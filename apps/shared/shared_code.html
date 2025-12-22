@@ -1,0 +1,438 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>shared Code Browser</title>
+<style>
+body {
+    background:#0f1115;
+    color:#eaeaea;
+    font-family:Consolas, monospace;
+    padding:24px;
+}
+h1 { margin-bottom:24px; }
+h2 { color:#7dd3fc; font-size:15px; }
+pre {
+    background:#111418;
+    padding:16px;
+    border-radius:8px;
+    overflow-x:auto;
+    font-size:13px;
+    line-height:1.5;
+}
+section { margin-bottom:32px; }
+</style>
+</head>
+<body>
+<h1>📦 apps\shared</h1>
+
+        <section>
+            <h2>__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>contracts\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>contracts\ai_job.py</h2>
+            <pre><code># apps/shared/contracts/ai_job.py
+from __future__ import annotations
+
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, Literal, Optional
+import json
+import uuid
+from datetime import datetime, timezone
+
+
+AIJobType = Literal[
+    &quot;ocr&quot;,
+    &quot;question_segmentation&quot;,
+    &quot;handwriting_analysis&quot;,
+    &quot;embedding&quot;,
+    &quot;problem_generation&quot;,
+    &quot;homework_video_analysis&quot;,
+    &quot;omr_grading&quot;,
+]
+
+
+def _now_iso() -&gt; str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass(frozen=True)
+class AIJob:
+    &quot;&quot;&quot;
+    API → Worker 로 전달되는 &#x27;계약&#x27; (Contract)
+
+    원칙:
+    - Worker는 DB/ORM/비즈니스 문맥을 몰라야 하므로
+      job payload에는 file path / ids / 최소 메타만 담는다.
+    &quot;&quot;&quot;
+
+    id: str
+    type: AIJobType
+
+    # 테넌트/스코핑 (API에서만 의미 있음. worker는 그대로 echo만)
+    tenant_id: Optional[str] = None
+
+    # 어떤 도메인 이벤트에서 발생했는지 추적용
+    source_domain: Optional[str] = None  # e.g. &quot;submissions&quot;, &quot;exams&quot;, &quot;homework&quot;
+    source_id: Optional[str] = None      # e.g. submission_id
+
+    # 실제 처리에 필요한 데이터
+    payload: Dict[str, Any] = None  # type: ignore
+
+    # 추적
+    created_at: str = &quot;&quot;
+
+    @staticmethod
+    def new(
+        *,
+        type: AIJobType,
+        payload: Dict[str, Any],
+        tenant_id: Optional[str] = None,
+        source_domain: Optional[str] = None,
+        source_id: Optional[str] = None,
+    ) -&gt; &quot;AIJob&quot;:
+        return AIJob(
+            id=str(uuid.uuid4()),
+            type=type,
+            tenant_id=tenant_id,
+            source_domain=source_domain,
+            source_id=source_id,
+            payload=payload or {},
+            created_at=_now_iso(),
+        )
+
+    def to_dict(self) -&gt; Dict[str, Any]:
+        d = asdict(self)
+        if d[&quot;payload&quot;] is None:
+            d[&quot;payload&quot;] = {}
+        return d
+
+    def to_json(self) -&gt; str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -&gt; &quot;AIJob&quot;:
+        return AIJob(
+            id=str(data.get(&quot;id&quot;)),
+            type=data.get(&quot;type&quot;),
+            tenant_id=data.get(&quot;tenant_id&quot;),
+            source_domain=data.get(&quot;source_domain&quot;),
+            source_id=data.get(&quot;source_id&quot;),
+            payload=data.get(&quot;payload&quot;) or {},
+            created_at=str(data.get(&quot;created_at&quot;) or &quot;&quot;),
+        )
+
+    @staticmethod
+    def from_json(raw: str) -&gt; &quot;AIJob&quot;:
+        return AIJob.from_dict(json.loads(raw))
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>contracts\ai_result.py</h2>
+            <pre><code># apps/shared/contracts/ai_result.py
+from __future__ import annotations
+
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, Literal, Optional
+import json
+from datetime import datetime, timezone
+
+
+AIJobStatus = Literal[&quot;DONE&quot;, &quot;FAILED&quot;]
+
+
+def _now_iso() -&gt; str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass(frozen=True)
+class AIResult:
+    &quot;&quot;&quot;
+    Worker → API 로 전달되는 &#x27;계약&#x27; (Contract)
+
+    원칙:
+    - Worker는 저장하지 않는다. 결과를 &#x27;전달&#x27;만 한다.
+    - API는 결과를 받아서 results/facts 혹은 submission meta 등에 반영한다.
+    &quot;&quot;&quot;
+
+    job_id: str
+    status: AIJobStatus
+
+    # 결과 데이터 (job type 별 스키마는 payload/result로 구분)
+    result: Dict[str, Any] = None  # type: ignore
+
+    # 오류 정보
+    error: Optional[str] = None
+
+    finished_at: str = &quot;&quot;
+
+    @staticmethod
+    def done(job_id: str, result: Dict[str, Any]) -&gt; &quot;AIResult&quot;:
+        return AIResult(
+            job_id=job_id,
+            status=&quot;DONE&quot;,
+            result=result or {},
+            error=None,
+            finished_at=_now_iso(),
+        )
+
+    @staticmethod
+    def failed(job_id: str, error: str) -&gt; &quot;AIResult&quot;:
+        return AIResult(
+            job_id=job_id,
+            status=&quot;FAILED&quot;,
+            result={},
+            error=error,
+            finished_at=_now_iso(),
+        )
+
+    def to_dict(self) -&gt; Dict[str, Any]:
+        d = asdict(self)
+        if d[&quot;result&quot;] is None:
+            d[&quot;result&quot;] = {}
+        return d
+
+    def to_json(self) -&gt; str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -&gt; &quot;AIResult&quot;:
+        return AIResult(
+            job_id=str(data.get(&quot;job_id&quot;)),
+            status=data.get(&quot;status&quot;),
+            result=data.get(&quot;result&quot;) or {},
+            error=data.get(&quot;error&quot;),
+            finished_at=str(data.get(&quot;finished_at&quot;) or &quot;&quot;),
+        )
+
+    @staticmethod
+    def from_json(raw: str) -&gt; &quot;AIResult&quot;:
+        return AIResult.from_dict(json.loads(raw))
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>contracts\message_job.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>tasks\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>tasks\media.py</h2>
+            <pre><code>from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Optional
+
+from celery import shared_task
+from django.conf import settings
+from django.db import transaction
+
+from apps.support.media.models import Video
+from libs.s3_client.presign import create_presigned_put_url
+from apps.worker.media.video import processor
+from apps.worker.media.video.processor import MediaProcessingError
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+
+def _get_hls_output_root(video_id: int) -&gt; Path:
+    &quot;&quot;&quot;
+    storage/media/hls/videos/{video_id}
+    &quot;&quot;&quot;
+    return (
+        Path(settings.BASE_DIR)
+        / &quot;storage&quot;
+        / &quot;media&quot;
+        / &quot;hls&quot;
+        / &quot;videos&quot;
+        / str(video_id)
+    )
+
+
+def _to_relative_media_path(path: Path) -&gt; str:
+    &quot;&quot;&quot;
+    Convert absolute path under BASE_DIR/storage to relative media path.
+    &quot;&quot;&quot;
+    base = Path(settings.BASE_DIR)
+    try:
+        return str(path.relative_to(base))
+    except ValueError:
+        # fallback (should not normally happen)
+        return str(path)
+
+
+# ---------------------------------------------------------------------
+# Celery Task
+# ---------------------------------------------------------------------
+
+@shared_task(
+    bind=True,
+    autoretry_for=(),   # retry 판단 ❌ (의도적으로 비활성)
+    retry_backoff=False,
+    retry_kwargs=None,
+)
+def process_video_media(self, video_id: int) -&gt; None:
+    &quot;&quot;&quot;
+    Orchestrates media processing for a single Video.
+
+    Responsibilities:
+    - DB lock
+    - status transition
+    - calling processor
+    - persisting results
+    &quot;&quot;&quot;
+
+    # 1) Lock &amp; initial state check
+    with transaction.atomic():
+        video = (
+            Video.objects
+            .select_for_update()
+            .filter(id=video_id)
+            .first()
+        )
+
+        if video is None:
+            logger.warning(
+                &quot;[media] Video not found (video_id=%s)&quot;, video_id
+            )
+            return
+
+        if video.status != Video.Status.UPLOADED:
+            # idempotency guard
+            logger.info(
+                &quot;[media] Skip processing due to status=%s (video_id=%s)&quot;,
+                video.status,
+                video_id,
+            )
+            return
+
+        video.status = Video.Status.PROCESSING
+        video.save(update_fields=[&quot;status&quot;])
+
+    # 2) Build input/output contracts (outside DB lock)
+    try:
+        input_url = generate_presigned_get_url(
+            bucket=video.s3_bucket,
+            key=video.s3_key,
+            expires_in=60 * 60,  # 충분히 긴 TTL
+        )
+
+        output_root = _get_hls_output_root(video_id)
+
+    except Exception as e:
+        # Presign 실패는 즉시 FAILED
+        logger.exception(
+            &quot;[media] Failed to prepare input/output (video_id=%s)&quot;,
+            video_id,
+        )
+        _mark_failed(video_id)
+        return
+
+    # 3) Run processor (actual work)
+    try:
+        result = processor.run(
+            video_id=video_id,
+            input_url=input_url,
+            output_root=output_root,
+        )
+
+    except MediaProcessingError as e:
+        # 의미 있는 실패 (stage/code/context 포함)
+        logger.error(
+            &quot;[media] Media processing failed (video_id=%s) %s&quot;,
+            video_id,
+            e.to_dict(),
+        )
+        _mark_failed(video_id)
+        return
+
+    except Exception as e:
+        # 예상 못 한 실패 (버그/환경 문제)
+        logger.exception(
+            &quot;[media] Unexpected error during media processing (video_id=%s)&quot;,
+            video_id,
+        )
+        _mark_failed(video_id)
+        return
+
+    # 4) Persist results &amp; mark READY
+    with transaction.atomic():
+        video = (
+            Video.objects
+            .select_for_update()
+            .filter(id=video_id)
+            .first()
+        )
+
+        if video is None:
+            # 매우 드문 케이스: 처리 중 삭제
+            logger.warning(
+                &quot;[media] Video disappeared before READY persist (video_id=%s)&quot;,
+                video_id,
+            )
+            return
+
+        video.duration = result.duration_seconds
+        video.thumbnail = _to_relative_media_path(result.thumbnail_path)
+        video.hls_path = _to_relative_media_path(result.master_playlist_path)
+        video.status = Video.Status.READY
+
+        video.save(
+            update_fields=[
+                &quot;duration&quot;,
+                &quot;thumbnail&quot;,
+                &quot;hls_path&quot;,
+                &quot;status&quot;,
+            ]
+        )
+
+    logger.info(
+        &quot;[media] Video media processing READY (video_id=%s)&quot;,
+        video_id,
+    )
+
+
+# ---------------------------------------------------------------------
+# Failure handling
+# ---------------------------------------------------------------------
+
+def _mark_failed(video_id: int) -&gt; None:
+    &quot;&quot;&quot;
+    Mark Video as FAILED. No retry decision here.
+    &quot;&quot;&quot;
+    with transaction.atomic():
+        video = (
+            Video.objects
+            .select_for_update()
+            .filter(id=video_id)
+            .first()
+        )
+        if video is None:
+            return
+
+        video.status = Video.Status.FAILED
+        video.save(update_fields=[&quot;status&quot;])
+</code></pre>
+        </section>
+        
+</body>
+</html>

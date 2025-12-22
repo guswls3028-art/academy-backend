@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+
+# Virtualenv
+venv/
+.env
+
+# Node
+node_modules/
+
+# Media / Storage
+storage/
+media/
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# ML / CV
+*.pt
+*.pth
+*.onnx
+
+# OS
+.DS_Store
+Thumbs.db

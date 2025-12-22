@@ -1,0 +1,286 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>ai Code Browser</title>
+<style>
+body {
+    background:#0f1115;
+    color:#eaeaea;
+    font-family:Consolas, monospace;
+    padding:24px;
+}
+h1 { margin-bottom:24px; }
+h2 { color:#7dd3fc; font-size:15px; }
+pre {
+    background:#111418;
+    padding:16px;
+    border-radius:8px;
+    overflow-x:auto;
+    font-size:13px;
+    line-height:1.5;
+}
+section { margin-bottom:32px; }
+</style>
+</head>
+<body>
+<h1>📦 apps\domains\ai</h1>
+
+        <section>
+            <h2>__init__.py</h2>
+            <pre><code># apps/domains/ai/__init__.py
+
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>apps.py</h2>
+            <pre><code># apps/domains/ai/apps.py
+from django.apps import AppConfig
+
+class AIDomainConfig(AppConfig):
+    default_auto_field = &quot;django.db.models.BigAutoField&quot;
+    name = &quot;apps.domains.ai&quot;
+    label = &quot;ai_domain&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>callbacks.py</h2>
+            <pre><code>from apps.shared.contracts.ai_result import AIResult
+from apps.domains.ai.models import AIJobModel, AIResultModel
+from apps.domains.submissions.services.ai_result_mapper import apply_ai_result
+from apps.domains.results.tasks.grading_tasks import grade_submission_task
+
+
+def handle_ai_result(result: AIResult) -&gt; None:
+    &quot;&quot;&quot;
+    Worker → API callback entry
+    &quot;&quot;&quot;
+    job = AIJobModel.objects.get(job_id=result.job_id)
+
+    if result.status == &quot;FAILED&quot;:
+        job.status = &quot;FAILED&quot;
+        job.error_message = result.error or &quot;&quot;
+        job.save(update_fields=[&quot;status&quot;, &quot;error_message&quot;])
+        return
+
+    # 1️⃣ AI 결과 저장 (fact)
+    AIResultModel.objects.create(
+        job=job,
+        payload=result.result,
+    )
+
+    # 2️⃣ submissions 로 위임 (답안 중간산물 저장)
+    submission_id = apply_ai_result(result.result)
+
+    # 3️⃣ 채점 job enqueue (results 책임)
+    if submission_id:
+        grade_submission_task.delay(int(submission_id))
+
+    job.status = &quot;DONE&quot;
+    job.save(update_fields=[&quot;status&quot;])
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>gateway.py</h2>
+            <pre><code>from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from apps.shared.contracts.ai_job import AIJob
+from apps.domains.ai.types import ensure_payload_dict, AIJobType
+from apps.domains.ai.safe import safe_dispatch
+from apps.domains.ai.publisher import publish_job
+from apps.domains.ai.models import AIJobModel
+
+
+def dispatch_job(
+    *,
+    job_type: AIJobType,
+    payload: Dict[str, Any],
+    tenant_id: Optional[str] = None,
+    source_domain: Optional[str] = None,
+    source_id: Optional[str] = None,
+) -&gt; Dict[str, Any]:
+    payload = ensure_payload_dict(payload)
+
+    job = AIJob.new(
+        type=job_type,
+        payload=payload,
+        tenant_id=tenant_id,
+        source_domain=source_domain,
+        source_id=source_id,
+    )
+
+    def _do():
+        # ✅ callbacks가 AIJobModel을 조회하므로, 발행 시점에 반드시 저장
+        job_model = AIJobModel.objects.create(
+            job_id=job.id,
+            job_type=job.type,
+            payload=job.payload,
+            status=&quot;PENDING&quot;,
+        )
+
+        try:
+            publish_job(job)
+        except Exception as e:
+            job_model.status = &quot;FAILED&quot;
+            job_model.error_message = str(e)
+            job_model.save(update_fields=[&quot;status&quot;, &quot;error_message&quot;, &quot;updated_at&quot;])
+            raise
+
+        return {&quot;ok&quot;: True, &quot;job_id&quot;: job.id, &quot;type&quot;: job.type}
+
+    return safe_dispatch(_do, fallback={&quot;ok&quot;: False, &quot;job_id&quot;: job.id, &quot;type&quot;: job.type})
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models.py</h2>
+            <pre><code># apps/domains/ai/models.py
+from django.db import models
+from apps.api.common.models import BaseModel
+
+
+class AIJobModel(BaseModel):
+    &quot;&quot;&quot;
+    API 서버가 관리하는 AI Job 메타
+    &quot;&quot;&quot;
+    job_id = models.CharField(max_length=64, unique=True)
+    job_type = models.CharField(max_length=50)
+
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            (&quot;PENDING&quot;, &quot;PENDING&quot;),
+            (&quot;RUNNING&quot;, &quot;RUNNING&quot;),
+            (&quot;DONE&quot;, &quot;DONE&quot;),
+            (&quot;FAILED&quot;, &quot;FAILED&quot;),
+        ],
+        default=&quot;PENDING&quot;,
+    )
+
+    payload = models.JSONField()
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        db_table = &quot;ai_job&quot;
+
+
+class AIResultModel(BaseModel):
+    &quot;&quot;&quot;
+    AI 결과 fact (저장만, 계산 없음)
+    &quot;&quot;&quot;
+    job = models.OneToOneField(
+        AIJobModel,
+        on_delete=models.CASCADE,
+        related_name=&quot;result&quot;,
+    )
+    payload = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = &quot;ai_result&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>publisher.py</h2>
+            <pre><code># apps/domains/ai/publisher.py
+from apps.shared.contracts.ai_job import AIJob
+
+def publish_job(job: AIJob) -&gt; None:
+    &quot;&quot;&quot;
+    실제 메시지 큐 연결 지점.
+    지금은 infra layer placeholder.
+    &quot;&quot;&quot;
+    from apps.worker.queue.producer import publish_ai_job
+    publish_ai_job(job)
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>safe.py</h2>
+            <pre><code># apps/domains/ai/safe.py
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+
+def safe_dispatch(fn, *, fallback: Optional[Dict[str, Any]] = None, **kwargs) -&gt; Dict[str, Any]:
+    &quot;&quot;&quot;
+    AI Job 발행을 안전하게 감싼다.
+    API는 실패해도 깨지면 안 된다.
+    &quot;&quot;&quot;
+    try:
+        return fn(**kwargs)
+    except Exception as e:
+        logger.exception(&quot;AI job dispatch failed&quot;, exc_info=e)
+        return fallback or {&quot;ok&quot;: False, &quot;error&quot;: str(e)}
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>types.py</h2>
+            <pre><code>from __future__ import annotations
+
+from typing import Any, Dict, Literal, Optional, TypedDict
+
+
+AIJobType = Literal[
+    &quot;ocr&quot;,
+    &quot;question_segmentation&quot;,
+    &quot;handwriting_analysis&quot;,
+    &quot;embedding&quot;,
+    &quot;problem_generation&quot;,
+    &quot;homework_video_analysis&quot;,
+]
+
+
+class OCRPayload(TypedDict, total=False):
+    image_path: str
+    engine: Optional[Literal[&quot;google&quot;, &quot;tesseract&quot;, &quot;auto&quot;]]
+    academy_id: Optional[int]
+
+
+class SegmentationPayload(TypedDict, total=False):
+    image_path: str
+    engine: Optional[Literal[&quot;yolo&quot;, &quot;opencv&quot;, &quot;template&quot;, &quot;auto&quot;]]
+
+
+class HandwritingPayload(TypedDict, total=False):
+    image_path: str
+
+
+class EmbeddingPayload(TypedDict, total=False):
+    texts: list[str]
+    backend: Optional[Literal[&quot;local&quot;, &quot;openai&quot;, &quot;auto&quot;]]
+
+
+class ProblemGenerationPayload(TypedDict, total=False):
+    ocr_text: str
+    model: Optional[str]
+
+
+class HomeworkVideoPayload(TypedDict, total=False):
+    video_path: str
+    frame_stride: Optional[int]
+    min_frame_count: Optional[int]
+
+
+def ensure_payload_dict(payload: Any) -&gt; Dict[str, Any]:
+    if payload is None:
+        return {}
+    if isinstance(payload, dict):
+        return payload
+    raise TypeError(&quot;payload must be a dict&quot;)
+</code></pre>
+        </section>
+        
+</body>
+</html>

@@ -1,0 +1,186 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>libs Code Browser</title>
+<style>
+body {
+    background:#0f1115;
+    color:#eaeaea;
+    font-family:Consolas, monospace;
+    padding:24px;
+}
+h1 { margin-bottom:24px; }
+h2 { color:#7dd3fc; font-size:15px; }
+pre {
+    background:#111418;
+    padding:16px;
+    border-radius:8px;
+    overflow-x:auto;
+    font-size:13px;
+    line-height:1.5;
+}
+section { margin-bottom:32px; }
+</style>
+</head>
+<body>
+<h1>📦 libs</h1>
+
+        <section>
+            <h2>observability\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>observability\logger.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>observability\tracing.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>redis_client\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>redis_client\client.py</h2>
+            <pre><code>import os
+import redis
+
+REDIS_URL = os.getenv(&quot;REDIS_URL&quot;, &quot;redis://localhost:6379/0&quot;)
+
+redis_client = redis.Redis.from_url(
+    REDIS_URL,
+    decode_responses=True,
+)
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>s3_client\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>s3_client\client.py</h2>
+            <pre><code>import os
+from typing import Tuple
+
+import boto3
+from botocore.exceptions import ClientError
+
+
+AWS_REGION = os.getenv(&quot;AWS_REGION&quot;, &quot;ap-northeast-2&quot;)
+AWS_S3_BUCKET = os.getenv(&quot;AWS_S3_BUCKET_NAME&quot;, &quot;&quot;)
+AWS_S3_ENDPOINT_URL = os.getenv(&quot;AWS_S3_ENDPOINT_URL&quot;)
+
+_s3 = boto3.client(
+    &quot;s3&quot;,
+    region_name=AWS_REGION,
+    endpoint_url=AWS_S3_ENDPOINT_URL or None,
+)
+
+
+def head_object(key: str) -&gt; Tuple[bool, int]:
+    &quot;&quot;&quot;
+    S3 object 존재 여부 + size(bytes)
+    &quot;&quot;&quot;
+    if not AWS_S3_BUCKET:
+        return False, 0
+
+    try:
+        resp = _s3.head_object(
+            Bucket=AWS_S3_BUCKET,
+            Key=key,
+        )
+        return True, int(resp.get(&quot;ContentLength&quot;) or 0)
+
+    except ClientError as e:
+        code = (e.response.get(&quot;Error&quot;) or {}).get(&quot;Code&quot;)
+        if code in (&quot;404&quot;, &quot;NoSuchKey&quot;, &quot;NotFound&quot;):
+            return False, 0
+        return False, 0
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>s3_client\presign.py</h2>
+            <pre><code>import os
+import boto3
+from botocore.client import Config
+
+
+AWS_REGION = os.getenv(&quot;AWS_REGION&quot;, &quot;ap-northeast-2&quot;)
+AWS_S3_BUCKET = os.getenv(&quot;AWS_S3_BUCKET_NAME&quot;, &quot;&quot;)
+AWS_S3_ENDPOINT_URL = os.getenv(&quot;AWS_S3_ENDPOINT_URL&quot;)
+
+AWS_PRESIGN_UPLOAD_EXPIRES = int(os.getenv(&quot;AWS_PRESIGN_UPLOAD_EXPIRES&quot;, &quot;900&quot;))
+AWS_PRESIGN_STREAM_EXPIRES = int(os.getenv(&quot;AWS_PRESIGN_STREAM_EXPIRES&quot;, &quot;3600&quot;))
+
+_s3 = boto3.client(
+    &quot;s3&quot;,
+    region_name=AWS_REGION,
+    endpoint_url=AWS_S3_ENDPOINT_URL or None,
+    config=Config(signature_version=&quot;s3v4&quot;),
+)
+
+
+def create_presigned_put_url(
+    key: str,
+    content_type: str = &quot;application/octet-stream&quot;,
+    expires_in: int = AWS_PRESIGN_UPLOAD_EXPIRES,
+) -&gt; str:
+    if not AWS_S3_BUCKET:
+        raise RuntimeError(&quot;AWS_S3_BUCKET_NAME is not set&quot;)
+
+    return _s3.generate_presigned_url(
+        ClientMethod=&quot;put_object&quot;,
+        Params={
+            &quot;Bucket&quot;: AWS_S3_BUCKET,
+            &quot;Key&quot;: key,
+            &quot;ContentType&quot;: content_type,
+        },
+        ExpiresIn=expires_in,
+    )
+
+
+def create_presigned_get_url(
+    key: str,
+    expires_in: int = AWS_PRESIGN_STREAM_EXPIRES,
+) -&gt; str:
+    if not AWS_S3_BUCKET:
+        raise RuntimeError(&quot;AWS_S3_BUCKET_NAME is not set&quot;)
+
+    return _s3.generate_presigned_url(
+        ClientMethod=&quot;get_object&quot;,
+        Params={
+            &quot;Bucket&quot;: AWS_S3_BUCKET,
+            &quot;Key&quot;: key,
+        },
+        ExpiresIn=expires_in,
+    )
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>tenant_util\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>tenant_util\context.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>tenant_util\validator.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+</body>
+</html>

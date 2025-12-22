@@ -1,0 +1,783 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>submissions Code Browser</title>
+<style>
+body {
+    background:#0f1115;
+    color:#eaeaea;
+    font-family:Consolas, monospace;
+    padding:24px;
+}
+h1 { margin-bottom:24px; }
+h2 { color:#7dd3fc; font-size:15px; }
+pre {
+    background:#111418;
+    padding:16px;
+    border-radius:8px;
+    overflow-x:auto;
+    font-size:13px;
+    line-height:1.5;
+}
+section { margin-bottom:32px; }
+</style>
+</head>
+<body>
+<h1>📦 apps\domains\submissions</h1>
+
+        <section>
+            <h2>__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>admin.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>apps.py</h2>
+            <pre><code># apps/domains/submissions/apps.py
+from django.apps import AppConfig
+
+
+class SubmissionsConfig(AppConfig):
+    default_auto_field = &quot;django.db.models.BigAutoField&quot;
+    name = &quot;apps.domains.submissions&quot;
+    label = &quot;submissions&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models\__init__.py</h2>
+            <pre><code>from .submission import Submission
+from .submission_answer import SubmissionAnswer
+
+__all__ = [
+    &quot;Submission&quot;, 
+    &quot;SubmissionAnswer&quot;
+    ]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models\submission.py</h2>
+            <pre><code># apps/domains/submissions/models/submission.py
+from __future__ import annotations
+
+from django.db import models
+from django.conf import settings
+
+from apps.api.common.models import TimestampModel
+
+
+class Submission(TimestampModel):
+    &quot;&quot;&quot;
+    submissions = &quot;제출 행위 + 원본 보관&quot;
+    - 계산/채점/정답비교 금지
+    &quot;&quot;&quot;
+
+    class TargetType(models.TextChoices):
+        EXAM = &quot;exam&quot;, &quot;Exam&quot;
+        HOMEWORK = &quot;homework&quot;, &quot;Homework&quot;
+
+    class Source(models.TextChoices):
+        # 시험
+        OMR_SCAN = &quot;omr_scan&quot;, &quot;OMR Scan&quot;
+        OMR_MANUAL = &quot;omr_manual&quot;, &quot;OMR Manual Input&quot;
+        ONLINE = &quot;online&quot;, &quot;Online&quot;
+        # 숙제
+        HOMEWORK_IMAGE = &quot;homework_image&quot;, &quot;Homework Image&quot;
+        HOMEWORK_VIDEO = &quot;homework_video&quot;, &quot;Homework Video&quot;
+        # 기타
+        AI_MATCH = &quot;ai_match&quot;, &quot;AI Image Match&quot;
+
+    class Status(models.TextChoices):
+        SUBMITTED = &quot;submitted&quot;, &quot;Submitted&quot;
+        DISPATCHED = &quot;dispatched&quot;, &quot;Dispatched&quot;            # AI job publish 완료
+        EXTRACTING = &quot;extracting&quot;, &quot;Extracting&quot;            # (선택) worker 처리중 표현
+        ANSWERS_READY = &quot;answers_ready&quot;, &quot;Answers Ready&quot;   # SubmissionAnswer 저장 완료
+        GRADING = &quot;grading&quot;, &quot;Grading&quot;                     # results 채점 job 처리 중
+        DONE = &quot;done&quot;, &quot;Done&quot;
+        FAILED = &quot;failed&quot;, &quot;Failed&quot;
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name=&quot;submissions&quot;,
+    )
+
+    # ✅ A안: enrollment_id 추가 (FK 강제 X)
+    enrollment_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+
+    target_type = models.CharField(max_length=20, choices=TargetType.choices)
+    target_id = models.PositiveIntegerField()
+
+    source = models.CharField(max_length=30, choices=Source.choices)
+
+    file = models.FileField(
+        upload_to=&quot;submissions/%Y/%m/%d/&quot;,
+        null=True,
+        blank=True,
+    )
+
+    payload = models.JSONField(null=True, blank=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.SUBMITTED,
+    )
+    error_message = models.TextField(blank=True)
+    meta = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=[&quot;target_type&quot;, &quot;target_id&quot;]),
+            models.Index(fields=[&quot;enrollment_id&quot;, &quot;created_at&quot;]),
+            models.Index(fields=[&quot;user&quot;, &quot;created_at&quot;]),
+            models.Index(fields=[&quot;status&quot;]),
+            models.Index(fields=[&quot;source&quot;]),
+        ]
+
+    def __str__(self) -&gt; str:
+        return (
+            f&quot;Submission({self.id}) {self.target_type}:{self.target_id} &quot;
+            f&quot;source={self.source} by user={self.user_id}&quot;
+        )
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models\submission_answer.py</h2>
+            <pre><code># apps/domains/submissions/models/submission_answer.py
+from __future__ import annotations
+
+from django.db import models
+from apps.api.common.models import TimestampModel
+
+
+class SubmissionAnswer(TimestampModel):
+    &quot;&quot;&quot;
+    SubmissionAnswer = &quot;답안 추출 중간산물&quot;
+    - 정답/점수/정오판정 금지 (results 도메인 책임)
+    &quot;&quot;&quot;
+    submission = models.ForeignKey(
+        &quot;submissions.Submission&quot;,
+        on_delete=models.CASCADE,
+        related_name=&quot;answers&quot;,
+    )
+
+    question_id = models.PositiveIntegerField()
+
+    answer = models.TextField(blank=True)
+    meta = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=[&quot;submission&quot;, &quot;question_id&quot;]),
+        ]
+        unique_together = (&quot;submission&quot;, &quot;question_id&quot;)
+
+    def __str__(self) -&gt; str:
+        return f&quot;SubmissionAnswer(submission={self.submission_id}, q={self.question_id})&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>serializers\__init__.py</h2>
+            <pre><code>from .submission import SubmissionSerializer, SubmissionCreateSerializer
+
+__all__ = [&quot;SubmissionSerializer&quot;, &quot;SubmissionCreateSerializer&quot;]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>serializers\submission.py</h2>
+            <pre><code># apps/domains/submissions/serializers/submission.py
+from rest_framework import serializers
+from apps.domains.submissions.models import Submission
+
+
+class SubmissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Submission
+        fields = &quot;__all__&quot;
+        read_only_fields = (
+            &quot;id&quot;,
+            &quot;user&quot;,
+            &quot;status&quot;,
+            &quot;error_message&quot;,
+            &quot;meta&quot;,
+            &quot;created_at&quot;,
+            &quot;updated_at&quot;,
+        )
+
+
+class SubmissionCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Submission
+        fields = (
+            &quot;enrollment_id&quot;,
+            &quot;target_type&quot;,
+            &quot;target_id&quot;,
+            &quot;source&quot;,
+            &quot;file&quot;,
+            &quot;payload&quot;,
+        )
+
+    def validate(self, attrs):
+        source = attrs.get(&quot;source&quot;)
+        target_type = attrs.get(&quot;target_type&quot;)
+
+        # enrollment_id는 grading에 필요하므로 강제(시험/숙제 공통)
+        if target_type in (Submission.TargetType.EXAM, Submission.TargetType.HOMEWORK):
+            if not attrs.get(&quot;enrollment_id&quot;):
+                raise serializers.ValidationError({&quot;enrollment_id&quot;: &quot;enrollment_id is required&quot;})
+
+        if source in (
+            Submission.Source.OMR_SCAN,
+            Submission.Source.HOMEWORK_IMAGE,
+            Submission.Source.HOMEWORK_VIDEO,
+        ):
+            if not attrs.get(&quot;file&quot;):
+                raise serializers.ValidationError({&quot;file&quot;: &quot;해당 source는 file 업로드가 필요합니다.&quot;})
+
+        if source == Submission.Source.ONLINE:
+            if not attrs.get(&quot;payload&quot;):
+                raise serializers.ValidationError({&quot;payload&quot;: &quot;온라인 제출은 payload가 필요합니다.&quot;})
+
+        return attrs
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>services\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>services\ai_result_mapper.py</h2>
+            <pre><code># apps/domains/submissions/services/ai_result_mapper.py
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from django.db import transaction
+
+from apps.domains.submissions.models import Submission, SubmissionAnswer
+
+
+@transaction.atomic
+def apply_ai_result(payload: Dict[str, Any]) -&gt; Optional[int]:
+    &quot;&quot;&quot;
+    Worker AI 결과를 submissions에 반영.
+
+    지원 스키마:
+    1) 답안형(items):
+      {
+        &quot;submission_id&quot;: int,
+        &quot;items&quot;: [{&quot;question_id&quot;:int,&quot;answer&quot;:str,&quot;meta&quot;:dict?}, ...]
+      }
+      -&gt; SubmissionAnswer upsert + status=ANSWERS_READY + submission.id 반환
+
+    2) OMR형(v1):
+      {
+        &quot;submission_id&quot;: int,
+        &quot;version&quot;: &quot;v1&quot;,
+        &quot;answers&quot;: [ {version, question_id, detected, marking, confidence, status, raw?}, ... ]
+      }
+      -&gt; SubmissionAnswer upsert(meta[&quot;omr&quot;]=answer_payload) + status=ANSWERS_READY + submission.id 반환
+
+    3) 분석형(채점 없음):
+      {&quot;submission_id&quot;: int, &quot;analysis&quot;: {...}}
+      -&gt; meta[&quot;analysis&quot;] 저장 + (HOMEWORK이면) status=DONE + None 반환
+    &quot;&quot;&quot;
+    submission_id = payload.get(&quot;submission_id&quot;)
+    if not submission_id:
+        return None
+
+    submission = Submission.objects.select_for_update().get(id=int(submission_id))
+
+    # 결과 원본 저장(디버그/추적용)
+    base_payload = submission.payload or {}
+    base_payload[&quot;ai_result&quot;] = payload
+    submission.payload = base_payload
+
+    # 1) items 답안형
+    items = payload.get(&quot;items&quot;)
+    if isinstance(items, list) and items:
+        for item in items:
+            qid = item.get(&quot;question_id&quot;)
+            if not qid:
+                continue
+
+            SubmissionAnswer.objects.update_or_create(
+                submission=submission,
+                question_id=int(qid),
+                defaults={
+                    &quot;answer&quot;: str(item.get(&quot;answer&quot;) or &quot;&quot;),
+                    &quot;meta&quot;: item.get(&quot;meta&quot;) or None,
+                },
+            )
+
+        submission.status = Submission.Status.ANSWERS_READY
+        submission.error_message = &quot;&quot;
+        meta = submission.meta or {}
+        meta[&quot;answers_ready&quot;] = True
+        meta[&quot;answer_count&quot;] = SubmissionAnswer.objects.filter(submission=submission).count()
+        submission.meta = meta
+        submission.save(update_fields=[&quot;payload&quot;, &quot;status&quot;, &quot;error_message&quot;, &quot;meta&quot;, &quot;updated_at&quot;])
+        return submission.id
+
+    # 2) OMR v1 형식
+    answers = payload.get(&quot;answers&quot;)
+    version = payload.get(&quot;version&quot;)
+    if version and isinstance(answers, list) and answers:
+        for a in answers:
+            qid = (a or {}).get(&quot;question_id&quot;)
+            if not qid:
+                continue
+
+            detected = (a or {}).get(&quot;detected&quot;) or []
+            # 사람이 읽기 쉬운 answer 문자열(예: &quot;B&quot; / &quot;BD&quot;)
+            ans_text = &quot;&quot;.join([str(x).strip().upper() for x in detected]) if isinstance(detected, list) else &quot;&quot;
+
+            SubmissionAnswer.objects.update_or_create(
+                submission=submission,
+                question_id=int(qid),
+                defaults={
+                    &quot;answer&quot;: ans_text,
+                    &quot;meta&quot;: {&quot;omr&quot;: a},  # ✅ results.grader가 meta[&quot;omr&quot;]를 읽는다
+                },
+            )
+
+        submission.status = Submission.Status.ANSWERS_READY
+        submission.error_message = &quot;&quot;
+        meta = submission.meta or {}
+        meta[&quot;answers_ready&quot;] = True
+        meta[&quot;answer_count&quot;] = SubmissionAnswer.objects.filter(submission=submission).count()
+        meta[&quot;omr_version&quot;] = str(version)
+        submission.meta = meta
+        submission.save(update_fields=[&quot;payload&quot;, &quot;status&quot;, &quot;error_message&quot;, &quot;meta&quot;, &quot;updated_at&quot;])
+        return submission.id
+
+    # 3) 분석형
+    analysis = payload.get(&quot;analysis&quot;)
+    if analysis is not None:
+        meta = submission.meta or {}
+        meta[&quot;analysis&quot;] = analysis
+        submission.meta = meta
+
+        if submission.target_type == Submission.TargetType.HOMEWORK:
+            submission.status = Submission.Status.DONE
+
+        submission.save(update_fields=[&quot;payload&quot;, &quot;meta&quot;, &quot;status&quot;, &quot;updated_at&quot;])
+        return None
+
+    submission.save(update_fields=[&quot;payload&quot;, &quot;updated_at&quot;])
+    return None
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>services\dispatcher.py</h2>
+            <pre><code># apps/domains/submissions/services/dispatcher.py
+from __future__ import annotations
+
+from apps.domains.submissions.models import Submission
+from apps.domains.ai.gateway import dispatch_job
+from apps.domains.submissions.services.submission_service import SubmissionService
+from apps.domains.results.tasks.grading_tasks import grade_submission_task
+
+
+def dispatch_submission(submission: Submission) -&gt; None:
+    &quot;&quot;&quot;
+    Submission 생성 직후 호출되는 단일 진입점.
+
+    - ONLINE: submissions에서 정규화 저장(SubmissionAnswer) 후 grading task enqueue
+    - 그 외: AI Job 발행 후 DISPATCHED
+    &quot;&quot;&quot;
+
+    if submission.source == Submission.Source.ONLINE:
+        SubmissionService.process(submission)
+        grade_submission_task.delay(int(submission.id))
+        return
+
+    if not submission.file:
+        submission.status = Submission.Status.FAILED
+        submission.error_message = &quot;file is required for this submission source&quot;
+        submission.save(update_fields=[&quot;status&quot;, &quot;error_message&quot;])
+        return
+
+    job_type = None
+    job_payload = None
+
+    # ✅ OMR scan → worker omr_grading 연결 (questions/roi는 payload로 받는다)
+    if submission.source == Submission.Source.OMR_SCAN:
+        payload = submission.payload or {}
+        questions = payload.get(&quot;questions&quot;)  # [{question_id, roi:{x,y,w,h}, choices:[...], axis}, ...]
+        if not isinstance(questions, list) or not questions:
+            submission.status = Submission.Status.FAILED
+            submission.error_message = &quot;OMR_SCAN requires payload.questions (roi list)&quot;
+            submission.save(update_fields=[&quot;status&quot;, &quot;error_message&quot;])
+            return
+
+        job_type = &quot;omr_grading&quot;
+        job_payload = {
+            &quot;image_path&quot;: submission.file.path,
+            &quot;questions&quot;: questions,
+        }
+
+    elif submission.source in (Submission.Source.HOMEWORK_IMAGE, Submission.Source.HOMEWORK_VIDEO):
+        job_type = &quot;homework_video_analysis&quot;
+        job_payload = {
+            &quot;video_path&quot;: submission.file.path,
+        }
+
+    else:
+        submission.status = Submission.Status.FAILED
+        submission.error_message = f&quot;Unsupported AI dispatch source yet: {submission.source}&quot;
+        submission.save(update_fields=[&quot;status&quot;, &quot;error_message&quot;])
+        return
+
+    resp = dispatch_job(
+        job_type=job_type,  # type: ignore[arg-type]
+        payload={
+            **job_payload,
+            &quot;submission_id&quot;: submission.id,
+            &quot;target_type&quot;: submission.target_type,
+            &quot;target_id&quot;: submission.target_id,
+            &quot;enrollment_id&quot;: submission.enrollment_id,
+        },
+        source_domain=&quot;submissions&quot;,
+        source_id=str(submission.id),
+    )
+
+    if resp.get(&quot;ok&quot;):
+        submission.status = Submission.Status.DISPATCHED
+        submission.error_message = &quot;&quot;
+        meta = submission.meta or {}
+        meta[&quot;ai_job_id&quot;] = resp.get(&quot;job_id&quot;)
+        meta[&quot;ai_job_type&quot;] = resp.get(&quot;type&quot;)
+        submission.meta = meta
+        submission.save(update_fields=[&quot;status&quot;, &quot;error_message&quot;, &quot;meta&quot;, &quot;updated_at&quot;])
+    else:
+        submission.status = Submission.Status.FAILED
+        submission.error_message = resp.get(&quot;error&quot;) or &quot;AI job dispatch failed&quot;
+        submission.save(update_fields=[&quot;status&quot;, &quot;error_message&quot;, &quot;updated_at&quot;])
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>services\processor\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>services\processor\base.py</h2>
+            <pre><code># apps/domains/submissions/services/processor/base.py
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Iterable, Dict, Any, List
+
+from django.db import transaction
+from apps.domains.submissions.models import Submission, SubmissionAnswer
+
+
+class BaseSubmissionProcessor(ABC):
+    &quot;&quot;&quot;
+    submissions 내 processor = &#x27;답안 중간산물 저장&#x27;까지만
+    - 채점/정답비교/점수계산 절대 금지
+    &quot;&quot;&quot;
+    source: str = &quot;base&quot;
+
+    def __init__(self, submission: Submission):
+        self.submission = submission
+
+    @transaction.atomic
+    def process(self) -&gt; List[SubmissionAnswer]:
+        extracted = list(self.extract_answers())
+        return self._save_answers(extracted)
+
+    @abstractmethod
+    def extract_answers(self) -&gt; Iterable[Dict[str, Any]]:
+        &quot;&quot;&quot;
+        반환 포맷(고정):
+            {&quot;question_id&quot;: int, &quot;answer&quot;: str, &quot;meta&quot;: dict|None}
+        &quot;&quot;&quot;
+        raise NotImplementedError
+
+    def _save_answers(self, extracted: Iterable[Dict[str, Any]]) -&gt; List[SubmissionAnswer]:
+        results: List[SubmissionAnswer] = []
+
+        for item in extracted:
+            qid = item.get(&quot;question_id&quot;)
+            if not qid:
+                continue
+
+            obj, _ = SubmissionAnswer.objects.update_or_create(
+                submission=self.submission,
+                question_id=int(qid),
+                defaults={
+                    &quot;answer&quot;: str(item.get(&quot;answer&quot;) or &quot;&quot;),
+                    &quot;meta&quot;: item.get(&quot;meta&quot;) or None,
+                },
+            )
+            results.append(obj)
+
+        return results
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>services\processor\omr.py</h2>
+            <pre><code># apps/domains/submissions/services/processor/omr.py
+from __future__ import annotations
+
+from typing import Iterable, Dict, Any
+
+from apps.domains.submissions.services.processor.base import BaseSubmissionProcessor
+
+
+class OMRSubmissionProcessor(BaseSubmissionProcessor):
+    &quot;&quot;&quot;
+    원칙상 OMR &#x27;추출&#x27;은 worker 책임.
+    API(submissions)에서는 아래 중 하나만 수행:
+      - (권장) dispatcher가 AI job 발행, 결과는 ai callbacks에서 SubmissionAnswer로 저장
+      - (보조) 이미 meta/payload에 추출 결과가 들어온 경우 정규화 저장만
+    &quot;&quot;&quot;
+
+    source = &quot;omr_scan&quot;
+
+    def extract_answers(self) -&gt; Iterable[Dict[str, Any]]:
+        # 1) worker가 돌려준 결과가 payload/meta에 들어온 케이스만 처리
+        payload = self.submission.payload or {}
+        extracted = payload.get(&quot;extracted_answers&quot;) or payload.get(&quot;answers&quot;)
+
+        # extracted가 online과 같은 스키마면 그대로 처리 가능
+        if isinstance(extracted, list):
+            for row in extracted:
+                qid = row.get(&quot;question_id&quot;)
+                if not qid:
+                    continue
+                yield {
+                    &quot;question_id&quot;: int(qid),
+                    &quot;answer&quot;: row.get(&quot;answer&quot;, &quot;&quot;),
+                    &quot;meta&quot;: row.get(&quot;meta&quot;) or {&quot;via&quot;: &quot;omr&quot;},
+                }
+            return
+
+        if isinstance(extracted, dict):
+            for k, v in extracted.items():
+                try:
+                    qid = int(k)
+                except Exception:
+                    continue
+                yield {
+                    &quot;question_id&quot;: qid,
+                    &quot;answer&quot;: v if v is not None else &quot;&quot;,
+                    &quot;meta&quot;: {&quot;via&quot;: &quot;omr&quot;},
+                }
+            return
+
+        return
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>services\processor\online.py</h2>
+            <pre><code># apps/domains/submissions/services/processor/online.py
+from __future__ import annotations
+
+from typing import Iterable, Dict, Any
+from apps.domains.submissions.services.processor.base import BaseSubmissionProcessor
+
+
+class OnlineSubmissionProcessor(BaseSubmissionProcessor):
+    source = &quot;online&quot;
+
+    def extract_answers(self) -&gt; Iterable[Dict[str, Any]]:
+        payload = self.submission.payload or {}
+        answers = payload.get(&quot;answers&quot;)
+
+        # A) list
+        if isinstance(answers, list):
+            for row in answers:
+                qid = row.get(&quot;question_id&quot;)
+                if not qid:
+                    continue
+                yield {
+                    &quot;question_id&quot;: int(qid),
+                    &quot;answer&quot;: row.get(&quot;answer&quot;, &quot;&quot;),
+                    &quot;meta&quot;: row.get(&quot;meta&quot;),
+                }
+            return
+
+        # B) dict (key=question_id)
+        if isinstance(answers, dict):
+            for k, v in answers.items():
+                try:
+                    qid = int(k)
+                except Exception:
+                    continue
+                yield {
+                    &quot;question_id&quot;: qid,
+                    &quot;answer&quot;: v if v is not None else &quot;&quot;,
+                    &quot;meta&quot;: {&quot;via&quot;: &quot;online&quot;},
+                }
+            return
+
+        return
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>services\processor\video.py</h2>
+            <pre><code># apps/domains/submissions/services/processor/video.py
+from __future__ import annotations
+
+from typing import Iterable, Dict, Any
+
+from apps.domains.submissions.services.processor.base import BaseSubmissionProcessor
+
+
+class VideoSubmissionProcessor(BaseSubmissionProcessor):
+    &quot;&quot;&quot;
+    원칙상 영상 분석은 worker 책임.
+    API(submissions)에서는:
+      - (권장) dispatcher가 AI job 발행
+      - (보조) payload/meta에 분석결과가 이미 들어온 경우만 SubmissionAnswer로 정규화 저장
+    &quot;&quot;&quot;
+
+    source = &quot;homework_video&quot;
+
+    def extract_answers(self) -&gt; Iterable[Dict[str, Any]]:
+        payload = self.submission.payload or {}
+        extracted = payload.get(&quot;extracted_answers&quot;) or payload.get(&quot;answers&quot;)
+
+        if isinstance(extracted, list):
+            for row in extracted:
+                qid = row.get(&quot;question_id&quot;)
+                if not qid:
+                    continue
+                yield {
+                    &quot;question_id&quot;: int(qid),
+                    &quot;answer&quot;: row.get(&quot;answer&quot;, &quot;&quot;),
+                    &quot;meta&quot;: row.get(&quot;meta&quot;) or {&quot;via&quot;: &quot;video&quot;},
+                }
+            return
+
+        if isinstance(extracted, dict):
+            for k, v in extracted.items():
+                try:
+                    qid = int(k)
+                except Exception:
+                    continue
+                yield {
+                    &quot;question_id&quot;: qid,
+                    &quot;answer&quot;: v if v is not None else &quot;&quot;,
+                    &quot;meta&quot;: {&quot;via&quot;: &quot;video&quot;},
+                }
+            return
+
+        return
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>services\submission_service.py</h2>
+            <pre><code># apps/domains/submissions/services/submission_service.py
+from typing import List, Type
+
+from django.db import transaction
+
+from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.domains.submissions.services.processor.base import BaseSubmissionProcessor
+from apps.domains.submissions.services.processor.online import OnlineSubmissionProcessor
+
+
+PROCESSOR_MAP: dict[str, Type[BaseSubmissionProcessor]] = {
+    Submission.Source.ONLINE: OnlineSubmissionProcessor,
+}
+
+
+class SubmissionService:
+    &quot;&quot;&quot;
+    submissions 처리의 유일한 퍼블릭 서비스
+    - ONLINE만 즉시 처리 (정규화만 수행)
+    &quot;&quot;&quot;
+
+    @staticmethod
+    @transaction.atomic
+    def process(submission: Submission) -&gt; List[SubmissionAnswer]:
+        processor_cls = PROCESSOR_MAP.get(submission.source)
+        if not processor_cls:
+            return []
+
+        processor = processor_cls(submission)
+        answers = processor.process()
+
+        # ONLINE은 즉시 answers_ready로
+        submission.status = Submission.Status.ANSWERS_READY
+        submission.save(update_fields=[&quot;status&quot;, &quot;updated_at&quot;])
+
+        return answers
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>urls.py</h2>
+            <pre><code>from rest_framework.routers import DefaultRouter
+from .views import SubmissionViewSet
+
+router = DefaultRouter()
+router.register(&quot;submissions&quot;, SubmissionViewSet, basename=&quot;submissions&quot;)
+
+urlpatterns = router.urls
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>views\__init__.py</h2>
+            <pre><code># domains/submissions/views/__init__.py
+
+from .submission_view import SubmissionViewSet
+
+__all__ = [&quot;SubmissionViewSet&quot;]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>views\submission_view.py</h2>
+            <pre><code>from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.submissions.models import Submission
+from apps.domains.submissions.serializers.submission import (
+    SubmissionSerializer,
+    SubmissionCreateSerializer,
+)
+from apps.domains.submissions.services.dispatcher import dispatch_submission
+
+
+class SubmissionViewSet(ModelViewSet):
+    queryset = Submission.objects.all().order_by(&quot;-id&quot;)
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.action == &quot;create&quot;:
+            return SubmissionCreateSerializer
+        return SubmissionSerializer
+
+    def perform_create(self, serializer):
+        submission = serializer.save(user=self.request.user)
+        dispatch_submission(submission)
+</code></pre>
+        </section>
+        
+</body>
+</html>

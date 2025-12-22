@@ -1,0 +1,56 @@
+# apps/support/analytics/views.py
+from __future__ import annotations
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.support.analytics.serializers import (
+    ExamSummarySerializer,
+    QuestionStatSerializer,
+    WrongAnswerDistributionSerializer,
+)
+from apps.support.analytics.services.exam_analytics import (
+    get_exam_summary,
+    get_question_stats,
+    get_top_wrong_questions,
+    get_wrong_answer_distribution,
+)
+
+
+class ExamAnalyticsSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, exam_id: int):
+        data = get_exam_summary(exam_id=int(exam_id))
+        return Response(ExamSummarySerializer(data).data)
+
+
+class ExamAnalyticsQuestionStatsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, exam_id: int):
+        rows = get_question_stats(exam_id=int(exam_id))
+        return Response(QuestionStatSerializer(rows, many=True).data)
+
+
+class ExamAnalyticsTopWrongView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, exam_id: int):
+        limit = int(request.query_params.get("limit") or 5)
+        rows = get_top_wrong_questions(exam_id=int(exam_id), limit=limit)
+        return Response(QuestionStatSerializer(rows, many=True).data)
+
+
+class ExamAnalyticsWrongDistributionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, exam_id: int, question_id: int):
+        limit = int(request.query_params.get("limit") or 5)
+        data = get_wrong_answer_distribution(
+            exam_id=int(exam_id),
+            question_id=int(question_id),
+            limit=limit,
+        )
+        return Response(WrongAnswerDistributionSerializer(data).data)
