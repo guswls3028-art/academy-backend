@@ -286,6 +286,7 @@ def _to_relative_media_path(path: Path) -&gt; str:
 
 @shared_task(
     bind=True,
+    queue=&quot;video&quot;,   # ✅ 이거 추가
     autoretry_for=(),   # retry 판단 ❌ (의도적으로 비활성)
     retry_backoff=False,
     retry_kwargs=None,

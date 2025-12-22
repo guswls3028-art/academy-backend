@@ -1,16 +1,14 @@
-import os
 from celery import Celery
 
-os.environ.setdefault(
-    "DJANGO_SETTINGS_MODULE",
-    "apps.api.config.settings.base",
-)
+# ❗ settings는 여기서 지정하지 않는다
+# DJANGO_SETTINGS_MODULE은 반드시 외부에서 주입
 
 app = Celery("academy")
 
-app.config_from_object("django.conf:settings", namespace="CELERY")
+app.config_from_object(
+    "django.conf:settings",
+    namespace="CELERY",
+)
 
-# 🔥 Single Source of Truth
-app.autodiscover_tasks([
-    "apps.shared.tasks",
-])
+# ✅ Django INSTALLED_APPS 기준으로 자동 탐색
+app.autodiscover_tasks()

@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 from celery import shared_task
 from django.conf import settings
 from django.db import transaction
 
 from apps.support.media.models import Video
-from libs.s3_client.presign import create_presigned_put_url
+from libs.s3_client.presign import create_presigned_get_url
 from apps.worker.media.video import processor
 from apps.worker.media.video.processor import MediaProcessingError
+from apps.worker.media.r2_uploader import upload_dir
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -42,7 +41,6 @@ def _to_relative_media_path(path: Path) -> str:
     try:
         return str(path.relative_to(base))
     except ValueError:
-        # fallback (should not normally happen)
         return str(path)
 
 
@@ -52,23 +50,16 @@ def _to_relative_media_path(path: Path) -> str:
 
 @shared_task(
     bind=True,
-    queue="video",   # ✅ 이거 추가
-    autoretry_for=(),   # retry 판단 ❌ (의도적으로 비활성)
+    queue="video",
+    autoretry_for=(),
     retry_backoff=False,
-    retry_kwargs=None,
 )
 def process_video_media(self, video_id: int) -> None:
     """
     Orchestrates media processing for a single Video.
-
-    Responsibilities:
-    - DB lock
-    - status transition
-    - calling processor
-    - persisting results
     """
 
-    # 1) Lock & initial state check
+    # 1️⃣ Lock & 상태 전이
     with transaction.atomic():
         video = (
             Video.objects
@@ -78,15 +69,12 @@ def process_video_media(self, video_id: int) -> None:
         )
 
         if video is None:
-            logger.warning(
-                "[media] Video not found (video_id=%s)", video_id
-            )
+            logger.warning("[media] Video not found (video_id=%s)", video_id)
             return
 
         if video.status != Video.Status.UPLOADED:
-            # idempotency guard
             logger.info(
-                "[media] Skip processing due to status=%s (video_id=%s)",
+                "[media] Skip processing (status=%s, video_id=%s)",
                 video.status,
                 video_id,
             )
@@ -95,18 +83,15 @@ def process_video_media(self, video_id: int) -> None:
         video.status = Video.Status.PROCESSING
         video.save(update_fields=["status"])
 
-    # 2) Build input/output contracts (outside DB lock)
+    # 2️⃣ 입력 URL + 출력 경로 준비
     try:
-        input_url = generate_presigned_get_url(
-            bucket=video.s3_bucket,
-            key=video.s3_key,
-            expires_in=60 * 60,  # 충분히 긴 TTL
+        input_url = create_presigned_get_url(
+            key=video.file_key,
+            expires_in=60 * 60,
         )
-
         output_root = _get_hls_output_root(video_id)
 
-    except Exception as e:
-        # Presign 실패는 즉시 FAILED
+    except Exception:
         logger.exception(
             "[media] Failed to prepare input/output (video_id=%s)",
             video_id,
@@ -114,7 +99,7 @@ def process_video_media(self, video_id: int) -> None:
         _mark_failed(video_id)
         return
 
-    # 3) Run processor (actual work)
+    # 3️⃣ 실제 처리 (ffmpeg)
     try:
         result = processor.run(
             video_id=video_id,
@@ -123,7 +108,6 @@ def process_video_media(self, video_id: int) -> None:
         )
 
     except MediaProcessingError as e:
-        # 의미 있는 실패 (stage/code/context 포함)
         logger.error(
             "[media] Media processing failed (video_id=%s) %s",
             video_id,
@@ -132,8 +116,7 @@ def process_video_media(self, video_id: int) -> None:
         _mark_failed(video_id)
         return
 
-    except Exception as e:
-        # 예상 못 한 실패 (버그/환경 문제)
+    except Exception:
         logger.exception(
             "[media] Unexpected error during media processing (video_id=%s)",
             video_id,
@@ -141,7 +124,7 @@ def process_video_media(self, video_id: int) -> None:
         _mark_failed(video_id)
         return
 
-    # 4) Persist results & mark READY
+    # 4️⃣ DB 결과 반영 (READY)
     with transaction.atomic():
         video = (
             Video.objects
@@ -151,7 +134,6 @@ def process_video_media(self, video_id: int) -> None:
         )
 
         if video is None:
-            # 매우 드문 케이스: 처리 중 삭제
             logger.warning(
                 "[media] Video disappeared before READY persist (video_id=%s)",
                 video_id,
@@ -172,6 +154,20 @@ def process_video_media(self, video_id: int) -> None:
             ]
         )
 
+    # 5️⃣ R2 업로드 (🚨 반드시 트랜잭션 밖)
+    try:
+        upload_dir(
+            local_dir=output_root,
+            prefix=f"media/hls/videos/{video_id}",
+        )
+    except Exception:
+        logger.exception(
+            "[media] R2 upload failed (video_id=%s)",
+            video_id,
+        )
+        _mark_failed(video_id)
+        return
+
     logger.info(
         "[media] Video media processing READY (video_id=%s)",
         video_id,
@@ -184,7 +180,7 @@ def process_video_media(self, video_id: int) -> None:
 
 def _mark_failed(video_id: int) -> None:
     """
-    Mark Video as FAILED. No retry decision here.
+    Mark Video as FAILED.
     """
     with transaction.atomic():
         video = (

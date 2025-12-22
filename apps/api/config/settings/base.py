@@ -175,7 +175,6 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        # ✅ 복구된 부분
         "rest_framework.authentication.SessionAuthentication",
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
@@ -225,7 +224,8 @@ CLOUDFRONT_DOMAIN = os.getenv("CLOUDFRONT_DOMAIN", "")
 CLOUDFRONT_KEY_PAIR_ID = os.getenv("CLOUDFRONT_KEY_PAIR_ID", "")
 CLOUDFRONT_PRIVATE_KEY_PEM = os.getenv("CLOUDFRONT_PRIVATE_KEY_PEM", "")
 
-CDN_HLS_BASE_URL = os.getenv("CDN_HLS_BASE_URL", "")
+# ✅ 수정된 부분
+CDN_HLS_BASE_URL = "https://pub-54ae4dcb984d4491b08f6c57023a1621.r2.dev"
 
 VIDEO_PLAYBACK_TTL_SECONDS = int(os.getenv("VIDEO_PLAYBACK_TTL_SECONDS", "600"))
 VIDEO_MAX_SESSIONS = int(os.getenv("VIDEO_MAX_SESSIONS", "9999"))

@@ -20,7 +20,6 @@ TARGET_DIRS = [
     #Path("apps/domains/ai"),
     Path("apps/shared"),
     #Path("apps/worker/ai"),
-    #Path("apps/worker/queue"),
     #Path("apps/support/analytics"),
     Path("apps/core"),
     Path("apps/support/media"),
