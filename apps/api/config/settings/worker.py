@@ -8,6 +8,4 @@ INSTALLED_APPS = [
     # 실제 존재하는 것만
     "apps.worker",
 
-    # Celery 결과 백엔드 쓰면만
-    "django_celery_results",
 ]
