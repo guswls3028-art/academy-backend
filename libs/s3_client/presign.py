@@ -42,7 +42,6 @@ def _get_bucket() -> str:
 
 def create_presigned_put_url(
     key: str,
-    content_type: str = "application/octet-stream",
     expires_in: int = AWS_PRESIGN_UPLOAD_EXPIRES,
 ) -> str:
     """
@@ -53,7 +52,6 @@ def create_presigned_put_url(
         Params={
             "Bucket": _get_bucket(),
             "Key": key,
-            "ContentType": content_type,
         },
         ExpiresIn=expires_in,
     )
