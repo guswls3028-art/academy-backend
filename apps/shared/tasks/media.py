@@ -9,7 +9,7 @@ from django.conf import settings
 from django.db import transaction
 
 from libs.s3_client.presign import create_presigned_get_url
-from apps.worker.media.video import processor
+from apps.worker.media.video.processor import run as run_processor
 from apps.worker.media.video.processor import MediaProcessingError
 from apps.worker.media.r2_uploader import upload_dir
 
@@ -131,7 +131,7 @@ def process_video_media(self, video_id: int) -> None:
 
     # 3️⃣ 실제 처리 (ffmpeg + HLS)
     try:
-        result = processor.run(
+        result = run_processor(
             video_id=video_id,
             input_url=input_url,
             output_root=output_root,
