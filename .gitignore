@@ -1,18 +1,26 @@
+# =========================
 # Python
+# =========================
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.so
 
-# Virtualenv
+# =========================
+# Virtualenv / Env
+# =========================
 venv/
 .env
 
+# =========================
 # Node
+# =========================
 node_modules/
 
-# Media / Storage
+# =========================
+# Media / Storage (RUNTIME ONLY)
+# =========================
 storage/
 media/
 *.mp4
@@ -20,11 +28,19 @@ media/
 *.mov
 *.mkv
 
+# 🔥 EXCEPTION: worker media는 코드이므로 추적
+!apps/worker/media/
+!apps/worker/media/**
+
+# =========================
 # ML / CV
+# =========================
 *.pt
 *.pth
 *.onnx
 
+# =========================
 # OS
+# =========================
 .DS_Store
 Thumbs.db
