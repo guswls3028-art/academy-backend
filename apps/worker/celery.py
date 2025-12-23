@@ -1,5 +1,10 @@
 # apps/worker/celery.py
 
+
+print("🔥 WORKER CELERY LOADED 🔥")
+
+
+
 import os
 from celery import Celery
 
@@ -14,3 +19,5 @@ app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks([
     "apps.shared.tasks.media",
 ])
+
+print("🔥 autodiscover_tasks called 🔥")

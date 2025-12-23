@@ -1,237 +1,174 @@
-# apps/shared/tasks/media.py
+# apps/worker/media/video/transcoder.py
+
 
 from __future__ import annotations
 
-import logging
+import subprocess
 from pathlib import Path
+from typing import List
 
-import requests
-from celery import shared_task
 from django.conf import settings
-from django.db import transaction
 
-from libs.s3_client.presign import create_presigned_get_url
-from apps.worker.media.video import processor
-from apps.worker.media.video.processor import MediaProcessingError
-from apps.worker.media.r2_uploader import upload_dir
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------
-# Helpers
+# HLS Variant Ladder
 # ---------------------------------------------------------------------
 
-def _get_hls_output_root(video_id: int) -> Path:
+HLS_VARIANTS = [
+    {"name": "v1", "width": 426, "height": 240, "video_bitrate": "400k", "audio_bitrate": "64k"},
+    {"name": "v2", "width": 640, "height": 360, "video_bitrate": "800k", "audio_bitrate": "96k"},
+    {"name": "v3", "width": 1280, "height": 720, "video_bitrate": "2500k", "audio_bitrate": "128k"},
+]
+
+
+# ---------------------------------------------------------------------
+# Directory preparation
+# ---------------------------------------------------------------------
+
+def prepare_output_dirs(output_root: Path) -> None:
     """
-    storage/media/hls/videos/{video_id}
+    storage/media/hls/videos/{video_id}/
+      ├─ v1/
+      ├─ v2/
+      └─ v3/
     """
-    return (
-        Path(settings.BASE_DIR)
-        / "storage"
-        / "media"
+    output_root.mkdir(parents=True, exist_ok=True)
+    for v in HLS_VARIANTS:
+        (output_root / v["name"]).mkdir(exist_ok=True)
+
+
+# ---------------------------------------------------------------------
+# ffmpeg filter_complex builder
+# ---------------------------------------------------------------------
+
+def build_filter_complex() -> str:
+    parts: List[str] = []
+    split_count = len(HLS_VARIANTS)
+
+    parts.append(
+        "[0:v]split={}".format(split_count)
+        + "".join(f"[v{i}]" for i in range(split_count))
+    )
+
+    for i, v in enumerate(HLS_VARIANTS):
+        parts.append(f"[v{i}]scale={v['width']}:{v['height']}[v{i}out]")
+
+    return ";".join(parts)
+
+
+# ---------------------------------------------------------------------
+# ffmpeg command builder
+# ---------------------------------------------------------------------
+
+def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
+    cmd: List[str] = [
+        "ffmpeg",
+        "-y",
+        "-i", input_path,
+        "-filter_complex", build_filter_complex(),
+    ]
+
+    for i, v in enumerate(HLS_VARIANTS):
+        cmd += [
+            "-map", f"[v{i}out]",
+            "-map", "0:a?",
+
+            f"-c:v:{i}", "libx264",
+            "-profile:v", "main",
+            "-pix_fmt", "yuv420p",
+            f"-b:v:{i}", v["video_bitrate"],
+
+            "-g", "48",
+            "-keyint_min", "48",
+            "-sc_threshold", "0",
+
+            f"-c:a:{i}", "aac",
+            "-ac", "2",
+            f"-b:a:{i}", v["audio_bitrate"],
+        ]
+
+    cmd += [
+        "-f", "hls",
+        "-hls_time", "4",
+        "-hls_playlist_type", "vod",
+        "-hls_flags", "independent_segments",
+        "-master_pl_name", "master.m3u8",
+        "-var_stream_map",
+        " ".join(f"v:{i},a:{i},name:{v['name']}" for i, v in enumerate(HLS_VARIANTS)),
+        str(output_root / "v%v" / "index.m3u8"),
+    ]
+
+    return cmd
+
+
+# ---------------------------------------------------------------------
+# Public API (실전용)
+# ---------------------------------------------------------------------
+
+def transcode_to_hls(
+    *,
+    video_id: int,
+    input_path: str,  # video.file.path
+    timeout: int | None = None,
+) -> Path:
+    """
+    Execute HLS transcoding.
+    """
+
+    output_root = (
+        Path(settings.MEDIA_ROOT)
         / "hls"
         / "videos"
         / str(video_id)
     )
 
+    prepare_output_dirs(output_root)
 
-def _to_relative_media_path(path: Path) -> str:
-    """
-    Convert absolute path under BASE_DIR/storage to relative media path.
-    """
-    base = Path(settings.BASE_DIR)
-    try:
-        return str(path.relative_to(base))
-    except ValueError:
-        return str(path)
-
-
-def notify_processing_complete(*, video_id: int, hls_path: str, duration: int | None) -> None:
-    url = f"{settings.API_BASE_URL}/api/v1/internal/videos/{video_id}/processing-complete/"
-
-    headers = {
-        "X-Worker-Token": settings.INTERNAL_WORKER_TOKEN,
-        "Content-Type": "application/json",
-    }
-
-    payload = {
-        "hls_path": hls_path,
-        "duration": duration,
-    }
-
-    resp = requests.post(url, json=payload, headers=headers, timeout=5)
-    resp.raise_for_status()
-
-
-# ---------------------------------------------------------------------
-# Celery Task
-# ---------------------------------------------------------------------
-
-@shared_task(
-    bind=True,
-    queue="video",
-    autoretry_for=(),
-    retry_backoff=False,
-)
-def process_video_media(self, video_id: int) -> None:
-    """
-    Orchestrates media processing for a single Video.
-    """
-    # ✅ 여기서 import (Celery/Django 앱 로딩 순서 꼬임 방지)
-    from apps.support.media.models import Video
-
-    # 1️⃣ Lock & 상태 전이
-    with transaction.atomic():
-        video = (
-            Video.objects
-            .select_for_update()
-            .filter(id=video_id)
-            .first()
-        )
-
-        if video is None:
-            logger.warning("[media] Video not found (video_id=%s)", video_id)
-            return
-
-        if video.status != Video.Status.UPLOADED:
-            logger.info(
-                "[media] Skip processing (status=%s, video_id=%s)",
-                video.status,
-                video_id,
-            )
-            return
-
-        video.status = Video.Status.PROCESSING
-        video.save(update_fields=["status"])
-
-    # 2️⃣ 입력 URL + 출력 경로 준비
-    try:
-        input_url = create_presigned_get_url(
-            key=video.file_key,
-            expires_in=60 * 60,
-        )
-        output_root = _get_hls_output_root(video_id)
-
-    except Exception:
-        logger.exception(
-            "[media] Failed to prepare input/output (video_id=%s)",
-            video_id,
-        )
-        _mark_failed(video_id)
-        return
-
-    # 3️⃣ 실제 처리 (ffmpeg)
-    try:
-        result = processor.run(
-            video_id=video_id,
-            input_url=input_url,
-            output_root=output_root,
-        )
-
-    except MediaProcessingError as e:
-        logger.error(
-            "[media] Media processing failed (video_id=%s) %s",
-            video_id,
-            e.to_dict(),
-        )
-        _mark_failed(video_id)
-        return
-
-    except Exception:
-        logger.exception(
-            "[media] Unexpected error during media processing (video_id=%s)",
-            video_id,
-        )
-        _mark_failed(video_id)
-        return
-
-    # 4️⃣ DB 결과 반영 (READY)
-    with transaction.atomic():
-        video = (
-            Video.objects
-            .select_for_update()
-            .filter(id=video_id)
-            .first()
-        )
-
-        if video is None:
-            logger.warning(
-                "[media] Video disappeared before READY persist (video_id=%s)",
-                video_id,
-            )
-            return
-
-        video.duration = result.duration_seconds
-        video.thumbnail = _to_relative_media_path(result.thumbnail_path)
-        video.hls_path = _to_relative_media_path(result.master_playlist_path)
-        video.status = Video.Status.READY
-
-        video.save(
-            update_fields=[
-                "duration",
-                "thumbnail",
-                "hls_path",
-                "status",
-            ]
-        )
-
-    # 5️⃣ R2 업로드 (🚨 반드시 트랜잭션 밖)
-    try:
-        upload_dir(
-            local_dir=output_root,
-            prefix=f"media/hls/videos/{video_id}",
-        )
-    except Exception:
-        logger.exception(
-            "[media] R2 upload failed (video_id=%s)",
-            video_id,
-        )
-        _mark_failed(video_id)
-        return
-
-    logger.info(
-        "[media] Video media processing READY (video_id=%s)",
-        video_id,
+    cmd = build_ffmpeg_command(
+        input_path=input_path,
+        output_root=output_root,
     )
 
-    # 6️⃣ API에 처리 완료 통지
-    try:
-        notify_processing_complete(
-            video_id=video_id,
-            hls_path=str(video.hls_path),
-            duration=video.duration,
-        )
-        logger.info(
-            "[media] Video processing notified API (video_id=%s)",
-            video_id,
-        )
-    except Exception:
-        logger.exception(
-            "[media] Failed to notify API (video_id=%s)",
-            video_id,
-        )
+    process = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+    if process.returncode != 0:
+        raise RuntimeError({
+            "video_id": video_id,
+            "cmd": cmd,
+            "stderr": process.stderr,
+        })
+
+    master_path = output_root / "master.m3u8"
+    if not master_path.exists():
+        raise RuntimeError("master.m3u8 not created")
+
+    return master_path
 
 
 # ---------------------------------------------------------------------
-# Failure handling
+# TEST ONLY
 # ---------------------------------------------------------------------
 
-def _mark_failed(video_id: int) -> None:
-    """
-    Mark Video as FAILED.
-    """
-    # ✅ 여기서 import (Celery/Django 앱 로딩 순서 꼬임 방지)
-    from apps.support.media.models import Video
+def test_local_hls_transcode() -> None:
+    input_path = (
+        Path(settings.MEDIA_ROOT)
+        / "videos"
+        / "2025"
+        / "12"
+        / "19"
+        / "던파.mp4"
+    )
 
-    with transaction.atomic():
-        video = (
-            Video.objects
-            .select_for_update()
-            .filter(id=video_id)
-            .first()
-        )
-        if video is None:
-            return
+    transcode_to_hls(
+        video_id=2,
+        input_path=str(input_path),
+    )
 
-        video.status = Video.Status.FAILED
-        video.save(update_fields=["status"])
+    print("✅ HLS transcode completed")
