@@ -1,8 +1,8 @@
+from __future__ import annotations
+# 얘는 맨위에 있어야함. 무조건 !!! 
+
 # apps/shared/tasks/media.py
 print("🔥 media task module imported 🔥")
-
-
-from __future__ import annotations
 
 import logging
 from pathlib import Path
