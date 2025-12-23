@@ -89,7 +89,7 @@ def process_video_media(self, video_id: int) -> None:
     """
 
     # ⚠️ 중요: 여기서 import (Celery/Django 로딩 순서 문제 방지)
-    from apps.worker.models import Video
+    from apps.support.media.models import Video
 
     logger.info("[media] Start processing (video_id=%s)", video_id)
 
@@ -233,7 +233,7 @@ def _mark_failed(video_id: int) -> None:
     """
     Mark Video as FAILED.
     """
-    from apps.worker.models import Video
+    from apps.support.media.models import Video
 
     with transaction.atomic():
         video = (
