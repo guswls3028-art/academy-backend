@@ -1,3 +1,5 @@
+# apps/shared/tasks/media.py
+
 from __future__ import annotations
 
 import logging
@@ -12,6 +14,9 @@ from libs.s3_client.presign import create_presigned_get_url
 from apps.worker.media.video import processor
 from apps.worker.media.video.processor import MediaProcessingError
 from apps.worker.media.r2_uploader import upload_dir
+
+# 🔥 API notify
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +47,22 @@ def _to_relative_media_path(path: Path) -> str:
         return str(path.relative_to(base))
     except ValueError:
         return str(path)
+
+def notify_processing_complete(*, video_id: int, hls_path: str, duration: int | None):
+    url = f"{settings.API_BASE_URL}/api/v1/internal/videos/{video_id}/processing-complete/"
+
+    headers = {
+        "X-Worker-Token": settings.INTERNAL_WORKER_TOKEN,
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "hls_path": hls_path,
+        "duration": duration,
+    }
+
+    resp = requests.post(url, json=payload, headers=headers, timeout=5)
+    resp.raise_for_status()
 
 
 # ---------------------------------------------------------------------
@@ -172,6 +193,23 @@ def process_video_media(self, video_id: int) -> None:
         "[media] Video media processing READY (video_id=%s)",
         video_id,
     )
+
+    # 6️⃣ API에 처리 완료 통지
+    try:
+        notify_processing_complete(
+            video_id=video_id,
+            hls_path=str(video.hls_path),
+            duration=video.duration,
+        )
+        logger.info(
+            "[media] Video processing notified API (video_id=%s)",
+            video_id,
+        )
+    except Exception:
+        logger.exception(
+            "[media] Failed to notify API (video_id=%s)",
+            video_id,
+        )
 
 
 # ---------------------------------------------------------------------

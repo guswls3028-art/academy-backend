@@ -1,3 +1,5 @@
+# apps\api\config\setttings\base.py
+
 from pathlib import Path
 from datetime import timedelta
 import os
@@ -13,6 +15,9 @@ DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
 AUTH_USER_MODEL = "core.User"
+
+API_BASE_URL = "http://localhost:8000"
+
 
 
 # ==================================================
@@ -215,6 +220,8 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+INTERNAL_WORKER_TOKEN = "long-random-secret"
 
 # ==================================================
 # VIDEO PLAYBACK / CDN
