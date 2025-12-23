@@ -2,4 +2,4 @@ from django.apps import AppConfig
 
 class MaterialsConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
-    name = "domains.interactions.materials"
+    name = "apps.domains.interactions.materials"
