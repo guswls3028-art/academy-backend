@@ -1,3 +1,5 @@
+# apps/api/celery.py
+
 from celery import Celery
 
 # ❗ settings는 여기서 지정하지 않는다

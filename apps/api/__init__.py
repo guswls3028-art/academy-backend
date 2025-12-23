@@ -1,4 +1,5 @@
-import os
+# apps/api/__init__.py
 
-if os.environ.get("DJANGO_SETTINGS_MODULE", "").endswith("settings.base"):
-    from .celery import app as celery_app
+from .celery import app as celery_app
+
+__all__ = ("celery_app",)
