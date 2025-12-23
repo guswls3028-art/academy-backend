@@ -12,5 +12,5 @@ app = Celery("worker")
 
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks([
-    "apps.shared.tasks",
+    "apps.shared.tasks.media",
 ])
