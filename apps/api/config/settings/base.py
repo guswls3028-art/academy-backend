@@ -75,6 +75,9 @@ INSTALLED_APPS = [
 
     # CORS
     "corsheaders",
+
+    # shared 여기에 등록해야 워커에서 줏어감. 
+    "apps.shared",
 ]
 
 # ==================================================
