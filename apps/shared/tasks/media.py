@@ -5,18 +5,15 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import requests
 from celery import shared_task
 from django.conf import settings
 from django.db import transaction
 
-from apps.support.media.models import Video
 from libs.s3_client.presign import create_presigned_get_url
 from apps.worker.media.video import processor
 from apps.worker.media.video.processor import MediaProcessingError
 from apps.worker.media.r2_uploader import upload_dir
-
-# 🔥 API notify
-import requests
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +45,8 @@ def _to_relative_media_path(path: Path) -> str:
     except ValueError:
         return str(path)
 
-def notify_processing_complete(*, video_id: int, hls_path: str, duration: int | None):
+
+def notify_processing_complete(*, video_id: int, hls_path: str, duration: int | None) -> None:
     url = f"{settings.API_BASE_URL}/api/v1/internal/videos/{video_id}/processing-complete/"
 
     headers = {
@@ -79,6 +77,8 @@ def process_video_media(self, video_id: int) -> None:
     """
     Orchestrates media processing for a single Video.
     """
+    # ✅ 여기서 import (Celery/Django 앱 로딩 순서 꼬임 방지)
+    from apps.support.media.models import Video
 
     # 1️⃣ Lock & 상태 전이
     with transaction.atomic():
@@ -220,6 +220,9 @@ def _mark_failed(video_id: int) -> None:
     """
     Mark Video as FAILED.
     """
+    # ✅ 여기서 import (Celery/Django 앱 로딩 순서 꼬임 방지)
+    from apps.support.media.models import Video
+
     with transaction.atomic():
         video = (
             Video.objects
