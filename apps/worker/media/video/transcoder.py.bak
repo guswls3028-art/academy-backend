@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+from typing import List, Dict, Any
+
+
+# ---------------------------------------------------------------------
+# HLS Variant Ladder (v1 고정)
+# ---------------------------------------------------------------------
+
+HLS_VARIANTS = [
+    {
+        "name": "v1",
+        "width": 426,
+        "height": 240,
+        "video_bitrate": "400k",
+        "audio_bitrate": "64k",
+    },
+    {
+        "name": "v2",
+        "width": 640,
+        "height": 360,
+        "video_bitrate": "800k",
+        "audio_bitrate": "96k",
+    },
+    {
+        "name": "v3",
+        "width": 1280,
+        "height": 720,
+        "video_bitrate": "2500k",
+        "audio_bitrate": "128k",
+    },
+]
+
+
+# ---------------------------------------------------------------------
+# Directory preparation
+# ---------------------------------------------------------------------
+
+def prepare_output_dirs(output_root: Path) -> None:
+    """
+    Ensure output directories exist.
+
+    storage/media/hls/videos/{video_id}/
+      ├─ v1/
+      ├─ v2/
+      └─ v3/
+    """
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    for v in HLS_VARIANTS:
+        (output_root / v["name"]).mkdir(exist_ok=True)
+
+
+# ---------------------------------------------------------------------
+# ffmpeg filter_complex builder
+# ---------------------------------------------------------------------
+
+def build_filter_complex() -> str:
+    """
+    Build safe filter_complex string without trailing separators.
+
+    Example:
+      [0:v]split=3[v0][v1][v2];
+      [v0]scale=426:240[v0out];
+      [v1]scale=640:360[v1out];
+      [v2]scale=1280:720[v2out]
+    """
+    parts: List[str] = []
+    split_count = len(HLS_VARIANTS)
+
+    parts.append(
+        "[0:v]split={}".format(split_count)
+        + "".join(f"[v{i}]" for i in range(split_count))
+    )
+
+    for i, v in enumerate(HLS_VARIANTS):
+        parts.append(
+            f"[v{i}]scale={v['width']}:{v['height']}[v{i}out]"
+        )
+
+    return ";".join(parts)
+
+
+# ---------------------------------------------------------------------
+# ffmpeg command builder
+# ---------------------------------------------------------------------
+
+def build_ffmpeg_command(
+    input_url: str,
+    output_root: Path,
+) -> List[str]:
+    """
+    Build single-run multi-bitrate HLS ffmpeg command.
+    """
+    cmd: List[str] = [
+        "ffmpeg",
+        "-y",
+        "-i", input_url,
+        "-filter_complex", build_filter_complex(),
+    ]
+
+    for i, v in enumerate(HLS_VARIANTS):
+        cmd += [
+            # Video / Audio mapping
+            "-map", f"[v{i}out]",
+            "-map", "0:a?",  # audio optional (important)
+
+            # Video encoding (explicit & stable)
+            f"-c:v:{i}", "libx264",
+            "-profile:v", "main",
+            "-pix_fmt", "yuv420p",
+            f"-b:v:{i}", v["video_bitrate"],
+
+            # GOP / Keyframe alignment for HLS
+            "-g", "48",
+            "-keyint_min", "48",
+            "-sc_threshold", "0",
+
+            # Audio encoding
+            f"-c:a:{i}", "aac",
+            "-ac", "2",
+            f"-b:a:{i}", v["audio_bitrate"],
+        ]
+
+    cmd += [
+        "-f", "hls",
+        "-hls_time", "4",
+        "-hls_playlist_type", "vod",
+        "-hls_flags", "independent_segments",
+        "-master_pl_name", "master.m3u8",
+        "-var_stream_map",
+        " ".join(
+            f"v:{i},a:{i},name:{v['name']}"
+            for i, v in enumerate(HLS_VARIANTS)
+        ),
+        str(output_root / "v%v" / "index.m3u8"),
+    ]
+
+    return cmd
+
+
+# ---------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------
+
+def transcode_to_hls(
+    *,
+    video_id: int,
+    input_url: str,
+    output_root: Path,
+    timeout: int | None = None,
+) -> Path:
+    """
+    Execute HLS transcoding.
+
+    Contract:
+    - Success  → master.m3u8 exists and Path is returned
+    - Failure  → RuntimeError with ffmpeg context
+    """
+    prepare_output_dirs(output_root)
+
+    cmd = build_ffmpeg_command(
+        input_url=input_url,
+        output_root=output_root,
+    )
+
+    process = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout,
+        check=False,  # explicit for environment safety
+    )
+
+    if process.returncode != 0:
+        # NOTE:
+        # stderr / cmd are intentionally propagated upward
+        # so processor / task layer can decide how to log or persist them.
+        raise RuntimeError({
+            "video_id": video_id,
+            "cmd": cmd,
+            "returncode": process.returncode,
+            "stderr": process.stderr,
+        })
+
+    master_path = output_root / "master.m3u8"
+    if not master_path.exists():
+        raise RuntimeError({
+            "video_id": video_id,
+            "error": "master.m3u8 not found after transcode",
+            "output_root": str(output_root),
+        })
+
+    return master_path
