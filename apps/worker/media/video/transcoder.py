@@ -9,6 +9,7 @@ from typing import List
 # HLS Variant Ladder
 # ---------------------------------------------------------------------
 
+# ⚠️ name에는 절대 v 붙이지 말 것
 HLS_VARIANTS = [
     {"name": "1", "width": 426,  "height": 240,  "video_bitrate": "400k",  "audio_bitrate": "64k"},
     {"name": "2", "width": 640,  "height": 360,  "video_bitrate": "800k",  "audio_bitrate": "96k"},
@@ -29,6 +30,7 @@ def prepare_output_dirs(output_root: Path) -> None:
     """
     output_root.mkdir(parents=True, exist_ok=True)
 
+    # v1, v2, v3 디렉토리 미리 생성
     for v in HLS_VARIANTS:
         (output_root / f"v{v['name']}").mkdir(parents=True, exist_ok=True)
 
@@ -57,7 +59,7 @@ def build_filter_complex() -> str:
 # ---------------------------------------------------------------------
 
 def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
-    # 🔥 핵심: ffmpeg에 전달하는 모든 경로는 POSIX 문자열로 고정
+    # 🔥🔥🔥 핵심: ffmpeg에 전달하는 경로는 무조건 POSIX 문자열
     out = output_root.as_posix()
 
     cmd: List[str] = [
@@ -92,18 +94,19 @@ def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
         "-hls_playlist_type", "vod",
         "-hls_flags", "independent_segments",
 
-        # 🔥🔥🔥 세그먼트 경로 강제 (/)
+        # 🔥 세그먼트 파일 경로 강제 (/)
         "-hls_segment_filename",
         f"{out}/v%v/index%d.ts",
 
         "-master_pl_name", "master.m3u8",
+
         "-var_stream_map",
         " ".join(
             f"v:{i},a:{i},name:{v['name']}"
             for i, v in enumerate(HLS_VARIANTS)
         ),
 
-        # 🔥 variant playlist 경로도 POSIX
+        # 🔥 variant playlist 경로
         f"{out}/v%v/index.m3u8",
     ]
 
