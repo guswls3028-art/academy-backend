@@ -4,7 +4,6 @@ import subprocess
 from pathlib import Path
 from typing import List
 
-from django.conf import settings
 
 # ---------------------------------------------------------------------
 # HLS Variant Ladder
@@ -29,8 +28,9 @@ def prepare_output_dirs(output_root: Path) -> None:
       └─ v3/
     """
     output_root.mkdir(parents=True, exist_ok=True)
+
     for v in HLS_VARIANTS:
-        (output_root / f"v{v['name']}").mkdir(exist_ok=True)
+        (output_root / f"v{v['name']}").mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------
@@ -51,11 +51,15 @@ def build_filter_complex() -> str:
 
     return ";".join(parts)
 
+
 # ---------------------------------------------------------------------
 # ffmpeg command builder
 # ---------------------------------------------------------------------
 
 def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
+    # 🔥 핵심: ffmpeg에 전달하는 모든 경로는 POSIX 문자열로 고정
+    out = output_root.as_posix()
+
     cmd: List[str] = [
         "ffmpeg",
         "-y",
@@ -87,23 +91,24 @@ def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
         "-hls_time", "4",
         "-hls_playlist_type", "vod",
         "-hls_flags", "independent_segments",
-        "-master_pl_name", "master.m3u8",
 
-        # 🔥🔥🔥 핵심: 세그먼트 파일 경로 강제 POSIX
+        # 🔥🔥🔥 세그먼트 경로 강제 (/)
         "-hls_segment_filename",
-        f"{output_root.as_posix()}/v%v/index%d.ts",
-        
+        f"{out}/v%v/index%d.ts",
+
+        "-master_pl_name", "master.m3u8",
         "-var_stream_map",
         " ".join(
             f"v:{i},a:{i},name:{v['name']}"
             for i, v in enumerate(HLS_VARIANTS)
         ),
-f"{output_root.as_posix()}/v%v/index.m3u8",
 
+        # 🔥 variant playlist 경로도 POSIX
+        f"{out}/v%v/index.m3u8",
     ]
 
-
     return cmd
+
 
 # ---------------------------------------------------------------------
 # Public API
