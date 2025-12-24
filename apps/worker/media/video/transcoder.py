@@ -11,10 +11,11 @@ from django.conf import settings
 # ---------------------------------------------------------------------
 
 HLS_VARIANTS = [
-    {"name": "v1", "width": 426,  "height": 240,  "video_bitrate": "400k",  "audio_bitrate": "64k"},
-    {"name": "v2", "width": 640,  "height": 360,  "video_bitrate": "800k",  "audio_bitrate": "96k"},
-    {"name": "v3", "width": 1280, "height": 720,  "video_bitrate": "2500k", "audio_bitrate": "128k"},
+    {"name": "1", "width": 426,  "height": 240,  "video_bitrate": "400k",  "audio_bitrate": "64k"},
+    {"name": "2", "width": 640,  "height": 360,  "video_bitrate": "800k",  "audio_bitrate": "96k"},
+    {"name": "3", "width": 1280, "height": 720,  "video_bitrate": "2500k", "audio_bitrate": "128k"},
 ]
+
 
 # ---------------------------------------------------------------------
 # Directory preparation
@@ -29,7 +30,8 @@ def prepare_output_dirs(output_root: Path) -> None:
     """
     output_root.mkdir(parents=True, exist_ok=True)
     for v in HLS_VARIANTS:
-        (output_root / v["name"]).mkdir(exist_ok=True)
+        (output_root / f"v{v['name']}").mkdir(exist_ok=True)
+
 
 # ---------------------------------------------------------------------
 # ffmpeg filter_complex builder
@@ -87,8 +89,12 @@ def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
         "-hls_flags", "independent_segments",
         "-master_pl_name", "master.m3u8",
         "-var_stream_map",
-        " ".join(f"v:{i},a:{i},name:{v['name']}" for i, v in enumerate(HLS_VARIANTS)),
-        f"{output_root.as_posix()}/v%v/index.m3u8",  # 🔥 핵심 수정
+        " ".join(
+            f"v:{i},a:{i},name:{v['name']}"
+            for i, v in enumerate(HLS_VARIANTS)
+        ),
+f"{output_root.as_posix()}/v%v/index.m3u8",
+
     ]
 
 
