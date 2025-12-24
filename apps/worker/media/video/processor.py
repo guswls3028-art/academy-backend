@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
+import requests
+
 from .transcoder import transcode_to_hls
 
 
@@ -19,7 +21,7 @@ from .transcoder import transcode_to_hls
 class MediaProcessingError(RuntimeError):
     """
     Processor-level error with structured context.
-    Task layer should catch this and mark Video as FAILED (no retry decision here).
+    Task layer should catch this and mark Video as FAILED.
     """
 
     def __init__(
@@ -64,9 +66,10 @@ class ProcessResult:
 class VideoProcessor:
     """
     The single authority that turns one uploaded video into READY artifacts:
-      - duration (ffprobe)
-      - thumbnail (ffmpeg)
-      - HLS (transcoder.transcode_to_hls)
+      - download source to local
+      - duration (ffprobe local)
+      - thumbnail (ffmpeg local)
+      - HLS (transcoder.transcode_to_hls local)
       - verification (master.m3u8 exists)
     """
 
@@ -76,9 +79,11 @@ class VideoProcessor:
         video_id: int,
         input_url: str,
         output_root: Union[str, Path],
+        timeout_download: Optional[int] = 60 * 30,
         timeout_probe: Optional[int] = 60,
         timeout_thumbnail: Optional[int] = 120,
         timeout_hls: Optional[int] = None,
+        cleanup_source: bool = False,
     ) -> ProcessResult:
         out_root = Path(output_root)
 
@@ -88,43 +93,59 @@ class VideoProcessor:
             output_root=out_root,
         )
 
-        # 2) probe duration
-        duration = self._probe_duration_seconds(
-            video_id=video_id,
-            input_url=input_url,
-            timeout=timeout_probe,
-        )
-
-        # 3) thumbnail
-        thumb_path = out_root / "thumbnail.jpg"
-        self._generate_thumbnail(
-            video_id=video_id,
-            input_url=input_url,
-            output_path=thumb_path,
-            timeout=timeout_thumbnail,
-        )
-
-        # 4) HLS transcode (delegated to fixed transcoder)
-        master_path = self._transcode_hls(
+        # 2) download source to local (정석)
+        local_input_path = self._download_source(
             video_id=video_id,
             input_url=input_url,
             output_root=out_root,
-            timeout=timeout_hls,
+            timeout=timeout_download,
         )
 
-        # 5) verify (READY condition: master.m3u8 exists)
-        self._verify_ready(
-            video_id=video_id,
-            master_path=master_path,
-        )
+        try:
+            # 3) probe duration (local)
+            duration = self._probe_duration_seconds(
+                video_id=video_id,
+                input_path=str(local_input_path),
+                timeout=timeout_probe,
+            )
 
-        return ProcessResult(
-            video_id=video_id,
-            duration_seconds=duration,
-            thumbnail_path=thumb_path,
-            master_playlist_path=master_path,
-            output_root=out_root,
-        )
+            # 4) thumbnail (local)
+            thumb_path = out_root / "thumbnail.jpg"
+            self._generate_thumbnail(
+                video_id=video_id,
+                input_path=str(local_input_path),
+                output_path=thumb_path,
+                timeout=timeout_thumbnail,
+            )
+
+            # 5) HLS transcode (local)
+            master_path = self._transcode_hls(
+                video_id=video_id,
+                input_path=str(local_input_path),
+                timeout=timeout_hls,
+            )
+
+            # 6) verify
+            self._verify_ready(
+                video_id=video_id,
+                master_path=master_path,
+            )
+
+            return ProcessResult(
+                video_id=video_id,
+                duration_seconds=duration,
+                thumbnail_path=thumb_path,
+                master_playlist_path=master_path,
+                output_root=out_root,
+            )
+
+        finally:
+            if cleanup_source:
+                try:
+                    if local_input_path.exists():
+                        local_input_path.unlink()
+                except Exception:
+                    pass
 
     # -----------------------------------------------------------------
     # Internal steps
@@ -133,7 +154,7 @@ class VideoProcessor:
     def _pre_clean_output_root(self, *, video_id: int, output_root: Path) -> None:
         """
         Delete output_root entirely if exists, then recreate.
-        This prevents 'stale artifacts' from making retries look successful.
+        Prevents stale artifacts from making retries look successful.
         """
         try:
             if output_root.exists():
@@ -151,15 +172,74 @@ class VideoProcessor:
                 },
             ) from e
 
-    def _probe_duration_seconds(
+    def _download_source(
         self,
         *,
         video_id: int,
         input_url: str,
+        output_root: Path,
+        timeout: Optional[int] = 60 * 30,  # 30m
+        chunk_size: int = 1024 * 1024,      # 1MB
+    ) -> Path:
+        """
+        Download source MP4 from presigned GET URL to local disk.
+        """
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        final_path = output_root / "_source.mp4"
+        tmp_path = output_root / "_source.mp4.part"
+
+        try:
+            with requests.get(input_url, stream=True, timeout=30) as r:
+                r.raise_for_status()
+
+                expected_len = r.headers.get("Content-Length")
+                expected_len_int = int(expected_len) if expected_len and expected_len.isdigit() else None
+
+                written = 0
+                with open(tmp_path, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=chunk_size):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        written += len(chunk)
+
+                if expected_len_int is not None and written != expected_len_int:
+                    raise RuntimeError(
+                        f"download size mismatch (expected={expected_len_int}, got={written})"
+                    )
+
+            tmp_path.replace(final_path)
+            return final_path
+
+        except Exception as e:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
+
+            raise MediaProcessingError(
+                stage="DOWNLOAD",
+                code="DOWNLOAD_FAILED",
+                message=f"Failed to download source (video_id={video_id})",
+                context={
+                    "video_id": video_id,
+                    "input_url": input_url[:2000],
+                    "output_root": str(output_root),
+                    "error": repr(e),
+                },
+            ) from e
+
+    def _probe_duration_seconds(
+        self,
+        *,
+        video_id: int,
+        input_path: str,
         timeout: Optional[int],
     ) -> float:
         """
-        ffprobe via streaming URL. No local download.
+        ffprobe local file.
         """
         cmd = [
             "ffprobe",
@@ -167,7 +247,7 @@ class VideoProcessor:
             "-print_format", "json",
             "-show_format",
             "-show_streams",
-            input_url,
+            input_path,
         ]
 
         try:
@@ -217,13 +297,12 @@ class VideoProcessor:
                 context={
                     "video_id": video_id,
                     "cmd": cmd,
-                    "stdout": p.stdout[:4000],  # keep bounded
+                    "stdout": p.stdout[:4000],
                     "error": repr(e),
                 },
             ) from e
 
         if duration <= 0:
-            # duration 0이면 이후 UX/정산 등에서 문제되므로 여기서 실패로 올림
             raise MediaProcessingError(
                 stage="PROBE",
                 code="PROBE_FAILED",
@@ -241,23 +320,19 @@ class VideoProcessor:
         self,
         *,
         video_id: int,
-        input_url: str,
+        input_path: str,
         output_path: Path,
         timeout: Optional[int],
     ) -> None:
         """
-        Generate one thumbnail jpg. Streaming input. No local download.
-
-        Note:
-        - Using a safe seek pattern: try -ss before -i may be unreliable for some HTTP sources,
-          so we keep it simple: capture a frame near the start.
+        Generate one thumbnail jpg from local file.
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         cmd = [
             "ffmpeg",
             "-y",
-            "-i", input_url,
+            "-i", input_path,
             "-vf", "thumbnail,scale=1280:-2",
             "-frames:v", "1",
             str(output_path),
@@ -312,33 +387,28 @@ class VideoProcessor:
         self,
         *,
         video_id: int,
-        input_url: str,
-        output_root: Path,
+        input_path: str,
         timeout: Optional[int],
     ) -> Path:
         """
-        Delegate to fixed transcoder. Any error should be wrapped with stage/code.
+        Delegate to transcoder (local input).
         """
         try:
             master_path = transcode_to_hls(
                 video_id=video_id,
-                input_url=input_url,
-                output_root=output_root,
+                input_path=input_path,
                 timeout=timeout,
             )
             return master_path
         except Exception as e:
-            # transcoder already raises rich RuntimeError(dict) in many cases.
-            # We wrap it to unify error boundary for task.
             raise MediaProcessingError(
                 stage="HLS",
                 code="HLS_FAILED",
                 message=f"HLS transcode failed (video_id={video_id})",
                 context={
                     "video_id": video_id,
-                    "output_root": str(output_root),
+                    "input_path": input_path,
                     "error": repr(e),
-                    # if underlying exception contains dict-like args, task can still log repr(e)
                 },
             ) from e
 
@@ -359,7 +429,7 @@ class VideoProcessor:
 
 
 # ---------------------------------------------------------------------
-# Public entry (simple functional style)
+# Public entry
 # ---------------------------------------------------------------------
 
 def run(
@@ -367,18 +437,16 @@ def run(
     video_id: int,
     input_url: str,
     output_root: Union[str, Path],
+    timeout_download: Optional[int] = 60 * 30,
     timeout_probe: Optional[int] = 60,
     timeout_thumbnail: Optional[int] = 120,
     timeout_hls: Optional[int] = None,
 ) -> ProcessResult:
-    """
-    Public entry point used by task layer.
-    Keeps dependency surface minimal: processor.run(...) only.
-    """
     return VideoProcessor().run(
         video_id=video_id,
         input_url=input_url,
         output_root=output_root,
+        timeout_download=timeout_download,
         timeout_probe=timeout_probe,
         timeout_thumbnail=timeout_thumbnail,
         timeout_hls=timeout_hls,
