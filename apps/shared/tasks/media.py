@@ -147,6 +147,13 @@ def process_video_media(self, video_id: int) -> None:
             video_id,
             e.to_dict(),
         )
+        print("🔥 MEDIA PROCESSING ERROR 🔥", e.to_dict())
+        logger.error(
+            "[media] Media processing failed (video_id=%s) %s",
+            video_id,
+            e.to_dict(),
+        )
+
         _mark_failed(video_id)
         return
 
