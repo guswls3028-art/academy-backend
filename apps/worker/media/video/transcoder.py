@@ -8,8 +8,7 @@ from typing import List
 # ---------------------------------------------------------------------
 # HLS Variant Ladder
 # ---------------------------------------------------------------------
-
-# ⚠️ name에는 절대 v 붙이지 말 것
+# ⚠️ name에는 절대 'v' 붙이지 말 것
 HLS_VARIANTS = [
     {"name": "1", "width": 426,  "height": 240,  "video_bitrate": "400k",  "audio_bitrate": "64k"},
     {"name": "2", "width": 640,  "height": 360,  "video_bitrate": "800k",  "audio_bitrate": "96k"},
@@ -20,11 +19,13 @@ HLS_VARIANTS = [
 # ---------------------------------------------------------------------
 # Directory preparation
 # ---------------------------------------------------------------------
-
 def prepare_output_dirs(output_root: Path) -> None:
     """
     storage/media/hls/videos/{video_id}/
+      ├─ master.m3u8
       ├─ v1/
+      │   ├─ index.m3u8
+      │   └─ index0.ts ...
       ├─ v2/
       └─ v3/
     """
@@ -38,7 +39,6 @@ def prepare_output_dirs(output_root: Path) -> None:
 # ---------------------------------------------------------------------
 # ffmpeg filter_complex builder
 # ---------------------------------------------------------------------
-
 def build_filter_complex() -> str:
     parts: List[str] = []
     split_count = len(HLS_VARIANTS)
@@ -55,17 +55,17 @@ def build_filter_complex() -> str:
 
 
 # ---------------------------------------------------------------------
-# ffmpeg command builder
+# ffmpeg command builder (⭐ 표준형)
 # ---------------------------------------------------------------------
-
-def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
-    # 🔥🔥🔥 핵심: ffmpeg에 전달하는 경로는 무조건 POSIX 문자열
-    out = output_root.as_posix()
-
+def build_ffmpeg_command(input_path: str) -> List[str]:
+    """
+    ⚠️ 모든 출력 경로는 '상대 경로'만 사용
+    ⚠️ cwd 기준으로 ffmpeg 실행됨
+    """
     cmd: List[str] = [
         "ffmpeg",
         "-y",
-        "-i", input_path,
+        "-i", input_path,  # 입력은 절대 경로여도 OK
         "-filter_complex", build_filter_complex(),
     ]
 
@@ -94,10 +94,8 @@ def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
         "-hls_playlist_type", "vod",
         "-hls_flags", "independent_segments",
 
-        # 🔥 세그먼트 파일 경로 강제 (/)
-        "-hls_segment_filename",
-        f"{out}/v%v/index%d.ts",
-
+        # ✅ 표준: 상대 경로 + POSIX 슬래시
+        "-hls_segment_filename", "v%v/index%d.ts",
         "-master_pl_name", "master.m3u8",
 
         "-var_stream_map",
@@ -106,17 +104,16 @@ def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
             for i, v in enumerate(HLS_VARIANTS)
         ),
 
-        # 🔥 variant playlist 경로
-        f"{out}/v%v/index.m3u8",
+        # ✅ variant playlist도 상대 경로
+        "v%v/index.m3u8",
     ]
 
     return cmd
 
 
 # ---------------------------------------------------------------------
-# Public API
+# Public API (⭐ 표준형 실행부)
 # ---------------------------------------------------------------------
-
 def transcode_to_hls(
     *,
     video_id: int,
@@ -125,18 +122,19 @@ def transcode_to_hls(
     timeout: int | None = None,
 ) -> Path:
     """
-    Execute HLS transcoding from local mp4.
+    Execute HLS transcoding from local mp4 (Best Practice)
     """
 
+    # 1. 출력 디렉토리 준비
     prepare_output_dirs(output_root)
 
-    cmd = build_ffmpeg_command(
-        input_path=input_path,
-        output_root=output_root,
-    )
+    # 2. ffmpeg 명령어 생성
+    cmd = build_ffmpeg_command(input_path)
 
+    # 3. ⭐ 핵심: output_root를 cwd로 실행
     process = subprocess.run(
         cmd,
+        cwd=str(output_root.resolve()),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
