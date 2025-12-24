@@ -1,13 +1,13 @@
-# apps/worker/media/video/transcoder.py
-
-
 from __future__ import annotations
+# apps/worker/media/video/transcoder.py
 
 import subprocess
 from pathlib import Path
 from typing import List
 
 from django.conf import settings
+
+print("🔥 TRANSCODER START", input_url)
 
 
 # ---------------------------------------------------------------------
@@ -108,9 +108,11 @@ def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
 def transcode_to_hls(
     *,
     video_id: int,
-    input_path: str,  # video.file.path
+    input_url: str,
+    output_root: Path,
     timeout: int | None = None,
 ) -> Path:
+
     """
     Execute HLS transcoding.
     """
