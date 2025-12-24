@@ -13,7 +13,14 @@ User = get_user_model()
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "username", "email", "name", "phone"]
+        fields = [
+            "id", 
+            "username", 
+            "name", 
+            "phone",
+            "is_staff",        # ✅ 추가
+            "is_superuser"    # (선택) 있으면 좋음
+        ]
 
 
 # ------------------------------------

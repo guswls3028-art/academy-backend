@@ -218,7 +218,9 @@ class Expense(TimestampModel):
         
         <section>
             <h2>permissions.py</h2>
-            <pre><code>from rest_framework.permissions import BasePermission
+            <pre><code>#apps/core/permissions.py
+
+from rest_framework.permissions import BasePermission
 
 
 class IsAdminOrStaff(BasePermission):
@@ -269,7 +271,14 @@ User = get_user_model()
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = [&quot;id&quot;, &quot;username&quot;, &quot;email&quot;, &quot;name&quot;, &quot;phone&quot;]
+        fields = [
+            &quot;id&quot;, 
+            &quot;username&quot;, 
+            &quot;name&quot;, 
+            &quot;phone&quot;,
+            &quot;is_staff&quot;,        # ✅ 추가
+            &quot;is_superuser&quot;    # (선택) 있으면 좋음
+        ]
 
 
 # ------------------------------------

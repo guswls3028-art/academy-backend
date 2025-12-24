@@ -68,34 +68,36 @@ redis_client = redis.Redis.from_url(
         
         <section>
             <h2>s3_client\client.py</h2>
-            <pre><code>import os
-from typing import Tuple
+            <pre><code># libs/s3_client/client.py
 
+from typing import Tuple
+from django.conf import settings
 import boto3
 from botocore.exceptions import ClientError
 
-
-AWS_REGION = os.getenv(&quot;AWS_REGION&quot;, &quot;ap-northeast-2&quot;)
-AWS_S3_BUCKET = os.getenv(&quot;AWS_S3_BUCKET_NAME&quot;, &quot;&quot;)
-AWS_S3_ENDPOINT_URL = os.getenv(&quot;AWS_S3_ENDPOINT_URL&quot;)
+# ---------------------------------------------------------------------
+# S3 Client (Cloudflare R2)
+# ---------------------------------------------------------------------
 
 _s3 = boto3.client(
     &quot;s3&quot;,
-    region_name=AWS_REGION,
-    endpoint_url=AWS_S3_ENDPOINT_URL or None,
+    region_name=&quot;auto&quot;,
+    endpoint_url=settings.R2_ENDPOINT,
+    aws_access_key_id=settings.R2_ACCESS_KEY,
+    aws_secret_access_key=settings.R2_SECRET_KEY,
 )
 
+# ---------------------------------------------------------------------
+# API
+# ---------------------------------------------------------------------
 
 def head_object(key: str) -&gt; Tuple[bool, int]:
     &quot;&quot;&quot;
-    S3 object 존재 여부 + size(bytes)
+    Check object exists + size (bytes)
     &quot;&quot;&quot;
-    if not AWS_S3_BUCKET:
-        return False, 0
-
     try:
         resp = _s3.head_object(
-            Bucket=AWS_S3_BUCKET,
+            Bucket=settings.R2_BUCKET,
             Key=key,
         )
         return True, int(resp.get(&quot;ContentLength&quot;) or 0)
@@ -104,46 +106,67 @@ def head_object(key: str) -&gt; Tuple[bool, int]:
         code = (e.response.get(&quot;Error&quot;) or {}).get(&quot;Code&quot;)
         if code in (&quot;404&quot;, &quot;NoSuchKey&quot;, &quot;NotFound&quot;):
             return False, 0
-        return False, 0
+        raise
 </code></pre>
         </section>
         
         <section>
             <h2>s3_client\presign.py</h2>
-            <pre><code>import os
+            <pre><code># libs/s3_client/presign.py
+
+from django.conf import settings
 import boto3
 from botocore.client import Config
 
+# ---------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------
 
-AWS_REGION = os.getenv(&quot;AWS_REGION&quot;, &quot;ap-northeast-2&quot;)
-AWS_S3_BUCKET = os.getenv(&quot;AWS_S3_BUCKET_NAME&quot;, &quot;&quot;)
-AWS_S3_ENDPOINT_URL = os.getenv(&quot;AWS_S3_ENDPOINT_URL&quot;)
+PRESIGN_UPLOAD_EXPIRES = 900        # 15 min
+PRESIGN_STREAM_EXPIRES = 60 * 60    # 1 hour
 
-AWS_PRESIGN_UPLOAD_EXPIRES = int(os.getenv(&quot;AWS_PRESIGN_UPLOAD_EXPIRES&quot;, &quot;900&quot;))
-AWS_PRESIGN_STREAM_EXPIRES = int(os.getenv(&quot;AWS_PRESIGN_STREAM_EXPIRES&quot;, &quot;3600&quot;))
+# ---------------------------------------------------------------------
+# S3 Client (Cloudflare R2)
+# ---------------------------------------------------------------------
 
 _s3 = boto3.client(
     &quot;s3&quot;,
-    region_name=AWS_REGION,
-    endpoint_url=AWS_S3_ENDPOINT_URL or None,
-    config=Config(signature_version=&quot;s3v4&quot;),
+    region_name=&quot;auto&quot;,
+    endpoint_url=settings.R2_ENDPOINT,
+    aws_access_key_id=settings.R2_ACCESS_KEY,
+    aws_secret_access_key=settings.R2_SECRET_KEY,
+    config=Config(
+        signature_version=&quot;s3v4&quot;,
+        s3={&quot;addressing_style&quot;: &quot;path&quot;},  # ✅ 로컬/운영 모두 안정적
+    ),
 )
 
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+
+def _get_bucket() -&gt; str:
+    bucket = getattr(settings, &quot;R2_BUCKET&quot;, None)
+    if not bucket:
+        raise RuntimeError(&quot;R2_BUCKET is not set in Django settings&quot;)
+    return bucket
+
+# ---------------------------------------------------------------------
+# Presigned URLs
+# ---------------------------------------------------------------------
 
 def create_presigned_put_url(
     key: str,
-    content_type: str = &quot;application/octet-stream&quot;,
-    expires_in: int = AWS_PRESIGN_UPLOAD_EXPIRES,
+    expires_in: int = PRESIGN_UPLOAD_EXPIRES,
 ) -&gt; str:
-    if not AWS_S3_BUCKET:
-        raise RuntimeError(&quot;AWS_S3_BUCKET_NAME is not set&quot;)
-
+    &quot;&quot;&quot;
+    Generate presigned PUT url (upload)
+    &quot;&quot;&quot;
     return _s3.generate_presigned_url(
         ClientMethod=&quot;put_object&quot;,
         Params={
-            &quot;Bucket&quot;: AWS_S3_BUCKET,
+            &quot;Bucket&quot;: _get_bucket(),
             &quot;Key&quot;: key,
-            &quot;ContentType&quot;: content_type,
         },
         ExpiresIn=expires_in,
     )
@@ -151,15 +174,15 @@ def create_presigned_put_url(
 
 def create_presigned_get_url(
     key: str,
-    expires_in: int = AWS_PRESIGN_STREAM_EXPIRES,
+    expires_in: int = PRESIGN_STREAM_EXPIRES,
 ) -&gt; str:
-    if not AWS_S3_BUCKET:
-        raise RuntimeError(&quot;AWS_S3_BUCKET_NAME is not set&quot;)
-
+    &quot;&quot;&quot;
+    Generate presigned GET url (download / stream)
+    &quot;&quot;&quot;
     return _s3.generate_presigned_url(
         ClientMethod=&quot;get_object&quot;,
         Params={
-            &quot;Bucket&quot;: AWS_S3_BUCKET,
+            &quot;Bucket&quot;: _get_bucket(),
             &quot;Key&quot;: key,
         },
         ExpiresIn=expires_in,

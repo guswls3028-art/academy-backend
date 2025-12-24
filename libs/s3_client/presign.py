@@ -23,7 +23,7 @@ _s3 = boto3.client(
     aws_secret_access_key=settings.R2_SECRET_KEY,
     config=Config(
         signature_version="s3v4",
-        s3={"addressing_style": "virtual"},
+        s3={"addressing_style": "path"},  # ✅ 로컬/운영 모두 안정적
     ),
 )
 
