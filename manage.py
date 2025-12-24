@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 """Django's command-line utility for administrative tasks."""
+# manage.py (상단)
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import sys
 from pathlib import Path
 
