@@ -3,6 +3,7 @@
 print("🔥 WORKER CELERY LOADED 🔥")
 
 import os
+import django               # ✅ 추가
 from celery import Celery
 
 # Worker 전용 settings
@@ -10,6 +11,8 @@ os.environ.setdefault(
     "DJANGO_SETTINGS_MODULE",
     "apps.api.config.settings.worker",
 )
+
+django.setup()               # ✅ 핵심 (이게 없어서 다 터졌음)
 
 # 프로젝트 이름
 app = Celery("academy")
