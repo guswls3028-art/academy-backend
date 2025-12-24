@@ -1,31 +1,33 @@
-import os
-from typing import Tuple
+# libs/s3_client/client.py
 
+from typing import Tuple
+from django.conf import settings
 import boto3
 from botocore.exceptions import ClientError
 
-
-AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-2")
-AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET_NAME", "")
-AWS_S3_ENDPOINT_URL = os.getenv("AWS_S3_ENDPOINT_URL")
+# ---------------------------------------------------------------------
+# S3 Client (Cloudflare R2)
+# ---------------------------------------------------------------------
 
 _s3 = boto3.client(
     "s3",
-    region_name=AWS_REGION,
-    endpoint_url=AWS_S3_ENDPOINT_URL or None,
+    region_name="auto",
+    endpoint_url=settings.R2_ENDPOINT,
+    aws_access_key_id=settings.R2_ACCESS_KEY,
+    aws_secret_access_key=settings.R2_SECRET_KEY,
 )
 
+# ---------------------------------------------------------------------
+# API
+# ---------------------------------------------------------------------
 
 def head_object(key: str) -> Tuple[bool, int]:
     """
-    S3 object 존재 여부 + size(bytes)
+    Check object exists + size (bytes)
     """
-    if not AWS_S3_BUCKET:
-        return False, 0
-
     try:
         resp = _s3.head_object(
-            Bucket=AWS_S3_BUCKET,
+            Bucket=settings.R2_BUCKET,
             Key=key,
         )
         return True, int(resp.get("ContentLength") or 0)
@@ -34,4 +36,4 @@ def head_object(key: str) -> Tuple[bool, int]:
         code = (e.response.get("Error") or {}).get("Code")
         if code in ("404", "NoSuchKey", "NotFound"):
             return False, 0
-        return False, 0
+        raise

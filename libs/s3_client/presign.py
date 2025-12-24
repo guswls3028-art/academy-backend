@@ -1,25 +1,26 @@
-import os
+# libs/s3_client/presign.py
+
+from django.conf import settings
 import boto3
 from botocore.client import Config
 
 # ---------------------------------------------------------------------
-# Environment
+# Constants
 # ---------------------------------------------------------------------
 
-AWS_REGION = os.getenv("AWS_REGION", "auto")
-AWS_S3_ENDPOINT_URL = os.getenv("AWS_S3_ENDPOINT_URL")
-
-AWS_PRESIGN_UPLOAD_EXPIRES = int(os.getenv("AWS_PRESIGN_UPLOAD_EXPIRES", "900"))
-AWS_PRESIGN_STREAM_EXPIRES = int(os.getenv("AWS_PRESIGN_STREAM_EXPIRES", "3600"))
+PRESIGN_UPLOAD_EXPIRES = 900        # 15 min
+PRESIGN_STREAM_EXPIRES = 60 * 60    # 1 hour
 
 # ---------------------------------------------------------------------
-# S3 Client (Cloudflare R2 – virtual host style 필수)
+# S3 Client (Cloudflare R2)
 # ---------------------------------------------------------------------
 
 _s3 = boto3.client(
     "s3",
-    region_name=AWS_REGION,
-    endpoint_url=AWS_S3_ENDPOINT_URL,
+    region_name="auto",
+    endpoint_url=settings.R2_ENDPOINT,
+    aws_access_key_id=settings.R2_ACCESS_KEY,
+    aws_secret_access_key=settings.R2_SECRET_KEY,
     config=Config(
         signature_version="s3v4",
         s3={"addressing_style": "virtual"},
@@ -31,9 +32,9 @@ _s3 = boto3.client(
 # ---------------------------------------------------------------------
 
 def _get_bucket() -> str:
-    bucket = os.getenv("AWS_S3_BUCKET_NAME")
+    bucket = getattr(settings, "R2_BUCKET", None)
     if not bucket:
-        raise RuntimeError("AWS_S3_BUCKET_NAME is not set")
+        raise RuntimeError("R2_BUCKET is not set in Django settings")
     return bucket
 
 # ---------------------------------------------------------------------
@@ -42,7 +43,7 @@ def _get_bucket() -> str:
 
 def create_presigned_put_url(
     key: str,
-    expires_in: int = AWS_PRESIGN_UPLOAD_EXPIRES,
+    expires_in: int = PRESIGN_UPLOAD_EXPIRES,
 ) -> str:
     """
     Generate presigned PUT url (upload)
@@ -59,7 +60,7 @@ def create_presigned_put_url(
 
 def create_presigned_get_url(
     key: str,
-    expires_in: int = AWS_PRESIGN_STREAM_EXPIRES,
+    expires_in: int = PRESIGN_STREAM_EXPIRES,
 ) -> str:
     """
     Generate presigned GET url (download / stream)
