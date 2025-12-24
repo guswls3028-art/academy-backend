@@ -87,12 +87,10 @@ def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
         "-hls_flags", "independent_segments",
         "-master_pl_name", "master.m3u8",
         "-var_stream_map",
-        " ".join(
-            f"v:{i},a:{i},name:{v['name']}"
-            for i, v in enumerate(HLS_VARIANTS)
-        ),
-        str(output_root / "v%v" / "index.m3u8"),
+        " ".join(f"v:{i},a:{i},name:{v['name']}" for i, v in enumerate(HLS_VARIANTS)),
+        f"{output_root.as_posix()}/v%v/index.m3u8",  # 🔥 핵심 수정
     ]
+
 
     return cmd
 
