@@ -8,8 +8,8 @@ ROOT_URLCONF = None
 # ==================================================
 # Celery (Redis)
 # ==================================================
-CELERY_BROKER_URL = "redis://localhost:6379/0"
-CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
+CELERY_BROKER_URL = "redis://172.31.32.109:6379/0"
+CELERY_RESULT_BACKEND = "redis://172.31.32.109:6379/1"
 
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
