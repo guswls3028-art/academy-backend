@@ -1,19 +1,14 @@
 import boto3
-import os
 from pathlib import Path
 import mimetypes
-
-R2_ENDPOINT = os.getenv("R2_ENDPOINT")  # 예: https://xxxx.r2.cloudflarestorage.com
-R2_BUCKET = os.getenv("R2_BUCKET", "academy-video")
-
-R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
-R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
+from django.conf import settings
 
 s3 = boto3.client(
     "s3",
-    endpoint_url=R2_ENDPOINT,
-    aws_access_key_id=R2_ACCESS_KEY,
-    aws_secret_access_key=R2_SECRET_KEY,
+    endpoint_url=settings.R2_ENDPOINT,
+    aws_access_key_id=settings.R2_ACCESS_KEY,
+    aws_secret_access_key=settings.R2_SECRET_KEY,
+    region_name="auto",
 )
 
 def upload_dir(local_dir: Path, prefix: str):
@@ -29,7 +24,7 @@ def upload_dir(local_dir: Path, prefix: str):
 
         s3.upload_file(
             str(path),
-            R2_BUCKET,
+            settings.R2_BUCKET,
             key,
             ExtraArgs={
                 "ContentType": content_type or "application/octet-stream"

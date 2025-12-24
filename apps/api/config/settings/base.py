@@ -258,3 +258,20 @@ VIDEO_PLAYBACK_CONFIG_MISSING = [
 ]
 
 VIDEO_PLAYBACK_ENABLED = not bool(VIDEO_PLAYBACK_CONFIG_MISSING)
+
+
+
+
+
+# ------------------------------------------------------------------
+# Cloudflare R2
+# ------------------------------------------------------------------
+R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
+R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
+R2_ENDPOINT = os.environ.get("R2_ENDPOINT")
+R2_PUBLIC_BASE_URL = os.environ.get("R2_PUBLIC_BASE_URL")
+R2_BUCKET = os.environ.get("R2_BUCKET")
+
+# 안전장치 (개발 중에만)
+if DEBUG:
+    print("[settings] R2_ENDPOINT =", R2_ENDPOINT)
