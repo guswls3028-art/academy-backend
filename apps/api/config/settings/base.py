@@ -16,7 +16,7 @@ ALLOWED_HOSTS = ["*"]
 
 AUTH_USER_MODEL = "core.User"
 
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = os.getenv("API_BASE_URL")
 
 
 
@@ -212,8 +212,8 @@ CORS_ALLOW_CREDENTIALS = True
 # CELERY / REDIS
 # ==================================================
 
-CELERY_BROKER_URL = "redis://172.31.32.109:6379/0"
-CELERY_RESULT_BACKEND = "redis://172.31.32.109:6379/0"
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND")
 
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
