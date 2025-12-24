@@ -22,7 +22,6 @@ node_modules/
 # Media / Storage (RUNTIME ONLY)
 # =========================
 storage/
-media/
 *.mp4
 *.avi
 *.mov
@@ -31,6 +30,7 @@ media/
 # 🔥 EXCEPTION: worker media는 코드이므로 추적
 !apps/worker/media/
 !apps/worker/media/**
+
 
 # =========================
 # ML / CV

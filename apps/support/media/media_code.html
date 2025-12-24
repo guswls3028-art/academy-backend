@@ -1,0 +1,2262 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>media Code Browser</title>
+<style>
+body {
+    background:#0f1115;
+    color:#eaeaea;
+    font-family:Consolas, monospace;
+    padding:24px;
+}
+h1 { margin-bottom:24px; }
+h2 { color:#7dd3fc; font-size:15px; }
+pre {
+    background:#111418;
+    padding:16px;
+    border-radius:8px;
+    overflow-x:auto;
+    font-size:13px;
+    line-height:1.5;
+}
+section { margin-bottom:32px; }
+</style>
+</head>
+<body>
+<h1>📦 apps\support\media</h1>
+
+        <section>
+            <h2>__init__.py</h2>
+            <pre><code># services package
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>admin.py</h2>
+            <pre><code>from django.contrib import admin
+from .models import (
+    Video,
+    VideoPermission,
+    VideoProgress,
+    VideoPlaybackSession,
+    VideoPlaybackEvent,
+)
+
+
+@admin.register(Video)
+class VideoAdmin(admin.ModelAdmin):
+    list_display = (&quot;id&quot;, &quot;title&quot;, &quot;session&quot;, &quot;order&quot;, &quot;duration&quot;, &quot;status&quot;)
+    list_display_links = (&quot;id&quot;, &quot;title&quot;)
+    list_filter = (&quot;status&quot;, &quot;session__lecture&quot;, &quot;session&quot;)
+    search_fields = (&quot;title&quot;,)
+    ordering = (&quot;session&quot;, &quot;order&quot;)
+
+
+@admin.register(VideoPermission)
+class VideoPermissionAdmin(admin.ModelAdmin):
+    list_display = (
+        &quot;id&quot;,
+        &quot;video&quot;,
+        &quot;enrollment&quot;,
+        &quot;rule&quot;,
+        &quot;allow_skip_override&quot;,
+        &quot;max_speed_override&quot;,
+        &quot;show_watermark_override&quot;,
+        &quot;block_seek&quot;,
+        &quot;block_speed_control&quot;,
+        &quot;is_override&quot;,
+    )
+    list_display_links = (&quot;id&quot;, &quot;video&quot;)
+    list_filter = (&quot;rule&quot;, &quot;video__session__lecture&quot;, &quot;block_seek&quot;, &quot;block_speed_control&quot;)
+    search_fields = (&quot;enrollment__student__name&quot;,)
+    ordering = (&quot;-id&quot;,)
+
+
+@admin.register(VideoProgress)
+class VideoProgressAdmin(admin.ModelAdmin):
+    list_display = (&quot;id&quot;, &quot;video&quot;, &quot;enrollment&quot;, &quot;progress&quot;, &quot;completed&quot;, &quot;updated_at&quot;)
+    list_display_links = (&quot;id&quot;, &quot;video&quot;)
+    list_filter = (&quot;video__session__lecture&quot;, &quot;completed&quot;)
+    search_fields = (&quot;enrollment__student__name&quot;,)
+    ordering = (&quot;-updated_at&quot;,)
+
+
+@admin.register(VideoPlaybackSession)
+class VideoPlaybackSessionAdmin(admin.ModelAdmin):
+    list_display = (
+        &quot;id&quot;,
+        &quot;video&quot;,
+        &quot;enrollment&quot;,
+        &quot;session_id&quot;,
+        &quot;device_id&quot;,
+        &quot;status&quot;,
+        &quot;started_at&quot;,
+        &quot;ended_at&quot;,
+    )
+    list_filter = (&quot;status&quot;, &quot;video__session__lecture&quot;, &quot;video&quot;)
+    search_fields = (&quot;session_id&quot;, &quot;device_id&quot;, &quot;enrollment__student__name&quot;)
+    ordering = (&quot;-started_at&quot;,)
+
+
+@admin.register(VideoPlaybackEvent)
+class VideoPlaybackEventAdmin(admin.ModelAdmin):
+    list_display = (
+        &quot;id&quot;,
+        &quot;video&quot;,
+        &quot;enrollment&quot;,
+        &quot;session_id&quot;,
+        &quot;user_id&quot;,
+        &quot;event_type&quot;,
+        &quot;violated&quot;,
+        &quot;violation_reason&quot;,
+        &quot;occurred_at&quot;,
+        &quot;received_at&quot;,
+    )
+    list_filter = (&quot;event_type&quot;, &quot;violated&quot;, &quot;video__session__lecture&quot;)
+    search_fields = (&quot;session_id&quot;, &quot;enrollment__student__name&quot;, &quot;user_id&quot;)
+    ordering = (&quot;-received_at&quot;,)
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>cdn\__init__.py</h2>
+            <pre><code># CDN helpers package
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>cdn\cloudfront.py</h2>
+            <pre><code>import base64
+import json
+from typing import Dict
+from django.conf import settings
+
+
+# =========================
+# Public API
+# =========================
+
+def build_signed_cookies_for_path(*, path_prefix: str, expires_at: int) -&gt; Dict[str, str]:
+    &quot;&quot;&quot;
+    DEV/LOCAL:
+      - CloudFront 사용 안 함 → 빈 dict 반환
+
+    PROD:
+      - CloudFront Signed Cookies 생성
+    &quot;&quot;&quot;
+    if settings.DEBUG:
+        return {}
+
+    key_pair_id = _required(&quot;CLOUDFRONT_KEY_PAIR_ID&quot;)
+    domain = _required(&quot;CLOUDFRONT_DOMAIN&quot;).rstrip(&quot;/&quot;)
+
+    resource = f&quot;https://{domain}{path_prefix}*&quot;
+
+    policy = {
+        &quot;Statement&quot;: [{
+            &quot;Resource&quot;: resource,
+            &quot;Condition&quot;: {
+                &quot;DateLessThan&quot;: {&quot;AWS:EpochTime&quot;: int(expires_at)}
+            }
+        }]
+    }
+
+    policy_json = json.dumps(policy, separators=(&quot;,&quot;, &quot;:&quot;)).encode(&quot;utf-8&quot;)
+
+    from botocore.signers import CloudFrontSigner
+
+    signer = CloudFrontSigner(key_pair_id, _rsa_signer)
+
+    signed_policy = _b64_urlsafe(policy_json)
+    signature = signer._sign(policy_json)
+
+    return {
+        &quot;CloudFront-Policy&quot;: signed_policy,
+        &quot;CloudFront-Signature&quot;: _b64_urlsafe(signature),
+        &quot;CloudFront-Key-Pair-Id&quot;: key_pair_id,
+    }
+
+
+def default_cookie_options(*, path_prefix: str) -&gt; dict:
+    &quot;&quot;&quot;
+    DEV: cookie 설정 안 함
+    PROD: CloudFront 도메인 쿠키 설정
+    &quot;&quot;&quot;
+    if settings.DEBUG:
+        return {}
+
+    domain = _required(&quot;CLOUDFRONT_DOMAIN&quot;)
+
+    secure = bool(getattr(settings, &quot;SESSION_COOKIE_SECURE&quot;, False))
+
+    return {
+        &quot;domain&quot;: domain,
+        &quot;path&quot;: path_prefix,
+        &quot;httponly&quot;: True,
+        &quot;secure&quot;: secure,
+        &quot;samesite&quot;: &quot;Lax&quot;,
+    }
+
+
+# =========================
+# Internal helpers
+# =========================
+
+def _required(name: str) -&gt; str:
+    v = getattr(settings, name, None)
+    if not v:
+        raise RuntimeError(f&quot;Missing setting: {name}&quot;)
+    return str(v)
+
+
+def _load_private_key_pem() -&gt; bytes:
+    pem = _required(&quot;CLOUDFRONT_PRIVATE_KEY_PEM&quot;)
+    pem = pem.replace(&quot;\\n&quot;, &quot;\n&quot;)
+    return pem.encode(&quot;utf-8&quot;)
+
+
+def _rsa_signer(message: bytes) -&gt; bytes:
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    key = load_pem_private_key(_load_private_key_pem(), password=None)
+    return key.sign(message, padding.PKCS1v15(), hashes.SHA1())
+
+
+def _b64_urlsafe(data: bytes) -&gt; str:
+    return (
+        base64.b64encode(data)
+        .decode(&quot;utf-8&quot;)
+        .replace(&quot;+&quot;, &quot;-&quot;)
+        .replace(&quot;=&quot;, &quot;_&quot;)
+        .replace(&quot;/&quot;, &quot;~&quot;)
+    )
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>drm.py</h2>
+            <pre><code>import time
+from typing import Any, Dict, Tuple
+
+from django.core import signing
+
+
+_SALT = &quot;media.playback.token.v1&quot;
+
+
+def create_playback_token(*, payload: Dict[str, Any], ttl_seconds: int) -&gt; str:
+    now = int(time.time())
+    data = dict(payload or {})
+    data[&quot;iat&quot;] = now
+    data[&quot;exp&quot;] = now + int(ttl_seconds)
+    return signing.dumps(data, salt=_SALT, compress=True)
+
+
+def verify_playback_token(token: str) -&gt; Tuple[bool, Dict[str, Any] | None, str | None]:
+    if not token:
+        return False, None, &quot;token_required&quot;
+
+    try:
+        data = signing.loads(token, salt=_SALT)
+    except signing.BadSignature:
+        return False, None, &quot;invalid_token&quot;
+    except Exception:
+        return False, None, &quot;token_decode_failed&quot;
+
+    try:
+        exp = int(data.get(&quot;exp&quot;) or 0)
+    except Exception:
+        return False, None, &quot;token_exp_invalid&quot;
+
+    if exp &lt;= int(time.time()):
+        return False, None, &quot;token_expired&quot;
+
+    return True, data, None
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models.py</h2>
+            <pre><code>from django.db import models
+from django.utils import timezone
+
+from apps.api.common.models import TimestampModel
+from apps.domains.lectures.models import Session
+from apps.domains.enrollment.models import Enrollment
+
+
+# ========================================================
+# Video (영상 메타데이터)
+# ========================================================
+
+class Video(TimestampModel):
+    class Status(models.TextChoices):
+        PENDING = &quot;PENDING&quot;, &quot;업로드 대기&quot;
+        UPLOADED = &quot;UPLOADED&quot;, &quot;업로드 완료&quot;
+        PROCESSING = &quot;PROCESSING&quot;, &quot;처리중&quot;
+        READY = &quot;READY&quot;, &quot;사용 가능&quot;
+        FAILED = &quot;FAILED&quot;, &quot;실패&quot;
+
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name=&quot;videos&quot;,
+    )
+
+    title = models.CharField(max_length=255)
+
+    # ===============================
+    # SaaS upload (Source of Truth)
+    # ===============================
+    file_key = models.CharField(
+        max_length=500,
+        blank=True,
+        help_text=&quot;S3 object key (presigned upload)&quot;,
+    )
+
+    duration = models.PositiveIntegerField(null=True, blank=True)
+    order = models.PositiveIntegerField(default=1)
+
+    # 썸네일은 Worker가 생성
+    thumbnail = models.ImageField(
+        upload_to=&quot;thumbnails/&quot;,
+        null=True,
+        blank=True,
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+
+    # --------------------------------------------------
+    # 기본 재생 정책 (비디오 단위 default)
+    # --------------------------------------------------
+    allow_skip = models.BooleanField(default=False)
+    max_speed = models.FloatField(default=1.0)
+    show_watermark = models.BooleanField(default=True)
+
+    # --------------------------------------------------
+    # Worker 실패 사유 기록
+    # --------------------------------------------------
+    error_reason = models.TextField(blank=True, null=True, default=&quot;&quot;)
+
+    class Meta:
+        ordering = [&quot;order&quot;, &quot;id&quot;]
+
+    def __str__(self):
+        return f&quot;[{self.status}] {self.title}&quot;
+
+    @property
+    def source_type(self) -&gt; str:
+        if self.file_key:
+            return &quot;s3&quot;
+        return &quot;unknown&quot;
+
+    
+    # ===============================
+    # HLS Output (Worker 결과)
+    # ===============================
+    hls_path = models.CharField(
+        max_length=500,
+        blank=True,
+        help_text=&quot;HLS master playlist path (relative to CDN root)&quot;,
+    )
+
+
+
+# ========================================================
+# Video Permission (수강생별 override + 접근 규칙)
+# ========================================================
+
+class VideoPermission(models.Model):
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.CASCADE,
+        related_name=&quot;permissions&quot;,
+    )
+    enrollment = models.ForeignKey(
+        Enrollment,
+        on_delete=models.CASCADE,
+        related_name=&quot;video_permissions&quot;,
+    )
+
+    rule = models.CharField(
+        max_length=20,
+        choices=[
+            (&quot;free&quot;, &quot;무제한&quot;),
+            (&quot;once&quot;, &quot;1회 제한&quot;),
+            (&quot;blocked&quot;, &quot;제한&quot;),
+        ],
+        default=&quot;once&quot;,
+    )
+
+    # 학생별 정책 override (null이면 Video 기본값 사용)
+    allow_skip_override = models.BooleanField(null=True, blank=True)
+    max_speed_override = models.FloatField(null=True, blank=True)
+    show_watermark_override = models.BooleanField(null=True, blank=True)
+
+    # 최우선 차단 플래그
+    block_speed_control = models.BooleanField(default=False)
+    block_seek = models.BooleanField(default=False)
+
+    is_override = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[&quot;video&quot;, &quot;enrollment&quot;],
+                name=&quot;unique_video_permission&quot;,
+            )
+        ]
+
+    def __str__(self):
+        return f&quot;{self.enrollment.student.name} {self.video.title} ({self.rule})&quot;
+
+
+# ========================================================
+# Video Progress
+# ========================================================
+
+class VideoProgress(models.Model):
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.CASCADE,
+        related_name=&quot;progresses&quot;,
+    )
+    enrollment = models.ForeignKey(
+        Enrollment,
+        on_delete=models.CASCADE,
+        related_name=&quot;video_progress&quot;,
+    )
+
+    progress = models.FloatField(default=0)
+    last_position = models.IntegerField(default=0)
+    completed = models.BooleanField(default=False)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[&quot;video&quot;, &quot;enrollment&quot;],
+                name=&quot;unique_video_progress&quot;,
+            )
+        ]
+
+    def __str__(self):
+        return (
+            f&quot;{self.enrollment.student.name} - &quot;
+            f&quot;{self.video.title} ({self.progress * 100:.1f}%)&quot;
+        )
+
+
+# ========================================================
+# Video Playback Session (세션 / 감사)
+# ========================================================
+
+class VideoPlaybackSession(TimestampModel):
+    class Status(models.TextChoices):
+        ACTIVE = &quot;ACTIVE&quot;, &quot;활성&quot;
+        ENDED = &quot;ENDED&quot;, &quot;종료&quot;
+        REVOKED = &quot;REVOKED&quot;, &quot;차단&quot;
+        EXPIRED = &quot;EXPIRED&quot;, &quot;만료&quot;
+
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.CASCADE,
+        related_name=&quot;playback_sessions&quot;,
+    )
+    enrollment = models.ForeignKey(
+        Enrollment,
+        on_delete=models.CASCADE,
+        related_name=&quot;playback_sessions&quot;,
+    )
+
+    session_id = models.CharField(max_length=64, db_index=True)
+    device_id = models.CharField(max_length=128, db_index=True)
+
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_index=True,
+    )
+
+    started_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[&quot;session_id&quot;],
+                name=&quot;uniq_video_playback_session_id&quot;,
+            )
+        ]
+
+    def __str__(self):
+        return f&quot;{self.video_id}/{self.enrollment_id} {self.session_id} {self.status}&quot;
+
+
+# ========================================================
+# Video Playback Event (v1: Audit only)
+# ========================================================
+
+class VideoPlaybackEvent(TimestampModel):
+    class EventType(models.TextChoices):
+        VISIBILITY_HIDDEN = &quot;VISIBILITY_HIDDEN&quot;, &quot;탭 숨김&quot;
+        VISIBILITY_VISIBLE = &quot;VISIBILITY_VISIBLE&quot;, &quot;탭 노출&quot;
+        FOCUS_LOST = &quot;FOCUS_LOST&quot;, &quot;포커스 이탈&quot;
+        FOCUS_GAINED = &quot;FOCUS_GAINED&quot;, &quot;포커스 복귀&quot;
+        SEEK_ATTEMPT = &quot;SEEK_ATTEMPT&quot;, &quot;탐색 시도&quot;
+        SPEED_CHANGE_ATTEMPT = &quot;SPEED_CHANGE_ATTEMPT&quot;, &quot;배속 변경 시도&quot;
+        FULLSCREEN_ENTER = &quot;FULLSCREEN_ENTER&quot;, &quot;전체화면 진입&quot;
+        FULLSCREEN_EXIT = &quot;FULLSCREEN_EXIT&quot;, &quot;전체화면 종료&quot;
+        PLAYER_ERROR = &quot;PLAYER_ERROR&quot;, &quot;플레이어 오류&quot;
+
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.CASCADE,
+        related_name=&quot;playback_events&quot;,
+    )
+    enrollment = models.ForeignKey(
+        Enrollment,
+        on_delete=models.CASCADE,
+        related_name=&quot;video_playback_events&quot;,
+    )
+
+    session_id = models.CharField(max_length=64, db_index=True)
+    user_id = models.BigIntegerField(db_index=True)
+
+    event_type = models.CharField(
+        max_length=32,
+        choices=EventType.choices,
+        db_index=True,
+    )
+
+    event_payload = models.JSONField(default=dict, blank=True)
+    policy_snapshot = models.JSONField(default=dict, blank=True)
+
+    violated = models.BooleanField(default=False, db_index=True)
+    violation_reason = models.CharField(max_length=64, blank=True, default=&quot;&quot;)
+
+    occurred_at = models.DateTimeField(default=timezone.now)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=[&quot;video&quot;, &quot;enrollment&quot;, &quot;session_id&quot;]),
+            models.Index(fields=[&quot;user_id&quot;, &quot;session_id&quot;]),
+            models.Index(fields=[&quot;event_type&quot;, &quot;received_at&quot;]),
+        ]
+        ordering = [&quot;-received_at&quot;, &quot;-id&quot;]
+
+    def __str__(self):
+        return f&quot;{self.session_id} {self.event_type} v={self.violated}&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>serializers.py</h2>
+            <pre><code>from rest_framework import serializers
+
+from .models import (
+    Video,
+    VideoPermission,
+    VideoProgress,
+    VideoPlaybackSession,
+    VideoPlaybackEvent,
+)
+
+from rest_framework import serializers
+from apps.support.media.models import Video
+from apps.domains.lectures.models import Session
+
+
+class VideoSerializer(serializers.ModelSerializer):
+    # 🔥 핵심 1: 생성 시 받을 session (write only)
+    session = serializers.PrimaryKeyRelatedField(
+        queryset=Session.objects.all(),
+        write_only=True,
+    )
+
+    # 🔥 핵심 2: 응답용 session_id (read only)
+    session_id = serializers.IntegerField(
+        source=&quot;session.id&quot;,
+        read_only=True,
+    )
+
+    source_type = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Video
+        fields = [
+            &quot;id&quot;,
+            &quot;session&quot;,        # ✅ 추가
+            &quot;session_id&quot;,
+            &quot;title&quot;,
+            &quot;file_key&quot;,
+            &quot;duration&quot;,
+            &quot;order&quot;,
+            &quot;status&quot;,
+            &quot;allow_skip&quot;,
+            &quot;max_speed&quot;,
+            &quot;show_watermark&quot;,
+            &quot;hls_path&quot;,
+            &quot;created_at&quot;,
+            &quot;updated_at&quot;,
+            &quot;source_type&quot;,
+        ]
+        read_only_fields = [
+            &quot;id&quot;,
+            &quot;session_id&quot;,
+            &quot;created_at&quot;,
+            &quot;updated_at&quot;,
+        ]
+        ref_name = &quot;MediaVideo&quot;
+
+    def get_source_type(self, obj):
+        return &quot;s3&quot; if obj.file_key else &quot;unknown&quot;
+
+
+class VideoPermissionSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(
+        source=&quot;enrollment.student.name&quot;,
+        read_only=True,
+    )
+
+    class Meta:
+        model = VideoPermission
+        fields = &quot;__all__&quot;
+        ref_name = &quot;MediaVideoPermission&quot;
+
+
+class VideoProgressSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(
+        source=&quot;enrollment.student.name&quot;,
+        read_only=True,
+    )
+
+    class Meta:
+        model = VideoProgress
+        fields = &quot;__all__&quot;
+        ref_name = &quot;MediaVideoProgress&quot;
+
+
+class VideoDetailSerializer(VideoSerializer):
+    class Meta(VideoSerializer.Meta):
+        ref_name = &quot;MediaVideoDetail&quot;
+
+
+
+# ========================================================
+# Playback API (v1)
+# ========================================================
+
+class PlaybackStartRequestSerializer(serializers.Serializer):
+    enrollment_id = serializers.IntegerField()
+    device_id = serializers.CharField(max_length=128)
+
+
+class PlaybackRefreshRequestSerializer(serializers.Serializer):
+    token = serializers.CharField()
+
+
+class PlaybackHeartbeatRequestSerializer(serializers.Serializer):
+    token = serializers.CharField()
+
+
+class PlaybackEndRequestSerializer(serializers.Serializer):
+    token = serializers.CharField()
+
+
+class PlaybackResponseSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    session_id = serializers.CharField()
+    expires_at = serializers.IntegerField()
+    policy = serializers.JSONField()
+    play_url = serializers.CharField()
+
+
+# ========================================================
+# Playback Session (Student Facade API)
+# ========================================================
+
+class PlaybackSessionSerializer(serializers.Serializer):
+    &quot;&quot;&quot;
+    Facade API 전용 Serializer
+
+    ⚠️ 주의
+    - VideoPlaybackSession(Model)과 무관
+    - create_playback_session() 반환 dict 전용
+    &quot;&quot;&quot;
+
+    video_id = serializers.IntegerField()
+    enrollment_id = serializers.IntegerField()
+    session_id = serializers.CharField()
+    expires_at = serializers.IntegerField()
+
+
+# ========================================================
+# Event collection (v1: audit-only)
+# ========================================================
+
+class PlaybackEventItemSerializer(serializers.Serializer):
+    type = serializers.ChoiceField(choices=VideoPlaybackEvent.EventType.choices)
+    occurred_at = serializers.IntegerField(required=False)  # epoch seconds
+    payload = serializers.JSONField(required=False)
+
+
+class PlaybackEventBatchRequestSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    events = PlaybackEventItemSerializer(many=True)
+
+
+class PlaybackEventBatchResponseSerializer(serializers.Serializer):
+    stored = serializers.IntegerField()
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>services\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>services\playback_session.py</h2>
+            <pre><code>import time
+import uuid
+from typing import Dict, Any, Tuple, Iterable
+
+from django.conf import settings
+from django.utils import timezone
+
+from libs.redis_client.client import redis_client
+
+from apps.domains.enrollment.models import Enrollment
+from apps.support.media.models import (
+    Video,
+    VideoPlaybackSession,
+)
+
+# =======================================================
+# Redis Key Helpers
+# =======================================================
+
+def _now() -&gt; int:
+    return int(time.time())
+
+
+def _key_user_sessions(user_id: int) -&gt; str:
+    # zset (session_id -&gt; expires_at)
+    return f&quot;media:playback:user:{user_id}:sessions&quot;
+
+
+def _key_session(session_id: str) -&gt; str:
+    # hash
+    return f&quot;media:playback:session:{session_id}&quot;
+
+
+def _key_user_devices(user_id: int) -&gt; str:
+    # set
+    return f&quot;media:playback:user:{user_id}:devices&quot;
+
+
+# =======================================================
+# Decode Helpers (bytes/str 방어)
+# =======================================================
+
+def _decode(value):
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode()
+    return value
+
+
+def _decode_set(values: Iterable) -&gt; set[str]:
+    return {_decode(v) for v in (values or set())}
+
+
+# =======================================================
+# Internal Helpers
+# =======================================================
+
+def _cleanup_expired_sessions(user_id: int) -&gt; None:
+    &quot;&quot;&quot;
+    만료된 세션 정리
+    - session zset
+    - session hash
+    - device set (누수 방지)
+    &quot;&quot;&quot;
+    sessions_key = _key_user_sessions(user_id)
+    devices_key = _key_user_devices(user_id)
+
+    now = _now()
+    expired = redis_client.zrangebyscore(sessions_key, 0, now)
+    if not expired:
+        return
+
+    pipe = redis_client.pipeline(transaction=False)
+
+    for raw_sid in expired:
+        sid = _decode(raw_sid)
+
+        device_id = _decode(
+            redis_client.hget(_key_session(sid), &quot;device_id&quot;)
+        )
+        if device_id:
+            pipe.srem(devices_key, device_id)
+
+        pipe.zrem(sessions_key, sid)
+        pipe.delete(_key_session(sid))
+
+    pipe.execute()
+
+
+# =======================================================
+# Core Session APIs (Redis / Infra)
+# =======================================================
+
+def issue_session(
+    *,
+    user_id: int,
+    device_id: str,
+    ttl_seconds: int,
+    max_sessions: int,
+    max_devices: int,
+) -&gt; Tuple[bool, Dict[str, Any] | None, str | None]:
+    &quot;&quot;&quot;
+    Redis 기반 재생 세션 발급 (공통 Infra)
+    &quot;&quot;&quot;
+    if not device_id:
+        return False, None, &quot;device_id_required&quot;
+
+    _cleanup_expired_sessions(user_id)
+
+    sessions_key = _key_user_sessions(user_id)
+    devices_key = _key_user_devices(user_id)
+
+    now = _now()
+    expires_at = now + int(ttl_seconds)
+
+    existing_devices = _decode_set(
+        redis_client.smembers(devices_key)
+    )
+
+    if device_id not in existing_devices and len(existing_devices) &gt;= int(max_devices):
+        return False, None, &quot;device_limit_exceeded&quot;
+
+    active_count = int(redis_client.zcard(sessions_key) or 0)
+    if active_count &gt;= int(max_sessions):
+        return False, None, &quot;concurrency_limit_exceeded&quot;
+
+    session_id = str(uuid.uuid4())
+
+    pipe = redis_client.pipeline(transaction=True)
+
+    pipe.zadd(sessions_key, {session_id: expires_at})
+    pipe.expire(sessions_key, ttl_seconds + 60)
+
+    pipe.hset(
+        _key_session(session_id),
+        mapping={
+            &quot;user_id&quot;: str(user_id),
+            &quot;device_id&quot;: device_id,
+            &quot;expires_at&quot;: str(expires_at),
+            &quot;last_seen&quot;: str(now),
+        },
+    )
+    pipe.expire(_key_session(session_id), ttl_seconds + 60)
+
+    pipe.sadd(devices_key, device_id)
+    pipe.expire(devices_key, ttl_seconds + 60)
+
+    pipe.execute()
+
+    return True, {&quot;session_id&quot;: session_id, &quot;expires_at&quot;: expires_at}, None
+
+
+def heartbeat_session(*, user_id: int, session_id: str, ttl_seconds: int) -&gt; bool:
+    &quot;&quot;&quot;
+    세션 TTL 연장
+    - user_id 소유 검증 포함
+    &quot;&quot;&quot;
+    session_id = _decode(session_id)
+    sid_key = _key_session(session_id)
+    sessions_key = _key_user_sessions(user_id)
+
+    owner = _decode(redis_client.hget(sid_key, &quot;user_id&quot;))
+    if not owner or int(owner) != int(user_id):
+        return False
+
+    now = _now()
+    new_expires_at = now + int(ttl_seconds)
+
+    pipe = redis_client.pipeline(transaction=True)
+    pipe.zadd(sessions_key, {session_id: new_expires_at})
+    pipe.hset(
+        sid_key,
+        mapping={
+            &quot;expires_at&quot;: str(new_expires_at),
+            &quot;last_seen&quot;: str(now),
+        },
+    )
+    pipe.expire(sessions_key, ttl_seconds + 60)
+    pipe.expire(sid_key, ttl_seconds + 60)
+    pipe.execute()
+
+    return True
+
+
+def end_session(*, user_id: int, session_id: str) -&gt; None:
+    &quot;&quot;&quot;
+    명시적 세션 종료
+    &quot;&quot;&quot;
+    session_id = _decode(session_id)
+
+    sessions_key = _key_user_sessions(user_id)
+    devices_key = _key_user_devices(user_id)
+    sid_key = _key_session(session_id)
+
+    device_id = _decode(redis_client.hget(sid_key, &quot;device_id&quot;))
+
+    pipe = redis_client.pipeline(transaction=False)
+    pipe.zrem(sessions_key, session_id)
+    pipe.delete(sid_key)
+
+    if device_id:
+        pipe.srem(devices_key, device_id)
+
+    pipe.execute()
+
+
+def is_session_active(*, user_id: int, session_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    세션 활성 여부 확인
+    &quot;&quot;&quot;
+    session_id = _decode(session_id)
+    sessions_key = _key_user_sessions(user_id)
+
+    score = redis_client.zscore(sessions_key, session_id)
+    if score is None:
+        return False
+
+    return int(score) &gt; _now()
+
+
+# =======================================================
+# Facade API (Student ONLY)
+# =======================================================
+
+def create_playback_session(*, user, video_id: int, enrollment_id: int) -&gt; dict:
+    &quot;&quot;&quot;
+    학생 전용 Facade API
+
+    책임:
+    - &quot;재생 세션 생성&quot;만 담당
+    - 권한 / 수강 검증은 반드시 View에서 선행되어야 함
+
+    ⚠️ 주의
+    - 이 함수는 Facade View 전용이다.
+    - 다른 View / Task / Script에서 직접 호출하지 말 것.
+    &quot;&quot;&quot;
+
+    # 🚫 강사 / 운영자 차단
+    if getattr(user, &quot;is_instructor&quot;, False) or getattr(user, &quot;is_staff&quot;, False):
+        return {
+            &quot;ok&quot;: False,
+            &quot;error&quot;: &quot;instructor_must_use_play_api&quot;,
+        }
+
+    video = Video.objects.select_related(
+        &quot;session&quot;,
+        &quot;session__lecture&quot;,
+    ).get(id=video_id)
+
+    enrollment = Enrollment.objects.select_related(
+        &quot;student&quot;,
+        &quot;lecture&quot;,
+    ).get(
+        id=enrollment_id,
+        status=&quot;ACTIVE&quot;,
+    )
+
+    # 🛡️ 안전 가드 (View 누락 방지용, 정상 경로에서는 항상 통과)
+    if enrollment.lecture_id != video.session.lecture_id:
+        return {
+            &quot;ok&quot;: False,
+            &quot;error&quot;: &quot;enrollment_lecture_mismatch&quot;,
+        }
+
+    ttl = int(getattr(settings, &quot;VIDEO_PLAYBACK_TTL_SECONDS&quot;, 600))
+
+    # Facade 전용 논리 device
+    device_id = f&quot;facade:{uuid.uuid4()}&quot;
+
+    ok, sess, err = issue_session(
+        user_id=user.id,
+        device_id=device_id,
+        ttl_seconds=ttl,
+        max_sessions=int(getattr(settings, &quot;VIDEO_MAX_SESSIONS&quot;, 9999)),
+        max_devices=int(getattr(settings, &quot;VIDEO_MAX_DEVICES&quot;, 9999)),
+    )
+
+    if not ok:
+        return {
+            &quot;ok&quot;: False,
+            &quot;error&quot;: err,
+        }
+
+    session_id = str(sess[&quot;session_id&quot;])
+    expires_at = int(sess[&quot;expires_at&quot;])
+
+    VideoPlaybackSession.objects.create(
+        video=video,
+        enrollment=enrollment,
+        session_id=session_id,
+        device_id=device_id,
+        status=VideoPlaybackSession.Status.ACTIVE,
+        started_at=timezone.now(),
+    )
+
+    return {
+        &quot;ok&quot;: True,
+        &quot;video_id&quot;: video.id,
+        &quot;enrollment_id&quot;: enrollment.id,
+        &quot;session_id&quot;: session_id,
+        &quot;expires_at&quot;: expires_at,
+    }
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>urls.py</h2>
+            <pre><code># app/support/media/urls.py
+
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+
+
+from .views import VideoProcessingCompleteView
+
+from .views import (
+    VideoViewSet,
+    VideoPermissionViewSet,
+    VideoProgressViewSet,
+    HLSMediaServeView,
+)
+
+router = DefaultRouter()
+
+# ========================================================
+# Video
+# ========================================================
+
+router.register(r&quot;videos&quot;, VideoViewSet, basename=&quot;videos&quot;)
+router.register(r&quot;video-permissions&quot;, VideoPermissionViewSet, basename=&quot;video-permissions&quot;)
+router.register(r&quot;video-progress&quot;, VideoProgressViewSet, basename=&quot;video-progress&quot;)
+
+urlpatterns = [
+    path(&quot;&quot;, include(router.urls)),
+]
+
+# ========================================================
+# Nested / 상세 Video API
+# ========================================================
+
+video_detail = VideoViewSet.as_view({&quot;get&quot;: &quot;retrieve&quot;})
+video_stats = VideoViewSet.as_view({&quot;get&quot;: &quot;stats&quot;})
+
+urlpatterns += [
+    path(
+        &quot;lectures/&lt;int:lecture_id&gt;/sessions/&lt;int:session_id&gt;/videos/&lt;int:pk&gt;/&quot;,
+        video_detail,
+        name=&quot;media-video-detail-nested&quot;,
+    ),
+    path(
+        &quot;lectures/&lt;int:lecture_id&gt;/sessions/&lt;int:session_id&gt;/videos/&lt;int:pk&gt;/stats/&quot;,
+        video_stats,
+        name=&quot;media-video-stats-nested&quot;,
+    ),
+]
+
+# ========================================================
+# Step 3: HLS Serving (v1)
+# ========================================================
+
+urlpatterns += [
+    path(
+        &quot;hls/videos/&lt;int:video_id&gt;/&lt;path:path&gt;&quot;,
+        HLSMediaServeView.as_view(),
+        name=&quot;media-hls-serve&quot;,
+    ),
+]
+
+
+# 대충 붙이기
+
+from .views import PlaybackSessionView
+
+urlpatterns += [
+    path(&quot;playback/sessions/&quot;, PlaybackSessionView.as_view(), name=&quot;media-playback-session&quot;),
+]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>utils.py</h2>
+            <pre><code>import ffmpeg
+
+
+def extract_duration_seconds_from_url(url: str) -&gt; int | None:
+    &quot;&quot;&quot;
+    ffprobe를 URL에 직접 적용 (Range Request 기반)
+    &quot;&quot;&quot;
+    try:
+        probe = ffmpeg.probe(url)
+        fmt = probe.get(&quot;format&quot;) or {}
+        dur = fmt.get(&quot;duration&quot;)
+        if dur is None:
+            return None
+        return int(float(dur))
+    except Exception as e:
+        print(&quot;duration 추출 실패:&quot;, e)
+        return None
+
+
+def generate_thumbnail_from_url(
+    url: str,
+    ss_seconds: int = 1,
+) -&gt; bytes | None:
+    &quot;&quot;&quot;
+    URL 스트리밍 기반 썸네일 생성 (전체 다운로드 ❌)
+    &quot;&quot;&quot;
+    try:
+        out, _ = (
+            ffmpeg
+            .input(url, ss=ss_seconds)
+            .output(
+                &quot;pipe:&quot;,
+                vframes=1,
+                format=&quot;image2&quot;,
+                vcodec=&quot;mjpeg&quot;,
+            )
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        return out
+    except Exception as e:
+        print(&quot;썸네일 생성 실패:&quot;, e)
+        return None
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>views.py</h2>
+            <pre><code># apps/support/media/views.py
+
+import time
+from datetime import datetime
+from uuid import uuid4
+from pathlib import Path
+import mimetypes
+
+from django.conf import settings
+from django.db import models, transaction
+from django.http import  Http404, FileResponse
+from django.utils import timezone
+from django.views import View
+
+from rest_framework import status
+from rest_framework.views import APIView
+from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter
+from rest_framework.response import Response
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import serializers
+
+
+from django_filters.rest_framework import DjangoFilterBackend
+
+from libs.s3_client.presign import create_presigned_put_url
+from libs.s3_client.client import head_object
+
+from .models import (
+    Video,
+    VideoPermission,
+    VideoProgress,
+    VideoPlaybackSession,
+    VideoPlaybackEvent,
+)
+
+from apps.core.permissions import IsAdminOrStaff
+
+from apps.domains.lectures.models import Session
+from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.domains.attendance.models import Attendance
+
+from .serializers import (
+    VideoSerializer,
+    VideoDetailSerializer,
+    VideoPermissionSerializer,
+    VideoProgressSerializer,
+    PlaybackStartRequestSerializer,
+    PlaybackRefreshRequestSerializer,
+    PlaybackHeartbeatRequestSerializer,
+    PlaybackEndRequestSerializer,
+    PlaybackResponseSerializer,
+    PlaybackEventBatchRequestSerializer,
+    PlaybackEventBatchResponseSerializer,
+    PlaybackSessionSerializer,
+)
+
+from apps.shared.tasks.media import process_video_media
+
+from .drm import create_playback_token, verify_playback_token
+from .services.playback_session import (
+    issue_session,
+    heartbeat_session,
+    end_session,
+    is_session_active,
+    create_playback_session,  # ⭐ 추가 (학생 Facade API용)
+)
+
+from .cdn.cloudfront import build_signed_cookies_for_path, default_cookie_options
+
+# ⭐ 학생 전용 Playback Facade API용 Permission
+from apps.core.permissions import IsStudent
+#from apps.domains.enrollment.permissions import HasEnrollmentAccess
+#일단 ai가 지우래서 주석처리. 혹시 모르니 유지
+
+from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import PermissionDenied, ValidationError
+
+
+#HLS
+from rest_framework.permissions import AllowAny
+from rest_framework.views import APIView
+
+# 하래서함
+from rest_framework.parsers import JSONParser
+
+
+class VideoViewSet(ModelViewSet):
+    &quot;&quot;&quot;
+    Video 관리 ViewSet
+
+    - 기본: 로그인만 필요
+    - 업로드/관리 action: 관리자 or 스태프만 가능
+    &quot;&quot;&quot;
+
+    queryset = Video.objects.all().select_related(&quot;session&quot;, &quot;session__lecture&quot;)
+    serializer_class = VideoSerializer
+    parser_classes = [JSONParser]
+
+    # ✅ 기본은 로그인만
+    permission_classes = [IsAuthenticated]
+
+    # 🔐 관리자 전용 action 목록
+    ADMIN_ONLY_ACTIONS = {
+        &quot;upload_init&quot;,
+        &quot;upload_complete&quot;,
+        &quot;retry&quot;,
+        &quot;complete&quot;,
+        &quot;presign&quot;,
+        &quot;create&quot;,
+        &quot;update&quot;,
+        &quot;partial_update&quot;,
+        &quot;destroy&quot;,
+    }
+
+    def get_permissions(self):
+        if self.action in self.ADMIN_ONLY_ACTIONS:
+            return [IsAuthenticated(), IsAdminOrStaff()]
+        return [IsAuthenticated()]
+
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = [&quot;session&quot;, &quot;status&quot;]
+    search_fields = [&quot;title&quot;]
+    
+    # --------------------------------------------------
+    # [LEGACY] Presigned URL 발급
+    # POST /media/videos/presign/
+    # --------------------------------------------------
+    @action(detail=False, methods=[&quot;post&quot;], url_path=&quot;presign&quot;)
+    def presign(self, request):
+        session_id = request.data.get(&quot;session&quot;)
+        filename = request.data.get(&quot;filename&quot;)
+
+        if not session_id or not filename:
+            return Response(
+                {&quot;detail&quot;: &quot;session, filename required&quot;},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ext = filename.split(&quot;.&quot;)[-1]
+        key = f&quot;videos/{session_id}/{uuid4()}.{ext}&quot;
+
+        upload_url = create_presigned_put_url(key=key)
+        return Response({&quot;upload_url&quot;: upload_url, &quot;file_key&quot;: key})
+
+    # --------------------------------------------------
+    # [LEGACY] 업로드 완료 + Worker 트리거
+    # POST /media/videos/complete/
+    # --------------------------------------------------
+    @transaction.atomic
+    @action(detail=False, methods=[&quot;post&quot;], url_path=&quot;complete&quot;)
+    def complete(self, request):
+        session_id = request.data.get(&quot;session&quot;)
+        title = request.data.get(&quot;title&quot;)
+        file_key = request.data.get(&quot;file_key&quot;)
+
+        if not all([session_id, title, file_key]):
+            return Response(
+                {&quot;detail&quot;: &quot;session, title, file_key required&quot;},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        exists, size = head_object(file_key)
+        if not exists or size == 0:
+            return Response(
+                {&quot;detail&quot;: &quot;S3 object not found&quot;},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        session = Session.objects.get(id=session_id)
+        order = (session.videos.aggregate(
+            max_order=models.Max(&quot;order&quot;)
+        ).get(&quot;max_order&quot;) or 0) + 1
+
+        video = Video.objects.create(
+            session=session,
+            title=title,
+            file_key=file_key,
+            order=order,
+            status=Video.Status.UPLOADED,
+        )
+
+        transaction.on_commit(lambda: process_video_media.delay(video.id))
+        return Response(VideoSerializer(video).data, status=201)
+
+    # ==================================================
+    # [NEW] Step 1) upload/init
+    # POST /media/videos/upload/init/
+    # ==================================================
+    @transaction.atomic
+    @action(detail=False, methods=[&quot;post&quot;], url_path=&quot;upload/init&quot;)
+    def upload_init(self, request):
+        session_id = request.data.get(&quot;session&quot;)
+        title = request.data.get(&quot;title&quot;)
+        filename = request.data.get(&quot;filename&quot;)
+
+        allow_skip = bool(request.data.get(&quot;allow_skip&quot;, False))
+        max_speed = float(request.data.get(&quot;max_speed&quot;, 1.0) or 1.0)
+        show_watermark = bool(request.data.get(&quot;show_watermark&quot;, True))
+
+        if not session_id or not title or not filename:
+            return Response(
+                {&quot;detail&quot;: &quot;session, title, filename required&quot;},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session = Session.objects.get(id=session_id)
+        order = (session.videos.aggregate(
+            max_order=models.Max(&quot;order&quot;)
+        ).get(&quot;max_order&quot;) or 0) + 1
+
+        ext = (filename.split(&quot;.&quot;)[-1] if &quot;.&quot; in filename else &quot;mp4&quot;).lower()
+        key = f&quot;videos/{session_id}/{uuid4()}.{ext}&quot;
+
+        video = Video.objects.create(
+            session=session,
+            title=title,
+            file_key=key,
+            order=order,
+            status=Video.Status.PENDING,
+            allow_skip=allow_skip,
+            max_speed=max_speed,
+            show_watermark=show_watermark,
+        )
+
+        upload_url = create_presigned_put_url(key=key)
+
+        return Response(
+            {
+                &quot;video&quot;: VideoSerializer(video).data,
+                &quot;upload_url&quot;: upload_url,
+                &quot;file_key&quot;: key,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    # ==================================================
+    # [NEW] Step 2) upload/complete
+    # POST /media/videos/{id}/upload/complete/
+    # ==================================================
+    @transaction.atomic
+    @action(detail=True, methods=[&quot;post&quot;], url_path=&quot;upload/complete&quot;)
+    def upload_complete(self, request, pk=None):
+        video = self.get_object()
+
+        if video.status != Video.Status.PENDING:
+            return Response(
+                {&quot;detail&quot;: f&quot;Invalid status: {video.status}&quot;},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        exists, size = head_object(video.file_key)
+        if not exists or size == 0:
+            return Response(
+                {&quot;detail&quot;: &quot;S3 object not found&quot;},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        video.status = Video.Status.UPLOADED
+        video.save(update_fields=[&quot;status&quot;])
+
+        transaction.on_commit(lambda: process_video_media.delay(video.id))
+        return Response(VideoSerializer(video).data, status=status.HTTP_200_OK)
+
+    # --------------------------------------------------
+    # FAILED 영상 재처리
+    # --------------------------------------------------
+    @transaction.atomic
+    @action(detail=True, methods=[&quot;post&quot;], url_path=&quot;retry&quot;)
+    def retry(self, request, pk=None):
+        video = self.get_object()
+
+        if video.status not in (Video.Status.FAILED, Video.Status.UPLOADED):
+            return Response(
+                {&quot;detail&quot;: f&quot;Cannot retry video in status {video.status}&quot;},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        transaction.on_commit(lambda: process_video_media.delay(video.id))
+        return Response({&quot;detail&quot;: &quot;Video reprocessing started&quot;}, status=status.HTTP_202_ACCEPTED)
+
+    # --------------------------------------------------
+    # Stats
+    # --------------------------------------------------
+    @action(detail=True, methods=[&quot;get&quot;], url_path=&quot;stats&quot;)
+    def stats(self, request, pk=None):
+        video = self.get_object()
+        lecture = video.session.lecture
+
+        enrollments = Enrollment.objects.filter(lecture=lecture)
+        progresses = {p.enrollment_id: p for p in VideoProgress.objects.filter(video=video)}
+        perms = {p.enrollment_id: p for p in VideoPermission.objects.filter(video=video)}
+        attendance = {a.enrollment_id: a.status for a in Attendance.objects.filter(session=video.session)}
+
+        students = []
+        for e in enrollments:
+            vp = progresses.get(e.id)
+            perm = perms.get(e.id)
+
+            students.append({
+                &quot;student_name&quot;: e.student.name,
+                &quot;progress&quot;: vp.progress if vp else 0,
+                &quot;completed&quot;: vp.completed if vp else False,
+                &quot;attendance_status&quot;: attendance.get(e.id),
+                &quot;rule&quot;: perm.rule if perm else &quot;free&quot;,
+            })
+
+        return Response({&quot;video&quot;: VideoDetailSerializer(video).data, &quot;students&quot;: students})
+
+    # =======================================================
+    # Playback API (v1 + CDN Signed Cookie + 정책 override)
+    # =======================================================
+
+    def _get_student_for_user(self, request):
+        return getattr(request.user, &quot;student_profile&quot;, None)
+
+    def _check_access(self, *, video: Video, enrollment: Enrollment) -&gt; tuple[bool, str | None]:
+        if video.status != Video.Status.READY:
+            return False, &quot;video_not_ready&quot;
+
+        if not SessionEnrollment.objects.filter(session=video.session, enrollment=enrollment).exists():
+            return False, &quot;no_session_access&quot;
+
+        perm = VideoPermission.objects.filter(video=video, enrollment=enrollment).first()
+        rule = perm.rule if perm else &quot;free&quot;
+
+        if rule == &quot;blocked&quot;:
+            return False, &quot;blocked&quot;
+
+        if rule == &quot;once&quot;:
+            vp = VideoProgress.objects.filter(video=video, enrollment=enrollment).first()
+            if vp and vp.completed:
+                return False, &quot;already_completed_once&quot;
+
+        return True, None
+
+    def _load_permission(self, *, video: Video, enrollment: Enrollment) -&gt; VideoPermission | None:
+        return VideoPermission.objects.filter(video=video, enrollment=enrollment).first()
+
+    # --------------------------------------------------
+    # 정책 생성 (PATCH 반영: seek 정책 확장 + legacy 유지)
+    # --------------------------------------------------
+    def _effective_policy(self, *, video: Video, perm: VideoPermission | None) -&gt; dict:
+        allow_seek = bool(video.allow_skip)
+        max_rate = float(video.max_speed or 1.0)
+        watermark_enabled = bool(video.show_watermark)
+        ui_speed_control = True
+
+        # seek policy (new, front-driven)
+        # - free: fully allowed
+        # - bounded_forward: block forward-jumps beyond max_watched (+ grace)
+        # - blocked: no seeking at all
+        seek_policy = {
+            &quot;mode&quot;: &quot;free&quot;,
+            &quot;forward_limit&quot;: None,
+            &quot;grace_seconds&quot;: 3,
+        }
+
+        if perm:
+            if perm.allow_skip_override is not None:
+                allow_seek = bool(perm.allow_skip_override)
+            if perm.max_speed_override is not None:
+                max_rate = float(perm.max_speed_override)
+            if perm.show_watermark_override is not None:
+                watermark_enabled = bool(perm.show_watermark_override)
+
+            # 온라인/1회제한(once) 대상: 앞으로만 제한 (되돌리기 자유)
+            if getattr(perm, &quot;rule&quot;, None) == &quot;once&quot;:
+                seek_policy = {
+                    &quot;mode&quot;: &quot;bounded_forward&quot;,
+                    &quot;forward_limit&quot;: &quot;max_watched&quot;,
+                    &quot;grace_seconds&quot;: 3,
+                }
+
+            # 최우선 차단
+            if getattr(perm, &quot;block_seek&quot;, False):
+                allow_seek = False
+                seek_policy = {&quot;mode&quot;: &quot;blocked&quot;}
+
+            if getattr(perm, &quot;block_speed_control&quot;, False):
+                ui_speed_control = False
+                max_rate = 1.0
+
+        return {
+            &quot;allow_seek&quot;: allow_seek,  # legacy (deprecated)
+            &quot;seek&quot;: seek_policy,
+            &quot;playback_rate&quot;: {&quot;max&quot;: max_rate, &quot;ui_control&quot;: ui_speed_control},
+            &quot;watermark&quot;: {&quot;enabled&quot;: watermark_enabled, &quot;mode&quot;: &quot;overlay&quot;, &quot;fields&quot;: [&quot;user_id&quot;]},
+            &quot;concurrency&quot;: {
+                &quot;max_sessions&quot;: int(getattr(settings, &quot;VIDEO_MAX_SESSIONS&quot;, 9999)),
+                &quot;max_devices&quot;: int(getattr(settings, &quot;VIDEO_MAX_DEVICES&quot;, 9999)),
+            },
+        }
+
+    def _hls_path_prefix_for_video(self, video_id: int) -&gt; str:
+        return f&quot;/hls/videos/{video_id}/&quot;
+
+    def _public_play_url(self, video_id: int) -&gt; str:
+        cdn_base = getattr(settings, &quot;CDN_HLS_BASE_URL&quot;, &quot;&quot;).rstrip(&quot;/&quot;)
+        path = f&quot;/hls/videos/{video_id}/master.m3u8&quot;
+        return f&quot;{cdn_base}{path}&quot; if cdn_base else path
+
+    def _set_signed_cookies(self, response: Response, *, video_id: int, expires_at: int) -&gt; None:
+        path_prefix = self._hls_path_prefix_for_video(video_id)
+        cookies = build_signed_cookies_for_path(path_prefix=path_prefix, expires_at=expires_at)
+        opts = default_cookie_options(path_prefix=path_prefix)
+
+        max_age = max(0, int(expires_at - int(time.time())))
+        for k, v in cookies.items():
+            response.set_cookie(
+                key=k,
+                value=v,
+                max_age=max_age,
+                expires=None,
+                **opts,
+            )
+
+    @action(
+        detail=True,
+        methods=[&quot;post&quot;],
+        url_path=&quot;play&quot;,
+        permission_classes=[IsAuthenticated, IsStudent],
+    )
+    def play(self, request, pk=None):
+        video = self.get_object()
+
+        req = PlaybackStartRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+
+        enrollment_id = req.validated_data[&quot;enrollment_id&quot;]
+        device_id = req.validated_data[&quot;device_id&quot;]
+
+        student = self._get_student_for_user(request)
+        if student is None:
+            return Response({&quot;detail&quot;: &quot;student_profile_not_linked&quot;}, status=403)
+
+        try:
+            enrollment = Enrollment.objects.select_related(&quot;student&quot;, &quot;lecture&quot;).get(
+                id=enrollment_id,
+                student=student,
+                status=&quot;ACTIVE&quot;,
+            )
+        except Enrollment.DoesNotExist:
+            return Response({&quot;detail&quot;: &quot;enrollment_not_found&quot;}, status=404)
+
+        ok, reason = self._check_access(video=video, enrollment=enrollment)
+        if not ok:
+            return Response({&quot;detail&quot;: reason}, status=403)
+
+        perm = self._load_permission(video=video, enrollment=enrollment)
+        policy = self._effective_policy(video=video, perm=perm)
+
+        ttl = int(getattr(settings, &quot;VIDEO_PLAYBACK_TTL_SECONDS&quot;, 600))
+        max_sessions = int(policy[&quot;concurrency&quot;][&quot;max_sessions&quot;])
+        max_devices = int(policy[&quot;concurrency&quot;][&quot;max_devices&quot;])
+
+        ok_sess, sess, err = issue_session(
+            user_id=request.user.id,
+            device_id=device_id,
+            ttl_seconds=ttl,
+            max_sessions=max_sessions,
+            max_devices=max_devices,
+        )
+        if not ok_sess:
+            return Response({&quot;detail&quot;: err}, status=409)
+
+        session_id = str(sess[&quot;session_id&quot;])
+        expires_at = int(sess[&quot;expires_at&quot;])
+
+        VideoPlaybackSession.objects.create(
+            video=video,
+            enrollment=enrollment,
+            session_id=session_id,
+            device_id=device_id,
+            status=VideoPlaybackSession.Status.ACTIVE,
+        )
+
+        token = create_playback_token(
+            payload={
+                &quot;tenant_id&quot;: None,
+                &quot;video_id&quot;: video.id,
+                &quot;enrollment_id&quot;: enrollment.id,
+                &quot;user_id&quot;: request.user.id,
+                &quot;device_id&quot;: device_id,
+                &quot;session_id&quot;: session_id,
+                &quot;policy&quot;: policy,
+            },
+            ttl_seconds=ttl,
+        )
+
+        resp = PlaybackResponseSerializer({
+            &quot;token&quot;: token,
+            &quot;session_id&quot;: session_id,
+            &quot;expires_at&quot;: expires_at,
+            &quot;policy&quot;: policy,
+            &quot;play_url&quot;: self._public_play_url(video.id),
+        })
+
+        response = Response(resp.data, status=200)
+        self._set_signed_cookies(response, video_id=video.id, expires_at=expires_at)
+        return response
+
+    @action(
+        detail=True,
+        methods=[&quot;post&quot;],
+        url_path=&quot;refresh&quot;,
+        permission_classes=[IsAuthenticated, IsStudent],
+    )
+    def refresh(self, request, pk=None):
+        video = self.get_object()
+
+        req = PlaybackRefreshRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        token = req.validated_data[&quot;token&quot;]
+
+        ok, payload, err = verify_playback_token(token)
+        if not ok:
+            return Response({&quot;detail&quot;: err}, status=401)
+
+        if int(payload.get(&quot;video_id&quot;) or 0) != int(video.id):
+            return Response({&quot;detail&quot;: &quot;video_mismatch&quot;}, status=401)
+        if int(payload.get(&quot;user_id&quot;) or 0) != int(request.user.id):
+            return Response({&quot;detail&quot;: &quot;user_mismatch&quot;}, status=401)
+
+        session_id = str(payload.get(&quot;session_id&quot;) or &quot;&quot;)
+        device_id = str(payload.get(&quot;device_id&quot;) or &quot;&quot;)
+        enrollment_id = int(payload.get(&quot;enrollment_id&quot;) or 0)
+
+        ttl = int(getattr(settings, &quot;VIDEO_PLAYBACK_TTL_SECONDS&quot;, 600))
+        ok_hb = heartbeat_session(user_id=request.user.id, session_id=session_id, ttl_seconds=ttl)
+        if not ok_hb:
+            return Response({&quot;detail&quot;: &quot;session_not_active&quot;}, status=409)
+
+        student = self._get_student_for_user(request)
+        if student is None:
+            return Response({&quot;detail&quot;: &quot;student_profile_not_linked&quot;}, status=403)
+
+        try:
+            enrollment = Enrollment.objects.get(id=enrollment_id, student=student, status=&quot;ACTIVE&quot;)
+        except Enrollment.DoesNotExist:
+            return Response({&quot;detail&quot;: &quot;enrollment_not_found&quot;}, status=404)
+
+        ok_access, reason = self._check_access(video=video, enrollment=enrollment)
+        if not ok_access:
+            return Response({&quot;detail&quot;: reason}, status=403)
+
+        perm = self._load_permission(video=video, enrollment=enrollment)
+        policy = self._effective_policy(video=video, perm=perm)
+
+        new_token = create_playback_token(
+            payload={
+                &quot;tenant_id&quot;: None,
+                &quot;video_id&quot;: video.id,
+                &quot;enrollment_id&quot;: enrollment.id,
+                &quot;user_id&quot;: request.user.id,
+                &quot;device_id&quot;: device_id,
+                &quot;session_id&quot;: session_id,
+                &quot;policy&quot;: policy,
+            },
+            ttl_seconds=ttl,
+        )
+
+        expires_at = int(time.time()) + ttl
+
+        resp = PlaybackResponseSerializer({
+            &quot;token&quot;: new_token,
+            &quot;session_id&quot;: session_id,
+            &quot;expires_at&quot;: expires_at,
+            &quot;policy&quot;: policy,
+            &quot;play_url&quot;: self._public_play_url(video.id),
+        })
+        response = Response(resp.data, status=200)
+        self._set_signed_cookies(response, video_id=video.id, expires_at=expires_at)
+        return response
+
+    @action(
+        detail=True,
+        methods=[&quot;post&quot;],
+        url_path=&quot;heartbeat&quot;,
+        permission_classes=[IsAuthenticated, IsStudent],
+    )
+    def heartbeat(self, request, pk=None):
+        req = PlaybackHeartbeatRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        token = req.validated_data[&quot;token&quot;]
+
+        ok, payload, err = verify_playback_token(token)
+        if not ok:
+            return Response({&quot;detail&quot;: err}, status=401)
+
+        if int(payload.get(&quot;user_id&quot;) or 0) != int(request.user.id):
+            return Response({&quot;detail&quot;: &quot;user_mismatch&quot;}, status=401)
+
+        session_id = str(payload.get(&quot;session_id&quot;) or &quot;&quot;)
+        ttl = int(getattr(settings, &quot;VIDEO_PLAYBACK_TTL_SECONDS&quot;, 600))
+
+        ok_hb = heartbeat_session(user_id=request.user.id, session_id=session_id, ttl_seconds=ttl)
+        if not ok_hb:
+            return Response({&quot;detail&quot;: &quot;session_not_active&quot;}, status=409)
+
+        return Response({&quot;status&quot;: &quot;ok&quot;}, status=200)
+
+    @action(
+        detail=True,
+        methods=[&quot;post&quot;],
+        url_path=&quot;end&quot;,
+        permission_classes=[IsAuthenticated, IsStudent],
+    )
+    def end(self, request, pk=None):
+        req = PlaybackEndRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        token = req.validated_data[&quot;token&quot;]
+
+        ok, payload, err = verify_playback_token(token)
+        if not ok:
+            return Response({&quot;detail&quot;: err}, status=401)
+
+        if int(payload.get(&quot;user_id&quot;) or 0) != int(request.user.id):
+            return Response({&quot;detail&quot;: &quot;user_mismatch&quot;}, status=401)
+
+        session_id = str(payload.get(&quot;session_id&quot;) or &quot;&quot;)
+        end_session(user_id=request.user.id, session_id=session_id)
+
+        VideoPlaybackSession.objects.filter(session_id=session_id).update(
+            status=VideoPlaybackSession.Status.ENDED,
+            ended_at=timezone.now(),
+        )
+
+        response = Response({&quot;status&quot;: &quot;ended&quot;}, status=200)
+
+        path_prefix = self._hls_path_prefix_for_video(int(pk))
+        opts = default_cookie_options(path_prefix=path_prefix)
+
+        response.delete_cookie(&quot;CloudFront-Policy&quot;, domain=opts.get(&quot;domain&quot;), path=opts.get(&quot;path&quot;))
+        response.delete_cookie(&quot;CloudFront-Signature&quot;, domain=opts.get(&quot;domain&quot;), path=opts.get(&quot;path&quot;))
+        response.delete_cookie(&quot;CloudFront-Key-Pair-Id&quot;, domain=opts.get(&quot;domain&quot;), path=opts.get(&quot;path&quot;))
+        return response
+    
+    #1) 학생용 “READY 목록 + 잠금정보” (GET)
+    @action(
+        detail=False,
+        methods=[&quot;get&quot;],
+        url_path=&quot;student&quot;,
+        permission_classes=[IsAuthenticated, IsStudent],
+    )
+    def student_list(self, request):
+        &quot;&quot;&quot;
+        학생용 목록
+        - READY만 노출
+        - 각 video마다 can_play / reason 제공 (잠금 UI용)
+        query:
+          - session (필수): session id
+        &quot;&quot;&quot;
+        session_id = request.query_params.get(&quot;session&quot;)
+        if not session_id:
+            return Response({&quot;detail&quot;: &quot;session is required&quot;}, status=400)
+
+        student = self._get_student_for_user(request)
+        if student is None:
+            return Response({&quot;detail&quot;: &quot;student_profile_not_linked&quot;}, status=403)
+
+        # READY만
+        qs = Video.objects.select_related(&quot;session&quot;, &quot;session__lecture&quot;).filter(
+            session_id=session_id,
+            status=Video.Status.READY,
+        ).order_by(&quot;order&quot;, &quot;id&quot;)
+
+        # video -&gt; lecture 역추적
+        # (같은 session이면 lecture는 동일)
+        session = Session.objects.select_related(&quot;lecture&quot;).get(id=session_id)
+        lecture = session.lecture
+
+        enrollment = Enrollment.objects.filter(
+            student=student,
+            lecture=lecture,
+            status=&quot;ACTIVE&quot;,
+        ).first()
+
+        # 수강 자체가 없으면 전체 잠금
+        if not enrollment:
+            data = []
+            for v in qs:
+                d = VideoSerializer(v).data
+                d[&quot;can_play&quot;] = False
+                d[&quot;reason&quot;] = &quot;not_enrolled&quot;
+                data.append(d)
+            return Response(data)
+
+        # session access 없는 경우도 잠금
+        has_session_access = SessionEnrollment.objects.filter(
+            session=session,
+            enrollment=enrollment,
+        ).exists()
+
+        data = []
+        for v in qs:
+            d = VideoSerializer(v).data
+
+            if not has_session_access:
+                d[&quot;can_play&quot;] = False
+                d[&quot;reason&quot;] = &quot;no_session_access&quot;
+                data.append(d)
+                continue
+
+            ok, reason = self._check_access(video=v, enrollment=enrollment)
+            d[&quot;can_play&quot;] = bool(ok)
+            d[&quot;reason&quot;] = reason if not ok else None
+            data.append(d)
+
+        return Response(data)
+
+    #2) 학생용 /play/facade/ (POST) — 토큰 + 쿠키 + play_url
+    @action(
+        detail=True,
+        methods=[&quot;post&quot;],
+        url_path=&quot;play/facade&quot;,
+        permission_classes=[IsAuthenticated, IsStudent],
+    )
+    def play_facade(self, request, pk=None):
+        &quot;&quot;&quot;
+        학생용 Facade 재생 시작
+        - 프론트는 video_id(pk) + device_id만 전달
+        - 서버가 enrollment 역추적 + 권한검사 + token/cookie/play_url 발급
+        &quot;&quot;&quot;
+        video = self.get_object()
+
+        # 요청 검증
+        from .serializers import PlaybackStartFacadeRequestSerializer
+        req = PlaybackStartFacadeRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+        device_id = req.validated_data[&quot;device_id&quot;]
+
+        student = self._get_student_for_user(request)
+        if student is None:
+            return Response({&quot;detail&quot;: &quot;student_profile_not_linked&quot;}, status=403)
+
+        lecture = video.session.lecture
+        enrollment = Enrollment.objects.filter(
+            student=student,
+            lecture=lecture,
+            status=&quot;ACTIVE&quot;,
+        ).first()
+        if not enrollment:
+            return Response({&quot;detail&quot;: &quot;enrollment_not_found&quot;}, status=403)
+
+        # session access (핵심)
+        if not SessionEnrollment.objects.filter(
+            session=video.session,
+            enrollment=enrollment,
+        ).exists():
+            return Response({&quot;detail&quot;: &quot;no_session_access&quot;}, status=403)
+
+        # 기존 access 체크 (READY 포함, once/blocked 등)
+        ok, reason = self._check_access(video=video, enrollment=enrollment)
+        if not ok:
+            return Response({&quot;detail&quot;: reason}, status=403)
+
+        perm = self._load_permission(video=video, enrollment=enrollment)
+        policy = self._effective_policy(video=video, perm=perm)
+
+        ttl = int(getattr(settings, &quot;VIDEO_PLAYBACK_TTL_SECONDS&quot;, 600))
+        max_sessions = int(policy[&quot;concurrency&quot;][&quot;max_sessions&quot;])
+        max_devices = int(policy[&quot;concurrency&quot;][&quot;max_devices&quot;])
+
+        ok_sess, sess, err = issue_session(
+            user_id=request.user.id,
+            device_id=device_id,
+            ttl_seconds=ttl,
+            max_sessions=max_sessions,
+            max_devices=max_devices,
+        )
+        if not ok_sess:
+            return Response({&quot;detail&quot;: err}, status=409)
+
+        session_id = str(sess[&quot;session_id&quot;])
+        expires_at = int(sess[&quot;expires_at&quot;])
+
+        VideoPlaybackSession.objects.create(
+            video=video,
+            enrollment=enrollment,
+            session_id=session_id,
+            device_id=device_id,
+            status=VideoPlaybackSession.Status.ACTIVE,
+        )
+
+        token = create_playback_token(
+            payload={
+                &quot;tenant_id&quot;: None,
+                &quot;video_id&quot;: video.id,
+                &quot;enrollment_id&quot;: enrollment.id,
+                &quot;user_id&quot;: request.user.id,
+                &quot;device_id&quot;: device_id,
+                &quot;session_id&quot;: session_id,
+                &quot;policy&quot;: policy,
+            },
+            ttl_seconds=ttl,
+        )
+
+        resp = PlaybackResponseSerializer({
+            &quot;token&quot;: token,
+            &quot;session_id&quot;: session_id,
+            &quot;expires_at&quot;: expires_at,
+            &quot;policy&quot;: policy,
+            &quot;play_url&quot;: self._public_play_url(video.id),
+        })
+
+        response = Response(resp.data, status=200)
+        self._set_signed_cookies(response, video_id=video.id, expires_at=expires_at)
+        return response
+
+
+
+    # =======================================================
+    # Events API (v1: audit-only)
+    # =======================================================
+
+    def _epoch_to_dt(self, epoch: int | None) -&gt; datetime:
+        if not epoch:
+            return timezone.now()
+        try:
+            return datetime.fromtimestamp(int(epoch), tz=timezone.get_current_timezone())
+        except Exception:
+            return timezone.now()
+
+    # --------------------------------------------------
+    # 위반 판정 (PATCH 반영: seek 정책 기반 + legacy fallback)
+    # --------------------------------------------------
+    def _evaluate_violation(self, *, event_type: str, payload: dict, policy: dict) -&gt; tuple[bool, str]:
+        if event_type == VideoPlaybackEvent.EventType.SEEK_ATTEMPT:
+            seek = policy.get(&quot;seek&quot;) or {}
+            mode = seek.get(&quot;mode&quot;)
+            grace = float(seek.get(&quot;grace_seconds&quot;, 0) or 0)
+
+            # legacy fallback (seek 정책이 없는 구버전 프론트)
+            if not mode:
+                if not bool(policy.get(&quot;allow_seek&quot;, False)):
+                    return True, &quot;seek_not_allowed&quot;
+                return False, &quot;&quot;
+
+            # mode 기반 판정
+            if mode == &quot;blocked&quot;:
+                return True, &quot;seek_blocked&quot;
+
+            if mode == &quot;bounded_forward&quot;:
+                to = payload.get(&quot;to&quot;)
+                max_watched = payload.get(&quot;max_watched&quot;)
+                try:
+                    to = float(to)
+                    max_watched = float(max_watched)
+                except Exception:
+                    # payload 부족하면 판단 불가 → 위반 처리 안 함
+                    return False, &quot;&quot;
+
+                # 뒤로 가기(to &lt;= max_watched)는 허용
+                # 앞으로 점프만 제한
+                if to &gt; max_watched + grace:
+                    return True, &quot;seek_forward_exceeded&quot;
+
+        if event_type == VideoPlaybackEvent.EventType.SPEED_CHANGE_ATTEMPT:
+            pr = policy.get(&quot;playback_rate&quot;) or {}
+            ui_control = bool(pr.get(&quot;ui_control&quot;, True))
+            max_rate = float(pr.get(&quot;max&quot;, 1.0) or 1.0)
+
+            to_rate = payload.get(&quot;to&quot;)
+            try:
+                to_rate = float(to_rate)
+            except Exception:
+                to_rate = None
+
+            if not ui_control:
+                return True, &quot;speed_control_disabled&quot;
+            if to_rate is not None and to_rate &gt; max_rate:
+                return True, &quot;speed_exceeds_max&quot;
+
+        return False, &quot;&quot;
+
+    @action(
+        detail=True,
+        methods=[&quot;post&quot;],
+        url_path=&quot;events&quot;,
+        permission_classes=[IsAuthenticated, IsStudent],
+    )
+    def events(self, request, pk=None):
+        video = self.get_object()
+
+        req = PlaybackEventBatchRequestSerializer(data=request.data)
+        req.is_valid(raise_exception=True)
+
+        token = req.validated_data[&quot;token&quot;]
+        events = req.validated_data[&quot;events&quot;]
+
+        ok, payload, err = verify_playback_token(token)
+        if not ok:
+            return Response({&quot;detail&quot;: err}, status=401)
+
+        if int(payload.get(&quot;video_id&quot;) or 0) != int(video.id):
+            return Response({&quot;detail&quot;: &quot;video_mismatch&quot;}, status=401)
+        if int(payload.get(&quot;user_id&quot;) or 0) != int(request.user.id):
+            return Response({&quot;detail&quot;: &quot;user_mismatch&quot;}, status=401)
+
+        enrollment_id = int(payload.get(&quot;enrollment_id&quot;) or 0)
+        session_id = str(payload.get(&quot;session_id&quot;) or &quot;&quot;)
+
+        if not is_session_active(user_id=request.user.id, session_id=session_id):
+            return Response({&quot;detail&quot;: &quot;session_not_active&quot;}, status=409)
+
+        student = self._get_student_for_user(request)
+        if student is None:
+            return Response({&quot;detail&quot;: &quot;student_profile_not_linked&quot;}, status=403)
+
+        try:
+            enrollment = Enrollment.objects.get(id=enrollment_id, student=student, status=&quot;ACTIVE&quot;)
+        except Enrollment.DoesNotExist:
+            return Response({&quot;detail&quot;: &quot;enrollment_not_found&quot;}, status=404)
+
+        ok_access, reason = self._check_access(video=video, enrollment=enrollment)
+        if not ok_access:
+            return Response({&quot;detail&quot;: reason}, status=403)
+
+        perm = self._load_permission(video=video, enrollment=enrollment)
+        policy = self._effective_policy(video=video, perm=perm)
+
+        rows: list[VideoPlaybackEvent] = []
+        for ev in events:
+            ev_type = ev.get(&quot;type&quot;)
+            ev_payload = ev.get(&quot;payload&quot;) or {}
+            occurred_at_epoch = ev.get(&quot;occurred_at&quot;)
+
+            violated, reason = self._evaluate_violation(
+                event_type=ev_type,
+                payload=ev_payload,
+                policy=policy,
+            )
+
+            rows.append(
+                VideoPlaybackEvent(
+                    video=video,
+                    enrollment=enrollment,
+                    session_id=session_id,
+                    user_id=request.user.id,
+                    event_type=ev_type,
+                    event_payload=ev_payload,
+                    policy_snapshot=policy,
+                    violated=violated,
+                    violation_reason=reason,
+                    occurred_at=self._epoch_to_dt(occurred_at_epoch),
+                )
+            )
+
+        if rows:
+            VideoPlaybackEvent.objects.bulk_create(rows, batch_size=500)
+
+        resp = PlaybackEventBatchResponseSerializer({&quot;stored&quot;: len(rows)})
+        return Response(resp.data, status=200)
+
+
+
+
+class VideoPermissionViewSet(ModelViewSet):
+    queryset = VideoPermission.objects.all()
+    serializer_class = VideoPermissionSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = [&quot;video&quot;, &quot;enrollment&quot;]
+    permission_classes = [IsAuthenticated]
+
+
+class VideoProgressViewSet(ModelViewSet):
+    queryset = VideoProgress.objects.all()
+    serializer_class = VideoProgressSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = [&quot;video&quot;, &quot;enrollment&quot;]
+    permission_classes = [IsAuthenticated]
+
+
+# =======================================================
+# Step 3: HLS Serving (v1) – Django Static Serve
+# URL 계약: /hls/videos/...
+# =======================================================
+
+class HLSMediaServeView(View):
+    &quot;&quot;&quot;
+    /hls/videos/{video_id}/master.m3u8
+    /hls/videos/{video_id}/v1/index.m3u8
+    /hls/videos/{video_id}/v1/seg_000.ts
+    &quot;&quot;&quot;
+
+    ALLOWED_EXTENSIONS = {&quot;.m3u8&quot;, &quot;.ts&quot;}
+
+    def get(self, request, video_id: int, path: str):
+        base_dir = (
+            Path(settings.BASE_DIR)
+            / &quot;storage&quot;
+            / &quot;media&quot;
+            / &quot;hls&quot;
+            / &quot;videos&quot;
+            / str(video_id)
+        )
+
+        target = (base_dir / path).resolve()
+
+        try:
+            target.relative_to(base_dir.resolve())
+        except ValueError:
+            raise Http404(&quot;Invalid path&quot;)
+
+        if target.suffix not in self.ALLOWED_EXTENSIONS:
+            raise Http404(&quot;Invalid file type&quot;)
+
+        if not target.exists() or not target.is_file():
+            raise Http404(&quot;File not found&quot;)
+
+        content_type, _ = mimetypes.guess_type(str(target))
+        return FileResponse(
+            open(target, &quot;rb&quot;),
+            content_type=content_type or &quot;application/octet-stream&quot;,
+        )
+
+
+# =======================================================
+# Playback Session API (Student Facade)
+# =======================================================
+class PlaybackSessionView(APIView):
+    permission_classes = [IsAuthenticated, IsStudent]
+
+    def post(self, request):
+        student = request.user.student_profile
+        video_id = request.data.get(&quot;video_id&quot;)
+
+        if not video_id:
+            raise ValidationError(&quot;video_id is required&quot;)
+
+        video = get_object_or_404(Video, id=video_id)
+        lecture = video.session.lecture
+
+        enrollment = Enrollment.objects.filter(
+            student=student,
+            lecture=lecture,
+            status=&quot;ACTIVE&quot;,
+        ).first()
+
+        if not enrollment:
+            raise PermissionDenied(&quot;Not enrolled in this lecture&quot;)
+
+        # ✅ 핵심: 세션 접근 권한
+        if not SessionEnrollment.objects.filter(
+            session=video.session,
+            enrollment=enrollment,
+        ).exists():
+            raise PermissionDenied(&quot;No session access&quot;)
+
+        result = create_playback_session(
+            user=request.user,
+            video_id=video.id,
+            enrollment_id=enrollment.id,
+        )
+
+        if not result.get(&quot;ok&quot;):
+            return Response(
+                {&quot;detail&quot;: result[&quot;error&quot;]},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response(
+            PlaybackSessionSerializer(result).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+
+
+
+class VideoProcessingCompleteView(APIView):
+    &quot;&quot;&quot;
+    ⚠️ 내부 전용
+    worker → API ACK 용
+    &quot;&quot;&quot;
+    permission_classes = [AllowAny]
+
+    def post(self, request, video_id: int):
+        token = request.headers.get(&quot;X-Worker-Token&quot;)
+        if token != settings.INTERNAL_WORKER_TOKEN:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
+        # ❌ DB 수정 금지
+        # worker가 single source of truth
+
+        return Response({&quot;status&quot;: &quot;ack&quot;}, status=200)
+
+
+
+
+#apps/support/media/serializers.py 맨 아래 아무데나 추가:
+
+class PlaybackStartFacadeRequestSerializer(serializers.Serializer):
+    device_id = serializers.CharField(max_length=128)
+</code></pre>
+        </section>
+        
+</body>
+</html>
