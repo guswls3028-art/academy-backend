@@ -122,6 +122,7 @@ class VideoProcessor:
             master_path = self._transcode_hls(
                 video_id=video_id,
                 input_path=str(local_input_path),
+                output_root=out_root, 
                 timeout=timeout_hls,
             )
 
@@ -388,6 +389,7 @@ class VideoProcessor:
         *,
         video_id: int,
         input_path: str,
+        output_root: Path, 
         timeout: Optional[int],
     ) -> Path:
         """
@@ -397,6 +399,7 @@ class VideoProcessor:
             master_path = transcode_to_hls(
                 video_id=video_id,
                 input_path=input_path,
+                output_root=output_root, 
                 timeout=timeout,
             )
             return master_path

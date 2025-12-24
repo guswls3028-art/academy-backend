@@ -1,5 +1,4 @@
 from __future__ import annotations
-# apps/worker/media/video/transcoder.py
 
 import subprocess
 from pathlib import Path
@@ -12,11 +11,10 @@ from django.conf import settings
 # ---------------------------------------------------------------------
 
 HLS_VARIANTS = [
-    {"name": "v1", "width": 426, "height": 240, "video_bitrate": "400k", "audio_bitrate": "64k"},
-    {"name": "v2", "width": 640, "height": 360, "video_bitrate": "800k", "audio_bitrate": "96k"},
-    {"name": "v3", "width": 1280, "height": 720, "video_bitrate": "2500k", "audio_bitrate": "128k"},
+    {"name": "v1", "width": 426,  "height": 240,  "video_bitrate": "400k",  "audio_bitrate": "64k"},
+    {"name": "v2", "width": 640,  "height": 360,  "video_bitrate": "800k",  "audio_bitrate": "96k"},
+    {"name": "v3", "width": 1280, "height": 720,  "video_bitrate": "2500k", "audio_bitrate": "128k"},
 ]
-
 
 # ---------------------------------------------------------------------
 # Directory preparation
@@ -32,7 +30,6 @@ def prepare_output_dirs(output_root: Path) -> None:
     output_root.mkdir(parents=True, exist_ok=True)
     for v in HLS_VARIANTS:
         (output_root / v["name"]).mkdir(exist_ok=True)
-
 
 # ---------------------------------------------------------------------
 # ffmpeg filter_complex builder
@@ -51,7 +48,6 @@ def build_filter_complex() -> str:
         parts.append(f"[v{i}]scale={v['width']}:{v['height']}[v{i}out]")
 
     return ";".join(parts)
-
 
 # ---------------------------------------------------------------------
 # ffmpeg command builder
@@ -91,35 +87,29 @@ def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
         "-hls_flags", "independent_segments",
         "-master_pl_name", "master.m3u8",
         "-var_stream_map",
-        " ".join(f"v:{i},a:{i},name:{v['name']}" for i, v in enumerate(HLS_VARIANTS)),
+        " ".join(
+            f"v:{i},a:{i},name:{v['name']}"
+            for i, v in enumerate(HLS_VARIANTS)
+        ),
         str(output_root / "v%v" / "index.m3u8"),
     ]
 
     return cmd
 
-
 # ---------------------------------------------------------------------
-# Public API (실전용)
+# Public API
 # ---------------------------------------------------------------------
 
 def transcode_to_hls(
     *,
     video_id: int,
-    input_url: str,
+    input_path: str,
     output_root: Path,
     timeout: int | None = None,
 ) -> Path:
-
     """
-    Execute HLS transcoding.
+    Execute HLS transcoding from local mp4.
     """
-
-    output_root = (
-        Path(settings.MEDIA_ROOT)
-        / "hls"
-        / "videos"
-        / str(video_id)
-    )
 
     prepare_output_dirs(output_root)
 
@@ -149,25 +139,3 @@ def transcode_to_hls(
         raise RuntimeError("master.m3u8 not created")
 
     return master_path
-
-
-# ---------------------------------------------------------------------
-# TEST ONLY
-# ---------------------------------------------------------------------
-
-def test_local_hls_transcode() -> None:
-    input_path = (
-        Path(settings.MEDIA_ROOT)
-        / "videos"
-        / "2025"
-        / "12"
-        / "19"
-        / "던파.mp4"
-    )
-
-    transcode_to_hls(
-        video_id=2,
-        input_path=str(input_path),
-    )
-
-    print("✅ HLS transcode completed")
