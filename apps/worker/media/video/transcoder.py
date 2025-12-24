@@ -88,6 +88,11 @@ def build_ffmpeg_command(input_path: str, output_root: Path) -> List[str]:
         "-hls_playlist_type", "vod",
         "-hls_flags", "independent_segments",
         "-master_pl_name", "master.m3u8",
+
+        # 🔥🔥🔥 핵심: 세그먼트 파일 경로 강제 POSIX
+        "-hls_segment_filename",
+        f"{output_root.as_posix()}/v%v/index%d.ts",
+        
         "-var_stream_map",
         " ".join(
             f"v:{i},a:{i},name:{v['name']}"
