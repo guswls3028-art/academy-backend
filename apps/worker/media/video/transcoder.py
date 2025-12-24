@@ -7,7 +7,7 @@ from typing import List
 
 from django.conf import settings
 
-print("🔥 TRANSCODER START", input_url)
+print("🔥 TRANSCODER START", input_path)
 
 
 # ---------------------------------------------------------------------
