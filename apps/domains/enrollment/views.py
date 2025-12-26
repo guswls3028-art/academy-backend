@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.response import Response
+from rest_framework import status
 
 from .models import Enrollment, SessionEnrollment
 from .serializers import EnrollmentSerializer, SessionEnrollmentSerializer
@@ -40,6 +41,19 @@ class EnrollmentViewSet(ModelViewSet):
             EnrollmentSerializer(created, many=True).data,
             status=201,
         )
+
+    # ✅ 추가된 부분: 삭제 처리
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        enrollment = self.get_object()
+
+        # 세션 등록 먼저 삭제
+        SessionEnrollment.objects.filter(enrollment=enrollment).delete()
+
+        # 수강 등록 삭제
+        enrollment.delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class SessionEnrollmentViewSet(ModelViewSet):

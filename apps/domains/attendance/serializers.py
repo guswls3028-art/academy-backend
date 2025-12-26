@@ -18,6 +18,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "session",
+            "enrollment_id",  # ⭐ 추가
             "status",
             "memo",
             "name",
