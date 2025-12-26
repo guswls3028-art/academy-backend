@@ -47,19 +47,6 @@ urlpatterns += [
     ),
 ]
 
-# ========================================================
-# Step 3: HLS Serving (v1)
-# ========================================================
-
-urlpatterns += [
-    path(
-        "hls/videos/<int:video_id>/<path:path>",
-        HLSMediaServeView.as_view(),
-        name="media-hls-serve",
-    ),
-]
-
-
 # 대충 붙이기
 
 from .views import PlaybackSessionView

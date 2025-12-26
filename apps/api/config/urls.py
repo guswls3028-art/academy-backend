@@ -3,14 +3,14 @@ from django.urls import path, include
 from django.conf import settings
 import sys
 
-# HLS개발환경용
-from django.conf.urls.static import static
-# 삭제예정
-
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
+
+from django.conf.urls.static import static
+from apps.support.media.views import HLSMediaServeView
+
 
 urlpatterns = [
     # =========================
@@ -28,7 +28,18 @@ urlpatterns = [
     # API v1
     # =========================
     path("api/v1/", include("apps.api.v1.urls")),
-    ]
+]
+
+# =========================
+# 🔥 HLS (API 바깥, 루트)
+# =========================
+urlpatterns += [
+    path(
+        "hls/videos/<int:video_id>/<path:path>",
+        HLSMediaServeView.as_view(),
+        name="hls-media-serve",
+    ),
+]
 
 # =========================
 # Debug Toolbar (DEBUG only)
@@ -39,9 +50,10 @@ if settings.DEBUG and "runserver" in sys.argv:
         path("__debug__/", include(debug_toolbar.urls)),
     ]
 
-
-# HLS 테스트용 개발환경용 삭제예정
-urlpatterns += static(
-    settings.MEDIA_URL,
-    document_root=settings.MEDIA_ROOT,
-)
+# =========================
+# DEV ONLY: media static
+# =========================
+if settings.DEBUG:
+    urlpatterns += static(
+        settings.MEDIA_URL,
+        document_root=settings.MEDI_
