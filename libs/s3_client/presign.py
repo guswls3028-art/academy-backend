@@ -43,19 +43,19 @@ def _get_bucket() -> str:
 
 def create_presigned_put_url(
     key: str,
+    content_type: str,
     expires_in: int = PRESIGN_UPLOAD_EXPIRES,
 ) -> str:
-    """
-    Generate presigned PUT url (upload)
-    """
     return _s3.generate_presigned_url(
         ClientMethod="put_object",
         Params={
             "Bucket": _get_bucket(),
             "Key": key,
+            "ContentType": content_type,  # 🔥 핵심
         },
         ExpiresIn=expires_in,
     )
+
 
 
 def create_presigned_get_url(
