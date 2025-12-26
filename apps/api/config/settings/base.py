@@ -161,7 +161,7 @@ CORS_ALLOW_CREDENTIALS = True
 # VIDEO / CDN
 # ==================================================
 
-CDN_HLS_BASE_URL = "https://beth-none-discovered-repairs.trycloudflare.com"
+CDN_HLS_BASE_URL = "https://pub-54ae4dcb984d4491b08f6c57023a1621.r2.dev/media"
 VIDEO_PLAYBACK_TTL_SECONDS = int(os.getenv("VIDEO_PLAYBACK_TTL_SECONDS", "600"))
 
 # ==================================================
