@@ -1,3 +1,5 @@
+# apps/core/views.py
+
 from datetime import datetime
 from django.db.models import Sum
 
