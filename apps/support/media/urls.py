@@ -10,7 +10,6 @@ from .views import (
     VideoViewSet,
     VideoPermissionViewSet,
     VideoProgressViewSet,
-    HLSMediaServeView,
 )
 
 router = DefaultRouter()
