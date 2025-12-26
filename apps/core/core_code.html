@@ -34,13 +34,33 @@ section { margin-bottom:32px; }
         
         <section>
             <h2>apps.py</h2>
-            <pre><code>from django.apps import AppConfig
+            <pre><code># apps/core/apps.py
+
+from django.apps import AppConfig
 
 
 class CoreConfig(AppConfig):
     default_auto_field = &quot;django.db.models.BigAutoField&quot;
     name = &quot;apps.core&quot;
     label = &quot;core&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>authentication.py</h2>
+            <pre><code># apps/core/authentication.py
+
+from rest_framework.authentication import SessionAuthentication
+
+
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    &quot;&quot;&quot;
+    API 전용 SessionAuthentication
+    - 로그인 세션은 유지
+    - CSRF 검사는 비활성화
+    &quot;&quot;&quot;
+    def enforce_csrf(self, request):
+        return
 </code></pre>
         </section>
         
@@ -256,7 +276,9 @@ class IsStudent(BasePermission):
         
         <section>
             <h2>serializers.py</h2>
-            <pre><code>from rest_framework import serializers
+            <pre><code># apps/core/serializers.py
+
+from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
 from apps.core.models import Attendance, Expense
@@ -316,7 +338,9 @@ class ExpenseSerializer(serializers.ModelSerializer):
         
         <section>
             <h2>urls.py</h2>
-            <pre><code>from django.urls import path, include
+            <pre><code># apps/core/urls.py
+
+from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from apps.core.views import (
@@ -340,7 +364,9 @@ urlpatterns = [
         
         <section>
             <h2>views.py</h2>
-            <pre><code>from datetime import datetime
+            <pre><code># apps/core/views.py
+
+from datetime import datetime
 from django.db.models import Sum
 
 from rest_framework.views import APIView

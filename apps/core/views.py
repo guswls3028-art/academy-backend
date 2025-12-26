@@ -29,6 +29,8 @@ class MeView(APIView):
 
     @swagger_auto_schema(auto_schema=None)
     def get(self, request):
+        print("AUTH HEADER:", request.headers.get("Authorization"))
+        print("USER:", request.user, request.user.is_authenticated)
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 

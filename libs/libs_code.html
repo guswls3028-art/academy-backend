@@ -49,14 +49,15 @@ section { margin-bottom:32px; }
         
         <section>
             <h2>redis_client\client.py</h2>
-            <pre><code>import os
-import redis
+            <pre><code># libs/redis_client/client.py
 
-REDIS_URL = os.getenv(&quot;REDIS_URL&quot;, &quot;redis://localhost:6379/0&quot;)
+import os
+import redis
+from django.conf import settings
 
 redis_client = redis.Redis.from_url(
-    REDIS_URL,
-    decode_responses=True,
+    settings.REDIS_URL,
+    decode_responses=False,  # 🔥 이게 정석
 )
 </code></pre>
         </section>
@@ -157,19 +158,19 @@ def _get_bucket() -&gt; str:
 
 def create_presigned_put_url(
     key: str,
+    content_type: str,
     expires_in: int = PRESIGN_UPLOAD_EXPIRES,
 ) -&gt; str:
-    &quot;&quot;&quot;
-    Generate presigned PUT url (upload)
-    &quot;&quot;&quot;
     return _s3.generate_presigned_url(
         ClientMethod=&quot;put_object&quot;,
         Params={
             &quot;Bucket&quot;: _get_bucket(),
             &quot;Key&quot;: key,
+            &quot;ContentType&quot;: content_type,  # 🔥 핵심
         },
         ExpiresIn=expires_in,
     )
+
 
 
 def create_presigned_get_url(
