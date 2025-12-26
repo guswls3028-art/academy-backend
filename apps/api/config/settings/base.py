@@ -1,4 +1,4 @@
-# apps\api\config\setttings\base.py
+# apps/api/config/settings/base.py
 
 from pathlib import Path
 from datetime import timedelta
@@ -10,15 +10,11 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 
-SECRET_KEY = "dev-secret-key"
-DEBUG = True
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
+DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 ALLOWED_HOSTS = ["*"]
 
 AUTH_USER_MODEL = "core.User"
-
-API_BASE_URL = os.getenv("API_BASE_URL")
-
-
 
 # ==================================================
 # INSTALLED APPS
@@ -42,24 +38,19 @@ INSTALLED_APPS = [
     "apps.domains.teachers",
     "apps.domains.staffs",
     "apps.domains.parents",
-
     "apps.domains.lectures",
     "apps.domains.enrollment",
     "apps.domains.attendance",
     "apps.domains.schedule",
-
     "apps.domains.interactions.materials",
     "apps.domains.interactions.questions",
     "apps.domains.interactions.counseling",
     "apps.domains.interactions.boards",
-
     "apps.domains.exams",
     "apps.domains.homework",
     "apps.domains.submissions",
     "apps.domains.results",
-
     "apps.domains.clinic",
-
     "apps.domains.ai.apps.AIDomainConfig",
 
     # support
@@ -76,7 +67,7 @@ INSTALLED_APPS = [
     # CORS
     "corsheaders",
 
-    # shared 여기에 등록해야 워커에서 줏어감. 
+    # shared (워커 태스크 자동 탐색)
     "apps.shared",
 ]
 
@@ -93,8 +84,6 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-
-    # Tenant
     "apps.core.middleware.tenant.TenantMiddleware",
 ]
 
@@ -103,28 +92,8 @@ MIDDLEWARE = [
 # ==================================================
 
 ROOT_URLCONF = "apps.api.config.urls"
-
 WSGI_APPLICATION = "apps.api.config.wsgi.application"
 ASGI_APPLICATION = "apps.api.config.asgi.application"
-
-# ==================================================
-# TEMPLATES
-# ==================================================
-
-TEMPLATES = [
-    {
-        "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
-        "APP_DIRS": True,
-        "OPTIONS": {
-            "context_processors": [
-                "django.template.context_processors.request",
-                "django.contrib.auth.context_processors.auth",
-                "django.contrib.messages.context_processors.messages",
-            ],
-        },
-    },
-]
 
 # ==================================================
 # DATABASE
@@ -141,31 +110,12 @@ DATABASES = {
     }
 }
 
-
-# ==================================================
-# AUTH
-# ==================================================
-
-AUTHENTICATION_BACKENDS = [
-    "django.contrib.auth.backends.ModelBackend",
-]
-
-AUTH_PASSWORD_VALIDATORS = [
-    {
-        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"
-    },
-]
-
 # ==================================================
 # GLOBAL
 # ==================================================
 
 LANGUAGE_CODE = "ko-kr"
 TIME_ZONE = "Asia/Seoul"
-
 USE_I18N = True
 USE_TZ = True
 
@@ -209,70 +159,21 @@ CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
 # ==================================================
-# CELERY / REDIS
+# VIDEO / CDN
 # ==================================================
 
-CELERY_BROKER_URL = os.environ["CELERY_BROKER_URL"]
-CELERY_RESULT_BACKEND = os.environ["CELERY_RESULT_BACKEND"]
-
-CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TASK_SERIALIZER = "json"
-CELERY_RESULT_SERIALIZER = "json"
-
-CELERY_TASK_DEFAULT_QUEUE = "default"
-
-CELERY_TIMEZONE = TIME_ZONE
-
-CELERY_TASK_ACKS_LATE = True
-CELERY_TASK_REJECT_ON_WORKER_LOST = True
-CELERY_WORKER_PREFETCH_MULTIPLIER = 1
-
-INTERNAL_WORKER_TOKEN = "long-random-secret"
-
-# ==================================================
-# VIDEO PLAYBACK / CDN
-# ==================================================
-
-CLOUDFRONT_DOMAIN = os.getenv("CLOUDFRONT_DOMAIN", "")
-CLOUDFRONT_KEY_PAIR_ID = os.getenv("CLOUDFRONT_KEY_PAIR_ID", "")
-CLOUDFRONT_PRIVATE_KEY_PEM = os.getenv("CLOUDFRONT_PRIVATE_KEY_PEM", "")
-
-# ✅ 수정된 부분
-CDN_HLS_BASE_URL = "https://pub-54ae4dcb984d4491b08f6c57023a1621.r2.dev"
-
+CDN_HLS_BASE_URL = os.getenv("CDN_HLS_BASE_URL", "")
 VIDEO_PLAYBACK_TTL_SECONDS = int(os.getenv("VIDEO_PLAYBACK_TTL_SECONDS", "600"))
-VIDEO_MAX_SESSIONS = int(os.getenv("VIDEO_MAX_SESSIONS", "9999"))
-VIDEO_MAX_DEVICES = int(os.getenv("VIDEO_MAX_DEVICES", "9999"))
 
-REQUIRED_ENV_VARS = [
-    ("CLOUDFRONT_DOMAIN", CLOUDFRONT_DOMAIN),
-    ("CLOUDFRONT_KEY_PAIR_ID", CLOUDFRONT_KEY_PAIR_ID),
-    ("CLOUDFRONT_PRIVATE_KEY_PEM", CLOUDFRONT_PRIVATE_KEY_PEM),
-    ("CDN_HLS_BASE_URL", CDN_HLS_BASE_URL),
-]
-
-# NOTE:
-# 개발/베타 단계에서는 예외를 던지지 않고 상태만 기록한다.
-# 실제 재생 API에서만 VIDEO_PLAYBACK_ENABLED 여부를 확인해 차단한다.
-VIDEO_PLAYBACK_CONFIG_MISSING = [
-    name for name, value in REQUIRED_ENV_VARS if not value
-]
-
-VIDEO_PLAYBACK_ENABLED = not bool(VIDEO_PLAYBACK_CONFIG_MISSING)
-
-
-
-
-
-# ------------------------------------------------------------------
+# ==================================================
 # Cloudflare R2
-# ------------------------------------------------------------------
-R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
-R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
-R2_ENDPOINT = os.environ.get("R2_ENDPOINT")
-R2_PUBLIC_BASE_URL = os.environ.get("R2_PUBLIC_BASE_URL")
-R2_BUCKET = os.environ.get("R2_BUCKET")
+# ==================================================
 
-# 안전장치 (개발 중에만)
+R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
+R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT")
+R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
+R2_BUCKET = os.getenv("R2_BUCKET")
+
 if DEBUG:
     print("[settings] R2_ENDPOINT =", R2_ENDPOINT)

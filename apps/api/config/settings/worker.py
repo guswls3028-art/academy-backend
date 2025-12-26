@@ -1,24 +1,32 @@
 # apps/api/config/settings/worker.py
 
 from .base import *
+import os
 
-# ⛔️ Worker는 URLConf를 타지 않도록
+# 워커는 URLConf 불필요
 ROOT_URLCONF = None
 
 # ==================================================
-# Celery (Redis)
+# Celery (워커 필수)
 # ==================================================
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL")
-CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND")
 
+CELERY_BROKER_URL = os.environ["CELERY_BROKER_URL"]
+CELERY_RESULT_BACKEND = os.environ["CELERY_RESULT_BACKEND"]
 
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 
-# ==================================================
-# Worker internal API call
-# ==================================================
-API_BASE_URL = os.getenv("API_BASE_URL")
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
-INTERNAL_WORKER_TOKEN = "long-random-secret"
+# ==================================================
+# Worker → API 통신
+# ==================================================
+
+API_BASE_URL = os.environ["API_BASE_URL"]
+INTERNAL_WORKER_TOKEN = os.environ.get(
+    "INTERNAL_WORKER_TOKEN", "long-random-secret"
+)

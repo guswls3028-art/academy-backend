@@ -1,0 +1,38 @@
+# Django & API
+Django==5.2.9
+djangorestframework==3.16.1
+django-cors-headers==4.9.0
+django-filter==25.2
+django-debug-toolbar==6.1.0
+django-timezone-field==7.2.1
+django_celery_results==2.6.0
+django-celery-beat==2.8.1
+
+# Auth / Docs
+djangorestframework_simplejwt==5.5.1
+drf-nested-routers==0.95.0
+drf-yasg==1.21.11
+
+# Celery (API는 client만)
+celery==5.6.0
+amqp==5.3.1
+billiard==4.2.4
+kombu==5.6.1
+redis==6.4.0
+
+# DB / Infra
+psycopg2-binary==2.9.11
+boto3==1.42.13
+botocore==1.42.13
+s3transfer==0.16.0
+
+# HTTP / Utils
+requests==2.32.5
+httpx==0.28.1
+anyio==4.12.0
+pytz==2025.2
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+
+# Server
+gunicorn

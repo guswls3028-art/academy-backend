@@ -2,12 +2,15 @@
 import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
 
 def main():
-    # 🔴 academy 루트를 PYTHONPATH에 추가
     BASE_DIR = Path(__file__).resolve().parents[2]
     sys.path.append(str(BASE_DIR))
+
+    # ✅ .env 로드
+    load_dotenv(BASE_DIR / ".env")
 
     os.environ.setdefault(
         "DJANGO_SETTINGS_MODULE",
