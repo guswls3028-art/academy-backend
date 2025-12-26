@@ -1,9 +1,10 @@
+# libs/redis_client/client.py
+
 import os
 import redis
-
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+from django.conf import settings
 
 redis_client = redis.Redis.from_url(
-    REDIS_URL,
-    decode_responses=True,
+    settings.REDIS_URL,
+    decode_responses=False,  # 🔥 이게 정석
 )
