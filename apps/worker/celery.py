@@ -23,6 +23,11 @@ app.config_from_object(
     namespace="CELERY",
 )
 
+# 🔥 추가 (이 줄이 핵심)
+app.conf.broker_url = os.environ.get("CELERY_BROKER_URL")
+app.conf.result_backend = os.environ.get("CELERY_RESULT_BACKEND")
+
+
 # ✅ 핵심: 인자 없이 autodiscover
 app.autodiscover_tasks()
 
