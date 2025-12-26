@@ -148,7 +148,13 @@ class VideoViewSet(ModelViewSet):
         ext = filename.split(".")[-1]
         key = f"videos/{session_id}/{uuid4()}.{ext}"
 
-        upload_url = create_presigned_put_url(key=key)
+        content_type = request.data.get("content_type") or "application/octet-stream"
+
+        upload_url = create_presigned_put_url(
+            key=key,
+            content_type=content_type,
+        )
+
         return Response({"upload_url": upload_url, "file_key": key})
 
     # --------------------------------------------------
@@ -233,7 +239,12 @@ class VideoViewSet(ModelViewSet):
             show_watermark=show_watermark,
         )
 
-        upload_url = create_presigned_put_url(key=key)
+        content_type = request.data.get("content_type") or "application/octet-stream"
+
+        upload_url = create_presigned_put_url(
+            key=key,
+            content_type=content_type,
+        )
 
         return Response(
             {
