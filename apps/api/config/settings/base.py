@@ -177,3 +177,23 @@ R2_BUCKET = os.getenv("R2_BUCKET")
 
 if DEBUG:
     print("[settings] R2_ENDPOINT =", R2_ENDPOINT)
+
+# ==================================================
+# TEMPLATES
+# ==================================================
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
