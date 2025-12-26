@@ -154,3 +154,6 @@ class PlaybackEventBatchRequestSerializer(serializers.Serializer):
 
 class PlaybackEventBatchResponseSerializer(serializers.Serializer):
     stored = serializers.IntegerField()
+
+class PlaybackStartFacadeRequestSerializer(serializers.Serializer):
+    device_id = serializers.CharField(max_length=128)

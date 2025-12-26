@@ -19,7 +19,8 @@ from rest_framework.filters import SearchFilter
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
-from rest_framework import serializers
+from .serializers import PlaybackStartFacadeRequestSerializer
+
 
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -113,8 +114,6 @@ class VideoViewSet(ModelViewSet):
         "upload_init",
         "upload_complete",
         "retry",
-        "complete",
-        "presign",
         "create",
         "update",
         "partial_update",
@@ -130,77 +129,8 @@ class VideoViewSet(ModelViewSet):
     filterset_fields = ["session", "status"]
     search_fields = ["title"]
 
-    # --------------------------------------------------
-    # [LEGACY] Presigned URL 발급
-    # POST /media/videos/presign/
-    # --------------------------------------------------
-    @action(detail=False, methods=["post"], url_path="presign")
-    def presign(self, request):
-        session_id = request.data.get("session")
-        filename = request.data.get("filename")
-
-        if not session_id or not filename:
-            return Response(
-                {"detail": "session, filename required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        ext = filename.split(".")[-1]
-        key = f"videos/{session_id}/{uuid4()}.{ext}"
-
-        content_type = request.data.get("content_type") or "application/octet-stream"
-
-        upload_url = create_presigned_put_url(
-            key=key,
-            content_type=content_type,
-        )
-
-        return Response({"upload_url": upload_url, "file_key": key})
-
-    # --------------------------------------------------
-    # [LEGACY] 업로드 완료 + Worker 트리거
-    # POST /media/videos/complete/
-    # --------------------------------------------------
-    @transaction.atomic
-    @action(detail=False, methods=["post"], url_path="complete")
-    def complete(self, request):
-        session_id = request.data.get("session")
-        title = request.data.get("title")
-        file_key = request.data.get("file_key")
-
-        if not all([session_id, title, file_key]):
-            return Response(
-                {"detail": "session, title, file_key required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        exists, size = head_object(file_key)
-        if not exists or size == 0:
-            return Response(
-                {"detail": "S3 object not found"},
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        session = Session.objects.get(id=session_id)
-        order = (session.videos.aggregate(
-            max_order=models.Max("order")
-        ).get("max_order") or 0) + 1
-
-        video = Video.objects.create(
-            session=session,
-            title=title,
-            file_key=file_key,
-            order=order,
-            status=Video.Status.UPLOADED,
-        )
-
-        # 🔥 여기만 바뀜 (on_commit 제거)
-        process_video_media.delay(video.id)
-
-        return Response(VideoSerializer(video).data, status=201)
-
     # ==================================================
-    # [NEW] Step 1) upload/init
+    # Step 1) upload/init
     # POST /media/videos/upload/init/
     # ==================================================
     @transaction.atomic
@@ -239,7 +169,11 @@ class VideoViewSet(ModelViewSet):
             show_watermark=show_watermark,
         )
 
-        content_type = request.data.get("content_type") or "application/octet-stream"
+        content_type = request.data.get("content_type") or "video/mp4"
+
+        # ✅ 정규화 (중요)
+        if ";" in content_type:
+            content_type = content_type.split(";")[0]
 
         upload_url = create_presigned_put_url(
             key=key,
@@ -251,12 +185,13 @@ class VideoViewSet(ModelViewSet):
                 "video": VideoSerializer(video).data,
                 "upload_url": upload_url,
                 "file_key": key,
+                "content_type": content_type,  # ⭐ 프론트가 그대로 사용
             },
             status=status.HTTP_201_CREATED,
         )
 
     # ==================================================
-    # [NEW] Step 2) upload/complete
+    # Step 2) upload/complete
     # POST /media/videos/{id}/upload/complete/
     # ==================================================
     @transaction.atomic
@@ -280,9 +215,9 @@ class VideoViewSet(ModelViewSet):
         video.status = Video.Status.UPLOADED
         video.save(update_fields=["status"])
 
-        # 🔥 여기만 핵심 (on_commit 제거)
-        process_video_media.delay(video.id)    
-    
+        from apps.shared.tasks.media import process_video_media
+        process_video_media.delay(video.id)
+
         return Response(VideoSerializer(video).data, status=status.HTTP_200_OK)
 
     # --------------------------------------------------
@@ -1111,10 +1046,3 @@ class VideoProcessingCompleteView(APIView):
 
         return Response({"status": "ack"}, status=200)
 
-
-
-
-#apps/support/media/serializers.py 맨 아래 아무데나 추가:
-
-class PlaybackStartFacadeRequestSerializer(serializers.Serializer):
-    device_id = serializers.CharField(max_length=128)
