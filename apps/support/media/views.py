@@ -356,9 +356,8 @@ class VideoViewSet(ModelViewSet):
         return f"/hls/videos/{video_id}/"
 
     def _public_play_url(self, video_id: int) -> str:
-        cdn_base = getattr(settings, "CDN_HLS_BASE_URL", "").rstrip("/")
-        path = f"/hls/videos/{video_id}/master.m3u8"
-        return f"{cdn_base}{path}" if cdn_base else path
+        cdn_base = settings.CDN_HLS_BASE_URL.rstrip("/")
+        return f"{cdn_base}/media/hls/videos/{video_id}/master.m3u8"
 
     def _set_signed_cookies(self, response: Response, *, video_id: int, expires_at: int) -> None:
         path_prefix = self._hls_path_prefix_for_video(video_id)
@@ -932,49 +931,51 @@ class VideoProgressViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated]
 
 
+# 장고는 서빙안하고 CDN에 넘기는것
+
 # =======================================================
 # Step 3: HLS Serving (v1) – Django Static Serve
 # URL 계약: /hls/videos/...
 # =======================================================
+# 
+# class HLSMediaServeView(View):
+#     """
+#     /hls/videos/{video_id}/master.m3u8
+#     /hls/videos/{video_id}/v1/index.m3u8
+#     /hls/videos/{video_id}/v1/seg_000.ts
+#     """
 
-class HLSMediaServeView(View):
-    """
-    /hls/videos/{video_id}/master.m3u8
-    /hls/videos/{video_id}/v1/index.m3u8
-    /hls/videos/{video_id}/v1/seg_000.ts
-    """
+#     ALLOWED_EXTENSIONS = {".m3u8", ".ts"}
 
-    ALLOWED_EXTENSIONS = {".m3u8", ".ts"}
+#     def get(self, request, video_id: int, path: str):
+#         base_dir = (
+#             Path(settings.BASE_DIR)
+#             / "storage"
+#             / "media"
+#             / "hls"
+#             / "videos"
+#             / str(video_id)
+#         )
 
-    def get(self, request, video_id: int, path: str):
-        base_dir = (
-            Path(settings.BASE_DIR)
-            / "storage"
-            / "media"
-            / "hls"
-            / "videos"
-            / str(video_id)
-        )
+#         target = (base_dir / path).resolve()
 
-        target = (base_dir / path).resolve()
+#         try:
+#             target.relative_to(base_dir.resolve())
+#         except ValueError:
+#             raise Http404("Invalid path")
 
-        try:
-            target.relative_to(base_dir.resolve())
-        except ValueError:
-            raise Http404("Invalid path")
+#         if target.suffix not in self.ALLOWED_EXTENSIONS:
+#             raise Http404("Invalid file type")
 
-        if target.suffix not in self.ALLOWED_EXTENSIONS:
-            raise Http404("Invalid file type")
+#         if not target.exists() or not target.is_file():
+#             raise Http404("File not found")
 
-        if not target.exists() or not target.is_file():
-            raise Http404("File not found")
-
-        content_type, _ = mimetypes.guess_type(str(target))
-        return FileResponse(
-            open(target, "rb"),
-            content_type=content_type or "application/octet-stream",
-        )
-
+#         content_type, _ = mimetypes.guess_type(str(target))
+#         return FileResponse(
+#             open(target, "rb"),
+#             content_type=content_type or "application/octet-stream",
+#         )
+# 
 
 # =======================================================
 # Playback Session API (Student Facade)

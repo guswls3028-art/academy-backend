@@ -9,7 +9,6 @@ from rest_framework_simplejwt.views import (
 )
 
 from django.conf.urls.static import static
-from apps.support.media.views import HLSMediaServeView
 
 
 urlpatterns = [
@@ -31,17 +30,6 @@ urlpatterns = [
 ]
 
 # =========================
-# 🔥 HLS (API 바깥, 루트)
-# =========================
-urlpatterns += [
-    path(
-        "hls/videos/<int:video_id>/<path:path>",
-        HLSMediaServeView.as_view(),
-        name="hls-media-serve",
-    ),
-]
-
-# =========================
 # Debug Toolbar (DEBUG only)
 # =========================
 if settings.DEBUG and "runserver" in sys.argv:
@@ -56,4 +44,5 @@ if settings.DEBUG and "runserver" in sys.argv:
 if settings.DEBUG:
     urlpatterns += static(
         settings.MEDIA_URL,
-        document_root=settings.MEDI_
+        document_root=settings.MEDIA_ROOT,
+    )
