@@ -48,8 +48,20 @@ urlpatterns += [
 
 # 대충 붙이기
 
-from .views import PlaybackSessionView
+# playback APIs (token-based)
+
+from .views.playback_views import (
+    PlaybackStartView,
+    PlaybackRefreshView,
+    PlaybackHeartbeatView,
+    PlaybackEndView,
+    PlaybackEventBatchView,
+)
 
 urlpatterns += [
-    path("playback/sessions/", PlaybackSessionView.as_view(), name="media-playback-session"),
+    path("playback/start/", PlaybackStartView.as_view()),
+    path("playback/refresh/", PlaybackRefreshView.as_view()),
+    path("playback/heartbeat/", PlaybackHeartbeatView.as_view()),
+    path("playback/end/", PlaybackEndView.as_view()),
+    path("playback/events/", PlaybackEventBatchView.as_view()),
 ]
