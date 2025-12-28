@@ -1,45 +1,14 @@
 
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<title>media Code Browser</title>
-<style>
-body {
-    background:#0f1115;
-    color:#eaeaea;
-    font-family:Consolas, monospace;
-    padding:24px;
-}
-h1 { margin-bottom:24px; }
-h2 { color:#7dd3fc; font-size:15px; }
-pre {
-    background:#111418;
-    padding:16px;
-    border-radius:8px;
-    overflow-x:auto;
-    font-size:13px;
-    line-height:1.5;
-}
-section { margin-bottom:32px; }
-</style>
-</head>
-<body>
-<h1>📦 apps\worker\media</h1>
+================================================================================
+# FILE: __init__.py
+================================================================================
 
-        <section>
-            <h2>__init__.py</h2>
-            <pre><code></code></pre>
-        </section>
-        
-        <section>
-            <h2>drm\__init__.py</h2>
-            <pre><code></code></pre>
-        </section>
-        
-        <section>
-            <h2>r2_uploader.py</h2>
-            <pre><code># apps/worker/media/r2_uploader.py
+
+
+================================================================================
+# FILE: r2_uploader.py
+================================================================================
+# apps/worker/media/r2_uploader.py
 
 import boto3
 import mimetypes
@@ -47,25 +16,25 @@ from pathlib import Path
 from django.conf import settings
 
 s3 = boto3.client(
-    &quot;s3&quot;,
+    "s3",
     endpoint_url=settings.R2_ENDPOINT,
     aws_access_key_id=settings.R2_ACCESS_KEY,
     aws_secret_access_key=settings.R2_SECRET_KEY,
-    region_name=&quot;auto&quot;,
+    region_name="auto",
 )
 
 def upload_dir(local_dir: Path, prefix: str):
-    &quot;&quot;&quot;
+    """
     local_dir 전체를 prefix 기준으로 R2에 업로드
     (Windows 경로 문제 방지용 표준형)
-    &quot;&quot;&quot;
-    for path in local_dir.rglob(&quot;*&quot;):
+    """
+    for path in local_dir.rglob("*"):
         if not path.is_file():
             continue
 
         # 🔥🔥🔥 핵심
         relative_path = path.relative_to(local_dir).as_posix()
-        key = f&quot;{prefix}/{relative_path}&quot;
+        key = f"{prefix}/{relative_path}"
 
         content_type, _ = mimetypes.guess_type(path.name)
 
@@ -74,15 +43,15 @@ def upload_dir(local_dir: Path, prefix: str):
             settings.R2_BUCKET,
             key,
             ExtraArgs={
-                &quot;ContentType&quot;: content_type or &quot;application/octet-stream&quot;
+                "ContentType": content_type or "application/octet-stream"
             },
         )
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>tasks.py</h2>
-            <pre><code># worker/media/tasks.py
+
+
+================================================================================
+# FILE: tasks.py
+================================================================================
+# worker/media/tasks.py
 # Worker 프로세스가 media task를 확실히 import하도록 고정점 역할
 from apps.shared.tasks.media import process_video_media  # noqa: F401
 # worker 쪽 코드 예시 (apps/shared/tasks/media.py 내부)
@@ -91,26 +60,33 @@ import requests
 from django.conf import settings
 
 def notify_processing_complete(*, video_id: int, hls_path: str, duration: int | None):
-    url = f&quot;{settings.API_BASE_URL}/internal/videos/{video_id}/processing-complete/&quot;
+    url = f"{settings.API_BASE_URL}/internal/videos/{video_id}/processing-complete/"
     requests.post(
         url,
         json={
-            &quot;hls_path&quot;: hls_path,
-            &quot;duration&quot;: duration,
+            "hls_path": hls_path,
+            "duration": duration,
         },
         timeout=5,
     )
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>video\__init__.py</h2>
-            <pre><code></code></pre>
-        </section>
-        
-        <section>
-            <h2>video\processor.py</h2>
-            <pre><code># apps/worker/media/video/processor.py
+
+
+================================================================================
+# FILE: drm/__init__.py
+================================================================================
+
+
+
+================================================================================
+# FILE: video/__init__.py
+================================================================================
+
+
+
+================================================================================
+# FILE: video/processor.py
+================================================================================
+# apps/worker/media/video/processor.py
 
 from __future__ import annotations
 
@@ -127,14 +103,14 @@ from .transcoder import transcode_to_hls
 
 
 # ---------------------------------------------------------------------
-# Errors (processor -&gt; task boundary)
+# Errors (processor -> task boundary)
 # ---------------------------------------------------------------------
 
 class MediaProcessingError(RuntimeError):
-    &quot;&quot;&quot;
+    """
     Processor-level error with structured context.
     Task layer should catch this and mark Video as FAILED.
-    &quot;&quot;&quot;
+    """
 
     def __init__(
         self,
@@ -143,23 +119,23 @@ class MediaProcessingError(RuntimeError):
         code: str,
         message: str,
         context: Optional[Dict[str, Any]] = None,
-    ) -&gt; None:
+    ) -> None:
         super().__init__(message)
         self.stage = stage
         self.code = code
         self.context = context or {}
 
-    def to_dict(self) -&gt; Dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return {
-            &quot;stage&quot;: self.stage,
-            &quot;code&quot;: self.code,
-            &quot;message&quot;: str(self),
-            &quot;context&quot;: self.context,
+            "stage": self.stage,
+            "code": self.code,
+            "message": str(self),
+            "context": self.context,
         }
 
 
 # ---------------------------------------------------------------------
-# Result contract (processor -&gt; task)
+# Result contract (processor -> task)
 # ---------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -176,14 +152,14 @@ class ProcessResult:
 # ---------------------------------------------------------------------
 
 class VideoProcessor:
-    &quot;&quot;&quot;
+    """
     The single authority that turns one uploaded video into READY artifacts:
       - download source to local
       - duration (ffprobe local)
       - thumbnail (ffmpeg local)
       - HLS (transcoder.transcode_to_hls local)
       - verification (master.m3u8 exists)
-    &quot;&quot;&quot;
+    """
 
     def run(
         self,
@@ -196,7 +172,7 @@ class VideoProcessor:
         timeout_thumbnail: Optional[int] = 120,
         timeout_hls: Optional[int] = None,
         cleanup_source: bool = False,
-    ) -&gt; ProcessResult:
+    ) -> ProcessResult:
         out_root = Path(output_root)
 
         # 1) pre-clean
@@ -222,7 +198,7 @@ class VideoProcessor:
             )
 
             # 4) thumbnail (local)
-            thumb_path = out_root / &quot;thumbnail.jpg&quot;
+            thumb_path = out_root / "thumbnail.jpg"
             self._generate_thumbnail(
                 video_id=video_id,
                 input_path=str(local_input_path),
@@ -264,24 +240,24 @@ class VideoProcessor:
     # Internal steps
     # -----------------------------------------------------------------
 
-    def _pre_clean_output_root(self, *, video_id: int, output_root: Path) -&gt; None:
-        &quot;&quot;&quot;
+    def _pre_clean_output_root(self, *, video_id: int, output_root: Path) -> None:
+        """
         Delete output_root entirely if exists, then recreate.
         Prevents stale artifacts from making retries look successful.
-        &quot;&quot;&quot;
+        """
         try:
             if output_root.exists():
                 shutil.rmtree(output_root)
             output_root.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             raise MediaProcessingError(
-                stage=&quot;CLEAN&quot;,
-                code=&quot;CLEAN_FAILED&quot;,
-                message=f&quot;Failed to pre-clean output_root (video_id={video_id})&quot;,
+                stage="CLEAN",
+                code="CLEAN_FAILED",
+                message=f"Failed to pre-clean output_root (video_id={video_id})",
                 context={
-                    &quot;video_id&quot;: video_id,
-                    &quot;output_root&quot;: str(output_root),
-                    &quot;error&quot;: repr(e),
+                    "video_id": video_id,
+                    "output_root": str(output_root),
+                    "error": repr(e),
                 },
             ) from e
 
@@ -293,24 +269,24 @@ class VideoProcessor:
         output_root: Path,
         timeout: Optional[int] = 60 * 30,  # 30m
         chunk_size: int = 1024 * 1024,      # 1MB
-    ) -&gt; Path:
-        &quot;&quot;&quot;
+    ) -> Path:
+        """
         Download source MP4 from presigned GET URL to local disk.
-        &quot;&quot;&quot;
+        """
         output_root.mkdir(parents=True, exist_ok=True)
 
-        final_path = output_root / &quot;_source.mp4&quot;
-        tmp_path = output_root / &quot;_source.mp4.part&quot;
+        final_path = output_root / "_source.mp4"
+        tmp_path = output_root / "_source.mp4.part"
 
         try:
             with requests.get(input_url, stream=True, timeout=30) as r:
                 r.raise_for_status()
 
-                expected_len = r.headers.get(&quot;Content-Length&quot;)
+                expected_len = r.headers.get("Content-Length")
                 expected_len_int = int(expected_len) if expected_len and expected_len.isdigit() else None
 
                 written = 0
-                with open(tmp_path, &quot;wb&quot;) as f:
+                with open(tmp_path, "wb") as f:
                     for chunk in r.iter_content(chunk_size=chunk_size):
                         if not chunk:
                             continue
@@ -319,7 +295,7 @@ class VideoProcessor:
 
                 if expected_len_int is not None and written != expected_len_int:
                     raise RuntimeError(
-                        f&quot;download size mismatch (expected={expected_len_int}, got={written})&quot;
+                        f"download size mismatch (expected={expected_len_int}, got={written})"
                     )
 
             tmp_path.replace(final_path)
@@ -333,14 +309,14 @@ class VideoProcessor:
                 pass
 
             raise MediaProcessingError(
-                stage=&quot;DOWNLOAD&quot;,
-                code=&quot;DOWNLOAD_FAILED&quot;,
-                message=f&quot;Failed to download source (video_id={video_id})&quot;,
+                stage="DOWNLOAD",
+                code="DOWNLOAD_FAILED",
+                message=f"Failed to download source (video_id={video_id})",
                 context={
-                    &quot;video_id&quot;: video_id,
-                    &quot;input_url&quot;: input_url[:2000],
-                    &quot;output_root&quot;: str(output_root),
-                    &quot;error&quot;: repr(e),
+                    "video_id": video_id,
+                    "input_url": input_url[:2000],
+                    "output_root": str(output_root),
+                    "error": repr(e),
                 },
             ) from e
 
@@ -350,16 +326,16 @@ class VideoProcessor:
         video_id: int,
         input_path: str,
         timeout: Optional[int],
-    ) -&gt; float:
-        &quot;&quot;&quot;
+    ) -> float:
+        """
         ffprobe local file.
-        &quot;&quot;&quot;
+        """
         cmd = [
-            &quot;ffprobe&quot;,
-            &quot;-v&quot;, &quot;error&quot;,
-            &quot;-print_format&quot;, &quot;json&quot;,
-            &quot;-show_format&quot;,
-            &quot;-show_streams&quot;,
+            "ffprobe",
+            "-v", "error",
+            "-print_format", "json",
+            "-show_format",
+            "-show_streams",
             input_path,
         ]
 
@@ -374,56 +350,56 @@ class VideoProcessor:
             )
         except Exception as e:
             raise MediaProcessingError(
-                stage=&quot;PROBE&quot;,
-                code=&quot;PROBE_FAILED&quot;,
-                message=f&quot;ffprobe execution failed (video_id={video_id})&quot;,
+                stage="PROBE",
+                code="PROBE_FAILED",
+                message=f"ffprobe execution failed (video_id={video_id})",
                 context={
-                    &quot;video_id&quot;: video_id,
-                    &quot;cmd&quot;: cmd,
-                    &quot;error&quot;: repr(e),
+                    "video_id": video_id,
+                    "cmd": cmd,
+                    "error": repr(e),
                 },
             ) from e
 
         if p.returncode != 0:
             raise MediaProcessingError(
-                stage=&quot;PROBE&quot;,
-                code=&quot;PROBE_FAILED&quot;,
-                message=f&quot;ffprobe returned non-zero (video_id={video_id})&quot;,
+                stage="PROBE",
+                code="PROBE_FAILED",
+                message=f"ffprobe returned non-zero (video_id={video_id})",
                 context={
-                    &quot;video_id&quot;: video_id,
-                    &quot;cmd&quot;: cmd,
-                    &quot;returncode&quot;: p.returncode,
-                    &quot;stderr&quot;: p.stderr,
+                    "video_id": video_id,
+                    "cmd": cmd,
+                    "returncode": p.returncode,
+                    "stderr": p.stderr,
                 },
             )
 
         try:
             data = json.loads(p.stdout)
-            fmt = data.get(&quot;format&quot;) or {}
-            duration_str = fmt.get(&quot;duration&quot;)
+            fmt = data.get("format") or {}
+            duration_str = fmt.get("duration")
             duration = float(duration_str) if duration_str is not None else 0.0
         except Exception as e:
             raise MediaProcessingError(
-                stage=&quot;PROBE&quot;,
-                code=&quot;PROBE_FAILED&quot;,
-                message=f&quot;Failed to parse ffprobe output (video_id={video_id})&quot;,
+                stage="PROBE",
+                code="PROBE_FAILED",
+                message=f"Failed to parse ffprobe output (video_id={video_id})",
                 context={
-                    &quot;video_id&quot;: video_id,
-                    &quot;cmd&quot;: cmd,
-                    &quot;stdout&quot;: p.stdout[:4000],
-                    &quot;error&quot;: repr(e),
+                    "video_id": video_id,
+                    "cmd": cmd,
+                    "stdout": p.stdout[:4000],
+                    "error": repr(e),
                 },
             ) from e
 
-        if duration &lt;= 0:
+        if duration <= 0:
             raise MediaProcessingError(
-                stage=&quot;PROBE&quot;,
-                code=&quot;PROBE_FAILED&quot;,
-                message=f&quot;Invalid duration from ffprobe (video_id={video_id}, duration={duration})&quot;,
+                stage="PROBE",
+                code="PROBE_FAILED",
+                message=f"Invalid duration from ffprobe (video_id={video_id}, duration={duration})",
                 context={
-                    &quot;video_id&quot;: video_id,
-                    &quot;cmd&quot;: cmd,
-                    &quot;duration&quot;: duration,
+                    "video_id": video_id,
+                    "cmd": cmd,
+                    "duration": duration,
                 },
             )
 
@@ -436,18 +412,18 @@ class VideoProcessor:
         input_path: str,
         output_path: Path,
         timeout: Optional[int],
-    ) -&gt; None:
-        &quot;&quot;&quot;
+    ) -> None:
+        """
         Generate one thumbnail jpg from local file.
-        &quot;&quot;&quot;
+        """
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         cmd = [
-            &quot;ffmpeg&quot;,
-            &quot;-y&quot;,
-            &quot;-i&quot;, input_path,
-            &quot;-vf&quot;, &quot;thumbnail,scale=1280:-2&quot;,
-            &quot;-frames:v&quot;, &quot;1&quot;,
+            "ffmpeg",
+            "-y",
+            "-i", input_path,
+            "-vf", "thumbnail,scale=1280:-2",
+            "-frames:v", "1",
             str(output_path),
         ]
 
@@ -462,37 +438,37 @@ class VideoProcessor:
             )
         except Exception as e:
             raise MediaProcessingError(
-                stage=&quot;THUMBNAIL&quot;,
-                code=&quot;THUMBNAIL_FAILED&quot;,
-                message=f&quot;ffmpeg thumbnail execution failed (video_id={video_id})&quot;,
+                stage="THUMBNAIL",
+                code="THUMBNAIL_FAILED",
+                message=f"ffmpeg thumbnail execution failed (video_id={video_id})",
                 context={
-                    &quot;video_id&quot;: video_id,
-                    &quot;cmd&quot;: cmd,
-                    &quot;error&quot;: repr(e),
+                    "video_id": video_id,
+                    "cmd": cmd,
+                    "error": repr(e),
                 },
             ) from e
 
         if p.returncode != 0:
             raise MediaProcessingError(
-                stage=&quot;THUMBNAIL&quot;,
-                code=&quot;THUMBNAIL_FAILED&quot;,
-                message=f&quot;ffmpeg thumbnail returned non-zero (video_id={video_id})&quot;,
+                stage="THUMBNAIL",
+                code="THUMBNAIL_FAILED",
+                message=f"ffmpeg thumbnail returned non-zero (video_id={video_id})",
                 context={
-                    &quot;video_id&quot;: video_id,
-                    &quot;cmd&quot;: cmd,
-                    &quot;returncode&quot;: p.returncode,
-                    &quot;stderr&quot;: p.stderr,
+                    "video_id": video_id,
+                    "cmd": cmd,
+                    "returncode": p.returncode,
+                    "stderr": p.stderr,
                 },
             )
 
         if not output_path.exists():
             raise MediaProcessingError(
-                stage=&quot;THUMBNAIL&quot;,
-                code=&quot;THUMBNAIL_FAILED&quot;,
-                message=f&quot;thumbnail file not created (video_id={video_id})&quot;,
+                stage="THUMBNAIL",
+                code="THUMBNAIL_FAILED",
+                message=f"thumbnail file not created (video_id={video_id})",
                 context={
-                    &quot;video_id&quot;: video_id,
-                    &quot;output_path&quot;: str(output_path),
+                    "video_id": video_id,
+                    "output_path": str(output_path),
                 },
             )
 
@@ -503,10 +479,10 @@ class VideoProcessor:
         input_path: str,
         output_root: Path, 
         timeout: Optional[int],
-    ) -&gt; Path:
-        &quot;&quot;&quot;
+    ) -> Path:
+        """
         Delegate to transcoder (local input).
-        &quot;&quot;&quot;
+        """
         try:
             master_path = transcode_to_hls(
                 video_id=video_id,
@@ -517,28 +493,28 @@ class VideoProcessor:
             return master_path
         except Exception as e:
             raise MediaProcessingError(
-                stage=&quot;HLS&quot;,
-                code=&quot;HLS_FAILED&quot;,
-                message=f&quot;HLS transcode failed (video_id={video_id})&quot;,
+                stage="HLS",
+                code="HLS_FAILED",
+                message=f"HLS transcode failed (video_id={video_id})",
                 context={
-                    &quot;video_id&quot;: video_id,
-                    &quot;input_path&quot;: input_path,
-                    &quot;error&quot;: repr(e),
+                    "video_id": video_id,
+                    "input_path": input_path,
+                    "error": repr(e),
                 },
             ) from e
 
-    def _verify_ready(self, *, video_id: int, master_path: Path) -&gt; None:
-        &quot;&quot;&quot;
+    def _verify_ready(self, *, video_id: int, master_path: Path) -> None:
+        """
         READY criterion is strictly: master.m3u8 exists.
-        &quot;&quot;&quot;
+        """
         if not master_path.exists():
             raise MediaProcessingError(
-                stage=&quot;VERIFY&quot;,
-                code=&quot;OUTPUT_INVALID&quot;,
-                message=f&quot;READY criterion failed: master.m3u8 missing (video_id={video_id})&quot;,
+                stage="VERIFY",
+                code="OUTPUT_INVALID",
+                message=f"READY criterion failed: master.m3u8 missing (video_id={video_id})",
                 context={
-                    &quot;video_id&quot;: video_id,
-                    &quot;master_path&quot;: str(master_path),
+                    "video_id": video_id,
+                    "master_path": str(master_path),
                 },
             )
 
@@ -556,7 +532,7 @@ def run(
     timeout_probe: Optional[int] = 60,
     timeout_thumbnail: Optional[int] = 120,
     timeout_hls: Optional[int] = None,
-) -&gt; ProcessResult:
+) -> ProcessResult:
     return VideoProcessor().run(
         video_id=video_id,
         input_url=input_url,
@@ -566,12 +542,12 @@ def run(
         timeout_thumbnail=timeout_thumbnail,
         timeout_hls=timeout_hls,
     )
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>video\transcoder.py</h2>
-            <pre><code>from __future__ import annotations
+
+
+================================================================================
+# FILE: video/transcoder.py
+================================================================================
+from __future__ import annotations
 
 import subprocess
 from pathlib import Path
@@ -581,19 +557,19 @@ from typing import List
 # ---------------------------------------------------------------------
 # HLS Variant Ladder
 # ---------------------------------------------------------------------
-# ⚠️ name에는 절대 &#x27;v&#x27; 붙이지 말 것
+# ⚠️ name에는 절대 'v' 붙이지 말 것
 HLS_VARIANTS = [
-    {&quot;name&quot;: &quot;1&quot;, &quot;width&quot;: 426,  &quot;height&quot;: 240,  &quot;video_bitrate&quot;: &quot;400k&quot;,  &quot;audio_bitrate&quot;: &quot;64k&quot;},
-    {&quot;name&quot;: &quot;2&quot;, &quot;width&quot;: 640,  &quot;height&quot;: 360,  &quot;video_bitrate&quot;: &quot;800k&quot;,  &quot;audio_bitrate&quot;: &quot;96k&quot;},
-    {&quot;name&quot;: &quot;3&quot;, &quot;width&quot;: 1280, &quot;height&quot;: 720,  &quot;video_bitrate&quot;: &quot;2500k&quot;, &quot;audio_bitrate&quot;: &quot;128k&quot;},
+    {"name": "1", "width": 426,  "height": 240,  "video_bitrate": "400k",  "audio_bitrate": "64k"},
+    {"name": "2", "width": 640,  "height": 360,  "video_bitrate": "800k",  "audio_bitrate": "96k"},
+    {"name": "3", "width": 1280, "height": 720,  "video_bitrate": "2500k", "audio_bitrate": "128k"},
 ]
 
 
 # ---------------------------------------------------------------------
 # Directory preparation
 # ---------------------------------------------------------------------
-def prepare_output_dirs(output_root: Path) -&gt; None:
-    &quot;&quot;&quot;
+def prepare_output_dirs(output_root: Path) -> None:
+    """
     storage/media/hls/videos/{video_id}/
       ├─ master.m3u8
       ├─ v1/
@@ -601,84 +577,84 @@ def prepare_output_dirs(output_root: Path) -&gt; None:
       │   └─ index0.ts ...
       ├─ v2/
       └─ v3/
-    &quot;&quot;&quot;
+    """
     output_root.mkdir(parents=True, exist_ok=True)
 
     # v1, v2, v3 디렉토리 미리 생성
     for v in HLS_VARIANTS:
-        (output_root / f&quot;v{v[&#x27;name&#x27;]}&quot;).mkdir(parents=True, exist_ok=True)
+        (output_root / f"v{v['name']}").mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------
 # ffmpeg filter_complex builder
 # ---------------------------------------------------------------------
-def build_filter_complex() -&gt; str:
+def build_filter_complex() -> str:
     parts: List[str] = []
     split_count = len(HLS_VARIANTS)
 
     parts.append(
-        &quot;[0:v]split={}&quot;.format(split_count)
-        + &quot;&quot;.join(f&quot;[v{i}]&quot; for i in range(split_count))
+        "[0:v]split={}".format(split_count)
+        + "".join(f"[v{i}]" for i in range(split_count))
     )
 
     for i, v in enumerate(HLS_VARIANTS):
-        parts.append(f&quot;[v{i}]scale={v[&#x27;width&#x27;]}:{v[&#x27;height&#x27;]}[v{i}out]&quot;)
+        parts.append(f"[v{i}]scale={v['width']}:{v['height']}[v{i}out]")
 
-    return &quot;;&quot;.join(parts)
+    return ";".join(parts)
 
 
 # ---------------------------------------------------------------------
 # ffmpeg command builder (⭐ 표준형)
 # ---------------------------------------------------------------------
-def build_ffmpeg_command(input_path: str) -&gt; List[str]:
-    &quot;&quot;&quot;
-    ⚠️ 모든 출력 경로는 &#x27;상대 경로&#x27;만 사용
+def build_ffmpeg_command(input_path: str) -> List[str]:
+    """
+    ⚠️ 모든 출력 경로는 '상대 경로'만 사용
     ⚠️ cwd 기준으로 ffmpeg 실행됨
-    &quot;&quot;&quot;
+    """
     cmd: List[str] = [
-        &quot;ffmpeg&quot;,
-        &quot;-y&quot;,
-        &quot;-i&quot;, input_path,  # 입력은 절대 경로여도 OK
-        &quot;-filter_complex&quot;, build_filter_complex(),
+        "ffmpeg",
+        "-y",
+        "-i", input_path,  # 입력은 절대 경로여도 OK
+        "-filter_complex", build_filter_complex(),
     ]
 
     for i, v in enumerate(HLS_VARIANTS):
         cmd += [
-            &quot;-map&quot;, f&quot;[v{i}out]&quot;,
-            &quot;-map&quot;, &quot;0:a?&quot;,
+            "-map", f"[v{i}out]",
+            "-map", "0:a?",
 
-            f&quot;-c:v:{i}&quot;, &quot;libx264&quot;,
-            &quot;-profile:v&quot;, &quot;main&quot;,
-            &quot;-pix_fmt&quot;, &quot;yuv420p&quot;,
-            f&quot;-b:v:{i}&quot;, v[&quot;video_bitrate&quot;],
+            f"-c:v:{i}", "libx264",
+            "-profile:v", "main",
+            "-pix_fmt", "yuv420p",
+            f"-b:v:{i}", v["video_bitrate"],
 
-            &quot;-g&quot;, &quot;48&quot;,
-            &quot;-keyint_min&quot;, &quot;48&quot;,
-            &quot;-sc_threshold&quot;, &quot;0&quot;,
+            "-g", "48",
+            "-keyint_min", "48",
+            "-sc_threshold", "0",
 
-            f&quot;-c:a:{i}&quot;, &quot;aac&quot;,
-            &quot;-ac&quot;, &quot;2&quot;,
-            f&quot;-b:a:{i}&quot;, v[&quot;audio_bitrate&quot;],
+            f"-c:a:{i}", "aac",
+            "-ac", "2",
+            f"-b:a:{i}", v["audio_bitrate"],
         ]
 
     cmd += [
-        &quot;-f&quot;, &quot;hls&quot;,
-        &quot;-hls_time&quot;, &quot;4&quot;,
-        &quot;-hls_playlist_type&quot;, &quot;vod&quot;,
-        &quot;-hls_flags&quot;, &quot;independent_segments&quot;,
+        "-f", "hls",
+        "-hls_time", "4",
+        "-hls_playlist_type", "vod",
+        "-hls_flags", "independent_segments",
 
         # ✅ 표준: 상대 경로 + POSIX 슬래시
-        &quot;-hls_segment_filename&quot;, &quot;v%v/index%d.ts&quot;,
-        &quot;-master_pl_name&quot;, &quot;master.m3u8&quot;,
+        "-hls_segment_filename", "v%v/index%d.ts",
+        "-master_pl_name", "master.m3u8",
 
-        &quot;-var_stream_map&quot;,
-        &quot; &quot;.join(
-            f&quot;v:{i},a:{i},name:{v[&#x27;name&#x27;]}&quot;
+        "-var_stream_map",
+        " ".join(
+            f"v:{i},a:{i},name:{v['name']}"
             for i, v in enumerate(HLS_VARIANTS)
         ),
 
         # ✅ variant playlist도 상대 경로
-        &quot;v%v/index.m3u8&quot;,
+        "v%v/index.m3u8",
     ]
 
     return cmd
@@ -693,10 +669,10 @@ def transcode_to_hls(
     input_path: str,
     output_root: Path,
     timeout: int | None = None,
-) -&gt; Path:
-    &quot;&quot;&quot;
+) -> Path:
+    """
     Execute HLS transcoding from local mp4 (Best Practice)
-    &quot;&quot;&quot;
+    """
 
     # 1. 출력 디렉토리 준비
     prepare_output_dirs(output_root)
@@ -717,18 +693,13 @@ def transcode_to_hls(
 
     if process.returncode != 0:
         raise RuntimeError({
-            &quot;video_id&quot;: video_id,
-            &quot;cmd&quot;: cmd,
-            &quot;stderr&quot;: process.stderr,
+            "video_id": video_id,
+            "cmd": cmd,
+            "stderr": process.stderr,
         })
 
-    master_path = output_root / &quot;master.m3u8&quot;
+    master_path = output_root / "master.m3u8"
     if not master_path.exists():
-        raise RuntimeError(&quot;master.m3u8 not created&quot;)
+        raise RuntimeError("master.m3u8 not created")
 
     return master_path
-</code></pre>
-        </section>
-        
-</body>
-</html>

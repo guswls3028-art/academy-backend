@@ -673,40 +673,35 @@ from .views import (
     VideoProcessingCompleteView,
 )
 
-# apps/support/media/urls.py
-
 from .views.achievement_views import VideoAchievementView
+from .views.playback_views import (
+    PlaybackStartView,
+    PlaybackRefreshView,
+    PlaybackHeartbeatView,
+    PlaybackEndView,
+    PlaybackEventBatchView,
+)
 
-urlpatterns += [
-    path(
-        "videos/<int:video_id>/achievement/",
-        VideoAchievementView.as_view(),
-        name="media-video-achievement",
-    ),
-]
-
+# ========================================================
+# Router
+# ========================================================
 
 router = DefaultRouter()
-
-# ========================================================
-# Admin / CRUD APIs
-# ========================================================
-
 router.register(r"videos", VideoViewSet, basename="videos")
 router.register(r"video-permissions", VideoPermissionViewSet, basename="video-permissions")
 router.register(r"video-progress", VideoProgressViewSet, basename="video-progress")
-router.register(
-    r"video-playback-events",
-    VideoPlaybackEventViewSet,
-    basename="video-playback-events",
-)
+router.register(r"video-playback-events", VideoPlaybackEventViewSet, basename="video-playback-events")
+
+# ========================================================
+# urlpatterns (선언 먼저!)
+# ========================================================
 
 urlpatterns = [
     path("", include(router.urls)),
 ]
 
 # ========================================================
-# Nested Video APIs (프론트 가독성용)
+# Nested / Extra APIs
 # ========================================================
 
 video_detail = VideoViewSet.as_view({"get": "retrieve"})
@@ -723,19 +718,16 @@ urlpatterns += [
         video_stats,
         name="media-video-stats-nested",
     ),
+    path(
+        "videos/<int:video_id>/achievement/",
+        VideoAchievementView.as_view(),
+        name="media-video-achievement",
+    ),
 ]
 
 # ========================================================
-# Playback APIs (Student, token-based)
+# Playback APIs (Student)
 # ========================================================
-
-from .views.playback_views import (
-    PlaybackStartView,
-    PlaybackRefreshView,
-    PlaybackHeartbeatView,
-    PlaybackEndView,
-    PlaybackEventBatchView,
-)
 
 urlpatterns += [
     path("playback/start/", PlaybackStartView.as_view()),
@@ -746,7 +738,7 @@ urlpatterns += [
 ]
 
 # ========================================================
-# Internal APIs (Worker → API)
+# Internal (Worker)
 # ========================================================
 
 urlpatterns += [
@@ -1709,7 +1701,6 @@ class VideoAchievementView(APIView):
 import csv
 from datetime import timedelta
 
-from django.db.models import Count, Max
 from django.http import HttpResponse
 from django.utils import timezone
 
@@ -1717,11 +1708,15 @@ from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.filters import SearchFilter
 
 from django_filters.rest_framework import DjangoFilterBackend
 
 from ..models import VideoPlaybackEvent
-from ..serializers import VideoPlaybackEventListSerializer, VideoRiskRowSerializer
+from ..serializers import (
+    VideoPlaybackEventListSerializer,
+    VideoRiskRowSerializer,
+)
 
 
 def _range_to_since(range_key: str):
@@ -1730,7 +1725,7 @@ def _range_to_since(range_key: str):
         return now - timedelta(hours=24)
     if range_key == "7d":
         return now - timedelta(days=7)
-    return None  # all
+    return None
 
 
 def _event_score(event_type: str, violated: bool, violation_reason: str | None):
@@ -1747,7 +1742,7 @@ def _event_score(event_type: str, violated: bool, violation_reason: str | None):
     }
     w = int(weights.get(event_type, 1))
     if violated:
-        w = int(w * 2)
+        w *= 2
     if violation_reason:
         w += 1
     return w
@@ -1755,16 +1750,28 @@ def _event_score(event_type: str, violated: bool, violation_reason: str | None):
 
 class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
     """
-    Admin/Staff 용 이벤트 조회 API
-    - list: video 필수
-    - risk: 위험 학생 랭킹
-    - export: CSV 내보내기
+    Admin / Staff 전용
+    - list
+    - risk
+    - export
     """
-    queryset = VideoPlaybackEvent.objects.all().select_related("enrollment", "enrollment__student", "video")
+
+    queryset = (
+        VideoPlaybackEvent.objects
+        .all()
+        .select_related("enrollment", "enrollment__student", "video")
+    )
     serializer_class = VideoPlaybackEventListSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["video", "enrollment", "event_type", "violated"]
+
+    # ✅ 검색 + 필터 동시 지원
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["video", "enrollment", "violated"]
+    search_fields = [
+        "enrollment__student__name",
+        "session_id",
+        "user_id",
+    ]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -1778,18 +1785,20 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
         if since:
             qs = qs.filter(occurred_at__gte=since)
 
-        # 최신순
+        # ✅ event_type 다중 필터 (comma-separated)
+        et = self.request.query_params.get("event_type")
+        if et:
+            types = [x for x in et.split(",") if x]
+            if types:
+                qs = qs.filter(event_type__in=types)
+
         return qs.order_by("-occurred_at", "-id")
 
+    # --------------------------------------------------
+    # Risk Top
+    # --------------------------------------------------
     @action(detail=False, methods=["get"], url_path="risk")
     def risk(self, request):
-        """
-        위험 학생 Top N
-        params:
-          - video (required)
-          - range: 24h | 7d | all
-          - limit (default 5)
-        """
         video_id = request.query_params.get("video")
         if not video_id:
             return Response({"detail": "video is required"}, status=400)
@@ -1798,11 +1807,12 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
         range_key = request.query_params.get("range", "24h")
         since = _range_to_since(range_key)
 
-        qs = VideoPlaybackEvent.objects.filter(video_id=video_id).select_related("enrollment", "enrollment__student")
+        qs = VideoPlaybackEvent.objects.filter(video_id=video_id).select_related(
+            "enrollment", "enrollment__student"
+        )
         if since:
             qs = qs.filter(occurred_at__gte=since)
 
-        # 파이썬으로 점수 집계 (정책 바뀌어도 즉시 대응 가능)
         agg = {}
         for ev in qs.iterator():
             eid = ev.enrollment_id
@@ -1827,23 +1837,25 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
             else:
                 agg[eid]["info"] += 1
 
-            if agg[eid]["last_occurred_at"] is None or ev.occurred_at > agg[eid]["last_occurred_at"]:
+            if (
+                agg[eid]["last_occurred_at"] is None
+                or ev.occurred_at > agg[eid]["last_occurred_at"]
+            ):
                 agg[eid]["last_occurred_at"] = ev.occurred_at
 
-        rows = list(agg.values())
-        rows.sort(key=lambda r: (r["score"], r["danger"], r["warn"]), reverse=True)
+        rows = sorted(
+            agg.values(),
+            key=lambda r: (r["score"], r["danger"], r["warn"]),
+            reverse=True,
+        )[:limit]
 
-        rows = rows[:limit]
         return Response(VideoRiskRowSerializer(rows, many=True).data)
 
+    # --------------------------------------------------
+    # CSV Export
+    # --------------------------------------------------
     @action(detail=False, methods=["get"], url_path="export")
     def export_csv(self, request):
-        """
-        CSV Export
-        params:
-          - video (required)
-          - range: 24h | 7d | all
-        """
         video_id = request.query_params.get("video")
         if not video_id:
             return Response({"detail": "video is required"}, status=400)
@@ -1851,13 +1863,18 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
         range_key = request.query_params.get("range", "24h")
         since = _range_to_since(range_key)
 
-        qs = VideoPlaybackEvent.objects.filter(video_id=video_id).select_related("enrollment", "enrollment__student")
+        qs = VideoPlaybackEvent.objects.filter(video_id=video_id).select_related(
+            "enrollment", "enrollment__student"
+        )
         if since:
             qs = qs.filter(occurred_at__gte=since)
+
         qs = qs.order_by("-occurred_at", "-id")
 
         resp = HttpResponse(content_type="text/csv; charset=utf-8")
-        resp["Content-Disposition"] = f'attachment; filename="video_{video_id}_events_{range_key}.csv"'
+        resp["Content-Disposition"] = (
+            f'attachment; filename="video_{video_id}_events_{range_key}.csv"'
+        )
 
         writer = csv.writer(resp)
         writer.writerow([
@@ -1921,8 +1938,6 @@ class VideoProcessingCompleteView(APIView):
 ================================================================================
 # apps/support/media/views/permission_views.py
 
-# test change
-
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
@@ -1967,7 +1982,10 @@ class VideoPermissionViewSet(ModelViewSet):
             obj, _ = VideoPermission.objects.update_or_create(
                 video_id=video_id,
                 enrollment_id=enrollment_id,
-                defaults={"rule": rule},
+                defaults={
+                    "rule": rule,
+                    "is_override": True,   # ✅ 관리자 수동 설정 명시
+                },
             )
             objs.append(obj)
 

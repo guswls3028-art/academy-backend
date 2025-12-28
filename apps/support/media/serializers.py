@@ -1,5 +1,6 @@
 # apps/support/media/serializers.py
 
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.domains.lectures.models import Session
@@ -29,6 +30,10 @@ class VideoSerializer(serializers.ModelSerializer):
 
     source_type = serializers.SerializerMethodField()
 
+    # ✅ CDN 기반 파생 필드 (READ ONLY)
+    thumbnail_url = serializers.SerializerMethodField()
+    hls_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Video
         fields = [
@@ -43,7 +48,10 @@ class VideoSerializer(serializers.ModelSerializer):
             "allow_skip",
             "max_speed",
             "show_watermark",
-            "hls_path",
+            "thumbnail",      # 🔒 기존 유지 (상대경로)
+            "thumbnail_url",  # ✅ 추가
+            "hls_path",       # 🔒 기존 유지 (상대경로)
+            "hls_url",        # ✅ 추가
             "created_at",
             "updated_at",
             "source_type",
@@ -53,11 +61,35 @@ class VideoSerializer(serializers.ModelSerializer):
             "session_id",
             "created_at",
             "updated_at",
+            "thumbnail",
+            "hls_path",
+            "thumbnail_url",
+            "hls_url",
         ]
         ref_name = "MediaVideo"
 
+    # ----------------------------
+    # Derived fields
+    # ----------------------------
+
     def get_source_type(self, obj):
         return "s3" if obj.file_key else "unknown"
+
+    def get_thumbnail_url(self, obj):
+        """
+        CDN absolute URL for thumbnail
+        """
+        if not obj.thumbnail:
+            return None
+        return f"{settings.CDN_HLS_BASE_URL}/{obj.thumbnail}"
+
+    def get_hls_url(self, obj):
+        """
+        CDN absolute URL for HLS master.m3u8
+        """
+        if not obj.hls_path:
+            return None
+        return f"{settings.CDN_HLS_BASE_URL}/{obj.hls_path}"
 
 
 class VideoDetailSerializer(VideoSerializer):
@@ -127,11 +159,6 @@ class PlaybackResponseSerializer(serializers.Serializer):
 # ========================================================
 
 class PlaybackSessionSerializer(serializers.Serializer):
-    """
-    Facade API 전용 Serializer
-    - DB 모델과 무관
-    - create_playback_session() 반환 dict 전용
-    """
     video_id = serializers.IntegerField()
     enrollment_id = serializers.IntegerField()
     session_id = serializers.CharField()
@@ -161,10 +188,15 @@ class PlaybackEventBatchResponseSerializer(serializers.Serializer):
     stored = serializers.IntegerField()
 
 
-
 class VideoPlaybackEventListSerializer(serializers.ModelSerializer):
-    student_name = serializers.CharField(source="enrollment.student.name", read_only=True)
-    enrollment_id = serializers.IntegerField(source="enrollment.id", read_only=True)
+    student_name = serializers.CharField(
+        source="enrollment.student.name",
+        read_only=True,
+    )
+    enrollment_id = serializers.IntegerField(
+        source="enrollment.id",
+        read_only=True,
+    )
     severity = serializers.SerializerMethodField()
     score = serializers.SerializerMethodField()
 
@@ -190,7 +222,6 @@ class VideoPlaybackEventListSerializer(serializers.ModelSerializer):
         ref_name = "MediaVideoPlaybackEventList"
 
     def get_severity(self, obj):
-        # violated이면 기본적으로 상향
         base = {
             "SEEK_ATTEMPT": "warn",
             "SPEED_CHANGE_ATTEMPT": "warn",
@@ -204,7 +235,6 @@ class VideoPlaybackEventListSerializer(serializers.ModelSerializer):
         return base
 
     def get_score(self, obj):
-        # 이벤트 점수화 (클릭/리스트에 즉시 표시)
         weights = {
             "VISIBILITY_HIDDEN": 1,
             "VISIBILITY_VISIBLE": 0,
@@ -218,8 +248,7 @@ class VideoPlaybackEventListSerializer(serializers.ModelSerializer):
         }
         w = int(weights.get(obj.event_type, 1))
         if obj.violated:
-            w = int(w * 2)
-        # violation_reason 있으면 약간 가산
+            w *= 2
         if obj.violation_reason:
             w += 1
         return w
