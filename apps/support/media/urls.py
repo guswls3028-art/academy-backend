@@ -1,33 +1,37 @@
-# app/support/media/urls.py
+# apps/support/media/urls.py
 
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-
-
-from .views import VideoProcessingCompleteView
 
 from .views import (
     VideoViewSet,
     VideoPermissionViewSet,
     VideoProgressViewSet,
+    VideoPlaybackEventViewSet,
+    VideoProcessingCompleteView,
 )
 
 router = DefaultRouter()
 
 # ========================================================
-# Video
+# Admin / CRUD APIs
 # ========================================================
 
 router.register(r"videos", VideoViewSet, basename="videos")
 router.register(r"video-permissions", VideoPermissionViewSet, basename="video-permissions")
 router.register(r"video-progress", VideoProgressViewSet, basename="video-progress")
+router.register(
+    r"video-playback-events",
+    VideoPlaybackEventViewSet,
+    basename="video-playback-events",
+)
 
 urlpatterns = [
     path("", include(router.urls)),
 ]
 
 # ========================================================
-# Nested / 상세 Video API
+# Nested Video APIs (프론트 가독성용)
 # ========================================================
 
 video_detail = VideoViewSet.as_view({"get": "retrieve"})
@@ -46,9 +50,9 @@ urlpatterns += [
     ),
 ]
 
-# 대충 붙이기
-
-# playback APIs (token-based)
+# ========================================================
+# Playback APIs (Student, token-based)
+# ========================================================
 
 from .views.playback_views import (
     PlaybackStartView,
@@ -64,4 +68,16 @@ urlpatterns += [
     path("playback/heartbeat/", PlaybackHeartbeatView.as_view()),
     path("playback/end/", PlaybackEndView.as_view()),
     path("playback/events/", PlaybackEventBatchView.as_view()),
+]
+
+# ========================================================
+# Internal APIs (Worker → API)
+# ========================================================
+
+urlpatterns += [
+    path(
+        "internal/videos/<int:video_id>/processing-complete/",
+        VideoProcessingCompleteView.as_view(),
+        name="media-video-processing-complete",
+    ),
 ]

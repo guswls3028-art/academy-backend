@@ -1,26 +1,27 @@
+# apps/support/media/serializers.py
+
 from rest_framework import serializers
 
+from apps.domains.lectures.models import Session
 from .models import (
     Video,
     VideoPermission,
     VideoProgress,
-    VideoPlaybackSession,
     VideoPlaybackEvent,
 )
 
-from rest_framework import serializers
-from apps.support.media.models import Video
-from apps.domains.lectures.models import Session
-
+# ========================================================
+# Video
+# ========================================================
 
 class VideoSerializer(serializers.ModelSerializer):
-    # 🔥 핵심 1: 생성 시 받을 session (write only)
+    # 생성 시 session 지정 (write only)
     session = serializers.PrimaryKeyRelatedField(
         queryset=Session.objects.all(),
         write_only=True,
     )
 
-    # 🔥 핵심 2: 응답용 session_id (read only)
+    # 응답용 session_id
     session_id = serializers.IntegerField(
         source="session.id",
         read_only=True,
@@ -32,7 +33,7 @@ class VideoSerializer(serializers.ModelSerializer):
         model = Video
         fields = [
             "id",
-            "session",        # ✅ 추가
+            "session",
             "session_id",
             "title",
             "file_key",
@@ -59,6 +60,15 @@ class VideoSerializer(serializers.ModelSerializer):
         return "s3" if obj.file_key else "unknown"
 
 
+class VideoDetailSerializer(VideoSerializer):
+    class Meta(VideoSerializer.Meta):
+        ref_name = "MediaVideoDetail"
+
+
+# ========================================================
+# Permission / Progress
+# ========================================================
+
 class VideoPermissionSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(
         source="enrollment.student.name",
@@ -83,14 +93,8 @@ class VideoProgressSerializer(serializers.ModelSerializer):
         ref_name = "MediaVideoProgress"
 
 
-class VideoDetailSerializer(VideoSerializer):
-    class Meta(VideoSerializer.Meta):
-        ref_name = "MediaVideoDetail"
-
-
-
 # ========================================================
-# Playback API (v1)
+# Playback API (token-based)
 # ========================================================
 
 class PlaybackStartRequestSerializer(serializers.Serializer):
@@ -119,31 +123,32 @@ class PlaybackResponseSerializer(serializers.Serializer):
 
 
 # ========================================================
-# Playback Session (Student Facade API)
+# Facade Playback Session (dict 기반)
 # ========================================================
 
 class PlaybackSessionSerializer(serializers.Serializer):
     """
     Facade API 전용 Serializer
-
-    ⚠️ 주의
-    - VideoPlaybackSession(Model)과 무관
+    - DB 모델과 무관
     - create_playback_session() 반환 dict 전용
     """
-
     video_id = serializers.IntegerField()
     enrollment_id = serializers.IntegerField()
     session_id = serializers.CharField()
     expires_at = serializers.IntegerField()
 
 
+class PlaybackStartFacadeRequestSerializer(serializers.Serializer):
+    device_id = serializers.CharField(max_length=128)
+
+
 # ========================================================
-# Event collection (v1: audit-only)
+# Playback Events
 # ========================================================
 
 class PlaybackEventItemSerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=VideoPlaybackEvent.EventType.choices)
-    occurred_at = serializers.IntegerField(required=False)  # epoch seconds
+    occurred_at = serializers.IntegerField(required=False)
     payload = serializers.JSONField(required=False)
 
 
@@ -155,5 +160,32 @@ class PlaybackEventBatchRequestSerializer(serializers.Serializer):
 class PlaybackEventBatchResponseSerializer(serializers.Serializer):
     stored = serializers.IntegerField()
 
-class PlaybackStartFacadeRequestSerializer(serializers.Serializer):
-    device_id = serializers.CharField(max_length=128)
+
+class VideoPlaybackEventListSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(
+        source="enrollment.student.name",
+        read_only=True,
+    )
+    enrollment_id = serializers.IntegerField(
+        source="enrollment.id",
+        read_only=True,
+    )
+
+    class Meta:
+        model = VideoPlaybackEvent
+        fields = [
+            "id",
+            "video",
+            "enrollment_id",
+            "student_name",
+            "session_id",
+            "user_id",
+            "event_type",
+            "violated",
+            "violation_reason",
+            "event_payload",
+            "policy_snapshot",
+            "occurred_at",
+            "received_at",
+        ]
+        ref_name = "MediaVideoPlaybackEventList"

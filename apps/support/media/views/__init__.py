@@ -5,3 +5,4 @@ from .permission_views import VideoPermissionViewSet
 from .progress_views import VideoProgressViewSet
 from .playback_session_views import PlaybackSessionView
 from .internal_views import VideoProcessingCompleteView
+from .event_views import VideoPlaybackEventViewSet
