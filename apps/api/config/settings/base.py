@@ -69,6 +69,9 @@ INSTALLED_APPS = [
 
     # shared (워커 태스크 자동 탐색)
     "apps.shared",
+
+    #그랩!
+    'django_extensions',
 ]
 
 # ==================================================
