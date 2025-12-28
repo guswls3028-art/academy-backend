@@ -287,3 +287,101 @@ class AttendanceViewSet(ModelViewSet):
         resp["Content-Disposition"] = f'attachment; filename="{filename}"'
         wb.save(resp)
         return resp
+
+    # =========================================================
+    # 3️⃣ 엑셀 다운로드 API
+    # =========================================================
+    @action(detail=False, methods=["get"], url_path="excel")
+    def excel(self, request):
+        lecture_id = request.query_params.get("lecture")
+        if not lecture_id:
+            return Response(
+                {"detail": "lecture 파라미터는 필수입니다"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        lecture = Lecture.objects.get(id=lecture_id)
+
+        sessions = Session.objects.filter(
+            lecture=lecture
+        ).order_by("order")
+
+        enrollments = Enrollment.objects.filter(
+            lecture=lecture,
+            status="ACTIVE",
+        ).select_related("student")
+
+        attendances = Attendance.objects.filter(
+            session__lecture=lecture,
+            enrollment__in=enrollments,
+        )
+
+        attendance_map = {
+            (a.enrollment_id, a.session_id): a.status
+            for a in attendances
+        }
+
+        # -----------------------------
+        # Workbook
+        # -----------------------------
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "출결 현황"
+
+        # 헤더
+        headers = ["이름", "학생 전화", "학부모 전화"]
+        for s in sessions:
+            headers.append(f"{s.order}차시")
+
+        ws.append(headers)
+
+        # 컬러맵
+        STATUS_FILL = {
+            "PRESENT": PatternFill("solid", fgColor="C6EFCE"),   # 초록
+            "LATE": PatternFill("solid", fgColor="FFEB9C"),      # 노랑
+            "ONLINE": PatternFill("solid", fgColor="BDD7EE"),    # 파랑
+            "SUPPLEMENT": PatternFill("solid", fgColor="E4DFEC"),# 보라
+            "EARLY_LEAVE": PatternFill("solid", fgColor="FCE4D6"),# 주황
+            "ABSENT": PatternFill("solid", fgColor="FFC7CE"),    # 빨강
+            "RUNAWAY": PatternFill("solid", fgColor="F4B6C2"),   # 진빨강
+            "MATERIAL": PatternFill("solid", fgColor="D9E1F2"),  # 남보라
+            "INACTIVE": PatternFill("solid", fgColor="E7E6E6"),  # 회색
+            "SECESSION": PatternFill("solid", fgColor="D0CECE"), # 탈퇴
+        }
+
+        # 데이터
+        for en in enrollments:
+            row = [
+                en.student.name,
+                en.student.phone,
+                en.student.parent_phone,
+            ]
+
+            for s in sessions:
+                status = attendance_map.get((en.id, s.id), "")
+                row.append(status)
+
+            ws.append(row)
+
+            # 상태 셀 컬러
+            r_idx = ws.max_row
+            for c_idx, s in enumerate(sessions, start=4):
+                cell = ws.cell(row=r_idx, column=c_idx)
+                fill = STATUS_FILL.get(cell.value)
+                if fill:
+                    cell.fill = fill
+                cell.alignment = Alignment(horizontal="center")
+
+        # 컬럼 자동 너비
+        for i in range(1, ws.max_column + 1):
+            ws.column_dimensions[get_column_letter(i)].width = 16
+
+        # Response
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        filename = f"{lecture.title}_출결현황.xlsx"
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        wb.save(response)
+
+        return response
