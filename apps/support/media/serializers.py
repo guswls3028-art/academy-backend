@@ -48,7 +48,7 @@ class VideoSerializer(serializers.ModelSerializer):
             "allow_skip",
             "max_speed",
             "show_watermark",
-            "thumbnail",      # 🔒 내부용 (상대경로)
+            "thumbnail",      # 🔒 내부용 (ImageField)
             "thumbnail_url",  # ✅ CDN URL
             "hls_path",       # 🔒 내부용 (상대경로)
             "hls_url",        # ✅ CDN URL
@@ -83,6 +83,15 @@ class VideoSerializer(serializers.ModelSerializer):
             return path[len("storage/media/"):]
         return path
 
+    def _cdn_base(self) -> str | None:
+        """
+        CDN_BASE_URL 방어 처리
+        """
+        base = getattr(settings, "CDN_HLS_BASE_URL", None)
+        if not base:
+            return None
+        return base.rstrip("/")
+
     def get_thumbnail_url(self, obj):
         """
         CDN absolute URL for thumbnail
@@ -90,8 +99,14 @@ class VideoSerializer(serializers.ModelSerializer):
         if not obj.thumbnail:
             return None
 
-        rel = self._strip_media_prefix(obj.thumbnail)
-        return f"{settings.CDN_HLS_BASE_URL}/{rel}"
+        cdn = self._cdn_base()
+        if not cdn:
+            return None
+
+        # 🔥 ImageFieldFile → str 변환 (500 에러 방지)
+        path = str(obj.thumbnail)
+        rel = self._strip_media_prefix(path)
+        return f"{cdn}/{rel}"
 
     def get_hls_url(self, obj):
         """
@@ -100,8 +115,13 @@ class VideoSerializer(serializers.ModelSerializer):
         if not obj.hls_path:
             return None
 
-        rel = self._strip_media_prefix(obj.hls_path)
-        return f"{settings.CDN_HLS_BASE_URL}/{rel}"
+        cdn = self._cdn_base()
+        if not cdn:
+            return None
+
+        path = str(obj.hls_path)
+        rel = self._strip_media_prefix(path)
+        return f"{cdn}/{rel}"
 
 
 class VideoDetailSerializer(VideoSerializer):
