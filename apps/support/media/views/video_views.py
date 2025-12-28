@@ -159,9 +159,19 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         video = self.get_object()
         lecture = video.session.lecture
 
-        enrollments = Enrollment.objects.filter(lecture=lecture)
-        progresses = {p.enrollment_id: p for p in VideoProgress.objects.filter(video=video)}
-        perms = {p.enrollment_id: p for p in VideoPermission.objects.filter(video=video)}
+        enrollments = Enrollment.objects.filter(
+            lecture=lecture,
+            status="ACTIVE",
+        ).select_related("student")
+
+        progresses = {
+            p.enrollment_id: p
+            for p in VideoProgress.objects.filter(video=video)
+        }
+        perms = {
+            p.enrollment_id: p
+            for p in VideoPermission.objects.filter(video=video)
+        }
         attendance = {
             a.enrollment_id: a.status
             for a in Attendance.objects.filter(session=video.session)
@@ -171,17 +181,33 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         for e in enrollments:
             vp = progresses.get(e.id)
             perm = perms.get(e.id)
+
+            rule = perm.rule if perm else "free"
+
             students.append({
+                # 🔥 관리자 권한 UI 핵심
+                "enrollment": e.id,
                 "student_name": e.student.name,
+                "attendance_status": attendance.get(e.id),
+
+                # 진행 정보
                 "progress": vp.progress if vp else 0,
                 "completed": vp.completed if vp else False,
-                "attendance_status": attendance.get(e.id),
-                "rule": perm.rule if perm else "free",
+
+                # 권한
+                "effective_rule": rule,
+
+                # 표시용 메타
+                "parent_phone": getattr(e.student, "parent_phone", None),
+                "student_phone": getattr(e.student, "phone", None),
+                "school": getattr(e.student, "school", None),
+                "grade": getattr(e.student, "grade", None),
             })
 
         return Response({
             "video": VideoDetailSerializer(video).data,
             "students": students,
+            "total_filtered": len(students),
         })
 
     # ==================================================
