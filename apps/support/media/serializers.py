@@ -48,10 +48,10 @@ class VideoSerializer(serializers.ModelSerializer):
             "allow_skip",
             "max_speed",
             "show_watermark",
-            "thumbnail",      # 🔒 내부 저장용 (상대경로)
-            "thumbnail_url",  # ✅ 외부 CDN URL
-            "hls_path",       # 🔒 내부 저장용 (상대경로)
-            "hls_url",        # ✅ 외부 CDN URL
+            "thumbnail",      # 🔒 내부용 (상대경로)
+            "thumbnail_url",  # ✅ CDN URL
+            "hls_path",       # 🔒 내부용 (상대경로)
+            "hls_url",        # ✅ CDN URL
             "created_at",
             "updated_at",
             "source_type",
@@ -69,41 +69,39 @@ class VideoSerializer(serializers.ModelSerializer):
         ref_name = "MediaVideo"
 
     # ----------------------------
-    # Derived helpers
+    # Derived fields
     # ----------------------------
 
     def get_source_type(self, obj):
         return "s3" if obj.file_key else "unknown"
 
-    def _normalize_media_path(self, path: str) -> str:
+    def _strip_media_prefix(self, path: str) -> str:
         """
-        DB에 저장된 상대경로를 CDN 기준 경로로 정규화
-        - storage/media/... → media/...
-        - media/... → media/...
+        storage/media/ prefix 제거 (CDN 기준 보정)
         """
         if path.startswith("storage/media/"):
             return path[len("storage/media/"):]
-        return path.lstrip("/")
-
-    def _cdn_url(self, rel_path: str) -> str:
-        base = settings.CDN_HLS_BASE_URL.rstrip("/")
-        return f"{base}/{rel_path}"
-
-    # ----------------------------
-    # CDN fields
-    # ----------------------------
+        return path
 
     def get_thumbnail_url(self, obj):
+        """
+        CDN absolute URL for thumbnail
+        """
         if not obj.thumbnail:
             return None
-        rel = self._normalize_media_path(obj.thumbnail)
-        return self._cdn_url(rel)
+
+        rel = self._strip_media_prefix(obj.thumbnail)
+        return f"{settings.CDN_HLS_BASE_URL}/{rel}"
 
     def get_hls_url(self, obj):
+        """
+        CDN absolute URL for HLS master.m3u8
+        """
         if not obj.hls_path:
             return None
-        rel = self._normalize_media_path(obj.hls_path)
-        return self._cdn_url(rel)
+
+        rel = self._strip_media_prefix(obj.hls_path)
+        return f"{settings.CDN_HLS_BASE_URL}/{rel}"
 
 
 class VideoDetailSerializer(VideoSerializer):
@@ -169,7 +167,7 @@ class PlaybackResponseSerializer(serializers.Serializer):
 
 
 # ========================================================
-# Facade Playback Session
+# Facade Playback Session (dict 기반)
 # ========================================================
 
 class PlaybackSessionSerializer(serializers.Serializer):
@@ -244,7 +242,9 @@ class VideoPlaybackEventListSerializer(serializers.ModelSerializer):
             "PLAYER_ERROR": "info",
         }.get(obj.event_type, "info")
 
-        return "danger" if obj.violated else base
+        if obj.violated:
+            return "danger"
+        return base
 
     def get_score(self, obj):
         weights = {
@@ -258,12 +258,12 @@ class VideoPlaybackEventListSerializer(serializers.ModelSerializer):
             "FULLSCREEN_EXIT": 0,
             "PLAYER_ERROR": 1,
         }
-        score = int(weights.get(obj.event_type, 1))
+        w = int(weights.get(obj.event_type, 1))
         if obj.violated:
-            score *= 2
+            w *= 2
         if obj.violation_reason:
-            score += 1
-        return score
+            w += 1
+        return w
 
 
 class VideoRiskRowSerializer(serializers.Serializer):
