@@ -5,7 +5,7 @@ from .views import AttendanceViewSet
 
 router = DefaultRouter()
 router.register(
-    r"attendance",
+    r"",
     AttendanceViewSet,
     basename="lecture-attendance",
 )
