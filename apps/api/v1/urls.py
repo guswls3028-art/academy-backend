@@ -7,12 +7,18 @@ urlpatterns = [
     # Domain APIs
     # =========================
     path("lectures/", include("apps.domains.lectures.urls")),
+
+    # 🔥 출결은 lectures 하위로 이동
+    path("lectures/", include("apps.domains.attendance.urls")),
+
     path("students/", include("apps.domains.students.urls")),
     path("enrollments/", include("apps.domains.enrollment.urls")),
-    path("attendances/", include("apps.domains.attendance.urls")),
     path("submissions/", include("apps.domains.submissions.urls")),
     path("exams/", include("apps.domains.exams.urls")),
 
+    path("core/", include("apps.core.urls")),
+    path("media/", include("apps.support.media.urls")),
+    
     # =========================
     # Core (🔥 추가)
     # =========================
