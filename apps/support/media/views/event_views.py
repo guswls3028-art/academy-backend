@@ -1,171 +1,209 @@
 # apps/support/media/views/event_views.py
 
-from collections import defaultdict
-from django.db.models import Count, Q
+import csv
+from datetime import timedelta
+
+from django.http import HttpResponse
+from django.utils import timezone
+
 from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.pagination import PageNumberPagination
+from rest_framework.filters import SearchFilter
+
+from django_filters.rest_framework import DjangoFilterBackend
 
 from ..models import VideoPlaybackEvent
-from ..serializers import VideoPlaybackEventListSerializer
+from ..serializers import (
+    VideoPlaybackEventListSerializer,
+    VideoRiskRowSerializer,
+)
 
 
-# =========================
-# Pagination
-# =========================
-class StandardPagination(PageNumberPagination):
-    page_size = 50
-    page_size_query_param = "page_size"
-    max_page_size = 200
+def _range_to_since(range_key: str):
+    now = timezone.now()
+    if range_key == "24h":
+        return now - timedelta(hours=24)
+    if range_key == "7d":
+        return now - timedelta(days=7)
+    return None
 
 
-# =========================
-# Severity / Risk Scoring
-# =========================
-EVENT_WEIGHTS = {
-    # 핵심 정책 위반류
-    "SEEK_ATTEMPT": 5,
-    "SPEED_CHANGE_ATTEMPT": 4,
-
-    # 의심 행동
-    "VISIBILITY_HIDDEN": 2,
-    "FOCUS_LOST": 2,
-
-    # 환경/오류(패널티 낮게)
-    "PLAYER_ERROR": 1,
-
-    # 나머지 기본값
-}
-
-VIOLATED_BONUS = 6  # violated=True면 가산점
-
-
-def _event_weight(event_type: str) -> int:
-    return int(EVENT_WEIGHTS.get(event_type, 1))
+def _event_score(event_type: str, violated: bool, violation_reason: str | None):
+    weights = {
+        "VISIBILITY_HIDDEN": 1,
+        "VISIBILITY_VISIBLE": 0,
+        "FOCUS_LOST": 2,
+        "FOCUS_GAINED": 0,
+        "SEEK_ATTEMPT": 3,
+        "SPEED_CHANGE_ATTEMPT": 3,
+        "FULLSCREEN_ENTER": 0,
+        "FULLSCREEN_EXIT": 0,
+        "PLAYER_ERROR": 1,
+    }
+    w = int(weights.get(event_type, 1))
+    if violated:
+        w *= 2
+    if violation_reason:
+        w += 1
+    return w
 
 
-def _risk_level(score: int) -> str:
-    # 운영하면서 튜닝하면 됨
-    if score >= 35:
-        return "high"
-    if score >= 18:
-        return "mid"
-    return "low"
-
-
-# =========================
-# ViewSet
-# =========================
 class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
     """
-    운영자용 이벤트 로그 조회 API
-    GET /media/video-events/?video=1&violated=1&event_type=SEEK_ATTEMPT&search=홍&page=1&page_size=50
+    Admin / Staff 전용
+    - list
+    - risk
+    - export
     """
+
     queryset = (
         VideoPlaybackEvent.objects
         .all()
         .select_related("enrollment", "enrollment__student", "video")
-        .order_by("-received_at", "-id")
     )
     serializer_class = VideoPlaybackEventListSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = StandardPagination
 
-    def list(self, request, *args, **kwargs):
-        qp = request.query_params
+    # ✅ 검색 + 필터 동시 지원
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["video", "enrollment", "violated"]
+    search_fields = [
+        "enrollment__student__name",
+        "session_id",
+        "user_id",
+    ]
 
-        video_id = qp.get("video")
+    def get_queryset(self):
+        qs = super().get_queryset()
+
+        video_id = self.request.query_params.get("video")
+        if video_id:
+            qs = qs.filter(video_id=video_id)
+
+        range_key = self.request.query_params.get("range", "24h")
+        since = _range_to_since(range_key)
+        if since:
+            qs = qs.filter(occurred_at__gte=since)
+
+        # ✅ event_type 다중 필터 (comma-separated)
+        et = self.request.query_params.get("event_type")
+        if et:
+            types = [x for x in et.split(",") if x]
+            if types:
+                qs = qs.filter(event_type__in=types)
+
+        return qs.order_by("-occurred_at", "-id")
+
+    # --------------------------------------------------
+    # Risk Top
+    # --------------------------------------------------
+    @action(detail=False, methods=["get"], url_path="risk")
+    def risk(self, request):
+        video_id = request.query_params.get("video")
         if not video_id:
             return Response({"detail": "video is required"}, status=400)
 
-        violated = qp.get("violated")  # "1" or "0"
-        event_type = qp.get("event_type")
-        enrollment_id = qp.get("enrollment")
-        user_id = qp.get("user_id")
-        search = (qp.get("search") or "").strip()
+        limit = int(request.query_params.get("limit") or 5)
+        range_key = request.query_params.get("range", "24h")
+        since = _range_to_since(range_key)
 
-        base = self.get_queryset().filter(video_id=video_id)
+        qs = VideoPlaybackEvent.objects.filter(video_id=video_id).select_related(
+            "enrollment", "enrollment__student"
+        )
+        if since:
+            qs = qs.filter(occurred_at__gte=since)
 
-        if violated in ("0", "1"):
-            base = base.filter(violated=(violated == "1"))
+        agg = {}
+        for ev in qs.iterator():
+            eid = ev.enrollment_id
+            if eid not in agg:
+                agg[eid] = {
+                    "enrollment_id": eid,
+                    "student_name": ev.enrollment.student.name,
+                    "score": 0,
+                    "danger": 0,
+                    "warn": 0,
+                    "info": 0,
+                    "last_occurred_at": None,
+                }
 
-        if event_type:
-            base = base.filter(event_type=event_type)
+            s = _event_score(ev.event_type, bool(ev.violated), ev.violation_reason)
+            agg[eid]["score"] += s
 
-        if enrollment_id:
-            base = base.filter(enrollment_id=enrollment_id)
+            if ev.violated:
+                agg[eid]["danger"] += 1
+            elif ev.event_type in ("SEEK_ATTEMPT", "SPEED_CHANGE_ATTEMPT", "FOCUS_LOST"):
+                agg[eid]["warn"] += 1
+            else:
+                agg[eid]["info"] += 1
 
-        if user_id:
-            base = base.filter(user_id=user_id)
+            if (
+                agg[eid]["last_occurred_at"] is None
+                or ev.occurred_at > agg[eid]["last_occurred_at"]
+            ):
+                agg[eid]["last_occurred_at"] = ev.occurred_at
 
-        if search:
-            base = base.filter(
-                Q(enrollment__student__name__icontains=search)
-                | Q(session_id__icontains=search)
-                | Q(violation_reason__icontains=search)
-            )
+        rows = sorted(
+            agg.values(),
+            key=lambda r: (r["score"], r["danger"], r["warn"]),
+            reverse=True,
+        )[:limit]
 
-        # ---------- summary ----------
-        # video 단위 요약 (현재 필터와 무관하게 전체 기반으로 주고 싶으면 base 대신 total_qs 사용)
-        total_qs = self.get_queryset().filter(video_id=video_id)
+        return Response(VideoRiskRowSerializer(rows, many=True).data)
 
-        summary = {
-            "total_events": int(total_qs.count()),
-            "violations": int(total_qs.filter(violated=True).count()),
-            "seek_attempts": int(total_qs.filter(event_type="SEEK_ATTEMPT").count()),
-            "speed_attempts": int(total_qs.filter(event_type="SPEED_CHANGE_ATTEMPT").count()),
-            "visibility_hidden": int(total_qs.filter(event_type="VISIBILITY_HIDDEN").count()),
-            "focus_lost": int(total_qs.filter(event_type="FOCUS_LOST").count()),
-        }
+    # --------------------------------------------------
+    # CSV Export
+    # --------------------------------------------------
+    @action(detail=False, methods=["get"], url_path="export")
+    def export_csv(self, request):
+        video_id = request.query_params.get("video")
+        if not video_id:
+            return Response({"detail": "video is required"}, status=400)
 
-        # ---------- risk students ----------
-        # video 전체 이벤트를 학생별로 점수화 (top 10)
-        score_map = defaultdict(lambda: {"score": 0, "violations": 0, "counts": defaultdict(int), "student_name": "-", "enrollment": None})
+        range_key = request.query_params.get("range", "24h")
+        since = _range_to_since(range_key)
 
-        for e in total_qs.only(
-            "enrollment_id", "event_type", "violated",
-            "enrollment__student__name"
-        ):
-            sid = int(e.enrollment_id)
-            score_map[sid]["enrollment"] = sid
-            score_map[sid]["student_name"] = getattr(getattr(e.enrollment, "student", None), "name", "-") if hasattr(e, "enrollment") else score_map[sid]["student_name"]
+        qs = VideoPlaybackEvent.objects.filter(video_id=video_id).select_related(
+            "enrollment", "enrollment__student"
+        )
+        if since:
+            qs = qs.filter(occurred_at__gte=since)
 
-            score_map[sid]["counts"][e.event_type] += 1
+        qs = qs.order_by("-occurred_at", "-id")
 
-            w = _event_weight(e.event_type)
-            if e.violated:
-                w += VIOLATED_BONUS
-                score_map[sid]["violations"] += 1
+        resp = HttpResponse(content_type="text/csv; charset=utf-8")
+        resp["Content-Disposition"] = (
+            f'attachment; filename="video_{video_id}_events_{range_key}.csv"'
+        )
 
-            score_map[sid]["score"] += w
+        writer = csv.writer(resp)
+        writer.writerow([
+            "occurred_at",
+            "student_name",
+            "enrollment_id",
+            "event_type",
+            "violated",
+            "violation_reason",
+            "session_id",
+            "user_id",
+            "score",
+            "payload",
+        ])
 
-        risk_students = []
-        for sid, v in score_map.items():
-            score = int(v["score"])
-            risk_students.append({
-                "enrollment": sid,
-                "student_name": v["student_name"],
-                "score": score,
-                "level": _risk_level(score),
-                "violations": int(v["violations"]),
-                "top_events": sorted(
-                    [{"type": k, "count": int(c)} for k, c in v["counts"].items()],
-                    key=lambda x: x["count"],
-                    reverse=True,
-                )[:3],
-            })
+        for ev in qs.iterator():
+            writer.writerow([
+                ev.occurred_at.isoformat(),
+                ev.enrollment.student.name if ev.enrollment_id else "",
+                ev.enrollment_id,
+                ev.event_type,
+                "Y" if ev.violated else "N",
+                ev.violation_reason or "",
+                ev.session_id,
+                ev.user_id,
+                _event_score(ev.event_type, bool(ev.violated), ev.violation_reason),
+                ev.event_payload,
+            ])
 
-        risk_students.sort(key=lambda x: x["score"], reverse=True)
-        risk_students = risk_students[:10]
-
-        # ---------- paginated events (filtered base) ----------
-        page = self.paginate_queryset(base)
-        ser = self.get_serializer(page, many=True)
-        paginated = self.get_paginated_response(ser.data).data
-
-        return Response({
-            "summary": summary,
-            "risk_students": risk_students,
-            "events": paginated,
-        })
+        return resp

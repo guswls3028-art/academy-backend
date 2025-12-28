@@ -1,7 +1,5 @@
 # apps/support/media/views/permission_views.py
 
-# test change
-
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
@@ -46,7 +44,10 @@ class VideoPermissionViewSet(ModelViewSet):
             obj, _ = VideoPermission.objects.update_or_create(
                 video_id=video_id,
                 enrollment_id=enrollment_id,
-                defaults={"rule": rule},
+                defaults={
+                    "rule": rule,
+                    "is_override": True,   # ✅ 관리자 수동 설정 명시
+                },
             )
             objs.append(obj)
 

@@ -161,15 +161,12 @@ class PlaybackEventBatchResponseSerializer(serializers.Serializer):
     stored = serializers.IntegerField()
 
 
+
 class VideoPlaybackEventListSerializer(serializers.ModelSerializer):
-    student_name = serializers.CharField(
-        source="enrollment.student.name",
-        read_only=True,
-    )
-    enrollment_id = serializers.IntegerField(
-        source="enrollment.id",
-        read_only=True,
-    )
+    student_name = serializers.CharField(source="enrollment.student.name", read_only=True)
+    enrollment_id = serializers.IntegerField(source="enrollment.id", read_only=True)
+    severity = serializers.SerializerMethodField()
+    score = serializers.SerializerMethodField()
 
     class Meta:
         model = VideoPlaybackEvent
@@ -187,5 +184,52 @@ class VideoPlaybackEventListSerializer(serializers.ModelSerializer):
             "policy_snapshot",
             "occurred_at",
             "received_at",
+            "severity",
+            "score",
         ]
         ref_name = "MediaVideoPlaybackEventList"
+
+    def get_severity(self, obj):
+        # violated이면 기본적으로 상향
+        base = {
+            "SEEK_ATTEMPT": "warn",
+            "SPEED_CHANGE_ATTEMPT": "warn",
+            "FOCUS_LOST": "warn",
+            "VISIBILITY_HIDDEN": "info",
+            "PLAYER_ERROR": "info",
+        }.get(obj.event_type, "info")
+
+        if obj.violated:
+            return "danger"
+        return base
+
+    def get_score(self, obj):
+        # 이벤트 점수화 (클릭/리스트에 즉시 표시)
+        weights = {
+            "VISIBILITY_HIDDEN": 1,
+            "VISIBILITY_VISIBLE": 0,
+            "FOCUS_LOST": 2,
+            "FOCUS_GAINED": 0,
+            "SEEK_ATTEMPT": 3,
+            "SPEED_CHANGE_ATTEMPT": 3,
+            "FULLSCREEN_ENTER": 0,
+            "FULLSCREEN_EXIT": 0,
+            "PLAYER_ERROR": 1,
+        }
+        w = int(weights.get(obj.event_type, 1))
+        if obj.violated:
+            w = int(w * 2)
+        # violation_reason 있으면 약간 가산
+        if obj.violation_reason:
+            w += 1
+        return w
+
+
+class VideoRiskRowSerializer(serializers.Serializer):
+    enrollment_id = serializers.IntegerField()
+    student_name = serializers.CharField()
+    score = serializers.IntegerField()
+    danger = serializers.IntegerField()
+    warn = serializers.IntegerField()
+    info = serializers.IntegerField()
+    last_occurred_at = serializers.DateTimeField(allow_null=True)

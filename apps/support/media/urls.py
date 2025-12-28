@@ -11,27 +11,35 @@ from .views import (
     VideoProcessingCompleteView,
 )
 
+from .views.achievement_views import VideoAchievementView
+from .views.playback_views import (
+    PlaybackStartView,
+    PlaybackRefreshView,
+    PlaybackHeartbeatView,
+    PlaybackEndView,
+    PlaybackEventBatchView,
+)
+
+# ========================================================
+# Router
+# ========================================================
+
 router = DefaultRouter()
-
-# ========================================================
-# Admin / CRUD APIs
-# ========================================================
-
 router.register(r"videos", VideoViewSet, basename="videos")
 router.register(r"video-permissions", VideoPermissionViewSet, basename="video-permissions")
 router.register(r"video-progress", VideoProgressViewSet, basename="video-progress")
-router.register(
-    r"video-playback-events",
-    VideoPlaybackEventViewSet,
-    basename="video-playback-events",
-)
+router.register(r"video-playback-events", VideoPlaybackEventViewSet, basename="video-playback-events")
+
+# ========================================================
+# urlpatterns (선언 먼저!)
+# ========================================================
 
 urlpatterns = [
     path("", include(router.urls)),
 ]
 
 # ========================================================
-# Nested Video APIs (프론트 가독성용)
+# Nested / Extra APIs
 # ========================================================
 
 video_detail = VideoViewSet.as_view({"get": "retrieve"})
@@ -48,19 +56,16 @@ urlpatterns += [
         video_stats,
         name="media-video-stats-nested",
     ),
+    path(
+        "videos/<int:video_id>/achievement/",
+        VideoAchievementView.as_view(),
+        name="media-video-achievement",
+    ),
 ]
 
 # ========================================================
-# Playback APIs (Student, token-based)
+# Playback APIs (Student)
 # ========================================================
-
-from .views.playback_views import (
-    PlaybackStartView,
-    PlaybackRefreshView,
-    PlaybackHeartbeatView,
-    PlaybackEndView,
-    PlaybackEventBatchView,
-)
 
 urlpatterns += [
     path("playback/start/", PlaybackStartView.as_view()),
@@ -71,7 +76,7 @@ urlpatterns += [
 ]
 
 # ========================================================
-# Internal APIs (Worker → API)
+# Internal (Worker)
 # ========================================================
 
 urlpatterns += [
