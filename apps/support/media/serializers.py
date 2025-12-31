@@ -1,4 +1,4 @@
-# apps/support/media/serializers.py
+#apps/support/media/serializers.py
 
 from django.conf import settings
 from rest_framework import serializers
@@ -55,10 +55,10 @@ class VideoSerializer(serializers.ModelSerializer):
             "allow_skip",
             "max_speed",
             "show_watermark",
-            "thumbnail",      # 내부 ImageField (media/...)
-            "thumbnail_url",  # CDN URL
-            "hls_path",       # 내부 경로 (media/...)
-            "hls_url",        # CDN URL
+            "thumbnail",
+            "thumbnail_url",
+            "hls_path",
+            "hls_url",
             "created_at",
             "updated_at",
             "source_type",
@@ -87,9 +87,7 @@ class VideoSerializer(serializers.ModelSerializer):
         CDN base URL (no trailing slash)
         """
         base = getattr(settings, "CDN_HLS_BASE_URL", None)
-        if not base:
-            return None
-        return base.rstrip("/")
+        return base.rstrip("/") if base else None
 
     def _normalize_media_path(self, path: str) -> str:
         """
@@ -120,13 +118,10 @@ class VideoSerializer(serializers.ModelSerializer):
             return 0
 
     # ====================================================
-    # CDN fields
+    # CDN fields (🔥 핵심 수정 포인트)
     # ====================================================
 
     def get_thumbnail_url(self, obj):
-        """
-        CDN absolute URL for thumbnail
-        """
         if not obj.thumbnail:
             return None
 
@@ -134,18 +129,10 @@ class VideoSerializer(serializers.ModelSerializer):
         if not cdn:
             return None
 
-        path = obj.thumbnail.name.lstrip("/")
-        if path.startswith("storage/"):
-            path = path[len("storage/"):]
-
-        v = self._cache_version(obj)
-        return f"{cdn}/{path}?v={v}"
-
+        path = self._normalize_media_path(obj.thumbnail.name)
+        return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
     def get_hls_url(self, obj):
-        """
-        CDN absolute URL for HLS master.m3u8
-        """
         if not obj.hls_path:
             return None
 
@@ -153,12 +140,8 @@ class VideoSerializer(serializers.ModelSerializer):
         if not cdn:
             return None
 
-        path = str(obj.hls_path).lstrip("/")
-        if path.startswith("storage/"):
-            path = path[len("storage/"):]
-
-        v = self._cache_version(obj)
-        return f"{cdn}/{path}?v={v}"
+        path = self._normalize_media_path(str(obj.hls_path))
+        return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
 
 # ========================================================
@@ -329,13 +312,10 @@ class VideoRiskRowSerializer(serializers.Serializer):
     last_occurred_at = serializers.DateTimeField(allow_null=True)
 
 
-# serializers.py 맨 아래 VideoSerializer 다음에 추가
+# ========================================================
+# Detail (현재는 list와 동일)
+# ========================================================
 
 class VideoDetailSerializer(VideoSerializer):
-    """
-    Detail serializer
-    - 현재는 list와 동일
-    - 향후 detail 전용 필드 확장 대비
-    """
     class Meta(VideoSerializer.Meta):
         ref_name = "MediaVideoDetail"
