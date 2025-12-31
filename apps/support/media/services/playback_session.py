@@ -1,4 +1,4 @@
-#apps/support/media/servieces/playback_session.py
+# apps/support/media/services/playback_session.py
 
 import time
 import uuid
@@ -78,9 +78,7 @@ def _cleanup_expired_sessions(user_id: int) -> None:
     for raw_sid in expired:
         sid = _decode(raw_sid)
 
-        device_id = _decode(
-            redis_client.hget(_key_session(sid), "device_id")
-        )
+        device_id = _decode(redis_client.hget(_key_session(sid), "device_id"))
         if device_id:
             pipe.srem(devices_key, device_id)
 
@@ -116,13 +114,13 @@ def issue_session(
     now = _now()
     expires_at = now + int(ttl_seconds)
 
-    existing_devices = _decode_set(
-        redis_client.smembers(devices_key)
-    )
+    existing_devices = _decode_set(redis_client.smembers(devices_key))
 
+    # 기기 제한
     if device_id not in existing_devices and len(existing_devices) >= int(max_devices):
         return False, None, "device_limit_exceeded"
 
+    # 동시 세션 제한
     active_count = int(redis_client.zcard(sessions_key) or 0)
     if active_count >= int(max_sessions):
         return False, None, "concurrency_limit_exceeded"
@@ -225,17 +223,22 @@ def is_session_active(*, user_id: int, session_id: str) -> bool:
 # Facade API (Student ONLY)
 # =======================================================
 
-def create_playback_session(*, user, video_id: int, enrollment_id: int) -> dict:
+def create_playback_session(
+    *,
+    user,
+    video_id: int,
+    enrollment_id: int,
+    device_id: str,
+) -> dict:
     """
     학생 전용 Facade API
 
     책임:
     - "재생 세션 생성"만 담당
-    - 권한 / 수강 검증은 반드시 View에서 선행되어야 함
+    - 권한 / 수강 검증은 View에서 선행되어야 함
 
-    ⚠️ 주의
-    - 이 함수는 Facade View 전용이다.
-    - 다른 View / Task / Script에서 직접 호출하지 말 것.
+    변경점(중요):
+    - ✅ device_id는 클라이언트 입력을 그대로 사용 (정책 핵심)
     """
 
     # 🚫 강사 / 운영자 차단
@@ -244,6 +247,9 @@ def create_playback_session(*, user, video_id: int, enrollment_id: int) -> dict:
             "ok": False,
             "error": "instructor_must_use_play_api",
         }
+
+    if not device_id:
+        return {"ok": False, "error": "device_id_required"}
 
     video = Video.objects.select_related(
         "session",
@@ -258,7 +264,7 @@ def create_playback_session(*, user, video_id: int, enrollment_id: int) -> dict:
         status="ACTIVE",
     )
 
-    # 🛡️ 안전 가드 (View 누락 방지용, 정상 경로에서는 항상 통과)
+    # 🛡️ 안전 가드 (View 누락 방지용)
     if enrollment.lecture_id != video.session.lecture_id:
         return {
             "ok": False,
@@ -266,9 +272,6 @@ def create_playback_session(*, user, video_id: int, enrollment_id: int) -> dict:
         }
 
     ttl = int(getattr(settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600))
-
-    # Facade 전용 논리 device
-    device_id = f"facade:{uuid.uuid4()}"
 
     ok, sess, err = issue_session(
         user_id=user.id,

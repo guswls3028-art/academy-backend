@@ -9,6 +9,7 @@ from .views import (
     VideoProgressViewSet,
     VideoPlaybackEventViewSet,
     VideoProcessingCompleteView,
+    VideoPolicyImpactAPIView,
 )
 
 from .views.achievement_views import VideoAchievementView
@@ -85,4 +86,10 @@ urlpatterns += [
         VideoProcessingCompleteView.as_view(),
         name="media-video-processing-complete",
     ),
+]
+
+# from apps.support.media.views.video_policy_impact import VideoPolicyImpactAPIView
+
+urlpatterns += [
+  path("media/videos/<int:video_id>/policy-impact/", VideoPolicyImpactAPIView.as_view()),
 ]
