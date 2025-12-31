@@ -9,8 +9,9 @@ from .views import (
     VideoProgressViewSet,
     VideoPlaybackEventViewSet,
     VideoProcessingCompleteView,
-    VideoPolicyImpactAPIView,
 )
+from .views.video_policy_impact import VideoPolicyImpactAPIView  # ✅ 직접 import
+
 
 from .views.achievement_views import VideoAchievementView
 from .views.playback_views import (
