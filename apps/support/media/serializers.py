@@ -1,5 +1,3 @@
-# apps/support/media/serializers.py
-
 from django.conf import settings
 from rest_framework import serializers
 
@@ -55,9 +53,9 @@ class VideoSerializer(serializers.ModelSerializer):
             "allow_skip",
             "max_speed",
             "show_watermark",
-            "thumbnail",      # 내부 ImageField (media/...)
+            "thumbnail",      # 내부 ImageField (storage/media/...)
             "thumbnail_url",  # CDN URL
-            "hls_path",       # 내부 경로 (media/...)
+            "hls_path",       # 내부 경로
             "hls_url",        # CDN URL
             "created_at",
             "updated_at",
@@ -91,25 +89,6 @@ class VideoSerializer(serializers.ModelSerializer):
             return None
         return base.rstrip("/")
 
-    def _normalize_media_path(self, path: str) -> str:
-        """
-        Normalize path to 'media/...' form
-
-        Accepts:
-        - media/xxx
-        - /media/xxx
-        - storage/media/xxx (legacy)
-        """
-        path = path.lstrip("/")
-
-        if path.startswith("media/"):
-            return path
-
-        if path.startswith("storage/media/"):
-            return path[len("storage/"):]
-
-        return path
-
     def _cache_version(self, obj) -> int:
         """
         Cache-busting version (CDN safe)
@@ -119,13 +98,8 @@ class VideoSerializer(serializers.ModelSerializer):
         except Exception:
             return 0
 
-class VideoDetailSerializer(VideoSerializer):
-    class Meta(VideoSerializer.Meta):
-        ref_name = "MediaVideoDetail"
-
-
     # ====================================================
-    # CDN fields
+    # CDN fields  ⭐ 핵심 (반드시 여기!)
     # ====================================================
 
     def get_thumbnail_url(self, obj):
@@ -146,7 +120,6 @@ class VideoDetailSerializer(VideoSerializer):
         v = self._cache_version(obj)
         return f"{cdn}/{path}?v={v}"
 
-
     def get_hls_url(self, obj):
         """
         CDN absolute URL for HLS master.m3u8
@@ -164,6 +137,15 @@ class VideoDetailSerializer(VideoSerializer):
 
         v = self._cache_version(obj)
         return f"{cdn}/{path}?v={v}"
+
+
+class VideoDetailSerializer(VideoSerializer):
+    """
+    Detail용 확장 Serializer
+    (핵심 로직은 전부 VideoSerializer에 있음)
+    """
+    class Meta(VideoSerializer.Meta):
+        ref_name = "MediaVideoDetail"
 
 
 # ========================================================
