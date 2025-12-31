@@ -327,3 +327,15 @@ class VideoRiskRowSerializer(serializers.Serializer):
     warn = serializers.IntegerField()
     info = serializers.IntegerField()
     last_occurred_at = serializers.DateTimeField(allow_null=True)
+
+
+# serializers.py 맨 아래 VideoSerializer 다음에 추가
+
+class VideoDetailSerializer(VideoSerializer):
+    """
+    Detail serializer
+    - 현재는 list와 동일
+    - 향후 detail 전용 필드 확장 대비
+    """
+    class Meta(VideoSerializer.Meta):
+        ref_name = "MediaVideoDetail"
