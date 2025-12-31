@@ -119,6 +119,11 @@ class VideoSerializer(serializers.ModelSerializer):
         except Exception:
             return 0
 
+class VideoDetailSerializer(VideoSerializer):
+    class Meta(VideoSerializer.Meta):
+        ref_name = "MediaVideoDetail"
+
+
     # ====================================================
     # CDN fields
     # ====================================================
@@ -134,8 +139,6 @@ class VideoSerializer(serializers.ModelSerializer):
         if not cdn:
             return None
 
-        # 🔥 핵심 수정
-        # storage/media/... → media/...
         path = obj.thumbnail.name.lstrip("/")
         if path.startswith("storage/"):
             path = path[len("storage/"):]
@@ -161,10 +164,6 @@ class VideoSerializer(serializers.ModelSerializer):
 
         v = self._cache_version(obj)
         return f"{cdn}/{path}?v={v}"
-
-    class VideoDetailSerializer(VideoSerializer):
-        class Meta(VideoSerializer.Meta):
-            ref_name = "MediaVideoDetail"
 
 
 # ========================================================
