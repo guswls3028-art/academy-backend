@@ -9,9 +9,8 @@ from .views import (
     VideoProgressViewSet,
     VideoPlaybackEventViewSet,
     VideoProcessingCompleteView,
+    VideoPolicyImpactAPIView,
 )
-from .views.video_policy_impact import VideoPolicyImpactAPIView  # ✅ 직접 import
-
 
 from .views.achievement_views import VideoAchievementView
 from .views.playback_views import (
@@ -89,8 +88,14 @@ urlpatterns += [
     ),
 ]
 
-# from apps.support.media.views.video_policy_impact import VideoPolicyImpactAPIView
+# ========================================================
+# Policy Impact (Admin preview)
+# ========================================================
 
 urlpatterns += [
-  path("media/videos/<int:video_id>/policy-impact/", VideoPolicyImpactAPIView.as_view()),
+    path(
+        "videos/<int:video_id>/policy-impact/",
+        VideoPolicyImpactAPIView.as_view(),
+        name="media-video-policy-impact",
+    ),
 ]
