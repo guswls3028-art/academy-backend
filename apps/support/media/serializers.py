@@ -1,3 +1,5 @@
+# apps/support/media/serializers.py
+
 from django.conf import settings
 from rest_framework import serializers
 
@@ -21,11 +23,13 @@ class VideoSerializer(serializers.ModelSerializer):
     - thumbnail_url / hls_url : CDN 노출용 (API)
     """
 
+    # 생성 시만 사용
     session = serializers.PrimaryKeyRelatedField(
         queryset=Session.objects.all(),
         write_only=True,
     )
 
+    # 응답용
     session_id = serializers.IntegerField(
         source="session.id",
         read_only=True,
@@ -33,7 +37,7 @@ class VideoSerializer(serializers.ModelSerializer):
 
     source_type = serializers.SerializerMethodField()
 
-    # 🔥 반드시 여기 선언 + 여기 구현
+    # CDN derived fields
     thumbnail_url = serializers.SerializerMethodField()
     hls_url = serializers.SerializerMethodField()
 
@@ -51,10 +55,10 @@ class VideoSerializer(serializers.ModelSerializer):
             "allow_skip",
             "max_speed",
             "show_watermark",
-            "thumbnail",
-            "thumbnail_url",
-            "hls_path",
-            "hls_url",
+            "thumbnail",      # 내부 ImageField (media/...)
+            "thumbnail_url",  # CDN URL
+            "hls_path",       # 내부 경로 (media/...)
+            "hls_url",        # CDN URL
             "created_at",
             "updated_at",
             "source_type",
@@ -71,24 +75,58 @@ class VideoSerializer(serializers.ModelSerializer):
         ]
         ref_name = "MediaVideo"
 
-    # ================= helpers =================
+    # ====================================================
+    # helpers
+    # ====================================================
 
     def get_source_type(self, obj):
         return "s3" if obj.file_key else "unknown"
 
-    def _cdn_base(self):
+    def _cdn_base(self) -> str | None:
+        """
+        CDN base URL (no trailing slash)
+        """
         base = getattr(settings, "CDN_HLS_BASE_URL", None)
-        return base.rstrip("/") if base else None
+        if not base:
+            return None
+        return base.rstrip("/")
 
-    def _cache_version(self, obj):
+    def _normalize_media_path(self, path: str) -> str:
+        """
+        Normalize path to 'media/...' form
+
+        Accepts:
+        - media/xxx
+        - /media/xxx
+        - storage/media/xxx (legacy)
+        """
+        path = path.lstrip("/")
+
+        if path.startswith("media/"):
+            return path
+
+        if path.startswith("storage/media/"):
+            return path[len("storage/"):]
+
+        return path
+
+    def _cache_version(self, obj) -> int:
+        """
+        Cache-busting version (CDN safe)
+        """
         try:
             return int(obj.updated_at.timestamp())
         except Exception:
             return 0
 
-    # ================= CDN fields =================
+    # ====================================================
+    # CDN fields
+    # ====================================================
 
     def get_thumbnail_url(self, obj):
+        """
+        CDN absolute URL for thumbnail
+        """
         if not obj.thumbnail:
             return None
 
@@ -100,9 +138,14 @@ class VideoSerializer(serializers.ModelSerializer):
         if path.startswith("storage/"):
             path = path[len("storage/"):]
 
-        return f"{cdn}/{path}?v={self._cache_version(obj)}"
+        v = self._cache_version(obj)
+        return f"{cdn}/{path}?v={v}"
+
 
     def get_hls_url(self, obj):
+        """
+        CDN absolute URL for HLS master.m3u8
+        """
         if not obj.hls_path:
             return None
 
@@ -114,15 +157,8 @@ class VideoSerializer(serializers.ModelSerializer):
         if path.startswith("storage/"):
             path = path[len("storage/"):]
 
-        return f"{cdn}/{path}?v={self._cache_version(obj)}"
-
-
-class VideoDetailSerializer(VideoSerializer):
-    """
-    상세용은 그냥 상속만
-    """
-    class Meta(VideoSerializer.Meta):
-        ref_name = "MediaVideoDetail"
+        v = self._cache_version(obj)
+        return f"{cdn}/{path}?v={v}"
 
 
 # ========================================================
