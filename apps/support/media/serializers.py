@@ -127,9 +127,9 @@ class VideoSerializer(serializers.ModelSerializer):
         """
         CDN absolute URL for thumbnail
 
-        Priority:
-        1) Video.thumbnail (ImageField)
-        2) HLS worker thumbnail: media/hls/videos/{video_id}/thumbnail.jpg
+        우선순위:
+        1) ImageField (obj.thumbnail)
+        2) 관례 기반 fallback: media/hls/videos/{id}/thumbnail.jpg
         """
         cdn = self._cdn_base()
         if not cdn:
@@ -137,15 +137,14 @@ class VideoSerializer(serializers.ModelSerializer):
 
         v = self._cache_version(obj)
 
-        # 1️⃣ ImageField 썸네일 (있으면 최우선)
+        # 1️⃣ ImageField가 있으면 최우선
         if obj.thumbnail:
             rel_path = self._normalize_media_path(obj.thumbnail.name)
             return f"{cdn}/{rel_path}?v={v}"
 
-        # 2️⃣ HLS 썸네일 fallback
-        rel_path = f"media/hls/videos/{obj.id}/thumbnail.jpg"
-        return f"{cdn}/{rel_path}?v={v}"
-
+        # 2️⃣ fallback: worker가 생성한 HLS 썸네일
+        fallback_path = f"media/hls/videos/{obj.id}/thumbnail.jpg"
+        return f"{cdn}/{fallback_path}?v={v}"
 
     def get_hls_url(self, obj):
         """
