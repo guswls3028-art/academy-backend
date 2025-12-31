@@ -126,25 +126,23 @@ class VideoSerializer(serializers.ModelSerializer):
     def get_thumbnail_url(self, obj):
         """
         CDN absolute URL for thumbnail
-
-        우선순위:
-        1) ImageField (obj.thumbnail)
-        2) 관례 기반 fallback: media/hls/videos/{id}/thumbnail.jpg
         """
+        if not obj.thumbnail:
+            return None
+
         cdn = self._cdn_base()
         if not cdn:
             return None
 
+        # 🔥 핵심 수정
+        # storage/media/... → media/...
+        path = obj.thumbnail.name.lstrip("/")
+        if path.startswith("storage/"):
+            path = path[len("storage/"):]
+
         v = self._cache_version(obj)
+        return f"{cdn}/{path}?v={v}"
 
-        # 1️⃣ ImageField가 있으면 최우선
-        if obj.thumbnail:
-            rel_path = self._normalize_media_path(obj.thumbnail.name)
-            return f"{cdn}/{rel_path}?v={v}"
-
-        # 2️⃣ fallback: worker가 생성한 HLS 썸네일
-        fallback_path = f"media/hls/videos/{obj.id}/thumbnail.jpg"
-        return f"{cdn}/{fallback_path}?v={v}"
 
     def get_hls_url(self, obj):
         """
@@ -157,15 +155,16 @@ class VideoSerializer(serializers.ModelSerializer):
         if not cdn:
             return None
 
-        rel_path = self._normalize_media_path(str(obj.hls_path))
+        path = str(obj.hls_path).lstrip("/")
+        if path.startswith("storage/"):
+            path = path[len("storage/"):]
+
         v = self._cache_version(obj)
+        return f"{cdn}/{path}?v={v}"
 
-        return f"{cdn}/{rel_path}?v={v}"
-
-
-class VideoDetailSerializer(VideoSerializer):
-    class Meta(VideoSerializer.Meta):
-        ref_name = "MediaVideoDetail"
+    class VideoDetailSerializer(VideoSerializer):
+        class Meta(VideoSerializer.Meta):
+            ref_name = "MediaVideoDetail"
 
 
 # ========================================================
