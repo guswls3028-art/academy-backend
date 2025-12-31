@@ -21,13 +21,11 @@ class VideoSerializer(serializers.ModelSerializer):
     - thumbnail_url / hls_url : CDN 노출용 (API)
     """
 
-    # 생성 시만 사용
     session = serializers.PrimaryKeyRelatedField(
         queryset=Session.objects.all(),
         write_only=True,
     )
 
-    # 응답용
     session_id = serializers.IntegerField(
         source="session.id",
         read_only=True,
@@ -35,7 +33,7 @@ class VideoSerializer(serializers.ModelSerializer):
 
     source_type = serializers.SerializerMethodField()
 
-    # CDN derived fields
+    # 🔥 반드시 여기 선언 + 여기 구현
     thumbnail_url = serializers.SerializerMethodField()
     hls_url = serializers.SerializerMethodField()
 
@@ -53,10 +51,10 @@ class VideoSerializer(serializers.ModelSerializer):
             "allow_skip",
             "max_speed",
             "show_watermark",
-            "thumbnail",      # 내부 ImageField (storage/media/...)
-            "thumbnail_url",  # CDN URL
-            "hls_path",       # 내부 경로
-            "hls_url",        # CDN URL
+            "thumbnail",
+            "thumbnail_url",
+            "hls_path",
+            "hls_url",
             "created_at",
             "updated_at",
             "source_type",
@@ -73,39 +71,24 @@ class VideoSerializer(serializers.ModelSerializer):
         ]
         ref_name = "MediaVideo"
 
-    # ====================================================
-    # helpers
-    # ====================================================
+    # ================= helpers =================
 
     def get_source_type(self, obj):
         return "s3" if obj.file_key else "unknown"
 
-    def _cdn_base(self) -> str | None:
-        """
-        CDN base URL (no trailing slash)
-        """
+    def _cdn_base(self):
         base = getattr(settings, "CDN_HLS_BASE_URL", None)
-        if not base:
-            return None
-        return base.rstrip("/")
+        return base.rstrip("/") if base else None
 
-    def _cache_version(self, obj) -> int:
-        """
-        Cache-busting version (CDN safe)
-        """
+    def _cache_version(self, obj):
         try:
             return int(obj.updated_at.timestamp())
         except Exception:
             return 0
 
-    # ====================================================
-    # CDN fields  ⭐ 핵심 (반드시 여기!)
-    # ====================================================
+    # ================= CDN fields =================
 
     def get_thumbnail_url(self, obj):
-        """
-        CDN absolute URL for thumbnail
-        """
         if not obj.thumbnail:
             return None
 
@@ -117,13 +100,9 @@ class VideoSerializer(serializers.ModelSerializer):
         if path.startswith("storage/"):
             path = path[len("storage/"):]
 
-        v = self._cache_version(obj)
-        return f"{cdn}/{path}?v={v}"
+        return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
     def get_hls_url(self, obj):
-        """
-        CDN absolute URL for HLS master.m3u8
-        """
         if not obj.hls_path:
             return None
 
@@ -135,14 +114,12 @@ class VideoSerializer(serializers.ModelSerializer):
         if path.startswith("storage/"):
             path = path[len("storage/"):]
 
-        v = self._cache_version(obj)
-        return f"{cdn}/{path}?v={v}"
+        return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
 
 class VideoDetailSerializer(VideoSerializer):
     """
-    Detail용 확장 Serializer
-    (핵심 로직은 전부 VideoSerializer에 있음)
+    상세용은 그냥 상속만
     """
     class Meta(VideoSerializer.Meta):
         ref_name = "MediaVideoDetail"
