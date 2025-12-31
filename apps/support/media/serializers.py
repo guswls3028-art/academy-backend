@@ -126,17 +126,20 @@ class VideoSerializer(serializers.ModelSerializer):
         if not cdn:
             return None
 
-        # 1️⃣ DB thumbnail이 있으면 그걸 최우선 사용 (어제 동작 복구)
+        # 1️⃣ DB thumbnail (ImageField) 최우선
         if obj.thumbnail:
-            path = obj.thumbnail.name.lstrip("/")
+            path = self._normalize_media_path(obj.thumbnail.name)
             return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
-        # 2️⃣ fallback: worker 고정 경로 (READY만)
+        # 2️⃣ READY 상태 fallback (worker 규약)
         if obj.status == obj.Status.READY:
-            path = f"media/hls/videos/{obj.id}/thumbnail.jpg"
+            path = self._normalize_media_path(
+                f"media/hls/videos/{obj.id}/thumbnail.jpg"
+            )
             return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
         return None
+
 
     def get_hls_url(self, obj):
         if not obj.hls_path:
