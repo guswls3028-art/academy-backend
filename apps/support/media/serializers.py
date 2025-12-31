@@ -122,14 +122,16 @@ class VideoSerializer(serializers.ModelSerializer):
     # ====================================================
 
     def get_thumbnail_url(self, obj):
-        if not obj.thumbnail:
-            return None
-
         cdn = self._cdn_base()
         if not cdn:
             return None
 
-        path = self._normalize_media_path(obj.thumbnail.name)
+        # ✅ HLS 썸네일은 status READY일 때만 존재
+        if obj.status != obj.Status.READY:
+            return None
+
+        # ✅ Worker가 만드는 고정 경로
+        path = f"media/hls/videos/{obj.id}/thumbnail.jpg"
         return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
     def get_hls_url(self, obj):
