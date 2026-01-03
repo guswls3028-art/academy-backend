@@ -1,0 +1,14 @@
+#worker-video.txt
+
+# ---- base ----
+-r common.txt
+
+# Video processing
+ffmpeg-python
+
+# Image (thumbnail)
+pillow
+opencv-python-headless
+
+# HTTP download
+requests

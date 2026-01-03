@@ -223,55 +223,114 @@ class AIResult:
 
 from .media import process_video_media
 from .ai import process_ai_submission_task
+from .ai_worker import run_ai_job_task
 
 __all__ = [
     "process_video_media",
     "process_ai_submission_task",
+    "run_ai_job_task",
 ]
 
 
 ==========================================================================================
 # FILE: tasks/ai.py
 ==========================================================================================
-# apps/shared/tasks/ai.py
+# # apps/shared/tasks/ai.py
+# from __future__ import annotations
+
+# from celery import shared_task
+# from django.db import transaction
+
+# from apps.domains.submissions.models import Submission
+# from apps.domains.submissions.services.ai_result_mapper import apply_ai_result
+# from apps.domains.results.tasks.grading_tasks import grade_submission_task
+
+
+# @shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={"max_retries": 3, "countdown": 10})
+# def process_ai_submission_task(self, submission_id: int) -> None:
+#     """
+#     MVP용 AI 처리 태스크
+#     - 실제 AI 대신 payload 기반 처리 / 더미 가능
+#     - 결과는 반드시 apply_ai_result로 반영
+#     """
+#     submission = Submission.objects.get(id=submission_id)
+
+#     # 🔧 MVP: 실제로는 worker AI가 payload를 만든다고 가정
+#     # 지금은 예시 더미
+#     fake_result = {
+#         "submission_id": submission.id,
+#         "items": [
+#             {
+#                 "question_id": 1,
+#                 "answer": "B",
+#                 "meta": {"via": "mvp-ai"},
+#             }
+#         ],
+#     }
+
+#     with transaction.atomic():
+#         returned_submission_id = apply_ai_result(fake_result)
+
+#     # 답안이 생겼으면 grading으로
+#     if returned_submission_id:
+#         grade_submission_task.delay(returned_submission_id)
+
+
+
+
+# ⚠️ process_ai_submission_task 는 MVP 더미였음
+# 이제 사용 안 함
+
+
+==========================================================================================
+# FILE: tasks/ai_worker.py
+==========================================================================================
+# apps/shared/tasks/ai_worker.py
 from __future__ import annotations
 
 from celery import shared_task
-from django.db import transaction
 
-from apps.domains.submissions.models import Submission
-from apps.domains.submissions.services.ai_result_mapper import apply_ai_result
-from apps.domains.results.tasks.grading_tasks import grade_submission_task
+from apps.shared.contracts.ai_job import AIJob
+from apps.shared.contracts.ai_result import AIResult
+from apps.worker.ai.pipelines.dispatcher import handle_ai_job
 
 
-@shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={"max_retries": 3, "countdown": 10})
-def process_ai_submission_task(self, submission_id: int) -> None:
+@shared_task(
+    bind=True,
+    queue="ai",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3, "countdown": 10},
+)
+def run_ai_job_task(self, job_dict: dict) -> dict:
     """
-    MVP용 AI 처리 태스크
-    - 실제 AI 대신 payload 기반 처리 / 더미 가능
-    - 결과는 반드시 apply_ai_result로 반영
+    API → AI Worker 단일 진입점 (MVP)
+
+    역할:
+    - AIJob 계약(dict)을 받아서
+    - worker-side handle_ai_job 실행
+    - AIResult 계약(dict)으로 반환
+
+    원칙:
+    - DB 접근 ❌
+    - Django ORM ❌
+    - 파일은 path 기준으로만 처리
     """
-    submission = Submission.objects.get(id=submission_id)
 
-    # 🔧 MVP: 실제로는 worker AI가 payload를 만든다고 가정
-    # 지금은 예시 더미
-    fake_result = {
-        "submission_id": submission.id,
-        "items": [
-            {
-                "question_id": 1,
-                "answer": "B",
-                "meta": {"via": "mvp-ai"},
-            }
-        ],
-    }
+    # 1️⃣ Contract 복원
+    job = AIJob.from_dict(job_dict)
 
-    with transaction.atomic():
-        returned_submission_id = apply_ai_result(fake_result)
+    try:
+        # 2️⃣ 실제 AI 처리 (worker pure logic)
+        result: AIResult = handle_ai_job(job)
 
-    # 답안이 생겼으면 grading으로
-    if returned_submission_id:
-        grade_submission_task.delay(returned_submission_id)
+    except Exception as e:
+        # 🚨 여기서 raise하면 Celery retry가 걸림
+        raise RuntimeError(
+            f"AI worker failed (job_id={job.id}, type={job.type}): {e}"
+        ) from e
+
+    # 3️⃣ Contract → dict 반환
+    return result.to_dict()
 
 
 ==========================================================================================

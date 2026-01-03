@@ -1,0 +1,23 @@
+#common.txt
+
+# HTTP / Utils
+requests
+urllib3
+charset-normalizer
+idna
+certifi
+
+# AWS / Storage
+boto3
+botocore
+s3transfer
+jmespath
+
+# Date / Time
+python-dateutil
+pytz
+tzdata
+
+# Serialization / Validation
+pydantic
+typing_extensions

@@ -1,25 +1,26 @@
+# academy/docker/ai-worker/Dockerfile
+
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# 시스템 의존성
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     ffmpeg \
     libgl1 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# 코드 복사
+COPY requirements/worker-ai.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY apps ./apps
 COPY libs ./libs
-COPY requirements.txt .
-
-# Python 의존성
-RUN pip install --no-cache-dir -r requirements.txt
 
 ENV PYTHONPATH=/app
 
-CMD ["python", "-m", "apps.worker.run"]
+# ✅ AI Worker 전용 Celery
+CMD ["celery", "-A", "apps.shared.tasks", "worker", "-Q", "ai", "-l", "info"]
