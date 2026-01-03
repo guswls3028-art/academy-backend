@@ -1,4 +1,4 @@
-# apps/domains/submissions/services/dispatcher.py
+# apps/domains/submissions/services/dispatcher.py.legacy
 from __future__ import annotations
 
 from apps.domains.submissions.models import Submission

@@ -22,6 +22,9 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
+# ✅ Celery 5.6 worker_state_db 이슈 대응
+CELERY_WORKER_STATE_DB = None
+
 # ==================================================
 # Worker → API 통신
 # ==================================================
