@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8" />
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        h1 {
+            border-bottom: 2px solid #333;
+            padding-bottom: 4px;
+        }
+        .exam {
+            margin-top: 20px;
+        }
+        .question {
+            margin-left: 12px;
+        }
+        .wrong {
+            color: #c0392b;
+        }
+    </style>
+</head>
+<body>
+    <h1>오답 노트</h1>
+
+    <p>
+        학생 ID: {{ enrollment_id }}<br/>
+        생성일: {{ created_at }}
+    </p>
+
+    {% for exam_id, items in grouped.items %}
+        <div class="exam">
+            <h2>시험 {{ exam_id }}</h2>
+            {% for item in items %}
+                <div class="question">
+                    <span class="wrong">
+                        Q{{ item.question_id }}
+                    </span>
+                    / 제출 답안: {{ item.answer }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endfor %}
+</body>
+</html>

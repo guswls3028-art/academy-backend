@@ -1,0 +1,972 @@
+====================================================================================================
+# BACKEND APP: domains__staffs
+# ROOT PATH: C:\academy\apps\domains\staffs
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: admin.py
+==========================================================================================
+from django.contrib import admin
+from .models import (
+    Staff,
+    WorkType,
+    StaffWorkType,
+    WorkRecord,
+    ExpenseRecord,
+)
+
+
+@admin.register(Staff)
+class StaffAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "phone", "is_active", "is_manager")
+    search_fields = ("name", "phone")
+    list_filter = ("is_active", "is_manager", "pay_type")
+
+
+@admin.register(WorkType)
+class WorkTypeAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "base_hourly_wage", "is_active")
+    list_filter = ("is_active",)
+    search_fields = ("name",)
+
+
+@admin.register(StaffWorkType)
+class StaffWorkTypeAdmin(admin.ModelAdmin):
+    list_display = ("staff", "work_type", "hourly_wage")
+
+
+@admin.register(WorkRecord)
+class WorkRecordAdmin(admin.ModelAdmin):
+    list_display = ("date", "staff", "work_type", "work_hours", "amount")
+    list_filter = ("date", "work_type")
+
+
+@admin.register(ExpenseRecord)
+class ExpenseRecordAdmin(admin.ModelAdmin):
+    list_display = ("date", "staff", "title", "amount", "status")
+    list_filter = ("status",)
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+class StaffsConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.staffs"  # ✅
+
+
+==========================================================================================
+# FILE: filters.py
+==========================================================================================
+import django_filters
+from django.db.models import Q
+
+from .models import Staff, WorkRecord, ExpenseRecord
+
+
+class StaffFilter(django_filters.FilterSet):
+    search = django_filters.CharFilter(method="filter_search")
+    is_active = django_filters.BooleanFilter()
+    is_manager = django_filters.BooleanFilter()
+    pay_type = django_filters.CharFilter()
+
+    class Meta:
+        model = Staff
+        fields = ["is_active", "is_manager", "pay_type"]
+
+    def filter_search(self, queryset, name, value):
+        return queryset.filter(
+            Q(name__icontains=value) |
+            Q(phone__icontains=value)
+        )
+
+
+class WorkRecordFilter(django_filters.FilterSet):
+    date_from = django_filters.DateFilter(field_name="date", lookup_expr="gte")
+    date_to = django_filters.DateFilter(field_name="date", lookup_expr="lte")
+
+    class Meta:
+        model = WorkRecord
+        fields = ["staff", "work_type", "date_from", "date_to"]
+
+
+class ExpenseRecordFilter(django_filters.FilterSet):
+    date_from = django_filters.DateFilter(field_name="date", lookup_expr="gte")
+    date_to = django_filters.DateFilter(field_name="date", lookup_expr="lte")
+    status = django_filters.CharFilter()
+
+    class Meta:
+        model = ExpenseRecord
+        fields = ["staff", "status", "date_from", "date_to"]
+
+
+==========================================================================================
+# FILE: models.py
+==========================================================================================
+from datetime import datetime, timedelta
+from decimal import Decimal
+
+from django.conf import settings
+from django.db import models
+
+from apps.api.common.models import TimestampModel
+
+
+class Staff(TimestampModel):
+    """
+    조교 / 아르바이트생
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="staff_profile",
+    )
+
+    name = models.CharField(max_length=100)
+    phone = models.CharField(max_length=20, blank=True)
+
+    is_active = models.BooleanField(default=True)
+    is_manager = models.BooleanField(default=False)
+
+    PAY_TYPE_CHOICES = (
+        ("HOURLY", "시급"),
+        ("MONTHLY", "월급"),
+    )
+    pay_type = models.CharField(
+        max_length=20,
+        choices=PAY_TYPE_CHOICES,
+        default="HOURLY",
+    )
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class WorkType(TimestampModel):
+    """
+    근무 유형
+    """
+
+    name = models.CharField(max_length=100)
+    base_hourly_wage = models.PositiveIntegerField(default=0)
+
+    color = models.CharField(
+        max_length=7,
+        default="#4CAF50",
+        help_text="HEX 색상 코드",
+    )
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class StaffWorkType(TimestampModel):
+    """
+    조교별 근무유형/시급
+    """
+
+    staff = models.ForeignKey(
+        Staff,
+        on_delete=models.CASCADE,
+        related_name="staff_work_types",
+    )
+    work_type = models.ForeignKey(
+        WorkType,
+        on_delete=models.CASCADE,
+        related_name="staff_work_types",
+    )
+
+    hourly_wage = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="비우면 WorkType 기본 시급",
+    )
+
+    class Meta:
+        unique_together = ("staff", "work_type")
+
+    @property
+    def effective_hourly_wage(self) -> int:
+        return self.hourly_wage or self.work_type.base_hourly_wage
+
+    def __str__(self) -> str:
+        return f"{self.staff.name} - {self.work_type.name}"
+
+
+class WorkRecord(TimestampModel):
+    """
+    출퇴근 기록
+    """
+
+    staff = models.ForeignKey(
+        Staff,
+        on_delete=models.CASCADE,
+        related_name="work_records",
+    )
+    work_type = models.ForeignKey(
+        WorkType,
+        on_delete=models.PROTECT,
+        related_name="work_records",
+    )
+
+    date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    break_minutes = models.PositiveIntegerField(default=0)
+
+    work_hours = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    amount = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+    )
+
+    memo = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-date", "-start_time"]
+
+    def _calculate_hours_and_amount(self):
+        start_dt = datetime.combine(self.date, self.start_time)
+        end_dt = datetime.combine(self.date, self.end_time)
+        if end_dt < start_dt:
+            end_dt += timedelta(days=1)
+
+        total_minutes = (end_dt - start_dt).total_seconds() / 60
+        total_minutes = max(0, total_minutes - self.break_minutes)
+        hours = Decimal(total_minutes / 60).quantize(Decimal("0.01"))
+
+        try:
+            swt = StaffWorkType.objects.get(
+                staff=self.staff,
+                work_type=self.work_type,
+            )
+            wage = swt.effective_hourly_wage
+        except StaffWorkType.DoesNotExist:
+            wage = self.work_type.base_hourly_wage
+
+        amount = int(hours * Decimal(wage))
+        return hours, amount
+
+    def save(self, *args, **kwargs):
+        if self.work_hours is None or self.amount is None:
+            self.work_hours, self.amount = self._calculate_hours_and_amount()
+        super().save(*args, **kwargs)
+
+
+class ExpenseRecord(TimestampModel):
+    """
+    기타 비용
+    """
+
+    staff = models.ForeignKey(
+        Staff,
+        on_delete=models.CASCADE,
+        related_name="expense_records",
+    )
+
+    date = models.DateField()
+    title = models.CharField(max_length=255)
+    amount = models.PositiveIntegerField()
+    memo = models.TextField(blank=True)
+
+    STATUS_CHOICES = (
+        ("PENDING", "대기"),
+        ("APPROVED", "승인"),
+        ("REJECTED", "반려"),
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="PENDING",
+    )
+
+    class Meta:
+        ordering = ["-date", "-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.staff.name} - {self.title}"
+
+
+==========================================================================================
+# FILE: serializers.py
+==========================================================================================
+# -*- coding: utf-8 -*-
+# apps/staffs/serializers.py
+
+from rest_framework import serializers
+
+from .models import (
+    Staff,
+    WorkType,
+    StaffWorkType,
+    WorkRecord,
+    ExpenseRecord,
+)
+
+
+# ---------------------------
+# WorkType
+# ---------------------------
+
+class WorkTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WorkType
+        fields = [
+            "id",
+            "name",
+            "base_hourly_wage",
+            "color",
+            "description",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        ref_name = "StaffWorkTypeDefinition"
+
+
+# ---------------------------
+# StaffWorkType (조교-근무유형)
+# ---------------------------
+
+class StaffWorkTypeSerializer(serializers.ModelSerializer):
+    work_type = WorkTypeSerializer(read_only=True)
+    work_type_id = serializers.PrimaryKeyRelatedField(
+        source="work_type",
+        queryset=WorkType.objects.all(),
+        write_only=True,
+    )
+    effective_hourly_wage = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = StaffWorkType
+        fields = [
+            "id",
+            "staff",
+            "work_type",
+            "work_type_id",
+            "hourly_wage",
+            "effective_hourly_wage",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["staff", "created_at", "updated_at"]
+        ref_name = "StaffWorkType"
+
+
+# ---------------------------
+# Staff
+# ---------------------------
+
+class StaffListSerializer(serializers.ModelSerializer):
+    """
+    Staff list serializer.
+    Includes simplified work type info.
+    """
+
+    staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Staff
+        fields = [
+            "id",
+            "name",
+            "phone",
+            "is_active",
+            "is_manager",
+            "pay_type",
+            "staff_work_types",
+            "created_at",
+            "updated_at",
+        ]
+        ref_name = "StaffList"
+
+
+class StaffDetailSerializer(serializers.ModelSerializer):
+    staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Staff
+        fields = [
+            "id",
+            "user",
+            "name",
+            "phone",
+            "is_active",
+            "is_manager",
+            "pay_type",
+            "staff_work_types",
+            "created_at",
+            "updated_at",
+        ]
+        ref_name = "StaffDetail"
+
+
+class StaffCreateUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Staff
+        fields = [
+            "user",
+            "name",
+            "phone",
+            "is_active",
+            "is_manager",
+            "pay_type",
+        ]
+        ref_name = "StaffWrite"
+
+
+# ---------------------------
+# WorkRecord (출퇴근 기록)
+# ---------------------------
+
+class WorkRecordSerializer(serializers.ModelSerializer):
+    staff_name = serializers.CharField(source="staff.name", read_only=True)
+    work_type_name = serializers.CharField(source="work_type.name", read_only=True)
+
+    class Meta:
+        model = WorkRecord
+        fields = [
+            "id",
+            "staff",
+            "staff_name",
+            "work_type",
+            "work_type_name",
+            "date",
+            "start_time",
+            "end_time",
+            "break_minutes",
+            "work_hours",
+            "amount",
+            "memo",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["work_hours", "amount", "created_at", "updated_at"]
+        ref_name = "StaffWorkRecord"
+
+
+# ---------------------------
+# ExpenseRecord (비용 기록)
+# ---------------------------
+
+class ExpenseRecordSerializer(serializers.ModelSerializer):
+    staff_name = serializers.CharField(source="staff.name", read_only=True)
+
+    class Meta:
+        model = ExpenseRecord
+        fields = [
+            "id",
+            "staff",
+            "staff_name",
+            "date",
+            "title",
+            "amount",
+            "memo",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["created_at", "updated_at"]
+        ref_name = "StaffExpenseRecord"
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+
+from .views import (
+    WorkTypeViewSet,
+    StaffViewSet,
+    StaffWorkTypeViewSet,
+    WorkRecordViewSet,
+    ExpenseRecordViewSet,
+)
+
+router = DefaultRouter()
+router.register(r"work-types", WorkTypeViewSet, basename="work-type")
+router.register(r"staffs", StaffViewSet, basename="staff")
+router.register(r"staff-work-types", StaffWorkTypeViewSet, basename="staff-work-type")
+router.register(r"work-records", WorkRecordViewSet, basename="work-record")
+router.register(r"expense-records", ExpenseRecordViewSet, basename="expense-record")
+
+urlpatterns = [
+    path("", include(router.urls)),
+]
+
+
+==========================================================================================
+# FILE: views.py
+==========================================================================================
+# apps/staffs/views.py
+
+from django.db.models import Sum
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from .models import (
+    Staff,
+    WorkType,
+    StaffWorkType,
+    WorkRecord,
+    ExpenseRecord,
+)
+from .serializers import (
+    WorkTypeSerializer,
+    StaffWorkTypeSerializer,
+    StaffListSerializer,
+    StaffDetailSerializer,
+    StaffCreateUpdateSerializer,
+    WorkRecordSerializer,
+    ExpenseRecordSerializer,
+)
+from .filters import StaffFilter, WorkRecordFilter, ExpenseRecordFilter
+
+
+# ---------------------------
+# WorkType (근무 유형 정의)
+# ---------------------------
+
+class WorkTypeViewSet(viewsets.ModelViewSet):
+    queryset = WorkType.objects.all().order_by("name")
+    serializer_class = WorkTypeSerializer
+    permission_classes = [IsAuthenticated]
+
+    filter_backends = (DjangoFilterBackend, SearchFilter, OrderingFilter)
+    filterset_fields = ["is_active"]
+    search_fields = ["name", "description"]
+    ordering_fields = ["name", "base_hourly_wage", "created_at"]
+
+
+# ---------------------------
+# Staff (조교)
+# ---------------------------
+
+class StaffViewSet(viewsets.ModelViewSet):
+    queryset = (
+        Staff.objects.all()
+        .select_related("user")
+        .prefetch_related("staff_work_types__work_type")
+        .order_by("name")
+    )
+    permission_classes = [IsAuthenticated]
+
+    filter_backends = (DjangoFilterBackend, SearchFilter, OrderingFilter)
+    filterset_class = StaffFilter
+    search_fields = ["name", "phone"]
+    ordering_fields = ["name", "created_at", "is_active"]
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return StaffListSerializer
+        if self.action == "retrieve":
+            return StaffDetailSerializer
+        return StaffCreateUpdateSerializer
+
+    # /api/staffs/{id}/work-types/
+    @action(detail=True, methods=["get", "post"], url_path="work-types")
+    def work_types(self, request, pk=None):
+        staff = self.get_object()
+
+        if request.method.lower() == "get":
+            qs = staff.staff_work_types.select_related("work_type").all()
+            serializer = StaffWorkTypeSerializer(qs, many=True)
+            return Response(serializer.data)
+
+        serializer = StaffWorkTypeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        StaffWorkType.objects.create(
+            staff=staff,
+            work_type=serializer.validated_data["work_type"],
+            hourly_wage=serializer.validated_data.get("hourly_wage"),
+        )
+
+        qs = staff.staff_work_types.select_related("work_type").all()
+        return Response(
+            StaffWorkTypeSerializer(qs, many=True).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    # /api/staffs/{id}/summary/?date_from=&date_to=
+    @action(detail=True, methods=["get"], url_path="summary")
+    def summary(self, request, pk=None):
+        staff = self.get_object()
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+
+        wr_qs = staff.work_records.all()
+        er_qs = staff.expense_records.all()
+
+        if date_from:
+            wr_qs = wr_qs.filter(date__gte=date_from)
+            er_qs = er_qs.filter(date__gte=date_from)
+        if date_to:
+            wr_qs = wr_qs.filter(date__lte=date_to)
+            er_qs = er_qs.filter(date__lte=date_to)
+
+        work_amount = wr_qs.aggregate(total=Sum("amount"))["total"] or 0
+        work_hours = wr_qs.aggregate(total=Sum("work_hours"))["total"] or 0
+        expense_amount = er_qs.aggregate(total=Sum("amount"))["total"] or 0
+
+        return Response(
+            {
+                "staff_id": staff.id,
+                "work_hours": work_hours,
+                "work_amount": work_amount,
+                "expense_amount": expense_amount,
+                "total_amount": work_amount + expense_amount,
+            }
+        )
+
+
+# ---------------------------
+# StaffWorkType (조교-근무유형 매핑)
+# ---------------------------
+
+class StaffWorkTypeViewSet(viewsets.ModelViewSet):
+    """
+    /api/staff-work-types/?staff=1
+    PATCH / DELETE 지원
+    """
+
+    queryset = StaffWorkType.objects.select_related("staff", "work_type").all()
+    serializer_class = StaffWorkTypeSerializer
+    permission_classes = [IsAuthenticated]
+
+    filter_backends = (DjangoFilterBackend, OrderingFilter)
+    filterset_fields = ["staff", "work_type"]
+    ordering_fields = ["created_at"]
+
+
+# ---------------------------
+# WorkRecord (출퇴근 기록)
+# ---------------------------
+
+class WorkRecordViewSet(viewsets.ModelViewSet):
+    queryset = (
+        WorkRecord.objects.select_related("staff", "work_type")
+        .all()
+        .order_by("-date", "-start_time")
+    )
+    serializer_class = WorkRecordSerializer
+    permission_classes = [IsAuthenticated]
+
+    filter_backends = (DjangoFilterBackend, OrderingFilter)
+    filterset_class = WorkRecordFilter
+    ordering_fields = ["date", "created_at", "amount"]
+
+    # /api/work-records/my/
+    @action(detail=False, methods=["get"], url_path="my")
+    def my_records(self, request):
+        staff = getattr(request.user, "staff_profile", None)
+        if not staff:
+            return Response(
+                {"detail": "Staff profile not found."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = self.get_queryset().filter(staff=staff)
+
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+        if date_from:
+            qs = qs.filter(date__gte=date_from)
+        if date_to:
+            qs = qs.filter(date__lte=date_to)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
+
+# ---------------------------
+# ExpenseRecord (비용 기록)
+# ---------------------------
+
+class ExpenseRecordViewSet(viewsets.ModelViewSet):
+    queryset = (
+        ExpenseRecord.objects.select_related("staff")
+        .all()
+        .order_by("-date", "-id")
+    )
+    serializer_class = ExpenseRecordSerializer
+    permission_classes = [IsAuthenticated]
+
+    filter_backends = (DjangoFilterBackend, OrderingFilter)
+    filterset_class = ExpenseRecordFilter
+    ordering_fields = ["date", "amount", "created_at"]
+
+    # /api/expense-records/my/
+    @action(detail=False, methods=["get"], url_path="my")
+    def my_expenses(self, request):
+        staff = getattr(request.user, "staff_profile", None)
+        if not staff:
+            return Response(
+                {"detail": "Staff profile not found."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = self.get_queryset().filter(staff=staff)
+
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+        if date_from:
+            qs = qs.filter(date__gte=date_from)
+        if date_to:
+            qs = qs.filter(date__lte=date_to)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="WorkType",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("name", models.CharField(max_length=100)),
+                ("base_hourly_wage", models.PositiveIntegerField(default=0)),
+                (
+                    "color",
+                    models.CharField(
+                        default="#4CAF50", help_text="HEX 색상 코드", max_length=7
+                    ),
+                ),
+                ("description", models.TextField(blank=True)),
+                ("is_active", models.BooleanField(default=True)),
+            ],
+            options={
+                "abstract": False,
+            },
+        ),
+        migrations.CreateModel(
+            name="Staff",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("name", models.CharField(max_length=100)),
+                ("phone", models.CharField(blank=True, max_length=20)),
+                ("is_active", models.BooleanField(default=True)),
+                ("is_manager", models.BooleanField(default=False)),
+                (
+                    "pay_type",
+                    models.CharField(
+                        choices=[("HOURLY", "시급"), ("MONTHLY", "월급")],
+                        default="HOURLY",
+                        max_length=20,
+                    ),
+                ),
+                (
+                    "user",
+                    models.OneToOneField(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="staff_profile",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+            ],
+            options={
+                "abstract": False,
+            },
+        ),
+        migrations.CreateModel(
+            name="ExpenseRecord",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("date", models.DateField()),
+                ("title", models.CharField(max_length=255)),
+                ("amount", models.PositiveIntegerField()),
+                ("memo", models.TextField(blank=True)),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("PENDING", "대기"),
+                            ("APPROVED", "승인"),
+                            ("REJECTED", "반려"),
+                        ],
+                        default="PENDING",
+                        max_length=20,
+                    ),
+                ),
+                (
+                    "staff",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="expense_records",
+                        to="staffs.staff",
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-date", "-created_at"],
+            },
+        ),
+        migrations.CreateModel(
+            name="WorkRecord",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("date", models.DateField()),
+                ("start_time", models.TimeField()),
+                ("end_time", models.TimeField()),
+                ("break_minutes", models.PositiveIntegerField(default=0)),
+                (
+                    "work_hours",
+                    models.DecimalField(
+                        blank=True, decimal_places=2, max_digits=5, null=True
+                    ),
+                ),
+                ("amount", models.PositiveIntegerField(blank=True, null=True)),
+                ("memo", models.TextField(blank=True)),
+                (
+                    "staff",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="work_records",
+                        to="staffs.staff",
+                    ),
+                ),
+                (
+                    "work_type",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="work_records",
+                        to="staffs.worktype",
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-date", "-start_time"],
+            },
+        ),
+        migrations.CreateModel(
+            name="StaffWorkType",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                (
+                    "hourly_wage",
+                    models.PositiveIntegerField(
+                        blank=True, help_text="비우면 WorkType 기본 시급", null=True
+                    ),
+                ),
+                (
+                    "staff",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="staff_work_types",
+                        to="staffs.staff",
+                    ),
+                ),
+                (
+                    "work_type",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="staff_work_types",
+                        to="staffs.worktype",
+                    ),
+                ),
+            ],
+            options={
+                "unique_together": {("staff", "work_type")},
+            },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+

@@ -1,0 +1,490 @@
+====================================================================================================
+# BACKEND APP: domains__enrollment
+# ROOT PATH: C:\academy\apps\domains\enrollment
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: admin.py
+==========================================================================================
+from django.contrib import admin
+from .models import Enrollment, SessionEnrollment
+
+
+@admin.register(Enrollment)
+class EnrollmentAdmin(admin.ModelAdmin):
+    list_display = ("id", "student", "lecture", "status", "enrolled_at")
+    list_display_links = ("id", "student")
+    list_filter = ("status", "lecture")
+    search_fields = ("student__name", "lecture__title")
+    ordering = ("-id",)
+
+
+@admin.register(SessionEnrollment)
+class SessionEnrollmentAdmin(admin.ModelAdmin):
+    list_display = ("id", "session", "enrollment", "created_at")
+    list_display_links = ("id", "session")
+    list_filter = ("session__lecture", "session")
+    search_fields = ("enrollment__student__name",)
+    ordering = ("-id",)
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class EnrollmentConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.enrollment"
+
+
+==========================================================================================
+# FILE: filters.py
+==========================================================================================
+# apps/domains/enrollment/filters.py
+
+import django_filters
+
+from .models import Enrollment
+
+
+class EnrollmentFilter(django_filters.FilterSet):
+    """
+    Enrollment list filtering.
+    Front uses: /lectures/enrollments/?lecture={lectureId}
+    """
+
+    class Meta:
+        model = Enrollment
+        fields = {
+            "lecture": ["exact"],
+            "student": ["exact"],
+            "status": ["exact"],
+        }
+
+
+==========================================================================================
+# FILE: models.py
+==========================================================================================
+from django.db import models
+
+from apps.api.common.models import TimestampModel
+from apps.domains.students.models import Student
+from apps.domains.lectures.models import Lecture, Session
+
+
+# ========================================================
+# Enrollment (강의 단위 수강 등록)
+# ========================================================
+
+class Enrollment(TimestampModel):
+    """
+    학생이 특정 강의를 수강하는 행위.
+    강의 정의(Lecture)와 분리된 '수강 행위' 도메인이다.
+    """
+
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name="enrollments",
+    )
+    lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name="enrollments",
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("ACTIVE", "활성"),
+            ("INACTIVE", "비활성"),
+            ("PENDING", "대기"),
+        ],
+        default="ACTIVE",
+    )
+
+    enrolled_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["student", "lecture"],
+                name="unique_enrollment_per_lecture",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.student.name} -> {self.lecture.title}"
+
+
+# ========================================================
+# SessionEnrollment (차시 단위 수강 권한)
+# ========================================================
+
+class SessionEnrollment(models.Model):
+    """
+    특정 Enrollment가 어떤 Session(차시)에 접근 가능한지 정의.
+    출결/영상/자료 접근의 기준이 되는 중간 테이블.
+    """
+
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="session_enrollments",
+    )
+    enrollment = models.ForeignKey(
+        Enrollment,
+        on_delete=models.CASCADE,
+        related_name="session_enrollments",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("session", "enrollment")
+
+    def __str__(self):
+        return f"{self.session} - {self.enrollment.student.name}"
+
+
+==========================================================================================
+# FILE: permissions.py
+==========================================================================================
+from rest_framework.permissions import BasePermission
+from apps.domains.enrollment.models import Enrollment
+
+
+class HasEnrollmentAccess(BasePermission):
+    """
+    학생이 해당 Enrollment(수강 정보)에 접근 가능한지 검증
+    """
+    message = "You do not have access to this enrollment."
+
+    def has_permission(self, request, view):
+        user = request.user
+
+        if not user or not user.is_authenticated:
+            return False
+
+        # IsStudent에서 이미 student_profile 보장됨
+        student = getattr(user, "student_profile", None)
+        if not student:
+            return False
+
+        enrollment_id = (
+            request.data.get("enrollment_id")
+            or request.query_params.get("enrollment_id")
+        )
+        if not enrollment_id:
+            return False
+
+        return Enrollment.objects.filter(
+            id=enrollment_id,
+            student=student,
+            status="ACTIVE",  # ✅ 여기만 핵심 수정
+        ).exists()
+
+
+==========================================================================================
+# FILE: serializers.py
+==========================================================================================
+from rest_framework import serializers
+
+from .models import Enrollment, SessionEnrollment
+from apps.domains.students.models import Student
+
+
+class StudentShortSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Student
+        fields = [
+            "id",
+            "name",
+            "grade",
+            "high_school",
+            "high_school_class",
+            "major",
+            "phone",
+            "parent_phone",
+        ]
+
+
+class EnrollmentSerializer(serializers.ModelSerializer):
+    student = StudentShortSerializer(read_only=True)
+
+    class Meta:
+        model = Enrollment
+        fields = "__all__"
+
+
+class SessionEnrollmentSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(
+        source="enrollment.student.name", read_only=True
+    )
+
+    class Meta:
+        model = SessionEnrollment
+        fields = "__all__"
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+from rest_framework.routers import DefaultRouter
+from .views import EnrollmentViewSet, SessionEnrollmentViewSet
+
+router = DefaultRouter()
+
+router.register(
+    r"",
+    EnrollmentViewSet,
+    basename="enrollment",
+)
+
+router.register(
+    r"session-enrollments",
+    SessionEnrollmentViewSet,
+    basename="session-enrollment",
+)
+
+urlpatterns = router.urls
+
+
+==========================================================================================
+# FILE: views.py
+==========================================================================================
+from django.db import transaction
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.exceptions import ValidationError
+
+from .models import Enrollment, SessionEnrollment
+from .serializers import EnrollmentSerializer, SessionEnrollmentSerializer
+from .filters import EnrollmentFilter
+from apps.domains.lectures.models import Session
+
+
+class EnrollmentViewSet(ModelViewSet):
+    queryset = Enrollment.objects.all().select_related("student", "lecture")
+    serializer_class = EnrollmentSerializer
+
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_class = EnrollmentFilter
+    search_fields = ["student__name"]
+
+    @transaction.atomic
+    @action(detail=False, methods=["post"])
+    def bulk_create(self, request):
+        lecture_id = request.data.get("lecture")
+        student_ids = request.data.get("students", [])
+
+        if not lecture_id or not isinstance(student_ids, list):
+            return Response(
+                {"detail": "lecture, students(list)는 필수입니다"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        created = []
+        for sid in student_ids:
+            obj, _ = Enrollment.objects.get_or_create(
+                lecture_id=lecture_id,
+                student_id=sid,
+                defaults={"status": "ACTIVE"},
+            )
+            created.append(obj)
+
+        return Response(
+            EnrollmentSerializer(created, many=True).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    # 수강 등록 삭제 시 세션 등록도 함께 삭제
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        enrollment = self.get_object()
+
+        SessionEnrollment.objects.filter(enrollment=enrollment).delete()
+        enrollment.delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SessionEnrollmentViewSet(ModelViewSet):
+    queryset = SessionEnrollment.objects.all().select_related(
+        "session",
+        "enrollment",
+        "enrollment__student",
+    )
+    serializer_class = SessionEnrollmentSerializer
+
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["session", "enrollment"]
+    search_fields = ["enrollment__student__name"]
+
+    @transaction.atomic
+    @action(detail=False, methods=["post"])
+    def bulk_create(self, request):
+        session_id = request.data.get("session")
+        enrollment_ids = request.data.get("enrollments", [])
+
+        if not session_id or not isinstance(enrollment_ids, list):
+            return Response(
+                {"detail": "session, enrollments(list)는 필수입니다"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session = Session.objects.select_related("lecture").get(id=session_id)
+
+        created = []
+        for eid in enrollment_ids:
+            enrollment = Enrollment.objects.select_related("lecture").get(id=eid)
+
+            # 🔥 보호 로직 핵심:
+            # 다른 강의 enrollment를 현재 세션에 연결하는 것 차단
+            if enrollment.lecture_id != session.lecture_id:
+                raise ValidationError(
+                    {
+                        "detail": (
+                            "다른 강의에 등록된 학생은 "
+                            "이 세션에 추가할 수 없습니다."
+                        )
+                    }
+                )
+
+            obj, _ = SessionEnrollment.objects.get_or_create(
+                session=session,
+                enrollment=enrollment,
+            )
+            created.append(obj)
+
+        return Response(
+            SessionEnrollmentSerializer(created, many=True).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("lectures", "0001_initial"),
+        ("students", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="Enrollment",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("ACTIVE", "활성"),
+                            ("INACTIVE", "비활성"),
+                            ("PENDING", "대기"),
+                        ],
+                        default="ACTIVE",
+                        max_length=20,
+                    ),
+                ),
+                ("enrolled_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "lecture",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="enrollments",
+                        to="lectures.lecture",
+                    ),
+                ),
+                (
+                    "student",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="enrollments",
+                        to="students.student",
+                    ),
+                ),
+            ],
+        ),
+        migrations.CreateModel(
+            name="SessionEnrollment",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "enrollment",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="session_enrollments",
+                        to="enrollment.enrollment",
+                    ),
+                ),
+                (
+                    "session",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="session_enrollments",
+                        to="lectures.session",
+                    ),
+                ),
+            ],
+        ),
+        migrations.AddConstraint(
+            model_name="enrollment",
+            constraint=models.UniqueConstraint(
+                fields=("student", "lecture"), name="unique_enrollment_per_lecture"
+            ),
+        ),
+        migrations.AlterUniqueTogether(
+            name="sessionenrollment",
+            unique_together={("session", "enrollment")},
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+

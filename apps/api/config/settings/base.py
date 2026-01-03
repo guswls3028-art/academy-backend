@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "apps.domains.submissions",
     "apps.domains.results",
     "apps.domains.clinic",
+    "apps.domains.progress",
     "apps.domains.ai.apps.AIDomainConfig",
 
     # support

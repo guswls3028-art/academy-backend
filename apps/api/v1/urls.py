@@ -15,6 +15,9 @@ urlpatterns = [
     path("enrollments/", include("apps.domains.enrollment.urls")),
     path("submissions/", include("apps.domains.submissions.urls")),
     path("exams/", include("apps.domains.exams.urls")),
+    path("progress/", include("apps.domains.progress.urls")),
+    # results API 연결
+    path("results/", include("apps.domains.results.urls")),
 
     path("core/", include("apps.core.urls")),
     path("media/", include("apps.support.media.urls")),

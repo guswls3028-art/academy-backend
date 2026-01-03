@@ -1,0 +1,1155 @@
+====================================================================================================
+# BACKEND APP: domains__exams
+# ROOT PATH: C:\academy\apps\domains\exams
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class ExamsConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.exams"
+    label = "exams"
+
+
+==========================================================================================
+# FILE: exams_code.html
+==========================================================================================
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>exams Code Browser</title>
+<style>
+body {
+    background:#0f1115;
+    color:#eaeaea;
+    font-family:Consolas, monospace;
+    padding:24px;
+}
+h1 { margin-bottom:24px; }
+h2 { color:#7dd3fc; font-size:15px; }
+pre {
+    background:#111418;
+    padding:16px;
+    border-radius:8px;
+    overflow-x:auto;
+    font-size:13px;
+    line-height:1.5;
+}
+section { margin-bottom:32px; }
+</style>
+</head>
+<body>
+<h1>📦 apps\domains\exams</h1>
+
+        <section>
+            <h2>__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>apps.py</h2>
+            <pre><code>from django.apps import AppConfig
+
+
+class ExamsConfig(AppConfig):
+    default_auto_field = &quot;django.db.models.BigAutoField&quot;
+    name = &quot;apps.domains.exams&quot;
+    label = &quot;exams&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models\__init__.py</h2>
+            <pre><code>from .exam import Exam
+from .sheet import Sheet
+from .question import ExamQuestion
+from .answer_key import AnswerKey
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models\answer_key.py</h2>
+            <pre><code>from django.db import models
+from apps.api.common.models import BaseModel
+from .exam import Exam
+
+
+class AnswerKey(BaseModel):
+    &quot;&quot;&quot;
+    정답 정의 (값만 저장, 채점 로직 없음)
+    &quot;&quot;&quot;
+
+    exam = models.OneToOneField(
+        Exam,
+        on_delete=models.CASCADE,
+        related_name=&quot;answer_key&quot;,
+    )
+
+    # 예: { &quot;1&quot;: &quot;3&quot;, &quot;2&quot;: &quot;5&quot;, &quot;3&quot;: &quot;②&quot; }
+    answers = models.JSONField()
+
+    class Meta:
+        db_table = &quot;exams_answer_key&quot;
+
+    def __str__(self):
+        return f&quot;AnswerKey for {self.exam.title}&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models\exam.py</h2>
+            <pre><code>from django.db import models
+from apps.api.common.models import BaseModel
+
+
+class Exam(BaseModel):
+    &quot;&quot;&quot;
+    시험 정의 (메타 정보만)
+    &quot;&quot;&quot;
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    subject = models.CharField(max_length=100)
+
+    # 예: 중간고사, 모의고사, 클리닉 테스트 등
+    exam_type = models.CharField(
+        max_length=50,
+        default=&quot;regular&quot;,
+    )
+
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = &quot;exams_exam&quot;
+        ordering = [&quot;-created_at&quot;]
+
+    def __str__(self):
+        return self.title
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models\question.py</h2>
+            <pre><code>from django.db import models
+from apps.api.common.models import BaseModel
+from .sheet import Sheet
+
+
+class ExamQuestion(BaseModel):
+    &quot;&quot;&quot;
+    시험 문항 정의
+    &quot;&quot;&quot;
+
+    sheet = models.ForeignKey(
+        Sheet,
+        on_delete=models.CASCADE,
+        related_name=&quot;questions&quot;,
+    )
+
+    number = models.PositiveIntegerField()  # 1번, 2번 ...
+    score = models.FloatField(default=1.0)
+
+    # 문항 이미지 (AI로 잘라낸 결과 포함 가능)
+    image = models.ImageField(
+        upload_to=&quot;exams/questions/&quot;,
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = &quot;exams_question&quot;
+        unique_together = (&quot;sheet&quot;, &quot;number&quot;)
+        ordering = [&quot;number&quot;]
+
+    def __str__(self):
+        return f&quot;{self.sheet} Q{self.number}&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models\sheet.py</h2>
+            <pre><code>from django.db import models
+from apps.api.common.models import BaseModel
+from .exam import Exam
+
+
+class Sheet(BaseModel):
+    &quot;&quot;&quot;
+    시험지 (A형, B형 등)
+    &quot;&quot;&quot;
+
+    exam = models.ForeignKey(
+        Exam,
+        on_delete=models.CASCADE,
+        related_name=&quot;sheets&quot;,
+    )
+
+    name = models.CharField(max_length=50)  # A형, B형
+    total_questions = models.PositiveIntegerField()
+
+    # 시험지 원본 이미지 / PDF
+    file = models.FileField(
+        upload_to=&quot;exams/sheets/&quot;,
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = &quot;exams_sheet&quot;
+        unique_together = (&quot;exam&quot;, &quot;name&quot;)
+
+    def __str__(self):
+        return f&quot;{self.exam.title} - {self.name}&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>serializers\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>serializers\answer_key.py</h2>
+            <pre><code>from rest_framework import serializers
+from apps.domains.exams.models import AnswerKey
+
+class AnswerKeySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnswerKey
+        fields = [
+            &quot;id&quot;,
+            &quot;exam&quot;,
+            &quot;answers&quot;,
+            &quot;created_at&quot;,
+            &quot;updated_at&quot;,
+        ]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>serializers\exam.py</h2>
+            <pre><code>from rest_framework import serializers
+from apps.domains.exams.models import Exam
+
+class ExamSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Exam
+        fields = [
+            &quot;id&quot;,
+            &quot;title&quot;,
+            &quot;description&quot;,
+            &quot;subject&quot;,
+            &quot;exam_type&quot;,
+            &quot;is_active&quot;,
+            &quot;created_at&quot;,
+            &quot;updated_at&quot;,
+        ]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>serializers\question.py</h2>
+            <pre><code>from rest_framework import serializers
+from apps.domains.exams.models import ExamQuestion
+
+class QuestionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExamQuestion
+        fields = [
+            &quot;id&quot;,
+            &quot;sheet&quot;,
+            &quot;number&quot;,
+            &quot;score&quot;,
+            &quot;image&quot;,
+            &quot;created_at&quot;,
+            &quot;updated_at&quot;,
+        ]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>serializers\question_auto.py</h2>
+            <pre><code># apps/domains/exams/serializers/question_auto.py
+from __future__ import annotations
+
+from rest_framework import serializers
+
+
+class QuestionAutoCreateSerializer(serializers.Serializer):
+    &quot;&quot;&quot;
+    worker segmentation 결과 boxes를 그대로 받는다.
+    boxes: [[x,y,w,h], ...]
+    &quot;&quot;&quot;
+    boxes = serializers.ListField(
+        child=serializers.ListField(
+            child=serializers.IntegerField(),
+            min_length=4,
+            max_length=4,
+        ),
+        allow_empty=False,
+    )
+
+    def validate_boxes(self, v):
+        # x,y,w,h 모두 0 이상, w/h는 1 이상
+        out = []
+        for row in v:
+            x, y, w, h = row
+            if x &lt; 0 or y &lt; 0 or w &lt;= 0 or h &lt;= 0:
+                raise serializers.ValidationError(&quot;Each box must be [x&gt;=0, y&gt;=0, w&gt;0, h&gt;0].&quot;)
+            out.append([int(x), int(y), int(w), int(h)])
+        return out
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>serializers\sheet.py</h2>
+            <pre><code>from rest_framework import serializers
+from apps.domains.exams.models import Sheet
+
+class SheetSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Sheet
+        fields = [
+            &quot;id&quot;,
+            &quot;exam&quot;,
+            &quot;name&quot;,
+            &quot;total_questions&quot;,
+            &quot;file&quot;,
+            &quot;created_at&quot;,
+            &quot;updated_at&quot;,
+        ]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>services\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>services\question_factory.py</h2>
+            <pre><code># apps/domains/exams/services/question_factory.py
+from __future__ import annotations
+
+from typing import List, Tuple
+
+from django.db import transaction
+
+from apps.domains.exams.models import Sheet, ExamQuestion
+
+BBox = Tuple[int, int, int, int]
+
+
+@transaction.atomic
+def create_questions_from_boxes(*, sheet_id: int, boxes: List[BBox]) -&gt; List[ExamQuestion]:
+    &quot;&quot;&quot;
+    Segmentation 결과(boxes)를 기반으로 ExamQuestion 자동 생성.
+
+    규칙:
+    - idempotent: (sheet, number) 기준으로 update_or_create
+    - boxes 개수 변화 시 기존 문제 삭제/추가 동기화
+    - number = boxes 시각적 순서 (1-based)
+    - score는 이 단계에서 건드리지 않음 (grading 단계 책임)
+    &quot;&quot;&quot;
+    sheet = Sheet.objects.select_for_update().get(id=int(sheet_id))
+
+    # 1️⃣ total_questions 동기화
+    total = int(len(boxes or []))
+    if sheet.total_questions != total:
+        sheet.total_questions = total
+        sheet.save(update_fields=[&quot;total_questions&quot;, &quot;updated_at&quot;])
+
+    # 2️⃣ 기존 문제 정리 (idempotent 핵심)
+    existing_numbers = set(
+        ExamQuestion.objects
+        .filter(sheet=sheet)
+        .values_list(&quot;number&quot;, flat=True)
+    )
+    new_numbers = set(range(1, total + 1))
+
+    # 삭제 대상
+    to_delete = existing_numbers - new_numbers
+    if to_delete:
+        ExamQuestion.objects.filter(
+            sheet=sheet,
+            number__in=to_delete,
+        ).delete()
+
+    # 3️⃣ 문제 생성 / 갱신
+    created: List[ExamQuestion] = []
+
+    for idx, _bbox in enumerate(boxes or [], start=1):
+        obj, _ = ExamQuestion.objects.update_or_create(
+            sheet=sheet,
+            number=idx,
+            defaults={},  # score 등은 grading 단계에서 처리
+        )
+        created.append(obj)
+
+    return created
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>urls.py</h2>
+            <pre><code># apps/domains/exams/urls.py
+from django.urls import path
+from rest_framework.routers import DefaultRouter
+
+from .views.exam_view import ExamViewSet
+from .views.sheet_view import SheetViewSet
+from .views.question_view import QuestionViewSet
+from .views.answer_key_view import AnswerKeyViewSet
+from .views.question_auto_view import SheetAutoQuestionsView
+
+router = DefaultRouter()
+router.register(&quot;exams&quot;, ExamViewSet)
+router.register(&quot;sheets&quot;, SheetViewSet)
+router.register(&quot;questions&quot;, QuestionViewSet)
+router.register(&quot;answer-keys&quot;, AnswerKeyViewSet)
+
+urlpatterns = router.urls + [
+    path(&quot;sheets/&lt;int:sheet_id&gt;/auto-questions/&quot;, SheetAutoQuestionsView.as_view()),
+]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>views\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>views\answer_key_view.py</h2>
+            <pre><code>
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.exams.models import AnswerKey
+from apps.domains.exams.serializers.answer_key import AnswerKeySerializer
+
+class AnswerKeyViewSet(ModelViewSet):
+    queryset = AnswerKey.objects.select_related(&quot;exam&quot;)
+    serializer_class = AnswerKeySerializer
+    permission_classes = [IsAuthenticated]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>views\exam_view.py</h2>
+            <pre><code>from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.exams.models import Exam
+from apps.domains.exams.serializers.exam import ExamSerializer
+
+class ExamViewSet(ModelViewSet):
+    queryset = Exam.objects.all()
+    serializer_class = ExamSerializer
+    permission_classes = [IsAuthenticated]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>views\question_auto_view.py</h2>
+            <pre><code># apps/domains/exams/views/question_auto_view.py
+from __future__ import annotations
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.exams.models import Sheet
+from apps.domains.exams.serializers.question import QuestionSerializer
+from apps.domains.exams.serializers.question_auto import QuestionAutoCreateSerializer
+from apps.domains.exams.services.question_factory import create_questions_from_boxes
+
+
+class SheetAutoQuestionsView(APIView):
+    &quot;&quot;&quot;
+    POST /exams/sheets/&lt;sheet_id&gt;/auto-questions/
+    {
+      &quot;boxes&quot;: [[x,y,w,h], ...]
+    }
+
+    반환: 생성/업데이트된 ExamQuestion 목록
+    &quot;&quot;&quot;
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, sheet_id: int):
+        # sheet 존재 확인
+        Sheet.objects.get(id=int(sheet_id))
+
+        s = QuestionAutoCreateSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+
+        boxes = [tuple(b) for b in s.validated_data[&quot;boxes&quot;]]
+        questions = create_questions_from_boxes(sheet_id=int(sheet_id), boxes=boxes)
+
+        return Response(QuestionSerializer(questions, many=True).data)
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>views\question_view.py</h2>
+            <pre><code>from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.exams.models import ExamQuestion
+from apps.domains.exams.serializers.question import QuestionSerializer
+
+class QuestionViewSet(ModelViewSet):
+    queryset = ExamQuestion.objects.select_related(&quot;sheet&quot;, &quot;sheet__exam&quot;)
+    serializer_class = QuestionSerializer
+    permission_classes = [IsAuthenticated]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>views\sheet_view.py</h2>
+            <pre><code>from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.exams.models import Sheet
+from apps.domains.exams.serializers.sheet import SheetSerializer
+
+class SheetViewSet(ModelViewSet):
+    queryset = Sheet.objects.select_related(&quot;exam&quot;)
+    serializer_class = SheetSerializer
+    permission_classes = [IsAuthenticated]
+</code></pre>
+        </section>
+        
+</body>
+</html>
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+# apps/domains/exams/urls.py
+from django.urls import path
+from rest_framework.routers import DefaultRouter
+
+from .views.exam_view import ExamViewSet
+from .views.sheet_view import SheetViewSet
+from .views.question_view import QuestionViewSet
+from .views.answer_key_view import AnswerKeyViewSet
+from .views.question_auto_view import SheetAutoQuestionsView
+
+router = DefaultRouter()
+router.register("exams", ExamViewSet)
+router.register("sheets", SheetViewSet)
+router.register("questions", QuestionViewSet)
+router.register("answer-keys", AnswerKeyViewSet)
+
+urlpatterns = router.urls + [
+    path("sheets/<int:sheet_id>/auto-questions/", SheetAutoQuestionsView.as_view()),
+]
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = []
+
+    operations = [
+        migrations.CreateModel(
+            name="Exam",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("title", models.CharField(max_length=255)),
+                ("description", models.TextField(blank=True)),
+                ("subject", models.CharField(max_length=100)),
+                ("exam_type", models.CharField(default="regular", max_length=50)),
+                ("is_active", models.BooleanField(default=True)),
+            ],
+            options={
+                "db_table": "exams_exam",
+                "ordering": ["-created_at"],
+            },
+        ),
+        migrations.CreateModel(
+            name="AnswerKey",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("answers", models.JSONField()),
+                (
+                    "exam",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="answer_key",
+                        to="exams.exam",
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "exams_answer_key",
+            },
+        ),
+        migrations.CreateModel(
+            name="Sheet",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("name", models.CharField(max_length=50)),
+                ("total_questions", models.PositiveIntegerField(default=0)),
+                (
+                    "file",
+                    models.FileField(blank=True, null=True, upload_to="exams/sheets/"),
+                ),
+                (
+                    "exam",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="sheets",
+                        to="exams.exam",
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "exams_sheet",
+                "unique_together": {("exam", "name")},
+            },
+        ),
+        migrations.CreateModel(
+            name="ExamQuestion",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("number", models.PositiveIntegerField()),
+                ("score", models.FloatField(default=1.0)),
+                (
+                    "image",
+                    models.ImageField(
+                        blank=True, null=True, upload_to="exams/questions/"
+                    ),
+                ),
+                (
+                    "sheet",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="questions",
+                        to="exams.sheet",
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "exams_question",
+                "ordering": ["number"],
+                "unique_together": {("sheet", "number")},
+            },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: models/__init__.py
+==========================================================================================
+from .exam import Exam
+from .sheet import Sheet
+from .question import ExamQuestion
+from .answer_key import AnswerKey
+
+
+==========================================================================================
+# FILE: models/answer_key.py
+==========================================================================================
+from django.db import models
+from apps.api.common.models import BaseModel
+from .exam import Exam
+
+
+class AnswerKey(BaseModel):
+    """
+    정답 정의 (값만 저장, 채점 로직 없음)
+    """
+
+    exam = models.OneToOneField(
+        Exam,
+        on_delete=models.CASCADE,
+        related_name="answer_key",
+    )
+
+    # 예: { "1": "3", "2": "5", "3": "②" }
+    answers = models.JSONField()
+
+    class Meta:
+        db_table = "exams_answer_key"
+
+    def __str__(self):
+        return f"AnswerKey for {self.exam.title}"
+
+
+==========================================================================================
+# FILE: models/exam.py
+==========================================================================================
+from django.db import models
+from apps.api.common.models import BaseModel
+
+
+class Exam(BaseModel):
+    """
+    시험 정의 (메타 정보만)
+    """
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    subject = models.CharField(max_length=100)
+
+    # 예: 중간고사, 모의고사, 클리닉 테스트 등
+    exam_type = models.CharField(
+        max_length=50,
+        default="regular",
+    )
+
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "exams_exam"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.title
+
+
+==========================================================================================
+# FILE: models/question.py
+==========================================================================================
+from django.db import models
+from apps.api.common.models import BaseModel
+from .sheet import Sheet
+
+
+class ExamQuestion(BaseModel):
+    """
+    시험 문항 정의
+    """
+
+    sheet = models.ForeignKey(
+        Sheet,
+        on_delete=models.CASCADE,
+        related_name="questions",
+    )
+
+    number = models.PositiveIntegerField()  # 1번, 2번 ...
+    score = models.FloatField(default=1.0)
+
+    # 문항 이미지 (AI로 잘라낸 결과 포함 가능)
+    image = models.ImageField(
+        upload_to="exams/questions/",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = "exams_question"
+        unique_together = ("sheet", "number")
+        ordering = ["number"]
+
+    def __str__(self):
+        return f"{self.sheet} Q{self.number}"
+
+
+==========================================================================================
+# FILE: models/sheet.py
+==========================================================================================
+# apps/domains/exams/models/sheet.py
+from django.db import models
+from apps.api.common.models import BaseModel
+from .exam import Exam
+
+
+class Sheet(BaseModel):
+    """
+    시험지 (A형, B형 등)
+    """
+
+    exam = models.ForeignKey(
+        Exam,
+        on_delete=models.CASCADE,
+        related_name="sheets",
+    )
+
+    name = models.CharField(max_length=50)  # A형, B형
+
+    # ✅ 자동 생성 서비스가 동기화하므로 default=0이 맞음
+    total_questions = models.PositiveIntegerField(default=0)
+
+    # 시험지 원본 이미지 / PDF
+    file = models.FileField(
+        upload_to="exams/sheets/",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = "exams_sheet"
+        unique_together = ("exam", "name")
+
+    def __str__(self):
+        return f"{self.exam.title} - {self.name}"
+
+
+==========================================================================================
+# FILE: serializers/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: serializers/answer_key.py
+==========================================================================================
+from rest_framework import serializers
+from apps.domains.exams.models import AnswerKey
+
+class AnswerKeySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnswerKey
+        fields = [
+            "id",
+            "exam",
+            "answers",
+            "created_at",
+            "updated_at",
+        ]
+
+
+==========================================================================================
+# FILE: serializers/exam.py
+==========================================================================================
+from rest_framework import serializers
+from apps.domains.exams.models import Exam
+
+class ExamSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Exam
+        fields = [
+            "id",
+            "title",
+            "description",
+            "subject",
+            "exam_type",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+
+
+==========================================================================================
+# FILE: serializers/question.py
+==========================================================================================
+from rest_framework import serializers
+from apps.domains.exams.models import ExamQuestion
+
+class QuestionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExamQuestion
+        fields = [
+            "id",
+            "sheet",
+            "number",
+            "score",
+            "image",
+            "created_at",
+            "updated_at",
+        ]
+
+
+==========================================================================================
+# FILE: serializers/question_auto.py
+==========================================================================================
+# apps/domains/exams/serializers/question_auto.py
+from __future__ import annotations
+
+from rest_framework import serializers
+
+
+class QuestionAutoCreateSerializer(serializers.Serializer):
+    """
+    worker segmentation 결과 boxes를 그대로 받는다.
+    boxes: [[x,y,w,h], ...]
+    """
+    boxes = serializers.ListField(
+        child=serializers.ListField(
+            child=serializers.IntegerField(),
+            min_length=4,
+            max_length=4,
+        ),
+        allow_empty=False,
+    )
+
+    def validate_boxes(self, v):
+        # x,y,w,h 모두 0 이상, w/h는 1 이상
+        out = []
+        for row in v:
+            x, y, w, h = row
+            if x < 0 or y < 0 or w <= 0 or h <= 0:
+                raise serializers.ValidationError("Each box must be [x>=0, y>=0, w>0, h>0].")
+            out.append([int(x), int(y), int(w), int(h)])
+        return out
+
+
+==========================================================================================
+# FILE: serializers/sheet.py
+==========================================================================================
+from rest_framework import serializers
+from apps.domains.exams.models import Sheet
+
+class SheetSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Sheet
+        fields = [
+            "id",
+            "exam",
+            "name",
+            "total_questions",
+            "file",
+            "created_at",
+            "updated_at",
+        ]
+
+
+==========================================================================================
+# FILE: services/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: services/question_factory.py
+==========================================================================================
+# apps/domains/exams/services/question_factory.py
+from __future__ import annotations
+
+from typing import List, Tuple
+
+from django.db import transaction
+
+from apps.domains.exams.models import Sheet, ExamQuestion
+
+BBox = Tuple[int, int, int, int]
+
+
+@transaction.atomic
+def create_questions_from_boxes(*, sheet_id: int, boxes: List[BBox]) -> List[ExamQuestion]:
+    """
+    Segmentation 결과(boxes)를 기반으로 ExamQuestion 자동 생성.
+
+    규칙:
+    - idempotent: (sheet, number) 기준으로 update_or_create
+    - boxes 개수 변화 시 기존 문제 삭제/추가 동기화
+    - number = boxes 시각적 순서 (1-based)
+    - score는 이 단계에서 건드리지 않음 (grading 단계 책임)
+    """
+    sheet = Sheet.objects.select_for_update().get(id=int(sheet_id))
+
+    # 1️⃣ total_questions 동기화
+    total = int(len(boxes or []))
+    if sheet.total_questions != total:
+        sheet.total_questions = total
+        sheet.save(update_fields=["total_questions", "updated_at"])
+
+    # 2️⃣ 기존 문제 정리
+    existing_numbers = set(
+        ExamQuestion.objects
+        .filter(sheet=sheet)
+        .values_list("number", flat=True)
+    )
+    new_numbers = set(range(1, total + 1))
+
+    to_delete = existing_numbers - new_numbers
+    if to_delete:
+        ExamQuestion.objects.filter(
+            sheet=sheet,
+            number__in=to_delete,
+        ).delete()
+
+    # 3️⃣ 생성 / 갱신
+    created: List[ExamQuestion] = []
+
+    for idx in range(1, total + 1):
+        obj, _ = ExamQuestion.objects.update_or_create(
+            sheet=sheet,
+            number=idx,
+            defaults={},
+        )
+        created.append(obj)
+
+    return created
+
+
+==========================================================================================
+# FILE: views/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: views/answer_key_view.py
+==========================================================================================
+
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.exams.models import AnswerKey
+from apps.domains.exams.serializers.answer_key import AnswerKeySerializer
+
+class AnswerKeyViewSet(ModelViewSet):
+    queryset = AnswerKey.objects.select_related("exam")
+    serializer_class = AnswerKeySerializer
+    permission_classes = [IsAuthenticated]
+
+
+==========================================================================================
+# FILE: views/exam_view.py
+==========================================================================================
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.exams.models import Exam
+from apps.domains.exams.serializers.exam import ExamSerializer
+
+class ExamViewSet(ModelViewSet):
+    queryset = Exam.objects.all()
+    serializer_class = ExamSerializer
+    permission_classes = [IsAuthenticated]
+
+
+==========================================================================================
+# FILE: views/question_auto_view.py
+==========================================================================================
+# apps/domains/exams/views/question_auto_view.py
+from __future__ import annotations
+
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.exams.models import Sheet
+from apps.domains.exams.serializers.question import QuestionSerializer
+from apps.domains.exams.serializers.question_auto import QuestionAutoCreateSerializer
+from apps.domains.exams.services.question_factory import create_questions_from_boxes
+
+
+class SheetAutoQuestionsView(APIView):
+    """
+    POST /exams/sheets/<sheet_id>/auto-questions/
+    {
+      "boxes": [[x,y,w,h], ...]
+    }
+
+    반환: 생성/업데이트된 ExamQuestion 목록
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, sheet_id: int):
+        # ✅ 없으면 404 (정상)
+        get_object_or_404(Sheet, id=int(sheet_id))
+
+        s = QuestionAutoCreateSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+
+        boxes = [tuple(b) for b in s.validated_data["boxes"]]
+        questions = create_questions_from_boxes(sheet_id=int(sheet_id), boxes=boxes)
+
+        return Response(QuestionSerializer(questions, many=True).data)
+
+
+==========================================================================================
+# FILE: views/question_view.py
+==========================================================================================
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.exams.models import ExamQuestion
+from apps.domains.exams.serializers.question import QuestionSerializer
+
+class QuestionViewSet(ModelViewSet):
+    queryset = ExamQuestion.objects.select_related("sheet", "sheet__exam")
+    serializer_class = QuestionSerializer
+    permission_classes = [IsAuthenticated]
+
+
+==========================================================================================
+# FILE: views/sheet_view.py
+==========================================================================================
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.exams.models import Sheet
+from apps.domains.exams.serializers.sheet import SheetSerializer
+
+class SheetViewSet(ModelViewSet):
+    queryset = Sheet.objects.select_related("exam")
+    serializer_class = SheetSerializer
+    permission_classes = [IsAuthenticated]

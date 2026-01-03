@@ -1,0 +1,559 @@
+====================================================================================================
+# BACKEND APP: api
+# ROOT PATH: C:\academy\apps\api
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: manage.py
+==========================================================================================
+#!/usr/bin/env python
+import os
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
+
+def main():
+    BASE_DIR = Path(__file__).resolve().parents[2]
+    sys.path.append(str(BASE_DIR))
+
+    # ✅ .env 로드
+    load_dotenv(BASE_DIR / ".env")
+
+    os.environ.setdefault(
+        "DJANGO_SETTINGS_MODULE",
+        "apps.api.config.settings.dev"
+    )
+
+    from django.core.management import execute_from_command_line
+    execute_from_command_line(sys.argv)
+
+
+if __name__ == "__main__":
+    main()
+
+
+==========================================================================================
+# FILE: ai/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: ai/config.py
+==========================================================================================
+# AI / OCR 엔진 선택 (API는 상태/요청만 관리)
+
+OCR_ENGINE = "google"
+OCR_ACCOUNT_STRATEGY = "academy_first_random_global"
+
+QUESTION_SEGMENTATION_ENGINE = "auto"
+EXAM_SHEET_SEGMENT_ENGINE = "opencv"
+
+
+==========================================================================================
+# FILE: ai/models.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: ai/serializers.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: ai/urls.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: ai/views.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: ai/migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: common/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: common/models.py
+==========================================================================================
+from django.db import models
+
+
+class TimestampModel(models.Model):
+    """
+    생성 / 수정 시간 자동 기록 추상 모델
+    """
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+
+from django.db import models
+
+
+class BaseModel(TimestampModel):
+    """
+    모든 모델이 상속하는 공통 베이스 모델.
+
+    - 공통 타임스탬프 포함
+    - 추후 SoftDelete, Taggable 등의 기능 확장 가능
+    """
+    class Meta:
+        abstract = True
+
+
+==========================================================================================
+# FILE: common/migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: config/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: config/asgi.py
+==========================================================================================
+import os
+from django.core.asgi import get_asgi_application
+
+os.environ.setdefault(
+    "DJANGO_SETTINGS_MODULE",
+    "apps.api.config.settings.base",
+)
+
+application = get_asgi_application()
+
+
+==========================================================================================
+# FILE: config/urls.py
+==========================================================================================
+from django.contrib import admin
+from django.urls import path, include
+from django.conf import settings
+import sys
+
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView,
+    TokenRefreshView,
+)
+
+from django.conf.urls.static import static
+
+
+urlpatterns = [
+    # =========================
+    # Admin
+    # =========================
+    path("admin/", admin.site.urls),
+
+    # =========================
+    # Auth (JWT)
+    # =========================
+    path("api/v1/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
+    path("api/v1/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+
+    # =========================
+    # API v1
+    # =========================
+    path("api/v1/", include("apps.api.v1.urls")),
+]
+
+# =========================
+# Debug Toolbar (DEBUG only)
+# =========================
+if settings.DEBUG and "runserver" in sys.argv:
+    import debug_toolbar
+    urlpatterns += [
+        path("__debug__/", include(debug_toolbar.urls)),
+    ]
+
+# =========================
+# DEV ONLY: media static
+# =========================
+if settings.DEBUG:
+    urlpatterns += static(
+        settings.MEDIA_URL,
+        document_root=settings.MEDIA_ROOT,
+    )
+
+
+==========================================================================================
+# FILE: config/wsgi.py
+==========================================================================================
+import os
+from django.core.wsgi import get_wsgi_application
+
+os.environ.setdefault(
+    "DJANGO_SETTINGS_MODULE",
+    "apps.api.config.settings.base",
+)
+
+application = get_wsgi_application()
+
+
+==========================================================================================
+# FILE: config/settings/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: config/settings/base.py
+==========================================================================================
+# apps/api/config/settings/base.py
+
+from pathlib import Path
+from datetime import timedelta
+import os
+
+# ==================================================
+# BASE
+# ==================================================
+
+BASE_DIR = Path(__file__).resolve().parents[3]
+
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
+DEBUG = os.getenv("DEBUG", "true").lower() == "true"
+ALLOWED_HOSTS = ["*"]
+
+AUTH_USER_MODEL = "core.User"
+
+# ==================================================
+# INSTALLED APPS
+# ==================================================
+
+INSTALLED_APPS = [
+    # Django
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+
+    # Common / Core
+    "apps.api.common",
+    "apps.core",
+
+    # Domain Apps
+    "apps.domains.students",
+    "apps.domains.teachers",
+    "apps.domains.staffs",
+    "apps.domains.parents",
+    "apps.domains.lectures",
+    "apps.domains.enrollment",
+    "apps.domains.attendance",
+    "apps.domains.schedule",
+    "apps.domains.interactions.materials",
+    "apps.domains.interactions.questions",
+    "apps.domains.interactions.counseling",
+    "apps.domains.interactions.boards",
+    "apps.domains.exams",
+    "apps.domains.homework",
+    "apps.domains.submissions",
+    "apps.domains.results",
+    "apps.domains.clinic",
+    "apps.domains.progress",
+    "apps.domains.ai.apps.AIDomainConfig",
+
+    # support
+    "apps.support.media",
+
+    # REST
+    "rest_framework",
+    "rest_framework_simplejwt",
+    "django_filters",
+
+    # Swagger
+    "drf_yasg",
+
+    # CORS
+    "corsheaders",
+
+    # shared (워커 태스크 자동 탐색)
+    "apps.shared",
+
+    #그랩!
+    'django_extensions',
+]
+
+# ==================================================
+# MIDDLEWARE
+# ==================================================
+
+MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.core.middleware.tenant.TenantMiddleware",
+]
+
+# ==================================================
+# URL / WSGI / ASGI
+# ==================================================
+
+ROOT_URLCONF = "apps.api.config.urls"
+WSGI_APPLICATION = "apps.api.config.wsgi.application"
+ASGI_APPLICATION = "apps.api.config.asgi.application"
+
+# ==================================================
+# DATABASE
+# ==================================================
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("DB_NAME"),
+        "USER": os.getenv("DB_USER"),
+        "PASSWORD": os.getenv("DB_PASSWORD"),
+        "HOST": os.getenv("DB_HOST"),
+        "PORT": os.getenv("DB_PORT", "5432"),
+    }
+}
+
+# ==================================================
+# GLOBAL
+# ==================================================
+
+LANGUAGE_CODE = "ko-kr"
+TIME_ZONE = "Asia/Seoul"
+USE_I18N = True
+USE_TZ = True
+
+STATIC_URL = "/static/"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "storage" / "media"
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ==================================================
+# DRF
+# ==================================================
+
+REST_FRAMEWORK = {
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 20,
+}
+
+# ==================================================
+# JWT
+# ==================================================
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=30),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=60),
+    "AUTH_HEADER_TYPES": ("Bearer",),
+}
+
+# ==================================================
+# CORS
+# ==================================================
+
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+
+# ==================================================
+# VIDEO / CDN
+# ==================================================
+
+CDN_HLS_BASE_URL = "https://pub-54ae4dcb984d4491b08f6c57023a1621.r2.dev"
+VIDEO_PLAYBACK_TTL_SECONDS = int(os.getenv("VIDEO_PLAYBACK_TTL_SECONDS", "600"))
+
+# ==================================================
+# Cloudflare R2
+# ==================================================
+
+R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
+R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT")
+R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
+R2_BUCKET = os.getenv("R2_BUCKET")
+
+if DEBUG:
+    print("[settings] R2_ENDPOINT =", R2_ENDPOINT)
+
+# ==================================================
+# TEMPLATES
+# ==================================================
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
+
+# ==================================================
+# REDIS (API 서버에서도 사용)
+# ==================================================
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+
+==========================================================================================
+# FILE: config/settings/dev.py
+==========================================================================================
+# apps/api/config/settings/dev.py
+
+from .base import *
+
+DEBUG = True
+ALLOWED_HOSTS = ["*"]
+
+INSTALLED_APPS += [
+    "debug_toolbar",
+]
+
+MIDDLEWARE.insert(0, "debug_toolbar.middleware.DebugToolbarMiddleware")
+
+INTERNAL_IPS = ["127.0.0.1"]
+
+
+==========================================================================================
+# FILE: config/settings/prod.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: config/settings/worker.py
+==========================================================================================
+# apps/api/config/settings/worker.py
+
+from .base import *
+import os
+
+# 워커는 URLConf 불필요
+ROOT_URLCONF = None
+
+# ==================================================
+# Celery (워커 필수)
+# ==================================================
+
+CELERY_BROKER_URL = os.environ["CELERY_BROKER_URL"]
+CELERY_RESULT_BACKEND = os.environ["CELERY_RESULT_BACKEND"]
+
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+# ==================================================
+# Worker → API 통신
+# ==================================================
+
+API_BASE_URL = os.environ["API_BASE_URL"]
+INTERNAL_WORKER_TOKEN = os.environ.get(
+    "INTERNAL_WORKER_TOKEN", "long-random-secret"
+)
+
+
+==========================================================================================
+# FILE: v1/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: v1/routers.py
+==========================================================================================
+#apps/api/v1/routers.py
+
+# 여기는 비어있음.
+
+
+==========================================================================================
+# FILE: v1/urls.py
+==========================================================================================
+# apps/api/v1/urls.py
+from django.urls import path, include
+from apps.support.media.views import VideoProcessingCompleteView
+
+urlpatterns = [
+    # =========================
+    # Domain APIs
+    # =========================
+    path("lectures/", include("apps.domains.lectures.urls")),
+
+    # 🔥 출결은 lectures 하위로 이동
+    path("lectures/", include("apps.domains.attendance.urls")),
+
+    path("students/", include("apps.domains.students.urls")),
+    path("enrollments/", include("apps.domains.enrollment.urls")),
+    path("submissions/", include("apps.domains.submissions.urls")),
+    path("exams/", include("apps.domains.exams.urls")),
+    path("progress/", include("apps.domains.progress.urls")),
+    # results API 연결
+    path("results/", include("apps.domains.results.urls")),
+
+    path("core/", include("apps.core.urls")),
+    path("media/", include("apps.support.media.urls")),
+    
+    # =========================
+    # Core (🔥 추가)
+    # =========================
+    path("core/", include("apps.core.urls")),
+
+    # =========================
+    # Media
+    # =========================
+    path("media/", include("apps.support.media.urls")),
+
+    # ai가 추가하래서함 여기는 api\v1\urls.py
+    path(
+        "internal/videos/<int:video_id>/processing-complete/",
+        VideoProcessingCompleteView.as_view(),
+        name="video-processing-complete",
+    ),
+
+
+]

@@ -1,0 +1,753 @@
+====================================================================================================
+# BACKEND APP: domains__students
+# ROOT PATH: C:\academy\apps\domains\students
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: admin.py
+==========================================================================================
+from django.contrib import admin
+from .models import Student, Tag, StudentTag
+
+
+@admin.register(Student)
+class StudentAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "name",
+        "gender",
+        "grade",
+        "phone",
+        "parent",
+        "high_school",
+        "is_managed",
+        "created_at",
+    )
+    list_filter = (
+        "gender",
+        "grade",
+        "high_school",
+        "is_managed",
+    )
+    search_fields = ("name", "phone")
+
+
+@admin.register(Tag)
+class TagAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "color")
+    search_fields = ("name",)
+
+
+@admin.register(StudentTag)
+class StudentTagAdmin(admin.ModelAdmin):
+    list_display = ("student", "tag")
+    list_filter = ("tag",)
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class StudentsConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.students"
+    label = "students"
+
+
+==========================================================================================
+# FILE: filters.py
+==========================================================================================
+import django_filters
+from .models import Student
+
+
+class StudentFilter(django_filters.FilterSet):
+    name = django_filters.CharFilter(field_name="name", lookup_expr="icontains")
+    gender = django_filters.CharFilter()
+    grade = django_filters.NumberFilter()
+    high_school = django_filters.CharFilter(lookup_expr="icontains")
+    major = django_filters.CharFilter(lookup_expr="icontains")
+    is_managed = django_filters.BooleanFilter()
+
+    class Meta:
+        model = Student
+        fields = [
+            "name",
+            "gender",
+            "grade",
+            "high_school",
+            "major",
+            "is_managed",
+        ]
+
+
+==========================================================================================
+# FILE: models.py
+==========================================================================================
+from django.db import models
+from django.conf import settings
+
+from apps.api.common.models import TimestampModel
+
+
+class Student(TimestampModel):
+    # =========================
+    # 🔐 로그인 사용자 연결 (신규)
+    # =========================
+    # - 상용 SaaS에서 재생 권한/로그인을 증명하려면 User ↔ Student 매핑이 필수
+    # - 기존 데이터/운영 고려: null 허용
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="student_profile",
+        help_text="학생이 로그인 계정을 가지는 경우 연결",
+    )
+
+    # =========================
+    # 기본 정보
+    # =========================
+    name = models.CharField(max_length=50)
+
+    gender = models.CharField(
+        max_length=1,
+        choices=[("M", "남"), ("F", "여")],
+        null=True,
+        blank=True,
+    )
+
+    # 중/고 공통 학년 (1~3)
+    grade = models.PositiveSmallIntegerField(
+        choices=[(1, "1"), (2, "2"), (3, "3")],
+        null=True,
+        blank=True,
+    )
+
+    # 🔴 중학생 / 고등학생 구분
+    SCHOOL_TYPE_CHOICES = (
+        ("MIDDLE", "중등"),
+        ("HIGH", "고등"),
+    )
+
+    school_type = models.CharField(
+        max_length=10,
+        choices=SCHOOL_TYPE_CHOICES,
+        default="HIGH",
+    )
+
+    phone = models.CharField(max_length=20, null=True, blank=True)
+
+    # legacy 유지 (학생 기준 빠른 조회용)
+    parent_phone = models.CharField(max_length=20, null=True, blank=True)
+
+    # =========================
+    # 보호자 (1:N 구조)
+    # =========================
+    parent = models.ForeignKey(
+        "parents.Parent",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="students",
+    )
+
+    # =========================
+    # 학교 정보
+    # =========================
+    # 고등학생용
+    high_school = models.CharField(max_length=100, null=True, blank=True)
+    high_school_class = models.CharField(max_length=100, null=True, blank=True)
+    major = models.CharField(max_length=50, null=True, blank=True)
+
+    # 중학생용
+    middle_school = models.CharField(max_length=100, null=True, blank=True)
+
+    # =========================
+    # 기타
+    # =========================
+    memo = models.TextField(null=True, blank=True)
+    is_managed = models.BooleanField(default=True)
+
+    # =========================
+    # 태그 (주의학생 등)
+    # =========================
+    tags = models.ManyToManyField(
+        "Tag",
+        through="StudentTag",
+        related_name="students",
+        blank=True,
+    )
+
+    class Meta:
+        ordering = ["-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user"],
+                name="uniq_student_user",
+                condition=models.Q(user__isnull=False),
+            )
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+# =========================
+# Tag
+# =========================
+class Tag(models.Model):
+    name = models.CharField(max_length=50)
+    color = models.CharField(max_length=20, default="#000000")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["name"],
+                name="uniq_tag_name",
+            )
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+# =========================
+# Student - Tag 연결
+# =========================
+class StudentTag(models.Model):
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name="student_tags",
+    )
+    tag = models.ForeignKey(Tag, on_delete=models.CASCADE)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["student", "tag"],
+                name="uniq_student_tag",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.student.name} - {self.tag.name}"
+
+
+==========================================================================================
+# FILE: serializers.py
+==========================================================================================
+
+from rest_framework import serializers
+
+
+from apps.domains.students.models import Student, Tag
+from apps.domains.enrollment.models import Enrollment
+from apps.domains.interactions.counseling.models import Counseling
+from apps.domains.interactions.questions.models import Question
+
+
+# -------------------------------
+# Tag
+# -------------------------------
+
+class TagSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Tag
+        fields = "__all__"
+        ref_name = "StudentTagSerializer"
+
+
+# -------------------------------
+# Nested
+# -------------------------------
+
+class CounselingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Counseling
+        fields = "__all__"
+        ref_name = "StudentCounseling"
+
+
+class QuestionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Question
+        fields = "__all__"
+        ref_name = "StudentQuestion"
+
+
+class EnrollmentSerializer(serializers.ModelSerializer):
+    lecture_name = serializers.CharField(source="lecture.title", read_only=True)
+
+    class Meta:
+        model = Enrollment
+        fields = "__all__"
+        ref_name = "StudentEnrollment"
+
+
+# -------------------------------
+# Student
+# -------------------------------
+
+class StudentListSerializer(serializers.ModelSerializer):
+    tags = TagSerializer(many=True, read_only=True)
+    is_enrolled = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Student
+        fields = "__all__"
+        ref_name = "StudentList"
+
+    def get_is_enrolled(self, obj):
+        request = self.context.get("request")
+        if not request:
+            return False
+
+        lecture_id = request.query_params.get("lecture")
+        if lecture_id:
+            return obj.enrollments.filter(lecture_id=lecture_id).exists()
+
+        return False
+
+
+class StudentDetailSerializer(serializers.ModelSerializer):
+    tags = TagSerializer(many=True, read_only=True)
+    enrollments = EnrollmentSerializer(many=True, read_only=True)
+    counselings = CounselingSerializer(many=True, read_only=True)
+    questions = QuestionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Student
+        fields = "__all__"
+        ref_name = "StudentDetail"
+
+
+class AddTagSerializer(serializers.Serializer):
+    tag_id = serializers.IntegerField()
+
+
+# -------------------------------
+# Student Create (with User)
+# -------------------------------
+
+class StudentCreateSerializer(serializers.ModelSerializer):
+    """
+    학생 생성 전용 Serializer
+    - 교사가 초기 비밀번호 설정
+    - phone → User.username 으로 사용
+    """
+
+    initial_password = serializers.CharField(
+        write_only=True,
+        required=True,
+        min_length=4,
+        help_text="학생 초기 비밀번호 (교사 설정)",
+    )
+
+    class Meta:
+        model = Student
+        fields = "__all__"
+
+    def validate_phone(self, value):
+        if not value:
+            raise serializers.ValidationError("전화번호는 필수입니다.")
+
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("이미 사용 중인 전화번호입니다.")
+
+        return value
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+from rest_framework.routers import DefaultRouter
+from .views import StudentViewSet, TagViewSet
+
+router = DefaultRouter()
+router.register(r"", StudentViewSet)
+router.register(r"tags", TagViewSet)
+
+urlpatterns = router.urls
+
+
+==========================================================================================
+# FILE: views.py
+==========================================================================================
+from django.db import transaction
+from django.contrib.auth import get_user_model
+
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+
+from apps.core.permissions import IsAdminOrStaff, IsStudent
+
+from .models import Student, Tag, StudentTag
+from .filters import StudentFilter
+from .serializers import (
+    StudentListSerializer,
+    StudentDetailSerializer,
+    TagSerializer,
+    AddTagSerializer,
+)
+
+
+# ======================================================
+# Tag
+# ======================================================
+
+class TagViewSet(ModelViewSet):
+    """
+    학생 태그 관리
+    - 관리자 / 스태프 전용
+    """
+    queryset = Tag.objects.all()
+    serializer_class = TagSerializer
+    permission_classes = [IsAdminOrStaff]
+
+
+# ======================================================
+# Student
+# ======================================================
+
+class StudentViewSet(ModelViewSet):
+    """
+    학생 관리 ViewSet
+
+    ✔ 학생 생성 시 User 계정 자동 생성
+    ✔ phone = username
+    ✔ 초기 비밀번호는 교사가 설정
+    ✔ 학생 CRUD는 관리자만 가능
+    """
+    queryset = Student.objects.all()
+    permission_classes = [IsAdminOrStaff]
+
+    # ------------------------------
+    # Serializer 선택
+    # ------------------------------
+    def get_serializer_class(self):
+        if self.action == "create":
+            # 생성 전용 (initial_password 포함)
+            from .serializers import StudentCreateSerializer
+            return StudentCreateSerializer
+
+        if self.action == "list":
+            return StudentListSerializer
+
+        return StudentDetailSerializer
+
+    # ------------------------------
+    # Student + User 생성
+    # ------------------------------
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        """
+        학생 생성 시 처리 흐름
+
+        1. 입력값 검증 (StudentCreateSerializer)
+        2. User 생성 (username = phone)
+        3. Student 생성 + user 연결
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        User = get_user_model()
+
+        phone = serializer.validated_data["phone"]
+        password = serializer.validated_data.pop("initial_password")
+
+        # 1️⃣ User 생성
+        user = User.objects.create(
+            username=phone,
+            phone=phone,
+            name=serializer.validated_data.get("name", ""),
+        )
+        user.set_password(password)
+        user.save()
+
+        # 2️⃣ Student 생성 + User 연결
+        student = Student.objects.create(
+            user=user,
+            **serializer.validated_data,
+        )
+
+        output = StudentDetailSerializer(
+            student,
+            context={"request": request},
+        )
+        return Response(output.data, status=201)
+
+    # ------------------------------
+    # Filtering / Searching / Ordering
+    # ------------------------------
+    filter_backends = [
+        DjangoFilterBackend,
+        SearchFilter,
+        OrderingFilter,
+    ]
+    filterset_class = StudentFilter
+    search_fields = ["name", "high_school", "major"]
+    ordering_fields = ["id", "created_at", "updated_at"]
+    ordering = ["-id"]
+
+    # ------------------------------
+    # Tag 관리
+    # ------------------------------
+    @action(detail=True, methods=["post"])
+    def add_tag(self, request, pk=None):
+        student = self.get_object()
+        serializer = AddTagSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        tag = Tag.objects.get(id=serializer.validated_data["tag_id"])
+        StudentTag.objects.get_or_create(student=student, tag=tag)
+
+        return Response({"status": "ok"}, status=201)
+
+    @action(detail=True, methods=["post"])
+    def remove_tag(self, request, pk=None):
+        student = self.get_object()
+        serializer = AddTagSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        StudentTag.objects.filter(
+            student=student,
+            tag_id=serializer.validated_data["tag_id"],
+        ).delete()
+
+        return Response({"status": "ok"}, status=200)
+
+    # --------------------------------------------------
+    # Anchor API: /students/me/
+    # --------------------------------------------------
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="me",
+        permission_classes=[IsAuthenticated, IsStudent],
+    )
+    def me(self, request):
+        """
+        학생 본인 정보 조회 (Anchor API)
+
+        🔒 보안 포인트
+        - request.user 기준 강제
+        - 다른 학생 ID 접근 불가
+        - staff가 호출하면 403
+        """
+        student = (
+            Student.objects
+            .select_related("user")
+            .prefetch_related("tags", "enrollments")
+            .get(user=request.user)
+        )
+
+        serializer = StudentDetailSerializer(
+            student,
+            context={"request": request},
+        )
+        return Response(serializer.data)
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("parents", "0001_initial"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="Student",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("name", models.CharField(max_length=50)),
+                (
+                    "gender",
+                    models.CharField(
+                        blank=True,
+                        choices=[("M", "남"), ("F", "여")],
+                        max_length=1,
+                        null=True,
+                    ),
+                ),
+                (
+                    "grade",
+                    models.PositiveSmallIntegerField(
+                        blank=True, choices=[(1, "1"), (2, "2"), (3, "3")], null=True
+                    ),
+                ),
+                (
+                    "school_type",
+                    models.CharField(
+                        choices=[("MIDDLE", "중등"), ("HIGH", "고등")],
+                        default="HIGH",
+                        max_length=10,
+                    ),
+                ),
+                ("phone", models.CharField(blank=True, max_length=20, null=True)),
+                (
+                    "parent_phone",
+                    models.CharField(blank=True, max_length=20, null=True),
+                ),
+                (
+                    "high_school",
+                    models.CharField(blank=True, max_length=100, null=True),
+                ),
+                (
+                    "high_school_class",
+                    models.CharField(blank=True, max_length=100, null=True),
+                ),
+                ("major", models.CharField(blank=True, max_length=50, null=True)),
+                (
+                    "middle_school",
+                    models.CharField(blank=True, max_length=100, null=True),
+                ),
+                ("memo", models.TextField(blank=True, null=True)),
+                ("is_managed", models.BooleanField(default=True)),
+                (
+                    "parent",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="students",
+                        to="parents.parent",
+                    ),
+                ),
+                (
+                    "user",
+                    models.OneToOneField(
+                        blank=True,
+                        help_text="학생이 로그인 계정을 가지는 경우 연결",
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="student_profile",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-id"],
+            },
+        ),
+        migrations.CreateModel(
+            name="Tag",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("name", models.CharField(max_length=50)),
+                ("color", models.CharField(default="#000000", max_length=20)),
+            ],
+            options={
+                "constraints": [
+                    models.UniqueConstraint(fields=("name",), name="uniq_tag_name")
+                ],
+            },
+        ),
+        migrations.CreateModel(
+            name="StudentTag",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "student",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="student_tags",
+                        to="students.student",
+                    ),
+                ),
+                (
+                    "tag",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE, to="students.tag"
+                    ),
+                ),
+            ],
+        ),
+        migrations.AddField(
+            model_name="student",
+            name="tags",
+            field=models.ManyToManyField(
+                blank=True,
+                related_name="students",
+                through="students.StudentTag",
+                to="students.tag",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="studenttag",
+            constraint=models.UniqueConstraint(
+                fields=("student", "tag"), name="uniq_student_tag"
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="student",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("user__isnull", False)),
+                fields=("user",),
+                name="uniq_student_user",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+

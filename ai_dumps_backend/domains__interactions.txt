@@ -1,0 +1,1464 @@
+====================================================================================================
+# BACKEND APP: domains__interactions
+# ROOT PATH: C:\academy\apps\domains\interactions
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: boards/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: boards/admin.py
+==========================================================================================
+from django.contrib import admin
+from .models import (
+    BoardCategory,
+    BoardPost,
+    BoardAttachment,
+    BoardReadStatus,
+)
+
+
+@admin.register(BoardCategory)
+class BoardCategoryAdmin(admin.ModelAdmin):
+    list_display = ("id", "lecture", "name", "order")
+    list_display_links = ("id", "name")
+    list_filter = ("lecture",)
+    search_fields = ("name",)
+    ordering = ("lecture", "order")
+
+
+@admin.register(BoardPost)
+class BoardPostAdmin(admin.ModelAdmin):
+    list_display = ("id", "title", "lecture", "category", "created_by", "created_at")
+    list_display_links = ("id", "title")
+    list_filter = ("lecture", "category")
+    search_fields = ("title", "content")
+    ordering = ("-created_at",)
+
+
+@admin.register(BoardAttachment)
+class BoardAttachmentAdmin(admin.ModelAdmin):
+    list_display = ("id", "post", "file")
+
+
+@admin.register(BoardReadStatus)
+class BoardReadStatusAdmin(admin.ModelAdmin):
+    list_display = ("id", "post", "enrollment", "checked_at")
+    list_display_links = ("id", "post")
+    list_filter = ("post__lecture",)
+    search_fields = ("enrollment__student__name",)
+    ordering = ("-checked_at",)
+
+
+==========================================================================================
+# FILE: boards/apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class BoardsConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.interactions.boards"
+
+
+==========================================================================================
+# FILE: boards/models.py
+==========================================================================================
+from django.db import models
+
+from apps.domains.students.models import Student
+from apps.domains.lectures.models import Lecture
+
+
+# ========================================================
+# Board Category
+# ========================================================
+
+class BoardCategory(models.Model):
+    lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name="board_categories",
+    )
+    name = models.CharField(max_length=100)
+    order = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"[{self.lecture.title}] {self.name}"
+
+
+# ========================================================
+# Board Post
+# ========================================================
+
+class BoardPost(models.Model):
+    lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name="board_posts",
+    )
+    category = models.ForeignKey(
+        BoardCategory,
+        on_delete=models.CASCADE,
+        related_name="posts",
+    )
+
+    title = models.CharField(max_length=255)
+    content = models.TextField()
+    created_by = models.ForeignKey(
+        Student,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.title
+
+
+# ========================================================
+# Board Attachment
+# ========================================================
+
+class BoardAttachment(models.Model):
+    post = models.ForeignKey(
+        BoardPost,
+        on_delete=models.CASCADE,
+        related_name="attachments",
+    )
+    file = models.FileField(upload_to="board/%Y/%m/%d/")
+
+
+# ========================================================
+# Board Read Status
+# ========================================================
+
+class BoardReadStatus(models.Model):
+    post = models.ForeignKey(
+        BoardPost,
+        on_delete=models.CASCADE,
+        related_name="read_status",
+    )
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+    )
+    checked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("post", "enrollment")
+
+
+==========================================================================================
+# FILE: boards/serializers.py
+==========================================================================================
+from rest_framework import serializers
+from .models import (
+    BoardCategory,
+    BoardPost,
+    BoardAttachment,
+    BoardReadStatus,
+)
+
+
+class BoardCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BoardCategory
+        fields = "__all__"
+
+
+class BoardAttachmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BoardAttachment
+        fields = "__all__"
+
+
+class BoardPostSerializer(serializers.ModelSerializer):
+    attachments = BoardAttachmentSerializer(
+        many=True, read_only=True
+    )
+
+    class Meta:
+        model = BoardPost
+        fields = "__all__"
+
+
+class BoardReadStatusSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(
+        source="enrollment.student.name", read_only=True
+    )
+
+    class Meta:
+        model = BoardReadStatus
+        fields = "__all__"
+
+
+==========================================================================================
+# FILE: boards/views.py
+==========================================================================================
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.filters import SearchFilter
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.decorators import action
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.response import Response
+
+from .models import (
+    BoardCategory,
+    BoardPost,
+    BoardAttachment,
+    BoardReadStatus,
+)
+from .serializers import (
+    BoardCategorySerializer,
+    BoardPostSerializer,
+    BoardReadStatusSerializer,
+)
+
+
+class BoardCategoryViewSet(ModelViewSet):
+    queryset = BoardCategory.objects.all()
+    serializer_class = BoardCategorySerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["lecture"]
+
+
+class BoardPostViewSet(ModelViewSet):
+    queryset = BoardPost.objects.all().select_related("lecture", "category")
+    serializer_class = BoardPostSerializer
+    parser_classes = [MultiPartParser, FormParser]
+
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["lecture", "category"]
+    search_fields = ["title", "content"]
+
+    def create(self, request, *args, **kwargs):
+        files = request.FILES.getlist("files")
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        post = serializer.save()
+
+        for f in files:
+            BoardAttachment.objects.create(post=post, file=f)
+
+        return Response(self.get_serializer(post).data, status=201)
+
+
+class BoardReadStatusViewSet(ModelViewSet):
+    queryset = BoardReadStatus.objects.all().select_related(
+        "post",
+        "enrollment",
+        "enrollment__student",
+    )
+    serializer_class = BoardReadStatusSerializer
+
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["post", "enrollment"]
+
+    @action(detail=False, methods=["post"])
+    def mark_read(self, request):
+        obj, _ = BoardReadStatus.objects.get_or_create(
+            post_id=request.data.get("post"),
+            enrollment_id=request.data.get("enrollment"),
+        )
+        return Response(BoardReadStatusSerializer(obj).data)
+
+
+==========================================================================================
+# FILE: boards/migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("lectures", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="BoardAttachment",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("file", models.FileField(upload_to="board/%Y/%m/%d/")),
+            ],
+        ),
+        migrations.CreateModel(
+            name="BoardReadStatus",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("checked_at", models.DateTimeField(auto_now_add=True)),
+            ],
+        ),
+        migrations.CreateModel(
+            name="BoardCategory",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("name", models.CharField(max_length=100)),
+                ("order", models.PositiveIntegerField(default=1)),
+                (
+                    "lecture",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="board_categories",
+                        to="lectures.lecture",
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["order", "id"],
+            },
+        ),
+        migrations.CreateModel(
+            name="BoardPost",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("title", models.CharField(max_length=255)),
+                ("content", models.TextField()),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "category",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="posts",
+                        to="boards.boardcategory",
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-created_at"],
+            },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: boards/migrations/0002_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("boards", "0001_initial"),
+        ("enrollment", "0001_initial"),
+        ("lectures", "0001_initial"),
+        ("students", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="boardpost",
+            name="created_by",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                to="students.student",
+            ),
+        ),
+        migrations.AddField(
+            model_name="boardpost",
+            name="lecture",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="board_posts",
+                to="lectures.lecture",
+            ),
+        ),
+        migrations.AddField(
+            model_name="boardattachment",
+            name="post",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="attachments",
+                to="boards.boardpost",
+            ),
+        ),
+        migrations.AddField(
+            model_name="boardreadstatus",
+            name="enrollment",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE, to="enrollment.enrollment"
+            ),
+        ),
+        migrations.AddField(
+            model_name="boardreadstatus",
+            name="post",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="read_status",
+                to="boards.boardpost",
+            ),
+        ),
+        migrations.AlterUniqueTogether(
+            name="boardreadstatus",
+            unique_together={("post", "enrollment")},
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: boards/migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: counseling/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: counseling/admin.py
+==========================================================================================
+from django.contrib import admin
+from .models import Counseling
+
+
+@admin.register(Counseling)
+class CounselingAdmin(admin.ModelAdmin):
+    list_display = ("id", "enrollment", "created_at")
+    list_display_links = ("id", "enrollment")
+    search_fields = ("enrollment__student__name",)
+    ordering = ("-created_at",)
+
+
+==========================================================================================
+# FILE: counseling/apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class CounselingConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.interactions.counseling"
+
+
+==========================================================================================
+# FILE: counseling/models.py
+==========================================================================================
+from django.db import models
+
+
+# ========================================================
+# Counseling
+# ========================================================
+
+class Counseling(models.Model):
+    """
+    수강 중 발생하는 1:1 상담 기록.
+    Lecture가 아닌 Enrollment 컨텍스트에 종속된다.
+    """
+
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        related_name="counselings",
+    )
+
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.enrollment.student.name} 상담"
+
+
+==========================================================================================
+# FILE: counseling/serializers.py
+==========================================================================================
+from rest_framework import serializers
+from .models import Counseling
+
+
+class CounselingSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(
+        source="enrollment.student.name", read_only=True
+    )
+
+    class Meta:
+        model = Counseling
+        fields = "__all__"
+
+
+==========================================================================================
+# FILE: counseling/views.py
+==========================================================================================
+from rest_framework.viewsets import ModelViewSet
+from django_filters.rest_framework import DjangoFilterBackend
+
+from .models import Counseling
+from .serializers import CounselingSerializer
+
+
+class CounselingViewSet(ModelViewSet):
+    queryset = Counseling.objects.all().select_related(
+        "enrollment",
+        "enrollment__student",
+    )
+    serializer_class = CounselingSerializer
+
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["enrollment"]
+
+
+==========================================================================================
+# FILE: counseling/migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("enrollment", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="Counseling",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("content", models.TextField()),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "enrollment",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="counselings",
+                        to="enrollment.enrollment",
+                    ),
+                ),
+            ],
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: counseling/migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+class MaterialsConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.interactions.materials"
+
+
+==========================================================================================
+# FILE: materials/permissions.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/admin/__init__.py
+==========================================================================================
+from .category import MaterialCategoryAdmin
+from .material import MaterialAdmin
+from .access import MaterialAccessAdmin
+
+
+==========================================================================================
+# FILE: materials/admin/access.py
+==========================================================================================
+from django.contrib import admin
+from ..models import MaterialAccess
+
+
+@admin.register(MaterialAccess)
+class MaterialAccessAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "material",
+        "student",
+        "enrollment",
+        "session",
+        "available_from",
+        "available_until",
+    )
+    list_filter = ("material", "session")
+    ordering = ("-created_at",)
+
+
+==========================================================================================
+# FILE: materials/admin/category.py
+==========================================================================================
+from django.contrib import admin
+from ..models import MaterialCategory
+
+
+@admin.register(MaterialCategory)
+class MaterialCategoryAdmin(admin.ModelAdmin):
+    list_display = ("id", "lecture", "name", "order")
+    list_filter = ("lecture",)
+    ordering = ("lecture", "order")
+
+
+==========================================================================================
+# FILE: materials/admin/material.py
+==========================================================================================
+from django.contrib import admin
+from ..models import Material
+
+
+@admin.register(Material)
+class MaterialAdmin(admin.ModelAdmin):
+    list_display = ("id", "title", "lecture", "category", "is_public", "created_at")
+    list_filter = ("lecture", "category", "is_public")
+    ordering = ("-created_at",)
+
+
+==========================================================================================
+# FILE: materials/migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("enrollment", "0001_initial"),
+        ("lectures", "0001_initial"),
+        ("students", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="MaterialCategory",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("name", models.CharField(max_length=100)),
+                ("order", models.PositiveIntegerField(default=1)),
+                (
+                    "lecture",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="material_categories",
+                        to="lectures.lecture",
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["order", "id"],
+            },
+        ),
+        migrations.CreateModel(
+            name="Material",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("title", models.CharField(max_length=255)),
+                ("description", models.TextField(blank=True)),
+                ("file", models.FileField(blank=True, upload_to="materials/%Y/%m/%d/")),
+                ("url", models.URLField(blank=True)),
+                ("order", models.PositiveIntegerField(default=1)),
+                ("is_public", models.BooleanField(default=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "lecture",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="materials",
+                        to="lectures.lecture",
+                    ),
+                ),
+                (
+                    "uploaded_by",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        to="students.student",
+                    ),
+                ),
+                (
+                    "category",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="materials",
+                        to="materials.materialcategory",
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["category", "order", "-created_at"],
+            },
+        ),
+        migrations.CreateModel(
+            name="MaterialAccess",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("available_from", models.DateTimeField(blank=True, null=True)),
+                ("available_until", models.DateTimeField(blank=True, null=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "enrollment",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="material_accesses",
+                        to="enrollment.enrollment",
+                    ),
+                ),
+                (
+                    "material",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="accesses",
+                        to="materials.material",
+                    ),
+                ),
+                (
+                    "session",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="material_accesses",
+                        to="lectures.session",
+                    ),
+                ),
+                (
+                    "student",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="material_accesses",
+                        to="students.student",
+                    ),
+                ),
+            ],
+            options={
+                "indexes": [
+                    models.Index(
+                        fields=["material"], name="materials_m_materia_983f86_idx"
+                    ),
+                    models.Index(
+                        fields=["student"], name="materials_m_student_620ce3_idx"
+                    ),
+                    models.Index(
+                        fields=["enrollment"], name="materials_m_enrollm_83f3cb_idx"
+                    ),
+                    models.Index(
+                        fields=["session"], name="materials_m_session_42c7e6_idx"
+                    ),
+                ],
+            },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: materials/migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/models/__init__.py
+==========================================================================================
+from .category import MaterialCategory
+from .material import Material
+from .access import MaterialAccess
+
+__all__ = [
+    "MaterialCategory",
+    "Material",
+    "MaterialAccess",
+]
+
+
+==========================================================================================
+# FILE: materials/models/access.py
+==========================================================================================
+from django.db import models
+
+from apps.domains.students.models import Student
+from apps.domains.lectures.models import Session
+from apps.domains.enrollment.models import Enrollment
+from .material import Material
+
+
+class MaterialAccess(models.Model):
+    """
+    특정 Material에 대해 '누가 / 언제 / 어떤 범위로' 접근 가능한지 정의
+    """
+
+    material = models.ForeignKey(
+        Material,
+        on_delete=models.CASCADE,
+        related_name="accesses",
+    )
+
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="material_accesses",
+    )
+    enrollment = models.ForeignKey(
+        Enrollment,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="material_accesses",
+    )
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="material_accesses",
+    )
+
+    available_from = models.DateTimeField(null=True, blank=True)
+    available_until = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["material"]),
+            models.Index(fields=["student"]),
+            models.Index(fields=["enrollment"]),
+            models.Index(fields=["session"]),
+        ]
+
+    def __str__(self):
+        return f"Access: {self.material.title}"
+
+
+==========================================================================================
+# FILE: materials/models/category.py
+==========================================================================================
+from django.db import models
+from apps.domains.lectures.models import Lecture
+
+
+class MaterialCategory(models.Model):
+    lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name="material_categories",
+    )
+    name = models.CharField(max_length=100)
+    order = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"[{self.lecture.title}] {self.name}"
+
+
+==========================================================================================
+# FILE: materials/models/material.py
+==========================================================================================
+from django.db import models
+
+from apps.domains.students.models import Student
+from apps.domains.lectures.models import Lecture
+from .category import MaterialCategory
+
+
+class Material(models.Model):
+    lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name="materials",
+    )
+    category = models.ForeignKey(
+        MaterialCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="materials",
+    )
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+
+    file = models.FileField(upload_to="materials/%Y/%m/%d/", blank=True)
+    url = models.URLField(blank=True)
+
+    order = models.PositiveIntegerField(default=1)
+    is_public = models.BooleanField(default=True)
+
+    uploaded_by = models.ForeignKey(
+        Student,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["category", "order", "-created_at"]
+
+    def __str__(self):
+        return self.title
+
+
+==========================================================================================
+# FILE: materials/serializers/__init__.py
+==========================================================================================
+from .category import MaterialCategorySerializer
+from .material import MaterialSerializer
+from .access import MaterialAccessSerializer
+
+__all__ = [
+    "MaterialCategorySerializer",
+    "MaterialSerializer",
+    "MaterialAccessSerializer",
+]
+
+
+==========================================================================================
+# FILE: materials/serializers/access.py
+==========================================================================================
+from rest_framework import serializers
+from ..models import MaterialAccess
+
+
+class MaterialAccessSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MaterialAccess
+        fields = "__all__"
+
+
+==========================================================================================
+# FILE: materials/serializers/category.py
+==========================================================================================
+from rest_framework import serializers
+from ..models import MaterialCategory
+
+
+class MaterialCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MaterialCategory
+        fields = "__all__"
+
+
+==========================================================================================
+# FILE: materials/serializers/material.py
+==========================================================================================
+from rest_framework import serializers
+from ..models import Material
+
+
+class MaterialSerializer(serializers.ModelSerializer):
+    uploader_name = serializers.CharField(
+        source="uploaded_by.name",
+        read_only=True,
+    )
+    category_name = serializers.CharField(
+        source="category.name",
+        read_only=True,
+    )
+
+    class Meta:
+        model = Material
+        fields = "__all__"
+
+
+==========================================================================================
+# FILE: materials/serializers/students.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/services/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/services/bulk.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/services/permission.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/services/selectors.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/urls/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/urls/admin.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/urls/student.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/urls/urls.py
+==========================================================================================
+from rest_framework.routers import DefaultRouter
+from .views import (
+    MaterialViewSet,
+    MaterialCategoryViewSet,
+    MaterialAccessViewSet,
+)
+
+router = DefaultRouter()
+router.register("materials", MaterialViewSet)
+router.register("material-categories", MaterialCategoryViewSet)
+router.register("material-accesses", MaterialAccessViewSet)
+
+urlpatterns = router.urls
+
+
+==========================================================================================
+# FILE: materials/views/__init__.py
+==========================================================================================
+from .category import MaterialCategoryViewSet
+from .material import MaterialViewSet
+from .access import MaterialAccessViewSet
+
+__all__ = [
+    "MaterialCategoryViewSet",
+    "MaterialViewSet",
+    "MaterialAccessViewSet",
+]
+
+
+==========================================================================================
+# FILE: materials/views/access.py
+==========================================================================================
+from rest_framework.viewsets import ModelViewSet
+from django_filters.rest_framework import DjangoFilterBackend
+
+from ..models import MaterialAccess
+from ..serializers import MaterialAccessSerializer
+
+
+class MaterialAccessViewSet(ModelViewSet):
+    """
+    강사가 특정 자료 접근 권한을 제어
+    """
+    queryset = MaterialAccess.objects.all().select_related(
+        "material",
+        "student",
+        "enrollment",
+        "session",
+    )
+    serializer_class = MaterialAccessSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["material", "student", "enrollment", "session"]
+
+
+==========================================================================================
+# FILE: materials/views/admin.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: materials/views/category.py
+==========================================================================================
+from rest_framework.viewsets import ModelViewSet
+from django_filters.rest_framework import DjangoFilterBackend
+
+from ..models import MaterialCategory
+from ..serializers import MaterialCategorySerializer
+
+
+class MaterialCategoryViewSet(ModelViewSet):
+    queryset = MaterialCategory.objects.all()
+    serializer_class = MaterialCategorySerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["lecture"]
+
+
+==========================================================================================
+# FILE: materials/views/material.py
+==========================================================================================
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.filters import SearchFilter
+from rest_framework.parsers import MultiPartParser, FormParser
+from django_filters.rest_framework import DjangoFilterBackend
+
+from ..models import Material
+from ..serializers import MaterialSerializer
+
+
+class MaterialViewSet(ModelViewSet):
+    queryset = Material.objects.all().select_related(
+        "lecture",
+        "category",
+        "uploaded_by",
+    )
+    serializer_class = MaterialSerializer
+    parser_classes = [MultiPartParser, FormParser]
+
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["lecture", "category"]
+    search_fields = ["title"]
+
+
+==========================================================================================
+# FILE: materials/views/student.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: questions/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: questions/admin.py
+==========================================================================================
+from django.contrib import admin
+from .models import Question, Answer
+
+
+@admin.register(Question)
+class QuestionAdmin(admin.ModelAdmin):
+    list_display = ("id", "title", "enrollment", "is_answered", "created_at")
+    list_display_links = ("id", "title")
+    list_filter = ("is_answered",)
+    search_fields = ("title", "enrollment__student__name")
+    ordering = ("-created_at",)
+
+
+@admin.register(Answer)
+class AnswerAdmin(admin.ModelAdmin):
+    list_display = ("id", "question", "created_at")
+    list_display_links = ("id", "question")
+    search_fields = ("question__title",)
+    ordering = ("-created_at",)
+
+
+==========================================================================================
+# FILE: questions/apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class QuestionsConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.interactions.questions"
+
+
+==========================================================================================
+# FILE: questions/models.py
+==========================================================================================
+from django.db import models
+
+
+# ========================================================
+# Question / Answer
+# ========================================================
+
+class Question(models.Model):
+    """
+    학생이 수강 중 남기는 질문.
+    """
+
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        related_name="questions",
+    )
+
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_answered = models.BooleanField(default=False)
+
+    def __str__(self):
+        return self.title
+
+
+class Answer(models.Model):
+    """
+    Question에 대한 단일 답변.
+    """
+
+    question = models.OneToOneField(
+        Question,
+        on_delete=models.CASCADE,
+        related_name="answer",
+    )
+
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Answer to {self.question.title}"
+
+
+==========================================================================================
+# FILE: questions/serializers.py
+==========================================================================================
+from rest_framework import serializers
+from .models import Question, Answer
+
+
+class QuestionSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(
+        source="enrollment.student.name", read_only=True
+    )
+
+    class Meta:
+        model = Question
+        fields = "__all__"
+
+
+class AnswerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Answer
+        fields = "__all__"
+
+
+==========================================================================================
+# FILE: questions/views.py
+==========================================================================================
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.filters import SearchFilter
+from django_filters.rest_framework import DjangoFilterBackend
+
+from .models import Question, Answer
+from .serializers import QuestionSerializer, AnswerSerializer
+
+
+class QuestionViewSet(ModelViewSet):
+    queryset = Question.objects.all().select_related(
+        "enrollment",
+        "enrollment__student",
+    )
+    serializer_class = QuestionSerializer
+
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["enrollment"]
+    search_fields = ["title", "content", "enrollment__student__name"]
+
+
+class AnswerViewSet(ModelViewSet):
+    queryset = Answer.objects.all().select_related("question")
+    serializer_class = AnswerSerializer
+
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["question"]
+
+
+==========================================================================================
+# FILE: questions/migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("enrollment", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="Question",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("title", models.CharField(max_length=200)),
+                ("content", models.TextField()),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("is_answered", models.BooleanField(default=False)),
+                (
+                    "enrollment",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="questions",
+                        to="enrollment.enrollment",
+                    ),
+                ),
+            ],
+        ),
+        migrations.CreateModel(
+            name="Answer",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("content", models.TextField()),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "question",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="answer",
+                        to="questions.question",
+                    ),
+                ),
+            ],
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: questions/migrations/__init__.py
+==========================================================================================
+

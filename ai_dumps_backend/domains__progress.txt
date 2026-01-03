@@ -1,0 +1,863 @@
+====================================================================================================
+# BACKEND APP: domains__progress
+# ROOT PATH: C:\academy\apps\domains\progress
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+# apps/domains/progress/__init__.py
+
+
+==========================================================================================
+# FILE: admin.py
+==========================================================================================
+# apps/domains/progress/admin.py
+from django.contrib import admin
+
+from .models import ProgressPolicy, SessionProgress, LectureProgress, ClinicLink, RiskLog
+
+
+@admin.register(ProgressPolicy)
+class ProgressPolicyAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "lecture",
+        "video_required_rate",
+        "exam_start_session_order",
+        "exam_end_session_order",
+        "exam_pass_score",
+        "homework_start_session_order",
+        "homework_end_session_order",
+        "homework_pass_type",
+        "created_at",
+    )
+    list_filter = ("homework_pass_type",)
+    search_fields = ("lecture__title", "lecture__name")
+    ordering = ("-id",)
+
+
+@admin.register(SessionProgress)
+class SessionProgressAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "enrollment_id",
+        "session",
+        "attendance_type",
+        "video_progress_rate",
+        "video_completed",
+        "exam_score",
+        "exam_passed",
+        "homework_submitted",
+        "homework_passed",
+        "completed",
+        "calculated_at",
+        "updated_at",
+    )
+    list_filter = ("attendance_type", "completed", "exam_passed", "homework_passed")
+    search_fields = ("enrollment_id", "session__title", "session__lecture__title")
+    ordering = ("-updated_at", "-id")
+
+
+@admin.register(LectureProgress)
+class LectureProgressAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "enrollment_id",
+        "lecture",
+        "total_sessions",
+        "completed_sessions",
+        "failed_sessions",
+        "consecutive_failed_sessions",
+        "risk_level",
+        "last_session",
+        "last_updated",
+        "updated_at",
+    )
+    list_filter = ("risk_level", "lecture")
+    search_fields = ("enrollment_id", "lecture__title", "lecture__name")
+    ordering = ("-updated_at", "-id")
+
+
+@admin.register(ClinicLink)
+class ClinicLinkAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "enrollment_id",
+        "session",
+        "reason",
+        "is_auto",
+        "approved",
+        "created_at",
+    )
+    list_filter = ("reason", "is_auto", "approved")
+    search_fields = ("enrollment_id", "session__title", "session__lecture__title")
+    ordering = ("-created_at", "-id")
+
+
+@admin.register(RiskLog)
+class RiskLogAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "enrollment_id",
+        "session",
+        "risk_level",
+        "rule",
+        "created_at",
+    )
+    list_filter = ("risk_level", "rule")
+    search_fields = ("enrollment_id",)
+    ordering = ("-created_at", "-id")
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+# apps/domains/progress/apps.py
+from django.apps import AppConfig
+
+
+class ProgressConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.progress"
+    label = "progress"
+
+
+==========================================================================================
+# FILE: dispatcher.py
+==========================================================================================
+# apps/domains/progress/dispatcher.py
+from apps.domains.progress.tasks.progress_pipeline_task import (
+    run_progress_pipeline_task,
+)
+
+
+def dispatch_progress_pipeline(submission_id: int) -> None:
+    """
+    Results → Progress 진입점
+    """
+    run_progress_pipeline_task.delay(submission_id)
+
+
+==========================================================================================
+# FILE: filters.py
+==========================================================================================
+# apps/domains/progress/filters.py
+import django_filters
+
+from .models import SessionProgress, LectureProgress, ClinicLink, RiskLog, ProgressPolicy
+
+
+class ProgressPolicyFilter(django_filters.FilterSet):
+    lecture = django_filters.NumberFilter(field_name="lecture_id")
+
+    class Meta:
+        model = ProgressPolicy
+        fields = ["lecture"]
+
+
+class SessionProgressFilter(django_filters.FilterSet):
+    enrollment_id = django_filters.NumberFilter(field_name="enrollment_id")
+    session = django_filters.NumberFilter(field_name="session_id")
+    lecture = django_filters.NumberFilter(field_name="session__lecture_id")
+    completed = django_filters.BooleanFilter(field_name="completed")
+
+    class Meta:
+        model = SessionProgress
+        fields = ["enrollment_id", "session", "lecture", "completed"]
+
+
+class LectureProgressFilter(django_filters.FilterSet):
+    enrollment_id = django_filters.NumberFilter(field_name="enrollment_id")
+    lecture = django_filters.NumberFilter(field_name="lecture_id")
+    risk_level = django_filters.CharFilter(field_name="risk_level")
+
+    class Meta:
+        model = LectureProgress
+        fields = ["enrollment_id", "lecture", "risk_level"]
+
+
+class ClinicLinkFilter(django_filters.FilterSet):
+    enrollment_id = django_filters.NumberFilter(field_name="enrollment_id")
+    session = django_filters.NumberFilter(field_name="session_id")
+    lecture = django_filters.NumberFilter(field_name="session__lecture_id")
+    reason = django_filters.CharFilter(field_name="reason")
+    is_auto = django_filters.BooleanFilter(field_name="is_auto")
+    approved = django_filters.BooleanFilter(field_name="approved")
+
+    class Meta:
+        model = ClinicLink
+        fields = ["enrollment_id", "session", "lecture", "reason", "is_auto", "approved"]
+
+
+class RiskLogFilter(django_filters.FilterSet):
+    enrollment_id = django_filters.NumberFilter(field_name="enrollment_id")
+    session = django_filters.NumberFilter(field_name="session_id")
+    risk_level = django_filters.CharFilter(field_name="risk_level")
+    rule = django_filters.CharFilter(field_name="rule")
+
+    class Meta:
+        model = RiskLog
+        fields = ["enrollment_id", "session", "risk_level", "rule"]
+
+
+==========================================================================================
+# FILE: models.py
+==========================================================================================
+# apps/domains/progress/models.py
+from __future__ import annotations
+
+from django.db import models
+
+from apps.api.common.models import TimestampModel
+from apps.domains.lectures.models import Lecture, Session
+
+
+class ProgressPolicy(TimestampModel):
+    """
+    강의별 진행/통과 정책 (커스텀 가능)
+    - 영상 인정 기준
+    - 시험/과제 적용 주차 범위
+    - 시험 통과 점수
+    - 과제 통과 방식(강사 승인 등)
+    """
+
+    class HomeworkPassType(models.TextChoices):
+        SUBMIT = "SUBMIT", "제출만"
+        SCORE = "SCORE", "점수"
+        TEACHER_APPROVAL = "TEACHER_APPROVAL", "강사승인"
+
+    lecture = models.OneToOneField(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name="progress_policy",
+    )
+
+    # ---------- Video ----------
+    video_required_rate = models.PositiveIntegerField(default=90)  # 0~100
+
+    # ---------- Exam (n~m 주차) ----------
+    exam_start_session_order = models.PositiveIntegerField(default=2)
+    exam_end_session_order = models.PositiveIntegerField(default=9999)
+    exam_pass_score = models.FloatField(default=60.0)
+
+    # ---------- Homework (n~m 주차) ----------
+    homework_start_session_order = models.PositiveIntegerField(default=2)
+    homework_end_session_order = models.PositiveIntegerField(default=9999)
+    homework_pass_type = models.CharField(
+        max_length=30,
+        choices=HomeworkPassType.choices,
+        default=HomeworkPassType.TEACHER_APPROVAL,
+    )
+
+    class Meta:
+        ordering = ["-id"]
+
+    def __str__(self):
+        return f"Policy(lecture={self.lecture_id})"
+
+
+class SessionProgress(TimestampModel):
+    """
+    Enrollment(수강) x Session(차시) 단위의 진행 스냅샷
+    - fact 도메인(lectures/submissions/results)에서 읽어와 계산된 결과를 저장
+    - UI에서 '차시 통과/미통과/완료' 가시성의 원천 데이터
+    """
+
+    class AttendanceType(models.TextChoices):
+        ONLINE = "online", "Online"
+        OFFLINE = "offline", "Offline"
+
+    enrollment_id = models.PositiveIntegerField(db_index=True)
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="progress_rows",
+    )
+
+    # ----- attendance / video -----
+    attendance_type = models.CharField(
+        max_length=10,
+        choices=AttendanceType.choices,
+        default=AttendanceType.ONLINE,
+    )
+    # online일 때만 의미 있음
+    video_progress_rate = models.PositiveIntegerField(default=0)  # 0~100
+    video_completed = models.BooleanField(default=False)
+
+    # ----- exam -----
+    exam_score = models.FloatField(null=True, blank=True)
+    exam_passed = models.BooleanField(default=False)
+
+    # ----- homework -----
+    homework_submitted = models.BooleanField(default=False)
+    homework_passed = models.BooleanField(default=False)  # 강사 승인 등
+
+    # ----- final -----
+    completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    # ----- meta -----
+    calculated_at = models.DateTimeField(null=True, blank=True)
+    meta = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["enrollment_id", "session"],
+                name="unique_session_progress_per_enrollment",
+            )
+        ]
+        ordering = ["-updated_at", "-id"]
+
+    def __str__(self):
+        return f"SessionProgress(enroll={self.enrollment_id}, session={self.session_id}, completed={self.completed})"
+
+
+class LectureProgress(TimestampModel):
+    """
+    Enrollment(수강) x Lecture(강의) 단위의 집계 스냅샷
+    - list 화면(학부모/강사)에서 '한눈에 보기'를 위해 저장
+    """
+
+    class RiskLevel(models.TextChoices):
+        NORMAL = "NORMAL", "Normal"
+        WARNING = "WARNING", "Warning"
+        DANGER = "DANGER", "Danger"
+
+    enrollment_id = models.PositiveIntegerField(unique=True, db_index=True)
+    lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name="lecture_progress_rows",
+    )
+
+    total_sessions = models.PositiveIntegerField(default=0)
+    completed_sessions = models.PositiveIntegerField(default=0)
+    failed_sessions = models.PositiveIntegerField(default=0)
+
+    consecutive_failed_sessions = models.PositiveIntegerField(default=0)
+    risk_level = models.CharField(
+        max_length=10,
+        choices=RiskLevel.choices,
+        default=RiskLevel.NORMAL,
+    )
+
+    last_session = models.ForeignKey(
+        Session,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="last_lecture_progress_rows",
+    )
+    last_updated = models.DateTimeField(null=True, blank=True)
+
+    meta = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+
+    def __str__(self):
+        return f"LectureProgress(enroll={self.enrollment_id}, lecture={self.lecture_id}, risk={self.risk_level})"
+
+
+class ClinicLink(TimestampModel):
+    """
+    차시(Session) 기준 클리닉 연결 이력
+    - 실패로 자동 생성
+    - 합격자도 원하는 경우 생성 가능
+    - 학원 운영의 '주 시스템' 포인트
+    """
+
+    class Reason(models.TextChoices):
+        AUTO_FAILED = "AUTO_FAILED", "자동(차시 미통과)"
+        AUTO_RISK = "AUTO_RISK", "자동(위험 알림)"
+        MANUAL_REQUEST = "MANUAL_REQUEST", "수동(학생/학부모 요청)"
+        TEACHER_RECOMMEND = "TEACHER_RECOMMEND", "강사 추천"
+
+    enrollment_id = models.PositiveIntegerField(db_index=True)
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="clinic_links",
+    )
+
+    reason = models.CharField(max_length=30, choices=Reason.choices)
+    is_auto = models.BooleanField(default=False)
+    approved = models.BooleanField(default=False)
+
+    memo = models.TextField(null=True, blank=True)
+    meta = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["enrollment_id", "created_at"]),
+            models.Index(fields=["session", "created_at"]),
+            models.Index(fields=["reason"]),
+        ]
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"ClinicLink(enroll={self.enrollment_id}, session={self.session_id}, reason={self.reason})"
+
+
+class RiskLog(TimestampModel):
+    """
+    위험 판단 이력 (근거/알림 추적용)
+    """
+
+    class RiskLevel(models.TextChoices):
+        WARNING = "WARNING", "Warning"
+        DANGER = "DANGER", "Danger"
+
+    class Rule(models.TextChoices):
+        CONSECUTIVE_INCOMPLETE = "CONSECUTIVE_INCOMPLETE", "연속 미완료"
+        CONSECUTIVE_LOW_SCORE = "CONSECUTIVE_LOW_SCORE", "연속 저점수"
+        OTHER = "OTHER", "기타"
+
+    enrollment_id = models.PositiveIntegerField(db_index=True)
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="risk_logs",
+    )
+
+    risk_level = models.CharField(max_length=10, choices=RiskLevel.choices)
+    rule = models.CharField(max_length=40, choices=Rule.choices)
+
+    reason = models.TextField(null=True, blank=True)
+    meta = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["enrollment_id", "created_at"]),
+            models.Index(fields=["risk_level", "created_at"]),
+            models.Index(fields=["rule", "created_at"]),
+        ]
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"RiskLog(enroll={self.enrollment_id}, level={self.risk_level}, rule={self.rule})"
+
+
+==========================================================================================
+# FILE: serializers.py
+==========================================================================================
+# apps/domains/progress/serializers.py
+from rest_framework import serializers
+
+from .models import ProgressPolicy, SessionProgress, LectureProgress, ClinicLink, RiskLog
+
+
+class ProgressPolicySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProgressPolicy
+        fields = "__all__"
+
+
+class SessionProgressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SessionProgress
+        fields = "__all__"
+
+
+class LectureProgressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LectureProgress
+        fields = "__all__"
+
+
+class ClinicLinkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ClinicLink
+        fields = "__all__"
+
+
+class RiskLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RiskLog
+        fields = "__all__"
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+# apps/domains/progress/urls.py
+from rest_framework.routers import DefaultRouter
+
+from .views import (
+    ProgressPolicyViewSet,
+    SessionProgressViewSet,
+    LectureProgressViewSet,
+    ClinicLinkViewSet,
+    RiskLogViewSet,
+)
+
+router = DefaultRouter()
+router.register("policies", ProgressPolicyViewSet, basename="progress-policy")
+router.register("session-progress", SessionProgressViewSet, basename="session-progress")
+router.register("lecture-progress", LectureProgressViewSet, basename="lecture-progress")
+router.register("clinic-links", ClinicLinkViewSet, basename="clinic-link")
+router.register("risk-logs", RiskLogViewSet, basename="risk-log")
+
+urlpatterns = router.urls
+
+
+==========================================================================================
+# FILE: views.py
+==========================================================================================
+# apps/domains/progress/views.py
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.filters import SearchFilter, OrderingFilter
+from django_filters.rest_framework import DjangoFilterBackend
+
+from .models import ProgressPolicy, SessionProgress, LectureProgress, ClinicLink, RiskLog
+from .serializers import (
+    ProgressPolicySerializer,
+    SessionProgressSerializer,
+    LectureProgressSerializer,
+    ClinicLinkSerializer,
+    RiskLogSerializer,
+)
+from .filters import (
+    ProgressPolicyFilter,
+    SessionProgressFilter,
+    LectureProgressFilter,
+    ClinicLinkFilter,
+    RiskLogFilter,
+)
+
+
+class ProgressPolicyViewSet(ModelViewSet):
+    queryset = ProgressPolicy.objects.select_related("lecture").all()
+    serializer_class = ProgressPolicySerializer
+    permission_classes = [IsAuthenticated]
+
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ProgressPolicyFilter
+    search_fields = ["lecture__title", "lecture__name"]
+    ordering_fields = ["id", "created_at", "updated_at"]
+    ordering = ["-id"]
+
+
+class SessionProgressViewSet(ModelViewSet):
+    queryset = SessionProgress.objects.select_related("session", "session__lecture").all()
+    serializer_class = SessionProgressSerializer
+    permission_classes = [IsAuthenticated]
+
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = SessionProgressFilter
+    search_fields = ["enrollment_id", "session__title", "session__lecture__title"]
+    ordering_fields = ["id", "created_at", "updated_at", "calculated_at", "completed"]
+    ordering = ["-updated_at", "-id"]
+
+
+class LectureProgressViewSet(ModelViewSet):
+    queryset = LectureProgress.objects.select_related("lecture", "last_session").all()
+    serializer_class = LectureProgressSerializer
+    permission_classes = [IsAuthenticated]
+
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = LectureProgressFilter
+    search_fields = ["enrollment_id", "lecture__title", "lecture__name"]
+    ordering_fields = ["id", "created_at", "updated_at", "risk_level", "completed_sessions"]
+    ordering = ["-updated_at", "-id"]
+
+
+class ClinicLinkViewSet(ModelViewSet):
+    queryset = ClinicLink.objects.select_related("session", "session__lecture").all()
+    serializer_class = ClinicLinkSerializer
+    permission_classes = [IsAuthenticated]
+
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ClinicLinkFilter
+    search_fields = ["enrollment_id", "session__title", "session__lecture__title", "memo"]
+    ordering_fields = ["id", "created_at", "updated_at", "approved", "is_auto"]
+    ordering = ["-created_at", "-id"]
+
+
+class RiskLogViewSet(ModelViewSet):
+    queryset = RiskLog.objects.select_related("session").all()
+    serializer_class = RiskLogSerializer
+    permission_classes = [IsAuthenticated]
+
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = RiskLogFilter
+    search_fields = ["enrollment_id", "reason"]
+    ordering_fields = ["id", "created_at", "updated_at", "risk_level", "rule"]
+    ordering = ["-created_at", "-id"]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+# apps/domains/progress/migrations/__init__.py
+
+
+==========================================================================================
+# FILE: services/__init__.py
+==========================================================================================
+# apps/domains/progress/services/__init__.py
+
+
+==========================================================================================
+# FILE: services/clinic_trigger_service.py
+==========================================================================================
+# apps/domains/progress/services/clinic_trigger_service.py
+from __future__ import annotations
+
+from apps.domains.progress.models import ClinicLink, SessionProgress
+
+
+class ClinicTriggerService:
+    """
+    클리닉 '필요 상태'를 생성하는 트리거 서비스
+
+    ❗ 실제 클리닉 수업(Session)은 생성하지 않는다
+    ❗ clinic 도메인과 직접 결합하지 않는다
+
+    역할:
+    - 차시(SessionProgress) 기준으로
+      "이 학생은 클리닉 대상이다" 라는 사실만 기록
+    """
+
+    @staticmethod
+    def auto_create_if_failed(session_progress: SessionProgress) -> None:
+        """
+        차시 미완료 시 자동 클리닉 대상자 생성
+        (자동 트리거)
+        """
+        if session_progress.completed:
+            return
+
+        ClinicLink.objects.get_or_create(
+            enrollment_id=session_progress.enrollment_id,
+            session=session_progress.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            defaults={
+                "is_auto": True,
+                "approved": False,
+            },
+        )
+
+    @staticmethod
+    def manual_create(
+        *,
+        enrollment_id: int,
+        session_id: int,
+        reason: str,
+        memo: str | None = None,
+    ) -> ClinicLink:
+        """
+        강사/조교가 수동으로 클리닉 대상자 지정
+        (합격자도 포함 가능)
+        """
+        return ClinicLink.objects.create(
+            enrollment_id=enrollment_id,
+            session_id=session_id,
+            reason=reason,
+            is_auto=False,
+            memo=memo,
+        )
+
+
+==========================================================================================
+# FILE: services/lecture_calculator.py
+==========================================================================================
+# apps/domains/progress/services/lecture_calculator.py
+from __future__ import annotations
+
+from django.utils import timezone
+
+from apps.domains.progress.models import LectureProgress, SessionProgress
+from apps.domains.lectures.models import Lecture
+
+
+class LectureProgressCalculator:
+    """
+    강의 단위 집계 계산기
+    """
+
+    @staticmethod
+    def calculate(*, enrollment_id: int, lecture: Lecture) -> LectureProgress:
+        sessions = lecture.sessions.all()
+        total_sessions = sessions.count()
+
+        progress_qs = SessionProgress.objects.filter(
+            enrollment_id=enrollment_id,
+            session__lecture=lecture,
+        ).order_by("session__order")
+
+        completed_sessions = progress_qs.filter(completed=True).count()
+        failed_sessions = progress_qs.filter(completed=False).count()
+
+        # 연속 미완료 계산
+        consecutive_failed = 0
+        for p in progress_qs.reverse():
+            if p.completed:
+                break
+            consecutive_failed += 1
+
+        obj, _ = LectureProgress.objects.get_or_create(
+            enrollment_id=enrollment_id,
+            lecture=lecture,
+        )
+
+        obj.total_sessions = total_sessions
+        obj.completed_sessions = completed_sessions
+        obj.failed_sessions = failed_sessions
+        obj.consecutive_failed_sessions = consecutive_failed
+        obj.last_session = progress_qs.last().session if progress_qs.exists() else None
+        obj.last_updated = timezone.now()
+
+        obj.save()
+        return obj
+
+
+==========================================================================================
+# FILE: services/risk_evaluator.py
+==========================================================================================
+# apps/domains/progress/services/risk_evaluator.py
+from __future__ import annotations
+
+from apps.domains.progress.models import LectureProgress, RiskLog
+
+
+class RiskEvaluator:
+    """
+    위험 판단 로직 (표준 SaaS 룰)
+    """
+
+    @staticmethod
+    def evaluate(lecture_progress: LectureProgress) -> None:
+        enroll_id = lecture_progress.enrollment_id
+
+        # -----------------------
+        # 연속 미완료
+        # -----------------------
+        if lecture_progress.consecutive_failed_sessions >= 3:
+            lecture_progress.risk_level = LectureProgress.RiskLevel.DANGER
+
+            RiskLog.objects.create(
+                enrollment_id=enroll_id,
+                session=lecture_progress.last_session,
+                risk_level=RiskLog.RiskLevel.DANGER,
+                rule=RiskLog.Rule.CONSECUTIVE_INCOMPLETE,
+                reason="연속 3차시 미완료",
+            )
+
+        elif lecture_progress.consecutive_failed_sessions >= 2:
+            lecture_progress.risk_level = LectureProgress.RiskLevel.WARNING
+
+            RiskLog.objects.create(
+                enrollment_id=enroll_id,
+                session=lecture_progress.last_session,
+                risk_level=RiskLog.RiskLevel.WARNING,
+                rule=RiskLog.Rule.CONSECUTIVE_INCOMPLETE,
+                reason="연속 2차시 미완료",
+            )
+
+        else:
+            lecture_progress.risk_level = LectureProgress.RiskLevel.NORMAL
+
+        lecture_progress.save(update_fields=["risk_level", "updated_at"])
+
+
+==========================================================================================
+# FILE: services/session_calculator.py
+==========================================================================================
+# apps/domains/progress/services/session_calculator.py
+from __future__ import annotations
+
+from django.utils import timezone
+
+from apps.domains.progress.models import SessionProgress, ProgressPolicy
+from apps.domains.lectures.models import Session
+
+
+class SessionProgressCalculator:
+    """
+    차시 단위 진행 계산기
+    """
+
+    @staticmethod
+    def calculate(
+        *,
+        enrollment_id: int,
+        session: Session,
+        attendance_type: str,
+        video_progress_rate: int = 0,
+        exam_score: float | None = None,
+        homework_submitted: bool = False,
+        homework_teacher_approved: bool = False,
+    ) -> SessionProgress:
+        """
+        외부 도메인 값들을 받아서
+        SessionProgress를 계산/업데이트
+        """
+
+        policy = ProgressPolicy.objects.get(lecture=session.lecture)
+
+        obj, _ = SessionProgress.objects.get_or_create(
+            enrollment_id=enrollment_id,
+            session=session,
+        )
+
+        # ----------------------
+        # Attendance / Video
+        # ----------------------
+        obj.attendance_type = attendance_type
+        obj.video_progress_rate = video_progress_rate
+
+        if attendance_type == SessionProgress.AttendanceType.OFFLINE:
+            obj.video_completed = True
+        else:
+            obj.video_completed = video_progress_rate >= policy.video_required_rate
+
+        # ----------------------
+        # Exam
+        # ----------------------
+        if policy.exam_start_session_order <= session.order <= policy.exam_end_session_order:
+            if exam_score is not None:
+                obj.exam_score = exam_score
+                obj.exam_passed = exam_score >= policy.exam_pass_score
+        else:
+            obj.exam_passed = True  # 적용 대상 아님 → 통과 처리
+
+        # ----------------------
+        # Homework
+        # ----------------------
+        if policy.homework_start_session_order <= session.order <= policy.homework_end_session_order:
+            obj.homework_submitted = homework_submitted
+
+            if policy.homework_pass_type == ProgressPolicy.HomeworkPassType.SUBMIT:
+                obj.homework_passed = homework_submitted
+
+            elif policy.homework_pass_type == ProgressPolicy.HomeworkPassType.SCORE:
+                obj.homework_passed = homework_teacher_approved  # 점수판정은 외부에서 계산 후 true/false 전달
+
+            elif policy.homework_pass_type == ProgressPolicy.HomeworkPassType.TEACHER_APPROVAL:
+                obj.homework_passed = homework_teacher_approved
+        else:
+            obj.homework_passed = True
+
+        # ----------------------
+        # Final Completion
+        # ----------------------
+        obj.completed = (
+            obj.video_completed
+            and obj.exam_passed
+            and obj.homework_passed
+        )
+
+        if obj.completed and not obj.completed_at:
+            obj.completed_at = timezone.now()
+
+        obj.calculated_at = timezone.now()
+        obj.save()
+
+        return obj

@@ -1,6 +1,4 @@
 # apps/worker/celery.py
-print("🔥 WORKER CELERY LOADED 🔥")
-
 import os
 import django
 from celery import Celery
@@ -14,12 +12,15 @@ django.setup()
 
 app = Celery("academy")
 
-# ✅ Django settings만 신뢰
 app.config_from_object(
     "django.conf:settings",
     namespace="CELERY",
 )
 
-app.autodiscover_tasks()
+# 🔥 task 고정
+app.autodiscover_tasks([
+    "apps.shared.tasks",   # video
+    "apps.worker.media",
+])
 
-print("🔥 autodiscover_tasks called 🔥")
+print("🔥 Worker Celery READY (video / ai queues) 🔥")

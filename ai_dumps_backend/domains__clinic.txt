@@ -1,0 +1,525 @@
+====================================================================================================
+# BACKEND APP: domains__clinic
+# ROOT PATH: C:\academy\apps\domains\clinic
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: admin.py
+==========================================================================================
+from django.contrib import admin
+from .models import Session, SessionParticipant, Test, Submission
+
+
+@admin.register(Session)
+class SessionAdmin(admin.ModelAdmin):
+    list_display = ("id", "date", "start_time", "location", "max_participants", "created_at")
+    list_filter = ("date", "location")
+    search_fields = ("location",)
+    ordering = ("-date", "-start_time")
+
+
+@admin.register(SessionParticipant)
+class SessionParticipantAdmin(admin.ModelAdmin):
+    list_display = ("id", "session", "student", "status", "created_at")
+    list_filter = ("status", "session__date")
+    search_fields = ("student__name", "session__location")
+    ordering = ("-created_at",)
+
+
+@admin.register(Test)
+class TestAdmin(admin.ModelAdmin):
+    list_display = ("id", "title", "session", "round", "date")
+    list_filter = ("session", "date")
+    search_fields = ("title",)
+    ordering = ("-date",)
+
+
+@admin.register(Submission)
+class SubmissionAdmin(admin.ModelAdmin):
+    list_display = ("id", "test", "student", "status", "score", "created_at")
+    list_filter = ("status", "test__session__date")
+    search_fields = ("student__name", "test__title")
+    ordering = ("-created_at",)
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class ClinicConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.clinic"
+
+
+==========================================================================================
+# FILE: filters.py
+==========================================================================================
+import django_filters
+from .models import Session, Submission
+
+
+class SessionFilter(django_filters.FilterSet):
+    date = django_filters.DateFilter()
+    date_from = django_filters.DateFilter(field_name="date", lookup_expr="gte")
+    date_to = django_filters.DateFilter(field_name="date", lookup_expr="lte")
+
+    class Meta:
+        model = Session
+        fields = ["date", "location"]
+
+
+class SubmissionFilter(django_filters.FilterSet):
+    session = django_filters.NumberFilter(method="filter_session")
+    test = django_filters.NumberFilter(field_name="test_id")
+    student = django_filters.NumberFilter(field_name="student_id")
+    status = django_filters.CharFilter(field_name="status")
+
+    need_file = django_filters.BooleanFilter(method="filter_need_file")
+    need_score = django_filters.BooleanFilter(method="filter_need_score")
+    need_grade = django_filters.BooleanFilter(method="filter_need_grade")
+
+    class Meta:
+        model = Submission
+        fields = ["test", "student", "status"]
+
+    def filter_session(self, queryset, name, value):
+        return queryset.filter(test__session_id=value)
+
+    def filter_need_file(self, queryset, name, value):
+        return queryset.filter(file__isnull=True) if value else queryset
+
+    def filter_need_score(self, queryset, name, value):
+        return queryset.filter(score__isnull=True) if value else queryset
+
+    def filter_need_grade(self, queryset, name, value):
+        return queryset.filter(status="pending") if value else queryset
+
+
+==========================================================================================
+# FILE: models.py
+==========================================================================================
+from django.db import models
+
+from apps.api.common.models import TimestampModel
+from apps.domains.students.models import Student
+
+
+# --------------------------------------------------
+# Clinic Session
+# --------------------------------------------------
+
+class Session(TimestampModel):
+    date = models.DateField()
+    start_time = models.TimeField()
+    location = models.CharField(max_length=255)
+    max_participants = models.PositiveIntegerField()
+
+    def __str__(self):
+        return f"{self.date} {self.start_time} @ {self.location}"
+
+
+# --------------------------------------------------
+# Session Participant
+# --------------------------------------------------
+
+class SessionParticipant(TimestampModel):
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="participants",
+    )
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name="clinic_participations",
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=(
+            ("registered", "Registered"),
+            ("cancelled", "Cancelled"),
+        ),
+        default="registered",
+    )
+    memo = models.TextField(blank=True, null=True)
+
+    class Meta:
+        unique_together = ("session", "student")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.student.name} in {self.session}"
+
+
+# --------------------------------------------------
+# Clinic Test
+# --------------------------------------------------
+
+class Test(TimestampModel):
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="tests",
+    )
+    title = models.CharField(max_length=255)
+    round = models.PositiveIntegerField(default=1)
+    date = models.DateField()
+
+    class Meta:
+        ordering = ["-date", "-created_at"]
+
+    def __str__(self):
+        return f"{self.title} ({self.round}차)"
+
+
+# --------------------------------------------------
+# Submission Upload Path
+# --------------------------------------------------
+
+def submission_upload_path(instance, filename):
+    return f"clinic/submissions/{instance.student_id}/{instance.test_id}/{filename}"
+
+
+# --------------------------------------------------
+# Submission
+# --------------------------------------------------
+
+class Submission(TimestampModel):
+    test = models.ForeignKey(
+        Test,
+        on_delete=models.CASCADE,
+        related_name="submissions",
+    )
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name="clinic_submissions",
+    )
+
+    file = models.FileField(upload_to=submission_upload_path, null=True, blank=True)
+    score = models.FloatField(null=True, blank=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=(
+            ("pending", "Pending"),
+            ("passed", "Passed"),
+            ("failed", "Failed"),
+        ),
+        default="pending",
+    )
+    remark = models.TextField(blank=True, null=True)
+
+    class Meta:
+        unique_together = ("test", "student")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.student.name} - {self.test.title}"
+
+
+==========================================================================================
+# FILE: serializers.py
+==========================================================================================
+from rest_framework import serializers
+from .models import Session, SessionParticipant, Test, Submission
+
+
+class ClinicSessionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Session
+        fields = "__all__"
+
+
+class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SessionParticipant
+        fields = "__all__"
+
+
+class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SessionParticipant
+        fields = ["student", "status", "memo"]
+
+
+class ClinicTestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Test
+        fields = "__all__"
+
+
+class ClinicSubmissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Submission
+        fields = "__all__"
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+from rest_framework.routers import DefaultRouter
+from .views import (
+    SessionViewSet,
+    ParticipantViewSet,
+    TestViewSet,
+    SubmissionViewSet,
+)
+
+router = DefaultRouter()
+router.register("sessions", SessionViewSet, basename="clinic-session")
+router.register("participants", ParticipantViewSet, basename="clinic-participant")
+router.register("tests", TestViewSet, basename="clinic-test")
+router.register("submissions", SubmissionViewSet, basename="clinic-submission")
+
+urlpatterns = router.urls
+
+
+==========================================================================================
+# FILE: views.py
+==========================================================================================
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+
+from .models import Session, SessionParticipant, Test, Submission
+from .serializers import (
+    ClinicSessionSerializer,
+    ClinicSessionParticipantSerializer,
+    ClinicSessionParticipantCreateSerializer,
+    ClinicTestSerializer,
+    ClinicSubmissionSerializer,
+)
+from .filters import SessionFilter, SubmissionFilter
+
+from apps.support.messaging.services import send_clinic_reminder_for_students
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import apps.domains.clinic.models
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = []
+
+    operations = [
+        migrations.CreateModel(
+            name="Session",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("date", models.DateField()),
+                ("start_time", models.TimeField()),
+                ("location", models.CharField(max_length=255)),
+                ("max_participants", models.PositiveIntegerField()),
+            ],
+            options={
+                "abstract": False,
+            },
+        ),
+        migrations.CreateModel(
+            name="Submission",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                (
+                    "file",
+                    models.FileField(
+                        blank=True,
+                        null=True,
+                        upload_to=apps.domains.clinic.models.submission_upload_path,
+                    ),
+                ),
+                ("score", models.FloatField(blank=True, null=True)),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("pending", "Pending"),
+                            ("passed", "Passed"),
+                            ("failed", "Failed"),
+                        ],
+                        default="pending",
+                        max_length=20,
+                    ),
+                ),
+                ("remark", models.TextField(blank=True, null=True)),
+            ],
+            options={
+                "ordering": ["-created_at"],
+            },
+        ),
+        migrations.CreateModel(
+            name="Test",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("title", models.CharField(max_length=255)),
+                ("round", models.PositiveIntegerField(default=1)),
+                ("date", models.DateField()),
+            ],
+            options={
+                "ordering": ["-date", "-created_at"],
+            },
+        ),
+        migrations.CreateModel(
+            name="SessionParticipant",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("registered", "Registered"),
+                            ("cancelled", "Cancelled"),
+                        ],
+                        default="registered",
+                        max_length=20,
+                    ),
+                ),
+                ("memo", models.TextField(blank=True, null=True)),
+                (
+                    "session",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="participants",
+                        to="clinic.session",
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-created_at"],
+            },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0002_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("clinic", "0001_initial"),
+        ("students", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="sessionparticipant",
+            name="student",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="clinic_participations",
+                to="students.student",
+            ),
+        ),
+        migrations.AddField(
+            model_name="submission",
+            name="student",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="clinic_submissions",
+                to="students.student",
+            ),
+        ),
+        migrations.AddField(
+            model_name="test",
+            name="session",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="tests",
+                to="clinic.session",
+            ),
+        ),
+        migrations.AddField(
+            model_name="submission",
+            name="test",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="submissions",
+                to="clinic.test",
+            ),
+        ),
+        migrations.AlterUniqueTogether(
+            name="sessionparticipant",
+            unique_together={("session", "student")},
+        ),
+        migrations.AlterUniqueTogether(
+            name="submission",
+            unique_together={("test", "student")},
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+

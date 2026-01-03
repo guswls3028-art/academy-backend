@@ -1,0 +1,938 @@
+====================================================================================================
+# BACKEND APP: domains__attendance
+# ROOT PATH: C:\academy\apps\domains\attendance
+====================================================================================================
+
+
+==========================================================================================
+# FILE: FRONTEND_GUIDE_ATTENDANCE.txt
+==========================================================================================
+# FRONTEND_GUIDE_ATTENDANCE.txt
+# 강의 출결 / 수강생 관리 (Frontend Quick Guide)
+# 마지막 업데이트: 2025-12-28
+
+==================================================
+1. 핵심 개념 요약 (중요)
+==================================================
+
+- "학생 등록"의 진입점은 오직 "세션(Session)"이다.
+- 세션에 학생을 추가하면, 백엔드에서 자동으로 아래가 처리된다:
+
+  1) Enrollment (강의 수강 등록)
+  2) SessionEnrollment (세션 접근 권한)
+  3) Attendance (출결 데이터)
+
+⚠️ 프론트에서는 Enrollment / SessionEnrollment를 직접 생성하지 않는다.
+
+
+==================================================
+2. API 엔드포인트 정리
+==================================================
+
+[BASE]
+/lectures/attendance/
+
+
+--------------------------------------------------
+2-1. 세션 기준 학생 추가 (출결 생성)
+--------------------------------------------------
+
+POST /lectures/attendance/bulk_create/
+
+Request Body:
+{
+  "session": number,          // sessionId (필수)
+  "students": number[]        // studentId 배열
+}
+
+Response:
+AttendanceSerializer[]
+
+
+✔ 이 API 하나로 다음이 모두 해결됨
+- 강의 수강 등록
+- 세션 접근 권한
+- 출결 생성 (기본 상태: PRESENT)
+
+✔ 프론트 사용 위치
+- SessionDetailPage > "학생 추가" 모달
+
+
+--------------------------------------------------
+2-2. 세션 출결 조회 (단일 차시)
+--------------------------------------------------
+
+GET /lectures/attendance/?session={sessionId}
+
+Response:
+AttendanceSerializer[]
+
+AttendanceSerializer 주요 필드:
+- id                (attendanceId)
+- enrollment_id
+- status
+- memo
+- name
+- phone
+- parent_phone
+
+✔ 사용 화면
+- SessionDetailPage (출결 관리 탭)
+
+
+--------------------------------------------------
+2-3. 강의 × 차시 출결 매트릭스 (중요)
+--------------------------------------------------
+
+GET /lectures/attendance/matrix/?lecture={lectureId}
+
+Response 구조:
+{
+  "lecture": {
+    "id": number,
+    "title": string
+  },
+  "sessions": [
+    {
+      "id": number,
+      "order": number,
+      "date": string
+    }
+  ],
+  "students": [
+    {
+      "student_id": number,
+      "name": string,
+      "phone": string | null,
+      "parent_phone": string | null,
+      "attendance": {
+        "{sessionId}": {
+          "attendance_id": number,
+          "status": string
+        }
+      }
+    }
+  ]
+}
+
+✔ 특징
+- 강의에 등록된 모든 학생 반환
+- 모든 차시의 출결 상태를 한 번에 제공
+- 출결이 없는 차시는 key 자체가 없음
+
+✔ 사용 예정 화면
+- 강의 수강생 목록 + 차시별 출결 테이블
+- 엑셀 다운로드
+- 출결 리포트
+
+
+==================================================
+3. 프론트 구현 시 주의사항 (중요)
+==================================================
+
+1️⃣ NaN 방어 필수
+- lectureId, sessionId는 항상 Number.isFinite 체크 후 API 호출
+
+2️⃣ Enrollment 직접 호출 금지
+- enrollments API는 관리자 보조용
+- 실제 학생 추가는 attendance/bulk_create 만 사용
+
+3️⃣ 캐시 invalidate 기준 (중요)
+- 세션 출결 변경 후:
+  ["attendance", sessionId]
+- 학생 추가 후:
+  ["attendance", sessionId]
+
+※ queryKey는 백엔드 URL과 무관한 프론트 캐시 식별자이다.
+※ ["attendance", sessionId]는 "세션 출결 도메인 데이터"를 의미한다.
+※ 강의 수강생 목록 갱신은 matrix API 재조회 기준으로 처리한다.
+
+4️⃣ 출결 상태 변경
+- PATCH /lectures/attendance/{attendanceId}/
+- payload: { status } 또는 { memo }
+
+
+==================================================
+4. 상태 코드 (Attendance.status)
+==================================================
+
+PRESENT      : 현장
+LATE         : 지각
+ONLINE       : 영상
+SUPPLEMENT   : 보강
+EARLY_LEAVE  : 조퇴
+ABSENT       : 결석
+RUNAWAY      : 출튀
+MATERIAL     : 자료
+INACTIVE     : 부재
+SECESSION    : 퇴원
+
+
+==================================================
+5. 설계 철학 (요약)
+==================================================
+
+- "출석 생성 = 세션 참여"
+- Attendance API가 도메인 오케스트레이터
+- 프론트는 단순하게, 백엔드는 강하게
+
+========================================
+강의 출결 매트릭스 API 설명서 (프론트용)
+========================================
+
+[개요]
+- 강의 단위로
+- 수강생 × 차시 출결을 한 번에 조회/수정하기 위한 API
+- 관리자 전용
+- 출결 매트릭스 화면 + 엑셀 다운로드 용도
+
+
+--------------------------------------------------
+1. 출결 매트릭스 조회 API
+--------------------------------------------------
+
+GET /lectures/attendance/matrix/?lecture={lectureId}
+
+[Query Params]
+- lecture (number, 필수): 강의 ID
+
+[Response 구조]
+
+{
+  "lecture": {
+    "id": 1,
+    "title": "고3 수학"
+  },
+
+  "sessions": [
+    {
+      "id": 1,
+      "order": 1,
+      "date": "2025-12-28"
+    },
+    {
+      "id": 2,
+      "order": 2,
+      "date": "2026-01-04"
+    }
+  ],
+
+  "students": [
+    {
+      "student_id": 10,
+      "name": "홍길동",
+      "phone": "010-xxxx",
+      "parent_phone": "010-yyyy",
+
+      "attendance": {
+        "1": {
+          "attendance_id": 100,
+          "status": "PRESENT"
+        },
+        "2": {
+          "attendance_id": 101,
+          "status": "ABSENT"
+        }
+      }
+    }
+  ]
+}
+
+[프론트 사용 포인트]
+- sessions → 테이블 컬럼
+- students → 테이블 row
+- attendance[sessionId] → 셀 데이터
+- attendance_id → PATCH 시 필수
+- status → 화면 표시용
+
+
+--------------------------------------------------
+2. 출결 상태 코드 (공통)
+--------------------------------------------------
+
+PRESENT      : 현장
+LATE         : 지각
+ONLINE       : 영상
+SUPPLEMENT   : 보강
+EARLY_LEAVE  : 조퇴
+ABSENT       : 결석
+RUNAWAY      : 출튀
+MATERIAL     : 자료
+INACTIVE     : 부재
+SECESSION    : 퇴원
+
+※ 프론트에서는 필요에 따라 일부만 사용 가능
+
+
+--------------------------------------------------
+3. 출결 매트릭스 PATCH API
+--------------------------------------------------
+
+PATCH /lectures/attendance/matrix/
+
+[Request Body]
+
+{
+  "updates": [
+    {
+      "attendance_id": 100,
+      "status": "ABSENT"
+    },
+    {
+      "attendance_id": 101,
+      "status": "PRESENT"
+    }
+  ]
+}
+
+[설명]
+- 셀 클릭으로 변경된 출결만 배열로 전송
+- attendance_id 기준으로 부분 업데이트
+- 성공 시 응답: { "updated": number }
+
+[프론트 구현 팁]
+- 상태 변경 시 로컬 pending 배열에 누적
+- "저장" 버튼 클릭 시 한 번에 PATCH
+- 성공 후 matrix API 재조회
+
+
+--------------------------------------------------
+4. 엑셀 다운로드 API
+--------------------------------------------------
+
+GET /lectures/attendance/excel/?lecture={lectureId}
+
+[Response]
+- Content-Type:
+  application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+- 파일명:
+  attendance_lecture_{lectureId}.xlsx
+
+[엑셀 구성]
+- 첫 열: 학생명
+- 이후 열: 1차시, 2차시, 3차시 ...
+- 값: 출결 상태 코드 (PRESENT, ABSENT 등)
+
+[프론트 사용 예]
+- 단순 <a href="..."> 다운로드 가능
+- 인증 필요 시 axios blob 처리 가능
+
+
+--------------------------------------------------
+5. 권장 프론트 화면 구성
+--------------------------------------------------
+
+- 경로:
+  /lectures/:lectureId/attendance-matrix
+
+- 기능:
+  1) 매트릭스 테이블 렌더링
+  2) 셀 클릭 → 출결 상태 순환 변경
+  3) 변경사항 저장 (PATCH)
+  4) 엑셀 다운로드 버튼
+
+
+--------------------------------------------------
+6. 주의사항
+--------------------------------------------------
+
+- attendance_id 없는 셀은 클릭 불가
+- lectureId 없으면 API 호출 불가
+- 대규모 강의 시 테이블 가로 스크롤 필수
+- 상태 문자열은 그대로 서버에 전달 (한글 ❌)
+
+
+--------------------------------------------------
+[요약]
+--------------------------------------------------
+
+- matrix API = 테이블 그리기
+- PATCH API = 셀 변경 저장
+- excel API = 동일 데이터 다운로드
+- SessionDetail 출결 UI와 독립적으로 동작
+
+==================================================
+끝.
+==================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+default_app_config = "apps.domains.attendance.apps.AttendanceConfig"
+
+
+==========================================================================================
+# FILE: admin.py
+==========================================================================================
+from django.contrib import admin
+from .models import Attendance
+
+
+@admin.register(Attendance)
+class AttendanceAdmin(admin.ModelAdmin):
+    list_display = ("id", "enrollment", "session", "status", "recorded_at")
+    list_display_links = ("id", "enrollment")
+    list_filter = ("status", "session__lecture")
+    search_fields = ("enrollment__student__name",)
+    ordering = ("-recorded_at",)
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class AttendanceConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.attendance"
+
+
+==========================================================================================
+# FILE: filters.py
+==========================================================================================
+import django_filters
+from .models import Attendance
+
+
+class AttendanceFilter(django_filters.FilterSet):
+    """
+    Attendance 기본 필터
+    - session 기준 조회 (프론트 필수)
+    - enrollment 기준 조회 (확장 대비)
+    """
+
+    session = django_filters.NumberFilter(field_name="session_id")
+    enrollment = django_filters.NumberFilter(field_name="enrollment_id")
+
+    class Meta:
+        model = Attendance
+        fields = [
+            "session",
+            "enrollment",
+        ]
+
+
+==========================================================================================
+# FILE: models.py
+==========================================================================================
+from django.db import models
+
+
+# ========================================================
+# Attendance
+# ========================================================
+
+class Attendance(models.Model):
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        related_name="attendances",
+    )
+    session = models.ForeignKey(
+        "lectures.Session",
+        on_delete=models.CASCADE,
+        related_name="attendances",
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("PRESENT", "출석"),
+            ("LATE", "지각"),
+            ("ONLINE", "온라인"),
+            ("SUPPLEMENT", "보강"),
+            ("EARLY_LEAVE", "조퇴"),
+            ("ABSENT", "결석"),
+            ("RUNAWAY", "출튀"),
+            ("MATERIAL", "자료"),
+            ("INACTIVE", "부재"),
+            ("SECESSION", "탈퇴"),
+        ],
+        default="PRESENT",
+    )
+
+    memo = models.TextField(blank=True)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["enrollment", "session"],
+                name="unique_attendance_per_session",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.enrollment.student.name} / {self.session.title} / {self.status}"
+
+
+==========================================================================================
+# FILE: serializers.py
+==========================================================================================
+# apps/domains/attendance/serializers.py
+
+from rest_framework import serializers
+from .models import Attendance
+
+
+class AttendanceSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(
+        source="enrollment.student.name",
+        read_only=True,
+    )
+    parent_phone = serializers.CharField(
+        source="enrollment.student.parent_phone",
+        read_only=True,
+    )
+    phone = serializers.CharField(
+        source="enrollment.student.phone",
+        read_only=True,
+    )
+
+    class Meta:
+        model = Attendance
+        fields = [
+            "id",
+            "session",
+            "enrollment_id",
+            "status",
+            "memo",
+            "name",
+            "parent_phone",
+            "phone",
+        ]
+        
+class AttendanceMatrixStudentSerializer(serializers.Serializer):
+    student_id = serializers.IntegerField()
+    name = serializers.CharField()
+    phone = serializers.CharField(allow_null=True)
+    parent_phone = serializers.CharField(allow_null=True)
+    attendance = serializers.DictField()
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+# apps/domains/attendance/urls.py
+
+from rest_framework.routers import DefaultRouter
+from .views import AttendanceViewSet
+
+router = DefaultRouter()
+router.register(
+    r"attendance",
+    AttendanceViewSet,
+    basename="lecture-attendance",
+)
+
+urlpatterns = router.urls
+
+
+==========================================================================================
+# FILE: views.py
+==========================================================================================
+# apps/domains/attendance/views.py
+from django.db import transaction
+from django.shortcuts import get_object_or_404
+from django.http import HttpResponse
+
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.response import Response
+from rest_framework import status
+
+from .models import Attendance
+from .serializers import (
+    AttendanceSerializer,
+    AttendanceMatrixStudentSerializer,
+)
+from .filters import AttendanceFilter
+
+from apps.domains.lectures.models import Lecture, Session
+from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+
+from .utils.excel import build_attendance_excel
+
+
+class AttendanceViewSet(ModelViewSet):
+    """
+    lectures/attendance
+    - 세션 기준 학생 등록
+    - 강의 × 차시 출결 매트릭스
+    - 엑셀 다운로드
+    """
+
+    queryset = Attendance.objects.all().select_related(
+        "session",
+        "enrollment",
+        "enrollment__student",
+    )
+    serializer_class = AttendanceSerializer
+
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_class = AttendanceFilter
+    search_fields = ["enrollment__student__name"]
+
+    # =========================================================
+    # 1️⃣ 세션 기준 학생 등록
+    # =========================================================
+    @transaction.atomic
+    @action(detail=False, methods=["post"])
+    def bulk_create(self, request):
+        session_id = request.data.get("session")
+        student_ids = request.data.get("students", [])
+
+        if not session_id or not isinstance(student_ids, list):
+            return Response(
+                {"detail": "session, students(list)는 필수입니다"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session = get_object_or_404(Session, id=session_id)
+        created = []
+
+        for sid in student_ids:
+            enrollment, _ = Enrollment.objects.get_or_create(
+                student_id=sid,
+                lecture=session.lecture,
+                defaults={"status": "ACTIVE"},
+            )
+
+            SessionEnrollment.objects.get_or_create(
+                enrollment=enrollment,
+                session=session,
+            )
+
+            attendance, _ = Attendance.objects.get_or_create(
+                enrollment=enrollment,
+                session=session,
+                defaults={"status": "PRESENT"},
+            )
+
+            created.append(attendance)
+
+        return Response(
+            AttendanceSerializer(created, many=True).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    # =========================================================
+    # 2️⃣ 강의 × 차시 출결 매트릭스
+    # =========================================================
+    @action(detail=False, methods=["get"], url_path="matrix")
+    def matrix(self, request):
+        lecture_id = request.query_params.get("lecture")
+
+        if not lecture_id:
+            return Response(
+                {"detail": "lecture 파라미터는 필수입니다"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        lecture = get_object_or_404(Lecture, id=lecture_id)
+
+        sessions = Session.objects.filter(
+            lecture=lecture
+        ).order_by("order", "id")
+
+        enrollments = Enrollment.objects.filter(
+            lecture=lecture,
+            status="ACTIVE",
+        ).select_related("student").order_by("student__name", "id")
+
+        attendances = Attendance.objects.filter(
+            session__lecture=lecture,
+            enrollment__in=enrollments,
+        ).select_related("session", "enrollment")
+
+        attendance_map = {
+            (a.enrollment_id, a.session_id): a
+            for a in attendances
+        }
+
+        students_payload = []
+
+        for en in enrollments:
+            row = {
+                "student_id": en.student.id,
+                "name": en.student.name,
+                "phone": en.student.phone,
+                "parent_phone": en.student.parent_phone,
+                "attendance": {},
+            }
+
+            for s in sessions:
+                att = attendance_map.get((en.id, s.id))
+                if att:
+                    row["attendance"][str(s.id)] = {
+                        "attendance_id": att.id,
+                        "status": att.status,
+                    }
+
+            students_payload.append(row)
+
+        return Response(
+            {
+                "lecture": {
+                    "id": lecture.id,
+                    "title": lecture.title,
+                },
+                "sessions": [
+                    {
+                        "id": s.id,
+                        "order": s.order,
+                        "date": s.date,
+                    }
+                    for s in sessions
+                ],
+                "students": AttendanceMatrixStudentSerializer(
+                    students_payload, many=True
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # =========================================================
+    # 3️⃣ 엑셀 다운로드
+    # =========================================================
+    @action(detail=False, methods=["get"], url_path="excel")
+    def excel(self, request):
+        lecture_id = request.query_params.get("lecture")
+
+        if not lecture_id:
+            return Response(
+                {"detail": "lecture 파라미터는 필수입니다"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        lecture = get_object_or_404(Lecture, id=lecture_id)
+
+        workbook, filename = build_attendance_excel(lecture)
+
+        response = HttpResponse(
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        workbook.save(response)
+        return response
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = []
+
+    operations = [
+        migrations.CreateModel(
+            name="Attendance",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("PRESENT", "출석"),
+                            ("LATE", "지각"),
+                            ("ONLINE", "온라인"),
+                            ("SUPPLEMENT", "보강"),
+                            ("EARLY_LEAVE", "조퇴"),
+                            ("ABSENT", "결석"),
+                            ("RUNAWAY", "출튀"),
+                            ("MATERIAL", "자료"),
+                            ("INACTIVE", "부재"),
+                            ("SECESSION", "탈퇴"),
+                        ],
+                        default="PRESENT",
+                        max_length=20,
+                    ),
+                ),
+                ("memo", models.TextField(blank=True)),
+                ("recorded_at", models.DateTimeField(auto_now_add=True)),
+            ],
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0002_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("attendance", "0001_initial"),
+        ("enrollment", "0001_initial"),
+        ("lectures", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="attendance",
+            name="enrollment",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="attendances",
+                to="enrollment.enrollment",
+            ),
+        ),
+        migrations.AddField(
+            model_name="attendance",
+            name="session",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="attendances",
+                to="lectures.session",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="attendance",
+            constraint=models.UniqueConstraint(
+                fields=("enrollment", "session"), name="unique_attendance_per_session"
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: utils/excel.py
+==========================================================================================
+# apps/domains/attendance/utils/excel.py
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+
+from apps.domains.lectures.models import Session
+from apps.domains.enrollment.models import Enrollment
+from apps.domains.attendance.models import Attendance
+
+
+STATUS_LABEL_MAP = {
+    "PRESENT": "현장",
+    "LATE": "지각",
+    "ONLINE": "영상",
+    "SUPPLEMENT": "보강",
+    "EARLY_LEAVE": "조퇴",
+    "ABSENT": "결석",
+    "RUNAWAY": "출튀",
+    "MATERIAL": "자료",
+    "INACTIVE": "부재",
+    "SECESSION": "퇴원",
+}
+
+STATUS_FILL_MAP = {
+    "PRESENT": "C6EFCE",
+    "ABSENT": "FFC7CE",
+    "LATE": "FFEB9C",
+    "ONLINE": "BDD7EE",
+}
+
+
+def build_attendance_excel(lecture):
+    sessions = Session.objects.filter(
+        lecture=lecture
+    ).order_by("order", "id")
+
+    enrollments = Enrollment.objects.filter(
+        lecture=lecture,
+        status="ACTIVE",
+    ).select_related("student").order_by("student__name", "id")
+
+    attendances = Attendance.objects.filter(
+        session__lecture=lecture,
+        enrollment__in=enrollments,
+    )
+
+    attendance_map = {
+        (a.enrollment_id, a.session_id): a
+        for a in attendances
+    }
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "출결"
+
+    # Header
+    header = ["학생명", "학생번호", "학부모번호"]
+    for s in sessions:
+        label = f"{s.order}차시"
+        if s.date:
+            label += f" ({s.date})"
+        header.append(label)
+
+    ws.append(header)
+
+    header_font = Font(bold=True)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    for col in range(1, len(header) + 1):
+        cell = ws.cell(row=1, column=col)
+        cell.font = header_font
+        cell.alignment = center
+        ws.column_dimensions[get_column_letter(col)].width = 16
+
+    ws.freeze_panes = "D2"
+
+    for en in enrollments:
+        row = [
+            en.student.name,
+            en.student.phone or "",
+            en.student.parent_phone or "",
+        ]
+
+        for s in sessions:
+            att = attendance_map.get((en.id, s.id))
+            code = att.status if att else ""
+            label = STATUS_LABEL_MAP.get(code, code)
+            row.append(label)
+
+        ws.append(row)
+        r = ws.max_row
+
+        for idx, s in enumerate(sessions, start=4):
+            att = attendance_map.get((en.id, s.id))
+            if att and att.status in STATUS_FILL_MAP:
+                ws.cell(row=r, column=idx).fill = PatternFill(
+                    start_color=STATUS_FILL_MAP[att.status],
+                    end_color=STATUS_FILL_MAP[att.status],
+                    fill_type="solid",
+                )
+            ws.cell(row=r, column=idx).alignment = center
+
+    filename = f"출결_{lecture.title}_{lecture.id}.xlsx"
+    return wb, filename

@@ -1,0 +1,1277 @@
+====================================================================================================
+# BACKEND APP: core
+# ROOT PATH: C:\academy\apps\core
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+# apps/core/apps.py
+
+from django.apps import AppConfig
+
+
+class CoreConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.core"
+    label = "core"
+
+
+==========================================================================================
+# FILE: authentication.py
+==========================================================================================
+# apps/core/authentication.py
+
+from rest_framework.authentication import SessionAuthentication
+
+
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    """
+    API 전용 SessionAuthentication
+    - 로그인 세션은 유지
+    - CSRF 검사는 비활성화
+    """
+    def enforce_csrf(self, request):
+        return
+
+
+==========================================================================================
+# FILE: core_code.html
+==========================================================================================
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>core Code Browser</title>
+<style>
+body {
+    background:#0f1115;
+    color:#eaeaea;
+    font-family:Consolas, monospace;
+    padding:24px;
+}
+h1 { margin-bottom:24px; }
+h2 { color:#7dd3fc; font-size:15px; }
+pre {
+    background:#111418;
+    padding:16px;
+    border-radius:8px;
+    overflow-x:auto;
+    font-size:13px;
+    line-height:1.5;
+}
+section { margin-bottom:32px; }
+</style>
+</head>
+<body>
+<h1>📦 apps\core</h1>
+
+        <section>
+            <h2>__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>apps.py</h2>
+            <pre><code># apps/core/apps.py
+
+from django.apps import AppConfig
+
+
+class CoreConfig(AppConfig):
+    default_auto_field = &quot;django.db.models.BigAutoField&quot;
+    name = &quot;apps.core&quot;
+    label = &quot;core&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>authentication.py</h2>
+            <pre><code># apps/core/authentication.py
+
+from rest_framework.authentication import SessionAuthentication
+
+
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    &quot;&quot;&quot;
+    API 전용 SessionAuthentication
+    - 로그인 세션은 유지
+    - CSRF 검사는 비활성화
+    &quot;&quot;&quot;
+    def enforce_csrf(self, request):
+        return
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>middleware\__init__.py</h2>
+            <pre><code></code></pre>
+        </section>
+        
+        <section>
+            <h2>middleware\tenant.py</h2>
+            <pre><code># apps/core/middleware/tenant.py
+
+class TenantMiddleware:
+    &quot;&quot;&quot;
+    Tenant middleware (placeholder)
+    현재는 멀티테넌시 로직 없이 통과만 시킨다.
+    &quot;&quot;&quot;
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        return response
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models\__init__.py</h2>
+            <pre><code>from .tenant import Tenant
+from .user import User, Attendance, Expense
+
+__all__ = [
+    &quot;Tenant&quot;,
+    &quot;User&quot;,
+    &quot;Attendance&quot;,
+    &quot;Expense&quot;,
+]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models\tenant.py</h2>
+            <pre><code>from django.db import models
+
+
+class Tenant(models.Model):
+    &quot;&quot;&quot;
+    Tenant == Academy
+    SaaS 단위의 학원
+    &quot;&quot;&quot;
+
+    name = models.CharField(max_length=255)
+    code = models.CharField(max_length=50, unique=True)
+
+    owner_name = models.CharField(max_length=100, blank=True)
+    phone = models.CharField(max_length=50, blank=True)
+    address = models.CharField(max_length=255, blank=True)
+
+    logo = models.ImageField(
+        upload_to=&quot;academy/logo/&quot;,
+        null=True,
+        blank=True,
+    )
+
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        app_label = &quot;core&quot;
+        verbose_name = &quot;Tenant&quot;
+        verbose_name_plural = &quot;Tenants&quot;
+
+    def __str__(self):
+        return self.name
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>models\user.py</h2>
+            <pre><code>from django.db import models
+from django.conf import settings
+from django.contrib.auth.models import AbstractUser, Group, Permission
+
+from apps.api.common.models import TimestampModel
+
+
+# --------------------------------------------------
+# Custom User (AUTH_USER_MODEL)
+# --------------------------------------------------
+
+class User(AbstractUser):
+    &quot;&quot;&quot;
+    Custom User 모델
+    - AUTH_USER_MODEL = core.User
+    - auth.User 와의 groups / permissions reverse accessor 충돌 방지
+    &quot;&quot;&quot;
+
+    name = models.CharField(max_length=50, blank=True, null=True)
+    phone = models.CharField(max_length=20, blank=True, null=True)
+
+    # 🔥 핵심: auth.User 와 reverse accessor 충돌 방지
+    groups = models.ManyToManyField(
+        Group,
+        related_name=&quot;core_users&quot;,
+        blank=True,
+    )
+    user_permissions = models.ManyToManyField(
+        Permission,
+        related_name=&quot;core_users&quot;,
+        blank=True,
+    )
+
+    class Meta:
+        app_label = &quot;core&quot;
+        db_table = &quot;accounts_user&quot;
+        ordering = [&quot;-id&quot;]
+
+    def __str__(self):
+        return self.username
+
+
+# --------------------------------------------------
+# Attendance
+# --------------------------------------------------
+
+class Attendance(TimestampModel):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name=&quot;attendances&quot;,
+    )
+
+    date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+
+    work_type = models.CharField(max_length=50)
+    memo = models.TextField(blank=True, null=True)
+
+    duration_hours = models.FloatField(default=0)
+    amount = models.IntegerField(default=0)
+
+    class Meta:
+        app_label = &quot;core&quot;
+        ordering = [&quot;-date&quot;, &quot;-start_time&quot;]
+
+    def __str__(self):
+        return f&quot;{self.user.username} - {self.date}&quot;
+
+
+# --------------------------------------------------
+# Expense
+# --------------------------------------------------
+
+class Expense(TimestampModel):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name=&quot;expenses&quot;,
+    )
+
+    date = models.DateField()
+    title = models.CharField(max_length=255)
+    amount = models.IntegerField()
+    memo = models.TextField(blank=True, null=True)
+
+    class Meta:
+        app_label = &quot;core&quot;
+        ordering = [&quot;-date&quot;]
+
+    def __str__(self):
+        return f&quot;{self.user.username} - {self.title}&quot;
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>permissions.py</h2>
+            <pre><code>#apps/core/permissions.py
+
+from rest_framework.permissions import BasePermission
+
+
+class IsAdminOrStaff(BasePermission):
+    &quot;&quot;&quot;
+    관리자 / 운영자 전용 Permission
+    &quot;&quot;&quot;
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and (user.is_superuser or user.is_staff)
+        )
+
+
+class IsStudent(BasePermission):
+    &quot;&quot;&quot;
+    학생 전용 Permission
+    - 로그인 필수
+    - User ↔ Student OneToOne 연결 필수
+    &quot;&quot;&quot;
+    message = &quot;Student account required.&quot;
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and hasattr(user, &quot;student_profile&quot;)
+        )
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>serializers.py</h2>
+            <pre><code># apps/core/serializers.py
+
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+
+from apps.core.models import Attendance, Expense
+
+User = get_user_model()
+
+
+# ------------------------------------
+# User Base
+# ------------------------------------
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = [
+            &quot;id&quot;, 
+            &quot;username&quot;, 
+            &quot;name&quot;, 
+            &quot;phone&quot;,
+            &quot;is_staff&quot;,        # ✅ 추가
+            &quot;is_superuser&quot;    # (선택) 있으면 좋음
+        ]
+
+
+# ------------------------------------
+# Profile
+# ------------------------------------
+
+class ProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = [&quot;id&quot;, &quot;name&quot;, &quot;phone&quot;]
+
+
+# ------------------------------------
+# Attendance
+# ------------------------------------
+
+class AttendanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Attendance
+        fields = &quot;__all__&quot;
+        read_only_fields = [&quot;user&quot;, &quot;duration_hours&quot;, &quot;amount&quot;]
+
+
+# ------------------------------------
+# Expense
+# ------------------------------------
+
+class ExpenseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Expense
+        fields = &quot;__all__&quot;
+        read_only_fields = [&quot;user&quot;]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>urls.py</h2>
+            <pre><code># apps/core/urls.py
+
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+
+from apps.core.views import (
+    MeView,
+    ProfileViewSet,
+    MyAttendanceViewSet,
+    MyExpenseViewSet,
+)
+
+router = DefaultRouter()
+router.register(&quot;profile&quot;, ProfileViewSet, basename=&quot;profile&quot;)
+router.register(&quot;profile/attendance&quot;, MyAttendanceViewSet, basename=&quot;my-attendance&quot;)
+router.register(&quot;profile/expenses&quot;, MyExpenseViewSet, basename=&quot;my-expense&quot;)
+
+urlpatterns = [
+    path(&quot;me/&quot;, MeView.as_view(), name=&quot;core-me&quot;),
+    path(&quot;&quot;, include(router.urls)),
+]
+</code></pre>
+        </section>
+        
+        <section>
+            <h2>views.py</h2>
+            <pre><code># apps/core/views.py
+
+from datetime import datetime
+from django.db.models import Sum
+
+from rest_framework.views import APIView
+from rest_framework import viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from drf_yasg.utils import swagger_auto_schema
+
+from apps.core.models import Attendance, Expense
+from apps.core.serializers import (
+    UserSerializer,
+    ProfileSerializer,
+    AttendanceSerializer,
+    ExpenseSerializer,
+)
+
+
+# --------------------------------------------------
+# Auth: /core/me/
+# --------------------------------------------------
+
+class MeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(auto_schema=None)
+    def get(self, request):
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data)
+
+
+# --------------------------------------------------
+# Profile
+# --------------------------------------------------
+
+class ProfileViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(auto_schema=None)
+    @action(detail=False, methods=[&quot;get&quot;])
+    def me(self, request):
+        serializer = ProfileSerializer(request.user)
+        return Response(serializer.data)
+
+    @swagger_auto_schema(auto_schema=None)
+    @action(detail=False, methods=[&quot;patch&quot;])
+    def update_me(self, request):
+        serializer = ProfileSerializer(
+            request.user,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    @swagger_auto_schema(auto_schema=None)
+    @action(detail=False, methods=[&quot;post&quot;], url_path=&quot;change-password&quot;)
+    def change_password(self, request):
+        old_pw = request.data.get(&quot;old_password&quot;)
+        new_pw = request.data.get(&quot;new_password&quot;)
+
+        if not old_pw or not new_pw:
+            return Response({&quot;error&quot;: &quot;old_password, new_password 필요&quot;}, status=400)
+
+        if not request.user.check_password(old_pw):
+            return Response({&quot;error&quot;: &quot;현재 비밀번호가 올바르지 않습니다.&quot;}, status=400)
+
+        request.user.set_password(new_pw)
+        request.user.save()
+
+        return Response({&quot;message&quot;: &quot;비밀번호 변경 완료&quot;})
+
+
+# --------------------------------------------------
+# Attendance
+# --------------------------------------------------
+
+class MyAttendanceViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AttendanceSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        month = self.request.query_params.get(&quot;month&quot;)
+
+        qs = Attendance.objects.filter(user=user)
+
+        if month:
+            qs = qs.filter(date__startswith=month)
+
+        return qs
+
+    def perform_create(self, serializer):
+        user = self.request.user
+
+        start = self.request.data.get(&quot;start_time&quot;)
+        end = self.request.data.get(&quot;end_time&quot;)
+
+        try:
+            start_dt = datetime.strptime(start, &quot;%H:%M&quot;)
+            end_dt = datetime.strptime(end, &quot;%H:%M&quot;)
+            duration = (end_dt - start_dt).seconds / 3600
+        except Exception:
+            duration = 0
+
+        hourly = 15000
+        amount = int(duration * hourly)
+
+        serializer.save(
+            user=user,
+            duration_hours=duration,
+            amount=amount,
+        )
+
+    @swagger_auto_schema(auto_schema=None)
+    @action(detail=False, methods=[&quot;get&quot;], url_path=&quot;summary&quot;)
+    def summary(self, request):
+        user = request.user
+        month = self.request.query_params.get(&quot;month&quot;)
+
+        qs = Attendance.objects.filter(user=user)
+
+        if month:
+            qs = qs.filter(date__startswith=month)
+
+        total_hours = qs.aggregate(Sum(&quot;duration_hours&quot;))[&quot;duration_hours__sum&quot;] or 0
+        total_amount = qs.aggregate(Sum(&quot;amount&quot;))[&quot;amount__sum&quot;] or 0
+        after_tax = int(total_amount * 0.967)
+
+        return Response({
+            &quot;total_hours&quot;: total_hours,
+            &quot;total_amount&quot;: total_amount,
+            &quot;total_after_tax&quot;: after_tax,
+        })
+
+
+# --------------------------------------------------
+# Expense
+# --------------------------------------------------
+
+class MyExpenseViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ExpenseSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        month = self.request.query_params.get(&quot;month&quot;)
+
+        qs = Expense.objects.filter(user=user)
+
+        if month:
+            qs = qs.filter(date__startswith=month)
+
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+</code></pre>
+        </section>
+        
+</body>
+</html>
+
+
+==========================================================================================
+# FILE: permissions.py
+==========================================================================================
+#apps/core/permissions.py
+
+from rest_framework.permissions import BasePermission
+
+
+class IsAdminOrStaff(BasePermission):
+    """
+    관리자 / 운영자 전용 Permission
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and (user.is_superuser or user.is_staff)
+        )
+
+
+class IsStudent(BasePermission):
+    """
+    학생 전용 Permission
+    - 로그인 필수
+    - User ↔ Student OneToOne 연결 필수
+    """
+    message = "Student account required."
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and hasattr(user, "student_profile")
+        )
+
+
+==========================================================================================
+# FILE: serializers.py
+==========================================================================================
+# apps/core/serializers.py
+
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+
+from apps.core.models import Attendance, Expense
+
+User = get_user_model()
+
+
+# ------------------------------------
+# User Base
+# ------------------------------------
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = [
+            "id", 
+            "username", 
+            "name", 
+            "phone",
+            "is_staff",        # ✅ 추가
+            "is_superuser"    # (선택) 있으면 좋음
+        ]
+
+
+# ------------------------------------
+# Profile
+# ------------------------------------
+
+class ProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["id", "name", "phone"]
+
+
+# ------------------------------------
+# Attendance
+# ------------------------------------
+
+class AttendanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Attendance
+        fields = "__all__"
+        read_only_fields = ["user", "duration_hours", "amount"]
+
+
+# ------------------------------------
+# Expense
+# ------------------------------------
+
+class ExpenseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Expense
+        fields = "__all__"
+        read_only_fields = ["user"]
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+# apps/core/urls.py
+
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+
+from apps.core.views import (
+    MeView,
+    ProfileViewSet,
+    MyAttendanceViewSet,
+    MyExpenseViewSet,
+)
+
+router = DefaultRouter()
+router.register("profile", ProfileViewSet, basename="profile")
+router.register("profile/attendance", MyAttendanceViewSet, basename="my-attendance")
+router.register("profile/expenses", MyExpenseViewSet, basename="my-expense")
+
+urlpatterns = [
+    path("me/", MeView.as_view(), name="core-me"),
+    path("", include(router.urls)),
+]
+
+
+==========================================================================================
+# FILE: views.py
+==========================================================================================
+# apps/core/views.py
+
+from datetime import datetime
+from django.db.models import Sum
+
+from rest_framework.views import APIView
+from rest_framework import viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from drf_yasg.utils import swagger_auto_schema
+
+from apps.core.models import Attendance, Expense
+from apps.core.serializers import (
+    UserSerializer,
+    ProfileSerializer,
+    AttendanceSerializer,
+    ExpenseSerializer,
+)
+
+
+# --------------------------------------------------
+# Auth: /core/me/
+# --------------------------------------------------
+
+class MeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(auto_schema=None)
+    def get(self, request):
+        print("AUTH HEADER:", request.headers.get("Authorization"))
+        print("USER:", request.user, request.user.is_authenticated)
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data)
+
+
+# --------------------------------------------------
+# Profile
+# --------------------------------------------------
+
+class ProfileViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(auto_schema=None)
+    @action(detail=False, methods=["get"])
+    def me(self, request):
+        serializer = ProfileSerializer(request.user)
+        return Response(serializer.data)
+
+    @swagger_auto_schema(auto_schema=None)
+    @action(detail=False, methods=["patch"])
+    def update_me(self, request):
+        serializer = ProfileSerializer(
+            request.user,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    @swagger_auto_schema(auto_schema=None)
+    @action(detail=False, methods=["post"], url_path="change-password")
+    def change_password(self, request):
+        old_pw = request.data.get("old_password")
+        new_pw = request.data.get("new_password")
+
+        if not old_pw or not new_pw:
+            return Response({"error": "old_password, new_password 필요"}, status=400)
+
+        if not request.user.check_password(old_pw):
+            return Response({"error": "현재 비밀번호가 올바르지 않습니다."}, status=400)
+
+        request.user.set_password(new_pw)
+        request.user.save()
+
+        return Response({"message": "비밀번호 변경 완료"})
+
+
+# --------------------------------------------------
+# Attendance
+# --------------------------------------------------
+
+class MyAttendanceViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AttendanceSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        month = self.request.query_params.get("month")
+
+        qs = Attendance.objects.filter(user=user)
+
+        if month:
+            qs = qs.filter(date__startswith=month)
+
+        return qs
+
+    def perform_create(self, serializer):
+        user = self.request.user
+
+        start = self.request.data.get("start_time")
+        end = self.request.data.get("end_time")
+
+        try:
+            start_dt = datetime.strptime(start, "%H:%M")
+            end_dt = datetime.strptime(end, "%H:%M")
+            duration = (end_dt - start_dt).seconds / 3600
+        except Exception:
+            duration = 0
+
+        hourly = 15000
+        amount = int(duration * hourly)
+
+        serializer.save(
+            user=user,
+            duration_hours=duration,
+            amount=amount,
+        )
+
+    @swagger_auto_schema(auto_schema=None)
+    @action(detail=False, methods=["get"], url_path="summary")
+    def summary(self, request):
+        user = request.user
+        month = self.request.query_params.get("month")
+
+        qs = Attendance.objects.filter(user=user)
+
+        if month:
+            qs = qs.filter(date__startswith=month)
+
+        total_hours = qs.aggregate(Sum("duration_hours"))["duration_hours__sum"] or 0
+        total_amount = qs.aggregate(Sum("amount"))["amount__sum"] or 0
+        after_tax = int(total_amount * 0.967)
+
+        return Response({
+            "total_hours": total_hours,
+            "total_amount": total_amount,
+            "total_after_tax": after_tax,
+        })
+
+
+# --------------------------------------------------
+# Expense
+# --------------------------------------------------
+
+class MyExpenseViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ExpenseSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        month = self.request.query_params.get("month")
+
+        qs = Expense.objects.filter(user=user)
+
+        if month:
+            qs = qs.filter(date__startswith=month)
+
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+==========================================================================================
+# FILE: middleware/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: middleware/tenant.py
+==========================================================================================
+# apps/core/middleware/tenant.py
+
+class TenantMiddleware:
+    """
+    Tenant middleware (placeholder)
+    현재는 멀티테넌시 로직 없이 통과만 시킨다.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        return response
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.contrib.auth.models
+import django.contrib.auth.validators
+import django.db.models.deletion
+import django.utils.timezone
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("auth", "0012_alter_user_first_name_max_length"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="Tenant",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("name", models.CharField(max_length=255)),
+                ("code", models.CharField(max_length=50, unique=True)),
+                ("owner_name", models.CharField(blank=True, max_length=100)),
+                ("phone", models.CharField(blank=True, max_length=50)),
+                ("address", models.CharField(blank=True, max_length=255)),
+                (
+                    "logo",
+                    models.ImageField(blank=True, null=True, upload_to="academy/logo/"),
+                ),
+                ("is_active", models.BooleanField(default=True)),
+            ],
+            options={
+                "verbose_name": "Tenant",
+                "verbose_name_plural": "Tenants",
+            },
+        ),
+        migrations.CreateModel(
+            name="User",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("password", models.CharField(max_length=128, verbose_name="password")),
+                (
+                    "last_login",
+                    models.DateTimeField(
+                        blank=True, null=True, verbose_name="last login"
+                    ),
+                ),
+                (
+                    "is_superuser",
+                    models.BooleanField(
+                        default=False,
+                        help_text="Designates that this user has all permissions without explicitly assigning them.",
+                        verbose_name="superuser status",
+                    ),
+                ),
+                (
+                    "username",
+                    models.CharField(
+                        error_messages={
+                            "unique": "A user with that username already exists."
+                        },
+                        help_text="Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.",
+                        max_length=150,
+                        unique=True,
+                        validators=[
+                            django.contrib.auth.validators.UnicodeUsernameValidator()
+                        ],
+                        verbose_name="username",
+                    ),
+                ),
+                (
+                    "first_name",
+                    models.CharField(
+                        blank=True, max_length=150, verbose_name="first name"
+                    ),
+                ),
+                (
+                    "last_name",
+                    models.CharField(
+                        blank=True, max_length=150, verbose_name="last name"
+                    ),
+                ),
+                (
+                    "email",
+                    models.EmailField(
+                        blank=True, max_length=254, verbose_name="email address"
+                    ),
+                ),
+                (
+                    "is_staff",
+                    models.BooleanField(
+                        default=False,
+                        help_text="Designates whether the user can log into this admin site.",
+                        verbose_name="staff status",
+                    ),
+                ),
+                (
+                    "is_active",
+                    models.BooleanField(
+                        default=True,
+                        help_text="Designates whether this user should be treated as active. Unselect this instead of deleting accounts.",
+                        verbose_name="active",
+                    ),
+                ),
+                (
+                    "date_joined",
+                    models.DateTimeField(
+                        default=django.utils.timezone.now, verbose_name="date joined"
+                    ),
+                ),
+                ("name", models.CharField(blank=True, max_length=50, null=True)),
+                ("phone", models.CharField(blank=True, max_length=20, null=True)),
+                (
+                    "groups",
+                    models.ManyToManyField(
+                        blank=True, related_name="core_users", to="auth.group"
+                    ),
+                ),
+                (
+                    "user_permissions",
+                    models.ManyToManyField(
+                        blank=True, related_name="core_users", to="auth.permission"
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "accounts_user",
+                "ordering": ["-id"],
+            },
+            managers=[
+                ("objects", django.contrib.auth.models.UserManager()),
+            ],
+        ),
+        migrations.CreateModel(
+            name="Attendance",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("date", models.DateField()),
+                ("start_time", models.TimeField()),
+                ("end_time", models.TimeField()),
+                ("work_type", models.CharField(max_length=50)),
+                ("memo", models.TextField(blank=True, null=True)),
+                ("duration_hours", models.FloatField(default=0)),
+                ("amount", models.IntegerField(default=0)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="attendances",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-date", "-start_time"],
+            },
+        ),
+        migrations.CreateModel(
+            name="Expense",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("date", models.DateField()),
+                ("title", models.CharField(max_length=255)),
+                ("amount", models.IntegerField()),
+                ("memo", models.TextField(blank=True, null=True)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="expenses",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-date"],
+            },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: models/__init__.py
+==========================================================================================
+from .tenant import Tenant
+from .user import User, Attendance, Expense
+
+__all__ = [
+    "Tenant",
+    "User",
+    "Attendance",
+    "Expense",
+]
+
+
+==========================================================================================
+# FILE: models/tenant.py
+==========================================================================================
+from django.db import models
+
+
+class Tenant(models.Model):
+    """
+    Tenant == Academy
+    SaaS 단위의 학원
+    """
+
+    name = models.CharField(max_length=255)
+    code = models.CharField(max_length=50, unique=True)
+
+    owner_name = models.CharField(max_length=100, blank=True)
+    phone = models.CharField(max_length=50, blank=True)
+    address = models.CharField(max_length=255, blank=True)
+
+    logo = models.ImageField(
+        upload_to="academy/logo/",
+        null=True,
+        blank=True,
+    )
+
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        app_label = "core"
+        verbose_name = "Tenant"
+        verbose_name_plural = "Tenants"
+
+    def __str__(self):
+        return self.name
+
+
+==========================================================================================
+# FILE: models/user.py
+==========================================================================================
+from django.db import models
+from django.conf import settings
+from django.contrib.auth.models import AbstractUser, Group, Permission
+
+from apps.api.common.models import TimestampModel
+
+
+# --------------------------------------------------
+# Custom User (AUTH_USER_MODEL)
+# --------------------------------------------------
+
+class User(AbstractUser):
+    """
+    Custom User 모델
+    - AUTH_USER_MODEL = core.User
+    - auth.User 와의 groups / permissions reverse accessor 충돌 방지
+    """
+
+    name = models.CharField(max_length=50, blank=True, null=True)
+    phone = models.CharField(max_length=20, blank=True, null=True)
+
+    # 🔥 핵심: auth.User 와 reverse accessor 충돌 방지
+    groups = models.ManyToManyField(
+        Group,
+        related_name="core_users",
+        blank=True,
+    )
+    user_permissions = models.ManyToManyField(
+        Permission,
+        related_name="core_users",
+        blank=True,
+    )
+
+    class Meta:
+        app_label = "core"
+        db_table = "accounts_user"
+        ordering = ["-id"]
+
+    def __str__(self):
+        return self.username
+
+
+# --------------------------------------------------
+# Attendance
+# --------------------------------------------------
+
+class Attendance(TimestampModel):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="attendances",
+    )
+
+    date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+
+    work_type = models.CharField(max_length=50)
+    memo = models.TextField(blank=True, null=True)
+
+    duration_hours = models.FloatField(default=0)
+    amount = models.IntegerField(default=0)
+
+    class Meta:
+        app_label = "core"
+        ordering = ["-date", "-start_time"]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.date}"
+
+
+# --------------------------------------------------
+# Expense
+# --------------------------------------------------
+
+class Expense(TimestampModel):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="expenses",
+    )
+
+    date = models.DateField()
+    title = models.CharField(max_length=255)
+    amount = models.IntegerField()
+    memo = models.TextField(blank=True, null=True)
+
+    class Meta:
+        app_label = "core"
+        ordering = ["-date"]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.title}"

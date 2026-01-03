@@ -9,6 +9,8 @@ from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.results.services.applier import ResultApplier
 from apps.domains.exams.models import ExamQuestion, AnswerKey
 
+# progress 연결
+from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 
 # ============================================================
 # OMR/채점 정책 v1 (Results 도메인 책임)
@@ -208,3 +210,8 @@ def grade_submission_to_results(submission: Submission) -> None:
 
     submission.status = Submission.Status.DONE
     submission.save(update_fields=["status"])
+    
+    # 🔔 Progress 후속 파이프라인 (트랜잭션 커밋 후)
+    transaction.on_commit(
+        lambda: dispatch_progress_pipeline(submission.id)
+    )

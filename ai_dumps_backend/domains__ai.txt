@@ -1,0 +1,347 @@
+====================================================================================================
+# BACKEND APP: domains__ai
+# ROOT PATH: C:\academy\apps\domains\ai
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+# apps/domains/ai/__init__.py
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+# apps/domains/ai/apps.py
+from django.apps import AppConfig
+
+class AIDomainConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.ai"
+    label = "ai_domain"
+
+
+==========================================================================================
+# FILE: callbacks.py
+==========================================================================================
+from apps.shared.contracts.ai_result import AIResult
+from apps.domains.ai.models import AIJobModel, AIResultModel
+from apps.domains.submissions.services.ai_result_mapper import apply_ai_result
+from apps.domains.results.tasks.grading_tasks import grade_submission_task
+
+
+def handle_ai_result(result: AIResult) -> None:
+    """
+    Worker → API callback entry
+    """
+    job = AIJobModel.objects.get(job_id=result.job_id)
+
+    if result.status == "FAILED":
+        job.status = "FAILED"
+        job.error_message = result.error or ""
+        job.save(update_fields=["status", "error_message"])
+        return
+
+    # 1️⃣ AI 결과 저장 (fact)
+    AIResultModel.objects.create(
+        job=job,
+        payload=result.result,
+    )
+
+    # 2️⃣ submissions 로 위임 (답안 중간산물 저장)
+    submission_id = apply_ai_result(result.result)
+
+    # 3️⃣ 채점 job enqueue (results 책임)
+    if submission_id:
+        grade_submission_task.delay(int(submission_id))
+
+    job.status = "DONE"
+    job.save(update_fields=["status"])
+
+
+==========================================================================================
+# FILE: gateway.py
+==========================================================================================
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from apps.shared.contracts.ai_job import AIJob
+from apps.domains.ai.types import ensure_payload_dict, AIJobType
+from apps.domains.ai.safe import safe_dispatch
+from apps.domains.ai.publisher import publish_job
+from apps.domains.ai.models import AIJobModel
+
+
+def dispatch_job(
+    *,
+    job_type: AIJobType,
+    payload: Dict[str, Any],
+    tenant_id: Optional[str] = None,
+    source_domain: Optional[str] = None,
+    source_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    payload = ensure_payload_dict(payload)
+
+    job = AIJob.new(
+        type=job_type,
+        payload=payload,
+        tenant_id=tenant_id,
+        source_domain=source_domain,
+        source_id=source_id,
+    )
+
+    def _do():
+        # ✅ callbacks가 AIJobModel을 조회하므로, 발행 시점에 반드시 저장
+        job_model = AIJobModel.objects.create(
+            job_id=job.id,
+            job_type=job.type,
+            payload=job.payload,
+            status="PENDING",
+        )
+
+        try:
+            publish_job(job)
+        except Exception as e:
+            job_model.status = "FAILED"
+            job_model.error_message = str(e)
+            job_model.save(update_fields=["status", "error_message", "updated_at"])
+            raise
+
+        return {"ok": True, "job_id": job.id, "type": job.type}
+
+    return safe_dispatch(_do, fallback={"ok": False, "job_id": job.id, "type": job.type})
+
+
+==========================================================================================
+# FILE: models.py
+==========================================================================================
+# apps/domains/ai/models.py
+from django.db import models
+from apps.api.common.models import BaseModel
+
+
+class AIJobModel(BaseModel):
+    """
+    API 서버가 관리하는 AI Job 메타
+    """
+    job_id = models.CharField(max_length=64, unique=True)
+    job_type = models.CharField(max_length=50)
+
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("PENDING", "PENDING"),
+            ("RUNNING", "RUNNING"),
+            ("DONE", "DONE"),
+            ("FAILED", "FAILED"),
+        ],
+        default="PENDING",
+    )
+
+    payload = models.JSONField()
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "ai_job"
+
+
+class AIResultModel(BaseModel):
+    """
+    AI 결과 fact (저장만, 계산 없음)
+    """
+    job = models.OneToOneField(
+        AIJobModel,
+        on_delete=models.CASCADE,
+        related_name="result",
+    )
+    payload = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = "ai_result"
+
+
+==========================================================================================
+# FILE: publisher.py
+==========================================================================================
+# apps/domains/ai/publisher.py
+from apps.shared.contracts.ai_job import AIJob
+
+def publish_job(job: AIJob) -> None:
+    """
+    실제 메시지 큐 연결 지점.
+    지금은 infra layer placeholder.
+    """
+    from worker.queue.producer import publish_ai_job
+    publish_ai_job(job)
+
+
+==========================================================================================
+# FILE: safe.py
+==========================================================================================
+# apps/domains/ai/safe.py
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+
+def safe_dispatch(fn, *, fallback: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+    """
+    AI Job 발행을 안전하게 감싼다.
+    API는 실패해도 깨지면 안 된다.
+    """
+    try:
+        return fn(**kwargs)
+    except Exception as e:
+        logger.exception("AI job dispatch failed", exc_info=e)
+        return fallback or {"ok": False, "error": str(e)}
+
+
+==========================================================================================
+# FILE: types.py
+==========================================================================================
+from __future__ import annotations
+
+from typing import Any, Dict, Literal, Optional, TypedDict
+
+
+AIJobType = Literal[
+    "ocr",
+    "question_segmentation",
+    "handwriting_analysis",
+    "embedding",
+    "problem_generation",
+    "homework_video_analysis",
+]
+
+
+class OCRPayload(TypedDict, total=False):
+    image_path: str
+    engine: Optional[Literal["google", "tesseract", "auto"]]
+    academy_id: Optional[int]
+
+
+class SegmentationPayload(TypedDict, total=False):
+    image_path: str
+    engine: Optional[Literal["yolo", "opencv", "template", "auto"]]
+
+
+class HandwritingPayload(TypedDict, total=False):
+    image_path: str
+
+
+class EmbeddingPayload(TypedDict, total=False):
+    texts: list[str]
+    backend: Optional[Literal["local", "openai", "auto"]]
+
+
+class ProblemGenerationPayload(TypedDict, total=False):
+    ocr_text: str
+    model: Optional[str]
+
+
+class HomeworkVideoPayload(TypedDict, total=False):
+    video_path: str
+    frame_stride: Optional[int]
+    min_frame_count: Optional[int]
+
+
+def ensure_payload_dict(payload: Any) -> Dict[str, Any]:
+    if payload is None:
+        return {}
+    if isinstance(payload, dict):
+        return payload
+    raise TypeError("payload must be a dict")
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2025-12-19 00:33
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = []
+
+    operations = [
+        migrations.CreateModel(
+            name="AIJobModel",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("job_id", models.CharField(max_length=64, unique=True)),
+                ("job_type", models.CharField(max_length=50)),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("PENDING", "PENDING"),
+                            ("RUNNING", "RUNNING"),
+                            ("DONE", "DONE"),
+                            ("FAILED", "FAILED"),
+                        ],
+                        default="PENDING",
+                        max_length=20,
+                    ),
+                ),
+                ("payload", models.JSONField()),
+                ("error_message", models.TextField(blank=True)),
+            ],
+            options={
+                "db_table": "ai_job",
+            },
+        ),
+        migrations.CreateModel(
+            name="AIResultModel",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("payload", models.JSONField(blank=True, null=True)),
+                (
+                    "job",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="result",
+                        to="ai_domain.aijobmodel",
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "ai_result",
+            },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+
