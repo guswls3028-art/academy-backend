@@ -37,7 +37,6 @@ app.config_from_object(
 # 🔥 task 고정
 app.autodiscover_tasks([
     "apps.shared.tasks",   # video
-    "apps.worker.ai",      # ai
     "apps.worker.media",
 ])
 
@@ -161,7 +160,7 @@ if __name__ == "__main__":
 # FILE: ai/__init__.py
 ==========================================================================================
 # apps/worker/ai/__init__.py
-from . import tasks  # noqa
+# Celery 제거됨. run.py 단일 진입
 
 
 ==========================================================================================
@@ -227,51 +226,6 @@ class AIConfig:
 
             PROBLEM_GEN_MODEL=_env("PROBLEM_GEN_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini",
         )
-
-
-==========================================================================================
-# FILE: ai/tasks.py
-==========================================================================================
-# apps/worker/ai/tasks.py
-from __future__ import annotations
-
-import requests
-from celery import shared_task
-from django.conf import settings
-
-from apps.shared.contracts.ai_job import AIJob
-from apps.worker.ai.pipelines.dispatcher import handle_ai_job
-
-
-@shared_task(
-    bind=True,
-    queue="ai",
-    autoretry_for=(requests.exceptions.RequestException,),
-    retry_kwargs={"max_retries": 5, "countdown": 10},
-)
-def process_ai_job(self, job_payload: dict) -> bool:
-    """
-    Redis → AI Worker 단일 진입점
-    """
-    job = AIJob.from_dict(job_payload)
-
-    result = handle_ai_job(job)
-
-    url = f"{settings.API_BASE_URL}/api/v1/internal/ai/result/"
-    headers = {
-        "X-Worker-Token": settings.INTERNAL_WORKER_TOKEN,
-        "Content-Type": "application/json",
-    }
-
-    resp = requests.post(
-        url,
-        json=result.to_dict(),
-        headers=headers,
-        timeout=10,
-    )
-    resp.raise_for_status()
-
-    return True
 
 
 ==========================================================================================
@@ -1503,8 +1457,7 @@ OCR 텍스트:
 ==========================================================================================
 # FILE: media/__init__.py
 ==========================================================================================
-# apps/worker/media/__init__.py
-from . import tasks  # noqa (있다면)
+
 
 
 ==========================================================================================
