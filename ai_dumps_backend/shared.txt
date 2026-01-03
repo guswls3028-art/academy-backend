@@ -225,6 +225,26 @@ from . import media
 
 
 ==========================================================================================
+# FILE: tasks/ai.py
+==========================================================================================
+from celery import shared_task
+from apps.shared.contracts.ai_job import AIJob
+from apps.worker.ai.pipelines.dispatcher import handle_ai_job
+
+@shared_task(
+    bind=True,
+    queue="ai",
+    autoretry_for=(Exception,),
+    retry_backoff=10,
+    retry_kwargs={"max_retries": 3},
+)
+def run_ai_job(self, job_dict: dict):
+    job = AIJob.from_dict(job_dict)
+    result = handle_ai_job(job)
+    return result.to_dict()
+
+
+==========================================================================================
 # FILE: tasks/media.py
 ==========================================================================================
 from __future__ import annotations

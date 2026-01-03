@@ -19,7 +19,7 @@ from celery import Celery
 
 os.environ.setdefault(
     "DJANGO_SETTINGS_MODULE",
-    "apps.api.config.settings.base",
+    "apps.api.config.settings.worker",
 )
 
 app = Celery("academy")
@@ -29,12 +29,11 @@ app.config_from_object(
     namespace="CELERY",
 )
 
-# ✅ Celery task는 오직 여기서만 autodiscover
 app.autodiscover_tasks([
     "apps.shared.tasks",
 ])
 
-print("🔥 API Celery READY 🔥")
+print("🔥 API Celery (WORKER) READY 🔥")
 
 
 ==========================================================================================
