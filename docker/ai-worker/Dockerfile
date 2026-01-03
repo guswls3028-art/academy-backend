@@ -1,5 +1,3 @@
-# academy/docker/ai-worker/Dockerfile
-
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1
@@ -17,13 +15,10 @@ WORKDIR /app
 # 코드 복사
 COPY apps ./apps
 COPY libs ./libs
-COPY pyproject.toml .
-COPY poetry.lock .
+COPY requirements.txt .
 
-# 의존성
-RUN pip install --no-cache-dir poetry \
-    && poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi
+# Python 의존성
+RUN pip install --no-cache-dir -r requirements.txt
 
 ENV PYTHONPATH=/app
 

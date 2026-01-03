@@ -19,7 +19,7 @@ from celery import Celery
 
 os.environ.setdefault(
     "DJANGO_SETTINGS_MODULE",
-    "apps.api.config.settings.worker",
+    "apps.api.config.settings.base",
 )
 
 app = Celery("academy")
@@ -29,11 +29,15 @@ app.config_from_object(
     namespace="CELERY",
 )
 
+# 🔥🔥🔥 Celery 5.6 worker_state_db 강제 설정 (필수)
+app.conf.worker_state_db = None
+
+# task autodiscover
 app.autodiscover_tasks([
     "apps.shared.tasks",
 ])
 
-print("🔥 API Celery (WORKER) READY 🔥")
+print("🔥 API Celery READY 🔥")
 
 
 ==========================================================================================
@@ -512,6 +516,11 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+# Celery 5.6 worker_state_db 이슈 대응 (중요)
+
+CELERY_WORKER_STATE_DB = None
+worker_state_db = None   # 🔥 이 줄이 핵심
 
 # ==================================================
 # Worker → API 통신
