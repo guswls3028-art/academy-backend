@@ -3,11 +3,15 @@
 from .base import *
 import os
 
-# 워커는 URLConf 불필요
+DEBUG = False
+
+# 워커는 URL / admin / static 불필요
 ROOT_URLCONF = None
+WSGI_APPLICATION = None
+ASGI_APPLICATION = None
 
 # ==================================================
-# Celery (워커 필수)
+# Celery
 # ==================================================
 
 CELERY_BROKER_URL = os.environ["CELERY_BROKER_URL"]
@@ -22,10 +26,9 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
-# Celery 5.6 worker_state_db 이슈 대응 (중요)
-
+# 🔥 Celery 5.6 핵심 패치
 CELERY_WORKER_STATE_DB = None
-worker_state_db = None   # 🔥 이 줄이 핵심
+worker_state_db = None
 
 # ==================================================
 # Worker → API 통신

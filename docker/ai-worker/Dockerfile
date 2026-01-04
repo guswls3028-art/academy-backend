@@ -15,12 +15,12 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY requirements/worker-ai.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir google-cloud-vision
 
 COPY apps ./apps
 COPY libs ./libs
 
 ENV PYTHONPATH=/app
 
-# ✅ AI Worker 전용 Celery
 CMD ["celery", "-A", "apps.shared.tasks", "worker", "-Q", "ai", "-l", "info"]

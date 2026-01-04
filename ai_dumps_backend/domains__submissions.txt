@@ -570,6 +570,10 @@ def dispatch_submission(submission: Submission) -> None:
         - AI Job 생성 → ai worker celery
         - (MVP) 동기 결과 수신
         - 결과 반영 → grading enqueue
+
+    ⚠️ MVP ONLY
+    - async_result.get()은 API worker를 block함
+    - 추후 callback / polling 구조로 교체 예정
     """
 
     # 1️⃣ ONLINE 제출
@@ -578,7 +582,7 @@ def dispatch_submission(submission: Submission) -> None:
         grade_submission_task.delay(int(submission.id))
         return
 
-    # 2️⃣ FILE 기반 제출 (OMR / IMAGE / VIDEO)
+    # 2️⃣ FILE 기반 제출
     if not submission.file:
         submission.status = Submission.Status.FAILED
         submission.error_message = "file is required"
@@ -597,8 +601,7 @@ def dispatch_submission(submission: Submission) -> None:
         source_id=str(submission.id),
     )
 
-    # 4️⃣ AI Worker 실행
-    # ⚠️ MVP ONLY: 동기 대기 (운영 환경에서는 async callback 구조로 교체 필요)
+    # 4️⃣ AI Worker 실행 (MVP: 동기 대기)
     async_result = run_ai_job_task.delay(job.to_dict())
 
     try:
@@ -648,15 +651,20 @@ def _build_ai_payload(submission: Submission) -> dict:
     """
     Worker는 DB를 모르므로 path / 최소 정보만 전달
     """
-    payload = submission.payload or {}
+    payload = dict(submission.payload or {})
 
     if not submission.file:
         return payload
 
     if submission.source == Submission.Source.HOMEWORK_VIDEO:
         payload["video_path"] = submission.file.path
+
     else:
         payload["image_path"] = submission.file.path
+
+        # ✅ OMR 필수 payload (이거 없으면 결과 0개 나옴)
+        if submission.source == Submission.Source.OMR_SCAN:
+            payload["questions"] = payload.get("questions", [])
 
     return payload
 
