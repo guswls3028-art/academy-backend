@@ -1,4 +1,4 @@
-# academy-backend/docker/ai-worker/Dockerfile
+# docker/ai-worker/Dockerfile
 
 FROM python:3.11-slim
 
@@ -15,15 +15,17 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY requirements/worker-ai.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# ✅ requirements 폴더 전체 복사 (핵심)
+COPY requirements ./requirements
+
+# ✅ worker-ai.txt 기준으로 설치
+RUN pip install --no-cache-dir -r requirements/worker-ai.txt
 
 COPY apps ./apps
 COPY libs ./libs
-COPY docker/ai-worker/keys/google-vision.json /keys/google-vision.json
 
+# ✅ Google Vision Key
+COPY docker/ai-worker/keys/google-vision.json /keys/google-vision.json
 ENV GOOGLE_APPLICATION_CREDENTIALS=/keys/google-vision.json
 
-# ✅ Django / Celery ❌
-# ✅ 순수 AI Worker 실행
 CMD ["python", "-m", "apps.worker.run"]
