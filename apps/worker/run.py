@@ -42,7 +42,9 @@ def fetch_job() -> AIJob | None:
     response: { "job": {...} | null }
     """
     url = f"{API_BASE_URL}/api/v1/internal/ai/job/next/"
-    headers = {"X-Worker-Token": INTERNAL_WORKER_TOKEN}
+    headers = {
+        "X-Worker-Token": INTERNAL_WORKER_TOKEN,
+    }
 
     resp = requests.get(url, headers=headers, timeout=10)
     resp.raise_for_status()
@@ -69,7 +71,12 @@ def submit_result(result: AIResult, submission_id: int) -> None:
     payload = result.to_dict()
     payload["submission_id"] = submission_id
 
-    resp = requests.post(url, json=payload, headers=headers, timeout=20)
+    resp = requests.post(
+        url,
+        json=payload,
+        headers=headers,
+        timeout=20,
+    )
     resp.raise_for_status()
 
 
@@ -88,7 +95,7 @@ def main():
             # 🔥 AI 처리
             result = handle_ai_job(job)
 
-            # 🔥 결과 전송 (submission_id는 source_id)
+            # 🔥 결과 전송 (submission_id = job.source_id)
             submit_result(result, int(job.source_id))
 
             logger.info(
