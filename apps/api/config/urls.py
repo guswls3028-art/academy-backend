@@ -32,11 +32,12 @@ urlpatterns = [
 # =========================
 # Debug Toolbar (DEBUG only)
 # =========================
-if settings.DEBUG and "runserver" in sys.argv:
+if settings.DEBUG:
     import debug_toolbar
     urlpatterns += [
         path("__debug__/", include(debug_toolbar.urls)),
     ]
+
 
 # =========================
 # DEV ONLY: media static
