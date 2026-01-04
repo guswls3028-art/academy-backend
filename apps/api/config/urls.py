@@ -29,15 +29,6 @@ urlpatterns = [
     path("api/v1/", include("apps.api.v1.urls")),
 ]
 
-# =========================
-# Debug Toolbar (DEBUG only)
-# =========================
-if settings.DEBUG:
-    import debug_toolbar
-    urlpatterns += [
-        path("__debug__/", include(debug_toolbar.urls)),
-    ]
-
 
 # =========================
 # DEV ONLY: media static
