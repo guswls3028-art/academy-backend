@@ -205,3 +205,6 @@ TEMPLATES = [
 # REDIS (API 서버에서도 사용)
 # ==================================================
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# ai 워커를 위한.
+INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN")
