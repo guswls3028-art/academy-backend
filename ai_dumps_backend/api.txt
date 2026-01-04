@@ -14,13 +14,12 @@
 # FILE: celery.py
 ==========================================================================================
 # apps/api/celery.py
+
 import os
 from celery import Celery
 
-os.environ.setdefault(
-    "DJANGO_SETTINGS_MODULE",
-    "apps.api.config.settings.base",
-)
+# ⚠️ settings는 외부에서 주입 (API / Worker 분리)
+# os.environ.setdefault(...) ❌ 절대 쓰지 말 것
 
 app = Celery("academy")
 
@@ -29,7 +28,7 @@ app.config_from_object(
     namespace="CELERY",
 )
 
-# 🔥🔥🔥 Celery 5.6 worker_state_db 강제 설정 (필수)
+# Celery 5.6 worker_state_db 이슈 회피
 app.conf.worker_state_db = None
 
 # task autodiscover
@@ -498,11 +497,15 @@ INTERNAL_IPS = ["127.0.0.1"]
 from .base import *
 import os
 
-# 워커는 URLConf 불필요
+DEBUG = False
+
+# 워커는 URL / admin / static 불필요
 ROOT_URLCONF = None
+WSGI_APPLICATION = None
+ASGI_APPLICATION = None
 
 # ==================================================
-# Celery (워커 필수)
+# Celery
 # ==================================================
 
 CELERY_BROKER_URL = os.environ["CELERY_BROKER_URL"]
@@ -517,10 +520,9 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
-# Celery 5.6 worker_state_db 이슈 대응 (중요)
-
+# 🔥 Celery 5.6 핵심 패치
 CELERY_WORKER_STATE_DB = None
-worker_state_db = None   # 🔥 이 줄이 핵심
+worker_state_db = None
 
 # ==================================================
 # Worker → API 통신
@@ -550,16 +552,12 @@ INTERNAL_WORKER_TOKEN = os.environ.get(
 # FILE: v1/urls.py
 ==========================================================================================
 # apps/api/v1/urls.py
+
 from django.urls import path, include
 from apps.support.media.views import VideoProcessingCompleteView
 
 urlpatterns = [
-    # =========================
-    # Domain APIs
-    # =========================
     path("lectures/", include("apps.domains.lectures.urls")),
-
-    # 🔥 출결은 lectures 하위로 이동
     path("lectures/", include("apps.domains.attendance.urls")),
 
     path("students/", include("apps.domains.students.urls")),
@@ -567,28 +565,15 @@ urlpatterns = [
     path("submissions/", include("apps.domains.submissions.urls")),
     path("exams/", include("apps.domains.exams.urls")),
     path("progress/", include("apps.domains.progress.urls")),
-    # results API 연결
     path("results/", include("apps.domains.results.urls")),
 
     path("core/", include("apps.core.urls")),
     path("media/", include("apps.support.media.urls")),
-    
-    # =========================
-    # Core (🔥 추가)
-    # =========================
-    path("core/", include("apps.core.urls")),
 
-    # =========================
-    # Media
-    # =========================
-    path("media/", include("apps.support.media.urls")),
-
-    # ai가 추가하래서함 여기는 api\v1\urls.py
+    # 내부 워커 콜백
     path(
         "internal/videos/<int:video_id>/processing-complete/",
         VideoProcessingCompleteView.as_view(),
         name="video-processing-complete",
     ),
-
-
 ]
