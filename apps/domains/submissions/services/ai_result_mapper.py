@@ -20,27 +20,44 @@ def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     if not submission_id:
         return None
 
-    # ✅ 보호패치 START
+    # ✅ 보호패치: submission 없으면 DROP
     try:
         submission = Submission.objects.select_for_update().get(
             id=int(submission_id)
         )
     except Submission.DoesNotExist:
-        # 정상적인 분산 환경 상황 → 결과 DROP
         logger.warning(
             "[AI_RESULT] submission %s not found. result dropped.",
             submission_id,
         )
         return None
-    # ✅ 보호패치 END
 
-    # 결과 원본 저장(디버그/추적용)
+    # ✅ 결과 원본 저장 (항상)
     base_payload = submission.payload or {}
     base_payload["ai_result"] = payload
     submission.payload = base_payload
 
+    status = payload.get("status")
+    error = payload.get("error")
+
+    # ✅ FAILED 결과 즉시 처리
+    if status == "FAILED":
+        submission.status = Submission.Status.FAILED
+        submission.error_message = error or "AI worker failed"
+        submission.save(
+            update_fields=[
+                "payload",
+                "status",
+                "error_message",
+                "updated_at",
+            ]
+        )
+        return submission.id
+
+    # =========================
     # 1) items 답안형
-    items = payload.get("items")
+    # =========================
+    items = payload.get("result", {}).get("items")
     if isinstance(items, list) and items:
         for item in items:
             qid = item.get("question_id")
@@ -75,9 +92,13 @@ def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         )
         return submission.id
 
+    # =========================
     # 2) OMR v1 형식
-    answers = payload.get("answers")
-    version = payload.get("version")
+    # =========================
+    result = payload.get("result") or {}
+    answers = result.get("answers")
+    version = result.get("version")
+
     if version and isinstance(answers, list) and answers:
         for a in answers:
             qid = (a or {}).get("question_id")
@@ -120,8 +141,10 @@ def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         )
         return submission.id
 
+    # =========================
     # 3) 분석형
-    analysis = payload.get("analysis")
+    # =========================
+    analysis = result.get("analysis")
     if analysis is not None:
         meta = submission.meta or {}
         meta["analysis"] = analysis
@@ -131,7 +154,12 @@ def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             submission.status = Submission.Status.DONE
 
         submission.save(
-            update_fields=["payload", "meta", "status", "updated_at"]
+            update_fields=[
+                "payload",
+                "meta",
+                "status",
+                "updated_at",
+            ]
         )
         return None
 
