@@ -17,6 +17,9 @@ urlpatterns = [
     path("core/", include("apps.core.urls")),
     path("media/", include("apps.support.media.urls")),
 
+    # ai
+    path("internal/ai/", include("apps.api.v1.internal.ai.urls")),
+
     # 내부 워커 콜백
     path(
         "internal/videos/<int:video_id>/processing-complete/",
