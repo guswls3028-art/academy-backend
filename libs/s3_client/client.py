@@ -27,7 +27,7 @@ def head_object(key: str) -> Tuple[bool, int]:
     """
     try:
         resp = _s3.head_object(
-            Bucket=settings.R2_BUCKET,
+            Bucket=settings.R2_VIDEO_BUCKET,
             Key=key,
         )
         return True, int(resp.get("ContentLength") or 0)

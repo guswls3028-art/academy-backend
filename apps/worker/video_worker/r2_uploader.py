@@ -27,7 +27,7 @@ def upload_fileobj_to_r2(*, fileobj, key: str, content_type: str | None = None):
     """
     s3.upload_fileobj(
         Fileobj=fileobj,
-        Bucket=settings.R2_BUCKET,
+        Bucket=settings.R2_VIDEO_BUCKET,
         Key=key,
         ExtraArgs={
             "ContentType": content_type or "application/octet-stream"
@@ -50,7 +50,7 @@ def upload_dir(local_dir: Path, prefix: str):
 
         s3.upload_file(
             str(path),
-            settings.R2_BUCKET,
+            settings.R2_VIDEO_BUCKET,
             key,
             ExtraArgs={
                 "ContentType": content_type or "application/octet-stream"
@@ -75,7 +75,7 @@ def generate_presigned_get_url(
     return s3.generate_presigned_url(
         ClientMethod="get_object",
         Params={
-            "Bucket": settings.R2_BUCKET,
+            "Bucket": settings.R2_VIDEO_BUCKET,
             "Key": key,
         },
         ExpiresIn=expires_in,

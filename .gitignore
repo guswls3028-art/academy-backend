@@ -28,8 +28,8 @@ storage/
 *.mkv
 
 # 🔥 EXCEPTION: worker media는 코드이므로 추적
-!apps/worker/media/
-!apps/worker/media/**
+!apps/worker/video_worker/
+!apps/worker/video_worker/**
 
 # 🔥 EXCEPTION: infrastructure storage는 코드
 !apps/infrastructure/storage/

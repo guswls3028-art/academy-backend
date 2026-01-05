@@ -32,9 +32,9 @@ _s3 = boto3.client(
 # ---------------------------------------------------------------------
 
 def _get_bucket() -> str:
-    bucket = getattr(settings, "R2_BUCKET", None)
+    bucket = getattr(settings, "R2_VIDEO_BUCKET", None)
     if not bucket:
-        raise RuntimeError("R2_BUCKET is not set in Django settings")
+        raise RuntimeError("R2_VIDEO_BUCKET is not set in Django settings")
     return bucket
 
 # ---------------------------------------------------------------------
