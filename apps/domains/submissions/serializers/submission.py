@@ -4,11 +4,17 @@
 # - 업로드된 파일을 R2로 즉시 업로드
 # - file_key/file_type/file_size 저장
 
-from rest_framework import serializers
-from apps.domains.submissions.models import Submission
-from apps.infrastructure.storage.r2 
-import generate_presigned_get_urlimport mimetypes
+from __future__ import annotations
+
+import mimetypes
 import uuid
+
+from rest_framework import serializers
+
+from apps.domains.submissions.models import Submission
+
+# ✅ API 서버 전용 R2 업로드
+from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
 
 
 class SubmissionSerializer(serializers.ModelSerializer):

@@ -1,4 +1,4 @@
-# apps/worker/media/r2_uploader.py
+# apps/worker/video_worker/r2_uploader.py
 
 import boto3
 import mimetypes

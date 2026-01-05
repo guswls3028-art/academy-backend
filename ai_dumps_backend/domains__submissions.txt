@@ -357,7 +357,11 @@ __all__ = ["SubmissionSerializer", "SubmissionCreateSerializer"]
 
 from rest_framework import serializers
 from apps.domains.submissions.models import Submission
-from apps.infrastructure.storage.r2 import generate_presigned_get_urlimport mimetypes
+
+# 🔹 R2 업로드 유틸 (API 서버 전용)
+from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
+
+import mimetypes
 import uuid
 
 
