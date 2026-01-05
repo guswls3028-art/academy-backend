@@ -6,7 +6,8 @@
 
 from rest_framework import serializers
 from apps.domains.submissions.models import Submission
-from apps.infrastructure.storage.r2 import generate_presigned_get_urlimport mimetypes
+from apps.infrastructure.storage.r2 
+import generate_presigned_get_urlimport mimetypes
 import uuid
 
 
