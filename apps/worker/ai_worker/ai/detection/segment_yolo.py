@@ -7,7 +7,7 @@ from typing import List, Tuple
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 
-from apps.worker.ai.config import AIConfig
+from apps.worker.ai_worker.ai.config import AIConfig
 
 BBox = Tuple[int, int, int, int]
 

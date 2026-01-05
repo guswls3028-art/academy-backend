@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-from apps.worker.ai.config import AIConfig
-from apps.worker.ai.detection.segment_opencv import segment_questions_opencv
-from apps.worker.ai.detection.segment_yolo import segment_questions_yolo
+from apps.worker.ai_worker.ai.config import AIConfig
+from apps.worker.ai_worker.ai.detection.segment_opencv import segment_questions_opencv
+from apps.worker.ai_worker.ai.detection.segment_yolo import segment_questions_yolo
 
 BBox = Tuple[int, int, int, int]
 

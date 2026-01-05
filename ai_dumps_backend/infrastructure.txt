@@ -1,0 +1,110 @@
+====================================================================================================
+# BACKEND APP: infrastructure
+# ROOT PATH: C:\academy\apps\infrastructure
+====================================================================================================
+
+
+==========================================================================================
+# FILE: storage/__init__.py
+==========================================================================================
+# ==============================================================================
+# PATH: apps/infrastructure/storage/r2.py
+#
+# PURPOSE:
+# - API 서버 전용 R2(S3) 접근 레이어
+# - presigned GET URL 생성
+# - AI / Video 모두 "API 경유"만 허용
+#
+# RULE:
+# - worker에서 import ❌
+# - video_worker에서 import ❌
+# ==============================================================================
+
+from __future__ import annotations
+
+import boto3
+from django.conf import settings
+
+
+def _get_s3_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=settings.R2_ENDPOINT,
+        aws_access_key_id=settings.R2_ACCESS_KEY,
+        aws_secret_access_key=settings.R2_SECRET_KEY,
+        region_name="auto",
+    )
+
+
+def generate_presigned_get_url(
+    *,
+    key: str,
+    expires_in: int = 3600,
+) -> str:
+    """
+    R2 object presigned GET URL 생성
+    - API 서버에서만 사용
+    - worker는 이 URL만 소비
+    """
+    s3 = _get_s3_client()
+    return s3.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": settings.R2_BUCKET,
+            "Key": key,
+        },
+        ExpiresIn=expires_in,
+    )
+
+
+==========================================================================================
+# FILE: storage/r2.py
+==========================================================================================
+# ==============================================================================
+# PATH: apps/infrastructure/storage/r2.py
+#
+# PURPOSE:
+# - API 서버 전용 R2(S3) 접근 레이어
+# - presigned GET URL 생성
+# - AI / Video 모두 "API 경유"만 허용
+#
+# RULE:
+# - worker에서 import ❌
+# - video_worker에서 import ❌
+# ==============================================================================
+
+from __future__ import annotations
+
+import boto3
+from django.conf import settings
+
+
+def _get_s3_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=settings.R2_ENDPOINT,
+        aws_access_key_id=settings.R2_ACCESS_KEY,
+        aws_secret_access_key=settings.R2_SECRET_KEY,
+        region_name="auto",
+    )
+
+
+def generate_presigned_get_url(
+    *,
+    key: str,
+    expires_in: int = 3600,
+) -> str:
+    """
+    R2 object presigned GET URL 생성
+    - API 서버에서만 사용
+    - worker는 이 URL만 소비
+    """
+    s3 = _get_s3_client()
+    return s3.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": settings.R2_BUCKET,
+            "Key": key,
+        },
+        ExpiresIn=expires_in,
+    )

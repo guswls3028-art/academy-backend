@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Sequence, Literal
 import math
 
-from apps.worker.ai.config import AIConfig
+from apps.worker.ai_worker.ai.config import AIConfig
 
 EmbeddingBackendName = Literal["local", "openai"]
 

@@ -225,19 +225,22 @@ __all__ = [
 ==========================================================================================
 # FILE: models/submission.py
 ==========================================================================================
-# apps/domains/submissions/models/submission.py
+# PATH: apps/domains/submissions/models/submission.py
+# 변경 요약:
+# - FileField 제거
+# - R2 기반 file_key / file_type 필드 추가
+
 from __future__ import annotations
 
 from django.db import models
 from django.conf import settings
-
 from apps.api.common.models import TimestampModel
 
 
 class Submission(TimestampModel):
     """
-    submissions = "제출 행위 + 원본 보관"
-    - 계산/채점/정답비교 금지
+    submissions = 제출 행위 + 원본 메타
+    - 파일은 Object Storage(R2)에만 존재
     """
 
     class TargetType(models.TextChoices):
@@ -245,22 +248,19 @@ class Submission(TimestampModel):
         HOMEWORK = "homework", "Homework"
 
     class Source(models.TextChoices):
-        # 시험
         OMR_SCAN = "omr_scan", "OMR Scan"
         OMR_MANUAL = "omr_manual", "OMR Manual Input"
         ONLINE = "online", "Online"
-        # 숙제
         HOMEWORK_IMAGE = "homework_image", "Homework Image"
         HOMEWORK_VIDEO = "homework_video", "Homework Video"
-        # 기타
         AI_MATCH = "ai_match", "AI Image Match"
 
     class Status(models.TextChoices):
         SUBMITTED = "submitted", "Submitted"
-        DISPATCHED = "dispatched", "Dispatched"            # AI job publish 완료
-        EXTRACTING = "extracting", "Extracting"            # (선택) worker 처리중 표현
-        ANSWERS_READY = "answers_ready", "Answers Ready"   # SubmissionAnswer 저장 완료
-        GRADING = "grading", "Grading"                     # results 채점 job 처리 중
+        DISPATCHED = "dispatched", "Dispatched"
+        EXTRACTING = "extracting", "Extracting"
+        ANSWERS_READY = "answers_ready", "Answers Ready"
+        GRADING = "grading", "Grading"
         DONE = "done", "Done"
         FAILED = "failed", "Failed"
 
@@ -270,7 +270,6 @@ class Submission(TimestampModel):
         related_name="submissions",
     )
 
-    # ✅ A안: enrollment_id 추가 (FK 강제 X)
     enrollment_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
 
     target_type = models.CharField(max_length=20, choices=TargetType.choices)
@@ -278,11 +277,10 @@ class Submission(TimestampModel):
 
     source = models.CharField(max_length=30, choices=Source.choices)
 
-    file = models.FileField(
-        upload_to="submissions/%Y/%m/%d/",
-        null=True,
-        blank=True,
-    )
+    # ✅ R2 기준 파일 메타
+    file_key = models.CharField(max_length=512, null=True, blank=True)
+    file_type = models.CharField(max_length=50, null=True, blank=True)
+    file_size = models.PositiveIntegerField(null=True, blank=True)
 
     payload = models.JSONField(null=True, blank=True)
 
@@ -302,12 +300,6 @@ class Submission(TimestampModel):
             models.Index(fields=["status"]),
             models.Index(fields=["source"]),
         ]
-
-    def __str__(self) -> str:
-        return (
-            f"Submission({self.id}) {self.target_type}:{self.target_id} "
-            f"source={self.source} by user={self.user_id}"
-        )
 
 
 ==========================================================================================
@@ -357,9 +349,16 @@ __all__ = ["SubmissionSerializer", "SubmissionCreateSerializer"]
 ==========================================================================================
 # FILE: serializers/submission.py
 ==========================================================================================
-# apps/domains/submissions/serializers/submission.py
+# PATH: apps/domains/submissions/serializers/submission.py
+# 변경 요약:
+# - file(FileField) 제거
+# - 업로드된 파일을 R2로 즉시 업로드
+# - file_key/file_type/file_size 저장
+
 from rest_framework import serializers
 from apps.domains.submissions.models import Submission
+from apps.infrastructure.storage.r2 import generate_presigned_get_urlimport mimetypes
+import uuid
 
 
 class SubmissionSerializer(serializers.ModelSerializer):
@@ -378,6 +377,8 @@ class SubmissionSerializer(serializers.ModelSerializer):
 
 
 class SubmissionCreateSerializer(serializers.ModelSerializer):
+    file = serializers.FileField(required=False)
+
     class Meta:
         model = Submission
         fields = (
@@ -393,10 +394,9 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
         source = attrs.get("source")
         target_type = attrs.get("target_type")
 
-        # enrollment_id는 grading에 필요하므로 강제(시험/숙제 공통)
         if target_type in (Submission.TargetType.EXAM, Submission.TargetType.HOMEWORK):
             if not attrs.get("enrollment_id"):
-                raise serializers.ValidationError({"enrollment_id": "enrollment_id is required"})
+                raise serializers.ValidationError({"enrollment_id": "required"})
 
         if source in (
             Submission.Source.OMR_SCAN,
@@ -404,13 +404,34 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
             Submission.Source.HOMEWORK_VIDEO,
         ):
             if not attrs.get("file"):
-                raise serializers.ValidationError({"file": "해당 source는 file 업로드가 필요합니다."})
+                raise serializers.ValidationError({"file": "file required"})
 
-        if source == Submission.Source.ONLINE:
-            if not attrs.get("payload"):
-                raise serializers.ValidationError({"payload": "온라인 제출은 payload가 필요합니다."})
+        if source == Submission.Source.ONLINE and not attrs.get("payload"):
+            raise serializers.ValidationError({"payload": "required"})
 
         return attrs
+
+    def create(self, validated_data):
+        upload_file = validated_data.pop("file", None)
+
+        submission = Submission.objects.create(**validated_data)
+
+        if upload_file:
+            ext = upload_file.name.split(".")[-1]
+            key = f"submissions/{submission.id}/{uuid.uuid4().hex}.{ext}"
+
+            upload_fileobj_to_r2(
+                fileobj=upload_file,
+                key=key,
+                content_type=upload_file.content_type,
+            )
+
+            submission.file_key = key
+            submission.file_type = upload_file.content_type or mimetypes.guess_type(upload_file.name)[0]
+            submission.file_size = upload_file.size
+            submission.save(update_fields=["file_key", "file_type", "file_size"])
+
+        return submission
 
 
 ==========================================================================================
@@ -426,50 +447,62 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
+import logging
 
 from django.db import transaction
 
 from apps.domains.submissions.models import Submission, SubmissionAnswer
+
+logger = logging.getLogger(__name__)
 
 
 @transaction.atomic
 def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     """
     Worker AI 결과를 submissions에 반영.
-
-    지원 스키마:
-    1) 답안형(items):
-      {
-        "submission_id": int,
-        "items": [{"question_id":int,"answer":str,"meta":dict?}, ...]
-      }
-      -> SubmissionAnswer upsert + status=ANSWERS_READY + submission.id 반환
-
-    2) OMR형(v1):
-      {
-        "submission_id": int,
-        "version": "v1",
-        "answers": [ {version, question_id, detected, marking, confidence, status, raw?}, ... ]
-      }
-      -> SubmissionAnswer upsert(meta["omr"]=answer_payload) + status=ANSWERS_READY + submission.id 반환
-
-    3) 분석형(채점 없음):
-      {"submission_id": int, "analysis": {...}}
-      -> meta["analysis"] 저장 + (HOMEWORK이면) status=DONE + None 반환
     """
     submission_id = payload.get("submission_id")
     if not submission_id:
         return None
 
-    submission = Submission.objects.select_for_update().get(id=int(submission_id))
+    # ✅ 보호패치: submission 없으면 DROP
+    try:
+        submission = Submission.objects.select_for_update().get(
+            id=int(submission_id)
+        )
+    except Submission.DoesNotExist:
+        logger.warning(
+            "[AI_RESULT] submission %s not found. result dropped.",
+            submission_id,
+        )
+        return None
 
-    # 결과 원본 저장(디버그/추적용)
+    # ✅ 결과 원본 저장 (항상)
     base_payload = submission.payload or {}
     base_payload["ai_result"] = payload
     submission.payload = base_payload
 
+    status = payload.get("status")
+    error = payload.get("error")
+
+    # ✅ FAILED 결과 즉시 처리
+    if status == "FAILED":
+        submission.status = Submission.Status.FAILED
+        submission.error_message = error or "AI worker failed"
+        submission.save(
+            update_fields=[
+                "payload",
+                "status",
+                "error_message",
+                "updated_at",
+            ]
+        )
+        return submission.id
+
+    # =========================
     # 1) items 답안형
-    items = payload.get("items")
+    # =========================
+    items = payload.get("result", {}).get("items")
     if isinstance(items, list) and items:
         for item in items:
             qid = item.get("question_id")
@@ -489,14 +522,28 @@ def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         submission.error_message = ""
         meta = submission.meta or {}
         meta["answers_ready"] = True
-        meta["answer_count"] = SubmissionAnswer.objects.filter(submission=submission).count()
+        meta["answer_count"] = SubmissionAnswer.objects.filter(
+            submission=submission
+        ).count()
         submission.meta = meta
-        submission.save(update_fields=["payload", "status", "error_message", "meta", "updated_at"])
+        submission.save(
+            update_fields=[
+                "payload",
+                "status",
+                "error_message",
+                "meta",
+                "updated_at",
+            ]
+        )
         return submission.id
 
+    # =========================
     # 2) OMR v1 형식
-    answers = payload.get("answers")
-    version = payload.get("version")
+    # =========================
+    result = payload.get("result") or {}
+    answers = result.get("answers")
+    version = result.get("version")
+
     if version and isinstance(answers, list) and answers:
         for a in answers:
             qid = (a or {}).get("question_id")
@@ -504,15 +551,18 @@ def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
                 continue
 
             detected = (a or {}).get("detected") or []
-            # 사람이 읽기 쉬운 answer 문자열(예: "B" / "BD")
-            ans_text = "".join([str(x).strip().upper() for x in detected]) if isinstance(detected, list) else ""
+            ans_text = (
+                "".join([str(x).strip().upper() for x in detected])
+                if isinstance(detected, list)
+                else ""
+            )
 
             SubmissionAnswer.objects.update_or_create(
                 submission=submission,
                 question_id=int(qid),
                 defaults={
                     "answer": ans_text,
-                    "meta": {"omr": a},  # ✅ results.grader가 meta["omr"]를 읽는다
+                    "meta": {"omr": a},
                 },
             )
 
@@ -520,14 +570,26 @@ def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         submission.error_message = ""
         meta = submission.meta or {}
         meta["answers_ready"] = True
-        meta["answer_count"] = SubmissionAnswer.objects.filter(submission=submission).count()
+        meta["answer_count"] = SubmissionAnswer.objects.filter(
+            submission=submission
+        ).count()
         meta["omr_version"] = str(version)
         submission.meta = meta
-        submission.save(update_fields=["payload", "status", "error_message", "meta", "updated_at"])
+        submission.save(
+            update_fields=[
+                "payload",
+                "status",
+                "error_message",
+                "meta",
+                "updated_at",
+            ]
+        )
         return submission.id
 
+    # =========================
     # 3) 분석형
-    analysis = payload.get("analysis")
+    # =========================
+    analysis = result.get("analysis")
     if analysis is not None:
         meta = submission.meta or {}
         meta["analysis"] = analysis
@@ -536,7 +598,14 @@ def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         if submission.target_type == Submission.TargetType.HOMEWORK:
             submission.status = Submission.Status.DONE
 
-        submission.save(update_fields=["payload", "meta", "status", "updated_at"])
+        submission.save(
+            update_fields=[
+                "payload",
+                "meta",
+                "status",
+                "updated_at",
+            ]
+        )
         return None
 
     submission.save(update_fields=["payload", "updated_at"])
@@ -549,31 +618,45 @@ def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
 # apps/domains/submissions/services/dispatcher.py
 from __future__ import annotations
 
+import redis
+from django.conf import settings
+
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.submission_service import SubmissionService
 from apps.domains.results.tasks.grading_tasks import grade_submission_task
-
 from apps.shared.contracts.ai_job import AIJob
-from apps.shared.contracts.ai_result import AIResult
-from apps.shared.tasks.ai_worker import run_ai_job_task
-from apps.domains.submissions.services.ai_result_mapper import apply_ai_result
 
+# ⭐ STEP 2: presigned URL 생성 유틸
+from apps.infrastructure.storage.r2 import generate_presigned_get_url
+
+# ---------------------------------------------------------------------
+# Redis AI Queue
+# ---------------------------------------------------------------------
+
+AI_QUEUE_KEY = "ai:jobs"
+
+
+def _redis():
+    return redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+# ---------------------------------------------------------------------
+# Public Entry
+# ---------------------------------------------------------------------
 
 def dispatch_submission(submission: Submission) -> None:
     """
-    Submission 생성 직후 호출되는 단일 진입점.
+    Submission 생성 직후 호출되는 단일 진입점 (STEP 2 확정판)
 
-    - ONLINE:
-        - submissions 내부 처리
-        - grading 바로 enqueue
-    - FILE 기반:
-        - AI Job 생성 → ai worker celery
-        - (MVP) 동기 결과 수신
-        - 결과 반영 → grading enqueue
-
-    ⚠️ MVP ONLY
-    - async_result.get()은 API worker를 block함
-    - 추후 callback / polling 구조로 교체 예정
+    역할:
+    - ONLINE 제출:
+        - 즉시 처리 (정규화)
+        - 채점 task enqueue
+    - FILE 제출:
+        - R2에 저장된 file_key 존재 여부만 검증
+        - presigned GET URL 생성
+        - AIJob enqueue
+        - 파일 접근/다운로드는 worker 책임
     """
 
     # 1️⃣ ONLINE 제출
@@ -582,18 +665,19 @@ def dispatch_submission(submission: Submission) -> None:
         grade_submission_task.delay(int(submission.id))
         return
 
-    # 2️⃣ FILE 기반 제출
-    if not submission.file:
+    # 2️⃣ FILE 제출 (R2 기준)
+    if not submission.file_key:
         submission.status = Submission.Status.FAILED
-        submission.error_message = "file is required"
+        submission.error_message = "file_key missing"
         submission.save(update_fields=["status", "error_message"])
         return
 
+    # 상태 전이: DISPATCHED
     submission.status = Submission.Status.DISPATCHED
     submission.error_message = ""
     submission.save(update_fields=["status", "error_message"])
 
-    # 3️⃣ AI Job 생성
+    # 3️⃣ AI Job 생성 (STEP 2: presigned URL 포함)
     job = AIJob.new(
         type=_infer_ai_job_type(submission),
         payload=_build_ai_payload(submission),
@@ -601,36 +685,9 @@ def dispatch_submission(submission: Submission) -> None:
         source_id=str(submission.id),
     )
 
-    # 4️⃣ AI Worker 실행 (MVP: 동기 대기)
-    async_result = run_ai_job_task.delay(job.to_dict())
-
-    try:
-        result_dict = async_result.get(timeout=120)
-    except Exception as e:
-        submission.status = Submission.Status.FAILED
-        submission.error_message = f"AI timeout or error: {e}"
-        submission.save(update_fields=["status", "error_message"])
-        return
-
-    ai_result = AIResult.from_dict(result_dict)
-
-    if ai_result.status != "DONE":
-        submission.status = Submission.Status.FAILED
-        submission.error_message = ai_result.error or "AI failed"
-        submission.save(update_fields=["status", "error_message"])
-        return
-
-    # 5️⃣ AI 결과 반영
-    returned_submission_id = apply_ai_result(
-        {
-            **ai_result.result,
-            "submission_id": submission.id,
-        }
-    )
-
-    # 6️⃣ 채점 enqueue
-    if returned_submission_id:
-        grade_submission_task.delay(returned_submission_id)
+    # 4️⃣ Redis enqueue
+    r = _redis()
+    r.lpush(AI_QUEUE_KEY, job.to_json())
 
 
 # ---------------------------------------------------------------------
@@ -649,22 +706,30 @@ def _infer_ai_job_type(submission: Submission) -> str:
 
 def _build_ai_payload(submission: Submission) -> dict:
     """
-    Worker는 DB를 모르므로 path / 최소 정보만 전달
+    STEP 2 payload 규칙 (🔥 중요)
+
+    - 로컬 파일 경로(.path) ❌ 절대 사용 금지
+    - R2 presigned GET URL만 전달
+    - worker는 download_url → /tmp 저장 후 처리
     """
     payload = dict(submission.payload or {})
 
-    if not submission.file:
-        return payload
+    # ⭐ presigned GET URL 생성
+    download_url = generate_presigned_get_url(
+        key=submission.file_key,
+        expires_in=60 * 60,  # 1시간
+    )
 
-    if submission.source == Submission.Source.HOMEWORK_VIDEO:
-        payload["video_path"] = submission.file.path
+    payload.update(
+        {
+            # 메타 정보
+            "file_key": submission.file_key,
+            "file_type": submission.file_type,
 
-    else:
-        payload["image_path"] = submission.file.path
-
-        # ✅ OMR 필수 payload (이거 없으면 결과 0개 나옴)
-        if submission.source == Submission.Source.OMR_SCAN:
-            payload["questions"] = payload.get("questions", [])
+            # ⭐ worker 전용 파일 접근 수단
+            "download_url": download_url,
+        }
+    )
 
     return payload
 

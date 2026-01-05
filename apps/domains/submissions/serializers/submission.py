@@ -1,6 +1,13 @@
-# apps/domains/submissions/serializers/submission.py
+# PATH: apps/domains/submissions/serializers/submission.py
+# 변경 요약:
+# - file(FileField) 제거
+# - 업로드된 파일을 R2로 즉시 업로드
+# - file_key/file_type/file_size 저장
+
 from rest_framework import serializers
 from apps.domains.submissions.models import Submission
+from apps.infrastructure.storage.r2 import generate_presigned_get_urlimport mimetypes
+import uuid
 
 
 class SubmissionSerializer(serializers.ModelSerializer):
@@ -19,6 +26,8 @@ class SubmissionSerializer(serializers.ModelSerializer):
 
 
 class SubmissionCreateSerializer(serializers.ModelSerializer):
+    file = serializers.FileField(required=False)
+
     class Meta:
         model = Submission
         fields = (
@@ -34,10 +43,9 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
         source = attrs.get("source")
         target_type = attrs.get("target_type")
 
-        # enrollment_id는 grading에 필요하므로 강제(시험/숙제 공통)
         if target_type in (Submission.TargetType.EXAM, Submission.TargetType.HOMEWORK):
             if not attrs.get("enrollment_id"):
-                raise serializers.ValidationError({"enrollment_id": "enrollment_id is required"})
+                raise serializers.ValidationError({"enrollment_id": "required"})
 
         if source in (
             Submission.Source.OMR_SCAN,
@@ -45,10 +53,31 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
             Submission.Source.HOMEWORK_VIDEO,
         ):
             if not attrs.get("file"):
-                raise serializers.ValidationError({"file": "해당 source는 file 업로드가 필요합니다."})
+                raise serializers.ValidationError({"file": "file required"})
 
-        if source == Submission.Source.ONLINE:
-            if not attrs.get("payload"):
-                raise serializers.ValidationError({"payload": "온라인 제출은 payload가 필요합니다."})
+        if source == Submission.Source.ONLINE and not attrs.get("payload"):
+            raise serializers.ValidationError({"payload": "required"})
 
         return attrs
+
+    def create(self, validated_data):
+        upload_file = validated_data.pop("file", None)
+
+        submission = Submission.objects.create(**validated_data)
+
+        if upload_file:
+            ext = upload_file.name.split(".")[-1]
+            key = f"submissions/{submission.id}/{uuid.uuid4().hex}.{ext}"
+
+            upload_fileobj_to_r2(
+                fileobj=upload_file,
+                key=key,
+                content_type=upload_file.content_type,
+            )
+
+            submission.file_key = key
+            submission.file_type = upload_file.content_type or mimetypes.guess_type(upload_file.name)[0]
+            submission.file_size = upload_file.size
+            submission.save(update_fields=["file_key", "file_type", "file_size"])
+
+        return submission

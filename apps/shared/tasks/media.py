@@ -13,9 +13,9 @@ from django.conf import settings
 from django.db import transaction
 
 from libs.s3_client.presign import create_presigned_get_url
-from apps.worker.media.video.processor import run as run_processor
-from apps.worker.media.video.processor import MediaProcessingError
-from apps.worker.media.r2_uploader import upload_dir
+from apps.worker.video_worker.video.processor import run as run_processor
+from apps.worker.video_worker.video.processor import MediaProcessingError
+from apps.worker.video_worker.r2_uploader import upload_dir
 
 logger = logging.getLogger(__name__)
 

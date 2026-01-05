@@ -9,6 +9,8 @@ from apps.domains.submissions.services.submission_service import SubmissionServi
 from apps.domains.results.tasks.grading_tasks import grade_submission_task
 from apps.shared.contracts.ai_job import AIJob
 
+# ⭐ STEP 2: presigned URL 생성 유틸
+from apps.infrastructure.storage.r2 import generate_presigned_get_url
 
 # ---------------------------------------------------------------------
 # Redis AI Queue
@@ -27,15 +29,17 @@ def _redis():
 
 def dispatch_submission(submission: Submission) -> None:
     """
-    Submission 생성 직후 호출되는 단일 진입점 (확정판)
+    Submission 생성 직후 호출되는 단일 진입점 (STEP 2 확정판)
 
     역할:
-    - ONLINE 제출: 즉시 처리 + 채점
+    - ONLINE 제출:
+        - 즉시 처리 (정규화)
+        - 채점 task enqueue
     - FILE 제출:
-        - AIJob 생성
-        - Redis AI Queue enqueue
-        - 여기서는 결과 대기 ❌
-        - 결과 반영/채점은 AI Worker → API 콜백에서 처리
+        - R2에 저장된 file_key 존재 여부만 검증
+        - presigned GET URL 생성
+        - AIJob enqueue
+        - 파일 접근/다운로드는 worker 책임
     """
 
     # 1️⃣ ONLINE 제출
@@ -44,10 +48,10 @@ def dispatch_submission(submission: Submission) -> None:
         grade_submission_task.delay(int(submission.id))
         return
 
-    # 2️⃣ FILE 기반 제출 (AI 필요)
-    if not submission.file:
+    # 2️⃣ FILE 제출 (R2 기준)
+    if not submission.file_key:
         submission.status = Submission.Status.FAILED
-        submission.error_message = "file is required"
+        submission.error_message = "file_key missing"
         submission.save(update_fields=["status", "error_message"])
         return
 
@@ -56,7 +60,7 @@ def dispatch_submission(submission: Submission) -> None:
     submission.error_message = ""
     submission.save(update_fields=["status", "error_message"])
 
-    # 3️⃣ AI Job 생성 (Contract only)
+    # 3️⃣ AI Job 생성 (STEP 2: presigned URL 포함)
     job = AIJob.new(
         type=_infer_ai_job_type(submission),
         payload=_build_ai_payload(submission),
@@ -64,7 +68,7 @@ def dispatch_submission(submission: Submission) -> None:
         source_id=str(submission.id),
     )
 
-    # 4️⃣ Redis enqueue (🔥 핵심)
+    # 4️⃣ Redis enqueue
     r = _redis()
     r.lpush(AI_QUEUE_KEY, job.to_json())
 
@@ -85,24 +89,29 @@ def _infer_ai_job_type(submission: Submission) -> str:
 
 def _build_ai_payload(submission: Submission) -> dict:
     """
-    Worker는 DB를 모르므로
-    - file path
-    - 최소 메타(payload)
-    만 전달
+    STEP 2 payload 규칙 (🔥 중요)
+
+    - 로컬 파일 경로(.path) ❌ 절대 사용 금지
+    - R2 presigned GET URL만 전달
+    - worker는 download_url → /tmp 저장 후 처리
     """
     payload = dict(submission.payload or {})
 
-    if not submission.file:
-        return payload
+    # ⭐ presigned GET URL 생성
+    download_url = generate_presigned_get_url(
+        key=submission.file_key,
+        expires_in=60 * 60,  # 1시간
+    )
 
-    if submission.source == Submission.Source.HOMEWORK_VIDEO:
-        payload["video_path"] = submission.file.path
+    payload.update(
+        {
+            # 메타 정보
+            "file_key": submission.file_key,
+            "file_type": submission.file_type,
 
-    else:
-        payload["image_path"] = submission.file.path
-
-        # OMR 필수 payload
-        if submission.source == Submission.Source.OMR_SCAN:
-            payload["questions"] = payload.get("questions", [])
+            # ⭐ worker 전용 파일 접근 수단
+            "download_url": download_url,
+        }
+    )
 
     return payload

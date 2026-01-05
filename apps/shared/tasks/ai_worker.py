@@ -5,7 +5,7 @@
 
 # from apps.shared.contracts.ai_job import AIJob
 # from apps.shared.contracts.ai_result import AIResult
-# from apps.worker.ai.pipelines.dispatcher import handle_ai_job
+# from apps.worker.ai_worker.ai.pipelines.dispatcher import handle_ai_job
 
 
 # @shared_task(

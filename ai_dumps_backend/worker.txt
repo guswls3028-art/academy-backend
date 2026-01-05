@@ -13,14 +13,143 @@
 
 
 ==========================================================================================
-# FILE: ai/__init__.py
+# FILE: ai_worker/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: ai_worker/run.py
+==========================================================================================
+# apps/worker/run.py
+from __future__ import annotations
+
+import os
+import sys
+import time
+import signal
+import logging
+import requests
+
+from apps.shared.contracts.ai_job import AIJob
+from apps.shared.contracts.ai_result import AIResult
+from apps.worker.ai_worker.ai.pipelines.dispatcher import handle_ai_job
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] [AI-WORKER] %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "long-random-secret")
+POLL_INTERVAL_SEC = float(os.getenv("AI_WORKER_POLL_INTERVAL", "1.0"))
+
+_running = True
+
+
+def _shutdown(signum, frame):
+    global _running
+    logger.warning("Shutdown signal received (%s)", signum)
+    _running = False
+
+
+signal.signal(signal.SIGINT, _shutdown)
+signal.signal(signal.SIGTERM, _shutdown)
+
+
+def fetch_job() -> AIJob | None:
+    """
+    API → Worker
+    GET /api/v1/internal/ai/job/next/
+    response: { "job": {...} | null }
+    """
+    url = f"{API_BASE_URL}/api/v1/internal/ai/job/next/"
+    headers = {"X-Worker-Token": INTERNAL_WORKER_TOKEN}
+
+    resp = requests.get(url, headers=headers, timeout=10)
+    resp.raise_for_status()
+
+    data = resp.json()
+    job_data = data.get("job")
+    if not job_data:
+        return None
+
+    return AIJob.from_dict(job_data)
+
+
+def submit_result(result: AIResult, submission_id: int) -> None:
+    """
+    Worker → API
+    POST /api/v1/internal/ai/job/result/
+    """
+    url = f"{API_BASE_URL}/api/v1/internal/ai/job/result/"
+    headers = {
+        "X-Worker-Token": INTERNAL_WORKER_TOKEN,
+        "Content-Type": "application/json",
+    }
+
+    # ✅ 구조 고정 (중요)
+    payload = {
+        "submission_id": submission_id,
+        "status": result.status,
+        "result": result.result,
+        "error": result.error,
+    }
+
+    resp = requests.post(
+        url,
+        json=payload,
+        headers=headers,
+        timeout=20,
+    )
+    resp.raise_for_status()
+
+
+def main():
+    logger.info("AI Worker started")
+
+    while _running:
+        try:
+            job = fetch_job()
+            if job is None:
+                time.sleep(POLL_INTERVAL_SEC)
+                continue
+
+            logger.info("Job received: id=%s type=%s", job.id, job.type)
+
+            # 🔥 AI 처리
+            result = handle_ai_job(job)
+
+            # 🔥 결과 전송 (submission_id = job.source_id)
+            submit_result(result, int(job.source_id))
+
+            logger.info(
+                "Job finished: id=%s status=%s",
+                job.id,
+                result.status,
+            )
+
+        except Exception:
+            logger.exception("Worker loop error")
+            time.sleep(2.0)
+
+    logger.info("AI Worker shutdown complete")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+==========================================================================================
+# FILE: ai_worker/ai/__init__.py
 ==========================================================================================
 # apps/worker/ai/__init__.py
 # Celery 제거됨. run.py 단일 진입
 
 
 ==========================================================================================
-# FILE: ai/config.py
+# FILE: ai_worker/ai/config.py
 ==========================================================================================
 # apps/worker/ai/config.py
 from __future__ import annotations
@@ -85,23 +214,23 @@ class AIConfig:
 
 
 ==========================================================================================
-# FILE: ai/detection/__init__.py
+# FILE: ai_worker/ai/detection/__init__.py
 ==========================================================================================
 # apps/worker/ai/detection/__init__.py
 from __future__ import annotations
 
 
 ==========================================================================================
-# FILE: ai/detection/segment_dispatcher.py
+# FILE: ai_worker/ai/detection/segment_dispatcher.py
 ==========================================================================================
 # apps/worker/ai/detection/segment_dispatcher.py
 from __future__ import annotations
 
 from typing import List, Tuple
 
-from apps.worker.ai.config import AIConfig
-from apps.worker.ai.detection.segment_opencv import segment_questions_opencv
-from apps.worker.ai.detection.segment_yolo import segment_questions_yolo
+from apps.worker.ai_worker.ai.config import AIConfig
+from apps.worker.ai_worker.ai.detection.segment_opencv import segment_questions_opencv
+from apps.worker.ai_worker.ai.detection.segment_yolo import segment_questions_yolo
 
 BBox = Tuple[int, int, int, int]
 
@@ -129,7 +258,7 @@ def segment_questions(image_path: str) -> List[BBox]:
 
 
 ==========================================================================================
-# FILE: ai/detection/segment_opencv.py
+# FILE: ai_worker/ai/detection/segment_opencv.py
 ==========================================================================================
 # apps/worker/ai/detection/segment_opencv.py
 from __future__ import annotations
@@ -186,7 +315,7 @@ def segment_questions_opencv(image_path: str) -> List[BBox]:
 
 
 ==========================================================================================
-# FILE: ai/detection/segment_yolo.py
+# FILE: ai_worker/ai/detection/segment_yolo.py
 ==========================================================================================
 # apps/worker/ai/detection/segment_yolo.py
 from __future__ import annotations
@@ -197,7 +326,7 @@ from typing import List, Tuple
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 
-from apps.worker.ai.config import AIConfig
+from apps.worker.ai_worker.ai.config import AIConfig
 
 BBox = Tuple[int, int, int, int]
 
@@ -327,14 +456,14 @@ def segment_questions_yolo(image_path: str) -> List[BBox]:
 
 
 ==========================================================================================
-# FILE: ai/embedding/__init__.py
+# FILE: ai_worker/ai/embedding/__init__.py
 ==========================================================================================
 # apps/worker/ai/embedding/__init__.py
 from __future__ import annotations
 
 
 ==========================================================================================
-# FILE: ai/embedding/service.py
+# FILE: ai_worker/ai/embedding/service.py
 ==========================================================================================
 # apps/worker/ai/embedding/service.py
 from __future__ import annotations
@@ -343,7 +472,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Sequence, Literal
 import math
 
-from apps.worker.ai.config import AIConfig
+from apps.worker.ai_worker.ai.config import AIConfig
 
 EmbeddingBackendName = Literal["local", "openai"]
 
@@ -473,14 +602,14 @@ def get_embeddings(texts: List[str]) -> EmbeddingBatch:
 
 
 ==========================================================================================
-# FILE: ai/handwriting/__init__.py
+# FILE: ai_worker/ai/handwriting/__init__.py
 ==========================================================================================
 # apps/worker/ai/handwriting/__init__.py
 from __future__ import annotations
 
 
 ==========================================================================================
-# FILE: ai/handwriting/detector.py
+# FILE: ai_worker/ai/handwriting/detector.py
 ==========================================================================================
 # apps/worker/ai/handwriting/detector.py
 from __future__ import annotations
@@ -524,20 +653,20 @@ def analyze_handwriting(image_path: str) -> Dict[str, float]:
 
 
 ==========================================================================================
-# FILE: ai/homework/__init__.py
+# FILE: ai_worker/ai/homework/__init__.py
 ==========================================================================================
 
 
 
 ==========================================================================================
-# FILE: ai/ocr/__init__.py
+# FILE: ai_worker/ai/ocr/__init__.py
 ==========================================================================================
 # apps/worker/ai/ocr/__init__.py
 from __future__ import annotations
 
 
 ==========================================================================================
-# FILE: ai/ocr/engine.py
+# FILE: ai_worker/ai/ocr/engine.py
 ==========================================================================================
 from __future__ import annotations
 from typing import List
@@ -579,7 +708,7 @@ def run_ocr_engine(
 
 
 ==========================================================================================
-# FILE: ai/ocr/google.py
+# FILE: ai_worker/ai/ocr/google.py
 ==========================================================================================
 # apps/worker/ai/ocr/google.py
 from __future__ import annotations
@@ -626,7 +755,7 @@ def google_ocr(image_path: str) -> OCRResult:
 
 
 ==========================================================================================
-# FILE: ai/ocr/schemas.py
+# FILE: ai_worker/ai/ocr/schemas.py
 ==========================================================================================
 from __future__ import annotations
 from typing import TypedDict, List, Optional
@@ -647,7 +776,7 @@ class OCRResultPayload(TypedDict):
 
 
 ==========================================================================================
-# FILE: ai/ocr/tesseract.py
+# FILE: ai_worker/ai/ocr/tesseract.py
 ==========================================================================================
 # apps/worker/ai/ocr/tesseract.py
 from __future__ import annotations
@@ -680,13 +809,13 @@ def tesseract_ocr(image_path: str) -> OCRResult:
 
 
 ==========================================================================================
-# FILE: ai/omr/__init__.py
+# FILE: ai_worker/ai/omr/__init__.py
 ==========================================================================================
 
 
 
 ==========================================================================================
-# FILE: ai/omr/engine.py
+# FILE: ai_worker/ai/omr/engine.py
 ==========================================================================================
 # apps/worker/ai/omr/engine.py
 from __future__ import annotations
@@ -697,7 +826,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 
-from apps.worker.ai.omr.types import OMRAnswerV1
+from apps.worker.ai_worker.ai.omr.types import OMRAnswerV1
 
 
 # ------------------------------------------------------------
@@ -926,7 +1055,7 @@ def detect_omr_answers_v1(
 
 
 ==========================================================================================
-# FILE: ai/omr/types.py
+# FILE: ai_worker/ai/omr/types.py
 ==========================================================================================
 # apps/worker/ai/omr/types.py
 from __future__ import annotations
@@ -975,14 +1104,14 @@ class OMRAnswerV1:
 
 
 ==========================================================================================
-# FILE: ai/pipelines/__init__.py
+# FILE: ai_worker/ai/pipelines/__init__.py
 ==========================================================================================
 # apps/worker/ai/pipelines/__init__.py
 from __future__ import annotations
 
 
 ==========================================================================================
-# FILE: ai/pipelines/dispatcher.py
+# FILE: ai_worker/ai/pipelines/dispatcher.py
 ==========================================================================================
 # apps/worker/ai/pipelines/dispatcher.py
 from __future__ import annotations
@@ -992,61 +1121,81 @@ from typing import Any, Dict
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
 
-from apps.worker.ai.config import AIConfig
-from apps.worker.ai.ocr.google import google_ocr
-from apps.worker.ai.ocr.tesseract import tesseract_ocr
-from apps.worker.ai.detection.segment_dispatcher import segment_questions
-from apps.worker.ai.handwriting.detector import analyze_handwriting
-from apps.worker.ai.embedding.service import get_embeddings
-from apps.worker.ai.problem.generator import generate_problem_from_ocr
-from apps.worker.ai.pipelines.homework_video_analyzer import analyze_homework_video
+from apps.worker.ai_worker.ai.config import AIConfig
+from apps.worker.ai_worker.ai.ocr.google import google_ocr
+from apps.worker.ai_worker.ai.ocr.tesseract import tesseract_ocr
+from apps.worker.ai_worker.ai.detection.segment_dispatcher import segment_questions
+from apps.worker.ai_worker.ai.handwriting.detector import analyze_handwriting
+from apps.worker.ai_worker.ai.embedding.service import get_embeddings
+from apps.worker.ai_worker.ai.problem.generator import generate_problem_from_ocr
+from apps.worker.ai_worker.ai.pipelines.homework_video_analyzer import analyze_homework_video
+from apps.worker.storage.downloader import download_to_tmp
 
 
 def handle_ai_job(job: AIJob) -> AIResult:
     """
-    Worker-side single entrypoint:
-      AIJob -> AIResult
+    Worker-side single entrypoint (STEP 2 확정판)
 
-    - 저장하지 않음
-    - 도메인 규칙 판단하지 않음
-    - 필요한 계산만 수행하고 결과를 result payload로 반환
+    규칙:
+    - worker는 R2 credential 없음
+    - payload["download_url"]만 신뢰
+    - presigned URL → /tmp 다운로드 → local_path 사용
     """
     try:
         cfg = AIConfig.load()
         payload: Dict[str, Any] = job.payload or {}
 
+        # 🔥 STEP 2 핵심: presigned GET URL → local file
+        download_url = payload.get("download_url")
+        if not download_url:
+            return AIResult.failed(job.id, "download_url missing")
+
+        local_path = download_to_tmp(
+            download_url=download_url,
+            job_id=str(job.id),
+        )
+
+        # --------------------------------------------------
+        # OCR
+        # --------------------------------------------------
         if job.type == "ocr":
-            image_path = payload["image_path"]
             engine = (payload.get("engine") or cfg.OCR_ENGINE or "auto").lower()
 
             if engine == "tesseract":
-                r = tesseract_ocr(image_path)
+                r = tesseract_ocr(local_path)
             elif engine == "google":
-                r = google_ocr(image_path)
+                r = google_ocr(local_path)
             else:
-                # auto: google -> tesseract
+                # auto: google → tesseract
                 try:
-                    r = google_ocr(image_path)
+                    r = google_ocr(local_path)
                     if not r.text.strip():
-                        r = tesseract_ocr(image_path)
+                        r = tesseract_ocr(local_path)
                 except Exception:
-                    r = tesseract_ocr(image_path)
+                    r = tesseract_ocr(local_path)
 
             return AIResult.done(
                 job.id,
                 {"text": r.text, "confidence": r.confidence},
             )
 
+        # --------------------------------------------------
+        # Question segmentation
+        # --------------------------------------------------
         if job.type == "question_segmentation":
-            image_path = payload["image_path"]
-            boxes = segment_questions(image_path)
+            boxes = segment_questions(local_path)
             return AIResult.done(job.id, {"boxes": boxes})
 
+        # --------------------------------------------------
+        # Handwriting analysis
+        # --------------------------------------------------
         if job.type == "handwriting_analysis":
-            image_path = payload["image_path"]
-            scores = analyze_handwriting(image_path)
+            scores = analyze_handwriting(local_path)
             return AIResult.done(job.id, scores)
 
+        # --------------------------------------------------
+        # Embedding
+        # --------------------------------------------------
         if job.type == "embedding":
             texts = payload.get("texts") or []
             batch = get_embeddings(list(texts))
@@ -1055,6 +1204,9 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 {"backend": batch.backend, "vectors": batch.vectors},
             )
 
+        # --------------------------------------------------
+        # Problem generation
+        # --------------------------------------------------
         if job.type == "problem_generation":
             ocr_text = payload.get("ocr_text") or ""
             parsed = generate_problem_from_ocr(ocr_text)
@@ -1071,25 +1223,28 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 },
             )
 
+        # --------------------------------------------------
+        # Homework video analysis
+        # --------------------------------------------------
         if job.type == "homework_video_analysis":
-            video_path = payload["video_path"]
             frame_stride = int(payload.get("frame_stride") or 10)
             min_frame_count = int(payload.get("min_frame_count") or 30)
             analysis = analyze_homework_video(
-                video_path=video_path,
+                video_path=local_path,
                 frame_stride=frame_stride,
                 min_frame_count=min_frame_count,
             )
             return AIResult.done(job.id, analysis)
 
+        # --------------------------------------------------
+        # OMR grading
+        # --------------------------------------------------
         if job.type == "omr_grading":
-            image_path = payload["image_path"]
             questions = payload.get("questions") or []
-            # questions: [{question_id, roi:{x,y,w,h}, choices:[...], axis:"x"|"y"}, ...]
-            from apps.worker.ai.omr.engine import detect_omr_answers_v1
+            from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v1
 
             answers = detect_omr_answers_v1(
-                image_path=image_path,
+                image_path=local_path,
                 questions=list(questions),
             )
             return AIResult.done(
@@ -1107,7 +1262,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
 
 
 ==========================================================================================
-# FILE: ai/pipelines/homework_video_analyzer.py
+# FILE: ai_worker/ai/pipelines/homework_video_analyzer.py
 ==========================================================================================
 # apps/worker/ai/pipelines/homework_video_analyzer.py
 from __future__ import annotations
@@ -1187,14 +1342,14 @@ def analyze_homework_video(
 
 
 ==========================================================================================
-# FILE: ai/problem/__init__.py
+# FILE: ai_worker/ai/problem/__init__.py
 ==========================================================================================
 # apps/worker/ai/problem/__init__.py
 from __future__ import annotations
 
 
 ==========================================================================================
-# FILE: ai/problem/generator.py
+# FILE: ai_worker/ai/problem/generator.py
 ==========================================================================================
 # apps/worker/ai/problem/generator.py
 from __future__ import annotations
@@ -1203,8 +1358,8 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
-from apps.worker.ai.config import AIConfig
-from apps.worker.ai.problem.prompt import BASE_PROMPT
+from apps.worker.ai_worker.ai.config import AIConfig
+from apps.worker.ai_worker.ai.problem.prompt import BASE_PROMPT
 
 try:
     from openai import OpenAI  # type: ignore
@@ -1274,7 +1429,7 @@ def generate_problem_from_ocr(ocr_text: str) -> ParsedProblem:
 
 
 ==========================================================================================
-# FILE: ai/problem/prompt.py
+# FILE: ai_worker/ai/problem/prompt.py
 ==========================================================================================
 # apps/worker/ai/problem/prompt.py
 BASE_PROMPT = """
@@ -1311,13 +1466,179 @@ OCR 텍스트:
 
 
 ==========================================================================================
-# FILE: media/__init__.py
+# FILE: ai_worker/storage/__init__.py
 ==========================================================================================
 
 
 
 ==========================================================================================
-# FILE: media/r2_uploader.py
+# FILE: ai_worker/storage/downloader.py
+==========================================================================================
+# ==============================================================================
+# PATH: apps/worker/storage/downloader.py
+#
+# PURPOSE:
+# - AI worker 전용 파일 다운로드 유틸
+# - presigned GET URL → /tmp local file
+# - R2 / S3 credential 사용 ❌
+# - video_worker 코드와 절대 공유하지 않음
+# ==============================================================================
+
+from __future__ import annotations
+
+import os
+import tempfile
+import requests
+from pathlib import Path
+
+
+def download_to_tmp(
+    *,
+    download_url: str,
+    job_id: str,
+    suffix: str | None = None,
+    timeout: int = 60,
+    chunk_size: int = 1024 * 1024,  # 1MB
+) -> str:
+    """
+    presigned GET URL로 파일을 다운로드하여 local temp file 경로 반환
+
+    규칙:
+    - AI worker는 URL만 신뢰
+    - 파일은 /tmp 또는 OS temp dir에 생성
+    - 호출자는 반환된 path만 사용
+    """
+
+    tmp_dir = Path(tempfile.gettempdir())
+    ext = suffix or ""
+
+    filename = f"ai_job_{job_id}{ext}"
+    tmp_path = tmp_dir / filename
+    part_path = tmp_dir / f"{filename}.part"
+
+    try:
+        with requests.get(download_url, stream=True, timeout=timeout) as r:
+            r.raise_for_status()
+
+            expected_len = r.headers.get("Content-Length")
+            expected_len = int(expected_len) if expected_len and expected_len.isdigit() else None
+
+            written = 0
+            with open(part_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=chunk_size):
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    written += len(chunk)
+
+            if expected_len is not None and written != expected_len:
+                raise RuntimeError(
+                    f"download size mismatch (expected={expected_len}, got={written})"
+                )
+
+        part_path.replace(tmp_path)
+        return str(tmp_path)
+
+    except Exception:
+        try:
+            if part_path.exists():
+                part_path.unlink()
+        except Exception:
+            pass
+        raise
+
+
+==========================================================================================
+# FILE: ai_worker/wrong_notes/__init__.py
+==========================================================================================
+# apps/worker/wrong_notes/__init__.py
+
+
+==========================================================================================
+# FILE: ai_worker/wrong_notes/templates/wrong_note.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8" />
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        h1 {
+            border-bottom: 2px solid #333;
+            padding-bottom: 4px;
+        }
+        .exam {
+            margin-top: 20px;
+        }
+        .question {
+            margin-left: 12px;
+        }
+        .wrong {
+            color: #c0392b;
+        }
+    </style>
+</head>
+<body>
+    <h1>오답 노트</h1>
+
+    <p>
+        학생 ID: {{ enrollment_id }}<br/>
+        생성일: {{ created_at }}
+    </p>
+
+    {% for exam_id, items in grouped.items %}
+        <div class="exam">
+            <h2>시험 {{ exam_id }}</h2>
+            {% for item in items %}
+                <div class="question">
+                    <span class="wrong">
+                        Q{{ item.question_id }}
+                    </span>
+                    / 제출 답안: {{ item.answer }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endfor %}
+</body>
+</html>
+
+
+==========================================================================================
+# FILE: messaging/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: messaging/kakao/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: messaging/pipelines/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: messaging/sms/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: video_worker/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: video_worker/r2_uploader.py
 ==========================================================================================
 # apps/worker/media/r2_uploader.py
 
@@ -1325,6 +1646,10 @@ import boto3
 import mimetypes
 from pathlib import Path
 from django.conf import settings
+
+# ---------------------------------------------------------------------
+# R2 S3 Client (공용)
+# ---------------------------------------------------------------------
 
 s3 = boto3.client(
     "s3",
@@ -1334,16 +1659,32 @@ s3 = boto3.client(
     region_name="auto",
 )
 
+# ---------------------------------------------------------------------
+# Upload helpers (기존)
+# ---------------------------------------------------------------------
+
+def upload_fileobj_to_r2(*, fileobj, key: str, content_type: str | None = None):
+    """
+    Django UploadedFile -> R2 업로드
+    """
+    s3.upload_fileobj(
+        Fileobj=fileobj,
+        Bucket=settings.R2_BUCKET,
+        Key=key,
+        ExtraArgs={
+            "ContentType": content_type or "application/octet-stream"
+        },
+    )
+
+
 def upload_dir(local_dir: Path, prefix: str):
     """
     local_dir 전체를 prefix 기준으로 R2에 업로드
-    (Windows 경로 문제 방지용 표준형)
     """
     for path in local_dir.rglob("*"):
         if not path.is_file():
             continue
 
-        # 🔥🔥🔥 핵심
         relative_path = path.relative_to(local_dir).as_posix()
         key = f"{prefix}/{relative_path}"
 
@@ -1358,21 +1699,45 @@ def upload_dir(local_dir: Path, prefix: str):
             },
         )
 
+# ---------------------------------------------------------------------
+# ⭐ STEP 2 핵심: presigned GET URL 생성
+# ---------------------------------------------------------------------
+
+def generate_presigned_get_url(
+    *,
+    key: str,
+    expires_in: int = 3600,
+) -> str:
+    """
+    R2 object를 임시로 다운로드할 수 있는 presigned GET URL 생성
+
+    - API 서버에서만 호출
+    - worker는 이 URL만 사용 (R2 credential 불필요)
+    """
+    return s3.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": settings.R2_BUCKET,
+            "Key": key,
+        },
+        ExpiresIn=expires_in,
+    )
+
 
 ==========================================================================================
-# FILE: media/drm/__init__.py
+# FILE: video_worker/drm/__init__.py
 ==========================================================================================
 
 
 
 ==========================================================================================
-# FILE: media/video/__init__.py
+# FILE: video_worker/video/__init__.py
 ==========================================================================================
 
 
 
 ==========================================================================================
-# FILE: media/video/processor.py
+# FILE: video_worker/video/processor.py
 ==========================================================================================
 # apps/worker/media/video/processor.py
 
@@ -1833,7 +2198,7 @@ def run(
 
 
 ==========================================================================================
-# FILE: media/video/transcoder.py
+# FILE: video_worker/video/transcoder.py
 ==========================================================================================
 from __future__ import annotations
 
@@ -1991,104 +2356,3 @@ def transcode_to_hls(
         raise RuntimeError("master.m3u8 not created")
 
     return master_path
-
-
-==========================================================================================
-# FILE: messaging/__init__.py
-==========================================================================================
-
-
-
-==========================================================================================
-# FILE: messaging/kakao/__init__.py
-==========================================================================================
-
-
-
-==========================================================================================
-# FILE: messaging/pipelines/__init__.py
-==========================================================================================
-
-
-
-==========================================================================================
-# FILE: messaging/sms/__init__.py
-==========================================================================================
-
-
-
-==========================================================================================
-# FILE: stats/__init__.py
-==========================================================================================
-
-
-
-==========================================================================================
-# FILE: stats/exam_aggregator.py
-==========================================================================================
-
-
-
-==========================================================================================
-# FILE: stats/question_aggregator.py
-==========================================================================================
-
-
-
-==========================================================================================
-# FILE: wrong_notes/__init__.py
-==========================================================================================
-# apps/worker/wrong_notes/__init__.py
-
-
-==========================================================================================
-# FILE: wrong_notes/templates/wrong_note.html
-==========================================================================================
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="utf-8" />
-    <style>
-        body {
-            font-family: Arial, Helvetica, sans-serif;
-            font-size: 12px;
-            line-height: 1.6;
-        }
-        h1 {
-            border-bottom: 2px solid #333;
-            padding-bottom: 4px;
-        }
-        .exam {
-            margin-top: 20px;
-        }
-        .question {
-            margin-left: 12px;
-        }
-        .wrong {
-            color: #c0392b;
-        }
-    </style>
-</head>
-<body>
-    <h1>오답 노트</h1>
-
-    <p>
-        학생 ID: {{ enrollment_id }}<br/>
-        생성일: {{ created_at }}
-    </p>
-
-    {% for exam_id, items in grouped.items %}
-        <div class="exam">
-            <h2>시험 {{ exam_id }}</h2>
-            {% for item in items %}
-                <div class="question">
-                    <span class="wrong">
-                        Q{{ item.question_id }}
-                    </span>
-                    / 제출 답안: {{ item.answer }}
-                </div>
-            {% endfor %}
-        </div>
-    {% endfor %}
-</body>
-</html>

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 
-from apps.worker.ai.omr.types import OMRAnswerV1
+from apps.worker.ai_worker.ai.omr.types import OMRAnswerV1
 
 
 # ------------------------------------------------------------
