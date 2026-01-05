@@ -39,7 +39,7 @@ def upload_fileobj_to_r2(
     s3 = _get_s3_client()
     s3.upload_fileobj(
         Fileobj=fileobj,
-        Bucket=settings.R2_AI,
+        Bucket=settings.R2_AI_BUCKET,
         Key=key,
         ExtraArgs={
             "ContentType": content_type or "application/octet-stream"
