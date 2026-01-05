@@ -23,35 +23,138 @@ class ResultsConfig(AppConfig):
 
 
 ==========================================================================================
+# FILE: permissions.py
+==========================================================================================
+# PATH: apps/domains/results/permissions.py
+from __future__ import annotations
+
+from rest_framework.permissions import BasePermission
+
+
+def _role(u) -> str:
+    """
+    프로젝트마다 user.role / user.user_type / groups 등 다를 수 있어서 방어적으로.
+    - 있으면 쓰고
+    - 없으면 is_staff/is_superuser로 판단
+    """
+    v = getattr(u, "role", None) or getattr(u, "user_type", None) or ""
+    return str(v).upper()
+
+
+def is_admin_user(u) -> bool:
+    return bool(getattr(u, "is_superuser", False) or getattr(u, "is_staff", False) or _role(u) in ("ADMIN", "STAFF"))
+
+
+def is_teacher_user(u) -> bool:
+    # 프로젝트에 따라 "TEACHER" 문자열이 다를 수 있음 → 필요시 여기만 수정
+    return bool(is_admin_user(u) or _role(u) in ("TEACHER",))
+
+
+def is_student_user(u) -> bool:
+    # 명시적으로 teacher/admin 아니면 student로 취급(일반적인 정책)
+    return bool(not is_teacher_user(u))
+
+
+class IsStudent(BasePermission):
+    def has_permission(self, request, view):
+        u = getattr(request, "user", None)
+        return bool(u and u.is_authenticated and is_student_user(u))
+
+
+class IsTeacherOrAdmin(BasePermission):
+    def has_permission(self, request, view):
+        u = getattr(request, "user", None)
+        return bool(u and u.is_authenticated and is_teacher_user(u))
+
+
+==========================================================================================
 # FILE: urls.py
 ==========================================================================================
-# apps/domains/results/urls.py
+# PATH: apps/domains/results/urls.py
+"""
+Results Domain API Routes
+
+정책:
+- Student / Admin API 명확히 분리
+- Legacy API는 DEPRECATED 처리
+"""
+
 from django.urls import path
 
+# ======================
+# Student
+# ======================
+from apps.domains.results.views.student_exam_result_view import MyExamResultView
+
+# ======================
+# Admin / Teacher (⭐ 권장)
+# ======================
+from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
+from apps.domains.results.views.admin_exam_summary_view import AdminExamSummaryView
+from apps.domains.results.views.admin_exam_question_stats_view import (
+    AdminExamQuestionStatsView,
+)
+
+# ======================
+# Legacy
+# ======================
 from apps.domains.results.views.exam_result_view import (
     ExamStatsView,
     ExamQuestionStatsView,
 )
 from apps.domains.results.views.wrong_note_view import WrongNoteView
 
+
 urlpatterns = [
-    # 시험 통계
+    # -------------------
+    # Student
+    # -------------------
     path(
-        "exams/<int:exam_id>/stats",
-        ExamStatsView.as_view(),
-        name="exam-stats",
-    ),
-    path(
-        "exams/<int:exam_id>/questions/stats",
-        ExamQuestionStatsView.as_view(),
-        name="exam-question-stats",
+        "me/exams/<int:exam_id>/",
+        MyExamResultView.as_view(),
+        name="my-exam-result",
     ),
 
-    # 오답노트
+    # -------------------
+    # Admin / Teacher
+    # -------------------
+    path(
+        "admin/exams/<int:exam_id>/summary/",
+        AdminExamSummaryView.as_view(),
+        name="admin-exam-summary",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/results/",
+        AdminExamResultsView.as_view(),
+        name="admin-exam-results",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/questions/",
+        AdminExamQuestionStatsView.as_view(),
+        name="admin-exam-question-stats",
+    ),
+
+    # -------------------
+    # Wrong Notes
+    # -------------------
     path(
         "wrong-notes",
         WrongNoteView.as_view(),
         name="wrong-note",
+    ),
+
+    # -------------------
+    # ⚠️ Legacy (DEPRECATED)
+    # -------------------
+    path(
+        "exams/<int:exam_id>/stats",
+        ExamStatsView.as_view(),
+        name="legacy-exam-stats",
+    ),
+    path(
+        "exams/<int:exam_id>/questions/stats",
+        ExamQuestionStatsView.as_view(),
+        name="legacy-exam-question-stats",
     ),
 ]
 
@@ -321,6 +424,92 @@ class WrongNotePDF(BaseModel):
     class Meta:
         db_table = "results_wrong_note_pdf"
         ordering = ["-created_at"]
+
+
+==========================================================================================
+# FILE: serializers/admin_exam_result_row.py
+==========================================================================================
+# apps/domains/results/serializers/admin_exam_result_row.py
+from rest_framework import serializers
+
+
+class AdminExamResultRowSerializer(serializers.Serializer):
+    enrollment_id = serializers.IntegerField()
+    student_name = serializers.CharField()
+
+    total_score = serializers.FloatField()
+    max_score = serializers.FloatField()
+
+    passed = serializers.BooleanField()
+    clinic_required = serializers.BooleanField()
+
+    submitted_at = serializers.DateTimeField(allow_null=True)
+
+
+==========================================================================================
+# FILE: serializers/admin_exam_summary.py
+==========================================================================================
+# apps/domains/results/serializers/admin_exam_summary.py
+from rest_framework import serializers
+
+
+class AdminExamSummarySerializer(serializers.Serializer):
+    participant_count = serializers.IntegerField()
+
+    avg_score = serializers.FloatField()
+    min_score = serializers.FloatField()
+    max_score = serializers.FloatField()
+
+    pass_count = serializers.IntegerField()
+    fail_count = serializers.IntegerField()
+    pass_rate = serializers.FloatField()
+
+    clinic_count = serializers.IntegerField()
+
+
+==========================================================================================
+# FILE: serializers/student_exam_result.py
+==========================================================================================
+# PATH: apps/domains/results/serializers/student_exam_result.py
+from __future__ import annotations
+
+from rest_framework import serializers
+from apps.domains.results.models import Result, ResultItem
+
+
+class ResultItemSerializer(serializers.ModelSerializer):
+    """
+    ✅ 학생 화면: 문항별 결과
+    """
+    class Meta:
+        model = ResultItem
+        fields = [
+            "question_id",
+            "answer",
+            "is_correct",
+            "score",
+            "max_score",
+            "source",
+        ]
+
+
+class StudentExamResultSerializer(serializers.ModelSerializer):
+    """
+    ✅ 학생 화면: 시험 결과(총점 + 문항별)
+    """
+    items = ResultItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Result
+        fields = [
+            "target_type",
+            "target_id",
+            "enrollment_id",
+            "total_score",
+            "max_score",
+            "submitted_at",
+            "items",
+        ]
 
 
 ==========================================================================================
@@ -810,26 +999,268 @@ def generate_wrong_note_pdf_task(self, job_id: int) -> bool:
 ==========================================================================================
 # FILE: views/__init__.py
 ==========================================================================================
-# apps/domains/results/views/__init__.py
+# PATH: apps/domains/results/views/__init__.py
+
 from .exam_result_view import ExamStatsView, ExamQuestionStatsView
 from .wrong_note_view import WrongNoteView
 
+from .admin_exam_results_view import AdminExamResultsView
+from .admin_exam_summary_view import AdminExamSummaryView
+from .admin_exam_question_stats_view import AdminExamQuestionStatsView
+
 __all__ = [
+    # Legacy
     "ExamStatsView",
     "ExamQuestionStatsView",
+
+    # Admin
+    "AdminExamResultsView",
+    "AdminExamSummaryView",
+    "AdminExamQuestionStatsView",
+
+    # Shared
     "WrongNoteView",
 ]
 
 
 ==========================================================================================
-# FILE: views/exam_result_view.py
+# FILE: views/admin_exam_question_stats_view.py
 ==========================================================================================
-# apps/domains/results/views/exam_result_view.py
+# PATH: apps/domains/results/views/admin_exam_question_stats_view.py
+"""
+Admin / Teacher Exam Question Statistics
+
+- ResultFact 기반 (append-only)
+- support.analytics 완전 대체
+"""
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 
-from django.db.models import Avg, Min, Max, StdDev, Count, Q
+from django.db.models import Count
 
+from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.models import ResultFact
+
+
+class AdminExamQuestionStatsView(APIView):
+    """
+    GET /results/admin/exams/<exam_id>/questions/
+    """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request, exam_id: int):
+        facts = ResultFact.objects.filter(
+            target_type="exam",
+            target_id=int(exam_id),
+        )
+
+        rows = []
+
+        for qid in facts.values_list("question_id", flat=True).distinct():
+            qf = facts.filter(question_id=qid)
+            total = qf.count()
+            correct = qf.filter(is_correct=True).count()
+
+            rows.append({
+                "question_id": qid,
+                "attempts": total,
+                "correct_count": correct,
+                "wrong_count": total - correct,
+                "correct_rate": (correct / total) if total else 0.0,
+            })
+
+        return Response(rows)
+
+
+==========================================================================================
+# FILE: views/admin_exam_results_view.py
+==========================================================================================
+# PATH: apps/domains/results/views/admin_exam_results_view.py
+"""
+Admin / Teacher Exam Results List
+
+- Results + SessionProgress 기준
+- Submissions ❌
+"""
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.models import Result
+from apps.domains.results.serializers.admin_exam_result_row import (
+    AdminExamResultRowSerializer,
+)
+
+from apps.domains.progress.models import SessionProgress
+from apps.domains.lectures.models import Session
+from apps.domains.students.models import Student
+
+
+class AdminExamResultsView(APIView):
+    """
+    GET /results/admin/exams/<exam_id>/results/
+    """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request, exam_id: int):
+        # 1️⃣ Results (snapshot)
+        results = Result.objects.filter(
+            target_type="exam",
+            target_id=int(exam_id),
+        )
+
+        # 2️⃣ Session → Progress
+        session = Session.objects.filter(exam__id=exam_id).first()
+        progress_map = {
+            sp.enrollment_id: sp
+            for sp in SessionProgress.objects.filter(session=session)
+        }
+
+        # 3️⃣ 필요한 학생만 조회 (성능 최적화)
+        student_ids = [
+            sp.student_id
+            for sp in progress_map.values()
+            if getattr(sp, "student_id", None)
+        ]
+
+        student_map = {
+            s.id: s
+            for s in Student.objects.filter(id__in=student_ids)
+        }
+
+        rows = []
+
+        for r in results:
+            sp = progress_map.get(r.enrollment_id)
+            student = student_map.get(
+                getattr(sp, "student_id", None)
+            )
+
+            rows.append({
+                "enrollment_id": r.enrollment_id,
+                "student_name": student.name if student else "-",
+                "total_score": r.total_score,
+                "max_score": r.max_score,
+                "passed": bool(sp and not sp.failed),
+                "clinic_required": bool(sp and sp.clinic_required),
+                "submitted_at": r.submitted_at,
+            })
+
+        return Response(
+            AdminExamResultRowSerializer(rows, many=True).data
+        )
+
+
+==========================================================================================
+# FILE: views/admin_exam_summary_view.py
+==========================================================================================
+# PATH: apps/domains/results/views/admin_exam_summary_view.py
+"""
+Admin / Teacher Exam Summary
+"""
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from django.db.models import Avg, Min, Max, Count
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.models import Result
+from apps.domains.results.serializers.admin_exam_summary import (
+    AdminExamSummarySerializer,
+)
+
+from apps.domains.progress.models import ProgressPolicy, SessionProgress
+from apps.domains.lectures.models import Session
+
+
+class AdminExamSummaryView(APIView):
+    """
+    GET /results/admin/exams/<exam_id>/summary/
+    """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request, exam_id: int):
+        qs = Result.objects.filter(
+            target_type="exam",
+            target_id=int(exam_id),
+        )
+
+        agg = qs.aggregate(
+            participant_count=Count("id"),
+            avg_score=Avg("total_score"),
+            min_score=Min("total_score"),
+            max_score=Max("total_score"),
+        )
+
+        session = Session.objects.filter(exam__id=exam_id).first()
+
+        policy = (
+            ProgressPolicy.objects
+            .filter(lecture=session.lecture)
+            .first()
+            if session else None
+        )
+
+        pass_score = policy.exam_pass_score if policy else 0
+
+        pass_count = qs.filter(total_score__gte=pass_score).count()
+        fail_count = qs.filter(total_score__lt=pass_score).count()
+
+        participant_count = agg["participant_count"] or 0
+        pass_rate = (
+            pass_count / participant_count
+            if participant_count else 0.0
+        )
+
+        clinic_count = (
+            SessionProgress.objects
+            .filter(session=session, clinic_required=True)
+            .count()
+            if session else 0
+        )
+
+        return Response(
+            AdminExamSummarySerializer({
+                "participant_count": participant_count,
+                "avg_score": float(agg["avg_score"] or 0.0),
+                "min_score": float(agg["min_score"] or 0.0),
+                "max_score": float(agg["max_score"] or 0.0),
+                "pass_count": pass_count,
+                "fail_count": fail_count,
+                "pass_rate": round(float(pass_rate), 4),
+                "clinic_count": clinic_count,
+            }).data
+        )
+
+
+==========================================================================================
+# FILE: views/exam_result_view.py
+==========================================================================================
+# PATH: apps/domains/results/views/exam_result_view.py
+"""
+⚠️ LEGACY APIs (DEPRECATED)
+
+- Admin 전용 API는 /admin/* 경로 사용
+- 본 파일은 과거 프론트 호환용
+- 추후 삭제 예정
+"""
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from django.db.models import Avg, Min, Max, StdDev, Count
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultFact
 from apps.domains.exams.models import Exam
 from apps.domains.progress.models import ProgressPolicy
@@ -837,10 +1268,11 @@ from apps.domains.progress.models import ProgressPolicy
 
 class ExamStatsView(APIView):
     """
-    시험 요약 통계 API
-    - Result 기반 (snapshot)
-    - 계산 없음
+    ⚠️ DEPRECATED
+    시험 요약 통계 (Legacy)
     """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request, exam_id: int):
         exam = Exam.objects.select_related("lecture").get(id=exam_id)
@@ -860,7 +1292,6 @@ class ExamStatsView(APIView):
         )
 
         participants = agg["participants"] or 0
-
         passed = qs.filter(
             total_score__gte=policy.exam_pass_score
         ).count()
@@ -880,9 +1311,11 @@ class ExamStatsView(APIView):
 
 class ExamQuestionStatsView(APIView):
     """
-    시험 문항별 통계 API
-    - ResultFact 기반 (append-only)
+    ⚠️ DEPRECATED
+    시험 문항별 통계 (Legacy)
     """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request, exam_id: int):
         facts = ResultFact.objects.filter(
@@ -890,40 +1323,120 @@ class ExamQuestionStatsView(APIView):
             target_id=exam_id,
         )
 
-        result = []
+        rows = []
 
-        question_ids = (
-            facts.values_list("question_id", flat=True)
-            .distinct()
-        )
-
-        for qid in question_ids:
+        for qid in facts.values_list("question_id", flat=True).distinct():
             qf = facts.filter(question_id=qid)
-
             total = qf.count()
             correct = qf.filter(is_correct=True).count()
 
-            wrong_dist = (
-                qf.filter(is_correct=False)
-                .values("answer")
-                .annotate(cnt=Count("id"))
-            )
-
-            result.append({
+            rows.append({
                 "question_id": qid,
                 "correct_rate": (correct / total) if total else 0.0,
-                "wrong_distribution": {
-                    w["answer"]: w["cnt"] for w in wrong_dist
-                },
             })
 
-        return Response(result)
+        return Response(rows)
 
 
 ==========================================================================================
 # FILE: views/homework_result_view.py
 ==========================================================================================
 
+
+
+==========================================================================================
+# FILE: views/student_exam_result_view.py
+==========================================================================================
+# PATH: apps/domains/results/views/student_exam_result_view.py
+from __future__ import annotations
+
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.results.models import Result
+from apps.domains.results.serializers.student_exam_result import StudentExamResultSerializer
+from apps.domains.results.permissions import IsStudent
+
+# ✅ 시험/수강정보를 통해 enrollment_id를 찾기 위해 import
+from apps.domains.exams.models import Exam
+from apps.domains.enrollment.models import Enrollment
+
+
+class MyExamResultView(APIView):
+    """
+    ✅ 학생 본인 시험 성적 조회 (1개 API)
+
+    GET /results/me/exams/<exam_id>/
+
+    - request.user(학생) 기준으로 enrollment_id를 찾아서
+    - results_result + results_result_item을 반환
+
+    주의:
+    - Enrollment/Exam 필드가 프로젝트마다 다를 수 있어 방어적으로 작성함
+    """
+
+    permission_classes = [IsAuthenticated, IsStudent]
+
+    def get(self, request, exam_id: int):
+        user = request.user
+        exam = get_object_or_404(Exam, id=int(exam_id))
+
+        # ------------------------------------------------------------
+        # 1) enrollment 찾기
+        # ------------------------------------------------------------
+        # ✅ 가장 이상적인 매핑: Enrollment(user + lecture)
+        # - Exam에 lecture_id(혹은 lecture)가 있는 프로젝트를 전제로 우선 시도
+        lecture_id = getattr(exam, "lecture_id", None)
+        if lecture_id is None and getattr(exam, "lecture", None) is not None:
+            lecture_id = getattr(exam.lecture, "id", None)
+
+        enrollment_qs = Enrollment.objects.all()
+
+        # 프로젝트별 Enrollment의 user FK 필드명이 다를 수 있음 (보통 user)
+        if hasattr(Enrollment, "user_id"):
+            enrollment_qs = enrollment_qs.filter(user_id=user.id)
+        elif hasattr(Enrollment, "student_id"):
+            enrollment_qs = enrollment_qs.filter(student_id=user.id)
+        else:
+            # 정말 특이 케이스면 여기 수정
+            enrollment_qs = enrollment_qs.filter(user=user)
+
+        if lecture_id is not None:
+            # Enrollment에 lecture_id 필드가 있는 경우 우선 필터
+            if hasattr(Enrollment, "lecture_id"):
+                enrollment_qs = enrollment_qs.filter(lecture_id=int(lecture_id))
+
+        enrollment = enrollment_qs.first()
+        if not enrollment:
+            return Response(
+                {"detail": "enrollment not found for this user (and lecture)."},
+                status=404,
+            )
+
+        enrollment_id = int(getattr(enrollment, "id"))
+
+        # ------------------------------------------------------------
+        # 2) Result 조회 (Result = 최신 스냅샷)
+        # ------------------------------------------------------------
+        result = Result.objects.filter(
+            target_type="exam",
+            target_id=int(exam_id),
+            enrollment_id=enrollment_id,
+        ).prefetch_related("items").first()
+
+        if not result:
+            # ✅ 학생 관점 UX:
+            # - 아직 제출/채점 전이면 404가 더 자연스럽거나,
+            # - 200 + null 형태로 주기도 함 (팀 컨벤션에 맞춰 택1)
+            return Response(
+                {"detail": "result not found (not submitted or not graded yet)."},
+                status=404,
+            )
+
+        return Response(StudentExamResultSerializer(result).data)
 
 
 ==========================================================================================
