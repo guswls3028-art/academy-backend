@@ -4,46 +4,114 @@ from __future__ import annotations
 from typing import Any, Dict, List
 from collections import Counter
 
-from django.db.models import Avg, Max, Count, Sum, Case, When, IntegerField
+from django.db.models import (
+    Avg,
+    Max,
+    Min,
+    Count,
+    Sum,
+    Case,
+    When,
+    IntegerField,
+)
 
 from apps.domains.results.models import Result, ResultItem, ResultFact
+from apps.domains.progress.models import ProgressPolicy, SessionProgress
+from apps.domains.lectures.models import Session
+from apps.domains.students.models import Student
 
 
+# ============================================================
+# 시험 요약 통계 (관리자)
+# ============================================================
 def get_exam_summary(*, exam_id: int) -> Dict[str, Any]:
     """
-    results 기반 시험 요약 (읽기 전용)
-
-    - Result 기준 집계
-    - 채점/정답비교 없음
+    관리자 시험 요약 통계
+    - Result + ProgressPolicy + clinic flag 기준
     """
-    qs = Result.objects.filter(target_type="exam", target_id=exam_id)
+
+    qs = Result.objects.filter(
+        target_type="exam",
+        target_id=exam_id,
+    )
 
     agg = qs.aggregate(
         participant_count=Count("id"),
-        average_score=Avg("total_score"),
-        max_score=Max("max_score"),
+        avg_score=Avg("total_score"),
+        min_score=Min("total_score"),
+        max_score=Max("total_score"),
+    )
+
+    # -----------------------------
+    # 커트라인 기준
+    # -----------------------------
+    session = (
+        Session.objects
+        .filter(exam__id=exam_id)
+        .select_related("lecture")
+        .first()
+    )
+
+    policy = (
+        ProgressPolicy.objects
+        .filter(lecture=session.lecture)
+        .first()
+        if session else None
+    )
+
+    pass_score = policy.exam_pass_score if policy else 0
+
+    pass_count = qs.filter(total_score__gte=pass_score).count()
+    fail_count = qs.filter(total_score__lt=pass_score).count()
+
+    participant_count = agg["participant_count"] or 0
+    pass_rate = (
+        pass_count / participant_count
+        if participant_count else 0.0
+    )
+
+    clinic_count = (
+        SessionProgress.objects
+        .filter(
+            session=session,
+            clinic_required=True,
+        )
+        .count()
+        if session else 0
     )
 
     return {
         "target_type": "exam",
         "target_id": int(exam_id),
-        "participant_count": int(agg["participant_count"] or 0),
-        "average_score": float(agg["average_score"] or 0.0),
+
+        "participant_count": participant_count,
+
+        "avg_score": float(agg["avg_score"] or 0.0),
+        "min_score": float(agg["min_score"] or 0.0),
         "max_score": float(agg["max_score"] or 0.0),
+
+        "pass_count": pass_count,
+        "fail_count": fail_count,
+        "pass_rate": round(float(pass_rate), 4),
+
+        "clinic_count": clinic_count,
     }
 
 
+# ============================================================
+# 문항별 통계
+# ============================================================
 def get_question_stats(*, exam_id: int) -> List[Dict[str, Any]]:
     """
-    results 기반 문항별 통계 (읽기 전용)
-
-    기준:
-    - ResultItem은 (result, question_id) 기준 snapshot 1개만 존재
-    - 따라서 attempts = 해당 문항을 푼 학생 수
+    문항별 통계 (관리자/교사용)
     """
+
     items = (
         ResultItem.objects
-        .filter(result__target_type="exam", result__target_id=exam_id)
+        .filter(
+            result__target_type="exam",
+            result__target_id=exam_id,
+        )
         .values("question_id")
         .annotate(
             attempts=Count("id"),
@@ -68,67 +136,84 @@ def get_question_stats(*, exam_id: int) -> List[Dict[str, Any]]:
     )
 
     rows: List[Dict[str, Any]] = []
+
     for r in items:
         attempts = int(r["attempts"] or 0)
         correct = int(r["correct_count"] or 0)
-        wrong = int(r["wrong_count"] or 0)
 
-        answer_rate = (correct / attempts) if attempts > 0 else 0.0
-
-        rows.append(
-            {
-                "question_id": int(r["question_id"]),
-                "attempts": attempts,
-                "correct_count": correct,
-                "wrong_count": wrong,
-                "answer_rate": round(float(answer_rate), 4),
-                "avg_score": float(r["avg_score"] or 0.0),
-                "max_score": float(r["max_score"] or 0.0),
-            }
+        correct_rate = (
+            correct / attempts
+            if attempts else 0.0
         )
+
+        rows.append({
+            "question_id": int(r["question_id"]),
+            "attempts": attempts,
+            "correct_count": correct,
+            "wrong_count": int(r["wrong_count"] or 0),
+            "correct_rate": round(float(correct_rate), 4),
+            "avg_score": float(r["avg_score"] or 0.0),
+            "max_score": float(r["max_score"] or 0.0),
+        })
+
     return rows
 
 
-def get_top_wrong_questions(*, exam_id: int, limit: int = 5) -> List[Dict[str, Any]]:
+# ============================================================
+# 관리자 성적 리스트 (신규)
+# ============================================================
+def get_exam_results(*, exam_id: int) -> List[Dict[str, Any]]:
     """
-    오답이 많은 문항 TOP N (snapshot 기반)
+    관리자 성적 테이블용 API
+    - Submissions ❌
+    - Results + SessionProgress 기준
     """
-    stats = get_question_stats(exam_id=exam_id)
-    stats.sort(key=lambda x: x["wrong_count"], reverse=True)
-    return stats[: max(1, int(limit))]
 
+    results = (
+        Result.objects
+        .filter(
+            target_type="exam",
+            target_id=exam_id,
+        )
+        .select_related(None)
+    )
 
-def get_wrong_answer_distribution(
-    *, exam_id: int, question_id: int, limit: int = 5
-) -> Dict[str, Any]:
-    """
-    오답 분포 (Fact 기반: 누적 제출 히스토리)
+    session = (
+        Session.objects
+        .filter(exam__id=exam_id)
+        .first()
+    )
 
-    - is_correct=False 인 오답만 집계
-    - 채점/정답비교 없음 (단순 통계)
-    """
-    qs = ResultFact.objects.filter(
-        target_type="exam",
-        target_id=exam_id,
-        question_id=question_id,
-        is_correct=False,
-    ).exclude(answer="")
+    progress_map = {
+        sp.enrollment_id: sp
+        for sp in SessionProgress.objects.filter(session=session)
+    }
 
-    counter = Counter(qs.values_list("answer", flat=True))
-    total = sum(counter.values())
+    student_map = {
+        s.id: s
+        for s in Student.objects.all()
+    }
 
-    top = []
-    for ans, cnt in counter.most_common(limit):
-        top.append(
-            {
-                "answer": ans,
-                "count": int(cnt),
-                "rate": round((cnt / total) * 100.0, 2) if total > 0 else 0.0,
-            }
+    rows: List[Dict[str, Any]] = []
+
+    for r in results:
+        sp = progress_map.get(r.enrollment_id)
+
+        student = student_map.get(
+            getattr(sp, "student_id", None)
         )
 
-    return {
-        "question_id": int(question_id),
-        "total": int(total),
-        "top": top,
-    }
+        rows.append({
+            "enrollment_id": r.enrollment_id,
+            "student_name": student.name if student else "-",
+
+            "total_score": r.total_score,
+            "max_score": r.max_score,
+
+            "passed": bool(sp and not sp.failed),
+            "clinic_required": bool(sp and sp.clinic_required),
+
+            "submitted_at": r.submitted_at,
+        })
+
+    return rows
