@@ -31,6 +31,9 @@ storage/
 !apps/worker/media/
 !apps/worker/media/**
 
+# 🔥 EXCEPTION: infrastructure storage는 코드
+!apps/infrastructure/storage/
+!apps/infrastructure/storage/**
 
 # =========================
 # ML / CV
