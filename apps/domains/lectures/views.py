@@ -1,4 +1,4 @@
-# domains/lectures/views.py
+# PATH: apps/domains/lectures/views.py
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.filters import SearchFilter
@@ -44,12 +44,20 @@ class SessionViewSet(ModelViewSet):
         if date:
             qs = qs.filter(date=date)
 
+        # ✅ 선택: exam_id로도 필터 가능
+        exam = self.request.query_params.get("exam")
+        if exam:
+            qs = qs.filter(exam_id=exam)
+
         return qs.order_by("order", "id")
 
     def create(self, request, *args, **kwargs):
         lecture_id = request.data.get("lecture")
         title = request.data.get("title")
         date = request.data.get("date")
+
+        # ✅ NEW: exam은 optional
+        exam_id = request.data.get("exam")
 
         if not lecture_id:
             return Response({"detail": "lecture 필드는 필수입니다"}, status=400)
@@ -68,6 +76,8 @@ class SessionViewSet(ModelViewSet):
             "title": title,
             "date": date,
             "order": next_order,
+            # ✅ 시험 연결 (없으면 None)
+            "exam": exam_id if exam_id else None,
         }
 
         serializer = self.get_serializer(data=data)

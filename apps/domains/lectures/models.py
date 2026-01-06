@@ -1,5 +1,6 @@
-from django.db import models
+# PATH: apps/domains/lectures/models.py
 
+from django.db import models
 from apps.api.common.models import TimestampModel
 
 
@@ -30,6 +31,25 @@ class Session(TimestampModel):
     lecture = models.ForeignKey(
         Lecture,
         on_delete=models.CASCADE,
+        related_name="sessions",
+    )
+
+    # ==========================================================
+    # ✅ SaaS 표준: Session ↔ Exam FK
+    #
+    # - Session(차시) = 실행 단위
+    # - Exam(시험)   = 정의 단위
+    #
+    # 정책:
+    # - 시험이 없는 차시 허용 (null=True)
+    # - Exam 삭제 시 Session 유지 (SET_NULL)
+    # - Exam → sessions 역참조 가능
+    # ==========================================================
+    exam = models.ForeignKey(
+        "exams.Exam",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
         related_name="sessions",
     )
 

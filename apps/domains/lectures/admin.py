@@ -1,4 +1,4 @@
-# domains/lectures/admin.py
+# PATH: apps/domains/lectures/admin.py
 
 from django.contrib import admin
 from .models import Lecture, Session
@@ -31,7 +31,8 @@ class LectureAdmin(admin.ModelAdmin):
 
 @admin.register(Session)
 class SessionAdmin(admin.ModelAdmin):
-    list_display = ("id", "lecture", "order", "title", "date")
+    # ✅ exam 컬럼 추가 (운영자 가시성)
+    list_display = ("id", "lecture", "order", "title", "date", "exam")
     list_display_links = ("id", "title")
     list_filter = ("lecture",)
     search_fields = ("title",)
