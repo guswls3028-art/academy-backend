@@ -28,4 +28,4 @@ COPY libs ./libs
 COPY docker/ai-worker/keys/google-vision.json /keys/google-vision.json
 ENV GOOGLE_APPLICATION_CREDENTIALS=/keys/google-vision.json
 
-CMD ["python", "-m", "apps.worker.run"]
+CMD ["python", "-m", "apps.worker.ai_worker.run"]
