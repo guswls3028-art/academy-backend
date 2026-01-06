@@ -11,7 +11,7 @@ from .results.views import (
 
 urlpatterns = [
     # Dashboard
-    path("student/dashboard/", StudentDashboardView.as_view()),
+    path("dashboard/", StudentDashboardView.as_view()),
 
     # Sessions
     path("sessions/me/", StudentSessionListView.as_view()),
