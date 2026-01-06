@@ -32,13 +32,119 @@ class SubmissionsConfig(AppConfig):
 ==========================================================================================
 # FILE: urls.py
 ==========================================================================================
+# apps/domains/submissions/urls.py
+from django.urls import path
 from rest_framework.routers import DefaultRouter
+
 from .views import SubmissionViewSet
+from .views.exam_omr_submit_view import ExamOMRSubmitView
 
 router = DefaultRouter()
 router.register("submissions", SubmissionViewSet, basename="submissions")
 
-urlpatterns = router.urls
+urlpatterns = [
+    # 🔥 STEP 2: 시험 OMR 전용 제출
+    # ⚠️ TEMPORARY API (STEP 2 전용)
+    # - REST 정규 경로는 추후 /submissions/ 통합 예정
+    # - 현재는 OMR 전용 UX 흐름 분리를 위해 유지
+    path(
+        "submissions/exams/<int:exam_id>/omr/",
+        ExamOMRSubmitView.as_view(),
+        name="exam-omr-submit",
+    ),
+]
+
+urlpatterns += router.urls
+
+
+==========================================================================================
+# FILE: management/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: management/commands/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: management/commands/backfill_exam_question_id.py
+==========================================================================================
+# apps/domains/submissions/management/commands/backfill_exam_question_id.py
+from __future__ import annotations
+
+from django.core.management.base import BaseCommand
+from django.db import transaction
+
+from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.domains.exams.models import ExamQuestion
+
+
+class Command(BaseCommand):
+    """
+    legacy question_number(number) → exam_question_id(ExamQuestion.id) 백필
+
+    사용 예)
+    python manage.py backfill_exam_question_id --exam-id 10
+    python manage.py backfill_exam_question_id --dry-run
+    """
+
+    help = "Backfill SubmissionAnswer.exam_question_id from legacy question_number."
+
+    def add_arguments(self, parser):
+        parser.add_argument("--exam-id", type=int)
+        parser.add_argument("--dry-run", action="store_true")
+
+    @transaction.atomic
+    def handle(self, *args, **opts):
+        exam_id = opts.get("exam_id")
+        dry_run = bool(opts.get("dry_run", False))
+
+        subs = Submission.objects.filter(target_type=Submission.TargetType.EXAM)
+        if exam_id:
+            subs = subs.filter(target_id=int(exam_id))
+
+        answers = (
+            SubmissionAnswer.objects
+            .filter(submission__in=subs, exam_question_id__isnull=True)
+            .exclude(question_number__isnull=True)
+            .select_related("submission")
+        )
+
+        cache: dict[int, dict[int, int]] = {}
+        updated = 0
+
+        for sa in answers:
+            exid = int(sa.submission.target_id)
+
+            # exam_id별 number→ExamQuestion.id 캐시
+            if exid not in cache:
+                cache[exid] = {
+                    int(q.number): int(q.id)
+                    for q in ExamQuestion.objects.filter(sheet__exam_id=exid)
+                }
+
+            qnum = int(sa.question_number) if sa.question_number is not None else None
+            if not qnum:
+                continue
+
+            qid = cache[exid].get(qnum)
+            if not qid:
+                continue
+
+            if not dry_run:
+                sa.exam_question_id = int(qid)
+                sa.save(update_fields=["exam_question_id", "updated_at"])
+
+            updated += 1
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Backfill done. updated={updated}, dry_run={dry_run}"
+            )
+        )
 
 
 ==========================================================================================
@@ -202,6 +308,110 @@ class Migration(migrations.Migration):
 
 
 ==========================================================================================
+# FILE: migrations/0002_submissionanswer_contract_v2.py
+==========================================================================================
+# apps/domains/submissions/migrations/0002_submissionanswer_contract_v2.py
+from __future__ import annotations
+
+from django.db import migrations, models
+
+
+def forwards_copy_question_id_to_question_number(apps, schema_editor):
+    """
+    기존 question_id(혼재 가능)를 question_number로 보관해두는 migration.
+    - exam_question_id는 worker 전환/백필로 채워지는 것이 정석
+    """
+    SubmissionAnswer = apps.get_model("submissions", "SubmissionAnswer")
+
+    # 기존 컬럼이 있는 DB에서만 동작하도록 try 방어
+    for sa in SubmissionAnswer.objects.all().iterator():
+        # 이전 스키마에 question_id가 있었다면 그것을 number로 옮긴다.
+        # (혼재일 수 있으나 "유실 방지" 목적)
+        if hasattr(sa, "question_id") and getattr(sa, "question_id", None) is not None:
+            sa.question_number = int(sa.question_id)
+            sa.save(update_fields=["question_number"])
+
+
+def backwards_restore_question_id(apps, schema_editor):
+    """
+    롤백 대비: question_number를 question_id로 복구
+    """
+    SubmissionAnswer = apps.get_model("submissions", "SubmissionAnswer")
+
+    for sa in SubmissionAnswer.objects.all().iterator():
+        if hasattr(sa, "question_number") and sa.question_number is not None:
+            # backwards 시점에 question_id 컬럼이 있다고 가정
+            if hasattr(sa, "question_id"):
+                sa.question_id = int(sa.question_number)
+                sa.save(update_fields=["question_id"])
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("submissions", "0001_initial"),
+    ]
+
+    operations = [
+        # 1) question_number 추가
+        migrations.AddField(
+            model_name="submissionanswer",
+            name="question_number",
+            field=models.PositiveIntegerField(
+                null=True,
+                blank=True,
+                help_text="Legacy migration only (number). Will be removed.",
+            ),
+        ),
+
+        # 2) question_id -> question_number 데이터 보존
+        migrations.RunPython(
+            forwards_copy_question_id_to_question_number,
+            backwards_restore_question_id,
+        ),
+
+        # 3) question_id 제거 (애매한 이름 제거가 핵심)
+        migrations.RemoveField(
+            model_name="submissionanswer",
+            name="question_id",
+        ),
+
+        # 4) exam_question_id help_text/인덱스는 모델에서 유지
+        #    (이미 존재하는 필드라면 여기서 AlterField 생략 가능)
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0003_remove_submissionanswer_submissions_submiss_102ae9_idx_and_more.py
+==========================================================================================
+from django.db import migrations
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("submissions", "0002_submissionanswer_contract_v2"),
+    ]
+
+    operations = [
+        # -------------------------------------------------
+        # 🔴 NO-OP MIGRATION
+        #
+        # 이 migration은 다음 문제로 인해 비워둔다:
+        # - question_id 제거
+        # - exam_question_id 추가
+        # - index/unique 변경
+        #
+        # 이 모든 작업은 이미
+        #   - DB 레벨에서 완료되었거나
+        #   - 이전 migration에서 처리되었음
+        #
+        # Django migration state 정합성만 맞추기 위한 migration
+        # -------------------------------------------------
+    ]
+
+
+==========================================================================================
 # FILE: migrations/__init__.py
 ==========================================================================================
 
@@ -306,33 +516,65 @@ class Submission(TimestampModel):
 from __future__ import annotations
 
 from django.db import models
-from apps.api.common.models import TimestampModel
+from apps.api.common.models import BaseModel
 
 
-class SubmissionAnswer(TimestampModel):
+class SubmissionAnswer(BaseModel):
     """
-    SubmissionAnswer = "답안 추출 중간산물"
-    - 정답/점수/정오판정 금지 (results 도메인 책임)
+    submissions 도메인의 문항 단위 raw 답안 (중간산물)
+
+    🔥 NEXT-1 계약 고정 (Breaking Change)
+    - exam_question_id = exams.ExamQuestion.id (절대 number 아님)  ✅ 단일 진실
+    - question_number  = legacy 임시 필드 (마이그레이션/과거 데이터용)  ✅ 제거 예정
+
+    왜?
+    - question_id 같은 애매한 이름은 시스템을 무너뜨린다.
+    - number 기반은 Sheet A/B 다형성에서 100% 깨진다.
     """
+
     submission = models.ForeignKey(
         "submissions.Submission",
         on_delete=models.CASCADE,
         related_name="answers",
     )
 
-    question_id = models.PositiveIntegerField()
+    # ✅ 최종 계약 필드: ExamQuestion.id (절대 number 아님)
+    exam_question_id = models.PositiveIntegerField(
+        null=True,          # ⚠️ 전환 단계 안전화: 기존 데이터가 있으므로 일단 NULL 허용
+        blank=True,
+        db_index=True,
+        help_text="Fixed contract: exams.ExamQuestion.id (NEVER number)",
+    )
+
+    # ✅ legacy fallback: 과거 number(1,2,3...) 보관용
+    question_number = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Legacy migration only (number). Will be removed.",
+    )
 
     answer = models.TextField(blank=True)
-    meta = models.JSONField(null=True, blank=True)
+
+    # meta는 submissions가 소유 (AI 원본/OMR 정보 저장)
+    # meta 규칙 예: {"omr": {"version":"v2","detected":[...], ...}}
+    meta = models.JSONField(default=dict, blank=True)
 
     class Meta:
+        db_table = "submissions_submission_answer"
         indexes = [
-            models.Index(fields=["submission", "question_id"]),
+            models.Index(fields=["exam_question_id"]),
+            models.Index(fields=["submission", "exam_question_id"]),
         ]
-        unique_together = ("submission", "question_id")
+        # ✅ 최종적으로는 (submission, exam_question_id) unique가 정석
+        # 다만 exam_question_id가 NULL인 레거시가 있을 수 있으므로
+        # 현 단계에서는 unique_together를 강제하지 않는다.
+        # (백필 완료 후 tighten 권장)
 
-    def __str__(self) -> str:
-        return f"SubmissionAnswer(submission={self.submission_id}, q={self.question_id})"
+    def __str__(self):
+        return (
+            f"Submission#{self.submission_id} "
+            f"Q={self.exam_question_id or f'legacy:{self.question_number}'}"
+        )
 
 
 ==========================================================================================
@@ -445,9 +687,9 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
 
 
 ==========================================================================================
-# FILE: services/ai_result_mapper.py
+# FILE: services/ai_omr_result_mapper.py
 ==========================================================================================
-# apps/domains/submissions/services/ai_result_mapper.py
+# apps/domains/submissions/services/ai_omr_result_mapper.py
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -461,27 +703,36 @@ logger = logging.getLogger(__name__)
 
 
 @transaction.atomic
-def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
+def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     """
-    Worker AI 결과를 submissions에 반영.
+    OMR AI 결과를 Submission / SubmissionAnswer에 반영한다.
+
+    ✅ NEXT-2 계약:
+    - AI 결과 answers[*].exam_question_id 를 반드시 사용한다.
+    - legacy로 question_id가 오면 question_number로 보관만 한다.
+
+    meta 규칙 (고정):
+    meta = {
+      "omr": {
+        "version": "v2",
+        "detected": [...],
+        "marking": "...",
+        "confidence": 0.82,
+        "status": "ok"
+      }
+    }
     """
     submission_id = payload.get("submission_id")
     if not submission_id:
         return None
 
-    # ✅ 보호패치: submission 없으면 DROP
     try:
-        submission = Submission.objects.select_for_update().get(
-            id=int(submission_id)
-        )
+        submission = Submission.objects.select_for_update().get(id=int(submission_id))
     except Submission.DoesNotExist:
-        logger.warning(
-            "[AI_RESULT] submission %s not found. result dropped.",
-            submission_id,
-        )
+        logger.warning("[OMR_AI_RESULT] submission %s not found. dropped.", submission_id)
         return None
 
-    # ✅ 결과 원본 저장 (항상)
+    # 1) AI 원본 결과는 payload.ai_result 로 보존 (fact)
     base_payload = submission.payload or {}
     base_payload["ai_result"] = payload
     submission.payload = base_payload
@@ -489,129 +740,82 @@ def apply_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     status = payload.get("status")
     error = payload.get("error")
 
-    # ✅ FAILED 결과 즉시 처리
+    # 2) FAILED 처리
     if status == "FAILED":
         submission.status = Submission.Status.FAILED
         submission.error_message = error or "AI worker failed"
-        submission.save(
-            update_fields=[
-                "payload",
-                "status",
-                "error_message",
-                "updated_at",
-            ]
-        )
+        submission.save(update_fields=["payload", "status", "error_message", "updated_at"])
         return submission.id
 
-    # =========================
-    # 1) items 답안형
-    # =========================
-    items = payload.get("result", {}).get("items")
-    if isinstance(items, list) and items:
-        for item in items:
-            qid = item.get("question_id")
-            if not qid:
-                continue
-
-            SubmissionAnswer.objects.update_or_create(
-                submission=submission,
-                question_id=int(qid),
-                defaults={
-                    "answer": str(item.get("answer") or ""),
-                    "meta": item.get("meta") or None,
-                },
-            )
-
-        submission.status = Submission.Status.ANSWERS_READY
-        submission.error_message = ""
-        meta = submission.meta or {}
-        meta["answers_ready"] = True
-        meta["answer_count"] = SubmissionAnswer.objects.filter(
-            submission=submission
-        ).count()
-        submission.meta = meta
-        submission.save(
-            update_fields=[
-                "payload",
-                "status",
-                "error_message",
-                "meta",
-                "updated_at",
-            ]
-        )
+    # 3) 중복 callback 방어
+    if submission.status in (
+        Submission.Status.ANSWERS_READY,
+        Submission.Status.GRADING,
+        Submission.Status.DONE,
+    ):
+        submission.save(update_fields=["payload", "updated_at"])
         return submission.id
 
-    # =========================
-    # 2) OMR v1 형식
-    # =========================
+    # 4) 답안 매핑
     result = payload.get("result") or {}
     answers = result.get("answers")
-    version = result.get("version")
+    version = str(result.get("version") or "v2")
 
-    if version and isinstance(answers, list) and answers:
+    if isinstance(answers, list):
         for a in answers:
-            qid = (a or {}).get("question_id")
-            if not qid:
+            # ✅ v2: exam_question_id만 신뢰
+            eqid = a.get("exam_question_id")
+
+            # legacy: worker가 아직 전환 안 됐으면 question_id가 올 수 있음
+            legacy_qid = a.get("question_id")
+
+            detected = a.get("detected") or []
+            marking = a.get("marking") or ""
+            confidence = a.get("confidence")
+            astatus = a.get("status") or ""
+
+            defaults = {
+                "answer": "".join([str(x) for x in detected]),
+                "meta": {
+                    "omr": {
+                        "version": version,
+                        "detected": detected,
+                        "marking": marking,
+                        "confidence": confidence,
+                        "status": astatus,
+                    }
+                },
+            }
+
+            # ✅ v2 정상 케이스
+            if eqid:
+                SubmissionAnswer.objects.update_or_create(
+                    submission=submission,
+                    exam_question_id=int(eqid),
+                    defaults={
+                        **defaults,
+                        # legacy 보관은 optional
+                        "question_number": None,
+                    },
+                )
                 continue
 
-            detected = (a or {}).get("detected") or []
-            ans_text = (
-                "".join([str(x).strip().upper() for x in detected])
-                if isinstance(detected, list)
-                else ""
-            )
-
-            SubmissionAnswer.objects.update_or_create(
-                submission=submission,
-                question_id=int(qid),
-                defaults={
-                    "answer": ans_text,
-                    "meta": {"omr": a},
-                },
-            )
+            # ⚠️ legacy 임시: eqid 없으면 number로만 보관
+            if legacy_qid:
+                SubmissionAnswer.objects.update_or_create(
+                    submission=submission,
+                    # exam_question_id가 없으므로 NULL row가 생김 → 운영상 허용(전환기)
+                    exam_question_id=None,
+                    question_number=int(legacy_qid),
+                    defaults=defaults,
+                )
 
         submission.status = Submission.Status.ANSWERS_READY
         submission.error_message = ""
-        meta = submission.meta or {}
-        meta["answers_ready"] = True
-        meta["answer_count"] = SubmissionAnswer.objects.filter(
-            submission=submission
-        ).count()
-        meta["omr_version"] = str(version)
-        submission.meta = meta
-        submission.save(
-            update_fields=[
-                "payload",
-                "status",
-                "error_message",
-                "meta",
-                "updated_at",
-            ]
-        )
+        submission.save(update_fields=["payload", "status", "error_message", "updated_at"])
         return submission.id
 
-    # =========================
-    # 3) 분석형
-    # =========================
-    analysis = result.get("analysis")
-    if analysis is not None:
-        meta = submission.meta or {}
-        meta["analysis"] = analysis
-        submission.meta = meta
-
-        if submission.target_type == Submission.TargetType.HOMEWORK:
-            submission.status = Submission.Status.DONE
-
-        submission.save(
-            update_fields=[
-                "payload",
-                "meta",
-                "status",
-                "updated_at",
-            ]
-        )
-        return None
-
+    # answers 포맷이 없을 경우: payload만 저장
     submission.save(update_fields=["payload", "updated_at"])
     return None
 
@@ -629,13 +833,10 @@ from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.submission_service import SubmissionService
 from apps.domains.results.tasks.grading_tasks import grade_submission_task
 from apps.shared.contracts.ai_job import AIJob
-
-# ⭐ STEP 2: presigned URL 생성 유틸
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
 
-# ---------------------------------------------------------------------
-# Redis AI Queue
-# ---------------------------------------------------------------------
+# ✅ exams 도메인에서 문항 메타 제공
+from apps.domains.exams.models import ExamQuestion
 
 AI_QUEUE_KEY = "ai:jobs"
 
@@ -644,59 +845,45 @@ def _redis():
     return redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
-# ---------------------------------------------------------------------
-# Public Entry
-# ---------------------------------------------------------------------
-
 def dispatch_submission(submission: Submission) -> None:
     """
-    Submission 생성 직후 호출되는 단일 진입점 (STEP 2 확정판)
+    Submission 생성 직후 호출되는 유일한 진입점
 
-    역할:
-    - ONLINE 제출:
-        - 즉시 처리 (정규화)
-        - 채점 task enqueue
-    - FILE 제출:
-        - R2에 저장된 file_key 존재 여부만 검증
-        - presigned GET URL 생성
-        - AIJob enqueue
-        - 파일 접근/다운로드는 worker 책임
+    상태 전이 규칙 (고정):
+    - SUBMITTED → DISPATCHED : dispatcher
+    - DISPATCHED → ANSWERS_READY / FAILED : ai_result_mapper
+    - ANSWERS_READY → GRADING → DONE : results.grader
     """
 
-    # 1️⃣ ONLINE 제출
+    # 1) ONLINE 제출: 즉시 처리
     if submission.source == Submission.Source.ONLINE:
         SubmissionService.process(submission)
         grade_submission_task.delay(int(submission.id))
         return
 
-    # 2️⃣ FILE 제출 (R2 기준)
+    # 2) FILE 제출: presigned URL → AI Worker
     if not submission.file_key:
         submission.status = Submission.Status.FAILED
         submission.error_message = "file_key missing"
         submission.save(update_fields=["status", "error_message"])
         return
 
-    # 상태 전이: DISPATCHED
+    # 상태 전이: SUBMITTED → DISPATCHED
     submission.status = Submission.Status.DISPATCHED
     submission.error_message = ""
     submission.save(update_fields=["status", "error_message"])
 
-    # 3️⃣ AI Job 생성 (STEP 2: presigned URL 포함)
+    # 3) AI Job 생성
     job = AIJob.new(
         type=_infer_ai_job_type(submission),
-        payload=_build_ai_payload(submission),
         source_domain="submissions",
         source_id=str(submission.id),
+        payload=_build_ai_payload(submission),
     )
 
-    # 4️⃣ Redis enqueue
     r = _redis()
     r.lpush(AI_QUEUE_KEY, job.to_json())
 
-
-# ---------------------------------------------------------------------
-# AI Job 타입 / payload 빌더
-# ---------------------------------------------------------------------
 
 def _infer_ai_job_type(submission: Submission) -> str:
     if submission.source == Submission.Source.OMR_SCAN:
@@ -710,28 +897,74 @@ def _infer_ai_job_type(submission: Submission) -> str:
 
 def _build_ai_payload(submission: Submission) -> dict:
     """
-    STEP 2 payload 규칙 (🔥 중요)
+    ✅ NEXT-2 확정 payload 규칙
+    - file 접근은 presigned GET URL만
+    - OMR은 "sheet_id" 기반으로 문항 목록을 함께 제공
+    - worker는 answers[*].exam_question_id 로만 결과를 리턴해야 함
 
-    - 로컬 파일 경로(.path) ❌ 절대 사용 금지
-    - R2 presigned GET URL만 전달
-    - worker는 download_url → /tmp 저장 후 처리
+    Worker 입력(권장):
+    {
+      "submission_id": ...,
+      "download_url": "...",
+      "omr": {"sheet_id": 45},
+      "questions": [
+        {
+          "exam_question_id": 123,
+          "number": 1,
+          "region_meta": {...}  # bbox 등
+        },
+        ...
+      ]
+    }
     """
     payload = dict(submission.payload or {})
 
-    # ⭐ presigned GET URL 생성
-    download_url = generate_presigned_get_url(
-        key=submission.file_key,
-        expires_in=60 * 60,  # 1시간
-    )
+    sheet_id = None
+    if isinstance(payload.get("sheet_id"), int):
+        sheet_id = int(payload["sheet_id"])
+    elif payload.get("sheet_id") is not None:
+        try:
+            sheet_id = int(payload.get("sheet_id"))
+        except Exception:
+            sheet_id = None
+
+    # -------------------------------------------------
+    # ✅ 문항 목록 구성 (sheet_id 기반)
+    # -------------------------------------------------
+    questions_payload = []
+    if sheet_id:
+        qs = ExamQuestion.objects.filter(sheet_id=sheet_id).order_by("number")
+        for q in qs:
+            # region_meta 필드명이 프로젝트마다 다를 수 있어 getattr로 방어
+            region_meta = getattr(q, "region_meta", None) or getattr(q, "meta", None) or None
+
+            questions_payload.append(
+                {
+                    "exam_question_id": int(q.id),
+                    "number": int(getattr(q, "number", 0) or 0),
+                    "region_meta": region_meta,
+                }
+            )
 
     payload.update(
         {
-            # 메타 정보
-            "file_key": submission.file_key,
-            "file_type": submission.file_type,
+            "submission_id": submission.id,
+            "target_type": submission.target_type,
+            "target_id": submission.target_id,
 
-            # ⭐ worker 전용 파일 접근 수단
-            "download_url": download_url,
+            "file_key": submission.file_key,
+            "download_url": generate_presigned_get_url(
+                key=submission.file_key,
+                expires_in=60 * 60,
+            ),
+
+            # ✅ OMR 전용
+            "omr": {
+                "sheet_id": sheet_id,
+            },
+
+            # ✅ NEXT-2 핵심: worker가 exam_question_id를 알도록 제공
+            "questions": questions_payload,
         }
     )
 
@@ -760,6 +993,7 @@ class SubmissionService:
     """
     submissions 처리의 유일한 퍼블릭 서비스
     - ONLINE만 즉시 처리 (정규화만 수행)
+    # OMR / IMAGE / VIDEO는 반드시 AI Worker 경유
     """
 
     @staticmethod
@@ -803,6 +1037,7 @@ class BaseSubmissionProcessor(ABC):
     submissions 내 processor = '답안 중간산물 저장'까지만
     - 채점/정답비교/점수계산 절대 금지
     """
+
     source: str = "base"
 
     def __init__(self, submission: Submission):
@@ -816,8 +1051,13 @@ class BaseSubmissionProcessor(ABC):
     @abstractmethod
     def extract_answers(self) -> Iterable[Dict[str, Any]]:
         """
-        반환 포맷(고정):
-            {"question_id": int, "answer": str, "meta": dict|None}
+        반환 포맷(고정, v2):
+            {
+              "exam_question_id": int | None,
+              "question_number": int | None,   # legacy only
+              "answer": str,
+              "meta": dict|None
+            }
         """
         raise NotImplementedError
 
@@ -825,76 +1065,35 @@ class BaseSubmissionProcessor(ABC):
         results: List[SubmissionAnswer] = []
 
         for item in extracted:
-            qid = item.get("question_id")
-            if not qid:
+            eqid = item.get("exam_question_id")
+            qnum = item.get("question_number")
+
+            # ✅ v2: exam_question_id 우선
+            if eqid:
+                obj, _ = SubmissionAnswer.objects.update_or_create(
+                    submission=self.submission,
+                    exam_question_id=int(eqid),
+                    defaults={
+                        "question_number": None,
+                        "answer": str(item.get("answer") or ""),
+                        "meta": item.get("meta") or {},
+                    },
+                )
+                results.append(obj)
                 continue
 
-            obj, _ = SubmissionAnswer.objects.update_or_create(
-                submission=self.submission,
-                question_id=int(qid),
-                defaults={
-                    "answer": str(item.get("answer") or ""),
-                    "meta": item.get("meta") or None,
-                },
-            )
-            results.append(obj)
+            # legacy: number만 있는 경우(전환기)
+            if qnum:
+                obj = SubmissionAnswer.objects.create(
+                    submission=self.submission,
+                    exam_question_id=None,
+                    question_number=int(qnum),
+                    answer=str(item.get("answer") or ""),
+                    meta=item.get("meta") or {},
+                )
+                results.append(obj)
 
         return results
-
-
-==========================================================================================
-# FILE: services/processor/omr.py
-==========================================================================================
-# apps/domains/submissions/services/processor/omr.py
-from __future__ import annotations
-
-from typing import Iterable, Dict, Any
-
-from apps.domains.submissions.services.processor.base import BaseSubmissionProcessor
-
-
-class OMRSubmissionProcessor(BaseSubmissionProcessor):
-    """
-    원칙상 OMR '추출'은 worker 책임.
-    API(submissions)에서는 아래 중 하나만 수행:
-      - (권장) dispatcher가 AI job 발행, 결과는 ai callbacks에서 SubmissionAnswer로 저장
-      - (보조) 이미 meta/payload에 추출 결과가 들어온 경우 정규화 저장만
-    """
-
-    source = "omr_scan"
-
-    def extract_answers(self) -> Iterable[Dict[str, Any]]:
-        # 1) worker가 돌려준 결과가 payload/meta에 들어온 케이스만 처리
-        payload = self.submission.payload or {}
-        extracted = payload.get("extracted_answers") or payload.get("answers")
-
-        # extracted가 online과 같은 스키마면 그대로 처리 가능
-        if isinstance(extracted, list):
-            for row in extracted:
-                qid = row.get("question_id")
-                if not qid:
-                    continue
-                yield {
-                    "question_id": int(qid),
-                    "answer": row.get("answer", ""),
-                    "meta": row.get("meta") or {"via": "omr"},
-                }
-            return
-
-        if isinstance(extracted, dict):
-            for k, v in extracted.items():
-                try:
-                    qid = int(k)
-                except Exception:
-                    continue
-                yield {
-                    "question_id": qid,
-                    "answer": v if v is not None else "",
-                    "meta": {"via": "omr"},
-                }
-            return
-
-        return
 
 
 ==========================================================================================
@@ -917,28 +1116,51 @@ class OnlineSubmissionProcessor(BaseSubmissionProcessor):
         # A) list
         if isinstance(answers, list):
             for row in answers:
-                qid = row.get("question_id")
-                if not qid:
-                    continue
-                yield {
-                    "question_id": int(qid),
-                    "answer": row.get("answer", ""),
-                    "meta": row.get("meta"),
-                }
+                # ✅ v2 키
+                eqid = row.get("exam_question_id")
+                # legacy 키
+                legacy = row.get("question_id") or row.get("question_number")
+
+                if eqid:
+                    yield {
+                        "exam_question_id": int(eqid),
+                        "question_number": None,
+                        "answer": row.get("answer", ""),
+                        "meta": row.get("meta") or {"via": "online"},
+                    }
+                elif legacy:
+                    yield {
+                        "exam_question_id": None,
+                        "question_number": int(legacy),
+                        "answer": row.get("answer", ""),
+                        "meta": row.get("meta") or {"via": "online_legacy"},
+                    }
             return
 
-        # B) dict (key=question_id)
+        # B) dict (key=exam_question_id 권장)
         if isinstance(answers, dict):
             for k, v in answers.items():
+                # ✅ 기본은 exam_question_id로 해석
                 try:
-                    qid = int(k)
+                    eqid = int(k)
+                    yield {
+                        "exam_question_id": eqid,
+                        "question_number": None,
+                        "answer": v if v is not None else "",
+                        "meta": {"via": "online"},
+                    }
                 except Exception:
-                    continue
-                yield {
-                    "question_id": qid,
-                    "answer": v if v is not None else "",
-                    "meta": {"via": "online"},
-                }
+                    # legacy: key가 number일 수도 있으니 보관만
+                    try:
+                        qnum = int(k)
+                    except Exception:
+                        continue
+                    yield {
+                        "exam_question_id": None,
+                        "question_number": qnum,
+                        "answer": v if v is not None else "",
+                        "meta": {"via": "online_legacy"},
+                    }
             return
 
         return
@@ -1005,6 +1227,87 @@ class VideoSubmissionProcessor(BaseSubmissionProcessor):
 from .submission_view import SubmissionViewSet
 
 __all__ = ["SubmissionViewSet"]
+
+
+==========================================================================================
+# FILE: views/exam_omr_submit_view.py
+==========================================================================================
+# PATH: apps/domains/submissions/views/exam_omr_submit_view.py
+"""
+🔥 STEP 2 (정리 완료판)
+
+시험 OMR 전용 Submission 진입점
+
+설계 원칙 (중요):
+- ❌ status 직접 제어 금지
+- ❌ AIJob 직접 생성 금지
+- ✔ Submission 생성만 수행
+- ✔ 이후 흐름은 dispatcher 단일 진실
+"""
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.submissions.models import Submission
+from apps.domains.submissions.services.dispatcher import dispatch_submission
+
+
+class ExamOMRSubmitView(APIView):
+    """
+    POST /api/v1/submissions/exams/<exam_id>/omr/
+
+    body:
+    {
+        "enrollment_id": 123,
+        "sheet_id": 45,
+        "file_key": "exams/submissions/abc.jpg"
+    }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, exam_id: int):
+        enrollment_id = request.data.get("enrollment_id")
+        sheet_id = request.data.get("sheet_id")
+        file_key = request.data.get("file_key")
+
+        if not all([enrollment_id, sheet_id, file_key]):
+            return Response(
+                {"detail": "enrollment_id, sheet_id, file_key are required"},
+                status=400,
+            )
+
+        # -------------------------------------------------
+        # 1️⃣ Submission 생성
+        # -------------------------------------------------
+        # ⚠️ status는 SUBMITTED 고정
+        # ⚠️ 이후 상태 전이는 dispatcher / AI / grader 책임
+        submission = Submission.objects.create(
+            user=request.user,
+            target_type=Submission.TargetType.EXAM,
+            target_id=int(exam_id),
+            enrollment_id=int(enrollment_id),
+            source=Submission.Source.OMR_SCAN,
+            file_key=str(file_key),
+            payload={
+                # OMR 전용 메타는 payload에만 둠
+                "sheet_id": int(sheet_id),
+            },
+        )
+
+        # -------------------------------------------------
+        # 2️⃣ 단일 진입점: dispatcher
+        # -------------------------------------------------
+        dispatch_submission(submission)
+
+        return Response(
+            {
+                "submission_id": submission.id,
+                "status": submission.status,
+            },
+            status=201,
+        )
 
 
 ==========================================================================================

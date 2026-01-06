@@ -1,16 +1,9 @@
-# PATH: apps/domains/results/views/admin_exam_question_stats_view.py
-"""
-Admin / Teacher Exam Question Statistics
-
-- ResultFact 기반 (append-only)
-- support.analytics 완전 대체
-"""
-
+# apps/domains/results/views/admin_exam_question_stats_view.py
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from django.db.models import Count
+from django.db.models import Count, Q, F, FloatField, ExpressionWrapper
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import ResultFact
@@ -18,7 +11,9 @@ from apps.domains.results.models import ResultFact
 
 class AdminExamQuestionStatsView(APIView):
     """
-    GET /results/admin/exams/<exam_id>/questions/
+    🔧 성능 패치
+    - N+1 제거
+    - 단일 aggregate 쿼리
     """
 
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
@@ -29,19 +24,20 @@ class AdminExamQuestionStatsView(APIView):
             target_id=int(exam_id),
         )
 
-        rows = []
+        rows = (
+            facts.values("question_id")
+            .annotate(
+                attempts=Count("id"),
+                correct_count=Count("id", filter=Q(is_correct=True)),
+            )
+            .annotate(
+                wrong_count=F("attempts") - F("correct_count"),
+                correct_rate=ExpressionWrapper(
+                    F("correct_count") * 1.0 / F("attempts"),
+                    output_field=FloatField(),
+                ),
+            )
+            .order_by("question_id")
+        )
 
-        for qid in facts.values_list("question_id", flat=True).distinct():
-            qf = facts.filter(question_id=qid)
-            total = qf.count()
-            correct = qf.filter(is_correct=True).count()
-
-            rows.append({
-                "question_id": qid,
-                "attempts": total,
-                "correct_count": correct,
-                "wrong_count": total - correct,
-                "correct_rate": (correct / total) if total else 0.0,
-            })
-
-        return Response(rows)
+        return Response(list(rows))

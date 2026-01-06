@@ -1,3 +1,5 @@
+#apps/domains/exams/models/answer_key.py
+
 from django.db import models
 from apps.api.common.models import BaseModel
 from .exam import Exam
@@ -5,7 +7,14 @@ from .exam import Exam
 
 class AnswerKey(BaseModel):
     """
-    정답 정의 (값만 저장, 채점 로직 없음)
+    AnswerKey v2
+
+    answers:
+      {
+        "123": "B",
+        "124": "D"
+      }
+    key == ExamQuestion.id (string)
     """
 
     exam = models.OneToOneField(
@@ -14,11 +23,12 @@ class AnswerKey(BaseModel):
         related_name="answer_key",
     )
 
-    # 예: { "1": "3", "2": "5", "3": "②" }
-    answers = models.JSONField()
+    answers = models.JSONField(
+        help_text="key=ExamQuestion.id (string), value=correct answer"
+    )
 
     class Meta:
         db_table = "exams_answer_key"
 
     def __str__(self):
-        return f"AnswerKey for {self.exam.title}"
+        return f"AnswerKey v2 for {self.exam_id}"

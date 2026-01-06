@@ -1,4 +1,4 @@
-# PATH: apps/domains/results/views/exam_result_view.py
+# apps/domains/results/views/exam_result_view.py
 """
 ⚠️ LEGACY APIs (DEPRECATED)
 

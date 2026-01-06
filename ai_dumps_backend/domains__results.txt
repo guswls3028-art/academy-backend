@@ -71,66 +71,34 @@ class IsTeacherOrAdmin(BasePermission):
 # FILE: urls.py
 ==========================================================================================
 # apps/domains/results/urls.py
-"""
-Results Domain API Routes
-
-정책:
-- Student / Admin API 명확히 분리
-- Legacy API는 DEPRECATED 처리
-"""
 
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-# ======================
-# Student
-# ======================
 from apps.domains.results.views.student_exam_result_view import MyExamResultView
-
-# ======================
-# Admin / Teacher (⭐ 권장)
-# ======================
 from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
 from apps.domains.results.views.admin_exam_summary_view import AdminExamSummaryView
 from apps.domains.results.views.admin_exam_question_stats_view import (
     AdminExamQuestionStatsView,
 )
-
-# ======================
-# Wrong Notes
-# ======================
 from apps.domains.results.views.wrong_note_view import WrongNoteView
-
-# ✅ PDF 생성 API (URL 등록 누락 버그 수정)
 from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
-
-# ======================
-# Legacy
-# ======================
-from apps.domains.results.views.exam_result_view import (
-    ExamStatsView,
-    ExamQuestionStatsView,
-)
-
-# ======================
-# Attempt
-# ======================
 from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
 
+# ✅ STEP 8-B 추가
+from apps.domains.results.views.admin_representative_attempt_view import (
+    AdminRepresentativeAttemptView,
+)
 
 urlpatterns = [
-    # -------------------
     # Student
-    # -------------------
     path(
         "me/exams/<int:exam_id>/",
         MyExamResultView.as_view(),
         name="my-exam-result",
     ),
 
-    # -------------------
     # Admin / Teacher
-    # -------------------
     path(
         "admin/exams/<int:exam_id>/summary/",
         AdminExamSummaryView.as_view(),
@@ -147,43 +115,30 @@ urlpatterns = [
         name="admin-exam-question-stats",
     ),
 
-    # -------------------
+    # ==============================
+    # ✅ STEP 8-B: 대표 attempt 변경
+    # ==============================
+    path(
+        "admin/exams/<int:exam_id>/representative-attempt/",
+        AdminRepresentativeAttemptView.as_view(),
+        name="admin-representative-attempt",
+    ),
+
     # Wrong Notes
-    # -------------------
     path(
         "wrong-notes",
         WrongNoteView.as_view(),
         name="wrong-note",
     ),
-
-    # ✅ WrongNote PDF 생성 (기존 누락된 라우트)
     path(
         "wrong-notes/pdf/",
         WrongNotePDFCreateView.as_view(),
         name="wrong-note-pdf-create",
     ),
-
-    # -------------------
-    # ⚠️ Legacy (DEPRECATED)
-    # -------------------
-    path(
-        "exams/<int:exam_id>/stats",
-        ExamStatsView.as_view(),
-        name="legacy-exam-stats",
-    ),
-    path(
-        "exams/<int:exam_id>/questions/stats",
-        ExamQuestionStatsView.as_view(),
-        name="legacy-exam-question-stats",
-    ),
 ]
 
-# ======================
-# Attempt Router
-# ======================
 attempt_router = DefaultRouter()
 attempt_router.register("exam-attempts", ExamAttemptViewSet)
-
 urlpatterns += attempt_router.urls
 
 
@@ -480,6 +435,39 @@ class Migration(migrations.Migration):
 
 
 ==========================================================================================
+# FILE: migrations/0004_submissionanswer_exam_question_v2.py
+==========================================================================================
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("submissions", "0003_remove_submissionanswer_submissions_submiss_102ae9_idx_and_more"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="submissionanswer",
+            name="exam_question_id",
+            field=models.PositiveIntegerField(
+                null=True,
+                help_text="ExamQuestion.id (v2)",
+            ),
+        ),
+        migrations.AddField(
+            model_name="submissionanswer",
+            name="question_number",
+            field=models.PositiveIntegerField(
+                null=True,
+                blank=True,
+                help_text="LEGACY (migration only)",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
 # FILE: migrations/__init__.py
 ==========================================================================================
 
@@ -702,39 +690,40 @@ from apps.api.common.models import BaseModel
 
 class SubmissionAnswer(BaseModel):
     """
-    results 도메인의 문항 단위 '채점 결과'
+    SubmissionAnswer (raw input)
 
-    🔥 SubmissionAnswer(submissions) = raw input
-    🔥 SubmissionAnswer(results) = grading output (불변)
+    🔥 핵심 계약:
+    - exam_question_id = ExamQuestion.id (절대 number 아님)
+    - number 기반 접근 완전 폐기
     """
 
-    attempt = models.ForeignKey(
-        "results.ExamAttempt",
+    submission = models.ForeignKey(
+        "submissions.Submission",
         on_delete=models.CASCADE,
         related_name="answers",
     )
 
-    question_id = models.PositiveIntegerField()
-
-    detected = models.JSONField(default=list)      # ["B"]
-    marking = models.CharField(max_length=20)      # single / multi / blank
-    confidence = models.FloatField(default=0.0)
-    status = models.CharField(
-        max_length=20,
-        help_text="ok / ambiguous / low_confidence / blank / error",
+    # ✅ v2 단일 진실
+    exam_question_id = models.PositiveIntegerField(
+        help_text="ExamQuestion.id (number 아님)"
     )
 
-    is_correct = models.BooleanField(null=True)
-    score_awarded = models.FloatField(default=0.0)
+    # 🧯 legacy (전환기용)
+    question_number = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="LEGACY (migration only, 제거 예정)",
+    )
 
+    answer = models.TextField(blank=True)
     meta = models.JSONField(default=dict, blank=True)
 
     class Meta:
-        db_table = "results_submission_answer"
-        unique_together = ("attempt", "question_id")
-
-    def __str__(self) -> str:
-        return f"Attempt#{self.attempt_id} Q{self.question_id}"
+        db_table = "submissions_submission_answer"
+        indexes = [
+            models.Index(fields=["exam_question_id"]),
+            models.Index(fields=["submission", "exam_question_id"]),
+        ]
 
 
 ==========================================================================================
@@ -866,9 +855,22 @@ class ResultItemSerializer(serializers.ModelSerializer):
 
 class StudentExamResultSerializer(serializers.ModelSerializer):
     """
-    ✅ 학생 화면: 시험 결과(총점 + 문항별)
+    ✅ 학생 화면: 시험 결과(총점 + 문항별) + 재시험 버튼 판단값
+
+    설계:
+    - Result 모델 자체는 '스냅샷'이므로
+      allow_retake/max_attempts/can_retake는 Exam 정책 + Attempt 상태로 계산해서 내려준다.
+    - 이 값들은 "응답 필드"이지 Result DB 필드가 아니다.
+      → View에서 계산 후 data에 주입하는 방식이 가장 단순/명확.
     """
+
     items = ResultItemSerializer(many=True, read_only=True)
+
+    # ✅ STEP 2: 프론트 재시험 버튼 판단용 (응답 전용 필드)
+    attempt_id = serializers.IntegerField(allow_null=True, required=False, read_only=True)
+    can_retake = serializers.BooleanField(required=False, read_only=True)
+    max_attempts = serializers.IntegerField(required=False, read_only=True)
+    allow_retake = serializers.BooleanField(required=False, read_only=True)
 
     class Meta:
         model = Result
@@ -876,10 +878,16 @@ class StudentExamResultSerializer(serializers.ModelSerializer):
             "target_type",
             "target_id",
             "enrollment_id",
+
+            # ✅ STEP 2
+            "attempt_id",
             "total_score",
             "max_score",
             "submitted_at",
             "items",
+            "allow_retake",
+            "max_attempts",
+            "can_retake",
         ]
 
 
@@ -910,6 +918,11 @@ class ResultApplier:
 
     ✅ attempt 중심 설계 반영:
     - apply()가 attempt_id를 받아서 Result / ResultFact에 저장
+
+    ✅ 운영 안전성 패치 (Critical #4)
+    - ResultFact / ResultItem에 들어가는 값은 "항상 타입이 보장된다"는 전제가 운영에서 깨질 수 있음
+      (blank, meta-only, None, 숫자/리스트 등)
+    - 따라서 여기서 최소 캐스팅/디폴트를 강제해 DB insert 안정성을 올린다.
     """
 
     @staticmethod
@@ -924,7 +937,7 @@ class ResultApplier:
         items: list[dict],
     ) -> Result:
         """
-        items format:
+        items format (권장):
         {
             question_id,
             answer,
@@ -936,52 +949,67 @@ class ResultApplier:
         }
         """
 
-        # Result는 "최신 스냅샷"
         result, _ = Result.objects.get_or_create(
             target_type=target_type,
             target_id=target_id,
             enrollment_id=enrollment_id,
         )
 
-        # ✅ 이 Result가 참조하는 attempt 갱신
-        # 대표 attempt가 바뀌면 여기서 최신값으로 덮어씌워짐(정상)
+        # ✅ 대표 attempt 추적 (덮어쓰는게 정상)
         result.attempt_id = int(attempt_id)
 
         total = 0.0
         max_total = 0.0
 
-        for item in items:
+        for item in (items or []):
+            # -----------------------------
+            # ✅ Critical #4 PATCH
+            # -----------------------------
+            qid = int(item.get("question_id"))
+            ans = str(item.get("answer") or "")
+            is_correct = bool(item.get("is_correct"))
+            score = float(item.get("score") or 0.0)
+            max_score = float(item.get("max_score") or 0.0)
+            source = str(item.get("source") or "")
+            meta = item.get("meta", None)
+
             # 1️⃣ Fact (append-only)
             ResultFact.objects.create(
                 target_type=target_type,
-                target_id=target_id,
-                enrollment_id=enrollment_id,
-                submission_id=submission_id,
-                attempt_id=int(attempt_id),  # ✅ 추가
-                **item,
+                target_id=int(target_id),
+                enrollment_id=int(enrollment_id),
+                submission_id=int(submission_id),
+                attempt_id=int(attempt_id),
+
+                question_id=qid,
+                answer=ans,
+                is_correct=is_correct,
+                score=score,
+                max_score=max_score,
+                source=source,
+                meta=meta,
             )
 
             # 2️⃣ Snapshot (ResultItem)
             ResultItem.objects.update_or_create(
                 result=result,
-                question_id=item["question_id"],
+                question_id=qid,
                 defaults={
-                    "answer": item["answer"],
-                    "is_correct": item["is_correct"],
-                    "score": item["score"],
-                    "max_score": item["max_score"],
-                    "source": item["source"],
+                    "answer": ans,
+                    "is_correct": is_correct,
+                    "score": score,
+                    "max_score": max_score,
+                    "source": source,
                 },
             )
 
-            total += float(item["score"] or 0.0)
-            max_total += float(item["max_score"] or 0.0)
+            total += score
+            max_total += max_score
 
         result.total_score = float(total)
         result.max_score = float(max_total)
         result.submitted_at = timezone.now()
 
-        # ✅ attempt_id도 같이 저장
         result.save(
             update_fields=["attempt_id", "total_score", "max_score", "submitted_at"]
         )
@@ -992,19 +1020,24 @@ class ResultApplier:
 ==========================================================================================
 # FILE: services/attempt_service.py
 ==========================================================================================
+# apps/domains/results/services/attempt_service.py
+from __future__ import annotations
+
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Max
+from django.utils import timezone
 
 from apps.domains.results.models import ExamAttempt
+from apps.domains.exams.models import Exam
 
 
 class ExamAttemptService:
     """
     ExamAttempt 생성/관리 전담
 
-    🔥 수정 사항
-    - 동시성 안전 (transaction.atomic)
-    - 대표 attempt 단일성 보장
+    🔥 Critical 패치:
+    - 같은 submission_id로 Attempt가 중복 생성되는 것을 차단
     """
 
     @staticmethod
@@ -1016,27 +1049,66 @@ class ExamAttemptService:
         submission_id: int,
     ) -> ExamAttempt:
 
-        # 🔒 row-level lock
+        # -------------------------------------------------
+        # 🔴 CRITICAL #2
+        # -------------------------------------------------
+        # 같은 submission으로 Attempt가 이미 있으면 즉시 차단
+        if ExamAttempt.objects.filter(submission_id=int(submission_id)).exists():
+            raise ValidationError(
+                "Attempt already exists for this submission."
+            )
+
+        # -------------------------------------------------
+        # 1️⃣ Exam 정책 로딩
+        # -------------------------------------------------
+        exam = Exam.objects.filter(id=int(exam_id)).first()
+        allow_retake = bool(getattr(exam, "allow_retake", False)) if exam else False
+        max_attempts = int(getattr(exam, "max_attempts", 1) or 1) if exam else 1
+
+        # -------------------------------------------------
+        # 2️⃣ open_at / close_at 정책 강제
+        # -------------------------------------------------
+        if exam:
+            now = timezone.now()
+            open_at = getattr(exam, "open_at", None)
+            close_at = getattr(exam, "close_at", None)
+
+            if open_at and now < open_at:
+                raise ValidationError("Exam not open yet.")
+            if close_at and now > close_at:
+                raise ValidationError("Exam is closed.")
+
+        # -------------------------------------------------
+        # 3️⃣ 동시성 안전: (exam, enrollment) lock
+        # -------------------------------------------------
         qs = (
             ExamAttempt.objects
             .select_for_update()
             .filter(exam_id=exam_id, enrollment_id=enrollment_id)
         )
 
-        last = qs.aggregate(Max("attempt_index")).get(
-            "attempt_index__max"
-        ) or 0
+        last = qs.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
+        next_index = int(last) + 1
 
-        # 기존 대표 attempt 해제
-        qs.filter(is_representative=True).update(
-            is_representative=False
-        )
+        # -------------------------------------------------
+        # 4️⃣ 정책 강제
+        # -------------------------------------------------
+        if not allow_retake and next_index > 1:
+            raise ValidationError("Retake is not allowed for this exam.")
+
+        if allow_retake and next_index > max_attempts:
+            raise ValidationError("Max attempts exceeded.")
+
+        # -------------------------------------------------
+        # 5️⃣ 대표 attempt 교체
+        # -------------------------------------------------
+        qs.filter(is_representative=True).update(is_representative=False)
 
         attempt = ExamAttempt.objects.create(
             exam_id=exam_id,
             enrollment_id=enrollment_id,
             submission_id=submission_id,
-            attempt_index=last + 1,
+            attempt_index=next_index,
             is_retake=(last > 0),
             is_representative=True,
             status="pending",
@@ -1055,25 +1127,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from django.db import transaction
 
-# 🔽 Submission은 submissions 도메인의 단일 진실
+# 🔽 submissions 도메인 (raw input)
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 
-# 🔽 Results 도메인 실 저장 Answer (채점 결과)
-from apps.domains.results.models import SubmissionAnswer as ResultSubmissionAnswer
+# 🔽 results 도메인 (grading output, 불변)
+from apps.domains.results.models import (
+    SubmissionAnswer as ResultSubmissionAnswer,
+)
 
 from apps.domains.results.services.applier import ResultApplier
 from apps.domains.results.services.attempt_service import ExamAttemptService
 
 from apps.domains.exams.models import ExamQuestion, AnswerKey
 
-# ✅ Progress 파이프라인 Celery Task
+# Progress pipeline
 from apps.domains.progress.tasks.progress_pipeline_task import (
     run_progress_pipeline_task,
 )
-
-# ============================================================
-# OMR / 채점 정책 v1 (Results 도메인 책임)
-# ============================================================
 
 OMR_CONF_THRESHOLD_V1 = 0.70
 
@@ -1098,6 +1168,9 @@ def _grade_choice_v1(
     correct_answer: str,
     max_score: float,
 ) -> Tuple[bool, float]:
+    """
+    OMR 객관식 채점 v1
+    """
     if (status or "").lower() != "ok":
         return False, 0.0
 
@@ -1124,6 +1197,9 @@ def _grade_short_v1(
     correct_answer: str,
     max_score: float,
 ) -> Tuple[bool, float]:
+    """
+    주관식 / fallback 채점
+    """
     ans = _norm(answer_text)
     cor = _norm(correct_answer)
 
@@ -1141,8 +1217,13 @@ def _infer_answer_type(q: ExamQuestion) -> str:
     return "choice"
 
 
-def _get_correct_answer_map(exam_id: int) -> Dict[str, Any]:
-    ak = AnswerKey.objects.filter(exam_id=exam_id).first()
+def _get_correct_answer_map_v2(exam_id: int) -> Dict[str, Any]:
+    """
+    ✅ AnswerKey v2 고정
+    answers = { "123": "B", "124": "D" }
+    key == ExamQuestion.id (string)
+    """
+    ak = AnswerKey.objects.filter(exam_id=int(exam_id)).first()
     if not ak or not isinstance(ak.answers, dict):
         return {}
     return ak.answers
@@ -1153,84 +1234,93 @@ def grade_submission_to_results(submission: Submission) -> None:
     """
     Submission → ExamAttempt → Result / ResultItem / ResultFact
 
-    ✅ attempt 중심 설계:
-    - ExamAttempt 생성
-    - Result / ResultFact에 attempt_id 저장
+    🔥 v2 핵심:
+    - SubmissionAnswer.exam_question_id만 사용
+    - number / fallback 완전 제거
+    - AnswerKey v2 고정
     """
 
-    # ---------------------------
-    # 1️⃣ Submission 상태 변경
-    # ---------------------------
     submission.status = Submission.Status.GRADING
-    submission.save(update_fields=["status"])
+    if hasattr(submission, "error_message"):
+        submission.error_message = ""
+        submission.save(update_fields=["status", "error_message"])
+    else:
+        submission.save(update_fields=["status"])
 
     if submission.target_type != Submission.TargetType.EXAM:
         raise ValueError("Only exam grading is supported")
 
-    # ---------------------------
-    # 2️⃣ ExamAttempt 생성 + 상태 전이
-    # ---------------------------
-    attempt = ExamAttemptService.create_for_submission(
-        exam_id=int(submission.target_id),
-        enrollment_id=int(submission.enrollment_id),
-        submission_id=int(submission.id),
-    )
+    attempt = None
 
-    attempt.status = "grading"
-    attempt.save(update_fields=["status"])
+    try:
+        # 1️⃣ Attempt 생성
+        attempt = ExamAttemptService.create_for_submission(
+            exam_id=int(submission.target_id),
+            enrollment_id=int(submission.enrollment_id),
+            submission_id=int(submission.id),
+        )
+        attempt.status = "grading"
+        attempt.save(update_fields=["status"])
 
-    # ---------------------------
-    # 3️⃣ 채점 대상 로딩
-    # ---------------------------
-    answers = list(
-        SubmissionAnswer.objects.filter(submission=submission)
-    )
-
-    questions = (
-        ExamQuestion.objects
-        .filter(sheet__exam_id=submission.target_id)
-        .in_bulk(field_name="id")
-    )
-
-    correct_map = _get_correct_answer_map(int(submission.target_id))
-
-    items: List[dict] = []
-
-    # ---------------------------
-    # 4️⃣ 문항별 채점 + ResultSubmissionAnswer 저장
-    # ---------------------------
-    for sa in answers:
-        q = questions.get(sa.question_id)
-        if not q:
-            continue
-
-        max_score = float(getattr(q, "score", 0) or 0.0)
-        correct_answer = str(
-            correct_map.get(str(getattr(q, "number", ""))) or ""
+        # 2️⃣ Raw answers
+        answers = list(
+            SubmissionAnswer.objects.filter(submission=submission)
         )
 
-        answer_text = str(sa.answer or "").strip()
+        # 3️⃣ ExamQuestion id map
+        questions_by_id = (
+            ExamQuestion.objects
+            .filter(sheet__exam_id=submission.target_id)
+            .in_bulk(field_name="id")
+        )
 
-        omr = _get_omr_meta(sa.meta)
-        detected = omr.get("detected") or []
-        marking = str(omr.get("marking") or "")
-        confidence = omr.get("confidence", None)
-        status = str(omr.get("status") or "")
-        omr_version = str(omr.get("version") or "")
+        correct_map = _get_correct_answer_map_v2(int(submission.target_id))
 
-        answer_type = _infer_answer_type(q)
+        items: List[dict] = []
 
-        if answer_type in ("choice", "omr", "multiple_choice"):
-            if omr_version.lower() == "v1":
-                is_correct, score = _grade_choice_v1(
-                    detected=[str(x) for x in detected],
-                    marking=marking,
-                    confidence=(float(confidence) if confidence is not None else None),
-                    status=status,
-                    correct_answer=correct_answer,
-                    max_score=max_score,
-                )
-                final_answer = "".join([_norm(x) for x in detected]) if detected else ""
+        # 4️⃣ 문항별 채점
+        for sa in answers:
+            eqid = getattr(sa, "exam_question_id", None)
+            if not eqid:
+                # 전환기 legacy 데이터는 skip
+                continue
+
+            q = questions_by_id.get(int(eqid))
+            if not q:
+                continue
+
+            max_score = float(getattr(q, "score", 0) or 0.0)
+            correct_answer = str(correct_map.get(str(int(q.id))) or "")
+
+            answer_text = str(getattr(sa, "answer", "") or "").strip()
+
+            omr = _get_omr_meta(getattr(sa, "meta", None))
+            detected = omr.get("detected") or []
+            marking = str(omr.get("marking") or "")
+            confidence = omr.get("confidence", None)
+            status = str(omr.get("status") or "")
+            omr_version = str(omr.get("version") or "")
+
+            answer_type = _infer_answer_type(q)
+
+            if answer_type in ("choice", "omr", "multiple_choice"):
+                if omr_version.lower() in ("v1", "v2"):
+                    is_correct, score = _grade_choice_v1(
+                        detected=[str(x) for x in detected],
+                        marking=marking,
+                        confidence=confidence,
+                        status=status,
+                        correct_answer=correct_answer,
+                        max_score=max_score,
+                    )
+                    final_answer = "".join([_norm(x) for x in detected]) if detected else ""
+                else:
+                    is_correct, score = _grade_short_v1(
+                        answer_text=answer_text,
+                        correct_answer=correct_answer,
+                        max_score=max_score,
+                    )
+                    final_answer = answer_text
             else:
                 is_correct, score = _grade_short_v1(
                     answer_text=answer_text,
@@ -1238,64 +1328,62 @@ def grade_submission_to_results(submission: Submission) -> None:
                     max_score=max_score,
                 )
                 final_answer = answer_text
-        else:
-            is_correct, score = _grade_short_v1(
-                answer_text=answer_text,
-                correct_answer=correct_answer,
-                max_score=max_score,
-            )
-            final_answer = answer_text
 
-        # 🔥 Results 도메인 Answer 실 저장 (불변)
-        ResultSubmissionAnswer.objects.create(
-            attempt=attempt,
-            question_id=q.id,
-            detected=detected,
-            marking=marking,
-            confidence=float(confidence or 0),
-            status=status,
-            is_correct=bool(is_correct),
-            score_awarded=float(score),
-            meta=sa.meta,
+            # 결과 Answer (불변)
+            ResultSubmissionAnswer.objects.create(
+                attempt=attempt,
+                question_id=int(q.id),
+                detected=detected,
+                marking=marking,
+                confidence=float(confidence or 0),
+                status=status,
+                is_correct=bool(is_correct),
+                score_awarded=float(score),
+                meta=getattr(sa, "meta", None),
+            )
+
+            items.append({
+                "question_id": int(q.id),
+                "answer": final_answer,
+                "is_correct": bool(is_correct),
+                "score": float(score),
+                "max_score": float(max_score),
+                "source": submission.source,
+                "meta": getattr(sa, "meta", None),
+            })
+
+        # 5️⃣ Result 반영
+        ResultApplier.apply(
+            target_type=submission.target_type,
+            target_id=int(submission.target_id),
+            enrollment_id=int(submission.enrollment_id),
+            submission_id=int(submission.id),
+            attempt_id=int(attempt.id),
+            items=items,
         )
 
-        items.append({
-            "question_id": q.id,
-            "answer": final_answer,
-            "is_correct": bool(is_correct),
-            "score": float(score),
-            "max_score": float(max_score),
-            "source": submission.source,
-            "meta": sa.meta,
-        })
+        attempt.status = "done"
+        attempt.save(update_fields=["status"])
 
-    # ---------------------------
-    # 5️⃣ Result 반영 (attempt 기준)
-    # ---------------------------
-    ResultApplier.apply(
-        target_type=submission.target_type,
-        target_id=int(submission.target_id),
-        enrollment_id=int(submission.enrollment_id),
-        submission_id=int(submission.id),
-        attempt_id=int(attempt.id),     # ✅ 핵심: attempt_id 저장
-        items=items,
-    )
+        submission.status = Submission.Status.DONE
+        submission.save(update_fields=["status"])
 
-    # ---------------------------
-    # 6️⃣ 상태 마무리
-    # ---------------------------
-    attempt.status = "done"
-    attempt.save(update_fields=["status"])
+        transaction.on_commit(
+            lambda: run_progress_pipeline_task.delay(submission.id)
+        )
 
-    submission.status = Submission.Status.DONE
-    submission.save(update_fields=["status"])
+    except Exception as e:
+        if attempt:
+            attempt.status = "failed"
+            attempt.save(update_fields=["status"])
 
-    # ---------------------------
-    # 7️⃣ Progress 파이프라인 (commit 후)
-    # ---------------------------
-    transaction.on_commit(
-        lambda: run_progress_pipeline_task.delay(submission.id)
-    )
+        submission.status = Submission.Status.FAILED
+        if hasattr(submission, "error_message"):
+            submission.error_message = str(e)[:2000]
+            submission.save(update_fields=["status", "error_message"])
+        else:
+            submission.save(update_fields=["status"])
+        raise
 
 
 ==========================================================================================
@@ -1437,9 +1525,7 @@ def run_progress_pipeline_task(self, submission_id: int) -> bool:
 ==========================================================================================
 # apps/domains/results/tasks/wrong_note_pdf_tasks.py
 from celery import shared_task
-
 from apps.domains.results.models.wrong_note_pdf import WrongNotePDF
-from worker.wrong_notes.generator import generate_wrong_note_pdf
 
 
 @shared_task(
@@ -1449,51 +1535,42 @@ from worker.wrong_notes.generator import generate_wrong_note_pdf
 )
 def generate_wrong_note_pdf_task(self, job_id: int) -> bool:
     """
-    ❗ 계약 역할만 수행
-    ❗ 실제 계산/생성은 worker로 위임
+    🔴 UX/운영 패치
+    - API 서버는 RUNNING까지만 책임
+    - DONE은 외부 worker만 찍음
     """
+
     job = WrongNotePDF.objects.get(id=job_id)
 
     job.status = WrongNotePDF.Status.RUNNING
     job.save(update_fields=["status"])
 
-    try:
-        file_path = generate_wrong_note_pdf(job_id)
-        job.file_path = file_path
-        job.status = WrongNotePDF.Status.DONE
-        job.save(update_fields=["status", "file_path"])
-        return True
+    # ------------------------------------------------
+    # ❗ 실제 PDF 생성은 외부 Worker 책임
+    # 여기서는 enqueue만 수행
+    # ------------------------------------------------
+    # enqueue_wrong_note_pdf_job(job_id)
+    # TODO: worker 연동
 
-    except Exception as e:
-        job.status = WrongNotePDF.Status.FAILED
-        job.error_message = str(e)
-        job.save(update_fields=["status", "error_message"])
-        raise
+    return True
 
 
 ==========================================================================================
 # FILE: views/__init__.py
 ==========================================================================================
-# PATH: apps/domains/results/views/__init__.py
-
-from .exam_result_view import ExamStatsView, ExamQuestionStatsView
-from .wrong_note_view import WrongNoteView
+# apps/domains/results/views/__init__.py
 
 from .admin_exam_results_view import AdminExamResultsView
 from .admin_exam_summary_view import AdminExamSummaryView
 from .admin_exam_question_stats_view import AdminExamQuestionStatsView
+from .student_exam_result_view import MyExamResultView
+from .wrong_note_view import WrongNoteView
 
 __all__ = [
-    # Legacy
-    "ExamStatsView",
-    "ExamQuestionStatsView",
-
-    # Admin
     "AdminExamResultsView",
     "AdminExamSummaryView",
     "AdminExamQuestionStatsView",
-
-    # Shared
+    "MyExamResultView",
     "WrongNoteView",
 ]
 
@@ -1501,19 +1578,12 @@ __all__ = [
 ==========================================================================================
 # FILE: views/admin_exam_question_stats_view.py
 ==========================================================================================
-# PATH: apps/domains/results/views/admin_exam_question_stats_view.py
-"""
-Admin / Teacher Exam Question Statistics
-
-- ResultFact 기반 (append-only)
-- support.analytics 완전 대체
-"""
-
+# apps/domains/results/views/admin_exam_question_stats_view.py
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from django.db.models import Count
+from django.db.models import Count, Q, F, FloatField, ExpressionWrapper
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import ResultFact
@@ -1521,7 +1591,9 @@ from apps.domains.results.models import ResultFact
 
 class AdminExamQuestionStatsView(APIView):
     """
-    GET /results/admin/exams/<exam_id>/questions/
+    🔧 성능 패치
+    - N+1 제거
+    - 단일 aggregate 쿼리
     """
 
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
@@ -1532,22 +1604,23 @@ class AdminExamQuestionStatsView(APIView):
             target_id=int(exam_id),
         )
 
-        rows = []
+        rows = (
+            facts.values("question_id")
+            .annotate(
+                attempts=Count("id"),
+                correct_count=Count("id", filter=Q(is_correct=True)),
+            )
+            .annotate(
+                wrong_count=F("attempts") - F("correct_count"),
+                correct_rate=ExpressionWrapper(
+                    F("correct_count") * 1.0 / F("attempts"),
+                    output_field=FloatField(),
+                ),
+            )
+            .order_by("question_id")
+        )
 
-        for qid in facts.values_list("question_id", flat=True).distinct():
-            qf = facts.filter(question_id=qid)
-            total = qf.count()
-            correct = qf.filter(is_correct=True).count()
-
-            rows.append({
-                "question_id": qid,
-                "attempts": total,
-                "correct_count": correct,
-                "wrong_count": total - correct,
-                "correct_rate": (correct / total) if total else 0.0,
-            })
-
-        return Response(rows)
+        return Response(list(rows))
 
 
 ==========================================================================================
@@ -1555,12 +1628,14 @@ class AdminExamQuestionStatsView(APIView):
 ==========================================================================================
 # PATH: apps/domains/results/views/admin_exam_results_view.py
 
+from __future__ import annotations
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.results.models import Result, ResultFact
+from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.results.serializers.admin_exam_result_row import (
     AdminExamResultRowSerializer,
 )
@@ -1581,6 +1656,22 @@ class AdminExamResultsView(APIView):
     - ResultFact 기준 "최신 submission" 판단 시
       submission_id 단독이 아니라 attempt_id 기준으로 판단
     - 재시험 / 재채점 / 대표 attempt 변경에도 의미적으로 올바른 최신값 보장
+
+    🔧 PATCH(치명 케이스):
+    - items == [] (매칭 실패)면 ResultFact가 한 건도 안 생길 수 있음.
+      → 그런데 Result는 생성됨 (attempt_id는 있음).
+      → 기존 로직은 Fact만 보고 최신 submission을 잡아와서 submission_id가 None으로 떨어짐.
+
+    ✅ 해결:
+    - Result.attempt_id → ExamAttempt → submission_id 로 fallback(또는 대체)해서 채움.
+
+    ✅ 운영 안정성 패치 (Critical #2)
+    - SessionProgress.student_id가 Student.id와 1:1로 매칭된다는 가정은 프로젝트마다 깨질 수 있다.
+      (어떤 프로젝트는 user_id, 어떤 프로젝트는 enrollment FK, 어떤 프로젝트는 student 테이블 PK가 다름)
+    - 최소 방어:
+      - sp.student_id가 있으면 그것을 우선 키로
+      - 없으면 sp.user_id로 fallback
+      - Student 조회 및 row 구성에서도 동일 규칙 적용
     """
 
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
@@ -1606,34 +1697,28 @@ class AdminExamResultsView(APIView):
         }
 
         # -------------------------------------------------
-        # 3️⃣ Student 조회 최적화
+        # 3️⃣ Student 조회 최적화 (Critical #2 PATCH)
         # -------------------------------------------------
-        student_ids = [
-            sp.student_id
-            for sp in progress_map.values()
-            if getattr(sp, "student_id", None)
-        ]
+        # ✅ 프로젝트마다 SessionProgress가 student_id / user_id / enrollment_id 등을 들고 있을 수 있음
+        # 여기서는 "있으면 student_id, 없으면 user_id"의 최소 방어 규칙을 적용.
+        student_ids = set()
+
+        for sp in progress_map.values():
+            # 가장 흔한 케이스: student_id
+            if hasattr(sp, "student_id") and getattr(sp, "student_id", None):
+                student_ids.add(int(sp.student_id))
+            # fallback 케이스: user_id
+            elif hasattr(sp, "user_id") and getattr(sp, "user_id", None):
+                student_ids.add(int(sp.user_id))
 
         student_map = {
             s.id: s
-            for s in Student.objects.filter(id__in=student_ids)
+            for s in Student.objects.filter(id__in=list(student_ids))
         }
 
         # -------------------------------------------------
-        # 4️⃣ 🔥 enrollment_id → 최신 attempt/submission 맵
+        # 4️⃣ enrollment_id → 최신 attempt/submission 맵 (Fact 기반 1차)
         # -------------------------------------------------
-        """
-        ❗ 핵심 변경 포인트
-
-        기존:
-        - ResultFact.id DESC 기준 → submission_id 최신 판단
-        문제:
-        - 재시험/재채점 시 의미상 최신이 아닐 수 있음
-
-        변경:
-        - ResultFact.attempt_id 기준으로 "시험 응시 단위 최신" 판단
-        """
-
         fact_qs = (
             ResultFact.objects
             .filter(
@@ -1659,6 +1744,31 @@ class AdminExamResultsView(APIView):
                 }
 
         # -------------------------------------------------
+        # 4-1️⃣ 🔧 PATCH: Fact가 없더라도 Result.attempt_id로 submission 추적
+        # -------------------------------------------------
+        attempt_ids = [r.attempt_id for r in results if getattr(r, "attempt_id", None)]
+        attempt_map = {
+            a.id: a
+            for a in ExamAttempt.objects.filter(id__in=attempt_ids)
+        }
+
+        for r in results:
+            eid = r.enrollment_id
+            aid = getattr(r, "attempt_id", None)
+            if not aid:
+                continue
+
+            a = attempt_map.get(int(aid))
+            if not a:
+                continue
+
+            if (eid not in latest_map) or (not latest_map[eid].get("submission_id")):
+                latest_map[eid] = {
+                    "attempt_id": int(a.id),
+                    "submission_id": int(a.submission_id),
+                }
+
+        # -------------------------------------------------
         # 5️⃣ Submission.status 조회
         # -------------------------------------------------
         submission_ids = [
@@ -1680,9 +1790,12 @@ class AdminExamResultsView(APIView):
         for r in results:
             enrollment_id = r.enrollment_id
             sp = progress_map.get(enrollment_id)
-            student = student_map.get(
-                getattr(sp, "student_id", None)
-            )
+
+            # ✅ Critical #2 PATCH: student_id/user_id 어떤 필드가 있어도 최소 방어로 커버
+            sid = None
+            if sp is not None:
+                sid = getattr(sp, "student_id", None) or getattr(sp, "user_id", None)
+            student = student_map.get(int(sid)) if sid else None
 
             latest = latest_map.get(enrollment_id, {})
             submission_id = latest.get("submission_id")
@@ -1699,8 +1812,9 @@ class AdminExamResultsView(APIView):
                 "total_score": r.total_score,
                 "max_score": r.max_score,
 
-                "passed": bool(sp and not sp.failed),
-                "clinic_required": bool(sp and sp.clinic_required),
+                # sp가 없으면 보수적으로 False 처리
+                "passed": bool(sp and not getattr(sp, "failed", False)),
+                "clinic_required": bool(sp and getattr(sp, "clinic_required", False)),
 
                 "submitted_at": r.submitted_at,
 
@@ -1800,6 +1914,90 @@ class AdminExamSummaryView(APIView):
 
 
 ==========================================================================================
+# FILE: views/admin_representative_attempt_view.py
+==========================================================================================
+# apps/domains/results/views/admin_representative_attempt_view.py
+from __future__ import annotations
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.models import ExamAttempt, Result
+
+
+class AdminRepresentativeAttemptView(APIView):
+    """
+    POST /results/admin/exams/<exam_id>/representative-attempt/
+
+    요청:
+    {
+      "enrollment_id": 55,
+      "attempt_id": 1234
+    }
+
+    동작:
+    1) (exam_id, enrollment_id) 의 모든 attempt → is_representative=False
+    2) 지정 attempt → is_representative=True
+    3) Result.attempt_id도 해당 attempt로 동기화
+
+    ✅ 운영/CS 필수 API
+    - 재시험 실패
+    - 채점 오류
+    - 대표 점수 수동 교체
+    """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def post(self, request, exam_id: int):
+        enrollment_id = request.data.get("enrollment_id")
+        attempt_id = request.data.get("attempt_id")
+
+        if not enrollment_id or not attempt_id:
+            raise ValidationError("enrollment_id and attempt_id are required")
+
+        exam_id = int(exam_id)
+        enrollment_id = int(enrollment_id)
+        attempt_id = int(attempt_id)
+
+        # 1️⃣ attempt 검증
+        target = ExamAttempt.objects.filter(
+            id=attempt_id,
+            exam_id=exam_id,
+            enrollment_id=enrollment_id,
+        ).first()
+
+        if not target:
+            raise ValidationError("attempt not found for this exam/enrollment")
+
+        # 2️⃣ 대표 attempt 초기화
+        ExamAttempt.objects.filter(
+            exam_id=exam_id,
+            enrollment_id=enrollment_id,
+        ).update(is_representative=False)
+
+        # 3️⃣ 지정 attempt 대표로 설정
+        target.is_representative = True
+        target.save(update_fields=["is_representative"])
+
+        # 4️⃣ Result 스냅샷도 동기화
+        Result.objects.filter(
+            target_type="exam",
+            target_id=exam_id,
+            enrollment_id=enrollment_id,
+        ).update(attempt_id=attempt_id)
+
+        return Response({
+            "ok": True,
+            "exam_id": exam_id,
+            "enrollment_id": enrollment_id,
+            "attempt_id": attempt_id,
+        })
+
+
+==========================================================================================
 # FILE: views/exam_attempt_view.py
 ==========================================================================================
 # apps/domains/results/views/exam_attempt_view.py
@@ -1837,7 +2035,7 @@ class ExamAttemptViewSet(ModelViewSet):
 ==========================================================================================
 # FILE: views/exam_result_view.py
 ==========================================================================================
-# PATH: apps/domains/results/views/exam_result_view.py
+# apps/domains/results/views/exam_result_view.py
 """
 ⚠️ LEGACY APIs (DEPRECATED)
 
@@ -1939,7 +2137,7 @@ class ExamQuestionStatsView(APIView):
 ==========================================================================================
 # FILE: views/student_exam_result_view.py
 ==========================================================================================
-# PATH: apps/domains/results/views/student_exam_result_view.py
+# apps/domains/results/views/student_exam_result_view.py
 from __future__ import annotations
 
 from django.shortcuts import get_object_or_404
@@ -1948,26 +2146,35 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from apps.domains.results.models import Result
-from apps.domains.results.serializers.student_exam_result import StudentExamResultSerializer
+from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.results.serializers.student_exam_result import (
+    StudentExamResultSerializer,
+)
 from apps.domains.results.permissions import IsStudent
 
-# ✅ 시험/수강정보를 통해 enrollment_id를 찾기 위해 import
 from apps.domains.exams.models import Exam
 from apps.domains.enrollment.models import Enrollment
+
+# ✅ Progress 조회 (clinic_required 계산용)
+from apps.domains.progress.models import SessionProgress
+from apps.domains.lectures.models import Session
 
 
 class MyExamResultView(APIView):
     """
-    ✅ 학생 본인 시험 성적 조회 (1개 API)
-
     GET /results/me/exams/<exam_id>/
 
-    - request.user(학생) 기준으로 enrollment_id를 찾아서
-    - results_result + results_result_item을 반환
+    ✅ 단일 최종 버전 (중복 제거 완료)
 
-    주의:
-    - Enrollment/Exam 필드가 프로젝트마다 다를 수 있어 방어적으로 작성함
+    포함 기능:
+    - Result + ResultItem 조회
+    - allow_retake / max_attempts / can_retake 계산
+    - clinic_required 주입
+    - Enrollment 탐색 방어 로직
+
+    ⚠️ 중요:
+    - 이 View 정의는 반드시 1개만 존재해야 함
+    - 다른 파일에 동일 클래스가 있으면 즉시 삭제할 것
     """
 
     permission_classes = [IsAuthenticated, IsStudent]
@@ -1976,59 +2183,77 @@ class MyExamResultView(APIView):
         user = request.user
         exam = get_object_or_404(Exam, id=int(exam_id))
 
-        # ------------------------------------------------------------
-        # 1) enrollment 찾기
-        # ------------------------------------------------------------
-        # ✅ 가장 이상적인 매핑: Enrollment(user + lecture)
-        # - Exam에 lecture_id(혹은 lecture)가 있는 프로젝트를 전제로 우선 시도
-        lecture_id = getattr(exam, "lecture_id", None)
-        if lecture_id is None and getattr(exam, "lecture", None) is not None:
-            lecture_id = getattr(exam.lecture, "id", None)
-
+        # -------------------------------------------------
+        # 1️⃣ Enrollment 찾기 (프로젝트별 필드 차이 방어)
+        # -------------------------------------------------
         enrollment_qs = Enrollment.objects.all()
 
-        # 프로젝트별 Enrollment의 user FK 필드명이 다를 수 있음 (보통 user)
         if hasattr(Enrollment, "user_id"):
             enrollment_qs = enrollment_qs.filter(user_id=user.id)
         elif hasattr(Enrollment, "student_id"):
             enrollment_qs = enrollment_qs.filter(student_id=user.id)
         else:
-            # 정말 특이 케이스면 여기 수정
             enrollment_qs = enrollment_qs.filter(user=user)
-
-        if lecture_id is not None:
-            # Enrollment에 lecture_id 필드가 있는 경우 우선 필터
-            if hasattr(Enrollment, "lecture_id"):
-                enrollment_qs = enrollment_qs.filter(lecture_id=int(lecture_id))
 
         enrollment = enrollment_qs.first()
         if not enrollment:
-            return Response(
-                {"detail": "enrollment not found for this user (and lecture)."},
-                status=404,
+            return Response({"detail": "enrollment not found"}, status=404)
+
+        enrollment_id = int(enrollment.id)
+
+        # -------------------------------------------------
+        # 2️⃣ Result 조회 (최신 스냅샷)
+        # -------------------------------------------------
+        result = (
+            Result.objects
+            .filter(
+                target_type="exam",
+                target_id=int(exam_id),
+                enrollment_id=enrollment_id,
             )
-
-        enrollment_id = int(getattr(enrollment, "id"))
-
-        # ------------------------------------------------------------
-        # 2) Result 조회 (Result = 최신 스냅샷)
-        # ------------------------------------------------------------
-        result = Result.objects.filter(
-            target_type="exam",
-            target_id=int(exam_id),
-            enrollment_id=enrollment_id,
-        ).prefetch_related("items").first()
+            .prefetch_related("items")
+            .first()
+        )
 
         if not result:
-            # ✅ 학생 관점 UX:
-            # - 아직 제출/채점 전이면 404가 더 자연스럽거나,
-            # - 200 + null 형태로 주기도 함 (팀 컨벤션에 맞춰 택1)
-            return Response(
-                {"detail": "result not found (not submitted or not graded yet)."},
-                status=404,
-            )
+            return Response({"detail": "result not found"}, status=404)
 
-        return Response(StudentExamResultSerializer(result).data)
+        # -------------------------------------------------
+        # 3️⃣ 재시험 버튼 판단 (대표 attempt 의존 ❌)
+        # -------------------------------------------------
+        allow_retake = bool(getattr(exam, "allow_retake", False))
+        max_attempts = int(getattr(exam, "max_attempts", 1) or 1)
+
+        attempt_count = ExamAttempt.objects.filter(
+            exam_id=int(exam_id),
+            enrollment_id=enrollment_id,
+        ).count()
+
+        can_retake = bool(allow_retake and attempt_count < max_attempts)
+
+        # -------------------------------------------------
+        # 4️⃣ clinic_required 계산 (Progress 파이프라인 결과)
+        # -------------------------------------------------
+        clinic_required = False
+        session = Session.objects.filter(exam__id=exam_id).first()
+
+        if session:
+            sp = SessionProgress.objects.filter(
+                session=session,
+                enrollment_id=enrollment_id,
+            ).first()
+            clinic_required = bool(sp and getattr(sp, "clinic_required", False))
+
+        # -------------------------------------------------
+        # 5️⃣ 응답 구성
+        # -------------------------------------------------
+        data = StudentExamResultSerializer(result).data
+        data["allow_retake"] = allow_retake
+        data["max_attempts"] = max_attempts
+        data["can_retake"] = can_retake
+        data["clinic_required"] = clinic_required
+
+        return Response(data)
 
 
 ==========================================================================================
@@ -2038,46 +2263,62 @@ class MyExamResultView(APIView):
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 
+from apps.domains.results.permissions import is_teacher_user
+from apps.domains.enrollment.models import Enrollment
 from apps.domains.results.models.wrong_note_pdf import WrongNotePDF
 
-# ✅ 네 프로젝트 덤프 기준 실제 파일명은 wrong_note_pdf_tasks.py
-# (이거 틀리면 바로 ImportError/CI 터짐)
-from apps.domains.results.tasks.wrong_note_pdf_tasks import generate_wrong_note_pdf_task
+from apps.domains.results.tasks.wrong_note_pdf_tasks import (
+    generate_wrong_note_pdf_task,
+)
 
 
 class WrongNotePDFCreateView(APIView):
     """
     오답노트 PDF 생성 요청
 
-    POST /results/wrong-notes/pdf/
-
-    body:
-    - enrollment_id (required)
-    - lecture_id (optional)
-    - exam_id (optional)
-    - from_session_order (optional, default=2)
+    🔴 보안 패치:
+    - 학생은 본인 enrollment만 PDF 생성 가능
+    - 교사/관리자는 전체 허용
     """
 
     permission_classes = [IsAuthenticated]
 
+    def _assert_enrollment_access(self, request, enrollment_id: int) -> None:
+        user = request.user
+
+        if is_teacher_user(user):
+            return
+
+        qs = Enrollment.objects.filter(id=int(enrollment_id))
+        if hasattr(Enrollment, "user_id"):
+            qs = qs.filter(user_id=user.id)
+        elif hasattr(Enrollment, "student_id"):
+            qs = qs.filter(student_id=user.id)
+
+        if not qs.exists():
+            raise PermissionDenied("You cannot create PDF for this enrollment_id.")
+
     def post(self, request):
         enrollment_id = request.data.get("enrollment_id")
+        if not enrollment_id:
+            return Response({"detail": "enrollment_id required"}, status=400)
+
+        # 🔐 접근 권한 검사
+        self._assert_enrollment_access(request, int(enrollment_id))
+
         lecture_id = request.data.get("lecture_id")
         exam_id = request.data.get("exam_id")
         from_order = request.data.get("from_session_order", 2)
 
-        if not enrollment_id:
-            return Response({"detail": "enrollment_id required"}, status=400)
-
         job = WrongNotePDF.objects.create(
-            enrollment_id=enrollment_id,
+            enrollment_id=int(enrollment_id),
             lecture_id=lecture_id,
             exam_id=exam_id,
-            from_session_order=from_order,
+            from_session_order=int(from_order),
         )
 
-        # ✅ celery task 실행
         generate_wrong_note_pdf_task.delay(job.id)
 
         return Response({
@@ -2090,25 +2331,66 @@ class WrongNotePDFCreateView(APIView):
 # FILE: views/wrong_note_view.py
 ==========================================================================================
 # apps/domains/results/views/wrong_note_view.py
+from __future__ import annotations
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 
-from django.db.models import F
+from apps.domains.results.permissions import is_teacher_user
+from apps.domains.enrollment.models import Enrollment
 
 from apps.domains.results.models import ResultFact
 from apps.domains.exams.models import Exam
-from apps.domains.lectures.models import Session
 
 
 class WrongNoteView(APIView):
     """
     오답노트 조회 API (v1)
-    - ResultFact 기반
-    - append-only
+
+    🔴 보안 패치 요약
+    - enrollment_id를 query로 받기 때문에 접근 제어 필수
+    - 학생: 본인 enrollment만 허용
+    - 교사/관리자: 전체 허용
+
+    ✅ 운영 안정성 패치 (Critical #3)
+    - Exam ↔ Session reverse related_name이 프로젝트마다 다를 수 있음
+      (session / sessions / session_set 등)
+    - 기존 코드의 session__order 가정은 깨질 수 있으므로
+      Exam 모델의 실제 relation 이름을 검사 후 필터 적용
     """
 
     permission_classes = [IsAuthenticated]
+
+    # --------------------------------------------------
+    # 🔐 enrollment 접근 권한 검사 (핵심 보안 로직)
+    # --------------------------------------------------
+    def _assert_enrollment_access(self, request, enrollment_id: int) -> None:
+        user = request.user
+
+        if is_teacher_user(user):
+            return
+
+        qs = Enrollment.objects.filter(id=int(enrollment_id))
+
+        if hasattr(Enrollment, "user_id"):
+            qs = qs.filter(user_id=user.id)
+        elif hasattr(Enrollment, "student_id"):
+            qs = qs.filter(student_id=user.id)
+
+        if not qs.exists():
+            raise PermissionDenied("You cannot access this enrollment_id.")
+
+    @staticmethod
+    def _has_relation(model, name: str) -> bool:
+        """
+        Exam 모델에 session/sessions 관계가 존재하는지 검사 (정석).
+        """
+        try:
+            return any(getattr(f, "name", None) == name for f in model._meta.get_fields())
+        except Exception:
+            return False
 
     def get(self, request):
         """
@@ -2121,62 +2403,56 @@ class WrongNoteView(APIView):
 
         enrollment_id = request.query_params.get("enrollment_id")
         if not enrollment_id:
-            return Response(
-                {"detail": "enrollment_id is required"},
-                status=400,
-            )
+            return Response({"detail": "enrollment_id is required"}, status=400)
+
+        self._assert_enrollment_access(request, int(enrollment_id))
 
         lecture_id = request.query_params.get("lecture_id")
         exam_id = request.query_params.get("exam_id")
         from_order = int(request.query_params.get("from_session_order", 2))
 
         qs = ResultFact.objects.filter(
-            enrollment_id=enrollment_id,
+            enrollment_id=int(enrollment_id),
             is_correct=False,
             target_type="exam",
         )
 
-        # -----------------------------
-        # 시험 기준 필터
-        # -----------------------------
         if exam_id:
-            qs = qs.filter(target_id=exam_id)
+            qs = qs.filter(target_id=int(exam_id))
 
-        # -----------------------------
-        # 강의 / 주차 기준 필터
-        # -----------------------------
         if lecture_id:
-            exam_ids = (
-                Exam.objects
-                .filter(
-                    lecture_id=lecture_id,
-                    session__order__gte=from_order,
-                )
-                .values_list("id", flat=True)
-            )
-            qs = qs.filter(target_id__in=exam_ids)
+            # ----------------------------------------------------------
+            # ✅ Critical #3 PATCH:
+            # - Exam ↔ Session 관계명이 session/sessions인지 검사 후 적용
+            # - 둘 다 없으면 안전하게 none()
+            # ----------------------------------------------------------
+            exam_qs = Exam.objects.filter(lecture_id=int(lecture_id))
 
-        qs = qs.select_related(None).order_by(
-            "target_id",
-            "question_id",
-        )
+            if self._has_relation(Exam, "sessions"):
+                exam_qs = exam_qs.filter(sessions__order__gte=from_order)
+            elif self._has_relation(Exam, "session"):
+                exam_qs = exam_qs.filter(session__order__gte=from_order)
+            else:
+                exam_qs = exam_qs.none()
 
-        result = []
+            exam_ids = exam_qs.values_list("id", flat=True)
+            qs = qs.filter(target_id__in=list(exam_ids))
 
-        for f in qs:
-            result.append({
-                "exam_id": f.target_id,
-                "question_id": f.question_id,
-                "answer": f.answer,
-                "score": f.score,
-                "max_score": f.max_score,
-                "source": f.source,
-                "meta": f.meta,
-                "created_at": f.created_at,
-            })
+        qs = qs.order_by("target_id", "question_id")
+
+        items = [{
+            "exam_id": f.target_id,
+            "question_id": f.question_id,
+            "answer": f.answer,
+            "score": f.score,
+            "max_score": f.max_score,
+            "source": f.source,
+            "meta": f.meta,
+            "created_at": f.created_at,
+        } for f in qs]
 
         return Response({
             "enrollment_id": int(enrollment_id),
-            "count": len(result),
-            "items": result,
+            "count": len(items),
+            "items": items,
         })

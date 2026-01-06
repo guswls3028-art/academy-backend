@@ -27,7 +27,7 @@ class AIDomainConfig(AppConfig):
 ==========================================================================================
 from apps.shared.contracts.ai_result import AIResult
 from apps.domains.ai.models import AIJobModel, AIResultModel
-from apps.domains.submissions.services.ai_result_mapper import apply_ai_result
+from apps.domains.submissions.services.ai_omr_result_mapper import apply_ai_result
 from apps.domains.results.tasks.grading_tasks import grade_submission_task
 
 

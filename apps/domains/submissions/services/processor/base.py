@@ -13,6 +13,7 @@ class BaseSubmissionProcessor(ABC):
     submissions 내 processor = '답안 중간산물 저장'까지만
     - 채점/정답비교/점수계산 절대 금지
     """
+
     source: str = "base"
 
     def __init__(self, submission: Submission):
@@ -26,8 +27,13 @@ class BaseSubmissionProcessor(ABC):
     @abstractmethod
     def extract_answers(self) -> Iterable[Dict[str, Any]]:
         """
-        반환 포맷(고정):
-            {"question_id": int, "answer": str, "meta": dict|None}
+        반환 포맷(고정, v2):
+            {
+              "exam_question_id": int | None,
+              "question_number": int | None,   # legacy only
+              "answer": str,
+              "meta": dict|None
+            }
         """
         raise NotImplementedError
 
@@ -35,18 +41,32 @@ class BaseSubmissionProcessor(ABC):
         results: List[SubmissionAnswer] = []
 
         for item in extracted:
-            qid = item.get("question_id")
-            if not qid:
+            eqid = item.get("exam_question_id")
+            qnum = item.get("question_number")
+
+            # ✅ v2: exam_question_id 우선
+            if eqid:
+                obj, _ = SubmissionAnswer.objects.update_or_create(
+                    submission=self.submission,
+                    exam_question_id=int(eqid),
+                    defaults={
+                        "question_number": None,
+                        "answer": str(item.get("answer") or ""),
+                        "meta": item.get("meta") or {},
+                    },
+                )
+                results.append(obj)
                 continue
 
-            obj, _ = SubmissionAnswer.objects.update_or_create(
-                submission=self.submission,
-                question_id=int(qid),
-                defaults={
-                    "answer": str(item.get("answer") or ""),
-                    "meta": item.get("meta") or None,
-                },
-            )
-            results.append(obj)
+            # legacy: number만 있는 경우(전환기)
+            if qnum:
+                obj = SubmissionAnswer.objects.create(
+                    submission=self.submission,
+                    exam_question_id=None,
+                    question_number=int(qnum),
+                    answer=str(item.get("answer") or ""),
+                    meta=item.get("meta") or {},
+                )
+                results.append(obj)
 
         return results

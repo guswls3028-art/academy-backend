@@ -17,6 +17,7 @@ class SubmissionService:
     """
     submissions 처리의 유일한 퍼블릭 서비스
     - ONLINE만 즉시 처리 (정규화만 수행)
+    # OMR / IMAGE / VIDEO는 반드시 AI Worker 경유
     """
 
     @staticmethod

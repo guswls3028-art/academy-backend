@@ -14,7 +14,7 @@ import redis
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
-from apps.domains.submissions.services.ai_result_mapper import apply_ai_result
+from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_result
 from apps.domains.results.tasks.grading_tasks import grade_submission_task
 
 
@@ -81,7 +81,7 @@ def submit_ai_result_view(request):
     if submission_id:
         payload["submission_id"] = int(submission_id)
 
-    returned_submission_id = apply_ai_result(payload)
+    returned_submission_id = apply_omr_ai_result(payload)
 
     # ✅ 채점 enqueue
     if returned_submission_id:

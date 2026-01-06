@@ -15,28 +15,51 @@ class OnlineSubmissionProcessor(BaseSubmissionProcessor):
         # A) list
         if isinstance(answers, list):
             for row in answers:
-                qid = row.get("question_id")
-                if not qid:
-                    continue
-                yield {
-                    "question_id": int(qid),
-                    "answer": row.get("answer", ""),
-                    "meta": row.get("meta"),
-                }
+                # ✅ v2 키
+                eqid = row.get("exam_question_id")
+                # legacy 키
+                legacy = row.get("question_id") or row.get("question_number")
+
+                if eqid:
+                    yield {
+                        "exam_question_id": int(eqid),
+                        "question_number": None,
+                        "answer": row.get("answer", ""),
+                        "meta": row.get("meta") or {"via": "online"},
+                    }
+                elif legacy:
+                    yield {
+                        "exam_question_id": None,
+                        "question_number": int(legacy),
+                        "answer": row.get("answer", ""),
+                        "meta": row.get("meta") or {"via": "online_legacy"},
+                    }
             return
 
-        # B) dict (key=question_id)
+        # B) dict (key=exam_question_id 권장)
         if isinstance(answers, dict):
             for k, v in answers.items():
+                # ✅ 기본은 exam_question_id로 해석
                 try:
-                    qid = int(k)
+                    eqid = int(k)
+                    yield {
+                        "exam_question_id": eqid,
+                        "question_number": None,
+                        "answer": v if v is not None else "",
+                        "meta": {"via": "online"},
+                    }
                 except Exception:
-                    continue
-                yield {
-                    "question_id": qid,
-                    "answer": v if v is not None else "",
-                    "meta": {"via": "online"},
-                }
+                    # legacy: key가 number일 수도 있으니 보관만
+                    try:
+                        qnum = int(k)
+                    except Exception:
+                        continue
+                    yield {
+                        "exam_question_id": None,
+                        "question_number": qnum,
+                        "answer": v if v is not None else "",
+                        "meta": {"via": "online_legacy"},
+                    }
             return
 
         return

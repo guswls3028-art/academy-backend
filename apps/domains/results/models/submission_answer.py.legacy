@@ -1,0 +1,43 @@
+# from django.db import models
+# from apps.api.common.models import BaseModel
+
+
+# class SubmissionAnswer(BaseModel):
+#     """
+#     SubmissionAnswer (raw input)
+
+#     🔥 핵심 계약:
+#     - exam_question_id = ExamQuestion.id (절대 number 아님)
+#     - number 기반 접근 완전 폐기
+#     """
+
+#     submission = models.ForeignKey(
+#         "submissions.Submission",
+#         on_delete=models.CASCADE,
+#         related_name="answers",
+#     )
+
+#     # ✅ v2 단일 진실
+#     exam_question_id = models.PositiveIntegerField(
+#         help_text="ExamQuestion.id (number 아님)"
+#     )
+
+#     # 🧯 legacy (전환기용)
+#     question_number = models.PositiveIntegerField(
+#         null=True,
+#         blank=True,
+#         help_text="LEGACY (migration only, 제거 예정)",
+#     )
+
+#     answer = models.TextField(blank=True)
+#     meta = models.JSONField(default=dict, blank=True)
+
+#     class Meta:
+#         db_table = "submissions_submission_answer"
+#         indexes = [
+#             models.Index(fields=["exam_question_id"]),
+#             models.Index(fields=["submission", "exam_question_id"]),
+#         ]
+
+
+# 이름 충돌로 인해 제거. 레가시 상태.
