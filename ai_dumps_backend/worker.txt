@@ -1149,7 +1149,7 @@ from apps.worker.ai_worker.ai.handwriting.detector import analyze_handwriting
 from apps.worker.ai_worker.ai.embedding.service import get_embeddings
 from apps.worker.ai_worker.ai.problem.generator import generate_problem_from_ocr
 from apps.worker.ai_worker.ai.pipelines.homework_video_analyzer import analyze_homework_video
-from apps.worker.storage.downloader import download_to_tmp
+from apps.worker.ai_worker.storage.downloader import download_to_tmp
 
 
 def handle_ai_job(job: AIJob) -> AIResult:
@@ -1486,6 +1486,12 @@ OCR 텍스트:
 
 
 ==========================================================================================
+# FILE: ai_worker/apps/worker/ai_worker/celery.py
+==========================================================================================
+
+
+
+==========================================================================================
 # FILE: ai_worker/storage/__init__.py
 ==========================================================================================
 
@@ -1647,6 +1653,51 @@ def download_to_tmp(
 
 ==========================================================================================
 # FILE: messaging/sms/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: storage/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: storage/downloader.py
+==========================================================================================
+# PATH: apps/worker/storage/downloader.py
+# 역할: 모든 AI worker 입력 파일 다운로드 (공통)
+
+import os
+import requests
+from urllib.parse import urlparse
+
+
+def download_to_tmp(download_url: str, job_id: str) -> str:
+    """
+    presigned GET URL에서 파일 다운로드 → /tmp
+    """
+    parsed = urlparse(download_url)
+    filename = os.path.basename(parsed.path)
+
+    job_dir = f"/tmp/ai_job_{job_id}"
+    os.makedirs(job_dir, exist_ok=True)
+
+    local_path = os.path.join(job_dir, filename)
+
+    with requests.get(download_url, stream=True, timeout=30) as r:
+        r.raise_for_status()
+        with open(local_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+
+    return local_path
+
+
+==========================================================================================
+# FILE: storage/r2_client.py
 ==========================================================================================
 
 

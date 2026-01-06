@@ -26,4 +26,7 @@ urlpatterns = [
         VideoProcessingCompleteView.as_view(),
         name="video-processing-complete",
     ),
+
+    #학생용앱 (사용자가 학생)
+    path("api/v1/student/", include("apps.domains.student_app.urls")),
 ]

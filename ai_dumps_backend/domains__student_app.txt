@@ -1,0 +1,128 @@
+====================================================================================================
+# BACKEND APP: domains__student_app
+# ROOT PATH: C:\academy\apps\domains\student_app
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+# apps/domains/student_app/apps.py
+from django.apps import AppConfig
+
+
+class StudentAppConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.student_app"
+    label = "student_app"
+
+
+==========================================================================================
+# FILE: permissions.py
+==========================================================================================
+# apps/domains/student_app/permissions.py
+from rest_framework.permissions import BasePermission
+
+
+class IsStudent(BasePermission):
+    """
+    학생 로그인 전용
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and hasattr(user, "student_profile")
+        )
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+# apps/domains/student_app/urls.py
+from django.urls import path
+from .dashboard.views import StudentDashboardView
+
+urlpatterns = [
+    path("dashboard/", StudentDashboardView.as_view()),
+]
+
+
+==========================================================================================
+# FILE: dashboard/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: dashboard/serializers.py
+==========================================================================================
+# apps/domains/student_app/dashboard/serializers.py
+from rest_framework import serializers
+
+
+class DashboardNoticeSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    created_at = serializers.DateTimeField(allow_null=True, required=False)
+
+
+class DashboardSessionSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    date = serializers.DateField(allow_null=True, required=False)
+    status = serializers.CharField(allow_null=True, required=False)
+
+
+class StudentDashboardSerializer(serializers.Serializer):
+    notices = DashboardNoticeSerializer(many=True)
+    today_sessions = DashboardSessionSerializer(many=True)
+    badges = serializers.DictField(required=False)
+
+
+==========================================================================================
+# FILE: dashboard/views.py
+==========================================================================================
+# apps/domains/student_app/dashboard/views.py
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.student_app.permissions import IsStudent
+from .serializers import StudentDashboardSerializer
+
+
+class StudentDashboardView(APIView):
+    """
+    ✅ Student Dashboard (LOCK v1)
+
+    GET /api/v1/student/dashboard/
+
+    원칙:
+    - 계산 ❌
+    - 판단 ❌
+    - aggregation 최소
+    """
+
+    permission_classes = [IsAuthenticated, IsStudent]
+
+    def get(self, request):
+        student = request.user.student_profile
+
+        # ⚠️ 아직 실제 도메인 연결 안 함 (MVP)
+        # 프론트가 깨지지 않도록 "형태만" 맞춘다.
+        data = {
+            "notices": [],
+            "today_sessions": [],
+            "badges": {},
+        }
+
+        serializer = StudentDashboardSerializer(data)
+        return Response(serializer.data)

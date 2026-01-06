@@ -73,6 +73,9 @@ INSTALLED_APPS = [
 
     #그랩!
     'django_extensions',
+
+    # 학생페이지 앱 (사용자가 학생)
+    "apps.domains.student_app",
 ]
 
 # ==================================================

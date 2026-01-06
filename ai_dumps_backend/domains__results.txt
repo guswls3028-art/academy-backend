@@ -75,43 +75,55 @@ class IsTeacherOrAdmin(BasePermission):
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
+# ======================================================
+# Student
+# ======================================================
 from apps.domains.results.views.student_exam_result_view import MyExamResultView
+
+# ======================================================
+# Admin / Teacher
+# ======================================================
 from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
 from apps.domains.results.views.admin_exam_summary_view import AdminExamSummaryView
-
-from apps.domains.results.views.wrong_note_view import WrongNoteView
-from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
-from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
-
-# ✅ STEP 8-B: 대표 attempt 변경
 from apps.domains.results.views.admin_representative_attempt_view import (
     AdminRepresentativeAttemptView,
 )
 
-# ✅ STEP 2: 문항 통계 (단일/TopWrong/기본통계)
+# ======================================================
+# Question statistics (STEP 2)
+# ======================================================
 from apps.domains.results.views.question_stats_views import (
     AdminExamQuestionStatsView,
     ExamQuestionWrongDistributionView,
     ExamTopWrongQuestionsView,
 )
 
-# ✅ STEP 3-2: PDF 상태 조회
+# ======================================================
+# Wrong note
+# ======================================================
+from apps.domains.results.views.wrong_note_view import WrongNoteView
+from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
 from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFStatusView
+
+# ======================================================
+# ExamAttempt (history / retake)
+# ======================================================
+from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
 
 
 urlpatterns = [
-    # ======================================================
+    # ============================
     # Student
-    # ======================================================
+    # ============================
     path(
         "me/exams/<int:exam_id>/",
         MyExamResultView.as_view(),
         name="my-exam-result",
     ),
 
-    # ======================================================
+    # ============================
     # Admin / Teacher
-    # ======================================================
+    # ============================
     path(
         "admin/exams/<int:exam_id>/summary/",
         AdminExamSummaryView.as_view(),
@@ -123,45 +135,45 @@ urlpatterns = [
         name="admin-exam-results",
     ),
 
-    # ------------------------------------------------------
-    # STEP 2-A: 문항별 기본 통계 (정답률/평균/최대)
-    # ------------------------------------------------------
+    # ----------------------------
+    # STEP 2-A: 문항 기본 통계
+    # ----------------------------
     path(
         "admin/exams/<int:exam_id>/questions/",
         AdminExamQuestionStatsView.as_view(),
         name="admin-exam-question-stats",
     ),
 
-    # ------------------------------------------------------
-    # STEP 2-B: 문항 단일 오답 분포 (선택지 기준)
-    # ------------------------------------------------------
+    # ----------------------------
+    # STEP 2-B: 단일 문항 오답 분포
+    # ----------------------------
     path(
         "admin/exams/<int:exam_id>/questions/<int:question_id>/wrong-distribution/",
         ExamQuestionWrongDistributionView.as_view(),
         name="admin-exam-question-wrong-distribution",
     ),
 
-    # ------------------------------------------------------
-    # STEP 2-C: 가장 많이 틀린 문항 TOP N
-    # ------------------------------------------------------
+    # ----------------------------
+    # STEP 2-C: Top N 오답 문항
+    # ----------------------------
     path(
         "admin/exams/<int:exam_id>/questions/top-wrong/",
         ExamTopWrongQuestionsView.as_view(),
         name="admin-exam-top-wrong-questions",
     ),
 
-    # ======================================================
+    # ============================
     # STEP 8-B: 대표 attempt 변경
-    # ======================================================
+    # ============================
     path(
         "admin/exams/<int:exam_id>/representative-attempt/",
         AdminRepresentativeAttemptView.as_view(),
         name="admin-representative-attempt",
     ),
 
-    # ======================================================
+    # ============================
     # Wrong Notes
-    # ======================================================
+    # ============================
     path(
         "wrong-notes",
         WrongNoteView.as_view(),
@@ -179,9 +191,9 @@ urlpatterns = [
     ),
 ]
 
-# ======================================================
-# ExamAttempt (히스토리 / 재시험 관리)
-# ======================================================
+# ================================
+# ExamAttempt router
+# ================================
 attempt_router = DefaultRouter()
 attempt_router.register("exam-attempts", ExamAttemptViewSet)
 urlpatterns += attempt_router.urls
@@ -2205,34 +2217,39 @@ def generate_wrong_note_pdf_task(self, job_id: int) -> None:
 # apps/domains/results/views/__init__.py
 
 """
-views package export
+results.views public exports
 
-⚠️ 주의:
-- 이 파일에서 import 하는 대상은
-  실제로 존재하는 view 파일만 포함해야 한다.
-- URLConf import 시점에 실행되므로,
-  존재하지 않는 파일이 있으면 migrate/runserver 모두 크래시함.
+⚠️ IMPORTANT RULES
+- 이 파일은 "외부에서 import 해도 되는 View"만 export한다.
+- urls.py에서 직접 import하는 View는 굳이 여기서 export하지 않아도 된다.
+- 존재하지 않는 파일 / 클래스가 import되면
+  migrate / runserver 시점에 즉시 크래시 난다.
 """
 
-from .admin_exam_results_view import AdminExamResultsView
-from .admin_exam_summary_view import AdminExamSummaryView
-
-# ❌ 제거됨:
-# from .admin_exam_question_stats_view import AdminExamQuestionStatsView
-# (파일 자체가 존재하지 않음)
-
-# ✅ 실제 존재하는 통계 View
-from .question_stats_views import ExamQuestionStatsView
-
+# ======================================================
+# Student-facing
+# ======================================================
 from .student_exam_result_view import MyExamResultView
 from .wrong_note_view import WrongNoteView
 
+# ======================================================
+# Admin / Teacher-facing (대표 View만)
+# ======================================================
+from .admin_exam_results_view import AdminExamResultsView
+from .admin_exam_summary_view import AdminExamSummaryView
+
+# ======================================================
+# ⚠️ Question stats 관련
+# - AdminExamQuestionStatsView 등은
+#   urls.py에서 직접 import하므로 여기서는 export하지 않는다.
+# - 중복 export / 불필요한 import를 방지하기 위함
+# ======================================================
+
 __all__ = [
-    "AdminExamResultsView",
-    "AdminExamSummaryView",
-    "ExamQuestionStatsView",
     "MyExamResultView",
     "WrongNoteView",
+    "AdminExamResultsView",
+    "AdminExamSummaryView",
 ]
 
 
