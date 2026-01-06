@@ -15,6 +15,7 @@ router = DefaultRouter()
 # exams prefix는 v1에서 이미 붙음
 # ===========================
 router.register(r"", ExamViewSet, basename="exam")
+
 router.register(r"sheets", SheetViewSet)
 router.register(r"questions", QuestionViewSet)
 router.register(r"answer-keys", AnswerKeyViewSet)

@@ -13,7 +13,7 @@
 ==========================================================================================
 # FILE: admin.py
 ==========================================================================================
-# domains/lectures/admin.py
+# PATH: apps/domains/lectures/admin.py
 
 from django.contrib import admin
 from .models import Lecture, Session
@@ -46,7 +46,8 @@ class LectureAdmin(admin.ModelAdmin):
 
 @admin.register(Session)
 class SessionAdmin(admin.ModelAdmin):
-    list_display = ("id", "lecture", "order", "title", "date")
+    # ✅ exam 컬럼 추가 (운영자 가시성)
+    list_display = ("id", "lecture", "order", "title", "date", "exam")
     list_display_links = ("id", "title")
     list_filter = ("lecture",)
     search_fields = ("title",)
@@ -61,7 +62,12 @@ from django.apps import AppConfig
 
 class LecturesConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
+
+    # 🔥 Django 내부 경로
     name = "apps.domains.lectures"
+
+    # 🔥 migration / FK / 참조용 앱 라벨 (절대 변경 금지)
+    label = "lectures"
 
 
 ==========================================================================================
@@ -160,8 +166,9 @@ class AttendanceFilter(django_filters.FilterSet):
 ==========================================================================================
 # FILE: models.py
 ==========================================================================================
-from django.db import models
+# PATH: apps/domains/lectures/models.py
 
+from django.db import models
 from apps.api.common.models import TimestampModel
 
 
@@ -195,6 +202,25 @@ class Session(TimestampModel):
         related_name="sessions",
     )
 
+    # ==========================================================
+    # ✅ SaaS 표준: Session ↔ Exam FK
+    #
+    # - Session(차시) = 실행 단위
+    # - Exam(시험)   = 정의 단위
+    #
+    # 정책:
+    # - 시험이 없는 차시 허용 (null=True)
+    # - Exam 삭제 시 Session 유지 (SET_NULL)
+    # - Exam → sessions 역참조 가능
+    # ==========================================================
+    exam = models.ForeignKey(
+        "exams.Exam",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="sessions",
+    )
+
     order = models.PositiveIntegerField()
     title = models.CharField(max_length=255)
     date = models.DateField(null=True, blank=True)
@@ -209,10 +235,9 @@ class Session(TimestampModel):
 ==========================================================================================
 # FILE: serializers.py
 ==========================================================================================
-# domains/lectures/serializers.py
+# PATH: apps/domains/lectures/serializers.py
 
 from rest_framework import serializers
-
 from .models import Lecture, Session
 
 
@@ -232,6 +257,11 @@ class LectureSerializer(serializers.ModelSerializer):
 # ========================================================
 
 class SessionSerializer(serializers.ModelSerializer):
+    """
+    ✅ 프론트 표준 계약:
+    - exam: 연결된 시험 ID (nullable)
+    - Session 상세에서 examId는 여기서 가져온다
+    """
     class Meta:
         model = Session
         fields = "__all__"
@@ -265,7 +295,7 @@ urlpatterns = [
 ==========================================================================================
 # FILE: views.py
 ==========================================================================================
-# domains/lectures/views.py
+# PATH: apps/domains/lectures/views.py
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.filters import SearchFilter
@@ -311,12 +341,20 @@ class SessionViewSet(ModelViewSet):
         if date:
             qs = qs.filter(date=date)
 
+        # ✅ 선택: exam_id로도 필터 가능
+        exam = self.request.query_params.get("exam")
+        if exam:
+            qs = qs.filter(exam_id=exam)
+
         return qs.order_by("order", "id")
 
     def create(self, request, *args, **kwargs):
         lecture_id = request.data.get("lecture")
         title = request.data.get("title")
         date = request.data.get("date")
+
+        # ✅ NEW: exam은 optional
+        exam_id = request.data.get("exam")
 
         if not lecture_id:
             return Response({"detail": "lecture 필드는 필수입니다"}, status=400)
@@ -335,6 +373,8 @@ class SessionViewSet(ModelViewSet):
             "title": title,
             "date": date,
             "order": next_order,
+            # ✅ 시험 연결 (없으면 None)
+            "exam": exam_id if exam_id else None,
         }
 
         serializer = self.get_serializer(data=data)
@@ -347,7 +387,7 @@ class SessionViewSet(ModelViewSet):
 ==========================================================================================
 # FILE: migrations/0001_initial.py
 ==========================================================================================
-# Generated by Django 5.2.9 on 2025-12-19 00:33
+# Generated by Django 5.2.9 on 2026-01-06 02:52
 
 import django.db.models.deletion
 from django.db import migrations, models
@@ -357,7 +397,9 @@ class Migration(migrations.Migration):
 
     initial = True
 
-    dependencies = []
+    dependencies = [
+        ("exams", "0001_initial"),
+    ]
 
     operations = [
         migrations.CreateModel(
@@ -403,6 +445,16 @@ class Migration(migrations.Migration):
                 ("order", models.PositiveIntegerField()),
                 ("title", models.CharField(max_length=255)),
                 ("date", models.DateField(blank=True, null=True)),
+                (
+                    "exam",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="sessions",
+                        to="exams.exam",
+                    ),
+                ),
                 (
                     "lecture",
                     models.ForeignKey(

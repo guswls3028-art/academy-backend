@@ -19,6 +19,26 @@
 
 
 ==========================================================================================
+# FILE: ai_worker/celery.py
+==========================================================================================
+# apps/worker/ai_worker/celery.py
+
+from celery import Celery
+
+app = Celery("academy_ai")
+
+app.conf.broker_url = "redis://172.31.32.109:6379/0"
+app.conf.result_backend = "redis://172.31.32.109:6379/0"
+
+# 🤖 AI 전용
+app.autodiscover_tasks([
+    "apps.worker.ai_worker.ai",
+])
+
+print("🤖 AI Celery READY 🤖")
+
+
+==========================================================================================
 # FILE: ai_worker/run.py
 ==========================================================================================
 # apps/worker/run.py
@@ -1635,6 +1655,30 @@ def download_to_tmp(
 # FILE: video_worker/__init__.py
 ==========================================================================================
 
+
+
+==========================================================================================
+# FILE: video_worker/celery.py
+==========================================================================================
+# apps/worker/video_worker/celery.py
+
+from celery import Celery
+
+app = Celery("academy_video")
+
+app.config_from_object(
+    "django.conf:settings",
+    namespace="CELERY",
+)
+
+app.conf.worker_state_db = None
+
+# 🎬 비디오 전용 task만
+app.autodiscover_tasks([
+    "apps.shared.tasks.media",
+])
+
+print("🎬 Video Celery READY 🎬")
 
 
 ==========================================================================================
