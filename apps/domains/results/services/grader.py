@@ -72,12 +72,6 @@ def _grade_choice_v1(
 ) -> Tuple[bool, float]:
     """
     OMR 객관식 채점 v1
-
-    정책:
-    - status != ok → 무조건 오답
-    - blank / multi → 오답
-    - confidence < threshold → 오답
-    - detected 1개 아니면 → 오답
     """
     if (status or "").lower() != "ok":
         return False, 0.0
@@ -107,10 +101,6 @@ def _grade_short_v1(
 ) -> Tuple[bool, float]:
     """
     주관식 / fallback 채점
-
-    정책:
-    - 빈 답안 → 오답
-    - 완전 일치만 정답
     """
     ans = _norm(answer_text)
     cor = _norm(correct_answer)
@@ -191,7 +181,7 @@ def grade_submission_to_results(submission: Submission) -> None:
         attempt.save(update_fields=["status"])
 
         # --------------------------------------------------
-        # 2️⃣ Raw answers (submissions 도메인)
+        # 2️⃣ Raw answers
         # --------------------------------------------------
         answers = list(
             SubmissionAnswer.objects.filter(submission=submission)
@@ -216,10 +206,8 @@ def grade_submission_to_results(submission: Submission) -> None:
         for sa in answers:
             eqid = getattr(sa, "exam_question_id", None)
             if not eqid:
-                # 전환기 legacy 데이터는 skip
                 continue
 
-            # 🔧 운영 안정성 최소 방어
             try:
                 q = questions_by_id.get(int(eqid))
             except (TypeError, ValueError):
@@ -229,7 +217,7 @@ def grade_submission_to_results(submission: Submission) -> None:
                 continue
 
             max_score = float(getattr(q, "score", 0) or 0.0)
-            correct_answer = str(correct_map.get(str(int(q.id))) or "")
+            correct_answer = str(correct_map.get(str(q.id)) or "")
 
             answer_text = str(getattr(sa, "answer", "") or "").strip()
 
@@ -271,11 +259,8 @@ def grade_submission_to_results(submission: Submission) -> None:
                 )
                 final_answer = answer_text
 
-            # --------------------------------------------------
-            # 5️⃣ ResultApplier 입력용 item 구성
-            # --------------------------------------------------
             items.append({
-                "question_id": int(q.id),
+                "question_id": q.id,
                 "answer": final_answer,
                 "is_correct": bool(is_correct),
                 "score": float(score),
@@ -285,7 +270,7 @@ def grade_submission_to_results(submission: Submission) -> None:
             })
 
         # --------------------------------------------------
-        # 6️⃣ Result / ResultItem / ResultFact 반영
+        # 5️⃣ Result 반영
         # --------------------------------------------------
         ResultApplier.apply(
             target_type=submission.target_type,
@@ -297,7 +282,7 @@ def grade_submission_to_results(submission: Submission) -> None:
         )
 
         # --------------------------------------------------
-        # 7️⃣ 상태 마무리
+        # 6️⃣ 상태 마무리
         # --------------------------------------------------
         attempt.status = "done"
         attempt.save(update_fields=["status"])
@@ -310,9 +295,6 @@ def grade_submission_to_results(submission: Submission) -> None:
         )
 
     except Exception as e:
-        # --------------------------------------------------
-        # 실패 처리 (멱등 / 재시도 안전)
-        # --------------------------------------------------
         if attempt:
             attempt.status = "failed"
             attempt.save(update_fields=["status"])

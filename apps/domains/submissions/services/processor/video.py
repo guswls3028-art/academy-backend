@@ -5,44 +5,33 @@ from typing import Iterable, Dict, Any
 
 from apps.domains.submissions.services.processor.base import BaseSubmissionProcessor
 
-
 class VideoSubmissionProcessor(BaseSubmissionProcessor):
-    """
-    원칙상 영상 분석은 worker 책임.
-    API(submissions)에서는:
-      - (권장) dispatcher가 AI job 발행
-      - (보조) payload/meta에 분석결과가 이미 들어온 경우만 SubmissionAnswer로 정규화 저장
-    """
-
     source = "homework_video"
 
-    def extract_answers(self) -> Iterable[Dict[str, Any]]:
+    def extract_answers(self):
         payload = self.submission.payload or {}
         extracted = payload.get("extracted_answers") or payload.get("answers")
 
-        if isinstance(extracted, list):
-            for row in extracted:
-                qid = row.get("question_id")
-                if not qid:
-                    continue
-                yield {
-                    "question_id": int(qid),
-                    "answer": row.get("answer", ""),
-                    "meta": row.get("meta") or {"via": "video"},
-                }
+        if not isinstance(extracted, (list, dict)):
             return
 
-        if isinstance(extracted, dict):
-            for k, v in extracted.items():
-                try:
-                    qid = int(k)
-                except Exception:
-                    continue
-                yield {
-                    "question_id": qid,
-                    "answer": v if v is not None else "",
-                    "meta": {"via": "video"},
-                }
-            return
+        rows = extracted if isinstance(extracted, list) else extracted.items()
 
-        return
+        for row in rows:
+            # worker가 v2 계약을 지킨 경우만 처리
+            eqid = (
+                row.get("exam_question_id")
+                if isinstance(row, dict)
+                else None
+            )
+
+            if not eqid:
+                # ❌ legacy video 답안은 정규 저장하지 않음
+                continue
+
+            yield {
+                "exam_question_id": int(eqid),
+                "question_number": None,
+                "answer": row.get("answer", ""),
+                "meta": row.get("meta") or {"via": "video"},
+            }
