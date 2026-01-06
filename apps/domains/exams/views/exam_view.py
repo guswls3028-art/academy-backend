@@ -29,6 +29,20 @@ class ExamViewSet(ModelViewSet):
     serializer_class = ExamSerializer
     permission_classes = [IsAuthenticated]
 
+    def perform_create(self, serializer):
+        """
+        Exam 생성 시 subject 자동 주입
+        - 프론트에서 subject 받지 않음
+        - session → lecture → subject 기준으로 결정
+        """
+        session = serializer.validated_data.get("session")
+        if not session:
+            raise ValidationError({"session": "session is required to create exam"})
+
+        serializer.save(
+            subject=session.lecture.subject
+        )
+
     @staticmethod
     def _has_relation(model, name: str) -> bool:
         """

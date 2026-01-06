@@ -4,6 +4,10 @@ from apps.domains.exams.models import Exam
 
 
 class ExamSerializer(serializers.ModelSerializer):
+    
+    # 과목 자동으로 입력되게.
+    subject = serializers.CharField(read_only=True)
+
     """
     ✅ Exam 조회/수정 serializer
 
