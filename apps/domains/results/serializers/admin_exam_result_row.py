@@ -13,3 +13,9 @@ class AdminExamResultRowSerializer(serializers.Serializer):
     clinic_required = serializers.BooleanField()
 
     submitted_at = serializers.DateTimeField(allow_null=True)
+
+    # ===============================
+    # 🔥 Submission 연동 필드 (신규)
+    # ===============================
+    submission_id = serializers.IntegerField(allow_null=True)
+    submission_status = serializers.CharField(allow_null=True)
