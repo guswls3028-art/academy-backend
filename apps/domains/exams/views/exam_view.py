@@ -33,10 +33,12 @@ class ExamViewSet(ModelViewSet):
     # ======================================================
     def perform_create(self, serializer):
         """
-        Exam 생성 시 처리 규칙 (고정)
+        Exam 생성 규칙 (고정)
 
         - request.data.session_id 필수
+        - Exam에는 session 필드 직접 넣지 않음
         - subject는 백엔드에서 자동 주입
+        - 생성 후 session 관계 연결
         """
         session_id = self.request.data.get("session_id")
         if not session_id:
@@ -52,10 +54,17 @@ class ExamViewSet(ModelViewSet):
         except Session.DoesNotExist:
             raise ValidationError({"session_id": "invalid session_id"})
 
-        serializer.save(
-            session=session,
-            subject=session.lecture.subject,
+        # ✅ Exam 먼저 생성 (session ❌)
+        exam = serializer.save(
+            subject=session.lecture.subject
         )
+
+        # ✅ 관계 연결 (프로젝트 구조 대응)
+        if hasattr(exam, "sessions"):
+            exam.sessions.add(session)
+        elif hasattr(exam, "session"):
+            exam.session = session
+            exam.save(update_fields=["session"])
 
     # ======================================================
     # QUERY FILTERS
