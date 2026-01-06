@@ -5,21 +5,24 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from django.db import transaction
 
+# 🔽 Submission은 submissions 도메인의 단일 진실
 from apps.domains.submissions.models import Submission, SubmissionAnswer
+
+# 🔽 Results 도메인 실 저장 Answer (채점 결과)
+from apps.domains.results.models import SubmissionAnswer as ResultSubmissionAnswer
+
 from apps.domains.results.services.applier import ResultApplier
+from apps.domains.results.services.attempt_service import ExamAttemptService
+
 from apps.domains.exams.models import ExamQuestion, AnswerKey
 
-# progress 연결
-from apps.domains.progress.dispatcher import dispatch_progress_pipeline
+# ✅ Progress 파이프라인 Celery Task
+from apps.domains.progress.tasks.progress_pipeline_task import (
+    run_progress_pipeline_task,
+)
 
 # ============================================================
-# OMR/채점 정책 v1 (Results 도메인 책임)
-# - Worker는 "답안 사실"만 보내고, 점수 계산은 여기서 한다.
-# - v1 고정 정책:
-#   - multi 마킹 = 0점
-#   - confidence < 0.70 = 0점
-#   - status != ok = 0점
-#   - 부분점수 없음
+# OMR / 채점 정책 v1 (Results 도메인 책임)
 # ============================================================
 
 OMR_CONF_THRESHOLD_V1 = 0.70
@@ -30,10 +33,6 @@ def _norm(s: Optional[str]) -> str:
 
 
 def _get_omr_meta(meta: Any) -> Dict[str, Any]:
-    """
-    SubmissionAnswer.meta에서 OMR v1 payload 추출.
-    기대 위치: meta["omr"]
-    """
     if not isinstance(meta, dict):
         return {}
     omr = meta.get("omr")
@@ -49,30 +48,24 @@ def _grade_choice_v1(
     correct_answer: str,
     max_score: float,
 ) -> Tuple[bool, float]:
-    """
-    객관식(선택형) 채점 v1
-    return: (is_correct, score)
-    """
     if (status or "").lower() != "ok":
-        return (False, 0.0)
+        return False, 0.0
 
-    m = (marking or "").lower()
-    if m in ("blank", "multi"):
-        return (False, 0.0)
+    if (marking or "").lower() in ("blank", "multi"):
+        return False, 0.0
 
     conf = float(confidence) if confidence is not None else 0.0
     if conf < OMR_CONF_THRESHOLD_V1:
-        return (False, 0.0)
+        return False, 0.0
 
     if not detected or len(detected) != 1:
-        return (False, 0.0)
+        return False, 0.0
 
     ans = _norm(detected[0])
     cor = _norm(correct_answer)
 
-    is_correct = (ans != "") and (cor != "") and (ans == cor)
-    score = float(max_score) if is_correct else 0.0
-    return (is_correct, score)
+    is_correct = ans != "" and cor != "" and ans == cor
+    return is_correct, (float(max_score) if is_correct else 0.0)
 
 
 def _grade_short_v1(
@@ -81,24 +74,17 @@ def _grade_short_v1(
     correct_answer: str,
     max_score: float,
 ) -> Tuple[bool, float]:
-    """
-    주관식(텍스트) 채점 v1 (exact match only)
-    """
     ans = _norm(answer_text)
     cor = _norm(correct_answer)
 
     if ans == "":
-        return (False, 0.0)
+        return False, 0.0
 
-    is_correct = (cor != "") and (ans == cor)
-    score = float(max_score) if is_correct else 0.0
-    return (is_correct, score)
+    is_correct = cor != "" and ans == cor
+    return is_correct, (float(max_score) if is_correct else 0.0)
 
 
 def _infer_answer_type(q: ExamQuestion) -> str:
-    """
-    answer_type가 모델에 없을 수도 있으니 방어적으로 추론.
-    """
     v = getattr(q, "answer_type", None)
     if isinstance(v, str) and v.strip():
         return v.strip().lower()
@@ -106,9 +92,6 @@ def _infer_answer_type(q: ExamQuestion) -> str:
 
 
 def _get_correct_answer_map(exam_id: int) -> Dict[str, Any]:
-    """
-    AnswerKey.answers: { "1": "B", "2": "3", ... } (question number 기반)
-    """
     ak = AnswerKey.objects.filter(exam_id=exam_id).first()
     if not ak or not isinstance(ak.answers, dict):
         return {}
@@ -118,52 +101,77 @@ def _get_correct_answer_map(exam_id: int) -> Dict[str, Any]:
 @transaction.atomic
 def grade_submission_to_results(submission: Submission) -> None:
     """
-    Submission + SubmissionAnswer(+meta) -> Result/ResultItem/ResultFact 반영
-    - 정책/점수 계산은 Results 도메인 책임
+    Submission → ExamAttempt → Result / ResultItem / ResultFact
+
+    ✅ attempt 중심 설계:
+    - ExamAttempt 생성
+    - Result / ResultFact에 attempt_id 저장
     """
+
+    # ---------------------------
+    # 1️⃣ Submission 상태 변경
+    # ---------------------------
     submission.status = Submission.Status.GRADING
     submission.save(update_fields=["status"])
-
-    answers = list(SubmissionAnswer.objects.filter(submission=submission))
 
     if submission.target_type != Submission.TargetType.EXAM:
         raise ValueError("Only exam grading is supported")
 
-    # ✅ ExamQuestion은 sheet->exam 구조
+    # ---------------------------
+    # 2️⃣ ExamAttempt 생성 + 상태 전이
+    # ---------------------------
+    attempt = ExamAttemptService.create_for_submission(
+        exam_id=int(submission.target_id),
+        enrollment_id=int(submission.enrollment_id),
+        submission_id=int(submission.id),
+    )
+
+    attempt.status = "grading"
+    attempt.save(update_fields=["status"])
+
+    # ---------------------------
+    # 3️⃣ 채점 대상 로딩
+    # ---------------------------
+    answers = list(
+        SubmissionAnswer.objects.filter(submission=submission)
+    )
+
     questions = (
         ExamQuestion.objects
         .filter(sheet__exam_id=submission.target_id)
         .in_bulk(field_name="id")
     )
 
-    # ✅ 정답은 AnswerKey.answers에서 (question.number 기준)
     correct_map = _get_correct_answer_map(int(submission.target_id))
 
     items: List[dict] = []
 
+    # ---------------------------
+    # 4️⃣ 문항별 채점 + ResultSubmissionAnswer 저장
+    # ---------------------------
     for sa in answers:
         q = questions.get(sa.question_id)
         if not q:
             continue
 
         max_score = float(getattr(q, "score", 0) or 0.0)
-
-        # question.number 기반 정답
-        correct_answer = str(correct_map.get(str(getattr(q, "number", ""))) or "")
+        correct_answer = str(
+            correct_map.get(str(getattr(q, "number", ""))) or ""
+        )
 
         answer_text = str(sa.answer or "").strip()
 
         omr = _get_omr_meta(sa.meta)
-        omr_version = str(omr.get("version") or "")
         detected = omr.get("detected") or []
         marking = str(omr.get("marking") or "")
         confidence = omr.get("confidence", None)
         status = str(omr.get("status") or "")
+        omr_version = str(omr.get("version") or "")
 
         answer_type = _infer_answer_type(q)
 
         if answer_type in ("choice", "omr", "multiple_choice"):
-            if omr_version.lower() == "v1" and isinstance(detected, list):
+            if omr_version.lower() == "v1":
                 is_correct, score = _grade_choice_v1(
                     detected=[str(x) for x in detected],
                     marking=marking,
@@ -188,30 +196,53 @@ def grade_submission_to_results(submission: Submission) -> None:
             )
             final_answer = answer_text
 
-        items.append(
-            {
-                "question_id": q.id,
-                "answer": final_answer,
-                "is_correct": bool(is_correct),
-                "score": float(score),
-                "max_score": float(max_score),
-                "source": submission.source,
-                "meta": sa.meta,
-            }
+        # 🔥 Results 도메인 Answer 실 저장 (불변)
+        ResultSubmissionAnswer.objects.create(
+            attempt=attempt,
+            question_id=q.id,
+            detected=detected,
+            marking=marking,
+            confidence=float(confidence or 0),
+            status=status,
+            is_correct=bool(is_correct),
+            score_awarded=float(score),
+            meta=sa.meta,
         )
 
+        items.append({
+            "question_id": q.id,
+            "answer": final_answer,
+            "is_correct": bool(is_correct),
+            "score": float(score),
+            "max_score": float(max_score),
+            "source": submission.source,
+            "meta": sa.meta,
+        })
+
+    # ---------------------------
+    # 5️⃣ Result 반영 (attempt 기준)
+    # ---------------------------
     ResultApplier.apply(
         target_type=submission.target_type,
         target_id=int(submission.target_id),
-        enrollment_id=int(submission.enrollment_id or 0),
+        enrollment_id=int(submission.enrollment_id),
         submission_id=int(submission.id),
+        attempt_id=int(attempt.id),     # ✅ 핵심: attempt_id 저장
         items=items,
     )
 
+    # ---------------------------
+    # 6️⃣ 상태 마무리
+    # ---------------------------
+    attempt.status = "done"
+    attempt.save(update_fields=["status"])
+
     submission.status = Submission.Status.DONE
     submission.save(update_fields=["status"])
-    
-    # 🔔 Progress 후속 파이프라인 (트랜잭션 커밋 후)
+
+    # ---------------------------
+    # 7️⃣ Progress 파이프라인 (commit 후)
+    # ---------------------------
     transaction.on_commit(
-        lambda: dispatch_progress_pipeline(submission.id)
+        lambda: run_progress_pipeline_task.delay(submission.id)
     )

@@ -1,4 +1,4 @@
-# PATH: apps/domains/results/urls.py
+# apps/domains/results/urls.py
 """
 Results Domain API Routes
 
@@ -8,6 +8,7 @@ Results Domain API Routes
 """
 
 from django.urls import path
+from rest_framework.routers import DefaultRouter
 
 # ======================
 # Student
@@ -24,13 +25,25 @@ from apps.domains.results.views.admin_exam_question_stats_view import (
 )
 
 # ======================
+# Wrong Notes
+# ======================
+from apps.domains.results.views.wrong_note_view import WrongNoteView
+
+# ✅ PDF 생성 API (URL 등록 누락 버그 수정)
+from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
+
+# ======================
 # Legacy
 # ======================
 from apps.domains.results.views.exam_result_view import (
     ExamStatsView,
     ExamQuestionStatsView,
 )
-from apps.domains.results.views.wrong_note_view import WrongNoteView
+
+# ======================
+# Attempt
+# ======================
+from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
 
 
 urlpatterns = [
@@ -71,6 +84,13 @@ urlpatterns = [
         name="wrong-note",
     ),
 
+    # ✅ WrongNote PDF 생성 (기존 누락된 라우트)
+    path(
+        "wrong-notes/pdf/",
+        WrongNotePDFCreateView.as_view(),
+        name="wrong-note-pdf-create",
+    ),
+
     # -------------------
     # ⚠️ Legacy (DEPRECATED)
     # -------------------
@@ -85,3 +105,11 @@ urlpatterns = [
         name="legacy-exam-question-stats",
     ),
 ]
+
+# ======================
+# Attempt Router
+# ======================
+attempt_router = DefaultRouter()
+attempt_router.register("exam-attempts", ExamAttemptViewSet)
+
+urlpatterns += attempt_router.urls
