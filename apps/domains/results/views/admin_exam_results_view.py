@@ -63,23 +63,24 @@ class AdminExamResultsView(APIView):
         # 2️⃣ Session → Progress (enrollment 기준)
         # -------------------------------------------------
         session = Session.objects.filter(exam__id=exam_id).first()
-        progress_map = {
-            sp.enrollment_id: sp
-            for sp in SessionProgress.objects.filter(session=session)
-        }
+
+        # ✅ 치명 방어: session이 없으면 progress는 빈 맵
+        if not session:
+            progress_map = {}
+        else:
+            progress_map = {
+                sp.enrollment_id: sp
+                for sp in SessionProgress.objects.filter(session=session)
+            }
 
         # -------------------------------------------------
         # 3️⃣ Student 조회 최적화 (Critical #2 PATCH)
         # -------------------------------------------------
-        # ✅ 프로젝트마다 SessionProgress가 student_id / user_id / enrollment_id 등을 들고 있을 수 있음
-        # 여기서는 "있으면 student_id, 없으면 user_id"의 최소 방어 규칙을 적용.
         student_ids = set()
 
         for sp in progress_map.values():
-            # 가장 흔한 케이스: student_id
             if hasattr(sp, "student_id") and getattr(sp, "student_id", None):
                 student_ids.add(int(sp.student_id))
-            # fallback 케이스: user_id
             elif hasattr(sp, "user_id") and getattr(sp, "user_id", None):
                 student_ids.add(int(sp.user_id))
 
@@ -118,7 +119,12 @@ class AdminExamResultsView(APIView):
         # -------------------------------------------------
         # 4-1️⃣ 🔧 PATCH: Fact가 없더라도 Result.attempt_id로 submission 추적
         # -------------------------------------------------
-        attempt_ids = [r.attempt_id for r in results if getattr(r, "attempt_id", None)]
+        attempt_ids = [
+            r.attempt_id
+            for r in results
+            if getattr(r, "attempt_id", None)
+        ]
+
         attempt_map = {
             a.id: a
             for a in ExamAttempt.objects.filter(id__in=attempt_ids)
@@ -163,7 +169,6 @@ class AdminExamResultsView(APIView):
             enrollment_id = r.enrollment_id
             sp = progress_map.get(enrollment_id)
 
-            # ✅ Critical #2 PATCH: student_id/user_id 어떤 필드가 있어도 최소 방어로 커버
             sid = None
             if sp is not None:
                 sid = getattr(sp, "student_id", None) or getattr(sp, "user_id", None)
@@ -184,13 +189,11 @@ class AdminExamResultsView(APIView):
                 "total_score": r.total_score,
                 "max_score": r.max_score,
 
-                # sp가 없으면 보수적으로 False 처리
                 "passed": bool(sp and not getattr(sp, "failed", False)),
                 "clinic_required": bool(sp and getattr(sp, "clinic_required", False)),
 
                 "submitted_at": r.submitted_at,
 
-                # 🔥 Submission 연동 (기존 프론트 호환)
                 "submission_id": submission_id,
                 "submission_status": submission_status,
             })

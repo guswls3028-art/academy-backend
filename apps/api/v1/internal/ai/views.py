@@ -1,5 +1,4 @@
-# apps/api/v1/internal/ai/views.py
-
+# PATH: apps/api/v1/internal/ai/views.py
 from __future__ import annotations
 
 import json
@@ -14,12 +13,12 @@ import redis
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
-from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_result
+
+from apps.domains.submissions.services.ai_result_router import apply_ai_result_for_submission
 from apps.domains.results.tasks.grading_tasks import grade_submission_task
 
 
 def _redis() -> redis.Redis:
-    # settings.REDIS_URL 이미 있음
     return redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
@@ -41,8 +40,6 @@ def next_ai_job_view(request):
         return unauth
 
     r = _redis()
-
-    # rpop: 가장 단순한 MVP (at-least-once는 아님. 운영은 streams 추천)
     raw = r.rpop(QUEUE_KEY)
     if not raw:
         return JsonResponse({"job": None}, status=200)
@@ -51,13 +48,28 @@ def next_ai_job_view(request):
         job = AIJob.from_json(raw)
         return JsonResponse({"job": job.to_dict()}, status=200)
     except Exception:
-        # 파싱 실패하면 버림(혹은 DLQ로)
         return JsonResponse({"job": None}, status=200)
 
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def submit_ai_result_view(request):
+    """
+    Worker → API 콜백 (STEP 1 확정)
+
+    Worker payload (run.py 기준):
+    {
+      "submission_id": 123,
+      "status": "DONE" | "FAILED",
+      "result": {...} | null,
+      "error": "..." | null
+    }
+
+    ✅ 핵심:
+    - job.type을 굳이 안 보내도 됨
+    - Submission.source 기준으로 라우팅
+    - 시험만 grade_submission_task enqueue
+    """
     unauth = _auth_or_401(request)
     if unauth:
         return unauth
@@ -67,24 +79,27 @@ def submit_ai_result_view(request):
     except Exception:
         return JsonResponse({"detail": "invalid json"}, status=400)
 
-    # body: AIResult dict + (submission_id는 result.apply 때 필요)
-    try:
-        ai_result = AIResult.from_dict(body)
-    except Exception:
-        return JsonResponse({"detail": "invalid ai_result"}, status=400)
+    submission_id = body.get("submission_id")
+    if not submission_id:
+        return JsonResponse({"detail": "submission_id required"}, status=400)
 
-    # ✅ result 반영 (submissions)
-    # 여기서는 ai_result.result 안에 submission_id가 들어오도록 worker가 같이 보내거나,
-    # job.source_id를 함께 보내는 형태로 맞추면 됨.
-    payload: Dict[str, Any] = dict(ai_result.result or {})
-    submission_id = body.get("submission_id") or payload.get("submission_id")
-    if submission_id:
-        payload["submission_id"] = int(submission_id)
+    status = body.get("status") or "DONE"
+    result = body.get("result") if isinstance(body.get("result"), dict) else (body.get("result") or None)
+    error = body.get("error")
 
-    returned_submission_id = apply_omr_ai_result(payload)
+    # ✅ STEP 1: 라우터로 처리
+    outcome = apply_ai_result_for_submission(
+        submission_id=int(submission_id),
+        status=str(status),
+        result=result if isinstance(result, dict) else None,
+        error=str(error) if error else None,
+    )
 
-    # ✅ 채점 enqueue
-    if returned_submission_id:
-        grade_submission_task.delay(int(returned_submission_id))
+    # ✅ 시험 제출만 채점 enqueue
+    if outcome.returned_submission_id and outcome.should_grade:
+        grade_submission_task.delay(int(outcome.returned_submission_id))
 
-    return JsonResponse({"ok": True}, status=200)
+    return JsonResponse(
+        {"ok": True, "detail": outcome.detail},
+        status=200,
+    )
