@@ -8,11 +8,13 @@ class Migration(migrations.Migration):
 
     initial = True
 
-    dependencies = []
+    dependencies = [
+        ("exams", "0001_initial"),
+    ]
 
     operations = [
         migrations.CreateModel(
-            name="AIJobModel",
+            name="Lecture",
             fields=[
                 (
                     "id",
@@ -25,30 +27,20 @@ class Migration(migrations.Migration):
                 ),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),
-                ("job_id", models.CharField(max_length=64, unique=True)),
-                ("job_type", models.CharField(max_length=50)),
-                (
-                    "status",
-                    models.CharField(
-                        choices=[
-                            ("PENDING", "PENDING"),
-                            ("RUNNING", "RUNNING"),
-                            ("DONE", "DONE"),
-                            ("FAILED", "FAILED"),
-                        ],
-                        default="PENDING",
-                        max_length=20,
-                    ),
-                ),
-                ("payload", models.JSONField()),
-                ("error_message", models.TextField(blank=True)),
+                ("title", models.CharField(max_length=255)),
+                ("name", models.CharField(max_length=255)),
+                ("subject", models.CharField(max_length=50)),
+                ("description", models.TextField(blank=True)),
+                ("start_date", models.DateField(blank=True, null=True)),
+                ("end_date", models.DateField(blank=True, null=True)),
+                ("is_active", models.BooleanField(default=True)),
             ],
             options={
-                "db_table": "ai_job",
+                "abstract": False,
             },
         ),
         migrations.CreateModel(
-            name="AIResultModel",
+            name="Session",
             fields=[
                 (
                     "id",
@@ -61,18 +53,30 @@ class Migration(migrations.Migration):
                 ),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),
-                ("payload", models.JSONField(blank=True, null=True)),
+                ("order", models.PositiveIntegerField()),
+                ("title", models.CharField(max_length=255)),
+                ("date", models.DateField(blank=True, null=True)),
                 (
-                    "job",
-                    models.OneToOneField(
+                    "exam",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="sessions",
+                        to="exams.exam",
+                    ),
+                ),
+                (
+                    "lecture",
+                    models.ForeignKey(
                         on_delete=django.db.models.deletion.CASCADE,
-                        related_name="result",
-                        to="ai_domain.aijobmodel",
+                        related_name="sessions",
+                        to="lectures.lecture",
                     ),
                 ),
             ],
             options={
-                "db_table": "ai_result",
+                "ordering": ["order"],
             },
         ),
     ]
