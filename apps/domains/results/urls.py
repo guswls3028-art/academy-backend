@@ -1,4 +1,4 @@
-# apps/domains/results/urls.py
+# PATH: apps/domains/results/urls.py
 
 from django.urls import path
 from rest_framework.routers import DefaultRouter
@@ -15,6 +15,11 @@ from apps.domains.results.views.admin_exam_results_view import AdminExamResultsV
 from apps.domains.results.views.admin_exam_summary_view import AdminExamSummaryView
 from apps.domains.results.views.admin_representative_attempt_view import (
     AdminRepresentativeAttemptView,
+)
+
+# ✅ 추가: 단일 학생 결과 상세
+from apps.domains.results.views.admin_exam_result_detail_view import (
+    AdminExamResultDetailView,
 )
 
 # ======================================================
@@ -61,6 +66,13 @@ urlpatterns = [
         "admin/exams/<int:exam_id>/results/",
         AdminExamResultsView.as_view(),
         name="admin-exam-results",
+    ),
+
+    # ✅ 추가: 단일 학생 결과 상세 (리스트 API와 분리)
+    path(
+        "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/",
+        AdminExamResultDetailView.as_view(),
+        name="admin-exam-result-detail",
     ),
 
     # ----------------------------
