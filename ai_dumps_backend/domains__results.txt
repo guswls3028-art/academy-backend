@@ -115,6 +115,14 @@ from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFSt
 # ======================================================
 from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
 
+# ======================================================
+# Session score summary (Admin)
+# ======================================================
+# 🔧 PATCH: 세션 단위 성적 요약 API
+from apps.domains.results.views.session_score_summary_view import (
+    SessionScoreSummaryView,
+)
+
 
 urlpatterns = [
     # ============================
@@ -140,7 +148,7 @@ urlpatterns = [
         name="admin-exam-results",
     ),
 
-    # ✅ 추가: 단일 학생 결과 상세 (리스트 API와 분리)
+    # ✅ 단일 학생 결과 상세 (리스트 API와 분리)
     path(
         "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/",
         AdminExamResultDetailView.as_view(),
@@ -181,6 +189,16 @@ urlpatterns = [
         "admin/exams/<int:exam_id>/representative-attempt/",
         AdminRepresentativeAttemptView.as_view(),
         name="admin-representative-attempt",
+    ),
+
+    # ============================
+    # Session Scores (Admin)
+    # ============================
+    # 🔧 PATCH: 세션 단위 최종 성적 요약
+    path(
+        "admin/sessions/<int:session_id>/score-summary/",
+        SessionScoreSummaryView.as_view(),
+        name="session-score-summary",
     ),
 
     # ============================
@@ -687,16 +705,22 @@ class AdminExamResultRowSerializer(serializers.Serializer):
     enrollment_id = serializers.IntegerField()
     student_name = serializers.CharField()
 
-    total_score = serializers.FloatField()
-    max_score = serializers.FloatField()
+    # =====================================
+    # 🔧 PATCH: 점수 필드 명시적 분리
+    # - SessionScores / AdminExamResults 공용 계약
+    # - 프론트 수정 없이 확장 가능
+    # =====================================
+    exam_score = serializers.FloatField()
+    exam_max_score = serializers.FloatField()
 
+    final_score = serializers.FloatField()
     passed = serializers.BooleanField()
     clinic_required = serializers.BooleanField()
 
     submitted_at = serializers.DateTimeField(allow_null=True)
 
     # ===============================
-    # 🔥 Submission 연동 필드 (신규)
+    # 🔥 Submission 연동 필드 (기존 유지)
     # ===============================
     submission_id = serializers.IntegerField(allow_null=True)
     submission_status = serializers.CharField(allow_null=True)
@@ -765,6 +789,35 @@ class WrongDistributionSerializer(serializers.Serializer):
 class TopWrongQuestionSerializer(serializers.Serializer):
     question_id = serializers.IntegerField()
     wrong_count = serializers.IntegerField()
+
+
+==========================================================================================
+# FILE: serializers/session_score_summary.py
+==========================================================================================
+# PATH: apps/domains/results/serializers/session_score_summary.py
+
+from rest_framework import serializers
+
+
+class SessionScoreSummarySerializer(serializers.Serializer):
+    """
+    세션 단위 성적 요약 (운영/통계용)
+
+    ⚠️ 주의
+    - Result / ResultFact / Progress 결과만 사용
+    - attempt 교체와 무관하게 항상 일관된 값
+    """
+
+    participant_count = serializers.IntegerField()
+
+    avg_score = serializers.FloatField()
+    min_score = serializers.FloatField()
+    max_score = serializers.FloatField()
+
+    pass_rate = serializers.FloatField()
+    clinic_rate = serializers.FloatField()
+
+    attempt_stats = serializers.DictField()
 
 
 ==========================================================================================
@@ -1801,6 +1854,143 @@ class QuestionStatsService:
 
 
 ==========================================================================================
+# FILE: services/session_score_summary_service.py
+==========================================================================================
+# PATH: apps/domains/results/services/session_score_summary_service.py
+
+from __future__ import annotations
+
+from django.db.models import Avg, Min, Max, Count
+
+from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.progress.models import SessionProgress
+from apps.domains.lectures.models import Session
+
+
+class SessionScoreSummaryService:
+    """
+    ✅ Session 단위 성적 통계 (results 기준 단일 진실)
+
+    사용 근거:
+    - 점수: Result (대표 attempt 스냅샷)
+    - 통과/클리닉: SessionProgress
+    - 재시험: ExamAttempt
+    """
+
+    @staticmethod
+    def build(*, session_id: int) -> dict:
+        session = Session.objects.filter(id=int(session_id)).first()
+        if not session:
+            return {
+                "participant_count": 0,
+                "avg_score": 0.0,
+                "min_score": 0.0,
+                "max_score": 0.0,
+                "pass_rate": 0.0,
+                "clinic_rate": 0.0,
+                "attempt_stats": {
+                    "avg_attempts": 0.0,
+                    "retake_ratio": 0.0,
+                },
+            }
+
+        # ---------------------------------------------
+        # 1️⃣ Session ↔ Exam (다대일)
+        # ---------------------------------------------
+        exam_ids = list(
+            session.exam_set.values_list("id", flat=True)
+            if hasattr(session, "exam_set")
+            else Session.objects.filter(id=session.id).values_list("exam__id", flat=True)
+        )
+
+        if not exam_ids:
+            return {
+                "participant_count": 0,
+                "avg_score": 0.0,
+                "min_score": 0.0,
+                "max_score": 0.0,
+                "pass_rate": 0.0,
+                "clinic_rate": 0.0,
+                "attempt_stats": {
+                    "avg_attempts": 0.0,
+                    "retake_ratio": 0.0,
+                },
+            }
+
+        # ---------------------------------------------
+        # 2️⃣ Result 기반 점수 통계 (대표 attempt)
+        # ---------------------------------------------
+        results = Result.objects.filter(
+            target_type="exam",
+            target_id__in=exam_ids,
+        )
+
+        agg = results.aggregate(
+            participant_count=Count("id"),
+            avg_score=Avg("total_score"),
+            min_score=Min("total_score"),
+            max_score=Max("total_score"),
+        )
+
+        participant_count = agg["participant_count"] or 0
+
+        # ---------------------------------------------
+        # 3️⃣ Progress 기반 pass / clinic
+        # ---------------------------------------------
+        progresses = SessionProgress.objects.filter(session=session)
+
+        pass_count = progresses.filter(failed=False).count()
+        clinic_count = progresses.filter(clinic_required=True).count()
+
+        pass_rate = (
+            pass_count / participant_count
+            if participant_count else 0.0
+        )
+        clinic_rate = (
+            clinic_count / participant_count
+            if participant_count else 0.0
+        )
+
+        # ---------------------------------------------
+        # 4️⃣ Attempt 통계 (재시험 비율)
+        # ---------------------------------------------
+        attempts = ExamAttempt.objects.filter(
+            exam_id__in=exam_ids
+        )
+
+        per_enrollment = (
+            attempts
+            .values("enrollment_id")
+            .annotate(cnt=Count("id"))
+        )
+
+        total_attempts = sum(r["cnt"] for r in per_enrollment)
+        retake_users = sum(1 for r in per_enrollment if r["cnt"] > 1)
+
+        avg_attempts = (
+            total_attempts / participant_count
+            if participant_count else 0.0
+        )
+        retake_ratio = (
+            retake_users / participant_count
+            if participant_count else 0.0
+        )
+
+        return {
+            "participant_count": participant_count,
+            "avg_score": float(agg["avg_score"] or 0.0),
+            "min_score": float(agg["min_score"] or 0.0),
+            "max_score": float(agg["max_score"] or 0.0),
+            "pass_rate": round(float(pass_rate), 4),
+            "clinic_rate": round(float(clinic_rate), 4),
+            "attempt_stats": {
+                "avg_attempts": round(float(avg_attempts), 2),
+                "retake_ratio": round(float(retake_ratio), 4),
+            },
+        }
+
+
+==========================================================================================
 # FILE: services/wrong_note_service.py
 ==========================================================================================
 # apps/domains/results/services/wrong_note_service.py
@@ -2362,7 +2552,7 @@ class AdminExamResultDetailView(APIView):
 ==========================================================================================
 # FILE: views/admin_exam_results_view.py
 ==========================================================================================
-# PATH: apps/domains/results/views/admin_exam_results_view.py
+# apps/domains/results/views/admin_exam_results_view.py
 
 from __future__ import annotations
 
@@ -2387,27 +2577,6 @@ class AdminExamResultsView(APIView):
     GET /results/admin/exams/<exam_id>/results/
 
     🔥 attempt 중심 설계 반영 버전
-
-    변경 포인트 요약:
-    - ResultFact 기준 "최신 submission" 판단 시
-      submission_id 단독이 아니라 attempt_id 기준으로 판단
-    - 재시험 / 재채점 / 대표 attempt 변경에도 의미적으로 올바른 최신값 보장
-
-    🔧 PATCH(치명 케이스):
-    - items == [] (매칭 실패)면 ResultFact가 한 건도 안 생길 수 있음.
-      → 그런데 Result는 생성됨 (attempt_id는 있음).
-      → 기존 로직은 Fact만 보고 최신 submission을 잡아와서 submission_id가 None으로 떨어짐.
-
-    ✅ 해결:
-    - Result.attempt_id → ExamAttempt → submission_id 로 fallback(또는 대체)해서 채움.
-
-    ✅ 운영 안정성 패치 (Critical #2)
-    - SessionProgress.student_id가 Student.id와 1:1로 매칭된다는 가정은 프로젝트마다 깨질 수 있다.
-      (어떤 프로젝트는 user_id, 어떤 프로젝트는 enrollment FK, 어떤 프로젝트는 student 테이블 PK가 다름)
-    - 최소 방어:
-      - sp.student_id가 있으면 그것을 우선 키로
-      - 없으면 sp.user_id로 fallback
-      - Student 조회 및 row 구성에서도 동일 규칙 적용
     """
 
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
@@ -2428,7 +2597,6 @@ class AdminExamResultsView(APIView):
         # -------------------------------------------------
         session = Session.objects.filter(exam__id=exam_id).first()
 
-        # ✅ 치명 방어: session이 없으면 progress는 빈 맵
         if not session:
             progress_map = {}
         else:
@@ -2438,7 +2606,7 @@ class AdminExamResultsView(APIView):
             }
 
         # -------------------------------------------------
-        # 3️⃣ Student 조회 최적화 (Critical #2 PATCH)
+        # 3️⃣ Student 조회 최적화
         # -------------------------------------------------
         student_ids = set()
 
@@ -2454,7 +2622,7 @@ class AdminExamResultsView(APIView):
         }
 
         # -------------------------------------------------
-        # 4️⃣ enrollment_id → 최신 attempt/submission 맵 (Fact 기반 1차)
+        # 4️⃣ enrollment_id → 최신 attempt/submission 맵
         # -------------------------------------------------
         fact_qs = (
             ResultFact.objects
@@ -2481,7 +2649,7 @@ class AdminExamResultsView(APIView):
                 }
 
         # -------------------------------------------------
-        # 4-1️⃣ 🔧 PATCH: Fact가 없더라도 Result.attempt_id로 submission 추적
+        # 4-1️⃣ Fact 없는 경우 Result.attempt_id fallback
         # -------------------------------------------------
         attempt_ids = [
             r.attempt_id
@@ -2525,7 +2693,7 @@ class AdminExamResultsView(APIView):
         }
 
         # -------------------------------------------------
-        # 6️⃣ 최종 rows 구성 (응답 스펙 변경 없음)
+        # 6️⃣ 최종 rows 구성
         # -------------------------------------------------
         rows = []
 
@@ -2550,8 +2718,15 @@ class AdminExamResultsView(APIView):
                 "enrollment_id": enrollment_id,
                 "student_name": student.name if student else "-",
 
-                "total_score": r.total_score,
-                "max_score": r.max_score,
+                # =====================================
+                # 🔧 PATCH: 점수 의미 분리
+                # =====================================
+                "exam_score": r.total_score,
+                "exam_max_score": r.max_score,
+
+                # 🔥 현재는 동일하지만
+                # 이후 session aggregation / 가중치 가능
+                "final_score": r.total_score,
 
                 "passed": bool(sp and not getattr(sp, "failed", False)),
                 "clinic_required": bool(sp and getattr(sp, "clinic_required", False)),
@@ -2846,6 +3021,42 @@ class ExamTopWrongQuestionsView(APIView):
             n=n,
         )
         return Response(TopWrongQuestionSerializer(data, many=True).data)
+
+
+==========================================================================================
+# FILE: views/session_score_summary_view.py
+==========================================================================================
+# PATH: apps/domains/results/views/session_score_summary_view.py
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.services.session_score_summary_service import (
+    SessionScoreSummaryService,
+)
+from apps.domains.results.serializers.session_score_summary import (
+    SessionScoreSummarySerializer,
+)
+
+
+class SessionScoreSummaryView(APIView):
+    """
+    GET /results/admin/sessions/<session_id>/score-summary/
+
+    ✅ results 도메인 기준
+    - Session 단위 성적 통계
+    - 운영/대시보드/AI 추천 입력용
+    """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request, session_id: int):
+        data = SessionScoreSummaryService.build(
+            session_id=int(session_id)
+        )
+        return Response(SessionScoreSummarySerializer(data).data)
 
 
 ==========================================================================================

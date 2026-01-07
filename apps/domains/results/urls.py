@@ -43,6 +43,14 @@ from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFSt
 # ======================================================
 from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
 
+# ======================================================
+# Session score summary (Admin)
+# ======================================================
+# 🔧 PATCH: 세션 단위 성적 요약 API
+from apps.domains.results.views.session_score_summary_view import (
+    SessionScoreSummaryView,
+)
+
 
 urlpatterns = [
     # ============================
@@ -68,7 +76,7 @@ urlpatterns = [
         name="admin-exam-results",
     ),
 
-    # ✅ 추가: 단일 학생 결과 상세 (리스트 API와 분리)
+    # ✅ 단일 학생 결과 상세 (리스트 API와 분리)
     path(
         "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/",
         AdminExamResultDetailView.as_view(),
@@ -109,6 +117,16 @@ urlpatterns = [
         "admin/exams/<int:exam_id>/representative-attempt/",
         AdminRepresentativeAttemptView.as_view(),
         name="admin-representative-attempt",
+    ),
+
+    # ============================
+    # Session Scores (Admin)
+    # ============================
+    # 🔧 PATCH: 세션 단위 최종 성적 요약
+    path(
+        "admin/sessions/<int:session_id>/score-summary/",
+        SessionScoreSummaryView.as_view(),
+        name="session-score-summary",
     ),
 
     # ============================
