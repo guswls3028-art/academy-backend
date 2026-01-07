@@ -3,6 +3,13 @@ from __future__ import annotations
 
 from apps.domains.progress.models import ClinicLink, SessionProgress
 
+# ======================================================
+# 🔧 PATCH: 시험 기반 클리닉 위험도 판단 서비스
+# ======================================================
+from apps.domains.progress.services.clinic_exam_rule_service import (
+    ClinicExamRuleService,
+)
+
 
 class ClinicTriggerService:
     """
@@ -53,4 +60,47 @@ class ClinicTriggerService:
             reason=reason,
             is_auto=False,
             memo=memo,
+        )
+
+    # ======================================================
+    # 🔧 PATCH: 시험 결과 기반 클리닉 위험 자동 트리거
+    # ======================================================
+    @staticmethod
+    def auto_create_if_exam_risk(
+        *,
+        enrollment_id: int,
+        session,
+        exam_id: int,
+    ) -> None:
+        """
+        시험 결과를 기반으로 클리닉 '위험 상태' 자동 생성
+
+        - ClinicExamRuleService를 통해 위험 사유 평가
+        - 실제 점수/합불 판단 로직은 이 서비스에 존재하지 않음
+        - meta.exam_reasons 에 '왜 위험한지' 근거만 기록
+
+        ❗ 시험 합불 정책 변경 시 이 메서드는 수정 대상 아님
+        """
+
+        # 🔹 시험 위험도 평가 (단일 진실)
+        reasons = ClinicExamRuleService.evaluate(
+            enrollment_id=enrollment_id,
+            exam_id=exam_id,
+        )
+
+        if not reasons:
+            return
+
+        ClinicLink.objects.get_or_create(
+            enrollment_id=enrollment_id,
+            session=session,
+            # 🔹 기존 Reason 재사용 (추후 AUTO_RISK_EXAM 확장 가능)
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            defaults={
+                "is_auto": True,
+                "approved": False,
+                "meta": {
+                    "exam_reasons": reasons,
+                },
+            },
         )

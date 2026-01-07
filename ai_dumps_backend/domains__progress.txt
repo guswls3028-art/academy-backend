@@ -909,12 +909,103 @@ class Migration(migrations.Migration):
 
 
 ==========================================================================================
+# FILE: services/clinic_exam_rule_service.py
+==========================================================================================
+from __future__ import annotations
+from django.db.models import Count
+
+from apps.domains.results.models import Result, ResultFact
+from apps.domains.exams.models import Exam
+
+
+class ClinicExamRuleService:
+    """
+    시험/OMR/오답 기반 클리닉 판단 (판단만 함, 저장 ❌)
+    """
+
+    LOW_CONF_THRESHOLD = 2
+
+    @classmethod
+    def evaluate(
+        cls,
+        *,
+        enrollment_id: int,
+        exam_id: int,
+    ) -> dict:
+        reasons: dict = {}
+
+        # ----------------------
+        # 1️⃣ 점수 미달
+        # ----------------------
+        result = Result.objects.filter(
+            enrollment_id=enrollment_id,
+            target_type="exam",
+            target_id=exam_id,
+        ).first()
+
+        exam = Exam.objects.filter(id=exam_id).first()
+        pass_score = float(getattr(exam, "pass_score", 0) or 0)
+
+        if result and result.total_score < pass_score:
+            reasons["LOW_SCORE"] = {
+                "score": result.total_score,
+                "pass_score": pass_score,
+            }
+
+        # ----------------------
+        # 2️⃣ OMR 신뢰도 낮음
+        # ----------------------
+        low_conf = ResultFact.objects.filter(
+            enrollment_id=enrollment_id,
+            target_type="exam",
+            target_id=exam_id,
+            meta__grading__invalid_reason="LOW_CONFIDENCE",
+        ).count()
+
+        if low_conf >= cls.LOW_CONF_THRESHOLD:
+            reasons["LOW_CONFIDENCE_OMR"] = {
+                "count": low_conf,
+                "threshold": cls.LOW_CONF_THRESHOLD,
+            }
+
+        # ----------------------
+        # 3️⃣ 반복 오답
+        # ----------------------
+        repeated = (
+            ResultFact.objects
+            .filter(
+                enrollment_id=enrollment_id,
+                target_type="exam",
+                target_id=exam_id,
+                is_correct=False,
+            )
+            .values("question_id")
+            .annotate(cnt=Count("attempt_id", distinct=True))
+            .filter(cnt__gte=2)
+        )
+
+        if repeated.exists():
+            reasons["REPEATED_WRONG"] = {
+                "question_ids": [r["question_id"] for r in repeated]
+            }
+
+        return reasons
+
+
+==========================================================================================
 # FILE: services/clinic_trigger_service.py
 ==========================================================================================
 # apps/domains/progress/services/clinic_trigger_service.py
 from __future__ import annotations
 
 from apps.domains.progress.models import ClinicLink, SessionProgress
+
+# ======================================================
+# 🔧 PATCH: 시험 기반 클리닉 위험도 판단 서비스
+# ======================================================
+from apps.domains.progress.services.clinic_exam_rule_service import (
+    ClinicExamRuleService,
+)
 
 
 class ClinicTriggerService:
@@ -966,6 +1057,49 @@ class ClinicTriggerService:
             reason=reason,
             is_auto=False,
             memo=memo,
+        )
+
+    # ======================================================
+    # 🔧 PATCH: 시험 결과 기반 클리닉 위험 자동 트리거
+    # ======================================================
+    @staticmethod
+    def auto_create_if_exam_risk(
+        *,
+        enrollment_id: int,
+        session,
+        exam_id: int,
+    ) -> None:
+        """
+        시험 결과를 기반으로 클리닉 '위험 상태' 자동 생성
+
+        - ClinicExamRuleService를 통해 위험 사유 평가
+        - 실제 점수/합불 판단 로직은 이 서비스에 존재하지 않음
+        - meta.exam_reasons 에 '왜 위험한지' 근거만 기록
+
+        ❗ 시험 합불 정책 변경 시 이 메서드는 수정 대상 아님
+        """
+
+        # 🔹 시험 위험도 평가 (단일 진실)
+        reasons = ClinicExamRuleService.evaluate(
+            enrollment_id=enrollment_id,
+            exam_id=exam_id,
+        )
+
+        if not reasons:
+            return
+
+        ClinicLink.objects.get_or_create(
+            enrollment_id=enrollment_id,
+            session=session,
+            # 🔹 기존 Reason 재사용 (추후 AUTO_RISK_EXAM 확장 가능)
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            defaults={
+                "is_auto": True,
+                "approved": False,
+                "meta": {
+                    "exam_reasons": reasons,
+                },
+            },
         )
 
 
@@ -1195,7 +1329,12 @@ from apps.domains.progress.services.clinic_trigger_service import (
 )
 
 
-@shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=5, retry_kwargs={"max_retries": 3})
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=5,
+    retry_kwargs={"max_retries": 3},
+)
 def run_progress_pipeline_task(self, submission_id: int) -> None:
     """
     Results → Progress 파이프라인 (MVP)
@@ -1242,6 +1381,20 @@ def run_progress_pipeline_task(self, submission_id: int) -> None:
         RiskEvaluator.evaluate(lecture_progress)
 
         # -----------------------------
-        # 4️⃣ Clinic 자동 트리거
+        # 4️⃣ Clinic 자동 트리거 (기존)
         # -----------------------------
         ClinicTriggerService.auto_create_if_failed(session_progress)
+
+        # =====================================================
+        # 🔧 PATCH: 시험 기반 클리닉 자동 추천 (확장)
+        #
+        # - 기존 파이프라인 흐름 유지
+        # - 시험이 없는 submission 은 대상 아님
+        # - 합불/위험 판단은 ClinicExamRuleService에 위임
+        # =====================================================
+        if submission.exam_id:
+            ClinicTriggerService.auto_create_if_exam_risk(
+                enrollment_id=submission.enrollment_id,
+                session=submission.session,
+                exam_id=submission.exam_id,
+            )

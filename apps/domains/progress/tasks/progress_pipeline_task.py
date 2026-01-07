@@ -17,7 +17,12 @@ from apps.domains.progress.services.clinic_trigger_service import (
 )
 
 
-@shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=5, retry_kwargs={"max_retries": 3})
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=5,
+    retry_kwargs={"max_retries": 3},
+)
 def run_progress_pipeline_task(self, submission_id: int) -> None:
     """
     Results → Progress 파이프라인 (MVP)
@@ -64,6 +69,20 @@ def run_progress_pipeline_task(self, submission_id: int) -> None:
         RiskEvaluator.evaluate(lecture_progress)
 
         # -----------------------------
-        # 4️⃣ Clinic 자동 트리거
+        # 4️⃣ Clinic 자동 트리거 (기존)
         # -----------------------------
         ClinicTriggerService.auto_create_if_failed(session_progress)
+
+        # =====================================================
+        # 🔧 PATCH: 시험 기반 클리닉 자동 추천 (확장)
+        #
+        # - 기존 파이프라인 흐름 유지
+        # - 시험이 없는 submission 은 대상 아님
+        # - 합불/위험 판단은 ClinicExamRuleService에 위임
+        # =====================================================
+        if submission.exam_id:
+            ClinicTriggerService.auto_create_if_exam_risk(
+                enrollment_id=submission.enrollment_id,
+                session=submission.session,
+                exam_id=submission.exam_id,
+            )
