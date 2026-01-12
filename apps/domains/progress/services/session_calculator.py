@@ -10,7 +10,30 @@ from apps.domains.lectures.models import Session
 class SessionProgressCalculator:
     """
     차시 단위 진행 계산기
+
+    ⚠️ ProgressPolicy는 반드시 존재해야 한다.
+    없으면 여기서 기본값으로 생성한다. (lazy-create)
     """
+
+    @staticmethod
+    def _get_or_create_policy(session: Session) -> ProgressPolicy:
+        """
+        Lecture 단위 ProgressPolicy 보장
+        - 정책이 없으면 기본 정책으로 생성
+        """
+        policy, _ = ProgressPolicy.objects.get_or_create(
+            lecture=session.lecture,
+            defaults={
+                "video_required_rate": 90,
+                "exam_start_session_order": 2,
+                "exam_end_session_order": 9999,
+                "exam_pass_score": 60.0,
+                "homework_start_session_order": 2,
+                "homework_end_session_order": 9999,
+                "homework_pass_type": ProgressPolicy.HomeworkPassType.TEACHER_APPROVAL,
+            },
+        )
+        return policy
 
     @staticmethod
     def calculate(
@@ -28,7 +51,8 @@ class SessionProgressCalculator:
         SessionProgress를 계산/업데이트
         """
 
-        policy = ProgressPolicy.objects.get(lecture=session.lecture)
+        # ✅ ProgressPolicy 보장
+        policy = SessionProgressCalculator._get_or_create_policy(session)
 
         obj, _ = SessionProgress.objects.get_or_create(
             enrollment_id=enrollment_id,
@@ -47,14 +71,18 @@ class SessionProgressCalculator:
             obj.video_completed = video_progress_rate >= policy.video_required_rate
 
         # ----------------------
-        # Exam
+        # Exam (⚠️ 시험은 1:N 가능)
         # ----------------------
         if policy.exam_start_session_order <= session.order <= policy.exam_end_session_order:
             if exam_score is not None:
                 obj.exam_score = exam_score
                 obj.exam_passed = exam_score >= policy.exam_pass_score
+            else:
+                # 시험이 있는 주차인데 점수가 아직 없음
+                obj.exam_passed = False
         else:
-            obj.exam_passed = True  # 적용 대상 아님 → 통과 처리
+            # 시험 적용 대상 아님
+            obj.exam_passed = True
 
         # ----------------------
         # Homework
@@ -66,7 +94,7 @@ class SessionProgressCalculator:
                 obj.homework_passed = homework_submitted
 
             elif policy.homework_pass_type == ProgressPolicy.HomeworkPassType.SCORE:
-                obj.homework_passed = homework_teacher_approved  # 점수판정은 외부에서 계산 후 true/false 전달
+                obj.homework_passed = homework_teacher_approved
 
             elif policy.homework_pass_type == ProgressPolicy.HomeworkPassType.TEACHER_APPROVAL:
                 obj.homework_passed = homework_teacher_approved
