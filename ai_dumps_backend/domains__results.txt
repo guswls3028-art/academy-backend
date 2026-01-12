@@ -80,6 +80,11 @@ from rest_framework.routers import DefaultRouter
 # ======================================================
 from apps.domains.results.views.student_exam_result_view import MyExamResultView
 
+# 🔧 PATCH: 학생 본인 Attempt 히스토리
+from apps.domains.results.views.student_exam_attempts_view import (
+    MyExamAttemptsView,
+)
+
 # ======================================================
 # Admin / Teacher
 # ======================================================
@@ -89,9 +94,19 @@ from apps.domains.results.views.admin_representative_attempt_view import (
     AdminRepresentativeAttemptView,
 )
 
-# ✅ 추가: 단일 학생 결과 상세
+# ✅ 단일 학생 결과 상세
 from apps.domains.results.views.admin_exam_result_detail_view import (
     AdminExamResultDetailView,
+)
+
+# 🔧 PATCH: Session → Exam 목록 (미래 다중 시험 대비)
+from apps.domains.results.views.admin_session_exams_view import (
+    AdminSessionExamsView,
+)
+
+# 🔧 PATCH: ResultFact 디버그 조회
+from apps.domains.results.views.admin_result_fact_view import (
+    AdminResultFactView,
 )
 
 # ======================================================
@@ -111,7 +126,7 @@ from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateVie
 from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFStatusView
 
 # ======================================================
-# ExamAttempt (history / retake)
+# ExamAttempt (history / retake) - Admin only
 # ======================================================
 from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
 
@@ -132,6 +147,13 @@ urlpatterns = [
         "me/exams/<int:exam_id>/",
         MyExamResultView.as_view(),
         name="my-exam-result",
+    ),
+
+    # 🔧 PATCH: 학생 본인 재시험/Attempt 히스토리
+    path(
+        "me/exams/<int:exam_id>/attempts/",
+        MyExamAttemptsView.as_view(),
+        name="my-exam-attempts",
     ),
 
     # ============================
@@ -194,11 +216,24 @@ urlpatterns = [
     # ============================
     # Session Scores (Admin)
     # ============================
-    # 🔧 PATCH: 세션 단위 최종 성적 요약
     path(
         "admin/sessions/<int:session_id>/score-summary/",
         SessionScoreSummaryView.as_view(),
         name="session-score-summary",
+    ),
+
+    # 🔧 PATCH: Session → Exam 목록
+    path(
+        "admin/sessions/<int:session_id>/exams/",
+        AdminSessionExamsView.as_view(),
+        name="admin-session-exams",
+    ),
+
+    # 🔧 PATCH: ResultFact 디버그 조회
+    path(
+        "admin/facts/",
+        AdminResultFactView.as_view(),
+        name="admin-result-facts",
     ),
 
     # ============================
@@ -222,7 +257,7 @@ urlpatterns = [
 ]
 
 # ================================
-# ExamAttempt router
+# ExamAttempt router (Admin only)
 # ================================
 attempt_router = DefaultRouter()
 attempt_router.register("exam-attempts", ExamAttemptViewSet)
@@ -2935,6 +2970,107 @@ class AdminRepresentativeAttemptView(APIView):
 
 
 ==========================================================================================
+# FILE: views/admin_result_fact_view.py
+==========================================================================================
+# PATH: apps/domains/results/views/admin_result_fact_view.py
+"""
+Admin ResultFact Debug View
+
+GET /results/admin/facts/?exam_id=&enrollment_id=&limit=100
+
+⚠️ 목적:
+- 운영/CS/디버깅
+- append-only Fact 직접 조회
+"""
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.models import ResultFact
+
+
+class AdminResultFactView(APIView):
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request):
+        exam_id = request.query_params.get("exam_id")
+        enrollment_id = request.query_params.get("enrollment_id")
+        limit = int(request.query_params.get("limit", 100))
+
+        qs = ResultFact.objects.all().order_by("-id")
+
+        if exam_id:
+            qs = qs.filter(target_type="exam", target_id=int(exam_id))
+        if enrollment_id:
+            qs = qs.filter(enrollment_id=int(enrollment_id))
+
+        qs = qs[: min(limit, 500)]
+
+        return Response([
+            {
+                "id": f.id,
+                "exam_id": f.target_id,
+                "enrollment_id": f.enrollment_id,
+                "attempt_id": f.attempt_id,
+                "question_id": f.question_id,
+                "answer": f.answer,
+                "is_correct": f.is_correct,
+                "score": f.score,
+                "max_score": f.max_score,
+                "meta": f.meta,
+                "created_at": f.created_at,
+            }
+            for f in qs
+        ])
+
+
+==========================================================================================
+# FILE: views/admin_session_exams_view.py
+==========================================================================================
+# PATH: apps/domains/results/views/admin_session_exams_view.py
+"""
+Admin Session → Exams 조회
+
+GET /results/admin/sessions/{session_id}/exams/
+
+⚠️ 현재 계약:
+- Session.exam = ForeignKey(Exam) (단일)
+- 응답은 리스트 형태로 고정 (미래 다중 시험 대비)
+"""
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.lectures.models import Session
+
+
+class AdminSessionExamsView(APIView):
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request, session_id: int):
+        session = Session.objects.filter(id=int(session_id)).first()
+        if not session or not getattr(session, "exam_id", None):
+            return Response([])
+
+        exam = session.exam
+
+        return Response([
+            {
+                "exam_id": int(exam.id),
+                "title": getattr(exam, "title", ""),
+                "open_at": getattr(exam, "open_at", None),
+                "close_at": getattr(exam, "close_at", None),
+                "allow_retake": bool(getattr(exam, "allow_retake", False)),
+                "max_attempts": int(getattr(exam, "max_attempts", 1) or 1),
+            }
+        ])
+
+
+==========================================================================================
 # FILE: views/exam_attempt_view.py
 ==========================================================================================
 # apps/domains/results/views/exam_attempt_view.py
@@ -3080,6 +3216,63 @@ class SessionScoreSummaryView(APIView):
             session_id=int(session_id)
         )
         return Response(SessionScoreSummarySerializer(data).data)
+
+
+==========================================================================================
+# FILE: views/student_exam_attempts_view.py
+==========================================================================================
+# PATH: apps/domains/results/views/student_exam_attempts_view.py
+"""
+Student Exam Attempt History
+
+GET /results/me/exams/{exam_id}/attempts/
+
+- 학생 본인 enrollment 기준
+- 재시험 히스토리 UI 전용
+"""
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.results.permissions import IsStudent
+from apps.domains.results.models import ExamAttempt
+from apps.domains.enrollment.models import Enrollment
+
+
+class MyExamAttemptsView(APIView):
+    permission_classes = [IsAuthenticated, IsStudent]
+
+    def get(self, request, exam_id: int):
+        user = request.user
+
+        # enrollment 탐색 (방어)
+        qs = Enrollment.objects.all()
+        if hasattr(Enrollment, "user_id"):
+            qs = qs.filter(user_id=user.id)
+        elif hasattr(Enrollment, "student_id"):
+            qs = qs.filter(student_id=user.id)
+
+        enrollment = qs.first()
+        if not enrollment:
+            return Response([])
+
+        attempts = ExamAttempt.objects.filter(
+            exam_id=int(exam_id),
+            enrollment_id=int(enrollment.id),
+        ).order_by("attempt_index")
+
+        return Response([
+            {
+                "attempt_id": a.id,
+                "attempt_index": a.attempt_index,
+                "is_retake": a.is_retake,
+                "is_representative": a.is_representative,
+                "status": a.status,
+                "created_at": a.created_at,
+            }
+            for a in attempts
+        ])
 
 
 ==========================================================================================

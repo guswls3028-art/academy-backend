@@ -8,6 +8,11 @@ from rest_framework.routers import DefaultRouter
 # ======================================================
 from apps.domains.results.views.student_exam_result_view import MyExamResultView
 
+# 🔧 PATCH: 학생 본인 Attempt 히스토리
+from apps.domains.results.views.student_exam_attempts_view import (
+    MyExamAttemptsView,
+)
+
 # ======================================================
 # Admin / Teacher
 # ======================================================
@@ -17,9 +22,19 @@ from apps.domains.results.views.admin_representative_attempt_view import (
     AdminRepresentativeAttemptView,
 )
 
-# ✅ 추가: 단일 학생 결과 상세
+# ✅ 단일 학생 결과 상세
 from apps.domains.results.views.admin_exam_result_detail_view import (
     AdminExamResultDetailView,
+)
+
+# 🔧 PATCH: Session → Exam 목록 (미래 다중 시험 대비)
+from apps.domains.results.views.admin_session_exams_view import (
+    AdminSessionExamsView,
+)
+
+# 🔧 PATCH: ResultFact 디버그 조회
+from apps.domains.results.views.admin_result_fact_view import (
+    AdminResultFactView,
 )
 
 # ======================================================
@@ -39,7 +54,7 @@ from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateVie
 from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFStatusView
 
 # ======================================================
-# ExamAttempt (history / retake)
+# ExamAttempt (history / retake) - Admin only
 # ======================================================
 from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
 
@@ -60,6 +75,13 @@ urlpatterns = [
         "me/exams/<int:exam_id>/",
         MyExamResultView.as_view(),
         name="my-exam-result",
+    ),
+
+    # 🔧 PATCH: 학생 본인 재시험/Attempt 히스토리
+    path(
+        "me/exams/<int:exam_id>/attempts/",
+        MyExamAttemptsView.as_view(),
+        name="my-exam-attempts",
     ),
 
     # ============================
@@ -122,11 +144,24 @@ urlpatterns = [
     # ============================
     # Session Scores (Admin)
     # ============================
-    # 🔧 PATCH: 세션 단위 최종 성적 요약
     path(
         "admin/sessions/<int:session_id>/score-summary/",
         SessionScoreSummaryView.as_view(),
         name="session-score-summary",
+    ),
+
+    # 🔧 PATCH: Session → Exam 목록
+    path(
+        "admin/sessions/<int:session_id>/exams/",
+        AdminSessionExamsView.as_view(),
+        name="admin-session-exams",
+    ),
+
+    # 🔧 PATCH: ResultFact 디버그 조회
+    path(
+        "admin/facts/",
+        AdminResultFactView.as_view(),
+        name="admin-result-facts",
     ),
 
     # ============================
@@ -150,7 +185,7 @@ urlpatterns = [
 ]
 
 # ================================
-# ExamAttempt router
+# ExamAttempt router (Admin only)
 # ================================
 attempt_router = DefaultRouter()
 attempt_router.register("exam-attempts", ExamAttemptViewSet)
