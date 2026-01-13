@@ -1,5 +1,3 @@
-# PATH: apps/domains/lectures/admin.py
-
 from django.contrib import admin
 from .models import Lecture, Session
 
@@ -31,9 +29,36 @@ class LectureAdmin(admin.ModelAdmin):
 
 @admin.register(Session)
 class SessionAdmin(admin.ModelAdmin):
-    # ✅ exam 컬럼 추가 (운영자 가시성)
-    list_display = ("id", "lecture", "order", "title", "date", "exam")
+    """
+    Session Admin (차시 관리)
+
+    ⚠️ 중요:
+    - Session.exam FK는 제거됨
+    - 시험은 Exam.sessions (ManyToMany)로만 연결됨
+    - admin에서는 '시험 개수 / 요약'만 노출
+    """
+
+    list_display = (
+        "id",
+        "lecture",
+        "order",
+        "title",
+        "date",
+        "exam_count",     # ✅ 대체 컬럼
+    )
     list_display_links = ("id", "title")
     list_filter = ("lecture",)
     search_fields = ("title",)
     ordering = ("lecture", "order")
+
+    # --------------------------------------------
+    # ✅ 연결된 시험 개수 표시
+    # --------------------------------------------
+    def exam_count(self, obj: Session) -> int:
+        """
+        이 차시에 연결된 시험 개수
+        (Exam.sessions M2M 기준)
+        """
+        return obj.exams.count()
+
+    exam_count.short_description = "시험 수"
