@@ -1,7 +1,13 @@
 # apps/domains/progress/admin.py
 from django.contrib import admin
 
-from .models import ProgressPolicy, SessionProgress, LectureProgress, ClinicLink, RiskLog
+from .models import (
+    ProgressPolicy,
+    SessionProgress,
+    LectureProgress,
+    ClinicLink,
+    RiskLog,
+)
 
 
 @admin.register(ProgressPolicy)
@@ -25,6 +31,16 @@ class ProgressPolicyAdmin(admin.ModelAdmin):
 
 @admin.register(SessionProgress)
 class SessionProgressAdmin(admin.ModelAdmin):
+    """
+    ✅ SessionProgress Admin (집계 결과 전용)
+
+    설계 원칙:
+    - ❌ 시험 점수(exam_score)는 여기 책임이 아님
+      → Result / SessionExamsSummary API에서만 조회
+    - ✅ pass/fail 여부는 '집계 결과'이므로 유지
+    - ✅ clinic 여부는 ClinicLink 도메인에서 별도 관리
+    """
+
     list_display = (
         "id",
         "enrollment_id",
@@ -32,7 +48,10 @@ class SessionProgressAdmin(admin.ModelAdmin):
         "attendance_type",
         "video_progress_rate",
         "video_completed",
-        "exam_score",
+
+        # ❌ REMOVED:
+        # "exam_score",  # 시험 점수는 Result 도메인 책임
+
         "exam_passed",
         "homework_submitted",
         "homework_passed",
@@ -40,8 +59,20 @@ class SessionProgressAdmin(admin.ModelAdmin):
         "calculated_at",
         "updated_at",
     )
-    list_filter = ("attendance_type", "completed", "exam_passed", "homework_passed")
-    search_fields = ("enrollment_id", "session__title", "session__lecture__title")
+
+    list_filter = (
+        "attendance_type",
+        "completed",
+        "exam_passed",
+        "homework_passed",
+    )
+
+    search_fields = (
+        "enrollment_id",
+        "session__title",
+        "session__lecture__title",
+    )
+
     ordering = ("-updated_at", "-id")
 
 
@@ -67,6 +98,10 @@ class LectureProgressAdmin(admin.ModelAdmin):
 
 @admin.register(ClinicLink)
 class ClinicLinkAdmin(admin.ModelAdmin):
+    """
+    ✅ ClinicLink = 클리닉 트리거 단일 진실
+    SessionProgress에서 분리된 구조 유지
+    """
     list_display = (
         "id",
         "enrollment_id",

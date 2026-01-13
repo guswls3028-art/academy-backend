@@ -10,16 +10,29 @@ from apps.domains.lectures.models import Lecture, Session
 class ProgressPolicy(TimestampModel):
     """
     강의별 진행/통과 정책 (커스텀 가능)
-    - 영상 인정 기준
-    - 시험/과제 적용 주차 범위
-    - 시험 통과 점수
-    - 과제 통과 방식(강사 승인 등)
+
+    ✅ 1:N 시험 구조 대응 포인트
+    - exam_aggregate_strategy: Session에 여러 Exam이 있을 때 Result를 어떻게 집계할지
+    - exam_pass_source:
+        - POLICY: ProgressPolicy.exam_pass_score 사용
+        - EXAM: exams.Exam.pass_score 사용 (시험별 커트라인)
     """
 
     class HomeworkPassType(models.TextChoices):
         SUBMIT = "SUBMIT", "제출만"
         SCORE = "SCORE", "점수"
         TEACHER_APPROVAL = "TEACHER_APPROVAL", "강사승인"
+
+    # ✅ PATCH: 시험 집계 전략
+    class ExamAggregateStrategy(models.TextChoices):
+        MAX = "MAX", "최고점"
+        AVG = "AVG", "평균"
+        LATEST = "LATEST", "최근 제출"
+
+    # ✅ PATCH: pass 기준 출처
+    class ExamPassSource(models.TextChoices):
+        POLICY = "POLICY", "정책 기준"
+        EXAM = "EXAM", "시험 기준"
 
     lecture = models.OneToOneField(
         Lecture,
@@ -33,7 +46,24 @@ class ProgressPolicy(TimestampModel):
     # ---------- Exam (n~m 주차) ----------
     exam_start_session_order = models.PositiveIntegerField(default=2)
     exam_end_session_order = models.PositiveIntegerField(default=9999)
+
+    # (레거시/정책형 커트라인)
     exam_pass_score = models.FloatField(default=60.0)
+
+    # ✅ PATCH: 다중 시험 집계 정책
+    exam_aggregate_strategy = models.CharField(
+        max_length=10,
+        choices=ExamAggregateStrategy.choices,
+        default=ExamAggregateStrategy.MAX,
+        help_text="Session에 여러 시험이 있을 때 Result 집계 방식",
+    )
+
+    exam_pass_source = models.CharField(
+        max_length=10,
+        choices=ExamPassSource.choices,
+        default=ExamPassSource.EXAM,
+        help_text="합격 기준을 정책(POLICY)으로 볼지, 시험(EXAM)마다 볼지",
+    )
 
     # ---------- Homework (n~m 주차) ----------
     homework_start_session_order = models.PositiveIntegerField(default=2)
@@ -53,9 +83,17 @@ class ProgressPolicy(TimestampModel):
 
 class SessionProgress(TimestampModel):
     """
-    Enrollment(수강) x Session(차시) 단위의 진행 스냅샷
-    - fact 도메인(lectures/submissions/results)에서 읽어와 계산된 결과를 저장
-    - UI에서 '차시 통과/미통과/완료' 가시성의 원천 데이터
+    Enrollment x Session 단위 진행 스냅샷
+
+    ✅ 1:N 시험 구조 원칙 준수:
+    - SessionProgress는 특정 Exam 점수에 의존하지 않는다.
+    - 반드시 Result들을 "집계"한 최종 판단만 저장한다.
+
+    추가 필드:
+    - exam_attempted: 이 session에서 시험 Result가 하나라도 있는지
+    - exam_aggregate_score: 전략(MAX/AVG/LATEST) 기반 집계 점수
+    - exam_passed: 집계/정책 기반 최종 시험 통과 여부
+    - exam_meta: 집계 상세(시험별 score/passed/기준 등)
     """
 
     class AttendanceType(models.TextChoices):
@@ -75,17 +113,20 @@ class SessionProgress(TimestampModel):
         choices=AttendanceType.choices,
         default=AttendanceType.ONLINE,
     )
-    # online일 때만 의미 있음
     video_progress_rate = models.PositiveIntegerField(default=0)  # 0~100
     video_completed = models.BooleanField(default=False)
 
-    # ----- exam -----
-    exam_score = models.FloatField(null=True, blank=True)
+    # ======================================================
+    # ✅ PATCH: Exam aggregate (1 Session : N Exams)
+    # ======================================================
+    exam_attempted = models.BooleanField(default=False)
+    exam_aggregate_score = models.FloatField(null=True, blank=True)
     exam_passed = models.BooleanField(default=False)
+    exam_meta = models.JSONField(null=True, blank=True)
 
     # ----- homework -----
     homework_submitted = models.BooleanField(default=False)
-    homework_passed = models.BooleanField(default=False)  # 강사 승인 등
+    homework_passed = models.BooleanField(default=False)
 
     # ----- final -----
     completed = models.BooleanField(default=False)
@@ -105,15 +146,13 @@ class SessionProgress(TimestampModel):
         ordering = ["-updated_at", "-id"]
 
     def __str__(self):
-        return f"SessionProgress(enroll={self.enrollment_id}, session={self.session_id}, completed={self.completed})"
+        return (
+            f"SessionProgress(enroll={self.enrollment_id}, "
+            f"session={self.session_id}, completed={self.completed})"
+        )
 
 
 class LectureProgress(TimestampModel):
-    """
-    Enrollment(수강) x Lecture(강의) 단위의 집계 스냅샷
-    - list 화면(학부모/강사)에서 '한눈에 보기'를 위해 저장
-    """
-
     class RiskLevel(models.TextChoices):
         NORMAL = "NORMAL", "Normal"
         WARNING = "WARNING", "Warning"
@@ -156,13 +195,6 @@ class LectureProgress(TimestampModel):
 
 
 class ClinicLink(TimestampModel):
-    """
-    차시(Session) 기준 클리닉 연결 이력
-    - 실패로 자동 생성
-    - 합격자도 원하는 경우 생성 가능
-    - 학원 운영의 '주 시스템' 포인트
-    """
-
     class Reason(models.TextChoices):
         AUTO_FAILED = "AUTO_FAILED", "자동(차시 미통과)"
         AUTO_RISK = "AUTO_RISK", "자동(위험 알림)"
@@ -196,10 +228,6 @@ class ClinicLink(TimestampModel):
 
 
 class RiskLog(TimestampModel):
-    """
-    위험 판단 이력 (근거/알림 추적용)
-    """
-
     class RiskLevel(models.TextChoices):
         WARNING = "WARNING", "Warning"
         DANGER = "DANGER", "Danger"
