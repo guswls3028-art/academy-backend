@@ -187,6 +187,7 @@ class SessionProgressCalculator:
                 "pass_score": float(pass_score),
                 "passed": bool(score >= float(pass_score)),
                 "submitted_at": r.submitted_at,
+                "submitted_count": rs.count(),
             })
 
         # 집계 점수 계산
