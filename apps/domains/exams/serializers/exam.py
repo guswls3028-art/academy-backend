@@ -31,6 +31,7 @@ class ExamSerializer(serializers.ModelSerializer):
             "pass_score",
             "open_at",
             "close_at",
+            
             "created_at",
             "updated_at",
         ]

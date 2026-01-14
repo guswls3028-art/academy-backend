@@ -1,3 +1,5 @@
+# python tools\export_backend_apps_deep_ai_dump.py
+
 # backend 앱 + domains/support 내부 앱까지 AI 덤프
 # 결과: 실제 Django app 단위 txt
 
