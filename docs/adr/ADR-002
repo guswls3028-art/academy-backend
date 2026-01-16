@@ -1,0 +1,15 @@
+ADR-002: 1 Session : N Exam 구조
+
+# ADR-002: 차시(Session)에 여러 시험(Exam)을 허용
+
+## Context
+한 차시에 여러 시험(OMR + 과제형 시험 등)이 필요해졌다.
+
+## Decision
+- Exam은 Session과 N:M 관계를 가진다.
+- SessionProgress는 개별 시험 점수를 직접 참조하지 않는다.
+- Result들을 정책(AVG/MAX/LATEST)으로 집계한다.
+
+## Consequences
+- 시험 구조 변경에도 progress 로직은 안정적
+- 시험이 없는 주차는 자동 통과 처리 가능

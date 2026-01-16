@@ -7,15 +7,14 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.results.models import Result
-from apps.domains.results.serializers.session_exams_summary import (
-    SessionExamsSummarySerializer,
-)
+from apps.domains.results.serializers.session_exams_summary import SessionExamsSummarySerializer
 
 from apps.domains.lectures.models import Session
-from apps.domains.exams.models import Exam
-
 from apps.domains.progress.models import SessionProgress, ClinicLink, ProgressPolicy
+
+# ✅ 단일 진실 유틸
+from apps.domains.results.utils.session_exam import get_exams_for_session
+from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 
 
 class AdminSessionExamsSummaryView(APIView):
@@ -24,44 +23,13 @@ class AdminSessionExamsSummaryView(APIView):
 
     GET /results/admin/sessions/{session_id}/exams/summary/
 
-    원칙:
-    - 점수/통계: Result 기반 (exam 단위 fact)
-    - pass_rate(세션 최종 통과): SessionProgress.exam_passed 기반 (집계 결과)
-    - clinic_rate: ClinicLink 기반 (진행/클리닉 분리)
+    단일 진실 규칙:
+    - 세션 단위 pass_rate: SessionProgress.exam_passed 기반 (집계 결과)
+    - 세션 단위 clinic_rate: ClinicLink(is_auto=True) enrollment distinct 기반
+    - 시험 단위 점수 통계: Result(단, enrollment 중복 방어)
     """
 
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
-
-    @staticmethod
-    def _has_relation(model, name: str) -> bool:
-        try:
-            return any(getattr(f, "name", None) == name for f in model._meta.get_fields())
-        except Exception:
-            return False
-
-    @classmethod
-    def _get_exams_for_session(cls, session: Session):
-        # Session.exam_id (FK)
-        exam_id = getattr(session, "exam_id", None)
-        if exam_id:
-            return list(Exam.objects.filter(id=int(exam_id)))
-
-        # Session.exams (M2M)
-        if cls._has_relation(Session, "exams"):
-            try:
-                return list(session.exams.all())
-            except Exception:
-                pass
-
-        # Exam.sessions reverse (M2M)
-        if cls._has_relation(Exam, "sessions"):
-            return list(Exam.objects.filter(sessions__id=int(session.id)).distinct())
-
-        # Exam.session reverse (FK/1:1)
-        if cls._has_relation(Exam, "session"):
-            return list(Exam.objects.filter(session__id=int(session.id)).distinct())
-
-        return []
 
     def get(self, request, session_id: int):
         session = Session.objects.filter(id=int(session_id)).select_related("lecture").first()
@@ -78,13 +46,13 @@ class AdminSessionExamsSummaryView(APIView):
                 }).data
             )
 
-        # 정책 (집계 전략 표시용)
+        # 정책(표시용)
         policy = ProgressPolicy.objects.filter(lecture=session.lecture).first()
         strategy = str(getattr(policy, "exam_aggregate_strategy", "MAX"))
         pass_source = str(getattr(policy, "exam_pass_source", "EXAM"))
 
-        # session에 연결된 exams
-        exams = self._get_exams_for_session(session)
+        # ✅ 세션에 연결된 exams (단일 진실)
+        exams = list(get_exams_for_session(session))
         exam_ids = [int(e.id) for e in exams]
 
         # -----------------------------
@@ -93,9 +61,11 @@ class AdminSessionExamsSummaryView(APIView):
         sp_qs = SessionProgress.objects.filter(session=session)
         participant_count = sp_qs.count()
 
+        # 세션 단위 시험 통과율(집계 결과)
         pass_count = sp_qs.filter(exam_passed=True).count()
         pass_rate = (pass_count / participant_count) if participant_count else 0.0
 
+        # clinic_rate(단일 규칙)
         clinic_count = (
             ClinicLink.objects.filter(session=session, is_auto=True)
             .values("enrollment_id").distinct().count()
@@ -103,29 +73,24 @@ class AdminSessionExamsSummaryView(APIView):
         clinic_rate = (clinic_count / participant_count) if participant_count else 0.0
 
         # -----------------------------
-        # exam-level stats (Result 기반)
+        # exam-level stats (Result 기반, enrollment 중복 방어)
         # -----------------------------
         exam_rows = []
-
         for ex in exams:
-            rs = Result.objects.filter(
+            rs = latest_results_per_enrollment(
                 target_type="exam",
                 target_id=int(ex.id),
             )
 
             agg = rs.aggregate(
-                participant_count=Count("id"),
+                participant_count=Count("id"),  # 이미 enrollment 1개씩으로 줄였으니 count(id)=participant
                 avg_score=Avg("total_score"),
                 min_score=Min("total_score"),
                 max_score=Max("total_score"),
             )
 
-            # pass 기준: pass_source가 POLICY면 정책 pass_score를 쓰지만,
-            # 이 API는 "시험별 표시"가 목적이므로 여기서는 exam.pass_score를 기본 제공.
-            # (정책형 pass 집계는 SessionProgress 쪽이 단일 진실)
             pass_score = float(getattr(ex, "pass_score", 0.0) or 0.0)
 
-            # 시험 단위 pass/fail 통계는 "시험 기준선(ex.pass_score)"로 제공
             pcount = rs.filter(total_score__gte=pass_score).count()
             fcount = rs.filter(total_score__lt=pass_score).count()
 
@@ -150,11 +115,22 @@ class AdminSessionExamsSummaryView(APIView):
         payload = {
             "session_id": int(session.id),
             "participant_count": int(participant_count),
+
+            # ✅ 의미 고정:
+            # pass_rate = SessionProgress.exam_passed 기반 (집계 결과)
             "pass_rate": round(float(pass_rate), 4),
+
+            # ✅ 의미 고정:
+            # clinic_rate = ClinicLink(is_auto=True) 기준
             "clinic_rate": round(float(clinic_rate), 4),
+
             "strategy": strategy,
             "pass_source": pass_source,
             "exams": exam_rows,
+
+            # (권장) pass_rate_source 같은 메타를 serializer에 추가하면 사고 방지에 큰 도움
+            # "pass_rate_source": "SESSION_PROGRESS",
+            # "clinic_rate_source": "CLINIC_LINK_AUTO",
         }
 
         return Response(SessionExamsSummarySerializer(payload).data)

@@ -1,40 +1,38 @@
-# PATH: apps/domains/results/services/session_score_summary_service.py
-
+# apps/domains/results/services/session_score_summary_service.py
 from __future__ import annotations
 
 from django.db.models import Avg, Min, Max, Count
 
-from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.results.models import ExamAttempt
 from apps.domains.progress.models import SessionProgress
-
-# ======================================================
-# 🔧 PATCH: Clinic은 Progress가 아니라 ClinicLink 도메인
-# - SessionProgress.clinic_required 같은 필드가 없다는 계약에 맞춤
-# ======================================================
-from apps.domains.progress.models import ClinicLink  # ✅ PATCH
-
+from apps.domains.progress.models import ClinicLink
 from apps.domains.lectures.models import Session
+
+# ✅ 단일 진실 유틸
+from apps.domains.results.utils.session_exam import get_exam_ids_for_session
+from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 
 
 class SessionScoreSummaryService:
     """
-    ✅ Session 단위 성적 통계 (results 기준 단일 진실)
+    ✅ Session 단위 성적 통계 (운영/대시보드)
 
-    사용 근거:
-    - 점수: Result (대표 attempt 스냅샷)
-    - 통과: SessionProgress (completed 기준)  ✅ PATCH
-    - 클리닉: ClinicLink (자동 트리거 기준) ✅ PATCH
-    - 재시험: ExamAttempt
+    단일 진실 규칙:
+    - 점수 통계: Result(단, enrollment 중복 방어 적용)
+    - 세션 통과율: SessionProgress.completed(혹은 정책에 따라 exam_passed) 중 무엇인지 '정의'가 필요하지만
+      기존 원본은 completed를 사용했으므로 원본 의미를 존중한다.
+    - 클리닉: ClinicLink (is_auto=True, enrollment distinct)
 
-    ⚠️ PATCH(설계 정합성):
-    - Session은 단일 exam만 가짐 (Session.exam FK)  ✅ PATCH
+    ⚠️ 세션1:시험N 구조 반영:
+    - session에 연결된 exam_id들을 모두 가져와서 통계를 만든다.
+    - 다만 "세션 전체 점수"를 1개 숫자로 만들 때는 집계 전략이 필요함.
+      이 서비스는 "세션 운영 통계" 성격이므로:
+        - 점수 집계는 우선 exams 전체 Result를 합쳐 평균/최소/최대를 구하는 보수적 방식으로 제공.
+      (정교한 전략은 AdminSessionExamsSummaryView에서 exam별로 제공하는 것이 정석)
     """
 
     @staticmethod
     def build(*, session_id: int) -> dict:
-        # -----------------------------
-        # EMPTY 응답 (기존 유지)
-        # -----------------------------
         EMPTY_SUMMARY = {
             "participant_count": 0,
             "avg_score": 0.0,
@@ -52,100 +50,88 @@ class SessionScoreSummaryService:
         if not session:
             return EMPTY_SUMMARY
 
-        # =====================================================
-        # 🔥 CRITICAL PATCH #1:
-        # Session ↔ Exam 관계 오류 수정
-        #
-        # 기존 코드는 session.exam_set 같은 "역관계"를 가정했으나,
-        # 현재 계약은 Session.exam = ForeignKey(Exam)
-        # -> Session은 단일 exam만 가진다.
-        # =====================================================
-        exam_id = getattr(session, "exam_id", None)  # ✅ PATCH
-        if not exam_id:
-            return EMPTY_SUMMARY
-
-        exam_id = int(exam_id)
-        exam_ids = [exam_id]  # ✅ PATCH: 하위 로직(Attempt 통계) 호환용으로 리스트 유지
-
-        # =====================================================
-        # ⚠️ PATCH #3 (정의 명확화):
-        # participant_count 기준을 "세션 참여자(Progress)"로 통일
-        #
-        # 이유:
-        # - Result는 '시험 제출자'만 잡힘 (미응시/결석/영상만 시청 등 누락 가능)
-        # - 운영용 세션 통계라면 SessionProgress가 참여자 모수로 더 안전
-        #
-        # 만약 "시험 참여자 통계"만 원하면 여기만 Result.count()로 바꾸면 됨.
-        # =====================================================
-        progresses = SessionProgress.objects.filter(session=session)  # ✅ PATCH (앞에서 재사용)
-        participant_count = progresses.count()  # ✅ PATCH
-
-        # ---------------------------------------------
-        # 2️⃣ Result 기반 점수 통계 (대표 attempt)
-        # ---------------------------------------------
-        # ✅ PATCH: Session은 단일 exam이므로 target_id=exam_id로 고정
-        results = Result.objects.filter(
-            target_type="exam",
-            target_id=exam_id,
-        )
-
-        agg = results.aggregate(
-            avg_score=Avg("total_score"),
-            min_score=Min("total_score"),
-            max_score=Max("total_score"),
-        )
-
-        # =====================================================
-        # 🔥 CRITICAL PATCH #2:
-        # SessionProgress 필드명 불일치 수정
-        #
-        # 기존:
-        # - failed / clinic_required 를 참조했으나 계약상 존재하지 않음
-        #
-        # 정답(권장):
-        # - pass 기준: completed=True
-        # - clinic 기준: ClinicLink (자동 트리거) distinct enrollment
-        # =====================================================
-        pass_count = progresses.filter(completed=True).count()  # ✅ PATCH
-
-        clinic_count = (
-            ClinicLink.objects.filter(
-                session=session,
-                is_auto=True,
+        exam_ids = get_exam_ids_for_session(session)
+        if not exam_ids:
+            # 세션에 시험이 없으면 점수 통계는 0, pass/clinic은 progress로만 판단 가능
+            progresses = SessionProgress.objects.filter(session=session)
+            participant_count = progresses.count()
+            pass_count = progresses.filter(completed=True).count()
+            clinic_count = (
+                ClinicLink.objects.filter(session=session, is_auto=True)
+                .values("enrollment_id").distinct().count()
             )
+            return {
+                **EMPTY_SUMMARY,
+                "participant_count": int(participant_count),
+                "pass_rate": round((pass_count / participant_count), 4) if participant_count else 0.0,
+                "clinic_rate": round((clinic_count / participant_count), 4) if participant_count else 0.0,
+            }
+
+        # -------------------------------------------------
+        # participant 모수: SessionProgress 기준(원본 존중)
+        # -------------------------------------------------
+        progresses = SessionProgress.objects.filter(session=session)
+        participant_count = progresses.count()
+
+        # -------------------------------------------------
+        # pass_rate: 원본은 SessionProgress.completed 기준
+        # -------------------------------------------------
+        pass_count = progresses.filter(completed=True).count()
+        pass_rate = (pass_count / participant_count) if participant_count else 0.0
+
+        # -------------------------------------------------
+        # clinic_rate: ClinicLink 기준 단일화
+        # -------------------------------------------------
+        clinic_count = (
+            ClinicLink.objects.filter(session=session, is_auto=True)
             .values("enrollment_id")
             .distinct()
             .count()
-        )  # ✅ PATCH
-
-        pass_rate = (pass_count / participant_count) if participant_count else 0.0
+        )
         clinic_rate = (clinic_count / participant_count) if participant_count else 0.0
 
-        # ---------------------------------------------
-        # 4️⃣ Attempt 통계 (재시험 비율)
-        # ---------------------------------------------
-        # =====================================================
-        # ✅ PATCH #4 (주석 보강 + 관계 명확화):
-        # Session은 단일 exam(FK)만 가지므로 attempt 통계는 exam 단위로 계산한다.
-        # =====================================================
-        attempts = ExamAttempt.objects.filter(exam_id__in=exam_ids)
+        # -------------------------------------------------
+        # 점수 통계:
+        # - 세션에 연결된 모든 시험의 Result를 모아서 통계
+        # - enrollment 중복 방어: exam별 latest_results_per_enrollment 적용 후 합치기
+        # -------------------------------------------------
+        all_results = []
+        for exid in exam_ids:
+            rs = list(latest_results_per_enrollment(target_type="exam", target_id=int(exid)))
+            all_results.extend(rs)
+
+        if not all_results:
+            score_summary = {"avg_score": 0.0, "min_score": 0.0, "max_score": 0.0}
+        else:
+            scores = [float(r.total_score or 0.0) for r in all_results]
+            score_summary = {
+                "avg_score": (sum(scores) / len(scores)) if scores else 0.0,
+                "min_score": min(scores) if scores else 0.0,
+                "max_score": max(scores) if scores else 0.0,
+            }
+
+        # -------------------------------------------------
+        # Attempt 통계(재시험 비율):
+        # - 세션에 연결된 모든 시험을 대상으로 attempt 통계
+        # -------------------------------------------------
+        attempts = ExamAttempt.objects.filter(exam_id__in=[int(x) for x in exam_ids])
 
         per_enrollment = (
             attempts.values("enrollment_id")
             .annotate(cnt=Count("id"))
         )
 
-        total_attempts = sum(r["cnt"] for r in per_enrollment)
-        retake_users = sum(1 for r in per_enrollment if r["cnt"] > 1)
+        total_attempts = sum(int(r["cnt"] or 0) for r in per_enrollment)
+        retake_users = sum(1 for r in per_enrollment if int(r["cnt"] or 0) > 1)
 
         avg_attempts = (total_attempts / participant_count) if participant_count else 0.0
         retake_ratio = (retake_users / participant_count) if participant_count else 0.0
 
         return {
             "participant_count": int(participant_count),
-            "avg_score": float(agg["avg_score"] or 0.0),
-            "min_score": float(agg["min_score"] or 0.0),
-            "max_score": float(agg["max_score"] or 0.0),
+            "avg_score": float(score_summary["avg_score"]),
+            "min_score": float(score_summary["min_score"]),
+            "max_score": float(score_summary["max_score"]),
             "pass_rate": round(float(pass_rate), 4),
             "clinic_rate": round(float(clinic_rate), 4),
             "attempt_stats": {

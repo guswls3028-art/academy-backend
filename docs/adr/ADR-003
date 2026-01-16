@@ -1,0 +1,15 @@
+ADR-003: clinic_required의 단일 진실
+
+# ADR-003: 클리닉 필요 여부는 ClinicLink가 단일 진실
+
+## Context
+차시 미통과, 시험 저득점, 위험 누적 등 다양한 클리닉 사유가 존재.
+
+## Decision
+- ClinicLink 테이블만이 클리닉 필요 여부의 단일 진실이다.
+- is_auto=True 인 경우만 "자동 클리닉"으로 간주한다.
+- results / progress는 ClinicLink를 조회만 한다.
+
+## Consequences
+- 수동/자동 클리닉 분리 가능
+- 클리닉 승인 워크플로 확장 용이

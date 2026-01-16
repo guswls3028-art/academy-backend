@@ -1,0 +1,12 @@
+# ADR-004: ExamAttempt 단위 메타데이터 저장
+
+## Context
+OMR 신뢰도, AI 판독 정보, 재채점 근거를 attempt 단위로 저장할 필요 발생.
+
+## Decision
+- ExamAttempt에 JSONField(meta)를 추가한다.
+- ResultFact는 문항 단위 로그
+- ExamAttempt.meta는 시도 단위 로그를 담당한다.
+
+## Consequences
+- 재채점/AI 분석/감사 로그 대응 가능
