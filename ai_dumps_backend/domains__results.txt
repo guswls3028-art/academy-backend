@@ -292,6 +292,39 @@ attempt_router = DefaultRouter()
 attempt_router.register("exam-attempts", ExamAttemptViewSet)
 urlpatterns += attempt_router.urls
 
+# ======================================================
+# ExamAttempt (Admin: per exam/enrollment)
+# ======================================================
+from apps.domains.results.views.admin_exam_attempts_view import (
+    AdminExamAttemptsView,
+)
+
+urlpatterns += [
+    path(
+        "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/attempts/",
+        AdminExamAttemptsView.as_view(),
+        name="admin-exam-attempts",
+    ),
+]
+
+
+
+# 이것도 반영해야 됨.
+# 🔧 URL 등록 (필수)
+
+# apps/domains/results/urls.py에 한 줄만 추가
+
+# from apps.domains.results.views.admin_exam_item_score_view import (
+#     AdminExamItemScoreView,
+# )
+
+# # ...
+# path(
+#     "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/items/<int:question_id>/",
+#     AdminExamItemScoreView.as_view(),
+#     name="admin-exam-item-score",
+# ),
+
 
 ==========================================================================================
 # FILE: migrations/0001_initial.py
@@ -506,6 +539,36 @@ class Migration(migrations.Migration):
 
 
 ==========================================================================================
+# FILE: migrations/0002_add_exam_attempt_meta.py
+==========================================================================================
+# apps/domains/results/migrations/0002_add_exam_attempt_meta.py
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("results", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="examattempt",
+            name="meta",
+            field=models.JSONField(
+                null=True,
+                blank=True,
+                help_text=(
+                    "Attempt 단위 메타데이터. "
+                    "OMR/AI 판독 정보, total_score, pass_score, "
+                    "재채점 근거 등 운영/분석용 정보 저장."
+                ),
+            ),
+        ),
+    ]
+
+
+==========================================================================================
 # FILE: migrations/__init__.py
 ==========================================================================================
 
@@ -536,6 +599,7 @@ __all__ = [
 ==========================================================================================
 # FILE: models/exam_attempt.py
 ==========================================================================================
+# apps/domains/results/models/exam_attempt.py
 from django.db import models
 from apps.api.common.models import BaseModel
 
@@ -546,7 +610,23 @@ class ExamAttempt(BaseModel):
 
     🔥 핵심 책임
     - Submission 단위가 아닌 '시험 응시 사실'의 고정
-    - Result / Fact / Snapshot의 기준점
+    - Result / ResultFact / Progress 집계의 기준점
+    - 재시험/대표 attempt 교체의 단위
+
+    ✅ 설계 고정 사항
+    --------------------------------------------------
+    1) ExamAttempt는 append-only 개념이다.
+       - 기존 attempt를 수정하지 않는다.
+       - 대표 attempt 변경은 is_representative 플래그로만 처리한다.
+
+    2) Result / ResultItem은 항상
+       "대표 attempt(is_representative=True)"를 가리키는 snapshot이다.
+
+    3) meta 필드는 attempt 단위의 '운영/분석/재채점 근거'를 저장한다.
+       - OMR 신뢰도
+       - AI 판독 결과
+       - total_score / pass_score 스냅샷
+       - 재채점 사유 등
     """
 
     exam_id = models.PositiveIntegerField()
@@ -557,10 +637,14 @@ class ExamAttempt(BaseModel):
         help_text="이 attempt를 발생시킨 submission"
     )
 
+    # 1부터 시작 (시험 n번째 응시)
     attempt_index = models.PositiveIntegerField(help_text="1부터 시작")
+
+    # 재시험 여부 (attempt_index > 1 과 의미적으로 동일하지만, 조회 최적화용)
     is_retake = models.BooleanField(default=False)
 
-    # 서버가 판단하는 대표 attempt (Result는 항상 이것 기준)
+    # 서버가 판단하는 대표 attempt
+    # Result는 항상 이 attempt를 기준으로 snapshot을 만든다.
     is_representative = models.BooleanField(default=True)
 
     status = models.CharField(
@@ -572,6 +656,19 @@ class ExamAttempt(BaseModel):
             ("failed", "Failed"),       # 채점 실패
         ],
         default="pending",
+    )
+
+    # ==================================================
+    # ✅ NEW: attempt 단위 메타데이터 (설계 필수)
+    # ==================================================
+    meta = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Attempt 단위 메타데이터. "
+            "OMR/AI 판독 정보, total_score, pass_score, "
+            "재채점 근거 등 운영/분석용 정보 저장."
+        ),
     )
 
     class Meta:
@@ -2809,39 +2906,332 @@ __all__ = [
 
 
 ==========================================================================================
+# FILE: views/admin_exam_attempts_view.py
+==========================================================================================
+# ==========================================================================================
+# FILE: apps/domains/results/views/admin_exam_attempts_view.py
+# ==========================================================================================
+"""
+Admin Exam Attempt List View
+
+GET /results/admin/exams/{exam_id}/enrollments/{enrollment_id}/attempts/
+
+==========================================================================================
+✅ 목적 (Phase 1)
+==========================================================================================
+- Admin / Teacher가 특정 시험(exam_id) + 특정 enrollment의
+  ExamAttempt 목록을 조회한다.
+- AttemptSelectorPanel의 데이터 소스
+
+==========================================================================================
+✅ 계약 (프론트 고정)
+==========================================================================================
+응답:
+[
+  {
+    "id": 101,
+    "attempt_index": 1,
+    "is_retake": false,
+    "is_representative": true,
+    "status": "done",
+    "created_at": "2025-01-01T10:00:00Z",
+    "meta": {
+      "grading": {
+        "total_score": 85,
+        "total_max_score": 100
+      }
+    }
+  }
+]
+
+- 정렬: attempt_index ASC
+- 대표 attempt: 항상 1개 보장 (서버 invariant)
+- status enum:
+    pending | grading | done | failed
+
+==========================================================================================
+⚠️ 주의
+==========================================================================================
+- 수정/대표 변경 ❌ (Phase 2에서 구현)
+- enrollment_id는 Enrollment PK 기준 (results 도메인 전체 계약과 동일)
+"""
+
+from __future__ import annotations
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.models import ExamAttempt
+
+
+class AdminExamAttemptsView(APIView):
+    """
+    Admin / Teacher 전용 Attempt 목록 조회
+    """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request, exam_id: int, enrollment_id: int):
+        exam_id = int(exam_id)
+        enrollment_id = int(enrollment_id)
+
+        # -------------------------------------------------
+        # 1️⃣ Attempt 조회
+        # -------------------------------------------------
+        attempts = (
+            ExamAttempt.objects
+            .filter(
+                exam_id=exam_id,
+                enrollment_id=enrollment_id,
+            )
+            .order_by("attempt_index")  # ✅ 프론트 계약
+        )
+
+        if not attempts.exists():
+            # 빈 배열을 내려도 되지만,
+            # Admin 화면에서는 보통 "존재하지 않음"이 의미 있는 오류라 판단
+            raise ValidationError("No attempts found for this exam/enrollment.")
+
+        # -------------------------------------------------
+        # 2️⃣ 응답 구성 (Serializer 없이 명시적 dict)
+        #    - 프론트 계약 안정성
+        #    - meta 구조를 그대로 노출 가능
+        # -------------------------------------------------
+        data = []
+        for a in attempts:
+            row = {
+                "id": a.id,
+                "attempt_index": a.attempt_index,
+                "is_retake": bool(a.is_retake),
+                "is_representative": bool(a.is_representative),
+                "status": a.status,
+                "created_at": a.created_at,
+            }
+
+            # meta 필드가 있으면 그대로 노출 (grading 정보 포함 가능)
+            if hasattr(a, "meta") and a.meta is not None:
+                row["meta"] = a.meta
+            else:
+                row["meta"] = {}
+
+            data.append(row)
+
+        return Response(data)
+
+
+==========================================================================================
+# FILE: views/admin_exam_item_score_view.py
+==========================================================================================
+# ==========================================================================================
+# FILE: apps/domains/results/views/admin_exam_item_score_view.py
+# ==========================================================================================
+"""
+Admin Manual Grading - Subjective Question Score
+
+PATCH /results/admin/exams/{exam_id}/enrollments/{enrollment_id}/items/{question_id}/
+
+==========================================================================================
+✅ 목적 (Phase 3)
+==========================================================================================
+- 주관식/수동 채점 점수를 문항 단위로 수정한다.
+- 항상 "대표 attempt" 기준 Result 스냅샷을 수정한다.
+- ResultItem + ResultFact를 동시에 반영한다.
+- total_score는 즉시 재계산된다.
+
+==========================================================================================
+✅ 프론트 계약 (고정)
+==========================================================================================
+- 저장 성공 후:
+    → 반드시 AdminExamResultDetail 재조회
+- 이 API는 "저장"만 책임진다.
+  (clinic_required / pass 여부 판단은 detail API가 진실의 원천)
+
+==========================================================================================
+⚠️ 주의
+==========================================================================================
+- grading 중인 attempt는 수정 불가 (LOCKED)
+- 점수 상한(max_score) 초과는 허용하지 않는다.
+"""
+
+from __future__ import annotations
+
+from django.db import transaction
+from django.utils import timezone
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status as drf_status
+from rest_framework.exceptions import ValidationError, NotFound
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
+
+
+class AdminExamItemScoreView(APIView):
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    @transaction.atomic
+    def patch(
+        self,
+        request,
+        exam_id: int,
+        enrollment_id: int,
+        question_id: int,
+    ):
+        exam_id = int(exam_id)
+        enrollment_id = int(enrollment_id)
+        question_id = int(question_id)
+
+        if "score" not in request.data:
+            raise ValidationError({"detail": "score is required", "code": "INVALID"})
+
+        try:
+            new_score = float(request.data.get("score"))
+        except Exception:
+            raise ValidationError({"detail": "score must be number", "code": "INVALID"})
+
+        # -------------------------------------------------
+        # 1️⃣ Result (대표 스냅샷)
+        # -------------------------------------------------
+        result = (
+            Result.objects
+            .select_for_update()
+            .filter(
+                target_type="exam",
+                target_id=exam_id,
+                enrollment_id=enrollment_id,
+            )
+            .first()
+        )
+        if not result:
+            raise NotFound({"detail": "result not found", "code": "NOT_FOUND"})
+
+        if not result.attempt_id:
+            raise ValidationError(
+                {"detail": "representative attempt not set", "code": "INVALID"}
+            )
+
+        # -------------------------------------------------
+        # 2️⃣ Attempt 상태 확인
+        # -------------------------------------------------
+        attempt = ExamAttempt.objects.filter(id=int(result.attempt_id)).first()
+        if not attempt:
+            raise NotFound({"detail": "attempt not found", "code": "NOT_FOUND"})
+
+        if attempt.status == "grading":
+            return Response(
+                {"detail": "attempt is grading", "code": "LOCKED"},
+                status=drf_status.HTTP_409_CONFLICT,
+            )
+
+        # -------------------------------------------------
+        # 3️⃣ ResultItem (문항 스냅샷)
+        # -------------------------------------------------
+        item = (
+            ResultItem.objects
+            .select_for_update()
+            .filter(result=result, question_id=question_id)
+            .first()
+        )
+        if not item:
+            raise NotFound({"detail": "result item not found", "code": "NOT_FOUND"})
+
+        # 점수 상한 방어
+        max_score = float(item.max_score or 0.0)
+        if new_score < 0 or new_score > max_score:
+            raise ValidationError(
+                {
+                    "detail": f"score must be between 0 and {max_score}",
+                    "code": "INVALID",
+                }
+            )
+
+        # -------------------------------------------------
+        # 4️⃣ ResultFact (append-only 로그)
+        # -------------------------------------------------
+        ResultFact.objects.create(
+            target_type="exam",
+            target_id=exam_id,
+            enrollment_id=enrollment_id,
+            submission_id=0,              # 수동 채점이므로 0
+            attempt_id=int(result.attempt_id),
+
+            question_id=question_id,
+            answer=item.answer or "",
+            is_correct=bool(new_score >= max_score),
+            score=float(new_score),
+            max_score=max_score,
+            source="manual",
+            meta={
+                "manual": True,
+                "edited_at": timezone.now().isoformat(),
+            },
+        )
+
+        # -------------------------------------------------
+        # 5️⃣ ResultItem 업데이트
+        # -------------------------------------------------
+        item.score = float(new_score)
+        item.is_correct = bool(new_score >= max_score)
+        item.source = "manual"
+        item.save(update_fields=["score", "is_correct", "source"])
+
+        # -------------------------------------------------
+        # 6️⃣ total_score 재계산
+        # -------------------------------------------------
+        agg = (
+            ResultItem.objects
+            .filter(result=result)
+        )
+
+        total_score = sum(float(x.score or 0.0) for x in agg)
+        max_total = sum(float(x.max_score or 0.0) for x in agg)
+
+        result.total_score = float(total_score)
+        result.max_score = float(max_total)
+        result.save(update_fields=["total_score", "max_score"])
+
+        return Response(
+            {
+                "ok": True,
+                "exam_id": exam_id,
+                "enrollment_id": enrollment_id,
+                "question_id": question_id,
+                "score": float(new_score),
+                "total_score": float(total_score),
+                "max_score": float(max_total),
+            },
+            status=drf_status.HTTP_200_OK,
+        )
+
+
+==========================================================================================
 # FILE: views/admin_exam_result_detail_view.py
 ==========================================================================================
-# apps/domains/results/views/admin_exam_result_detail_view.py
+# ==========================================================================================
+# FILE: apps/domains/results/views/admin_exam_result_detail_view.py
+# ==========================================================================================
 """
 Admin Exam Result Detail View (단일 학생 결과 상세)
 
 GET /results/admin/exams/<exam_id>/enrollments/<enrollment_id>/
 
-==========================================================
-✅ 이 파일의 목표 (계약/정합성)
-==========================================================
-1) "학생 상세 결과" 응답 포맷은 StudentExamResultSerializer 계약을 그대로 재사용한다.
-   - 프론트/기존 화면과의 호환성 유지
-   - items(문항별) 포함
+==========================================================================================
+✅ Phase 4 추가: edit_state
+==========================================================================================
+- 편집 가능 여부 판단용 메타 정보
+- 현재는 "조회 전용"
+- 추후 실시간 락 / Redis / DB Lock으로 확장 가능
 
-2) Session ↔ Exam 매핑은 반드시 results.utils.session_exam의 "단일 진실" 유틸을 사용한다.
-   - 프로젝트 히스토리상 관계가 (M2M / FK / reverse) 섞일 수 있음
-   - View에서 직접 ORM join을 쓰면 화면마다 결과가 달라지는 버그가 발생하기 쉬움
-
-3) clinic_required 기준은 다른 코드들과 동일하게 "ClinicLink(is_auto=True)"만 포함한다.
-   - 수동 클리닉까지 섞이면 AdminExamResultsView / Summary / SessionScoreSummary와 불일치
-   - 따라서 include_manual=False (default 정책)로 통일
-
-4) 재시험 정책(allow_retake/max_attempts/can_retake)은 Student View와 동일 로직을 사용한다.
-   - admin 화면에서도 학생 기준 정책을 보여주려는 의도(운영/CS)일 때 유용
-   - UX 정책 변경 시 이 블록만 수정하면 됨
-
-==========================================================
-⚠️ 주의
-==========================================================
-- 이 View는 "Admin/Teacher" 전용이다.
-- enrollment_id는 "Enrollment PK"로 가정한다(현재 results 도메인 전반과 동일).
-  프로젝트마다 Enrollment 구조가 다를 수 있으나, 이 도메인 계약에서는 enrollment_id를 식별자로 사용한다.
+판단 기준 (현재 고정):
+- 대표 attempt.status == "grading"
+  → can_edit = false
+  → is_locked = true
+  → lock_reason = "GRADING"
 """
 
 from __future__ import annotations
@@ -2861,42 +3251,26 @@ from apps.domains.results.serializers.student_exam_result import (
 
 from apps.domains.exams.models import Exam
 
-# ✅ 단일 진실 유틸 (Session/Clinic)
+# ✅ 단일 진실 유틸
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 
 
 class AdminExamResultDetailView(APIView):
-    """
-    단일 학생(Enrollment) 시험 결과 상세
-
-    - Result(스냅샷) + ResultItem(문항별)
-    - allow_retake/max_attempts/can_retake
-    - clinic_required (ClinicLink 기준 단일화)
-
-    응답 포맷:
-    - StudentExamResultSerializer(Result).data에
-      allow_retake/max_attempts/can_retake/clinic_required를 주입해서 반환
-    """
-
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request, exam_id: int, enrollment_id: int):
         exam_id = int(exam_id)
         enrollment_id = int(enrollment_id)
 
-        # -------------------------------------------------
-        # 0) Exam 존재 확인
-        # -------------------------------------------------
         exam = get_object_or_404(Exam, id=exam_id)
 
         # -------------------------------------------------
-        # 1) Result 조회 (스냅샷)
-        #    - attempt 대표 교체가 있더라도 Result는 항상 "현재 대표"를 가리키는 snapshot
-        #    - items는 문항별 최신 상태
+        # 1️⃣ Result (대표 스냅샷)
         # -------------------------------------------------
         result = (
-            Result.objects.filter(
+            Result.objects
+            .filter(
                 target_type="exam",
                 target_id=exam_id,
                 enrollment_id=enrollment_id,
@@ -2905,28 +3279,24 @@ class AdminExamResultDetailView(APIView):
             .first()
         )
         if not result:
-            # 일관된 404
             raise NotFound("result not found")
 
         # -------------------------------------------------
-        # 2) 재시험 정책 판단 (Student View와 동일)
+        # 2️⃣ 재시험 정책
         # -------------------------------------------------
         allow_retake = bool(getattr(exam, "allow_retake", False))
         max_attempts = int(getattr(exam, "max_attempts", 1) or 1)
 
-        attempt_count = ExamAttempt.objects.filter(
+        attempt_qs = ExamAttempt.objects.filter(
             exam_id=exam_id,
             enrollment_id=enrollment_id,
-        ).count()
+        )
 
-        # can_retake = (allow_retake True) and (현재 시도 수 < 제한)
-        # - allow_retake False이면 항상 False
+        attempt_count = attempt_qs.count()
         can_retake = bool(allow_retake and attempt_count < max_attempts)
 
         # -------------------------------------------------
-        # 3) clinic_required (단일 진실)
-        #    - Session ↔ Exam 매핑은 반드시 get_primary_session_for_exam 사용
-        #    - ClinicLink는 자동 트리거만 포함(include_manual=False)
+        # 3️⃣ clinic_required (단일 진실)
         # -------------------------------------------------
         clinic_required = False
         session = get_primary_session_for_exam(exam_id)
@@ -2934,19 +3304,38 @@ class AdminExamResultDetailView(APIView):
             clinic_required = is_clinic_required(
                 session=session,
                 enrollment_id=enrollment_id,
-                include_manual=False,  # ✅ 정책 통일: 자동만
+                include_manual=False,
             )
 
         # -------------------------------------------------
-        # 4) 응답 구성
-        #    - StudentExamResultSerializer 계약 재사용
-        #    - 응답 전용 필드를 data에 주입
+        # 4️⃣ edit_state (Phase 4)
+        # -------------------------------------------------
+        edit_state = {
+            "can_edit": True,
+            "is_locked": False,
+            "lock_reason": None,
+            "last_updated_by": None,
+            "updated_at": None,
+        }
+
+        if result.attempt_id:
+            attempt = ExamAttempt.objects.filter(id=int(result.attempt_id)).first()
+            if attempt and attempt.status == "grading":
+                edit_state.update({
+                    "can_edit": False,
+                    "is_locked": True,
+                    "lock_reason": "GRADING",
+                })
+
+        # -------------------------------------------------
+        # 5️⃣ 응답 구성
         # -------------------------------------------------
         data = StudentExamResultSerializer(result).data
         data["allow_retake"] = allow_retake
         data["max_attempts"] = max_attempts
         data["can_retake"] = can_retake
         data["clinic_required"] = bool(clinic_required)
+        data["edit_state"] = edit_state
 
         return Response(data)
 
@@ -3255,13 +3644,73 @@ class AdminExamSummaryView(APIView):
 ==========================================================================================
 # FILE: views/admin_representative_attempt_view.py
 ==========================================================================================
-# apps/domains/results/views/admin_representative_attempt_view.py
+# ==========================================================================================
+# FILE: apps/domains/results/views/admin_representative_attempt_view.py
+# ==========================================================================================
+"""
+Admin Representative Attempt Switch
+
+POST /results/admin/exams/<exam_id>/representative-attempt/
+
+요청:
+{
+  "enrollment_id": 55,
+  "attempt_id": 1234
+}
+
+==========================================================================================
+✅ 목적 (Phase 2)
+==========================================================================================
+- Admin/Teacher가 "대표 attempt"를 수동으로 교체한다.
+- Result(스냅샷)의 attempt_id도 즉시 동기화한다.
+- 이후 프론트는 반드시:
+    GET /results/admin/exams/<exam_id>/enrollments/<enrollment_id>/
+  를 재조회하여 최신 결과를 사용한다. (진실의 원천)
+
+==========================================================================================
+✅ 프론트 계약 (중요/고정)
+==========================================================================================
+1) 성공 응답: Body 있음 (ok + ids)
+   - 프론트가 optimistic update 하려면 최소 응답이 있는 게 안전
+
+2) 변경 후 재계산?
+   - ❌ "점수 재계산"은 하지 않는다.
+   - 대표 attempt 변경은 "이미 채점된 attempt 중 선택" 행위이므로
+     Result.attempt_id만 교체하면 된다.
+   - 점수(total_score 등) 자체를 "attempt별로 따로 보관"하는 구조가 아니라,
+     현재 설계에서는 Result가 대표 attempt의 결과 스냅샷이다.
+     따라서 운영적으로는 대표 attempt 교체 시점에 Result 스냅샷이 이미 그 attempt 기반인지가 중요하다.
+     (현재 시스템은 채점 완료 시 ResultApplier.apply()가 attempt_id를 덮어쓰므로
+      대표 교체는 Result.attempt_id를 명시적으로 업데이트해서 일관성을 확보한다.)
+
+3) 실패 케이스 (계약)
+   - 400 INVALID: 요청 파라미터/관계 불일치(다른 exam/enrollment)
+   - 404 NOT_FOUND: attempt 자체가 없음
+   - 409 LOCKED: 채점 중(grading) attempt는 대표로 변경 불가 (운영 사고 방지)
+   - 500 등 기타: 서버 오류
+
+응답 형태(실패):
+{
+  "detail": "...",
+  "code": "INVALID|NOT_FOUND|LOCKED"
+}
+
+==========================================================================================
+✅ 정합성/동시성
+==========================================================================================
+- 동시 변경/경쟁 상황 방지:
+  (exam_id, enrollment_id) 범위를 select_for_update로 잠금 후 대표 교체 수행
+"""
+
 from __future__ import annotations
+
+from django.db import transaction
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import ValidationError
+from rest_framework import status as drf_status
+from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import ExamAttempt, Result
@@ -3269,71 +3718,113 @@ from apps.domains.results.models import ExamAttempt, Result
 
 class AdminRepresentativeAttemptView(APIView):
     """
-    POST /results/admin/exams/<exam_id>/representative-attempt/
+    대표 attempt 변경 (Admin/Teacher)
 
-    요청:
-    {
-      "enrollment_id": 55,
-      "attempt_id": 1234
-    }
-
-    동작:
-    1) (exam_id, enrollment_id) 의 모든 attempt → is_representative=False
-    2) 지정 attempt → is_representative=True
-    3) Result.attempt_id도 해당 attempt로 동기화
-
-    ✅ 운영/CS 필수 API
-    - 재시험 실패
-    - 채점 오류
-    - 대표 점수 수동 교체
+    NOTE:
+    - 점수 재계산은 하지 않음 (대표 선택만)
+    - 변경 후 프론트는 detail 재조회가 진실의 원천
     """
 
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
+    @transaction.atomic
     def post(self, request, exam_id: int):
+        exam_id = int(exam_id)
+
         enrollment_id = request.data.get("enrollment_id")
         attempt_id = request.data.get("attempt_id")
 
-        if not enrollment_id or not attempt_id:
-            raise ValidationError("enrollment_id and attempt_id are required")
+        if enrollment_id is None or attempt_id is None:
+            # 프론트 실수/누락은 400으로 명확히
+            raise ValidationError({"detail": "enrollment_id and attempt_id are required", "code": "INVALID"})
 
-        exam_id = int(exam_id)
         enrollment_id = int(enrollment_id)
         attempt_id = int(attempt_id)
 
-        # 1️⃣ attempt 검증
-        target = ExamAttempt.objects.filter(
-            id=attempt_id,
-            exam_id=exam_id,
-            enrollment_id=enrollment_id,
-        ).first()
+        # -------------------------------------------------
+        # 1) 대상 attempt 검증 + 잠금
+        #    - 같은 exam/enrollment 범위에 대해서만 대표 교체 허용
+        # -------------------------------------------------
+        # 범위 잠금(경쟁 상황에서 대표 2개 되는 걸 원천 차단)
+        attempts_qs = (
+            ExamAttempt.objects
+            .select_for_update()
+            .filter(exam_id=exam_id, enrollment_id=enrollment_id)
+        )
 
+        if not attempts_qs.exists():
+            # 이 enrollment이 이 exam을 응시한 적이 없는 케이스
+            raise NotFound({"detail": "attempts not found for this exam/enrollment", "code": "NOT_FOUND"})
+
+        target = attempts_qs.filter(id=attempt_id).first()
         if not target:
-            raise ValidationError("attempt not found for this exam/enrollment")
+            # attempt_id가 다른 exam/enrollment의 것일 수 있음
+            raise NotFound({"detail": "attempt not found for this exam/enrollment", "code": "NOT_FOUND"})
 
-        # 2️⃣ 대표 attempt 초기화
-        ExamAttempt.objects.filter(
-            exam_id=exam_id,
-            enrollment_id=enrollment_id,
-        ).update(is_representative=False)
+        # -------------------------------------------------
+        # 2) LOCKED 정책 (운영 사고 방지)
+        #    - grading 중인 attempt를 대표로 바꾸면 화면/통계가 흔들릴 수 있음
+        # -------------------------------------------------
+        if (target.status or "").lower() == "grading":
+            return Response(
+                {"detail": "attempt is grading; cannot switch representative", "code": "LOCKED"},
+                status=drf_status.HTTP_409_CONFLICT,
+            )
 
-        # 3️⃣ 지정 attempt 대표로 설정
-        target.is_representative = True
-        target.save(update_fields=["is_representative"])
+        # (선택) pending도 대표 변경을 막고 싶다면 아래를 활성화
+        # if (target.status or "").lower() == "pending":
+        #     return Response(
+        #         {"detail": "attempt is pending; cannot switch representative", "code": "LOCKED"},
+        #         status=drf_status.HTTP_409_CONFLICT,
+        #     )
 
-        # 4️⃣ Result 스냅샷도 동기화
-        Result.objects.filter(
-            target_type="exam",
-            target_id=exam_id,
-            enrollment_id=enrollment_id,
-        ).update(attempt_id=attempt_id)
+        # -------------------------------------------------
+        # 3) 대표 attempt 교체
+        # -------------------------------------------------
+        # 기존 대표 모두 해제
+        attempts_qs.filter(is_representative=True).update(is_representative=False)
 
-        return Response({
-            "ok": True,
-            "exam_id": exam_id,
-            "enrollment_id": enrollment_id,
-            "attempt_id": attempt_id,
-        })
+        # 선택 attempt 대표로 설정
+        if not target.is_representative:
+            target.is_representative = True
+            target.save(update_fields=["is_representative"])
+
+        # -------------------------------------------------
+        # 4) Result 스냅샷 동기화
+        # -------------------------------------------------
+        # Result가 없으면 생성하지 않는다(운영상 "채점 결과가 아직 없다"는 뜻이므로)
+        # 단, 프로젝트 정책상 "Result가 없더라도 대표만 바꾸고 싶다"면 get_or_create로 변경 가능.
+        updated = (
+            Result.objects
+            .filter(
+                target_type="exam",
+                target_id=exam_id,
+                enrollment_id=enrollment_id,
+            )
+            .update(attempt_id=attempt_id)
+        )
+
+        if updated == 0:
+            # 대표 attempt는 존재하지만, 아직 Result 스냅샷이 없다는 의미
+            # → 프론트는 detail 재조회 시 404(result not found) 가능
+            # 운영/CS가 이해하기 쉽도록 명확히 409로 안내
+            return Response(
+                {"detail": "result snapshot not found; cannot sync representative attempt", "code": "INVALID"},
+                status=drf_status.HTTP_409_CONFLICT,
+            )
+
+        # -------------------------------------------------
+        # 5) 성공 응답 (프론트 계약)
+        # -------------------------------------------------
+        return Response(
+            {
+                "ok": True,
+                "exam_id": exam_id,
+                "enrollment_id": enrollment_id,
+                "attempt_id": attempt_id,
+            },
+            status=drf_status.HTTP_200_OK,
+        )
 
 
 ==========================================================================================

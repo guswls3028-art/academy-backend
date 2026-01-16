@@ -1,0 +1,97 @@
+📌 프론트 전달용 핵심 계약 요약 (시험/결과/진행)
+1️⃣ 시험의 유일한 식별자는 examId
+
+sessionId ≠ examId
+
+시험은 어디까지나 examId 기준
+
+session은 “어디에 속해 있나”일 뿐
+
+모든 시험 관련 API / 결과 / 재시험 / 통계
+→ examId 기준으로 동작
+
+2️⃣ 시험 결과는 “대표 결과(Result)”만 신뢰
+
+한 시험에 여러 번 응시 가능
+
+프론트는 attempt를 직접 다루지 않는다
+
+항상 최신/대표 Result 하나만 내려준다
+
+시험 결과 화면 = Result (대표 snapshot)
+재시험 여부 = 서버 판단 값
+
+3️⃣ 재시험 정책 필드 (시험 상세 / 결과 상세에 제공)
+{
+  "allow_retake": true,
+  "max_attempts": 3,
+  "can_retake": true
+}
+
+
+can_retake가 단일 진실
+
+프론트에서 attempt 수 계산 ❌
+
+버튼 노출 여부는 can_retake만 보면 됨
+
+4️⃣ clinic_required (중요 🔥)
+{
+  "clinic_required": true
+}
+
+
+ClinicLink 존재 여부가 단일 진실
+
+점수 / 합불 / progress 상태로 추측 ❌
+
+이 값이 true면:
+
+“클리닉 대상” UI 표시
+
+별도 안내 가능
+
+5️⃣ 시험 문항 ID는 고정 식별자
+
+ExamQuestion.id는 변하지 않음
+
+오답노트 / 하이라이트 / 통계는 이 ID 기준
+
+ResultItem.question_id === ExamQuestion.id
+
+6️⃣ 차시(Session) 진행률의 시험 통과 여부
+
+Session에는 시험이 여러 개 있을 수 있음
+
+프론트는 집계 로직을 몰라도 됨
+
+{
+  "exam_attempted": true,
+  "exam_passed": false,
+  "exam_aggregate_score": 72.5
+}
+
+
+이 값들은 집계된 최종 판단
+
+개별 시험 점수로 판단 ❌
+
+❌ 프론트가 알 필요 없는 것 (중요)
+
+attempt_index
+
+is_representative
+
+시험 집계 전략(MAX/AVG/LATEST)
+
+pass 기준 출처(POLICY vs EXAM)
+
+재채점 로직
+
+👉 모두 서버 책임
+
+✅ 한 줄 요약 (프론트용)
+
+“시험은 examId 기준,
+결과는 항상 대표 Result 하나,
+재시험/클리닉/통과 여부는 서버가 내려주는 값만 믿는다.”

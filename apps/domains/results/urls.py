@@ -219,3 +219,36 @@ urlpatterns = [
 attempt_router = DefaultRouter()
 attempt_router.register("exam-attempts", ExamAttemptViewSet)
 urlpatterns += attempt_router.urls
+
+# ======================================================
+# ExamAttempt (Admin: per exam/enrollment)
+# ======================================================
+from apps.domains.results.views.admin_exam_attempts_view import (
+    AdminExamAttemptsView,
+)
+
+urlpatterns += [
+    path(
+        "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/attempts/",
+        AdminExamAttemptsView.as_view(),
+        name="admin-exam-attempts",
+    ),
+]
+
+
+
+# 이것도 반영해야 됨.
+# 🔧 URL 등록 (필수)
+
+# apps/domains/results/urls.py에 한 줄만 추가
+
+# from apps.domains.results.views.admin_exam_item_score_view import (
+#     AdminExamItemScoreView,
+# )
+
+# # ...
+# path(
+#     "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/items/<int:question_id>/",
+#     AdminExamItemScoreView.as_view(),
+#     name="admin-exam-item-score",
+# ),
