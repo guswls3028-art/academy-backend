@@ -7,17 +7,20 @@ Admin Exam Result Detail View (단일 학생 결과 상세)
 GET /results/admin/exams/<exam_id>/enrollments/<enrollment_id>/
 
 ==========================================================================================
-✅ Phase 4 추가: edit_state
+✅ PHASE 3 확정 계약 (FRONTEND LOCK)
 ==========================================================================================
-- 편집 가능 여부 판단용 메타 정보
-- 현재는 "조회 전용"
-- 추후 실시간 락 / Redis / DB Lock으로 확장 가능
+응답 보장 필드:
+- passed                : Exam.pass_score 기준 시험 합불
+- clinic_required       : ClinicLink 단일 진실 (자동 트리거만)
+- items[].is_editable   : edit_state 기반
+- edit_state            : LOCK 판단 메타
+- allow_retake
+- max_attempts
+- can_retake
 
-판단 기준 (현재 고정):
-- 대표 attempt.status == "grading"
-  → can_edit = false
-  → is_locked = true
-  → lock_reason = "GRADING"
+⚠️ 주의
+- passed ≠ SessionProgress.exam_passed
+- 이 API는 "시험 단위(Result) 진실"
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ class AdminExamResultDetailView(APIView):
         enrollment_id = int(enrollment_id)
 
         exam = get_object_or_404(Exam, id=exam_id)
+        pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0)
 
         # -------------------------------------------------
         # 1️⃣ Result (대표 스냅샷)
@@ -68,7 +72,12 @@ class AdminExamResultDetailView(APIView):
             raise NotFound("result not found")
 
         # -------------------------------------------------
-        # 2️⃣ 재시험 정책
+        # 2️⃣ passed (시험 단위 기준)
+        # -------------------------------------------------
+        passed = bool(float(result.total_score or 0.0) >= pass_score)
+
+        # -------------------------------------------------
+        # 3️⃣ 재시험 정책 (⚠️ 기존 기능 유지)
         # -------------------------------------------------
         allow_retake = bool(getattr(exam, "allow_retake", False))
         max_attempts = int(getattr(exam, "max_attempts", 1) or 1)
@@ -77,12 +86,11 @@ class AdminExamResultDetailView(APIView):
             exam_id=exam_id,
             enrollment_id=enrollment_id,
         )
-
         attempt_count = attempt_qs.count()
         can_retake = bool(allow_retake and attempt_count < max_attempts)
 
         # -------------------------------------------------
-        # 3️⃣ clinic_required (단일 진실)
+        # 4️⃣ clinic_required (단일 진실)
         # -------------------------------------------------
         clinic_required = False
         session = get_primary_session_for_exam(exam_id)
@@ -94,7 +102,7 @@ class AdminExamResultDetailView(APIView):
             )
 
         # -------------------------------------------------
-        # 4️⃣ edit_state (Phase 4)
+        # 5️⃣ edit_state (LOCK 규칙)
         # -------------------------------------------------
         edit_state = {
             "can_edit": True,
@@ -114,13 +122,25 @@ class AdminExamResultDetailView(APIView):
                 })
 
         # -------------------------------------------------
-        # 5️⃣ 응답 구성
+        # 6️⃣ Serializer + items[].is_editable
         # -------------------------------------------------
         data = StudentExamResultSerializer(result).data
-        data["allow_retake"] = allow_retake
-        data["max_attempts"] = max_attempts
-        data["can_retake"] = can_retake
-        data["clinic_required"] = bool(clinic_required)
-        data["edit_state"] = edit_state
+
+        for item in data.get("items", []):
+            item["is_editable"] = bool(
+                edit_state["can_edit"] and not edit_state["is_locked"]
+            )
+
+        # -------------------------------------------------
+        # 7️⃣ 최종 응답 (기존 계약 + PHASE 3 확장)
+        # -------------------------------------------------
+        data.update({
+            "passed": passed,
+            "allow_retake": allow_retake,
+            "max_attempts": max_attempts,
+            "can_retake": can_retake,
+            "clinic_required": bool(clinic_required),
+            "edit_state": edit_state,
+        })
 
         return Response(data)
