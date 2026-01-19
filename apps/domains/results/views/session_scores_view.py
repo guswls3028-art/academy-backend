@@ -112,8 +112,6 @@ class SessionScoresView(APIView):
         enrollment_ids = list(
             sp_qs.values_list("enrollment_id", flat=True).distinct()
         )
-        if not enrollment_ids:
-            return Response([])
 
         # -------------------------------------------------
         # 2) Session ↔ Exam (단일 진실)
@@ -121,9 +119,30 @@ class SessionScoresView(APIView):
         exams = list(get_exams_for_session(session))
         exam_ids = [int(e.id) for e in exams]
 
-        # 시험이 하나도 없으면 row 생성 불가 (프론트 계약)
-        if not exam_ids:
-            return Response([])
+        # -------------------------------------------------
+        # 2-1) Header Meta (시험/과제 이름용, fact only)
+        # -------------------------------------------------
+        meta = {
+            "exams": [
+                {
+                    "exam_id": int(ex.id),
+                    "title": str(getattr(ex, "title", "")),
+                    "pass_score": float(getattr(ex, "pass_score", 0.0) or 0.0),
+                }
+                for ex in exams
+            ],
+            "homework": {
+                "title": "과제",
+                "unit": "%",
+            },
+        }
+
+        # enrollment 또는 exam 이 없으면 빈 rows 반환 (프론트 계약 보호)
+        if not enrollment_ids or not exam_ids:
+            return Response({
+                "meta": meta,
+                "rows": [],
+            })
 
         # -------------------------------------------------
         # 3) Clinic 대상자 (fact only)
@@ -163,7 +182,10 @@ class SessionScoresView(APIView):
 
         for exid in exam_ids:
             rs = (
-                latest_results_per_enrollment(target_type="exam", target_id=int(exid))
+                latest_results_per_enrollment(
+                    target_type="exam",
+                    target_id=int(exid),
+                )
                 .filter(enrollment_id__in=[int(x) for x in enrollment_ids])
             )
             bucket: Dict[int, Result] = {}
@@ -182,7 +204,9 @@ class SessionScoresView(APIView):
 
         attempt_status_map: Dict[int, str] = {}
         if attempt_ids:
-            for a in ExamAttempt.objects.filter(id__in=list(attempt_ids)).only("id", "status"):
+            for a in ExamAttempt.objects.filter(
+                id__in=list(attempt_ids)
+            ).only("id", "status"):
                 attempt_status_map[int(a.id)] = str(a.status or "")
 
         # -------------------------------------------------
@@ -223,7 +247,9 @@ class SessionScoresView(APIView):
 
                     attempt_status = ""
                     if getattr(r, "attempt_id", None):
-                        attempt_status = attempt_status_map.get(int(r.attempt_id), "") or ""
+                        attempt_status = attempt_status_map.get(
+                            int(r.attempt_id), ""
+                        ) or ""
 
                     exam_locked = bool((attempt_status or "").lower() == "grading")
                     exam_lock_reason = "GRADING" if exam_locked else None
@@ -249,9 +275,18 @@ class SessionScoresView(APIView):
                 clinic_required = bool(eid_i in clinic_ids)
 
                 updated_candidates = [
-                    d for d in [exam_updated_at, hw_updated_at, getattr(session, "updated_at", None)] if d
+                    d for d in [
+                        exam_updated_at,
+                        hw_updated_at,
+                        getattr(session, "updated_at", None),
+                    ]
+                    if d
                 ]
-                updated_at = max(updated_candidates) if updated_candidates else timezone.now()
+                updated_at = (
+                    max(updated_candidates)
+                    if updated_candidates
+                    else timezone.now()
+                )
 
                 rows.append({
                     "exam_id": int(exid),
@@ -280,4 +315,7 @@ class SessionScoresView(APIView):
                     "updated_at": updated_at,
                 })
 
-        return Response(SessionScoreRowSerializer(rows, many=True).data)
+        return Response({
+            "meta": meta,
+            "rows": SessionScoreRowSerializer(rows, many=True).data,
+        })
