@@ -157,6 +157,13 @@ from apps.domains.results.views.admin_exam_item_score_view import (
     AdminExamItemScoreView,
 )
 
+# ======================================================
+# ✅ NEW: Clinic Targets (Admin/Teacher)
+# ======================================================
+from apps.domains.results.views.admin_clinic_targets_view import (
+    AdminClinicTargetsView,
+)
+
 urlpatterns = [
     # ============================
     # Student
@@ -275,6 +282,15 @@ urlpatterns = [
         "admin/facts/",
         AdminResultFactView.as_view(),
         name="admin-result-facts",
+    ),
+
+    # ============================
+    # ✅ Clinic Targets (Admin/Teacher)
+    # ============================
+    path(
+        "admin/clinic-targets/",
+        AdminClinicTargetsView.as_view(),
+        name="admin-clinic-targets",
     ),
 
     # ============================
@@ -850,6 +866,40 @@ class WrongNotePDF(BaseModel):
 
 
 ==========================================================================================
+# FILE: serializers/admin_clinic_target.py
+==========================================================================================
+# PATH: apps/domains/results/serializers/admin_clinic_target.py
+"""
+역할
+- Admin/Teacher용 "클리닉 대상자" 리스트 응답 계약을 고정한다.
+
+설계 계약 (중요)
+- Clinic 대상자 선정/판단은 results 도메인의 단일 진실이다.
+- enrollment_id 기준(단일 진실)으로 내려준다.
+- 프론트의 ClinicTarget 타입과 1:1로 맞춘다.
+
+보류된 기능 (명시)
+- reason의 세부 판정(점수/신뢰도)은 서비스에서 보수적으로 판정한다.
+  (프로젝트마다 LOW_CONFIDENCE 신호가 Attempt.meta에 있을 수도, ResultFact.meta에 있을 수도 있어 방어 구현)
+"""
+
+from rest_framework import serializers
+
+
+class AdminClinicTargetSerializer(serializers.Serializer):
+    enrollment_id = serializers.IntegerField()
+    student_name = serializers.CharField()
+    session_title = serializers.CharField()
+
+    reason = serializers.ChoiceField(choices=["score", "confidence"])
+
+    exam_score = serializers.FloatField()
+    cutline_score = serializers.FloatField()
+
+    created_at = serializers.DateTimeField()
+
+
+==========================================================================================
 # FILE: serializers/admin_exam_result_row.py
 ==========================================================================================
 # apps/domains/results/serializers/admin_exam_result_row.py
@@ -1008,6 +1058,68 @@ class SessionScoreSummarySerializer(serializers.Serializer):
     clinic_rate = serializers.FloatField()
 
     attempt_stats = serializers.DictField()
+
+
+==========================================================================================
+# FILE: serializers/session_scores.py
+==========================================================================================
+# PATH: apps/domains/results/serializers/session_scores.py
+"""
+SessionScores Serializer (Score Tab)
+
+✅ 설계 고정(중요)
+- 이 Serializer는 "표시용 DTO" 이다.
+- 도메인 로직/판정/정책 계산을 하지 않는다.
+- View에서 만들어준 dict를 그대로 validate/serialize만 수행한다.
+
+✅ 프론트 계약
+- score === null 은 "미산출/미응시/처리중" 의미 (0과 구분)
+- is_locked / lock_reason 은 입력 비활성화 + tooltip 용도
+"""
+
+from __future__ import annotations
+
+from rest_framework import serializers
+
+
+class ScoreBlockSerializer(serializers.Serializer):
+    score = serializers.FloatField(allow_null=True)
+    max_score = serializers.FloatField(allow_null=True)
+
+    passed = serializers.BooleanField()
+    clinic_required = serializers.BooleanField()
+
+    is_locked = serializers.BooleanField()
+    lock_reason = serializers.CharField(allow_null=True, allow_blank=True)
+
+
+class SessionScoreRowSerializer(serializers.Serializer):
+    """
+    ✅ 성적 탭 메인 테이블 Row (exam_id 포함)
+    - Session 1 : N Exam 구조 대응
+    - 프론트는 이 Row를 기준으로 우측 패널(결과 상세) 연결
+    """
+
+    exam_id = serializers.IntegerField()
+
+    enrollment_id = serializers.IntegerField()
+    student_name = serializers.CharField(allow_blank=True)
+
+    exam = ScoreBlockSerializer()
+    homework = ScoreBlockSerializer()
+
+    updated_at = serializers.DateTimeField(allow_null=True)
+
+
+class SessionScoresResponseSerializer(serializers.Serializer):
+    """
+    리스트 응답 wrapper가 필요하면 확장 가능.
+    현재 프론트 계약은 "리스트"이므로 many=True로 사용한다.
+    """
+
+    # NOTE: 실제로 이 Serializer를 직접 쓰지 않을 수 있지만,
+    #       확장 포인트로 남겨둔다.
+    items = SessionScoreRowSerializer(many=True)
 
 
 ==========================================================================================
@@ -1377,6 +1489,297 @@ class ExamAttemptService:
         )
 
         return attempt
+
+
+==========================================================================================
+# FILE: services/clinic_target_service.py
+==========================================================================================
+# PATH: apps/domains/results/services/clinic_target_service.py
+"""
+역할
+- Admin/Teacher용 "클리닉 대상자" 리스트를 생성한다.
+- clinic_required의 단일 진실: progress.ClinicLink(is_auto=True)
+
+설계 계약 (중요)
+1) 단일 진실: enrollment_id (학생 식별은 enrollment_id로만)
+2) clinic_required 판단은 ClinicLink (자동 트리거) 기준
+3) 점수/커트라인/사유(reason)는 results/exams에서 파생
+4) Session ↔ Exam 매핑은 results.utils.session_exam.get_exams_for_session() 단일 진실 사용
+
+⚠️ 현실적 제약 (보류/명시)
+- "세션에 시험이 여러 개"인 구조에서, ClinicTarget의 exam_score/cutline_score는 1개 숫자만 담는다.
+  따라서 본 서비스는 "대표 exam"을 1개 선정해서 표기한다.
+  - 기본 정책: get_exams_for_session(session) 중 id가 가장 작은 exam을 대표로 사용
+  - 향후 정책 필요 시: ProgressPolicy(strategy)나 운영 규칙에 따라 변경 가능
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
+from apps.domains.lectures.models import Session
+from apps.domains.progress.models import ClinicLink
+from apps.domains.exams.models import Exam
+from apps.domains.results.models import Result, ResultFact, ExamAttempt
+
+# ✅ 단일 진실 유틸
+from apps.domains.results.utils.session_exam import get_exams_for_session
+
+
+def _safe_str(v: Any, default: str = "-") -> str:
+    try:
+        s = str(v)
+        return s if s.strip() else default
+    except Exception:
+        return default
+
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return float(default)
+
+
+def _extract_invalid_reason_from_meta(meta: Any) -> Optional[str]:
+    """
+    ResultFact.meta / Attempt.meta / SubmissionAnswer.meta 등 다양한 위치에 있을 수 있는
+    invalid_reason을 방어적으로 추출한다.
+
+    기대 가능한 형태:
+    meta = { "grading": { "invalid_reason": "LOW_CONFIDENCE" } }
+    """
+    if not isinstance(meta, dict):
+        return None
+    grading = meta.get("grading")
+    if isinstance(grading, dict):
+        v = grading.get("invalid_reason")
+        return str(v) if v else None
+    return None
+
+
+def _is_low_confidence_for_attempt(*, exam_id: int, enrollment_id: int, attempt_id: Optional[int]) -> bool:
+    """
+    "신뢰도 낮음" 판정은 프로젝트 구현에 따라:
+    - Attempt.meta.grading.invalid_reason (가능)
+    - ResultFact.meta.grading.invalid_reason (가능, 현재 grader는 문항 meta에 심는 형태)
+    둘 다 방어적으로 체크한다.
+    """
+    # 1) Attempt.meta (있으면 최우선)
+    if attempt_id:
+        a = ExamAttempt.objects.filter(id=int(attempt_id)).first()
+        if a and hasattr(a, "meta"):
+            reason = _extract_invalid_reason_from_meta(getattr(a, "meta", None))
+            if (reason or "").upper() == "LOW_CONFIDENCE":
+                return True
+
+    # 2) ResultFact.meta (대표 attempt 기준)
+    if attempt_id:
+        qs = (
+            ResultFact.objects.filter(
+                target_type="exam",
+                target_id=int(exam_id),
+                enrollment_id=int(enrollment_id),
+                attempt_id=int(attempt_id),
+            )
+            .exclude(meta__isnull=True)
+            .order_by("-id")[:200]  # 방어: 너무 큰 scan 방지
+        )
+        for f in qs:
+            r = _extract_invalid_reason_from_meta(getattr(f, "meta", None))
+            if (r or "").upper() == "LOW_CONFIDENCE":
+                return True
+
+    return False
+
+
+def _get_student_name_by_enrollment_id(enrollment_id: int) -> str:
+    """
+    enrollment_id → student_name 매핑은 프로젝트마다 도메인이 다를 수 있어 방어적으로 구현.
+
+    우선순위:
+    1) enrollments.SessionEnrollment (session-enrollments) 모델이 있으면 student_name 필드/조인 사용
+    2) enrollment.Enrollment 모델이 있으면 student/user 조인 시도
+    3) 실패 시 "-"
+    """
+    enrollment_id = int(enrollment_id)
+
+    # 1) SessionEnrollment (있으면 가장 확실)
+    try:
+        # 프로젝트에 따라 앱 경로가 다를 수 있음
+        # - apps.domains.enrollments.models.SessionEnrollment (가장 흔함)
+        # - apps.domains.enrollments.models.session_enrollment.SessionEnrollment 등
+        from apps.domains.enrollments.models import SessionEnrollment  # type: ignore
+
+        se = (
+            SessionEnrollment.objects.filter(enrollment_id=enrollment_id)
+            .order_by("-id")
+            .first()
+        )
+        if se:
+            # serializer 응답에 student_name이 있다고 했던 스펙과 정합성
+            v = getattr(se, "student_name", None)
+            if v:
+                return _safe_str(v, "-")
+
+            # 조인이 가능하면 student.name
+            st = getattr(se, "student", None)
+            if st and hasattr(st, "name"):
+                return _safe_str(getattr(st, "name", None), "-")
+    except Exception:
+        pass
+
+    # 2) Enrollment (기존 results 코드에서 사용 중)
+    try:
+        from apps.domains.enrollment.models import Enrollment  # type: ignore
+
+        e = Enrollment.objects.filter(id=enrollment_id).select_related().first()
+        if not e:
+            return "-"
+
+        # student FK가 있으면 우선
+        st = getattr(e, "student", None)
+        if st and hasattr(st, "name"):
+            return _safe_str(getattr(st, "name", None), "-")
+
+        # user가 학생 프로필을 들고 있을 수도
+        u = getattr(e, "user", None)
+        if u:
+            nm = getattr(u, "name", None) or getattr(u, "username", None)
+            return _safe_str(nm, "-")
+    except Exception:
+        pass
+
+    return "-"
+
+
+def _get_session_title(session: Session) -> str:
+    """
+    세션 타이틀은 프로젝트마다 표현이 달라서:
+    - __str__ 우선
+    - lecture/title/order 등 후보를 방어적으로 조합
+    """
+    s = _safe_str(session, "-")
+    if s != "-" and s.lower() != "session object":
+        return s
+
+    lecture = getattr(session, "lecture", None)
+    lecture_title = _safe_str(getattr(lecture, "title", None), "")
+    order = getattr(session, "order", None)
+
+    if lecture_title and order is not None:
+        return f"{lecture_title} {int(order)}회차"
+    if lecture_title:
+        return lecture_title
+
+    return f"Session#{int(getattr(session, 'id', 0) or 0)}"
+
+
+@dataclass(frozen=True)
+class ClinicTargetRow:
+    enrollment_id: int
+    student_name: str
+    session_title: str
+    reason: str  # "score" | "confidence"
+    exam_score: float
+    cutline_score: float
+    created_at: Any
+
+
+class ClinicTargetService:
+    """
+    Admin Clinic Targets
+
+    단일 진실:
+    - 대상자 모수: ClinicLink(is_auto=True)
+    - enrollment_id 기준
+    """
+
+    @staticmethod
+    def list_admin_targets() -> List[Dict[str, Any]]:
+        links = (
+            ClinicLink.objects.filter(is_auto=True)
+            .select_related("session")
+            .order_by("-created_at")  # 최신 자동 대상 우선
+        )
+
+        out: List[Dict[str, Any]] = []
+
+        # 세션별 exam 후보 캐시 (쿼리 절약)
+        exams_cache: Dict[int, Optional[Exam]] = {}
+
+        for link in links:
+            session = getattr(link, "session", None)
+            if not session:
+                continue
+
+            session_id = int(getattr(session, "id", 0) or 0)
+            enrollment_id = int(getattr(link, "enrollment_id", 0) or 0)
+            if not session_id or not enrollment_id:
+                continue
+
+            # 대표 exam 선정 (세션에 시험이 여러 개면 1개만 표기)
+            if session_id not in exams_cache:
+                exams = list(get_exams_for_session(session))
+                if exams:
+                    # ✅ 보수적 정책: id가 가장 작은 exam을 대표로
+                    ex = sorted(exams, key=lambda x: int(getattr(x, "id", 0) or 0))[0]
+                    exams_cache[session_id] = ex
+                else:
+                    exams_cache[session_id] = None
+
+            exam = exams_cache.get(session_id)
+            if not exam:
+                # 세션에 시험이 없으면 score/cutline은 0으로 내려서 화면이 깨지지 않게
+                out.append({
+                    "enrollment_id": enrollment_id,
+                    "student_name": _get_student_name_by_enrollment_id(enrollment_id),
+                    "session_title": _get_session_title(session),
+                    "reason": "score",
+                    "exam_score": 0.0,
+                    "cutline_score": 0.0,
+                    "created_at": getattr(link, "created_at", None),
+                })
+                continue
+
+            exam_id = int(getattr(exam, "id", 0) or 0)
+            cutline = _safe_float(getattr(exam, "pass_score", 0.0), 0.0)
+
+            # 대표 스냅샷 Result (시험 단위)
+            result = (
+                Result.objects.filter(
+                    target_type="exam",
+                    target_id=exam_id,
+                    enrollment_id=enrollment_id,
+                )
+                .order_by("-id")
+                .first()
+            )
+
+            exam_score = _safe_float(getattr(result, "total_score", 0.0) if result else 0.0, 0.0)
+            attempt_id = int(getattr(result, "attempt_id", 0) or 0) if result else 0
+
+            # reason 판정
+            # - LOW_CONFIDENCE 흔적이 있으면 confidence
+            # - 아니면 score
+            reason = "confidence" if _is_low_confidence_for_attempt(
+                exam_id=exam_id,
+                enrollment_id=enrollment_id,
+                attempt_id=attempt_id if attempt_id else None,
+            ) else "score"
+
+            out.append({
+                "enrollment_id": enrollment_id,
+                "student_name": _get_student_name_by_enrollment_id(enrollment_id),
+                "session_title": _get_session_title(session),
+                "reason": reason,
+                "exam_score": float(exam_score),
+                "cutline_score": float(cutline),
+                "created_at": getattr(link, "created_at", None),
+            })
+
+        return out
 
 
 ==========================================================================================
@@ -2900,6 +3303,45 @@ __all__ = [
 
 
 ==========================================================================================
+# FILE: views/admin_clinic_targets_view.py
+==========================================================================================
+# PATH: apps/domains/results/views/admin_clinic_targets_view.py
+"""
+역할
+- Admin/Teacher용 클리닉 대상자 조회 API
+
+Endpoint
+- GET /results/admin/clinic-targets/
+
+설계 계약 (중요)
+- 대상자 선정 단일 진실: progress.ClinicLink(is_auto=True)
+- enrollment_id 기준
+- 계산/판정은 Service(ClinicTargetService)에 위임
+- 응답 스키마는 AdminClinicTargetSerializer로 고정 (프론트 계약)
+
+보류된 기능 (명시)
+- pagination 필요 시 추후 DRF pagination 도입 가능
+- 현재는 운영에서 "전체 대상자"가 소수라는 가정 하에 list로 반환
+"""
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.services.clinic_target_service import ClinicTargetService
+from apps.domains.results.serializers.admin_clinic_target import AdminClinicTargetSerializer
+
+
+class AdminClinicTargetsView(APIView):
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request):
+        rows = ClinicTargetService.list_admin_targets()
+        return Response(AdminClinicTargetSerializer(rows, many=True).data)
+
+
+==========================================================================================
 # FILE: views/admin_exam_attempts_view.py
 ==========================================================================================
 # ==========================================================================================
@@ -4291,6 +4733,294 @@ class SessionScoreSummaryView(APIView):
             session_id=int(session_id)
         )
         return Response(SessionScoreSummarySerializer(data).data)
+
+
+==========================================================================================
+# FILE: views/session_scores_view.py
+==========================================================================================
+# PATH: apps/domains/results/views/session_scores_view.py
+"""
+SessionScores API (FOR FRONTEND SCORE TAB)
+
+GET /api/v1/sessions/{session_id}/scores/
+
+✅ 목적
+- "성적 탭" 메인 테이블에서 학생별 시험/과제 요약 + 편집 상태 표시
+- results(시험) + homework(과제) + progress(클리닉) 데이터를 "조합"만 한다.
+
+🚫 절대 금지
+- 프론트에서 점수 계산/판정 요구
+- submissions.status로 합불/통과 판단
+- progress 결과(SessionProgress.completed 등)를 score API에서 직접 노출
+- 새로운 비즈니스 로직/정책 생성
+
+✅ 단일 진실(불변)
+- 시험 점수/합불: results(Result + Exam.pass_score)
+- 과제 점수/합불: homework(HomeworkScore)
+- clinic_required: progress(ClinicLink, is_auto=True 기준)
+
+✅ LOCK / null 규칙
+- score == null : 미산출/미응시/처리중 (0점과 다름)
+- exam.is_locked : 대표 attempt.status == "grading" 이면 true
+- homework.is_locked : HomeworkScore.is_locked 이면 true
+
+[핵심 메모]
+- ProgressPolicy ❌ 사용 안 함
+- Homework percent / cutline ❌ 계산 안 함
+- clinic_reason ❌ 생성 안 함
+- fact 조합 + lock 상태만 전달
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional, Set
+
+from django.utils import timezone
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.results.utils.session_exam import get_exams_for_session
+from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.domains.results.serializers.session_scores import SessionScoreRowSerializer
+
+from apps.domains.lectures.models import Session
+from apps.domains.progress.models import SessionProgress, ClinicLink
+from apps.domains.exams.models import Exam
+from apps.domains.homework.models import HomeworkScore
+
+# Enrollment은 프로젝트마다 구조가 다를 수 있어 방어적으로 접근
+from apps.domains.enrollment.models import Enrollment
+
+
+def _safe_student_name(enrollment: Enrollment) -> str:
+    """
+    Enrollment → 학생 이름 방어적 추출
+    (도메인/프로젝트별 필드 차이 대응)
+    """
+    try:
+        if hasattr(enrollment, "student") and enrollment.student:
+            s = enrollment.student
+            for key in ("name", "full_name", "username"):
+                v = getattr(s, key, None)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+
+        if hasattr(enrollment, "user") and enrollment.user:
+            u = enrollment.user
+            for key in ("name", "full_name", "username", "first_name"):
+                v = getattr(u, key, None)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+
+        for key in ("student_name", "name", "title"):
+            v = getattr(enrollment, key, None)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    except Exception:
+        pass
+
+    return "-"
+
+
+class SessionScoresView(APIView):
+    """
+    Teacher/Admin 전용 Session Scores API
+    """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request, session_id: int):
+        session = get_object_or_404(Session, id=int(session_id))
+
+        # -------------------------------------------------
+        # 1) enrollment 모수 (SessionProgress 기준, 원본 존중)
+        # -------------------------------------------------
+        sp_qs = SessionProgress.objects.filter(session=session)
+
+        enrollment_id_param = request.query_params.get("enrollment_id")
+        if enrollment_id_param:
+            try:
+                sp_qs = sp_qs.filter(enrollment_id=int(enrollment_id_param))
+            except Exception:
+                pass
+
+        enrollment_ids = list(
+            sp_qs.values_list("enrollment_id", flat=True).distinct()
+        )
+        if not enrollment_ids:
+            return Response([])
+
+        # -------------------------------------------------
+        # 2) Session ↔ Exam (단일 진실)
+        # -------------------------------------------------
+        exams = list(get_exams_for_session(session))
+        exam_ids = [int(e.id) for e in exams]
+
+        # 시험이 하나도 없으면 row 생성 불가 (프론트 계약)
+        if not exam_ids:
+            return Response([])
+
+        # -------------------------------------------------
+        # 3) Clinic 대상자 (fact only)
+        # -------------------------------------------------
+        clinic_ids: Set[int] = set(
+            ClinicLink.objects.filter(session=session, is_auto=True)
+            .values_list("enrollment_id", flat=True)
+            .distinct()
+        )
+
+        # -------------------------------------------------
+        # 4) Enrollment → student_name
+        # -------------------------------------------------
+        enrollments = Enrollment.objects.filter(id__in=[int(x) for x in enrollment_ids])
+        enrollment_map: Dict[int, Enrollment] = {int(e.id): e for e in enrollments}
+
+        student_name_map: Dict[int, str] = {}
+        for eid in enrollment_ids:
+            enr = enrollment_map.get(int(eid))
+            student_name_map[int(eid)] = _safe_student_name(enr) if enr else "-"
+
+        # -------------------------------------------------
+        # 5) HomeworkScore (fact)
+        # -------------------------------------------------
+        hw_qs = HomeworkScore.objects.filter(
+            session=session,
+            enrollment_id__in=[int(x) for x in enrollment_ids],
+        )
+        hw_map: Dict[int, HomeworkScore] = {
+            int(h.enrollment_id): h for h in hw_qs
+        }
+
+        # -------------------------------------------------
+        # 6) Exam Result (최신 스냅샷, enrollment 중복 방어)
+        # -------------------------------------------------
+        result_map: Dict[int, Dict[int, Result]] = {}
+
+        for exid in exam_ids:
+            rs = (
+                latest_results_per_enrollment(target_type="exam", target_id=int(exid))
+                .filter(enrollment_id__in=[int(x) for x in enrollment_ids])
+            )
+            bucket: Dict[int, Result] = {}
+            for r in rs:
+                bucket[int(r.enrollment_id)] = r
+            result_map[int(exid)] = bucket
+
+        # -------------------------------------------------
+        # 7) Attempt LOCK 상태
+        # -------------------------------------------------
+        attempt_ids: Set[int] = set()
+        for exid in exam_ids:
+            for _, r in result_map.get(int(exid), {}).items():
+                if getattr(r, "attempt_id", None):
+                    attempt_ids.add(int(r.attempt_id))
+
+        attempt_status_map: Dict[int, str] = {}
+        if attempt_ids:
+            for a in ExamAttempt.objects.filter(id__in=list(attempt_ids)).only("id", "status"):
+                attempt_status_map[int(a.id)] = str(a.status or "")
+
+        # -------------------------------------------------
+        # 8) Exam.pass_score 로딩
+        # -------------------------------------------------
+        exam_pass_score_map: Dict[int, float] = {}
+        for ex in exams:
+            exam_pass_score_map[int(ex.id)] = float(
+                getattr(ex, "pass_score", 0.0) or 0.0
+            )
+
+        # -------------------------------------------------
+        # 9) Row 생성 (fact 조합만)
+        # -------------------------------------------------
+        rows: List[Dict[str, Any]] = []
+
+        for exid in exam_ids:
+            pass_score = float(exam_pass_score_map.get(int(exid), 0.0) or 0.0)
+            per_exam_results = result_map.get(int(exid), {})
+
+            for eid in enrollment_ids:
+                eid_i = int(eid)
+                r: Optional[Result] = per_exam_results.get(eid_i)
+
+                # ---------------- exam ----------------
+                if r is None:
+                    exam_score = None
+                    exam_max = None
+                    exam_passed = False
+                    exam_updated_at = None
+                    exam_locked = False
+                    exam_lock_reason = None
+                else:
+                    exam_score = float(r.total_score or 0.0)
+                    exam_max = float(r.max_score or 0.0)
+                    exam_passed = bool(exam_score >= float(pass_score))
+                    exam_updated_at = getattr(r, "updated_at", None)
+
+                    attempt_status = ""
+                    if getattr(r, "attempt_id", None):
+                        attempt_status = attempt_status_map.get(int(r.attempt_id), "") or ""
+
+                    exam_locked = bool((attempt_status or "").lower() == "grading")
+                    exam_lock_reason = "GRADING" if exam_locked else None
+
+                # ---------------- homework ----------------
+                hw: Optional[HomeworkScore] = hw_map.get(eid_i)
+                if hw is None:
+                    hw_score = None
+                    hw_max = None
+                    hw_passed = False
+                    hw_updated_at = None
+                    hw_locked = False
+                    hw_lock_reason = None
+                else:
+                    hw_score = hw.score if hw.score is not None else None
+                    hw_max = hw.max_score if hw.max_score is not None else None
+                    hw_passed = bool(hw.passed)
+                    hw_updated_at = getattr(hw, "updated_at", None)
+
+                    hw_locked = bool(hw.is_locked)
+                    hw_lock_reason = str(hw.lock_reason) if hw.lock_reason else None
+
+                clinic_required = bool(eid_i in clinic_ids)
+
+                updated_candidates = [
+                    d for d in [exam_updated_at, hw_updated_at, getattr(session, "updated_at", None)] if d
+                ]
+                updated_at = max(updated_candidates) if updated_candidates else timezone.now()
+
+                rows.append({
+                    "exam_id": int(exid),
+
+                    "enrollment_id": eid_i,
+                    "student_name": student_name_map.get(eid_i, "-"),
+
+                    "exam": {
+                        "score": exam_score,
+                        "max_score": exam_max,
+                        "passed": bool(exam_passed),
+                        "clinic_required": bool(clinic_required),
+                        "is_locked": bool(exam_locked),
+                        "lock_reason": exam_lock_reason,
+                    },
+
+                    "homework": {
+                        "score": hw_score,
+                        "max_score": hw_max,
+                        "passed": bool(hw_passed),
+                        "clinic_required": bool(clinic_required),
+                        "is_locked": bool(hw_locked),
+                        "lock_reason": hw_lock_reason,
+                    },
+
+                    "updated_at": updated_at,
+                })
+
+        return Response(SessionScoreRowSerializer(rows, many=True).data)
 
 
 ==========================================================================================

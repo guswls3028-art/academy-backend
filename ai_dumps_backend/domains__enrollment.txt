@@ -244,16 +244,22 @@ from .views import EnrollmentViewSet, SessionEnrollmentViewSet
 
 router = DefaultRouter()
 
-router.register(
-    r"",
-    EnrollmentViewSet,
-    basename="enrollment",
-)
-
+# ==================================================
+# SessionEnrollment (⚠️ 반드시 먼저!)
+# ==================================================
 router.register(
     r"session-enrollments",
     SessionEnrollmentViewSet,
     basename="session-enrollment",
+)
+
+# ==================================================
+# Enrollment (⚠️ r"" 는 항상 맨 마지막)
+# ==================================================
+router.register(
+    r"",
+    EnrollmentViewSet,
+    basename="enrollment",
 )
 
 urlpatterns = router.urls

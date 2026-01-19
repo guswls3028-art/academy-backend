@@ -98,3 +98,32 @@ class HomeworkScore(TimestampModel):
 
     def __str__(self) -> str:
         return f"HomeworkScore(enroll={self.enrollment_id}, session={self.session_id}, score={self.score})"
+
+class HomeworkPolicy(TimestampModel):
+    """
+    Session 단위 과제 판정 정책
+
+    - 시험 정책과 UX/개념 통일
+    - homework score는 근사값이므로 percent 기준만 사용
+    """
+
+    session = models.OneToOneField(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="homework_policy",
+    )
+
+    # 통과 커트라인 (%)
+    cutline_percent = models.PositiveSmallIntegerField(default=80)
+
+    # 클리닉 연동 여부
+    clinic_enabled = models.BooleanField(default=True)
+
+    # 과제 불합격 시 클리닉 대상 여부
+    clinic_on_fail = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return f"HomeworkPolicy(session={self.session_id}, cutline={self.cutline_percent}%)"

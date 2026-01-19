@@ -250,6 +250,11 @@ from pathlib import Path
 from datetime import timedelta
 import os
 
+# 나중에 빼
+DEBUG_TOOLBAR_CONFIG = {"SHOW_TOOLBAR_CALLBACK": lambda request: False}
+
+
+
 # ==================================================
 # BASE
 # ==================================================

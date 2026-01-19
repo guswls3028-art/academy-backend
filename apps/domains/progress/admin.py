@@ -15,16 +15,35 @@ class ProgressPolicyAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "lecture",
+
+        # ---------- video ----------
         "video_required_rate",
+
+        # ---------- exam ----------
         "exam_start_session_order",
         "exam_end_session_order",
         "exam_pass_score",
+        "exam_aggregate_strategy",
+        "exam_pass_source",
+
+        # ---------- homework ----------
         "homework_start_session_order",
         "homework_end_session_order",
         "homework_pass_type",
+
+        # ✅ STEP 1: homework policy 표시
+        "homework_cutline_percent",
+        "homework_round_unit",
+
         "created_at",
     )
-    list_filter = ("homework_pass_type",)
+
+    list_filter = (
+        "homework_pass_type",
+        "exam_aggregate_strategy",
+        "exam_pass_source",
+    )
+
     search_fields = ("lecture__title", "lecture__name")
     ordering = ("-id",)
 
@@ -33,12 +52,6 @@ class ProgressPolicyAdmin(admin.ModelAdmin):
 class SessionProgressAdmin(admin.ModelAdmin):
     """
     ✅ SessionProgress Admin (집계 결과 전용)
-
-    설계 원칙:
-    - ❌ 시험 점수(exam_score)는 여기 책임이 아님
-      → Result / SessionExamsSummary API에서만 조회
-    - ✅ pass/fail 여부는 '집계 결과'이므로 유지
-    - ✅ clinic 여부는 ClinicLink 도메인에서 별도 관리
     """
 
     list_display = (
@@ -49,12 +62,10 @@ class SessionProgressAdmin(admin.ModelAdmin):
         "video_progress_rate",
         "video_completed",
 
-        # ❌ REMOVED:
-        # "exam_score",  # 시험 점수는 Result 도메인 책임
-
         "exam_passed",
         "homework_submitted",
         "homework_passed",
+
         "completed",
         "calculated_at",
         "updated_at",
@@ -98,10 +109,6 @@ class LectureProgressAdmin(admin.ModelAdmin):
 
 @admin.register(ClinicLink)
 class ClinicLinkAdmin(admin.ModelAdmin):
-    """
-    ✅ ClinicLink = 클리닉 트리거 단일 진실
-    SessionProgress에서 분리된 구조 유지
-    """
     list_display = (
         "id",
         "enrollment_id",

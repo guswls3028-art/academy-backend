@@ -92,6 +92,13 @@ from apps.domains.results.views.admin_clinic_targets_view import (
     AdminClinicTargetsView,
 )
 
+# ======================================================
+# ✅ NEW: Session Scores (성적 탭 메인 테이블)
+# ======================================================
+# 🔥 핵심: results + homework + clinic 조합 API
+from apps.domains.results.views.session_scores_view import SessionScoresView
+
+
 urlpatterns = [
     # ============================
     # Student
@@ -114,8 +121,6 @@ urlpatterns = [
     # ============================
 
     # ⚠️ DEPRECATED
-    # - 기존 프론트(AdminExamResultsPanel 등)에서 아직 사용 중
-    # - Session 기준 요약으로 완전히 전환되면 제거 대상
     path(
         "admin/exams/<int:exam_id>/summary/",
         AdminExamSummaryView.as_view(),
@@ -189,6 +194,13 @@ urlpatterns = [
         name="session-score-summary",
     ),
 
+    # 🔹 🔥 성적 탭 메인 테이블 (exam + homework + clinic)
+    path(
+        "admin/sessions/<int:session_id>/scores/",
+        SessionScoresView.as_view(),
+        name="admin-session-scores",
+    ),
+
     # 🔹 Session → Exam 목록 (메타)
     path(
         "admin/sessions/<int:session_id>/exams/",
@@ -196,7 +208,7 @@ urlpatterns = [
         name="admin-session-exams",
     ),
 
-    # 🔥 핵심: Session 기준 시험 요약 (1:N Exam)
+    # 🔥 Session 기준 시험 요약 (1:N Exam)
     path(
         "admin/sessions/<int:session_id>/exams/summary/",
         AdminSessionExamsSummaryView.as_view(),

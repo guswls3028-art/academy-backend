@@ -23,13 +23,11 @@ class ProgressPolicy(TimestampModel):
         SCORE = "SCORE", "점수"
         TEACHER_APPROVAL = "TEACHER_APPROVAL", "강사승인"
 
-    # ✅ PATCH: 시험 집계 전략
     class ExamAggregateStrategy(models.TextChoices):
         MAX = "MAX", "최고점"
         AVG = "AVG", "평균"
         LATEST = "LATEST", "최근 제출"
 
-    # ✅ PATCH: pass 기준 출처
     class ExamPassSource(models.TextChoices):
         POLICY = "POLICY", "정책 기준"
         EXAM = "EXAM", "시험 기준"
@@ -50,7 +48,6 @@ class ProgressPolicy(TimestampModel):
     # (레거시/정책형 커트라인)
     exam_pass_score = models.FloatField(default=60.0)
 
-    # ✅ PATCH: 다중 시험 집계 정책
     exam_aggregate_strategy = models.CharField(
         max_length=10,
         choices=ExamAggregateStrategy.choices,
@@ -74,6 +71,19 @@ class ProgressPolicy(TimestampModel):
         default=HomeworkPassType.TEACHER_APPROVAL,
     )
 
+    # ======================================================
+    # ✅ STEP 1: Homework cutline/rounding 정책 (프론트 설정 가능)
+    # - 초기값: cutline 80%, round_unit 5%
+    # ======================================================
+    homework_cutline_percent = models.PositiveIntegerField(
+        default=80,
+        help_text="Homework pass cutline (%). 예: 80",
+    )
+    homework_round_unit = models.PositiveIntegerField(
+        default=5,
+        help_text="Homework percent rounding unit (%). 예: 5이면 5% 단위 반올림",
+    )
+
     class Meta:
         ordering = ["-id"]
 
@@ -84,16 +94,6 @@ class ProgressPolicy(TimestampModel):
 class SessionProgress(TimestampModel):
     """
     Enrollment x Session 단위 진행 스냅샷
-
-    ✅ 1:N 시험 구조 원칙 준수:
-    - SessionProgress는 특정 Exam 점수에 의존하지 않는다.
-    - 반드시 Result들을 "집계"한 최종 판단만 저장한다.
-
-    추가 필드:
-    - exam_attempted: 이 session에서 시험 Result가 하나라도 있는지
-    - exam_aggregate_score: 전략(MAX/AVG/LATEST) 기반 집계 점수
-    - exam_passed: 집계/정책 기반 최종 시험 통과 여부
-    - exam_meta: 집계 상세(시험별 score/passed/기준 등)
     """
 
     class AttendanceType(models.TextChoices):
@@ -116,9 +116,7 @@ class SessionProgress(TimestampModel):
     video_progress_rate = models.PositiveIntegerField(default=0)  # 0~100
     video_completed = models.BooleanField(default=False)
 
-    # ======================================================
-    # ✅ PATCH: Exam aggregate (1 Session : N Exams)
-    # ======================================================
+    # ----- exam aggregate -----
     exam_attempted = models.BooleanField(default=False)
     exam_aggregate_score = models.FloatField(null=True, blank=True)
     exam_passed = models.BooleanField(default=False)
