@@ -573,6 +573,8 @@ urlpatterns = [
     path("exams/", include("apps.domains.exams.urls")),
     path("progress/", include("apps.domains.progress.urls")),
     path("results/", include("apps.domains.results.urls")),
+        # ✅ 추가
+    path("homework/", include("apps.domains.homework.urls")),
 
     path("core/", include("apps.core.urls")),
     path("media/", include("apps.support.media.urls")),

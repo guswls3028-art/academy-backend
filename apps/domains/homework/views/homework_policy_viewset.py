@@ -1,3 +1,5 @@
+# PATH: apps/domains/homework/views/homework_policy_viewset.py
+
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 
@@ -8,13 +10,17 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 
 class HomeworkPolicyViewSet(ModelViewSet):
     """
-    HomeworkPolicy API (Admin/Teacher)
+    HomeworkPolicy API (Admin / Teacher)
 
-    GET /homework/policies/?session=
-    PATCH /homework/policies/{id}/
+    Endpoint:
+    - GET   /homework/policies/?session=
+    - PATCH /homework/policies/{id}
     """
 
-    queryset = HomeworkPolicy.objects.select_related("session", "session__lecture")
+    queryset = HomeworkPolicy.objects.select_related(
+        "session",
+        "session__lecture",
+    )
     serializer_class = HomeworkPolicySerializer
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
