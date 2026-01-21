@@ -1,10 +1,13 @@
 # PATH: apps/domains/homework/urls.py
+# 역할: homework 라우팅 (policy + score endpoints)
+
 """
 Homework URLs
 
 ✅ 라우팅
 - policies:
-    - GET/PATCH /homework/policies/session/?session_id=123
+    - GET   /homework/policies/?session=
+    - PATCH /homework/policies/{id}/
 - scores:
     - GET        /homework/scores/
     - PATCH      /homework/scores/{id}/

@@ -1,3 +1,6 @@
+# PATH: apps/domains/homework/filters.py
+# 역할: /homework/scores/ 필터 지원 (score 단일 진실은 homework_results)
+
 import django_filters
 
 # DESIGN:

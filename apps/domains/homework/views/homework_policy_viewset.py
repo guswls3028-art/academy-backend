@@ -1,20 +1,23 @@
 # PATH: apps/domains/homework/views/homework_policy_viewset.py
+# 역할: HomeworkPolicy API (프론트 계약: GET ?session= / PATCH {id}) + session당 1개 자동 생성
+
 """
 HomeworkPolicy ViewSet
 
+✅ 프론트 계약(LOCKED)
+- GET   /homework/policies/?session={sessionId}
+- PATCH /homework/policies/{id}/
+
 ✅ MVP 목표
 - session 당 HomeworkPolicy 1개 단일 진실
-- 없으면 자동 생성 (GET/PATCH 시 보장)
-- cutline_percent PATCH 허용
-- round_unit_percent PATCH 허용
+- 없으면 자동 생성 (GET 시 보장)
 
 ⚠️ 원본 존중
-- 기존 라우팅/권한 구조는 유지
-- 변경은 "단일 정책 보장" + "PATCH 제한"만
+- 권한 구조 유지
+- 정책 생성 POST는 프론트에서 하지 않음(서버가 get_or_create)
 """
 
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
@@ -25,54 +28,50 @@ from apps.domains.homework.serializers import (
 )
 
 
-class HomeworkPolicyViewSet(viewsets.ViewSet):
+class HomeworkPolicyViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
+    queryset = HomeworkPolicy.objects.select_related("session").all()
+    serializer_class = HomeworkPolicySerializer
 
-    def _get_or_create_policy(self, session_id: int) -> HomeworkPolicy:
-        # ✅ session당 1개 보장 (없으면 생성)
+    def get_queryset(self):
+        """
+        ✅ GET /homework/policies/?session=123
+
+        - session 파라미터 없으면 empty
+        - 있으면 session당 1개 보장(없으면 생성)
+        """
+        qs = super().get_queryset()
+
+        session_id = self.request.query_params.get("session")
+        if not session_id:
+            return qs.none()
+
+        try:
+            sid = int(session_id)
+        except Exception:
+            return qs.none()
+
         obj, _ = HomeworkPolicy.objects.get_or_create(
-            session_id=session_id,
+            session_id=sid,
             defaults={
                 "cutline_percent": 80,
                 "round_unit_percent": 5,
+                "clinic_enabled": True,
+                "clinic_on_fail": True,
             },
         )
-        return obj
 
-    @action(detail=False, methods=["get"], url_path="session")
-    def session_policy(self, request):
+        return qs.filter(id=obj.id)
+
+    def partial_update(self, request, *args, **kwargs):
         """
-        GET /homework/policies/session/?session_id=123
-
-        ✅ 없으면 자동 생성
+        ✅ PATCH /homework/policies/{id}/
+        - 수정 가능 필드만 제한(PatchSerializer)
         """
-        session_id = request.query_params.get("session_id")
-        if not session_id:
-            return Response({"detail": "session_id required"}, status=400)
+        obj = self.get_object()
 
-        policy = self._get_or_create_policy(int(session_id))
-        return Response(HomeworkPolicySerializer(policy).data)
-
-    @action(detail=False, methods=["patch"], url_path="session")
-    def patch_session_policy(self, request):
-        """
-        PATCH /homework/policies/session/?session_id=123
-        body:
-        {
-            "cutline_percent": 80,
-            "round_unit_percent": 5
-        }
-
-        ✅ 없으면 자동 생성 후 patch 적용
-        """
-        session_id = request.query_params.get("session_id")
-        if not session_id:
-            return Response({"detail": "session_id required"}, status=400)
-
-        policy = self._get_or_create_policy(int(session_id))
-
-        ser = HomeworkPolicyPatchSerializer(policy, data=request.data, partial=True)
+        ser = HomeworkPolicyPatchSerializer(obj, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
         ser.save()
 
-        return Response(HomeworkPolicySerializer(policy).data, status=status.HTTP_200_OK)
+        return Response(HomeworkPolicySerializer(obj).data, status=status.HTTP_200_OK)

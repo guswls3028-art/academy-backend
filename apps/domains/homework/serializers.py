@@ -1,3 +1,6 @@
+# PATH: apps/domains/homework/serializers.py
+# 역할: Policy 조회/패치 + Score 조회/패치 + quick_patch 입력 스키마
+
 """
 Homework Domain Serializers
 
@@ -38,12 +41,17 @@ class HomeworkPolicySerializer(serializers.ModelSerializer):
 class HomeworkPolicyPatchSerializer(serializers.ModelSerializer):
     """
     ✅ PATCH 전용
-    - 커트라인/반올림만 수정 가능하도록 제한
+    - 프론트 계약에 맞춰 수정 가능 필드만 허용
     """
 
     class Meta:
         model = HomeworkPolicy
-        fields = ["cutline_percent", "round_unit_percent"]
+        fields = [
+            "cutline_percent",
+            "round_unit_percent",
+            "clinic_enabled",
+            "clinic_on_fail",
+        ]
 
 
 class HomeworkScoreSerializer(serializers.ModelSerializer):
@@ -78,15 +86,15 @@ class HomeworkScoreSerializer(serializers.ModelSerializer):
 
 class HomeworkQuickPatchSerializer(serializers.Serializer):
     """
-    ✅ 조교 점수 입력 Quick Patch
+    ✅ 조교 점수 입력 Quick Patch (LOCKED SPEC)
 
     지원 입력:
-    - percent 입력: score=85, max_score=100(또는 생략)
+    - percent 입력: score=85, max_score 생략 (None)
     - raw 입력: score=18, max_score=20
 
-    backend 단일 진실:
-    - passed = (percent >= cutline_percent)
-    - clinic_required = clinic_enabled && clinic_on_fail && (not passed)
+    해석 규칙 (backend 단일 진실):
+    - max_score == None → score를 percent 값으로 간주
+    - max_score != None → score/max_score*100 으로 percent 계산
     """
 
     session_id = serializers.IntegerField()
@@ -94,6 +102,3 @@ class HomeworkQuickPatchSerializer(serializers.Serializer):
 
     score = serializers.FloatField()
     max_score = serializers.FloatField(required=False, allow_null=True)
-
-    # UI 편의: score만 보내도 percent로 간주하고 싶으면 max_score=100 기본
-    # (프론트 QuickScoreInput이 % 입력일 확률이 높아서)

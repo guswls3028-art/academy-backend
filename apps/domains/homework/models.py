@@ -1,3 +1,6 @@
+# PATH: apps/domains/homework/models.py
+# 역할: Session 단위 HomeworkPolicy(커트라인%/반올림/클리닉) 정의 레이어
+
 """
 Homework Domain Models
 

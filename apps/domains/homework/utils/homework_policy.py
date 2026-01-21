@@ -1,4 +1,6 @@
 # PATH: apps/domains/homework/utils/homework_policy.py
+# 역할: 점수 입력(%) 또는 (raw/max) → percent 계산 후 policy 기반 passed/clinic_required 결정
+
 """
 Homework policy calculation utilities
 
@@ -6,6 +8,7 @@ Homework policy calculation utilities
 - percent 계산
 - 반올림
 - cutline 비교
+- clinic_required 계산(정책 기반)
 
 🚫 책임 아님
 - progress 직접 갱신
@@ -73,7 +76,7 @@ def calc_homework_passed_and_clinic(
     반환:
     - passed: bool
     - clinic_required: bool
-    - percent: Optional[int] (디버깅/확장용)
+    - percent: Optional[int] (rounded percent)
     """
     policy, _ = HomeworkPolicy.objects.get_or_create(
         session=session,

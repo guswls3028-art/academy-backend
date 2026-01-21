@@ -1,3 +1,6 @@
+# PATH: apps/domains/homework/views/homework_score_viewset.py
+# 역할: HomeworkScore 조회/수정 + quick_patch(upsert)로 점수입력(% or raw/max) 지원
+
 """
 HomeworkScore API (Admin / Teacher)
 
@@ -13,6 +16,12 @@ Endpoint:
 ✅ IMPORTANT (리팩토링)
 - HomeworkScore 스냅샷의 단일 진실은 homework_results 도메인이다.
 - 하지만 /homework/scores/* 라우팅은 프론트 호환을 위해 유지한다.
+
+Quick Patch (MVP):
+- session_id + enrollment_id 기반 upsert
+- score 입력 방식 2개 지원:
+  - percent 직접 입력(score=85, max_score=None)
+  - raw/max 입력(score=18, max_score=20)
 """
 
 from __future__ import annotations
@@ -52,8 +61,51 @@ from apps.domains.homework.utils.homework_policy import (
 )
 
 
+# =====================================================
+# helpers
+# =====================================================
 def _safe_user_id(request) -> int | None:
     return getattr(getattr(request, "user", None), "id", None)
+
+
+def _locked_response(obj: HomeworkScore) -> Response:
+    return Response(
+        {
+            "detail": "score block is locked",
+            "code": "LOCKED",
+            "lock_reason": getattr(obj, "lock_reason", None),
+        },
+        status=drf_status.HTTP_409_CONFLICT,
+    )
+
+
+def _apply_score_and_policy(
+    *,
+    obj: HomeworkScore,
+    score: float | None,
+    max_score: float | None,
+    request,
+    save_fields: list[str],
+) -> HomeworkScore:
+    """
+    HomeworkScore에 점수 반영 + HomeworkPolicy 계산
+    (동작 변경 없음 / 중복 제거용)
+    """
+    obj.score = score
+    obj.max_score = max_score
+
+    passed, clinic_required, _ = calc_homework_passed_and_clinic(
+        session=obj.session,
+        score=score,
+        max_score=max_score,
+    )
+
+    obj.passed = bool(passed)
+    obj.clinic_required = bool(clinic_required)
+    obj.updated_by_user_id = _safe_user_id(request)
+
+    obj.save(update_fields=save_fields + ["updated_at"])
+    return obj
 
 
 def _maybe_fix_submission(
@@ -66,7 +118,6 @@ def _maybe_fix_submission(
     Submission 구조는 프로젝트마다 다를 수 있으므로
     "필드가 존재할 때만" 방어적으로 보정한다.
     """
-    # ✅ 원본 구조 존중 + 방어적 처리
     if hasattr(submission, "homework_submitted"):
         submission.homework_submitted = True
 
@@ -75,26 +126,28 @@ def _maybe_fix_submission(
 
     if hasattr(submission, "meta"):
         meta = submission.meta if isinstance(submission.meta, dict) else {}
-        meta = dict(meta)
+        meta = {**meta}
 
-        meta.setdefault("homework", {})
-        if isinstance(meta["homework"], dict):
-            meta["homework"].update(
-                {
-                    "homework_score_id": score_obj.id,
-                    "score": score_obj.score,
-                    "max_score": score_obj.max_score,
-                    "passed": score_obj.passed,
-                    "clinic_required": score_obj.clinic_required,
-                    "teacher_approved": getattr(
-                        submission, "homework_teacher_approved", None
-                    ),
-                }
-            )
+        homework_meta = meta.get("homework")
+        if not isinstance(homework_meta, dict):
+            homework_meta = {}
 
+        homework_meta.update(
+            {
+                "homework_score_id": score_obj.id,
+                "score": score_obj.score,
+                "max_score": score_obj.max_score,
+                "passed": score_obj.passed,
+                "clinic_required": score_obj.clinic_required,
+                "teacher_approved": getattr(
+                    submission, "homework_teacher_approved", None
+                ),
+            }
+        )
+
+        meta["homework"] = homework_meta
         submission.meta = meta
 
-    # update_fields 동적 구성 (필드 존재하는 것만)
     update_fields = ["updated_at"]
     for f in ["homework_submitted", "homework_teacher_approved", "meta"]:
         if hasattr(submission, f):
@@ -103,6 +156,9 @@ def _maybe_fix_submission(
     submission.save(update_fields=list(dict.fromkeys(update_fields)))
 
 
+# =====================================================
+# ViewSet
+# =====================================================
 class HomeworkScoreViewSet(ModelViewSet):
     """
     HomeworkScore 관리 ViewSet
@@ -143,75 +199,44 @@ class HomeworkScoreViewSet(ModelViewSet):
     # PATCH /homework/scores/{id}/
     # =================================================
     def partial_update(self, request, *args, **kwargs):
-        """
-        PATCH /homework/scores/{id}/
-
-        LOCK 규칙:
-        - is_locked == true → 409 CONFLICT
-
-        성공 시:
-        1) HomeworkScore 갱신 + passed/clinic_required 계산
-        2) (가능하면) Submission 보정(meta 포함)
-        3) progress pipeline 트리거 (실패해도 API는 성공 유지)
-
-        보강:
-        - Submission이 없어도 409로 실패시키지 않음
-          → 운영 입력 허용 (Score 저장 OK)
-          → progress dispatch는 skipped 처리
-        """
         obj: HomeworkScore = self.get_object()
 
-        # -------------------------------------------------
-        # 0) LOCK 방어
-        # -------------------------------------------------
         if getattr(obj, "is_locked", False):
-            return Response(
-                {
-                    "detail": "score block is locked",
-                    "code": "LOCKED",
-                    "lock_reason": getattr(obj, "lock_reason", None),
-                },
-                status=drf_status.HTTP_409_CONFLICT,
-            )
+            return _locked_response(obj)
 
-        # -------------------------------------------------
-        # 1) validate (partial)
-        # -------------------------------------------------
         serializer = self.get_serializer(obj, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        incoming = dict(serializer.validated_data)
 
-        next_score = incoming.get("score", obj.score)
-        next_max = incoming.get("max_score", obj.max_score)
-
-        # -------------------------------------------------
-        # 2) passed/clinic 계산 (HomeworkPolicy 단일 진실)
-        # -------------------------------------------------
-        passed, clinic_required, _percent = calc_homework_passed_and_clinic(
-            session=obj.session,
-            score=next_score,
-            max_score=next_max,
-        )
-
-        # teacher_approved가 들어오면 submission에도 반영(가능할 때만)
-        teacher_approved = incoming.get("teacher_approved", None)
+        vd = serializer.validated_data
+        next_score = vd.get("score", obj.score)
+        next_max = vd.get("max_score", obj.max_score)
+        teacher_approved = vd.get("teacher_approved")
 
         progress_info = {"dispatched": False, "reason": None}
 
-        # -------------------------------------------------
-        # 3) atomic: Score 저장 + (가능하면) Submission 보정
-        # -------------------------------------------------
         with transaction.atomic():
             serializer.save(
-                passed=bool(passed),
-                clinic_required=bool(clinic_required),
+                passed=obj.passed,
+                clinic_required=obj.clinic_required,
                 updated_by_user_id=_safe_user_id(request),
             )
 
-            # 최신 score instance
             score_obj: HomeworkScore = serializer.instance
 
-            # submission 조회 (있으면 보정)
+            score_obj = _apply_score_and_policy(
+                obj=score_obj,
+                score=next_score,
+                max_score=next_max,
+                request=request,
+                save_fields=[
+                    "score",
+                    "max_score",
+                    "passed",
+                    "clinic_required",
+                    "updated_by_user_id",
+                ],
+            )
+
             submission = (
                 Submission.objects.filter(
                     enrollment_id=score_obj.enrollment_id,
@@ -225,29 +250,24 @@ class HomeworkScoreViewSet(ModelViewSet):
                 _maybe_fix_submission(
                     submission,
                     score_obj=score_obj,
-                    teacher_approved=teacher_approved
-                    if teacher_approved is not None
-                    else getattr(score_obj, "teacher_approved", None),
+                    teacher_approved=teacher_approved,
                 )
 
-                # progress pipeline은 커밋 이후 트리거 (DB 반영 보장)
                 sub_id = int(submission.id)
 
                 def _dispatch():
                     try:
                         dispatch_progress_pipeline(sub_id)
                     except Exception:
-                        # MVP: 실패해도 API는 성공 유지
                         pass
 
                 transaction.on_commit(_dispatch)
                 progress_info = {"dispatched": True, "reason": None}
             else:
-                # submission이 없으면 운영 입력만 반영하고 progress는 스킵
                 progress_info = {"dispatched": False, "reason": "NO_SUBMISSION"}
 
-        data = self.get_serializer(serializer.instance).data
-        data["progress"] = progress_info  # ✅ 프론트가 “왜 갱신 안 됐는지” 알 수 있게
+        data = self.get_serializer(score_obj).data
+        data["progress"] = progress_info
 
         return Response(data, status=drf_status.HTTP_200_OK)
 
@@ -257,22 +277,10 @@ class HomeworkScoreViewSet(ModelViewSet):
     @action(detail=False, methods=["patch"], url_path="quick")
     def quick_patch(self, request):
         """
-        Quick input (MVP, 최종)
+        Quick input (MVP)
 
-        ✅ LOCK 존중
-        - is_locked == true → 409
-
-        ✅ 레이스 방지
-        - (session_id, enrollment_id) 행을 select_for_update로 잠그고 판단
-
-        입력 형태:
-        - % 입력: score=85 (max_score 생략 가능 → 100)
-        - 문항수 입력: score=32, max_score=64
-
-        NOTE:
-        - quick patch는 "조교 생산성 입력"에 집중
-        - submission 보정 / progress 트리거는 partial_update에서만 수행
-          (scores 탭은 refetch/invalidate로 갱신하면 충분)
+        - % 입력: score=85, max_score 생략 (percent 직접 입력)
+        - raw/max: score=32, max_score=64
         """
         serializer = HomeworkQuickPatchSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -280,72 +288,42 @@ class HomeworkScoreViewSet(ModelViewSet):
         session_id = serializer.validated_data["session_id"]
         enrollment_id = serializer.validated_data["enrollment_id"]
         score = serializer.validated_data["score"]
-        max_score = serializer.validated_data.get("max_score") or 100
+        max_score = serializer.validated_data.get("max_score")
 
         with transaction.atomic():
-            # 기존 row를 잠그고(lock) 확인
-            existing = (
+            obj = (
                 HomeworkScore.objects.select_for_update()
                 .filter(session_id=session_id, enrollment_id=enrollment_id)
                 .select_related("session")
                 .first()
             )
 
-            if existing and getattr(existing, "is_locked", False):
-                return Response(
-                    {
-                        "detail": "score block is locked",
-                        "code": "LOCKED",
-                        "lock_reason": getattr(existing, "lock_reason", None),
-                    },
-                    status=drf_status.HTTP_409_CONFLICT,
-                )
+            if obj and obj.is_locked:
+                return _locked_response(obj)
 
-            if existing:
-                # update
-                existing.score = score
-                existing.max_score = max_score
-                # passed/clinic 계산
-                passed, clinic_required, _percent = calc_homework_passed_and_clinic(
-                    session=existing.session,
-                    score=existing.score,
-                    max_score=existing.max_score,
-                )
-                existing.passed = bool(passed)
-                existing.clinic_required = bool(clinic_required)
-                existing.updated_by_user_id = _safe_user_id(request)
-                existing.save(
-                    update_fields=[
-                        "score",
-                        "max_score",
-                        "passed",
-                        "clinic_required",
-                        "updated_by_user_id",
-                        "updated_at",
-                    ]
-                )
-                obj = existing
-            else:
-                # create
+            if not obj:
                 obj = HomeworkScore.objects.create(
                     session_id=session_id,
                     enrollment_id=enrollment_id,
-                    score=score,
-                    max_score=max_score,
+                    score=None,
+                    max_score=None,
                     updated_by_user_id=_safe_user_id(request),
                 )
                 obj = HomeworkScore.objects.select_related("session").get(id=obj.id)
 
-                passed, clinic_required, _percent = calc_homework_passed_and_clinic(
-                    session=obj.session,
-                    score=obj.score,
-                    max_score=obj.max_score,
-                )
-                HomeworkScore.objects.filter(id=obj.id).update(
-                    passed=bool(passed),
-                    clinic_required=bool(clinic_required),
-                )
-                obj.refresh_from_db()
+            obj = _apply_score_and_policy(
+                obj=obj,
+                score=score,
+                max_score=max_score,
+                request=request,
+                save_fields=[
+                    "score",
+                    "max_score",
+                    "passed",
+                    "clinic_required",
+                    "updated_by_user_id",
+                ],
+            )
 
         return Response(
             HomeworkScoreSerializer(obj).data,
