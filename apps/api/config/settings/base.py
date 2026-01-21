@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "apps.domains.homework",
     "apps.domains.submissions",
     "apps.domains.results",
+    "apps.domains.homework_results",
     "apps.domains.clinic",
     "apps.domains.progress",
     "apps.domains.ai.apps.AIDomainConfig",

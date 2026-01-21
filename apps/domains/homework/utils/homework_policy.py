@@ -8,46 +8,92 @@ Homework policy calculation utilities
 - cutline 비교
 
 🚫 책임 아님
-- clinic 판단
 - progress 직접 갱신
 """
 
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, Tuple
 
-from apps.domains.progress.models import ProgressPolicy
 from apps.domains.lectures.models import Session
+from apps.domains.homework.models import HomeworkPolicy
 
 
-def calc_homework_passed(
+def _round_percent(percent: float, unit: int) -> int:
+    unit = int(unit or 1)
+    if unit <= 0:
+        unit = 1
+    return int(round(percent / unit) * unit)
+
+
+def calc_homework_percent(
+    *,
+    score: Optional[float],
+    max_score: Optional[float],
+) -> Optional[int]:
+    """
+    score/max_score -> percent 계산
+
+    규칙:
+    - score가 None -> None
+    - max_score가 None -> score를 "percent 값"으로 간주 (0~100)
+    - max_score가 0 -> None
+    - percent = score/max_score*100
+    """
+    if score is None:
+        return None
+
+    if max_score is None:
+        # percent 직접 입력 (예: 85)
+        try:
+            p = float(score)
+        except Exception:
+            return None
+        return int(round(p))
+
+    if max_score == 0:
+        return None
+
+    try:
+        raw = (float(score) / float(max_score)) * 100.0
+    except Exception:
+        return None
+
+    return int(round(raw))
+
+
+def calc_homework_passed_and_clinic(
     *,
     session: Session,
     score: Optional[float],
     max_score: Optional[float],
-) -> bool:
+) -> Tuple[bool, bool, Optional[int]]:
     """
-    Homework 합불 계산 (policy 기반)
+    Homework 합불 + 클리닉 계산 (HomeworkPolicy 단일 진실)
 
-    규칙:
-    - score/max_score 중 하나라도 None → False
-    - percent = score / max * 100
-    - round_unit 단위 반올림
-    - cutline 이상이면 passed
+    반환:
+    - passed: bool
+    - clinic_required: bool
+    - percent: Optional[int] (디버깅/확장용)
     """
-    if score is None or max_score in (None, 0):
-        return False
-
-    policy = (
-        ProgressPolicy.objects
-        .filter(lecture=session.lecture)
-        .order_by("-id")
-        .first()
+    policy, _ = HomeworkPolicy.objects.get_or_create(
+        session=session,
+        defaults={
+            "cutline_percent": 80,
+            "round_unit_percent": 5,
+            "clinic_enabled": True,
+            "clinic_on_fail": True,
+        },
     )
 
-    cutline = int(getattr(policy, "homework_cutline_percent", 80))
-    unit = int(getattr(policy, "homework_round_unit", 5)) or 1
+    percent = calc_homework_percent(score=score, max_score=max_score)
+    if percent is None:
+        return False, False, None
 
-    raw_percent = (float(score) / float(max_score)) * 100
-    rounded = int(round(raw_percent / unit) * unit)
+    rounded = _round_percent(percent, policy.round_unit_percent)
+    passed = bool(rounded >= int(policy.cutline_percent or 0))
 
-    return bool(rounded >= cutline)
+    clinic_required = bool(
+        policy.clinic_enabled and policy.clinic_on_fail and (not passed)
+    )
+
+    return passed, clinic_required, rounded

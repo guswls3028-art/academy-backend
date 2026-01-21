@@ -4803,7 +4803,10 @@ from apps.domains.results.serializers.session_scores import SessionScoreRowSeria
 from apps.domains.lectures.models import Session
 from apps.domains.progress.models import SessionProgress, ClinicLink
 from apps.domains.exams.models import Exam
-from apps.domains.homework.models import HomeworkScore
+
+# ✅ 단일 진실: homework_results
+from apps.domains.homework_results.models import HomeworkScore
+
 
 # Enrollment은 프로젝트마다 구조가 다를 수 있어 방어적으로 접근
 from apps.domains.enrollment.models import Enrollment

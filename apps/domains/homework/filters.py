@@ -1,7 +1,9 @@
-# PATH: apps/domains/homework/filters.py
 import django_filters
 
-from apps.domains.homework.models import HomeworkScore
+# DESIGN:
+# - /homework/scores/* 엔드포인트는 유지하되
+# - Score 스냅샷의 단일 진실은 homework_results.HomeworkScore 이다.
+from apps.domains.homework_results.models import HomeworkScore
 
 
 class HomeworkScoreFilter(django_filters.FilterSet):
