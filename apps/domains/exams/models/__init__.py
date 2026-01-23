@@ -4,6 +4,7 @@ from .sheet import Sheet
 from .question import ExamQuestion
 from .answer_key import AnswerKey
 from .exam_asset import ExamAsset
+from .exam_enrollment import ExamEnrollment  # ✅ 추가
 
 __all__ = [
     "Exam",
