@@ -14,6 +14,7 @@ from rest_framework import status
 
 from apps.domains.exams.models import ExamEnrollment
 from apps.domains.exams.models.exam import Exam
+
 from apps.domains.enrollment.models import SessionEnrollment
 
 from apps.domains.exams.serializers.exam_enrollment_serializer import (
@@ -31,44 +32,51 @@ class ExamEnrollmentManageView(APIView):
       시험(Exam)에 응시 대상자로 등록/제거 가능
 
     Endpoint:
-    - GET /api/v1/exams/{exam_id}/enrollments/
-    - PUT /api/v1/exams/{exam_id}/enrollments/
+    - GET /api/v1/exams/{exam_id}/enrollments/?session_id=123
+    - PUT /api/v1/exams/{exam_id}/enrollments/?session_id=123
 
     규칙:
-    - 시험은 최소 1개의 session과 연결되어 있어야 함 (Exam.sessions M2M)
+    - session_id는 반드시 필요 (M:N 구조이므로)
+    - 해당 session_id는 exam.sessions에 포함된 session만 허용
     - enrollment_ids는 반드시 "해당 세션 등록 학생"의 enrollment_id만 허용
     """
 
     permission_classes = [IsAuthenticated]
 
-    def _resolve_session_id(self, exam: Exam) -> int | None:
+    def _get_session_id_or_400(self, request, exam: Exam) -> int:
         """
-        ✅ Exam.sessions(M2M) 기준으로 session_id를 찾는다.
-        - 현재는 '첫 번째 세션'을 기준으로 동작.
-        - (추후) 프론트에서 session_id를 query로 넘기면 더 정확해짐.
+        ✅ M:N 구조 대응:
+        - session_id는 query param으로 받는다.
+        - 해당 session이 exam.sessions에 포함되지 않으면 400.
         """
+        raw = request.query_params.get("session_id") or request.data.get("session_id")
+        if not raw:
+            raise ValueError("session_id is required")
+
+        try:
+            session_id = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError("session_id must be integer")
+
+        # ✅ exam.sessions에 포함된 세션인지 검증
         if hasattr(exam, "sessions"):
-            s = exam.sessions.order_by("id").first()
-            return int(s.id) if s else None
+            ok = exam.sessions.filter(id=session_id).exists()
+            if not ok:
+                raise ValueError("This exam is not linked to the given session_id")
+        # (legacy) 단일 session 필드가 있는 경우만 fallback
+        elif hasattr(exam, "session_id"):
+            if int(getattr(exam, "session_id", 0) or 0) != session_id:
+                raise ValueError("This exam is not linked to the given session_id")
 
-        # legacy fallback
-        if hasattr(exam, "session_id") and exam.session_id:
-            return int(exam.session_id)
-
-        if hasattr(exam, "session") and exam.session:
-            return int(exam.session.id)
-
-        return None
+        return session_id
 
     def get(self, request, exam_id: int):
         exam = get_object_or_404(Exam, pk=exam_id)
 
-        session_id = self._resolve_session_id(exam)
-        if not session_id:
-            return Response(
-                {"detail": "이 시험은 session_id가 없어 대상자 관리를 할 수 없습니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        try:
+            session_id = self._get_session_id_or_400(request, exam)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         # 1) 세션 등록 학생 목록
         session_enrollments = (
@@ -80,7 +88,8 @@ class ExamEnrollmentManageView(APIView):
 
         # 2) 현재 시험에 선택된 enrollment_id set
         selected_ids: Set[int] = set(
-            ExamEnrollment.objects.filter(exam_id=exam_id)
+            ExamEnrollment.objects
+            .filter(exam_id=exam_id)
             .values_list("enrollment_id", flat=True)
         )
 
@@ -117,12 +126,10 @@ class ExamEnrollmentManageView(APIView):
     def put(self, request, exam_id: int):
         exam = get_object_or_404(Exam, pk=exam_id)
 
-        session_id = self._resolve_session_id(exam)
-        if not session_id:
-            return Response(
-                {"detail": "이 시험은 session_id가 없어 대상자 관리를 할 수 없습니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        try:
+            session_id = self._get_session_id_or_400(request, exam)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         ser = ExamEnrollmentUpdateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
