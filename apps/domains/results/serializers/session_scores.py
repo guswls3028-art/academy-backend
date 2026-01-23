@@ -28,30 +28,32 @@ class ScoreBlockSerializer(serializers.Serializer):
     lock_reason = serializers.CharField(allow_null=True, allow_blank=True)
 
 
-class SessionScoreRowSerializer(serializers.Serializer):
+class ExamScoreBlockSerializer(serializers.Serializer):
     """
-    ✅ 성적 탭 메인 테이블 Row (exam_id 포함)
-    - Session 1 : N Exam 구조 대응
-    - 프론트는 이 Row를 기준으로 우측 패널(결과 상세) 연결
+    ✅ Session 1:N Exam 대응
+    - exam_id + title + pass_score (meta 없이도 row 자체로 표시 가능)
+    - 내부 score block은 ScoreBlockSerializer를 재사용
     """
 
     exam_id = serializers.IntegerField()
+    title = serializers.CharField(allow_blank=True)
+    pass_score = serializers.FloatField()
+
+    block = ScoreBlockSerializer()
+
+
+class SessionScoreRowSerializer(serializers.Serializer):
+    """
+    ✅ 성적 탭 메인 테이블 Row
+    - 학생 1명당 1 Row
+    - exams: 시험 요약 리스트(1:N)
+    - homework: 과제 요약(세션 단위 스냅샷)
+    """
 
     enrollment_id = serializers.IntegerField()
     student_name = serializers.CharField(allow_blank=True)
 
-    exam = ScoreBlockSerializer()
+    exams = ExamScoreBlockSerializer(many=True)
     homework = ScoreBlockSerializer()
 
     updated_at = serializers.DateTimeField(allow_null=True)
-
-
-class SessionScoresResponseSerializer(serializers.Serializer):
-    """
-    리스트 응답 wrapper가 필요하면 확장 가능.
-    현재 프론트 계약은 "리스트"이므로 many=True로 사용한다.
-    """
-
-    # NOTE: 실제로 이 Serializer를 직접 쓰지 않을 수 있지만,
-    #       확장 포인트로 남겨둔다.
-    items = SessionScoreRowSerializer(many=True)

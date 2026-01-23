@@ -30,121 +30,21 @@ class HomeworkResultsConfig(AppConfig):
 
 
 ==========================================================================================
-# FILE: models.py
+# FILE: urls.py
 ==========================================================================================
-"""
-Homework Results Domain Models
+# PATH: apps/domains/homework_results/urls.py
 
-✅ 핵심 설계 (중요 / 레이어 고정)
-- homework_results 도메인은 "런타임 결과(스냅샷)"만 소유한다.
-- Homework 정의/정책은 homework 도메인 소유.
-- clinic 판단/차시 통과/집계는 progress 도메인 소유.
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 
-✅ 이 모델의 역할
-- Enrollment x Session 단위 Homework 결과 스냅샷(운영 입력 포함)
-- lock 상태, 운영 승인 여부, 점수(원점수/percent 모두)를 저장
-- SessionScores API는 이 엔티티를 'ScoreBlock'로 사용한다.
+from apps.domains.homework_results.views.homework_view import HomeworkViewSet
 
-🚫 이 모델이 하지 않는 것
-- 제출/원본/상태: submissions 도메인
-- 시험 채점/결과: results 도메인
-- 차시 통과/집계: progress 도메인
+router = DefaultRouter()
+router.register("", HomeworkViewSet, basename="homeworks")  # ✅ 핵심
 
-⚠️ DB 호환성 (중요)
-- 기존 homework 도메인의 HomeworkScore 테이블을 그대로 재사용한다.
-- db_table = "homework_homeworkscore" 고정
-- 따라서 DB DROP/CREATE 없이 "앱 소유권"만 이전한다.
-"""
-
-from __future__ import annotations
-
-from django.db import models
-
-from apps.api.common.models import TimestampModel
-from apps.domains.lectures.models import Session
-
-
-class HomeworkScore(TimestampModel):
-    """
-    Enrollment x Session 단위 숙제 점수/승인 스냅샷
-
-    DESIGN:
-    - 이 값은 progress 계산에 직접 사용되기보다는,
-      progress pipeline이 읽는 Submission.homework_* 를 갱신하기 위한 운영 입력/결과 스냅샷이다.
-    - 프론트는 이 엔티티를 'ScoreBlock'로 사용한다.
-    """
-
-    class LockReason(models.TextChoices):
-        GRADING = "GRADING", "채점중"
-        PUBLISHED = "PUBLISHED", "게시됨"
-        MANUAL = "MANUAL", "수동잠금"
-        OTHER = "OTHER", "기타"
-
-    enrollment_id = models.PositiveIntegerField(db_index=True)
-
-    session = models.ForeignKey(
-        Session,
-        on_delete=models.CASCADE,
-        related_name="homework_scores",
-    )
-
-    # -----------------------------
-    # 운영 점수
-    # -----------------------------
-    # 점수 입력 방식은 학원마다 다를 수 있음:
-    # - percent 입력: score=85, max_score=100
-    # - raw 입력: score=18, max_score=20
-    score = models.FloatField(null=True, blank=True)
-    max_score = models.FloatField(null=True, blank=True)
-
-    # 강사/운영 승인(통과 판단의 운영 입력값)
-    teacher_approved = models.BooleanField(default=False)
-
-    # 통과 여부(운영 표기용 스냅샷)
-    # - 실제 차시 통과(SessionProgress.homework_passed)는 ProgressPolicy에 의해 결정됨
-    passed = models.BooleanField(default=False)
-
-    # 클리닉 대상 여부 (scores 탭에서 바로 표현하기 위한 운영 스냅샷)
-    clinic_required = models.BooleanField(default=False)
-
-    # -----------------------------
-    # 편집 락
-    # -----------------------------
-    is_locked = models.BooleanField(default=False)
-    lock_reason = models.CharField(
-        max_length=30,
-        choices=LockReason.choices,
-        null=True,
-        blank=True,
-    )
-
-    # 누가 마지막으로 수정했는지(프로젝트 User 모델 의존 방지)
-    updated_by_user_id = models.PositiveIntegerField(null=True, blank=True)
-
-    # meta 확장
-    meta = models.JSONField(null=True, blank=True)
-
-    class Meta:
-        # ✅ DB 재사용 (중요)
-        db_table = "homework_homeworkscore"
-
-        constraints = [
-            models.UniqueConstraint(
-                fields=["enrollment_id", "session"],
-                name="unique_homework_score_per_enrollment_session",
-            )
-        ]
-        indexes = [
-            models.Index(fields=["enrollment_id", "updated_at"]),
-            models.Index(fields=["session", "updated_at"]),
-        ]
-        ordering = ["-updated_at", "-id"]
-
-    def __str__(self) -> str:
-        return (
-            f"HomeworkScore(enroll={self.enrollment_id}, "
-            f"session={self.session_id}, score={self.score}, max={self.max_score})"
-        )
+urlpatterns = [
+    path("", include(router.urls)),
+]
 
 
 ==========================================================================================
@@ -244,6 +144,496 @@ class Migration(migrations.Migration):
 
 
 ==========================================================================================
+# FILE: migrations/0002_homework_and_more.py
+==========================================================================================
+# PATH: apps/domains/homework_results/migrations/0002_homework_and_more.py
+# ✅ FIX: RenameIndex 제거 (DB에 해당 인덱스가 없어서 터짐)
+
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("lectures", "0002_remove_session_exam"),
+        ("homework_results", "0001_initial"),
+    ]
+
+    operations = [
+        # ✅ Homework 테이블 생성만 수행
+        migrations.CreateModel(
+            name="Homework",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("title", models.CharField(max_length=255)),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("DRAFT", "초안"),
+                            ("OPEN", "진행중"),
+                            ("CLOSED", "마감"),
+                        ],
+                        db_index=True,
+                        default="DRAFT",
+                        max_length=20,
+                    ),
+                ),
+                ("meta", models.JSONField(blank=True, null=True)),
+                (
+                    "session",
+                    models.ForeignKey(
+                        db_index=True,
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="homeworks",
+                        to="lectures.session",
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-updated_at", "-id"],
+            },
+        ),
+
+        # ✅ Homework 인덱스만 생성
+        migrations.AddIndex(
+            model_name="homework",
+            index=models.Index(
+                fields=["session", "updated_at"],
+                name="homework_re_session_2c33a5_idx",
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="homework",
+            index=models.Index(
+                fields=["session", "status"],
+                name="homework_re_session_c13723_idx",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0003_fix_homeworkscore_table.py
+==========================================================================================
+# PATH: apps/domains/homework_results/migrations/0003_fix_homeworkscore_table.py
+"""
+✅ FIX MIGRATION (DB 정합성 보정)
+
+목표:
+- homework_results_homeworkscore 테이블을 "정식 생성"해서 DB를 맞춘다.
+- 과거에 잘못된 state(db_table=homework_homeworkscore)가 있었더라도,
+  RenameIndex / AlterModelTable 같은 위험한 자동 migration이 나오지 않도록 막는다.
+
+중요:
+- 이미 DB에 homework_results_homeworkscore가 존재하면,
+  이 migration은 "적용되지 않거나" 에러가 날 수 있다.
+  그 경우 --fake 로 state만 맞추면 된다.
+"""
+
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+    dependencies = [
+        ("homework_results", "0002_homework_and_more"),
+        ("lectures", "0002_remove_session_exam"),
+    ]
+
+    operations = [
+        migrations.SeparateDatabaseAndState(
+            # ✅ DB에 실제 테이블 생성
+            database_operations=[
+                migrations.CreateModel(
+                    name="HomeworkScore",
+                    fields=[
+                        ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                        ("created_at", models.DateTimeField(auto_now_add=True)),
+                        ("updated_at", models.DateTimeField(auto_now=True)),
+
+                        ("enrollment_id", models.PositiveIntegerField(db_index=True)),
+
+                        ("score", models.FloatField(blank=True, null=True)),
+                        ("max_score", models.FloatField(blank=True, null=True)),
+
+                        ("teacher_approved", models.BooleanField(default=False)),
+                        ("passed", models.BooleanField(default=False)),
+                        ("clinic_required", models.BooleanField(default=False)),
+
+                        ("is_locked", models.BooleanField(default=False)),
+                        (
+                            "lock_reason",
+                            models.CharField(
+                                blank=True,
+                                choices=[
+                                    ("GRADING", "채점중"),
+                                    ("PUBLISHED", "게시됨"),
+                                    ("MANUAL", "수동잠금"),
+                                    ("OTHER", "기타"),
+                                ],
+                                max_length=30,
+                                null=True,
+                            ),
+                        ),
+
+                        ("updated_by_user_id", models.PositiveIntegerField(blank=True, null=True)),
+                        ("meta", models.JSONField(blank=True, null=True)),
+
+                        (
+                            "session",
+                            models.ForeignKey(
+                                on_delete=django.db.models.deletion.CASCADE,
+                                related_name="homework_scores",
+                                to="lectures.session",
+                            ),
+                        ),
+                    ],
+                    options={
+                        "db_table": "homework_results_homeworkscore",
+                        "ordering": ["-updated_at", "-id"],
+                    },
+                ),
+                migrations.AddConstraint(
+                    model_name="homeworkscore",
+                    constraint=models.UniqueConstraint(
+                        fields=("enrollment_id", "session"),
+                        name="unique_homework_score_per_enrollment_session",
+                    ),
+                ),
+                migrations.AddIndex(
+                    model_name="homeworkscore",
+                    index=models.Index(
+                        fields=["enrollment_id", "updated_at"],
+                        name="hwres_enroll_upd_idx",
+                    ),
+                ),
+                migrations.AddIndex(
+                    model_name="homeworkscore",
+                    index=models.Index(
+                        fields=["session", "updated_at"],
+                        name="hwres_session_upd_idx",
+                    ),
+                ),
+            ],
+
+            # ✅ state는 "이미 모델이 있다"고만 맞춰준다.
+            # (모델 state를 새로 만들지 않아서, RenameIndex/AlterTable 유발 방지)
+            state_operations=[],
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0004_alter_homeworkscore_table.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-23 06:58
+
+from django.db import migrations
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("homework_results", "0003_fix_homeworkscore_table"),
+    ]
+
+    operations = [
+        migrations.AlterModelTable(
+            name="homeworkscore",
+            table="homework_results_homeworkscore",
+        ),
+    ]
+
+
+==========================================================================================
 # FILE: migrations/__init__.py
 ==========================================================================================
 # apps/domains/homework_results/migrations/__init__.py
+
+
+==========================================================================================
+# FILE: models/__init__.py
+==========================================================================================
+# PATH: apps/domains/homework_results/models/__init__.py
+
+from .homework import Homework
+from .score import HomeworkScore
+
+__all__ = ["Homework", "HomeworkScore"]
+
+
+==========================================================================================
+# FILE: models/homework.py
+==========================================================================================
+# PATH: apps/domains/homework_results/models/homework.py
+"""
+Homework Entity (Runtime / Operational)
+
+✅ 목적
+- "과제 목록/상세"를 제공하기 위한 실체 엔티티
+- 프론트 좌측 패널(시험/과제 리스트)에서 사용
+- HomeworkPolicy(세션 1:1 정책)과는 별개로,
+  실제 "과제"는 세션 내 여러 개가 존재할 수 있다.
+
+✅ 설계 기준
+- 시험(Exam)처럼 Session 1:N 구조 지원
+- HomeworkScore는 Enrollment x Session 스냅샷이지만,
+  Homework 자체는 "과제 항목" 메타 정보다.
+
+⚠️ 주의
+- 기존 homework 도메인은 정책만 유지한다.
+- 여기서는 "운영/리소스 엔티티"만 만든다.
+"""
+
+from __future__ import annotations
+
+from django.db import models
+
+from apps.api.common.models import TimestampModel
+from apps.domains.lectures.models import Session
+
+
+class Homework(TimestampModel):
+    """
+    Session 단위 과제 엔티티
+
+    최소 필드:
+    - session: 소속 세션
+    - title: 제목
+    - status: 상태 (DRAFT/OPEN/CLOSED)
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "초안"
+        OPEN = "OPEN", "진행중"
+        CLOSED = "CLOSED", "마감"
+
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="homeworks",
+        db_index=True,
+    )
+
+    title = models.CharField(max_length=255)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        db_index=True,
+    )
+
+    # 확장용 (추후: 제출 방식/마감일/공지 등)
+    meta = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+        indexes = [
+            models.Index(fields=["session", "updated_at"]),
+            models.Index(fields=["session", "status"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"Homework(id={self.id}, session={self.session_id}, title={self.title})"
+
+
+==========================================================================================
+# FILE: models/score.py
+==========================================================================================
+# PATH: apps/domains/homework_results/models/score.py
+"""
+Homework Results Domain Models (Score Snapshot)
+
+✅ 핵심 설계 (중요 / 레이어 고정)
+- homework_results 도메인은 "런타임 결과(스냅샷)"만 소유한다.
+- Homework 정의/정책은 homework 도메인 소유.
+- clinic 판단/차시 통과/집계는 progress 도메인 소유.
+
+⚠️ DB 현실 반영 (중요)
+- 기존 DB에 homework_homeworkscore 테이블이 "존재하지 않음"이 확인됨
+- 따라서 '기존 테이블 재사용(db_table 고정)' 전략은 이 DB에서는 불가능
+- ✅ 정식으로 homework_results_homeworkscore 테이블을 생성하여 정합하게 맞춘다.
+"""
+
+from __future__ import annotations
+
+from django.db import models
+
+from apps.api.common.models import TimestampModel
+from apps.domains.lectures.models import Session
+
+
+class HomeworkScore(TimestampModel):
+    """
+    Enrollment x Session 단위 숙제 점수/승인 스냅샷
+    """
+
+    class LockReason(models.TextChoices):
+        GRADING = "GRADING", "채점중"
+        PUBLISHED = "PUBLISHED", "게시됨"
+        MANUAL = "MANUAL", "수동잠금"
+        OTHER = "OTHER", "기타"
+
+    enrollment_id = models.PositiveIntegerField(db_index=True)
+
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="homework_scores",
+    )
+
+    # 운영 점수 (percent/raw 둘 다 가능)
+    score = models.FloatField(null=True, blank=True)
+    max_score = models.FloatField(null=True, blank=True)
+
+    teacher_approved = models.BooleanField(default=False)
+
+    passed = models.BooleanField(default=False)
+    clinic_required = models.BooleanField(default=False)
+
+    is_locked = models.BooleanField(default=False)
+    lock_reason = models.CharField(
+        max_length=30,
+        choices=LockReason.choices,
+        null=True,
+        blank=True,
+    )
+
+    updated_by_user_id = models.PositiveIntegerField(null=True, blank=True)
+    meta = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        # ✅ 정식 소유 테이블로 고정 (CreateModel 유도)
+        db_table = "homework_results_homeworkscore"
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["enrollment_id", "session"],
+                name="unique_homework_score_per_enrollment_session",
+            )
+        ]
+
+        # ✅ 중요: 인덱스 name을 "예전 state(0001)"와 동일하게 고정
+        # 그래야 Django가 RenameIndex migration을 만들지 않는다.
+        indexes = [
+            models.Index(
+                fields=["enrollment_id", "updated_at"],
+                name="hwres_enroll_upd_idx",
+            ),
+            models.Index(
+                fields=["session", "updated_at"],
+                name="hwres_session_upd_idx",
+            ),
+        ]
+
+        ordering = ["-updated_at", "-id"]
+
+
+==========================================================================================
+# FILE: serializers/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: serializers/homework.py
+==========================================================================================
+# PATH: apps/domains/homework_results/serializers/homework.py
+
+from rest_framework import serializers
+
+from apps.domains.homework_results.models import Homework
+
+
+
+class HomeworkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Homework
+        fields = [
+            "id",
+            "session",
+            "title",
+            "status",
+            "meta",
+            "updated_at",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "updated_at",
+            "created_at",
+        ]
+
+
+==========================================================================================
+# FILE: views/__init__.py
+==========================================================================================
+# PATH: apps/domains/homework_results/views/__init__.py
+
+from .homework_view import HomeworkViewSet
+
+__all__ = ["HomeworkViewSet"]
+
+
+==========================================================================================
+# FILE: views/homework_view.py
+==========================================================================================
+# PATH: apps/domains/homework_results/views/homework_view.py
+"""
+Homework API (List/Retrieve/Create)
+
+✅ 프론트 요구사항 (즉시 해결 포인트)
+- GET /homeworks/?session_id={sessionId}
+- GET /homeworks/{id}/
+
+(선택)
+- POST /homeworks/   ← "과제 추가" 모달이 실제 생성하려면 필요
+"""
+
+from __future__ import annotations
+
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.filters import OrderingFilter
+
+from django.db.models import QuerySet
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+
+from apps.domains.homework_results.models import Homework
+from apps.domains.homework_results.serializers.homework import HomeworkSerializer
+
+class HomeworkViewSet(ModelViewSet):
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    serializer_class = HomeworkSerializer
+
+    filter_backends = [OrderingFilter]
+    ordering_fields = ["id", "created_at", "updated_at", "status"]
+    ordering = ["-updated_at", "-id"]
+
+    def get_queryset(self) -> QuerySet[Homework]:
+        qs = Homework.objects.select_related("session", "session__lecture")
+
+        # ✅ 프론트가 session_id로 필터링
+        session_id = self.request.query_params.get("session_id")
+        if session_id:
+            try:
+                sid = int(session_id)
+                qs = qs.filter(session_id=sid)
+            except Exception:
+                qs = qs.none()
+
+        return qs

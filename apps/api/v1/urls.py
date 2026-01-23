@@ -1,4 +1,4 @@
-# apps/api/v1/urls.py
+# PATH: apps/api/v1/urls.py
 
 from django.urls import path, include
 from apps.support.media.views import VideoProcessingCompleteView
@@ -12,9 +12,15 @@ urlpatterns = [
     path("submissions/", include("apps.domains.submissions.urls")),
     path("exams/", include("apps.domains.exams.urls")),
     path("progress/", include("apps.domains.progress.urls")),
+
+    # ✅ results (중복 제거)
     path("results/", include("apps.domains.results.urls")),
-        # ✅ 추가
+
+    # ✅ homework policy/score endpoints (중복 제거)
     path("homework/", include("apps.domains.homework.urls")),
+
+    # ✅ NEW: /homeworks/ 엔티티 엔드포인트는 명시적으로 분리
+    path("homeworks/", include("apps.domains.homework_results.urls")),
 
     path("core/", include("apps.core.urls")),
     path("media/", include("apps.support.media.urls")),
@@ -29,6 +35,6 @@ urlpatterns = [
         name="video-processing-complete",
     ),
 
-    #학생용앱 (사용자가 학생)
+    # 학생용앱
     path("student/", include("apps.domains.student_app.urls")),
 ]
