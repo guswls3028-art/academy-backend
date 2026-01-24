@@ -17,6 +17,10 @@ GET /api/v1/results/admin/sessions/<session_id>/scores/
 - exam: results(Result + Exam.pass_score)
 - homework: homework_results.HomeworkScore
 - clinic_required: progress.ClinicLink(is_auto=True)
+
+📌 중요 설계 결정
+- enrollment 모수는 SessionProgress ❌
+- 시험 OR 과제에 한 번이라도 연결된 Enrollment 기준 ✅
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from django.db.models import Q   # ✅ 중요: enrollment OR 조건용
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -37,7 +42,7 @@ from apps.domains.results.utils.result_queries import latest_results_per_enrollm
 from apps.domains.results.serializers.session_scores import SessionScoreRowSerializer
 
 from apps.domains.lectures.models import Session
-from apps.domains.progress.models import SessionProgress, ClinicLink
+from apps.domains.progress.models import ClinicLink   # SessionProgress ❌ 제거
 
 # ✅ 단일 진실
 from apps.domains.homework_results.models import HomeworkScore
@@ -45,6 +50,10 @@ from apps.domains.enrollment.models import Enrollment
 
 
 def _safe_student_name(enrollment: Enrollment) -> str:
+    """
+    Enrollment → 표시용 학생명 안전 추출
+    (student / user / legacy 필드 대응)
+    """
     try:
         if hasattr(enrollment, "student") and enrollment.student:
             s = enrollment.student
@@ -77,27 +86,44 @@ class SessionScoresView(APIView):
         session = get_object_or_404(Session, id=int(session_id))
 
         # -------------------------------------------------
-        # 1) enrollment 모수 (SessionProgress 기준)
-        # -------------------------------------------------
-        sp_qs = SessionProgress.objects.filter(session=session)
-
-        enrollment_id_param = request.query_params.get("enrollment_id")
-        if enrollment_id_param:
-            try:
-                sp_qs = sp_qs.filter(enrollment_id=int(enrollment_id_param))
-            except Exception:
-                pass
-
-        enrollment_ids = list(
-            sp_qs.values_list("enrollment_id", flat=True).distinct()
-        )
-
-        # -------------------------------------------------
-        # 2) Session ↔ Exam
+        # 0) Session ↔ Exam (단일 진실)
         # -------------------------------------------------
         exams = list(get_exams_for_session(session))
         exam_ids = [int(e.id) for e in exams]
 
+        # -------------------------------------------------
+        # 1) enrollment 모수
+        #    - 시험 OR 과제에 한 번이라도 연결된 Enrollment
+        # -------------------------------------------------
+        enrollment_qs = Enrollment.objects.filter(
+            Q(
+                id__in=HomeworkScore.objects.filter(session=session)
+                .values_list("enrollment_id", flat=True)
+            )
+            |
+            Q(
+                id__in=Result.objects.filter(
+                    target_type="exam",
+                    target_id__in=exam_ids,
+                ).values_list("enrollment_id", flat=True)
+            )
+        ).distinct()
+
+        # 단일 enrollment 조회용 (디버그/사이드패널)
+        enrollment_id_param = request.query_params.get("enrollment_id")
+        if enrollment_id_param:
+            try:
+                enrollment_qs = enrollment_qs.filter(id=int(enrollment_id_param))
+            except Exception:
+                pass
+
+        enrollment_ids = list(
+            enrollment_qs.values_list("id", flat=True)
+        )
+
+        # -------------------------------------------------
+        # 2) Meta (프론트 표시용)
+        # -------------------------------------------------
         meta = {
             "exams": [
                 {
@@ -114,7 +140,7 @@ class SessionScoresView(APIView):
             return Response({"meta": meta, "rows": []})
 
         # -------------------------------------------------
-        # 3) Clinic 대상자
+        # 3) Clinic 대상자 (보조 정보)
         # -------------------------------------------------
         clinic_ids: Set[int] = set(
             ClinicLink.objects.filter(session=session, is_auto=True)
@@ -134,7 +160,7 @@ class SessionScoresView(APIView):
         }
 
         # -------------------------------------------------
-        # 5) HomeworkScore
+        # 5) HomeworkScore map
         # -------------------------------------------------
         hw_qs = HomeworkScore.objects.filter(
             session=session,
@@ -143,7 +169,7 @@ class SessionScoresView(APIView):
         hw_map = {int(h.enrollment_id): h for h in hw_qs}
 
         # -------------------------------------------------
-        # 6) Exam Result map
+        # 6) Exam Result map (exam_id → enrollment_id → Result)
         # -------------------------------------------------
         result_map: Dict[int, Dict[int, Result]] = {}
         for exid in exam_ids:
@@ -199,9 +225,10 @@ class SessionScoresView(APIView):
                 r: Optional[Result] = result_map.get(int(exid), {}).get(eid_i)
 
                 if r is None:
+                    # ❗ 미응시 / 미산출 상태
                     exam_score = None
                     exam_max = None
-                    exam_passed = False
+                    exam_passed = None
                     exam_updated_at = None
                     exam_locked = False
                     exam_lock_reason = None
@@ -231,7 +258,7 @@ class SessionScoresView(APIView):
                         "block": {
                             "score": exam_score,
                             "max_score": exam_max,
-                            "passed": bool(exam_passed),
+                            "passed": exam_passed,   # ✅ None 그대로 전달
                             "clinic_required": bool(clinic_required),
                             "is_locked": bool(exam_locked),
                             "lock_reason": exam_lock_reason,
@@ -244,7 +271,7 @@ class SessionScoresView(APIView):
             if hw is None:
                 hw_score = None
                 hw_max = None
-                hw_passed = False
+                hw_passed = None     # ❗ 미산출
                 hw_updated_at = None
                 hw_locked = False
                 hw_lock_reason = None
@@ -275,7 +302,7 @@ class SessionScoresView(APIView):
                     "homework": {
                         "score": hw_score,
                         "max_score": hw_max,
-                        "passed": bool(hw_passed),
+                        "passed": hw_passed,   # ✅ None 유지
                         "clinic_required": bool(clinic_required),
                         "is_locked": bool(hw_locked),
                         "lock_reason": hw_lock_reason,
