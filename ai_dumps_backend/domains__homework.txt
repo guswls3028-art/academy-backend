@@ -54,190 +54,6 @@ class HomeworkScoreFilter(django_filters.FilterSet):
 
 
 ==========================================================================================
-# FILE: models.py
-==========================================================================================
-# PATH: apps/domains/homework/models.py
-# 역할: Session 단위 HomeworkPolicy(커트라인%/반올림/클리닉) 정의 레이어
-
-"""
-Homework Domain Models
-
-✅ 설계 고정(중요)
-- homework 도메인은 "정의/정책" 레이어다.
-- 런타임 결과(점수/락/스냅샷)는 homework_results 도메인 소유.
-
-✅ homework 도메인의 책임
-- Session 단위 과제 판정 정책(HomeworkPolicy)
-  - 커트라인 (%)
-  - 반올림 단위 (%)
-  - 클리닉 연동 여부
-
-✅ MVP 확정 요구사항 (2026-01-21)
-1) 커트라인은 % 기반
-2) 점수 입력 방식은 학원마다 다를 수 있음:
-   - percent 직접 입력 (0~100)
-   - raw 점수 입력 (예: 18/20)
-   → percent 계산은 homework.utils에서 수행 가능(정책 기반)
-
-⚠️ 중요:
-- 운영 점수 스냅샷(HomeworkScore)은 homework_results로 이전됨.
-"""
-
-from __future__ import annotations
-
-from django.db import models
-
-from apps.api.common.models import TimestampModel
-from apps.domains.lectures.models import Session
-
-
-class HomeworkPolicy(TimestampModel):
-    """
-    Session 단위 과제 판정 정책
-
-    ✅ 요구사항
-    - 커트라인은 % 기반 (cutline_percent)
-    - 점수는 score/max_score 기반으로 percent 계산 후 cutline 비교
-    """
-
-    session = models.OneToOneField(
-        Session,
-        on_delete=models.CASCADE,
-        related_name="homework_policy",
-    )
-
-    # 통과 커트라인 (%)
-    cutline_percent = models.PositiveSmallIntegerField(default=80)
-
-    # 반올림 단위(%) - 예: 5면 83% → 85%로 반올림
-    round_unit_percent = models.PositiveSmallIntegerField(default=5)
-
-    # 클리닉 연동 여부
-    clinic_enabled = models.BooleanField(default=True)
-
-    # 과제 불합격 시 클리닉 대상 여부
-    clinic_on_fail = models.BooleanField(default=True)
-
-    class Meta:
-        ordering = ["-updated_at"]
-
-    def __str__(self):
-        return (
-            f"HomeworkPolicy(session={self.session_id}, "
-            f"cutline={self.cutline_percent}%, unit={self.round_unit_percent}%)"
-        )
-
-
-==========================================================================================
-# FILE: serializers.py
-==========================================================================================
-# PATH: apps/domains/homework/serializers.py
-# 역할: Policy 조회/패치 + Score 조회/패치 + quick_patch 입력 스키마
-
-"""
-Homework Domain Serializers
-
-✅ 메모 (MVP)
-- HomeworkPolicy는 session 당 1개 보장
-- cutline_percent(%) 는 프론트 Setup에서 수정 가능 (PATCH 허용)
-- 점수 방식은 학원마다 다르므로 score/max_score 형태로 저장하고,
-  backend에서 percent로 판정해서 passed/clinic_required를 내려준다.
-
-⚠️ Score 스냅샷의 단일 진실은 homework_results 도메인이다.
-- 다만 /homework/scores/* 라우팅은 호환을 위해 여기서 유지한다.
-"""
-
-from rest_framework import serializers
-
-from .models import HomeworkPolicy
-
-# ✅ 단일 진실: homework score snapshot
-from apps.domains.homework_results.models import HomeworkScore
-
-
-class HomeworkPolicySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = HomeworkPolicy
-        fields = [
-            "id",
-            "session",
-            "cutline_percent",
-            "round_unit_percent",
-            "clinic_enabled",
-            "clinic_on_fail",
-            "updated_at",
-            "created_at",
-        ]
-        read_only_fields = ["id", "session", "updated_at", "created_at"]
-
-
-class HomeworkPolicyPatchSerializer(serializers.ModelSerializer):
-    """
-    ✅ PATCH 전용
-    - 프론트 계약에 맞춰 수정 가능 필드만 허용
-    """
-
-    class Meta:
-        model = HomeworkPolicy
-        fields = [
-            "cutline_percent",
-            "round_unit_percent",
-            "clinic_enabled",
-            "clinic_on_fail",
-        ]
-
-
-class HomeworkScoreSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = HomeworkScore
-        fields = [
-            "id",
-            "session",
-            "enrollment_id",
-            "score",
-            "max_score",
-            "passed",
-            "clinic_required",
-            "teacher_approved",
-            "is_locked",
-            "lock_reason",
-            "updated_at",
-            "created_at",
-        ]
-        read_only_fields = [
-            "id",
-            "session",
-            "enrollment_id",
-            "passed",
-            "clinic_required",
-            "is_locked",
-            "lock_reason",
-            "updated_at",
-            "created_at",
-        ]
-
-
-class HomeworkQuickPatchSerializer(serializers.Serializer):
-    """
-    ✅ 조교 점수 입력 Quick Patch (LOCKED SPEC)
-
-    지원 입력:
-    - percent 입력: score=85, max_score 생략 (None)
-    - raw 입력: score=18, max_score=20
-
-    해석 규칙 (backend 단일 진실):
-    - max_score == None → score를 percent 값으로 간주
-    - max_score != None → score/max_score*100 으로 percent 계산
-    """
-
-    session_id = serializers.IntegerField()
-    enrollment_id = serializers.IntegerField()
-
-    score = serializers.FloatField()
-    max_score = serializers.FloatField(required=False, allow_null=True)
-
-
-==========================================================================================
 # FILE: urls.py
 ==========================================================================================
 # PATH: apps/domains/homework/urls.py
@@ -329,10 +145,328 @@ class Migration(migrations.Migration):
 
 
 ==========================================================================================
+# FILE: migrations/0002_homeworkenrollment.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-24 02:23
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("homework", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="HomeworkEnrollment",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("session_id", models.IntegerField(db_index=True)),
+                ("enrollment_id", models.IntegerField(db_index=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+            ],
+            options={
+                "db_table": "homework_enrollment",
+                "constraints": [
+                    models.UniqueConstraint(
+                        fields=("session_id", "enrollment_id"),
+                        name="uniq_homework_enrollment_session_enrollment",
+                    )
+                ],
+            },
+        ),
+    ]
+
+
+==========================================================================================
 # FILE: migrations/__init__.py
 ==========================================================================================
 # PATH: apps/domains/homework/migrations/__init__.py
 # 역할: migration 패키지
+
+
+==========================================================================================
+# FILE: models/__init__.py
+==========================================================================================
+# PATH: apps/domains/homework/models/__init__.py
+
+from .homework_enrollment import HomeworkEnrollment
+from .homework_policy import HomeworkPolicy
+
+__all__ = [
+    "HomeworkEnrollment",
+    "HomeworkPolicy",
+]
+
+
+==========================================================================================
+# FILE: models/homework_enrollment.py
+==========================================================================================
+# PATH: apps/domains/homework/models/homework_enrollment.py
+from __future__ import annotations
+
+from django.db import models
+
+
+class HomeworkEnrollment(models.Model):
+    """
+    HomeworkEnrollment (Session 1:1 과제 응시 등록)
+
+    ✅ 단일 진실:
+    - "해당 세션에서 과제를 수행해야 하는 학생" 등록 엔티티
+    - HomeworkScore(점수 스냅샷)와 별개
+      -> 등록만 되어도 성적탭 rows에 포함되게 만들기 위함
+
+    Key:
+    - session_id + enrollment_id unique
+    """
+
+    session_id = models.IntegerField(db_index=True)
+    enrollment_id = models.IntegerField(db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "homework_enrollment"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["session_id", "enrollment_id"],
+                name="uniq_homework_enrollment_session_enrollment",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"HomeworkEnrollment(session={self.session_id}, enrollment={self.enrollment_id})"
+
+
+==========================================================================================
+# FILE: models/homework_policy.py
+==========================================================================================
+# PATH: apps/domains/homework/models/homework_policy.py
+"""
+HomeworkPolicy Model
+
+✅ 설계 고정(중요)
+- homework 도메인은 "정의/정책" 레이어다.
+- 런타임 결과(점수/락/스냅샷)는 homework_results 도메인 소유.
+
+✅ homework 도메인의 책임
+- Session 단위 과제 판정 정책(HomeworkPolicy)
+  - 커트라인 (%)
+  - 반올림 단위 (%)
+  - 클리닉 연동 여부
+"""
+
+from __future__ import annotations
+
+from django.db import models
+
+from apps.api.common.models import TimestampModel
+from apps.domains.lectures.models import Session
+
+
+class HomeworkPolicy(TimestampModel):
+    """
+    Session 단위 과제 판정 정책
+
+    ✅ 요구사항
+    - 커트라인은 % 기반 (cutline_percent)
+    - 점수는 score/max_score 기반으로 percent 계산 후 cutline 비교
+    """
+
+    session = models.OneToOneField(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="homework_policy",
+    )
+
+    # 통과 커트라인 (%)
+    cutline_percent = models.PositiveSmallIntegerField(default=80)
+
+    # 반올림 단위(%) - 예: 5면 83% → 85%로 반올림
+    round_unit_percent = models.PositiveSmallIntegerField(default=5)
+
+    # 클리닉 연동 여부
+    clinic_enabled = models.BooleanField(default=True)
+
+    # 과제 불합격 시 클리닉 대상 여부
+    clinic_on_fail = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return (
+            f"HomeworkPolicy(session={self.session_id}, "
+            f"cutline={self.cutline_percent}%, unit={self.round_unit_percent}%)"
+        )
+
+
+==========================================================================================
+# FILE: serializers/__init__.py
+==========================================================================================
+# PATH: apps/domains/homework/serializers/__init__.py
+
+from .core import (
+    HomeworkPolicySerializer,
+    HomeworkPolicyPatchSerializer,
+    HomeworkScoreSerializer,
+    HomeworkQuickPatchSerializer,
+)
+
+from .homework_enrollment_serializer import (
+    HomeworkEnrollmentRowSerializer,
+    HomeworkEnrollmentUpdateSerializer,
+)
+
+__all__ = [
+    "HomeworkPolicySerializer",
+    "HomeworkPolicyPatchSerializer",
+    "HomeworkScoreSerializer",
+    "HomeworkQuickPatchSerializer",
+    "HomeworkEnrollmentRowSerializer",
+    "HomeworkEnrollmentUpdateSerializer",
+]
+
+
+==========================================================================================
+# FILE: serializers/core.py
+==========================================================================================
+# PATH: apps/domains/homework/serializers/core.py
+"""
+Homework Domain Serializers (core)
+
+✅ 포함
+- HomeworkPolicySerializer / PatchSerializer
+- HomeworkScoreSerializer
+- HomeworkQuickPatchSerializer
+
+⚠️ 주의
+- 점수 스냅샷 단일 진실은 homework_results.HomeworkScore
+- /homework/scores/* 는 프론트 호환을 위해 유지
+"""
+
+from __future__ import annotations
+
+from rest_framework import serializers
+
+from apps.domains.homework.models import HomeworkPolicy
+from apps.domains.homework_results.models import HomeworkScore
+
+
+class HomeworkPolicySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HomeworkPolicy
+        fields = [
+            "id",
+            "session",
+            "cutline_percent",
+            "round_unit_percent",
+            "clinic_enabled",
+            "clinic_on_fail",
+            "updated_at",
+            "created_at",
+        ]
+        read_only_fields = ["id", "session", "updated_at", "created_at"]
+
+
+class HomeworkPolicyPatchSerializer(serializers.ModelSerializer):
+    """
+    ✅ PATCH 전용
+    - 프론트 계약에 맞춰 수정 가능 필드만 허용
+    """
+
+    class Meta:
+        model = HomeworkPolicy
+        fields = [
+            "cutline_percent",
+            "round_unit_percent",
+            "clinic_enabled",
+            "clinic_on_fail",
+        ]
+
+
+class HomeworkScoreSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HomeworkScore
+        fields = [
+            "id",
+            "session",
+            "enrollment_id",
+            "score",
+            "max_score",
+            "passed",
+            "clinic_required",
+            "teacher_approved",
+            "is_locked",
+            "lock_reason",
+            "updated_at",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "session",
+            "enrollment_id",
+            "passed",
+            "clinic_required",
+            "is_locked",
+            "lock_reason",
+            "updated_at",
+            "created_at",
+        ]
+
+
+class HomeworkQuickPatchSerializer(serializers.Serializer):
+    """
+    ✅ 조교 점수 입력 Quick Patch (LOCKED SPEC)
+
+    지원 입력:
+    - percent 입력: score=85, max_score 생략 (None)
+    - raw 입력: score=18, max_score=20
+
+    해석 규칙 (backend 단일 진실):
+    - max_score == None → score를 percent 값으로 간주
+    - max_score != None → score/max_score*100 으로 percent 계산
+    """
+
+    session_id = serializers.IntegerField()
+    enrollment_id = serializers.IntegerField()
+
+    score = serializers.FloatField()
+    max_score = serializers.FloatField(required=False, allow_null=True)
+
+
+==========================================================================================
+# FILE: serializers/homework_enrollment_serializer.py
+==========================================================================================
+# PATH: apps/domains/homework/serializers/homework_enrollment_serializer.py
+from __future__ import annotations
+
+from rest_framework import serializers
+
+
+class HomeworkEnrollmentRowSerializer(serializers.Serializer):
+    enrollment_id = serializers.IntegerField()
+    student_name = serializers.CharField(allow_blank=True, required=False)
+    is_selected = serializers.BooleanField()
+
+
+class HomeworkEnrollmentUpdateSerializer(serializers.Serializer):
+    enrollment_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=True,
+        required=True,
+    )
 
 
 ==========================================================================================
@@ -462,6 +596,159 @@ __all__ = [
     "HomeworkScoreViewSet",
     "HomeworkPolicyViewSet",
 ]
+
+
+==========================================================================================
+# FILE: views/homework_enrollment_view.py
+==========================================================================================
+# PATH: apps/domains/homework/views/homework_enrollment_view.py
+from __future__ import annotations
+
+from typing import List, Set
+
+from django.db import transaction
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+
+from apps.domains.enrollment.models import SessionEnrollment
+from apps.domains.homework.models import HomeworkEnrollment
+from apps.domains.homework.serializers.homework_enrollment_serializer import (
+    HomeworkEnrollmentRowSerializer,
+    HomeworkEnrollmentUpdateSerializer,
+)
+
+
+class HomeworkEnrollmentManageView(APIView):
+    """
+    Homework Enrollment Manage API
+
+    ✅ 요구사항:
+    - 세션(SessionEnrollment) 학생 중에서 선택하여
+      과제(Homework)에 응시 대상자로 등록/제거 가능
+
+    Endpoint:
+    - GET /api/v1/homework/enrollments/?session_id=123
+    - PUT /api/v1/homework/enrollments/?session_id=123
+
+    규칙:
+    - session_id는 반드시 필요
+    - enrollment_ids는 반드시 "해당 세션 등록 학생"의 enrollment_id만 허용
+    - 저장 방식: 완전 치환(replace)
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_session_id_or_400(self, request) -> int:
+        raw = request.query_params.get("session_id") or request.data.get("session_id")
+        if not raw:
+            raise ValueError("session_id is required")
+
+        try:
+            session_id = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError("session_id must be integer")
+
+        return session_id
+
+    def get(self, request):
+        try:
+            session_id = self._get_session_id_or_400(request)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1) 세션 등록 학생 목록
+        session_enrollments = (
+            SessionEnrollment.objects
+            .filter(session_id=session_id)
+            .select_related("enrollment")
+            .order_by("id")
+        )
+
+        # 2) 현재 과제에 선택된 enrollment_id set
+        selected_ids: Set[int] = set(
+            HomeworkEnrollment.objects
+            .filter(session_id=session_id)
+            .values_list("enrollment_id", flat=True)
+        )
+
+        # 3) UI row 구성
+        items: List[dict] = []
+        for se in session_enrollments:
+            enrollment = getattr(se, "enrollment", None)
+            student_name = ""
+
+            if enrollment is not None:
+                student = getattr(enrollment, "student", None)
+                if student is not None:
+                    student_name = str(getattr(student, "name", "") or "")
+                else:
+                    student_name = str(getattr(enrollment, "student_name", "") or "")
+
+            items.append(
+                {
+                    "enrollment_id": int(se.enrollment_id),
+                    "student_name": student_name,
+                    "is_selected": int(se.enrollment_id) in selected_ids,
+                }
+            )
+
+        return Response(
+            {
+                "session_id": int(session_id),
+                "items": HomeworkEnrollmentRowSerializer(items, many=True).data,
+            }
+        )
+
+    @transaction.atomic
+    def put(self, request):
+        try:
+            session_id = self._get_session_id_or_400(request)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        ser = HomeworkEnrollmentUpdateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        incoming_ids = set(map(int, ser.validated_data["enrollment_ids"]))
+
+        # ✅ 세션 등록 학생에 포함되는 enrollment_id만 허용
+        valid_ids = set(
+            SessionEnrollment.objects
+            .filter(session_id=session_id)
+            .values_list("enrollment_id", flat=True)
+        )
+
+        invalid = list(incoming_ids - valid_ids)
+        if invalid:
+            return Response(
+                {
+                    "detail": "세션 등록 학생이 아닌 enrollment_id가 포함되어 있습니다.",
+                    "invalid_enrollment_ids": invalid,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ✅ 완전 치환 방식
+        HomeworkEnrollment.objects.filter(session_id=session_id).delete()
+
+        bulk = [
+            HomeworkEnrollment(session_id=session_id, enrollment_id=eid)
+            for eid in sorted(incoming_ids)
+        ]
+        if bulk:
+            HomeworkEnrollment.objects.bulk_create(bulk, ignore_conflicts=True)
+
+        return Response(
+            {
+                "session_id": int(session_id),
+                "selected_count": len(incoming_ids),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 ==========================================================================================

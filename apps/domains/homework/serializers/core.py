@@ -1,24 +1,22 @@
-# PATH: apps/domains/homework/serializers.py
-# 역할: Policy 조회/패치 + Score 조회/패치 + quick_patch 입력 스키마
-
+# PATH: apps/domains/homework/serializers/core.py
 """
-Homework Domain Serializers
+Homework Domain Serializers (core)
 
-✅ 메모 (MVP)
-- HomeworkPolicy는 session 당 1개 보장
-- cutline_percent(%) 는 프론트 Setup에서 수정 가능 (PATCH 허용)
-- 점수 방식은 학원마다 다르므로 score/max_score 형태로 저장하고,
-  backend에서 percent로 판정해서 passed/clinic_required를 내려준다.
+✅ 포함
+- HomeworkPolicySerializer / PatchSerializer
+- HomeworkScoreSerializer
+- HomeworkQuickPatchSerializer
 
-⚠️ Score 스냅샷의 단일 진실은 homework_results 도메인이다.
-- 다만 /homework/scores/* 라우팅은 호환을 위해 여기서 유지한다.
+⚠️ 주의
+- 점수 스냅샷 단일 진실은 homework_results.HomeworkScore
+- /homework/scores/* 는 프론트 호환을 위해 유지
 """
+
+from __future__ import annotations
 
 from rest_framework import serializers
 
-from .models import HomeworkPolicy
-
-# ✅ 단일 진실: homework score snapshot
+from apps.domains.homework.models import HomeworkPolicy
 from apps.domains.homework_results.models import HomeworkScore
 
 

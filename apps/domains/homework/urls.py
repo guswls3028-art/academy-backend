@@ -20,6 +20,7 @@ from rest_framework.routers import DefaultRouter
 from apps.domains.homework.views import (
     HomeworkScoreViewSet,
     HomeworkPolicyViewSet,
+    HomeworkEnrollmentManageView,   # ✅ 추가
 )
 
 router = DefaultRouter()
@@ -28,4 +29,5 @@ router.register("policies", HomeworkPolicyViewSet, basename="homework-policies")
 
 urlpatterns = [
     path("", include(router.urls)),
+    path("enrollments/", HomeworkEnrollmentManageView.as_view()),  # ✅ 추가
 ]

@@ -1,8 +1,6 @@
-# PATH: apps/domains/homework/models.py
-# 역할: Session 단위 HomeworkPolicy(커트라인%/반올림/클리닉) 정의 레이어
-
+# PATH: apps/domains/homework/models/homework_policy.py
 """
-Homework Domain Models
+HomeworkPolicy Model
 
 ✅ 설계 고정(중요)
 - homework 도메인은 "정의/정책" 레이어다.
@@ -13,16 +11,6 @@ Homework Domain Models
   - 커트라인 (%)
   - 반올림 단위 (%)
   - 클리닉 연동 여부
-
-✅ MVP 확정 요구사항 (2026-01-21)
-1) 커트라인은 % 기반
-2) 점수 입력 방식은 학원마다 다를 수 있음:
-   - percent 직접 입력 (0~100)
-   - raw 점수 입력 (예: 18/20)
-   → percent 계산은 homework.utils에서 수행 가능(정책 기반)
-
-⚠️ 중요:
-- 운영 점수 스냅샷(HomeworkScore)은 homework_results로 이전됨.
 """
 
 from __future__ import annotations
