@@ -21,3 +21,6 @@ tzdata
 # Serialization / Validation
 pydantic
 typing_extensions
+
+
+python-dotenv

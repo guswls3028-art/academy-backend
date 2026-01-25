@@ -1,4 +1,4 @@
-# apps/support/media/views/video_views.py
+# PATH: apps/support/media/views/video_views.py
 
 from uuid import uuid4
 from datetime import timedelta
@@ -13,7 +13,11 @@ from rest_framework.filters import SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.parsers import JSONParser
+from rest_framework.parsers import (
+    JSONParser,
+    MultiPartParser,
+    FormParser,
+)
 from django_filters.rest_framework import DjangoFilterBackend
 
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -47,6 +51,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
     queryset = Video.objects.all().select_related("session", "session__lecture")
     serializer_class = VideoSerializer
+
+    # 🔑 핵심: ViewSet 기본은 JSON only (upload/init 포함)
     parser_classes = [JSONParser]
 
     authentication_classes = [
@@ -75,10 +81,15 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     search_fields = ["title"]
 
     # ==================================================
-    # upload/init
+    # upload/init (presigned URL 발급)
     # ==================================================
     @transaction.atomic
-    @action(detail=False, methods=["post"], url_path="upload/init")
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="upload/init",
+        parser_classes=[JSONParser],  # ✅ JSON only
+    )
     def upload_init(self, request):
         session_id = request.data.get("session")
         title = request.data.get("title")
@@ -127,10 +138,17 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         )
 
     # ==================================================
-    # upload/complete
+    # upload/complete (업로드 완료 확인 + 트리거)
     # ==================================================
     @transaction.atomic
-    @action(detail=True, methods=["post"], url_path="upload/complete")
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/complete",
+        # ✅ 원본 전체 코드 유지하면서 "업로드 관련 parser 라인만" 반영
+        # 여기서는 파일을 직접 받진 않지만, 일부 클라이언트가 form-data로 호출할 수 있어 예외적으로 허용
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+    )
     def upload_complete(self, request, pk=None):
         video = self.get_object()
 
@@ -186,14 +204,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             status="ACTIVE",
         ).select_related("student")
 
-        progresses = {
-            p.enrollment_id: p
-            for p in VideoProgress.objects.filter(video=video)
-        }
-        perms = {
-            p.enrollment_id: p
-            for p in VideoPermission.objects.filter(video=video)
-        }
+        progresses = {p.enrollment_id: p for p in VideoProgress.objects.filter(video=video)}
+        perms = {p.enrollment_id: p for p in VideoPermission.objects.filter(video=video)}
         attendance = {
             a.enrollment_id: a.status
             for a in Attendance.objects.filter(session=video.session)
@@ -209,25 +221,29 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             if rule == "once" and vp and vp.completed:
                 effective_rule = "free"
 
-            students.append({
-                "enrollment": e.id,
-                "student_name": e.student.name,
-                "attendance_status": attendance.get(e.id),
-                "progress": vp.progress if vp else 0,
-                "completed": vp.completed if vp else False,
-                "rule": rule,
-                "effective_rule": effective_rule,
-                "parent_phone": getattr(e.student, "parent_phone", None),
-                "student_phone": getattr(e.student, "phone", None),
-                "school": getattr(e.student, "school", None),
-                "grade": getattr(e.student, "grade", None),
-            })
+            students.append(
+                {
+                    "enrollment": e.id,
+                    "student_name": e.student.name,
+                    "attendance_status": attendance.get(e.id),
+                    "progress": vp.progress if vp else 0,
+                    "completed": vp.completed if vp else False,
+                    "rule": rule,
+                    "effective_rule": effective_rule,
+                    "parent_phone": getattr(e.student, "parent_phone", None),
+                    "student_phone": getattr(e.student, "phone", None),
+                    "school": getattr(e.student, "school", None),
+                    "grade": getattr(e.student, "grade", None),
+                }
+            )
 
-        return Response({
-            "video": VideoDetailSerializer(video).data,
-            "students": students,
-            "total_filtered": len(students),
-        })
+        return Response(
+            {
+                "video": VideoDetailSerializer(video).data,
+                "students": students,
+                "total_filtered": len(students),
+            }
+        )
 
     # ==================================================
     # summary (통계 탭 요약)
@@ -260,9 +276,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         completion_rate = (completed_count / total) if total else 0.0
 
-        ev_qs = VideoPlaybackEvent.objects.filter(
-            video=video
-        ).select_related("enrollment", "enrollment__student")
+        ev_qs = VideoPlaybackEvent.objects.filter(video=video).select_related(
+            "enrollment", "enrollment__student"
+        )
 
         if since:
             ev_qs = ev_qs.filter(occurred_at__gte=since)
@@ -297,21 +313,19 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
             agg[eid]["score"] += score
 
-        risk_top = sorted(
-            agg.values(),
-            key=lambda x: x["score"],
-            reverse=True,
-        )[:5]
+        risk_top = sorted(agg.values(), key=lambda x: x["score"], reverse=True)[:5]
 
-        return Response({
-            "video_id": video.id,
-            "range": range_key,
-            "total_students": total,
-            "completed_count": completed_count,
-            "completion_rate": completion_rate,
-            "watched_seconds_est": watched_seconds,
-            "risk_top": risk_top,
-        })
+        return Response(
+            {
+                "video_id": video.id,
+                "range": range_key,
+                "total_students": total,
+                "completed_count": completed_count,
+                "completion_rate": completion_rate,
+                "watched_seconds_est": watched_seconds,
+                "risk_top": risk_top,
+            }
+        )
 
     # ==================================================
     # student list
