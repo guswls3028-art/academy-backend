@@ -1,5 +1,6 @@
 # ---- base ----
 -r common.txt
+-r api.txt
 
 # =========================
 # Django (ORM 사용)
@@ -37,3 +38,10 @@ opencv-python-headless
 # HTTP (API callback, download)
 # =========================
 requests
+
+# Django REST (settings에서 사용됨)
+djangorestframework
+djangorestframework-simplejwt
+django-filter
+drf-yasg
+
