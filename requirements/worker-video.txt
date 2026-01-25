@@ -1,14 +1,39 @@
-#worker-video.txt
-
 # ---- base ----
 -r common.txt
 
+# =========================
+# Django (ORM 사용)
+# =========================
+Django
+sqlparse
+asgiref
+
+# =========================
+# Celery / Queue
+# =========================
+celery
+billiard
+kombu
+amqp
+redis
+
+# =========================
+# DB
+# =========================
+psycopg2-binary
+
+# =========================
 # Video processing
+# =========================
 ffmpeg-python
 
+# =========================
 # Image (thumbnail)
+# =========================
 pillow
 opencv-python-headless
 
-# HTTP download
+# =========================
+# HTTP (API callback, download)
+# =========================
 requests
