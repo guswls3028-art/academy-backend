@@ -20,6 +20,12 @@ urlpatterns = [
     path("progress/", include("apps.domains.progress.urls")),
 
     # =========================
+    # ✅ Staff / Teacher (FIX: 라우팅 추가)
+    # =========================
+    path("staffs/", include("apps.domains.staffs.urls")),
+    path("teachers/", include("apps.domains.teachers.urls")),
+
+    # =========================
     # Results / Homework
     # =========================
     path("results/", include("apps.domains.results.urls")),
