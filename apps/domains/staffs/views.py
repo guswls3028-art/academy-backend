@@ -1,7 +1,8 @@
-# PATH: apps/domains/staffs/views.py
 from django.db.models import Sum
 from django.utils import timezone
 from django.http import HttpResponse
+from django.db import transaction
+from django.contrib.auth import get_user_model
 
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, status
@@ -36,7 +37,9 @@ from .serializers import (
     PayrollSnapshotSerializer,
 )
 from .filters import StaffFilter, WorkRecordFilter, ExpenseRecordFilter
+from apps.domains.teachers.models import Teacher
 
+User = get_user_model()
 
 # ===========================
 # Permissions
@@ -149,10 +152,63 @@ class StaffViewSet(viewsets.ModelViewSet):
             return StaffDetailSerializer
         return StaffCreateUpdateSerializer
 
-    # ✅ 추가: DELETE 시 Serializer.delete(instance) 호출
+    # ✅ DELETE 시 Serializer.delete(instance) 호출 (원본 유지)
     def perform_destroy(self, instance):
         serializer = self.get_serializer(instance)
         serializer.delete(instance)
+
+    # ===========================
+    # CREATE (User + Staff + Teacher)
+    # ===========================
+    def create(self, request, *args, **kwargs):
+        data = request.data
+
+        username = data.get("username")
+        password = data.get("password")
+        role = data.get("role")  # TEACHER | ASSISTANT
+
+        if not username or not password or not role:
+            raise ValidationError("username, password, role 은 필수입니다.")
+
+        if role not in ("TEACHER", "ASSISTANT"):
+            raise ValidationError("role 은 TEACHER 또는 ASSISTANT 여야 합니다.")
+
+        if User.objects.filter(username=username).exists():
+            raise ValidationError("이미 존재하는 username 입니다.")
+
+        with transaction.atomic():
+            # 1️⃣ User 생성
+            user = User.objects.create(
+                username=username,
+                name=data.get("name", ""),
+                phone=data.get("phone", ""),
+                is_staff=(role == "TEACHER"),
+            )
+            user.set_password(password)
+            user.save()
+
+            # 2️⃣ Staff 생성
+            staff = Staff.objects.create(
+                user=user,
+                name=data.get("name", ""),
+                phone=data.get("phone", ""),
+                is_active=True,
+                is_manager=False,
+                pay_type="MONTHLY" if role == "TEACHER" else "HOURLY",
+            )
+
+            # 3️⃣ Teacher 자동 생성 (강사만)
+            if role == "TEACHER":
+                Teacher.objects.create(
+                    name=staff.name,
+                    phone=staff.phone,
+                    is_active=True,
+                )
+
+        return Response(
+            StaffDetailSerializer(staff).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=True, methods=["get", "post"], url_path="work-types")
     def work_types(self, request, pk=None):
