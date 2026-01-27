@@ -13,6 +13,7 @@
 ==========================================================================================
 # FILE: admin.py
 ==========================================================================================
+# PATH: apps/domains/staffs/admin.py
 from django.contrib import admin
 from .models import (
     Staff,
@@ -20,6 +21,7 @@ from .models import (
     StaffWorkType,
     WorkRecord,
     ExpenseRecord,
+    WorkMonthLock,
 )
 
 
@@ -52,6 +54,12 @@ class WorkRecordAdmin(admin.ModelAdmin):
 class ExpenseRecordAdmin(admin.ModelAdmin):
     list_display = ("date", "staff", "title", "amount", "status")
     list_filter = ("status",)
+
+
+@admin.register(WorkMonthLock)
+class WorkMonthLockAdmin(admin.ModelAdmin):
+    list_display = ("staff", "year", "month", "is_locked", "locked_by", "created_at")
+    list_filter = ("year", "month", "is_locked")
 
 
 ==========================================================================================
@@ -112,11 +120,13 @@ class ExpenseRecordFilter(django_filters.FilterSet):
 ==========================================================================================
 # FILE: models.py
 ==========================================================================================
+# PATH: apps/domains/staffs/models.py
 from datetime import datetime, timedelta
 from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
+from django.core.exceptions import ValidationError
 
 from apps.api.common.models import TimestampModel
 
@@ -274,7 +284,7 @@ class WorkRecord(TimestampModel):
 
 class ExpenseRecord(TimestampModel):
     """
-    기타 비용
+    기타 비용 (승인 워크플로우 포함)
     """
 
     staff = models.ForeignKey(
@@ -299,6 +309,15 @@ class ExpenseRecord(TimestampModel):
         default="PENDING",
     )
 
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approved_expenses",
+    )
+
     class Meta:
         ordering = ["-date", "-created_at"]
 
@@ -306,22 +325,95 @@ class ExpenseRecord(TimestampModel):
         return f"{self.staff.name} - {self.title}"
 
 
+class WorkMonthLock(TimestampModel):
+    """
+    근무 월 마감
+    """
+
+    staff = models.ForeignKey(
+        Staff,
+        on_delete=models.CASCADE,
+        related_name="work_month_locks",
+    )
+    year = models.PositiveIntegerField()
+    month = models.PositiveIntegerField()
+    is_locked = models.BooleanField(default=True)
+
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="locked_work_months",
+    )
+
+    class Meta:
+        unique_together = ("staff", "year", "month")
+        ordering = ["-year", "-month"]
+
+    def __str__(self):
+        return f"{self.staff.name} - {self.year}-{self.month:02d}"
+
+
+class PayrollSnapshot(TimestampModel):
+    """
+    월별 급여 정산 스냅샷 (불변)
+    """
+
+    staff = models.ForeignKey(
+        Staff,
+        on_delete=models.CASCADE,
+        related_name="payroll_snapshots",
+    )
+
+    year = models.PositiveIntegerField()
+    month = models.PositiveIntegerField()
+
+    work_hours = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    work_amount = models.PositiveIntegerField(default=0)
+    approved_expense_amount = models.PositiveIntegerField(default=0)
+    total_amount = models.PositiveIntegerField(default=0)
+
+    generated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="generated_payroll_snapshots",
+    )
+
+    class Meta:
+        unique_together = ("staff", "year", "month")
+        ordering = ["-year", "-month"]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("PayrollSnapshot은 수정할 수 없습니다.")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.staff.name} {self.year}-{self.month:02d}"
+
+
 ==========================================================================================
 # FILE: serializers.py
 ==========================================================================================
-# -*- coding: utf-8 -*-
-# apps/staffs/serializers.py
-
+# PATH: apps/domains/staffs/serializers.py
 from rest_framework import serializers
+from django.contrib.auth import get_user_model
 
+from apps.domains.teachers.models import Teacher
 from .models import (
     Staff,
     WorkType,
     StaffWorkType,
     WorkRecord,
     ExpenseRecord,
+    WorkMonthLock,
+    PayrollSnapshot,
 )
 
+User = get_user_model()
 
 # ---------------------------
 # WorkType
@@ -344,7 +436,7 @@ class WorkTypeSerializer(serializers.ModelSerializer):
 
 
 # ---------------------------
-# StaffWorkType (조교-근무유형)
+# StaffWorkType
 # ---------------------------
 
 class StaffWorkTypeSerializer(serializers.ModelSerializer):
@@ -373,15 +465,10 @@ class StaffWorkTypeSerializer(serializers.ModelSerializer):
 
 
 # ---------------------------
-# Staff
+# Staff (LIST / DETAIL)
 # ---------------------------
 
 class StaffListSerializer(serializers.ModelSerializer):
-    """
-    Staff list serializer.
-    Includes simplified work type info.
-    """
-
     staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
 
     class Meta:
@@ -420,7 +507,17 @@ class StaffDetailSerializer(serializers.ModelSerializer):
         ref_name = "StaffDetail"
 
 
+# ======================================================
+# 🔥 Staff CREATE / UPDATE / DELETE (ROLE 포함)
+# ======================================================
+
 class StaffCreateUpdateSerializer(serializers.ModelSerializer):
+    role = serializers.ChoiceField(
+        choices=[("TEACHER", "강사"), ("ASSISTANT", "조교")],
+        write_only=True,
+        required=True,
+    )
+
     class Meta:
         model = Staff
         fields = [
@@ -430,12 +527,70 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             "is_active",
             "is_manager",
             "pay_type",
+            "role",
         ]
         ref_name = "StaffWrite"
 
+    # =========================
+    # CREATE
+    # =========================
+    def create(self, validated_data):
+        role = validated_data.pop("role")
+        staff = super().create(validated_data)
+
+        if role == "TEACHER":
+            self._create_teacher(staff)
+            self._grant_user_staff_permission(staff)
+
+        return staff
+
+    # =========================
+    # UPDATE (is_active sync)
+    # =========================
+    def update(self, instance, validated_data):
+        is_active_before = instance.is_active
+        staff = super().update(instance, validated_data)
+
+        if is_active_before and staff.is_active is False:
+            Teacher.objects.filter(
+                name=staff.name,
+                phone=staff.phone,
+            ).update(is_active=False)
+
+        return staff
+
+    # =========================
+    # DELETE (Teacher 같이 제거)
+    # =========================
+    def delete(self, instance):
+        Teacher.objects.filter(
+            name=instance.name,
+            phone=instance.phone,
+        ).delete()
+        instance.delete()
+
+    # =========================
+    # Helpers
+    # =========================
+    def _create_teacher(self, staff: Staff):
+        Teacher.objects.create(
+            name=staff.name,
+            phone=staff.phone,
+            is_active=True,
+        )
+
+    def _grant_user_staff_permission(self, staff: Staff):
+        if not staff.user:
+            return
+
+        user: User = staff.user
+        if not user.is_staff:
+            user.is_staff = True
+            user.save(update_fields=["is_staff"])
+
 
 # ---------------------------
-# WorkRecord (출퇴근 기록)
+# WorkRecord
 # ---------------------------
 
 class WorkRecordSerializer(serializers.ModelSerializer):
@@ -465,11 +620,15 @@ class WorkRecordSerializer(serializers.ModelSerializer):
 
 
 # ---------------------------
-# ExpenseRecord (비용 기록)
+# ExpenseRecord
 # ---------------------------
 
 class ExpenseRecordSerializer(serializers.ModelSerializer):
     staff_name = serializers.CharField(source="staff.name", read_only=True)
+    approved_by_name = serializers.CharField(
+        source="approved_by.username",
+        read_only=True,
+    )
 
     class Meta:
         model = ExpenseRecord
@@ -482,16 +641,70 @@ class ExpenseRecordSerializer(serializers.ModelSerializer):
             "amount",
             "memo",
             "status",
+            "approved_at",
+            "approved_by",
+            "approved_by_name",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = [
+            "approved_at",
+            "approved_by",
+            "created_at",
+            "updated_at",
+        ]
         ref_name = "StaffExpenseRecord"
+
+
+# ---------------------------
+# WorkMonthLock / Payroll
+# ---------------------------
+
+class WorkMonthLockSerializer(serializers.ModelSerializer):
+    staff_name = serializers.CharField(source="staff.name", read_only=True)
+
+    class Meta:
+        model = WorkMonthLock
+        fields = [
+            "id",
+            "staff",
+            "staff_name",
+            "year",
+            "month",
+            "is_locked",
+            "locked_by",
+            "created_at",
+        ]
+        read_only_fields = ["locked_by", "created_at"]
+        ref_name = "WorkMonthLock"
+
+
+class PayrollSnapshotSerializer(serializers.ModelSerializer):
+    staff_name = serializers.CharField(source="staff.name", read_only=True)
+
+    class Meta:
+        model = PayrollSnapshot
+        fields = [
+            "id",
+            "staff",
+            "staff_name",
+            "year",
+            "month",
+            "work_hours",
+            "work_amount",
+            "approved_expense_amount",
+            "total_amount",
+            "generated_by",
+            "created_at",
+        ]
+        read_only_fields = fields
+        ref_name = "PayrollSnapshot"
 
 
 ==========================================================================================
 # FILE: urls.py
 ==========================================================================================
+# PATH: apps/domains/staffs/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
@@ -501,32 +714,41 @@ from .views import (
     StaffWorkTypeViewSet,
     WorkRecordViewSet,
     ExpenseRecordViewSet,
+    WorkMonthLockViewSet,
+    PayrollSnapshotViewSet,
 )
 
 router = DefaultRouter()
-router.register(r"work-types", WorkTypeViewSet, basename="work-type")
-router.register(r"staffs", StaffViewSet, basename="staff")
-router.register(r"staff-work-types", StaffWorkTypeViewSet, basename="staff-work-type")
-router.register(r"work-records", WorkRecordViewSet, basename="work-record")
-router.register(r"expense-records", ExpenseRecordViewSet, basename="expense-record")
+router.register(r"work-types", WorkTypeViewSet)
+router.register(r"staffs", StaffViewSet)
+router.register(r"staff-work-types", StaffWorkTypeViewSet)
+router.register(r"work-records", WorkRecordViewSet)
+router.register(r"expense-records", ExpenseRecordViewSet)
+router.register(r"work-month-locks", WorkMonthLockViewSet)
+router.register(r"payroll-snapshots", PayrollSnapshotViewSet, basename="payroll-snapshot")
 
-urlpatterns = [
-    path("", include(router.urls)),
-]
+urlpatterns = [path("", include(router.urls))]
 
 
 ==========================================================================================
 # FILE: views.py
 ==========================================================================================
-# apps/staffs/views.py
-
+# PATH: apps/domains/staffs/views.py
 from django.db.models import Sum
+from django.utils import timezone
+from django.http import HttpResponse
+
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.viewsets import ReadOnlyModelViewSet
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment
 
 from .models import (
     Staff,
@@ -534,6 +756,8 @@ from .models import (
     StaffWorkType,
     WorkRecord,
     ExpenseRecord,
+    WorkMonthLock,
+    PayrollSnapshot,
 )
 from .serializers import (
     WorkTypeSerializer,
@@ -543,13 +767,86 @@ from .serializers import (
     StaffCreateUpdateSerializer,
     WorkRecordSerializer,
     ExpenseRecordSerializer,
+    WorkMonthLockSerializer,
+    PayrollSnapshotSerializer,
 )
 from .filters import StaffFilter, WorkRecordFilter, ExpenseRecordFilter
 
 
-# ---------------------------
-# WorkType (근무 유형 정의)
-# ---------------------------
+# ===========================
+# Permissions
+# ===========================
+
+class IsPayrollManager(BasePermission):
+    """
+    superuser OR staff OR staff_profile.is_manager
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+
+        if user.is_superuser or user.is_staff:
+            return True
+
+        return getattr(getattr(user, "staff_profile", None), "is_manager", False)
+
+
+# ===========================
+# Helper
+# ===========================
+
+def is_month_locked(staff, date):
+    return WorkMonthLock.objects.filter(
+        staff=staff,
+        year=date.year,
+        month=date.month,
+        is_locked=True,
+    ).exists()
+
+
+def generate_payroll_snapshot(staff, year, month, user):
+    """
+    월 마감 시 1회 생성되는 급여 스냅샷 (불변)
+    """
+    if PayrollSnapshot.objects.filter(
+        staff=staff, year=year, month=month
+    ).exists():
+        return
+
+    wr_qs = WorkRecord.objects.filter(
+        staff=staff,
+        date__year=year,
+        date__month=month,
+    )
+
+    er_qs = ExpenseRecord.objects.filter(
+        staff=staff,
+        date__year=year,
+        date__month=month,
+        status="APPROVED",
+    )
+
+    work_hours = wr_qs.aggregate(total=Sum("work_hours"))["total"] or 0
+    work_amount = wr_qs.aggregate(total=Sum("amount"))["total"] or 0
+    approved_expense_amount = er_qs.aggregate(total=Sum("amount"))["total"] or 0
+
+    PayrollSnapshot.objects.create(
+        staff=staff,
+        year=year,
+        month=month,
+        work_hours=work_hours,
+        work_amount=work_amount,
+        approved_expense_amount=approved_expense_amount,
+        total_amount=work_amount + approved_expense_amount,
+        generated_by=user,
+    )
+
+
+# ===========================
+# WorkType
+# ===========================
 
 class WorkTypeViewSet(viewsets.ModelViewSet):
     queryset = WorkType.objects.all().order_by("name")
@@ -562,9 +859,9 @@ class WorkTypeViewSet(viewsets.ModelViewSet):
     ordering_fields = ["name", "base_hourly_wage", "created_at"]
 
 
-# ---------------------------
-# Staff (조교)
-# ---------------------------
+# ===========================
+# Staff
+# ===========================
 
 class StaffViewSet(viewsets.ModelViewSet):
     queryset = (
@@ -587,15 +884,18 @@ class StaffViewSet(viewsets.ModelViewSet):
             return StaffDetailSerializer
         return StaffCreateUpdateSerializer
 
-    # /api/staffs/{id}/work-types/
+    # ✅ 추가: DELETE 시 Serializer.delete(instance) 호출
+    def perform_destroy(self, instance):
+        serializer = self.get_serializer(instance)
+        serializer.delete(instance)
+
     @action(detail=True, methods=["get", "post"], url_path="work-types")
     def work_types(self, request, pk=None):
         staff = self.get_object()
 
         if request.method.lower() == "get":
             qs = staff.staff_work_types.select_related("work_type").all()
-            serializer = StaffWorkTypeSerializer(qs, many=True)
-            return Response(serializer.data)
+            return Response(StaffWorkTypeSerializer(qs, many=True).data)
 
         serializer = StaffWorkTypeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -612,7 +912,6 @@ class StaffViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    # /api/staffs/{id}/summary/?date_from=&date_to=
     @action(detail=True, methods=["get"], url_path="summary")
     def summary(self, request, pk=None):
         staff = self.get_object()
@@ -629,32 +928,26 @@ class StaffViewSet(viewsets.ModelViewSet):
             wr_qs = wr_qs.filter(date__lte=date_to)
             er_qs = er_qs.filter(date__lte=date_to)
 
-        work_amount = wr_qs.aggregate(total=Sum("amount"))["total"] or 0
-        work_hours = wr_qs.aggregate(total=Sum("work_hours"))["total"] or 0
-        expense_amount = er_qs.aggregate(total=Sum("amount"))["total"] or 0
-
         return Response(
             {
                 "staff_id": staff.id,
-                "work_hours": work_hours,
-                "work_amount": work_amount,
-                "expense_amount": expense_amount,
-                "total_amount": work_amount + expense_amount,
+                "work_hours": wr_qs.aggregate(total=Sum("work_hours"))["total"] or 0,
+                "work_amount": wr_qs.aggregate(total=Sum("amount"))["total"] or 0,
+                "expense_amount": er_qs.aggregate(total=Sum("amount"))["total"] or 0,
+                "total_amount": (
+                    (wr_qs.aggregate(total=Sum("amount"))["total"] or 0)
+                    + (er_qs.aggregate(total=Sum("amount"))["total"] or 0)
+                ),
             }
         )
 
 
-# ---------------------------
-# StaffWorkType (조교-근무유형 매핑)
-# ---------------------------
+# ===========================
+# StaffWorkType
+# ===========================
 
 class StaffWorkTypeViewSet(viewsets.ModelViewSet):
-    """
-    /api/staff-work-types/?staff=1
-    PATCH / DELETE 지원
-    """
-
-    queryset = StaffWorkType.objects.select_related("staff", "work_type").all()
+    queryset = StaffWorkType.objects.select_related("staff", "work_type")
     serializer_class = StaffWorkTypeSerializer
     permission_classes = [IsAuthenticated]
 
@@ -663,9 +956,9 @@ class StaffWorkTypeViewSet(viewsets.ModelViewSet):
     ordering_fields = ["created_at"]
 
 
-# ---------------------------
-# WorkRecord (출퇴근 기록)
-# ---------------------------
+# ===========================
+# WorkRecord
+# ===========================
 
 class WorkRecordViewSet(viewsets.ModelViewSet):
     queryset = (
@@ -680,39 +973,33 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
     filterset_class = WorkRecordFilter
     ordering_fields = ["date", "created_at", "amount"]
 
-    # /api/work-records/my/
-    @action(detail=False, methods=["get"], url_path="my")
-    def my_records(self, request):
-        staff = getattr(request.user, "staff_profile", None)
-        if not staff:
-            return Response(
-                {"detail": "Staff profile not found."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    def perform_create(self, serializer):
+        staff = serializer.validated_data["staff"]
+        date = serializer.validated_data["date"]
 
-        qs = self.get_queryset().filter(staff=staff)
+        if is_month_locked(staff, date):
+            raise ValidationError("마감된 월의 근무기록은 추가할 수 없습니다.")
 
-        date_from = request.query_params.get("date_from")
-        date_to = request.query_params.get("date_to")
-        if date_from:
-            qs = qs.filter(date__gte=date_from)
-        if date_to:
-            qs = qs.filter(date__lte=date_to)
+        serializer.save()
 
-        serializer = self.get_serializer(qs, many=True)
-        return Response(serializer.data)
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if is_month_locked(instance.staff, instance.date):
+            raise ValidationError("마감된 월의 근무기록은 수정할 수 없습니다.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if is_month_locked(instance.staff, instance.date):
+            raise ValidationError("마감된 월의 근무기록은 삭제할 수 없습니다.")
+        instance.delete()
 
 
-# ---------------------------
-# ExpenseRecord (비용 기록)
-# ---------------------------
+# ===========================
+# ExpenseRecord
+# ===========================
 
 class ExpenseRecordViewSet(viewsets.ModelViewSet):
-    queryset = (
-        ExpenseRecord.objects.select_related("staff")
-        .all()
-        .order_by("-date", "-id")
-    )
+    queryset = ExpenseRecord.objects.select_related("staff", "approved_by")
     serializer_class = ExpenseRecordSerializer
     permission_classes = [IsAuthenticated]
 
@@ -720,27 +1007,157 @@ class ExpenseRecordViewSet(viewsets.ModelViewSet):
     filterset_class = ExpenseRecordFilter
     ordering_fields = ["date", "amount", "created_at"]
 
-    # /api/expense-records/my/
-    @action(detail=False, methods=["get"], url_path="my")
-    def my_expenses(self, request):
-        staff = getattr(request.user, "staff_profile", None)
-        if not staff:
-            return Response(
-                {"detail": "Staff profile not found."},
-                status=status.HTTP_400_BAD_REQUEST,
+    def perform_update(self, serializer):
+        instance = self.get_object()
+
+        # ✅ 승인 이후 불변
+        if instance.status == "APPROVED":
+            raise ValidationError("승인된 비용은 수정할 수 없습니다.")
+
+        new_status = serializer.validated_data.get("status", instance.status)
+
+        if new_status != instance.status:
+            user = self.request.user
+            is_manager = (
+                user.is_superuser
+                or user.is_staff
+                or getattr(user.staff_profile, "is_manager", False)
             )
 
-        qs = self.get_queryset().filter(staff=staff)
+            if not is_manager:
+                raise PermissionDenied("비용 승인/반려는 관리자만 가능합니다.")
 
-        date_from = request.query_params.get("date_from")
-        date_to = request.query_params.get("date_to")
-        if date_from:
-            qs = qs.filter(date__gte=date_from)
-        if date_to:
-            qs = qs.filter(date__lte=date_to)
+            if instance.status != "PENDING":
+                raise ValidationError("이미 처리된 비용은 상태를 변경할 수 없습니다.")
 
-        serializer = self.get_serializer(qs, many=True)
-        return Response(serializer.data)
+            if new_status not in ("APPROVED", "REJECTED"):
+                raise ValidationError("유효하지 않은 상태 전이입니다.")
+
+            serializer.save(
+                approved_at=timezone.now(),
+                approved_by=user,
+            )
+            return
+
+        serializer.save()
+
+
+# ===========================
+# WorkMonthLock
+# ===========================
+
+class WorkMonthLockViewSet(viewsets.ModelViewSet):
+    queryset = WorkMonthLock.objects.select_related("staff", "locked_by")
+    serializer_class = WorkMonthLockSerializer
+    permission_classes = [IsAuthenticated, IsPayrollManager]
+
+    def create(self, request, *args, **kwargs):
+        staff = Staff.objects.get(id=request.data.get("staff"))
+        year = int(request.data.get("year"))
+        month = int(request.data.get("month"))
+
+        obj, _ = WorkMonthLock.objects.update_or_create(
+            staff=staff,
+            year=year,
+            month=month,
+            defaults={
+                "is_locked": True,
+                "locked_by": request.user,
+            },
+        )
+
+        generate_payroll_snapshot(
+            staff=staff,
+            year=year,
+            month=month,
+            user=request.user,
+        )
+
+        return Response(
+            WorkMonthLockSerializer(obj).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+# ===========================
+# PayrollSnapshot (ReadOnly)
+# ===========================
+
+class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
+    queryset = PayrollSnapshot.objects.select_related("staff")
+    serializer_class = PayrollSnapshotSerializer
+    permission_classes = [IsAuthenticated, IsPayrollManager]
+
+    def list(self, request, *args, **kwargs):
+        year = request.query_params.get("year")
+        month = request.query_params.get("month")
+
+        qs = self.get_queryset()
+        if year:
+            qs = qs.filter(year=year)
+        if month:
+            qs = qs.filter(month=month)
+
+        return Response(self.get_serializer(qs, many=True).data)
+
+    @action(detail=False, methods=["get"], url_path="export-excel")
+    def export_excel(self, request):
+        year = request.query_params.get("year")
+        month = request.query_params.get("month")
+
+        if not year or not month:
+            return Response({"detail": "year, month 필요"}, status=400)
+
+        qs = self.get_queryset().filter(year=year, month=month)
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = f"{year}-{month} 급여정산"
+
+        headers = [
+            "직원명",
+            "연도",
+            "월",
+            "근무시간",
+            "급여",
+            "승인된 비용",
+            "총 지급액",
+        ]
+        ws.append(headers)
+
+        for c in ws[1]:
+            c.font = Font(bold=True)
+            c.alignment = Alignment(horizontal="center")
+
+        tw = te = tt = 0
+
+        for s in qs:
+            ws.append([
+                s.staff.name,
+                s.year,
+                s.month,
+                float(s.work_hours),
+                s.work_amount,
+                s.approved_expense_amount,
+                s.total_amount,
+            ])
+            tw += s.work_amount
+            te += s.approved_expense_amount
+            tt += s.total_amount
+
+        ws.append(["합계", "", "", "", tw, te, tt])
+
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = 18
+
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="payroll_{year}_{month}.xlsx"'
+        )
+        wb.save(response)
+        return response
 
 
 ==========================================================================================
@@ -961,6 +1378,173 @@ class Migration(migrations.Migration):
             ],
             options={
                 "unique_together": {("staff", "work_type")},
+            },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0002_workmonthlock.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-27 00:36
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("staffs", "0001_initial"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="WorkMonthLock",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("year", models.PositiveIntegerField()),
+                ("month", models.PositiveIntegerField()),
+                ("is_locked", models.BooleanField(default=True)),
+                (
+                    "locked_by",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="locked_work_months",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+                (
+                    "staff",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="work_month_locks",
+                        to="staffs.staff",
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-year", "-month"],
+                "unique_together": {("staff", "year", "month")},
+            },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0003_expenserecord_approved_at_expenserecord_approved_by.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-27 00:50
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("staffs", "0002_workmonthlock"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="expenserecord",
+            name="approved_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="expenserecord",
+            name="approved_by",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="approved_expenses",
+                to=settings.AUTH_USER_MODEL,
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0004_payrollsnapshot.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-27 01:07
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("staffs", "0003_expenserecord_approved_at_expenserecord_approved_by"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="PayrollSnapshot",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("year", models.PositiveIntegerField()),
+                ("month", models.PositiveIntegerField()),
+                (
+                    "work_hours",
+                    models.DecimalField(decimal_places=2, default=0, max_digits=6),
+                ),
+                ("work_amount", models.PositiveIntegerField(default=0)),
+                ("approved_expense_amount", models.PositiveIntegerField(default=0)),
+                ("total_amount", models.PositiveIntegerField(default=0)),
+                (
+                    "generated_by",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="generated_payroll_snapshots",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+                (
+                    "staff",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="payroll_snapshots",
+                        to="staffs.staff",
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-year", "-month"],
+                "unique_together": {("staff", "year", "month")},
             },
         ),
     ]

@@ -1,3 +1,4 @@
+# PATH: apps/domains/staffs/admin.py
 from django.contrib import admin
 from .models import (
     Staff,
@@ -5,6 +6,7 @@ from .models import (
     StaffWorkType,
     WorkRecord,
     ExpenseRecord,
+    WorkMonthLock,
 )
 
 
@@ -37,3 +39,9 @@ class WorkRecordAdmin(admin.ModelAdmin):
 class ExpenseRecordAdmin(admin.ModelAdmin):
     list_display = ("date", "staff", "title", "amount", "status")
     list_filter = ("status",)
+
+
+@admin.register(WorkMonthLock)
+class WorkMonthLockAdmin(admin.ModelAdmin):
+    list_display = ("staff", "year", "month", "is_locked", "locked_by", "created_at")
+    list_filter = ("year", "month", "is_locked")

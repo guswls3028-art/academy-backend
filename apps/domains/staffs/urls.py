@@ -1,3 +1,4 @@
+# PATH: apps/domains/staffs/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
@@ -7,15 +8,17 @@ from .views import (
     StaffWorkTypeViewSet,
     WorkRecordViewSet,
     ExpenseRecordViewSet,
+    WorkMonthLockViewSet,
+    PayrollSnapshotViewSet,
 )
 
 router = DefaultRouter()
-router.register(r"work-types", WorkTypeViewSet, basename="work-type")
-router.register(r"staffs", StaffViewSet, basename="staff")
-router.register(r"staff-work-types", StaffWorkTypeViewSet, basename="staff-work-type")
-router.register(r"work-records", WorkRecordViewSet, basename="work-record")
-router.register(r"expense-records", ExpenseRecordViewSet, basename="expense-record")
+router.register(r"work-types", WorkTypeViewSet)
+router.register(r"staffs", StaffViewSet)
+router.register(r"staff-work-types", StaffWorkTypeViewSet)
+router.register(r"work-records", WorkRecordViewSet)
+router.register(r"expense-records", ExpenseRecordViewSet)
+router.register(r"work-month-locks", WorkMonthLockViewSet)
+router.register(r"payroll-snapshots", PayrollSnapshotViewSet, basename="payroll-snapshot")
 
-urlpatterns = [
-    path("", include(router.urls)),
-]
+urlpatterns = [path("", include(router.urls))]

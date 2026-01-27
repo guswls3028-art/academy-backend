@@ -1,8 +1,10 @@
+# PATH: apps/domains/staffs/models.py
 from datetime import datetime, timedelta
 from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
+from django.core.exceptions import ValidationError
 
 from apps.api.common.models import TimestampModel
 
@@ -160,7 +162,7 @@ class WorkRecord(TimestampModel):
 
 class ExpenseRecord(TimestampModel):
     """
-    기타 비용
+    기타 비용 (승인 워크플로우 포함)
     """
 
     staff = models.ForeignKey(
@@ -185,8 +187,87 @@ class ExpenseRecord(TimestampModel):
         default="PENDING",
     )
 
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approved_expenses",
+    )
+
     class Meta:
         ordering = ["-date", "-created_at"]
 
     def __str__(self) -> str:
         return f"{self.staff.name} - {self.title}"
+
+
+class WorkMonthLock(TimestampModel):
+    """
+    근무 월 마감
+    """
+
+    staff = models.ForeignKey(
+        Staff,
+        on_delete=models.CASCADE,
+        related_name="work_month_locks",
+    )
+    year = models.PositiveIntegerField()
+    month = models.PositiveIntegerField()
+    is_locked = models.BooleanField(default=True)
+
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="locked_work_months",
+    )
+
+    class Meta:
+        unique_together = ("staff", "year", "month")
+        ordering = ["-year", "-month"]
+
+    def __str__(self):
+        return f"{self.staff.name} - {self.year}-{self.month:02d}"
+
+
+class PayrollSnapshot(TimestampModel):
+    """
+    월별 급여 정산 스냅샷 (불변)
+    """
+
+    staff = models.ForeignKey(
+        Staff,
+        on_delete=models.CASCADE,
+        related_name="payroll_snapshots",
+    )
+
+    year = models.PositiveIntegerField()
+    month = models.PositiveIntegerField()
+
+    work_hours = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    work_amount = models.PositiveIntegerField(default=0)
+    approved_expense_amount = models.PositiveIntegerField(default=0)
+    total_amount = models.PositiveIntegerField(default=0)
+
+    generated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="generated_payroll_snapshots",
+    )
+
+    class Meta:
+        unique_together = ("staff", "year", "month")
+        ordering = ["-year", "-month"]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("PayrollSnapshot은 수정할 수 없습니다.")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.staff.name} {self.year}-{self.month:02d}"
