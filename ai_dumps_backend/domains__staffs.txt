@@ -398,7 +398,6 @@ class PayrollSnapshot(TimestampModel):
 ==========================================================================================
 # FILE: serializers.py
 ==========================================================================================
-# PATH: apps/domains/staffs/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
@@ -490,11 +489,23 @@ class StaffListSerializer(serializers.ModelSerializer):
 class StaffDetailSerializer(serializers.ModelSerializer):
     staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
 
+    # 🔥 CHANGED: 계정 정보 read-only
+    user_username = serializers.CharField(
+        source="user.username",
+        read_only=True,
+    )
+    user_is_staff = serializers.BooleanField(
+        source="user.is_staff",
+        read_only=True,
+    )
+
     class Meta:
         model = Staff
         fields = [
             "id",
             "user",
+            "user_username",   # 🔥 CHANGED
+            "user_is_staff",   # 🔥 CHANGED
             "name",
             "phone",
             "is_active",
@@ -560,14 +571,23 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
         return staff
 
     # =========================
-    # DELETE (Teacher 같이 제거)
+    # DELETE (Staff + Teacher + User)
     # =========================
     def delete(self, instance):
+        user = instance.user
+
+        # 🔥 Teacher 삭제
         Teacher.objects.filter(
             name=instance.name,
             phone=instance.phone,
         ).delete()
+
+        # 🔥 Staff 삭제
         instance.delete()
+
+        # 🔥 User 삭제
+        if user:
+            user.delete()
 
     # =========================
     # Helpers
@@ -737,6 +757,8 @@ urlpatterns = [path("", include(router.urls))]
 from django.db.models import Sum
 from django.utils import timezone
 from django.http import HttpResponse
+from django.db import transaction
+from django.contrib.auth import get_user_model
 
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, status
@@ -771,7 +793,9 @@ from .serializers import (
     PayrollSnapshotSerializer,
 )
 from .filters import StaffFilter, WorkRecordFilter, ExpenseRecordFilter
+from apps.domains.teachers.models import Teacher
 
+User = get_user_model()
 
 # ===========================
 # Permissions
@@ -884,10 +908,60 @@ class StaffViewSet(viewsets.ModelViewSet):
             return StaffDetailSerializer
         return StaffCreateUpdateSerializer
 
-    # ✅ 추가: DELETE 시 Serializer.delete(instance) 호출
+    # 🔥 CHANGED: Staff 삭제 시 Serializer.delete() 위임
     def perform_destroy(self, instance):
         serializer = self.get_serializer(instance)
         serializer.delete(instance)
+
+    # ===========================
+    # CREATE (User + Staff + Teacher)
+    # ===========================
+    def create(self, request, *args, **kwargs):
+        data = request.data
+
+        username = data.get("username")
+        password = data.get("password")
+        role = data.get("role")  # TEACHER | ASSISTANT
+
+        if not username or not password or not role:
+            raise ValidationError("username, password, role 은 필수입니다.")
+
+        if role not in ("TEACHER", "ASSISTANT"):
+            raise ValidationError("role 은 TEACHER 또는 ASSISTANT 여야 합니다.")
+
+        if User.objects.filter(username=username).exists():
+            raise ValidationError("이미 존재하는 username 입니다.")
+
+        with transaction.atomic():
+            user = User.objects.create(
+                username=username,
+                name=data.get("name", ""),
+                phone=data.get("phone", ""),
+                is_staff=(role == "TEACHER"),
+            )
+            user.set_password(password)
+            user.save()
+
+            staff = Staff.objects.create(
+                user=user,
+                name=data.get("name", ""),
+                phone=data.get("phone", ""),
+                is_active=True,
+                is_manager=False,
+                pay_type="MONTHLY" if role == "TEACHER" else "HOURLY",
+            )
+
+            if role == "TEACHER":
+                Teacher.objects.create(
+                    name=staff.name,
+                    phone=staff.phone,
+                    is_active=True,
+                )
+
+        return Response(
+            StaffDetailSerializer(staff).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=True, methods=["get", "post"], url_path="work-types")
     def work_types(self, request, pk=None):
@@ -941,11 +1015,9 @@ class StaffViewSet(viewsets.ModelViewSet):
             }
         )
 
-
 # ===========================
 # StaffWorkType
 # ===========================
-
 class StaffWorkTypeViewSet(viewsets.ModelViewSet):
     queryset = StaffWorkType.objects.select_related("staff", "work_type")
     serializer_class = StaffWorkTypeSerializer

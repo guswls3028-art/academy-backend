@@ -1,3 +1,4 @@
+# PATH: apps/domains/staffs/views.py
 from django.db.models import Sum
 from django.utils import timezone
 from django.http import HttpResponse
@@ -152,7 +153,7 @@ class StaffViewSet(viewsets.ModelViewSet):
             return StaffDetailSerializer
         return StaffCreateUpdateSerializer
 
-    # ✅ DELETE 시 Serializer.delete(instance) 호출 (원본 유지)
+    # 🔥 CHANGED: Staff 삭제 시 Serializer.delete() 위임
     def perform_destroy(self, instance):
         serializer = self.get_serializer(instance)
         serializer.delete(instance)
@@ -177,7 +178,6 @@ class StaffViewSet(viewsets.ModelViewSet):
             raise ValidationError("이미 존재하는 username 입니다.")
 
         with transaction.atomic():
-            # 1️⃣ User 생성
             user = User.objects.create(
                 username=username,
                 name=data.get("name", ""),
@@ -187,7 +187,6 @@ class StaffViewSet(viewsets.ModelViewSet):
             user.set_password(password)
             user.save()
 
-            # 2️⃣ Staff 생성
             staff = Staff.objects.create(
                 user=user,
                 name=data.get("name", ""),
@@ -197,7 +196,6 @@ class StaffViewSet(viewsets.ModelViewSet):
                 pay_type="MONTHLY" if role == "TEACHER" else "HOURLY",
             )
 
-            # 3️⃣ Teacher 자동 생성 (강사만)
             if role == "TEACHER":
                 Teacher.objects.create(
                     name=staff.name,
@@ -262,11 +260,9 @@ class StaffViewSet(viewsets.ModelViewSet):
             }
         )
 
-
 # ===========================
 # StaffWorkType
 # ===========================
-
 class StaffWorkTypeViewSet(viewsets.ModelViewSet):
     queryset = StaffWorkType.objects.select_related("staff", "work_type")
     serializer_class = StaffWorkTypeSerializer

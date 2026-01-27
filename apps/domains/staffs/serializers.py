@@ -1,4 +1,3 @@
-# PATH: apps/domains/staffs/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
@@ -90,11 +89,23 @@ class StaffListSerializer(serializers.ModelSerializer):
 class StaffDetailSerializer(serializers.ModelSerializer):
     staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
 
+    # 🔥 CHANGED: 계정 정보 read-only
+    user_username = serializers.CharField(
+        source="user.username",
+        read_only=True,
+    )
+    user_is_staff = serializers.BooleanField(
+        source="user.is_staff",
+        read_only=True,
+    )
+
     class Meta:
         model = Staff
         fields = [
             "id",
             "user",
+            "user_username",   # 🔥 CHANGED
+            "user_is_staff",   # 🔥 CHANGED
             "name",
             "phone",
             "is_active",
@@ -160,14 +171,23 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
         return staff
 
     # =========================
-    # DELETE (Teacher 같이 제거)
+    # DELETE (Staff + Teacher + User)
     # =========================
     def delete(self, instance):
+        user = instance.user
+
+        # 🔥 Teacher 삭제
         Teacher.objects.filter(
             name=instance.name,
             phone=instance.phone,
         ).delete()
+
+        # 🔥 Staff 삭제
         instance.delete()
+
+        # 🔥 User 삭제
+        if user:
+            user.delete()
 
     # =========================
     # Helpers
