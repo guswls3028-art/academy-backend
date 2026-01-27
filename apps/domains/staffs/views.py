@@ -1,4 +1,5 @@
 # PATH: apps/domains/staffs/views.py
+from io import BytesIO
 from django.db.models import Sum
 from django.utils import timezone
 from django.http import HttpResponse
@@ -16,6 +17,11 @@ from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
+
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
 
 from .models import (
     Staff,
@@ -113,6 +119,14 @@ def generate_payroll_snapshot(staff, year, month, user):
     )
 
 
+def can_manage_payroll(user) -> bool:
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser or user.is_staff:
+        return True
+    return getattr(getattr(user, "staff_profile", None), "is_manager", False)
+
+
 # ===========================
 # WorkType
 # ===========================
@@ -157,6 +171,20 @@ class StaffViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         serializer = self.get_serializer(instance)
         serializer.delete(instance)
+
+    @action(detail=False, methods=["get"], url_path="me")
+    def me(self, request):
+        """
+        프론트 UX 분리를 위한 권한 정보
+        """
+        return Response(
+            {
+                "is_authenticated": bool(request.user and request.user.is_authenticated),
+                "is_superuser": bool(getattr(request.user, "is_superuser", False)),
+                "is_staff": bool(getattr(request.user, "is_staff", False)),
+                "is_payroll_manager": can_manage_payroll(request.user),
+            }
+        )
 
     # ===========================
     # CREATE (User + Staff + Teacher)
@@ -335,11 +363,7 @@ class ExpenseRecordViewSet(viewsets.ModelViewSet):
 
         if new_status != instance.status:
             user = self.request.user
-            is_manager = (
-                user.is_superuser
-                or user.is_staff
-                or getattr(user.staff_profile, "is_manager", False)
-            )
+            is_manager = can_manage_payroll(user)
 
             if not is_manager:
                 raise PermissionDenied("비용 승인/반려는 관리자만 가능합니다.")
@@ -401,15 +425,18 @@ class WorkMonthLockViewSet(viewsets.ModelViewSet):
 # ===========================
 
 class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
-    queryset = PayrollSnapshot.objects.select_related("staff")
+    queryset = PayrollSnapshot.objects.select_related("staff", "generated_by")
     serializer_class = PayrollSnapshotSerializer
     permission_classes = [IsAuthenticated, IsPayrollManager]
 
     def list(self, request, *args, **kwargs):
         year = request.query_params.get("year")
         month = request.query_params.get("month")
+        staff = request.query_params.get("staff")
 
         qs = self.get_queryset()
+        if staff:
+            qs = qs.filter(staff_id=staff)
         if year:
             qs = qs.filter(year=year)
         if month:
@@ -439,6 +466,8 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
             "급여",
             "승인된 비용",
             "총 지급액",
+            "확정자",
+            "확정일시",
         ]
         ws.append(headers)
 
@@ -457,12 +486,14 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
                 s.work_amount,
                 s.approved_expense_amount,
                 s.total_amount,
+                getattr(s.generated_by, "username", "") if s.generated_by else "",
+                s.created_at.strftime("%Y-%m-%d %H:%M:%S") if s.created_at else "",
             ])
             tw += s.work_amount
             te += s.approved_expense_amount
             tt += s.total_amount
 
-        ws.append(["합계", "", "", "", tw, te, tt])
+        ws.append(["합계", "", "", "", tw, te, tt, "", ""])
 
         for col in ws.columns:
             ws.column_dimensions[col[0].column_letter].width = 18
@@ -474,4 +505,101 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
             f'attachment; filename="payroll_{year}_{month}.xlsx"'
         )
         wb.save(response)
+        return response
+
+    @action(detail=False, methods=["get"], url_path="export-pdf")
+    def export_pdf(self, request):
+        staff_id = request.query_params.get("staff")
+        year = request.query_params.get("year")
+        month = request.query_params.get("month")
+
+        if not staff_id or not year or not month:
+            return Response({"detail": "staff, year, month 필요"}, status=400)
+
+        snap = (
+            PayrollSnapshot.objects.filter(
+                staff_id=staff_id,
+                year=year,
+                month=month,
+            )
+            .select_related("staff", "generated_by")
+            .first()
+        )
+
+        if not snap:
+            return Response({"detail": "급여 스냅샷 없음"}, status=404)
+
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40)
+        styles = getSampleStyleSheet()
+        story = []
+
+        title = f"급여 명세서"
+        story.append(Paragraph(title, styles["Title"]))
+        story.append(Spacer(1, 12))
+
+        meta_rows = [
+            ["직원명", snap.staff.name],
+            ["정산월", f"{snap.year}-{snap.month:02d}"],
+            ["확정자", getattr(snap.generated_by, "username", "-") if snap.generated_by else "-"],
+            ["확정일시", snap.created_at.strftime("%Y-%m-%d %H:%M:%S") if snap.created_at else "-"],
+        ]
+        meta_table = Table(meta_rows, colWidths=[120, 360])
+        meta_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                    ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("PADDING", (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
+        story.append(meta_table)
+        story.append(Spacer(1, 16))
+
+        rows = [
+            ["항목", "값"],
+            ["근무시간", f"{snap.work_hours} h"],
+            ["급여", f"{snap.work_amount:,} 원"],
+            ["승인 비용", f"{snap.approved_expense_amount:,} 원"],
+            ["총 지급액", f"{snap.total_amount:,} 원"],
+        ]
+        t = Table(rows, colWidths=[120, 360])
+        t.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f3f4f6")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                    ("BOX", (0, 0), (-1, -1), 0.75, colors.grey),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                    ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 11),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("PADDING", (0, 0), (-1, -1), 8),
+                ]
+            )
+        )
+        story.append(t)
+        story.append(Spacer(1, 18))
+
+        story.append(
+            Paragraph(
+                "※ 본 명세서는 월 마감 시 생성된 불변(스냅샷) 데이터입니다.",
+                styles["Normal"],
+            )
+        )
+
+        doc.build(story)
+        pdf = buffer.getvalue()
+        buffer.close()
+
+        response = HttpResponse(content_type="application/pdf")
+        response["Content-Disposition"] = (
+            f'attachment; filename="payroll_{snap.staff.id}_{snap.year}_{snap.month:02d}.pdf"'
+        )
+        response.write(pdf)
         return response

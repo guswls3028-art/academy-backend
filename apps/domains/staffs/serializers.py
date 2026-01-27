@@ -1,3 +1,4 @@
+# PATH: apps/domains/staffs/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
@@ -282,6 +283,7 @@ class ExpenseRecordSerializer(serializers.ModelSerializer):
 
 class WorkMonthLockSerializer(serializers.ModelSerializer):
     staff_name = serializers.CharField(source="staff.name", read_only=True)
+    locked_by_name = serializers.CharField(source="locked_by.username", read_only=True)
 
     class Meta:
         model = WorkMonthLock
@@ -293,6 +295,7 @@ class WorkMonthLockSerializer(serializers.ModelSerializer):
             "month",
             "is_locked",
             "locked_by",
+            "locked_by_name",
             "created_at",
         ]
         read_only_fields = ["locked_by", "created_at"]
@@ -301,6 +304,7 @@ class WorkMonthLockSerializer(serializers.ModelSerializer):
 
 class PayrollSnapshotSerializer(serializers.ModelSerializer):
     staff_name = serializers.CharField(source="staff.name", read_only=True)
+    generated_by_name = serializers.CharField(source="generated_by.username", read_only=True)
 
     class Meta:
         model = PayrollSnapshot
@@ -315,6 +319,7 @@ class PayrollSnapshotSerializer(serializers.ModelSerializer):
             "approved_expense_amount",
             "total_amount",
             "generated_by",
+            "generated_by_name",
             "created_at",
         ]
         read_only_fields = fields
