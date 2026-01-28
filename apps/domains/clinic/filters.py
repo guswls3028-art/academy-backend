@@ -1,5 +1,7 @@
+# PATH: apps/domains/clinic/filters.py
+
 import django_filters
-from .models import Session, Submission
+from .models import Session, Submission, SessionParticipant
 
 
 class SessionFilter(django_filters.FilterSet):
@@ -10,6 +12,30 @@ class SessionFilter(django_filters.FilterSet):
     class Meta:
         model = Session
         fields = ["date", "location"]
+
+
+class ParticipantFilter(django_filters.FilterSet):
+    session = django_filters.NumberFilter(field_name="session_id")
+    student = django_filters.NumberFilter(field_name="student_id")
+    status = django_filters.CharFilter(field_name="status")
+    source = django_filters.CharFilter(field_name="source")
+    enrollment_id = django_filters.NumberFilter(field_name="enrollment_id")
+    clinic_reason = django_filters.CharFilter(field_name="clinic_reason")
+
+    session_date = django_filters.DateFilter(field_name="session__date")
+    session_date_from = django_filters.DateFilter(field_name="session__date", lookup_expr="gte")
+    session_date_to = django_filters.DateFilter(field_name="session__date", lookup_expr="lte")
+
+    class Meta:
+        model = SessionParticipant
+        fields = [
+            "session",
+            "student",
+            "status",
+            "source",
+            "enrollment_id",
+            "clinic_reason",
+        ]
 
 
 class SubmissionFilter(django_filters.FilterSet):

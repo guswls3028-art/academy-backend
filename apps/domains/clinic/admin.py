@@ -1,3 +1,5 @@
+# PATH: apps/domains/clinic/admin.py
+
 from django.contrib import admin
 from .models import Session, SessionParticipant, Test, Submission
 
@@ -12,8 +14,17 @@ class SessionAdmin(admin.ModelAdmin):
 
 @admin.register(SessionParticipant)
 class SessionParticipantAdmin(admin.ModelAdmin):
-    list_display = ("id", "session", "student", "status", "created_at")
-    list_filter = ("status", "session__date")
+    list_display = (
+        "id",
+        "session",
+        "student",
+        "status",
+        "source",
+        "enrollment_id",
+        "clinic_reason",
+        "created_at",
+    )
+    list_filter = ("status", "source", "clinic_reason", "session__date")
     search_fields = ("student__name", "session__location")
     ordering = ("-created_at",)
 

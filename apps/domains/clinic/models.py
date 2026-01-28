@@ -1,3 +1,5 @@
+# PATH: apps/domains/clinic/models.py
+
 from django.db import models
 
 from apps.api.common.models import TimestampModel
@@ -19,10 +21,25 @@ class Session(TimestampModel):
 
 
 # --------------------------------------------------
-# Session Participant
+# Session Participant (✅ SaaS 운영 상태 확장)
 # --------------------------------------------------
 
 class SessionParticipant(TimestampModel):
+    class Status(models.TextChoices):
+        BOOKED = "booked", "Booked"         # 예약됨
+        ATTENDED = "attended", "Attended"   # 출석(수업 완료)
+        NO_SHOW = "no_show", "NoShow"       # 미이행(예약했지만 수업 성립 X)
+        CANCELLED = "cancelled", "Cancelled"  # 취소
+
+    class Source(models.TextChoices):
+        AUTO = "auto", "Auto"       # 자동(Results 판정)
+        MANUAL = "manual", "Manual" # 수동 등록
+
+    class Reason(models.TextChoices):
+        EXAM = "exam", "Exam"
+        HOMEWORK = "homework", "Homework"
+        BOTH = "both", "Both"
+
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
@@ -34,14 +51,27 @@ class SessionParticipant(TimestampModel):
         related_name="clinic_participations",
     )
 
+    # ✅ 운영 상태
     status = models.CharField(
         max_length=20,
-        choices=(
-            ("registered", "Registered"),
-            ("cancelled", "Cancelled"),
-        ),
-        default="registered",
+        choices=Status.choices,
+        default=Status.BOOKED,
     )
+
+    # ✅ Results 연계 메타 (판정은 results 단일진실, clinic은 “기록/추적”만)
+    source = models.CharField(
+        max_length=20,
+        choices=Source.choices,
+        default=Source.AUTO,
+    )
+    enrollment_id = models.PositiveIntegerField(null=True, blank=True)
+    clinic_reason = models.CharField(
+        max_length=20,
+        choices=Reason.choices,
+        null=True,
+        blank=True,
+    )
+
     memo = models.TextField(blank=True, null=True)
 
     class Meta:
@@ -49,7 +79,7 @@ class SessionParticipant(TimestampModel):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.student.name} in {self.session}"
+        return f"{self.student.name} in {self.session} ({self.status})"
 
 
 # --------------------------------------------------

@@ -730,6 +730,7 @@ class PayrollSnapshotSerializer(serializers.ModelSerializer):
 # FILE: urls.py
 ==========================================================================================
 # PATH: apps/domains/staffs/urls.py
+
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
@@ -744,15 +745,29 @@ from .views import (
 )
 
 router = DefaultRouter()
+
+# ===========================
+# ⚠️ 서브 리소스 먼저 등록
+# ===========================
 router.register(r"work-types", WorkTypeViewSet)
-router.register(r"", StaffViewSet)
 router.register(r"staff-work-types", StaffWorkTypeViewSet)
 router.register(r"work-records", WorkRecordViewSet)
 router.register(r"expense-records", ExpenseRecordViewSet)
 router.register(r"work-month-locks", WorkMonthLockViewSet)
-router.register(r"payroll-snapshots", PayrollSnapshotViewSet, basename="payroll-snapshot")
+router.register(
+    r"payroll-snapshots",
+    PayrollSnapshotViewSet,
+    basename="payroll-snapshot",
+)
 
-urlpatterns = [path("", include(router.urls))]
+# ===========================
+# ⚠️ Staff는 반드시 마지막
+# ===========================
+router.register(r"", StaffViewSet)
+
+urlpatterns = [
+    path("", include(router.urls)),
+]
 
 
 ==========================================================================================
@@ -894,7 +909,7 @@ def can_manage_payroll(user) -> bool:
 class WorkTypeViewSet(viewsets.ModelViewSet):
     queryset = WorkType.objects.all().order_by("name")
     serializer_class = WorkTypeSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPayrollManager]
 
     filter_backends = (DjangoFilterBackend, SearchFilter, OrderingFilter)
     filterset_fields = ["is_active"]
@@ -913,7 +928,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         .prefetch_related("staff_work_types__work_type")
         .order_by("name")
     )
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPayrollManager]
 
     filter_backends = (DjangoFilterBackend, SearchFilter, OrderingFilter)
     filterset_class = StaffFilter
@@ -932,7 +947,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(instance)
         serializer.delete(instance)
 
-    @action(detail=False, methods=["get"], url_path="me")
+    @action(detail=False, methods=["get"], url_path="me",permission_classes=[IsAuthenticated])
     def me(self, request):
         """
         프론트 UX 분리를 위한 권한 정보
@@ -1054,7 +1069,7 @@ class StaffViewSet(viewsets.ModelViewSet):
 class StaffWorkTypeViewSet(viewsets.ModelViewSet):
     queryset = StaffWorkType.objects.select_related("staff", "work_type")
     serializer_class = StaffWorkTypeSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPayrollManager]
 
     filter_backends = (DjangoFilterBackend, OrderingFilter)
     filterset_fields = ["staff", "work_type"]
@@ -1072,7 +1087,7 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         .order_by("-date", "-start_time")
     )
     serializer_class = WorkRecordSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPayrollManager]
 
     filter_backends = (DjangoFilterBackend, OrderingFilter)
     filterset_class = WorkRecordFilter
@@ -1106,7 +1121,7 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
 class ExpenseRecordViewSet(viewsets.ModelViewSet):
     queryset = ExpenseRecord.objects.select_related("staff", "approved_by")
     serializer_class = ExpenseRecordSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPayrollManager]
 
     filter_backends = (DjangoFilterBackend, OrderingFilter)
     filterset_class = ExpenseRecordFilter
