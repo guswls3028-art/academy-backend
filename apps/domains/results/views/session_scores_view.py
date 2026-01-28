@@ -45,7 +45,7 @@ from apps.domains.lectures.models import Session
 from apps.domains.progress.models import ClinicLink
 
 from apps.domains.homework_results.models import HomeworkScore
-from apps.domains.homework.models import Homework
+from apps.domains.homework_results.models import Homework
 from apps.domains.enrollment.models import Enrollment
 
 from apps.domains.exams.models import ExamEnrollment
