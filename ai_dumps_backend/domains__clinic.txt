@@ -383,7 +383,7 @@ urlpatterns = router.urls
 ==========================================================================================
 # PATH: apps/domains/clinic/views.py
 
-from django.db.models import Count
+from django.db.models import Count, Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -433,6 +433,53 @@ class SessionViewSet(viewsets.ModelViewSet):
         session = self.get_object()
         send_clinic_reminder_for_students(session_id=session.id)
         return Response({"ok": True})
+
+    # ==================================================
+    # ✅ [추가] 운영 페이지 좌측 트리 전용 API
+    # GET /clinic/sessions/tree/?year=YYYY&month=MM
+    # ==================================================
+    @action(detail=False, methods=["get"])
+    def tree(self, request):
+        year = request.query_params.get("year")
+        month = request.query_params.get("month")
+
+        if not year or not month:
+            return Response(
+                {"detail": "year and month are required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = (
+            Session.objects
+            .filter(date__year=year, date__month=month)
+            .annotate(
+                participant_count=Count("participants"),
+                booked_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.BOOKED),
+                ),
+                no_show_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.NO_SHOW),
+                ),
+            )
+            .order_by("date", "start_time")
+        )
+
+        data = [
+            {
+                "id": s.id,
+                "date": s.date,
+                "start_time": s.start_time,
+                "location": s.location,
+                "participant_count": s.participant_count,
+                "booked_count": s.booked_count,
+                "no_show_count": s.no_show_count,
+            }
+            for s in qs
+        ]
+
+        return Response(data)
 
 
 class ParticipantViewSet(viewsets.ModelViewSet):
