@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
-from django.db.models import Q  # ✅ 중요: enrollment OR 조건용
+from django.db.models import Q
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -42,25 +42,18 @@ from apps.domains.results.utils.result_queries import latest_results_per_enrollm
 from apps.domains.results.serializers.session_scores import SessionScoreRowSerializer
 
 from apps.domains.lectures.models import Session
-from apps.domains.progress.models import ClinicLink  # SessionProgress ❌ 제거
+from apps.domains.progress.models import ClinicLink
 
 # ✅ 단일 진실
-from apps.domains.homework_results.models import HomeworkScore
+from apps.domains.homework_results.models import HomeworkScore, Homework
 from apps.domains.enrollment.models import Enrollment
 
-# 1)모수
+# 모수
 from apps.domains.exams.models import ExamEnrollment
 from apps.domains.homework.models import HomeworkEnrollment
 
 
 def _safe_student_name(enrollment: Optional[Enrollment]) -> str:
-    """
-    Enrollment → 표시용 학생명 안전 추출
-    (student / user / legacy 필드 대응)
-
-    ✅ 방어
-    - enrollment None 가능
-    """
     if not enrollment:
         return "-"
 
@@ -96,60 +89,40 @@ class SessionScoresView(APIView):
         session = get_object_or_404(Session, id=int(session_id))
 
         # -------------------------------------------------
-        # 0) Session ↔ Exam (단일 진실)
+        # 0) Session ↔ Exam
         # -------------------------------------------------
         exams = list(get_exams_for_session(session))
         exam_ids = [int(e.id) for e in exams]
 
         # -------------------------------------------------
-        # 1) enrollment 모수
-        #    - 시험 OR 과제에 한 번이라도 연결된 Enrollment
+        # 1) enrollment 모수 (시험 OR 과제)
         # -------------------------------------------------
         hw_enrollment_ids_qs = (
-            HomeworkEnrollment.objects.filter(session_id=int(session.id)).values_list(
-                "enrollment_id", flat=True
-            )
+            HomeworkEnrollment.objects.filter(session_id=int(session.id))
+            .values_list("enrollment_id", flat=True)
         )
 
-        # ✅ exam_ids 없으면 ExamEnrollment 조건은 스킵 (불필요쿼리 방지)
         if exam_ids:
             ex_enrollment_ids_qs = (
-                ExamEnrollment.objects.filter(exam_id__in=exam_ids).values_list(
-                    "enrollment_id", flat=True
-                )
+                ExamEnrollment.objects.filter(exam_id__in=exam_ids)
+                .values_list("enrollment_id", flat=True)
             )
             enrollment_qs = Enrollment.objects.filter(
                 Q(id__in=hw_enrollment_ids_qs) | Q(id__in=ex_enrollment_ids_qs)
             ).distinct()
         else:
-            enrollment_qs = Enrollment.objects.filter(Q(id__in=hw_enrollment_ids_qs)).distinct()
-
-        # 단일 enrollment 조회용 (디버그/사이드패널)
-        enrollment_id_param = request.query_params.get("enrollment_id")
-        if enrollment_id_param:
-            try:
-                enrollment_qs = enrollment_qs.filter(id=int(enrollment_id_param))
-            except Exception:
-                pass
+            enrollment_qs = Enrollment.objects.filter(
+                Q(id__in=hw_enrollment_ids_qs)
+            ).distinct()
 
         enrollment_ids = list(enrollment_qs.values_list("id", flat=True))
 
         # -------------------------------------------------
         # 2) Meta (프론트 표시용)
         # -------------------------------------------------
-
-        from apps.domains.homework_results.models import Homework
-
-        # 세션에 속한 과제 조회 (정렬 기준은 id, 필요시 변경 가능)
-        homeworks = (
-            Homework.objects
-            .filter(session=session)
-            .order_by("id")
+        homeworks = list(
+            Homework.objects.filter(session=session).order_by("id")
         )
-
-        # 과제가 1개면 → 그 과제명
-        # 없으면 → None (컬럼 자체를 안 띄우기 위함)
-        homework_title = homeworks[0].title if homeworks else None
 
         meta = {
             "exams": [
@@ -160,17 +133,21 @@ class SessionScoresView(APIView):
                 }
                 for ex in exams
             ],
-            "homework": {
-                "title": homework_title,  # ✅ 실제 과제명
-                "unit": None,             # ❗ % / 문항수 판단 안 함
-            },
+            "homeworks": [
+                {
+                    "homework_id": int(hw.id),
+                    "title": str(hw.title),
+                    "unit": None,  # ❗ 단위 판단 안 함 (서버 정책 유지)
+                }
+                for hw in homeworks
+            ],
         }
 
         if not enrollment_ids:
             return Response({"meta": meta, "rows": []})
 
         # -------------------------------------------------
-        # 3) Clinic 대상자 (보조 정보)
+        # 3) Clinic 대상자
         # -------------------------------------------------
         clinic_ids: Set[int] = set(
             ClinicLink.objects.filter(session=session, is_auto=True)
@@ -190,16 +167,19 @@ class SessionScoresView(APIView):
         }
 
         # -------------------------------------------------
-        # 5) HomeworkScore map
+        # 5) HomeworkScore map (enrollment_id → homework_id → score)
         # -------------------------------------------------
-        hw_qs = HomeworkScore.objects.filter(
+        hw_scores = HomeworkScore.objects.filter(
             session=session,
             enrollment_id__in=enrollment_ids,
         )
-        hw_map = {int(h.enrollment_id): h for h in hw_qs}
+
+        hw_map: Dict[int, Dict[int, HomeworkScore]] = {}
+        for hw in hw_scores:
+            hw_map.setdefault(int(hw.enrollment_id), {})[int(hw.homework_id)] = hw
 
         # -------------------------------------------------
-        # 6) Exam Result map (exam_id → enrollment_id → Result)
+        # 6) Exam Result map
         # -------------------------------------------------
         result_map: Dict[int, Dict[int, Result]] = {}
         for exid in exam_ids:
@@ -226,9 +206,6 @@ class SessionScoresView(APIView):
             for a in ExamAttempt.objects.filter(id__in=attempt_ids).only("id", "status"):
                 attempt_status_map[int(a.id)] = str(a.status or "")
 
-        # -------------------------------------------------
-        # 8) Exam 메타 map
-        # -------------------------------------------------
         exam_pass_score_map = {
             int(ex.id): float(getattr(ex, "pass_score", 0.0) or 0.0)
             for ex in exams
@@ -236,7 +213,7 @@ class SessionScoresView(APIView):
         exam_title_map = {int(ex.id): str(getattr(ex, "title", "") or "") for ex in exams}
 
         # -------------------------------------------------
-        # 9) Row 생성 (enrollment 기준)
+        # 8) Row 생성
         # -------------------------------------------------
         rows: List[Dict[str, Any]] = []
 
@@ -252,25 +229,20 @@ class SessionScoresView(APIView):
                 r: Optional[Result] = result_map.get(int(exid), {}).get(eid_i)
 
                 if r is None:
-                    # ❗ 미응시 / 미산출 상태
                     exam_score = None
                     exam_max = None
-                    exam_passed = None  # ✅ None 유지
+                    exam_passed = None
                     exam_updated_at = None
                     exam_locked = False
                     exam_lock_reason = None
                 else:
                     exam_score = float(getattr(r, "total_score", None) or 0.0)
                     exam_max = float(getattr(r, "max_score", None) or 0.0)
-
-                    # ✅ 정책 계산 금지: passed는 Result 단일 진실을 우선 사용
-                    # - 없으면 None 유지 (프론트에서 "미정/비표시" 가능)
                     exam_passed = getattr(r, "passed", None)
                     if exam_passed is not None:
                         exam_passed = bool(exam_passed)
 
                     exam_updated_at = getattr(r, "updated_at", None)
-
                     attempt_status = ""
                     if getattr(r, "attempt_id", None):
                         attempt_status = attempt_status_map.get(int(r.attempt_id), "")
@@ -289,7 +261,7 @@ class SessionScoresView(APIView):
                         "block": {
                             "score": exam_score,
                             "max_score": exam_max,
-                            "passed": exam_passed,  # ✅ None 그대로 전달
+                            "passed": exam_passed,
                             "clinic_required": bool(clinic_required),
                             "is_locked": bool(exam_locked),
                             "lock_reason": exam_lock_reason,
@@ -297,33 +269,53 @@ class SessionScoresView(APIView):
                     }
                 )
 
-            # ---------- homework ----------
-            hw: Optional[HomeworkScore] = hw_map.get(eid_i)
-            if hw is None:
-                hw_score = None
-                hw_max = None
-                hw_passed = None  # ❗ 미산출
-                hw_updated_at = None
-                hw_locked = False
-                hw_lock_reason = None
-            else:
-                hw_score = hw.score
-                hw_max = hw.max_score
+            # ---------- homework (1:N) ----------
+            homeworks_payload: List[Dict[str, Any]] = []
 
-                # ✅ homework_results 단일 진실 (있으면 그대로)
-                hw_passed = getattr(hw, "passed", None)
-                if hw_passed is not None:
-                    hw_passed = bool(hw_passed)
+            for hw in homeworks:
+                hw_score_obj = hw_map.get(eid_i, {}).get(int(hw.id))
 
-                hw_updated_at = getattr(hw, "updated_at", None)
-                hw_locked = bool(getattr(hw, "is_locked", False))
-                hw_lock_reason = str(hw.lock_reason) if getattr(hw, "lock_reason", None) else None
+                if hw_score_obj is None:
+                    hw_score = None
+                    hw_max = None
+                    hw_passed = None
+                    hw_updated_at = None
+                    hw_locked = False
+                    hw_lock_reason = None
+                else:
+                    hw_score = hw_score_obj.score
+                    hw_max = hw_score_obj.max_score
+                    hw_passed = getattr(hw_score_obj, "passed", None)
+                    if hw_passed is not None:
+                        hw_passed = bool(hw_passed)
+
+                    hw_updated_at = getattr(hw_score_obj, "updated_at", None)
+                    hw_locked = bool(getattr(hw_score_obj, "is_locked", False))
+                    hw_lock_reason = (
+                        str(hw_score_obj.lock_reason)
+                        if getattr(hw_score_obj, "lock_reason", None)
+                        else None
+                    )
+
+                homeworks_payload.append(
+                    {
+                        "homework_id": int(hw.id),
+                        "title": str(hw.title),
+                        "block": {
+                            "score": hw_score,
+                            "max_score": hw_max,
+                            "passed": hw_passed,
+                            "clinic_required": bool(clinic_required),
+                            "is_locked": bool(hw_locked),
+                            "lock_reason": hw_lock_reason,
+                        },
+                    }
+                )
 
             updated_candidates = [
                 d
                 for d in (
                     (max(exam_updated_ats) if exam_updated_ats else None),
-                    hw_updated_at,
                     getattr(session, "updated_at", None),
                 )
                 if d
@@ -335,14 +327,7 @@ class SessionScoresView(APIView):
                     "enrollment_id": eid_i,
                     "student_name": student_name_map.get(eid_i, "-"),
                     "exams": exams_payload,
-                    "homework": {
-                        "score": hw_score,
-                        "max_score": hw_max,
-                        "passed": hw_passed,  # ✅ None 유지
-                        "clinic_required": bool(clinic_required),
-                        "is_locked": bool(hw_locked),
-                        "lock_reason": hw_lock_reason,
-                    },
+                    "homeworks": homeworks_payload,
                     "updated_at": updated_at,
                 }
             )

@@ -8,7 +8,7 @@ SessionScores Serializer (Score Tab)
 - View에서 만들어준 dict를 그대로 validate/serialize만 수행한다.
 
 ✅ 프론트 계약
-- score === null 은 "미산출/미응시/처리중" 의미 (0과 구분)
+- score === null 은 "미산출/미응시/처리중" 의미
 - is_locked / lock_reason 은 입력 비활성화 + tooltip 용도
 """
 
@@ -21,7 +21,7 @@ class ScoreBlockSerializer(serializers.Serializer):
     score = serializers.FloatField(allow_null=True)
     max_score = serializers.FloatField(allow_null=True)
 
-    passed = serializers.BooleanField()
+    passed = serializers.BooleanField(allow_null=True)
     clinic_required = serializers.BooleanField()
 
     is_locked = serializers.BooleanField()
@@ -29,12 +29,6 @@ class ScoreBlockSerializer(serializers.Serializer):
 
 
 class ExamScoreBlockSerializer(serializers.Serializer):
-    """
-    ✅ Session 1:N Exam 대응
-    - exam_id + title + pass_score (meta 없이도 row 자체로 표시 가능)
-    - 내부 score block은 ScoreBlockSerializer를 재사용
-    """
-
     exam_id = serializers.IntegerField()
     title = serializers.CharField(allow_blank=True)
     pass_score = serializers.FloatField()
@@ -42,18 +36,18 @@ class ExamScoreBlockSerializer(serializers.Serializer):
     block = ScoreBlockSerializer()
 
 
-class SessionScoreRowSerializer(serializers.Serializer):
-    """
-    ✅ 성적 탭 메인 테이블 Row
-    - 학생 1명당 1 Row
-    - exams: 시험 요약 리스트(1:N)
-    - homework: 과제 요약(세션 단위 스냅샷)
-    """
+class HomeworkScoreBlockSerializer(serializers.Serializer):
+    homework_id = serializers.IntegerField()
+    title = serializers.CharField(allow_blank=True)
 
+    block = ScoreBlockSerializer()
+
+
+class SessionScoreRowSerializer(serializers.Serializer):
     enrollment_id = serializers.IntegerField()
     student_name = serializers.CharField(allow_blank=True)
 
     exams = ExamScoreBlockSerializer(many=True)
-    homework = ScoreBlockSerializer()
+    homeworks = HomeworkScoreBlockSerializer(many=True)
 
     updated_at = serializers.DateTimeField(allow_null=True)
