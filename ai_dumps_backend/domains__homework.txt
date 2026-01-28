@@ -74,20 +74,23 @@ Homework URLs
 
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-
+from apps.domains.homework.views.homework_assignment_view import HomeworkAssignmentManageView
 from apps.domains.homework.views import (
     HomeworkScoreViewSet,
     HomeworkPolicyViewSet,
     HomeworkEnrollmentManageView,   # ✅ 추가
 )
 
+
 router = DefaultRouter()
 router.register("scores", HomeworkScoreViewSet, basename="homework-scores")
 router.register("policies", HomeworkPolicyViewSet, basename="homework-policies")
 
+
 urlpatterns = [
     path("", include(router.urls)),
-    path("enrollments/", HomeworkEnrollmentManageView.as_view()),  # ✅ 추가
+    path("enrollments/", HomeworkEnrollmentManageView.as_view()),
+      path("assignments/", HomeworkAssignmentManageView.as_view()),  # ✅ 추가
 ]
 
 
@@ -191,6 +194,67 @@ class Migration(migrations.Migration):
 
 
 ==========================================================================================
+# FILE: migrations/0003_homework_assignment.py
+==========================================================================================
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("homework", "0002_homeworkenrollment"),
+        ("homework_results", "0002_homework_and_more"),
+        ("lectures", "0002_remove_session_exam"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="HomeworkAssignment",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("enrollment_id", models.IntegerField(db_index=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "homework",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="assignments",
+                        to="homework_results.homework",
+                    ),
+                ),
+                (
+                    "session",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        to="lectures.session",
+                        db_index=True,
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "homework_assignment",
+            },
+        ),
+        migrations.AddConstraint(
+            model_name="homeworkassignment",
+            constraint=models.UniqueConstraint(
+                fields=("homework", "enrollment_id"),
+                name="uniq_homework_assignment_homework_enrollment",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
 # FILE: migrations/__init__.py
 ==========================================================================================
 # PATH: apps/domains/homework/migrations/__init__.py
@@ -200,15 +264,72 @@ class Migration(migrations.Migration):
 ==========================================================================================
 # FILE: models/__init__.py
 ==========================================================================================
-# PATH: apps/domains/homework/models/__init__.py
-
 from .homework_enrollment import HomeworkEnrollment
 from .homework_policy import HomeworkPolicy
+from .homework_assignment import HomeworkAssignment
 
 __all__ = [
     "HomeworkEnrollment",
     "HomeworkPolicy",
+    "HomeworkAssignment",
 ]
+
+
+==========================================================================================
+# FILE: models/homework_assignment.py
+==========================================================================================
+from __future__ import annotations
+
+from django.db import models
+
+from apps.domains.homework_results.models import Homework
+from apps.domains.lectures.models import Session
+
+
+class HomeworkAssignment(models.Model):
+    """
+    HomeworkAssignment (과제별 대상자)
+
+    ✅ 단일 진실:
+    - 특정 Homework(과제)에 대해
+      어떤 enrollment_id가 대상자인지 관리
+
+    기존 HomeworkEnrollment(session 단위)는 유지하되
+    개별 과제에서는 이 테이블을 우선 사용한다.
+    """
+
+    homework = models.ForeignKey(
+        Homework,
+        on_delete=models.CASCADE,
+        related_name="assignments",
+    )
+
+    # 성능/필터 편의용 (중복 저장 허용)
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        db_index=True,
+    )
+
+    enrollment_id = models.IntegerField(db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "homework_assignment"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["homework", "enrollment_id"],
+                name="uniq_homework_assignment_homework_enrollment",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"HomeworkAssignment("
+            f"homework={self.homework_id}, "
+            f"enrollment={self.enrollment_id})"
+        )
 
 
 ==========================================================================================
@@ -443,9 +564,30 @@ class HomeworkQuickPatchSerializer(serializers.Serializer):
 
     session_id = serializers.IntegerField()
     enrollment_id = serializers.IntegerField()
+    homework_id = serializers.IntegerField()  # ✅ 추가
 
     score = serializers.FloatField()
     max_score = serializers.FloatField(required=False, allow_null=True)
+
+
+==========================================================================================
+# FILE: serializers/homework_assignment_serializer.py
+==========================================================================================
+from rest_framework import serializers
+
+
+class HomeworkAssignmentRowSerializer(serializers.Serializer):
+    enrollment_id = serializers.IntegerField()
+    student_name = serializers.CharField(allow_blank=True)
+    is_selected = serializers.BooleanField()
+
+
+class HomeworkAssignmentUpdateSerializer(serializers.Serializer):
+    enrollment_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=True,
+        required=True,
+    )
 
 
 ==========================================================================================
@@ -599,6 +741,139 @@ __all__ = [
     "HomeworkPolicyViewSet",
     "HomeworkEnrollmentManageView",
 ]
+
+
+==========================================================================================
+# FILE: views/homework_assignment_view.py
+==========================================================================================
+from __future__ import annotations
+
+from typing import List, Set
+
+from django.db import transaction
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+
+from apps.domains.enrollment.models import SessionEnrollment
+from apps.domains.homework.models import HomeworkAssignment
+from apps.domains.homework_results.models import Homework
+from apps.domains.homework.serializers.homework_assignment_serializer import (
+    HomeworkAssignmentRowSerializer,
+    HomeworkAssignmentUpdateSerializer,
+)
+
+
+class HomeworkAssignmentManageView(APIView):
+    """
+    Homework Assignment Manage API (과제별 대상자)
+
+    GET /homework/assignments/?homework_id=1
+    PUT /homework/assignments/?homework_id=1
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_homework(self, request) -> Homework:
+        hid = request.query_params.get("homework_id")
+        if not hid:
+            raise ValueError("homework_id is required")
+        return Homework.objects.select_related("session").get(id=int(hid))
+
+    def get(self, request):
+        try:
+            homework = self._get_homework(request)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=400)
+
+        session_id = homework.session_id
+
+        session_enrollments = (
+            SessionEnrollment.objects
+            .filter(session_id=session_id)
+            .select_related("enrollment")
+            .order_by("id")
+        )
+
+        selected_ids: Set[int] = set(
+            HomeworkAssignment.objects
+            .filter(homework=homework)
+            .values_list("enrollment_id", flat=True)
+        )
+
+        items: List[dict] = []
+        for se in session_enrollments:
+            enrollment = getattr(se, "enrollment", None)
+            student_name = ""
+
+            if enrollment and hasattr(enrollment, "student"):
+                student_name = str(enrollment.student.name or "")
+
+            items.append(
+                {
+                    "enrollment_id": se.enrollment_id,
+                    "student_name": student_name,
+                    "is_selected": se.enrollment_id in selected_ids,
+                }
+            )
+
+        return Response(
+            {
+                "homework_id": homework.id,
+                "session_id": session_id,
+                "items": HomeworkAssignmentRowSerializer(items, many=True).data,
+            }
+        )
+
+    @transaction.atomic
+    def put(self, request):
+        try:
+            homework = self._get_homework(request)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=400)
+
+        ser = HomeworkAssignmentUpdateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        incoming_ids = set(map(int, ser.validated_data["enrollment_ids"]))
+
+        valid_ids = set(
+            SessionEnrollment.objects
+            .filter(session_id=homework.session_id)
+            .values_list("enrollment_id", flat=True)
+        )
+
+        invalid = list(incoming_ids - valid_ids)
+        if invalid:
+            return Response(
+                {
+                    "detail": "세션 등록 학생이 아닌 enrollment_id 포함",
+                    "invalid_enrollment_ids": invalid,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        HomeworkAssignment.objects.filter(homework=homework).delete()
+
+        HomeworkAssignment.objects.bulk_create(
+            [
+                HomeworkAssignment(
+                    homework=homework,
+                    session=homework.session,
+                    enrollment_id=eid,
+                )
+                for eid in sorted(incoming_ids)
+            ]
+        )
+
+        return Response(
+            {
+                "homework_id": homework.id,
+                "selected_count": len(incoming_ids),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 ==========================================================================================
@@ -859,7 +1134,7 @@ Endpoint:
 - 하지만 /homework/scores/* 라우팅은 프론트 호환을 위해 유지한다.
 
 Quick Patch (MVP):
-- session_id + enrollment_id 기반 upsert
+- session_id + enrollment_id + homework_id 기반 upsert
 - score 입력 방식 2개 지원:
   - percent 직접 입력(score=85, max_score=None)
   - raw/max 입력(score=18, max_score=20)
@@ -976,6 +1251,7 @@ def _maybe_fix_submission(
         homework_meta.update(
             {
                 "homework_score_id": score_obj.id,
+                "homework_id": score_obj.homework_id,
                 "score": score_obj.score,
                 "max_score": score_obj.max_score,
                 "passed": score_obj.passed,
@@ -1008,6 +1284,7 @@ class HomeworkScoreViewSet(ModelViewSet):
     queryset: QuerySet[HomeworkScore] = HomeworkScore.objects.select_related(
         "session",
         "session__lecture",
+        "homework",
     ).all()
 
     serializer_class = HomeworkScoreSerializer
@@ -1024,6 +1301,7 @@ class HomeworkScoreViewSet(ModelViewSet):
         "enrollment_id",
         "session__title",
         "session__lecture__title",
+        "homework__title",
     ]
 
     ordering_fields = [
@@ -1128,14 +1406,19 @@ class HomeworkScoreViewSet(ModelViewSet):
 
         session_id = serializer.validated_data["session_id"]
         enrollment_id = serializer.validated_data["enrollment_id"]
+        homework_id = serializer.validated_data["homework_id"]
         score = serializer.validated_data["score"]
         max_score = serializer.validated_data.get("max_score")
 
         with transaction.atomic():
             obj = (
                 HomeworkScore.objects.select_for_update()
-                .filter(session_id=session_id, enrollment_id=enrollment_id)
-                .select_related("session")
+                .filter(
+                    session_id=session_id,
+                    enrollment_id=enrollment_id,
+                    homework_id=homework_id,
+                )
+                .select_related("session", "homework")
                 .first()
             )
 
@@ -1146,11 +1429,15 @@ class HomeworkScoreViewSet(ModelViewSet):
                 obj = HomeworkScore.objects.create(
                     session_id=session_id,
                     enrollment_id=enrollment_id,
+                    homework_id=homework_id,
                     score=None,
                     max_score=None,
                     updated_by_user_id=_safe_user_id(request),
                 )
-                obj = HomeworkScore.objects.select_related("session").get(id=obj.id)
+                obj = HomeworkScore.objects.select_related(
+                    "session",
+                    "homework",
+                ).get(id=obj.id)
 
             obj = _apply_score_and_policy(
                 obj=obj,
