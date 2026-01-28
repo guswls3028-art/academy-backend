@@ -46,10 +46,10 @@ from apps.domains.progress.models import ClinicLink
 
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.homework_results.models import Homework
-from apps.domains.enrollment.models import Enrollment
+from apps.domains.homework.models import HomeworkAssignment
 
+from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import ExamEnrollment
-from apps.domains.homework.models import HomeworkEnrollment
 
 
 def _safe_student_name(enrollment: Optional[Enrollment]) -> str:
@@ -94,8 +94,10 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         # 1) Enrollment 모수 (시험 OR 과제)
         # -------------------------------------------------
-        hw_enrollment_ids_qs = HomeworkEnrollment.objects.filter(
-            session_id=session.id
+        # ❗️FIX: HomeworkEnrollment ❌
+        # ✅ 과제 대상자의 단일 진실은 HomeworkAssignment
+        hw_enrollment_ids_qs = HomeworkAssignment.objects.filter(
+            session=session
         ).values_list("enrollment_id", flat=True)
 
         if exam_ids:
