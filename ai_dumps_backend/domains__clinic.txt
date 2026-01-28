@@ -13,15 +13,21 @@
 ==========================================================================================
 # FILE: admin.py
 ==========================================================================================
-# PATH: apps/domains/clinic/admin.py
-
 from django.contrib import admin
 from .models import Session, SessionParticipant, Test, Submission
 
 
 @admin.register(Session)
 class SessionAdmin(admin.ModelAdmin):
-    list_display = ("id", "date", "start_time", "location", "max_participants", "created_at")
+    list_display = (
+        "id",
+        "date",
+        "start_time",
+        "location",
+        "max_participants",
+        "created_by",
+        "created_at",
+    )
     list_filter = ("date", "location")
     search_fields = ("location",)
     ordering = ("-date", "-start_time")
@@ -35,11 +41,20 @@ class SessionParticipantAdmin(admin.ModelAdmin):
         "student",
         "status",
         "source",
+        "participant_role",
         "enrollment_id",
         "clinic_reason",
+        "status_changed_at",
+        "status_changed_by",
         "created_at",
     )
-    list_filter = ("status", "source", "clinic_reason", "session__date")
+    list_filter = (
+        "status",
+        "source",
+        "participant_role",
+        "clinic_reason",
+        "session__date",
+    )
     search_fields = ("student__name", "session__location")
     ordering = ("-created_at",)
 
@@ -54,7 +69,7 @@ class TestAdmin(admin.ModelAdmin):
 
 @admin.register(Submission)
 class SubmissionAdmin(admin.ModelAdmin):
-    list_display = ("id", "test", "student", "status", "score", "created_at")
+    list_display = ("id", "test", "student", "status", "score", "graded_at", "created_at")
     list_filter = ("status", "test__session__date")
     search_fields = ("student__name", "test__title")
     ordering = ("-created_at",)
@@ -147,6 +162,7 @@ class SubmissionFilter(django_filters.FilterSet):
 # PATH: apps/domains/clinic/models.py
 
 from django.db import models
+from django.conf import settings
 
 from apps.api.common.models import TimestampModel
 from apps.domains.students.models import Student
@@ -159,8 +175,23 @@ from apps.domains.students.models import Student
 class Session(TimestampModel):
     date = models.DateField()
     start_time = models.TimeField()
+
+    # ✅ [ADD] 수업 소요 시간 (분 단위)
+    # - 종료시간은 저장하지 않음 (파생값)
+    # - 기존 데이터 안정성 확보를 위해 default=60
+    duration_minutes = models.PositiveIntegerField(default=60)
+
     location = models.CharField(max_length=255)
     max_participants = models.PositiveIntegerField()
+
+    # ✅ [ADD] 생성자 (운영/감사 추적용)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_clinic_sessions",
+    )
 
     def __str__(self):
         return f"{self.date} {self.start_time} @ {self.location}"
@@ -217,6 +248,27 @@ class SessionParticipant(TimestampModel):
         null=True,
         blank=True,
     )
+
+    # ✅ [ADD] 대상자 / 수동 구분
+    participant_role = models.CharField(
+        max_length=20,
+        choices=(("target", "Target"), ("manual", "Manual")),
+        default="target",
+    )
+
+    # ✅ [ADD] 상태 변경 로그
+    status_changed_at = models.DateTimeField(null=True, blank=True)
+    status_changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="clinic_participant_status_changes",
+    )
+
+    # ✅ [ADD] 출석 확장 대비
+    checked_in_at = models.DateTimeField(null=True, blank=True)
+    is_late = models.BooleanField(default=False)
 
     memo = models.TextField(blank=True, null=True)
 
@@ -287,6 +339,9 @@ class Submission(TimestampModel):
     )
     remark = models.TextField(blank=True, null=True)
 
+    # ✅ [ADD] 채점 완료 시각
+    graded_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         unique_together = ("test", "student")
         ordering = ["-created_at"]
@@ -300,6 +355,7 @@ class Submission(TimestampModel):
 ==========================================================================================
 # PATH: apps/domains/clinic/serializers.py
 
+from datetime import datetime, timedelta
 from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
 
@@ -308,9 +364,54 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
     # (선택) 운영 페이지에서 잔여 좌석 계산하려면 participant_count 내려주면 편함
     participant_count = serializers.IntegerField(read_only=True)
 
+    # ✅ 파생 필드: 종료 시간 (저장 X)
+    end_time = serializers.SerializerMethodField()
+
+    # ✅ [ADD] 운영 판단 필드
+    available_slots = serializers.SerializerMethodField()
+    is_full = serializers.SerializerMethodField()
+
+    # ✅ [ADD] 상태/소스 요약
+    status_summary = serializers.SerializerMethodField()
+    source_summary = serializers.SerializerMethodField()
+    has_auto_targets = serializers.SerializerMethodField()
+
     class Meta:
         model = Session
         fields = "__all__"
+
+    def get_end_time(self, obj: Session):
+        if not obj.start_time or not obj.duration_minutes:
+            return None
+        dt = datetime.combine(obj.date, obj.start_time)
+        return (dt + timedelta(minutes=obj.duration_minutes)).time()
+
+    def get_available_slots(self, obj):
+        if obj.max_participants is None or obj.participant_count is None:
+            return None
+        return max(obj.max_participants - obj.participant_count, 0)
+
+    def get_is_full(self, obj):
+        if obj.max_participants is None or obj.participant_count is None:
+            return False
+        return obj.participant_count >= obj.max_participants
+
+    def get_status_summary(self, obj):
+        return {
+            "booked": getattr(obj, "booked_count", 0),
+            "attended": getattr(obj, "attended_count", 0),
+            "no_show": getattr(obj, "no_show_count", 0),
+            "cancelled": getattr(obj, "cancelled_count", 0),
+        }
+
+    def get_source_summary(self, obj):
+        return {
+            "auto": getattr(obj, "auto_count", 0),
+            "manual": getattr(obj, "manual_count", 0),
+        }
+
+    def get_has_auto_targets(self, obj):
+        return getattr(obj, "auto_count", 0) > 0
 
 
 class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
@@ -319,16 +420,32 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     session_start_time = serializers.TimeField(source="session.start_time", read_only=True)
     session_location = serializers.CharField(source="session.location", read_only=True)
 
+    # ✅ 파생 노출
+    session_duration_minutes = serializers.IntegerField(
+        source="session.duration_minutes", read_only=True
+    )
+    session_end_time = serializers.SerializerMethodField()
+
+    # ✅ [ADD] 변경자 이름 노출
+    status_changed_by_name = serializers.CharField(
+        source="status_changed_by.username",
+        read_only=True,
+    )
+
     class Meta:
         model = SessionParticipant
         fields = "__all__"
+
+    def get_session_end_time(self, obj):
+        if not obj.session.start_time or not obj.session.duration_minutes:
+            return None
+        dt = datetime.combine(obj.session.date, obj.session.start_time)
+        return (dt + timedelta(minutes=obj.session.duration_minutes)).time()
 
 
 class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
     """
     ✅ 예약 등록(생성) 전용
-    - 프론트: session + student만 넣어도 생성 가능
-    - results 연계용: enrollment_id, clinic_reason(optional)
     """
 
     class Meta:
@@ -341,6 +458,7 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
             "source",
             "enrollment_id",
             "clinic_reason",
+            "participant_role",
         ]
 
 
@@ -384,6 +502,7 @@ urlpatterns = router.urls
 # PATH: apps/domains/clinic/views.py
 
 from django.db.models import Count, Q
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -402,13 +521,17 @@ from .serializers import (
 from .filters import SessionFilter, SubmissionFilter, ParticipantFilter
 
 from apps.support.messaging.services import send_clinic_reminder_for_students
+from apps.domains.progress.models import ClinicLink
 
 
+# ============================================================
+# Session
+# ============================================================
 class SessionViewSet(viewsets.ModelViewSet):
     """
     ✅ 클리닉 세션 CRUD
-    - 예약페이지(세션 리스트)에서 주로 사용
-    - participant_count를 annotate하여 잔여좌석 계산에 활용 가능
+    - 예약 페이지 / 운영 페이지 공용
+    - 모든 participant 통계는 BACKEND 단일진실
     """
 
     serializer_class = ClinicSessionSerializer
@@ -421,25 +544,63 @@ class SessionViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return (
             Session.objects.all()
-            .annotate(participant_count=Count("participants"))
+            .annotate(
+                participant_count=Count("participants"),
+                booked_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.BOOKED),
+                ),
+                attended_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.ATTENDED),
+                ),
+                no_show_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.NO_SHOW),
+                ),
+                cancelled_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.CANCELLED),
+                ),
+                auto_count=Count(
+                    "participants",
+                    filter=Q(participants__source=SessionParticipant.Source.AUTO),
+                ),
+                manual_count=Count(
+                    "participants",
+                    filter=Q(participants__source=SessionParticipant.Source.MANUAL),
+                ),
+            )
         )
+
+    def perform_create(self, serializer):
+        """
+        ✅ created_by 자동 기록 (운영/감사 기준)
+        - 0004 이후 created_by 필드 존재 전제
+        - 아직 migrate 전이라도 코드 반영은 무해함
+        """
+        serializer.save(created_by=self.request.user)
 
     @action(detail=True, methods=["post"])
     def send_reminder(self, request, pk=None):
         """
         POST /clinic/sessions/{id}/send_reminder/
-        - 세션 참가자들에게 리마인더 발송 (운영 기능)
+        - 세션 참가자 리마인더 발송
         """
         session = self.get_object()
         send_clinic_reminder_for_students(session_id=session.id)
         return Response({"ok": True})
 
-    # ==================================================
-    # ✅ [추가] 운영 페이지 좌측 트리 전용 API
-    # GET /clinic/sessions/tree/?year=YYYY&month=MM
-    # ==================================================
+    # ------------------------------------------------------------
+    # 운영 페이지 좌측 트리 전용 API
+    # ------------------------------------------------------------
     @action(detail=False, methods=["get"])
     def tree(self, request):
+        """
+        GET /clinic/sessions/tree/?year=YYYY&month=MM
+        - 운영 페이지 좌측 트리 전용
+        - serializer 우회 (UI 최적화 목적)
+        """
         year = request.query_params.get("year")
         month = request.query_params.get("month")
 
@@ -482,12 +643,13 @@ class SessionViewSet(viewsets.ModelViewSet):
         return Response(data)
 
 
+# ============================================================
+# Participant
+# ============================================================
 class ParticipantViewSet(viewsets.ModelViewSet):
     """
-    ✅ 예약/출석/미이행/취소 운영의 핵심
-    - 리스트: /clinic/participants/?session=...&status=...
-    - 생성: /clinic/participants/  (예약 생성)
-    - 상태 변경: /clinic/participants/{id}/set_status/
+    ✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리
+    - 운영 핵심 엔드포인트
     """
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -498,37 +660,31 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return (
-            SessionParticipant.objects.select_related("student", "session").all()
+            SessionParticipant.objects
+            .select_related("student", "session", "status_changed_by")
+            .all()
         )
 
     def get_serializer_class(self):
-        if self.action in ["create"]:
+        if self.action == "create":
             return ClinicSessionParticipantCreateSerializer
         return ClinicSessionParticipantSerializer
 
     def create(self, request, *args, **kwargs):
         """
-        ✅ 예약 등록
-        payload 예:
-        {
-          "session": 12,
-          "student": 345,
-          "source": "auto",
-          "enrollment_id": 1234,
-          "clinic_reason": "both",
-          "memo": "자동 클리닉 대상자(시험+과제)"
-        }
+        ✅ 예약 생성
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # unique_together 충돌을 친절히 처리
-        session_id = serializer.validated_data["session"].id
-        student_id = serializer.validated_data["student"].id
+        session = serializer.validated_data["session"]
+        student = serializer.validated_data["student"]
+        enrollment_id = serializer.validated_data.get("enrollment_id")
+        source = serializer.validated_data.get("source")
 
         exists = SessionParticipant.objects.filter(
-            session_id=session_id,
-            student_id=student_id,
+            session=session,
+            student=student,
         ).exists()
         if exists:
             return Response(
@@ -536,18 +692,36 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        obj = serializer.save()
-        out = ClinicSessionParticipantSerializer(obj, context={"request": request}).data
+        # ✅ participant_role 자동 판정 (운영/감사 정합성)
+        # - MANUAL 등록이면 manual, 그 외(auto/default)는 target
+        # - 아직 migrate 전이라도 코드 반영은 무해함
+        participant_role = (
+            "manual"
+            if source == SessionParticipant.Source.MANUAL
+            else "target"
+        )
+
+        obj = serializer.save(participant_role=participant_role)
+
+        # 자동 클리닉 링크 해제
+        if enrollment_id:
+            ClinicLink.objects.filter(
+                session=session,
+                enrollment_id=enrollment_id,
+                is_auto=True,
+                resolved_at__isnull=True,
+            ).update(resolved_at=timezone.now())
+
+        out = ClinicSessionParticipantSerializer(
+            obj, context={"request": request}
+        ).data
         return Response(out, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["patch"])
     def set_status(self, request, pk=None):
         """
         PATCH /clinic/participants/{id}/set_status/
-        {
-          "status": "attended" | "no_show" | "cancelled" | "booked",
-          "memo": "선택"
-        }
+        - 상태 변경 + audit 기록
         """
         obj = self.get_object()
 
@@ -562,18 +736,45 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             )
 
         obj.status = next_status
+        obj.status_changed_at = timezone.now()
+        obj.status_changed_by = request.user
+
         if memo is not None:
             obj.memo = memo
 
-        obj.save(update_fields=["status", "memo", "updated_at"])
-        out = ClinicSessionParticipantSerializer(obj, context={"request": request}).data
+        obj.save(
+            update_fields=[
+                "status",
+                "memo",
+                "status_changed_at",
+                "status_changed_by",
+                "updated_at",
+            ]
+        )
+
+        # NO_SHOW / CANCELLED → 클리닉 링크 복구
+        if next_status in {
+            SessionParticipant.Status.NO_SHOW,
+            SessionParticipant.Status.CANCELLED,
+        } and obj.enrollment_id:
+            ClinicLink.objects.filter(
+                session=obj.session,
+                enrollment_id=obj.enrollment_id,
+                is_auto=True,
+            ).update(resolved_at=None)
+
+        out = ClinicSessionParticipantSerializer(
+            obj, context={"request": request}
+        ).data
         return Response(out)
 
+    # ------------------------------------------------------------
+    # 운영 UI 편의 API
+    # ------------------------------------------------------------
     @action(detail=False, methods=["get"])
     def by_session(self, request):
         """
         GET /clinic/participants/by_session/?session_id=12
-        - 운영 페이지에서 세션별 참가자 빠르게 로드할 때 편함
         """
         session_id = request.query_params.get("session_id")
         if not session_id:
@@ -587,6 +788,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         return Response(data)
 
 
+# ============================================================
+# Test
+# ============================================================
 class TestViewSet(viewsets.ModelViewSet):
     serializer_class = ClinicTestSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -598,6 +802,9 @@ class TestViewSet(viewsets.ModelViewSet):
         return Test.objects.select_related("session").all()
 
 
+# ============================================================
+# Submission
+# ============================================================
 class SubmissionViewSet(viewsets.ModelViewSet):
     serializer_class = ClinicSubmissionSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -607,7 +814,9 @@ class SubmissionViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        return Submission.objects.select_related("student", "test", "test__session").all()
+        return Submission.objects.select_related(
+            "student", "test", "test__session"
+        ).all()
 
 
 ==========================================================================================
@@ -873,6 +1082,147 @@ class Migration(migrations.Migration):
                 ],
                 default="booked",
                 max_length=20,
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0004_add_session_duration_minutes.py
+==========================================================================================
+# PATH: apps/domains/clinic/migrations/0004_add_session_duration_minutes.py
+
+from django.conf import settings
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("clinic", "0003_participant_operational_fields"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="session",
+            name="duration_minutes",
+            field=models.PositiveIntegerField(default=60),
+        ),
+        migrations.AddField(
+            model_name="session",
+            name="created_by",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="created_clinic_sessions",
+                to=settings.AUTH_USER_MODEL,
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0005_add_clinic_operational_fields.py
+==========================================================================================
+# PATH: apps/domains/clinic/migrations/0005_add_clinic_operational_fields.py
+
+from django.conf import settings
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("clinic", "0004_add_session_duration_minutes"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="sessionparticipant",
+            name="participant_role",
+            field=models.CharField(
+                choices=[("target", "Target"), ("manual", "Manual")],
+                default="target",
+                max_length=20,
+            ),
+        ),
+        migrations.AddField(
+            model_name="sessionparticipant",
+            name="status_changed_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="sessionparticipant",
+            name="status_changed_by",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="clinic_participant_status_changes",
+                to=settings.AUTH_USER_MODEL,
+            ),
+        ),
+        migrations.AddField(
+            model_name="sessionparticipant",
+            name="checked_in_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="sessionparticipant",
+            name="is_late",
+            field=models.BooleanField(default=False),
+        ),
+        migrations.AddField(
+            model_name="submission",
+            name="graded_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0006_alter_session_created_by_and_more.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-28 12:02
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("clinic", "0005_add_clinic_operational_fields"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="session",
+            name="created_by",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="created_clinic_sessions",
+                to=settings.AUTH_USER_MODEL,
+            ),
+        ),
+        migrations.AlterField(
+            model_name="sessionparticipant",
+            name="status_changed_by",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="clinic_participant_status_changes",
+                to=settings.AUTH_USER_MODEL,
             ),
         ),
     ]

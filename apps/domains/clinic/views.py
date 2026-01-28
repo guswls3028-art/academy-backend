@@ -1,7 +1,7 @@
 # PATH: apps/domains/clinic/views.py
 
 from django.db.models import Count, Q
-from django.utils import timezone  # ✅ 수정사항(추가)
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -20,14 +20,17 @@ from .serializers import (
 from .filters import SessionFilter, SubmissionFilter, ParticipantFilter
 
 from apps.support.messaging.services import send_clinic_reminder_for_students
-from apps.domains.progress.models import ClinicLink  # ✅ 수정사항(추가)
+from apps.domains.progress.models import ClinicLink
 
 
+# ============================================================
+# Session
+# ============================================================
 class SessionViewSet(viewsets.ModelViewSet):
     """
     ✅ 클리닉 세션 CRUD
-    - 예약페이지(세션 리스트)에서 주로 사용
-    - participant_count를 annotate하여 잔여좌석 계산에 활용 가능
+    - 예약 페이지 / 운영 페이지 공용
+    - 모든 participant 통계는 BACKEND 단일진실
     """
 
     serializer_class = ClinicSessionSerializer
@@ -40,25 +43,63 @@ class SessionViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return (
             Session.objects.all()
-            .annotate(participant_count=Count("participants"))
+            .annotate(
+                participant_count=Count("participants"),
+                booked_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.BOOKED),
+                ),
+                attended_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.ATTENDED),
+                ),
+                no_show_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.NO_SHOW),
+                ),
+                cancelled_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.CANCELLED),
+                ),
+                auto_count=Count(
+                    "participants",
+                    filter=Q(participants__source=SessionParticipant.Source.AUTO),
+                ),
+                manual_count=Count(
+                    "participants",
+                    filter=Q(participants__source=SessionParticipant.Source.MANUAL),
+                ),
+            )
         )
+
+    def perform_create(self, serializer):
+        """
+        ✅ created_by 자동 기록 (운영/감사 기준)
+        - 0004 이후 created_by 필드 존재 전제
+        - 아직 migrate 전이라도 코드 반영은 무해함
+        """
+        serializer.save(created_by=self.request.user)
 
     @action(detail=True, methods=["post"])
     def send_reminder(self, request, pk=None):
         """
         POST /clinic/sessions/{id}/send_reminder/
-        - 세션 참가자들에게 리마인더 발송 (운영 기능)
+        - 세션 참가자 리마인더 발송
         """
         session = self.get_object()
         send_clinic_reminder_for_students(session_id=session.id)
         return Response({"ok": True})
 
-    # ==================================================
-    # ✅ [추가] 운영 페이지 좌측 트리 전용 API
-    # GET /clinic/sessions/tree/?year=YYYY&month=MM
-    # ==================================================
+    # ------------------------------------------------------------
+    # 운영 페이지 좌측 트리 전용 API
+    # ------------------------------------------------------------
     @action(detail=False, methods=["get"])
     def tree(self, request):
+        """
+        GET /clinic/sessions/tree/?year=YYYY&month=MM
+        - 운영 페이지 좌측 트리 전용
+        - serializer 우회 (UI 최적화 목적)
+        """
         year = request.query_params.get("year")
         month = request.query_params.get("month")
 
@@ -101,12 +142,13 @@ class SessionViewSet(viewsets.ModelViewSet):
         return Response(data)
 
 
+# ============================================================
+# Participant
+# ============================================================
 class ParticipantViewSet(viewsets.ModelViewSet):
     """
-    ✅ 예약/출석/미이행/취소 운영의 핵심
-    - 리스트: /clinic/participants/?session=...&status=...
-    - 생성: /clinic/participants/  (예약 생성)
-    - 상태 변경: /clinic/participants/{id}/set_status/
+    ✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리
+    - 운영 핵심 엔드포인트
     """
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -117,41 +159,31 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return (
-            SessionParticipant.objects.select_related("student", "session").all()
+            SessionParticipant.objects
+            .select_related("student", "session", "status_changed_by")
+            .all()
         )
 
     def get_serializer_class(self):
-        if self.action in ["create"]:
+        if self.action == "create":
             return ClinicSessionParticipantCreateSerializer
         return ClinicSessionParticipantSerializer
 
     def create(self, request, *args, **kwargs):
         """
-        ✅ 예약 등록
-        payload 예:
-        {
-          "session": 12,
-          "student": 345,
-          "source": "auto",
-          "enrollment_id": 1234,
-          "clinic_reason": "both",
-          "memo": "자동 클리닉 대상자(시험+과제)"
-        }
+        ✅ 예약 생성
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # unique_together 충돌을 친절히 처리
-        session_id = serializer.validated_data["session"].id
-        student_id = serializer.validated_data["student"].id
-
-        # ✅ 수정사항(추가): resolved_at 처리를 위해 원본 validated_data에서 추가로 꺼냄
         session = serializer.validated_data["session"]
+        student = serializer.validated_data["student"]
         enrollment_id = serializer.validated_data.get("enrollment_id")
+        source = serializer.validated_data.get("source")
 
         exists = SessionParticipant.objects.filter(
-            session_id=session_id,
-            student_id=student_id,
+            session=session,
+            student=student,
         ).exists()
         if exists:
             return Response(
@@ -159,9 +191,18 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        obj = serializer.save()
+        # ✅ participant_role 자동 판정 (운영/감사 정합성)
+        # - MANUAL 등록이면 manual, 그 외(auto/default)는 target
+        # - 아직 migrate 전이라도 코드 반영은 무해함
+        participant_role = (
+            "manual"
+            if source == SessionParticipant.Source.MANUAL
+            else "target"
+        )
 
-        # ✅ 수정사항(추가): 자동 클리닉 대상자(is_auto=True)는 "예약 생성" 시점에 분리 처리
+        obj = serializer.save(participant_role=participant_role)
+
+        # 자동 클리닉 링크 해제
         if enrollment_id:
             ClinicLink.objects.filter(
                 session=session,
@@ -170,17 +211,16 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 resolved_at__isnull=True,
             ).update(resolved_at=timezone.now())
 
-        out = ClinicSessionParticipantSerializer(obj, context={"request": request}).data
+        out = ClinicSessionParticipantSerializer(
+            obj, context={"request": request}
+        ).data
         return Response(out, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["patch"])
     def set_status(self, request, pk=None):
         """
         PATCH /clinic/participants/{id}/set_status/
-        {
-          "status": "attended" | "no_show" | "cancelled" | "booked",
-          "memo": "선택"
-        }
+        - 상태 변경 + audit 기록
         """
         obj = self.get_object()
 
@@ -195,12 +235,23 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             )
 
         obj.status = next_status
+        obj.status_changed_at = timezone.now()
+        obj.status_changed_by = request.user
+
         if memo is not None:
             obj.memo = memo
 
-        obj.save(update_fields=["status", "memo", "updated_at"])
+        obj.save(
+            update_fields=[
+                "status",
+                "memo",
+                "status_changed_at",
+                "status_changed_by",
+                "updated_at",
+            ]
+        )
 
-        # ✅ 수정사항(추가): 노쇼/취소면 다시 대상자로 복귀 (resolved_at 해제)
+        # NO_SHOW / CANCELLED → 클리닉 링크 복구
         if next_status in {
             SessionParticipant.Status.NO_SHOW,
             SessionParticipant.Status.CANCELLED,
@@ -211,14 +262,18 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 is_auto=True,
             ).update(resolved_at=None)
 
-        out = ClinicSessionParticipantSerializer(obj, context={"request": request}).data
+        out = ClinicSessionParticipantSerializer(
+            obj, context={"request": request}
+        ).data
         return Response(out)
 
+    # ------------------------------------------------------------
+    # 운영 UI 편의 API
+    # ------------------------------------------------------------
     @action(detail=False, methods=["get"])
     def by_session(self, request):
         """
         GET /clinic/participants/by_session/?session_id=12
-        - 운영 페이지에서 세션별 참가자 빠르게 로드할 때 편함
         """
         session_id = request.query_params.get("session_id")
         if not session_id:
@@ -232,6 +287,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         return Response(data)
 
 
+# ============================================================
+# Test
+# ============================================================
 class TestViewSet(viewsets.ModelViewSet):
     serializer_class = ClinicTestSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -243,6 +301,9 @@ class TestViewSet(viewsets.ModelViewSet):
         return Test.objects.select_related("session").all()
 
 
+# ============================================================
+# Submission
+# ============================================================
 class SubmissionViewSet(viewsets.ModelViewSet):
     serializer_class = ClinicSubmissionSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -252,4 +313,6 @@ class SubmissionViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        return Submission.objects.select_related("student", "test", "test__session").all()
+        return Submission.objects.select_related(
+            "student", "test", "test__session"
+        ).all()

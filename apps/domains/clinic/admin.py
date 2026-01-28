@@ -1,12 +1,18 @@
-# PATH: apps/domains/clinic/admin.py
-
 from django.contrib import admin
 from .models import Session, SessionParticipant, Test, Submission
 
 
 @admin.register(Session)
 class SessionAdmin(admin.ModelAdmin):
-    list_display = ("id", "date", "start_time", "location", "max_participants", "created_at")
+    list_display = (
+        "id",
+        "date",
+        "start_time",
+        "location",
+        "max_participants",
+        "created_by",
+        "created_at",
+    )
     list_filter = ("date", "location")
     search_fields = ("location",)
     ordering = ("-date", "-start_time")
@@ -20,11 +26,20 @@ class SessionParticipantAdmin(admin.ModelAdmin):
         "student",
         "status",
         "source",
+        "participant_role",
         "enrollment_id",
         "clinic_reason",
+        "status_changed_at",
+        "status_changed_by",
         "created_at",
     )
-    list_filter = ("status", "source", "clinic_reason", "session__date")
+    list_filter = (
+        "status",
+        "source",
+        "participant_role",
+        "clinic_reason",
+        "session__date",
+    )
     search_fields = ("student__name", "session__location")
     ordering = ("-created_at",)
 
@@ -39,7 +54,7 @@ class TestAdmin(admin.ModelAdmin):
 
 @admin.register(Submission)
 class SubmissionAdmin(admin.ModelAdmin):
-    list_display = ("id", "test", "student", "status", "score", "created_at")
+    list_display = ("id", "test", "student", "status", "score", "graded_at", "created_at")
     list_filter = ("status", "test__session__date")
     search_fields = ("student__name", "test__title")
     ordering = ("-created_at",)
