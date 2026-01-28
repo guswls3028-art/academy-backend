@@ -1,4 +1,5 @@
 # PATH: apps/api/v1/urls.py
+# ⚠️ 기존 코드 유지 + clinic / results admin 라우팅 추가
 
 from django.urls import path, include
 from apps.support.media.views import VideoProcessingCompleteView
@@ -20,7 +21,7 @@ urlpatterns = [
     path("progress/", include("apps.domains.progress.urls")),
 
     # =========================
-    # ✅ Staff / Teacher (FIX: 라우팅 추가)
+    # Staff / Teacher
     # =========================
     path("staffs/", include("apps.domains.staffs.urls")),
     path("teachers/", include("apps.domains.teachers.urls")),
@@ -33,12 +34,9 @@ urlpatterns = [
     path("homeworks/", include("apps.domains.homework_results.urls")),
 
     # =========================
-    # ✅ Interactions (🔥 이게 핵심)
+    # ✅ [추가] Clinic Domain
     # =========================
-    path(
-        "interactions/",
-        include("apps.domains.interactions.urls"),
-    ),
+    path("clinic/", include("apps.domains.clinic.urls")),
 
     # =========================
     # Core / Media
@@ -61,7 +59,4 @@ urlpatterns = [
     # Student App
     # =========================
     path("student/", include("apps.domains.student_app.urls")),
-
-
 ]
-
