@@ -745,7 +745,7 @@ from .views import (
 
 router = DefaultRouter()
 router.register(r"work-types", WorkTypeViewSet)
-router.register(r"staffs", StaffViewSet)
+router.register(r"", StaffViewSet)
 router.register(r"staff-work-types", StaffWorkTypeViewSet)
 router.register(r"work-records", WorkRecordViewSet)
 router.register(r"expense-records", ExpenseRecordViewSet)

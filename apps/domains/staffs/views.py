@@ -134,7 +134,7 @@ def can_manage_payroll(user) -> bool:
 class WorkTypeViewSet(viewsets.ModelViewSet):
     queryset = WorkType.objects.all().order_by("name")
     serializer_class = WorkTypeSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPayrollManager]
 
     filter_backends = (DjangoFilterBackend, SearchFilter, OrderingFilter)
     filterset_fields = ["is_active"]
@@ -153,7 +153,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         .prefetch_related("staff_work_types__work_type")
         .order_by("name")
     )
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPayrollManager]
 
     filter_backends = (DjangoFilterBackend, SearchFilter, OrderingFilter)
     filterset_class = StaffFilter
@@ -172,7 +172,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(instance)
         serializer.delete(instance)
 
-    @action(detail=False, methods=["get"], url_path="me")
+    @action(detail=False, methods=["get"], url_path="me",permission_classes=[IsAuthenticated])
     def me(self, request):
         """
         프론트 UX 분리를 위한 권한 정보
@@ -294,7 +294,7 @@ class StaffViewSet(viewsets.ModelViewSet):
 class StaffWorkTypeViewSet(viewsets.ModelViewSet):
     queryset = StaffWorkType.objects.select_related("staff", "work_type")
     serializer_class = StaffWorkTypeSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPayrollManager]
 
     filter_backends = (DjangoFilterBackend, OrderingFilter)
     filterset_fields = ["staff", "work_type"]
@@ -312,7 +312,7 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         .order_by("-date", "-start_time")
     )
     serializer_class = WorkRecordSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPayrollManager]
 
     filter_backends = (DjangoFilterBackend, OrderingFilter)
     filterset_class = WorkRecordFilter
@@ -346,7 +346,7 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
 class ExpenseRecordViewSet(viewsets.ModelViewSet):
     queryset = ExpenseRecord.objects.select_related("staff", "approved_by")
     serializer_class = ExpenseRecordSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPayrollManager]
 
     filter_backends = (DjangoFilterBackend, OrderingFilter)
     filterset_class = ExpenseRecordFilter
