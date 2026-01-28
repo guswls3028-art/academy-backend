@@ -57,6 +57,7 @@ class HomeworkScoreSerializer(serializers.ModelSerializer):
         model = HomeworkScore
         fields = [
             "id",
+            "homework",
             "session",
             "enrollment_id",
             "score",
@@ -71,6 +72,7 @@ class HomeworkScoreSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "homework",
             "session",
             "enrollment_id",
             "passed",
@@ -95,9 +97,8 @@ class HomeworkQuickPatchSerializer(serializers.Serializer):
     - max_score != None → score/max_score*100 으로 percent 계산
     """
 
-    session_id = serializers.IntegerField()
+    homework_id = serializers.IntegerField()
     enrollment_id = serializers.IntegerField()
-    homework_id = serializers.IntegerField()  # ✅ 추가
 
     score = serializers.FloatField()
     max_score = serializers.FloatField(required=False, allow_null=True)

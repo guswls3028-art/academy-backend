@@ -18,7 +18,7 @@ Endpoint:
 - 하지만 /homework/scores/* 라우팅은 프론트 호환을 위해 유지한다.
 
 Quick Patch (MVP):
-- session_id + enrollment_id + homework_id 기반 upsert
+- homework_id + enrollment_id 기반 upsert
 - score 입력 방식 2개 지원:
   - percent 직접 입력(score=85, max_score=None)
   - raw/max 입력(score=18, max_score=20)
@@ -38,8 +38,9 @@ from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-# ✅ 단일 진실: homework_results
+# ✅ 단일 진실
 from apps.domains.homework_results.models import HomeworkScore
+from apps.domains.homework.models import Homework
 
 from apps.domains.homework.serializers import (
     HomeworkScoreSerializer,
@@ -288,19 +289,21 @@ class HomeworkScoreViewSet(ModelViewSet):
         serializer = HomeworkQuickPatchSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        session_id = serializer.validated_data["session_id"]
-        enrollment_id = serializer.validated_data["enrollment_id"]
         homework_id = serializer.validated_data["homework_id"]
+        enrollment_id = serializer.validated_data["enrollment_id"]
         score = serializer.validated_data["score"]
         max_score = serializer.validated_data.get("max_score")
+
+        # ✅ 단일 진실: homework → session
+        homework = Homework.objects.select_related("session").get(id=homework_id)
+        session = homework.session
 
         with transaction.atomic():
             obj = (
                 HomeworkScore.objects.select_for_update()
                 .filter(
-                    session_id=session_id,
-                    enrollment_id=enrollment_id,
                     homework_id=homework_id,
+                    enrollment_id=enrollment_id,
                 )
                 .select_related("session", "homework")
                 .first()
@@ -311,17 +314,13 @@ class HomeworkScoreViewSet(ModelViewSet):
 
             if not obj:
                 obj = HomeworkScore.objects.create(
-                    session_id=session_id,
+                    homework=homework,
+                    session=session,
                     enrollment_id=enrollment_id,
-                    homework_id=homework_id,
                     score=None,
                     max_score=None,
                     updated_by_user_id=_safe_user_id(request),
                 )
-                obj = HomeworkScore.objects.select_related(
-                    "session",
-                    "homework",
-                ).get(id=obj.id)
 
             obj = _apply_score_and_policy(
                 obj=obj,
