@@ -61,4 +61,7 @@ urlpatterns = [
     # Student App
     # =========================
     path("student/", include("apps.domains.student_app.urls")),
+
+
 ]
+
