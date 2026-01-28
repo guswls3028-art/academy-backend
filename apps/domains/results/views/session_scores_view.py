@@ -137,6 +137,20 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         # 2) Meta (프론트 표시용)
         # -------------------------------------------------
+
+        from apps.domains.homework_results.models import Homework
+
+        # 세션에 속한 과제 조회 (정렬 기준은 id, 필요시 변경 가능)
+        homeworks = (
+            Homework.objects
+            .filter(session=session)
+            .order_by("id")
+        )
+
+        # 과제가 1개면 → 그 과제명
+        # 없으면 → None (컬럼 자체를 안 띄우기 위함)
+        homework_title = homeworks[0].title if homeworks else None
+
         meta = {
             "exams": [
                 {
@@ -146,7 +160,10 @@ class SessionScoresView(APIView):
                 }
                 for ex in exams
             ],
-            "homework": {"title": "과제", "unit": "%"},
+            "homework": {
+                "title": homework_title,  # ✅ 실제 과제명
+                "unit": None,             # ❗ % / 문항수 판단 안 함
+            },
         }
 
         if not enrollment_ids:

@@ -8,14 +8,9 @@ Homework Entity (Runtime / Operational)
 - HomeworkPolicy(세션 1:1 정책)과는 별개로,
   실제 "과제"는 세션 내 여러 개가 존재할 수 있다.
 
-✅ 설계 기준
-- 시험(Exam)처럼 Session 1:N 구조 지원
-- HomeworkScore는 Enrollment x Session 스냅샷이지만,
-  Homework 자체는 "과제 항목" 메타 정보다.
-
-⚠️ 주의
-- 기존 homework 도메인은 정책만 유지한다.
-- 여기서는 "운영/리소스 엔티티"만 만든다.
+✅ 추가 (2026-01)
+- SessionScores 메타에서 사용할
+  "대표 과제 제목" 조회 헬퍼 제공
 """
 
 from __future__ import annotations
@@ -29,11 +24,6 @@ from apps.domains.lectures.models import Session
 class Homework(TimestampModel):
     """
     Session 단위 과제 엔티티
-
-    최소 필드:
-    - session: 소속 세션
-    - title: 제목
-    - status: 상태 (DRAFT/OPEN/CLOSED)
     """
 
     class Status(models.TextChoices):
@@ -57,7 +47,6 @@ class Homework(TimestampModel):
         db_index=True,
     )
 
-    # 확장용 (추후: 제출 방식/마감일/공지 등)
     meta = models.JSONField(null=True, blank=True)
 
     class Meta:
@@ -69,3 +58,49 @@ class Homework(TimestampModel):
 
     def __str__(self) -> str:
         return f"Homework(id={self.id}, session={self.session_id}, title={self.title})"
+
+    # =========================================================
+    # ✅ 추가: SessionScores 메타용 대표 과제 제목 헬퍼
+    # =========================================================
+    @classmethod
+    def get_representative_title_for_session(
+        cls,
+        *,
+        session: Session,
+        fallback: str = "과제",
+    ) -> str:
+        """
+        SessionScores meta.homework.title 용
+
+        규칙:
+        1) 해당 세션의 Homework 중
+           - 최신(updated_at desc)
+           - CLOSED → OPEN → DRAFT 우선
+        2) 없으면 fallback 반환
+
+        ❗ 책임:
+        - "어떤 과제를 대표로 보여줄지" 결정만 한다
+        - 점수/정책/판정 ❌
+        """
+
+        qs = (
+            cls.objects
+            .filter(session=session)
+            .order_by(
+                models.Case(
+                    models.When(status=cls.Status.CLOSED, then=0),
+                    models.When(status=cls.Status.OPEN, then=1),
+                    models.When(status=cls.Status.DRAFT, then=2),
+                    default=3,
+                    output_field=models.IntegerField(),
+                ),
+                "-updated_at",
+                "-id",
+            )
+        )
+
+        hw = qs.first()
+        if hw and hw.title:
+            return str(hw.title)
+
+        return fallback
