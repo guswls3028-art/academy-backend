@@ -210,6 +210,9 @@ class ClinicLink(TimestampModel):
     is_auto = models.BooleanField(default=False)
     approved = models.BooleanField(default=False)
 
+    # ✅ 수정사항(추가): 예약 완료/분리 처리를 위한 타임스탬프
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
     memo = models.TextField(null=True, blank=True)
     meta = models.JSONField(null=True, blank=True)
 
@@ -218,6 +221,8 @@ class ClinicLink(TimestampModel):
             models.Index(fields=["enrollment_id", "created_at"]),
             models.Index(fields=["session", "created_at"]),
             models.Index(fields=["reason"]),
+            # ✅ 수정사항(추가)
+            models.Index(fields=["resolved_at"]),
         ]
         ordering = ["-created_at", "-id"]
 

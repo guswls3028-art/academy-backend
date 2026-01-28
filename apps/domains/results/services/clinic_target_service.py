@@ -204,6 +204,8 @@ class ClinicTargetService:
     def list_admin_targets() -> List[Dict[str, Any]]:
         links = (
             ClinicLink.objects.filter(is_auto=True)
+            # ✅ 수정사항(추가): 예약 완료로 분리된 대상자는 "대상자"에서 제외
+            .filter(resolved_at__isnull=True)
             .select_related("session")
             .order_by("-created_at")  # 최신 자동 대상 우선
         )

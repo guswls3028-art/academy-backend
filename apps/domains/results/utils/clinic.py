@@ -28,6 +28,9 @@ def get_clinic_enrollment_ids_for_session(
     """
     qs = ClinicLink.objects.filter(session=session)
 
+    # ✅ 수정사항(추가): 예약 완료로 분리된 대상자는 clinic_required에서 제외
+    qs = qs.filter(resolved_at__isnull=True)
+
     if not include_manual:
         qs = qs.filter(is_auto=True)
 

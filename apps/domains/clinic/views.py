@@ -1,6 +1,7 @@
 # PATH: apps/domains/clinic/views.py
 
 from django.db.models import Count, Q
+from django.utils import timezone  # ✅ 수정사항(추가)
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -19,6 +20,7 @@ from .serializers import (
 from .filters import SessionFilter, SubmissionFilter, ParticipantFilter
 
 from apps.support.messaging.services import send_clinic_reminder_for_students
+from apps.domains.progress.models import ClinicLink  # ✅ 수정사항(추가)
 
 
 class SessionViewSet(viewsets.ModelViewSet):
@@ -143,6 +145,10 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         session_id = serializer.validated_data["session"].id
         student_id = serializer.validated_data["student"].id
 
+        # ✅ 수정사항(추가): resolved_at 처리를 위해 원본 validated_data에서 추가로 꺼냄
+        session = serializer.validated_data["session"]
+        enrollment_id = serializer.validated_data.get("enrollment_id")
+
         exists = SessionParticipant.objects.filter(
             session_id=session_id,
             student_id=student_id,
@@ -154,6 +160,16 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             )
 
         obj = serializer.save()
+
+        # ✅ 수정사항(추가): 자동 클리닉 대상자(is_auto=True)는 "예약 생성" 시점에 분리 처리
+        if enrollment_id:
+            ClinicLink.objects.filter(
+                session=session,
+                enrollment_id=enrollment_id,
+                is_auto=True,
+                resolved_at__isnull=True,
+            ).update(resolved_at=timezone.now())
+
         out = ClinicSessionParticipantSerializer(obj, context={"request": request}).data
         return Response(out, status=status.HTTP_201_CREATED)
 
@@ -183,6 +199,18 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             obj.memo = memo
 
         obj.save(update_fields=["status", "memo", "updated_at"])
+
+        # ✅ 수정사항(추가): 노쇼/취소면 다시 대상자로 복귀 (resolved_at 해제)
+        if next_status in {
+            SessionParticipant.Status.NO_SHOW,
+            SessionParticipant.Status.CANCELLED,
+        } and obj.enrollment_id:
+            ClinicLink.objects.filter(
+                session=obj.session,
+                enrollment_id=obj.enrollment_id,
+                is_auto=True,
+            ).update(resolved_at=None)
+
         out = ClinicSessionParticipantSerializer(obj, context={"request": request}).data
         return Response(out)
 
