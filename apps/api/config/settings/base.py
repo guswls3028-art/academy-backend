@@ -195,7 +195,7 @@ CORS_ALLOWED_ORIGINS = [
     "https://academy-frontend.pages.dev",
 ]
 
-CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_CREDENTIALS = False
 
 # ==================================================
 # VIDEO / CDN
