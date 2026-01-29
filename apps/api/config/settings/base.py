@@ -193,6 +193,7 @@ CORS_ALLOWED_ORIGINS = [
     "https://www.hakwonplus.com",
 
     "https://academy-frontend.pages.dev",
+    "https://api.hakwonplus.com",
 ]
 
 CORS_ALLOW_CREDENTIALS = False
