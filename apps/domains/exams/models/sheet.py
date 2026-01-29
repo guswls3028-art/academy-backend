@@ -1,4 +1,6 @@
-# apps/domains/exams/models/sheet.py
+# PATH: apps/domains/exams/models/sheet.py
+from __future__ import annotations
+
 from django.db import models
 from apps.api.common.models import BaseModel
 from .exam import Exam
@@ -6,21 +8,24 @@ from .exam import Exam
 
 class Sheet(BaseModel):
     """
-    시험지 (A형, B형 등)
+    Sheet
+
+    ✅ 확정 정책
+    - Sheet는 template exam에만 귀속된다 (단일 진실)
+    - 1 Exam : 1 Sheet (OneToOne)
+    - regular exam은 sheet를 직접 가지지 않는다 (template을 통해 resolve)
     """
 
-    exam = models.ForeignKey(
+    exam = models.OneToOneField(
         Exam,
         on_delete=models.CASCADE,
-        related_name="sheets",
+        related_name="sheet",
     )
 
-    name = models.CharField(max_length=50)  # A형, B형
+    name = models.CharField(max_length=50, default="MAIN")
 
-    # ✅ 자동 생성 서비스가 동기화하므로 default=0이 맞음
     total_questions = models.PositiveIntegerField(default=0)
 
-    # 시험지 원본 이미지 / PDF
     file = models.FileField(
         upload_to="exams/sheets/",
         null=True,
@@ -29,7 +34,6 @@ class Sheet(BaseModel):
 
     class Meta:
         db_table = "exams_sheet"
-        unique_together = ("exam", "name")
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.exam.title} - {self.name}"

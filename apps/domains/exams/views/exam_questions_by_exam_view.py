@@ -1,36 +1,32 @@
-# apps/domains/exams/views/exam_questions_by_exam_view.py
 from __future__ import annotations
 
 from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
-from apps.domains.exams.models import ExamQuestion
+from apps.domains.exams.models import ExamQuestion, Exam
 from apps.domains.exams.serializers.question import QuestionSerializer
+from apps.domains.exams.services.template_resolver import resolve_template_exam
 
 
 class ExamQuestionsByExamView(APIView):
     """
-    GET /exams/<exam_id>/questions/
-
-    ✅ 목적
-    - exam 기준으로 모든 ExamQuestion을 한 번에 조회
-    - ResultItem.question_id → ExamQuestion 매핑용
-    - 오답노트 / 문항통계 / bbox 하이라이트에 필수
-
-    설계 포인트
-    - QuestionViewSet(/exams/questions/)는 "전체"라 비효율
-    - exam_id 기준 필터링된 전용 API가 운영/프론트 모두에 안전
+    시험 기준 문항 조회
+    - template → self
+    - regular → template_exam
     """
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request, exam_id: int):
+        exam = Exam.objects.get(id=exam_id)
+        template = resolve_template_exam(exam)
+
         qs = (
             ExamQuestion.objects
-            .filter(sheet__exam_id=int(exam_id))
+            .filter(sheet__exam=template)
             .select_related("sheet")
-            .order_by("sheet_id", "number")
+            .order_by("number")
         )
 
         return Response(QuestionSerializer(qs, many=True).data)

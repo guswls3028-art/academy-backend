@@ -1,4 +1,5 @@
-#apps/domains/exams/models/answer_key.py
+# PATH: apps/domains/exams/models/answer_key.py
+from __future__ import annotations
 
 from django.db import models
 from apps.api.common.models import BaseModel
@@ -7,14 +8,11 @@ from .exam import Exam
 
 class AnswerKey(BaseModel):
     """
-    AnswerKey v2
+    AnswerKey
 
-    answers:
-      {
-        "123": "B",
-        "124": "D"
-      }
-    key == ExamQuestion.id (string)
+    ✅ 단일 진실:
+    - template exam에만 존재
+    - regular exam에서는 template_exam을 통해 resolve
     """
 
     exam = models.OneToOneField(
@@ -30,5 +28,5 @@ class AnswerKey(BaseModel):
     class Meta:
         db_table = "exams_answer_key"
 
-    def __str__(self):
-        return f"AnswerKey v2 for {self.exam_id}"
+    def __str__(self) -> str:
+        return f"AnswerKey for template exam {self.exam_id}"

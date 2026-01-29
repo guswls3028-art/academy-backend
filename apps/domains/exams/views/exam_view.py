@@ -1,172 +1,147 @@
-# PATH: apps/domains/exams/views/exam_view.py
-
 from __future__ import annotations
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.response import Response
 
 from apps.domains.exams.models import Exam
 from apps.domains.exams.serializers.exam import ExamSerializer
+from apps.domains.exams.serializers.exam_create import ExamCreateSerializer
+from apps.domains.exams.serializers.exam_update import ExamUpdateSerializer
 from apps.domains.lectures.models import Session
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
 
 
 class ExamViewSet(ModelViewSet):
     """
-    ✅ Exam 도메인의 '유일한 생성 진입점'
+    Exam 생성/조회/수정/삭제 API (봉인)
 
-    ===============================
-    📌 이 ViewSet의 책임
-    ===============================
-    - Exam 자체를 생성/조회/수정한다
-    - Exam의 **정체성은 exam.id (PK)** 로만 정의된다
-    - session은 '소속 정보'일 뿐, exam의 식별자가 아님
-
-    ===============================
-    📌 중요한 설계 원칙 (절대 깨면 안 됨)
-    ===============================
-    1. examId는 생성 시점에 고정된다 (전 도메인 공통 키)
-    2. results / sessions / analytics 는 examId 기준으로 동작
-    3. session ↔ exam 관계는 조회/필터 용도이지
-       "시험의 정체성"을 결정하지 않는다
-
-    👉 즉:
-    - 프론트는 examId만 믿고 사용하면 된다
-    - session 구조가 바뀌어도 examId는 절대 흔들리면 안 된다
+    봉인 규칙:
+    - create/update/delete는 Teacher/Admin만
+    - template: subject 필수, session_id/template_exam_id 입력 금지
+    - regular: template_exam_id + session_id 필수, subject는 template 기반으로 봉인
+    - update/patch에서 exam_type/subject/template_exam 변경 시도는 즉시 400
+    - template 삭제: derived regular 존재 시 금지
     """
 
     queryset = Exam.objects.all()
-    serializer_class = ExamSerializer
     permission_classes = [IsAuthenticated]
 
-    # ======================================================
-    # CREATE
-    # ======================================================
+    def get_permissions(self):
+        # list/retrieve는 로그인만
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticated()]
+        # 생성/수정/삭제는 Teacher/Admin
+        return [IsAuthenticated(), IsTeacherOrAdmin()]
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return ExamCreateSerializer
+        if self.action in {"update", "partial_update"}:
+            return ExamUpdateSerializer
+        return ExamSerializer
+
+    def _reject_immutable_fields_on_update(self, request):
+        # DRF는 fields에 없는 값은 무시될 수 있음 → 봉인 목적상 "들어오면 즉시 거절"
+        forbidden = {"exam_type", "subject", "template_exam", "template_exam_id"}
+        incoming = set(request.data.keys())
+        bad = sorted(list(incoming & forbidden))
+        if bad:
+            raise ValidationError({"detail": f"Immutable fields in update are forbidden: {bad}"})
+
     def perform_create(self, serializer):
-        """
-        ===============================
-        ✅ Exam 생성 규칙 (고정 계약)
-        ===============================
+        exam_type = serializer.validated_data.get("exam_type")
 
-        ✔ 프론트에서 반드시 session_id를 전달해야 한다
-        ✔ Exam 모델에는 session 필드를 직접 쓰지 않는다
-        ✔ subject는 session → lecture → subject 기준으로
-          백엔드가 자동 결정한다
+        # =========================
+        # TEMPLATE CREATE
+        # =========================
+        if exam_type == Exam.ExamType.TEMPLATE:
+            if self.request.data.get("session_id"):
+                raise ValidationError({"session_id": "template exam must not receive session_id"})
+            if self.request.data.get("template_exam_id"):
+                raise ValidationError({"template_exam_id": "template exam must not receive template_exam_id"})
 
-        -------------------------------
-        ❗ 왜 session_id를 여기서 받는가?
-        -------------------------------
-        - Exam은 항상 "어느 수업/차시에서 만들어졌는지"를
-          명시적으로 알아야 한다
-        - 하지만 exam의 PK(exam.id)는
-          session과 **논리적으로 분리**되어야 한다
+            serializer.save(exam_type=Exam.ExamType.TEMPLATE, template_exam=None)
+            return
 
-        👉 생성 시점에만 session을 사용하고,
-           이후 모든 연산은 examId 기준으로 진행한다
-        """
+        # =========================
+        # REGULAR CREATE
+        # =========================
+        template_exam_id = self.request.data.get("template_exam_id")
+        if not template_exam_id:
+            raise ValidationError({"template_exam_id": "required"})
+        try:
+            template_exam_id = int(template_exam_id)
+        except (TypeError, ValueError):
+            raise ValidationError({"template_exam_id": "must be integer"})
+
+        try:
+            template_exam = Exam.objects.get(id=template_exam_id)
+        except Exam.DoesNotExist:
+            raise ValidationError({"template_exam_id": "invalid"})
+        if template_exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise ValidationError({"template_exam_id": "must be template exam"})
 
         session_id = self.request.data.get("session_id")
         if not session_id:
-            raise ValidationError({"session_id": "session_id is required"})
-
+            raise ValidationError({"session_id": "required"})
         try:
             session_id = int(session_id)
         except (TypeError, ValueError):
-            raise ValidationError({"session_id": "session_id must be integer"})
+            raise ValidationError({"session_id": "must be integer"})
 
         try:
-            # 🔥 여기서만 Session을 신뢰한다
-            session = Session.objects.select_related("lecture").get(id=session_id)
+            session = Session.objects.get(id=session_id)
         except Session.DoesNotExist:
-            raise ValidationError({"session_id": "invalid session_id"})
+            raise ValidationError({"session_id": "invalid"})
 
-        # --------------------------------------------------
-        # 1️⃣ Exam 생성 (아직 session 연결 ❌)
-        # --------------------------------------------------
-        # ⚠️ 매우 중요:
-        # - 이 시점에서 생성되는 exam.id가
-        #   시스템 전체에서 사용하는 '유일한 시험 식별자'
         exam = serializer.save(
-            subject=session.lecture.subject
+            exam_type=Exam.ExamType.REGULAR,
+            subject=template_exam.subject,
+            template_exam=template_exam,
         )
+        exam.sessions.add(session)
 
-        # --------------------------------------------------
-        # 2️⃣ session ↔ exam 관계 연결
-        # --------------------------------------------------
-        # ✔ ManyToMany 구조 (현재 구조)
-        # ✔ 혹은 legacy OneToMany 구조 대응
-        #
-        # ❗ 이 관계는:
-        # - 조회 / 필터 / 그룹핑 용도일 뿐
-        # - examId의 의미를 바꾸지 않는다
-        if hasattr(exam, "sessions"):
-            exam.sessions.add(session)
-        elif hasattr(exam, "session"):
-            exam.session = session
-            exam.save(update_fields=["session"])
+    def update(self, request, *args, **kwargs):
+        self._reject_immutable_fields_on_update(request)
+        return super().update(request, *args, **kwargs)
 
-    # ======================================================
-    # QUERY FILTERS
-    # ======================================================
-    @staticmethod
-    def _has_relation(model, name: str) -> bool:
-        """
-        모델에 특정 relation/field가 존재하는지 안전하게 확인
+    def partial_update(self, request, *args, **kwargs):
+        self._reject_immutable_fields_on_update(request)
+        return super().partial_update(request, *args, **kwargs)
 
-        👉 이유:
-        - 프로젝트 히스토리상
-          Exam.session / Exam.sessions 구조가 혼재했음
-        - 런타임에서 구조를 유연하게 대응하기 위함
-        """
-        try:
-            return any(getattr(f, "name", None) == name for f in model._meta.get_fields())
-        except Exception:
-            return False
+    def destroy(self, request, *args, **kwargs):
+        obj: Exam = self.get_object()
+
+        # template 삭제 봉인: derived regular 존재하면 금지
+        if obj.exam_type == Exam.ExamType.TEMPLATE and obj.derived_exams.exists():
+            raise PermissionDenied("This template is used by regular exams and cannot be deleted.")
+
+        return super().destroy(request, *args, **kwargs)
 
     def get_queryset(self):
-        """
-        ===============================
-        ✅ Exam 조회 필터
-        ===============================
-
-        ✔ GET /exams/?session_id=123
-        ✔ GET /exams/?lecture_id=10
-
-        -------------------------------
-        ❗ 매우 중요한 보장
-        -------------------------------
-        - 이 필터들은 "조회 편의"를 위한 것
-        - exam의 정체성(examId)을 변경하거나
-          프론트 로직에 영향을 주지 않는다
-
-        👉 프론트는:
-        - examId만 신뢰
-        - session_id는 조회 조건으로만 사용
-        """
-
         qs = super().get_queryset()
+
+        exam_type = self.request.query_params.get("exam_type")
+        if exam_type:
+            qs = qs.filter(exam_type=exam_type)
 
         session_id = self.request.query_params.get("session_id")
         if session_id:
-            sid = int(session_id)
-
-            if self._has_relation(Exam, "sessions"):
-                qs = qs.filter(sessions__id=sid)
-            elif self._has_relation(Exam, "session"):
-                qs = qs.filter(session__id=sid)
-            else:
-                return qs.none()
+            try:
+                sid = int(session_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"session_id": "must be integer"})
+            qs = qs.filter(sessions__id=sid)
 
         lecture_id = self.request.query_params.get("lecture_id")
         if lecture_id:
-            lid = int(lecture_id)
+            try:
+                lid = int(lecture_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"lecture_id": "must be integer"})
+            qs = qs.filter(sessions__lecture_id=lid)
 
-            if self._has_relation(Exam, "sessions"):
-                qs = qs.filter(sessions__lecture_id=lid)
-            elif self._has_relation(Exam, "session"):
-                qs = qs.filter(session__lecture_id=lid)
-            else:
-                return qs.none()
-
-        # ✔ 중복 제거 + 최신순
         return qs.distinct().order_by("-created_at")
