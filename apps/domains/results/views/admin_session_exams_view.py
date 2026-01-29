@@ -1,4 +1,3 @@
-# PATH: apps/domains/results/views/admin_session_exams_view.py
 """
 Admin Session → Exams 조회
 
@@ -10,11 +9,20 @@ GET /results/admin/sessions/{session_id}/exams/
 
 응답은 리스트 형태로 고정:
 [
-  { exam_id, title, open_at, close_at, allow_retake, max_attempts },
+  {
+    exam_id,
+    title,
+    exam_type,
+    open_at,
+    close_at,
+    allow_retake,
+    max_attempts
+  },
   ...
 ]
 """
 
+from django.utils.timezone import localtime
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -22,6 +30,11 @@ from rest_framework.permissions import IsAuthenticated
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.lectures.models import Session
 from apps.domains.exams.models import Exam
+
+
+def _dt(v):
+    """datetime → ISO string | None (프론트 계약 고정)"""
+    return localtime(v).isoformat() if v else None
 
 
 class AdminSessionExamsView(APIView):
@@ -43,7 +56,12 @@ class AdminSessionExamsView(APIView):
                 return list(session.exams.all())
             except Exception:
                 pass
-        return list(Exam.objects.filter(sessions__id=int(session.id)).distinct())
+
+        return list(
+            Exam.objects
+            .filter(sessions__id=int(session.id))
+            .distinct()
+        )
 
     def get(self, request, session_id: int):
         session = Session.objects.filter(id=int(session_id)).first()
@@ -57,11 +75,12 @@ class AdminSessionExamsView(APIView):
         return Response([
             {
                 "exam_id": int(exam.id),
-                "title": getattr(exam, "title", "") or "",
-                "open_at": getattr(exam, "open_at", None),
-                "close_at": getattr(exam, "close_at", None),
-                "allow_retake": bool(getattr(exam, "allow_retake", False)),
-                "max_attempts": int(getattr(exam, "max_attempts", 1) or 1),
+                "title": exam.title or "",
+                "exam_type": exam.exam_type,          # ✅ 프론트 필터/표시용
+                "open_at": _dt(exam.open_at),         # ✅ string | null
+                "close_at": _dt(exam.close_at),       # ✅ string | null
+                "allow_retake": bool(exam.allow_retake),
+                "max_attempts": int(exam.max_attempts),
             }
             for exam in exams
         ])
