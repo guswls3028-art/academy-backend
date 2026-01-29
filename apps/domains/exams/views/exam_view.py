@@ -29,13 +29,9 @@ class ExamViewSet(ModelViewSet):
     queryset = Exam.objects.all()
     permission_classes = [IsAuthenticated]
 
-    def get_permissions(self):
-        # list/retrieve는 로그인만
-        if self.action in {"list", "retrieve"}:
-            return [IsAuthenticated()]
-        # 생성/수정/삭제는 Teacher/Admin
-        return [IsAuthenticated(), IsTeacherOrAdmin()]
-
+    # ================================
+    # Serializer 선택
+    # ================================
     def get_serializer_class(self):
         if self.action == "create":
             return ExamCreateSerializer
@@ -43,14 +39,49 @@ class ExamViewSet(ModelViewSet):
             return ExamUpdateSerializer
         return ExamSerializer
 
+    # ================================
+    # Permissions
+    # ================================
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsTeacherOrAdmin()]
+
+    # ================================
+    # 🔥 핵심 FIX: create 응답을 read serializer로
+    # ================================
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        self.perform_create(serializer)
+        instance = serializer.instance
+
+        # ✅ 응답은 반드시 read serializer
+        read_serializer = ExamSerializer(instance)
+        headers = self.get_success_headers(read_serializer.data)
+
+        return Response(
+            read_serializer.data,
+            status=201,
+            headers=headers,
+        )
+
+    # ================================
+    # Immutable 필드 방어
+    # ================================
     def _reject_immutable_fields_on_update(self, request):
-        # DRF는 fields에 없는 값은 무시될 수 있음 → 봉인 목적상 "들어오면 즉시 거절"
         forbidden = {"exam_type", "subject", "template_exam", "template_exam_id"}
         incoming = set(request.data.keys())
         bad = sorted(list(incoming & forbidden))
         if bad:
-            raise ValidationError({"detail": f"Immutable fields in update are forbidden: {bad}"})
+            raise ValidationError(
+                {"detail": f"Immutable fields in update are forbidden: {bad}"}
+            )
 
+    # ================================
+    # CREATE 로직
+    # ================================
     def perform_create(self, serializer):
         exam_type = serializer.validated_data.get("exam_type")
 
@@ -59,11 +90,18 @@ class ExamViewSet(ModelViewSet):
         # =========================
         if exam_type == Exam.ExamType.TEMPLATE:
             if self.request.data.get("session_id"):
-                raise ValidationError({"session_id": "template exam must not receive session_id"})
+                raise ValidationError(
+                    {"session_id": "template exam must not receive session_id"}
+                )
             if self.request.data.get("template_exam_id"):
-                raise ValidationError({"template_exam_id": "template exam must not receive template_exam_id"})
+                raise ValidationError(
+                    {"template_exam_id": "template exam must not receive template_exam_id"}
+                )
 
-            serializer.save(exam_type=Exam.ExamType.TEMPLATE, template_exam=None)
+            serializer.save(
+                exam_type=Exam.ExamType.TEMPLATE,
+                template_exam=None,
+            )
             return
 
         # =========================
@@ -72,6 +110,7 @@ class ExamViewSet(ModelViewSet):
         template_exam_id = self.request.data.get("template_exam_id")
         if not template_exam_id:
             raise ValidationError({"template_exam_id": "required"})
+
         try:
             template_exam_id = int(template_exam_id)
         except (TypeError, ValueError):
@@ -81,12 +120,14 @@ class ExamViewSet(ModelViewSet):
             template_exam = Exam.objects.get(id=template_exam_id)
         except Exam.DoesNotExist:
             raise ValidationError({"template_exam_id": "invalid"})
+
         if template_exam.exam_type != Exam.ExamType.TEMPLATE:
             raise ValidationError({"template_exam_id": "must be template exam"})
 
         session_id = self.request.data.get("session_id")
         if not session_id:
             raise ValidationError({"session_id": "required"})
+
         try:
             session_id = int(session_id)
         except (TypeError, ValueError):
@@ -102,8 +143,12 @@ class ExamViewSet(ModelViewSet):
             subject=template_exam.subject,
             template_exam=template_exam,
         )
+
         exam.sessions.add(session)
 
+    # ================================
+    # UPDATE 방어
+    # ================================
     def update(self, request, *args, **kwargs):
         self._reject_immutable_fields_on_update(request)
         return super().update(request, *args, **kwargs)
@@ -112,15 +157,22 @@ class ExamViewSet(ModelViewSet):
         self._reject_immutable_fields_on_update(request)
         return super().partial_update(request, *args, **kwargs)
 
+    # ================================
+    # DELETE 봉인
+    # ================================
     def destroy(self, request, *args, **kwargs):
         obj: Exam = self.get_object()
 
-        # template 삭제 봉인: derived regular 존재하면 금지
         if obj.exam_type == Exam.ExamType.TEMPLATE and obj.derived_exams.exists():
-            raise PermissionDenied("This template is used by regular exams and cannot be deleted.")
+            raise PermissionDenied(
+                "This template is used by regular exams and cannot be deleted."
+            )
 
         return super().destroy(request, *args, **kwargs)
 
+    # ================================
+    # Query Filters
+    # ================================
     def get_queryset(self):
         qs = super().get_queryset()
 
