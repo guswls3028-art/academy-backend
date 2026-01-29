@@ -15,7 +15,22 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"
-ALLOWED_HOSTS = ["*"]
+
+# ✅ 수정 1: 운영 대비 호스트 명시
+ALLOWED_HOSTS = [
+    "127.0.0.1",
+    "localhost",
+
+    # EC2
+    "13.125.207.197",
+
+    # 프론트 도메인
+    "hakwonplus.com",
+    "www.hakwonplus.com",
+
+    # Cloudflare Pages
+    "academy-frontend.pages.dev",
+]
 
 AUTH_USER_MODEL = "core.User"
 
@@ -58,7 +73,7 @@ INSTALLED_APPS = [
     "apps.domains.progress",
     "apps.domains.ai.apps.AIDomainConfig",
 
-    # ✅ Assets Domain (NEW)
+    # ✅ Assets Domain
     "apps.domains.assets",
 
     # support
@@ -75,13 +90,13 @@ INSTALLED_APPS = [
     # CORS
     "corsheaders",
 
-    # shared (워커 태스크 자동 탐색)
+    # shared
     "apps.shared",
 
-    # 그랩!
+    # tools
     "django_extensions",
 
-    # 학생페이지 앱 (사용자가 학생)
+    # student app
     "apps.domains.student_app",
 ]
 
@@ -168,7 +183,18 @@ SIMPLE_JWT = {
 # CORS
 # ==================================================
 
-CORS_ALLOW_ALL_ORIGINS = True
+# ✅ 수정 2: 운영 대비 제한형
+CORS_ALLOW_ALL_ORIGINS = False
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+
+    "https://hakwonplus.com",
+    "https://www.hakwonplus.com",
+
+    "https://academy-frontend.pages.dev",
+]
+
 CORS_ALLOW_CREDENTIALS = True
 
 # ==================================================
@@ -188,7 +214,7 @@ R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 
 # ==================================================
-# R2 Buckets (역할 분리)
+# R2 Buckets
 # ==================================================
 
 R2_AI_BUCKET = os.getenv("R2_AI_BUCKET", "academy-ai")
@@ -198,7 +224,7 @@ if DEBUG:
     print("[settings] R2_ENDPOINT =", R2_ENDPOINT)
 
 # ==================================================
-# TEMPLATES
+# TEMPLATES (원본 유지)
 # ==================================================
 
 TEMPLATES = [
@@ -218,10 +244,9 @@ TEMPLATES = [
 ]
 
 # ==================================================
-# REDIS (API 서버에서도 사용)
+# REDIS
 # ==================================================
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-# ai 워커를 위한.
 INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN")
