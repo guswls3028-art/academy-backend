@@ -1,5 +1,5 @@
 # PATH: apps/api/v1/urls.py
-# ⚠️ 기존 코드 유지 + clinic / results admin 라우팅 추가
+# ⚠️ 기존 코드 유지 + assets domain 라우팅 추가
 
 from django.urls import path, include
 from apps.support.media.views import VideoProcessingCompleteView
@@ -34,9 +34,14 @@ urlpatterns = [
     path("homeworks/", include("apps.domains.homework_results.urls")),
 
     # =========================
-    # ✅ [추가] Clinic Domain
+    # Clinic Domain
     # =========================
     path("clinic/", include("apps.domains.clinic.urls")),
+
+    # =========================
+    # ✅ Assets Domain (NEW)
+    # =========================
+    path("assets/", include("apps.domains.assets.urls")),
 
     # =========================
     # Core / Media

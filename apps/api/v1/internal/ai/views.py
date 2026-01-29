@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, Optional
 
 from django.conf import settings
@@ -18,6 +19,9 @@ from apps.domains.submissions.services.ai_result_router import apply_ai_result_f
 from apps.domains.results.tasks.grading_tasks import grade_submission_task
 
 
+logger = logging.getLogger(__name__)
+
+
 def _redis() -> redis.Redis:
     return redis.from_url(settings.REDIS_URL, decode_responses=True)
 
@@ -29,7 +33,8 @@ def _auth_or_401(request) -> Optional[JsonResponse]:
     return None
 
 
-QUEUE_KEY = "ai:jobs"  # Redis List
+QUEUE_KEY = "ai:jobs"          # Redis List
+DEAD_KEY = "ai:jobs:dead"      # Redis List (dead-letter)
 
 
 @csrf_exempt
@@ -47,7 +52,11 @@ def next_ai_job_view(request):
     try:
         job = AIJob.from_json(raw)
         return JsonResponse({"job": job.to_dict()}, status=200)
+
     except Exception:
+        # ✅ PATCH: 절대 유실 금지 → dead-letter로 이동
+        logger.exception("AIJob parsing failed. Moving to dead-letter.")
+        r.lpush(DEAD_KEY, raw)
         return JsonResponse({"job": None}, status=200)
 
 
@@ -56,19 +65,6 @@ def next_ai_job_view(request):
 def submit_ai_result_view(request):
     """
     Worker → API 콜백 (STEP 1 확정)
-
-    Worker payload (run.py 기준):
-    {
-      "submission_id": 123,
-      "status": "DONE" | "FAILED",
-      "result": {...} | null,
-      "error": "..." | null
-    }
-
-    ✅ 핵심:
-    - job.type을 굳이 안 보내도 됨
-    - Submission.source 기준으로 라우팅
-    - 시험만 grade_submission_task enqueue
     """
     unauth = _auth_or_401(request)
     if unauth:
@@ -87,7 +83,6 @@ def submit_ai_result_view(request):
     result = body.get("result") if isinstance(body.get("result"), dict) else (body.get("result") or None)
     error = body.get("error")
 
-    # ✅ STEP 1: 라우터로 처리
     outcome = apply_ai_result_for_submission(
         submission_id=int(submission_id),
         status=str(status),
@@ -95,7 +90,6 @@ def submit_ai_result_view(request):
         error=str(error) if error else None,
     )
 
-    # ✅ 시험 제출만 채점 enqueue
     if outcome.returned_submission_id and outcome.should_grade:
         grade_submission_task.delay(int(outcome.returned_submission_id))
 

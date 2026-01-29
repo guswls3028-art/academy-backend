@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import redis
+import json
 from django.conf import settings
 
 from apps.domains.submissions.models import Submission
@@ -11,7 +12,8 @@ from apps.shared.contracts.ai_job import AIJob
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
 
 # ✅ exams 도메인에서 문항 메타 제공
-from apps.domains.exams.models import ExamQuestion
+from apps.domains.exams.models import ExamQuestion, Sheet
+from apps.domains.assets.omr.services.meta_generator import build_objective_template_meta
 
 AI_QUEUE_KEY = "ai:jobs"
 
@@ -23,32 +25,35 @@ def _redis():
 def dispatch_submission(submission: Submission) -> None:
     """
     Submission 생성 직후 호출되는 유일한 진입점
-
-    상태 전이 규칙 (고정):
-    - SUBMITTED → DISPATCHED : dispatcher
-    - DISPATCHED → ANSWERS_READY / FAILED : ai_result_mapper
-    - ANSWERS_READY → GRADING → DONE : results.grader
     """
 
-    # 1) ONLINE 제출: 즉시 처리
+    # ✅ idempotency 보호
+    if submission.status in (
+        Submission.Status.DISPATCHED,
+        Submission.Status.EXTRACTING,
+        Submission.Status.ANSWERS_READY,
+        Submission.Status.GRADING,
+        Submission.Status.DONE,
+    ):
+        return
+
+    # 1) ONLINE 제출
     if submission.source == Submission.Source.ONLINE:
         SubmissionService.process(submission)
         grade_submission_task.delay(int(submission.id))
         return
 
-    # 2) FILE 제출: presigned URL → AI Worker
+    # 2) FILE 제출
     if not submission.file_key:
         submission.status = Submission.Status.FAILED
         submission.error_message = "file_key missing"
         submission.save(update_fields=["status", "error_message"])
         return
 
-    # 상태 전이: SUBMITTED → DISPATCHED
     submission.status = Submission.Status.DISPATCHED
     submission.error_message = ""
     submission.save(update_fields=["status", "error_message"])
 
-    # 3) AI Job 생성
     job = AIJob.new(
         type=_infer_ai_job_type(submission),
         source_domain="submissions",
@@ -71,28 +76,12 @@ def _infer_ai_job_type(submission: Submission) -> str:
 
 
 def _build_ai_payload(submission: Submission) -> dict:
-    """
-    ✅ NEXT-2 확정 payload 규칙
-    - file 접근은 presigned GET URL만
-    - OMR은 "sheet_id" 기반으로 문항 목록을 함께 제공
-    - worker는 answers[*].exam_question_id 로만 결과를 리턴해야 함
-
-    Worker 입력(권장):
-    {
-      "submission_id": ...,
-      "download_url": "...",
-      "omr": {"sheet_id": 45},
-      "questions": [
-        {
-          "exam_question_id": 123,
-          "number": 1,
-          "region_meta": {...}  # bbox 등
-        },
-        ...
-      ]
-    }
-    """
     payload = dict(submission.payload or {})
+
+    # mode normalize
+    mode = str(payload.get("mode") or "auto").lower()
+    if mode not in ("scan", "photo", "auto"):
+        mode = "auto"
 
     sheet_id = None
     if isinstance(payload.get("sheet_id"), int):
@@ -104,13 +93,12 @@ def _build_ai_payload(submission: Submission) -> dict:
             sheet_id = None
 
     # -------------------------------------------------
-    # ✅ 문항 목록 구성 (sheet_id 기반)
+    # 문항 목록 구성
     # -------------------------------------------------
     questions_payload = []
     if sheet_id:
         qs = ExamQuestion.objects.filter(sheet_id=sheet_id).order_by("number")
         for q in qs:
-            # region_meta 필드명이 프로젝트마다 다를 수 있어 getattr로 방어
             region_meta = getattr(q, "region_meta", None) or getattr(q, "meta", None) or None
 
             questions_payload.append(
@@ -126,21 +114,34 @@ def _build_ai_payload(submission: Submission) -> dict:
             "submission_id": submission.id,
             "target_type": submission.target_type,
             "target_id": submission.target_id,
-
             "file_key": submission.file_key,
             "download_url": generate_presigned_get_url(
                 key=submission.file_key,
-                expires_in=60 * 60,
+                expires_in=3600,
             ),
-
-            # ✅ OMR 전용
-            "omr": {
-                "sheet_id": sheet_id,
-            },
-
-            # ✅ NEXT-2 핵심: worker가 exam_question_id를 알도록 제공
+            "omr": {"sheet_id": sheet_id},
             "questions": questions_payload,
         }
     )
+
+    # -------------------------------------------------
+    # ✅ OMR v1 meta injection
+    # -------------------------------------------------
+    if submission.source == Submission.Source.OMR_SCAN and sheet_id:
+        try:
+            sh = Sheet.objects.filter(id=int(sheet_id)).first()
+            qc = int(getattr(sh, "total_questions", 0) or 0)
+        except Exception:
+            qc = 0
+
+        if qc in (10, 20, 30):
+            try:
+                payload["question_count"] = qc
+                payload["mode"] = mode
+                payload["template_meta"] = build_objective_template_meta(question_count=qc)
+            except Exception:
+                payload["mode"] = mode
+        else:
+            payload["mode"] = mode
 
     return payload

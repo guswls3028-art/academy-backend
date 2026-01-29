@@ -23,14 +23,17 @@ class IdentifierConfigV1:
     - Robust to scan/photo noise by sampling a square ROI around each bubble
     - No DB, no external calls, worker-only judgement/extraction
     """
+    # (OPS DEFAULT) 촬영/워프에서 중심 오차를 흡수하기 위해 소폭 확장
     # 주변 ROI(버블 중심 기준) 확장 계수: r * k
-    roi_expand_k: float = 1.55
+    roi_expand_k: float = 1.60
 
+    # (OPS DEFAULT) blank 과다 방지: 실데이터에서 연필 농도 낮은 케이스 대응
     # blank 판단: 해당 digit에서 최고 fill이 이 값보다 작으면 blank
-    blank_threshold: float = 0.070
+    blank_threshold: float = 0.055
 
+    # (OPS DEFAULT) ambiguous 과다 방지: top-2 gap 기준 소폭 완화
     # ambiguous 판단: top-2 gap이 이 값보다 작으면 ambiguous
-    conf_gap_threshold: float = 0.060
+    conf_gap_threshold: float = 0.050
 
     # (운영 편의) digit-level confidence clamp
     min_confidence: float = 0.0

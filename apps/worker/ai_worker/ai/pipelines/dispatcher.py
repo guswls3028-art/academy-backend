@@ -1,4 +1,4 @@
-# apps/worker/ai/pipelines/dispatcher.py
+# apps/worker/ai_worker/ai/pipelines/dispatcher.py
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -18,19 +18,10 @@ from apps.worker.ai_worker.storage.downloader import download_to_tmp
 
 
 def handle_ai_job(job: AIJob) -> AIResult:
-    """
-    Worker-side single entrypoint (STEP 2 확정판)
-
-    규칙:
-    - worker는 R2 credential 없음
-    - payload["download_url"]만 신뢰
-    - presigned URL → /tmp 다운로드 → local_path 사용
-    """
     try:
         cfg = AIConfig.load()
         payload: Dict[str, Any] = job.payload or {}
 
-        # 🔥 STEP 2 핵심: presigned GET URL → local file
         download_url = payload.get("download_url")
         if not download_url:
             return AIResult.failed(job.id, "download_url missing")
@@ -51,7 +42,6 @@ def handle_ai_job(job: AIJob) -> AIResult:
             elif engine == "google":
                 r = google_ocr(local_path)
             else:
-                # auto: google → tesseract
                 try:
                     r = google_ocr(local_path)
                     if not r.text.strip():
@@ -122,21 +112,153 @@ def handle_ai_job(job: AIJob) -> AIResult:
             return AIResult.done(job.id, analysis)
 
         # --------------------------------------------------
-        # OMR grading
+        # OMR grading (meta-aware) - production final
         # --------------------------------------------------
         if job.type == "omr_grading":
-            questions = payload.get("questions") or []
-            from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v1
+            """
+            payload options (recommended):
+              - mode: "scan" | "photo" | "auto" (default auto)
+              - question_count: 10|20|30 (required if template_fetch is used)
+              - template_meta: dict (inject meta directly; no API call)
+              - template_fetch:
+                    {
+                      "base_url": "...",
+                      "cookie": "...",
+                      "bearer_token": "...",
+                      "worker_token": "...",
+                      "timeout": 10
+                    }
 
-            answers = detect_omr_answers_v1(
-                image_path=local_path,
-                questions=list(questions),
+            Output contract:
+              {
+                "version": "v1",
+                "mode": "...",
+                "aligned": true|false,
+                "identifier": {...},
+                "answers": [...],
+                "meta_used": true|false
+              }
+            """
+            import cv2  # type: ignore
+
+            from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v1, OMRConfigV1
+            from apps.worker.ai_worker.ai.omr.roi_builder import build_questions_payload_from_meta
+            from apps.worker.ai_worker.ai.omr.warp import warp_to_a4_landscape
+            from apps.worker.ai_worker.ai.omr.template_meta import fetch_objective_meta, TemplateMetaFetchError
+            from apps.worker.ai_worker.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
+
+            mode = str(payload.get("mode") or "auto").lower()
+            if mode not in ("scan", "photo", "auto"):
+                mode = "auto"
+
+            # 1) meta 확보
+            meta = payload.get("template_meta")
+            meta_used = False
+            meta_fetch_error = None
+
+            if not meta:
+                tf = payload.get("template_fetch") or {}
+                base_url = tf.get("base_url")
+                if base_url:
+                    qc = int(payload.get("question_count") or 0)
+                    if qc not in (10, 20, 30):
+                        return AIResult.failed(job.id, "question_count required (10|20|30) for template_fetch")
+
+                    try:
+                        meta_obj = fetch_objective_meta(
+                            base_url=str(base_url),
+                            question_count=qc,
+                            auth_cookie_header=tf.get("cookie"),
+                            bearer_token=tf.get("bearer_token"),
+                            worker_token_header=tf.get("worker_token"),
+                            timeout=int(tf.get("timeout") or 10),
+                        )
+                        meta = meta_obj.raw
+                        meta_used = True
+                    except TemplateMetaFetchError as e:
+                        meta = None
+                        meta_fetch_error = str(e)[:500]
+
+            # 2) 이미지 로드
+            img_bgr = cv2.imread(local_path)
+            if img_bgr is None:
+                return AIResult.failed(job.id, "cannot read image")
+
+            aligned = img_bgr
+
+            # 3) mode 정책
+            if mode == "photo":
+                warped = warp_to_a4_landscape(img_bgr)
+                if warped is None:
+                    return AIResult.failed(job.id, "warp_failed_for_photo_mode")
+                aligned = warped
+
+            elif mode == "auto":
+                warped = warp_to_a4_landscape(img_bgr)
+                if warped is not None:
+                    aligned = warped
+
+            # 4) meta 없으면 legacy
+            if not meta:
+                questions = payload.get("questions") or []
+                if not questions:
+                    return AIResult.failed(job.id, "template_meta/template_fetch failed and legacy questions missing")
+
+                answers = detect_omr_answers_v1(
+                    image_path=local_path,
+                    questions=list(questions),
+                    cfg=None,
+                )
+                return AIResult.done(
+                    job.id,
+                    {
+                        "version": "v1",
+                        "mode": "legacy_questions",
+                        "aligned": False,
+                        "identifier": None,
+                        "answers": answers,
+                        "meta_used": False,
+                        "debug": {
+                            "meta_fetch_error": meta_fetch_error,
+                        },
+                    },
+                )
+
+            # 5) ROI + identifier
+            h, w = aligned.shape[:2]
+            questions_payload = build_questions_payload_from_meta(meta, (w, h))
+
+            ident = detect_identifier_v1(
+                image_bgr=aligned,
+                meta=meta,
+                cfg=IdentifierConfigV1(),
             )
+
+            # 6) aligned 저장 후 OMR
+            import tempfile, os
+
+            tmp_path = os.path.join(tempfile.gettempdir(), f"omr_aligned_{job.id}.jpg")
+            cv2.imwrite(tmp_path, aligned)
+
+            cfg = OMRConfigV1()
+            answers = detect_omr_answers_v1(
+                image_path=tmp_path,
+                questions=list(questions_payload),
+                cfg=cfg,
+            )
+
             return AIResult.done(
                 job.id,
                 {
                     "version": "v1",
+                    "mode": mode,
+                    "aligned": bool(aligned is not img_bgr),
+                    "identifier": ident,
                     "answers": answers,
+                    "meta_used": meta_used,
+                    "debug": {
+                        "meta_fetch_error": meta_fetch_error,
+                    },
                 },
             )
 

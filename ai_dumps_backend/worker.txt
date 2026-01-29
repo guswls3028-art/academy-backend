@@ -837,7 +837,7 @@ def tesseract_ocr(image_path: str) -> OCRResult:
 ==========================================================================================
 # FILE: ai_worker/ai/omr/engine.py
 ==========================================================================================
-# apps/worker/ai/omr/engine.py
+# apps/worker/ai_worker/ai/omr/identifier.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -846,232 +846,677 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 
-from apps.worker.ai_worker.ai.omr.types import OMRAnswerV1
+from apps.worker.ai_worker.ai.omr.meta_px import build_page_scale_from_meta, PageScale
 
-
-# ------------------------------------------------------------
-# OMR v1 Simple Engine (CPU)
-# - ROI(마킹 영역) 이미지에서 choice별 fill 점수를 계산
-# - Worker는 "판단/추출"만 하고, 정답 비교/점수 계산은 API(results)에서 함
-#
-# 입력:
-#   - image_path: 시험지 전체 이미지
-#   - questions: [{question_id, roi: {x,y,w,h}, choices: ["A","B","C","D","E"]}, ...]
-#   - threshold params
-#
-# 출력:
-#   - answers: [OMRAnswerV1, ...]
-# ------------------------------------------------------------
 
 BBox = Tuple[int, int, int, int]
 
 
 @dataclass(frozen=True)
-class OMRConfigV1:
-    # 이 값들은 v1 baseline. 운영하면서 조정 가능.
-    # 0~1 fill 점수 (어두운 픽셀 비율 기반)
-    blank_threshold: float = 0.08      # 모두 약하면 blank
-    multi_threshold: float = 0.62      # 2개 이상이 이 이상이면 multi
-    conf_gap_threshold: float = 0.08   # 1등-2등 차이가 이보다 작으면 ambiguous
-    low_confidence_threshold: float = 0.70  # API 채점 정책과 맞추기 위해 동일 기본값
+class IdentifierConfigV1:
+    """
+    Identifier OMR v1 (8 digits, each digit 0~9 single mark).
+
+    Principles:
+    - ROI based fill score (same philosophy as detect_omr_answers_v1)
+    - Robust to scan/photo noise by sampling a square ROI around each bubble
+    - No DB, no external calls, worker-only judgement/extraction
+    """
+    # 주변 ROI(버블 중심 기준) 확장 계수: r * k
+    roi_expand_k: float = 1.55
+
+    # blank 판단: 해당 digit에서 최고 fill이 이 값보다 작으면 blank
+    blank_threshold: float = 0.070
+
+    # ambiguous 판단: top-2 gap이 이 값보다 작으면 ambiguous
+    conf_gap_threshold: float = 0.060
+
+    # (운영 편의) digit-level confidence clamp
+    min_confidence: float = 0.0
+    max_confidence: float = 1.0
 
 
-def _safe_int(v: Any, default: int = 0) -> int:
-    try:
-        return int(v)
-    except Exception:
-        return default
+def _clamp(v: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, v))
 
 
 def _crop(gray: np.ndarray, bbox: BBox) -> np.ndarray:
     x, y, w, h = bbox
-    x = max(0, int(x))
-    y = max(0, int(y))
+    x = _clamp(int(x), 0, gray.shape[1] - 1)
+    y = _clamp(int(y), 0, gray.shape[0] - 1)
     w = max(1, int(w))
     h = max(1, int(h))
+    w = min(w, gray.shape[1] - x)
+    h = min(h, gray.shape[0] - y)
     return gray[y:y + h, x:x + w]
 
 
 def _fill_score(roi_gray: np.ndarray) -> float:
     """
-    ROI에서 '채워짐(fill)' 점수 계산 (0~1)
-    - 매우 단순한 v1: 밝기 임계값으로 어두운 픽셀 비율
+    Same core idea as OMR v1:
+    - blur
+    - OTSU + INV
+    - filled pixel ratio
     """
     if roi_gray.size == 0:
         return 0.0
 
-    # normalize
     blur = cv2.GaussianBlur(roi_gray, (5, 5), 0)
-
-    # adaptive-ish: OTSU
     _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # th: 채워진 부분이 255, 배경이 0 (INV)
     filled = float(np.sum(th > 0))
-    total = float(th.size)
-    if total <= 0:
-        return 0.0
-
+    total = float(th.size) if th.size > 0 else 1.0
     score = filled / total
-    # 0~1 clamp
     return float(max(0.0, min(1.0, score)))
 
 
-def _split_choices_bbox(roi_bbox: BBox, n: int, axis: str = "x") -> List[BBox]:
-    """
-    ROI bbox를 n등분해서 choice별 bbox를 만든다.
-    - axis="x": 가로로 n분할 (A B C D E가 가로배치인 경우)
-    - axis="y": 세로로 n분할
-    """
-    x, y, w, h = roi_bbox
-    boxes: List[BBox] = []
-    if n <= 0:
-        return boxes
-
-    if axis == "y":
-        step = h / float(n)
-        for i in range(n):
-            yy = y + int(round(i * step))
-            hh = int(round(step))
-            boxes.append((x, yy, w, max(1, hh)))
-        return boxes
-
-    # default x
-    step = w / float(n)
-    for i in range(n):
-        xx = x + int(round(i * step))
-        ww = int(round(step))
-        boxes.append((xx, y, max(1, ww), h))
-    return boxes
-
-
-def detect_omr_answers_v1(
+def _bubble_roi_bbox_px(
     *,
-    image_path: str,
-    questions: List[Dict[str, Any]],
-    cfg: Optional[OMRConfigV1] = None,
-) -> List[Dict[str, Any]]:
-    """
-    Worker entry: return list of dict payloads (each is OMRAnswerV1.to_dict()).
-    """
-    cfg = cfg or OMRConfigV1()
+    center_px: Tuple[int, int],
+    r_px: int,
+    cfg: IdentifierConfigV1,
+    img_w: int,
+    img_h: int,
+) -> BBox:
+    cx, cy = center_px
+    side = int(round(max(2, r_px) * cfg.roi_expand_k)) * 2
+    x = int(cx - side // 2)
+    y = int(cy - side // 2)
+    x = _clamp(x, 0, img_w - 1)
+    y = _clamp(y, 0, img_h - 1)
+    w = _clamp(side, 1, img_w - x)
+    h = _clamp(side, 1, img_h - y)
+    return (x, y, w, h)
 
-    img_bgr = cv2.imread(image_path)
-    if img_bgr is None:
-        # image load fail -> return error answers (best effort)
-        out: List[Dict[str, Any]] = []
-        for q in questions or []:
-            qid = _safe_int(q.get("question_id"))
-            out.append(
-                OMRAnswerV1(
-                    version="v1",
-                    question_id=qid,
-                    detected=[],
-                    marking="blank",
-                    confidence=0.0,
-                    status="error",
-                    raw={"error": "cannot read image"},
-                ).to_dict()
+
+def detect_identifier_v1(
+    *,
+    image_bgr: np.ndarray,
+    meta: Dict[str, Any],
+    cfg: Optional[IdentifierConfigV1] = None,
+) -> Dict[str, Any]:
+    """
+    Extract identifier(8 digits) from aligned full-page image.
+
+    meta requirements:
+      meta["identifier"]["bubbles"] list with:
+        - digit_index (1..8)
+        - number (0..9)
+        - center: {x(mm), y(mm)}
+        - r(mm)
+
+    return contract:
+      {
+        "identifier": "12345678" | None,
+        "digits": [{"digit_index":1,"value":1,"status":"ok|blank|ambiguous","confidence":0.91,"marks":[...]}...],
+        "confidence": 0.0~1.0,
+        "status": "ok|ambiguous|blank|error"
+      }
+    """
+    cfg = cfg or IdentifierConfigV1()
+
+    if image_bgr is None or image_bgr.size == 0:
+        return {"identifier": None, "digits": [], "confidence": 0.0, "status": "error"}
+
+    h, w = image_bgr.shape[:2]
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+
+    ident = meta.get("identifier") or {}
+    bubbles = list(ident.get("bubbles") or [])
+    if not bubbles:
+        return {"identifier": None, "digits": [], "confidence": 0.0, "status": "error"}
+
+    scale: PageScale = build_page_scale_from_meta(meta=meta, image_size_px=(w, h))
+
+    # group bubbles by digit_index
+    by_digit: Dict[int, List[Dict[str, Any]]] = {}
+    for b in bubbles:
+        try:
+            di = int(b.get("digit_index") or 0)
+        except Exception:
+            continue
+        if di <= 0:
+            continue
+        by_digit.setdefault(di, []).append(b)
+
+    digits_out: List[Dict[str, Any]] = []
+    identifier_chars: List[str] = []
+    status_rollup = "ok"
+    confidences: List[float] = []
+
+    for digit_index in sorted(by_digit.keys()):
+        bs = by_digit[digit_index]
+
+        marks: List[Dict[str, Any]] = []
+        for b in bs:
+            num = int(b.get("number") or 0)
+            c = b.get("center") or {}
+            r_mm = float(b.get("r") or 0.0)
+
+            cx_mm = float(c.get("x") or 0.0)
+            cy_mm = float(c.get("y") or 0.0)
+
+            cx_px, cy_px = scale.mm_to_px_point(cx_mm, cy_mm)
+
+            # radius: use average scale for robustness (mm->px)
+            r_px_x = max(1, scale.mm_to_px_len_x(r_mm))
+            r_px_y = max(1, scale.mm_to_px_len_y(r_mm))
+            r_px = max(1, int(round((r_px_x + r_px_y) / 2.0)))
+
+            bbox = _bubble_roi_bbox_px(
+                center_px=(cx_px, cy_px),
+                r_px=r_px,
+                cfg=cfg,
+                img_w=w,
+                img_h=h,
             )
-        return out
+            roi = _crop(gray, bbox)
+            fill = _fill_score(roi)
 
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+            marks.append(
+                {
+                    "number": int(num),
+                    "fill": float(fill),
+                    "center_px": {"x": int(cx_px), "y": int(cy_px)},
+                    "roi_px": {"x": int(bbox[0]), "y": int(bbox[1]), "w": int(bbox[2]), "h": int(bbox[3])},
+                }
+            )
 
-    results: List[Dict[str, Any]] = []
-
-    for q in questions or []:
-        qid = _safe_int(q.get("question_id"))
-        roi = q.get("roi") or {}
-        roi_bbox: BBox = (
-            _safe_int(roi.get("x")),
-            _safe_int(roi.get("y")),
-            _safe_int(roi.get("w"), 1),
-            _safe_int(roi.get("h"), 1),
-        )
-        choices = q.get("choices") or ["A", "B", "C", "D", "E"]
-        axis = (q.get("axis") or "x").lower()
-
-        n = len(choices)
-        choice_boxes = _split_choices_bbox(roi_bbox, n=n, axis=axis)
-
-        marks = []
-        for idx, cb in enumerate(choice_boxes):
-            roi_choice = _crop(gray, cb)
-            fill = _fill_score(roi_choice)
-            marks.append({"choice": str(choices[idx]), "fill": float(fill)})
-
-        # sort by fill desc
-        marks_sorted = sorted(marks, key=lambda m: m["fill"], reverse=True)
-        top = marks_sorted[0] if marks_sorted else {"choice": "", "fill": 0.0}
-        second = marks_sorted[1] if len(marks_sorted) > 1 else {"choice": "", "fill": 0.0}
+        marks_sorted = sorted(marks, key=lambda m: float(m.get("fill") or 0.0), reverse=True)
+        top = marks_sorted[0] if marks_sorted else {"number": 0, "fill": 0.0}
+        second = marks_sorted[1] if len(marks_sorted) > 1 else {"number": 0, "fill": 0.0}
 
         top_fill = float(top.get("fill") or 0.0)
         second_fill = float(second.get("fill") or 0.0)
+        gap = float(top_fill - second_fill)
 
-        # blank 판단
         if top_fill < cfg.blank_threshold:
-            results.append(
-                OMRAnswerV1(
-                    version="v1",
-                    question_id=qid,
-                    detected=[],
-                    marking="blank",
-                    confidence=0.0,
-                    status="blank",
-                    raw={"marks": marks_sorted},
-                ).to_dict()
+            digits_out.append(
+                {
+                    "digit_index": int(digit_index),
+                    "value": None,
+                    "status": "blank",
+                    "confidence": 0.0,
+                    "marks": marks_sorted,
+                }
             )
+            identifier_chars.append("?")
+            status_rollup = "blank" if status_rollup == "ok" else status_rollup
             continue
 
-        # multi 판단 (v1: 2개 이상이 multi_threshold 이상이면 multi)
-        high = [m for m in marks_sorted if float(m.get("fill") or 0.0) >= cfg.multi_threshold]
-        if len(high) >= 2:
-            detected = [str(m["choice"]) for m in high]
-            results.append(
-                OMRAnswerV1(
-                    version="v1",
-                    question_id=qid,
-                    detected=detected,
-                    marking="multi",
-                    confidence=float(top_fill),
-                    status="ambiguous",  # multi는 ambiguous로 처리 (v1)
-                    raw={"marks": marks_sorted},
-                ).to_dict()
-            )
-            continue
-
-        # ambiguous 판단 (top-2 gap이 너무 작음)
-        gap = top_fill - second_fill
         if gap < cfg.conf_gap_threshold:
-            results.append(
-                OMRAnswerV1(
-                    version="v1",
-                    question_id=qid,
-                    detected=[str(top["choice"])],
-                    marking="single",
-                    confidence=float(top_fill),
-                    status="ambiguous",
-                    raw={"marks": marks_sorted, "gap": float(gap)},
-                ).to_dict()
+            digits_out.append(
+                {
+                    "digit_index": int(digit_index),
+                    "value": int(top.get("number") or 0),
+                    "status": "ambiguous",
+                    "confidence": float(max(cfg.min_confidence, min(cfg.max_confidence, top_fill))),
+                    "gap": float(gap),
+                    "marks": marks_sorted,
+                }
             )
+            identifier_chars.append(str(int(top.get("number") or 0)))
+            status_rollup = "ambiguous" if status_rollup in ("ok",) else status_rollup
+            confidences.append(float(top_fill))
             continue
 
-        # ok / low_confidence
-        status = "ok" if top_fill >= cfg.low_confidence_threshold else "low_confidence"
+        # ok
+        conf = float(max(cfg.min_confidence, min(cfg.max_confidence, top_fill)))
+        digits_out.append(
+            {
+                "digit_index": int(digit_index),
+                "value": int(top.get("number") or 0),
+                "status": "ok",
+                "confidence": conf,
+                "gap": float(gap),
+                "marks": marks_sorted,
+            }
+        )
+        identifier_chars.append(str(int(top.get("number") or 0)))
+        confidences.append(conf)
 
-        results.append(
-            OMRAnswerV1(
-                version="v1",
-                question_id=qid,
-                detected=[str(top["choice"])],
-                marking="single",
-                confidence=float(top_fill),
-                status=status,  # ok 또는 low_confidence
-                raw={"marks": marks_sorted, "gap": float(gap)},
-            ).to_dict()
+    # identifier validity: must be 8 digits all ok/ambiguous (blank이면 ? 포함)
+    identifier = "".join(identifier_chars)
+    if "?" in identifier:
+        identifier_final: Optional[str] = None
+    else:
+        identifier_final = identifier
+
+    # overall confidence: conservative (mean of digit conf where available)
+    overall_conf = float(sum(confidences) / len(confidences)) if confidences else 0.0
+
+    return {
+        "identifier": identifier_final,
+        "raw_identifier": identifier,  # '?' 포함 가능 (운영 디버그/리트라이용)
+        "digits": digits_out,
+        "confidence": float(max(0.0, min(1.0, overall_conf))),
+        "status": status_rollup,
+    }
+
+
+==========================================================================================
+# FILE: ai_worker/ai/omr/identifier.py
+==========================================================================================
+# apps/worker/ai_worker/ai/omr/identifier.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+import cv2  # type: ignore
+import numpy as np  # type: ignore
+
+from apps.worker.ai_worker.ai.omr.meta_px import build_page_scale_from_meta, PageScale
+
+
+BBox = Tuple[int, int, int, int]
+
+
+@dataclass(frozen=True)
+class IdentifierConfigV1:
+    """
+    Identifier OMR v1 (8 digits, each digit 0~9 single mark).
+
+    Principles:
+    - ROI based fill score (same philosophy as detect_omr_answers_v1)
+    - Robust to scan/photo noise by sampling a square ROI around each bubble
+    - No DB, no external calls, worker-only judgement/extraction
+    """
+    # (OPS DEFAULT) 촬영/워프에서 중심 오차를 흡수하기 위해 소폭 확장
+    # 주변 ROI(버블 중심 기준) 확장 계수: r * k
+    roi_expand_k: float = 1.60
+
+    # (OPS DEFAULT) blank 과다 방지: 실데이터에서 연필 농도 낮은 케이스 대응
+    # blank 판단: 해당 digit에서 최고 fill이 이 값보다 작으면 blank
+    blank_threshold: float = 0.055
+
+    # (OPS DEFAULT) ambiguous 과다 방지: top-2 gap 기준 소폭 완화
+    # ambiguous 판단: top-2 gap이 이 값보다 작으면 ambiguous
+    conf_gap_threshold: float = 0.050
+
+    # (운영 편의) digit-level confidence clamp
+    min_confidence: float = 0.0
+    max_confidence: float = 1.0
+
+
+def _clamp(v: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, v))
+
+
+def _crop(gray: np.ndarray, bbox: BBox) -> np.ndarray:
+    x, y, w, h = bbox
+    x = _clamp(int(x), 0, gray.shape[1] - 1)
+    y = _clamp(int(y), 0, gray.shape[0] - 1)
+    w = max(1, int(w))
+    h = max(1, int(h))
+    w = min(w, gray.shape[1] - x)
+    h = min(h, gray.shape[0] - y)
+    return gray[y:y + h, x:x + w]
+
+
+def _fill_score(roi_gray: np.ndarray) -> float:
+    """
+    Same core idea as OMR v1:
+    - blur
+    - OTSU + INV
+    - filled pixel ratio
+    """
+    if roi_gray.size == 0:
+        return 0.0
+
+    blur = cv2.GaussianBlur(roi_gray, (5, 5), 0)
+    _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    filled = float(np.sum(th > 0))
+    total = float(th.size) if th.size > 0 else 1.0
+    score = filled / total
+    return float(max(0.0, min(1.0, score)))
+
+
+def _bubble_roi_bbox_px(
+    *,
+    center_px: Tuple[int, int],
+    r_px: int,
+    cfg: IdentifierConfigV1,
+    img_w: int,
+    img_h: int,
+) -> BBox:
+    cx, cy = center_px
+    side = int(round(max(2, r_px) * cfg.roi_expand_k)) * 2
+    x = int(cx - side // 2)
+    y = int(cy - side // 2)
+    x = _clamp(x, 0, img_w - 1)
+    y = _clamp(y, 0, img_h - 1)
+    w = _clamp(side, 1, img_w - x)
+    h = _clamp(side, 1, img_h - y)
+    return (x, y, w, h)
+
+
+def detect_identifier_v1(
+    *,
+    image_bgr: np.ndarray,
+    meta: Dict[str, Any],
+    cfg: Optional[IdentifierConfigV1] = None,
+) -> Dict[str, Any]:
+    """
+    Extract identifier(8 digits) from aligned full-page image.
+
+    meta requirements:
+      meta["identifier"]["bubbles"] list with:
+        - digit_index (1..8)
+        - number (0..9)
+        - center: {x(mm), y(mm)}
+        - r(mm)
+
+    return contract:
+      {
+        "identifier": "12345678" | None,
+        "digits": [{"digit_index":1,"value":1,"status":"ok|blank|ambiguous","confidence":0.91,"marks":[...]}...],
+        "confidence": 0.0~1.0,
+        "status": "ok|ambiguous|blank|error"
+      }
+    """
+    cfg = cfg or IdentifierConfigV1()
+
+    if image_bgr is None or image_bgr.size == 0:
+        return {"identifier": None, "digits": [], "confidence": 0.0, "status": "error"}
+
+    h, w = image_bgr.shape[:2]
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+
+    ident = meta.get("identifier") or {}
+    bubbles = list(ident.get("bubbles") or [])
+    if not bubbles:
+        return {"identifier": None, "digits": [], "confidence": 0.0, "status": "error"}
+
+    scale: PageScale = build_page_scale_from_meta(meta=meta, image_size_px=(w, h))
+
+    # group bubbles by digit_index
+    by_digit: Dict[int, List[Dict[str, Any]]] = {}
+    for b in bubbles:
+        try:
+            di = int(b.get("digit_index") or 0)
+        except Exception:
+            continue
+        if di <= 0:
+            continue
+        by_digit.setdefault(di, []).append(b)
+
+    digits_out: List[Dict[str, Any]] = []
+    identifier_chars: List[str] = []
+    status_rollup = "ok"
+    confidences: List[float] = []
+
+    for digit_index in sorted(by_digit.keys()):
+        bs = by_digit[digit_index]
+
+        marks: List[Dict[str, Any]] = []
+        for b in bs:
+            num = int(b.get("number") or 0)
+            c = b.get("center") or {}
+            r_mm = float(b.get("r") or 0.0)
+
+            cx_mm = float(c.get("x") or 0.0)
+            cy_mm = float(c.get("y") or 0.0)
+
+            cx_px, cy_px = scale.mm_to_px_point(cx_mm, cy_mm)
+
+            # radius: use average scale for robustness (mm->px)
+            r_px_x = max(1, scale.mm_to_px_len_x(r_mm))
+            r_px_y = max(1, scale.mm_to_px_len_y(r_mm))
+            r_px = max(1, int(round((r_px_x + r_px_y) / 2.0)))
+
+            bbox = _bubble_roi_bbox_px(
+                center_px=(cx_px, cy_px),
+                r_px=r_px,
+                cfg=cfg,
+                img_w=w,
+                img_h=h,
+            )
+            roi = _crop(gray, bbox)
+            fill = _fill_score(roi)
+
+            marks.append(
+                {
+                    "number": int(num),
+                    "fill": float(fill),
+                    "center_px": {"x": int(cx_px), "y": int(cy_px)},
+                    "roi_px": {"x": int(bbox[0]), "y": int(bbox[1]), "w": int(bbox[2]), "h": int(bbox[3])},
+                }
+            )
+
+        marks_sorted = sorted(marks, key=lambda m: float(m.get("fill") or 0.0), reverse=True)
+        top = marks_sorted[0] if marks_sorted else {"number": 0, "fill": 0.0}
+        second = marks_sorted[1] if len(marks_sorted) > 1 else {"number": 0, "fill": 0.0}
+
+        top_fill = float(top.get("fill") or 0.0)
+        second_fill = float(second.get("fill") or 0.0)
+        gap = float(top_fill - second_fill)
+
+        if top_fill < cfg.blank_threshold:
+            digits_out.append(
+                {
+                    "digit_index": int(digit_index),
+                    "value": None,
+                    "status": "blank",
+                    "confidence": 0.0,
+                    "marks": marks_sorted,
+                }
+            )
+            identifier_chars.append("?")
+            status_rollup = "blank" if status_rollup == "ok" else status_rollup
+            continue
+
+        if gap < cfg.conf_gap_threshold:
+            digits_out.append(
+                {
+                    "digit_index": int(digit_index),
+                    "value": int(top.get("number") or 0),
+                    "status": "ambiguous",
+                    "confidence": float(max(cfg.min_confidence, min(cfg.max_confidence, top_fill))),
+                    "gap": float(gap),
+                    "marks": marks_sorted,
+                }
+            )
+            identifier_chars.append(str(int(top.get("number") or 0)))
+            status_rollup = "ambiguous" if status_rollup in ("ok",) else status_rollup
+            confidences.append(float(top_fill))
+            continue
+
+        # ok
+        conf = float(max(cfg.min_confidence, min(cfg.max_confidence, top_fill)))
+        digits_out.append(
+            {
+                "digit_index": int(digit_index),
+                "value": int(top.get("number") or 0),
+                "status": "ok",
+                "confidence": conf,
+                "gap": float(gap),
+                "marks": marks_sorted,
+            }
+        )
+        identifier_chars.append(str(int(top.get("number") or 0)))
+        confidences.append(conf)
+
+    # identifier validity: must be 8 digits all ok/ambiguous (blank이면 ? 포함)
+    identifier = "".join(identifier_chars)
+    if "?" in identifier:
+        identifier_final: Optional[str] = None
+    else:
+        identifier_final = identifier
+
+    # overall confidence: conservative (mean of digit conf where available)
+    overall_conf = float(sum(confidences) / len(confidences)) if confidences else 0.0
+
+    return {
+        "identifier": identifier_final,
+        "raw_identifier": identifier,  # '?' 포함 가능 (운영 디버그/리트라이용)
+        "digits": digits_out,
+        "confidence": float(max(0.0, min(1.0, overall_conf))),
+        "status": status_rollup,
+    }
+
+
+==========================================================================================
+# FILE: ai_worker/ai/omr/meta_px.py
+==========================================================================================
+# apps/worker/ai_worker/ai/omr/meta_px.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Tuple
+
+
+def _clamp(v: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, v))
+
+
+@dataclass(frozen=True)
+class PageScale:
+    """
+    Convert meta(mm) -> px.
+    Boundary rule (fixed):
+      - meta(mm) is assets single truth
+      - px conversion is worker responsibility
+      - aligned/warped image must represent the full page
+    """
+    sx: float
+    sy: float
+    img_w: int
+    img_h: int
+
+    def mm_to_px_point(self, x_mm: float, y_mm: float) -> Tuple[int, int]:
+        x = int(round(float(x_mm) * self.sx))
+        y = int(round(float(y_mm) * self.sy))
+        x = _clamp(x, 0, self.img_w - 1)
+        y = _clamp(y, 0, self.img_h - 1)
+        return x, y
+
+    def mm_to_px_len_x(self, v_mm: float) -> int:
+        return max(1, int(round(float(v_mm) * self.sx)))
+
+    def mm_to_px_len_y(self, v_mm: float) -> int:
+        return max(1, int(round(float(v_mm) * self.sy)))
+
+
+def build_page_scale_from_meta(
+    *,
+    meta: Dict[str, Any],
+    image_size_px: Tuple[int, int],
+) -> PageScale:
+    """
+    Build scaler from template meta.
+    meta page size is mm. image_size_px is (width, height).
+    """
+    img_w, img_h = int(image_size_px[0]), int(image_size_px[1])
+
+    page = meta.get("page") or {}
+    size = page.get("size") or {}
+    page_w_mm = float(size.get("width") or 0.0)
+    page_h_mm = float(size.get("height") or 0.0)
+
+    if img_w <= 0 or img_h <= 0:
+        raise ValueError("invalid image_size_px")
+    if page_w_mm <= 0.0 or page_h_mm <= 0.0:
+        raise ValueError("invalid meta page size")
+
+    sx = img_w / page_w_mm
+    sy = img_h / page_h_mm
+    return PageScale(sx=float(sx), sy=float(sy), img_w=img_w, img_h=img_h)
+
+
+==========================================================================================
+# FILE: ai_worker/ai/omr/template_meta.py
+==========================================================================================
+# apps/worker/ai_worker/ai/omr/template_meta.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, List, Tuple, Optional
+
+import requests
+
+
+@dataclass(frozen=True)
+class TemplateMeta:
+    raw: Dict[str, Any]
+
+    @property
+    def units(self) -> str:
+        return str(self.raw.get("units") or "mm")
+
+    @property
+    def page_size_mm(self) -> Tuple[float, float]:
+        page = self.raw.get("page") or {}
+        size = page.get("size") or {}
+        return float(size.get("width") or 0.0), float(size.get("height") or 0.0)
+
+    @property
+    def questions(self) -> List[Dict[str, Any]]:
+        return list(self.raw.get("questions") or [])
+
+
+class TemplateMetaFetchError(RuntimeError):
+    pass
+
+
+def fetch_objective_meta(
+    *,
+    base_url: str,
+    question_count: int,
+    # auth options (choose what your deployment uses)
+    auth_cookie_header: Optional[str] = None,
+    bearer_token: Optional[str] = None,
+    worker_token_header: Optional[str] = None,  # e.g. X-Worker-Token (if API allows)
+    extra_headers: Optional[Dict[str, str]] = None,
+    timeout: int = 10,
+) -> TemplateMeta:
+    """
+    worker -> API (assets meta)
+
+    Stability goals:
+    - clear timeouts
+    - explicit error messages
+    - flexible auth (cookie/bearer/custom header)
+    - returns structured exception for caller to gracefully fallback
+
+    NOTE:
+    - assets endpoint currently uses IsAuthenticated.
+      Production typically uses cookie session OR bearer token.
+      worker_token_header is optional if you later add internal auth for workers.
+    """
+    url = f"{base_url.rstrip('/')}/api/v1/assets/omr/objective/meta/"
+    params = {"question_count": str(int(question_count))}
+
+    headers: Dict[str, str] = {"Accept": "application/json"}
+    if auth_cookie_header:
+        headers["Cookie"] = auth_cookie_header
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
+    if worker_token_header:
+        headers["X-Worker-Token"] = str(worker_token_header)
+    if extra_headers:
+        for k, v in extra_headers.items():
+            if k and v:
+                headers[str(k)] = str(v)
+
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=timeout)
+    except Exception as e:
+        raise TemplateMetaFetchError(f"meta_fetch_network_error: {e!r}") from e
+
+    if r.status_code >= 400:
+        body = (r.text or "")[:2000]
+        raise TemplateMetaFetchError(
+            f"meta_fetch_http_error: status={r.status_code} body={body}"
         )
 
-    return results
+    try:
+        data = r.json()
+    except Exception as e:
+        raise TemplateMetaFetchError(f"meta_fetch_invalid_json: {e!r}") from e
+
+    return TemplateMeta(raw=data)
 
 
 ==========================================================================================
@@ -1133,7 +1578,7 @@ from __future__ import annotations
 ==========================================================================================
 # FILE: ai_worker/ai/pipelines/dispatcher.py
 ==========================================================================================
-# apps/worker/ai/pipelines/dispatcher.py
+# apps/worker/ai_worker/ai/pipelines/dispatcher.py
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -1153,19 +1598,10 @@ from apps.worker.ai_worker.storage.downloader import download_to_tmp
 
 
 def handle_ai_job(job: AIJob) -> AIResult:
-    """
-    Worker-side single entrypoint (STEP 2 확정판)
-
-    규칙:
-    - worker는 R2 credential 없음
-    - payload["download_url"]만 신뢰
-    - presigned URL → /tmp 다운로드 → local_path 사용
-    """
     try:
         cfg = AIConfig.load()
         payload: Dict[str, Any] = job.payload or {}
 
-        # 🔥 STEP 2 핵심: presigned GET URL → local file
         download_url = payload.get("download_url")
         if not download_url:
             return AIResult.failed(job.id, "download_url missing")
@@ -1186,7 +1622,6 @@ def handle_ai_job(job: AIJob) -> AIResult:
             elif engine == "google":
                 r = google_ocr(local_path)
             else:
-                # auto: google → tesseract
                 try:
                     r = google_ocr(local_path)
                     if not r.text.strip():
@@ -1257,21 +1692,153 @@ def handle_ai_job(job: AIJob) -> AIResult:
             return AIResult.done(job.id, analysis)
 
         # --------------------------------------------------
-        # OMR grading
+        # OMR grading (meta-aware) - production final
         # --------------------------------------------------
         if job.type == "omr_grading":
-            questions = payload.get("questions") or []
-            from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v1
+            """
+            payload options (recommended):
+              - mode: "scan" | "photo" | "auto" (default auto)
+              - question_count: 10|20|30 (required if template_fetch is used)
+              - template_meta: dict (inject meta directly; no API call)
+              - template_fetch:
+                    {
+                      "base_url": "...",
+                      "cookie": "...",
+                      "bearer_token": "...",
+                      "worker_token": "...",
+                      "timeout": 10
+                    }
 
-            answers = detect_omr_answers_v1(
-                image_path=local_path,
-                questions=list(questions),
+            Output contract:
+              {
+                "version": "v1",
+                "mode": "...",
+                "aligned": true|false,
+                "identifier": {...},
+                "answers": [...],
+                "meta_used": true|false
+              }
+            """
+            import cv2  # type: ignore
+
+            from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v1, OMRConfigV1
+            from apps.worker.ai_worker.ai.omr.roi_builder import build_questions_payload_from_meta
+            from apps.worker.ai_worker.ai.omr.warp import warp_to_a4_landscape
+            from apps.worker.ai_worker.ai.omr.template_meta import fetch_objective_meta, TemplateMetaFetchError
+            from apps.worker.ai_worker.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
+
+            mode = str(payload.get("mode") or "auto").lower()
+            if mode not in ("scan", "photo", "auto"):
+                mode = "auto"
+
+            # 1) meta 확보
+            meta = payload.get("template_meta")
+            meta_used = False
+            meta_fetch_error = None
+
+            if not meta:
+                tf = payload.get("template_fetch") or {}
+                base_url = tf.get("base_url")
+                if base_url:
+                    qc = int(payload.get("question_count") or 0)
+                    if qc not in (10, 20, 30):
+                        return AIResult.failed(job.id, "question_count required (10|20|30) for template_fetch")
+
+                    try:
+                        meta_obj = fetch_objective_meta(
+                            base_url=str(base_url),
+                            question_count=qc,
+                            auth_cookie_header=tf.get("cookie"),
+                            bearer_token=tf.get("bearer_token"),
+                            worker_token_header=tf.get("worker_token"),
+                            timeout=int(tf.get("timeout") or 10),
+                        )
+                        meta = meta_obj.raw
+                        meta_used = True
+                    except TemplateMetaFetchError as e:
+                        meta = None
+                        meta_fetch_error = str(e)[:500]
+
+            # 2) 이미지 로드
+            img_bgr = cv2.imread(local_path)
+            if img_bgr is None:
+                return AIResult.failed(job.id, "cannot read image")
+
+            aligned = img_bgr
+
+            # 3) mode 정책
+            if mode == "photo":
+                warped = warp_to_a4_landscape(img_bgr)
+                if warped is None:
+                    return AIResult.failed(job.id, "warp_failed_for_photo_mode")
+                aligned = warped
+
+            elif mode == "auto":
+                warped = warp_to_a4_landscape(img_bgr)
+                if warped is not None:
+                    aligned = warped
+
+            # 4) meta 없으면 legacy
+            if not meta:
+                questions = payload.get("questions") or []
+                if not questions:
+                    return AIResult.failed(job.id, "template_meta/template_fetch failed and legacy questions missing")
+
+                answers = detect_omr_answers_v1(
+                    image_path=local_path,
+                    questions=list(questions),
+                    cfg=None,
+                )
+                return AIResult.done(
+                    job.id,
+                    {
+                        "version": "v1",
+                        "mode": "legacy_questions",
+                        "aligned": False,
+                        "identifier": None,
+                        "answers": answers,
+                        "meta_used": False,
+                        "debug": {
+                            "meta_fetch_error": meta_fetch_error,
+                        },
+                    },
+                )
+
+            # 5) ROI + identifier
+            h, w = aligned.shape[:2]
+            questions_payload = build_questions_payload_from_meta(meta, (w, h))
+
+            ident = detect_identifier_v1(
+                image_bgr=aligned,
+                meta=meta,
+                cfg=IdentifierConfigV1(),
             )
+
+            # 6) aligned 저장 후 OMR
+            import tempfile, os
+
+            tmp_path = os.path.join(tempfile.gettempdir(), f"omr_aligned_{job.id}.jpg")
+            cv2.imwrite(tmp_path, aligned)
+
+            cfg = OMRConfigV1()
+            answers = detect_omr_answers_v1(
+                image_path=tmp_path,
+                questions=list(questions_payload),
+                cfg=cfg,
+            )
+
             return AIResult.done(
                 job.id,
                 {
                     "version": "v1",
+                    "mode": mode,
+                    "aligned": bool(aligned is not img_bgr),
+                    "identifier": ident,
                     "answers": answers,
+                    "meta_used": meta_used,
+                    "debug": {
+                        "meta_fetch_error": meta_fetch_error,
+                    },
                 },
             )
 
@@ -1655,6 +2222,220 @@ def download_to_tmp(
 # FILE: messaging/sms/__init__.py
 ==========================================================================================
 
+
+
+==========================================================================================
+# FILE: omr/roi_builder.py
+==========================================================================================
+# apps/worker/ai_worker/ai/omr/roi_builder.py
+from __future__ import annotations
+
+from typing import Any, Dict, List, Tuple
+
+import math
+
+
+def _clamp(v: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, v))
+
+
+def build_questions_payload_from_meta(
+    *,
+    meta: Dict[str, Any],
+    image_size_px: Tuple[int, int],
+) -> List[Dict[str, Any]]:
+    """
+    meta(mm) -> questions payload (px) for detect_omr_answers_v1()
+
+    detect_omr_answers_v1 expects:
+      questions: [{question_id, roi:{x,y,w,h}, choices:[...], axis:"x"}, ...]
+
+    image_size_px: (width, height)
+    """
+    img_w, img_h = image_size_px
+
+    page = meta.get("page") or {}
+    size = page.get("size") or {}
+    page_w_mm = float(size.get("width") or 0.0)
+    page_h_mm = float(size.get("height") or 0.0)
+    if page_w_mm <= 0.0 or page_h_mm <= 0.0:
+        raise ValueError("invalid meta page size")
+
+    # 정렬된 스캔/워프 결과는 "페이지 전체가 이미지 전체"라고 가정
+    sx = img_w / page_w_mm
+    sy = img_h / page_h_mm
+
+    out: List[Dict[str, Any]] = []
+    for q in (meta.get("questions") or []):
+        qnum = int(q.get("question_number") or 0)
+        roi = q.get("roi") or {}
+
+        x_mm = float(roi.get("x") or 0.0)
+        y_mm = float(roi.get("y") or 0.0)
+        w_mm = float(roi.get("w") or 0.0)
+        h_mm = float(roi.get("h") or 0.0)
+
+        x = int(round(x_mm * sx))
+        y = int(round(y_mm * sy))
+        w = int(round(w_mm * sx))
+        h = int(round(h_mm * sy))
+
+        # 안전 클램프
+        x = _clamp(x, 0, img_w - 1)
+        y = _clamp(y, 0, img_h - 1)
+        w = _clamp(w, 1, img_w - x)
+        h = _clamp(h, 1, img_h - y)
+
+        out.append(
+            {
+                "question_id": qnum,  # worker 엔진은 question_id만 사용
+                "roi": {"x": x, "y": y, "w": w, "h": h},
+                "choices": ["A", "B", "C", "D", "E"],
+                "axis": "x",
+            }
+        )
+
+    # question_id 순서 보장
+    out.sort(key=lambda d: int(d.get("question_id") or 0))
+    return out
+
+
+==========================================================================================
+# FILE: omr/template_meta.py
+==========================================================================================
+# apps/worker/ai_worker/ai/omr/template_meta.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, List, Tuple, Optional
+import requests
+
+
+@dataclass(frozen=True)
+class TemplateMeta:
+    raw: Dict[str, Any]
+
+    @property
+    def units(self) -> str:
+        return str(self.raw.get("units") or "mm")
+
+    @property
+    def page_size_mm(self) -> Tuple[float, float]:
+        page = self.raw.get("page") or {}
+        size = page.get("size") or {}
+        return float(size.get("width") or 0.0), float(size.get("height") or 0.0)
+
+    @property
+    def questions(self) -> List[Dict[str, Any]]:
+        return list(self.raw.get("questions") or [])
+
+
+def fetch_objective_meta(
+    *,
+    base_url: str,
+    question_count: int,
+    auth_cookie_header: Optional[str] = None,
+    timeout: int = 10,
+) -> TemplateMeta:
+    """
+    worker -> API (assets meta)
+    - 외부 SaaS 호출 금지: 내부 API만 호출
+    - auth 방식은 운영 환경에 맞게 header/cookie를 전달
+    """
+    url = f"{base_url.rstrip('/')}/api/v1/assets/omr/objective/meta/"
+    params = {"question_count": str(int(question_count))}
+
+    headers: Dict[str, str] = {}
+    if auth_cookie_header:
+        headers["Cookie"] = auth_cookie_header
+
+    r = requests.get(url, params=params, headers=headers, timeout=timeout)
+    r.raise_for_status()
+    data = r.json()
+    return TemplateMeta(raw=data)
+
+
+==========================================================================================
+# FILE: omr/warp.py
+==========================================================================================
+# apps/worker/ai_worker/ai/omr/warp.py
+from __future__ import annotations
+
+from typing import Optional, Tuple
+
+import cv2  # type: ignore
+import numpy as np  # type: ignore
+
+
+def _order_points(pts: np.ndarray) -> np.ndarray:
+    # pts: (4,2)
+    rect = np.zeros((4, 2), dtype=np.float32)
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]  # top-left
+    rect[2] = pts[np.argmax(s)]  # bottom-right
+
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]  # top-right
+    rect[3] = pts[np.argmax(diff)]  # bottom-left
+    return rect
+
+
+def warp_to_a4_landscape(
+    *,
+    image_bgr: np.ndarray,
+    out_size_px: Tuple[int, int] = (3508, 2480),  # 300dpi A4 landscape (근사)
+) -> Optional[np.ndarray]:
+    """
+    촬영/프레임 이미지에서 문서(답안지) 외곽을 찾아 A4 landscape로 워프.
+    성공하면 "페이지 전체 = 이미지 전체"가 되므로 meta ROI를 그대로 적용 가능.
+
+    실패하면 None 반환 -> caller가 fallback(yolo/opencv segmentation 등) 처리
+    """
+    if image_bgr is None or image_bgr.size == 0:
+        return None
+
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 50, 150)
+
+    # 윤곽 강화
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    edges = cv2.dilate(edges, kernel, iterations=1)
+
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+    page_cnt = None
+    for cnt in contours[:8]:
+        peri = cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+        if len(approx) == 4:
+            page_cnt = approx
+            break
+
+    if page_cnt is None:
+        return None
+
+    pts = page_cnt.reshape(4, 2).astype(np.float32)
+    rect = _order_points(pts)
+
+    out_w, out_h = out_size_px
+    dst = np.array(
+        [
+            [0, 0],
+            [out_w - 1, 0],
+            [out_w - 1, out_h - 1],
+            [0, out_h - 1],
+        ],
+        dtype=np.float32,
+    )
+
+    M = cv2.getPerspectiveTransform(rect, dst)
+    warped = cv2.warpPerspective(image_bgr, M, (out_w, out_h))
+    return warped
 
 
 ==========================================================================================

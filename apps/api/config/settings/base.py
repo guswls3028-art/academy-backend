@@ -7,8 +7,6 @@ import os
 # 나중에 빼
 DEBUG_TOOLBAR_CONFIG = {"SHOW_TOOLBAR_CALLBACK": lambda request: False}
 
-
-
 # ==================================================
 # BASE
 # ==================================================
@@ -60,6 +58,9 @@ INSTALLED_APPS = [
     "apps.domains.progress",
     "apps.domains.ai.apps.AIDomainConfig",
 
+    # ✅ Assets Domain (NEW)
+    "apps.domains.assets",
+
     # support
     "apps.support.media",
 
@@ -77,8 +78,8 @@ INSTALLED_APPS = [
     # shared (워커 태스크 자동 탐색)
     "apps.shared",
 
-    #그랩!
-    'django_extensions',
+    # 그랩!
+    "django_extensions",
 
     # 학생페이지 앱 (사용자가 학생)
     "apps.domains.student_app",
@@ -186,11 +187,10 @@ R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 
-# R2_BUCKET = os.getenv("R2_BUCKET")
-
 # ==================================================
 # R2 Buckets (역할 분리)
 # ==================================================
+
 R2_AI_BUCKET = os.getenv("R2_AI_BUCKET", "academy-ai")
 R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
 
@@ -220,6 +220,7 @@ TEMPLATES = [
 # ==================================================
 # REDIS (API 서버에서도 사용)
 # ==================================================
+
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # ai 워커를 위한.
