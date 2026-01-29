@@ -180,10 +180,9 @@ SIMPLE_JWT = {
 }
 
 # ==================================================
-# CORS
+# CORS (✅ 최소 수정 핵심 영역)
 # ==================================================
 
-# ✅ 수정 2: 운영 대비 제한형
 CORS_ALLOW_ALL_ORIGINS = False
 
 CORS_ALLOWED_ORIGINS = [
@@ -193,10 +192,17 @@ CORS_ALLOWED_ORIGINS = [
     "https://www.hakwonplus.com",
 
     "https://academy-frontend.pages.dev",
-    "https://api.hakwonplus.com",
 ]
 
-CORS_ALLOW_CREDENTIALS = False
+# ✅ 로그인 해결 핵심
+CORS_ALLOW_CREDENTIALS = True
+
+# ✅ CSRF 보완 (추가)
+CSRF_TRUSTED_ORIGINS = [
+    "https://hakwonplus.com",
+    "https://www.hakwonplus.com",
+    "https://academy-frontend.pages.dev",
+]
 
 # ==================================================
 # VIDEO / CDN
@@ -212,7 +218,7 @@ VIDEO_PLAYBACK_TTL_SECONDS = int(os.getenv("VIDEO_PLAYBACK_TTL_SECONDS", "600"))
 R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
-R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
+R2_PUBLIC_BASE_URL 曾道人
 
 # ==================================================
 # R2 Buckets
