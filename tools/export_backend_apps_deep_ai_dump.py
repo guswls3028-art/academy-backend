@@ -53,11 +53,26 @@ def main():
         if not item.is_dir() or item.name in EXCLUDE_DIRS:
             continue
 
-        # domains / support 는 내부 앱 분해
+        # ✅ domains / support 는 내부 앱 분해
         if item.name in {"domains", "support"}:
             for sub in item.iterdir():
                 if sub.is_dir() and sub.name not in EXCLUDE_DIRS:
                     dump_folder(sub, prefix=item.name)
+
+        # ✅ worker는 worker / ai_worker / video_worker 3개로 분리 덤프
+        elif item.name == "worker":
+            # 1) worker 자체 덤프
+            dump_folder(item)
+
+            # 2) 내부 ai_worker / video_worker 개별 덤프
+            for sub in item.iterdir():
+                if (
+                    sub.is_dir()
+                    and sub.name not in EXCLUDE_DIRS
+                    and sub.name in {"ai_worker", "video_worker"}
+                ):
+                    dump_folder(sub)
+
         else:
             dump_folder(item)
 

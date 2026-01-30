@@ -323,8 +323,8 @@ INSTALLED_APPS = [
     # ✅ Assets Domain
     "apps.domains.assets",
 
-    # support
-    "apps.support.media",
+    # ✅ support.video (media → video 전환)
+    "apps.support.video",
 
     # REST
     "rest_framework",
@@ -594,10 +594,10 @@ INTERNAL_WORKER_TOKEN = os.environ.get(
 # FILE: v1/urls.py
 ==========================================================================================
 # PATH: apps/api/v1/urls.py
-# ⚠️ 기존 코드 유지 + assets domain 라우팅 추가
+# ⚠️ 기존 코드 유지 + support.video 전환 + internal video-worker include
 
 from django.urls import path, include
-from apps.support.media.views import VideoProcessingCompleteView
+from apps.support.video.views.internal_views import VideoProcessingCompleteView
 
 urlpatterns = [
     # =========================
@@ -634,21 +634,36 @@ urlpatterns = [
     path("clinic/", include("apps.domains.clinic.urls")),
 
     # =========================
-    # ✅ Assets Domain (NEW)
+    # ✅ Assets Domain
     # =========================
     path("assets/", include("apps.domains.assets.urls")),
 
     # =========================
-    # Core / Media
+    # Core
     # =========================
     path("core/", include("apps.core.urls")),
-    path("media/", include("apps.support.media.urls")),
+
+    # =========================
+    # ✅ Video Domain (media → video 전환)
+    # - URL prefix는 기존 "media/" 유지 (외부 클라이언트 안정성)
+    # - include 경로만 video로 전환
+    # =========================
+    path("media/", include("apps.support.video.urls")),
 
     # =========================
     # AI (internal)
     # =========================
     path("internal/ai/", include("apps.api.v1.internal.ai.urls")),
 
+    # =========================
+    # ✅ Video Worker (internal)
+    # /api/v1/internal/video-worker/*
+    # =========================
+    path("internal/", include("apps.support.video.urls_internal")),
+
+    # =========================
+    # Internal (Legacy ACK - kept)
+    # =========================
     path(
         "internal/videos/<int:video_id>/processing-complete/",
         VideoProcessingCompleteView.as_view(),

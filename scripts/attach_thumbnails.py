@@ -1,4 +1,4 @@
-from apps.support.media.models import Video
+from apps.support.video.models import Video
 from pathlib import Path
 from django.conf import settings
 from django.db.models import Q

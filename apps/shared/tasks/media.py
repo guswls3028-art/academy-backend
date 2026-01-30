@@ -92,7 +92,7 @@ def process_video_media(self, video_id: int) -> None:
         MediaProcessingError,
     )
     from apps.worker.video_worker.r2_uploader import upload_dir
-    from apps.support.media.models import Video
+    from apps.support.video.models import Video
 
     logger.info("[media] Start processing (video_id=%s)", video_id)
 
@@ -236,7 +236,7 @@ def _mark_failed(video_id: int) -> None:
     """
     Mark Video as FAILED.
     """
-    from apps.support.media.models import Video
+    from apps.support.video.models import Video
 
     with transaction.atomic():
         video = (

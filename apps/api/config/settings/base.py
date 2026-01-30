@@ -77,8 +77,8 @@ INSTALLED_APPS = [
     # ✅ Assets Domain
     "apps.domains.assets",
 
-    # support
-    "apps.support.media",
+    # ✅ support.video (media → video 전환)
+    "apps.support.video",
 
     # REST
     "rest_framework",
