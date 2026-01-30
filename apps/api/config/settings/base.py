@@ -1,4 +1,4 @@
-# apps/api/config/settings/base.py
+# PATH: apps/api/config/settings/base.py
 
 from pathlib import Path
 from datetime import timedelta
@@ -16,20 +16,38 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 
-# ✅ 수정 1: 운영 대비 호스트 명시
+# ==================================================
+# ALLOWED HOSTS
+# ==================================================
+# ✅ 내부 EC2 / 워커 통신을 위해 VPC IP 명시적으로 허용
+# - DEBUG=False 환경에서도 worker → api 호출이 400으로 차단되지 않도록 함
+# - 보안상 '*' 사용하지 않음 (dev.py에서만 허용)
+
 ALLOWED_HOSTS = [
     "127.0.0.1",
     "localhost",
 
-    # EC2
+    # =========================
+    # EC2 Public
+    # =========================
     "13.125.207.197",
 
-    # 프론트 도메인
+    # =========================
+    # EC2 Private (VPC Internal)
+    # =========================
+    "172.31.32.253",
+    "172.31.32.109",
+
+    # =========================
+    # Frontend / API Domains
+    # =========================
     "hakwonplus.com",
     "www.hakwonplus.com",
-    "api.hakwonplus.com",   # ✅ 추가
+    "api.hakwonplus.com",
 
+    # =========================
     # Cloudflare Pages
+    # =========================
     "academy-frontend.pages.dev",
 ]
 
@@ -74,10 +92,10 @@ INSTALLED_APPS = [
     "apps.domains.progress",
     "apps.domains.ai.apps.AIDomainConfig",
 
-    # ✅ Assets Domain
+    # Assets Domain
     "apps.domains.assets",
 
-    # ✅ support.video (media → video 전환)
+    # support.video
     "apps.support.video",
 
     # REST
@@ -181,24 +199,20 @@ SIMPLE_JWT = {
 }
 
 # ==================================================
-# CORS (✅ 최소 수정 핵심 영역)
+# CORS
 # ==================================================
 
 CORS_ALLOW_ALL_ORIGINS = False
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
-
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
-
     "https://academy-frontend.pages.dev",
 ]
 
-# ✅ 로그인 해결 핵심
 CORS_ALLOW_CREDENTIALS = True
 
-# ✅ CSRF 보완 (추가)
 CSRF_TRUSTED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
@@ -221,18 +235,11 @@ R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 
-# ==================================================
-# R2 Buckets
-# ==================================================
-
 R2_AI_BUCKET = os.getenv("R2_AI_BUCKET", "academy-ai")
 R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
 
-if DEBUG:
-    print("[settings] R2_ENDPOINT =", R2_ENDPOINT)
-
 # ==================================================
-# TEMPLATES (원본 유지)
+# TEMPLATES (복구)
 # ==================================================
 
 TEMPLATES = [
