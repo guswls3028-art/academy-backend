@@ -218,7 +218,7 @@ VIDEO_PLAYBACK_TTL_SECONDS = int(os.getenv("VIDEO_PLAYBACK_TTL_SECONDS", "600"))
 R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
-R2_PUBLIC_BASE_URL 曾道人
+R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 
 # ==================================================
 # R2 Buckets
