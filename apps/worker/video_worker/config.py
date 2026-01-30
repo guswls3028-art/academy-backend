@@ -12,6 +12,18 @@ def _require(name: str) -> str:
     return v
 
 
+def _require_any(*names: str) -> str:
+    """
+    여러 env 중 하나라도 있으면 사용.
+    (SSOT 유지 + 운영 환경 차이 흡수용)
+    """
+    for name in names:
+        v = os.environ.get(name)
+        if v:
+            return v
+    raise RuntimeError(f"Missing required env (any of): {', '.join(names)}")
+
+
 def _float(name: str, default: str) -> float:
     try:
         return float(os.environ.get(name, default))
@@ -102,14 +114,15 @@ def load_config() -> Config:
             FFMPEG_BIN=os.environ.get("FFMPEG_BIN", "ffmpeg"),
             FFPROBE_BIN=os.environ.get("FFPROBE_BIN", "ffprobe"),
             FFPROBE_TIMEOUT_SECONDS=_int("FFPROBE_TIMEOUT_SECONDS", "60"),
-            FFMPEG_TIMEOUT_SECONDS=_int("FFMPEG_TIMEOUT_SECONDS", "3600"),  # 1h default
+            FFMPEG_TIMEOUT_SECONDS=_int("FFMPEG_TIMEOUT_SECONDS", "3600"),
 
             HLS_TIME_SECONDS=_int("HLS_TIME_SECONDS", "4"),
             THUMBNAIL_AT_SECONDS=_float("THUMBNAIL_AT_SECONDS", "1.0"),
 
             MIN_SEGMENTS_PER_VARIANT=_int("MIN_SEGMENTS_PER_VARIANT", "3"),
 
-            R2_BUCKET=_require("R2_BUCKET"),
+            # ✅ 핵심 수정 포인트 (원본 로직 유지 + env 불일치 흡수)
+            R2_BUCKET=_require_any("R2_BUCKET", "R2_VIDEO_BUCKET"),
             R2_PREFIX=os.environ.get("R2_PREFIX", "media/hls/videos"),
             R2_ENDPOINT_URL=_require("R2_ENDPOINT_URL"),
             R2_ACCESS_KEY=_require("R2_ACCESS_KEY"),
