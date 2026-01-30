@@ -27,6 +27,7 @@ ALLOWED_HOSTS = [
     # 프론트 도메인
     "hakwonplus.com",
     "www.hakwonplus.com",
+    "api.hakwonplus.com",   # ✅ 추가
 
     # Cloudflare Pages
     "academy-frontend.pages.dev",
