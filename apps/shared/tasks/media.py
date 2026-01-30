@@ -1,9 +1,8 @@
 from __future__ import annotations
-# 얘는 맨위에 있어야함. 무조건 !!! 
+# ⚠️ 반드시 최상단 (import 순서 중요)
 
 # apps/shared/tasks/media.py
 print("[media] task module imported")
-
 
 import logging
 from pathlib import Path
@@ -14,9 +13,6 @@ from django.conf import settings
 from django.db import transaction
 
 from libs.s3_client.presign import create_presigned_get_url
-from apps.worker.video_worker.video.processor import run as run_processor
-from apps.worker.video_worker.video.processor import MediaProcessingError
-from apps.worker.video_worker.r2_uploader import upload_dir
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +52,7 @@ def notify_processing_complete(
     duration: int | None,
 ) -> None:
     """
-    Worker -> API ACK
+    Video Worker -> API ACK
     """
     url = f"{settings.API_BASE_URL}/api/v1/internal/videos/{video_id}/processing-complete/"
 
@@ -75,7 +71,7 @@ def notify_processing_complete(
 
 
 # ---------------------------------------------------------------------
-# Celery Task (🔥 이게 핵심)
+# Celery Task (VIDEO QUEUE 전용)
 # ---------------------------------------------------------------------
 
 @shared_task(
@@ -86,10 +82,16 @@ def notify_processing_complete(
 )
 def process_video_media(self, video_id: int) -> None:
     """
-    Orchestrates media processing for a single Video.
+    Video media processing task.
+    ⚠️ 이 task는 '비디오 워커 서버'에서만 정상 실행됨
     """
 
-    # ⚠️ 중요: 여기서 import (Celery/Django 로딩 순서 문제 방지)
+    # ✅ 중요: 비디오 워커 전용 import (API 서버 보호)
+    from apps.worker.video_worker.video.processor import (
+        run as run_processor,
+        MediaProcessingError,
+    )
+    from apps.worker.video_worker.r2_uploader import upload_dir
     from apps.support.media.models import Video
 
     logger.info("[media] Start processing (video_id=%s)", video_id)
@@ -118,7 +120,7 @@ def process_video_media(self, video_id: int) -> None:
         video.status = Video.Status.PROCESSING
         video.save(update_fields=["status"])
 
-    # 2️⃣ 입력 URL + 출력 경로 준비
+    # 2️⃣ 입력 URL + 출력 경로
     try:
         input_url = create_presigned_get_url(
             key=video.file_key,
@@ -134,7 +136,7 @@ def process_video_media(self, video_id: int) -> None:
         _mark_failed(video_id)
         return
 
-    # 3️⃣ 실제 처리 (ffmpeg + HLS)
+    # 3️⃣ ffmpeg + HLS 처리
     try:
         result = run_processor(
             video_id=video_id,
@@ -148,13 +150,6 @@ def process_video_media(self, video_id: int) -> None:
             video_id,
             e.to_dict(),
         )
-        print("🔥 MEDIA PROCESSING ERROR 🔥", e.to_dict())
-        logger.error(
-            "[media] Media processing failed (video_id=%s) %s",
-            video_id,
-            e.to_dict(),
-        )
-
         _mark_failed(video_id)
         return
 
@@ -166,7 +161,7 @@ def process_video_media(self, video_id: int) -> None:
         _mark_failed(video_id)
         return
 
-    # 4️⃣ DB 결과 반영 (READY)
+    # 4️⃣ DB 반영 (READY)
     with transaction.atomic():
         video = (
             Video.objects
@@ -196,7 +191,7 @@ def process_video_media(self, video_id: int) -> None:
             ]
         )
 
-    # 5️⃣ R2 업로드 (🚨 트랜잭션 밖)
+    # 5️⃣ R2 업로드 (트랜잭션 밖)
     try:
         upload_dir(
             local_dir=output_root,
@@ -215,7 +210,7 @@ def process_video_media(self, video_id: int) -> None:
         video_id,
     )
 
-    # 6️⃣ API 통지 (실패해도 READY는 유지)
+    # 6️⃣ API 통지 (실패해도 READY 유지)
     try:
         notify_processing_complete(
             video_id=video_id,
