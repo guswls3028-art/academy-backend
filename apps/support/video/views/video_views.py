@@ -241,14 +241,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.save(update_fields=["status", "error_reason"])
             return Response(VideoSerializer(video).data)
 
-        if not ok:
-            video.error_reason = f"source_invalid:{reason}"
-            video.save(update_fields=["error_reason"])
-            return Response(
-                {"detail": "source_invalid", "reason": reason},
-                status=status.HTTP_409_CONFLICT,
-            )
-
         min_dur = _safe_int(getattr(settings, "VIDEO_MIN_DURATION_SECONDS", 3), 3)
         duration = _safe_int(meta.get("duration"), None)
 
