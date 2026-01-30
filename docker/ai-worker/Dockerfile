@@ -1,5 +1,3 @@
-# docker/ai-worker/Dockerfile
-
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1
@@ -15,16 +13,19 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# ✅ requirements 폴더 전체 복사 (핵심)
-COPY requirements ./requirements
+# pip 안정화
+RUN pip install --upgrade pip
 
-# ✅ worker-ai.txt 기준으로 설치
+# 🔥 캐시 최적화 포인트
+COPY requirements/common.txt ./requirements/common.txt
+COPY requirements/worker-ai.txt ./requirements/worker-ai.txt
 RUN pip install --no-cache-dir -r requirements/worker-ai.txt
 
+# 코드
 COPY apps ./apps
 COPY libs ./libs
 
-# ✅ Google Vision Key
+# Google Vision Key
 COPY docker/ai-worker/keys/google-vision.json /keys/google-vision.json
 ENV GOOGLE_APPLICATION_CREDENTIALS=/keys/google-vision.json
 

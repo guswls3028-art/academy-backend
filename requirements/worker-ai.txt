@@ -1,18 +1,25 @@
 # worker-ai.txt
-
-# ---- base ----
+# =========================
+# Base (공용)
+# =========================
 -r common.txt
 
+# =========================
 # Core numeric
+# =========================
 numpy
 scipy
 
+# =========================
 # Image / OCR
+# =========================
 pillow
 opencv-python-headless
 pytesseract
 
+# =========================
 # Google OCR
+# =========================
 google-cloud-vision
 google-api-core
 google-auth
@@ -21,7 +28,9 @@ grpcio
 grpcio-status
 protobuf
 
+# =========================
 # Embedding / NLP
+# =========================
 torch
 sentence-transformers
 transformers
@@ -29,11 +38,23 @@ huggingface-hub
 tokenizers
 safetensors
 
-# ONNX / Detection
+# =========================
+# ONNX
+# =========================
 onnxruntime
 
+# =========================
 # LLM
+# =========================
 openai
 
-# Video frame analysis (AI 쪽)
+# =========================
+# Video (AI 쪽)
+# =========================
 ffmpeg-python
+
+# =========================
+# HTTP / Redis (worker 통신)
+# =========================
+requests
+redis

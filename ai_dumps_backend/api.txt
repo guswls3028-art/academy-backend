@@ -273,6 +273,7 @@ ALLOWED_HOSTS = [
     # 프론트 도메인
     "hakwonplus.com",
     "www.hakwonplus.com",
+    "api.hakwonplus.com",   # ✅ 추가
 
     # Cloudflare Pages
     "academy-frontend.pages.dev",
@@ -426,10 +427,9 @@ SIMPLE_JWT = {
 }
 
 # ==================================================
-# CORS
+# CORS (✅ 최소 수정 핵심 영역)
 # ==================================================
 
-# ✅ 수정 2: 운영 대비 제한형
 CORS_ALLOW_ALL_ORIGINS = False
 
 CORS_ALLOWED_ORIGINS = [
@@ -439,10 +439,17 @@ CORS_ALLOWED_ORIGINS = [
     "https://www.hakwonplus.com",
 
     "https://academy-frontend.pages.dev",
-    "https://api.hakwonplus.com",
 ]
 
-CORS_ALLOW_CREDENTIALS = False
+# ✅ 로그인 해결 핵심
+CORS_ALLOW_CREDENTIALS = True
+
+# ✅ CSRF 보완 (추가)
+CSRF_TRUSTED_ORIGINS = [
+    "https://hakwonplus.com",
+    "https://www.hakwonplus.com",
+    "https://academy-frontend.pages.dev",
+]
 
 # ==================================================
 # VIDEO / CDN

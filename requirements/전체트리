@@ -1,5 +1,3 @@
-# academy/requirements/*
-
 #api.txt
 
 # ---- base ----
@@ -38,7 +36,7 @@ inflection
 # Server
 gunicorn
 
-#=====================
+reportlab
 
 #common.txt
 
@@ -64,7 +62,8 @@ tzdata
 pydantic
 typing_extensions
 
-#=================================
+
+python-dotenv
 
 # worker-ai.txt
 
@@ -106,18 +105,50 @@ openai
 # Video frame analysis (AI 쪽)
 ffmpeg-python
 
-#=========================================================
-#worker-video.txt
-
 # ---- base ----
 -r common.txt
+-r api.txt
 
+# =========================
+# Django (ORM 사용)
+# =========================
+Django
+sqlparse
+asgiref
+
+# =========================
+# Celery / Queue
+# =========================
+celery
+billiard
+kombu
+amqp
+redis
+
+# =========================
+# DB
+# =========================
+psycopg2-binary
+
+# =========================
 # Video processing
+# =========================
 ffmpeg-python
 
+# =========================
 # Image (thumbnail)
+# =========================
 pillow
 opencv-python-headless
 
-# HTTP download
+# =========================
+# HTTP (API callback, download)
+# =========================
 requests
+
+# Django REST (settings에서 사용됨)
+djangorestframework
+djangorestframework-simplejwt
+django-filter
+drf-yasg
+
