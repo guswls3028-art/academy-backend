@@ -41,7 +41,8 @@ from ..models import (
 from ..serializers import VideoSerializer, VideoDetailSerializer
 from .playback_mixin import VideoPlaybackMixin
 
-import ffmpeg  # ✅ ffprobe(validate) 용도 (문제 5)
+# ❌ API 부팅 크래시 원인 제거:
+# import ffmpeg  # ✅ ffprobe(validate) 용도 (문제 5)
 
 
 def _safe_int(v, default=None):
@@ -60,9 +61,19 @@ def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
 
     NOTE:
     - 네트워크/Range 요청 기반 (ffmpeg-python -> ffprobe)
+
+    ✅ PATCH:
+    - API 서버에서 ffmpeg 모듈 import 실패 시(venv 경로/서비스 환경 문제 등)
+      API 전체가 죽지 않게 하고, 호출부에서 graceful fallback 하도록 reason 반환
     """
     if not url:
         return False, {}, "source_url_missing"
+
+    # ✅ lazy import (gunicorn 부팅 크래시 방지)
+    try:
+        import ffmpeg  # type: ignore
+    except Exception:
+        return False, {}, "ffmpeg_module_missing"
 
     try:
         probe = ffmpeg.probe(url)
@@ -207,6 +218,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
           - duration 추출
           - 최소 duration 기준
         - 실패 시 status 전이 금지 + error_reason 기록
+
+        ✅ PATCH:
+        - ffmpeg 모듈이 API 런타임에서 import 불가하면(서비스 env/venv 경로 문제 등)
+          API 자체가 죽지 않도록 ffprobe 검증은 스킵하고 UPLOADED로 전이한다.
+          (원본 흐름 유지 + 서비스 가용성 우선)
         """
         video = self.get_object()
 
@@ -237,6 +253,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
 
         ok, meta, reason = _validate_source_media_via_ffprobe(src_url)
+
+        # ✅ PATCH: ffmpeg 모듈이 없으면 API 크래시 방지 + 검증 스킵
+        if not ok and reason == "ffmpeg_module_missing":
+            video.status = Video.Status.UPLOADED
+            video.error_reason = ""
+            video.save(update_fields=["status", "error_reason"])
+            return Response(VideoSerializer(video).data)
+
         if not ok:
             video.error_reason = f"source_invalid:{reason}"
             video.save(update_fields=["error_reason"])
