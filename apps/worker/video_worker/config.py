@@ -78,7 +78,7 @@ class Config:
     # R2 (S3 compatible)
     R2_BUCKET: str
     R2_PREFIX: str
-    R2_ENDPOINT_URL: str
+    R2_ENDPOINT: str
     R2_ACCESS_KEY: str
     R2_SECRET_KEY: str
     R2_REGION: str
@@ -124,7 +124,7 @@ def load_config() -> Config:
             # ✅ 핵심 수정 포인트 (원본 로직 유지 + env 불일치 흡수)
             R2_BUCKET=_require_any("R2_BUCKET", "R2_VIDEO_BUCKET"),
             R2_PREFIX=os.environ.get("R2_PREFIX", "media/hls/videos"),
-            R2_ENDPOINT_URL=_require("R2_ENDPOINT_URL"),
+            R2_ENDPOINT=_require("R2_ENDPOINT"),
             R2_ACCESS_KEY=_require("R2_ACCESS_KEY"),
             R2_SECRET_KEY=_require("R2_SECRET_KEY"),
             R2_REGION=os.environ.get("R2_REGION", "auto"),

@@ -80,7 +80,7 @@ def process_video_job(*, job: Dict[str, Any], cfg: Config, client: VideoAPIClien
                 local_dir=out,
                 bucket=cfg.R2_BUCKET,
                 prefix=remote_prefix,
-                endpoint_url=cfg.R2_ENDPOINT_URL,
+                endpoint_url=cfg.R2_ENDPOINT,
                 access_key=cfg.R2_ACCESS_KEY,
                 secret_key=cfg.R2_SECRET_KEY,
                 region=cfg.R2_REGION,
