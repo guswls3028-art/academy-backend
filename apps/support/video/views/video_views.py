@@ -41,10 +41,10 @@ from ..models import (
 from ..serializers import VideoSerializer, VideoDetailSerializer
 from .playback_mixin import VideoPlaybackMixin
 
-# ❌ API 부팅 크래시 원인 제거:
-# import ffmpeg  # ✅ ffprobe(validate) 용도 (문제 5)
 
-
+# ==================================================
+# utils
+# ==================================================
 def _safe_int(v, default=None):
     try:
         return int(v)
@@ -54,22 +54,17 @@ def _safe_int(v, default=None):
 
 def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
     """
-    ✅ upload_complete 최소 무결성 검증:
-    - ffprobe로 format.duration 확인
-    - video stream 존재 확인
-    - 실패 이유 문자열 반환
+    upload_complete 최소 무결성 검증
 
-    NOTE:
-    - 네트워크/Range 요청 기반 (ffmpeg-python -> ffprobe)
-
-    ✅ PATCH:
-    - API 서버에서 ffmpeg 모듈 import 실패 시(venv 경로/서비스 환경 문제 등)
-      API 전체가 죽지 않게 하고, 호출부에서 graceful fallback 하도록 reason 반환
+    - ffprobe 기반
+    - API 서버에서 ffmpeg import 실패 시:
+      → API 크래시 방지
+      → 호출부에서 graceful fallback 처리
     """
     if not url:
         return False, {}, "source_url_missing"
 
-    # ✅ lazy import (gunicorn 부팅 크래시 방지)
+    # lazy import (gunicorn 부팅 크래시 방지)
     try:
         import ffmpeg  # type: ignore
     except Exception:
@@ -83,7 +78,6 @@ def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
     fmt = probe.get("format") or {}
     streams = probe.get("streams") or []
 
-    # duration
     dur_raw = fmt.get("duration")
     duration = None
     try:
@@ -92,7 +86,6 @@ def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
     except Exception:
         duration = None
 
-    # video stream 존재
     has_video = any((s.get("codec_type") == "video") for s in streams)
 
     if not has_video:
@@ -107,6 +100,9 @@ def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
     return True, {"duration": duration, "has_video": True}, ""
 
 
+# ==================================================
+# ViewSet
+# ==================================================
 class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     """
     Video 관리 + 통계 + 학생 목록
@@ -143,7 +139,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     search_fields = ["title"]
 
     # ==================================================
-    # upload/init (presigned URL 발급)
+    # upload/init
     # ==================================================
     @transaction.atomic
     @action(
@@ -200,7 +196,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         )
 
     # ==================================================
-    # upload/complete (업로드 완료 확인 + 무결성 검증 + 상태 전이)
+    # upload/complete
     # ==================================================
     @transaction.atomic
     @action(
@@ -210,20 +206,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         parser_classes=[MultiPartParser, FormParser, JSONParser],
     )
     def upload_complete(self, request, pk=None):
-        """
-        ✅ 문제 5 해결:
-        - head_object 존재 확인만 하던 것을 확장
-        - presigned GET URL로 ffprobe 검증:
-          - video stream 존재
-          - duration 추출
-          - 최소 duration 기준
-        - 실패 시 status 전이 금지 + error_reason 기록
-
-        ✅ PATCH:
-        - ffmpeg 모듈이 API 런타임에서 import 불가하면(서비스 env/venv 경로 문제 등)
-          API 자체가 죽지 않도록 ffprobe 검증은 스킵하고 UPLOADED로 전이한다.
-          (원본 흐름 유지 + 서비스 가용성 우선)
-        """
         video = self.get_object()
 
         if video.status != Video.Status.PENDING:
@@ -241,7 +223,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        # ✅ presigned GET URL → ffprobe validation
         try:
             src_url = create_presigned_get_url(key=video.file_key, expires_in=600)
         except Exception as e:
@@ -254,7 +235,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         ok, meta, reason = _validate_source_media_via_ffprobe(src_url)
 
-        # ✅ PATCH: ffmpeg 모듈이 없으면 API 크래시 방지 + 검증 스킵
         if not ok and reason == "ffmpeg_module_missing":
             video.status = Video.Status.UPLOADED
             video.error_reason = ""
@@ -271,6 +251,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         min_dur = _safe_int(getattr(settings, "VIDEO_MIN_DURATION_SECONDS", 3), 3)
         duration = _safe_int(meta.get("duration"), None)
+
         if duration is None or duration < int(min_dur):
             video.error_reason = f"duration_too_short:{duration}"
             video.save(update_fields=["error_reason"])
@@ -279,10 +260,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        # duration 저장(있으면)
         video.duration = duration
-
-        # 상태 전이
         video.status = Video.Status.UPLOADED
         video.error_reason = ""
         video.save(update_fields=["status", "duration", "error_reason"])
@@ -290,7 +268,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         return Response(VideoSerializer(video).data)
 
     # ==================================================
-    # retry (HTTP worker 기준: status를 UPLOADED로 돌림)
+    # retry
     # ==================================================
     @transaction.atomic
     @action(detail=True, methods=["post"], url_path="retry")
@@ -312,7 +290,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         )
 
     # ==================================================
-    # stats (관리자 학생별 상세)
+    # stats (관리자 상세)
     # ==================================================
     @action(detail=True, methods=["get"], url_path="stats")
     def stats(self, request, pk=None):
@@ -324,8 +302,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             status="ACTIVE",
         ).select_related("student")
 
-        progresses = {p.enrollment_id: p for p in VideoProgress.objects.filter(video=video)}
-        perms = {p.enrollment_id: p for p in VideoPermission.objects.filter(video=video)}
+        progresses = {
+            p.enrollment_id: p
+            for p in VideoProgress.objects.filter(video=video)
+        }
+        perms = {
+            p.enrollment_id: p
+            for p in VideoPermission.objects.filter(video=video)
+        }
         attendance = {
             a.enrollment_id: a.status
             for a in Attendance.objects.filter(session=video.session)
@@ -366,7 +350,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         )
 
     # ==================================================
-    # summary (통계 탭 요약)
+    # summary (통계 요약)
     # ==================================================
     @action(detail=True, methods=["get"], url_path="summary")
     def summary(self, request, pk=None):
@@ -433,7 +417,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
             agg[eid]["score"] += score
 
-        risk_top = sorted(agg.values(), key=lambda x: x["score"], reverse=True)[:5]
+        risk_top = sorted(
+            agg.values(),
+            key=lambda x: x["score"],
+            reverse=True,
+        )[:5]
 
         return Response(
             {
