@@ -1,5 +1,3 @@
-# PATH: apps/worker/video_worker/main.py
-
 from __future__ import annotations
 
 import logging
@@ -32,8 +30,13 @@ def main() -> None:
 
     cfg = load_config()
 
-    # ✅ FIX: VideoAPIClient(cfg) 지원 + worker-id 헤더 포함은 http_client에서 처리
-    client = VideoAPIClient(cfg)
+    # ✅ FIX: 생성자 시그니처 명확히 맞춤 (원본 구조 유지)
+    client = VideoAPIClient(
+        base_url=cfg.API_BASE_URL,
+        worker_token=cfg.WORKER_TOKEN,
+        worker_id=cfg.WORKER_ID,
+        timeout_seconds=int(cfg.HTTP_TIMEOUT_SECONDS),
+    )
 
     logger.info(
         "Video Worker started worker_id=%s api=%s poll=%ss",
@@ -54,21 +57,20 @@ def main() -> None:
 
                 error_attempt = 0
 
-                # ✅ 관측성(최소): job 시작 로그
-                try:
-                    logger.info("job received video_id=%s", job.get("video_id"))
-                except Exception:
-                    pass
+                logger.info("job received video_id=%s", job.get("video_id"))
 
                 process_video_job(job=job, cfg=cfg, client=client)
 
             except Exception:
                 logger.exception("worker loop error")
                 error_attempt = min(error_attempt + 1, 10)
-                backoff_sleep(error_attempt, cfg.BACKOFF_BASE_SECONDS, cfg.BACKOFF_CAP_SECONDS)
+                backoff_sleep(
+                    error_attempt,
+                    cfg.BACKOFF_BASE_SECONDS,
+                    cfg.BACKOFF_CAP_SECONDS,
+                )
 
     finally:
-        # ✅ FIX: close() 존재
         try:
             client.close()
         except Exception:

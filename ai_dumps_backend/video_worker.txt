@@ -21,6 +21,18 @@ def _require(name: str) -> str:
     return v
 
 
+def _require_any(*names: str) -> str:
+    """
+    여러 env 중 하나라도 있으면 사용.
+    (SSOT 유지 + 운영 환경 차이 흡수용)
+    """
+    for name in names:
+        v = os.environ.get(name)
+        if v:
+            return v
+    raise RuntimeError(f"Missing required env (any of): {', '.join(names)}")
+
+
 def _float(name: str, default: str) -> float:
     try:
         return float(os.environ.get(name, default))
@@ -75,7 +87,7 @@ class Config:
     # R2 (S3 compatible)
     R2_BUCKET: str
     R2_PREFIX: str
-    R2_ENDPOINT_URL: str
+    R2_ENDPOINT: str
     R2_ACCESS_KEY: str
     R2_SECRET_KEY: str
     R2_REGION: str
@@ -111,16 +123,17 @@ def load_config() -> Config:
             FFMPEG_BIN=os.environ.get("FFMPEG_BIN", "ffmpeg"),
             FFPROBE_BIN=os.environ.get("FFPROBE_BIN", "ffprobe"),
             FFPROBE_TIMEOUT_SECONDS=_int("FFPROBE_TIMEOUT_SECONDS", "60"),
-            FFMPEG_TIMEOUT_SECONDS=_int("FFMPEG_TIMEOUT_SECONDS", "3600"),  # 1h default
+            FFMPEG_TIMEOUT_SECONDS=_int("FFMPEG_TIMEOUT_SECONDS", "3600"),
 
             HLS_TIME_SECONDS=_int("HLS_TIME_SECONDS", "4"),
             THUMBNAIL_AT_SECONDS=_float("THUMBNAIL_AT_SECONDS", "1.0"),
 
             MIN_SEGMENTS_PER_VARIANT=_int("MIN_SEGMENTS_PER_VARIANT", "3"),
 
-            R2_BUCKET=_require("R2_BUCKET"),
+            # ✅ 핵심 수정 포인트 (원본 로직 유지 + env 불일치 흡수)
+            R2_BUCKET=_require_any("R2_BUCKET", "R2_VIDEO_BUCKET"),
             R2_PREFIX=os.environ.get("R2_PREFIX", "media/hls/videos"),
-            R2_ENDPOINT_URL=_require("R2_ENDPOINT_URL"),
+            R2_ENDPOINT=_require("R2_ENDPOINT"),
             R2_ACCESS_KEY=_require("R2_ACCESS_KEY"),
             R2_SECRET_KEY=_require("R2_SECRET_KEY"),
             R2_REGION=os.environ.get("R2_REGION", "auto"),
@@ -284,23 +297,6 @@ class HeartbeatThread:
 ==========================================================================================
 # FILE: http_client.py
 ==========================================================================================
-# PATH: apps/worker/video_worker/http_client.py
-#
-# PURPOSE:
-# - backend internal video-worker API 전용 HTTP client
-# - worker는 서버 내부 구현/DB를 알지 않는다
-#
-# ENDPOINTS:
-# - GET  /api/v1/internal/video-worker/next/
-# - POST /api/v1/internal/video-worker/{id}/complete/
-# - POST /api/v1/internal/video-worker/{id}/fail/
-# - POST /api/v1/internal/video-worker/{id}/heartbeat/
-#
-# DESIGN:
-# - timeout 명시
-# - retry는 heartbeat thread가 담당
-# - worker_id(lease owner)를 모든 요청에 포함
-
 from __future__ import annotations
 
 import logging
@@ -308,63 +304,25 @@ from typing import Any, Dict, Optional
 
 import requests
 
-from apps.worker.video_worker.config import Config
-
 logger = logging.getLogger("video_worker.http")
 
 
 class VideoAPIClient:
-    """
-    ✅ FIXED:
-    - 기존 main.py가 VideoAPIClient(cfg)로 호출하던 계약을 보존하면서 동작하도록 지원
-    - 모든 요청에 X-Worker-Id 포함 → backend lease owner 검증 충족
-    - close() 제공 → main.py finally에서 AttributeError 방지
-    """
-
     def __init__(
         self,
-        cfg: Optional[Config] = None,
         *,
-        base_url: Optional[str] = None,
-        worker_token: Optional[str] = None,
-        worker_id: Optional[str] = None,
-        timeout_seconds: Optional[float] = None,
+        base_url: str,
+        worker_token: str,
+        worker_id: str,
+        timeout_seconds: int,
     ):
-        # --------------------------------------------
-        # Backward compatible constructor
-        #   - VideoAPIClient(cfg)  ✅
-        #   - VideoAPIClient(base_url=..., worker_token=..., ...) ✅
-        # --------------------------------------------
-        if cfg is not None:
-            base_url = cfg.API_BASE_URL
-            worker_token = cfg.WORKER_TOKEN
-            worker_id = cfg.WORKER_ID
-            timeout_seconds = cfg.HTTP_TIMEOUT_SECONDS
-
-        if not base_url:
-            raise ValueError("base_url is required")
-        if not worker_token:
-            raise ValueError("worker_token is required")
-
-        self._base_url = str(base_url).rstrip("/")
-        self._timeout = float(timeout_seconds or 10.0)
-
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout_seconds
         self._headers = {
-            "X-Worker-Token": str(worker_token),
+            "X-Worker-Token": worker_token,
+            "X-Worker-Id": worker_id,          # ✅ 핵심 추가
             "Content-Type": "application/json",
         }
-        # ✅ lease owner를 backend에 전달 (문제 4 해결의 필수 조건)
-        if worker_id:
-            self._headers["X-Worker-Id"] = str(worker_id)
-
-        # requests.Session을 쓰면 keep-alive로 효율 + close 가능
-        self._session = requests.Session()
-
-    def close(self) -> None:
-        try:
-            self._session.close()
-        except Exception:
-            pass
 
     # --------------------------------------------------
     # Job control
@@ -372,7 +330,7 @@ class VideoAPIClient:
 
     def fetch_next_job(self) -> Optional[Dict[str, Any]]:
         url = f"{self._base_url}/internal/video-worker/next/"
-        resp = self._session.get(
+        resp = requests.get(
             url,
             headers=self._headers,
             timeout=self._timeout,
@@ -380,15 +338,11 @@ class VideoAPIClient:
         if resp.status_code == 204:
             return None
         resp.raise_for_status()
-        data = resp.json() if resp.content else {}
-        # backend는 {"job": {...}}를 주므로 호출자 편의 제공
-        if isinstance(data, dict) and "job" in data and isinstance(data["job"], dict):
-            return data["job"]
-        return data
+        return resp.json()
 
     def notify_complete(self, video_id: int, payload: Dict[str, Any]) -> None:
-        url = f"{self._base_url}/internal/video-worker/{int(video_id)}/complete/"
-        resp = self._session.post(
+        url = f"{self._base_url}/internal/video-worker/{video_id}/complete/"
+        resp = requests.post(
             url,
             json=payload,
             headers=self._headers,
@@ -397,8 +351,8 @@ class VideoAPIClient:
         resp.raise_for_status()
 
     def notify_fail(self, video_id: int, reason: str) -> None:
-        url = f"{self._base_url}/internal/video-worker/{int(video_id)}/fail/"
-        resp = self._session.post(
+        url = f"{self._base_url}/internal/video-worker/{video_id}/fail/"
+        resp = requests.post(
             url,
             json={"reason": reason},
             headers=self._headers,
@@ -411,13 +365,8 @@ class VideoAPIClient:
     # --------------------------------------------------
 
     def send_heartbeat(self, video_id: int) -> None:
-        """
-        Heartbeat는 best-effort.
-        실패 시 예외를 던지지만,
-        caller(HeartbeatThread)가 삼켜서 재시도/backoff 한다.
-        """
-        url = f"{self._base_url}/internal/video-worker/{int(video_id)}/heartbeat/"
-        resp = self._session.post(
+        url = f"{self._base_url}/internal/video-worker/{video_id}/heartbeat/"
+        resp = requests.post(
             url,
             headers=self._headers,
             timeout=self._timeout,
@@ -823,7 +772,7 @@ def process_video_job(*, job: Dict[str, Any], cfg: Config, client: VideoAPIClien
                 local_dir=out,
                 bucket=cfg.R2_BUCKET,
                 prefix=remote_prefix,
-                endpoint_url=cfg.R2_ENDPOINT_URL,
+                endpoint_url=cfg.R2_ENDPOINT,
                 access_key=cfg.R2_ACCESS_KEY,
                 secret_key=cfg.R2_SECRET_KEY,
                 region=cfg.R2_REGION,
