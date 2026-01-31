@@ -100,13 +100,19 @@ EXAM_SHEET_SEGMENT_ENGINE = "opencv"
 ==========================================================================================
 # FILE: ai/urls.py
 ==========================================================================================
+# apps/api/v1/internal/ai/urls.py
 
+from django.urls import path, include
 
-
-==========================================================================================
-# FILE: ai/views.py
-==========================================================================================
-
+urlpatterns = [
+    # ✅ AI Domain 단일 SSOT(DBQueue) 라우팅
+    # - AI Worker(run.py)가 호출하는 endpoint를 그대로 유지:
+    #   /api/v1/internal/ai/job/next/
+    #   /api/v1/internal/ai/job/result/
+    #
+    # - 구현은 apps.domains.ai.urls (InternalAIJobNextView / InternalAIJobResultView)
+    path("", include("apps.domains.ai.urls")),
+]
 
 
 ==========================================================================================
@@ -192,9 +198,6 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
 
-# ✅ [ADD] AI internal endpoint
-from apps.domains.ai.views_internal import next_ai_job
-
 urlpatterns = [
     # =========================
     # Admin
@@ -220,14 +223,6 @@ urlpatterns = [
     path(
         "internal/",
         include("apps.support.video.urls_internal"),
-    ),
-
-    # ==================================================
-    # ✅ INTERNAL AI WORKER (ADD ONLY)
-    # ==================================================
-    path(
-        "api/v1/internal/ai/job/next/",
-        next_ai_job,
     ),
 ]
 

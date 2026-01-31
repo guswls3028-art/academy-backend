@@ -16,6 +16,7 @@
 # apps/domains/ai/apps.py
 from django.apps import AppConfig
 
+
 class AIDomainConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.domains.ai"
@@ -25,8 +26,9 @@ class AIDomainConfig(AppConfig):
 ==========================================================================================
 # FILE: callbacks.py
 ==========================================================================================
+# apps/domains/ai/callbacks.py
 from apps.shared.contracts.ai_result import AIResult
-from apps.domains.ai.models import AIJobModel, AIResultModel
+from apps.domains.ai.models import AIJobModel
 from apps.domains.submissions.services.ai_omr_result_mapper import apply_ai_result
 from apps.domains.results.tasks.grading_tasks import grade_submission_task
 
@@ -34,30 +36,26 @@ from apps.domains.results.tasks.grading_tasks import grade_submission_task
 def handle_ai_result(result: AIResult) -> None:
     """
     Worker → API callback entry
+
+    규칙(무퇴화/정규화):
+    - 상태(status) 변경은 Queue/API(InternalAIJobResultView + DBJobQueue)가 SSOT로 처리한다.
+    - callbacks는 "도메인 후속 처리"만 담당한다.
+    - 결과 fact(AIResultModel)는 API 계층에서 이미 저장되므로 여기서 생성/수정하지 않는다.
     """
-    job = AIJobModel.objects.get(job_id=result.job_id)
+    # callbacks가 job 존재를 전제로 동작 (gateway에서 job row를 선생성)
+    AIJobModel.objects.get(job_id=result.job_id)
 
     if result.status == "FAILED":
-        job.status = "FAILED"
-        job.error_message = result.error or ""
-        job.save(update_fields=["status", "error_message"])
+        # 실패 상태/에러/재시도는 API + DBJobQueue에서 처리됨
         return
 
-    # 1️⃣ AI 결과 저장 (fact)
-    AIResultModel.objects.create(
-        job=job,
-        payload=result.result,
-    )
+    # DONE: submissions 로 위임 (답안 중간산물 저장)
+    payload = result.result if isinstance(result.result, dict) else {}
+    submission_id = apply_ai_result(payload)
 
-    # 2️⃣ submissions 로 위임 (답안 중간산물 저장)
-    submission_id = apply_ai_result(result.result)
-
-    # 3️⃣ 채점 job enqueue (results 책임)
+    # 채점 job enqueue (results 책임)
     if submission_id:
         grade_submission_task.delay(int(submission_id))
-
-    job.status = "DONE"
-    job.save(update_fields=["status"])
 
 
 ==========================================================================================
@@ -122,18 +120,21 @@ def dispatch_job(
 # FILE: models.py
 ==========================================================================================
 # apps/domains/ai/models.py
+from __future__ import annotations
+
 from django.db import models
 from django.utils import timezone
+
 from apps.api.common.models import BaseModel
 
 
 class AIJobModel(BaseModel):
     """
-    API 서버가 관리하는 AI Job 메타 (DB가 SSOT)
-
-    - 기존 필드 유지
-    - 운영레벨: lease/visibility timeout/retry/idempotency 대응 필드 "추가"만
+    AI Job Meta (DB is SSOT)
+    - API server owns lifecycle
+    - Worker pulls via internal endpoints
     """
+
     job_id = models.CharField(max_length=64, unique=True)
     job_type = models.CharField(max_length=50)
 
@@ -148,16 +149,15 @@ class AIJobModel(BaseModel):
         default="PENDING",
     )
 
-    payload = models.JSONField()
-    error_message = models.TextField(blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True, default="")
 
-    # ==================================================
-    # ✅ ADD ONLY: 운영 레벨 필드 (DB Queue / lease 기반)
-    # ==================================================
+    # ---- routing / trace ----
     tenant_id = models.CharField(max_length=64, null=True, blank=True)
     source_domain = models.CharField(max_length=64, null=True, blank=True)
     source_id = models.CharField(max_length=64, null=True, blank=True)
 
+    # ---- retry / lease ----
     attempt_count = models.IntegerField(default=0)
     max_attempts = models.IntegerField(default=5)
 
@@ -177,13 +177,16 @@ class AIJobModel(BaseModel):
             models.Index(fields=["source_domain", "source_id"], name="ai_job_source_idx"),
         ]
 
+    def __str__(self) -> str:
+        return f"AIJobModel<{self.job_id}>({self.job_type})[{self.status}]"
+
 
 class AIResultModel(BaseModel):
     """
-    AI 결과 fact (저장만, 계산 없음)
-
-    - OneToOne 이므로 idempotency의 핵심 기반이 됨
+    AI Result Fact (write-once, idempotency anchor)
+    - OneToOne to enforce single fact row per job
     """
+
     job = models.OneToOneField(
         AIJobModel,
         on_delete=models.CASCADE,
@@ -194,104 +197,8 @@ class AIResultModel(BaseModel):
     class Meta:
         db_table = "ai_result"
 
-
-==========================================================================================
-# FILE: publisher.py
-==========================================================================================
-# apps/domains/ai/publisher.py
-from apps.shared.contracts.ai_job import AIJob
-
-
-def publish_job(job: AIJob) -> None:
-    """
-    실제 메시지 큐 연결 지점.
-
-    ✅ 운영 기본: DBQueue (DB가 SSOT)
-    ✅ legacy/옵션: worker.queue.producer 가 있으면 그쪽도 시도 가능
-    - "기존 호출부 유지"하면서 내부에서 안전하게 처리
-    """
-    # 1) 운영 기본: DBQueue publisher
-    from apps.domains.ai.queueing.publisher import publish_ai_job_db
-    publish_ai_job_db(job)
-
-    # 2) legacy: 존재하면 추가로 publish(삭제 금지 요구 대응)
-    try:
-        from worker.queue.producer import publish_ai_job  # type: ignore
-        publish_ai_job(job)
-    except Exception:
-        # legacy 경로가 없거나 실패해도 DBQueue가 SSOT이므로 무시
-        return
-
-
-==========================================================================================
-# FILE: queue.py
-==========================================================================================
-from datetime import timedelta
-from django.db import transaction
-from django.utils import timezone
-from django.db.models import Q
-
-from apps.domains.ai.models import AIJobModel
-
-
-class DBJobQueue:
-    """
-    DB-backed Job Queue (SQS-style semantics)
-    """
-
-    def __init__(self, *, worker_id: str, visibility_seconds: int = 60):
-        self.worker_id = worker_id
-        self.visibility_seconds = visibility_seconds
-
-    @transaction.atomic
-    def claim_next(self) -> AIJobModel | None:
-        now = timezone.now()
-        expired = now - timedelta(seconds=self.visibility_seconds)
-
-        job = (
-            AIJobModel.objects
-            .select_for_update(skip_locked=True)
-            .filter(
-                Q(status="PENDING") |
-                Q(status="RUNNING", locked_at__lt=expired)
-            )
-            .order_by("created_at")
-            .first()
-        )
-
-        if not job:
-            return None
-
-        if job.retry_count >= job.max_retries:
-            job.status = "FAILED"
-            job.error_message = "max retries exceeded"
-            job.locked_at = None
-            job.locked_by = None
-            job.save()
-            return None
-
-        job.status = "RUNNING"
-        job.retry_count += 1
-        job.locked_by = self.worker_id
-        job.locked_at = now
-        job.save()
-
-        return job
-
-    @transaction.atomic
-    def mark_done(self, job: AIJobModel):
-        job.status = "DONE"
-        job.locked_by = None
-        job.locked_at = None
-        job.save(update_fields=["status", "locked_by", "locked_at", "updated_at"])
-
-    @transaction.atomic
-    def mark_failed(self, job: AIJobModel, error: str):
-        job.status = "FAILED"
-        job.error_message = error[:2000]
-        job.locked_by = None
-        job.locked_at = None
-        job.save(update_fields=["status", "error_message", "locked_by", "locked_at"])
+    def __str__(self) -> str:
+        return f"AIResultModel(job_id={self.job_id})"
 
 
 ==========================================================================================
@@ -376,7 +283,30 @@ def ensure_payload_dict(payload: Any) -> Dict[str, Any]:
 
 
 ==========================================================================================
-# FILE: views.py
+# FILE: urls.py
+==========================================================================================
+from django.urls import path
+
+from apps.domains.ai.views.internal_ai_job_view import (
+    InternalAIJobNextView,
+    InternalAIJobResultView,
+)
+
+urlpatterns = [
+    path("job/next/", InternalAIJobNextView.as_view(), name="internal-ai-job-next"),
+    path("job/result/", InternalAIJobResultView.as_view(), name="internal-ai-job-result"),
+]
+
+
+==========================================================================================
+# FILE: legacy/readme.md
+==========================================================================================
+legacy파일은 실제로 사용되지않는다.
+구현 기능이식 체크리스트 점검용으로 존재만한다.
+
+
+==========================================================================================
+# FILE: legacy/views.py
 ==========================================================================================
 # PATH: apps/api/v1/internal/ai/views.py
 from __future__ import annotations
@@ -591,7 +521,7 @@ def submit_ai_result_view(request):
 
 
 ==========================================================================================
-# FILE: views_internal.py
+# FILE: legacy/views_internal.py
 ==========================================================================================
 # apps/domains/ai/views_internal.py
 from django.http import JsonResponse
@@ -642,6 +572,136 @@ def next_ai_job(request):
     )
 
     return JsonResponse({"job": ai_job.to_dict()})
+
+
+==========================================================================================
+# FILE: legacy/views/internal_ai_job_view.py
+==========================================================================================
+# apps/domains/ai/views/internal_ai_job_view.py
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from django.conf import settings
+from rest_framework import status
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.shared.contracts.ai_job import AIJob as AIJobContract
+from apps.domains.ai.models import AIJobModel, AIResultModel
+from apps.domains.ai.queueing.db_queue import DBJobQueue
+
+
+def _get_worker_token_secret() -> str:
+    v = getattr(settings, "INTERNAL_WORKER_TOKEN", None)
+    return str(v or "")
+
+
+def _require_worker_auth(request) -> Optional[Response]:
+    expected = _get_worker_token_secret()
+    if not expected:
+        return Response(
+            {"detail": "INTERNAL_WORKER_TOKEN not configured"},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    token = request.headers.get("X-Worker-Token") or request.META.get("HTTP_X_WORKER_TOKEN") or ""
+    if str(token) != str(expected):
+        return Response({"detail": "Unauthorized worker"}, status=status.HTTP_401_UNAUTHORIZED)
+    return None
+
+
+def _worker_id(request) -> str:
+    return request.headers.get("X-Worker-Id") or request.META.get("HTTP_X_WORKER_ID") or "ai-worker"
+
+
+class InternalAIJobNextView(APIView):
+    """
+    GET /api/v1/internal/ai/job/next/
+    response: { "job": {...} | null }
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        auth = _require_worker_auth(request)
+        if auth:
+            return auth
+
+        q = DBJobQueue()
+        claimed = q.claim(worker_id=_worker_id(request))
+        if not claimed:
+            return Response({"job": None}, status=status.HTTP_200_OK)
+
+        # contracts 고정: id는 job_id(문자열 UUID)
+        job = AIJobContract.from_dict(
+            {
+                "id": claimed.job_id,
+                "type": claimed.job_type,
+                "payload": claimed.payload,
+                "tenant_id": claimed.tenant_id,
+                "source_domain": claimed.source_domain,
+                "source_id": claimed.source_id,
+            }
+        )
+        return Response({"job": job.to_dict()}, status=status.HTTP_200_OK)
+
+
+class InternalAIJobResultView(APIView):
+    """
+    POST /api/v1/internal/ai/job/result/
+    payload:
+      {
+        "job_id": "...",
+        "submission_id": 123,      # optional legacy
+        "status": "DONE|FAILED",
+        "result": {...} | null,
+        "error": "..." | null
+      }
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        auth = _require_worker_auth(request)
+        if auth:
+            return auth
+
+        data: Dict[str, Any] = request.data if isinstance(request.data, dict) else {}
+
+        job_id = data.get("job_id")
+        if not job_id:
+            return Response({"detail": "job_id required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        status_in = str(data.get("status") or "DONE").upper().strip()
+        if status_in not in ("DONE", "FAILED"):
+            return Response({"detail": "status must be DONE or FAILED"}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = data.get("result")
+        if result is not None and not isinstance(result, dict):
+            return Response({"detail": "result must be object or null"}, status=status.HTTP_400_BAD_REQUEST)
+
+        error = str(data.get("error") or "")
+
+        job = AIJobModel.objects.filter(job_id=str(job_id)).first()
+        if not job:
+            return Response({"detail": "job not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # idempotent: if result already stored, ignore duplicates
+        if AIResultModel.objects.filter(job=job).exists():
+            return Response({"ok": True, "detail": "duplicate_ignored"}, status=status.HTTP_200_OK)
+
+        # store fact
+        AIResultModel.objects.create(job=job, payload=(result or None))
+
+        q = DBJobQueue()
+        if status_in == "FAILED":
+            q.mark_failed(job_id=job.job_id, error=error or "failed", retryable=True)
+            return Response({"ok": True, "detail": "failed_recorded"}, status=status.HTTP_200_OK)
+
+        q.mark_done(job_id=job.job_id)
+        return Response({"ok": True, "detail": "done"}, status=status.HTTP_200_OK)
 
 
 ==========================================================================================
@@ -856,6 +916,74 @@ class Migration(migrations.Migration):
 
 
 ==========================================================================================
+# FILE: migrations/0004_remove_aijobmodel_ai_job_status_ba4967_idx_and_more.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-31 03:56
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("ai_domain", "0003_alter_aijobmodel_status_and_more"),
+    ]
+
+    operations = [
+        migrations.RemoveIndex(
+            model_name="aijobmodel",
+            name="ai_job_status_ba4967_idx",
+        ),
+        migrations.RemoveIndex(
+            model_name="aijobmodel",
+            name="ai_job_locked__f6f4a2_idx",
+        ),
+        migrations.AlterField(
+            model_name="aijobmodel",
+            name="status",
+            field=models.CharField(
+                choices=[
+                    ("PENDING", "PENDING"),
+                    ("RUNNING", "RUNNING"),
+                    ("DONE", "DONE"),
+                    ("FAILED", "FAILED"),
+                ],
+                default="PENDING",
+                max_length=20,
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0005_alter_aijobmodel_error_message_and_more.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-31 14:51
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("ai_domain", "0004_remove_aijobmodel_ai_job_status_ba4967_idx_and_more"),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="aijobmodel",
+            name="error_message",
+            field=models.TextField(blank=True, default=""),
+        ),
+        migrations.AlterField(
+            model_name="aijobmodel",
+            name="payload",
+            field=models.JSONField(blank=True, default=dict),
+        ),
+    ]
+
+
+==========================================================================================
 # FILE: migrations/__init__.py
 ==========================================================================================
 
@@ -878,7 +1006,6 @@ from datetime import timedelta
 from typing import Optional
 
 from django.db import transaction
-from django.db.models import Q
 from django.utils import timezone
 
 from apps.domains.ai.models import AIJobModel
@@ -888,7 +1015,6 @@ from apps.domains.ai.queueing.interfaces import JobQueue, ClaimedJob
 @dataclass(frozen=True)
 class DBQueueConfig:
     visibility_timeout_sec: int = 120  # lease duration
-    heartbeat_grace_sec: int = 0       # reserved for future
     default_max_attempts: int = 5
     base_backoff_sec: int = 2
     max_backoff_sec: int = 120
@@ -896,20 +1022,16 @@ class DBQueueConfig:
 
 class DBJobQueue(JobQueue):
     """
-    SQS 스타일 lease/visibility timeout을 DB로 구현.
-    - DB가 SSOT
-    - Worker stateless
-    - crash 시 lease 만료로 자동 재처리
+    SQS-style lease/visibility timeout on DB.
+    - DB is SSOT
+    - Worker is stateless
+    - Crash recovery via lease expiry
     """
 
     def __init__(self, cfg: Optional[DBQueueConfig] = None):
         self.cfg = cfg or DBQueueConfig()
 
     def publish(self, *, job_id: str) -> None:
-        """
-        DBQueue에서 publish는 '처리 가능 상태로 만드는 것' 정도만 수행.
-        job row 자체는 gateway에서 이미 생성됨.
-        """
         now = timezone.now()
         AIJobModel.objects.filter(job_id=job_id).update(
             status="PENDING",
@@ -920,7 +1042,7 @@ class DBJobQueue(JobQueue):
     def claim(self, *, worker_id: str) -> Optional[ClaimedJob]:
         now = timezone.now()
 
-        # 0) stale RUNNING 회수(lease 만료된 작업을 PENDING으로 되돌림)
+        # 0) reclaim stale RUNNING jobs
         AIJobModel.objects.select_for_update().filter(
             status="RUNNING",
             lease_expires_at__isnull=False,
@@ -932,13 +1054,10 @@ class DBJobQueue(JobQueue):
             lease_expires_at=None,
         )
 
-        # 1) claim 후보: PENDING + next_run_at <= now
+        # 1) pick next runnable
         qs = (
             AIJobModel.objects.select_for_update(skip_locked=True)
-            .filter(
-                status="PENDING",
-                next_run_at__lte=now,
-            )
+            .filter(status="PENDING", next_run_at__lte=now)
             .order_by("next_run_at", "created_at")
         )
 
@@ -946,7 +1065,7 @@ class DBJobQueue(JobQueue):
         if not job:
             return None
 
-        # 2) attempt 증가 + lease 발급
+        # 2) attempts + lease
         attempt = int(job.attempt_count or 0) + 1
         max_attempts = int(job.max_attempts or self.cfg.default_max_attempts)
         if attempt > max_attempts:
@@ -980,7 +1099,7 @@ class DBJobQueue(JobQueue):
         return ClaimedJob(
             job_id=job.job_id,
             job_type=job.job_type,
-            payload=job.payload,
+            payload=job.payload or {},
             tenant_id=job.tenant_id,
             source_domain=job.source_domain,
             source_id=job.source_id,
@@ -989,7 +1108,6 @@ class DBJobQueue(JobQueue):
 
     def heartbeat(self, *, job_id: str, worker_id: str) -> None:
         now = timezone.now()
-        # heartbeat는 운영 확장용(현재 worker가 별도 heartbeat를 치지 않아도 lease만료로 복구됨)
         AIJobModel.objects.filter(job_id=job_id, locked_by=str(worker_id), status="RUNNING").update(
             last_heartbeat_at=now,
             updated_at=now,
@@ -1004,9 +1122,9 @@ class DBJobQueue(JobQueue):
 
     def mark_failed(self, *, job_id: str, error: str, retryable: bool = True) -> None:
         """
-        실패 처리 + retry/backoff 스케줄링
-        - retryable=True & attempt_count < max_attempts 면 PENDING으로 되돌리고 next_run_at을 backoff로 설정
-        - 아니면 FAILED 확정
+        실패 처리 + retry/backoff
+        - retryable=True & attempt_count < max_attempts => PENDING with next_run_at(backoff)
+        - else => FAILED
         """
         now = timezone.now()
         job = AIJobModel.objects.filter(job_id=job_id).first()
@@ -1016,15 +1134,16 @@ class DBJobQueue(JobQueue):
         attempt = int(job.attempt_count or 0)
         max_attempts = int(job.max_attempts or self.cfg.default_max_attempts)
 
-        # backoff 계산 (2^attempt * base, cap)
         backoff = min(self.cfg.max_backoff_sec, (2 ** max(0, attempt - 1)) * self.cfg.base_backoff_sec)
         next_run = now + timedelta(seconds=int(backoff))
+
+        err = str(error or "")[:5000]
 
         if retryable and attempt < max_attempts:
             AIJobModel.objects.filter(job_id=job_id).update(
                 status="PENDING",
-                last_error=str(error or "")[:5000],
-                error_message=str(error or "")[:5000],
+                last_error=err,
+                error_message=err,
                 next_run_at=next_run,
                 locked_by=None,
                 locked_at=None,
@@ -1035,8 +1154,8 @@ class DBJobQueue(JobQueue):
 
         AIJobModel.objects.filter(job_id=job_id).update(
             status="FAILED",
-            last_error=str(error or "")[:5000],
-            error_message=str(error or "")[:5000],
+            last_error=err,
+            error_message=err,
             locked_by=None,
             locked_at=None,
             lease_expires_at=None,
@@ -1063,7 +1182,7 @@ class ClaimedJob:
     source_domain: Optional[str] = None
     source_id: Optional[str] = None
 
-    # lease info (debug/ops)
+    # lease/debug
     locked_by: Optional[str] = None
 
 
@@ -1101,3 +1220,24 @@ def publish_ai_job_db(job: AIJob) -> None:
     """
     q = DBJobQueue()
     q.publish(job_id=job.id)
+
+
+==========================================================================================
+# FILE: views/exam_sheet.py
+==========================================================================================
+# PATH: apps/domains/exams/models/exam_sheet.py
+from django.db import models
+
+
+class ExamSheet(models.Model):
+    """
+    시험(exam)에서 사용하는 시험지(sheet)
+    - 시험 실행 시 단일 진실
+    """
+
+    exam_id = models.PositiveIntegerField(db_index=True)
+    sheet_id = models.PositiveIntegerField(db_index=True)
+
+    class Meta:
+        db_table = "exams_exam_sheet"
+        unique_together = ("exam_id", "sheet_id")

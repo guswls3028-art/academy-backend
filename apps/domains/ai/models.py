@@ -1,16 +1,19 @@
 # apps/domains/ai/models.py
+from __future__ import annotations
+
 from django.db import models
 from django.utils import timezone
+
 from apps.api.common.models import BaseModel
 
 
 class AIJobModel(BaseModel):
     """
-    API 서버가 관리하는 AI Job 메타 (DB가 SSOT)
-
-    - 기존 필드 유지
-    - 운영레벨: lease/visibility timeout/retry/idempotency 대응 필드 "추가"만
+    AI Job Meta (DB is SSOT)
+    - API server owns lifecycle
+    - Worker pulls via internal endpoints
     """
+
     job_id = models.CharField(max_length=64, unique=True)
     job_type = models.CharField(max_length=50)
 
@@ -25,16 +28,15 @@ class AIJobModel(BaseModel):
         default="PENDING",
     )
 
-    payload = models.JSONField()
-    error_message = models.TextField(blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True, default="")
 
-    # ==================================================
-    # ✅ ADD ONLY: 운영 레벨 필드 (DB Queue / lease 기반)
-    # ==================================================
+    # ---- routing / trace ----
     tenant_id = models.CharField(max_length=64, null=True, blank=True)
     source_domain = models.CharField(max_length=64, null=True, blank=True)
     source_id = models.CharField(max_length=64, null=True, blank=True)
 
+    # ---- retry / lease ----
     attempt_count = models.IntegerField(default=0)
     max_attempts = models.IntegerField(default=5)
 
@@ -54,13 +56,16 @@ class AIJobModel(BaseModel):
             models.Index(fields=["source_domain", "source_id"], name="ai_job_source_idx"),
         ]
 
+    def __str__(self) -> str:
+        return f"AIJobModel<{self.job_id}>({self.job_type})[{self.status}]"
+
 
 class AIResultModel(BaseModel):
     """
-    AI 결과 fact (저장만, 계산 없음)
-
-    - OneToOne 이므로 idempotency의 핵심 기반이 됨
+    AI Result Fact (write-once, idempotency anchor)
+    - OneToOne to enforce single fact row per job
     """
+
     job = models.OneToOneField(
         AIJobModel,
         on_delete=models.CASCADE,
@@ -70,3 +75,6 @@ class AIResultModel(BaseModel):
 
     class Meta:
         db_table = "ai_result"
+
+    def __str__(self) -> str:
+        return f"AIResultModel(job_id={self.job_id})"

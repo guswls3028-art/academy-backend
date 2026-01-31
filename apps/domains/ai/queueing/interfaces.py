@@ -14,7 +14,7 @@ class ClaimedJob:
     source_domain: Optional[str] = None
     source_id: Optional[str] = None
 
-    # lease info (debug/ops)
+    # lease/debug
     locked_by: Optional[str] = None
 
 
