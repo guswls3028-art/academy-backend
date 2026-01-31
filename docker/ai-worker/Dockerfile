@@ -4,6 +4,10 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 
+# ✅ 운영 기준: Worker → API 는 무조건 VPC 내부 통신
+# (Cloudflare / HTTPS / 외부 LB 절대 통과 안 함)
+ENV API_BASE_URL=http://172.31.32.253:8000
+
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     ffmpeg \
