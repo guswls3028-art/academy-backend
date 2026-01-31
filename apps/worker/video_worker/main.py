@@ -30,7 +30,6 @@ def main() -> None:
 
     cfg = load_config()
 
-    # ✅ FIX: 생성자 시그니처 명확히 맞춤 (원본 구조 유지)
     client = VideoAPIClient(
         base_url=cfg.API_BASE_URL,
         worker_token=cfg.WORKER_TOKEN,
@@ -55,7 +54,6 @@ def main() -> None:
                     time.sleep(cfg.POLL_INTERVAL_SECONDS)
                     continue
 
-                # ↓↓↓ PATCH START ↓↓↓
                 if isinstance(job, dict) and "job" in job:  # MODIFIED
                     job = job.get("job")  # MODIFIED
 
@@ -63,11 +61,10 @@ def main() -> None:
                     time.sleep(cfg.POLL_INTERVAL_SECONDS)  # MODIFIED
                     continue  # MODIFIED
 
-                if "video_id" not in job:  # MODIFIED
-                    logger.warning("job missing video_id payload=%s", job)  # MODIFIED
+                if job.get("video_id") is None:  # MODIFIED
+                    logger.info("idle job payload=%s", job)  # MODIFIED
                     time.sleep(cfg.POLL_INTERVAL_SECONDS)  # MODIFIED
                     continue  # MODIFIED
-                # ↑↑↑ PATCH END ↑↑↑
 
                 error_attempt = 0
 
