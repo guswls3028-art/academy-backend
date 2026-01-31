@@ -7,6 +7,7 @@ from typing import Dict, Any
 
 import requests
 
+from apps.worker.video_worker.config import load_config  # MODIFIED
 from apps.worker.video_worker.video.storage import (
     upload_hls_directory,
     upload_thumbnail_bytes,
@@ -34,6 +35,7 @@ class VideoProcessor:
         self.api_base = api_base.rstrip("/")
         self.worker_id = worker_id
         self.worker_token = worker_token
+        self._cfg = load_config()  # MODIFIED
 
     # --------------------------------------------------
     # Internal HTTP helpers
@@ -53,29 +55,46 @@ class VideoProcessor:
     # Main entry
     # --------------------------------------------------
 
-    def process(self, *, video_id: int, source_url: str) -> None:
+    def process(self, *, video_id: int, source_url: str | None = None, file_key: str | None = None) -> None:  # MODIFIED
         """
         단일 영상 처리
         """
         try:
+            if source_url is None and file_key is not None:  # MODIFIED
+                source_url = f"{self._cfg.R2_PUBLIC_BASE_URL.rstrip('/')}/{file_key}"  # MODIFIED
+
+            if not source_url:  # MODIFIED
+                raise RuntimeError("source_url_missing")  # MODIFIED
+
             logger.info(
                 "video processing started video_id=%s worker=%s",
                 video_id,
                 self.worker_id,
             )
 
-            # 1. duration 추출
+            # ==================================================
+            # 1. duration 추출 (ffprobe, URL 기반)
+            # ==================================================
             duration = extract_duration_seconds_from_url(source_url)
+
             if not duration or duration <= 0:
                 raise RuntimeError("duration_probe_failed")
 
+            # ==================================================
             # 2. HLS 변환
+            # ==================================================
+            # (⚠️ 기존 구현 유지: 내부적으로 ffmpeg 사용)
             hls_output_dir = upload_hls_directory(
                 video_id=video_id,
                 source_url=source_url,
             )
 
-            # 3. 썸네일 생성 (중앙 프레임)
+            # ==================================================
+            # 3. 썸네일 생성 (방법 2)
+            # --------------------------------------------------
+            # ✅ 영상 길이 "중간 지점" 기준
+            # - 너무 앞/뒤 프레임 방지
+            # ==================================================
             if duration >= 10:
                 ss = int(duration * 0.5)
             elif duration >= 3:
@@ -99,7 +118,9 @@ class VideoProcessor:
                     video_id,
                 )
 
-            # 4. 완료 보고
+            # ==================================================
+            # 4. API 서버에 완료 보고
+            # ==================================================
             resp = self._post(
                 f"/internal/video-worker/{video_id}/complete/",
                 {
@@ -107,6 +128,7 @@ class VideoProcessor:
                     "duration": duration,
                 },
             )
+
             resp.raise_for_status()
 
             logger.info(
@@ -121,6 +143,7 @@ class VideoProcessor:
                 video_id,
                 e,
             )
+
             try:
                 self._post(
                     f"/internal/video-worker/{video_id}/fail/",
@@ -131,32 +154,3 @@ class VideoProcessor:
                     "failed to report processing failure video_id=%s",
                     video_id,
                 )
-
-
-# ==================================================
-# ✅ Worker entrypoint (상품 계약)
-# - main.py 와의 단일 접점
-# - job schema 검증 책임을 여기서 종료
-# ==================================================
-
-def process_video_job(*, job: Dict[str, Any], cfg, client) -> None:
-    """
-    Worker → Processor 어댑터
-    """
-
-    video_id = job.get("video_id")
-    source_url = job.get("source_url")
-
-    if not video_id or not source_url:
-        raise KeyError("video_id or source_url missing in job")
-
-    processor = VideoProcessor(
-        api_base=cfg.API_BASE_URL,
-        worker_id=cfg.WORKER_ID,
-        worker_token=cfg.WORKER_TOKEN,
-    )
-
-    processor.process(
-        video_id=int(video_id),
-        source_url=str(source_url),
-    )
