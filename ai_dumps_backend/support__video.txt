@@ -3989,13 +3989,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         min_dur = _safe_int(getattr(settings, "VIDEO_MIN_DURATION_SECONDS", 3), 3)
         duration = _safe_int(meta.get("duration"), None)
 
-        if duration is None or duration < int(min_dur):
-            video.error_reason = f"duration_too_short:{duration}"
-            video.save(update_fields=["error_reason"])
-            return Response(
-                {"detail": "duration_too_short", "duration": duration},
-                status=status.HTTP_409_CONFLICT,
-            )
+        if duration is not None and duration < int(min_dur):  # MODIFIED
+            video.duration = duration  # MODIFIED
+            video.status = Video.Status.UPLOADED  # MODIFIED
+            video.error_reason = ""  # MODIFIED
+            video.save(update_fields=["status", "duration", "error_reason"])  # MODIFIED
+            return Response(VideoSerializer(video).data)  # MODIFIED
 
         video.duration = duration
         video.status = Video.Status.UPLOADED
