@@ -125,6 +125,7 @@ from apps.api.common.models import BaseModel
 class AIJobModel(BaseModel):
     """
     API 서버가 관리하는 AI Job 메타
+    (DB-based Queue + Lock + Retry)
     """
     job_id = models.CharField(max_length=64, unique=True)
     job_type = models.CharField(max_length=50)
@@ -138,13 +139,29 @@ class AIJobModel(BaseModel):
             ("FAILED", "FAILED"),
         ],
         default="PENDING",
+        db_index=True,
     )
 
     payload = models.JSONField()
     error_message = models.TextField(blank=True)
 
+    # =========================
+    # 🔒 Queue / Retry / Lock
+    # =========================
+    retry_count = models.IntegerField(default=0)
+    max_retries = models.IntegerField(default=5)
+
+    locked_by = models.CharField(max_length=100, null=True, blank=True)
+    locked_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         db_table = "ai_job"
+        app_label = "ai_domain"   # ✅ 이 한 줄이 핵심
+        
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["locked_at"]),
+        ]
 
 
 class AIResultModel(BaseModel):
@@ -160,6 +177,7 @@ class AIResultModel(BaseModel):
 
     class Meta:
         db_table = "ai_result"
+        app_label = "ai_domain"   # ✅ 이것도
 
 
 ==========================================================================================
@@ -175,6 +193,77 @@ def publish_job(job: AIJob) -> None:
     """
     from worker.queue.producer import publish_ai_job
     publish_ai_job(job)
+
+
+==========================================================================================
+# FILE: queue.py
+==========================================================================================
+from datetime import timedelta
+from django.db import transaction
+from django.utils import timezone
+from django.db.models import Q
+
+from apps.domains.ai.models import AIJobModel
+
+
+class DBJobQueue:
+    """
+    DB-backed Job Queue (SQS-style semantics)
+    """
+
+    def __init__(self, *, worker_id: str, visibility_seconds: int = 60):
+        self.worker_id = worker_id
+        self.visibility_seconds = visibility_seconds
+
+    @transaction.atomic
+    def claim_next(self) -> AIJobModel | None:
+        now = timezone.now()
+        expired = now - timedelta(seconds=self.visibility_seconds)
+
+        job = (
+            AIJobModel.objects
+            .select_for_update(skip_locked=True)
+            .filter(
+                Q(status="PENDING") |
+                Q(status="RUNNING", locked_at__lt=expired)
+            )
+            .order_by("created_at")
+            .first()
+        )
+
+        if not job:
+            return None
+
+        if job.retry_count >= job.max_retries:
+            job.status = "FAILED"
+            job.error_message = "max retries exceeded"
+            job.locked_at = None
+            job.locked_by = None
+            job.save()
+            return None
+
+        job.status = "RUNNING"
+        job.retry_count += 1
+        job.locked_by = self.worker_id
+        job.locked_at = now
+        job.save()
+
+        return job
+
+    @transaction.atomic
+    def mark_done(self, job: AIJobModel):
+        job.status = "DONE"
+        job.locked_by = None
+        job.locked_at = None
+        job.save(update_fields=["status", "locked_by", "locked_at", "updated_at"])
+
+    @transaction.atomic
+    def mark_failed(self, job: AIJobModel, error: str):
+        job.status = "FAILED"
+        job.error_message = error[:2000]
+        job.locked_by = None
+        job.locked_at = None
+        job.save(update_fields=["status", "error_message", "locked_by", "locked_at"])
 
 
 ==========================================================================================
@@ -259,6 +348,110 @@ def ensure_payload_dict(payload: Any) -> Dict[str, Any]:
 
 
 ==========================================================================================
+# FILE: views.py
+==========================================================================================
+from __future__ import annotations
+
+import json
+from typing import Optional
+from django.conf import settings
+from django.http import JsonResponse
+from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
+
+from apps.shared.contracts.ai_job import AIJob
+from apps.domains.ai.queue import DBJobQueue
+
+
+def _auth_or_401(request) -> Optional[JsonResponse]:
+    token = request.headers.get("X-Worker-Token")
+    if not token or token != settings.INTERNAL_WORKER_TOKEN:
+        return JsonResponse({"detail": "unauthorized"}, status=401)
+    return None
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def next_ai_job_view(request):
+    unauth = _auth_or_401(request)
+    if unauth:
+        return unauth
+
+    worker_id = request.headers.get("X-Worker-Id", "ai-worker")
+
+    queue = DBJobQueue(
+        worker_id=worker_id,
+        visibility_seconds=60,
+    )
+
+    job = queue.claim_next()
+    if not job:
+        return JsonResponse({"job": None}, status=200)
+
+    contract = AIJob.new(
+        type=job.job_type,
+        payload=job.payload,
+        source_id=job.job_id,
+    )
+
+    return JsonResponse({"job": contract.to_dict()}, status=200)
+
+
+==========================================================================================
+# FILE: views_internal.py
+==========================================================================================
+# apps/domains/ai/views_internal.py
+from django.http import JsonResponse
+from django.views.decorators.http import require_GET
+from django.db import transaction
+from django.conf import settings
+
+from apps.domains.ai.models import AIJobModel
+from apps.shared.contracts.ai_job import AIJob
+
+
+def _auth_worker(request):
+    token = request.headers.get("X-Worker-Token")
+    return token and token == settings.INTERNAL_WORKER_TOKEN
+
+
+@require_GET
+def next_ai_job(request):
+    """
+    Worker → API
+    GET /api/v1/internal/ai/job/next/
+    """
+    if not _auth_worker(request):
+        return JsonResponse({"detail": "unauthorized"}, status=401)
+
+    with transaction.atomic():
+        job = (
+            AIJobModel.objects
+            .select_for_update(skip_locked=True)
+            .filter(status="PENDING")
+            .order_by("created_at")
+            .first()
+        )
+
+        if not job:
+            return JsonResponse({"job": None})
+
+        job.status = "RUNNING"
+        job.save(update_fields=["status", "updated_at"])
+
+    ai_job = AIJob(
+        id=job.job_id,
+        type=job.job_type,
+        payload=job.payload,
+        tenant_id=None,
+        source_domain=None,
+        source_id=None,
+    )
+
+    return JsonResponse({"job": ai_job.to_dict()})
+
+
+==========================================================================================
 # FILE: migrations/0001_initial.py
 ==========================================================================================
 # Generated by Django 5.2.9 on 2026-01-06 02:52
@@ -337,6 +530,85 @@ class Migration(migrations.Migration):
             options={
                 "db_table": "ai_result",
             },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0002_job_queue_fields.py
+==========================================================================================
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("ai_domain", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="aijobmodel",
+            name="retry_count",
+            field=models.IntegerField(default=0),
+        ),
+        migrations.AddField(
+            model_name="aijobmodel",
+            name="max_retries",
+            field=models.IntegerField(default=5),
+        ),
+        migrations.AddField(
+            model_name="aijobmodel",
+            name="locked_by",
+            field=models.CharField(blank=True, max_length=100, null=True),
+        ),
+        migrations.AddField(
+            model_name="aijobmodel",
+            name="locked_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0003_alter_aijobmodel_status_and_more.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-31 02:51
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("ai_domain", "0002_job_queue_fields"),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="aijobmodel",
+            name="status",
+            field=models.CharField(
+                choices=[
+                    ("PENDING", "PENDING"),
+                    ("RUNNING", "RUNNING"),
+                    ("DONE", "DONE"),
+                    ("FAILED", "FAILED"),
+                ],
+                db_index=True,
+                default="PENDING",
+                max_length=20,
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="aijobmodel",
+            index=models.Index(
+                fields=["status", "created_at"], name="ai_job_status_ba4967_idx"
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="aijobmodel",
+            index=models.Index(fields=["locked_at"], name="ai_job_locked__f6f4a2_idx"),
         ),
     ]
 

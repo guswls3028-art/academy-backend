@@ -12,9 +12,10 @@ def main():
     # ✅ .env 로드
     load_dotenv(BASE_DIR / ".env")
 
+    # ✅ 운영 기준: base 단일
     os.environ.setdefault(
         "DJANGO_SETTINGS_MODULE",
-        "apps.api.config.settings.dev"
+        "apps.api.config.settings.base"
     )
 
     from django.core.management import execute_from_command_line
