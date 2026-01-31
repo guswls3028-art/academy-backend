@@ -533,6 +533,8 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN")
 
+AI_QUEUE_BACKEND = os.getenv("AI_QUEUE_BACKEND", "db")
+
 
 ==========================================================================================
 # FILE: config/settings/dev.py
