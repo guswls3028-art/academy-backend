@@ -1,10 +1,16 @@
 # apps/domains/ai/publisher.py
 from apps.shared.contracts.ai_job import AIJob
+from django.conf import settings
+import redis
+
+
+QUEUE_KEY = "ai:jobs"
+
 
 def publish_job(job: AIJob) -> None:
     """
-    실제 메시지 큐 연결 지점.
-    지금은 infra layer placeholder.
+    API → Queue (Redis)
+    Worker는 Queue만 본다.
     """
-    from worker.queue.producer import publish_ai_job
-    publish_ai_job(job)
+    r = redis.from_url(settings.REDIS_URL)
+    r.lpush(QUEUE_KEY, job.to_json())
