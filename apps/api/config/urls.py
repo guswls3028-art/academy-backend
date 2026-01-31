@@ -10,6 +10,9 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
 
+# ✅ [ADD] AI internal endpoint
+from apps.domains.ai.views_internal import next_ai_job
+
 urlpatterns = [
     # =========================
     # Admin
@@ -35,6 +38,14 @@ urlpatterns = [
     path(
         "internal/",
         include("apps.support.video.urls_internal"),
+    ),
+
+    # ==================================================
+    # ✅ INTERNAL AI WORKER (ADD ONLY)
+    # ==================================================
+    path(
+        "api/v1/internal/ai/job/next/",
+        next_ai_job,
     ),
 ]
 
