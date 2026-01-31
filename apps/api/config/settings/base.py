@@ -117,6 +117,8 @@ INSTALLED_APPS = [
 
     # student app
     "apps.domains.student_app",
+
+    "apps.domains.ai.apps.AIDomainConfig",
 ]
 
 # ==================================================
