@@ -37,6 +37,8 @@ class AIJobModel(BaseModel):
 
     class Meta:
         db_table = "ai_job"
+        app_label = "ai_domain"   # ✅ 이 한 줄이 핵심
+        
         indexes = [
             models.Index(fields=["status", "created_at"]),
             models.Index(fields=["locked_at"]),
@@ -56,3 +58,4 @@ class AIResultModel(BaseModel):
 
     class Meta:
         db_table = "ai_result"
+        app_label = "ai_domain"   # ✅ 이것도
