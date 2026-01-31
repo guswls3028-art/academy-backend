@@ -55,6 +55,20 @@ def main() -> None:
                     time.sleep(cfg.POLL_INTERVAL_SECONDS)
                     continue
 
+                # ↓↓↓ PATCH START ↓↓↓
+                if isinstance(job, dict) and "job" in job:  # MODIFIED
+                    job = job.get("job")  # MODIFIED
+
+                if not job or not isinstance(job, dict):  # MODIFIED
+                    time.sleep(cfg.POLL_INTERVAL_SECONDS)  # MODIFIED
+                    continue  # MODIFIED
+
+                if "video_id" not in job:  # MODIFIED
+                    logger.warning("job missing video_id payload=%s", job)  # MODIFIED
+                    time.sleep(cfg.POLL_INTERVAL_SECONDS)  # MODIFIED
+                    continue  # MODIFIED
+                # ↑↑↑ PATCH END ↑↑↑
+
                 error_attempt = 0
 
                 logger.info("job received video_id=%s", job.get("video_id"))
