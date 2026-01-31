@@ -34,6 +34,9 @@ def dispatch_job(
             job_type=job.type,
             payload=job.payload,
             status="PENDING",
+            tenant_id=tenant_id,
+            source_domain=source_domain,
+            source_id=source_id,
         )
 
         try:
@@ -41,7 +44,8 @@ def dispatch_job(
         except Exception as e:
             job_model.status = "FAILED"
             job_model.error_message = str(e)
-            job_model.save(update_fields=["status", "error_message", "updated_at"])
+            job_model.last_error = str(e)
+            job_model.save(update_fields=["status", "error_message", "last_error", "updated_at"])
             raise
 
         return {"ok": True, "job_id": job.id, "type": job.type}

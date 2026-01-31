@@ -1,12 +1,15 @@
 # apps/domains/ai/models.py
 from django.db import models
+from django.utils import timezone
 from apps.api.common.models import BaseModel
 
 
 class AIJobModel(BaseModel):
     """
-    API 서버가 관리하는 AI Job 메타
-    (DB-based Queue + Lock + Retry)
+    API 서버가 관리하는 AI Job 메타 (DB가 SSOT)
+
+    - 기존 필드 유지
+    - 운영레벨: lease/visibility timeout/retry/idempotency 대응 필드 "추가"만
     """
     job_id = models.CharField(max_length=64, unique=True)
     job_type = models.CharField(max_length=50)
@@ -20,34 +23,43 @@ class AIJobModel(BaseModel):
             ("FAILED", "FAILED"),
         ],
         default="PENDING",
-        db_index=True,
     )
 
     payload = models.JSONField()
     error_message = models.TextField(blank=True)
 
-    # =========================
-    # 🔒 Queue / Retry / Lock
-    # =========================
-    retry_count = models.IntegerField(default=0)
-    max_retries = models.IntegerField(default=5)
+    # ==================================================
+    # ✅ ADD ONLY: 운영 레벨 필드 (DB Queue / lease 기반)
+    # ==================================================
+    tenant_id = models.CharField(max_length=64, null=True, blank=True)
+    source_domain = models.CharField(max_length=64, null=True, blank=True)
+    source_id = models.CharField(max_length=64, null=True, blank=True)
 
-    locked_by = models.CharField(max_length=100, null=True, blank=True)
+    attempt_count = models.IntegerField(default=0)
+    max_attempts = models.IntegerField(default=5)
+
+    locked_by = models.CharField(max_length=128, null=True, blank=True)
     locked_at = models.DateTimeField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+
+    next_run_at = models.DateTimeField(default=timezone.now)
+    last_error = models.TextField(blank=True, default="")
 
     class Meta:
         db_table = "ai_job"
-        app_label = "ai_domain"   # ✅ 이 한 줄이 핵심
-        
         indexes = [
-            models.Index(fields=["status", "created_at"]),
-            models.Index(fields=["locked_at"]),
+            models.Index(fields=["status", "next_run_at"], name="ai_job_status_next_run_idx"),
+            models.Index(fields=["lease_expires_at"], name="ai_job_lease_idx"),
+            models.Index(fields=["source_domain", "source_id"], name="ai_job_source_idx"),
         ]
 
 
 class AIResultModel(BaseModel):
     """
     AI 결과 fact (저장만, 계산 없음)
+
+    - OneToOne 이므로 idempotency의 핵심 기반이 됨
     """
     job = models.OneToOneField(
         AIJobModel,
@@ -58,4 +70,3 @@ class AIResultModel(BaseModel):
 
     class Meta:
         db_table = "ai_result"
-        app_label = "ai_domain"   # ✅ 이것도
