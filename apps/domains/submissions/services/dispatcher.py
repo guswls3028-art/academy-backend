@@ -7,9 +7,11 @@ from django.db import transaction
 
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.submission_service import SubmissionService
+
 from apps.domains.exams.models import ExamQuestion, Sheet
 from apps.domains.assets.omr.services.meta_generator import build_objective_template_meta
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
+
 from apps.domains.ai.gateway import dispatch_job
 from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
@@ -36,62 +38,84 @@ def _safe_int(v: Any) -> Optional[int]:
 
 def _build_ai_payload(submission: Submission) -> Dict[str, Any]:
     payload = dict(submission.payload or {})
+
+    mode = str(payload.get("mode") or "auto").lower()
+    if mode not in ("scan", "photo", "auto"):
+        mode = "auto"
+
     sheet_id = _safe_int(payload.get("sheet_id"))
 
-    questions = []
+    questions_payload = []
     if sheet_id:
-        for q in ExamQuestion.objects.filter(sheet_id=sheet_id).order_by("number"):
-            questions.append(
+        qs = ExamQuestion.objects.filter(sheet_id=sheet_id).order_by("number")
+        for q in qs:
+            region_meta = getattr(q, "region_meta", None) or getattr(q, "meta", None)
+            questions_payload.append(
                 {
-                    "exam_question_id": q.id,
-                    "number": q.number,
-                    "region_meta": getattr(q, "region_meta", None),
+                    "exam_question_id": int(q.id),
+                    "number": int(getattr(q, "number", 0) or 0),
+                    "region_meta": region_meta,
                 }
             )
 
-    download_url = (
-        generate_presigned_get_url(submission.file_key, 3600)
-        if submission.file_key
-        else None
-    )
+    download_url = None
+    if submission.file_key:
+        # ✅ FIX: keyword-only 호출
+        download_url = generate_presigned_get_url(
+            key=submission.file_key,
+            expires_in=3600,
+        )
 
     payload.update(
         {
-            "submission_id": submission.id,
+            "submission_id": int(submission.id),
             "target_type": submission.target_type,
-            "target_id": submission.target_id,
+            "target_id": int(submission.target_id),
             "file_key": submission.file_key,
             "download_url": download_url,
-            "questions": questions,
+            "omr": {"sheet_id": sheet_id},
+            "questions": questions_payload,
+            "mode": mode,
         }
     )
 
     if submission.source == Submission.Source.OMR_SCAN and sheet_id:
+        qc = 0
         sh = Sheet.objects.filter(id=sheet_id).first()
-        if sh and sh.total_questions in (10, 20, 30):
-            payload["question_count"] = sh.total_questions
-            payload["template_meta"] = build_objective_template_meta(
-                question_count=sh.total_questions
-            )
+        if sh:
+            qc = int(getattr(sh, "total_questions", 0) or 0)
+
+        if qc in (10, 20, 30):
+            payload["question_count"] = qc
+            payload["template_meta"] = build_objective_template_meta(question_count=qc)
 
     return payload
 
 
 @transaction.atomic
 def dispatch_submission(submission: Submission) -> None:
+    """
+    Submission 처리 SSOT
+    """
+
     if submission.status != Submission.Status.SUBMITTED:
         return
 
+    # ONLINE
     if submission.source == Submission.Source.ONLINE:
         SubmissionService.process(submission)
+
         submission.status = Submission.Status.GRADING
         submission.save(update_fields=["status", "updated_at"])
-        grade_submission(submission.id)
+
+        grade_submission(int(submission.id))
         dispatch_progress_pipeline(submission_id=submission.id)
+
         submission.status = Submission.Status.DONE
         submission.save(update_fields=["status", "updated_at"])
         return
 
+    # FILE 기반
     if not submission.file_key:
         submission.status = Submission.Status.FAILED
         submission.error_message = "file_key missing"
