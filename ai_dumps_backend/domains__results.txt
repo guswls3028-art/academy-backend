@@ -3677,22 +3677,47 @@ def grade_submission_to_results(submission: Submission) -> None:
 ==========================================================================================
 # FILE: services/grading_entrypoint.py
 ==========================================================================================
-# PATH: apps/domains/results/services/grading_entrypoint.py
+# apps/domains/results/services/grading_entrypoint.py
 from __future__ import annotations
 
+from typing import Any
+
+from django.db import transaction
+
 from apps.domains.submissions.models import Submission
-from apps.domains.results.tasks.grading_tasks import grade_submission_task
+from apps.domains.results.models import ExamResult
+from apps.domains.results.services.applier import ResultApplier
+from apps.domains.results.services.attempt_service import AttemptService
+from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 
 
-def enqueue_grading_if_ready(submission: Submission) -> None:
+class GradingEntrypoint:
     """
-    OMR / ONLINE 공통:
-    answers_ready 상태면 grading 큐로 이동
-    """
-    if submission.status != Submission.Status.ANSWERS_READY:
-        return
+    ✅ Results 채점 파이프라인 단일 진실 엔트리포인트
 
-    grade_submission_task.delay(int(submission.id))
+    grading_service → 이 클래스만 호출
+    """
+
+    @staticmethod
+    @transaction.atomic
+    def run(*, submission_id: int) -> ExamResult:
+        submission = Submission.objects.select_for_update().get(id=int(submission_id))
+
+        # 1. Attempt 확보
+        attempt = AttemptService.ensure_attempt(submission)
+
+        # 2. 결과 계산 + 반영
+        result = ResultApplier.apply(attempt)
+
+        # 3. submission 상태 확정
+        submission.status = Submission.Status.DONE
+        submission.error_message = ""
+        submission.save(update_fields=["status", "error_message", "updated_at"])
+
+        # 4. progress 파이프라인 (비동기)
+        dispatch_progress_pipeline(submission_id=submission.id)
+
+        return result
 
 
 ==========================================================================================
@@ -4416,6 +4441,19 @@ def list_wrong_notes_for_enrollment(
         })
 
     return total, out
+
+
+==========================================================================================
+# FILE: tasks/grading_tasks.py
+==========================================================================================
+from apps.domains.results.services.grading_service import grade_submission
+
+
+def grade_submission_task(submission_id: int):
+    """
+    Celery 없이도 동작 가능한 grading entry
+    """
+    return grade_submission(submission_id)
 
 
 ==========================================================================================

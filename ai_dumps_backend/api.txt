@@ -69,60 +69,6 @@ if __name__ == "__main__":
 
 
 ==========================================================================================
-# FILE: ai/__init__.py
-==========================================================================================
-
-
-
-==========================================================================================
-# FILE: ai/config.py
-==========================================================================================
-# AI / OCR 엔진 선택 (API는 상태/요청만 관리)
-
-OCR_ENGINE = "google"
-OCR_ACCOUNT_STRATEGY = "academy_first_random_global"
-
-QUESTION_SEGMENTATION_ENGINE = "auto"
-EXAM_SHEET_SEGMENT_ENGINE = "opencv"
-
-
-==========================================================================================
-# FILE: ai/models.py
-==========================================================================================
-
-
-
-==========================================================================================
-# FILE: ai/serializers.py
-==========================================================================================
-
-
-
-==========================================================================================
-# FILE: ai/urls.py
-==========================================================================================
-# apps/api/v1/internal/ai/urls.py
-
-from django.urls import path, include
-
-urlpatterns = [
-    # ✅ AI Domain 단일 SSOT(DBQueue) 라우팅
-    # - AI Worker(run.py)가 호출하는 endpoint를 그대로 유지:
-    #   /api/v1/internal/ai/job/next/
-    #   /api/v1/internal/ai/job/result/
-    #
-    # - 구현은 apps.domains.ai.urls (InternalAIJobNextView / InternalAIJobResultView)
-    path("", include("apps.domains.ai.urls")),
-]
-
-
-==========================================================================================
-# FILE: ai/migrations/__init__.py
-==========================================================================================
-
-
-
-==========================================================================================
 # FILE: common/__init__.py
 ==========================================================================================
 
@@ -706,161 +652,141 @@ urlpatterns = [
 ==========================================================================================
 # FILE: v1/internal/ai/urls.py
 ==========================================================================================
+# ====================================================================================================
+# FILE: apps/api/v1/internal/ai/urls.py
+# ====================================================================================================
+from django.urls import path, include
 
+urlpatterns = [
+    # AI Domain SSOT forwarding
+    # Worker endpoints:
+    #   GET  /api/v1/internal/ai/job/next/
+    #   POST /api/v1/internal/ai/job/result/
+    path("", include("apps.domains.ai.urls")),
+]
 
 
 ==========================================================================================
 # FILE: v1/internal/ai/views.py
 ==========================================================================================
-# PATH: apps/api/v1/internal/ai/views.py
+# ====================================================================================================
+# FILE: apps/domains/ai/views/internal_ai_job_view.py
+# ====================================================================================================
 from __future__ import annotations
 
-import logging
-from typing import Any
+from typing import Any, Dict, Optional
 
 from django.conf import settings
-from django.db import transaction
-from django.utils import timezone
-
-from rest_framework.decorators import (
-    api_view,
-    authentication_classes,
-    permission_classes,
-)
+from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from apps.domains.submissions.services.ai_result_router import (
-    apply_ai_result_for_submission,
-)
-from apps.domains.results.services.grading_service import grade_submission
-
-logger = logging.getLogger(__name__)
+from apps.shared.contracts.ai_job import AIJob as AIJobContract
+from apps.domains.ai.models import AIJobModel, AIResultModel
+from apps.domains.ai.queueing.db_queue import DBJobQueue
 
 
-def _http_400(detail: str, **extra: Any) -> Response:
-    body = {"detail": detail}
-    body.update(extra)
-    return Response(body, status=400)
-
-
-def _unauthorized() -> Response:
-    return Response({"detail": "unauthorized"}, status=401)
-
-
-def _check_worker_auth(request) -> bool:
-    token = request.headers.get("X-Worker-Token")
-    expected = getattr(settings, "INTERNAL_WORKER_TOKEN", None)
-    return bool(expected and token and token == expected)
-
-
-def _get_job_model():
-    from apps.domains.ai.models import AIJobModel
-    return AIJobModel
-
-
-@api_view(["GET"])
-@authentication_classes([])          # 🔥 DRF JWT 완전 비활성화
-@permission_classes([AllowAny])      # 🔥 권한 체크 스킵
-def next_ai_job_view(request):
-    """
-    GET /api/v1/internal/ai/next/
-    """
-    if not _check_worker_auth(request):
-        return _unauthorized()
-
-    AIJobModel = _get_job_model()
-
-    with transaction.atomic():
-        job = (
-            AIJobModel.objects.select_for_update(skip_locked=True)
-            .filter(status="PENDING")
-            .order_by("id")
-            .first()
-        )
-
-        if not job:
-            return Response({"job": None}, status=200)
-
-        job.status = "PROCESSING"
-        if hasattr(job, "started_at"):
-            job.started_at = timezone.now()
-        job.save()
-
+def _require_worker_auth(request) -> Optional[Response]:
+    expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
+    if not expected:
         return Response(
-            {
-                "job": {
-                    "job_id": job.job_id,
-                    "type": job.job_type,
-                    "source_domain": job.source_domain,
-                    "source_id": job.source_id,
-                    "payload": job.payload or {},
-                }
-            },
-            status=200,
+            {"detail": "INTERNAL_WORKER_TOKEN not configured"},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
+    token = request.headers.get("X-Worker-Token") or request.META.get("HTTP_X_WORKER_TOKEN") or ""
+    if str(token) != expected:
+        return Response({"detail": "Unauthorized worker"}, status=status.HTTP_401_UNAUTHORIZED)
+    return None
 
-@api_view(["POST"])
-@authentication_classes([])          # 🔥 DRF JWT 완전 비활성화
-@permission_classes([AllowAny])      # 🔥 권한 체크 스킵
-def submit_ai_result_view(request):
+
+def _worker_id(request) -> str:
+    return request.headers.get("X-Worker-Id") or request.META.get("HTTP_X_WORKER_ID") or "ai-worker"
+
+
+class InternalAIJobNextView(APIView):
     """
-    POST /api/v1/internal/ai/submit/
+    GET /api/v1/internal/ai/job/next/
+    response:
+      { "job": {...} } | { "job": null }
     """
-    if not _check_worker_auth(request):
-        return _unauthorized()
 
-    data = request.data if isinstance(request.data, dict) else {}
+    permission_classes = [AllowAny]
 
-    job_id = data.get("job_id")
-    submission_id = data.get("submission_id") or data.get("source_id")
-    status_str = data.get("status") or "DONE"
-    result = data.get("result")
-    error = data.get("error")
+    def get(self, request):
+        auth = _require_worker_auth(request)
+        if auth:
+            return auth
 
-    if not submission_id:
-        return _http_400("submission_id missing")
+        q = DBJobQueue()
+        claimed = q.claim(worker_id=_worker_id(request))
+        if not claimed:
+            return Response({"job": None}, status=status.HTTP_200_OK)
 
-    try:
-        submission_id_int = int(submission_id)
-    except Exception:
-        return _http_400("submission_id invalid", submission_id=submission_id)
+        job = AIJobContract.from_dict(
+            {
+                "id": claimed.job_id,
+                "type": claimed.job_type,
+                "payload": claimed.payload,
+                "tenant_id": claimed.tenant_id,
+                "source_domain": claimed.source_domain,
+                "source_id": claimed.source_id,
+            }
+        )
+        return Response({"job": job.to_dict()}, status=status.HTTP_200_OK)
 
-    outcome = apply_ai_result_for_submission(
-        submission_id=submission_id_int,
-        status=str(status_str),
-        result=result if isinstance(result, dict) else {},
-        error=str(error) if error else None,
-    )
 
-    graded_result_id = None
-    if outcome.should_grade:
-        r = grade_submission(submission_id_int)
-        graded_result_id = getattr(r, "id", None)
+class InternalAIJobResultView(APIView):
+    """
+    POST /api/v1/internal/ai/job/result/
+    payload:
+      {
+        "job_id": "...",
+        "status": "DONE" | "FAILED",
+        "result": {...} | null,
+        "error": "..." | null
+      }
+    """
 
-    if job_id:
-        AIJobModel = _get_job_model()
-        with transaction.atomic():
-            job = (
-                AIJobModel.objects.select_for_update(skip_locked=True)
-                .filter(job_id=str(job_id))
-                .first()
-            )
-            if job:
-                job.status = "FAILED" if str(status_str).upper() == "FAILED" else "DONE"
-                if hasattr(job, "finished_at"):
-                    job.finished_at = timezone.now()
-                job.save()
+    permission_classes = [AllowAny]
 
-    return Response(
-        {
-            "ok": True,
-            "submission_id": submission_id_int,
-            "should_grade": bool(outcome.should_grade),
-            "graded": bool(outcome.should_grade),
-            "exam_result_id": graded_result_id,
-            "detail": outcome.detail,
-        },
-        status=200,
-    )
+    def post(self, request):
+        auth = _require_worker_auth(request)
+        if auth:
+            return auth
+
+        data: Dict[str, Any] = request.data if isinstance(request.data, dict) else {}
+
+        job_id = data.get("job_id")
+        if not job_id:
+            return Response({"detail": "job_id required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        status_in = str(data.get("status") or "DONE").upper().strip()
+        if status_in not in ("DONE", "FAILED"):
+            return Response({"detail": "status must be DONE or FAILED"}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = data.get("result")
+        if result is not None and not isinstance(result, dict):
+            return Response({"detail": "result must be object or null"}, status=status.HTTP_400_BAD_REQUEST)
+
+        error = str(data.get("error") or "")
+
+        job = AIJobModel.objects.filter(job_id=str(job_id)).first()
+        if not job:
+            return Response({"detail": "job not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # idempotent: ignore duplicate result
+        if AIResultModel.objects.filter(job=job).exists():
+            return Response({"ok": True, "detail": "duplicate_ignored"}, status=status.HTTP_200_OK)
+
+        # store result fact
+        AIResultModel.objects.create(job=job, payload=(result or None))
+
+        q = DBJobQueue()
+        if status_in == "FAILED":
+            q.mark_failed(job_id=job.job_id, error=error or "failed", retryable=True)
+            return Response({"ok": True, "detail": "failed_recorded"}, status=status.HTTP_200_OK)
+
+        q.mark_done(job_id=job.job_id)
+        return Response({"ok": True, "detail": "done"}, status=status.HTTP_200_OK)
