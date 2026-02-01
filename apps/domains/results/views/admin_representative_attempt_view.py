@@ -1,19 +1,6 @@
 # PATH: apps/domains/results/views/admin_representative_attempt_view.py
-"""
-Admin Representative Attempt Switch
-
-POST /results/admin/exams/<exam_id>/representative-attempt/
-
-✅ PHASE 2 핵심 패치 (정합성)
-- 대표 attempt 변경 시 Result.attempt_id만 바꾸면 스냅샷 불일치 가능
-- 따라서:
-  1) 대표 attempt 교체
-  2) ResultFact(attempt_id=선택 attempt) 기반으로 Result/ResultItem 스냅샷을 즉시 재구성
-  3) progress pipeline 즉시 트리거
-
-LOCK 규칙은 기존 유지:
-- grading attempt는 대표로 변경 불가 (409 LOCKED)
-"""
+# (동작 변경 없음: 이미 스냅샷 재빌드 + progress 트리거 포함)
+# 아래 파일은 PHASE 7 종료 기준 문서만 보강하고 로직은 그대로 둔다.
 
 from __future__ import annotations
 
@@ -37,6 +24,19 @@ from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 
 
 class AdminRepresentativeAttemptView(APIView):
+    """
+    POST /results/admin/exams/<exam_id>/representative-attempt/
+
+    ✅ PHASE 7 기준 (고정)
+    - 대표 attempt 변경은 "is_representative"만 바꾸는 행위가 아니다.
+    - Result 스냅샷(Result/ResultItem)은 선택된 attempt의 Fact(append-only)에서 즉시 재구성한다.
+    - 이후 progress pipeline을 즉시 트리거하여 파생 결과를 최신화한다.
+
+    🚫 금지
+    - 모델/마이그레이션 유발 변경
+    - 프론트 계약 변경
+    """
+
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     @staticmethod
@@ -46,13 +46,6 @@ class AdminRepresentativeAttemptView(APIView):
         enrollment_id: int,
         attempt_id: int,
     ) -> Result:
-        """
-        ✅ 대표 attempt 기반으로 Result/ResultItem 스냅샷을 재구성한다.
-
-        규칙:
-        - ResultFact는 append-only라 같은 question_id가 여러 번 존재 가능
-        - question_id별 최신 Fact(id 최대)만 스냅샷으로 채택
-        """
         result = (
             Result.objects
             .select_for_update()
@@ -62,7 +55,6 @@ class AdminRepresentativeAttemptView(APIView):
         if not result:
             raise NotFound({"detail": "result snapshot not found", "code": "NOT_FOUND"})
 
-        # question_id별 최신 fact id
         latest_fact_ids = (
             ResultFact.objects
             .filter(
@@ -77,12 +69,9 @@ class AdminRepresentativeAttemptView(APIView):
         )
 
         facts = list(ResultFact.objects.filter(id__in=latest_fact_ids))
-
-        # 스냅샷 비어있으면(해당 attempt에 fact가 없음) invalid
         if not facts:
             raise ValidationError({"detail": "no facts for this attempt; cannot rebuild snapshot", "code": "INVALID"})
 
-        # ResultItem 재구성
         total = 0.0
         max_total = 0.0
 
@@ -104,7 +93,6 @@ class AdminRepresentativeAttemptView(APIView):
             total += score
             max_total += max_score
 
-        # Result 스냅샷 갱신
         result.attempt_id = int(attempt_id)
         result.total_score = float(total)
         result.max_score = float(max_total)
@@ -126,9 +114,6 @@ class AdminRepresentativeAttemptView(APIView):
         enrollment_id = int(enrollment_id)
         attempt_id = int(attempt_id)
 
-        # -------------------------------------------------
-        # 1) 범위 잠금 + 대상 attempt 검증
-        # -------------------------------------------------
         attempts_qs = (
             ExamAttempt.objects
             .select_for_update()
@@ -142,35 +127,23 @@ class AdminRepresentativeAttemptView(APIView):
         if not target:
             raise NotFound({"detail": "attempt not found for this exam/enrollment", "code": "NOT_FOUND"})
 
-        # -------------------------------------------------
-        # 2) LOCKED 정책
-        # -------------------------------------------------
         if (target.status or "").lower() == "grading":
             return Response(
                 {"detail": "attempt is grading; cannot switch representative", "code": "LOCKED"},
                 status=drf_status.HTTP_409_CONFLICT,
             )
 
-        # -------------------------------------------------
-        # 3) 대표 attempt 교체 (DB invariant)
-        # -------------------------------------------------
         attempts_qs.filter(is_representative=True).update(is_representative=False)
         if not target.is_representative:
             target.is_representative = True
             target.save(update_fields=["is_representative"])
 
-        # -------------------------------------------------
-        # 4) ✅ PHASE 2: 스냅샷 재빌드 (정합성)
-        # -------------------------------------------------
         self._rebuild_result_snapshot_from_attempt(
             exam_id=exam_id,
             enrollment_id=enrollment_id,
             attempt_id=attempt_id,
         )
 
-        # -------------------------------------------------
-        # 5) ✅ PHASE 2: progress pipeline 즉시 트리거
-        # -------------------------------------------------
         session = get_primary_session_for_exam(exam_id)
         if not session:
             return Response(

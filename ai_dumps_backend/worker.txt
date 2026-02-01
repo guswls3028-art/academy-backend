@@ -21,21 +21,20 @@
 ==========================================================================================
 # FILE: ai_worker/celery.py
 ==========================================================================================
-# apps/worker/ai_worker/celery.py
+# PATH: apps/worker/ai_worker/celery.py
+"""
+This project is queue-less.
 
-from celery import Celery
+Kept only to avoid breaking imports in legacy scripts.
+Do not add any queue/task dependencies here.
+"""
+from __future__ import annotations
 
-app = Celery("academy_ai")
+__all__ = ["get_app"]
 
-app.conf.broker_url = "redis://172.31.32.109:6379/0"
-app.conf.result_backend = "redis://172.31.32.109:6379/0"
 
-# 🤖 AI 전용
-app.autodiscover_tasks([
-    "apps.worker.ai_worker.ai",
-])
-
-print("🤖 AI Celery READY 🤖")
+def get_app():
+    return None
 
 
 ==========================================================================================
@@ -3842,3 +3841,281 @@ def validate_hls_output(root: Path, min_segments: int) -> None:
             raise RuntimeError(  # MODIFIED
                 f"HLS validation failed: {v} segments={len(segs)} min=1"  # MODIFIED
             )
+
+
+==========================================================================================
+# FILE: wrong_note_worker/README.md
+==========================================================================================
+# PATH: apps/worker/wrong_note_worker/README.md
+Wrong Note PDF Worker (HTTP polling)
+
+Required env:
+- API_BASE_URL=https://your-api
+- WORKER_TOKEN=... (must match settings.INTERNAL_WORKER_TOKEN or settings.WORKER_TOKEN)
+- WORKER_ID=wrong-note-worker-1
+
+Optional:
+- POLL_INTERVAL_SECONDS=2.0
+- HTTP_TIMEOUT_SECONDS=30.0
+- RETRY_MAX_ATTEMPTS=5
+- BACKOFF_BASE_SECONDS=1.5
+- PDF_MAX_ITEMS=200
+
+Run:
+  python -m apps.worker.wrong_note_worker.run
+
+
+==========================================================================================
+# FILE: wrong_note_worker/__init__.py
+==========================================================================================
+# PATH: apps/worker/wrong_note_worker/__init__.py
+# apps/worker/wrong_note_worker package
+
+
+==========================================================================================
+# FILE: wrong_note_worker/client.py
+==========================================================================================
+# PATH: apps/worker/wrong_note_worker/client.py
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+import requests
+
+
+class APIClient:
+    def __init__(self, *, api_base_url: str, worker_token: str, timeout_seconds: float) -> None:
+        self.api_base_url = api_base_url.rstrip("/")
+        self.worker_token = worker_token
+        self.timeout_seconds = float(timeout_seconds)
+
+    def _headers(self) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.worker_token}",
+            "Content-Type": "application/json",
+        }
+
+    def get_next_job(self) -> Dict[str, Any]:
+        url = f"{self.api_base_url}/api/v1/internal/wrong-note-worker/next/"
+        r = requests.get(url, headers=self._headers(), timeout=self.timeout_seconds)
+        r.raise_for_status()
+        return r.json()
+
+    def get_job_data(self, *, job_id: int) -> Dict[str, Any]:
+        url = f"{self.api_base_url}/api/v1/internal/wrong-note-worker/{int(job_id)}/data/"
+        r = requests.get(url, headers=self._headers(), timeout=self.timeout_seconds)
+        r.raise_for_status()
+        return r.json()
+
+    def prepare_upload(self, *, job_id: int) -> Dict[str, Any]:
+        url = f"{self.api_base_url}/api/v1/internal/wrong-note-worker/{int(job_id)}/prepare-upload/"
+        r = requests.post(url, headers=self._headers(), json={}, timeout=self.timeout_seconds)
+        r.raise_for_status()
+        return r.json()
+
+    def complete(self, *, job_id: int, file_path: str, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        url = f"{self.api_base_url}/api/v1/internal/wrong-note-worker/{int(job_id)}/complete/"
+        payload: Dict[str, Any] = {"file_path": str(file_path)}
+        if meta is not None:
+            payload["meta"] = meta
+        r = requests.post(url, headers=self._headers(), json=payload, timeout=self.timeout_seconds)
+        r.raise_for_status()
+        return r.json()
+
+    def fail(self, *, job_id: int, error_message: str) -> Dict[str, Any]:
+        url = f"{self.api_base_url}/api/v1/internal/wrong-note-worker/{int(job_id)}/fail/"
+        r = requests.post(
+            url,
+            headers=self._headers(),
+            json={"error_message": str(error_message)[:5000]},
+            timeout=self.timeout_seconds,
+        )
+        r.raise_for_status()
+        return r.json()
+
+
+==========================================================================================
+# FILE: wrong_note_worker/config.py
+==========================================================================================
+# PATH: apps/worker/wrong_note_worker/config.py
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+
+def _require(name: str) -> str:
+    v = os.environ.get(name)
+    if not v:
+        raise RuntimeError(f"Missing required env: {name}")
+    return v
+
+
+def _float(name: str, default: str) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except Exception:
+        return float(default)
+
+
+def _int(name: str, default: str) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except Exception:
+        return int(default)
+
+
+@dataclass(frozen=True)
+class Config:
+    # API
+    API_BASE_URL: str
+    WORKER_TOKEN: str
+    WORKER_ID: str
+
+    # Polling / retry
+    POLL_INTERVAL_SECONDS: float
+    HTTP_TIMEOUT_SECONDS: float
+    RETRY_MAX_ATTEMPTS: int
+    BACKOFF_BASE_SECONDS: float
+
+    # PDF
+    PDF_MAX_ITEMS: int
+
+
+def load_config() -> Config:
+    return Config(
+        API_BASE_URL=_require("API_BASE_URL").rstrip("/"),
+        WORKER_TOKEN=_require("WORKER_TOKEN"),
+        WORKER_ID=os.environ.get("WORKER_ID", "wrong-note-worker-1"),
+
+        POLL_INTERVAL_SECONDS=_float("POLL_INTERVAL_SECONDS", "2.0"),
+        HTTP_TIMEOUT_SECONDS=_float("HTTP_TIMEOUT_SECONDS", "30.0"),
+        RETRY_MAX_ATTEMPTS=_int("RETRY_MAX_ATTEMPTS", "5"),
+        BACKOFF_BASE_SECONDS=_float("BACKOFF_BASE_SECONDS", "1.5"),
+
+        PDF_MAX_ITEMS=_int("PDF_MAX_ITEMS", "200"),
+    )
+
+
+==========================================================================================
+# FILE: wrong_note_worker/run.py
+==========================================================================================
+# PATH: apps/worker/wrong_note_worker/run.py
+from __future__ import annotations
+
+import os
+import time
+import json
+import math
+import logging
+import traceback
+from typing import Any, Dict
+
+import requests
+
+from apps.worker.wrong_note_worker.config import load_config
+from apps.worker.wrong_note_worker.client import APIClient
+from apps.worker.wrong_note_worker.pdf_render import render_wrong_note_pdf
+
+
+logger = logging.getLogger("wrong_note_worker")
+
+
+def _sleep_backoff(base: float, attempt: int) -> None:
+    # exponential backoff with cap
+    sec = min(base * (2 ** max(attempt - 1, 0)), 30.0)
+    time.sleep(sec)
+
+
+def _upload_pdf(*, upload_url: str, pdf_bytes: bytes, timeout_seconds: float) -> None:
+    # NOTE:
+    # - 서버 presign이 Content-Type을 서명에 포함했으므로 동일하게 맞춘다.
+    headers = {"Content-Type": "application/pdf"}
+    r = requests.put(upload_url, data=pdf_bytes, headers=headers, timeout=timeout_seconds)
+    r.raise_for_status()
+
+
+def main() -> None:
+    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+
+    cfg = load_config()
+    api = APIClient(
+        api_base_url=cfg.API_BASE_URL,
+        worker_token=cfg.WORKER_TOKEN,
+        timeout_seconds=cfg.HTTP_TIMEOUT_SECONDS,
+    )
+
+    logger.info("WrongNoteWorker READY | worker_id=%s | api=%s", cfg.WORKER_ID, cfg.API_BASE_URL)
+
+    while True:
+        try:
+            payload = api.get_next_job()
+            if not payload.get("has_job"):
+                time.sleep(cfg.POLL_INTERVAL_SECONDS)
+                continue
+
+            job = payload.get("job") or {}
+            job_id = int(job.get("job_id"))
+
+            logger.info("JOB picked | job_id=%s", job_id)
+
+            # 1) fetch data
+            data = api.get_job_data(job_id=job_id)
+            filters = data.get("filters") or {}
+            items = data.get("items") or []
+
+            # 2) render pdf
+            title = f"Wrong Notes (job_id={job_id})"
+            pdf_bytes = render_wrong_note_pdf(
+                title=title,
+                filters=filters,
+                items=items,
+                max_items=cfg.PDF_MAX_ITEMS,
+            )
+
+            # 3) presign upload
+            up = api.prepare_upload(job_id=job_id)
+            upload_url = up.get("upload_url")
+            file_key = up.get("file_key") or ""
+
+            if not upload_url or not file_key:
+                raise RuntimeError("prepare_upload returned empty upload_url/file_key")
+
+            # 4) upload
+            _upload_pdf(upload_url=upload_url, pdf_bytes=pdf_bytes, timeout_seconds=cfg.HTTP_TIMEOUT_SECONDS)
+
+            # 5) complete
+            api.complete(job_id=job_id, file_path=str(file_key), meta={
+                "items_count": int(len(items)),
+                "generated_at": time.time(),
+            })
+
+            logger.info("JOB done | job_id=%s | file_key=%s", job_id, file_key)
+
+        except Exception as e:
+            # best-effort: if we know job_id, report fail
+            job_id = None
+            try:
+                # attempt to parse job_id from last logs/context is not reliable;
+                # leave as None unless explicitly set above.
+                pass
+            except Exception:
+                pass
+
+            logger.error("Worker loop error: %s", e)
+            logger.debug(traceback.format_exc())
+
+            # If a job_id is known in this scope, report fail.
+            # (In this implementation, job_id is local to the try-block after pick.
+            #  If exception occurs after pick, it will still be available.)
+            try:
+                if "job_id" in locals() and locals().get("job_id") is not None:
+                    api.fail(job_id=int(locals()["job_id"]), error_message=str(e))
+            except Exception:
+                logger.error("Failed to report job fail")
+
+            time.sleep(cfg.POLL_INTERVAL_SECONDS)
+
+
+if __name__ == "__main__":
+    main()

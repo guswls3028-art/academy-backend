@@ -1,22 +1,22 @@
-# apps/api/celery.py
+# PATH: apps/api/celery.py
+"""
+Project intentionally runs with **no task queue**.
 
-import os
-from celery import Celery
+This module exists only because some deployments/tools may still import it.
+Do not add any third-party queue/task dependencies here.
+"""
+from __future__ import annotations
 
-app = Celery("academy_api")
+# NOTE:
+# - Keep this file import-safe.
+# - Do not import task queue libraries.
+# - If something imports `apps.api.celery`, it should not crash.
 
-app.config_from_object(
-    "django.conf:settings",
-    namespace="CELERY",
-)
+__all__ = ["get_app"]
 
-app.conf.worker_state_db = None
 
-# 🔒 API에서 필요한 것만
-app.autodiscover_tasks([
-    "apps.domains.progress.tasks",
-    "apps.domains.results.tasks",
-])
-
-print("🔥 API Celery READY 🔥")
-
+def get_app():
+    """
+    Compatibility hook. Returns None because the project is queue-less.
+    """
+    return None

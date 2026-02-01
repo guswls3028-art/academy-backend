@@ -1,68 +1,20 @@
-# apps/domains/submissions/services/dispatcher.py
 from __future__ import annotations
 
-import redis
-import json
-from django.conf import settings
+import logging
+from typing import Any, Dict, Optional
+
+from django.db import transaction
 
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.submission_service import SubmissionService
-from apps.domains.results.tasks.grading_tasks import grade_submission_task
-from apps.shared.contracts.ai_job import AIJob
-from apps.infrastructure.storage.r2 import generate_presigned_get_url
-
-# ✅ exams 도메인에서 문항 메타 제공
 from apps.domains.exams.models import ExamQuestion, Sheet
 from apps.domains.assets.omr.services.meta_generator import build_objective_template_meta
+from apps.infrastructure.storage.r2 import generate_presigned_get_url
+from apps.domains.ai.gateway import dispatch_job
+from apps.domains.results.services.grading_service import grade_submission
+from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 
-AI_QUEUE_KEY = "ai:jobs"
-
-
-def _redis():
-    return redis.from_url(settings.REDIS_URL, decode_responses=True)
-
-
-def dispatch_submission(submission: Submission) -> None:
-    """
-    Submission 생성 직후 호출되는 유일한 진입점
-    """
-
-    # ✅ idempotency 보호
-    if submission.status in (
-        Submission.Status.DISPATCHED,
-        Submission.Status.EXTRACTING,
-        Submission.Status.ANSWERS_READY,
-        Submission.Status.GRADING,
-        Submission.Status.DONE,
-    ):
-        return
-
-    # 1) ONLINE 제출
-    if submission.source == Submission.Source.ONLINE:
-        SubmissionService.process(submission)
-        grade_submission_task.delay(int(submission.id))
-        return
-
-    # 2) FILE 제출
-    if not submission.file_key:
-        submission.status = Submission.Status.FAILED
-        submission.error_message = "file_key missing"
-        submission.save(update_fields=["status", "error_message"])
-        return
-
-    submission.status = Submission.Status.DISPATCHED
-    submission.error_message = ""
-    submission.save(update_fields=["status", "error_message"])
-
-    job = AIJob.new(
-        type=_infer_ai_job_type(submission),
-        source_domain="submissions",
-        source_id=str(submission.id),
-        payload=_build_ai_payload(submission),
-    )
-
-    r = _redis()
-    r.lpush(AI_QUEUE_KEY, job.to_json())
+logger = logging.getLogger(__name__)
 
 
 def _infer_ai_job_type(submission: Submission) -> str:
@@ -75,39 +27,33 @@ def _infer_ai_job_type(submission: Submission) -> str:
     return "ocr"
 
 
-def _build_ai_payload(submission: Submission) -> dict:
+def _safe_int(v: Any) -> Optional[int]:
+    try:
+        return int(v) if v is not None else None
+    except Exception:
+        return None
+
+
+def _build_ai_payload(submission: Submission) -> Dict[str, Any]:
     payload = dict(submission.payload or {})
+    sheet_id = _safe_int(payload.get("sheet_id"))
 
-    # mode normalize
-    mode = str(payload.get("mode") or "auto").lower()
-    if mode not in ("scan", "photo", "auto"):
-        mode = "auto"
-
-    sheet_id = None
-    if isinstance(payload.get("sheet_id"), int):
-        sheet_id = int(payload["sheet_id"])
-    elif payload.get("sheet_id") is not None:
-        try:
-            sheet_id = int(payload.get("sheet_id"))
-        except Exception:
-            sheet_id = None
-
-    # -------------------------------------------------
-    # 문항 목록 구성
-    # -------------------------------------------------
-    questions_payload = []
+    questions = []
     if sheet_id:
-        qs = ExamQuestion.objects.filter(sheet_id=sheet_id).order_by("number")
-        for q in qs:
-            region_meta = getattr(q, "region_meta", None) or getattr(q, "meta", None) or None
-
-            questions_payload.append(
+        for q in ExamQuestion.objects.filter(sheet_id=sheet_id).order_by("number"):
+            questions.append(
                 {
-                    "exam_question_id": int(q.id),
-                    "number": int(getattr(q, "number", 0) or 0),
-                    "region_meta": region_meta,
+                    "exam_question_id": q.id,
+                    "number": q.number,
+                    "region_meta": getattr(q, "region_meta", None),
                 }
             )
+
+    download_url = (
+        generate_presigned_get_url(submission.file_key, 3600)
+        if submission.file_key
+        else None
+    )
 
     payload.update(
         {
@@ -115,33 +61,50 @@ def _build_ai_payload(submission: Submission) -> dict:
             "target_type": submission.target_type,
             "target_id": submission.target_id,
             "file_key": submission.file_key,
-            "download_url": generate_presigned_get_url(
-                key=submission.file_key,
-                expires_in=3600,
-            ),
-            "omr": {"sheet_id": sheet_id},
-            "questions": questions_payload,
+            "download_url": download_url,
+            "questions": questions,
         }
     )
 
-    # -------------------------------------------------
-    # ✅ OMR v1 meta injection
-    # -------------------------------------------------
     if submission.source == Submission.Source.OMR_SCAN and sheet_id:
-        try:
-            sh = Sheet.objects.filter(id=int(sheet_id)).first()
-            qc = int(getattr(sh, "total_questions", 0) or 0)
-        except Exception:
-            qc = 0
-
-        if qc in (10, 20, 30):
-            try:
-                payload["question_count"] = qc
-                payload["mode"] = mode
-                payload["template_meta"] = build_objective_template_meta(question_count=qc)
-            except Exception:
-                payload["mode"] = mode
-        else:
-            payload["mode"] = mode
+        sh = Sheet.objects.filter(id=sheet_id).first()
+        if sh and sh.total_questions in (10, 20, 30):
+            payload["question_count"] = sh.total_questions
+            payload["template_meta"] = build_objective_template_meta(
+                question_count=sh.total_questions
+            )
 
     return payload
+
+
+@transaction.atomic
+def dispatch_submission(submission: Submission) -> None:
+    if submission.status != Submission.Status.SUBMITTED:
+        return
+
+    if submission.source == Submission.Source.ONLINE:
+        SubmissionService.process(submission)
+        submission.status = Submission.Status.GRADING
+        submission.save(update_fields=["status", "updated_at"])
+        grade_submission(submission.id)
+        dispatch_progress_pipeline(submission_id=submission.id)
+        submission.status = Submission.Status.DONE
+        submission.save(update_fields=["status", "updated_at"])
+        return
+
+    if not submission.file_key:
+        submission.status = Submission.Status.FAILED
+        submission.error_message = "file_key missing"
+        submission.save(update_fields=["status", "error_message", "updated_at"])
+        return
+
+    submission.status = Submission.Status.DISPATCHED
+    submission.error_message = ""
+    submission.save(update_fields=["status", "error_message", "updated_at"])
+
+    dispatch_job(
+        job_type=_infer_ai_job_type(submission),
+        payload=_build_ai_payload(submission),
+        source_domain="submissions",
+        source_id=str(submission.id),
+    )

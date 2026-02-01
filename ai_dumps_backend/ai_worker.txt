@@ -13,21 +13,20 @@
 ==========================================================================================
 # FILE: celery.py
 ==========================================================================================
-# apps/worker/ai_worker/celery.py
+# PATH: apps/worker/ai_worker/celery.py
+"""
+This project is queue-less.
 
-from celery import Celery
+Kept only to avoid breaking imports in legacy scripts.
+Do not add any queue/task dependencies here.
+"""
+from __future__ import annotations
 
-app = Celery("academy_ai")
+__all__ = ["get_app"]
 
-app.conf.broker_url = "redis://172.31.32.109:6379/0"
-app.conf.result_backend = "redis://172.31.32.109:6379/0"
 
-# 🤖 AI 전용
-app.autodiscover_tasks([
-    "apps.worker.ai_worker.ai",
-])
-
-print("🤖 AI Celery READY 🤖")
+def get_app():
+    return None
 
 
 ==========================================================================================

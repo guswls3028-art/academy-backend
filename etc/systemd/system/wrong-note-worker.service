@@ -1,0 +1,51 @@
+# PATH: /etc/systemd/system/wrong-note-worker.service
+[Unit]
+Description=Wrong Note PDF Worker (HTTP Polling)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/academy
+
+# ---- Environment (필수) ----
+Environment=API_BASE_URL=https://your-api.example.com
+Environment=WORKER_TOKEN=REPLACE_WITH_INTERNAL_WORKER_TOKEN
+Environment=WORKER_ID=wrong-note-worker-1
+
+# ---- Environment (옵션) ----
+Environment=POLL_INTERVAL_SECONDS=2.0
+Environment=HTTP_TIMEOUT_SECONDS=30.0
+Environment=RETRY_MAX_ATTEMPTS=5
+Environment=BACKOFF_BASE_SECONDS=1.5
+Environment=PDF_MAX_ITEMS=200
+Environment=LOG_LEVEL=INFO
+
+# ---- Python ----
+ExecStart=/home/ubuntu/academy/venv/bin/python -m apps.worker.wrong_note_worker.run
+Restart=always
+RestartSec=3
+
+# 로그는 journalctl로 확인
+StandardOutput=journal
+StandardError=journal
+
+# 보안 옵션(권장)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+
+
+
+sudo systemctl daemon-reload
+sudo systemctl enable wrong-note-worker
+sudo systemctl start wrong-note-worker
+sudo systemctl status wrong-note-worker
+
+journalctl -u wrong-note-worker -f

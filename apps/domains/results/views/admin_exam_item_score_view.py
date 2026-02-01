@@ -1,19 +1,6 @@
 # PATH: apps/domains/results/views/admin_exam_item_score_view.py
-"""
-Admin Manual Grading - Subjective Question Score
-
-PATCH /results/admin/exams/{exam_id}/enrollments/{enrollment_id}/items/{question_id}/
-
-✅ PHASE 2 핵심 패치
-- PATCH 성공 시 backend는 즉시:
-  - (이미 수행) ResultItem + ResultFact + Result.total_score 재계산
-  - (추가) progress pipeline을 즉시 트리거한다.
-    -> SessionProgress / LectureProgress / Risk / ClinicLink 최신화
-
-⚠️ progress pipeline은 submission_id 기반이므로,
-- 해당 enrollment + (exam에 연결된 대표 session) 기준 최신 Submission을 찾아 트리거한다.
-- Submission이 없으면 즉시성 계약을 지킬 수 없으므로 409 반환한다.
-"""
+# (동작 변경 없음: 이미 progress 트리거 포함)
+# 아래 파일은 "PHASE 7 종료 기준" 문서만 보강하고 로직은 그대로 둔다.
 
 from __future__ import annotations
 
@@ -36,6 +23,19 @@ from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 
 
 class AdminExamItemScoreView(APIView):
+    """
+    PATCH /results/admin/exams/{exam_id}/enrollments/{enrollment_id}/items/{question_id}/
+
+    ✅ PHASE 7 기준 (고정)
+    - 수동 채점은 ResultFact(append-only) + ResultItem 스냅샷 갱신으로 기록한다.
+    - total_score/max_score는 ResultItem 합으로 재계산한다.
+    - 변경 즉시 progress pipeline을 트리거하여 SessionProgress/ClinicLink 등 파생 결과를 최신화한다.
+
+    🚫 금지
+    - 모델/마이그레이션 유발 변경
+    - 프론트 계약 변경
+    """
+
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     @transaction.atomic
@@ -157,7 +157,7 @@ class AdminExamItemScoreView(APIView):
         result.save(update_fields=["total_score", "max_score"])
 
         # -------------------------------------------------
-        # 7️⃣ ✅ PHASE 2: progress pipeline 즉시 트리거
+        # 7️⃣ progress pipeline 즉시 트리거
         # -------------------------------------------------
         session = get_primary_session_for_exam(exam_id)
         if not session:

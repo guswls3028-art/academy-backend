@@ -1,8 +1,3 @@
-# PATH: apps/domains/submissions/models/submission.py
-# 변경 요약:
-# - FileField 제거
-# - R2 기반 file_key / file_type 필드 추가
-
 from __future__ import annotations
 
 from django.db import models
@@ -11,11 +6,6 @@ from apps.api.common.models import TimestampModel
 
 
 class Submission(TimestampModel):
-    """
-    submissions = 제출 행위 + 원본 메타
-    - 파일은 Object Storage(R2)에만 존재
-    """
-
     class TargetType(models.TextChoices):
         EXAM = "exam", "Exam"
         HOMEWORK = "homework", "Homework"
@@ -37,6 +27,18 @@ class Submission(TimestampModel):
         DONE = "done", "Done"
         FAILED = "failed", "Failed"
 
+    STATUS_FLOW = {
+        Status.SUBMITTED: {Status.DISPATCHED},
+        Status.DISPATCHED: {Status.EXTRACTING, Status.ANSWERS_READY},
+        Status.ANSWERS_READY: {Status.GRADING},
+        Status.GRADING: {Status.DONE, Status.FAILED},
+        Status.FAILED: {Status.SUBMITTED},
+    }
+
+    @classmethod
+    def can_transit(cls, from_status: str, to_status: str) -> bool:
+        return to_status in cls.STATUS_FLOW.get(from_status, set())
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -50,7 +52,6 @@ class Submission(TimestampModel):
 
     source = models.CharField(max_length=30, choices=Source.choices)
 
-    # ✅ R2 기준 파일 메타
     file_key = models.CharField(max_length=512, null=True, blank=True)
     file_type = models.CharField(max_length=50, null=True, blank=True)
     file_size = models.PositiveIntegerField(null=True, blank=True)

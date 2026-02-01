@@ -1,10 +1,13 @@
+# PATH: apps/domains/submissions/views/submission_view.py
+from __future__ import annotations
+
+from django.utils import timezone
+
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-
-from django.utils import timezone
 
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.submissions.serializers.submission import (
@@ -12,11 +15,10 @@ from apps.domains.submissions.serializers.submission import (
     SubmissionCreateSerializer,
 )
 from apps.domains.submissions.services.dispatcher import dispatch_submission
-from apps.domains.results.tasks.grading_tasks import grade_submission_task
+from apps.domains.results.services.grading_service import grade_submission
 
 
 class SubmissionViewSet(ModelViewSet):
-
     queryset = Submission.objects.all().order_by("-id")
     permission_classes = [IsAuthenticated]
 
@@ -31,8 +33,7 @@ class SubmissionViewSet(ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def retry(self, request, pk=None):
-
-        submission = self.get_object()
+        submission: Submission = self.get_object()
 
         if submission.status != Submission.Status.FAILED:
             return Response(
@@ -42,7 +43,7 @@ class SubmissionViewSet(ModelViewSet):
 
         submission.status = Submission.Status.SUBMITTED
         submission.error_message = ""
-        submission.save(update_fields=["status", "error_message"])
+        submission.save(update_fields=["status", "error_message", "updated_at"])
 
         dispatch_submission(submission)
 
@@ -53,12 +54,8 @@ class SubmissionViewSet(ModelViewSet):
             }
         )
 
-    # ============================================================
-    # ✅ 수동 수정 + 재채점
-    # ============================================================
     @action(detail=True, methods=["post"], url_path="manual-edit")
     def manual_edit(self, request, pk=None):
-
         submission: Submission = self.get_object()
 
         if submission.status == Submission.Status.GRADING:
@@ -109,15 +106,27 @@ class SubmissionViewSet(ModelViewSet):
         submission.meta = meta
         submission.status = Submission.Status.ANSWERS_READY
         submission.error_message = ""
-
         submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
 
-        grade_submission_task.delay(int(submission.id))
+        try:
+            result_obj = grade_submission(int(submission.id))
+        except Exception:
+            return Response(
+                {
+                    "submission_id": submission.id,
+                    "status": submission.status,
+                    "updated": updated,
+                    "detail": "grading failed",
+                },
+                status=500,
+            )
 
         return Response(
             {
                 "submission_id": submission.id,
                 "status": submission.status,
                 "updated": updated,
+                "graded": True,
+                "result_id": getattr(result_obj, "id", None),
             }
         )

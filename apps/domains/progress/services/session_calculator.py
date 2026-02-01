@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import Count
 
 from apps.domains.progress.models import SessionProgress, ProgressPolicy
 from apps.domains.lectures.models import Session
@@ -44,9 +45,6 @@ class SessionProgressCalculator:
         )
         return policy
 
-    # -----------------------------
-    # helpers
-    # -----------------------------
     @staticmethod
     def _pick_latest(results: List[Result]) -> Optional[Result]:
         if not results:
@@ -67,9 +65,6 @@ class SessionProgressCalculator:
         except Exception:
             return default
 
-    # -----------------------------
-    # Exam aggregate logic
-    # -----------------------------
     @classmethod
     def _aggregate_exam_results(
         cls,
@@ -78,17 +73,8 @@ class SessionProgressCalculator:
         session: Session,
         policy: ProgressPolicy,
     ) -> Tuple[bool, Optional[float], bool, Dict[str, Any]]:
-        """
-        반환:
-          exam_attempted, aggregate_score, exam_passed, exam_meta
-
-        ✅ 정합성 포인트:
-        - exam_ids는 반드시 단일 모듈(session_exam)로부터 얻는다.
-        - Result가 없으면 attempted=False (미응시)로 처리.
-        """
         exam_ids = get_exam_ids_for_session(session)
 
-        # 시험이 없는 session은 progress상 시험 통과로 취급 (비대상 주차)
         if not exam_ids:
             meta = {
                 "strategy": str(policy.exam_aggregate_strategy),
@@ -98,7 +84,6 @@ class SessionProgressCalculator:
             }
             return False, None, True, meta
 
-        # 대표 스냅샷 Result 조회
         results = list(
             Result.objects.filter(
                 target_type="exam",
@@ -107,7 +92,6 @@ class SessionProgressCalculator:
             )
         )
 
-        # Result가 하나도 없으면 미응시
         if not results:
             meta = {
                 "strategy": str(policy.exam_aggregate_strategy),
@@ -130,43 +114,46 @@ class SessionProgressCalculator:
 
         exam_attempted = True
 
-        # exam별 pass_score 로딩 (EXAM pass_source 대응)
         exams = {e.id: e for e in Exam.objects.filter(id__in=[int(x) for x in exam_ids])}
 
-        # attempt_count는 ExamAttempt에서 계산 (Result만으론 신뢰 불가)
+        # ✅ Attempt count is authoritative from ExamAttempt
         attempt_counts = {
-            row["exam_id"]: int(row["cnt"] or 0)
+            int(row["exam_id"]): int(row["cnt"] or 0)
             for row in (
                 ExamAttempt.objects.filter(
                     exam_id__in=[int(x) for x in exam_ids],
                     enrollment_id=int(enrollment_id),
                 )
                 .values("exam_id")
-                .annotate(cnt=transaction.models.Count("id"))  # type: ignore
+                .annotate(cnt=Count("id"))
             )
         }
-        # 위 annotate는 환경에 따라 import 경로가 다를 수 있어 아래 fallback 제공
-        # (실제로는 from django.db.models import Count 로 쓰는게 정석)
-        # 하지만 이 파일 단독 복붙 상황을 고려해 try/except로 방어도 가능.
 
         per_exam_rows: List[Dict[str, Any]] = []
         for r in results:
             ex = exams.get(int(r.target_id))
+
             exam_pass_score = cls._safe_float(getattr(ex, "pass_score", None), default=0.0) if ex else 0.0
             policy_pass_score = cls._safe_float(getattr(policy, "exam_pass_score", 0.0), default=0.0)
 
-            pass_score = policy_pass_score if policy.exam_pass_source == ProgressPolicy.ExamPassSource.POLICY else exam_pass_score
+            pass_score = (
+                policy_pass_score
+                if policy.exam_pass_source == ProgressPolicy.ExamPassSource.POLICY
+                else exam_pass_score
+            )
             score = cls._safe_float(r.total_score, default=0.0)
 
-            per_exam_rows.append({
-                "exam_id": int(r.target_id),
-                "score": score,
-                "max_score": cls._safe_float(r.max_score, default=0.0),
-                "pass_score": float(pass_score),
-                "passed": bool(score >= float(pass_score)),
-                "submitted_at": r.submitted_at,
-                "attempt_count": int(attempt_counts.get(int(r.target_id), 0)),
-            })
+            per_exam_rows.append(
+                {
+                    "exam_id": int(r.target_id),
+                    "score": score,
+                    "max_score": cls._safe_float(r.max_score, default=0.0),
+                    "pass_score": float(pass_score),
+                    "passed": bool(score >= float(pass_score)),
+                    "submitted_at": r.submitted_at,
+                    "attempt_count": int(attempt_counts.get(int(r.target_id), 0)),
+                }
+            )
 
         strategy = policy.exam_aggregate_strategy
 
@@ -194,12 +181,17 @@ class SessionProgressCalculator:
                 aggregate_score = 0.0
                 selected_pass_score = cls._safe_float(policy.exam_pass_score, 0.0)
             else:
-                row = next((x for x in per_exam_rows if int(x["exam_id"]) == int(latest.target_id)), None)
+                row = next(
+                    (x for x in per_exam_rows if int(x["exam_id"]) == int(latest.target_id)),
+                    None,
+                )
                 aggregate_score = cls._safe_float(latest.total_score, 0.0)
-                selected_pass_score = cls._safe_float(row.get("pass_score") if row else policy.exam_pass_score, 0.0)
+                selected_pass_score = cls._safe_float(
+                    (row.get("pass_score") if row else policy.exam_pass_score),
+                    0.0,
+                )
 
         else:
-            # 안전 fallback: MAX
             best = max(per_exam_rows, key=lambda x: cls._safe_float(x.get("score"), 0.0))
             aggregate_score = cls._safe_float(best.get("score"), 0.0)
             selected_pass_score = cls._safe_float(best.get("pass_score"), 0.0)
@@ -215,9 +207,6 @@ class SessionProgressCalculator:
 
         return True, aggregate_score, exam_passed, meta
 
-    # -----------------------------
-    # Main calculate
-    # -----------------------------
     @staticmethod
     def calculate(
         *,
@@ -228,12 +217,6 @@ class SessionProgressCalculator:
         homework_submitted: bool = False,
         homework_teacher_approved: bool = False,
     ) -> SessionProgress:
-        """
-        외부 도메인 값들을 받아서 SessionProgress를 계산/업데이트
-
-        ✅ 시험은 Result 기반 집계로만 계산한다.
-        """
-
         policy = SessionProgressCalculator._get_or_create_policy(session)
 
         obj, _ = SessionProgress.objects.get_or_create(

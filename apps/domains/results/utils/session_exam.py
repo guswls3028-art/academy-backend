@@ -27,14 +27,8 @@ def _has_relation(model, name: str) -> bool:
 def get_exams_for_session(session: Session) -> QuerySet[Exam]:
     """
     ✅ 단일 진실: Session에 연결된 Exam queryset 반환
-
-    원칙:
-    - 앞으로 'Session ↔ Exam 관계 해석'은 이 함수로만 한다.
-    - 어떤 API에서도 다음을 직접 쓰지 말 것:
-        session.exams / Exam.objects.filter(sessions__id=...) / Session.objects.filter(exams__id=...)
-      → 파일마다 다르게 구현되며 "화면마다 결과 다름" 버그의 원인.
     """
-    # 1) Session.exams (M2M) - 가장 canonical
+    # 1) Session.exams (M2M)
     if _has_relation(Session, "exams") and hasattr(session, "exams"):
         try:
             return session.exams.all()
@@ -46,22 +40,16 @@ def get_exams_for_session(session: Session) -> QuerySet[Exam]:
         return Exam.objects.filter(sessions__id=int(session.id)).distinct()
 
     # 3) Legacy fallback: Session.exam (FK)
-    #    (이미 1:N으로 리팩토링 했다고 했으니, 운영에서 없어도 무방하지만
-    #     개발/마이그레이션 중 섞여 있을 수 있어 방어적으로 유지)
     exam_id = getattr(session, "exam_id", None)
     if exam_id:
         return Exam.objects.filter(id=int(exam_id))
 
-    # 4) 못 찾으면 empty
     return Exam.objects.none()
 
 
 def get_exam_ids_for_session(session: Session) -> List[int]:
     """
     ✅ Session -> exam_id list
-
-    - 통계/집계에서 리스트가 필요할 때 사용.
-    - queryset 대신 list[int]로 고정해서 호출측의 중복/오해를 줄임.
     """
     return list(get_exams_for_session(session).values_list("id", flat=True))
 
@@ -72,11 +60,6 @@ def get_exam_ids_for_session(session: Session) -> List[int]:
 def get_sessions_for_exam(exam_id: int) -> QuerySet[Session]:
     """
     ✅ 단일 진실: 특정 exam_id가 속한 Session queryset 반환
-
-    (세션 1 : 시험 N 구조)
-    - Session.exams(M2M)가 있으면 그걸 우선 사용
-    - 없으면 Exam.sessions reverse 사용
-    - 마지막으로 legacy Session.exam FK fallback
     """
     exam_id = int(exam_id)
 
@@ -97,17 +80,12 @@ def get_sessions_for_exam(exam_id: int) -> QuerySet[Session]:
 
 def get_primary_session_for_exam(exam_id: int) -> Optional[Session]:
     """
-    ✅ '대표 session'이 필요할 때 사용 (예: legacy API)
-
-    정책:
-    - 여러 session이 걸릴 수 있으면 order가 가장 작은(빠른) session을 우선 반환.
-    - order 필드가 없거나 정렬 실패 시 그냥 first().
+    ✅ 대표 session 반환
     """
     qs = get_sessions_for_exam(int(exam_id))
     if not qs.exists():
         return None
 
-    # order가 존재할 가능성이 높음(lecture session order)
     if hasattr(Session, "order"):
         try:
             return qs.order_by("order", "id").first()
@@ -115,3 +93,20 @@ def get_primary_session_for_exam(exam_id: int) -> Optional[Session]:
             pass
 
     return qs.order_by("id").first()
+
+
+# ---------------------------------------------------------------------
+# ✅ NEW: Canonical API (ProgressPipeline용)
+# ---------------------------------------------------------------------
+def get_session_ids_for_exam(exam_id: int) -> List[int]:
+    """
+    ✅ Exam -> session_id list (SSOT)
+
+    - Progress / Result / 통계 / 알림 등에서
+      "시험 결과 → 어떤 차시를 갱신해야 하는가"를
+      판단할 때 사용하는 **유일한 함수**
+    """
+    return list(
+        get_sessions_for_exam(int(exam_id))
+        .values_list("id", flat=True)
+    )

@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from apps.shared.contracts.ai_job import AIJob
 from apps.domains.ai.types import ensure_payload_dict, AIJobType
 from apps.domains.ai.safe import safe_dispatch
-from apps.domains.ai.publisher import publish_job
+from apps.domains.ai.queueing.publisher import publish_job
 from apps.domains.ai.models import AIJobModel
 
 

@@ -25,73 +25,155 @@ class ExamsConfig(AppConfig):
 ==========================================================================================
 # FILE: urls.py
 ==========================================================================================
-# PATH: apps/domains/exams/urls.py
+# apps/domains/results/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
-from .views.exam_view import ExamViewSet
-from .views.sheet_view import SheetViewSet
-from .views.question_view import QuestionViewSet
-from .views.answer_key_view import AnswerKeyViewSet
-from .views.question_auto_view import SheetAutoQuestionsView
-from .views.exam_asset_view import ExamAssetView
-from .views.exam_questions_by_exam_view import ExamQuestionsByExamView
-from .views.exam_enrollment_view import ExamEnrollmentManageView
-from .views.student_exam_view import StudentAvailableExamListView
+from apps.domains.results.views import (
+    MyExamResultView,
+    WrongNoteView,
+    AdminExamResultsView,
+    AdminExamSummaryView,
+)
 
-from .views.template_builder_view import TemplateBuilderView
-from .views.template_status_view import TemplateStatusView
-from .views.template_editor_view import TemplateEditorView
-from .views.template_validation_view import TemplateValidationView
-
-# ✅ PHASE 2 신규(아래에서 제공)
-from .views.regular_from_template_view import RegularExamFromTemplateView
-from .views.omr_generate_view import GenerateOMRSheetAssetView
+from apps.domains.results.views.admin_exam_attempts_view import AdminExamAttemptsView
+from apps.domains.results.views.admin_exam_item_score_view import AdminExamItemScoreView
+from apps.domains.results.views.admin_exam_result_detail_view import AdminExamResultDetailView
+from apps.domains.results.views.admin_representative_attempt_view import AdminRepresentativeAttemptView
+from apps.domains.results.views.admin_result_fact_view import AdminResultFactView
+from apps.domains.results.views.admin_session_exams_view import AdminSessionExamsView
+from apps.domains.results.views.admin_session_exams_summary_view import AdminSessionExamsSummaryView
+from apps.domains.results.views.question_stats_views import (
+    AdminExamQuestionStatsView,
+    ExamQuestionWrongDistributionView,
+    ExamTopWrongQuestionsView,
+)
+from apps.domains.results.views.session_score_summary_view import SessionScoreSummaryView
+from apps.domains.results.views.session_scores_view import SessionScoresView
+from apps.domains.results.views.student_exam_attempts_view import MyExamAttemptsView
+from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
+from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFStatusView
+from apps.domains.results.views.exam_grading_view import (
+    AutoGradeSubmissionView,
+    ManualGradeSubmissionView,
+    FinalizeResultView,
+    ExamResultAdminListView,
+    MyExamResultListView,
+)
 
 router = DefaultRouter()
-router.register(r"", ExamViewSet, basename="exam")
-router.register(r"sheets", SheetViewSet)
-router.register(r"questions", QuestionViewSet)
-router.register(r"answer-keys", AnswerKeyViewSet)
+router.register(r"", ExamResultAdminListView, basename="exam-results")
 
 urlpatterns = [
     # =========================
-    # ✅ 기존 exams API (유지)
+    # Student
     # =========================
+    path("me/exams/<int:exam_id>/", MyExamResultView.as_view(), name="my-exam-result"),
+    path("me/exams/<int:exam_id>/attempts/", MyExamAttemptsView.as_view(), name="my-exam-attempts"),
+    path("me/", MyExamResultListView.as_view(), name="my-exam-results"),
+
+    # =========================
+    # Admin / Teacher – Exam
+    # =========================
+    path("admin/exams/<int:exam_id>/results/", AdminExamResultsView.as_view(), name="admin-exam-results"),
+    path("admin/exams/<int:exam_id>/summary/", AdminExamSummaryView.as_view(), name="admin-exam-summary"),
+    path(
+        "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/",
+        AdminExamResultDetailView.as_view(),
+        name="admin-exam-result-detail",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/attempts/",
+        AdminExamAttemptsView.as_view(),
+        name="admin-exam-attempts",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/items/<int:question_id>/enrollments/<int:enrollment_id>/",
+        AdminExamItemScoreView.as_view(),
+        name="admin-exam-item-score",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/representative-attempt/",
+        AdminRepresentativeAttemptView.as_view(),
+        name="admin-representative-attempt",
+    ),
+    path("admin/facts/", AdminResultFactView.as_view(), name="admin-result-facts"),
+
+    # =========================
+    # Admin – Stats
+    # =========================
+    path(
+        "admin/exams/<int:exam_id>/questions/",
+        AdminExamQuestionStatsView.as_view(),
+        name="admin-exam-question-stats",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/questions/<int:question_id>/wrong-distribution/",
+        ExamQuestionWrongDistributionView.as_view(),
+        name="exam-question-wrong-distribution",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/questions/top-wrong/",
+        ExamTopWrongQuestionsView.as_view(),
+        name="exam-top-wrong-questions",
+    ),
+
+    # =========================
+    # Session
+    # =========================
+    path(
+        "admin/sessions/<int:session_id>/exams/",
+        AdminSessionExamsView.as_view(),
+        name="admin-session-exams",
+    ),
+    path(
+        "admin/sessions/<int:session_id>/exams/summary/",
+        AdminSessionExamsSummaryView.as_view(),
+        name="admin-session-exams-summary",
+    ),
+    path(
+        "admin/sessions/<int:session_id>/score-summary/",
+        SessionScoreSummaryView.as_view(),
+        name="session-score-summary",
+    ),
+    path(
+        "admin/sessions/<int:session_id>/scores/",
+        SessionScoresView.as_view(),
+        name="session-scores",
+    ),
+
+    # =========================
+    # Grading (7-4~7-6)
+    # =========================
+    path(
+        "submissions/<int:submission_id>/auto-grade/",
+        AutoGradeSubmissionView.as_view(),
+        name="auto-grade-submission",
+    ),
+    path(
+        "submissions/<int:submission_id>/manual-grade/",
+        ManualGradeSubmissionView.as_view(),
+        name="manual-grade-submission",
+    ),
+    path(
+        "submissions/<int:submission_id>/finalize/",
+        FinalizeResultView.as_view(),
+        name="finalize-submission",
+    ),
+
+    # =========================
+    # Wrong Note
+    # =========================
+    path("wrong-notes/", WrongNoteView.as_view(), name="wrong-notes"),
+    path("wrong-notes/pdf/", WrongNotePDFCreateView.as_view(), name="wrong-note-pdf-create"),
+    path(
+        "wrong-notes/pdf/<int:job_id>/",
+        WrongNotePDFStatusView.as_view(),
+        name="wrong-note-pdf-status",
+    ),
+
+    # Router
     path("", include(router.urls)),
-    path("sheets/<int:sheet_id>/auto-questions/", SheetAutoQuestionsView.as_view(), name="sheet-auto-questions"),
-    path("<int:exam_id>/assets/", ExamAssetView.as_view(), name="exam-assets"),
-    path("<int:exam_id>/questions/", ExamQuestionsByExamView.as_view(), name="exam-questions-by-exam"),
-    path("<int:exam_id>/enrollments/", ExamEnrollmentManageView.as_view(), name="exam-enrollments-manage"),
-    path("me/available/", StudentAvailableExamListView.as_view(), name="student-available-exams"),
-
-    # =========================
-    # ✅ Template tooling (유지)
-    # =========================
-    path("<int:exam_id>/builder/", TemplateBuilderView.as_view(), name="template-builder"),
-    path("<int:exam_id>/template-status/", TemplateStatusView.as_view(), name="template-status"),
-    path("<int:exam_id>/template-editor/", TemplateEditorView.as_view(), name="template-editor"),
-    path("<int:exam_id>/template-validation/", TemplateValidationView.as_view(), name="template-validation"),
-
-    # ==================================================
-    # ✅ PHASE 2 (추가): 템플릿 → 실제 시험 생성 (기존 create도 그대로 둠)
-    # POST /api/v1/exams/<template_exam_id>/spawn-regular/
-    # ==================================================
-    path(
-        "<int:exam_id>/spawn-regular/",
-        RegularExamFromTemplateView.as_view(),
-        name="spawn-regular-from-template",
-    ),
-
-    # ==================================================
-    # ✅ PHASE 2 (추가): OMR 시험지 PDF 생성 → ExamAsset(omr_sheet) 저장
-    # POST /api/v1/exams/<template_exam_id>/generate-omr/
-    # ==================================================
-    path(
-        "<int:exam_id>/generate-omr/",
-        GenerateOMRSheetAssetView.as_view(),
-        name="generate-omr-sheet",
-    ),
 ]
 
 
@@ -2960,48 +3042,3 @@ class TemplateValidationView(APIView):
                 **result,
             }
         )
-
-
-==========================================================================================
-# FILE: 봉인/규칙.py
-==========================================================================================
-봉인 포인트 정리 (어떤 사고를 막기 위해 무엇을 봉인했는지)
-
-(권한 사고 차단)
-
-Exam/Sheet/Question/AnswerKey/AutoQuestions/Asset의 생성·수정·삭제를 전부 Teacher/Admin만 가능하게 봉인.
-
-(단일진실 우회 차단)
-
-template resolver를 resolve_template_exam()로 통일하고, AnswerKey/Asset/Questions 조회는 regular → template로 resolve 강제.
-
-(운영 사고 차단: 템플릿 변경으로 시험 사고)
-
-template이 derived regular를 하나라도 가지면 구조 변경(Sheet/Question/AnswerKey/Asset/AutoQuestions) 전면 금지
-
-즉, “이미 다른 강의에서 재사용된 템플릿”은 문제/정답/자산 교체 불가로 봉인.
-
-(프론트 실수 방어)
-
-ExamViewSet.update/partial_update에서 forbidden field 들어오면 즉시 400
-
-(DRF가 fields 밖 데이터를 “무시”해버리는 케이스로 인해 사고나는 걸 차단)
-
-“이제 하지 말아야 할 것” 리스트 (시니어 기준 금지 사항)
-
-template exam이 regular에 의해 사용 중인 상태에서
-문제/정답/자산을 바꾸는 요구사항을 받으면, exams에서 억지로 풀지 말 것.
-
-“운영 중 시험 문제 수정” 요구를 exams에서 처리하지 말 것.
-
-AnswerKey/Questions/Assets를 regular에 달아달라는 요구는 무조건 거절(단일진실 위반).
-
-봉인 규칙을 프론트에서 우회하려는 시도(예: PATCH로 hidden field 보내기)를 허용하지 말 것.
-
-최종 커밋 메시지 (출시 직전 기준)
-
-seal(exams): lock template structural edits once derived regular exists; enforce teacher-only mutations
-
-seal(exams): enforce immutable update fields and unify template resolver usage
-
-seal(exams): wire student available exams endpoint and harden query validation
