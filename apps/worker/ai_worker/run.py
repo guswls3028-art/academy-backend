@@ -1,3 +1,4 @@
+# PATH: apps/worker/ai_worker/run.py
 from __future__ import annotations
 
 import os
@@ -19,10 +20,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
-INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "")
+INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "long-random-secret")
 POLL_INTERVAL_SEC = float(os.getenv("AI_WORKER_POLL_INTERVAL", "1.0"))
-
-# 네트워크 장애/502 대비 백오프
 MAX_BACKOFF = float(os.getenv("AI_WORKER_MAX_BACKOFF", "30.0"))
 
 _running = True
@@ -39,27 +38,14 @@ signal.signal(signal.SIGTERM, _shutdown)
 
 
 def _headers() -> dict:
-    """
-    🔒 Internal API 인증 헤더 (SSOT)
-    Backend expects:
-      Authorization: Bearer <INTERNAL_WORKER_TOKEN>
-    """
-    if not INTERNAL_WORKER_TOKEN:
-        logger.error("INTERNAL_WORKER_TOKEN is not set")
     return {
-        "Authorization": f"Bearer {INTERNAL_WORKER_TOKEN}",
+        "X-Worker-Token": INTERNAL_WORKER_TOKEN,
         "X-Worker-Id": os.getenv("HOSTNAME", "ai-worker"),
-        "Accept": "application/json",
     }
 
 
 def fetch_job() -> AIJob | None:
-    """
-    API → Worker
-    GET /api/v1/internal/ai/next/
-    response: { "job": {...} | null }
-    """
-    url = f"{API_BASE_URL.rstrip('/')}/api/v1/internal/ai/next/"
+    url = f"{API_BASE_URL.rstrip('/')}/api/v1/internal/ai/job/next/"
     resp = requests.get(url, headers=_headers(), timeout=10)
     resp.raise_for_status()
 
@@ -72,13 +58,7 @@ def fetch_job() -> AIJob | None:
 
 
 def submit_result(*, result: AIResult, job: AIJob) -> None:
-    """
-    Worker → API
-    POST /api/v1/internal/ai/submit/
-
-    ✅ job_id 기반 결과 제출
-    """
-    url = f"{API_BASE_URL.rstrip('/')}/api/v1/internal/ai/submit/"
+    url = f"{API_BASE_URL.rstrip('/')}/api/v1/internal/ai/job/result/"
     headers = _headers()
     headers["Content-Type"] = "application/json"
 
@@ -126,7 +106,6 @@ def main():
         except requests.HTTPError as e:
             code = getattr(e.response, "status_code", None)
             logger.exception("Worker loop HTTP error (status=%s)", code)
-
             backoff = min(MAX_BACKOFF, backoff * 2.0 + 1.0) if backoff > 0 else 1.0
             time.sleep(backoff + random.random())
 
