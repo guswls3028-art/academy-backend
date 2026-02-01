@@ -1,7 +1,7 @@
 # PATH: apps/domains/results/services/exam_grading_service.py
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Dict, Tuple
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -17,8 +17,8 @@ class ExamGradingService:
     Objective exam grading service (queue-less, sync).
 
     운영 원칙:
-    - 채점 전 계약(SSOT) 검증 필수
-    - 계산 실패는 허용, 데이터 오염은 불허
+    - 모델(SSOT)이 가진 필드만 사용
+    - 결과 계산은 가능, 모델 계약 위반은 불가
     """
 
     # ------------------------------------------------------------------
@@ -31,7 +31,7 @@ class ExamGradingService:
         ).Submission
 
         return get_object_or_404(
-            Submission.objects.select_related("user", "exam_result"),
+            Submission.objects.select_related("user"),
             id=int(submission_id),
         )
 
@@ -50,13 +50,12 @@ class ExamGradingService:
         sheet,
         answer_key,
         submission_answers,
-    ) -> Tuple[int, Dict[str, Any]]:
+    ) -> int:
         """
         Returns:
-          (total_score, detail)
+          total_score (0~100)
         """
 
-        # AnswerKey.answers = { "question_id": "correct_answer" }
         key_map: Dict[int, str] = {
             int(k): str(v).strip()
             for k, v in answer_key.answers.items()
@@ -73,39 +72,20 @@ class ExamGradingService:
         questions = list(sheet.questions.all())
         total_q = len(questions)
 
-        correct = 0
-        breakdown = []
+        if total_q == 0:
+            return 0
 
+        correct = 0
         for q in questions:
             qid = int(q.id)
-            correct_ans = key_map.get(qid)
-            submitted_ans = answers_map.get(qid)
-
-            is_correct = (
-                correct_ans is not None
-                and submitted_ans is not None
-                and submitted_ans == correct_ans
-            )
-
-            if is_correct:
+            if (
+                qid in key_map
+                and qid in answers_map
+                and answers_map[qid] == key_map[qid]
+            ):
                 correct += 1
 
-            breakdown.append(
-                {
-                    "exam_question_id": qid,
-                    "correct_answer": correct_ans,
-                    "submitted_answer": submitted_ans,
-                    "is_correct": is_correct,
-                }
-            )
-
-        score = int(round((correct / total_q) * 100)) if total_q > 0 else 0
-
-        return score, {
-            "total_questions": total_q,
-            "correct_count": correct,
-            "breakdown": breakdown,
-        }
+        return int(round((correct / total_q) * 100))
 
     # ------------------------------------------------------------------
     # Public API
@@ -130,14 +110,11 @@ class ExamGradingService:
             .first()
         )
 
-        if existing and existing.status == ExamResult.Status.FINAL:
-            return existing
-
         submission_answers = list(
             SubmissionAnswer.objects.filter(submission=submission)
         )
 
-        total_score, detail = self._compute_score(
+        total_score = self._compute_score(
             sheet=sheet,
             answer_key=answer_key,
             submission_answers=submission_answers,
@@ -146,27 +123,13 @@ class ExamGradingService:
         result = existing or ExamResult.objects.create(
             submission=submission,
             exam=exam,
-            status=ExamResult.Status.DRAFT,
             total_score=0,
-            pass_score=int(getattr(exam, "pass_score", 0) or 0),
-            is_passed=False,
-            detail={},
+            status=ExamResult.Status.DRAFT,
         )
 
         result.total_score = total_score
-        result.is_passed = total_score >= result.pass_score
-        result.detail = detail
         result.status = ExamResult.Status.DRAFT
-
-        result.save(
-            update_fields=[
-                "total_score",
-                "is_passed",
-                "detail",
-                "status",
-                "updated_at",
-            ]
-        )
+        result.save(update_fields=["total_score", "status", "updated_at"])
 
         try:
             submission.status = "graded"
