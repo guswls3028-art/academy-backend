@@ -27,12 +27,17 @@ class Submission(TimestampModel):
         DONE = "done", "Done"
         FAILED = "failed", "Failed"
 
+        # ✅ 추가: OMR 식별 실패(조교 수동 개입 필요)
+        NEEDS_IDENTIFICATION = "needs_identification", "Needs Identification"
+
     STATUS_FLOW = {
         Status.SUBMITTED: {Status.DISPATCHED},
         Status.DISPATCHED: {Status.EXTRACTING, Status.ANSWERS_READY},
         Status.ANSWERS_READY: {Status.GRADING},
         Status.GRADING: {Status.DONE, Status.FAILED},
         Status.FAILED: {Status.SUBMITTED},
+        # NEEDS_IDENTIFICATION 은 수동 처리 후 ANSWERS_READY 로만 복귀
+        Status.NEEDS_IDENTIFICATION: {Status.ANSWERS_READY},
     }
 
     @classmethod
@@ -59,7 +64,7 @@ class Submission(TimestampModel):
     payload = models.JSONField(null=True, blank=True)
 
     status = models.CharField(
-        max_length=20,
+        max_length=30,
         choices=Status.choices,
         default=Status.SUBMITTED,
     )

@@ -25,152 +25,72 @@ class ExamsConfig(AppConfig):
 ==========================================================================================
 # FILE: urls.py
 ==========================================================================================
-# apps/domains/results/urls.py
+# PATH: apps/domains/exams/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
-from apps.domains.results.views import (
-    MyExamResultView,
-    WrongNoteView,
-    AdminExamResultsView,
-    AdminExamSummaryView,
-)
+from .views.exam_view import ExamViewSet
+from .views.sheet_view import SheetViewSet
+from .views.question_view import QuestionViewSet
+from .views.answer_key_view import AnswerKeyViewSet
 
-from apps.domains.results.views.admin_exam_attempts_view import AdminExamAttemptsView
-from apps.domains.results.views.admin_exam_item_score_view import AdminExamItemScoreView
-from apps.domains.results.views.admin_exam_result_detail_view import AdminExamResultDetailView
-from apps.domains.results.views.admin_representative_attempt_view import AdminRepresentativeAttemptView
-from apps.domains.results.views.admin_result_fact_view import AdminResultFactView
-from apps.domains.results.views.admin_session_exams_view import AdminSessionExamsView
-from apps.domains.results.views.admin_session_exams_summary_view import AdminSessionExamsSummaryView
-from apps.domains.results.views.question_stats_views import (
-    AdminExamQuestionStatsView,
-    ExamQuestionWrongDistributionView,
-    ExamTopWrongQuestionsView,
-)
-from apps.domains.results.views.session_score_summary_view import SessionScoreSummaryView
-from apps.domains.results.views.session_scores_view import SessionScoresView
-from apps.domains.results.views.student_exam_attempts_view import MyExamAttemptsView
-from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
-from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFStatusView
-from apps.domains.results.views.exam_grading_view import (
-    AutoGradeSubmissionView,
-    ManualGradeSubmissionView,
-    FinalizeResultView,
-    ExamResultAdminListView,
-    MyExamResultListView,
-)
+from .views.exam_asset_view import ExamAssetView
+from .views.exam_questions_by_exam_view import ExamQuestionsByExamView
+from .views.template_builder_view import TemplateBuilderView
+from .views.template_editor_view import TemplateEditorView
+from .views.template_status_view import TemplateStatusView
+from .views.template_validation_view import TemplateValidationView
+from .views.regular_from_template_view import RegularExamFromTemplateView
+from .views.omr_generate_view import GenerateOMRSheetAssetView
+from .views.exam_enrollment_view import ExamEnrollmentManageView
+from .views.student_exam_view import StudentAvailableExamListView
+from .views.question_auto_view import SheetAutoQuestionsView
 
 router = DefaultRouter()
-router.register(r"", ExamResultAdminListView, basename="exam-results")
+router.register(r"", ExamViewSet, basename="exams")
+router.register(r"sheets", SheetViewSet, basename="sheets")
+router.register(r"questions", QuestionViewSet, basename="questions")
+router.register(r"answer-keys", AnswerKeyViewSet, basename="answer-keys")
 
 urlpatterns = [
     # =========================
     # Student
     # =========================
-    path("me/exams/<int:exam_id>/", MyExamResultView.as_view(), name="my-exam-result"),
-    path("me/exams/<int:exam_id>/attempts/", MyExamAttemptsView.as_view(), name="my-exam-attempts"),
-    path("me/", MyExamResultListView.as_view(), name="my-exam-results"),
+    path("me/available/", StudentAvailableExamListView.as_view(), name="student-available-exams"),
 
     # =========================
-    # Admin / Teacher – Exam
+    # Exam Assets / Questions (resolve template)
     # =========================
-    path("admin/exams/<int:exam_id>/results/", AdminExamResultsView.as_view(), name="admin-exam-results"),
-    path("admin/exams/<int:exam_id>/summary/", AdminExamSummaryView.as_view(), name="admin-exam-summary"),
-    path(
-        "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/",
-        AdminExamResultDetailView.as_view(),
-        name="admin-exam-result-detail",
-    ),
-    path(
-        "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/attempts/",
-        AdminExamAttemptsView.as_view(),
-        name="admin-exam-attempts",
-    ),
-    path(
-        "admin/exams/<int:exam_id>/items/<int:question_id>/enrollments/<int:enrollment_id>/",
-        AdminExamItemScoreView.as_view(),
-        name="admin-exam-item-score",
-    ),
-    path(
-        "admin/exams/<int:exam_id>/representative-attempt/",
-        AdminRepresentativeAttemptView.as_view(),
-        name="admin-representative-attempt",
-    ),
-    path("admin/facts/", AdminResultFactView.as_view(), name="admin-result-facts"),
+    path("<int:exam_id>/assets/", ExamAssetView.as_view(), name="exam-assets"),
+    path("<int:exam_id>/questions/", ExamQuestionsByExamView.as_view(), name="exam-questions-by-exam"),
 
     # =========================
-    # Admin – Stats
+    # Template utilities
     # =========================
-    path(
-        "admin/exams/<int:exam_id>/questions/",
-        AdminExamQuestionStatsView.as_view(),
-        name="admin-exam-question-stats",
-    ),
-    path(
-        "admin/exams/<int:exam_id>/questions/<int:question_id>/wrong-distribution/",
-        ExamQuestionWrongDistributionView.as_view(),
-        name="exam-question-wrong-distribution",
-    ),
-    path(
-        "admin/exams/<int:exam_id>/questions/top-wrong/",
-        ExamTopWrongQuestionsView.as_view(),
-        name="exam-top-wrong-questions",
-    ),
+    path("<int:exam_id>/builder/", TemplateBuilderView.as_view(), name="template-builder"),
+    path("<int:exam_id>/template-editor/", TemplateEditorView.as_view(), name="template-editor"),
+    path("<int:exam_id>/template-status/", TemplateStatusView.as_view(), name="template-status"),
+    path("<int:exam_id>/template-validation/", TemplateValidationView.as_view(), name="template-validation"),
 
     # =========================
-    # Session
+    # Template -> Regular spawn
     # =========================
-    path(
-        "admin/sessions/<int:session_id>/exams/",
-        AdminSessionExamsView.as_view(),
-        name="admin-session-exams",
-    ),
-    path(
-        "admin/sessions/<int:session_id>/exams/summary/",
-        AdminSessionExamsSummaryView.as_view(),
-        name="admin-session-exams-summary",
-    ),
-    path(
-        "admin/sessions/<int:session_id>/score-summary/",
-        SessionScoreSummaryView.as_view(),
-        name="session-score-summary",
-    ),
-    path(
-        "admin/sessions/<int:session_id>/scores/",
-        SessionScoresView.as_view(),
-        name="session-scores",
-    ),
+    path("<int:exam_id>/spawn-regular/", RegularExamFromTemplateView.as_view(), name="spawn-regular-from-template"),
 
     # =========================
-    # Grading (7-4~7-6)
+    # OMR sheet generate (template only)
     # =========================
-    path(
-        "submissions/<int:submission_id>/auto-grade/",
-        AutoGradeSubmissionView.as_view(),
-        name="auto-grade-submission",
-    ),
-    path(
-        "submissions/<int:submission_id>/manual-grade/",
-        ManualGradeSubmissionView.as_view(),
-        name="manual-grade-submission",
-    ),
-    path(
-        "submissions/<int:submission_id>/finalize/",
-        FinalizeResultView.as_view(),
-        name="finalize-submission",
-    ),
+    path("<int:exam_id>/generate-omr/", GenerateOMRSheetAssetView.as_view(), name="generate-omr-sheet"),
 
     # =========================
-    # Wrong Note
+    # Exam Enrollment manage
     # =========================
-    path("wrong-notes/", WrongNoteView.as_view(), name="wrong-notes"),
-    path("wrong-notes/pdf/", WrongNotePDFCreateView.as_view(), name="wrong-note-pdf-create"),
-    path(
-        "wrong-notes/pdf/<int:job_id>/",
-        WrongNotePDFStatusView.as_view(),
-        name="wrong-note-pdf-status",
-    ),
+    path("<int:exam_id>/enrollments/", ExamEnrollmentManageView.as_view(), name="exam-enrollments"),
+
+    # =========================
+    # Sheet auto questions (segmentation result)
+    # =========================
+    path("sheets/<int:sheet_id>/auto-questions/", SheetAutoQuestionsView.as_view(), name="sheet-auto-questions"),
 
     # Router
     path("", include(router.urls)),

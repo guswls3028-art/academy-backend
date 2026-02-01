@@ -1,4 +1,3 @@
-# apps/domains/submissions/services/ai_omr_result_mapper.py
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -14,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 @transaction.atomic
 def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
-
     submission_id = payload.get("submission_id")
     if not submission_id:
         return None
@@ -24,18 +22,26 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     except Submission.DoesNotExist:
         return None
 
-    base_payload = submission.payload or {}
-    base_payload["ai_result"] = payload
-    submission.payload = base_payload
-
     status = payload.get("status")
+    result = payload.get("result") or {}
+    error = payload.get("error")
+
+    meta = dict(submission.meta or {})
+    meta["ai_result"] = {
+        "status": status,
+        "result": result,
+        "error": error,
+        "received_at": datetime.now(timezone.utc).isoformat(),
+        "kind": "omr_scan",
+    }
+    submission.meta = meta
+
     if status == "FAILED":
         submission.status = Submission.Status.FAILED
-        submission.error_message = payload.get("error") or "AI worker failed"
-        submission.save(update_fields=["payload", "status", "error_message", "updated_at"])
+        submission.error_message = error or "AI worker failed"
+        submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
         return submission.id
 
-    result = payload.get("result") or {}
     answers = result.get("answers") or []
     identifier = result.get("identifier")
 
@@ -85,29 +91,29 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             manual_required = True
             reasons.append("ANSWER_LOW_CONFIDENCE")
 
-    if isinstance(identifier, dict):
-        ist = str(identifier.get("status") or "").lower()
-        if ist in ("blank", "ambiguous", "error"):
-            manual_required = True
-            reasons.append("IDENTIFIER_NOT_OK")
-
-    meta = dict(submission.meta or {})
-    meta.setdefault("omr", {})
-
-    meta["omr"]["identifier"] = identifier
-    meta["omr"]["last_result_version"] = result.get("version")
-    meta["omr"]["last_mode"] = result.get("mode")
-    meta["omr"]["meta_used"] = bool(result.get("meta_used"))
+    # ✅ 식별자 실패 → 명시적 상태
+    identifier_ok = (
+        isinstance(identifier, dict)
+        and identifier.get("status") == "ok"
+        and identifier.get("enrollment_id")
+    )
 
     meta.setdefault("manual_review", {})
-    meta["manual_review"]["required"] = bool(manual_required)
+    meta["manual_review"]["required"] = bool(manual_required or not identifier_ok)
     meta["manual_review"]["reasons"] = sorted(set(reasons))
     meta["manual_review"]["updated_at"] = datetime.now(timezone.utc).isoformat()
 
     submission.meta = meta
 
+    if not identifier_ok:
+        submission.status = Submission.Status.NEEDS_IDENTIFICATION
+        submission.error_message = ""
+        submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
+        return submission.id
+
+    submission.enrollment_id = int(identifier.get("enrollment_id"))
     submission.status = Submission.Status.ANSWERS_READY
     submission.error_message = ""
-    submission.save(update_fields=["payload", "meta", "status", "error_message", "updated_at"])
+    submission.save(update_fields=["meta", "status", "enrollment_id", "error_message", "updated_at"])
 
     return submission.id
