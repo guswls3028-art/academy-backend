@@ -1,24 +1,24 @@
 # apps/domains/results/services/grading_service.py
 from __future__ import annotations
 
+from typing import Optional
+
 from django.db import transaction
-from apps.domains.submissions.models import Submission
-from apps.domains.results.services.exam_grading_service import ExamGradingService
+
 from apps.domains.results.models import ExamResult
+from apps.domains.results.services.exam_grading_service import ExamGradingService
 
 
 @transaction.atomic
 def grade_submission(submission_id: int) -> ExamResult:
-    submission = Submission.objects.select_for_update().get(id=submission_id)
+    """
+    Single public grading entrypoint (SSOT).
 
-    # answers_ready 아니면 아무것도 안 함 (SSOT)
-    if submission.status != Submission.Status.ANSWERS_READY:
-        return ExamResult.objects.filter(submission=submission).first()
-
+    - queue-less 환경에서도 shell/HTTP에서 한 방에 호출 가능해야 한다.
+    - 내부적으로 objective grading 수행 후 ExamResult를 반환한다.
+    """
     service = ExamGradingService()
-    output = service.auto_grade_objective(submission_id=submission.id)
-
-    submission.status = Submission.Status.DONE
-    submission.save(update_fields=["status", "updated_at"])
-
-    return output.result
+    result = service.auto_grade_objective(submission_id=int(submission_id))
+    # 필요하면 여기서 finalize 정책을 넣을 수 있음(운영 정책에 따라)
+    # result = service.finalize(submission_id=int(submission_id))
+    return result

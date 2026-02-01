@@ -1,32 +1,29 @@
 # apps/domains/ai/queueing/publisher.py
 from __future__ import annotations
 
-"""
-SSOT: AI Job Publish Entry
-
-규칙:
-- gateway.py 는 publish_job 만 호출한다.
-- queue 구현(DB / Redis 등)은 여기서만 결정한다.
-- 현재 운영 기준은 DBJobQueue.
-"""
-
 from apps.shared.contracts.ai_job import AIJob
 from apps.domains.ai.queueing.db_queue import DBJobQueue
 
 
-def publish_job(job: AIJob) -> None:
+def publish_ai_job_db(job: AIJob) -> None:
     """
-    ✅ 단일 진실 (SSOT)
+    DBQueue 발행 (운영 기본)
 
-    gateway 에서 AIJobModel row는 이미 생성됨.
-    여기서는 queue 에 '실행 가능 상태'로 노출시키는 역할만 담당.
+    - gateway에서 AIJobModel row를 선생성하고,
+      여기서는 DBJobQueue.publish 로 "PENDING + next_run_at"만 세팅한다.
+    - DB가 SSOT(단일진실)이며, 워커는 /internal endpoint로 pull 한다.
     """
     q = DBJobQueue()
-    q.publish(job_id=job.id)
+    q.publish(job_id=str(job.id))
 
 
-# ------------------------------------------------------------------
-# Backward compatibility (절대 삭제 금지)
-# ------------------------------------------------------------------
-# 과거 코드 / legacy / 실험 브랜치 보호용 alias
-publish_ai_job_db = publish_job
+# ----------------------------------------------------------------------
+# Backward-compat export (SSOT)
+# gateway.py 등에서 publish_job 이름을 기대하는 경우가 많아 alias로 봉인한다.
+# ----------------------------------------------------------------------
+def publish_job(job: AIJob) -> None:
+    """
+    Public publisher entrypoint (SSOT).
+    Keep this name stable to avoid import breaks.
+    """
+    publish_ai_job_db(job)
