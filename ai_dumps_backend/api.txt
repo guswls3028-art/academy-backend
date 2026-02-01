@@ -706,15 +706,7 @@ urlpatterns = [
 ==========================================================================================
 # FILE: v1/internal/ai/urls.py
 ==========================================================================================
-# PATH: apps/api/v1/internal/ai/urls.py
-from django.urls import path
 
-from .views import next_ai_job_view, submit_ai_result_view
-
-urlpatterns = [
-    path("next/", next_ai_job_view, name="internal-ai-next"),
-    path("submit/", submit_ai_result_view, name="internal-ai-submit"),
-]
 
 
 ==========================================================================================
@@ -730,7 +722,12 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from rest_framework.decorators import api_view
+from rest_framework.decorators import (
+    api_view,
+    authentication_classes,
+    permission_classes,
+)
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from apps.domains.submissions.services.ai_result_router import (
@@ -752,32 +749,22 @@ def _unauthorized() -> Response:
 
 
 def _check_worker_auth(request) -> bool:
-    """
-    Internal AI worker authentication.
-    - Header: X-Worker-Token
-    - Must match settings.INTERNAL_WORKER_TOKEN
-    """
     token = request.headers.get("X-Worker-Token")
     expected = getattr(settings, "INTERNAL_WORKER_TOKEN", None)
     return bool(expected and token and token == expected)
 
 
 def _get_job_model():
-    try:
-        from apps.domains.ai.models import AIJobModel  # type: ignore
-        return AIJobModel
-    except Exception as e:
-        raise RuntimeError(
-            "AIJobModel import failed. HTTP worker requires DB-backed AI job storage (AIJobModel)."
-        ) from e
+    from apps.domains.ai.models import AIJobModel
+    return AIJobModel
 
 
 @api_view(["GET"])
+@authentication_classes([])          # 🔥 DRF JWT 완전 비활성화
+@permission_classes([AllowAny])      # 🔥 권한 체크 스킵
 def next_ai_job_view(request):
     """
     GET /api/v1/internal/ai/next/
-    - HTTP worker polls this endpoint.
-    - One PENDING job is atomically claimed -> PROCESSING.
     """
     if not _check_worker_auth(request):
         return _unauthorized()
@@ -803,11 +790,11 @@ def next_ai_job_view(request):
         return Response(
             {
                 "job": {
-                    "job_id": getattr(job, "job_id", None),
-                    "type": getattr(job, "type", None),
-                    "source_domain": getattr(job, "source_domain", None),
-                    "source_id": getattr(job, "source_id", None),
-                    "payload": getattr(job, "payload", None) or {},
+                    "job_id": job.job_id,
+                    "type": job.job_type,
+                    "source_domain": job.source_domain,
+                    "source_id": job.source_id,
+                    "payload": job.payload or {},
                 }
             },
             status=200,
@@ -815,12 +802,11 @@ def next_ai_job_view(request):
 
 
 @api_view(["POST"])
+@authentication_classes([])          # 🔥 DRF JWT 완전 비활성화
+@permission_classes([AllowAny])      # 🔥 권한 체크 스킵
 def submit_ai_result_view(request):
     """
     POST /api/v1/internal/ai/submit/
-    - Worker submits AI output.
-    - API applies to submission (meta/answers), and triggers grading if needed.
-    - Idempotent: repeated submits are safe.
     """
     if not _check_worker_auth(request):
         return _unauthorized()
@@ -829,7 +815,7 @@ def submit_ai_result_view(request):
 
     job_id = data.get("job_id")
     submission_id = data.get("submission_id") or data.get("source_id")
-    status_str = data.get("status") or data.get("result_status") or "DONE"
+    status_str = data.get("status") or "DONE"
     result = data.get("result")
     error = data.get("error")
 
@@ -841,63 +827,31 @@ def submit_ai_result_view(request):
     except Exception:
         return _http_400("submission_id invalid", submission_id=submission_id)
 
-    try:
-        outcome = apply_ai_result_for_submission(
-            submission_id=submission_id_int,
-            status=str(status_str),
-            result=result if isinstance(result, dict) else (result or {}),
-            error=str(error) if error else None,
-        )
-    except Exception:
-        logger.exception(
-            "apply_ai_result_for_submission failed (submission_id=%s)",
-            submission_id_int,
-        )
-        return Response({"detail": "apply_ai_result failed"}, status=500)
+    outcome = apply_ai_result_for_submission(
+        submission_id=submission_id_int,
+        status=str(status_str),
+        result=result if isinstance(result, dict) else {},
+        error=str(error) if error else None,
+    )
 
     graded_result_id = None
     if outcome.should_grade:
-        try:
-            r = grade_submission(submission_id_int)
-            graded_result_id = getattr(r, "id", None)
-        except Exception:
-            logger.exception(
-                "grade_submission failed after ai result (submission_id=%s)",
-                submission_id_int,
-            )
-            return Response(
-                {
-                    "ok": True,
-                    "submission_id": submission_id_int,
-                    "should_grade": True,
-                    "graded": False,
-                    "detail": "grading failed",
-                },
-                status=200,
-            )
+        r = grade_submission(submission_id_int)
+        graded_result_id = getattr(r, "id", None)
 
     if job_id:
-        try:
-            AIJobModel = _get_job_model()
-            with transaction.atomic():
-                job = (
-                    AIJobModel.objects.select_for_update(skip_locked=True)
-                    .filter(job_id=str(job_id))
-                    .order_by("-id")
-                    .first()
-                )
-                if job:
-                    st = str(status_str).upper()
-                    job.status = "FAILED" if st == "FAILED" else "DONE"
-                    if hasattr(job, "finished_at"):
-                        job.finished_at = timezone.now()
-                    if hasattr(job, "error_message"):
-                        job.error_message = str(error) if error else ""
-                    job.save()
-        except Exception:
-            logger.exception(
-                "AIJobModel status update failed (job_id=%s)", job_id
+        AIJobModel = _get_job_model()
+        with transaction.atomic():
+            job = (
+                AIJobModel.objects.select_for_update(skip_locked=True)
+                .filter(job_id=str(job_id))
+                .first()
             )
+            if job:
+                job.status = "FAILED" if str(status_str).upper() == "FAILED" else "DONE"
+                if hasattr(job, "finished_at"):
+                    job.finished_at = timezone.now()
+                job.save()
 
     return Response(
         {
