@@ -1,3 +1,4 @@
+# PATH: apps/domains/ai/urls.py
 from django.urls import path
 
 from apps.domains.ai.views.internal_ai_job_view import (
