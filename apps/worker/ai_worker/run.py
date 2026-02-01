@@ -1,4 +1,4 @@
-# apps/worker/run.py
+# PATH: apps/worker/ai_worker/run.py
 from __future__ import annotations
 
 import os
@@ -49,10 +49,10 @@ def _headers() -> dict:
 def fetch_job() -> AIJob | None:
     """
     API → Worker
-    GET /api/v1/internal/ai/job/next/
+    GET /api/v1/internal/ai/next/
     response: { "job": {...} | null }
     """
-    url = f"{API_BASE_URL.rstrip('/')}/api/v1/internal/ai/job/next/"
+    url = f"{API_BASE_URL.rstrip('/')}/api/v1/internal/ai/next/"
     resp = requests.get(url, headers=_headers(), timeout=10)
     resp.raise_for_status()
 
@@ -67,12 +67,12 @@ def fetch_job() -> AIJob | None:
 def submit_result(*, result: AIResult, job: AIJob) -> None:
     """
     Worker → API
-    POST /api/v1/internal/ai/job/result/
+    POST /api/v1/internal/ai/submit/
 
     ✅ 운영 정석: job_id 기반
     - submission_id는 선택(optional): source_id가 숫자일 때만 포함
     """
-    url = f"{API_BASE_URL.rstrip('/')}/api/v1/internal/ai/job/result/"
+    url = f"{API_BASE_URL.rstrip('/')}/api/v1/internal/ai/submit/"
     headers = _headers()
     headers["Content-Type"] = "application/json"
 
