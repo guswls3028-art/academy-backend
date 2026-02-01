@@ -726,14 +726,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from apps.domains.submissions.services.ai_result_router import apply_ai_result_for_submission
+from apps.domains.submissions.services.ai_result_router import (
+    apply_ai_result_for_submission,
+)
 from apps.domains.results.services.grading_service import grade_submission
 
 logger = logging.getLogger(__name__)
@@ -743,6 +745,21 @@ def _http_400(detail: str, **extra: Any) -> Response:
     body = {"detail": detail}
     body.update(extra)
     return Response(body, status=400)
+
+
+def _unauthorized() -> Response:
+    return Response({"detail": "unauthorized"}, status=401)
+
+
+def _check_worker_auth(request) -> bool:
+    """
+    Internal AI worker authentication.
+    - Header: X-Worker-Token
+    - Must match settings.INTERNAL_WORKER_TOKEN
+    """
+    token = request.headers.get("X-Worker-Token")
+    expected = getattr(settings, "INTERNAL_WORKER_TOKEN", None)
+    return bool(expected and token and token == expected)
 
 
 def _get_job_model():
@@ -756,13 +773,15 @@ def _get_job_model():
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
 def next_ai_job_view(request):
     """
     GET /api/v1/internal/ai/next/
     - HTTP worker polls this endpoint.
     - One PENDING job is atomically claimed -> PROCESSING.
     """
+    if not _check_worker_auth(request):
+        return _unauthorized()
+
     AIJobModel = _get_job_model()
 
     with transaction.atomic():
@@ -796,7 +815,6 @@ def next_ai_job_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
 def submit_ai_result_view(request):
     """
     POST /api/v1/internal/ai/submit/
@@ -804,6 +822,9 @@ def submit_ai_result_view(request):
     - API applies to submission (meta/answers), and triggers grading if needed.
     - Idempotent: repeated submits are safe.
     """
+    if not _check_worker_auth(request):
+        return _unauthorized()
+
     data = request.data if isinstance(request.data, dict) else {}
 
     job_id = data.get("job_id")
@@ -828,7 +849,10 @@ def submit_ai_result_view(request):
             error=str(error) if error else None,
         )
     except Exception:
-        logger.exception("apply_ai_result_for_submission failed (submission_id=%s)", submission_id_int)
+        logger.exception(
+            "apply_ai_result_for_submission failed (submission_id=%s)",
+            submission_id_int,
+        )
         return Response({"detail": "apply_ai_result failed"}, status=500)
 
     graded_result_id = None
@@ -837,7 +861,10 @@ def submit_ai_result_view(request):
             r = grade_submission(submission_id_int)
             graded_result_id = getattr(r, "id", None)
         except Exception:
-            logger.exception("grade_submission failed after ai result (submission_id=%s)", submission_id_int)
+            logger.exception(
+                "grade_submission failed after ai result (submission_id=%s)",
+                submission_id_int,
+            )
             return Response(
                 {
                     "ok": True,
@@ -868,7 +895,9 @@ def submit_ai_result_view(request):
                         job.error_message = str(error) if error else ""
                     job.save()
         except Exception:
-            logger.exception("AIJobModel status update failed (job_id=%s)", job_id)
+            logger.exception(
+                "AIJobModel status update failed (job_id=%s)", job_id
+            )
 
     return Response(
         {

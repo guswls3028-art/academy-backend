@@ -1,4 +1,3 @@
-# PATH: apps/worker/ai_worker/run.py
 from __future__ import annotations
 
 import os
@@ -20,7 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
-INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "long-random-secret")
+INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "")
 POLL_INTERVAL_SEC = float(os.getenv("AI_WORKER_POLL_INTERVAL", "1.0"))
 
 # 네트워크 장애/502 대비 백오프
@@ -40,9 +39,17 @@ signal.signal(signal.SIGTERM, _shutdown)
 
 
 def _headers() -> dict:
+    """
+    🔒 Internal API 인증 헤더 (SSOT)
+    Backend expects:
+      Authorization: Bearer <INTERNAL_WORKER_TOKEN>
+    """
+    if not INTERNAL_WORKER_TOKEN:
+        logger.error("INTERNAL_WORKER_TOKEN is not set")
     return {
-        "X-Worker-Token": INTERNAL_WORKER_TOKEN,
+        "Authorization": f"Bearer {INTERNAL_WORKER_TOKEN}",
         "X-Worker-Id": os.getenv("HOSTNAME", "ai-worker"),
+        "Accept": "application/json",
     }
 
 
@@ -69,14 +76,12 @@ def submit_result(*, result: AIResult, job: AIJob) -> None:
     Worker → API
     POST /api/v1/internal/ai/submit/
 
-    ✅ 운영 정석: job_id 기반
-    - submission_id는 선택(optional): source_id가 숫자일 때만 포함
+    ✅ job_id 기반 결과 제출
     """
     url = f"{API_BASE_URL.rstrip('/')}/api/v1/internal/ai/submit/"
     headers = _headers()
     headers["Content-Type"] = "application/json"
 
-    # submission_id optional (legacy/도메인 필요할 때만)
     submission_id = None
     try:
         if job.source_id is not None and str(job.source_id).isdigit():
@@ -86,7 +91,7 @@ def submit_result(*, result: AIResult, job: AIJob) -> None:
 
     payload = {
         "job_id": job.id,
-        "submission_id": submission_id,  # optional
+        "submission_id": submission_id,
         "status": result.status,
         "result": result.result,
         "error": result.error,
@@ -105,28 +110,23 @@ def main():
         try:
             job = fetch_job()
             if job is None:
-                # 정상 idle
                 time.sleep(POLL_INTERVAL_SEC)
                 backoff = 0.0
                 continue
 
             logger.info("Job received: id=%s type=%s", job.id, job.type)
 
-            # 🔥 AI 처리
             result = handle_ai_job(job)
 
-            # 🔥 결과 전송 (job_id 기반)
             submit_result(result=result, job=job)
 
             logger.info("Job finished: id=%s status=%s", job.id, result.status)
             backoff = 0.0
 
         except requests.HTTPError as e:
-            # 5xx/502 등 네트워크 계층 장애 대응
             code = getattr(e.response, "status_code", None)
             logger.exception("Worker loop HTTP error (status=%s)", code)
 
-            # 백오프 (지수 + jitter)
             backoff = min(MAX_BACKOFF, backoff * 2.0 + 1.0) if backoff > 0 else 1.0
             time.sleep(backoff + random.random())
 
