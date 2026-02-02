@@ -128,3 +128,9 @@ VIDEO_WORKER_INSTANCE_ID = None
 
 assert DEBUG is False, "prod.py must run with DEBUG=False"
 assert API_BASE_URL.startswith("https://"), "API_BASE_URL must be external HTTPS URL"
+
+# ==================================================
+# REDIS 레가시 버그 방지
+# ==================================================
+
+REDIS_URL = os.getenv("REDIS_URL")
