@@ -50,6 +50,7 @@ import signal
 import logging
 import random
 import requests
+import subprocess
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
@@ -65,6 +66,13 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "long-random-secret")
 POLL_INTERVAL_SEC = float(os.getenv("AI_WORKER_POLL_INTERVAL", "1.0"))
 MAX_BACKOFF = float(os.getenv("AI_WORKER_MAX_BACKOFF", "30.0"))
+
+# =======================
+# COST OPTIMIZATION
+# =======================
+IDLE_LIMIT = int(os.getenv("AI_WORKER_IDLE_LIMIT", "5"))
+INSTANCE_ID = os.getenv("INSTANCE_ID")
+AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-2")
 
 _running = True
 
@@ -123,19 +131,46 @@ def submit_result(*, result: AIResult, job: AIJob) -> None:
     resp.raise_for_status()
 
 
+def _shutdown_self():
+    if not INSTANCE_ID:
+        logger.warning("INSTANCE_ID not set; skip self shutdown")
+        return
+
+    logger.warning("Idle limit reached; stopping instance %s", INSTANCE_ID)
+    subprocess.run(
+        [
+            "aws",
+            "ec2",
+            "stop-instances",
+            "--instance-ids",
+            INSTANCE_ID,
+            "--region",
+            AWS_REGION,
+        ],
+        check=False,
+    )
+
+
 def main():
     logger.info("AI Worker started (API_BASE_URL=%s)", API_BASE_URL)
 
     backoff = 0.0
+    idle_count = 0
 
     while _running:
         try:
             job = fetch_job()
             if job is None:
+                idle_count += 1
+                if idle_count >= IDLE_LIMIT:
+                    _shutdown_self()
+                    break
+
                 time.sleep(POLL_INTERVAL_SEC)
                 backoff = 0.0
                 continue
 
+            idle_count = 0
             logger.info("Job received: id=%s type=%s", job.id, job.type)
 
             result = handle_ai_job(job)

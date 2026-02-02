@@ -32,25 +32,40 @@ class SubmissionsConfig(AppConfig):
 ==========================================================================================
 # FILE: urls.py
 ==========================================================================================
-# apps/domains/submissions/urls.py
+# PATH: apps/domains/submissions/urls.py
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from .views import SubmissionViewSet
 from .views.exam_omr_submit_view import ExamOMRSubmitView
 
+# ✅ 추가
+from .views.exam_submissions_list_view import ExamSubmissionsListView
+from .views.exam_omr_batch_upload_view import ExamOMRBatchUploadView
+
 router = DefaultRouter()
 router.register("submissions", SubmissionViewSet, basename="submissions")
 
 urlpatterns = [
-    # 🔥 STEP 2: 시험 OMR 전용 제출
-    # ⚠️ TEMPORARY API (STEP 2 전용)
-    # - REST 정규 경로는 추후 /submissions/ 통합 예정
-    # - 현재는 OMR 전용 UX 흐름 분리를 위해 유지
+    # 🔥 STEP 2: 시험 OMR 전용 제출 (file_key 기반)
     path(
         "submissions/exams/<int:exam_id>/omr/",
         ExamOMRSubmitView.as_view(),
         name="exam-omr-submit",
+    ),
+
+    # ✅ 프론트 제출 목록: GET /submissions/exams/{examId}/
+    path(
+        "submissions/exams/<int:exam_id>/",
+        ExamSubmissionsListView.as_view(),
+        name="exam-submissions-list",
+    ),
+
+    # ✅ 다건 업로드: POST /submissions/exams/{examId}/omr/batch/
+    path(
+        "submissions/exams/<int:exam_id>/omr/batch/",
+        ExamOMRBatchUploadView.as_view(),
+        name="exam-omr-batch-upload",
     ),
 ]
 
@@ -432,9 +447,8 @@ __all__ = ["SubmissionSerializer", "SubmissionCreateSerializer"]
 ==========================================================================================
 # PATH: apps/domains/submissions/serializers/submission.py
 # 변경 요약:
-# - file(FileField) 제거
-# - 업로드된 파일을 R2로 즉시 업로드
-# - file_key/file_type/file_size 저장
+# - OMR_SCAN은 enrollment_id 없이 제출 생성 허용 (식별은 OMR 마킹/AI가 채움)
+# - file(FileField)로 업로드 받은 파일을 R2로 업로드 후 file_key 저장
 
 from __future__ import annotations
 
@@ -482,10 +496,15 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
         source = attrs.get("source")
         target_type = attrs.get("target_type")
 
+        # ✅ 핵심 정책:
+        # - exam/homework는 일반적으로 enrollment_id 필요
+        # - 단, OMR_SCAN은 "식별을 OMR 마킹으로 처리"하므로 enrollment_id 없이 생성 허용
         if target_type in (Submission.TargetType.EXAM, Submission.TargetType.HOMEWORK):
-            if not attrs.get("enrollment_id"):
-                raise serializers.ValidationError({"enrollment_id": "required"})
+            if source != Submission.Source.OMR_SCAN:
+                if not attrs.get("enrollment_id"):
+                    raise serializers.ValidationError({"enrollment_id": "required"})
 
+        # 파일 기반 소스는 file 필요
         if source in (
             Submission.Source.OMR_SCAN,
             Submission.Source.HOMEWORK_IMAGE,
@@ -494,6 +513,7 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
             if not attrs.get("file"):
                 raise serializers.ValidationError({"file": "file required"})
 
+        # online은 payload 필요
         if source == Submission.Source.ONLINE and not attrs.get("payload"):
             raise serializers.ValidationError({"payload": "required"})
 
@@ -511,12 +531,15 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
             upload_fileobj_to_r2(
                 fileobj=upload_file,
                 key=key,
-                content_type=upload_file.content_type,
+                content_type=getattr(upload_file, "content_type", None),
             )
 
             submission.file_key = key
-            submission.file_type = upload_file.content_type or mimetypes.guess_type(upload_file.name)[0]
-            submission.file_size = upload_file.size
+            submission.file_type = (
+                getattr(upload_file, "content_type", None)
+                or mimetypes.guess_type(upload_file.name)[0]
+            )
+            submission.file_size = getattr(upload_file, "size", None)
             submission.save(update_fields=["file_key", "file_type", "file_size"])
 
         return submission
@@ -1089,6 +1112,73 @@ __all__ = ["SubmissionViewSet"]
 
 
 ==========================================================================================
+# FILE: views/exam_omr_batch_upload_view.py
+==========================================================================================
+# PATH: apps/domains/submissions/views/exam_omr_batch_upload_view.py
+from __future__ import annotations
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.submissions.models import Submission
+from apps.domains.submissions.serializers.submission import SubmissionCreateSerializer
+from apps.domains.submissions.services.dispatcher import dispatch_submission
+
+
+class ExamOMRBatchUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, exam_id: int):
+        """
+        multipart/form-data:
+          - files: File[]  (반복)
+          - (optional) sheet_id: number  (payload로 전달)
+        """
+        files = request.FILES.getlist("files") or []
+        if not files:
+            # 일부 클라이언트는 file 단일 키를 쓰기도 함
+            f = request.FILES.get("file")
+            if f:
+                files = [f]
+
+        if not files:
+            return Response({"detail": "files required"}, status=400)
+
+        sheet_id = request.data.get("sheet_id")
+        payload = {}
+        if sheet_id:
+            try:
+                payload["sheet_id"] = int(sheet_id)
+            except Exception:
+                payload["sheet_id"] = sheet_id
+
+        created_ids = []
+
+        for f in files:
+            # ✅ OMR_SCAN은 enrollment_id 없이 생성 가능(Serializer 정책과 일치)
+            ser = SubmissionCreateSerializer(
+                data={
+                    "enrollment_id": None,
+                    "target_type": Submission.TargetType.EXAM,
+                    "target_id": int(exam_id),
+                    "source": Submission.Source.OMR_SCAN,
+                    "payload": payload or None,
+                    "file": f,
+                }
+            )
+            ser.is_valid(raise_exception=True)
+            sub = ser.save(user=request.user)
+            dispatch_submission(sub)
+            created_ids.append(int(sub.id))
+
+        return Response(
+            {"created_count": len(created_ids), "submission_ids": created_ids},
+            status=201,
+        )
+
+
+==========================================================================================
 # FILE: views/exam_omr_submit_view.py
 ==========================================================================================
 from rest_framework.views import APIView
@@ -1127,6 +1217,115 @@ class ExamOMRSubmitView(APIView):
         return Response(
             {"submission_id": submission.id, "status": submission.status}, status=201
         )
+
+
+==========================================================================================
+# FILE: views/exam_submissions_list_view.py
+==========================================================================================
+# PATH: apps/domains/submissions/views/exam_submissions_list_view.py
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.submissions.models import Submission
+
+
+def _map_row_status(s: str) -> str:
+    """
+    Front SubmissionRow.status contract:
+    - pending | processing | done | failed
+    """
+    s = str(s or "").lower()
+
+    if s in ("failed",):
+        return "failed"
+
+    # needs_identification도 운영상 "처리중(수동개입 필요)"로 본다
+    if s in ("done",):
+        return "done"
+
+    if s in ("submitted", "dispatched"):
+        return "pending"
+
+    if s in ("extracting", "answers_ready", "grading", "needs_identification"):
+        return "processing"
+
+    return "processing"
+
+
+def _resolve_student_name(enrollment_id: Optional[int]) -> str:
+    """
+    프로젝트마다 Enrollment/Student 모델 경로가 다르므로 best-effort.
+    없으면 빈 문자열 반환(프론트가 #id로도 식별 가능).
+    """
+    if not enrollment_id:
+        return ""
+
+    # 1) 가장 흔한 케이스: apps.domains.enrollments.models.Enrollment
+    try:
+        from apps.domains.enrollments.models import Enrollment  # type: ignore
+
+        obj = Enrollment.objects.filter(id=int(enrollment_id)).first()
+        if obj:
+            for attr in ("student_name", "name", "full_name"):
+                v = getattr(obj, attr, None)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+    except Exception:
+        pass
+
+    # 2) 다른 케이스들(있으면 확장)
+    return ""
+
+
+def _resolve_score_for_submission(submission_id: int) -> Optional[float]:
+    """
+    결과 도메인 구현이 여러 형태일 수 있어 best-effort.
+    있으면 score 반환, 없으면 None.
+    """
+    # 흔한 케이스: results 모델에 submission_id 연결
+    try:
+        from apps.domains.results.models import Result  # type: ignore
+
+        r = Result.objects.filter(submission_id=int(submission_id)).order_by("-id").first()
+        if r and getattr(r, "score", None) is not None:
+            return float(r.score)
+    except Exception:
+        pass
+
+    # 다른 테이블 구조라면 여기 추가
+    return None
+
+
+class ExamSubmissionsListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, exam_id: int):
+        qs = (
+            Submission.objects
+            .filter(target_type=Submission.TargetType.EXAM, target_id=int(exam_id))
+            .order_by("-id")[:200]
+        )
+
+        items: list[Dict[str, Any]] = []
+        for s in qs:
+            enrollment_id = getattr(s, "enrollment_id", None)
+            items.append(
+                {
+                    "id": int(s.id),
+                    "enrollment_id": int(enrollment_id) if enrollment_id else 0,
+                    "student_name": _resolve_student_name(enrollment_id),
+                    "status": _map_row_status(getattr(s, "status", "")),
+                    "score": _resolve_score_for_submission(int(s.id)),
+                    "created_at": s.created_at.isoformat(),
+                }
+            )
+
+        return Response(items, status=200)
 
 
 ==========================================================================================
