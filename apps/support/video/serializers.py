@@ -167,10 +167,19 @@ class VideoProgressSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
+    # ✅ 진행률 % (프론트 표시용)
+    progress_percent = serializers.SerializerMethodField()
+
     class Meta:
         model = VideoProgress
         fields = "__all__"
         ref_name = "SealedVideoProgress"
+
+    def get_progress_percent(self, obj):
+        try:
+            return round(float(obj.progress or 0) * 100, 1)
+        except Exception:
+            return 0.0
 
 
 # ========================================================

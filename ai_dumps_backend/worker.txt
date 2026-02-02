@@ -1649,8 +1649,7 @@ from apps.worker.ai_worker.ai.handwriting.detector import analyze_handwriting
 from apps.worker.ai_worker.ai.embedding.service import get_embeddings
 from apps.worker.ai_worker.ai.problem.generator import generate_problem_from_ocr
 from apps.worker.ai_worker.ai.pipelines.homework_video_analyzer import analyze_homework_video
-from apps.worker.storage.downloader import download_to_tmp
-
+from apps.worker.ai_worker.storage.downloader import download_to_tmp
 def handle_ai_job(job: AIJob) -> AIResult:
     try:
         cfg = AIConfig.load()
@@ -3173,17 +3172,6 @@ def cache_control_for_object(name: str) -> str:
     if n.endswith(".jpg") or n.endswith(".jpeg") or n.endswith(".png"):
         return "public, max-age=604800"
     return "public, max-age=3600"
-
-
-==========================================================================================
-# FILE: video_worker/validate.py
-==========================================================================================
-from __future__ import annotations
-
-from pathlib import Path
-from apps.worker.video_worker.video.validate import validate_hls_output
-
-__all__ = ["validate_hls_output"]
 
 
 ==========================================================================================

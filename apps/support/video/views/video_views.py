@@ -100,6 +100,32 @@ def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
     return True, {"duration": duration, "has_video": True}, ""
 
 
+def _try_start_video_worker_instance() -> None:
+    """
+    ✅ upload_complete 시점(UPLOADED 전환)에 video-worker EC2 인스턴스 자동 기동
+
+    - 설정이 없으면 아무것도 하지 않음 (안전)
+    - start_instances는 멱등이 아니므로 예외는 삼키고 로그만 남김
+    """
+    instance_id = getattr(settings, "VIDEO_WORKER_INSTANCE_ID", None) or ""
+    region = getattr(settings, "AWS_REGION", None) or getattr(settings, "AWS_DEFAULT_REGION", None) or ""
+
+    if not instance_id or not region:
+        return
+
+    try:
+        import boto3  # type: ignore
+    except Exception:
+        return
+
+    try:
+        ec2 = boto3.client("ec2", region_name=region)
+        ec2.start_instances(InstanceIds=[str(instance_id)])
+    except Exception:
+        # 운영에서 start 실패가 API를 깨면 안 됨
+        return
+
+
 # ==================================================
 # ViewSet
 # ==================================================
@@ -239,6 +265,10 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.status = Video.Status.UPLOADED
             video.error_reason = ""
             video.save(update_fields=["status", "error_reason"])
+
+            # ✅ 업로드 완료 → video-worker 자동 기동
+            _try_start_video_worker_instance()
+
             return Response(VideoSerializer(video).data)
 
         min_dur = _safe_int(getattr(settings, "VIDEO_MIN_DURATION_SECONDS", 3), 3)
@@ -249,12 +279,19 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.status = Video.Status.UPLOADED  # MODIFIED
             video.error_reason = ""  # MODIFIED
             video.save(update_fields=["status", "duration", "error_reason"])  # MODIFIED
+
+            # ✅ 업로드 완료 → video-worker 자동 기동
+            _try_start_video_worker_instance()
+
             return Response(VideoSerializer(video).data)  # MODIFIED
 
         video.duration = duration
         video.status = Video.Status.UPLOADED
         video.error_reason = ""
         video.save(update_fields=["status", "duration", "error_reason"])
+
+        # ✅ 업로드 완료 → video-worker 자동 기동
+        _try_start_video_worker_instance()
 
         return Response(VideoSerializer(video).data)
 
@@ -274,6 +311,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         video.status = Video.Status.UPLOADED
         video.save(update_fields=["status"])
+
+        # ✅ 재처리 큐(HTTP polling)로 되돌리는 순간에도 worker 기동
+        _try_start_video_worker_instance()
 
         return Response(
             {"detail": "Video reprocessing queued (HTTP worker polling)"},
