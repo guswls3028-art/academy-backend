@@ -43,74 +43,87 @@ urlpatterns = [
 ==========================================================================================
 # FILE: omr/constants.py
 ==========================================================================================
-# apps/domains/assets/omr/constants.py
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 
-# -----------------------------
-# Page / Layout (Single Source of Truth)
-# -----------------------------
-PAGE_SIZE = landscape(A4)  # 시험지 1은 항상 A4 가로
+# =========================
+# PAGE
+# =========================
+PAGE_SIZE = landscape(A4)
 PAGE_WIDTH, PAGE_HEIGHT = PAGE_SIZE
 
-MARGIN_X = 14 * mm
-MARGIN_Y = 14 * mm
+MARGIN_X = 12 * mm
+MARGIN_Y = 12 * mm
 
-# 3단 레이아웃
-COL_COUNT = 3
+# =========================
+# GRID: LEFT 1 + RIGHT 3
+# =========================
+COL_COUNT = 4
 COL_GAP = 6 * mm
+
 COL_WIDTH = (PAGE_WIDTH - (MARGIN_X * 2) - (COL_GAP * (COL_COUNT - 1))) / COL_COUNT
 
 COL1_X = MARGIN_X
-COL2_X = MARGIN_X + (COL_WIDTH + COL_GAP) * 1
-COL3_X = MARGIN_X + (COL_WIDTH + COL_GAP) * 2
+COL2_X = COL1_X + COL_WIDTH + COL_GAP
+COL3_X = COL2_X + COL_WIDTH + COL_GAP
+COL4_X = COL3_X + COL_WIDTH + COL_GAP
 
-# 로고 영역 (영역 1 상단)
-LOGO_BOX_HEIGHT = 22 * mm
-LOGO_BOX_Y = PAGE_HEIGHT - MARGIN_Y - LOGO_BOX_HEIGHT
+# =========================
+# LEFT COLUMN SECTIONS
+# (left column is independent; just consumes its own width/height)
+# =========================
+LEFT_PAD = 3 * mm
 
-# 식별자 영역 (영역 1 하단)
+LOGO_BOX_H = 28 * mm
+EXAMINFO_BOX_H = 22 * mm
+NAME_BOX_H = 18 * mm
+
+# gap between left blocks
+LEFT_BLOCK_GAP_1 = 6 * mm   # logo -> examinfo
+LEFT_BLOCK_GAP_2 = 4 * mm   # examinfo -> name
+LEFT_BLOCK_GAP_3 = 6 * mm   # name -> identifier
+
+# =========================
+# IDENTIFIER (8 digits, 0~9 bubbles)
+# =========================
 IDENT_TITLE_FONT_SIZE = 9
 IDENT_NUM_FONT_SIZE = 8
+
 IDENT_DIGITS = 8
 IDENT_ROWS = 10  # 0~9
-IDENT_ROW_GAP = 5.2 * mm
-IDENT_COL_GAP = 10.5 * mm
-IDENT_BUBBLE_R = 2.6 * mm
+IDENT_BUBBLE_R = 2.4 * mm
 
-IDENT_AREA_BOTTOM = MARGIN_Y + 10 * mm
-IDENT_AREA_TOP = IDENT_AREA_BOTTOM + (IDENT_ROWS - 1) * IDENT_ROW_GAP + 18 * mm  # 타이틀/여유 포함
+# the identifier area auto-fills remaining height (computed in layout)
+IDENT_DIGIT_RIGHT_PAD = 2 * mm
+IDENT_EXTRA_RIGHT_GAP = 10 * mm  # same philosophy: labels left, marking right
 
-# 객관식 버블/텍스트
-Q_FONT_SIZE = 10
-Q_BUBBLE_R = 2.6 * mm
+# =========================
+# OBJECTIVE QUESTIONS
+# =========================
+QUESTION_MAX = 45
+ALLOWED_QUESTION_COUNTS = tuple(range(1, QUESTION_MAX + 1))
+
+Q_FONT_SIZE = 9
+Q_HEADER_FONT_SIZE = 9
+
+Q_BUBBLE_R = 2.4 * mm
 Q_CHOICE_COUNT = 5
-Q_CHOICE_GAP = 9.5 * mm
-Q_LEFT_PAD = 2 * mm  # 문항번호 좌측 패딩
-Q_RIGHT_PAD = 2 * mm  # 버블 우측 패딩
+Q_CHOICE_GAP = 9.0 * mm
 
-# 객관식 시작/끝 Y
-Q_AREA_TOP = PAGE_HEIGHT - MARGIN_Y - 10 * mm
-Q_AREA_BOTTOM = MARGIN_Y + 14 * mm
+Q_LEFT_PAD = 2 * mm
+Q_RIGHT_PAD = 2 * mm
 
-# 문항수별 세로 간격 (문항 수 적을수록 더 넉넉)
-ROW_GAP_BY_COUNT = {
-    30: 11.0 * mm,
-    20: 14.0 * mm,
-    10: 20.0 * mm,
-}
+Q_ROWS_PER_COL = 15  # fixed: 1~15 / 16~30 / 31~45
+Q_GROUP_SIZE = 5     # separator each 5
 
-# 문항수별 컬럼 분배(영역2/3)
-# - 철학: 레이아웃 동일, 밀도만 달라짐
-DISTRIBUTION_BY_COUNT = {
-    30: (15, 15),
-    20: (10, 10),
-    10: (5, 5),
-}
+# question area vertical anchors (layout will fit exactly to bottom)
+Q_HEADER_Y_PAD = 6 * mm    # header baseline from top margin
+Q_TOP_PAD = 14 * mm        # top padding inside content area
+Q_BOTTOM_PAD = 6 * mm      # bottom padding inside content area
 
-ALLOWED_QUESTION_COUNTS = (10, 20, 30)
-
-# 로고 파일 타입(요청 검증용)
+# =========================
+# LOGO UPLOAD VALIDATION
+# =========================
 ALLOWED_LOGO_CONTENT_TYPES = (
     "image/png",
     "image/jpeg",
@@ -151,247 +164,264 @@ urlpatterns = [
 
 
 ==========================================================================================
-# FILE: omr/layouts/objective_v1_10.py
+# FILE: omr/layouts/objective_v2_45.py
 ==========================================================================================
-# apps/domains/assets/omr/layouts/objective_v1_10.py
+from __future__ import annotations
+
 from reportlab.lib.units import mm
+
 from apps.domains.assets.omr import constants as C
 
 
-def draw(c, *, logo_reader=None) -> None:
-    _draw_common(c, logo_reader=logo_reader, question_count=10)
-    _draw_questions(c, question_count=10)
+def draw(
+    c,
+    *,
+    question_count: int,
+    logo_reader=None,
+    exam_title: str = "3월 모의고사",
+    subject_round: str = "수학 (1회)",
+) -> None:
+    """
+    Front page (Objective OMR)
+    - 4 columns: left(logo/exam/name/identifier) + right 3 columns (1~15 / 16~30 / 31~45)
+    - 5-question separators
+    - print bubbles ONLY up to question_count; rest is blank
+    """
+    _draw_outer_frame(c)
+    _draw_vertical_dividers(c)
+
+    _draw_left_column(
+        c,
+        logo_reader=logo_reader,
+        exam_title=exam_title,
+        subject_round=subject_round,
+    )
+
+    _draw_objective_columns(c, question_count=question_count)
 
 
-def _draw_common(c, *, logo_reader, question_count: int) -> None:
-    # 로고 (영역1 상단)
+# =========================
+# FRAME
+# =========================
+def _draw_outer_frame(c) -> None:
+    c.setLineWidth(0.8)
+    c.rect(
+        C.MARGIN_X,
+        C.MARGIN_Y,
+        C.PAGE_WIDTH - 2 * C.MARGIN_X,
+        C.PAGE_HEIGHT - 2 * C.MARGIN_Y,
+    )
+
+
+def _draw_vertical_dividers(c) -> None:
+    # boundaries are at the midpoint of the gaps between columns
+    c.setLineWidth(0.8)
+    xs = [
+        (C.COL2_X - (C.COL_GAP / 2)),
+        (C.COL3_X - (C.COL_GAP / 2)),
+        (C.COL4_X - (C.COL_GAP / 2)),
+    ]
+    for x in xs:
+        c.line(x, C.MARGIN_Y, x, C.PAGE_HEIGHT - C.MARGIN_Y)
+
+
+# =========================
+# LEFT COLUMN (independent)
+# =========================
+def _draw_left_column(c, *, logo_reader, exam_title: str, subject_round: str) -> None:
+    top = C.PAGE_HEIGHT - C.MARGIN_Y
+
+    # --- Logo box
+    logo_y = top - C.LOGO_BOX_H
+    c.setLineWidth(0.8)
+    c.rect(C.COL1_X, logo_y, C.COL_WIDTH, C.LOGO_BOX_H)
+
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(C.COL1_X + C.LEFT_PAD, logo_y + C.LOGO_BOX_H - 10, "로고")
+
     if logo_reader is not None:
+        # preserve aspect ratio, fit inside box with padding
         c.drawImage(
             logo_reader,
-            C.COL1_X,
-            C.LOGO_BOX_Y,
-            width=C.COL_WIDTH,
-            height=C.LOGO_BOX_HEIGHT,
+            C.COL1_X + C.LEFT_PAD,
+            logo_y + C.LEFT_PAD,
+            width=C.COL_WIDTH - 2 * C.LEFT_PAD,
+            height=C.LOGO_BOX_H - 2 * C.LEFT_PAD,
             preserveAspectRatio=True,
+            anchor="c",
             mask="auto",
         )
 
-    # 식별자(영역1 하단) - 라벨 좌측, 마킹 우측 정렬
-    title_y = C.IDENT_AREA_TOP - 6 * mm
-    c.setFont("Helvetica", C.IDENT_TITLE_FONT_SIZE)
-    c.drawString(C.COL1_X, title_y, "휴대폰번호 (010 제외)")
+    # --- Exam info box
+    exam_y = logo_y - C.LEFT_BLOCK_GAP_1 - C.EXAMINFO_BOX_H
+    c.rect(C.COL1_X, exam_y, C.COL_WIDTH, C.EXAMINFO_BOX_H)
 
-    # digits x positions
-    digit_start_x = C.COL1_X
-    bubble_right_edge = C.COL1_X + C.COL_WIDTH - C.Q_RIGHT_PAD
-    # digits 전체 폭 계산 후 우측 정렬
-    total_digits_width = (C.IDENT_DIGITS - 1) * C.IDENT_COL_GAP
-    digits_left_x = bubble_right_edge - total_digits_width - 10 * mm  # 숫자/버블 여유
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(C.COL1_X + C.LEFT_PAD, exam_y + C.EXAMINFO_BOX_H - 10, "시험명 / 과목")
 
-    # rows 0..9: 라벨(0~9)은 좌측, 버블은 우측(각 digit column 내)
+    c.setFont("Helvetica", 10)
+    c.drawString(C.COL1_X + C.LEFT_PAD, exam_y + C.EXAMINFO_BOX_H - 24, str(exam_title))
+    c.drawString(C.COL1_X + C.LEFT_PAD, exam_y + C.EXAMINFO_BOX_H - 38, str(subject_round))
+
+    # --- Name box
+    name_y = exam_y - C.LEFT_BLOCK_GAP_2 - C.NAME_BOX_H
+    c.rect(C.COL1_X, name_y, C.COL_WIDTH, C.NAME_BOX_H)
+
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(C.COL1_X + C.LEFT_PAD, name_y + C.NAME_BOX_H - 10, "이름")
+
+    # writing line (right side is the “input area”)
+    c.setLineWidth(0.6)
+    c.line(
+        C.COL1_X + C.LEFT_PAD,
+        name_y + 6 * mm,
+        C.COL1_X + C.COL_WIDTH - C.LEFT_PAD,
+        name_y + 6 * mm,
+    )
+    c.setLineWidth(0.8)
+
+    # --- Identifier area fills to bottom margin
+    ident_top = name_y - C.LEFT_BLOCK_GAP_3
+    ident_bottom = C.MARGIN_Y
+    ident_h = ident_top - ident_bottom
+
+    c.rect(C.COL1_X, ident_bottom, C.COL_WIDTH, ident_h)
+
+    c.setFont("Helvetica-Bold", C.IDENT_TITLE_FONT_SIZE)
+    c.drawString(
+        C.COL1_X + C.LEFT_PAD,
+        ident_top - 10,
+        "수험번호 OMR (휴대폰 8자리, 010 제외)",
+    )
+
+    # compute row gap to fill area nicely
+    # reserve a small title area at the top of identifier box
+    title_reserved = 12 * mm
+    usable_h = max(1.0, ident_h - title_reserved - 6 * mm)
+    row_gap = usable_h / (C.IDENT_ROWS - 1)
+
+    # right-aligned digit columns (marking area)
+    bubble_right = C.COL1_X + C.COL_WIDTH - C.IDENT_DIGIT_RIGHT_PAD
+    col_gap = (C.COL_WIDTH - 22 * mm) / max(1, (C.IDENT_DIGITS - 1))
+    total_digits_w = (C.IDENT_DIGITS - 1) * col_gap
+    digits_left = bubble_right - total_digits_w - C.IDENT_EXTRA_RIGHT_GAP
+
     c.setFont("Helvetica", C.IDENT_NUM_FONT_SIZE)
     for n in range(10):
-        y = (C.IDENT_AREA_BOTTOM + (9 - n) * C.IDENT_ROW_GAP)
-        c.drawString(digit_start_x, y - 2 * mm, str(n))
-
+        y = ident_bottom + 6 * mm + (9 - n) * row_gap
+        # labels (left aligned)
+        c.drawString(C.COL1_X + C.LEFT_PAD, y - 2 * mm, str(n))
+        # bubbles (right aligned)
         for d in range(C.IDENT_DIGITS):
-            x = digits_left_x + d * C.IDENT_COL_GAP
+            x = digits_left + d * col_gap
             c.circle(x, y, C.IDENT_BUBBLE_R)
 
-    # 약한 안내선(시각 안정)
-    c.setLineWidth(0.4)
-    c.line(C.COL1_X, C.IDENT_AREA_TOP, C.COL1_X + C.COL_WIDTH, C.IDENT_AREA_TOP)
+
+# =========================
+# RIGHT 3 COLUMNS (objective)
+# =========================
+def _question_bubbles_start_x(col_x: float) -> float:
+    right_edge = col_x + C.COL_WIDTH - C.Q_RIGHT_PAD
+    total_choice_width = (C.Q_CHOICE_COUNT - 1) * C.Q_CHOICE_GAP
+    return right_edge - total_choice_width
 
 
-def _draw_questions(c, *, question_count: int) -> None:
-    left_count, right_count = C.DISTRIBUTION_BY_COUNT[question_count]
-    row_gap = C.ROW_GAP_BY_COUNT[question_count]
+def _question_area_y_bounds() -> tuple[float, float]:
+    top = C.PAGE_HEIGHT - C.MARGIN_Y - C.Q_TOP_PAD
+    bottom = C.MARGIN_Y + C.Q_BOTTOM_PAD
+    return top, bottom
 
-    # 각 컬럼의 버블 시작 X를 "컬럼 우측 기준"으로 잡아 우측 정렬을 강제
-    def bubbles_start_x(col_x: float) -> float:
-        right_edge = col_x + C.COL_WIDTH - C.Q_RIGHT_PAD
-        total_choice_width = (C.Q_CHOICE_COUNT - 1) * C.Q_CHOICE_GAP
-        return right_edge - total_choice_width
+
+def _draw_objective_columns(c, *, question_count: int) -> None:
+    c.setFont("Helvetica", C.Q_FONT_SIZE)
+
+    _draw_objective_one_col(c, col_x=C.COL2_X, start_q=1, question_count=question_count)
+    _draw_objective_one_col(c, col_x=C.COL3_X, start_q=16, question_count=question_count)
+    _draw_objective_one_col(c, col_x=C.COL4_X, start_q=31, question_count=question_count)
+
+
+def _draw_objective_one_col(c, *, col_x: float, start_q: int, question_count: int) -> None:
+    # header
+    c.setFont("Helvetica-Bold", C.Q_HEADER_FONT_SIZE)
+    header = f"{start_q} ~ {start_q + (C.Q_ROWS_PER_COL - 1)}"
+    c.drawCentredString(col_x + C.COL_WIDTH / 2, C.PAGE_HEIGHT - C.MARGIN_Y - C.Q_HEADER_Y_PAD, header)
+
+    # row geometry (fills down to bottom with no weird leftover)
+    top, bottom = _question_area_y_bounds()
+    row_gap = (top - bottom) / (C.Q_ROWS_PER_COL - 1)
+
+    bx0 = _question_bubbles_start_x(col_x)
 
     c.setFont("Helvetica", C.Q_FONT_SIZE)
 
-    # 영역2
-    x2 = C.COL2_X
-    y = C.Q_AREA_TOP
-    start_bx2 = bubbles_start_x(x2)
-    for i in range(1, left_count + 1):
-        c.drawString(x2 + C.Q_LEFT_PAD, y - 2 * mm, str(i))
-        for k in range(C.Q_CHOICE_COUNT):
-            c.circle(start_bx2 + k * C.Q_CHOICE_GAP, y, C.Q_BUBBLE_R)
-        y -= row_gap
+    y = top
+    for idx in range(C.Q_ROWS_PER_COL):
+        qnum = start_q + idx
 
-    # 영역3
-    x3 = C.COL3_X
-    y = C.Q_AREA_TOP
-    start_bx3 = bubbles_start_x(x3)
-    for i in range(left_count + 1, left_count + right_count + 1):
-        c.drawString(x3 + C.Q_LEFT_PAD, y - 2 * mm, str(i))
-        for k in range(C.Q_CHOICE_COUNT):
-            c.circle(start_bx3 + k * C.Q_CHOICE_GAP, y, C.Q_BUBBLE_R)
+        # only draw up to question_count; rest stays blank
+        if qnum <= question_count:
+            # number (left aligned)
+            c.drawString(col_x + C.Q_LEFT_PAD, y - 2 * mm, str(qnum))
+            # bubbles (right aligned)
+            for k in range(C.Q_CHOICE_COUNT):
+                c.circle(bx0 + k * C.Q_CHOICE_GAP, y, C.Q_BUBBLE_R)
+
+        # separator after each 5 questions (except after last)
+        if idx in (C.Q_GROUP_SIZE - 1, 2 * C.Q_GROUP_SIZE - 1):
+            c.setLineWidth(0.6)
+            c.line(col_x + C.Q_LEFT_PAD, y - (row_gap / 2), col_x + C.COL_WIDTH - C.Q_LEFT_PAD, y - (row_gap / 2))
+            c.setLineWidth(0.8)
+
         y -= row_gap
 
 
 ==========================================================================================
-# FILE: omr/layouts/objective_v1_20.py
+# FILE: omr/layouts/subjective_v2.py
 ==========================================================================================
-# apps/domains/assets/omr/layouts/objective_v1_20.py
+from __future__ import annotations
+
 from reportlab.lib.units import mm
+
 from apps.domains.assets.omr import constants as C
 
 
-def draw(c, *, logo_reader=None) -> None:
-    _draw_common(c, logo_reader=logo_reader, question_count=20)
-    _draw_questions(c, question_count=20)
+def draw(c, *, line_count: int = 10, title: str = "서술형 답안지") -> None:
+    """
+    Back page (Subjective)
+    - label left aligned
+    - writing area right aligned
+    - fixed A4 landscape, black&white
+    """
+    # frame
+    c.setLineWidth(0.8)
+    c.rect(
+        C.MARGIN_X,
+        C.MARGIN_Y,
+        C.PAGE_WIDTH - 2 * C.MARGIN_X,
+        C.PAGE_HEIGHT - 2 * C.MARGIN_Y,
+    )
 
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(C.MARGIN_X, C.PAGE_HEIGHT - C.MARGIN_Y - 18, title)
 
-def _draw_common(c, *, logo_reader, question_count: int) -> None:
-    if logo_reader is not None:
-        c.drawImage(
-            logo_reader,
-            C.COL1_X,
-            C.LOGO_BOX_Y,
-            width=C.COL_WIDTH,
-            height=C.LOGO_BOX_HEIGHT,
-            preserveAspectRatio=True,
-            mask="auto",
-        )
+    c.setFont("Helvetica", 10)
+    top = C.PAGE_HEIGHT - C.MARGIN_Y - 32
+    bottom = C.MARGIN_Y + 10 * mm
 
-    title_y = C.IDENT_AREA_TOP - 6 * mm
-    c.setFont("Helvetica", C.IDENT_TITLE_FONT_SIZE)
-    c.drawString(C.COL1_X, title_y, "휴대폰번호 (010 제외)")
+    # distribute evenly
+    gap = (top - bottom) / max(1, line_count)
 
-    digit_start_x = C.COL1_X
-    bubble_right_edge = C.COL1_X + C.COL_WIDTH - C.Q_RIGHT_PAD
-    total_digits_width = (C.IDENT_DIGITS - 1) * C.IDENT_COL_GAP
-    digits_left_x = bubble_right_edge - total_digits_width - 10 * mm
+    y = top
+    for i in range(1, line_count + 1):
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(C.MARGIN_X, y, f"{i}.")  # label left
 
-    c.setFont("Helvetica", C.IDENT_NUM_FONT_SIZE)
-    for n in range(10):
-        y = (C.IDENT_AREA_BOTTOM + (9 - n) * C.IDENT_ROW_GAP)
-        c.drawString(digit_start_x, y - 2 * mm, str(n))
-        for d in range(C.IDENT_DIGITS):
-            x = digits_left_x + d * C.IDENT_COL_GAP
-            c.circle(x, y, C.IDENT_BUBBLE_R)
+        # writing line right
+        c.setLineWidth(0.6)
+        c.line(C.MARGIN_X + 12 * mm, y, C.PAGE_WIDTH - C.MARGIN_X, y)
+        c.setLineWidth(0.8)
 
-    c.setLineWidth(0.4)
-    c.line(C.COL1_X, C.IDENT_AREA_TOP, C.COL1_X + C.COL_WIDTH, C.IDENT_AREA_TOP)
-
-
-def _draw_questions(c, *, question_count: int) -> None:
-    left_count, right_count = C.DISTRIBUTION_BY_COUNT[question_count]
-    row_gap = C.ROW_GAP_BY_COUNT[question_count]
-
-    def bubbles_start_x(col_x: float) -> float:
-        right_edge = col_x + C.COL_WIDTH - C.Q_RIGHT_PAD
-        total_choice_width = (C.Q_CHOICE_COUNT - 1) * C.Q_CHOICE_GAP
-        return right_edge - total_choice_width
-
-    c.setFont("Helvetica", C.Q_FONT_SIZE)
-
-    x2 = C.COL2_X
-    y = C.Q_AREA_TOP
-    start_bx2 = bubbles_start_x(x2)
-    for i in range(1, left_count + 1):
-        c.drawString(x2 + C.Q_LEFT_PAD, y - 2 * mm, str(i))
-        for k in range(C.Q_CHOICE_COUNT):
-            c.circle(start_bx2 + k * C.Q_CHOICE_GAP, y, C.Q_BUBBLE_R)
-        y -= row_gap
-
-    x3 = C.COL3_X
-    y = C.Q_AREA_TOP
-    start_bx3 = bubbles_start_x(x3)
-    for i in range(left_count + 1, left_count + right_count + 1):
-        c.drawString(x3 + C.Q_LEFT_PAD, y - 2 * mm, str(i))
-        for k in range(C.Q_CHOICE_COUNT):
-            c.circle(start_bx3 + k * C.Q_CHOICE_GAP, y, C.Q_BUBBLE_R)
-        y -= row_gap
-
-
-==========================================================================================
-# FILE: omr/layouts/objective_v1_30.py
-==========================================================================================
-# apps/domains/assets/omr/layouts/objective_v1_30.py
-from reportlab.lib.units import mm
-from apps.domains.assets.omr import constants as C
-
-
-def draw(c, *, logo_reader=None) -> None:
-    _draw_common(c, logo_reader=logo_reader, question_count=30)
-    _draw_questions(c, question_count=30)
-
-
-def _draw_common(c, *, logo_reader, question_count: int) -> None:
-    if logo_reader is not None:
-        c.drawImage(
-            logo_reader,
-            C.COL1_X,
-            C.LOGO_BOX_Y,
-            width=C.COL_WIDTH,
-            height=C.LOGO_BOX_HEIGHT,
-            preserveAspectRatio=True,
-            mask="auto",
-        )
-
-    title_y = C.IDENT_AREA_TOP - 6 * mm
-    c.setFont("Helvetica", C.IDENT_TITLE_FONT_SIZE)
-    c.drawString(C.COL1_X, title_y, "휴대폰번호 (010 제외)")
-
-    digit_start_x = C.COL1_X
-    bubble_right_edge = C.COL1_X + C.COL_WIDTH - C.Q_RIGHT_PAD
-    total_digits_width = (C.IDENT_DIGITS - 1) * C.IDENT_COL_GAP
-    digits_left_x = bubble_right_edge - total_digits_width - 10 * mm
-
-    c.setFont("Helvetica", C.IDENT_NUM_FONT_SIZE)
-    for n in range(10):
-        y = (C.IDENT_AREA_BOTTOM + (9 - n) * C.IDENT_ROW_GAP)
-        c.drawString(digit_start_x, y - 2 * mm, str(n))
-        for d in range(C.IDENT_DIGITS):
-            x = digits_left_x + d * C.IDENT_COL_GAP
-            c.circle(x, y, C.IDENT_BUBBLE_R)
-
-    c.setLineWidth(0.4)
-    c.line(C.COL1_X, C.IDENT_AREA_TOP, C.COL1_X + C.COL_WIDTH, C.IDENT_AREA_TOP)
-
-
-def _draw_questions(c, *, question_count: int) -> None:
-    left_count, right_count = C.DISTRIBUTION_BY_COUNT[question_count]
-    row_gap = C.ROW_GAP_BY_COUNT[question_count]
-
-    def bubbles_start_x(col_x: float) -> float:
-        right_edge = col_x + C.COL_WIDTH - C.Q_RIGHT_PAD
-        total_choice_width = (C.Q_CHOICE_COUNT - 1) * C.Q_CHOICE_GAP
-        return right_edge - total_choice_width
-
-    c.setFont("Helvetica", C.Q_FONT_SIZE)
-
-    x2 = C.COL2_X
-    y = C.Q_AREA_TOP
-    start_bx2 = bubbles_start_x(x2)
-    for i in range(1, left_count + 1):
-        c.drawString(x2 + C.Q_LEFT_PAD, y - 2 * mm, str(i))
-        for k in range(C.Q_CHOICE_COUNT):
-            c.circle(start_bx2 + k * C.Q_CHOICE_GAP, y, C.Q_BUBBLE_R)
-        y -= row_gap
-
-    x3 = C.COL3_X
-    y = C.Q_AREA_TOP
-    start_bx3 = bubbles_start_x(x3)
-    for i in range(left_count + 1, left_count + right_count + 1):
-        c.drawString(x3 + C.Q_LEFT_PAD, y - 2 * mm, str(i))
-        for k in range(C.Q_CHOICE_COUNT):
-            c.circle(start_bx3 + k * C.Q_CHOICE_GAP, y, C.Q_BUBBLE_R)
-        y -= row_gap
-
-
-==========================================================================================
-# FILE: omr/layouts/subjective_v1.py
-==========================================================================================
-
+        y -= gap
 
 
 ==========================================================================================
@@ -403,93 +433,88 @@ def _draw_questions(c, *, question_count: int) -> None:
 ==========================================================================================
 # FILE: omr/services/meta_generator.py
 ==========================================================================================
-# apps/domains/assets/omr/services/meta_generator.py
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from reportlab.lib.units import mm
 
 from apps.domains.assets.omr import constants as C
 
-ChoiceLabel = str
-
 
 def _pt_to_mm(v_pt: float) -> float:
-    # reportlab: mm = 2.8346..pt
     return float(v_pt) / float(mm)
-
-
-def _mm_box(x_pt: float, y_pt: float, w_pt: float, h_pt: float) -> Dict[str, float]:
-    return {
-        "x": _pt_to_mm(x_pt),
-        "y": _pt_to_mm(y_pt),
-        "w": _pt_to_mm(w_pt),
-        "h": _pt_to_mm(h_pt),
-    }
 
 
 def _mm_point(x_pt: float, y_pt: float) -> Dict[str, float]:
     return {"x": _pt_to_mm(x_pt), "y": _pt_to_mm(y_pt)}
 
 
-def _identifier_digits_left_x() -> float:
-    """
-    PDF 레이아웃(objective_v1_10/20/30)에서 사용한 식별자 bubble x 정렬 계산을
-    1:1로 그대로 복제한다. (단일진실: constants + 같은 공식)
+def _mm_box(x_pt: float, y_pt: float, w_pt: float, h_pt: float) -> Dict[str, float]:
+    return {"x": _pt_to_mm(x_pt), "y": _pt_to_mm(y_pt), "w": _pt_to_mm(w_pt), "h": _pt_to_mm(h_pt)}
 
-    layouts:
-      bubble_right_edge = COL1_X + COL_WIDTH - Q_RIGHT_PAD
-      total_digits_width = (IDENT_DIGITS - 1) * IDENT_COL_GAP
-      digits_left_x = bubble_right_edge - total_digits_width - 10*mm
-    """
-    bubble_right_edge = C.COL1_X + C.COL_WIDTH - C.Q_RIGHT_PAD
-    total_digits_width = (C.IDENT_DIGITS - 1) * C.IDENT_COL_GAP
-    return bubble_right_edge - total_digits_width - (10 * mm)
+
+def _choices_labels() -> List[str]:
+    return ["A", "B", "C", "D", "E"]
 
 
 def _question_bubbles_start_x(col_x: float) -> float:
-    """
-    layouts의 bubbles_start_x를 1:1 복제.
-      right_edge = col_x + COL_WIDTH - Q_RIGHT_PAD
-      total_choice_width = (Q_CHOICE_COUNT - 1) * Q_CHOICE_GAP
-      return right_edge - total_choice_width
-    """
     right_edge = col_x + C.COL_WIDTH - C.Q_RIGHT_PAD
     total_choice_width = (C.Q_CHOICE_COUNT - 1) * C.Q_CHOICE_GAP
     return right_edge - total_choice_width
 
 
-def _choices_labels() -> List[ChoiceLabel]:
-    # 5지선다 고정
-    return ["A", "B", "C", "D", "E"]
+def _question_area_y_bounds() -> tuple[float, float]:
+    top = C.PAGE_HEIGHT - C.MARGIN_Y - C.Q_TOP_PAD
+    bottom = C.MARGIN_Y + C.Q_BOTTOM_PAD
+    return top, bottom
 
 
 def build_objective_template_meta(*, question_count: int) -> Dict:
     """
-    OMR objective template meta (stateless)
+    Objective meta for the NEW layout:
     - units: mm
-    - PDF와 1:1로 대응되는 구조 정보만 제공 (채점/제출/DB 없음)
+    - 4 columns: left identifier + right 3 objective columns
+    - objective questions are laid out as:
+      col2: 1~15, col3: 16~30, col4: 31~45
+    - IMPORTANT: only includes questions up to question_count; others are omitted.
     """
     if question_count not in C.ALLOWED_QUESTION_COUNTS:
         raise ValueError("invalid question_count")
 
-    page_w_pt, page_h_pt = C.PAGE_WIDTH, C.PAGE_HEIGHT
+    # -------------------------
+    # Identifier bubbles (computed same philosophy: labels left, marking right)
+    # -------------------------
+    # We mirror layout math:
+    # ident area is dynamic; for meta we compute using same formula as layout
+    # so worker can rely on it for grading.
+    top = C.PAGE_HEIGHT - C.MARGIN_Y
+    logo_y = top - C.LOGO_BOX_H
+    exam_y = logo_y - C.LEFT_BLOCK_GAP_1 - C.EXAMINFO_BOX_H
+    name_y = exam_y - C.LEFT_BLOCK_GAP_2 - C.NAME_BOX_H
 
-    # -------------------------
-    # Identifier bubbles
-    # -------------------------
+    ident_top = name_y - C.LEFT_BLOCK_GAP_3
+    ident_bottom = C.MARGIN_Y
+    ident_h = ident_top - ident_bottom
+
+    title_reserved = 12 * mm
+    usable_h = max(1.0, ident_h - title_reserved - 6 * mm)
+    row_gap = usable_h / (C.IDENT_ROWS - 1)
+
+    bubble_right = C.COL1_X + C.COL_WIDTH - C.IDENT_DIGIT_RIGHT_PAD
+    col_gap = (C.COL_WIDTH - 22 * mm) / max(1, (C.IDENT_DIGITS - 1))
+    total_digits_w = (C.IDENT_DIGITS - 1) * col_gap
+    digits_left = bubble_right - total_digits_w - C.IDENT_EXTRA_RIGHT_GAP
+
     ident_bubbles: List[Dict] = []
-    digits_left_x = _identifier_digits_left_x()
-
     for n in range(10):
-        y_pt = (C.IDENT_AREA_BOTTOM + (9 - n) * C.IDENT_ROW_GAP)
+        y_pt = ident_bottom + 6 * mm + (9 - n) * row_gap
         for d in range(C.IDENT_DIGITS):
-            x_pt = digits_left_x + d * C.IDENT_COL_GAP
+            x_pt = digits_left + d * col_gap
             ident_bubbles.append(
                 {
-                    "digit_index": int(d + 1),  # 1~8
-                    "number": int(n),           # 0~9
+                    "digit_index": int(d + 1),  # 1..8
+                    "number": int(n),           # 0..9
                     "center": _mm_point(x_pt, y_pt),
                     "r": _pt_to_mm(C.IDENT_BUBBLE_R),
                 }
@@ -504,24 +529,26 @@ def build_objective_template_meta(*, question_count: int) -> Dict:
     # -------------------------
     # Questions bubbles + ROI
     # -------------------------
-    left_count, right_count = C.DISTRIBUTION_BY_COUNT[question_count]
-    row_gap = C.ROW_GAP_BY_COUNT[question_count]
+    top_y, bottom_y = _question_area_y_bounds()
+    row_gap_q = (top_y - bottom_y) / (C.Q_ROWS_PER_COL - 1)
 
-    roi_pad_pt = 2 * mm  # ROI bbox 여유(스캔/촬영 노이즈 대비). meta 전용, PDF 영향 없음.
+    roi_pad_pt = 2 * mm
+    labels = _choices_labels()
 
-    def build_col_questions(col_x: float, start_q: int, count: int) -> List[Dict]:
+    def build_col(col_x: float, start_q: int, rows: int) -> List[Dict]:
         bx0 = _question_bubbles_start_x(col_x)
-        y_pt = C.Q_AREA_TOP
+        y_pt = top_y
         out: List[Dict] = []
 
-        labels = _choices_labels()
-        for qi in range(count):
-            qnum = start_q + qi
+        for i in range(rows):
+            qnum = start_q + i
+            if qnum > question_count:
+                y_pt -= row_gap_q
+                continue
 
-            choice_bubbles = []
             xs = []
             ys = []
-
+            choice_bubbles = []
             for k, label in enumerate(labels):
                 cx = bx0 + k * C.Q_CHOICE_GAP
                 cy = y_pt
@@ -535,40 +562,36 @@ def build_objective_template_meta(*, question_count: int) -> Dict:
                     }
                 )
 
-            # ROI: 5개 버블을 감싸는 bbox (축정렬)
             left = min(xs) - C.Q_BUBBLE_R - roi_pad_pt
             right = max(xs) + C.Q_BUBBLE_R + roi_pad_pt
-            bottom = (y_pt - C.Q_BUBBLE_R - roi_pad_pt)
-            top = (y_pt + C.Q_BUBBLE_R + roi_pad_pt)
-
-            roi = _mm_box(left, bottom, right - left, top - bottom)
+            bottom = min(ys) - C.Q_BUBBLE_R - roi_pad_pt
+            topb = max(ys) + C.Q_BUBBLE_R + roi_pad_pt
 
             out.append(
                 {
                     "question_number": int(qnum),
+                    "axis": "x",
                     "choices": choice_bubbles,
-                    "roi": roi,
-                    "axis": "x",  # choices가 가로배치라는 단일 진실
+                    "roi": _mm_box(left, bottom, right - left, topb - bottom),
                 }
             )
-            y_pt -= row_gap
+
+            y_pt -= row_gap_q
 
         return out
 
     questions: List[Dict] = []
-    questions += build_col_questions(C.COL2_X, start_q=1, count=left_count)
-    questions += build_col_questions(C.COL3_X, start_q=left_count + 1, count=right_count)
+    questions += build_col(C.COL2_X, 1, C.Q_ROWS_PER_COL)
+    questions += build_col(C.COL3_X, 16, C.Q_ROWS_PER_COL)
+    questions += build_col(C.COL4_X, 31, C.Q_ROWS_PER_COL)
 
     meta = {
-        "version": "objective_v1",
+        "version": "objective_v2_45",
         "units": "mm",
         "question_count": int(question_count),
         "page": {
             "orientation": "landscape",
-            "size": {
-                "width": _pt_to_mm(page_w_pt),
-                "height": _pt_to_mm(page_h_pt),
-            },
+            "size": {"width": _pt_to_mm(C.PAGE_WIDTH), "height": _pt_to_mm(C.PAGE_HEIGHT)},
         },
         "identifier": identifier_meta,
         "questions": questions,
@@ -579,7 +602,6 @@ def build_objective_template_meta(*, question_count: int) -> Dict:
 ==========================================================================================
 # FILE: omr/services/pdf_generator.py
 ==========================================================================================
-# apps/domains/assets/omr/services/pdf_generator.py
 from __future__ import annotations
 
 from io import BytesIO
@@ -589,7 +611,8 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
 from apps.domains.assets.omr import constants as C
-from apps.domains.assets.omr.layouts import objective_v1_10, objective_v1_20, objective_v1_30
+from apps.domains.assets.omr.layouts.objective_v2_45 import draw as draw_objective
+from apps.domains.assets.omr.layouts.subjective_v2 import draw as draw_subjective
 
 
 class LogoValidationError(Exception):
@@ -597,34 +620,31 @@ class LogoValidationError(Exception):
 
 
 def _build_logo_reader(logo_file) -> Optional[ImageReader]:
-    """
-    - reportlab ImageReader로 실제 파싱을 시도해서 "진짜 이미지"만 통과시킨다.
-    - 변환 라이브러리 추가 없이 reportlab 기본으로 처리.
-    """
     if logo_file is None:
         return None
-
-    # DRF InMemoryUploadedFile / TemporaryUploadedFile 모두 file-like
     try:
-        logo_file.seek(0)
-    except Exception:
-        pass
-
-    try:
+        try:
+            logo_file.seek(0)
+        except Exception:
+            pass
         reader = ImageReader(logo_file)
-        # ImageReader가 내부 파싱을 미루는 경우가 있어 size 접근으로 한 번 더 검증
         _ = reader.getSize()
         return reader
     except Exception as e:
         raise LogoValidationError("logo must be a valid image file") from e
 
 
-def generate_objective_pdf(*, question_count: int, logo_file=None) -> bytes:
+def generate_objective_pdf(
+    *,
+    question_count: int,
+    logo_file=None,
+    exam_title: str = "3월 모의고사",
+    subject_round: str = "수학 (1회)",
+) -> bytes:
     """
-    Stateless PDF generator (시험지 1: 객관식 전용 OMR)
-    - A4 landscape
-    - 3단 레이아웃
-    - question_count: 10/20/30 only
+    Generates 2-page PDF:
+      - Page1: objective OMR (new agreed layout)
+      - Page2: subjective lines (simple back page)
     """
     if question_count not in C.ALLOWED_QUESTION_COUNTS:
         raise ValueError("invalid question_count")
@@ -634,15 +654,20 @@ def generate_objective_pdf(*, question_count: int, logo_file=None) -> bytes:
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=C.PAGE_SIZE)
 
-    # layout dispatch (no branching inside layout files)
-    if question_count == 10:
-        objective_v1_10.draw(c, logo_reader=logo_reader)
-    elif question_count == 20:
-        objective_v1_20.draw(c, logo_reader=logo_reader)
-    else:
-        objective_v1_30.draw(c, logo_reader=logo_reader)
+    # page 1
+    draw_objective(
+        c,
+        question_count=question_count,
+        logo_reader=logo_reader,
+        exam_title=exam_title,
+        subject_round=subject_round,
+    )
+    c.showPage()
 
+    # page 2
+    draw_subjective(c, line_count=10, title="서술형 답안지")
     c.save()
+
     buf.seek(0)
     return buf.read()
 
@@ -722,13 +747,12 @@ class ObjectiveOMRTemplateListView(APIView):
 ==========================================================================================
 # FILE: omr/views/omr_pdf_views.py
 ==========================================================================================
-# apps/domains/assets/omr/views/omr_pdf_views.py
 from __future__ import annotations
 
 from django.http import HttpResponse
-from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.domains.assets.omr import constants as C
 from apps.domains.assets.omr.services.pdf_generator import (
@@ -742,7 +766,7 @@ class ObjectiveOMRPdfView(APIView):
     """
     POST /api/v1/assets/omr/objective/pdf/
     multipart/form-data:
-      - question_count: 10 | 20 | 30 (required)
+      - question_count: 1..45 (required)
       - logo: optional image
     response:
       - application/pdf (download)
@@ -757,40 +781,32 @@ class ObjectiveOMRPdfView(APIView):
         try:
             question_count = int(str(qc_raw).strip())
         except Exception:
-            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+            return Response({"question_count": "must be an integer (1~45)"}, status=400)
 
         if question_count not in C.ALLOWED_QUESTION_COUNTS:
-            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+            return Response({"question_count": "must be between 1 and 45"}, status=400)
 
         logo = request.FILES.get("logo")
         if logo is not None:
             ctype = getattr(logo, "content_type", "") or ""
             if ctype and ctype not in C.ALLOWED_LOGO_CONTENT_TYPES:
-                return Response(
-                    {"logo": f"unsupported content_type: {ctype}"},
-                    status=415,
-                )
+                return Response({"logo": f"unsupported content_type: {ctype}"}, status=415)
 
         try:
             pdf_bytes = generate_objective_pdf(question_count=question_count, logo_file=logo)
         except LogoValidationError as e:
             return Response({"logo": str(e)}, status=400)
         except ValueError:
-            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+            return Response({"question_count": "must be between 1 and 45"}, status=400)
 
         resp = HttpResponse(pdf_bytes, content_type="application/pdf")
-        resp["Content-Disposition"] = (
-            f'attachment; filename="omr_objective_v1_{question_count}.pdf"'
-        )
+        resp["Content-Disposition"] = f'attachment; filename="omr_objective_v2_{question_count}.pdf"'
         return resp
 
 
 class ObjectiveOMRMetaView(APIView):
     """
-    GET /api/v1/assets/omr/objective/meta/?question_count=10|20|30
-
-    - PDF와 1:1로 대응되는 '템플릿 구조 정보(meta)' 제공
-    - 채점/제출/DB 저장 없음 (assets 책임 범위 준수)
+    GET /api/v1/assets/omr/objective/meta/?question_count=1..45
     """
     permission_classes = [IsAuthenticated]
 
@@ -802,15 +818,15 @@ class ObjectiveOMRMetaView(APIView):
         try:
             question_count = int(str(qc_raw).strip())
         except Exception:
-            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+            return Response({"question_count": "must be an integer (1~45)"}, status=400)
 
         if question_count not in C.ALLOWED_QUESTION_COUNTS:
-            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+            return Response({"question_count": "must be between 1 and 45"}, status=400)
 
         try:
             meta = build_objective_template_meta(question_count=question_count)
         except ValueError:
-            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+            return Response({"question_count": "must be between 1 and 45"}, status=400)
 
         return Response(meta, status=200)
 
@@ -818,7 +834,6 @@ class ObjectiveOMRMetaView(APIView):
 ==========================================================================================
 # FILE: omr/views/omr_save_views.py
 ==========================================================================================
-# PATH: apps/domains/assets/omr/views/omr_save_views.py
 from __future__ import annotations
 
 from django.core.files.base import ContentFile
@@ -836,26 +851,6 @@ from apps.domains.exams.models import Exam, ExamAsset
 
 
 class ObjectiveOMRSaveView(APIView):
-    """
-    POST /api/v1/assets/omr/objective/save/
-
-    multipart/form-data:
-      - exam_id: int (required)
-      - question_count: 10 | 20 | 30 (required)
-      - logo: optional image
-
-    response (201):
-      {
-        "asset_id": number,
-        "asset_type": "OMR_TEMPLATE",
-        "exam_id": number
-      }
-
-    책임:
-    - assets 도메인 범위 내에서
-      OMR 시험지(PDF)를 생성하고 "양식 자산"으로 저장
-    - 채점/제출/결과/AI 호출 절대 없음
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -875,10 +870,10 @@ class ObjectiveOMRSaveView(APIView):
         try:
             question_count = int(str(qc_raw).strip())
         except Exception:
-            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+            return Response({"question_count": "must be an integer (1~45)"}, status=400)
 
         if question_count not in C.ALLOWED_QUESTION_COUNTS:
-            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+            return Response({"question_count": "must be between 1 and 45"}, status=400)
 
         try:
             exam = Exam.objects.get(id=exam_id)
@@ -889,1288 +884,28 @@ class ObjectiveOMRSaveView(APIView):
         if logo is not None:
             ctype = getattr(logo, "content_type", "") or ""
             if ctype and ctype not in C.ALLOWED_LOGO_CONTENT_TYPES:
-                return Response(
-                    {"logo": f"unsupported content_type: {ctype}"},
-                    status=415,
-                )
+                return Response({"logo": f"unsupported content_type: {ctype}"}, status=415)
 
         try:
-            pdf_bytes = generate_objective_pdf(
-                question_count=question_count,
-                logo_file=logo,
-            )
+            pdf_bytes = generate_objective_pdf(question_count=question_count, logo_file=logo)
         except LogoValidationError as e:
             return Response({"logo": str(e)}, status=400)
-        except ValueError:
-            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
 
-        filename = f"omr_objective_v1_{question_count}.pdf"
+        filename = f"omr_objective_v2_{question_count}.pdf"
 
         asset = ExamAsset.objects.create(
             exam=exam,
             asset_type="OMR_TEMPLATE",
             meta={
-                "version": "objective_v1",
+                "version": "objective_v2_45",
                 "question_count": int(question_count),
                 "has_logo": bool(logo is not None),
             },
         )
 
-        asset.file.save(
-            filename,
-            ContentFile(pdf_bytes),
-            save=True,
-        )
+        asset.file.save(filename, ContentFile(pdf_bytes), save=True)
 
         return Response(
-            {
-                "asset_id": asset.id,
-                "asset_type": asset.asset_type,
-                "exam_id": exam.id,
-            },
+            {"asset_id": asset.id, "asset_type": asset.asset_type, "exam_id": exam.id},
             status=201,
         )
-
-
-==========================================================================================
-# FILE: 문서V1/마스터프롬프트.py
-==========================================================================================
-역할: 너는 대기업 실무급 Django/DRF 백엔드 엔지니어다. 아래 “단일진실 고정 문서”를 1바이트도 위반하지 말고, 현재 레포 구조를 존중하여 완성된 상품(바로 프론트에서 호출 가능한 PDF 생성 API)을 구현하라. 예제/연습/가이드가 아니라 실제 코드와 파일 단위 패치가 필요하다.
-
-전제: 나는 이미 다음 폴더를 생성했다.
-apps/domains/assets/
-apps/domains/assets/omr/
-apps/domains/assets/omr/layouts/
-apps/domains/assets/omr/services/
-apps/domains/assets/omr/views/
-
-단일진실 고정 문서 (절대 변경 금지):
-- 공통 철학: 라벨/번호/설명은 좌측 정렬, 입력/마킹은 우측 정렬
-- A4, 흑백, 벡터 PDF, 커스텀 없음, 로고만 업로드로 교체 가능
-- 시험지 1 (객관식 전용 OMR): 앞면만, Landscape, 3단 레이아웃
-  | 영역1 | 영역2 | 영역3 |
-  | 로고  | 객관식| 객관식|
-  | 식별자|      |      |
-  식별자: 휴대폰번호 뒤 8자리(010 제외), 자리별 0~9 버블
-  객관식: 5지선다, 문항번호 좌측, 버블 우측 정렬
-- 시험지 1 변형 버전: 객관식 문항 수만 10/20/30 세 가지. 레이아웃/철학 동일. 간격은 문항 수 적을수록 더 넉넉.
-- 시험지2(참고): 이번 구현 범위에서 제외. (객관식 버전 10/20/30만 구현)
-
-API 고정:
-- POST /api/v1/assets/omr/objective/pdf/
-- multipart/form-data
-  - logo: optional image
-  - question_count: enum {10,20,30} (필수)
-- 응답: application/pdf, 즉시 다운로드
-- 서버는 DB 저장을 하지 않는다(stateless). (캐시도 1차 제외)
-
-기술/품질 요구(대기업 실무급):
-- reportlab로 벡터 PDF 생성
-- 좌표는 mm 단위로 관리(가독성/인쇄 안정성)
-- constants.py가 수치 단일진실(버블 반지름, 간격, 마진 등)
-- layouts는 좌표/배치만 담당, 비즈니스 로직 최소화
-- pdf_generator는 reportlab wrapper로 렌더링만 담당
-- view는 인증/입력검증/응답만 담당(얇게)
-- 에러 응답은 DRF 표준으로 400/415 등 명확하게
-- logo는 이미지 파일만 허용(png/jpg/webp 등), 비정상이면 400
-- question_count가 잘못되면 400
-- 코드 스타일은 프로젝트 기존 패턴을 존중(IsAuthenticated 등)
-
-현재 레포에 맞춰 반드시 해줘야 하는 것:
-1) apps/domains/assets/apps.py 작성 (AppConfig)
-2) apps/domains/assets/urls.py 작성 (omr include)
-3) apps/domains/assets/omr/urls.py 작성 (objective endpoint)
-4) apps/domains/assets/omr/constants.py 작성
-5) apps/domains/assets/omr/layouts/objective_v1_10.py, objective_v1_20.py, objective_v1_30.py 작성
-6) apps/domains/assets/omr/services/pdf_generator.py 작성
-7) apps/domains/assets/omr/views/omr_pdf_views.py 작성
-8) 프로젝트 라우팅 연결 지점까지 “어디 파일을 어떻게 수정해야 하는지”를 구체적으로 제시
-   - 예: apps/api/v1/urls.py 또는 apps/api/config/urls.py 등 실제 이 레포 구조에서 맞는 위치를 찾아 안내(경로는 내가 보여준 tree 기준으로 판단)
-9) pip requirements(필요시) 안내
-
-산출물 형식(필수):
-- 파일별로 “경로” + “전체 코드”를 제공
-- 어떤 기존 파일을 수정해야 하면: 수정 전/후 또는 patch 형태로 제공
-- 마지막에 “프론트 호출 예시(fetch)”를 1개 제공
-- 마지막에 “수동 QA 체크리스트” 제공 (PDF 확인 포인트)
-
-주의:
-- 시험지2는 이번에 구현하지 않는다.
-- submissions/results/exams 도메인에 코드를 넣지 않는다. assets 도메인에만 구현한다.
-- 외부 서비스 호출 금지.
-- 비동기 작업/큐 사용 금지. 요청 즉시 PDF 반환.
-- 이미지 변환 라이브러리 추가 금지(가능하면 reportlab 기본으로 처리).
-
-2) AI가 반드시 내야 하는 “완성 산출물” 체크리스트
-
-너(또는 내가)가 위 명령어를 실행했을 때 결과물은 반드시 아래를 포함해야 함.
-
- assets 앱(AppConfig) + urls + include 경로 정합성
-
- /api/v1/assets/omr/objective/pdf/ 엔드포인트 동작
-
- multipart 입력검증(logo 타입, question_count enum)
-
- pdf는 A4 landscape + 3단 레이아웃
-
- 영역1에 로고/식별자
-
- 영역2/3에 객관식 (10/20/30 분기)
-
- 좌측 정렬/우측 정렬 철학 준수
-
- reportlab 벡터 PDF
-
- 프론트 fetch 예시 제공
-
- QA 체크리스트 제공
-
-
-==========================================================================================
-# FILE: 문서V1/문서폴더의설명.py
-==========================================================================================
-이 문서들은 설계 프로젝트시작전에 작성되었고.
-내가 붙여주는 덤프파일의 실존이 단일진실임으로 최종 고정한다.
-
-아래문서들은 참고하여 설계철학이 어긋난게 없는지 체크하는 용도로 쓰인다.
-
-
-==========================================================================================
-# FILE: 문서V1/설계.py
-==========================================================================================
-OMR 답안지 자산 도메인 – 최종 단일진실 고정 문서
-
-본 문서는 OMR 답안지 PDF 생성 기능의 최종 설계 동결 문서이다.
-이 문서에 명시되지 않은 변경, 확장, 커스터마이징은 허용하지 않는다.
-본 문서를 기준으로 구현할 경우, 실사용 가능한 대기업 실무 수준의 OMR 자산이 완성된다.
-
-0. 공통 철학 (전 페이지 공통, 절대 변경 불가)
-
-정보(라벨, 번호, 설명): 좌측 정렬
-
-입력 / 마킹 영역: 우측 정렬
-
-용지: A4
-
-색상: 흑백
-
-출력물: 벡터 PDF
-
-레이아웃: 고정
-
-커스터마이징: 불가
-
-사용자 입력 허용 요소: 로고 이미지 1개만 허용
-
-1. 도메인 및 단일 책임
-도메인 위치 (단일진실)
-apps/domains/assets
-
-assets 도메인의 책임
-
-assets 도메인은 아래 책임만 가진다.
-
-시험 전에 배포되는 모든 정적 / 반정적 산출물 생성
-
-시험지, 답안지, OMR 양식 생성
-
-PDF, 이미지, 인쇄용 자산 생성
-
-assets 도메인이 절대 하지 않는 것
-
-제출(submission) 생성
-
-채점(grading)
-
-AI 호출
-
-사용자 답안 처리
-
-결과(result) 처리
-
-2. 시험지 종류 정의 (고정)
-시험지 1 — 객관식 전용 OMR (확장형)
-
-시험지 1은 객관식 OMR의 단일 표준이다.
-문항 수만 다르고, 레이아웃 철학과 구조는 완전히 동일하다.
-
-시험지 1의 변형 버전 (확정)
-
-객관식 30문항
-
-객관식 20문항
-
-객관식 10문항
-
-위 3가지는 동일한 시험지 1의 파생 버전이다.
-별도의 시험지 개념이 아니다.
-
-3. 시험지 1 공통 사양 (모든 문항 수 버전 동일)
-페이지 구성
-
-사용 면: 앞면만 사용
-
-방향: 가로 (Landscape)
-
-선택지
-
-문항당 5지선다
-
-OMR 버블 방식
-
-인식 우선 설계
-
-문항 간 간격을 넉넉하게 확보
-
-스캐너 / 휴대폰 촬영 모두 대응
-
-기울어짐, 명암 편차 허용
-
-4. 시험지 1 레이아웃 구조 (고정)
-| 영역 1 | 영역 2 | 영역 3 |
-|--------|--------|--------|
-| 로고   | 객관식 | 객관식 |
-|        |        |        |
-| 식별자 |        |        |
-
-영역 1 (좌측 컬럼)
-
-상단: 로고
-
-사용자 업로드 이미지
-
-비율 유지
-
-흑백 출력 기준
-
-하단: 식별자
-
-휴대폰 번호 뒤 8자리
-
-숫자 0~9 버블 방식
-
-각 자리별 독립 마킹
-
-영역 2, 영역 3 (중앙 / 우측 컬럼)
-
-객관식 문항 배치
-
-문항 번호: 좌측 정렬
-
-선택지 버블: 번호 오른쪽 정렬
-
-문항 수에 따라 자동 분배
-
-5. 문항 수별 배치 규칙 (단일진실)
-
-시험지 1의 문항 수는 정확히 아래 3가지만 허용한다.
-
-객관식 30문항
-
-영역 2 + 영역 3 사용
-
-각 컬럼에 균등 분배
-
-인식 안정성 최우선 기준
-
-객관식 20문항
-
-영역 2 + 영역 3 사용
-
-문항 간 세로 간격 증가
-
-동일 레이아웃, 밀도만 감소
-
-객관식 10문항
-
-영역 2 + 영역 3 사용
-
-매우 넉넉한 간격
-
-초등 / 저학년 / 테스트용 최적
-
-※ 영역 1은 문항 수와 무관
-※ 컬럼 수는 항상 3단 고정
-※ 1단 레이아웃, 4단 레이아웃은 허용하지 않음
-
-6. 시험지 2 — 주관식 전용 답안지 (참고 고정)
-
-(시험지 1 확장 논의에서 제외되나, 자산 도메인 내 기준으로 유지)
-
-주관식 5문항 고정
-
-앞면: 가로 / 로고 + 식별자 + 대형 서술 영역
-
-뒷면: 세로 / 5문항 서술 영역 나열
-
-문항 번호 좌측 / 입력 영역 우측
-
-7. API 설계 (고정)
-시험지 1 – 객관식 OMR
-POST /api/v1/assets/omr/objective/pdf/
-
-요청 (multipart/form-data)
-
-logo (optional image)
-
-question_count (enum: 10 | 20 | 30)
-
-응답
-
-Content-Type: application/pdf
-
-즉시 다운로드
-
-서버 상태 저장 없음
-
-8. 폴더 트리 (단일진실, 변경 금지)
-apps/domains/assets/
-├─ __init__.py
-├─ apps.py
-├─ urls.py
-│
-├─ omr/
-│  ├─ __init__.py
-│  ├─ constants.py
-│  │
-│  ├─ layouts/
-│  │  ├─ __init__.py
-│  │  ├─ objective_v1_10.py
-│  │  ├─ objective_v1_20.py
-│  │  └─ objective_v1_30.py
-│  │
-│  ├─ services/
-│  │  ├─ __init__.py
-│  │  └─ pdf_generator.py
-│  │
-│  └─ views/
-│     ├─ __init__.py
-│     └─ omr_pdf_views.py
-
-9. constants.py의 위상 (가장 중요)
-
-constants.py는 OMR 시스템 전체의 단일진실이다.
-
-여기에 포함되는 것:
-
-문항 수
-
-페이지 크기
-
-방향
-
-컬럼 수
-
-margin
-
-버블 반지름
-
-버블 간 거리
-
-문항 간 최소 간격
-
-constants.py의 값이 바뀌면 동시에 영향을 받는 것:
-
-PDF 출력
-
-인쇄 품질
-
-OCR / OMR 인식률
-
-향후 AI region_meta
-
-10. 이 문서의 사용 규칙
-
-이 문서 이후 설계 변경은 버전 업으로만 허용
-
-v1 스펙은 절대 수정하지 않음
-
-신규 요구는 v2 문서로 분리
-
-최종 선언
-
-이 문서에 따라 assets 도메인을 구현하면:
-
-실사용 가능한 OMR 답안지 생성 가능
-
-학원 / 학교 배포 가능
-
-스캔 / 촬영 인식 안정
-
-AI 파이프라인과 자연스럽게 연결 가능
-
-구조 리팩토링 없이 확장 가능
-
-이 문서는 구현자의 판단보다 우선한다.
-
-
-==========================================================================================
-# FILE: 문서V1/프론트 호출 예시 (fetch 1개).py
-==========================================================================================
-async function downloadOmr(questionCount: 10 | 20 | 30, logoFile?: File) {
-  const fd = new FormData();
-  fd.append("question_count", String(questionCount));
-  if (logoFile) fd.append("logo", logoFile);
-
-  const res = await fetch("/api/v1/assets/omr/objective/pdf/", {
-    method: "POST",
-    body: fd,
-    credentials: "include", // 쿠키 인증이면 유지
-  });
-
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(txt);
-  }
-
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  window.open(url);
-}
-
-수동 QA 체크리스트 (PDF 확인 포인트)
-
-공통
-
-PDF가 벡터로 보이는지 확인 (확대해도 원/선이 깨지지 않아야 함)
-
-흑백 출력 기준으로 대비가 충분한지 확인
-
-레이아웃(3단)
-
-A4 가로로 생성되는지
-
-영역1(좌측): 상단 로고 / 하단 식별자 존재
-
-영역2/3: 객관식 문항만 존재
-
-좌측/우측 정렬 철학
-
-“휴대폰번호(010 제외)” 라벨은 좌측
-
-식별자 버블은 우측 정렬로 붙어 있는지
-
-문항 번호는 좌측, 5개 버블은 우측 정렬로 붙어 있는지
-
-문항 수 버전
-
-question_count=10: 문항 간격이 가장 넓은지
-
-question_count=20: 중간
-
-question_count=30: 가장 촘촘하지만 여전히 널널한지
-
-입력 검증
-
-question_count 누락 → 400
-
-question_count=15 → 400
-
-logo에 텍스트 파일 업로드 → 400
-
-logo content-type이 image/* 아닌 경우 → 415
-
-
-==========================================================================================
-# FILE: 문서V2/V2마스터프롬프트.py
-==========================================================================================
-V2단계 마스터 프롬프트이다. 
-V1 단계는 완료 되었다고 가정한다. 
-
-문서V1의 프롬프트를 최신화하고 이 문서를 단일진실로 고정한다. 
-
-역할:
-너는 대기업 실무급 Django/DRF + Computer Vision 백엔드 엔지니어다.
-교육/OMR/문서인식 시스템을 실제 서비스 수준으로 설계·구현한 경험이 있다고 가정한다.
-
-목표:
-이미 구현된 assets 도메인을 “실사용 가능한 최종 상태”로 완성하고,
-즉시 AI worker(OCR/OMR/영상 처리)와 자연스럽게 연결될 수 있도록 보강하라.
-예제/가이드가 아닌 실제 운영 가능한 코드와 파일 단위 패치가 필요하다.
-
-절대 규칙:
-- 아래 “단일진실 고정 문서”와 기존 코드 구조를 1바이트도 위반하지 말 것
-- assets 도메인의 책임을 절대 넘지 말 것
-- submissions / exams / results 도메인에 코드 추가 금지
-- 외부 SaaS 호출 금지
-- 비동기 큐 도입 금지 (요청 → 즉시 결과)
-- 설계 변경은 v2가 아닌 한 허용되지 않음
-
-========================
-[현재 확정된 사실]
-========================
-
-1) assets 도메인은 이미 다음을 완성했다.
-- OMR 객관식 답안지 PDF 생성 (10/20/30문항)
-- A4 / Landscape / 3단 레이아웃
-- reportlab 벡터 PDF
-- constants.py = 좌표/수치 단일진실
-- 로고 optional 업로드
-- API: POST /api/v1/assets/omr/objective/pdf/
-
-2) 실사용 조건
-- 답안지는 99% 스캔 이미지
-- 일부 상황에서는 휴대폰 촬영 이미지 또는 동영상 프레임 사용
-- 향후 과제/다른 답안지에서도 재사용 예정
-
-3) AI worker는 이미 존재하며,
-- OMR grading 엔진은 ROI(bbox) 기반 입력을 받는다
-- 촬영/영상 대응을 위해 opencv / yolo / warp 기반 처리가 가능하다
-
-========================
-[이번 작업의 핵심 요구]
-========================
-
-A. assets 도메인 보강 (필수)
-assets는 “정적 산출물 생성” 책임만 가지면서,
-OMR 답안지를 **기계가 읽을 수 있도록 하는 구조 정보(meta)** 를 제공해야 한다.
-
-구현해야 할 것:
-
-1) OMR 템플릿 메타데이터 생성 로직
-- constants.py / layouts 기준으로 계산
-- mm 단위 좌표 유지
-- 아래 정보를 반드시 포함:
-  - page_size (A4 landscape)
-  - question_count (10/20/30)
-  - identifier 영역:
-      - 각 digit(1~8)별
-      - 숫자 0~9 각각의 bubble 중심 좌표/반지름
-  - objective questions:
-      - question_number
-      - 각 choice(A~E) bubble 중심 좌표/반지름
-      - question-level ROI bbox (5개 버블을 감싸는 박스)
-
-2) API 추가 (stateless)
-- GET /api/v1/assets/omr/objective/meta/
-- query param: question_count=10|20|30
-- 응답: JSON (위 meta 전체)
-- DB 저장 금지
-- 이 meta는 “채점 결과가 아닌 산출물 구조 정보”임을 명확히 유지
-
-3) 설계 원칙
-- meta는 PDF와 1:1로 대응되어야 함
-- PDF가 바뀌면 meta도 반드시 같이 바뀌는 구조
-- constants.py가 유일한 좌표 단일진실
-
-========================
-B. worker 연계 관점 설계 (구현 또는 명세)
-========================
-
-assets 작업을 마친 뒤, AI worker가 다음 두 경로를 모두 지원할 수 있도록
-“연결 설계 또는 코드”를 제공하라.
-
-1) 스캔 이미지 경로 (Primary, 99%)
-- API → meta 조회
-- 스캔 이미지는 A4 정렬 가정
-- meta ROI를 그대로 적용하여 OMR grading
-- segmentation/yolo 사용하지 않음
-
-2) 촬영/동영상 경로 (Secondary)
-- 이미지 또는 프레임에서 문서 영역 검출
-- 원근 보정(warp)으로 A4 평면화
-- 동일 meta ROI 적용
-- 실패 시 기존 yolo/opencv segmentation fallback
-
-※ worker에서의 판단/추출만 담당
-※ 정답 비교/점수 계산은 API(results) 영역으로 넘긴다는 철학 유지
-
-========================
-[산출물 요구 형식]
-========================
-
-1) assets 도메인
-- 새로 추가/수정되는 파일:
-  - 경로 + 전체 코드 제공
-- urls.py / views.py / services.py 단위 명확히 분리
-- 기존 objective/pdf API는 변경하지 말 것
-
-2) worker 쪽
-- 실제 코드 또는
-- “이대로 구현하면 된다” 수준의 정확한 파일 단위 명세 제공
-- assets meta와 어떻게 연결되는지 명확히 기술
-
-3) 마지막에 반드시 포함:
-- 전체 처리 플로우 다이어그램(텍스트)
-- 스캔 vs 촬영 처리 차이 요약
-- 수동 QA 체크리스트 (운영 기준)
-
-========================
-[최종 목표 선언]
-========================
-
-이 프롬프트에 따라 구현된 결과물은 다음을 만족해야 한다.
-
-- 학원/학교에서 바로 배포 가능한 OMR 답안지
-- 스캔/촬영/영상 모두 대응 가능한 인식 파이프라인
-- assets ↔ worker 간 책임 분리가 명확
-- 좌표/레이아웃 단일진실 유지
-- v1 스펙을 절대 수정하지 않고 확장 가능
-- 대기업 실무 리뷰를 통과할 수 있는 구조
-
-이 조건을 만족하는 “완성 산출물”을 제시하라.
-
-
-==========================================================================================
-# FILE: 문서V2/전체 처리 플로우 다이어그램 (텍스트).py
-==========================================================================================
-[assets]
-  POST /api/v1/assets/omr/objective/pdf/  -> reportlab로 OMR PDF 생성 (벡터)
-  GET  /api/v1/assets/omr/objective/meta/ -> constants/layout 기반 meta(JSON, mm 단위) 생성
-
-[worker - 스캔(Primary)]
-  입력: 스캔 이미지(페이지가 거의 정렬되어 있음)
-  1) meta 확보 (API fetch 또는 payload로 주입)
-  2) image_size_px 기준 (page_mm -> px) 스케일 계산
-  3) meta ROI(mm) -> ROI(px) 변환
-  4) detect_omr_answers_v1(roi 기반) -> 답안 추출
-
-[worker - 촬영/영상(Secondary)]
-  입력: 사진/프레임(기울어짐/원근)
-  1) warp_to_a4_landscape로 문서 외곽 검출 + 원근보정(페이지 전체 정렬)
-  2) meta ROI(mm) -> ROI(px) 변환
-  3) detect_omr_answers_v1
-  4) warp 실패 시 (auto 모드라면) 기존 yolo/opencv segmentation fallback 가능
-
-
-6) 스캔 vs 촬영 처리 차이 요약
-
-스캔: “이미 페이지가 정렬/크롭” 가정 → meta ROI를 바로 적용
-
-촬영/영상: 문서 영역 검출 + 원근보정(warp)으로 “페이지 전체 정렬” 만든 뒤 → meta ROI 적용
-(warp 실패 시 auto로 fallback 가능)
-
-7) 수동 QA 체크리스트 (운영 기준)
-assets
-
- POST /api/v1/assets/omr/objective/pdf/ 기존과 동일하게 동작 (10/20/30)
-
- PDF 확대해도 원/선이 깨지지 않음(벡터)
-
- 3단 / 영역1 로고+식별자 / 영역2-3 객관식 배치 유지
-
- GET /api/v1/assets/omr/objective/meta/?question_count=10 응답 JSON 확인
-
- units = "mm"
-
- page.size.width/height 값 존재
-
- identifier.bubbles: 8*10=80개
-
- questions: 10/20/30 개 정확히 존재
-
- 각 question에 roi(x,y,w,h) 존재
-
-worker (스캔)
-
- 정렬된 스캔 JPG/PNG를 넣었을 때 omr_grading이 answers를 반환
-
- blank/multi/ok 상태가 정상적으로 분기됨
-
-worker (촬영/영상 프레임)
-
- 기울어진 사진에서 warp 성공 → aligned=true로 반환
-
- warp 실패 사진은 mode=photo에서 실패, mode=auto에서는 fallback 설계 여지 확인
-
-
-==========================================================================================
-# FILE: 문서실상품출시/고정.py
-==========================================================================================
-역할:
-너는 대기업 실무급 Backend/Computer Vision 엔지니어다.
-교육용 OMR 시스템을 실제 학원/학교에 상용 배포한 경험이 있다.
-
-현재 상태:
-- assets 도메인: v1 완성, PDF + meta 고정
-- worker 도메인: OMR v1 인식 완료 (objective + identifier)
-- 단일진실 문서 및 책임 분리 모두 확정
-- 기능 추가는 금지, 구조 변경 금지
-
-목표:
-현재 시스템을 “실제 상품으로 즉시 출시 가능한 상태”로 봉인하라.
-기능 개발이 아니라 **운영 기준·정책·실패 통제**를 완성하는 단계다.
-
-절대 규칙:
-- V1 단일진실 문서 1바이트도 위반 금지
-- assets / worker 책임 변경 금지
-- 신규 기능 추가 금지
-- 구조 리팩토링 금지
-- 튜닝/정책/운영 기준만 허용
-
-해야 할 작업:
-
-1) OMR v1 운영 기준 최종 고정
-- blank / ambiguous / low_confidence 기준값 확정
-- identifier 기준값 확정
-- scan/photo/auto 모드별 추천 운영값
-- 코드 기준(default) + 이유 명시
-
-2) 실패 시나리오 정의
-- 어떤 경우에 manual_review로 보내는가
-- identifier 실패 시 정책
-- meta fetch 실패 / warp 실패 / 인식 실패 분기
-
-3) results 연계 운영 계약 검증
-- payload 재확인
-- retry / idempotency 실제 운영 관점 검토
-- 장애 발생 시 worker 동작 정책
-
-4) 실운영 QA 체크리스트 (최종본)
-- 인쇄
-- 스캔
-- 촬영
-- 영상 프레임
-- 운영자 관점 점검 항목
-
-5) 최종 선언
-- 왜 이 상태가 “상품 출시 가능”인지
-- 어디까지가 v1 책임인지
-- v2에서만 가능한 확장 항목 명시
-
-산출물 형식:
-- 코드 변경이 필요한 경우: patch 단위
-- 정책/기준은 문서 형태로 명확히 정리
-- 마지막에 “운영자용 요약” 1페이지 제공
-
-이 작업이 끝나면:
-- 실제 학원/학교에서 바로 계약·배포 가능해야 한다.
-
-5) 실운영 QA 체크리스트 (최종본)
-5-1. 인쇄(학원/학교)
-
-프린터 2종 이상(레이저/잉크젯) 출력 테스트
-
-300dpi 스캔 기준으로 버블 원이 깨지지 않는지(벡터 유지)
-
-로고 포함/미포함 모두 확인
-
-용지 가장자리 크롭 발생 시에도 ROI가 크게 벗어나지 않는지
-
-5-2. 스캔(Primary, 99%)
-
-제조사 다른 스캐너 2종
-
-밝기 자동보정 ON/OFF
-
-기울어짐 1~3도 수준
-
-결과 확인:
-
-blank 폭증 없음(특히 연필 농도 낮게 마킹한 샘플)
-
-ambiguous가 일부 발생해도 “상식적 수준”
-
-identifier 8자리 정상 추출률 확인
-
-5-3. 촬영(Secondary)
-
-형광등 반사/그림자 케이스
-
-15~30도 원근
-
-손떨림/미세 블러
-
-결과 확인:
-
-mode=photo에서 warp 실패 시 즉시 error 반환되는지
-
-mode=auto에서 warp 실패해도 aligned=false로 결과가 나오는지
-
-aligned=false 결과는 manual_review로 보내는지(results 정책)
-
-5-4. 영상 프레임
-
-프레임 추출 stride가 큰 케이스(블러 많음)
-
-warp 성공률 확인
-
-warp 실패 프레임은 auto에서 fallback 결과가 나오는지
-
-identifier 실패 시 manual_review 라우팅되는지
-
-5-5. 운영자 관점 점검
-
-meta API 장애 시 debug에 원인 남는지(meta_fetch_error)
-
-results ingest 중복 호출 시에도 안전한지(idempotency)
-
-“오류/리뷰/정상” 케이스가 운영 화면에서 구분 가능한지
-
-6) 최종 선언: 왜 이 상태가 “상품 출시 가능”인가
-6-1. 상품 완성의 기술적 근거(봉인 조건 충족)
-
-인쇄/배포 가능한 답안지(assets): 벡터 PDF + 레이아웃 단일진실 + meta 제공 완료
-
-실인식 파이프라인(worker): scan/photo/auto 정책 고정 + warp/fallback + ROI 기반 추출 완료
-
-운영 실패 통제: 실패는 error로, 품질 이슈는 status로 → results가 manual_review 라우팅
-
-책임 분리(대기업 리뷰 포인트):
-
-assets: 생성 + meta(mm)
-
-worker: mm→px 변환 + 판단/추출
-
-results: 정답 비교/점수/저장/리뷰 라우팅
-
-확장 가능(v2): v1 스펙 수정 없이 템플릿/레이아웃만 추가하면 동일 파이프 재사용 가능
-
-6-2. v1 책임 경계(고정)
-
-v1에서 worker는 정답 비교/점수 계산/학생 매칭 절대 안 함
-
-identifier는 “추출 결과”일 뿐, 학생 매칭은 results
-
-6-3. v2에서만 가능한 확장(명확히 분리)
-
-다른 용지/다른 템플릿(세로/다페이지)
-
-필기/서술 인식
-
-adaptive threshold(학생/스캐너별 동적 보정)
-
-문항 유형 확장(복수정답 허용 등)
-
-템플릿 자동 분류(페이지 타입 auto-detect)
-
-7) 운영자용 요약 (1페이지)
-
-기본 모드: auto
-
-스캔이 대부분이면: auto로 두고 aligned=true 비율만 모니터링
-
-촬영 전용 플로우(학생 앱 등)는: photo 강제 (warp 실패를 즉시 알림)
-
-manual_review 추천 라우팅 조건:
-
-identifier.status != ok
-
-blank ≥ 5 또는 ambiguous ≥ 3 또는 low_confidence ≥ 5
-
-aligned=false
-
-장애 대응:
-
-meta 장애 → legacy questions 있으면 최소 서비스 유지
-
-results 장애 → worker 재시도 (idempotency 필수)
-
-
-==========================================================================================
-# FILE: 문서실상품출시/마스터 프롬프트 — OMR 실상품 출시 봉인 단계.py
-==========================================================================================
-앞선 문서들은 모두 완료된걸로 가정한다 
-문서V1, 문서V2, 문서최종
-
-역할:
-너는 대기업 실무급 Backend/Computer Vision 엔지니어다.
-교육용 OMR 시스템을 실제 학원/학교에 상용 배포한 경험이 있다.
-
-현재 상태:
-- assets 도메인: v1 완성, PDF + meta 고정
-- worker 도메인: OMR v1 인식 완료 (objective + identifier)
-- 단일진실 문서 및 책임 분리 모두 확정
-- 기능 추가는 금지, 구조 변경 금지
-
-목표:
-현재 시스템을 “실제 상품으로 즉시 출시 가능한 상태”로 봉인하라.
-기능 개발이 아니라 **운영 기준·정책·실패 통제**를 완성하는 단계다.
-
-절대 규칙:
-- V1 단일진실 문서 1바이트도 위반 금지
-- assets / worker 책임 변경 금지
-- 신규 기능 추가 금지
-- 구조 리팩토링 금지
-- 튜닝/정책/운영 기준만 허용
-
-해야 할 작업:
-
-1) OMR v1 운영 기준 최종 고정
-- blank / ambiguous / low_confidence 기준값 확정
-- identifier 기준값 확정
-- scan/photo/auto 모드별 추천 운영값
-- 코드 기준(default) + 이유 명시
-
-2) 실패 시나리오 정의
-- 어떤 경우에 manual_review로 보내는가
-- identifier 실패 시 정책
-- meta fetch 실패 / warp 실패 / 인식 실패 분기
-
-3) results 연계 운영 계약 검증
-- payload 재확인
-- retry / idempotency 실제 운영 관점 검토
-- 장애 발생 시 worker 동작 정책
-
-4) 실운영 QA 체크리스트 (최종본)
-- 인쇄
-- 스캔
-- 촬영
-- 영상 프레임
-- 운영자 관점 점검 항목
-
-5) 최종 선언
-- 왜 이 상태가 “상품 출시 가능”인지
-- 어디까지가 v1 책임인지
-- v2에서만 가능한 확장 항목 명시
-
-산출물 형식:
-- 코드 변경이 필요한 경우: patch 단위
-- 정책/기준은 문서 형태로 명확히 정리
-- 마지막에 “운영자용 요약” 1페이지 제공
-
-이 작업이 끝나면:
-- 실제 학원/학교에서 바로 계약·배포 가능해야 한다.
-
-
-==========================================================================================
-# FILE: 문서최종/문서진행1.py
-==========================================================================================
-6) worker ↔ assets 경계(책임) “고정” 확인
-
-이미 코드로 고정됨:
-
-assets: meta를 mm로 제공 (단일진실)
-
-worker: meta(mm) → px 변환 (roi_builder.py, meta_px.py) + 판단/추출 (engine.py, identifier.py)
-
-worker는 점수/정답 비교 없음 → 결과 도메인(results)로 넘길 계약만 정의
-
-7) results API 계약 정의 (구현 금지, 명세만)
-
-results 도메인에 코드 추가 금지 조건 준수 → 정확한 계약 명세만 제시
-
-7.1 Worker → API (results) 제안 엔드포인트
-
-POST /api/v1/internal/results/omr/ingest/
-
-인증: 기존 internal worker token 방식과 동일 (X-Worker-Token)
-
-Content-Type: application/json
-
-Request payload (고정)
-{
-  "submission_id": 123,
-  "template": {
-    "version": "objective_v1",
-    "question_count": 30
-  },
-  "input": {
-    "mode": "scan|photo|auto",
-    "aligned": true
-  },
-  "extracted": {
-    "identifier": {
-      "identifier": "12345678",
-      "raw_identifier": "12345678",
-      "confidence": 0.91,
-      "status": "ok|ambiguous|blank|error",
-      "digits": [
-        {
-          "digit_index": 1,
-          "value": 1,
-          "status": "ok|ambiguous|blank",
-          "confidence": 0.92
-        }
-      ]
-    },
-    "answers": [
-      {
-        "version": "v1",
-        "question_id": 1,
-        "detected": ["B"],
-        "marking": "single",
-        "confidence": 0.83,
-        "status": "ok|blank|ambiguous|low_confidence|error"
-      }
-    ]
-  },
-  "debug": {
-    "meta_used": true,
-    "worker_version": "ai_worker_v1"
-  }
-}
-
-Response payload (고정)
-{
-  "status": "ok",
-  "accepted": true,
-  "submission_id": 123,
-  "next_action": "grade_async_in_results|grade_now|manual_review"
-}
-
-7.2 Retry / error 정책
-
-worker는 네트워크 실패 시:
-
-job 자체를 failed로 두지 말고 internal retry(현재 루프 구조상 다음 폴링에 재시도 가능)
-
-단, 같은 submission_id 중복 ingest 가능성 → results는 idempotency 키 필요
-
-results 측 idempotency:
-
-key: submission_id + template.version + template.question_count
-
-동일 key 재요청은 “이미 처리됨”으로 200 응답
-
-7.3 identifier + answers 결합 방식
-
-results는 identifier를 “학생 매칭 정보”로 사용 가능하지만
-
-assets/worker는 매칭을 수행하지 않는다
-
-results가 최종적으로:
-
-submission.student_identifier 매칭
-
-answer scoring
-
-score persist
-
-manual review routing
-을 수행
-
-8) 전체 처리 플로우 다이어그램 (텍스트)
-[assets]
-  POST /api/v1/assets/omr/objective/pdf/       -> 벡터 OMR PDF 생성
-  GET  /api/v1/assets/omr/objective/meta/      -> 템플릿 meta(mm) 제공
-
-[worker: omr_grading]
-  input: 스캔 이미지 or 촬영 이미지 or 영상 프레임 (download_url)
-
-  1) meta 확보
-     - payload.template_meta 있으면 사용
-     - 없으면 payload.template_fetch.base_url로 assets meta 호출
-     - 실패 시 graceful fallback: payload.questions(legacy)로만 진행
-
-  2) mode 결정
-     - scan  : warp 금지, 바로 진행
-     - photo : warp 필수, 실패하면 error 반환
-     - auto  : warp 시도, 실패하면 scan처럼 진행 (fallback 허용)
-
-  3) aligned 이미지 기준 meta(mm)->px 변환
-     - questions ROI(px) 생성
-     - identifier 버블 ROI(px) 생성
-
-  4) 추출
-     - identifier: digit별 0~9 fill 점수 -> 8자리 + 상태
-     - answers   : question ROI -> A~E fill 점수 -> 상태
-
-  5) 결과 반환
-     - worker 결과는 “판단/추출”까지만 포함
-     - scoring/정답 비교 없음
-
-[results (API)]
-  POST /api/v1/internal/results/omr/ingest/
-    - identifier 매칭/검증
-    - answer scoring
-    - persist
-    - manual review 라우팅
-
-9) 스캔 vs 촬영 처리 차이 요약 (운영 고정)
-
-scan (99%)
-
-“이미 페이지 정렬/크롭” 가정
-
-warp 안 함
-
-meta ROI를 그대로 적용
-
-빠르고 안정적
-
-photo / video frame (예외 케이스)
-
-warp로 “페이지 전체 정렬”을 먼저 만든다
-
-그 다음 meta ROI 적용
-
-photo는 warp 실패 시 즉시 실패(운영에서 확실한 신호)
-
-auto는 warp 실패 시 scan처럼 진행(현장 유연성)
-
-10) 실운영 수동 QA 체크리스트
-assets
-
-POST /api/v1/assets/omr/objective/pdf/ 기존 동작 동일
-
-GET /api/v1/assets/omr/objective/meta/?question_count=10|20|30
-
-units="mm"
-
-identifier.bubbles = 80개(8*10)
-
-questions = 10/20/30 정확
-
-각 question에 roi 존재
-
-worker — 스캔
-
-mode=scan
-
-aligned=false
-
-identifier.status가 대부분 ok/ambiguous로 나오고 blank 폭증 없음
-
-answers status 분기(ok/blank/ambiguous/low_confidence)가 합리적
-
-worker — 촬영
-
-mode=photo
-
-warp 성공 사진: aligned=true
-
-warp 실패 사진: failed("warp_failed_for_photo_mode") 반환
-
-mode=auto
-
-warp 성공: aligned=true
-
-warp 실패: aligned=false 상태로도 answers/identifier가 산출(단, 품질은 낮을 수 있음)
-
-운영 튜닝 점검
-
-blank가 과다하면:
-
-OMR blank_threshold / Identifier blank_threshold를 소폭 하향
-
-ambiguous가 과다하면:
-
-conf_gap_threshold를 소폭 하향
-
-multi가 과소검출이면:
-
-multi_threshold를 소폭 하향
-
-low_confidence가 과다하면:
-
-low_confidence_threshold를 소폭 하향
-
-
-==========================================================================================
-# FILE: 문서최종/최종 마스터 프롬프트 (실상품 완성용).py
-==========================================================================================
-최종 마스터 프롬프트 (실상품 완성용)
-
-⚠️ 이 프롬프트는 V1 스펙을 수정하지 않는다
-⚠️ assets / worker 책임 분리를 절대 깨지 않는다
-⚠️ “예제·가이드·설명”을 금지하고 실제 코드/패치만 요구한다
-
-역할:
-너는 대기업 실무급 Django/DRF + Computer Vision 백엔드 엔지니어다.
-교육/OMR/문서인식 시스템을 실제 학원/학교에 상용 배포한 경험이 있다.
-
-현재 상태 (단일진실, 이미 구현됨):
-- assets 도메인
-  - OMR 객관식 답안지 PDF 생성 (10/20/30 문항)
-  - reportlab 벡터 PDF
-  - constants.py 기반 좌표 단일진실
-  - meta API (mm 단위, PDF와 1:1 대응)
-- worker 도메인
-  - OMR v1 grading 엔진 (ROI 기반)
-  - scan / photo / video 대응 구조
-  - warp → meta ROI 적용 → fallback segmentation 구조
-- 두 도메인은 이미 코드로 연결 가능
-
-목표:
-아래 작업을 통해 **“실제 상품으로 바로 출시 가능한 상태”**로 완성하라.
-PoC, 예제, 가이드는 금지한다.
-반드시 실제 운영 가능한 코드/패치/설계를 제공하라.
-
-==================================================
-[절대 규칙]
-==================================================
-- V1 단일진실 문서를 1바이트도 위반하지 말 것
-- assets 도메인의 책임을 절대 확장하지 말 것
-- worker는 “판단/추출”까지만 담당
-- 채점/점수/정답 비교는 API(results) 책임
-- 외부 SaaS 호출 금지
-- 비동기 큐 신규 도입 금지
-- 기존 코드 삭제 금지 (추가/보강만 허용)
-
-==================================================
-[반드시 완성해야 할 작업]
-==================================================
-
-A. Worker – OMR 실사용 완성 (필수)
-
-1) Identifier(식별자) OMR 인식 v1 구현
-- assets meta의 identifier.bubbles를 그대로 사용
-- 휴대폰번호 뒤 8자리 (digit 1~8)
-- 각 digit별 0~9 중 1개 선택
-- 결과 예시:
-  {
-    "identifier": "12345678",
-    "confidence": 0.91,
-    "status": "ok|ambiguous|blank"
-  }
-
-- detect_omr_answers_v1과 동일한 철학
-- ROI 기반, fill_score 방식
-- meta(mm) → px 변환 재사용
-
-2) OMR threshold 운영 튜닝 가이드 + 기본값 보정
-- blank / multi / ambiguous 과다 발생 방지
-- v1 default를 “실데이터 기준 안정값”으로 조정
-- 코드 + 이유 명시
-
-3) scan / photo / auto 모드 정책 최종 고정
-- 프론트 기본값: mode=auto
-- photo 모드는 실패 시 error 반환
-- auto 모드는 warp 실패 시 fallback 허용
-
---------------------------------------------------
-
-B. Worker ↔ Assets 연계 최종 정리
-
-4) assets meta API 호출 안정화
-- 인증 방식 정리 (cookie/header)
-- timeout / error 처리
-- meta 실패 시 graceful fallback 규칙 명시
-
-5) meta → questions payload 변환 책임 고정
-- meta(mm)는 assets의 단일진실
-- px 변환은 worker의 책임
-- 이 경계를 코드와 주석으로 명확히 고정
-
---------------------------------------------------
-
-C. 결과 도메인(results) 연계 명세 (구현 또는 정확한 명세)
-
-6) worker OMR 결과 → results API 계약 정의
-- input payload
-- expected response
-- retry / error 정책
-- identifier + answers 결합 방식
-
-※ results 도메인에 코드를 넣지는 말고
-※ “이대로 구현하면 된다” 수준의 명세 제공
-
-==================================================
-[산출물 형식 – 필수]
-==================================================
-
-- 수정/추가된 모든 파일:
-  - 경로 + 전체 코드
-- 기존 파일 변경 시:
-  - patch 또는 before/after
-- 마지막에 반드시 포함:
-  1) 전체 처리 플로우 다이어그램 (텍스트)
-  2) scan vs photo 처리 차이 요약
-  3) 실운영 기준 수동 QA 체크리스트
-  4) “이 상태가 왜 상품 완성인지”에 대한 기술적 근거
-
-==================================================
-[완료 기준 선언]
-==================================================
-
-이 작업이 끝나면 시스템은 다음을 만족해야 한다.
-
-- 학원/학교에서 바로 인쇄·배포 가능한 OMR 답안지
-- 스캔/촬영/영상 모두 안정적으로 인식
-- assets ↔ worker ↔ results 책임 분리 명확
-- 좌표/레이아웃 단일진실 유지
-- v1 스펙을 수정하지 않고 v2 확장 가능
-- 대기업 실무 리뷰 및 보안/운영 검토 통과 가능
-
-이 기준을 만족하는 **완성 산출물**을 제시하라.

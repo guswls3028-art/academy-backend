@@ -14,8 +14,7 @@ from apps.worker.ai_worker.ai.handwriting.detector import analyze_handwriting
 from apps.worker.ai_worker.ai.embedding.service import get_embeddings
 from apps.worker.ai_worker.ai.problem.generator import generate_problem_from_ocr
 from apps.worker.ai_worker.ai.pipelines.homework_video_analyzer import analyze_homework_video
-from apps.worker.storage.downloader import download_to_tmp
-
+from apps.worker.ai_worker.storage.downloader import download_to_tmp
 def handle_ai_job(job: AIJob) -> AIResult:
     try:
         cfg = AIConfig.load()

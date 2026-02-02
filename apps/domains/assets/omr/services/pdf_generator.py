@@ -1,4 +1,3 @@
-# apps/domains/assets/omr/services/pdf_generator.py
 from __future__ import annotations
 
 from io import BytesIO
@@ -8,7 +7,8 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
 from apps.domains.assets.omr import constants as C
-from apps.domains.assets.omr.layouts import objective_v1_10, objective_v1_20, objective_v1_30
+from apps.domains.assets.omr.layouts.objective_v2_45 import draw as draw_objective
+from apps.domains.assets.omr.layouts.subjective_v2 import draw as draw_subjective
 
 
 class LogoValidationError(Exception):
@@ -16,34 +16,31 @@ class LogoValidationError(Exception):
 
 
 def _build_logo_reader(logo_file) -> Optional[ImageReader]:
-    """
-    - reportlab ImageReader로 실제 파싱을 시도해서 "진짜 이미지"만 통과시킨다.
-    - 변환 라이브러리 추가 없이 reportlab 기본으로 처리.
-    """
     if logo_file is None:
         return None
-
-    # DRF InMemoryUploadedFile / TemporaryUploadedFile 모두 file-like
     try:
-        logo_file.seek(0)
-    except Exception:
-        pass
-
-    try:
+        try:
+            logo_file.seek(0)
+        except Exception:
+            pass
         reader = ImageReader(logo_file)
-        # ImageReader가 내부 파싱을 미루는 경우가 있어 size 접근으로 한 번 더 검증
         _ = reader.getSize()
         return reader
     except Exception as e:
         raise LogoValidationError("logo must be a valid image file") from e
 
 
-def generate_objective_pdf(*, question_count: int, logo_file=None) -> bytes:
+def generate_objective_pdf(
+    *,
+    question_count: int,
+    logo_file=None,
+    exam_title: str = "3월 모의고사",
+    subject_round: str = "수학 (1회)",
+) -> bytes:
     """
-    Stateless PDF generator (시험지 1: 객관식 전용 OMR)
-    - A4 landscape
-    - 3단 레이아웃
-    - question_count: 10/20/30 only
+    Generates 2-page PDF:
+      - Page1: objective OMR (new agreed layout)
+      - Page2: subjective lines (simple back page)
     """
     if question_count not in C.ALLOWED_QUESTION_COUNTS:
         raise ValueError("invalid question_count")
@@ -53,14 +50,19 @@ def generate_objective_pdf(*, question_count: int, logo_file=None) -> bytes:
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=C.PAGE_SIZE)
 
-    # layout dispatch (no branching inside layout files)
-    if question_count == 10:
-        objective_v1_10.draw(c, logo_reader=logo_reader)
-    elif question_count == 20:
-        objective_v1_20.draw(c, logo_reader=logo_reader)
-    else:
-        objective_v1_30.draw(c, logo_reader=logo_reader)
+    # page 1
+    draw_objective(
+        c,
+        question_count=question_count,
+        logo_reader=logo_reader,
+        exam_title=exam_title,
+        subject_round=subject_round,
+    )
+    c.showPage()
 
+    # page 2
+    draw_subjective(c, line_count=10, title="서술형 답안지")
     c.save()
+
     buf.seek(0)
     return buf.read()
