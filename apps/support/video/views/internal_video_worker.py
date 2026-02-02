@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from django.conf import settings
 from django.http import JsonResponse
-from django.utils import timezone
 
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 
-from apps.support.video.models import Video
 from apps.support.video.services.queue import VideoJobQueue
 
 
@@ -52,8 +50,10 @@ MAX_BATCH = int(getattr(settings, "VIDEO_WORKER_MAX_BATCH", 1))
 
 class VideoWorkerClaimNextView(APIView):
     """
-    Worker polls:
-      GET /internal/video-worker/next/
+    Worker polls (SSOT):
+
+      GET  /.../video-worker/next/
+      GET  /.../internal/video-worker/next/   (compat alias)
 
     Returns:
       200 { "job": { video_id, file_key } }
@@ -97,7 +97,10 @@ class VideoWorkerClaimNextView(APIView):
 class VideoWorkerCompleteView(APIView):
     """
     Worker reports success:
-      POST /internal/video-worker/{video_id}/complete/
+
+      POST /.../video-worker/{video_id}/complete/
+      POST /.../internal/video-worker/{video_id}/complete/   (compat alias)
+
       body: { hls_path, duration }
 
     ✅ SSOT:
@@ -147,7 +150,10 @@ class VideoWorkerCompleteView(APIView):
 class VideoWorkerFailView(APIView):
     """
     Worker reports failure:
-      POST /internal/video-worker/{video_id}/fail/
+
+      POST /.../video-worker/{video_id}/fail/
+      POST /.../internal/video-worker/{video_id}/fail/   (compat alias)
+
       body: { reason }
 
     ✅ SSOT:
