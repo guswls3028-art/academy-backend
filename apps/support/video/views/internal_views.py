@@ -2,81 +2,74 @@
 
 from __future__ import annotations
 
-from typing import Optional
-from django.conf import settings
 from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
 from rest_framework import status
 
-from apps.support.video.services.queue import VideoJobQueue
+from apps.support.video.models import Video
 
 
-# =========================
-# 🔒 SAME AS AI WORKER
-# =========================
-def _require_worker_auth(request) -> Optional[Response]:
-    expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
-    if not expected:
-        return Response(
-            {"detail": "INTERNAL_WORKER_TOKEN not configured"},
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
-
-    token = (
-        request.headers.get("X-Worker-Token")
-        or request.META.get("HTTP_X_WORKER_TOKEN")
-        or ""
-    )
-
-    if str(token) != expected:
-        return Response(
-            {"detail": "Unauthorized worker"},
-            status=status.HTTP_401_UNAUTHORIZED,
-        )
-
-    return None
-
-
-def _worker_id(request) -> str:
-    return (
-        request.headers.get("X-Worker-Id")
-        or request.META.get("HTTP_X_WORKER_ID")
-        or "video-worker"
-    )
-
-
-# =========================
-# 🎬 NEXT JOB
-# =========================
-class InternalVideoJobNextView(APIView):
+class VideoProcessingCompleteView(APIView):
     """
-    GET /internal/video-worker/next/
-    response:
-      { "job": {...} } | { "job": null }
+    ✅ Legacy ACK endpoint (kept)
+
+    기존 계약을 깨지 않기 위해 유지하되,
+    "worker queue/claim" 같은 책임을 절대 섞지 않는다.
+
+    POST /api/v1/videos/internal/videos/<video_id>/processing-complete/
+    (프로젝트의 기존 URL 연결 방식에 맞춰 유지)
+
+    body:
+      {
+        "hls_path": "...",
+        "duration": 123
+      }
     """
 
     permission_classes = [AllowAny]
+    authentication_classes = []
 
-    def get(self, request):
-        auth = _require_worker_auth(request)
-        if auth:
-            return auth
+    def post(self, request, video_id: int):
+        data = getattr(request, "data", None) or {}
 
-        q = VideoJobQueue()
-        job = q.claim(worker_id=_worker_id(request))
+        hls_path = data.get("hls_path")
+        if not hls_path:
+            return Response({"detail": "hls_path required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not job:
-            return Response({"job": None}, status=status.HTTP_200_OK)
+        duration = data.get("duration")
+        try:
+            duration_int = int(duration) if duration is not None else None
+        except Exception:
+            duration_int = None
 
-        return Response(
-            {
-                "job": {
-                    "id": job.id,
-                    "video_id": job.video_id,
-                    "input_key": job.input_key,
-                    "output_prefix": job.output_prefix,
-                }
-            },
-            status=status.HTTP_200_OK,
-        )
+        video = Video.objects.filter(id=int(video_id)).first()
+        if not video:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 멱등
+        if video.status == Video.Status.READY and bool(video.hls_path):
+            return Response({"ok": True, "idempotent": True}, status=status.HTTP_200_OK)
+
+        video.hls_path = str(hls_path)
+        if duration_int is not None and duration_int >= 0:
+            video.duration = duration_int
+        video.status = Video.Status.READY
+
+        # legacy complete는 lease 통제를 모를 수 있으므로 안전하게 lease 해제만 수행
+        if hasattr(video, "leased_until"):
+            video.leased_until = None
+        if hasattr(video, "leased_by"):
+            video.leased_by = ""
+
+        update_fields = ["hls_path", "status"]
+        if duration_int is not None and duration_int >= 0:
+            update_fields.append("duration")
+        if hasattr(video, "leased_until"):
+            update_fields.append("leased_until")
+        if hasattr(video, "leased_by"):
+            update_fields.append("leased_by")
+
+        video.save(update_fields=update_fields)
+
+        return Response({"ok": True}, status=status.HTTP_200_OK)

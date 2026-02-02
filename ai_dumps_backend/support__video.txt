@@ -99,6 +99,37 @@ class VideoPlaybackEventAdmin(admin.ModelAdmin):
 
 
 ==========================================================================================
+# FILE: constants.py
+==========================================================================================
+# PATH: apps/support/video/constants.py
+
+from __future__ import annotations
+
+
+class VideoStatus:
+    """
+    ⚠️ SSOT: models.Video.Status 와 반드시 동일해야 한다.
+
+    - worker/API/services에서 공통으로 쓰는 "외부 상수" 역할
+    - 실제 DB 상태 변화는 항상 Video.Status를 기준으로 한다.
+    """
+
+    PENDING = "PENDING"
+    UPLOADED = "UPLOADED"
+    PROCESSING = "PROCESSING"
+    READY = "READY"
+    FAILED = "FAILED"
+
+    CHOICES = (
+        (PENDING, "Pending"),
+        (UPLOADED, "Uploaded"),
+        (PROCESSING, "Processing"),
+        (READY, "Ready"),
+        (FAILED, "Failed"),
+    )
+
+
+==========================================================================================
 # FILE: drm.py
 ==========================================================================================
 import time
@@ -937,14 +968,13 @@ from apps.support.video.views.internal_video_worker import (
     VideoWorkerCompleteView,
     VideoWorkerFailView,
 )
-
 from apps.support.video.views.internal_video_worker_heartbeat import (
     InternalVideoWorkerHeartbeatView,
 )
 
 urlpatterns = [
     # --------------------------------------------------
-    # Worker job control
+    # Worker job control (SSOT)
     # --------------------------------------------------
     path(
         "video-worker/next/",
@@ -961,14 +991,13 @@ urlpatterns = [
         VideoWorkerFailView.as_view(),
         name="video_worker_fail",
     ),
-
     # --------------------------------------------------
-    # Worker heartbeat (long-running protection)
+    # Worker heartbeat (lease extension)
     # --------------------------------------------------
     path(
         "video-worker/<int:video_id>/heartbeat/",
         InternalVideoWorkerHeartbeatView.as_view(),
-        name="internal-video-worker-heartbeat",
+        name="internal_video_worker_heartbeat",
     ),
 ]
 
@@ -2067,6 +2096,261 @@ def create_playback_session(
 
 
 ==========================================================================================
+# FILE: services/queue.py
+==========================================================================================
+# PATH: apps/support/video/services/queue.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Optional
+
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
+
+from apps.support.video.models import Video
+
+
+@dataclass(frozen=True)
+class ClaimResult:
+    video: Video
+    leased_until: timezone.datetime
+
+
+class VideoJobQueue:
+    """
+    ✅ SSOT (DB 기반 Video Worker Queue)
+
+    철학:
+    - DB가 단일 진실
+    - claim은 원자적(select_for_update + skip_locked)
+    - stuck reclaim은 "updated_at" 기반(기존 철학 유지) + lease 필드로 중앙 통제 보강
+    - 멱등/경합 방지: leased_by/leased_until owner만 complete/fail/heartbeat 허용
+    """
+
+    @classmethod
+    def _lease_seconds(cls) -> int:
+        # settings 의존을 queue 레벨에서 강제하지 않기 위해 model 필드 기반으로만 설계
+        # (settings가 필요하면 View 레벨에서 전달)
+        return 60
+
+    @classmethod
+    def _reclaim_cutoff(cls, now) -> timezone.datetime:
+        # PROCESSING 상태가 오래 갱신이 없으면 reclaim 가능
+        return now - timedelta(seconds=cls._lease_seconds())
+
+    @classmethod
+    @transaction.atomic
+    def claim_next(
+        cls,
+        *,
+        worker_id: str,
+        lease_seconds: int = 60,
+        max_batch: int = 1,
+    ) -> Optional[Video]:
+        """
+        처리 대기 Video 1개를 claim 한다.
+        - 반환: Video | None
+        """
+        wid = (worker_id or "").strip() or "worker-unknown"
+        now = timezone.now()
+        cutoff = now - timedelta(seconds=int(lease_seconds or 60))
+
+        # 1) UPLOADED 우선
+        # 2) PROCESSING 이면서 오래된(updated_at < cutoff) 작업 reclaim 허용
+        video = (
+            Video.objects.select_for_update(skip_locked=True)
+            .filter(
+                Q(status=Video.Status.UPLOADED)
+                | Q(status=Video.Status.PROCESSING, updated_at__lt=cutoff)
+            )
+            .order_by("id")
+            .first()
+        )
+
+        if not video:
+            return None
+
+        video.status = Video.Status.PROCESSING
+
+        # lease 필드가 존재하면 반드시 기록 (모델에 이미 존재)
+        if hasattr(video, "processing_started_at"):
+            video.processing_started_at = now
+        if hasattr(video, "leased_until"):
+            video.leased_until = now + timedelta(seconds=int(lease_seconds or 60))
+        if hasattr(video, "leased_by"):
+            video.leased_by = wid
+
+        update_fields = ["status"]
+        if hasattr(video, "processing_started_at"):
+            update_fields.append("processing_started_at")
+        if hasattr(video, "leased_until"):
+            update_fields.append("leased_until")
+        if hasattr(video, "leased_by"):
+            update_fields.append("leased_by")
+
+        video.save(update_fields=update_fields)
+        return video
+
+    @classmethod
+    @transaction.atomic
+    def heartbeat(
+        cls,
+        *,
+        video_id: int,
+        worker_id: str,
+        lease_seconds: int = 60,
+    ) -> bool:
+        """
+        lease 연장.
+        - owner mismatch면 False
+        """
+        wid = (worker_id or "").strip() or "worker-unknown"
+        now = timezone.now()
+
+        video = Video.objects.select_for_update().filter(id=int(video_id)).first()
+        if not video:
+            return False
+
+        # owner check (lease가 없으면 통과)
+        leased_by = (getattr(video, "leased_by", "") or "").strip()
+        leased_until = getattr(video, "leased_until", None)
+
+        if leased_by and leased_by != wid:
+            return False
+        if leased_until and leased_until < now:
+            return False
+
+        if hasattr(video, "processing_started_at") and not video.processing_started_at:
+            video.processing_started_at = now
+
+        if hasattr(video, "leased_by"):
+            video.leased_by = wid
+        if hasattr(video, "leased_until"):
+            video.leased_until = now + timedelta(seconds=int(lease_seconds or 60))
+
+        update_fields = []
+        if hasattr(video, "processing_started_at"):
+            update_fields.append("processing_started_at")
+        if hasattr(video, "leased_by"):
+            update_fields.append("leased_by")
+        if hasattr(video, "leased_until"):
+            update_fields.append("leased_until")
+
+        if update_fields:
+            video.save(update_fields=update_fields)
+        return True
+
+    @classmethod
+    @transaction.atomic
+    def complete(
+        cls,
+        *,
+        video_id: int,
+        worker_id: str,
+        hls_path: str,
+        duration: int | None = None,
+    ) -> tuple[bool, str]:
+        """
+        완료 처리.
+        - owner mismatch면 (False, "lease_owner_mismatch")
+        - 이미 READY + hls_path면 멱등 OK
+        """
+        wid = (worker_id or "").strip() or "worker-unknown"
+
+        video = Video.objects.select_for_update().filter(id=int(video_id)).first()
+        if not video:
+            return False, "not_found"
+
+        leased_by = (getattr(video, "leased_by", "") or "").strip()
+        leased_until = getattr(video, "leased_until", None)
+        now = timezone.now()
+
+        if leased_by and leased_by != wid and (not leased_until or leased_until > now):
+            return False, "lease_owner_mismatch"
+
+        if video.status == Video.Status.READY and bool(video.hls_path):
+            return True, "idempotent"
+
+        video.hls_path = str(hls_path)
+
+        if duration is not None and int(duration) >= 0:
+            video.duration = int(duration)
+
+        video.status = Video.Status.READY
+
+        # lease 해제
+        if hasattr(video, "leased_until"):
+            video.leased_until = None
+        if hasattr(video, "leased_by"):
+            video.leased_by = ""
+
+        update_fields = ["hls_path", "status"]
+        if duration is not None and int(duration) >= 0:
+            update_fields.append("duration")
+        if hasattr(video, "leased_until"):
+            update_fields.append("leased_until")
+        if hasattr(video, "leased_by"):
+            update_fields.append("leased_by")
+
+        video.save(update_fields=update_fields)
+        return True, "ok"
+
+    @classmethod
+    @transaction.atomic
+    def fail(
+        cls,
+        *,
+        video_id: int,
+        worker_id: str,
+        reason: str = "unknown",
+    ) -> tuple[bool, str]:
+        """
+        실패 처리.
+        - owner mismatch면 (False, "lease_owner_mismatch")
+        - 이미 FAILED면 멱등 OK
+        """
+        wid = (worker_id or "").strip() or "worker-unknown"
+
+        video = Video.objects.select_for_update().filter(id=int(video_id)).first()
+        if not video:
+            return False, "not_found"
+
+        leased_by = (getattr(video, "leased_by", "") or "").strip()
+        leased_until = getattr(video, "leased_until", None)
+        now = timezone.now()
+
+        if leased_by and leased_by != wid and (not leased_until or leased_until > now):
+            return False, "lease_owner_mismatch"
+
+        if video.status == Video.Status.FAILED:
+            return True, "idempotent"
+
+        video.status = Video.Status.FAILED
+        if hasattr(video, "error_reason"):
+            video.error_reason = str(reason)[:2000]
+
+        # lease 해제
+        if hasattr(video, "leased_until"):
+            video.leased_until = None
+        if hasattr(video, "leased_by"):
+            video.leased_by = ""
+
+        update_fields = ["status"]
+        if hasattr(video, "error_reason"):
+            update_fields.append("error_reason")
+        if hasattr(video, "leased_until"):
+            update_fields.append("leased_until")
+        if hasattr(video, "leased_by"):
+            update_fields.append("leased_by")
+
+        video.save(update_fields=update_fields)
+        return True, "ok"
+
+
+==========================================================================================
 # FILE: services/video_stats.py
 ==========================================================================================
 # PATH: apps/support/video/services/video_stats.py
@@ -2452,42 +2736,39 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
 
 from __future__ import annotations
 
-from datetime import timedelta
-from typing import Any
+from typing import Any, Optional
 
 from django.conf import settings
-from django.db import transaction
 from django.http import JsonResponse
 from django.utils import timezone
-from django.db import models  # ✅ 원본 의미 유지 + 동작 보강 (기존 파일 하단 import 대체)
 
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 
 from apps.support.video.models import Video
+from apps.support.video.services.queue import VideoJobQueue
 
 
 def _require_worker_token(request) -> bool:
-    token = request.headers.get("X-Worker-Token")
-    return bool(token) and token == getattr(settings, "INTERNAL_WORKER_TOKEN", "")
+    expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
+    if not expected:
+        return False
+
+    token = (
+        request.headers.get("X-Worker-Token")
+        or request.META.get("HTTP_X_WORKER_TOKEN")
+        or ""
+    )
+    return str(token) == expected
 
 
 def _worker_id(request) -> str:
     return (
         request.headers.get("X-Worker-Id")
         or request.headers.get("X-Worker-ID")
+        or request.META.get("HTTP_X_WORKER_ID")
         or "worker-unknown"
     )
-
-
-LEASE_SECONDS = int(getattr(settings, "VIDEO_WORKER_LEASE_SECONDS", 60))
-MAX_BATCH = int(getattr(settings, "VIDEO_WORKER_MAX_BATCH", 1))
-
-
-def _lease_cutoff(now):
-    # DB 스키마 변경 없이 "PROCESSING stuck" 회수:
-    # - processing 상태가 LEASE_SECONDS 이상 갱신이 없으면 reclaim 허용
-    return now - timedelta(seconds=LEASE_SECONDS)
 
 
 def _parse_int(value: Any) -> int | None:
@@ -2499,89 +2780,50 @@ def _parse_int(value: Any) -> int | None:
         return None
 
 
-def _is_lease_owner(video: Video, worker_id: str) -> bool:
-    """
-    ✅ 다중 노드 중복 처리 방지:
-    - leased_by가 설정돼 있으면 소유자만 complete/fail/heartbeat 가능
-    - leased_until이 지나면(만료) owner 체크를 완화(회수/재처리 허용)
-    - 기존 구조(updated_at reclaim) 그대로 유지하면서 중앙 통제 추가
-    """
-    if not hasattr(video, "leased_by") or not hasattr(video, "leased_until"):
-        return True
-
-    lb = (getattr(video, "leased_by", "") or "").strip()
-    lu = getattr(video, "leased_until", None)
-
-    if not lb:
-        return True
-
-    # lease 만료면 소유권 강제 안 함(회수 가능)
-    if lu is not None and lu <= timezone.now():
-        return True
-
-    return lb == (worker_id or "")
+LEASE_SECONDS = int(getattr(settings, "VIDEO_WORKER_LEASE_SECONDS", 60))
+MAX_BATCH = int(getattr(settings, "VIDEO_WORKER_MAX_BATCH", 1))
 
 
 class VideoWorkerClaimNextView(APIView):
     """
     Worker polls:
-      GET /api/v1/internal/video-worker/next/
-    Returns:
-      200 { "job": {video_id, file_key} }  OR  204 no content
+      GET /internal/video-worker/next/
 
-    NOTE:
-    - 기존 reclaim 로직(updated_at 기준) 유지
-    - 여기에 leased_by/leased_until만 "추가 기록"하여
-      multi-host 환경에서 완료처리 경합 방지
+    Returns:
+      200 { "job": { video_id, file_key } }
+      204 no content
+
+    ✅ SSOT:
+    - claim은 VideoJobQueue.claim_next
+    - 상태 변화는 Video.Status 기준
     """
+
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def get(self, request):
         if not _require_worker_token(request):
+            expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
+            if not expected:
+                return JsonResponse(
+                    {"detail": "INTERNAL_WORKER_TOKEN not configured"},
+                    status=503,
+                )
             return JsonResponse({"detail": "Unauthorized"}, status=401)
-
-        now = timezone.now()
-        cutoff = _lease_cutoff(now)
 
         wid = _worker_id(request)
 
-        with transaction.atomic():
-            video = (
-                Video.objects.select_for_update(skip_locked=True)
-                .filter(
-                    models.Q(status=Video.Status.UPLOADED)
-                    | models.Q(status=Video.Status.PROCESSING, updated_at__lt=cutoff)
-                )
-                .order_by("id")
-                .first()
-            )
+        video = VideoJobQueue.claim_next(
+            worker_id=wid,
+            lease_seconds=LEASE_SECONDS,
+            max_batch=MAX_BATCH,
+        )
 
-            if video is None:
-                return JsonResponse({}, status=204)
-
-            # reclaim된 작업은 실패사유 남기지 않고 재처리
-            video.status = Video.Status.PROCESSING
-
-            # ✅ lease 필드가 있으면 반드시 기록(중복 완료 방지)
-            if hasattr(video, "processing_started_at"):
-                video.processing_started_at = now
-            if hasattr(video, "leased_until"):
-                video.leased_until = now + timedelta(seconds=LEASE_SECONDS)
-            if hasattr(video, "leased_by"):
-                video.leased_by = wid
-
-            update_fields = ["status"]
-            if hasattr(video, "processing_started_at"):
-                update_fields.append("processing_started_at")
-            if hasattr(video, "leased_until"):
-                update_fields.append("leased_until")
-            if hasattr(video, "leased_by"):
-                update_fields.append("leased_by")
-
-            video.save(update_fields=update_fields)
+        if video is None:
+            return JsonResponse({}, status=204)
 
         return JsonResponse(
-            {"job": {"video_id": video.id, "file_key": video.file_key}},
+            {"job": {"video_id": int(video.id), "file_key": str(video.file_key or "")}},
             status=200,
         )
 
@@ -2589,127 +2831,96 @@ class VideoWorkerClaimNextView(APIView):
 class VideoWorkerCompleteView(APIView):
     """
     Worker reports success:
-      POST /api/v1/internal/video-worker/{video_id}/complete/
-      body: {hls_path, duration}
+      POST /internal/video-worker/{video_id}/complete/
+      body: { hls_path, duration }
 
-    idempotent:
-    - 이미 READY면 ok 반환
-
-    ✅ 보강:
-    - lease owner(worker_id)만 complete 가능
-      (multi-host 이중 처리의 "완료 경합" 차단)
+    ✅ SSOT:
+    - owner(leased_by)만 complete 가능
+    - 멱등 처리: 이미 READY + hls_path면 OK
     """
+
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def post(self, request, video_id: int):
         if not _require_worker_token(request):
+            expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
+            if not expected:
+                return JsonResponse(
+                    {"detail": "INTERNAL_WORKER_TOKEN not configured"},
+                    status=503,
+                )
             return JsonResponse({"detail": "Unauthorized"}, status=401)
 
         wid = _worker_id(request)
 
-        data = request.data if hasattr(request, "data") else {}
+        data = getattr(request, "data", None) or {}
         hls_path = data.get("hls_path")
         duration = _parse_int(data.get("duration"))
 
         if not hls_path:
             return JsonResponse({"detail": "hls_path required"}, status=400)
 
-        with transaction.atomic():
-            video = Video.objects.select_for_update().filter(id=video_id).first()
-            if video is None:
+        ok, reason = VideoJobQueue.complete(
+            video_id=int(video_id),
+            worker_id=wid,
+            hls_path=str(hls_path),
+            duration=duration,
+        )
+
+        if not ok:
+            if reason == "not_found":
                 return JsonResponse({"detail": "Not found"}, status=404)
-
-            # ✅ lease owner 검증
-            if not _is_lease_owner(video, wid):
+            if reason == "lease_owner_mismatch":
                 return JsonResponse({"detail": "lease_owner_mismatch"}, status=409)
+            return JsonResponse({"detail": reason}, status=400)
 
-            # ✅ idempotent 처리
-            if video.status == Video.Status.READY and video.hls_path:
-                return JsonResponse({"ok": True, "idempotent": True}, status=200)
-
-            video.hls_path = str(hls_path)
-            if duration is not None and duration >= 0:
-                video.duration = duration
-
-            video.status = Video.Status.READY
-
-            # lease 해제
-            if hasattr(video, "leased_until"):
-                video.leased_until = None
-            if hasattr(video, "leased_by"):
-                video.leased_by = ""
-
-            update_fields = ["hls_path", "status"]
-            if duration is not None and duration >= 0:
-                update_fields.append("duration")
-            if hasattr(video, "leased_until"):
-                update_fields.append("leased_until")
-            if hasattr(video, "leased_by"):
-                update_fields.append("leased_by")
-
-            video.save(update_fields=update_fields)
-
-        return JsonResponse({"ok": True}, status=200)
+        return JsonResponse({"ok": True, "reason": reason}, status=200)
 
 
 class VideoWorkerFailView(APIView):
     """
     Worker reports failure:
-      POST /api/v1/internal/video-worker/{video_id}/fail/
-      body: {reason}
+      POST /internal/video-worker/{video_id}/fail/
+      body: { reason }
 
-    idempotent:
-    - 이미 FAILED면 ok 반환
-
-    ✅ 보강:
-    - lease owner(worker_id)만 fail 가능
+    ✅ SSOT:
+    - owner(leased_by)만 fail 가능
+    - 멱등 처리: 이미 FAILED면 OK
     """
+
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def post(self, request, video_id: int):
         if not _require_worker_token(request):
+            expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
+            if not expected:
+                return JsonResponse(
+                    {"detail": "INTERNAL_WORKER_TOKEN not configured"},
+                    status=503,
+                )
             return JsonResponse({"detail": "Unauthorized"}, status=401)
 
         wid = _worker_id(request)
 
-        data = request.data if hasattr(request, "data") else {}
-        reason = data.get("reason") or "unknown"
+        data = getattr(request, "data", None) or {}
+        reason = str(data.get("reason") or "unknown")
 
-        with transaction.atomic():
-            video = Video.objects.select_for_update().filter(id=video_id).first()
-            if video is None:
+        ok, why = VideoJobQueue.fail(
+            video_id=int(video_id),
+            worker_id=wid,
+            reason=reason,
+        )
+
+        if not ok:
+            if why == "not_found":
                 return JsonResponse({"detail": "Not found"}, status=404)
-
-            # ✅ lease owner 검증
-            if not _is_lease_owner(video, wid):
+            if why == "lease_owner_mismatch":
                 return JsonResponse({"detail": "lease_owner_mismatch"}, status=409)
+            return JsonResponse({"detail": why}, status=400)
 
-            # ✅ idempotent 처리
-            if video.status == Video.Status.FAILED:
-                return JsonResponse({"ok": True, "idempotent": True}, status=200)
-
-            video.status = Video.Status.FAILED
-
-            if hasattr(video, "error_reason"):
-                video.error_reason = str(reason)[:2000]
-
-            # lease 해제
-            if hasattr(video, "leased_until"):
-                video.leased_until = None
-            if hasattr(video, "leased_by"):
-                video.leased_by = ""
-
-            update_fields = ["status"]
-            if hasattr(video, "error_reason"):
-                update_fields.append("error_reason")
-            if hasattr(video, "leased_until"):
-                update_fields.append("leased_until")
-            if hasattr(video, "leased_by"):
-                update_fields.append("leased_by")
-
-            video.save(update_fields=update_fields)
-
-        return JsonResponse({"ok": True}, status=200)
+        return JsonResponse({"ok": True, "reason": why}, status=200)
 
 
 ==========================================================================================
@@ -2717,60 +2928,91 @@ class VideoWorkerFailView(APIView):
 ==========================================================================================
 # PATH: apps/support/video/views/internal_video_worker_heartbeat.py
 
-import logging
-from django.utils import timezone
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
+from __future__ import annotations
 
-from ..models import Video
+import logging
+
+from django.conf import settings
+from django.http import JsonResponse
+
+from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
+
+from apps.support.video.services.queue import VideoJobQueue
+
 
 logger = logging.getLogger("video.worker.heartbeat")
 
 
+def _require_worker_token(request) -> bool:
+    expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
+    if not expected:
+        return False
+
+    token = (
+        request.headers.get("X-Worker-Token")
+        or request.META.get("HTTP_X_WORKER_TOKEN")
+        or ""
+    )
+    return str(token) == expected
+
+
+def _worker_id(request) -> str:
+    return (
+        request.headers.get("X-Worker-Id")
+        or request.headers.get("X-Worker-ID")
+        or request.META.get("HTTP_X_WORKER_ID")
+        or "worker-unknown"
+    )
+
+
+LEASE_SECONDS = int(getattr(settings, "VIDEO_WORKER_LEASE_SECONDS", 60))
+
+
 class InternalVideoWorkerHeartbeatView(APIView):
+    """
+    POST /internal/video-worker/<video_id>/heartbeat/
+
+    ✅ SSOT:
+    - queue.heartbeat()가 lease 연장 단일 진입점
+    - owner mismatch/lease expired면 409
+    """
+
+    permission_classes = [AllowAny]
     authentication_classes = []
-    permission_classes = []
 
     def post(self, request, video_id: int):
-        worker_id = request.headers.get("X-Worker-Id") or "worker-unknown"
+        if not _require_worker_token(request):
+            expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
+            if not expected:
+                return JsonResponse(
+                    {"detail": "INTERNAL_WORKER_TOKEN not configured"},
+                    status=503,
+                )
+            return JsonResponse({"detail": "Unauthorized"}, status=401)
 
-        video = Video.objects.filter(id=video_id).first()
-        if not video:
-            return Response(status=status.HTTP_404_NOT_FOUND)
+        wid = _worker_id(request)
 
-        # lease owner 검증
-        leased_by = getattr(video, "leased_by", None)
-        leased_until = getattr(video, "leased_until", None)
+        ok = VideoJobQueue.heartbeat(
+            video_id=int(video_id),
+            worker_id=wid,
+            lease_seconds=LEASE_SECONDS,
+        )
 
-        if leased_by and leased_by != worker_id:
+        if not ok:
             logger.warning(
-                "heartbeat rejected lease_owner_mismatch video_id=%s leased_by=%s from=%s",
-                video_id, leased_by, worker_id,
+                "heartbeat rejected video_id=%s worker=%s",
+                str(video_id),
+                wid,
             )
-            return Response(status=status.HTTP_409_CONFLICT)
-
-        if leased_until and leased_until < timezone.now():
-            logger.warning(
-                "heartbeat rejected lease_expired video_id=%s worker=%s",
-                video_id, worker_id,
-            )
-            return Response(status=status.HTTP_409_CONFLICT)
-
-        # heartbeat accept → lease 연장
-        try:
-            video.processing_started_at = video.processing_started_at or timezone.now()
-            video.leased_by = worker_id
-            video.leased_until = timezone.now() + timezone.timedelta(seconds=60)
-            video.save(update_fields=["processing_started_at", "leased_by", "leased_until"])
-        except Exception:
-            pass
+            return JsonResponse({"detail": "lease_owner_mismatch_or_expired"}, status=409)
 
         logger.info(
             "heartbeat ok video_id=%s worker=%s",
-            video_id, worker_id,
+            str(video_id),
+            wid,
         )
-        return Response({"ok": True})
+        return JsonResponse({"ok": True}, status=200)
 
 
 ==========================================================================================
@@ -2780,84 +3022,77 @@ class InternalVideoWorkerHeartbeatView(APIView):
 
 from __future__ import annotations
 
-from typing import Optional
-from django.conf import settings
 from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
 from rest_framework import status
 
-from apps.support.video.services.queue import VideoJobQueue
+from apps.support.video.models import Video
 
 
-# =========================
-# 🔒 SAME AS AI WORKER
-# =========================
-def _require_worker_auth(request) -> Optional[Response]:
-    expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
-    if not expected:
-        return Response(
-            {"detail": "INTERNAL_WORKER_TOKEN not configured"},
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
-
-    token = (
-        request.headers.get("X-Worker-Token")
-        or request.META.get("HTTP_X_WORKER_TOKEN")
-        or ""
-    )
-
-    if str(token) != expected:
-        return Response(
-            {"detail": "Unauthorized worker"},
-            status=status.HTTP_401_UNAUTHORIZED,
-        )
-
-    return None
-
-
-def _worker_id(request) -> str:
-    return (
-        request.headers.get("X-Worker-Id")
-        or request.META.get("HTTP_X_WORKER_ID")
-        or "video-worker"
-    )
-
-
-# =========================
-# 🎬 NEXT JOB
-# =========================
-class InternalVideoJobNextView(APIView):
+class VideoProcessingCompleteView(APIView):
     """
-    GET /internal/video-worker/next/
-    response:
-      { "job": {...} } | { "job": null }
+    ✅ Legacy ACK endpoint (kept)
+
+    기존 계약을 깨지 않기 위해 유지하되,
+    "worker queue/claim" 같은 책임을 절대 섞지 않는다.
+
+    POST /api/v1/videos/internal/videos/<video_id>/processing-complete/
+    (프로젝트의 기존 URL 연결 방식에 맞춰 유지)
+
+    body:
+      {
+        "hls_path": "...",
+        "duration": 123
+      }
     """
 
     permission_classes = [AllowAny]
+    authentication_classes = []
 
-    def get(self, request):
-        auth = _require_worker_auth(request)
-        if auth:
-            return auth
+    def post(self, request, video_id: int):
+        data = getattr(request, "data", None) or {}
 
-        q = VideoJobQueue()
-        job = q.claim(worker_id=_worker_id(request))
+        hls_path = data.get("hls_path")
+        if not hls_path:
+            return Response({"detail": "hls_path required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not job:
-            return Response({"job": None}, status=status.HTTP_200_OK)
+        duration = data.get("duration")
+        try:
+            duration_int = int(duration) if duration is not None else None
+        except Exception:
+            duration_int = None
 
-        return Response(
-            {
-                "job": {
-                    "id": job.id,
-                    "video_id": job.video_id,
-                    "input_key": job.input_key,
-                    "output_prefix": job.output_prefix,
-                }
-            },
-            status=status.HTTP_200_OK,
-        )
+        video = Video.objects.filter(id=int(video_id)).first()
+        if not video:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 멱등
+        if video.status == Video.Status.READY and bool(video.hls_path):
+            return Response({"ok": True, "idempotent": True}, status=status.HTTP_200_OK)
+
+        video.hls_path = str(hls_path)
+        if duration_int is not None and duration_int >= 0:
+            video.duration = duration_int
+        video.status = Video.Status.READY
+
+        # legacy complete는 lease 통제를 모를 수 있으므로 안전하게 lease 해제만 수행
+        if hasattr(video, "leased_until"):
+            video.leased_until = None
+        if hasattr(video, "leased_by"):
+            video.leased_by = ""
+
+        update_fields = ["hls_path", "status"]
+        if duration_int is not None and duration_int >= 0:
+            update_fields.append("duration")
+        if hasattr(video, "leased_until"):
+            update_fields.append("leased_until")
+        if hasattr(video, "leased_by"):
+            update_fields.append("leased_by")
+
+        video.save(update_fields=update_fields)
+
+        return Response({"ok": True}, status=status.HTTP_200_OK)
 
 
 ==========================================================================================
@@ -3158,110 +3393,6 @@ class VideoPlaybackMixin:
             data.append(d)
 
         return Response(data)
-
-
-==========================================================================================
-# FILE: views/playback_session_views.py
-==========================================================================================
-from __future__ import annotations
-
-import time
-from django_redis import get_redis_connection
-
-redis_client = get_redis_connection("default")
-
-
-def _now() -> int:
-    return int(time.time())
-
-
-def _key_session(session_id: str) -> str:
-    return f"media:playback:session:{session_id}"
-
-
-def _key_user_sessions(user_id: int) -> str:
-    return f"media:playback:user:{user_id}:sessions"
-
-
-def _key_user_devices(user_id: int) -> str:
-    return f"media:playback:user:{user_id}:devices"
-
-
-def _key_revoked_sessions(user_id: int) -> str:
-    return f"media:playback:user:{user_id}:revoked"
-
-
-# ===============================
-# 기존 함수 (의미 유지)
-# ===============================
-
-def issue_session(
-    *,
-    user_id: int,
-    device_id: str,
-    ttl_seconds: int,
-    max_sessions: int,
-    max_devices: int,
-):
-    """
-    원본 구현 유지 (중략 없이 그대로 있다고 가정)
-    """
-    # ※ 원본 코드 그대로 유지
-    raise NotImplementedError
-
-
-def heartbeat_session(
-    *,
-    user_id: int,
-    session_id: str,
-    ttl_seconds: int,
-) -> bool:
-    sessions_key = _key_user_sessions(user_id)
-    score = redis_client.zscore(sessions_key, session_id)
-    if score is None:
-        return False
-
-    expire_at = _now() + ttl_seconds
-    redis_client.zadd(sessions_key, {session_id: expire_at})
-    return True
-
-
-def end_session(*, user_id: int, session_id: str) -> None:
-    pipe = redis_client.pipeline(transaction=False)
-    pipe.zrem(_key_user_sessions(user_id), session_id)
-    pipe.delete(_key_session(session_id))
-    pipe.execute()
-
-
-# ===============================
-# ✅ 보강: 즉시 차단 (문제 1)
-# ===============================
-
-def revoke_session(*, user_id: int, session_id: str) -> None:
-    """
-    서버 강제 차단:
-    - Redis 세션 즉시 제거
-    - revoked set에 기록하여 재사용 방지
-    """
-    pipe = redis_client.pipeline(transaction=False)
-    pipe.sadd(_key_revoked_sessions(user_id), session_id)
-    pipe.zrem(_key_user_sessions(user_id), session_id)
-    pipe.delete(_key_session(session_id))
-    pipe.execute()
-
-
-def is_session_active(*, user_id: int, session_id: str) -> bool:
-    """
-    Redis 기준 단일 판정 함수
-    """
-    if redis_client.sismember(_key_revoked_sessions(user_id), session_id):
-        return False
-
-    score = redis_client.zscore(_key_user_sessions(user_id), session_id)
-    if score is None:
-        return False
-
-    return int(score) > _now()
 
 
 ==========================================================================================

@@ -1,3 +1,4 @@
+# PATH: apps/worker/video_worker/config.py
 from __future__ import annotations
 
 import os
@@ -13,10 +14,6 @@ def _require(name: str) -> str:
 
 
 def _require_any(*names: str) -> str:
-    """
-    여러 env 중 하나라도 있으면 사용.
-    (SSOT 유지 + 운영 환경 차이 흡수용)
-    """
     for name in names:
         v = os.environ.get(name)
         if v:
@@ -40,22 +37,19 @@ def _int(name: str, default: str) -> int:
 
 @dataclass(frozen=True)
 class Config:
-    # API
+    # API / Auth
     API_BASE_URL: str
-    WORKER_TOKEN: str
+    INTERNAL_WORKER_TOKEN: str
     WORKER_ID: str
 
-    # Polling / retry
-    POLL_INTERVAL_SECONDS: float
+    # HTTP / retry
     HTTP_TIMEOUT_SECONDS: float
     RETRY_MAX_ATTEMPTS: int
     BACKOFF_BASE_SECONDS: float
     BACKOFF_CAP_SECONDS: float
 
-    # Temp
+    # Temp / Lock
     TEMP_DIR: str
-
-    # Locking (Idempotency)
     LOCK_DIR: str
     LOCK_STALE_SECONDS: int
 
@@ -71,11 +65,9 @@ class Config:
     # HLS / thumb
     HLS_TIME_SECONDS: int
     THUMBNAIL_AT_SECONDS: float
-
-    # Validation
     MIN_SEGMENTS_PER_VARIANT: int
 
-    # R2 (S3 compatible)
+    # R2
     R2_BUCKET: str
     R2_PREFIX: str
     R2_ENDPOINT: str
@@ -84,7 +76,7 @@ class Config:
     R2_REGION: str
     UPLOAD_MAX_CONCURRENCY: int
 
-    # download tuning
+    # download
     DOWNLOAD_TIMEOUT_SECONDS: float
     DOWNLOAD_CHUNK_BYTES: int
 
@@ -93,22 +85,18 @@ def load_config() -> Config:
     try:
         return Config(
             API_BASE_URL=_require("API_BASE_URL").rstrip("/"),
-            WORKER_TOKEN=_require("INTERNAL_WORKER_TOKEN"),
-            WORKER_ID=os.environ.get("WORKER_ID", "video-worker-1"),
+            INTERNAL_WORKER_TOKEN=_require("INTERNAL_WORKER_TOKEN"),
+            WORKER_ID=os.environ.get("WORKER_ID", "video-worker"),
 
-            POLL_INTERVAL_SECONDS=_float("VIDEO_WORKER_POLL_INTERVAL", "1.0"),
             HTTP_TIMEOUT_SECONDS=_float("VIDEO_WORKER_HTTP_TIMEOUT", "10.0"),
             RETRY_MAX_ATTEMPTS=_int("VIDEO_WORKER_RETRY_MAX", "6"),
             BACKOFF_BASE_SECONDS=_float("VIDEO_WORKER_BACKOFF_BASE", "0.5"),
             BACKOFF_CAP_SECONDS=_float("VIDEO_WORKER_BACKOFF_CAP", "10.0"),
 
             TEMP_DIR=os.environ.get("VIDEO_WORKER_TEMP_DIR", "/tmp/video-worker"),
-
-            # Idempotency lock
             LOCK_DIR=os.environ.get("VIDEO_WORKER_LOCK_DIR", "/tmp/video-worker-locks"),
             LOCK_STALE_SECONDS=_int("VIDEO_WORKER_LOCK_STALE_SECONDS", "3600"),
 
-            # Heartbeat
             HEARTBEAT_INTERVAL_SECONDS=_int("VIDEO_WORKER_HEARTBEAT_INTERVAL", "20"),
 
             FFMPEG_BIN=os.environ.get("FFMPEG_BIN", "ffmpeg"),
@@ -118,10 +106,8 @@ def load_config() -> Config:
 
             HLS_TIME_SECONDS=_int("HLS_TIME_SECONDS", "4"),
             THUMBNAIL_AT_SECONDS=_float("THUMBNAIL_AT_SECONDS", "1.0"),
+            MIN_SEGMENTS_PER_VARIANT=_int("MIN_SEGMENTS_PER_VARIANT", "1"),
 
-            MIN_SEGMENTS_PER_VARIANT=_int("MIN_SEGMENTS_PER_VARIANT", "3"),
-
-            # ✅ 핵심 수정 포인트 (원본 로직 유지 + env 불일치 흡수)
             R2_BUCKET=_require_any("R2_BUCKET", "R2_VIDEO_BUCKET"),
             R2_PREFIX=os.environ.get("R2_PREFIX", "media/hls/videos"),
             R2_ENDPOINT=_require("R2_ENDPOINT"),

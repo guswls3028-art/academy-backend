@@ -2508,6 +2508,7 @@ def warp_to_a4_landscape(
 ==========================================================================================
 # FILE: video_worker/config.py
 ==========================================================================================
+# PATH: apps/worker/video_worker/config.py
 from __future__ import annotations
 
 import os
@@ -2523,10 +2524,6 @@ def _require(name: str) -> str:
 
 
 def _require_any(*names: str) -> str:
-    """
-    여러 env 중 하나라도 있으면 사용.
-    (SSOT 유지 + 운영 환경 차이 흡수용)
-    """
     for name in names:
         v = os.environ.get(name)
         if v:
@@ -2550,22 +2547,19 @@ def _int(name: str, default: str) -> int:
 
 @dataclass(frozen=True)
 class Config:
-    # API
+    # API / Auth
     API_BASE_URL: str
-    WORKER_TOKEN: str
+    INTERNAL_WORKER_TOKEN: str
     WORKER_ID: str
 
-    # Polling / retry
-    POLL_INTERVAL_SECONDS: float
+    # HTTP / retry
     HTTP_TIMEOUT_SECONDS: float
     RETRY_MAX_ATTEMPTS: int
     BACKOFF_BASE_SECONDS: float
     BACKOFF_CAP_SECONDS: float
 
-    # Temp
+    # Temp / Lock
     TEMP_DIR: str
-
-    # Locking (Idempotency)
     LOCK_DIR: str
     LOCK_STALE_SECONDS: int
 
@@ -2581,11 +2575,9 @@ class Config:
     # HLS / thumb
     HLS_TIME_SECONDS: int
     THUMBNAIL_AT_SECONDS: float
-
-    # Validation
     MIN_SEGMENTS_PER_VARIANT: int
 
-    # R2 (S3 compatible)
+    # R2
     R2_BUCKET: str
     R2_PREFIX: str
     R2_ENDPOINT: str
@@ -2594,7 +2586,7 @@ class Config:
     R2_REGION: str
     UPLOAD_MAX_CONCURRENCY: int
 
-    # download tuning
+    # download
     DOWNLOAD_TIMEOUT_SECONDS: float
     DOWNLOAD_CHUNK_BYTES: int
 
@@ -2603,22 +2595,18 @@ def load_config() -> Config:
     try:
         return Config(
             API_BASE_URL=_require("API_BASE_URL").rstrip("/"),
-            WORKER_TOKEN=_require("INTERNAL_WORKER_TOKEN"),
-            WORKER_ID=os.environ.get("WORKER_ID", "video-worker-1"),
+            INTERNAL_WORKER_TOKEN=_require("INTERNAL_WORKER_TOKEN"),
+            WORKER_ID=os.environ.get("WORKER_ID", "video-worker"),
 
-            POLL_INTERVAL_SECONDS=_float("VIDEO_WORKER_POLL_INTERVAL", "1.0"),
             HTTP_TIMEOUT_SECONDS=_float("VIDEO_WORKER_HTTP_TIMEOUT", "10.0"),
             RETRY_MAX_ATTEMPTS=_int("VIDEO_WORKER_RETRY_MAX", "6"),
             BACKOFF_BASE_SECONDS=_float("VIDEO_WORKER_BACKOFF_BASE", "0.5"),
             BACKOFF_CAP_SECONDS=_float("VIDEO_WORKER_BACKOFF_CAP", "10.0"),
 
             TEMP_DIR=os.environ.get("VIDEO_WORKER_TEMP_DIR", "/tmp/video-worker"),
-
-            # Idempotency lock
             LOCK_DIR=os.environ.get("VIDEO_WORKER_LOCK_DIR", "/tmp/video-worker-locks"),
             LOCK_STALE_SECONDS=_int("VIDEO_WORKER_LOCK_STALE_SECONDS", "3600"),
 
-            # Heartbeat
             HEARTBEAT_INTERVAL_SECONDS=_int("VIDEO_WORKER_HEARTBEAT_INTERVAL", "20"),
 
             FFMPEG_BIN=os.environ.get("FFMPEG_BIN", "ffmpeg"),
@@ -2628,10 +2616,8 @@ def load_config() -> Config:
 
             HLS_TIME_SECONDS=_int("HLS_TIME_SECONDS", "4"),
             THUMBNAIL_AT_SECONDS=_float("THUMBNAIL_AT_SECONDS", "1.0"),
+            MIN_SEGMENTS_PER_VARIANT=_int("MIN_SEGMENTS_PER_VARIANT", "1"),
 
-            MIN_SEGMENTS_PER_VARIANT=_int("MIN_SEGMENTS_PER_VARIANT", "3"),
-
-            # ✅ 핵심 수정 포인트 (원본 로직 유지 + env 불일치 흡수)
             R2_BUCKET=_require_any("R2_BUCKET", "R2_VIDEO_BUCKET"),
             R2_PREFIX=os.environ.get("R2_PREFIX", "media/hls/videos"),
             R2_ENDPOINT=_require("R2_ENDPOINT"),
@@ -2798,91 +2784,75 @@ class HeartbeatThread:
 ==========================================================================================
 # FILE: video_worker/http_client.py
 ==========================================================================================
+# PATH: apps/worker/video_worker/http_client.py
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, Optional
-
 import requests
-
-logger = logging.getLogger("video_worker.http")
 
 
 class VideoAPIClient:
+    """
+    Internal API client (SSOT)
+    - Token: INTERNAL_WORKER_TOKEN
+    - Prefix: /api/v1/internal/video-worker/*
+    """
+
     def __init__(
         self,
         *,
         base_url: str,
-        worker_token: str,
+        internal_worker_token: str,
         worker_id: str,
-        timeout_seconds: int,
+        timeout_seconds: float,
     ):
-        self._base_url = base_url.rstrip("/")
+        self._base = base_url.rstrip("/") + "/api/v1/internal/video-worker"
         self._timeout = timeout_seconds
         self._headers = {
-            "X-Worker-Token": worker_token,
+            "X-Worker-Token": internal_worker_token,
             "X-Worker-Id": worker_id,
             "Content-Type": "application/json",
         }
 
-    # --------------------------------------------------
-    # Job control
-    # --------------------------------------------------
-
     def fetch_next_job(self) -> Optional[Dict[str, Any]]:
-        url = f"{self._base_url}/internal/video-worker/next/"
-        resp = requests.get(
-            url,
+        r = requests.get(
+            f"{self._base}/next/",
             headers=self._headers,
             timeout=self._timeout,
         )
-        if resp.status_code == 204:
+        if r.status_code == 204:
             return None
-        resp.raise_for_status()
-        return resp.json()
+        r.raise_for_status()
+        data = r.json()
+        return data.get("job") if isinstance(data, dict) else None
 
     def notify_complete(self, video_id: int, payload: Dict[str, Any]) -> None:
-        url = f"{self._base_url}/internal/video-worker/{video_id}/complete/"
-        resp = requests.post(
-            url,
+        r = requests.post(
+            f"{self._base}/{video_id}/complete/",
             json=payload,
             headers=self._headers,
             timeout=self._timeout,
         )
-        resp.raise_for_status()
+        r.raise_for_status()
 
     def notify_fail(self, video_id: int, reason: str) -> None:
-        url = f"{self._base_url}/internal/video-worker/{video_id}/fail/"
-        resp = requests.post(
-            url,
+        r = requests.post(
+            f"{self._base}/{video_id}/fail/",
             json={"reason": reason},
             headers=self._headers,
             timeout=self._timeout,
         )
-        resp.raise_for_status()
-
-    # --------------------------------------------------
-    # Heartbeat
-    # --------------------------------------------------
+        r.raise_for_status()
 
     def send_heartbeat(self, video_id: int) -> None:
-        url = f"{self._base_url}/internal/video-worker/{video_id}/heartbeat/"
-        resp = requests.post(
-            url,
+        r = requests.post(
+            f"{self._base}/{video_id}/heartbeat/",
             headers=self._headers,
             timeout=self._timeout,
         )
-        resp.raise_for_status()
-
-    # --------------------------------------------------
-    # Lifecycle
-    # --------------------------------------------------
+        r.raise_for_status()
 
     def close(self) -> None:
-        """
-        requests.Session을 쓰지 않으므로 noop.
-        main.py의 client.close() 계약을 맞추기 위한 메서드.
-        """
         return
 
 
@@ -2964,15 +2934,14 @@ def release_video_lock(handle: LockHandle) -> None:
 from __future__ import annotations
 
 import logging
-import signal
-import time
 import os
+import signal
 import subprocess
+import sys
 
 from apps.worker.video_worker.config import load_config
 from apps.worker.video_worker.http_client import VideoAPIClient
 from apps.worker.video_worker.video.processor import process_video_job
-from apps.worker.video_worker.utils import backoff_sleep
 
 logging.basicConfig(
     level=logging.INFO,
@@ -2989,16 +2958,9 @@ def _handle_signal(sig, frame):
     _shutdown = True
 
 
-def _shutdown_self():
-    """
-    단일 진실:
-    - worker는 자기 자신만 종료
-    - INSTANCE_ID는 systemd Environment로 주입
-    - region은 EC2 metadata에서 계산
-    """
+def _self_stop_ec2() -> None:
     instance_id = os.environ.get("INSTANCE_ID")
     if not instance_id:
-        logger.warning("INSTANCE_ID not set; skip self shutdown")
         return
 
     try:
@@ -3006,12 +2968,9 @@ def _shutdown_self():
             ["curl", "-s", "http://169.254.169.254/latest/meta-data/placement/availability-zone"],
             text=True,
         ).strip()
-        region = az[:-1]  # ap-northeast-2a → ap-northeast-2
-    except Exception as e:
-        logger.error("failed to resolve region from metadata: %s", e)
+        region = az[:-1]
+    except Exception:
         return
-
-    logger.warning("no job available; stopping instance %s", instance_id)
 
     subprocess.run(
         [
@@ -3027,7 +2986,7 @@ def _shutdown_self():
     )
 
 
-def main() -> None:
+def main() -> int:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
@@ -3035,70 +2994,41 @@ def main() -> None:
 
     client = VideoAPIClient(
         base_url=cfg.API_BASE_URL,
-        worker_token=cfg.WORKER_TOKEN,
+        internal_worker_token=cfg.INTERNAL_WORKER_TOKEN,
         worker_id=cfg.WORKER_ID,
-        timeout_seconds=int(cfg.HTTP_TIMEOUT_SECONDS),
+        timeout_seconds=cfg.HTTP_TIMEOUT_SECONDS,
     )
 
-    logger.info(
-        "Video Worker started (single-run) worker_id=%s api=%s",
-        cfg.WORKER_ID,
-        cfg.API_BASE_URL,
-    )
-
-    error_attempt = 0
+    logger.info("Video Worker started (single-run) api=%s", cfg.API_BASE_URL)
 
     try:
-        while not _shutdown:
-            try:
-                job = client.fetch_next_job()
+        job = client.fetch_next_job()
 
-                # ✅ 선택지 A 핵심:
-                # job 없음(204) → 즉시 self-stop + 종료
-                if not job:
-                    _shutdown_self()
-                    break
+        if not job:
+            logger.info("no job available")
+            return 0
 
-                if isinstance(job, dict) and "job" in job:
-                    job = job.get("job")
+        if not isinstance(job, dict) or job.get("video_id") is None:
+            raise RuntimeError("invalid job payload")
 
-                if not job or not isinstance(job, dict):
-                    _shutdown_self()
-                    break
+        process_video_job(job=job, cfg=cfg, client=client)
+        return 0
 
-                if job.get("video_id") is None:
-                    _shutdown_self()
-                    break
-
-                error_attempt = 0
-
-                logger.info("job received video_id=%s", job.get("video_id"))
-
-                process_video_job(job=job, cfg=cfg, client=client)
-
-                # 단일 작업 완료 후 종료
-                _shutdown_self()
-                break
-
-            except Exception:
-                logger.exception("worker error")
-                error_attempt = min(error_attempt + 1, 10)
-                backoff_sleep(
-                    error_attempt,
-                    cfg.BACKOFF_BASE_SECONDS,
-                    cfg.BACKOFF_CAP_SECONDS,
-                )
+    except Exception:
+        logger.exception("fatal error")
+        return 1
 
     finally:
         try:
             client.close()
         except Exception:
             pass
+        _self_stop_ec2()
         logger.info("Video Worker shutdown complete")
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
 
 
 ==========================================================================================

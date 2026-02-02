@@ -9,14 +9,13 @@ from apps.support.video.views.internal_video_worker import (
     VideoWorkerCompleteView,
     VideoWorkerFailView,
 )
-
 from apps.support.video.views.internal_video_worker_heartbeat import (
     InternalVideoWorkerHeartbeatView,
 )
 
 urlpatterns = [
     # --------------------------------------------------
-    # Worker job control
+    # Worker job control (SSOT)
     # --------------------------------------------------
     path(
         "video-worker/next/",
@@ -33,13 +32,12 @@ urlpatterns = [
         VideoWorkerFailView.as_view(),
         name="video_worker_fail",
     ),
-
     # --------------------------------------------------
-    # Worker heartbeat (long-running protection)
+    # Worker heartbeat (lease extension)
     # --------------------------------------------------
     path(
         "video-worker/<int:video_id>/heartbeat/",
         InternalVideoWorkerHeartbeatView.as_view(),
-        name="internal-video-worker-heartbeat",
+        name="internal_video_worker_heartbeat",
     ),
 ]

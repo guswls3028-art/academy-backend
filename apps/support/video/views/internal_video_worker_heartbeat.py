@@ -1,56 +1,87 @@
 # PATH: apps/support/video/views/internal_video_worker_heartbeat.py
 
-import logging
-from django.utils import timezone
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
+from __future__ import annotations
 
-from ..models import Video
+import logging
+
+from django.conf import settings
+from django.http import JsonResponse
+
+from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
+
+from apps.support.video.services.queue import VideoJobQueue
+
 
 logger = logging.getLogger("video.worker.heartbeat")
 
 
+def _require_worker_token(request) -> bool:
+    expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
+    if not expected:
+        return False
+
+    token = (
+        request.headers.get("X-Worker-Token")
+        or request.META.get("HTTP_X_WORKER_TOKEN")
+        or ""
+    )
+    return str(token) == expected
+
+
+def _worker_id(request) -> str:
+    return (
+        request.headers.get("X-Worker-Id")
+        or request.headers.get("X-Worker-ID")
+        or request.META.get("HTTP_X_WORKER_ID")
+        or "worker-unknown"
+    )
+
+
+LEASE_SECONDS = int(getattr(settings, "VIDEO_WORKER_LEASE_SECONDS", 60))
+
+
 class InternalVideoWorkerHeartbeatView(APIView):
+    """
+    POST /internal/video-worker/<video_id>/heartbeat/
+
+    ✅ SSOT:
+    - queue.heartbeat()가 lease 연장 단일 진입점
+    - owner mismatch/lease expired면 409
+    """
+
+    permission_classes = [AllowAny]
     authentication_classes = []
-    permission_classes = []
 
     def post(self, request, video_id: int):
-        worker_id = request.headers.get("X-Worker-Id") or "worker-unknown"
+        if not _require_worker_token(request):
+            expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
+            if not expected:
+                return JsonResponse(
+                    {"detail": "INTERNAL_WORKER_TOKEN not configured"},
+                    status=503,
+                )
+            return JsonResponse({"detail": "Unauthorized"}, status=401)
 
-        video = Video.objects.filter(id=video_id).first()
-        if not video:
-            return Response(status=status.HTTP_404_NOT_FOUND)
+        wid = _worker_id(request)
 
-        # lease owner 검증
-        leased_by = getattr(video, "leased_by", None)
-        leased_until = getattr(video, "leased_until", None)
+        ok = VideoJobQueue.heartbeat(
+            video_id=int(video_id),
+            worker_id=wid,
+            lease_seconds=LEASE_SECONDS,
+        )
 
-        if leased_by and leased_by != worker_id:
+        if not ok:
             logger.warning(
-                "heartbeat rejected lease_owner_mismatch video_id=%s leased_by=%s from=%s",
-                video_id, leased_by, worker_id,
+                "heartbeat rejected video_id=%s worker=%s",
+                str(video_id),
+                wid,
             )
-            return Response(status=status.HTTP_409_CONFLICT)
-
-        if leased_until and leased_until < timezone.now():
-            logger.warning(
-                "heartbeat rejected lease_expired video_id=%s worker=%s",
-                video_id, worker_id,
-            )
-            return Response(status=status.HTTP_409_CONFLICT)
-
-        # heartbeat accept → lease 연장
-        try:
-            video.processing_started_at = video.processing_started_at or timezone.now()
-            video.leased_by = worker_id
-            video.leased_until = timezone.now() + timezone.timedelta(seconds=60)
-            video.save(update_fields=["processing_started_at", "leased_by", "leased_until"])
-        except Exception:
-            pass
+            return JsonResponse({"detail": "lease_owner_mismatch_or_expired"}, status=409)
 
         logger.info(
             "heartbeat ok video_id=%s worker=%s",
-            video_id, worker_id,
+            str(video_id),
+            wid,
         )
-        return Response({"ok": True})
+        return JsonResponse({"ok": True}, status=200)
