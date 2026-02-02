@@ -264,3 +264,9 @@ TEMPLATES = [
 # ==================================================
 
 REDIS_URL = os.getenv("REDIS_URL")
+
+# ==================================================
+# 🔥 INTERNAL WORKER (FIX)
+# ==================================================
+
+INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "")
