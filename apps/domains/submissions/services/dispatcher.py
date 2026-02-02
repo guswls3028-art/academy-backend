@@ -1,3 +1,4 @@
+# PATH: apps/domains/submissions/services/dispatcher.py
 from __future__ import annotations
 
 import logging
@@ -15,6 +16,9 @@ from apps.infrastructure.storage.r2 import generate_presigned_get_url
 from apps.domains.ai.gateway import dispatch_job
 from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
+
+# ✅ [추가] AI 워커 EC2 제어
+from apps.domains.ai.services.worker_instance_control import start_ai_worker_instance
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +64,6 @@ def _build_ai_payload(submission: Submission) -> Dict[str, Any]:
 
     download_url = None
     if submission.file_key:
-        # ✅ FIX: keyword-only 호출
         download_url = generate_presigned_get_url(
             key=submission.file_key,
             expires_in=3600,
@@ -126,9 +129,19 @@ def dispatch_submission(submission: Submission) -> None:
     submission.error_message = ""
     submission.save(update_fields=["status", "error_message", "updated_at"])
 
+    # ==================================================
+    # ✅ 1) AI Job 생성 (DB SSOT)
+    # ==================================================
     dispatch_job(
         job_type=_infer_ai_job_type(submission),
         payload=_build_ai_payload(submission),
         source_domain="submissions",
         source_id=str(submission.id),
     )
+
+    # ==================================================
+    # ✅ 2) 워커 EC2 깨우기 (API 서버 책임)
+    # - job이 실제로 생긴 뒤에만 호출
+    # - 중복 호출돼도 EC2는 idempotent
+    # ==================================================
+    start_ai_worker_instance()
