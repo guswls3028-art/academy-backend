@@ -259,12 +259,9 @@ TEMPLATES = [
     },
 ]
 
-# ==================================================
-# REDIS
-# ==================================================
-
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
-INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN")
-
-AI_QUEUE_BACKEND = os.getenv("AI_QUEUE_BACKEND", "db")
+# =========================
+# Worker EC2 Control
+# =========================
+AI_WORKER_INSTANCE_ID = os.environ.get("AI_WORKER_INSTANCE_ID")
+VIDEO_WORKER_INSTANCE_ID = os.environ.get("VIDEO_WORKER_INSTANCE_ID")
+AWS_REGION = os.environ.get("AWS_REGION")

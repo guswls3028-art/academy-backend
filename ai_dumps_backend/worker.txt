@@ -2990,14 +2990,29 @@ def _handle_signal(sig, frame):
 
 
 def _shutdown_self():
+    """
+    ✅ 단일 진실:
+    - worker는 '자기 자신'만 종료 가능
+    - region은 EC2 metadata 기준으로 계산
+    - INSTANCE_ID는 systemd Environment로 주입됨
+    """
     instance_id = os.environ.get("INSTANCE_ID")
-    region = os.environ.get("AWS_REGION", "ap-northeast-2")
-
     if not instance_id:
         logger.warning("INSTANCE_ID not set; skip self shutdown")
         return
 
+    try:
+        az = subprocess.check_output(
+            ["curl", "-s", "http://169.254.169.254/latest/meta-data/placement/availability-zone"],
+            text=True,
+        ).strip()
+        region = az[:-1]  # ap-northeast-2a → ap-northeast-2
+    except Exception as e:
+        logger.error("failed to resolve region from metadata: %s", e)
+        return
+
     logger.warning("idle limit reached; stopping instance %s", instance_id)
+
     subprocess.run(
         [
             "aws",
@@ -3050,7 +3065,6 @@ def main() -> None:
                     time.sleep(cfg.POLL_INTERVAL_SECONDS)
                     continue
 
-                # reset idle counter on real job
                 idle_count = 0
 
                 if isinstance(job, dict) and "job" in job:
