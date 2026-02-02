@@ -122,13 +122,25 @@ ALLOWED_LOGO_CONTENT_TYPES = (
 ==========================================================================================
 # FILE: omr/urls.py
 ==========================================================================================
-# apps/domains/assets/omr/urls.py
+# PATH: apps/domains/assets/omr/urls.py
 from django.urls import path
-from apps.domains.assets.omr.views.omr_pdf_views import ObjectiveOMRPdfView, ObjectiveOMRMetaView
+
+from apps.domains.assets.omr.views.omr_pdf_views import (
+    ObjectiveOMRPdfView,
+    ObjectiveOMRMetaView,
+)
+from apps.domains.assets.omr.views.omr_save_views import ObjectiveOMRSaveView
+from apps.domains.assets.omr.views.omr_list_views import ObjectiveOMRTemplateListView
 
 urlpatterns = [
     path("objective/pdf/", ObjectiveOMRPdfView.as_view(), name="assets-omr-objective-pdf"),
     path("objective/meta/", ObjectiveOMRMetaView.as_view(), name="assets-omr-objective-meta"),
+    path("objective/save/", ObjectiveOMRSaveView.as_view(), name="assets-omr-objective-save"),
+    path(
+        "objective/templates/",
+        ObjectiveOMRTemplateListView.as_view(),
+        name="assets-omr-objective-template-list",
+    ),
 ]
 
 
@@ -642,6 +654,72 @@ def generate_objective_pdf(*, question_count: int, logo_file=None) -> bytes:
 
 
 ==========================================================================================
+# FILE: omr/views/omr_list_views.py
+==========================================================================================
+# PATH: apps/domains/assets/omr/views/omr_list_views.py
+from __future__ import annotations
+
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.domains.exams.models import ExamAsset
+
+
+class ObjectiveOMRTemplateListView(APIView):
+    """
+    GET /api/v1/assets/omr/objective/templates/
+
+    query params (optional):
+      - exam_id: int
+
+    response:
+      [
+        {
+          "asset_id": number,
+          "exam_id": number,
+          "question_count": 10 | 20 | 30,
+          "version": "objective_v1",
+          "has_logo": bool,
+          "file_url": string
+        }
+      ]
+
+    책임:
+    - assets 범위 내 "저장된 OMR 양식" 조회만 담당
+    - 시험/채점/결과 로직 관여 ❌
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = ExamAsset.objects.filter(asset_type="OMR_TEMPLATE").order_by("-id")
+
+        exam_id_raw = request.query_params.get("exam_id")
+        if exam_id_raw:
+            try:
+                exam_id = int(str(exam_id_raw).strip())
+                qs = qs.filter(exam_id=exam_id)
+            except Exception:
+                return Response({"exam_id": "must be an integer"}, status=400)
+
+        items = []
+        for asset in qs:
+            meta = asset.meta or {}
+            items.append(
+                {
+                    "asset_id": asset.id,
+                    "exam_id": asset.exam_id,
+                    "question_count": meta.get("question_count"),
+                    "version": meta.get("version"),
+                    "has_logo": bool(meta.get("has_logo")),
+                    "file_url": asset.file.url if asset.file else None,
+                }
+            )
+
+        return Response(items, status=200)
+
+
+==========================================================================================
 # FILE: omr/views/omr_pdf_views.py
 ==========================================================================================
 # apps/domains/assets/omr/views/omr_pdf_views.py
@@ -735,6 +813,123 @@ class ObjectiveOMRMetaView(APIView):
             return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
 
         return Response(meta, status=200)
+
+
+==========================================================================================
+# FILE: omr/views/omr_save_views.py
+==========================================================================================
+# PATH: apps/domains/assets/omr/views/omr_save_views.py
+from __future__ import annotations
+
+from django.core.files.base import ContentFile
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.domains.assets.omr import constants as C
+from apps.domains.assets.omr.services.pdf_generator import (
+    LogoValidationError,
+    generate_objective_pdf,
+)
+
+from apps.domains.exams.models import Exam, ExamAsset
+
+
+class ObjectiveOMRSaveView(APIView):
+    """
+    POST /api/v1/assets/omr/objective/save/
+
+    multipart/form-data:
+      - exam_id: int (required)
+      - question_count: 10 | 20 | 30 (required)
+      - logo: optional image
+
+    response (201):
+      {
+        "asset_id": number,
+        "asset_type": "OMR_TEMPLATE",
+        "exam_id": number
+      }
+
+    책임:
+    - assets 도메인 범위 내에서
+      OMR 시험지(PDF)를 생성하고 "양식 자산"으로 저장
+    - 채점/제출/결과/AI 호출 절대 없음
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        exam_id_raw = request.data.get("exam_id")
+        qc_raw = request.data.get("question_count")
+
+        if exam_id_raw is None:
+            return Response({"exam_id": "required"}, status=400)
+        if qc_raw is None:
+            return Response({"question_count": "required"}, status=400)
+
+        try:
+            exam_id = int(str(exam_id_raw).strip())
+        except Exception:
+            return Response({"exam_id": "must be an integer"}, status=400)
+
+        try:
+            question_count = int(str(qc_raw).strip())
+        except Exception:
+            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+
+        if question_count not in C.ALLOWED_QUESTION_COUNTS:
+            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+
+        try:
+            exam = Exam.objects.get(id=exam_id)
+        except Exam.DoesNotExist:
+            return Response({"exam_id": "not found"}, status=404)
+
+        logo = request.FILES.get("logo")
+        if logo is not None:
+            ctype = getattr(logo, "content_type", "") or ""
+            if ctype and ctype not in C.ALLOWED_LOGO_CONTENT_TYPES:
+                return Response(
+                    {"logo": f"unsupported content_type: {ctype}"},
+                    status=415,
+                )
+
+        try:
+            pdf_bytes = generate_objective_pdf(
+                question_count=question_count,
+                logo_file=logo,
+            )
+        except LogoValidationError as e:
+            return Response({"logo": str(e)}, status=400)
+        except ValueError:
+            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+
+        filename = f"omr_objective_v1_{question_count}.pdf"
+
+        asset = ExamAsset.objects.create(
+            exam=exam,
+            asset_type="OMR_TEMPLATE",
+            meta={
+                "version": "objective_v1",
+                "question_count": int(question_count),
+                "has_logo": bool(logo is not None),
+            },
+        )
+
+        asset.file.save(
+            filename,
+            ContentFile(pdf_bytes),
+            save=True,
+        )
+
+        return Response(
+            {
+                "asset_id": asset.id,
+                "asset_type": asset.asset_type,
+                "exam_id": exam.id,
+            },
+            status=201,
+        )
 
 
 ==========================================================================================
