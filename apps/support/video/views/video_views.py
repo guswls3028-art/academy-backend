@@ -1,5 +1,6 @@
 # PATH: apps/support/video/views/video_views.py
 
+import logging
 from uuid import uuid4
 from datetime import timedelta
 
@@ -41,6 +42,8 @@ from ..models import (
 from ..serializers import VideoSerializer, VideoDetailSerializer
 from .playback_mixin import VideoPlaybackMixin
 
+# 로거 설정
+logger = logging.getLogger(__name__)
 
 # ==================================================
 # utils
@@ -96,48 +99,39 @@ def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
 
 def _try_start_video_worker_instance() -> None:
     """
-    upload_complete 시점에 video-worker EC2 인스턴스 자동 기동
+    upload_complete 시점에 video-worker EC2 인스턴스 자동 기동 (로그 분석 강화)
     """
     instance_id = getattr(settings, "VIDEO_WORKER_INSTANCE_ID", None) or ""
     region = (
         getattr(settings, "AWS_REGION", None)
         or getattr(settings, "AWS_DEFAULT_REGION", None)
-        or ""
+        or "ap-northeast-2"
     )
 
-    if not instance_id or not region:
+    if not instance_id:
+        logger.error("[EC2-START] VIDEO_WORKER_INSTANCE_ID 설정이 없습니다.")
         return
 
     try:
         import boto3  # type: ignore
-    except Exception:
-        return
-
-    try:
         ec2 = boto3.client("ec2", region_name=region)
-        ec2.start_instances(InstanceIds=[str(instance_id)])
-    except Exception:
-        return
+        
+        # 기동 시도 및 응답 로그 기록
+        response = ec2.start_instances(InstanceIds=[str(instance_id)])
+        logger.info(f"[EC2-START] 성공: {instance_id} 기동 명령 전송. 응답: {response.get('StartingInstances')}")
+        
+    except Exception as e:
+        # 실패 시 구체적인 에러 메시지 로깅
+        logger.error(f"[EC2-START] 실패: {str(e)}", exc_info=True)
 
 
 def _try_start_video_worker_instance_after_job_creation() -> None:
     """
     job 생성 이후 EC2 인스턴스 활성화:
-    - worker가 single-run이라 job 생성 레이스가 있으면 "no job"로 즉시 종료할 수 있음
-    - 따라서 커밋 이후 아주 짧은 지연을 두고 start (기본 5초)
+    - 쓰레드 딜레이 제거: 요청 응답 전/프로세스 종료 전 안정적인 호출 보장
     """
-    try:
-        import threading  # lazy import
-    except Exception:
-        return
-
-    delay = _safe_int(getattr(settings, "VIDEO_WORKER_START_DELAY_SECONDS", 5), 5)
-    try:
-        delay = max(0, int(delay))
-    except Exception:
-        delay = 5
-
     _try_start_video_worker_instance()
+
 
 # ==================================================
 # ViewSet
