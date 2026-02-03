@@ -1,82 +1,53 @@
-from __future__ import annotations
-
 from django.http import HttpResponse
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.assets.omr import constants as C
-from apps.domains.assets.omr.services.pdf_generator import (
-    generate_objective_pdf,
-    LogoValidationError,
-)
+from apps.domains.assets.omr.services.pdf_generator import generate_objective_pdf
 from apps.domains.assets.omr.services.meta_generator import build_objective_template_meta
-
 
 class ObjectiveOMRPdfView(APIView):
     """
-    POST /api/v1/assets/omr/objective/pdf/
-    multipart/form-data:
-      - question_count: 1..45 (required)
-      - logo: optional image
-    response:
-      - application/pdf (download)
+    사용자가 선택한 옵션으로 PDF 미리보기를 생성합니다.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        qc_raw = request.data.get("question_count", None)
-        if qc_raw is None:
-            return Response({"question_count": "required"}, status=400)
-
-        try:
-            question_count = int(str(qc_raw).strip())
-        except Exception:
-            return Response({"question_count": "must be an integer (1~45)"}, status=400)
-
-        if question_count not in C.ALLOWED_QUESTION_COUNTS:
-            return Response({"question_count": "must be between 1 and 45"}, status=400)
-
+        qc_raw = request.data.get("question_count")
+        exam_title = request.data.get("exam_title", "Custom Exam")
+        subject_round = request.data.get("subject_round", "1st Round")
         logo = request.FILES.get("logo")
-        if logo is not None:
-            ctype = getattr(logo, "content_type", "") or ""
-            if ctype and ctype not in C.ALLOWED_LOGO_CONTENT_TYPES:
-                return Response({"logo": f"unsupported content_type: {ctype}"}, status=415)
 
         try:
-            pdf_bytes = generate_objective_pdf(question_count=question_count, logo_file=logo)
-        except LogoValidationError as e:
-            return Response({"logo": str(e)}, status=400)
-        except ValueError:
-            return Response({"question_count": "must be between 1 and 45"}, status=400)
+            question_count = int(qc_raw)
+            if question_count not in C.ALLOWED_QUESTION_COUNTS:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response({"error": "question_count must be 1~45"}, status=400)
 
-        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
-        resp["Content-Disposition"] = f'attachment; filename="omr_objective_v2_{question_count}.pdf"'
-        return resp
+        pdf_bytes = generate_objective_pdf(
+            question_count=question_count,
+            logo_file=logo,
+            exam_title=exam_title,
+            subject_round=subject_round
+        )
 
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="omr_v2_{question_count}.pdf"'
+        return response
 
 class ObjectiveOMRMetaView(APIView):
     """
-    GET /api/v1/assets/omr/objective/meta/?question_count=1..45
+    OCR AI 워커가 읽어야 할 각 버블의 좌표(mm) 데이터를 반환합니다.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         qc_raw = request.query_params.get("question_count")
-        if qc_raw is None:
-            return Response({"question_count": "required"}, status=400)
-
         try:
-            question_count = int(str(qc_raw).strip())
-        except Exception:
-            return Response({"question_count": "must be an integer (1~45)"}, status=400)
-
-        if question_count not in C.ALLOWED_QUESTION_COUNTS:
-            return Response({"question_count": "must be between 1 and 45"}, status=400)
-
-        try:
+            question_count = int(qc_raw)
             meta = build_objective_template_meta(question_count=question_count)
-        except ValueError:
-            return Response({"question_count": "must be between 1 and 45"}, status=400)
-
-        return Response(meta, status=200)
+            return Response(meta)
+        except Exception:
+            return Response({"error": "invalid question_count"}, status=400)
