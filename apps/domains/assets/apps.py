@@ -1,4 +1,3 @@
-# apps/domains/assets/apps.py
 from django.apps import AppConfig
 
 
