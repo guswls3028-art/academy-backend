@@ -4043,16 +4043,10 @@ def _safe_int(v, default=None):
 def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
     """
     upload_complete 최소 무결성 검증
-
-    - ffprobe 기반
-    - API 서버에서 ffmpeg import 실패 시:
-      → API 크래시 방지
-      → 호출부에서 graceful fallback 처리
     """
     if not url:
         return False, {}, "source_url_missing"
 
-    # lazy import (gunicorn 부팅 크래시 방지)
     try:
         import ffmpeg  # type: ignore
     except Exception:
@@ -4090,13 +4084,14 @@ def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
 
 def _try_start_video_worker_instance() -> None:
     """
-    ✅ upload_complete 시점(UPLOADED 전환)에 video-worker EC2 인스턴스 자동 기동
-
-    - 설정이 없으면 아무것도 하지 않음 (안전)
-    - start_instances는 멱등이 아니므로 예외는 삼키고 로그만 남김
+    upload_complete 시점에 video-worker EC2 인스턴스 자동 기동
     """
     instance_id = getattr(settings, "VIDEO_WORKER_INSTANCE_ID", None) or ""
-    region = getattr(settings, "AWS_REGION", None) or getattr(settings, "AWS_DEFAULT_REGION", None) or ""
+    region = (
+        getattr(settings, "AWS_REGION", None)
+        or getattr(settings, "AWS_DEFAULT_REGION", None)
+        or ""
+    )
 
     if not instance_id or not region:
         return
@@ -4110,8 +4105,27 @@ def _try_start_video_worker_instance() -> None:
         ec2 = boto3.client("ec2", region_name=region)
         ec2.start_instances(InstanceIds=[str(instance_id)])
     except Exception:
-        # 운영에서 start 실패가 API를 깨면 안 됨
         return
+
+
+def _try_start_video_worker_instance_after_job_creation() -> None:
+    """
+    job 생성 이후 EC2 인스턴스 활성화:
+    - worker가 single-run이라 job 생성 레이스가 있으면 "no job"로 즉시 종료할 수 있음
+    - 따라서 커밋 이후 아주 짧은 지연을 두고 start (기본 5초)
+    """
+    try:
+        import threading  # lazy import
+    except Exception:
+        return
+
+    delay = _safe_int(getattr(settings, "VIDEO_WORKER_START_DELAY_SECONDS", 5), 5)
+    try:
+        delay = max(0, int(delay))
+    except Exception:
+        delay = 5
+
+    threading.Timer(delay, _try_start_video_worker_instance).start()
 
 
 # ==================================================
@@ -4254,33 +4268,27 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.error_reason = ""
             video.save(update_fields=["status", "error_reason"])
 
-            # ✅ 업로드 완료 → video-worker 자동 기동
-            _try_start_video_worker_instance()
-
+            transaction.on_commit(_try_start_video_worker_instance_after_job_creation)
             return Response(VideoSerializer(video).data)
 
         min_dur = _safe_int(getattr(settings, "VIDEO_MIN_DURATION_SECONDS", 3), 3)
         duration = _safe_int(meta.get("duration"), None)
 
-        if duration is not None and duration < int(min_dur):  # MODIFIED
-            video.duration = duration  # MODIFIED
-            video.status = Video.Status.UPLOADED  # MODIFIED
-            video.error_reason = ""  # MODIFIED
-            video.save(update_fields=["status", "duration", "error_reason"])  # MODIFIED
+        if duration is not None and duration < int(min_dur):
+            video.duration = duration
+            video.status = Video.Status.UPLOADED
+            video.error_reason = ""
+            video.save(update_fields=["status", "duration", "error_reason"])
 
-            # ✅ 업로드 완료 → video-worker 자동 기동
-            _try_start_video_worker_instance()
-
-            return Response(VideoSerializer(video).data)  # MODIFIED
+            transaction.on_commit(_try_start_video_worker_instance_after_job_creation)
+            return Response(VideoSerializer(video).data)
 
         video.duration = duration
         video.status = Video.Status.UPLOADED
         video.error_reason = ""
         video.save(update_fields=["status", "duration", "error_reason"])
 
-        # ✅ 업로드 완료 → video-worker 자동 기동
-        _try_start_video_worker_instance()
-
+        transaction.on_commit(_try_start_video_worker_instance_after_job_creation)
         return Response(VideoSerializer(video).data)
 
     # ==================================================
@@ -4300,16 +4308,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         video.status = Video.Status.UPLOADED
         video.save(update_fields=["status"])
 
-        # ✅ 재처리 큐(HTTP polling)로 되돌리는 순간에도 worker 기동
-        _try_start_video_worker_instance()
-
+        transaction.on_commit(_try_start_video_worker_instance_after_job_creation)
         return Response(
             {"detail": "Video reprocessing queued (HTTP worker polling)"},
             status=status.HTTP_202_ACCEPTED,
         )
 
     # ==================================================
-    # stats (관리자 상세)
+    # stats
     # ==================================================
     @action(detail=True, methods=["get"], url_path="stats")
     def stats(self, request, pk=None):
@@ -4369,7 +4375,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         )
 
     # ==================================================
-    # summary (통계 요약)
+    # summary
     # ==================================================
     @action(detail=True, methods=["get"], url_path="summary")
     def summary(self, request, pk=None):

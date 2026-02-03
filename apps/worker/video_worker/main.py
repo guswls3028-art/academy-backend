@@ -31,14 +31,22 @@ def _self_stop_ec2() -> None:
     if not instance_id:
         return
 
-    try:
-        az = subprocess.check_output(
-            ["curl", "-s", "http://169.254.169.254/latest/meta-data/placement/availability-zone"],
-            text=True,
-        ).strip()
-        region = az[:-1]
-    except Exception:
-        return
+    # 🔒 1) 환경변수 우선 (systemd 기준)
+    region = (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+    )
+
+    # 🔒 2) fallback: EC2 metadata (기존 로직 유지)
+    if not region:
+        try:
+            az = subprocess.check_output(
+                ["curl", "-s", "http://169.254.169.254/latest/meta-data/placement/availability-zone"],
+                text=True,
+            ).strip()
+            region = az[:-1]
+        except Exception:
+            return
 
     subprocess.run(
         [
