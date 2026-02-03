@@ -2978,6 +2978,9 @@ _shutdown = False
 # OPS: idle window (seconds) — billing / autoscale 기준
 WORKER_IDLE_WINDOW_SECONDS = int(os.getenv("VIDEO_WORKER_IDLE_WINDOW", "120"))
 
+# 폴링 간격(초) - 최소 수정: 고정 1초 유지
+POLL_INTERVAL_SECONDS = 1
+
 
 # ------------------------------------------------------------------------------
 # SIGNAL HANDLING
@@ -3055,13 +3058,19 @@ def main() -> int:
         cfg.API_BASE_URL,
     )
 
-    idle_deadline = time.monotonic() + WORKER_IDLE_WINDOW_SECONDS
+    started_at = time.monotonic()
 
     try:
         while not _shutdown:
-            # idle window 초과 → 정상 종료
-            if time.monotonic() >= idle_deadline:
-                logger.info("idle window expired (%ss). exiting.", WORKER_IDLE_WINDOW_SECONDS)
+            elapsed = time.monotonic() - started_at
+            remaining = WORKER_IDLE_WINDOW_SECONDS - elapsed
+
+            # ✅ 정확히 120초 폴링 보장: 남은 시간이 0 이하면 종료
+            if remaining <= 0:
+                logger.info(
+                    "idle window expired (%ss). exiting.",
+                    WORKER_IDLE_WINDOW_SECONDS,
+                )
                 return 0
 
             try:
@@ -3072,7 +3081,9 @@ def main() -> int:
                 return 1
 
             if not job:
-                time.sleep(5)
+                # ✅ 남은 시간보다 오래 자지 않게 조정 (정확히 120초 안에 종료)
+                sleep_s = min(POLL_INTERVAL_SECONDS, max(0.0, remaining))
+                time.sleep(sleep_s)
                 continue
 
             if not isinstance(job, dict) or job.get("video_id") is None:

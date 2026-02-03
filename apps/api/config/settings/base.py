@@ -17,6 +17,16 @@ SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 
 # ==================================================
+# 🔥 AWS / WORKER INSTANCE (SSOT)
+# ==================================================
+
+AWS_REGION = os.getenv("AWS_REGION")
+AWS_DEFAULT_REGION = os.getenv("AWS_DEFAULT_REGION", AWS_REGION)
+
+AI_WORKER_INSTANCE_ID = os.getenv("AI_WORKER_INSTANCE_ID")
+VIDEO_WORKER_INSTANCE_ID = os.getenv("VIDEO_WORKER_INSTANCE_ID")
+
+# ==================================================
 # ALLOWED HOSTS
 # ==================================================
 # ✅ 내부 EC2 / 워커 통신을 위해 VPC IP 명시적으로 허용
@@ -117,7 +127,6 @@ INSTALLED_APPS = [
 
     # student app
     "apps.domains.student_app",
-
 ]
 
 # ==================================================
