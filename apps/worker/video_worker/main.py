@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 
 from apps.worker.video_worker.config import load_config
 from apps.worker.video_worker.http_client import VideoAPIClient
@@ -31,22 +32,15 @@ def _self_stop_ec2() -> None:
     if not instance_id:
         return
 
-    # 🔒 1) 환경변수 우선 (systemd 기준)
-    region = (
-        os.environ.get("AWS_REGION")
-        or os.environ.get("AWS_DEFAULT_REGION")
-    )
-
-    # 🔒 2) fallback: EC2 metadata (기존 로직 유지)
-    if not region:
-        try:
-            az = subprocess.check_output(
-                ["curl", "-s", "http://169.254.169.254/latest/meta-data/placement/availability-zone"],
-                text=True,
-            ).strip()
-            region = az[:-1]
-        except Exception:
-            return
+    try:
+        az = subprocess.check_output(
+            ["curl", "-s", "http://169.254.169.254/latest/meta-data/placement/availability-zone"],
+            text=True,
+            timeout=2,
+        ).strip()
+        region = az[:-1]
+    except Exception:
+        return
 
     subprocess.run(
         [
@@ -58,6 +52,8 @@ def _self_stop_ec2() -> None:
             "--region",
             region,
         ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         check=False,
     )
 
@@ -75,23 +71,56 @@ def main() -> int:
         timeout_seconds=cfg.HTTP_TIMEOUT_SECONDS,
     )
 
-    logger.info("Video Worker started (single-run) api=%s", cfg.API_BASE_URL)
+    logger.info("Video Worker started (idle-window=120s, retry=1) api=%s", cfg.API_BASE_URL)
+
+    idle_deadline = time.monotonic() + 120
 
     try:
-        job = client.fetch_next_job()
+        while not _shutdown:
+            if time.monotonic() >= idle_deadline:
+                logger.info("idle window expired (120s). exiting.")
+                return 0
 
-        if not job:
-            logger.info("no job available")
+            try:
+                job = client.fetch_next_job()
+            except Exception:
+                logger.exception("fetch_next_job failed")
+                return 1
+
+            if not job:
+                time.sleep(5)
+                continue
+
+            if not isinstance(job, dict) or job.get("video_id") is None:
+                logger.error("invalid job payload: %s", job)
+                return 0
+
+            # 🔥 최대 2회 시도
+            for attempt in (1, 2):
+                try:
+                    logger.info(
+                        "processing job video_id=%s attempt=%s",
+                        job.get("video_id"),
+                        attempt,
+                    )
+                    process_video_job(job=job, cfg=cfg, client=client)
+                    return 0  # 성공 시 즉시 종료
+
+                except Exception:
+                    if attempt >= 2:
+                        logger.exception("job failed after retry")
+                        return 0  # 실패도 정상 종료
+                    else:
+                        logger.warning("job failed, retrying once...")
+                        time.sleep(3)
+
             return 0
 
-        if not isinstance(job, dict) or job.get("video_id") is None:
-            raise RuntimeError("invalid job payload")
-
-        process_video_job(job=job, cfg=cfg, client=client)
+        logger.info("shutdown requested. exiting.")
         return 0
 
     except Exception:
-        logger.exception("fatal error")
+        logger.exception("fatal worker crash")
         return 1
 
     finally:
@@ -99,6 +128,7 @@ def main() -> int:
             client.close()
         except Exception:
             pass
+
         _self_stop_ec2()
         logger.info("Video Worker shutdown complete")
 
