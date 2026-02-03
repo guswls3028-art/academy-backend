@@ -39,6 +39,7 @@ import os
 import sys
 import logging
 import requests
+import time
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
@@ -49,13 +50,14 @@ from apps.worker.ai_worker.ai.pipelines.dispatcher import handle_ai_job
 #
 # DESIGN PRINCIPLES (ENTERPRISE STANDARD):
 # - Worker is NOT a daemon
-# - No polling loop
-# - No sleep / idle logic
-# - No EC2 control (❗ except self-stop on exit)
+# - Bounded polling within fixed lifetime window
+# - No infinite loop
 # - One execution = at most one job
-# - Exit immediately when no job exists
+# - Exit immediately after job 처리 or idle window expiration
 #
-# Execution / scaling / shutdown is handled OUTSIDE this process.
+# NOTE (OPS):
+# - Process lifetime is capped to match EC2 billing granularity (default 60s)
+# - Polling is allowed ONLY within this window
 # ==============================================================================
 
 logging.basicConfig(
@@ -66,6 +68,10 @@ logger = logging.getLogger(__name__)
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "long-random-secret")
+
+# OPS: worker lifetime & polling
+WORKER_MIN_LIFETIME = int(os.getenv("WORKER_MIN_LIFETIME", "60"))
+POLL_INTERVAL_SECONDS = int(os.getenv("WORKER_POLL_INTERVAL", "5"))
 
 
 def _headers() -> dict:
@@ -128,12 +134,10 @@ def _stop_self_ec2() -> None:
 
     - Uses IMDSv2
     - Requires IAM role permission: ec2:StopInstances
-    - Tag-based restriction is handled by IAM (SSOT)
     """
     try:
         import boto3
 
-        # IMDSv2 token
         token = requests.put(
             "http://169.254.169.254/latest/api/token",
             headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
@@ -160,46 +164,65 @@ def _stop_self_ec2() -> None:
         logger.info("EC2 self-stop requested (instance_id=%s)", instance_id)
 
     except Exception as e:
-        # 절대 worker 실패 원인이 되면 안 됨
         logger.exception("EC2 self-stop failed (ignored): %s", e)
 
 
 def main() -> int:
     """
-    Single-run worker entrypoint.
+    Single-run worker entrypoint with bounded polling.
 
     Flow:
-    1. Ask API for one job
-    2. If no job → exit immediately
-    3. If job exists → process once → submit result → exit
+    - Poll for job within WORKER_MIN_LIFETIME window
+    - If job found → process once → exit
+    - If no job until timeout → exit
     """
-    logger.info("AI Worker started (API_BASE_URL=%s)", API_BASE_URL)
+    start_ts = time.monotonic()
+    deadline = start_ts + WORKER_MIN_LIFETIME
+
+    logger.info(
+        "AI Worker started (API_BASE_URL=%s, lifetime=%ss)",
+        API_BASE_URL,
+        WORKER_MIN_LIFETIME,
+    )
 
     try:
-        job = fetch_job()
+        while True:
+            now = time.monotonic()
+            if now >= deadline:
+                logger.info("Idle window expired (%ss). exiting.", WORKER_MIN_LIFETIME)
+                return 0
 
-        if job is None:
-            logger.info("No job found; exiting")
-            return 0
+            try:
+                job = fetch_job()
+            except Exception:
+                logger.exception("fetch_job failed")
+                return 1
 
-        logger.info("Job received: id=%s type=%s", job.id, job.type)
+            if job is None:
+                sleep_sec = min(POLL_INTERVAL_SECONDS, max(0.0, deadline - now))
+                if sleep_sec > 0:
+                    time.sleep(sleep_sec)
+                continue
 
-        result = handle_ai_job(job)
-        submit_result(result=result, job=job)
+            logger.info("Job received: id=%s type=%s", job.id, job.type)
 
-        logger.info("Job finished: id=%s status=%s", job.id, result.status)
-        return 0
-
-    except requests.HTTPError as e:
-        code = getattr(e.response, "status_code", None)
-        logger.exception("Worker HTTP error (status=%s)", code)
-        return 1
-
-    except Exception:
-        logger.exception("Worker fatal error")
-        return 1
+            try:
+                result = handle_ai_job(job)
+                submit_result(result=result, job=job)
+                logger.info("Job finished: id=%s status=%s", job.id, result.status)
+                return 0
+            except Exception:
+                logger.exception("Job processing failed")
+                return 1
 
     finally:
+        elapsed = time.monotonic() - start_ts
+        remain = WORKER_MIN_LIFETIME - elapsed
+
+        if remain > 0:
+            logger.info("Graceful sleep before shutdown: %.1fs", remain)
+            time.sleep(remain)
+
         logger.info("AI Worker shutdown complete")
         _stop_self_ec2()
 
