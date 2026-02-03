@@ -473,10 +473,6 @@ def _handle_signal(sig, frame):
 def _self_stop_ec2() -> None:
     """
     Best-effort EC2 self stop.
-
-    - Uses IMDSv2
-    - Requires IAM role permission: ec2:StopInstances
-    - Failure must NEVER affect worker exit code
     """
     try:
         import boto3
@@ -508,7 +504,6 @@ def _self_stop_ec2() -> None:
         logger.info("EC2 self-stop requested (instance_id=%s)", instance_id)
 
     except Exception as e:
-        # 절대 worker 실패 원인이 되면 안 됨
         logger.exception("EC2 self-stop failed (ignored): %s", e)
 
 
@@ -529,11 +524,12 @@ def main() -> int:
     )
 
     logger.info(
-        "Video Worker started (single-run, idle-window=%ss) api=%s",
+        "Video Worker started (continuous-polling, idle-window=%ss) api=%s",
         WORKER_IDLE_WINDOW_SECONDS,
         cfg.API_BASE_URL,
     )
 
+    # 루프 시작 시간 기록
     started_at = time.monotonic()
 
     try:
@@ -541,46 +537,48 @@ def main() -> int:
             elapsed = time.monotonic() - started_at
             remaining = WORKER_IDLE_WINDOW_SECONDS - elapsed
 
-            # ✅ 정확히 120초 폴링 보장: 남은 시간이 0 이하면 종료
+            # ✅ 대기 시간 초과 시 루프 탈출 (이후 finally에서 인스턴스 종료)
             if remaining <= 0:
                 logger.info(
                     "idle window expired (%ss). exiting.",
                     WORKER_IDLE_WINDOW_SECONDS,
                 )
-                return 0
+                break
 
             try:
                 job = client.fetch_next_job()
             except Exception:
-                # fetch 실패 = 워커 장애
                 logger.exception("fetch_next_job failed")
                 return 1
 
             if not job:
-                # ✅ 남은 시간보다 오래 자지 않게 조정 (정확히 120초 안에 종료)
                 sleep_s = min(POLL_INTERVAL_SECONDS, max(0.0, remaining))
                 time.sleep(sleep_s)
                 continue
 
             if not isinstance(job, dict) or job.get("video_id") is None:
                 logger.error("invalid job payload: %s", job)
-                return 0  # 논리 오류 → 재시작 불필요
+                # 잘못된 데이터는 건너뛰고 계속 진행
+                continue
 
             try:
+                # 작업 처리
                 process_video_job(job=job, cfg=cfg, client=client)
+                
+                # ✅ 작업을 성공적으로 처리했다면, 시작 시간을 현재로 갱신하여 
+                # 다시 120초의 Idle Window를 부여합니다.
+                logger.info("job processed. resetting idle timer.")
+                started_at = time.monotonic()
+
             except Exception:
-                # process_video_job 내부에서 notify_fail 완료됨
                 logger.exception("job failed but handled")
-                return 0  # 실패도 정상 종료
+                # 작업 실패 시에도 타이머를 리셋하여 다른 대기 중인 작업을 확인할 기회를 줍니다.
+                started_at = time.monotonic()
 
-            # job 하나 처리하면 즉시 종료
-            return 0
-
-        logger.info("shutdown requested. exiting.")
+        logger.info("shutdown requested or idle expired. exiting loop.")
         return 0
 
     except Exception:
-        # 여기 도달 = 프로세스 붕괴
         logger.exception("fatal worker crash")
         return 1
 

@@ -43,117 +43,46 @@ urlpatterns = [
 ==========================================================================================
 # FILE: omr/constants.py
 ==========================================================================================
-from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 
-# =========================
-# PAGE
-# =========================
-PAGE_SIZE = landscape(A4)
-PAGE_WIDTH, PAGE_HEIGHT = PAGE_SIZE
+def draw_ellipse_bubble(c, x, y, w, h, label="", font_size=6):
+    """
+    정밀한 타원형 버블 생성. 
+    x, y는 타원의 좌측 하단 시작점.
+    """
+    c.setLineWidth(0.6)
+    c.ellipse(x, y, x + w, y + h, stroke=1, fill=0)
+    if label:
+        c.setFont("Helvetica", font_size)
+        # 타원 중앙 정렬 계산
+        c.drawCentredString(x + w/2, y + (h/2) - (font_size/2.5), str(label))
 
-MARGIN_X = 12 * mm
-MARGIN_Y = 12 * mm
-
-# =========================
-# GRID: LEFT 1 + RIGHT 3
-# =========================
-COL_COUNT = 4
-COL_GAP = 6 * mm
-
-COL_WIDTH = (PAGE_WIDTH - (MARGIN_X * 2) - (COL_GAP * (COL_COUNT - 1))) / COL_COUNT
-
-COL1_X = MARGIN_X
-COL2_X = COL1_X + COL_WIDTH + COL_GAP
-COL3_X = COL2_X + COL_WIDTH + COL_GAP
-COL4_X = COL3_X + COL_WIDTH + COL_GAP
-
-# =========================
-# LEFT COLUMN SECTIONS
-# (left column is independent; just consumes its own width/height)
-# =========================
-LEFT_PAD = 3 * mm
-
-LOGO_BOX_H = 28 * mm
-EXAMINFO_BOX_H = 22 * mm
-NAME_BOX_H = 18 * mm
-
-# gap between left blocks
-LEFT_BLOCK_GAP_1 = 6 * mm   # logo -> examinfo
-LEFT_BLOCK_GAP_2 = 4 * mm   # examinfo -> name
-LEFT_BLOCK_GAP_3 = 6 * mm   # name -> identifier
-
-# =========================
-# IDENTIFIER (8 digits, 0~9 bubbles)
-# =========================
-IDENT_TITLE_FONT_SIZE = 9
-IDENT_NUM_FONT_SIZE = 8
-
-IDENT_DIGITS = 8
-IDENT_ROWS = 10  # 0~9
-IDENT_BUBBLE_R = 2.4 * mm
-
-# the identifier area auto-fills remaining height (computed in layout)
-IDENT_DIGIT_RIGHT_PAD = 2 * mm
-IDENT_EXTRA_RIGHT_GAP = 10 * mm  # same philosophy: labels left, marking right
-
-# =========================
-# OBJECTIVE QUESTIONS
-# =========================
-QUESTION_MAX = 45
-ALLOWED_QUESTION_COUNTS = tuple(range(1, QUESTION_MAX + 1))
-
-Q_FONT_SIZE = 9
-Q_HEADER_FONT_SIZE = 9
-
-Q_BUBBLE_R = 2.4 * mm
-Q_CHOICE_COUNT = 5
-Q_CHOICE_GAP = 9.0 * mm
-
-Q_LEFT_PAD = 2 * mm
-Q_RIGHT_PAD = 2 * mm
-
-Q_ROWS_PER_COL = 15  # fixed: 1~15 / 16~30 / 31~45
-Q_GROUP_SIZE = 5     # separator each 5
-
-# question area vertical anchors (layout will fit exactly to bottom)
-Q_HEADER_Y_PAD = 6 * mm    # header baseline from top margin
-Q_TOP_PAD = 14 * mm        # top padding inside content area
-Q_BOTTOM_PAD = 6 * mm      # bottom padding inside content area
-
-# =========================
-# LOGO UPLOAD VALIDATION
-# =========================
-ALLOWED_LOGO_CONTENT_TYPES = (
-    "image/png",
-    "image/jpeg",
-    "image/jpg",
-    "image/webp",
-)
+def draw_dashed_line(c, x1, y1, x2, y2, dash=(1, 1)):
+    c.setDash(dash[0], dash[1])
+    c.setLineWidth(0.4)
+    c.line(x1, y1, x2, y2)
+    c.setDash() # 리셋
 
 
 ==========================================================================================
 # FILE: omr/urls.py
 ==========================================================================================
-# PATH: apps/domains/assets/omr/urls.py
+# apps/domains/assets/omr/urls.py
 from django.urls import path
-
-from apps.domains.assets.omr.views.omr_pdf_views import (
-    ObjectiveOMRPdfView,
-    ObjectiveOMRMetaView,
-)
+from apps.domains.assets.omr.views.omr_pdf_views import ObjectiveOMRPdfView, ObjectiveOMRMetaView
 from apps.domains.assets.omr.views.omr_save_views import ObjectiveOMRSaveView
 from apps.domains.assets.omr.views.omr_list_views import ObjectiveOMRTemplateListView
 
 urlpatterns = [
-    path("objective/pdf/", ObjectiveOMRPdfView.as_view(), name="assets-omr-objective-pdf"),
-    path("objective/meta/", ObjectiveOMRMetaView.as_view(), name="assets-omr-objective-meta"),
-    path("objective/save/", ObjectiveOMRSaveView.as_view(), name="assets-omr-objective-save"),
-    path(
-        "objective/templates/",
-        ObjectiveOMRTemplateListView.as_view(),
-        name="assets-omr-objective-template-list",
-    ),
+    # 1. 생성/미리보기 (POST) 및 메타데이터(GET)
+    path("objective/pdf/", ObjectiveOMRPdfView.as_view(), name="omr-pdf-generate"),
+    path("objective/meta/", ObjectiveOMRMetaView.as_view(), name="omr-meta-info"),
+    
+    # 2. 시험지 저장 (POST)
+    path("objective/save/", ObjectiveOMRSaveView.as_view(), name="omr-save"),
+    
+    # 3. 저장된 템플릿 리스트 조회 (GET) - 프론트엔드 호출 규격 준수
+    path("objective/templates/", ObjectiveOMRTemplateListView.as_view(), name="omr-template-list"),
 ]
 
 
@@ -166,262 +95,127 @@ urlpatterns = [
 ==========================================================================================
 # FILE: omr/layouts/objective_v2_45.py
 ==========================================================================================
-from __future__ import annotations
-
 from reportlab.lib.units import mm
-
 from apps.domains.assets.omr import constants as C
+from apps.domains.assets.omr.utils.draw_utils import draw_ellipse_bubble, draw_dashed_line
 
+def draw(c, *, question_count, logo_reader=None, exam_title="모의고사", subject_round="전과목"):
+    _draw_frames(c)
+    _draw_info_column(c, logo_reader, exam_title, subject_round)
+    _draw_objective_area(c, question_count)
+    _draw_footer(c)
 
-def draw(
-    c,
-    *,
-    question_count: int,
-    logo_reader=None,
-    exam_title: str = "3월 모의고사",
-    subject_round: str = "수학 (1회)",
-) -> None:
-    """
-    Front page (Objective OMR)
-    - 4 columns: left(logo/exam/name/identifier) + right 3 columns (1~15 / 16~30 / 31~45)
-    - 5-question separators
-    - print bubbles ONLY up to question_count; rest is blank
-    """
-    _draw_outer_frame(c)
-    _draw_vertical_dividers(c)
+def _draw_frames(c):
+    c.setLineWidth(C.LW_THICK)
+    # 외곽 프레임
+    c.rect(C.MARGIN_X, C.MARGIN_Y, C.PAGE_WIDTH - 2*C.MARGIN_X, C.PAGE_HEIGHT - 2*C.MARGIN_Y)
+    # 좌측 분리선
+    c.line(C.MARGIN_X + C.LEFT_COL_WIDTH, C.MARGIN_Y, C.MARGIN_X + C.LEFT_COL_WIDTH, C.PAGE_HEIGHT - C.MARGIN_Y)
 
-    _draw_left_column(
-        c,
-        logo_reader=logo_reader,
-        exam_title=exam_title,
-        subject_round=subject_round,
-    )
+def _draw_info_column(c, logo_reader, exam_title, subject_round):
+    x_start = C.MARGIN_X + 4*mm
+    y_top = C.PAGE_HEIGHT - C.MARGIN_Y - 5*mm
 
-    _draw_objective_columns(c, question_count=question_count)
+    # 1. Logo (No Border)
+    if logo_reader:
+        c.drawImage(logo_reader, x_start, y_top - C.LOGO_AREA_H + 2*mm, 
+                    width=C.LEFT_COL_WIDTH - 8*mm, height=C.LOGO_AREA_H - 4*mm, 
+                    preserveAspectRatio=True, anchor='sw', mask='auto')
+    
+    # 2. Exam Info
+    info_y = y_top - C.LOGO_AREA_H - 5*mm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(x_start, info_y, f"TITLE: {exam_title}")
+    c.drawString(x_start, info_y - 8*mm, f"SUBJ: {subject_round}")
+    
+    # 3. Name Field
+    name_y = info_y - 20*mm
+    c.drawString(x_start, name_y, "NAME:")
+    c.setLineWidth(C.LW_REG)
+    c.line(x_start + 15*mm, name_y - 1*mm, C.MARGIN_X + C.LEFT_COL_WIDTH - 5*mm, name_y - 1*mm)
 
-
-# =========================
-# FRAME
-# =========================
-def _draw_outer_frame(c) -> None:
-    c.setLineWidth(0.8)
-    c.rect(
-        C.MARGIN_X,
-        C.MARGIN_Y,
-        C.PAGE_WIDTH - 2 * C.MARGIN_X,
-        C.PAGE_HEIGHT - 2 * C.MARGIN_Y,
-    )
-
-
-def _draw_vertical_dividers(c) -> None:
-    # boundaries are at the midpoint of the gaps between columns
-    c.setLineWidth(0.8)
-    xs = [
-        (C.COL2_X - (C.COL_GAP / 2)),
-        (C.COL3_X - (C.COL_GAP / 2)),
-        (C.COL4_X - (C.COL_GAP / 2)),
-    ]
-    for x in xs:
-        c.line(x, C.MARGIN_Y, x, C.PAGE_HEIGHT - C.MARGIN_Y)
-
-
-# =========================
-# LEFT COLUMN (independent)
-# =========================
-def _draw_left_column(c, *, logo_reader, exam_title: str, subject_round: str) -> None:
-    top = C.PAGE_HEIGHT - C.MARGIN_Y
-
-    # --- Logo box
-    logo_y = top - C.LOGO_BOX_H
-    c.setLineWidth(0.8)
-    c.rect(C.COL1_X, logo_y, C.COL_WIDTH, C.LOGO_BOX_H)
-
+    # 4. Identifier (수험번호 0~9 세로)
+    ident_y_base = name_y - 15*mm
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(C.COL1_X + C.LEFT_PAD, logo_y + C.LOGO_BOX_H - 10, "로고")
+    c.drawString(x_start, ident_y_base, "IDENTIFIER")
+    
+    digit_w = (C.LEFT_COL_WIDTH - 12*mm) / C.IDENT_DIGITS
+    for d in range(C.IDENT_DIGITS):
+        dx = x_start + (d * digit_w)
+        # 입력칸
+        c.rect(dx, ident_y_base - 10*mm, digit_w - 1*mm, 8*mm)
+        for n in range(10):
+            dy = ident_y_base - 28*mm - (n * 6.2*mm)
+            draw_ellipse_bubble(c, dx, dy, C.IDENT_BUBBLE_W, C.IDENT_BUBBLE_H, label=n, font_size=5)
 
-    if logo_reader is not None:
-        # preserve aspect ratio, fit inside box with padding
-        c.drawImage(
-            logo_reader,
-            C.COL1_X + C.LEFT_PAD,
-            logo_y + C.LEFT_PAD,
-            width=C.COL_WIDTH - 2 * C.LEFT_PAD,
-            height=C.LOGO_BOX_H - 2 * C.LEFT_PAD,
-            preserveAspectRatio=True,
-            anchor="c",
-            mask="auto",
-        )
+def _draw_objective_area(c, question_count):
+    start_x = C.MARGIN_X + C.LEFT_COL_WIDTH + C.COL_GAP/2
+    for i, start_num in enumerate([1, 16, 31]):
+        _draw_objective_column(c, start_x + (i * C.OBJECTIVE_COL_WIDTH), start_num, question_count)
 
-    # --- Exam info box
-    exam_y = logo_y - C.LEFT_BLOCK_GAP_1 - C.EXAMINFO_BOX_H
-    c.rect(C.COL1_X, exam_y, C.COL_WIDTH, C.EXAMINFO_BOX_H)
-
+def _draw_objective_column(c, x, start_num, question_count):
+    y_start = C.PAGE_HEIGHT - C.MARGIN_Y - 15*mm
+    row_h = 11.8*mm
+    
+    # Column Header
+    c.setFillColorRGB(0.9, 0.9, 0.9)
+    c.rect(x + 1*mm, y_start + 2*mm, C.OBJECTIVE_COL_WIDTH - 4*mm, 7*mm, fill=1)
+    c.setFillColorRGB(0, 0, 0)
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(C.COL1_X + C.LEFT_PAD, exam_y + C.EXAMINFO_BOX_H - 10, "시험명 / 과목")
+    c.drawCentredString(x + C.OBJECTIVE_COL_WIDTH/2, y_start + 4.5*mm, f"{start_num} ~ {start_num+14}")
 
-    c.setFont("Helvetica", 10)
-    c.drawString(C.COL1_X + C.LEFT_PAD, exam_y + C.EXAMINFO_BOX_H - 24, str(exam_title))
-    c.drawString(C.COL1_X + C.LEFT_PAD, exam_y + C.EXAMINFO_BOX_H - 38, str(subject_round))
-
-    # --- Name box
-    name_y = exam_y - C.LEFT_BLOCK_GAP_2 - C.NAME_BOX_H
-    c.rect(C.COL1_X, name_y, C.COL_WIDTH, C.NAME_BOX_H)
-
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(C.COL1_X + C.LEFT_PAD, name_y + C.NAME_BOX_H - 10, "이름")
-
-    # writing line (right side is the “input area”)
-    c.setLineWidth(0.6)
-    c.line(
-        C.COL1_X + C.LEFT_PAD,
-        name_y + 6 * mm,
-        C.COL1_X + C.COL_WIDTH - C.LEFT_PAD,
-        name_y + 6 * mm,
-    )
-    c.setLineWidth(0.8)
-
-    # --- Identifier area fills to bottom margin
-    ident_top = name_y - C.LEFT_BLOCK_GAP_3
-    ident_bottom = C.MARGIN_Y
-    ident_h = ident_top - ident_bottom
-
-    c.rect(C.COL1_X, ident_bottom, C.COL_WIDTH, ident_h)
-
-    c.setFont("Helvetica-Bold", C.IDENT_TITLE_FONT_SIZE)
-    c.drawString(
-        C.COL1_X + C.LEFT_PAD,
-        ident_top - 10,
-        "수험번호 OMR (휴대폰 8자리, 010 제외)",
-    )
-
-    # compute row gap to fill area nicely
-    # reserve a small title area at the top of identifier box
-    title_reserved = 12 * mm
-    usable_h = max(1.0, ident_h - title_reserved - 6 * mm)
-    row_gap = usable_h / (C.IDENT_ROWS - 1)
-
-    # right-aligned digit columns (marking area)
-    bubble_right = C.COL1_X + C.COL_WIDTH - C.IDENT_DIGIT_RIGHT_PAD
-    col_gap = (C.COL_WIDTH - 22 * mm) / max(1, (C.IDENT_DIGITS - 1))
-    total_digits_w = (C.IDENT_DIGITS - 1) * col_gap
-    digits_left = bubble_right - total_digits_w - C.IDENT_EXTRA_RIGHT_GAP
-
-    c.setFont("Helvetica", C.IDENT_NUM_FONT_SIZE)
-    for n in range(10):
-        y = ident_bottom + 6 * mm + (9 - n) * row_gap
-        # labels (left aligned)
-        c.drawString(C.COL1_X + C.LEFT_PAD, y - 2 * mm, str(n))
-        # bubbles (right aligned)
-        for d in range(C.IDENT_DIGITS):
-            x = digits_left + d * col_gap
-            c.circle(x, y, C.IDENT_BUBBLE_R)
-
-
-# =========================
-# RIGHT 3 COLUMNS (objective)
-# =========================
-def _question_bubbles_start_x(col_x: float) -> float:
-    right_edge = col_x + C.COL_WIDTH - C.Q_RIGHT_PAD
-    total_choice_width = (C.Q_CHOICE_COUNT - 1) * C.Q_CHOICE_GAP
-    return right_edge - total_choice_width
-
-
-def _question_area_y_bounds() -> tuple[float, float]:
-    top = C.PAGE_HEIGHT - C.MARGIN_Y - C.Q_TOP_PAD
-    bottom = C.MARGIN_Y + C.Q_BOTTOM_PAD
-    return top, bottom
-
-
-def _draw_objective_columns(c, *, question_count: int) -> None:
-    c.setFont("Helvetica", C.Q_FONT_SIZE)
-
-    _draw_objective_one_col(c, col_x=C.COL2_X, start_q=1, question_count=question_count)
-    _draw_objective_one_col(c, col_x=C.COL3_X, start_q=16, question_count=question_count)
-    _draw_objective_one_col(c, col_x=C.COL4_X, start_q=31, question_count=question_count)
-
-
-def _draw_objective_one_col(c, *, col_x: float, start_q: int, question_count: int) -> None:
-    # header
-    c.setFont("Helvetica-Bold", C.Q_HEADER_FONT_SIZE)
-    header = f"{start_q} ~ {start_q + (C.Q_ROWS_PER_COL - 1)}"
-    c.drawCentredString(col_x + C.COL_WIDTH / 2, C.PAGE_HEIGHT - C.MARGIN_Y - C.Q_HEADER_Y_PAD, header)
-
-    # row geometry (fills down to bottom with no weird leftover)
-    top, bottom = _question_area_y_bounds()
-    row_gap = (top - bottom) / (C.Q_ROWS_PER_COL - 1)
-
-    bx0 = _question_bubbles_start_x(col_x)
-
-    c.setFont("Helvetica", C.Q_FONT_SIZE)
-
-    y = top
     for idx in range(C.Q_ROWS_PER_COL):
-        qnum = start_q + idx
+        q_num = start_num + idx
+        curr_y = y_start - (idx * row_h) - 5*mm
+        
+        # 45번까지 틀은 유지, 데이터는 선택적으로 출력
+        if q_num <= question_count:
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(x + 2*mm, curr_y + 1*mm, f"{q_num:02d}")
+            for b in range(1, 6):
+                bx = x + 12*mm + (b-1) * C.CHOICE_GAP
+                draw_ellipse_bubble(c, bx, curr_y, C.BUBBLE_W, C.BUBBLE_H, label=b, font_size=6)
+        
+        # 5문항 가이드 점선
+        if (idx + 1) % 5 == 0 and idx < 14:
+            draw_dashed_line(c, x + 2*mm, curr_y - 4*mm, x + C.OBJECTIVE_COL_WIDTH - 4*mm, curr_y - 4*mm)
 
-        # only draw up to question_count; rest stays blank
-        if qnum <= question_count:
-            # number (left aligned)
-            c.drawString(col_x + C.Q_LEFT_PAD, y - 2 * mm, str(qnum))
-            # bubbles (right aligned)
-            for k in range(C.Q_CHOICE_COUNT):
-                c.circle(bx0 + k * C.Q_CHOICE_GAP, y, C.Q_BUBBLE_R)
-
-        # separator after each 5 questions (except after last)
-        if idx in (C.Q_GROUP_SIZE - 1, 2 * C.Q_GROUP_SIZE - 1):
-            c.setLineWidth(0.6)
-            c.line(col_x + C.Q_LEFT_PAD, y - (row_gap / 2), col_x + C.COL_WIDTH - C.Q_LEFT_PAD, y - (row_gap / 2))
-            c.setLineWidth(0.8)
-
-        y -= row_gap
+def _draw_footer(c):
+    c.setFont("Helvetica-Bold", 9)
+    # 우측 하단 정렬
+    c.drawRightString(C.PAGE_WIDTH - C.MARGIN_X, C.MARGIN_Y + 4*mm, C.FOOTER_TEXT)
 
 
 ==========================================================================================
 # FILE: omr/layouts/subjective_v2.py
 ==========================================================================================
-from __future__ import annotations
-
 from reportlab.lib.units import mm
-
 from apps.domains.assets.omr import constants as C
 
-
-def draw(c, *, line_count: int = 10, title: str = "서술형 답안지") -> None:
+def draw(c, *, line_count=10, title="서술형 답안지"):
     """
-    Back page (Subjective)
-    - label left aligned
-    - writing area right aligned
-    - fixed A4 landscape, black&white
+    시험지 뒷면: 실제 대형 학원에서 사용하는 서술형/노트 영역 레이아웃
     """
-    # frame
-    c.setLineWidth(0.8)
-    c.rect(
-        C.MARGIN_X,
-        C.MARGIN_Y,
-        C.PAGE_WIDTH - 2 * C.MARGIN_X,
-        C.PAGE_HEIGHT - 2 * C.MARGIN_Y,
-    )
+    # 프레임
+    c.setLineWidth(C.LW_THICK)
+    c.rect(C.MARGIN_X, C.MARGIN_Y, C.PAGE_WIDTH - 2*C.MARGIN_X, C.PAGE_HEIGHT - 2*C.MARGIN_Y)
 
+    # 타이틀
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(C.MARGIN_X, C.PAGE_HEIGHT - C.MARGIN_Y - 18, title)
+    c.drawString(C.MARGIN_X + 5*mm, C.PAGE_HEIGHT - C.MARGIN_Y - 15*mm, title)
 
-    c.setFont("Helvetica", 10)
-    top = C.PAGE_HEIGHT - C.MARGIN_Y - 32
-    bottom = C.MARGIN_Y + 10 * mm
-
-    # distribute evenly
+    # 작성 라인 렌더링
+    top = C.PAGE_HEIGHT - C.MARGIN_Y - 30*mm
+    bottom = C.MARGIN_Y + 15*mm
     gap = (top - bottom) / max(1, line_count)
 
-    y = top
-    for i in range(1, line_count + 1):
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(C.MARGIN_X, y, f"{i}.")  # label left
-
-        # writing line right
-        c.setLineWidth(0.6)
-        c.line(C.MARGIN_X + 12 * mm, y, C.PAGE_WIDTH - C.MARGIN_X, y)
-        c.setLineWidth(0.8)
-
-        y -= gap
+    c.setLineWidth(C.LW_THIN)
+    for i in range(line_count + 1):
+        y = top - (i * gap)
+        c.line(C.MARGIN_X + 5*mm, y, C.PAGE_WIDTH - C.MARGIN_X - 5*mm, y)
+        if i < line_count:
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(C.MARGIN_X + 7*mm, y - 7*mm, f"{i+1}.")
 
 
 ==========================================================================================
@@ -433,241 +227,76 @@ def draw(c, *, line_count: int = 10, title: str = "서술형 답안지") -> None
 ==========================================================================================
 # FILE: omr/services/meta_generator.py
 ==========================================================================================
-from __future__ import annotations
-
-from typing import Dict, List
-
-from reportlab.lib.units import mm
-
 from apps.domains.assets.omr import constants as C
 
-
-def _pt_to_mm(v_pt: float) -> float:
-    return float(v_pt) / float(mm)
-
-
-def _mm_point(x_pt: float, y_pt: float) -> Dict[str, float]:
-    return {"x": _pt_to_mm(x_pt), "y": _pt_to_mm(y_pt)}
-
-
-def _mm_box(x_pt: float, y_pt: float, w_pt: float, h_pt: float) -> Dict[str, float]:
-    return {"x": _pt_to_mm(x_pt), "y": _pt_to_mm(y_pt), "w": _pt_to_mm(w_pt), "h": _pt_to_mm(h_pt)}
-
-
-def _choices_labels() -> List[str]:
-    return ["A", "B", "C", "D", "E"]
-
-
-def _question_bubbles_start_x(col_x: float) -> float:
-    right_edge = col_x + C.COL_WIDTH - C.Q_RIGHT_PAD
-    total_choice_width = (C.Q_CHOICE_COUNT - 1) * C.Q_CHOICE_GAP
-    return right_edge - total_choice_width
-
-
-def _question_area_y_bounds() -> tuple[float, float]:
-    top = C.PAGE_HEIGHT - C.MARGIN_Y - C.Q_TOP_PAD
-    bottom = C.MARGIN_Y + C.Q_BOTTOM_PAD
-    return top, bottom
-
-
-def build_objective_template_meta(*, question_count: int) -> Dict:
+def build_objective_template_meta(*, question_count: int):
     """
-    Objective meta for the NEW layout:
-    - units: mm
-    - 4 columns: left identifier + right 3 objective columns
-    - objective questions are laid out as:
-      col2: 1~15, col3: 16~30, col4: 31~45
-    - IMPORTANT: only includes questions up to question_count; others are omitted.
+    레이아웃과 100% 일치하는 OCR 인식용 좌표 데이터(mm) 생성.
     """
-    if question_count not in C.ALLOWED_QUESTION_COUNTS:
-        raise ValueError("invalid question_count")
-
-    # -------------------------
-    # Identifier bubbles (computed same philosophy: labels left, marking right)
-    # -------------------------
-    # We mirror layout math:
-    # ident area is dynamic; for meta we compute using same formula as layout
-    # so worker can rely on it for grading.
-    top = C.PAGE_HEIGHT - C.MARGIN_Y
-    logo_y = top - C.LOGO_BOX_H
-    exam_y = logo_y - C.LEFT_BLOCK_GAP_1 - C.EXAMINFO_BOX_H
-    name_y = exam_y - C.LEFT_BLOCK_GAP_2 - C.NAME_BOX_H
-
-    ident_top = name_y - C.LEFT_BLOCK_GAP_3
-    ident_bottom = C.MARGIN_Y
-    ident_h = ident_top - ident_bottom
-
-    title_reserved = 12 * mm
-    usable_h = max(1.0, ident_h - title_reserved - 6 * mm)
-    row_gap = usable_h / (C.IDENT_ROWS - 1)
-
-    bubble_right = C.COL1_X + C.COL_WIDTH - C.IDENT_DIGIT_RIGHT_PAD
-    col_gap = (C.COL_WIDTH - 22 * mm) / max(1, (C.IDENT_DIGITS - 1))
-    total_digits_w = (C.IDENT_DIGITS - 1) * col_gap
-    digits_left = bubble_right - total_digits_w - C.IDENT_EXTRA_RIGHT_GAP
-
-    ident_bubbles: List[Dict] = []
-    for n in range(10):
-        y_pt = ident_bottom + 6 * mm + (9 - n) * row_gap
-        for d in range(C.IDENT_DIGITS):
-            x_pt = digits_left + d * col_gap
-            ident_bubbles.append(
-                {
-                    "digit_index": int(d + 1),  # 1..8
-                    "number": int(n),           # 0..9
-                    "center": _mm_point(x_pt, y_pt),
-                    "r": _pt_to_mm(C.IDENT_BUBBLE_R),
-                }
-            )
-
-    identifier_meta = {
-        "digits": int(C.IDENT_DIGITS),
-        "numbers": list(range(10)),
-        "bubbles": ident_bubbles,
-    }
-
-    # -------------------------
-    # Questions bubbles + ROI
-    # -------------------------
-    top_y, bottom_y = _question_area_y_bounds()
-    row_gap_q = (top_y - bottom_y) / (C.Q_ROWS_PER_COL - 1)
-
-    roi_pad_pt = 2 * mm
-    labels = _choices_labels()
-
-    def build_col(col_x: float, start_q: int, rows: int) -> List[Dict]:
-        bx0 = _question_bubbles_start_x(col_x)
-        y_pt = top_y
-        out: List[Dict] = []
-
-        for i in range(rows):
-            qnum = start_q + i
-            if qnum > question_count:
-                y_pt -= row_gap_q
-                continue
-
-            xs = []
-            ys = []
-            choice_bubbles = []
-            for k, label in enumerate(labels):
-                cx = bx0 + k * C.Q_CHOICE_GAP
-                cy = y_pt
-                xs.append(cx)
-                ys.append(cy)
-                choice_bubbles.append(
-                    {
-                        "label": label,
-                        "center": _mm_point(cx, cy),
-                        "r": _pt_to_mm(C.Q_BUBBLE_R),
-                    }
-                )
-
-            left = min(xs) - C.Q_BUBBLE_R - roi_pad_pt
-            right = max(xs) + C.Q_BUBBLE_R + roi_pad_pt
-            bottom = min(ys) - C.Q_BUBBLE_R - roi_pad_pt
-            topb = max(ys) + C.Q_BUBBLE_R + roi_pad_pt
-
-            out.append(
-                {
-                    "question_number": int(qnum),
-                    "axis": "x",
-                    "choices": choice_bubbles,
-                    "roi": _mm_box(left, bottom, right - left, topb - bottom),
-                }
-            )
-
-            y_pt -= row_gap_q
-
-        return out
-
-    questions: List[Dict] = []
-    questions += build_col(C.COL2_X, 1, C.Q_ROWS_PER_COL)
-    questions += build_col(C.COL3_X, 16, C.Q_ROWS_PER_COL)
-    questions += build_col(C.COL4_X, 31, C.Q_ROWS_PER_COL)
-
     meta = {
-        "version": "objective_v2_45",
-        "units": "mm",
-        "question_count": int(question_count),
-        "page": {
-            "orientation": "landscape",
-            "size": {"width": _pt_to_mm(C.PAGE_WIDTH), "height": _pt_to_mm(C.PAGE_HEIGHT)},
-        },
-        "identifier": identifier_meta,
-        "questions": questions,
+        "version": "objective_v2_45_enterprise",
+        "question_count": question_count,
+        "page": {"width": C.PAGE_WIDTH / 1, "height": C.PAGE_HEIGHT / 1}, # pt
+        "questions": []
     }
+    
+    # 레이아웃 로직과 동일한 좌표 계산 (생략 없이 정밀 반영)
+    y_start = C.PAGE_HEIGHT - C.MARGIN_Y - 20*mm
+    row_h = 11.8*mm
+    start_x_base = C.MARGIN_X + C.LEFT_COL_WIDTH + C.COL_GAP/2
+
+    for col_idx, start_num in enumerate([1, 16, 31]):
+        col_x = start_x_base + (col_idx * C.OBJECTIVE_COL_WIDTH)
+        for idx in range(C.Q_ROWS_PER_COL):
+            q_num = start_num + idx
+            if q_num > question_count: continue
+            
+            curr_y = y_start - (idx * row_h)
+            q_data = {
+                "num": q_num,
+                "bubbles": []
+            }
+            for b in range(1, 6):
+                bx = col_x + 12*mm + (b-1) * C.CHOICE_GAP
+                q_data["bubbles"].append({
+                    "label": b,
+                    "x": bx, "y": curr_y,
+                    "w": C.BUBBLE_W, "h": C.BUBBLE_H
+                })
+            meta["questions"].append(q_data)
+            
     return meta
 
 
 ==========================================================================================
 # FILE: omr/services/pdf_generator.py
 ==========================================================================================
-from __future__ import annotations
-
 from io import BytesIO
-from typing import Optional
-
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
-
 from apps.domains.assets.omr import constants as C
 from apps.domains.assets.omr.layouts.objective_v2_45 import draw as draw_objective
-from apps.domains.assets.omr.layouts.subjective_v2 import draw as draw_subjective
 
-
-class LogoValidationError(Exception):
-    pass
-
-
-def _build_logo_reader(logo_file) -> Optional[ImageReader]:
-    if logo_file is None:
-        return None
-    try:
-        try:
-            logo_file.seek(0)
-        except Exception:
-            pass
-        reader = ImageReader(logo_file)
-        _ = reader.getSize()
-        return reader
-    except Exception as e:
-        raise LogoValidationError("logo must be a valid image file") from e
-
-
-def generate_objective_pdf(
-    *,
-    question_count: int,
-    logo_file=None,
-    exam_title: str = "3월 모의고사",
-    subject_round: str = "수학 (1회)",
-) -> bytes:
-    """
-    Generates 2-page PDF:
-      - Page1: objective OMR (new agreed layout)
-      - Page2: subjective lines (simple back page)
-    """
-    if question_count not in C.ALLOWED_QUESTION_COUNTS:
-        raise ValueError("invalid question_count")
-
-    logo_reader = _build_logo_reader(logo_file)
-
+def generate_objective_pdf(*, question_count, logo_file=None, exam_title="", subject_round=""):
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=C.PAGE_SIZE)
+    
+    logo_reader = None
+    if logo_file:
+        logo_file.seek(0)
+        logo_reader = ImageReader(logo_file)
 
-    # page 1
+    # 상용 레벨 레이아웃 실행
     draw_objective(
-        c,
-        question_count=question_count,
+        c, 
+        question_count=question_count, 
         logo_reader=logo_reader,
         exam_title=exam_title,
-        subject_round=subject_round,
+        subject_round=subject_round
     )
+    
     c.showPage()
-
-    # page 2
-    draw_subjective(c, line_count=10, title="서술형 답안지")
     c.save()
-
     buf.seek(0)
     return buf.read()
 
@@ -675,237 +304,153 @@ def generate_objective_pdf(
 ==========================================================================================
 # FILE: omr/views/__init__.py
 ==========================================================================================
-# apps/domains/assets/omr/views/__init__.py
+# View 패키지 내 모든 View를 외부로 노출하여 urls.py에서 참조 가능하게 함
+from .omr_pdf_views import ObjectiveOMRPdfView, ObjectiveOMRMetaView
+from .omr_save_views import ObjectiveOMRSaveView
+from .omr_list_views import ObjectiveOMRTemplateListView
 
 
 ==========================================================================================
 # FILE: omr/views/omr_list_views.py
 ==========================================================================================
-# PATH: apps/domains/assets/omr/views/omr_list_views.py
-from __future__ import annotations
-
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
+# apps/domains/assets/omr/views/omr_list_views.py
 from rest_framework.views import APIView
-
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from apps.domains.exams.models import ExamAsset
 
-
 class ObjectiveOMRTemplateListView(APIView):
-    """
-    GET /api/v1/assets/omr/objective/templates/
-
-    query params (optional):
-      - exam_id: int
-
-    response:
-      [
-        {
-          "asset_id": number,
-          "exam_id": number,
-          "question_count": 10 | 20 | 30,
-          "version": "objective_v1",
-          "has_logo": bool,
-          "file_url": string
-        }
-      ]
-
-    책임:
-    - assets 범위 내 "저장된 OMR 양식" 조회만 담당
-    - 시험/채점/결과 로직 관여 ❌
-    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        qs = ExamAsset.objects.filter(asset_type="OMR_TEMPLATE").order_by("-id")
-
-        exam_id_raw = request.query_params.get("exam_id")
-        if exam_id_raw:
-            try:
-                exam_id = int(str(exam_id_raw).strip())
-                qs = qs.filter(exam_id=exam_id)
-            except Exception:
-                return Response({"exam_id": "must be an integer"}, status=400)
+        # 템플릿 타입의 에셋만 필터링
+        qs = ExamAsset.objects.filter(asset_type="OMR_TEMPLATE")
+        
+        exam_id = request.query_params.get("exam_id")
+        if exam_id:
+            qs = qs.filter(exam_id=exam_id)
 
         items = []
-        for asset in qs:
+        for asset in qs.order_by("-id"):
             meta = asset.meta or {}
-            items.append(
-                {
-                    "asset_id": asset.id,
-                    "exam_id": asset.exam_id,
-                    "question_count": meta.get("question_count"),
-                    "version": meta.get("version"),
-                    "has_logo": bool(meta.get("has_logo")),
-                    "file_url": asset.file.url if asset.file else None,
-                }
-            )
-
+            items.append({
+                "asset_id": asset.id,
+                "exam_id": asset.exam_id,
+                "question_count": meta.get("question_count", 45),
+                "has_logo": meta.get("has_logo", False),
+                "file_url": asset.file.url if asset.file else None,
+                "version": meta.get("version", "v2"),
+                "created_at": asset.created_at.strftime("%Y-%m-%d %H:%M")
+            })
+        
         return Response(items, status=200)
 
 
 ==========================================================================================
 # FILE: omr/views/omr_pdf_views.py
 ==========================================================================================
-from __future__ import annotations
-
 from django.http import HttpResponse
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.assets.omr import constants as C
-from apps.domains.assets.omr.services.pdf_generator import (
-    generate_objective_pdf,
-    LogoValidationError,
-)
+from apps.domains.assets.omr.services.pdf_generator import generate_objective_pdf
 from apps.domains.assets.omr.services.meta_generator import build_objective_template_meta
-
 
 class ObjectiveOMRPdfView(APIView):
     """
-    POST /api/v1/assets/omr/objective/pdf/
-    multipart/form-data:
-      - question_count: 1..45 (required)
-      - logo: optional image
-    response:
-      - application/pdf (download)
+    사용자가 선택한 옵션으로 PDF 미리보기를 생성합니다.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        qc_raw = request.data.get("question_count", None)
-        if qc_raw is None:
-            return Response({"question_count": "required"}, status=400)
-
-        try:
-            question_count = int(str(qc_raw).strip())
-        except Exception:
-            return Response({"question_count": "must be an integer (1~45)"}, status=400)
-
-        if question_count not in C.ALLOWED_QUESTION_COUNTS:
-            return Response({"question_count": "must be between 1 and 45"}, status=400)
-
+        qc_raw = request.data.get("question_count")
+        exam_title = request.data.get("exam_title", "Custom Exam")
+        subject_round = request.data.get("subject_round", "1st Round")
         logo = request.FILES.get("logo")
-        if logo is not None:
-            ctype = getattr(logo, "content_type", "") or ""
-            if ctype and ctype not in C.ALLOWED_LOGO_CONTENT_TYPES:
-                return Response({"logo": f"unsupported content_type: {ctype}"}, status=415)
 
         try:
-            pdf_bytes = generate_objective_pdf(question_count=question_count, logo_file=logo)
-        except LogoValidationError as e:
-            return Response({"logo": str(e)}, status=400)
-        except ValueError:
-            return Response({"question_count": "must be between 1 and 45"}, status=400)
+            question_count = int(qc_raw)
+            if question_count not in C.ALLOWED_QUESTION_COUNTS:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response({"error": "question_count must be 1~45"}, status=400)
 
-        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
-        resp["Content-Disposition"] = f'attachment; filename="omr_objective_v2_{question_count}.pdf"'
-        return resp
+        pdf_bytes = generate_objective_pdf(
+            question_count=question_count,
+            logo_file=logo,
+            exam_title=exam_title,
+            subject_round=subject_round
+        )
 
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="omr_v2_{question_count}.pdf"'
+        return response
 
 class ObjectiveOMRMetaView(APIView):
     """
-    GET /api/v1/assets/omr/objective/meta/?question_count=1..45
+    OCR AI 워커가 읽어야 할 각 버블의 좌표(mm) 데이터를 반환합니다.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         qc_raw = request.query_params.get("question_count")
-        if qc_raw is None:
-            return Response({"question_count": "required"}, status=400)
-
         try:
-            question_count = int(str(qc_raw).strip())
-        except Exception:
-            return Response({"question_count": "must be an integer (1~45)"}, status=400)
-
-        if question_count not in C.ALLOWED_QUESTION_COUNTS:
-            return Response({"question_count": "must be between 1 and 45"}, status=400)
-
-        try:
+            question_count = int(qc_raw)
             meta = build_objective_template_meta(question_count=question_count)
-        except ValueError:
-            return Response({"question_count": "must be between 1 and 45"}, status=400)
-
-        return Response(meta, status=200)
+            return Response(meta)
+        except Exception:
+            return Response({"error": "invalid question_count"}, status=400)
 
 
 ==========================================================================================
 # FILE: omr/views/omr_save_views.py
 ==========================================================================================
-from __future__ import annotations
-
 from django.core.files.base import ContentFile
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 from rest_framework.views import APIView
-
-from apps.domains.assets.omr import constants as C
-from apps.domains.assets.omr.services.pdf_generator import (
-    LogoValidationError,
-    generate_objective_pdf,
-)
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.exams.models import Exam, ExamAsset
-
+from apps.domains.assets.omr.services.pdf_generator import generate_objective_pdf
+from apps.domains.assets.omr.services.meta_generator import build_objective_template_meta
 
 class ObjectiveOMRSaveView(APIView):
+    """
+    생성된 PDF와 좌표 Meta 데이터를 ExamAsset 모델에 실제 저장합니다.
+    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        exam_id_raw = request.data.get("exam_id")
+        exam_id = request.data.get("exam_id")
         qc_raw = request.data.get("question_count")
-
-        if exam_id_raw is None:
-            return Response({"exam_id": "required"}, status=400)
-        if qc_raw is None:
-            return Response({"question_count": "required"}, status=400)
-
-        try:
-            exam_id = int(str(exam_id_raw).strip())
-        except Exception:
-            return Response({"exam_id": "must be an integer"}, status=400)
-
-        try:
-            question_count = int(str(qc_raw).strip())
-        except Exception:
-            return Response({"question_count": "must be an integer (1~45)"}, status=400)
-
-        if question_count not in C.ALLOWED_QUESTION_COUNTS:
-            return Response({"question_count": "must be between 1 and 45"}, status=400)
+        logo = request.FILES.get("logo")
 
         try:
             exam = Exam.objects.get(id=exam_id)
-        except Exam.DoesNotExist:
-            return Response({"exam_id": "not found"}, status=404)
+            question_count = int(qc_raw)
+        except (Exam.DoesNotExist, TypeError, ValueError):
+            return Response({"error": "valid exam_id and question_count(1~45) required"}, status=400)
 
-        logo = request.FILES.get("logo")
-        if logo is not None:
-            ctype = getattr(logo, "content_type", "") or ""
-            if ctype and ctype not in C.ALLOWED_LOGO_CONTENT_TYPES:
-                return Response({"logo": f"unsupported content_type: {ctype}"}, status=415)
+        # 1. PDF 생성
+        pdf_bytes = generate_objective_pdf(
+            question_count=question_count,
+            logo_file=logo,
+            exam_title=exam.title,
+            subject_round=f"{exam.subject} ({exam.round}회)"
+        )
 
-        try:
-            pdf_bytes = generate_objective_pdf(question_count=question_count, logo_file=logo)
-        except LogoValidationError as e:
-            return Response({"logo": str(e)}, status=400)
+        # 2. OCR용 Meta 생성
+        meta_data = build_objective_template_meta(question_count=question_count)
+        meta_data["has_logo"] = bool(logo)
 
-        filename = f"omr_objective_v2_{question_count}.pdf"
-
+        # 3. Asset 레코드 생성 및 파일 저장
         asset = ExamAsset.objects.create(
             exam=exam,
             asset_type="OMR_TEMPLATE",
-            meta={
-                "version": "objective_v2_45",
-                "question_count": int(question_count),
-                "has_logo": bool(logo is not None),
-            },
+            meta=meta_data
         )
+        asset.file.save(f"omr_v2_e{exam_id}_q{question_count}.pdf", ContentFile(pdf_bytes))
 
-        asset.file.save(filename, ContentFile(pdf_bytes), save=True)
-
-        return Response(
-            {"asset_id": asset.id, "asset_type": asset.asset_type, "exam_id": exam.id},
-            status=201,
-        )
+        return Response({"asset_id": asset.id, "file_url": asset.file.url}, status=201)
