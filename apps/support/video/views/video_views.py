@@ -137,8 +137,7 @@ def _try_start_video_worker_instance_after_job_creation() -> None:
     except Exception:
         delay = 5
 
-    threading.Timer(delay, _try_start_video_worker_instance).start()
-
+    _try_start_video_worker_instance()
 
 # ==================================================
 # ViewSet
