@@ -19,13 +19,30 @@ class Student(TimestampModel):
         help_text="소속 학원 (Tenant)",
     )
 
+    # ✅ 봉인: Student는 User 없이 존재 불가 / User 삭제되면 Student도 같이 삭제
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
+        on_delete=models.CASCADE,
+        null=False,
+        blank=False,
         related_name="student_profile",
-        help_text="학생이 로그인 계정을 가지는 경우 연결",
+        help_text="학생 로그인 계정 (필수)",
+    )
+
+    # ✅ NEW: PS 번호 (학원 공식 학생 ID)
+    ps_number = models.CharField(
+        max_length=20,
+        null=False,
+        blank=False,
+        help_text="PS 번호 (학원 학생 ID)",
+    )
+
+    # ✅ NEW: OMR 식별자 (전화번호 뒤 8자리)
+    omr_code = models.CharField(
+        max_length=8,
+        null=False,
+        blank=False,
+        help_text="OMR 자동채점 식별자 (전화번호 뒤 8자리)",
     )
 
     name = models.CharField(max_length=50)
@@ -54,8 +71,9 @@ class Student(TimestampModel):
         default="HIGH",
     )
 
-    phone = models.CharField(max_length=20, null=True, blank=True)
-    parent_phone = models.CharField(max_length=20, null=True, blank=True)
+    # ✅ 봉인: phone/parent_phone 운영 필수 (NULL/BLANK 차단)
+    phone = models.CharField(max_length=20, null=False, blank=False)
+    parent_phone = models.CharField(max_length=20, null=False, blank=False)
 
     parent = models.ForeignKey(
         "parents.Parent",
@@ -83,11 +101,21 @@ class Student(TimestampModel):
     class Meta:
         ordering = ["-id"]
         constraints = [
+            # ✅ tenant 단위 User 유일 (기존 유지, 단 user는 이제 null 불가)
             models.UniqueConstraint(
                 fields=["tenant", "user"],
                 name="uniq_student_user_per_tenant",
-                condition=models.Q(user__isnull=False),
-            )
+            ),
+            # ✅ NEW: tenant 단위 PS 번호 유일
+            models.UniqueConstraint(
+                fields=["tenant", "ps_number"],
+                name="uniq_student_ps_number_per_tenant",
+            ),
+            # ✅ NEW: tenant 단위 OMR 코드 유일
+            models.UniqueConstraint(
+                fields=["tenant", "omr_code"],
+                name="uniq_student_omr_code_per_tenant",
+            ),
         ]
 
     def __str__(self):

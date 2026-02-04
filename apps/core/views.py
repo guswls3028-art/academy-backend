@@ -1,4 +1,6 @@
+# ======================================================================
 # PATH: apps/core/views.py
+# ======================================================================
 from datetime import datetime
 from django.db.models import Sum
 
@@ -29,15 +31,23 @@ from apps.core.serializers import (
 
 class MeView(APIView):
     """
-    인증 + 테넌트 확정 + 멤버십 존재 확인
-    (role 비해석)
+    ✅ Core Auth Endpoint (Enterprise Final)
+
+    - 인증 필수
+    - tenant 확정 필수
+    - TenantMembership 존재 필수
+    - tenant 기준 role 을 tenantRole 로 반환
+    - 프론트는 이 응답만 신뢰 (SSOT)
     """
 
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     @swagger_auto_schema(auto_schema=None)
     def get(self, request):
-        serializer = UserSerializer(request.user)
+        serializer = UserSerializer(
+            request.user,
+            context={"request": request},  # ✅ 핵심
+        )
         return Response(serializer.data)
 
 
@@ -143,7 +153,7 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):
         user = request.user
-        tenant = getattr(request, "tenant", None)
+        tenant = getattr(self.request, "tenant", None)
         month = self.request.query_params.get("month")
 
         qs = Attendance.objects.filter(

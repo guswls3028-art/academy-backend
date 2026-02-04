@@ -6,10 +6,13 @@ from .models import Student, Tag, StudentTag
 class StudentAdmin(admin.ModelAdmin):
     list_display = (
         "id",
+        "ps_number",   # ✅ NEW
+        "omr_code",    # ✅ NEW
         "name",
         "gender",
         "grade",
         "phone",
+        "parent_phone",  # ✅ 운영 확인용
         "parent",
         "high_school",
         "is_managed",
@@ -21,7 +24,7 @@ class StudentAdmin(admin.ModelAdmin):
         "high_school",
         "is_managed",
     )
-    search_fields = ("name", "phone")
+    search_fields = ("ps_number", "omr_code", "name", "phone")
 
 
 @admin.register(Tag)

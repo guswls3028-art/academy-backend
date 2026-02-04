@@ -12,6 +12,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.core.permissions import IsAdminOrStaff, IsStudent
+from apps.core.models import TenantMembership
 
 from .models import Student, Tag, StudentTag
 from .filters import StudentFilter
@@ -53,6 +54,10 @@ class StudentViewSet(ModelViewSet):
     ✔ phone = username
     ✔ 초기 비밀번호는 교사가 설정
     ✔ 학생 CRUD는 관리자만 가능
+
+    ✅ 봉인 강화:
+    - Student 생성 시 TenantMembership(role=student) 반드시 생성
+    - Student 삭제 시 User 삭제(고아유저 방지)
     """
 
     permission_classes = [IsAdminOrStaff]
@@ -81,7 +86,7 @@ class StudentViewSet(ModelViewSet):
         return StudentDetailSerializer
 
     # ------------------------------
-    # Student + User 생성
+    # Student + User + Membership 생성 (봉인)
     # ------------------------------
     @transaction.atomic
     def create(self, request, *args, **kwargs):
@@ -91,6 +96,7 @@ class StudentViewSet(ModelViewSet):
         1. 입력값 검증 (StudentCreateSerializer)
         2. User 생성 (username = phone)
         3. Student 생성 + tenant / user 연결
+        4. TenantMembership(role=student) SSOT 강제 생성
         """
         serializer = self.get_serializer(
             data=request.data,
@@ -103,8 +109,8 @@ class StudentViewSet(ModelViewSet):
         phone = serializer.validated_data["phone"]
         password = serializer.validated_data.pop("initial_password")
 
-        # 1️⃣ User 생성
-        user = User.objects.create(
+        # 1️⃣ User 생성 (항상 Student와 같은 트랜잭션에서)
+        user = User.objects.create_user(
             username=phone,
             phone=phone,
             name=serializer.validated_data.get("name", ""),
@@ -115,8 +121,15 @@ class StudentViewSet(ModelViewSet):
         # 2️⃣ Student 생성 + tenant / user 연결
         student = Student.objects.create(
             tenant=request.tenant,   # ✅ tenant 강제 주입
-            user=user,
+            user=user,               # ✅ user 필수
             **serializer.validated_data,
+        )
+
+        # 3️⃣ SSOT: TenantMembership 강제 생성 (고아/권한누락 봉인)
+        TenantMembership.ensure_active(
+            tenant=request.tenant,
+            user=user,
+            role="student",
         )
 
         output = StudentDetailSerializer(
@@ -126,7 +139,7 @@ class StudentViewSet(ModelViewSet):
         return Response(output.data, status=201)
 
     # ------------------------------
-    # DELETE: Student 삭제 시 User도 같이 삭제
+    # DELETE: Student 삭제 시 User도 같이 삭제 (봉인)
     # ------------------------------
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
@@ -134,15 +147,16 @@ class StudentViewSet(ModelViewSet):
         학생 삭제 시 처리 흐름
 
         ✔ Student 삭제
-        ✔ 연결된 User도 같이 삭제
+        ✔ 연결된 User도 같이 삭제 (고아유저 방지)
+        ✔ TenantMembership은 user FK CASCADE로 자동 정리
         """
         student = self.get_object()
         user = student.user
 
-        # Student 삭제 (StudentTag 등은 CASCADE)
+        # Student 삭제
         self.perform_destroy(student)
 
-        # User 같이 삭제
+        # User 같이 삭제 (Membership도 CASCADE)
         if user:
             user.delete()
 
@@ -157,7 +171,7 @@ class StudentViewSet(ModelViewSet):
         OrderingFilter,
     ]
     filterset_class = StudentFilter
-    search_fields = ["name", "high_school", "major"]
+    search_fields = ["ps_number", "omr_code", "name", "high_school", "major", "phone"]
     ordering_fields = ["id", "created_at", "updated_at"]
     ordering = ["-id"]
 
@@ -189,7 +203,7 @@ class StudentViewSet(ModelViewSet):
         return Response({"status": "ok"}, status=200)
 
     # --------------------------------------------------
-    # Anchor API: /students/me/
+    # Anchor API: /students/me/ (원본 100% 유지)
     # --------------------------------------------------
     @action(
         detail=False,
