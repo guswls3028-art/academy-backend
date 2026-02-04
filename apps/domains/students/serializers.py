@@ -92,8 +92,8 @@ class StudentCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Student
-        fields = "__all__"
-
+        exclude = ("tenant", "user")
+        
     def _require(self, attrs, key: str):
         v = attrs.get(key)
         if v is None:
