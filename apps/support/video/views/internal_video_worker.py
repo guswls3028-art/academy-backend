@@ -56,7 +56,7 @@ class VideoWorkerClaimNextView(APIView):
       GET  /.../internal/video-worker/next/   (compat alias)
 
     Returns:
-      200 { "job": { video_id, file_key } }
+      200 { "job": { video_id, file_key, tenant_code } }
       204 no content
 
     ✅ SSOT:
@@ -88,8 +88,18 @@ class VideoWorkerClaimNextView(APIView):
         if video is None:
             return JsonResponse({}, status=204)
 
+        # ✅ tenant context (R2 / HLS path isolation)
+        lecture = video.session.lecture
+        tenant = lecture.tenant
+
         return JsonResponse(
-            {"job": {"video_id": int(video.id), "file_key": str(video.file_key or "")}},
+            {
+                "job": {
+                    "video_id": int(video.id),
+                    "file_key": str(video.file_key or ""),
+                    "tenant_code": str(tenant.code),
+                }
+            },
             status=200,
         )
 
