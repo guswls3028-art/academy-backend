@@ -211,6 +211,7 @@ application = get_wsgi_application()
 from pathlib import Path
 from datetime import timedelta
 import os
+from corsheaders.defaults import default_headers  # 🔥 추가
 
 # 나중에 빼
 DEBUG_TOOLBAR_CONFIG = {"SHOW_TOOLBAR_CALLBACK": lambda request: False}
@@ -237,17 +238,11 @@ VIDEO_WORKER_INSTANCE_ID = os.getenv("VIDEO_WORKER_INSTANCE_ID")
 # ==================================================
 # ✅ MULTI TENANT (SSOT)  --- Enterprise baseline
 # ==================================================
-# - Header 기반 테넌트 분리
-# - 단일 테넌트(dev/초기) 즉시 동작:
-#     * TENANT_DEFAULT_CODE 없으면 fallback 없음
-# - 멀티 테넌트 운영에서 강제하려면:
-#     * prod.py 에서 TENANT_STRICT=True 권장
 TENANT_HEADER_NAME = os.getenv("TENANT_HEADER_NAME", "X-Tenant-Code")
 TENANT_QUERY_PARAM_NAME = os.getenv("TENANT_QUERY_PARAM_NAME", "tenant")
 
 # optional: dev/초기 운영에서 header 없이 기본 tenant 지정
-# ✅ 최소 수정: 풀백 제거
-TENANT_DEFAULT_CODE = None
+TENANT_DEFAULT_CODE = None  # 🔥 풀백 제거
 
 # strict: tenant 미지정 시 400 (멀티테넌트 운영에서는 True 권장)
 TENANT_STRICT = os.getenv("TENANT_STRICT", "false").lower() == "true"
@@ -255,7 +250,7 @@ TENANT_STRICT = os.getenv("TENANT_STRICT", "false").lower() == "true"
 # inactive tenant 허용 여부 (운영에서는 False 유지)
 TENANT_ALLOW_INACTIVE = os.getenv("TENANT_ALLOW_INACTIVE", "false").lower() == "true"
 
-# 테넌트 없어도 되는 prefix (기존 호환/내부 워커 보장)
+# 테넌트 없어도 되는 prefix
 TENANT_BYPASS_PATH_PREFIXES = [
     "/admin/",
     "/api/v1/token/",
@@ -269,39 +264,17 @@ TENANT_BYPASS_PATH_PREFIXES = [
 # ==================================================
 # ALLOWED HOSTS
 # ==================================================
-# ✅ 내부 EC2 / 워커 통신을 위해 VPC IP 명시적으로 허용
-# - DEBUG=False 환경에서도 worker → api 호출이 400으로 차단되지 않도록 함
-# - 보안상 '*' 사용하지 않음 (dev.py에서만 허용)
-
 ALLOWED_HOSTS = [
     "127.0.0.1",
     "localhost",
-
-    # =========================
-    # EC2 Public
-    # =========================
     "13.125.207.197",
-
-    # =========================
-    # EC2 Private (VPC Internal)
-    # =========================
     "172.31.32.253",
     "172.31.32.109",
-
-    # =========================
-    # Frontend / API Domains
-    # =========================
     "hakwonplus.com",
     "www.hakwonplus.com",
     "api.hakwonplus.com",
-
-    # limglish
     "limglish.kr",
     ".limglish.kr",
-
-    # =========================
-    # Cloudflare Pages
-    # =========================
     "academy-frontend.pages.dev",
 ]
 
@@ -310,21 +283,15 @@ AUTH_USER_MODEL = "core.User"
 # ==================================================
 # INSTALLED APPS
 # ==================================================
-
 INSTALLED_APPS = [
-    # Django
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-
-    # Common / Core
     "apps.api.common",
     "apps.core",
-
-    # Domain Apps
     "apps.domains.students",
     "apps.domains.teachers",
     "apps.domains.staffs",
@@ -345,31 +312,15 @@ INSTALLED_APPS = [
     "apps.domains.clinic",
     "apps.domains.progress",
     "apps.domains.ai.apps.AIDomainConfig",
-
-    # Assets Domain
     "apps.domains.assets",
-
-    # support.video
     "apps.support.video",
-
-    # REST
     "rest_framework",
     "rest_framework_simplejwt",
     "django_filters",
-
-    # Swagger
     "drf_yasg",
-
-    # CORS
     "corsheaders",
-
-    # shared
     "apps.shared",
-
-    # tools
     "django_extensions",
-
-    # student app
     "apps.domains.student_app",
 ]
 
@@ -381,10 +332,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
-
-    # ✅ Tenant must be resolved before auth/views use request.tenant
     "apps.core.middleware.tenant.TenantMiddleware",
-
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -394,7 +342,6 @@ MIDDLEWARE = [
 # ==================================================
 # URL / WSGI / ASGI
 # ==================================================
-
 ROOT_URLCONF = "apps.api.config.urls"
 WSGI_APPLICATION = "apps.api.config.wsgi.application"
 ASGI_APPLICATION = "apps.api.config.asgi.application"
@@ -402,7 +349,6 @@ ASGI_APPLICATION = "apps.api.config.asgi.application"
 # ==================================================
 # DATABASE
 # ==================================================
-
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -417,7 +363,6 @@ DATABASES = {
 # ==================================================
 # GLOBAL
 # ==================================================
-
 LANGUAGE_CODE = "ko-kr"
 TIME_ZONE = "Asia/Seoul"
 USE_I18N = True
@@ -432,14 +377,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ==================================================
 # DRF
 # ==================================================
-
 REST_FRAMEWORK = {
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
-    ],
-    "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
-    ],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework_simplejwt.authentication.JWTAuthentication"],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
 }
@@ -447,7 +387,6 @@ REST_FRAMEWORK = {
 # ==================================================
 # JWT
 # ==================================================
-
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(days=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=60),
@@ -457,9 +396,7 @@ SIMPLE_JWT = {
 # ==================================================
 # CORS
 # ==================================================
-
 CORS_ALLOW_ALL_ORIGINS = False
-
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "https://hakwonplus.com",
@@ -468,38 +405,35 @@ CORS_ALLOWED_ORIGINS = [
     "https://limglish.kr",
     "https://www.limglish.kr",
 ]
-
 CORS_ALLOW_CREDENTIALS = True
-
 CSRF_TRUSTED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
     "https://academy-frontend.pages.dev",
 ]
 
+# 🔥 추가: tenant header 허용
+CORS_ALLOW_HEADERS = list(default_headers) + ["X-Tenant-Code"]
+
 # ==================================================
 # VIDEO / CDN
 # ==================================================
-
 CDN_HLS_BASE_URL = "https://pub-54ae4dcb984d4491b08f6c57023a1621.r2.dev"
 VIDEO_PLAYBACK_TTL_SECONDS = int(os.getenv("VIDEO_PLAYBACK_TTL_SECONDS", "600"))
 
 # ==================================================
 # Cloudflare R2
 # ==================================================
-
 R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
-
 R2_AI_BUCKET = os.getenv("R2_AI_BUCKET", "academy-ai")
 R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
 
 # ==================================================
-# TEMPLATES (복구)
+# TEMPLATES
 # ==================================================
-
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -517,15 +451,13 @@ TEMPLATES = [
 ]
 
 # ==================================================
-# REDIS 레가시 버그 방지
+# REDIS
 # ==================================================
-
 REDIS_URL = os.getenv("REDIS_URL")
 
 # ==================================================
-# 🔥 INTERNAL WORKER (FIX)
+# INTERNAL WORKER (FIX)
 # ==================================================
-
 INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "")
 
 
@@ -560,23 +492,19 @@ import os
 # ==================================================
 # PROD MODE (외부 공개 API 서버 기준)
 # ==================================================
-
 DEBUG = False
 
 # ==================================================
 # SECURITY
 # ==================================================
-
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
-
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
 # ==================================================
 # ALLOWED HOSTS (외부 계약 기준)
 # ==================================================
-
 ALLOWED_HOSTS = [
     "hakwonplus.com",
     "www.hakwonplus.com",
@@ -589,9 +517,8 @@ ALLOWED_HOSTS = [
 ]
 
 # ==================================================
-# CORS (Frontend ↔ API 계약)
+# CORS
 # ==================================================
-
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     "https://hakwonplus.com",
@@ -603,10 +530,13 @@ CORS_ALLOWED_ORIGINS = [
 ]
 CORS_ALLOW_CREDENTIALS = True
 
+# 🔥 추가: tenant header 허용
+from corsheaders.defaults import default_headers
+CORS_ALLOW_HEADERS = list(default_headers) + ["X-Tenant-Code"]
+
 # ==================================================
 # CSRF
 # ==================================================
-
 CSRF_TRUSTED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
@@ -616,70 +546,49 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # ==================================================
-# API BASE (🔥 중요)
+# API BASE
 # ==================================================
-
 API_BASE_URL = "https://api.hakwonplus.com"
 
 # ==================================================
 # ✅ MULTI TENANT (PROD 운영 기준)
 # ==================================================
-
 TENANT_STRICT = True
 TENANT_HEADER_NAME = os.environ.get("TENANT_HEADER_NAME", TENANT_HEADER_NAME)
-# ✅ 최소 수정: prod에서도 기본 tenant 풀백 제거
-TENANT_DEFAULT_CODE = None
+TENANT_DEFAULT_CODE = None  # 🔥 풀백 제거
 
 # ==================================================
-# LOGGING (운영 최소 기준)
+# LOGGING
 # ==================================================
-
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "formatters": {
-        "simple": {
-            "format": "[{levelname}] {asctime} {name}: {message}",
-            "style": "{",
-        },
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "simple",
-        },
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "INFO",
-    },
+    "formatters": {"simple": {"format": "[{levelname}] {asctime} {name}: {message}", "style": "{"}},
+    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "simple"}},
+    "root": {"handlers": ["console"], "level": "INFO"},
 }
 
 # ==================================================
 # STATIC / MEDIA
 # ==================================================
-
 STATICFILES_STORAGE = "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"
 
 # ==================================================
 # WORKER SAFETY GUARD
 # ==================================================
-
 INTERNAL_WORKER_TOKEN = os.environ.get("INTERNAL_WORKER_TOKEN", "")
 AI_WORKER_INSTANCE_ID = None
 VIDEO_WORKER_INSTANCE_ID = None
 
 # ==================================================
-# FINAL ASSERTIONS (운영 안정성)
+# FINAL ASSERTIONS
 # ==================================================
-
 assert DEBUG is False, "prod.py must run with DEBUG=False"
 assert API_BASE_URL.startswith("https://"), "API_BASE_URL must be external HTTPS URL"
 
 # ==================================================
-# REDIS 레가시 버그 방지
+# REDIS
 # ==================================================
-
 REDIS_URL = os.getenv("REDIS_URL")
 
 
