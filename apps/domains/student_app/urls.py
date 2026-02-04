@@ -1,4 +1,4 @@
-# apps/domains/student_app/urls.py
+# PATH: C:\academy\apps\domains\student_app\urls.py
 from django.urls import path
 
 from .dashboard.views import StudentDashboardView
@@ -7,6 +7,12 @@ from .exams.views import StudentExamListView, StudentExamDetailView
 from .results.views import (
     MyExamResultView,
     MyExamResultItemsView,
+)
+
+# ✅ NEW
+from .media.views import (
+    StudentSessionVideoListView,
+    StudentVideoPlaybackView,
 )
 
 urlpatterns = [
@@ -24,4 +30,10 @@ urlpatterns = [
     # Results
     path("results/me/exams/<int:exam_id>/", MyExamResultView.as_view()),
     path("results/me/exams/<int:exam_id>/items/", MyExamResultItemsView.as_view()),
+
+    # ✅ Media (Student Consumer)
+    # 세션별 영상 목록
+    path("media/sessions/<int:session_id>/videos/", StudentSessionVideoListView.as_view()),
+    # 영상 재생 정보 (정책 포함)
+    path("media/videos/<int:video_id>/playback/", StudentVideoPlaybackView.as_view()),
 ]
