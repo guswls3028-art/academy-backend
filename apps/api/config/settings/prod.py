@@ -1,4 +1,6 @@
+# ======================================================================
 # PATH: apps/api/config/settings/prod.py
+# ======================================================================
 from .base import *
 import os
 
@@ -21,29 +23,14 @@ CSRF_COOKIE_SECURE = True
 # ==================================================
 # ALLOWED HOSTS (외부 계약 기준)
 # ==================================================
-# ⚠️ base.py의 ALLOWED_HOSTS를 그대로 확장/축소하지 않음
-# 단, prod에서는 "*" 절대 금지
 
 ALLOWED_HOSTS = [
-    # =========================
-    # Domains
-    # =========================
     "hakwonplus.com",
     "www.hakwonplus.com",
     "api.hakwonplus.com",
-
-    # limglish
     "limglish.kr",
     "www.limglish.kr",
-
-    # =========================
-    # Cloudflare Pages (frontend)
-    # =========================
     "academy-frontend.pages.dev",
-
-    # =========================
-    # Local dev (optional, safe)
-    # =========================
     "localhost",
     "127.0.0.1",
 ]
@@ -53,16 +40,14 @@ ALLOWED_HOSTS = [
 # ==================================================
 
 CORS_ALLOW_ALL_ORIGINS = False
-
 CORS_ALLOWED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
     "https://academy-frontend.pages.dev",
-    "http://localhost:5173",  # local dev
+    "http://localhost:5173",
     "https://limglish.kr",
     "https://www.limglish.kr",
 ]
-
 CORS_ALLOW_CREDENTIALS = True
 
 # ==================================================
@@ -80,21 +65,17 @@ CSRF_TRUSTED_ORIGINS = [
 # ==================================================
 # API BASE (🔥 중요)
 # ==================================================
-# ❌ 내부 IP 사용 금지
-# ❌ worker용 API_BASE_URL 혼입 금지
-# ✅ 외부 공개 기준 URL만 사용
 
 API_BASE_URL = "https://api.hakwonplus.com"
 
 # ==================================================
 # ✅ MULTI TENANT (PROD 운영 기준)
 # ==================================================
-# 운영에서는 tenant header를 강제하는 편이 안전하다.
+
 TENANT_STRICT = True
 TENANT_HEADER_NAME = os.environ.get("TENANT_HEADER_NAME", TENANT_HEADER_NAME)
-
-# ✅ 최소 수정: prod에서도 기본 tenant 허용
-TENANT_DEFAULT_CODE = os.environ.get("TENANT_DEFAULT_CODE", TENANT_DEFAULT_CODE or "default-tenant")  
+# ✅ 최소 수정: prod에서도 기본 tenant 풀백 제거
+TENANT_DEFAULT_CODE = None
 
 # ==================================================
 # LOGGING (운영 최소 기준)
@@ -124,16 +105,12 @@ LOGGING = {
 # ==================================================
 # STATIC / MEDIA
 # ==================================================
-# gunicorn + nginx + CDN 전제
-# Django는 서빙 책임 없음
 
 STATICFILES_STORAGE = "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"
 
 # ==================================================
 # WORKER SAFETY GUARD
 # ==================================================
-# prod API 서버에서는 worker 전용 설정을 신뢰하지 않음
-# (있어도 사용 안 함)
 
 INTERNAL_WORKER_TOKEN = os.environ.get("INTERNAL_WORKER_TOKEN", "")
 AI_WORKER_INSTANCE_ID = None

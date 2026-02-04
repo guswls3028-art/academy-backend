@@ -32,15 +32,15 @@ VIDEO_WORKER_INSTANCE_ID = os.getenv("VIDEO_WORKER_INSTANCE_ID")
 # ==================================================
 # - Header 기반 테넌트 분리
 # - 단일 테넌트(dev/초기) 즉시 동작:
-#     * TENANT_DEFAULT_CODE 있으면 그걸 사용
-#     * 없으면 active tenant가 1개면 자동 선택
+#     * TENANT_DEFAULT_CODE 없으면 fallback 없음
 # - 멀티 테넌트 운영에서 강제하려면:
 #     * prod.py 에서 TENANT_STRICT=True 권장
 TENANT_HEADER_NAME = os.getenv("TENANT_HEADER_NAME", "X-Tenant-Code")
 TENANT_QUERY_PARAM_NAME = os.getenv("TENANT_QUERY_PARAM_NAME", "tenant")
 
 # optional: dev/초기 운영에서 header 없이 기본 tenant 지정
-TENANT_DEFAULT_CODE = os.getenv("TENANT_DEFAULT_CODE", "default-tenant")  # ✅ 최소 수정: 기본 허용
+# ✅ 최소 수정: 풀백 제거
+TENANT_DEFAULT_CODE = None
 
 # strict: tenant 미지정 시 400 (멀티테넌트 운영에서는 True 권장)
 TENANT_STRICT = os.getenv("TENANT_STRICT", "false").lower() == "true"
@@ -91,8 +91,6 @@ ALLOWED_HOSTS = [
     # limglish
     "limglish.kr",
     ".limglish.kr",
-
-
 
     # =========================
     # Cloudflare Pages
@@ -171,8 +169,6 @@ INSTALLED_APPS = [
 # ==================================================
 # MIDDLEWARE
 # ==================================================
-# ✅ TenantMiddleware는 "뷰 실행 전에" tenant가 확정되어야 하므로
-# 가능한 한 앞쪽(세션/커먼 이후)에 둔다.
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
