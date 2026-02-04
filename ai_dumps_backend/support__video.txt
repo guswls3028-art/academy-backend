@@ -652,7 +652,7 @@ class VideoSerializer(serializers.ModelSerializer):
         # 2️⃣ READY fallback
         if obj.status == obj.Status.READY:
             path = self._normalize_media_path(
-                f"media/hls/videos/{obj.id}/thumbnail.jpg"
+                f"media/hls/{obj.tenant.code}/videos/{obj.id}/thumbnail.jpg"
             )
             return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
