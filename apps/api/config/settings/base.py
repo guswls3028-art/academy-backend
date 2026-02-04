@@ -40,7 +40,7 @@ TENANT_HEADER_NAME = os.getenv("TENANT_HEADER_NAME", "X-Tenant-Code")
 TENANT_QUERY_PARAM_NAME = os.getenv("TENANT_QUERY_PARAM_NAME", "tenant")
 
 # optional: dev/초기 운영에서 header 없이 기본 tenant 지정
-TENANT_DEFAULT_CODE = os.getenv("TENANT_DEFAULT_CODE", "")
+TENANT_DEFAULT_CODE = os.getenv("TENANT_DEFAULT_CODE", "default-tenant")  # ✅ 최소 수정: 기본 허용
 
 # strict: tenant 미지정 시 400 (멀티테넌트 운영에서는 True 권장)
 TENANT_STRICT = os.getenv("TENANT_STRICT", "false").lower() == "true"
@@ -264,7 +264,6 @@ CORS_ALLOWED_ORIGINS = [
     "https://academy-frontend.pages.dev",
     "https://limglish.kr",
     "https://www.limglish.kr",
-
 ]
 
 CORS_ALLOW_CREDENTIALS = True

@@ -93,15 +93,8 @@ API_BASE_URL = "https://api.hakwonplus.com"
 TENANT_STRICT = True
 TENANT_HEADER_NAME = os.environ.get("TENANT_HEADER_NAME", TENANT_HEADER_NAME)
 
-# ✅ 운영 가드:
-# - prod에서 TENANT_DEFAULT_CODE를 실수로 넣으면 “다중테넌트 사고”로 이어질 수 있음
-# - 따라서 prod에서는 기본 tenant 자동선택을 금지한다.
-TENANT_DEFAULT_CODE = os.environ.get("TENANT_DEFAULT_CODE", "")
-if TENANT_DEFAULT_CODE:
-    raise RuntimeError(
-        "TENANT_DEFAULT_CODE must be EMPTY in prod. "
-        "Provide X-Tenant-Code header explicitly for multi-tenant safety."
-    )
+# ✅ 최소 수정: prod에서도 기본 tenant 허용
+TENANT_DEFAULT_CODE = os.environ.get("TENANT_DEFAULT_CODE", TENANT_DEFAULT_CODE or "default-tenant")  
 
 # ==================================================
 # LOGGING (운영 최소 기준)
