@@ -7,23 +7,19 @@ import os
 # ==================================================
 # PROD MODE (외부 공개 API 서버 기준)
 # ==================================================
-
 DEBUG = False
 
 # ==================================================
 # SECURITY
 # ==================================================
-
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
-
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
 # ==================================================
 # ALLOWED HOSTS (외부 계약 기준)
 # ==================================================
-
 ALLOWED_HOSTS = [
     "hakwonplus.com",
     "www.hakwonplus.com",
@@ -36,9 +32,8 @@ ALLOWED_HOSTS = [
 ]
 
 # ==================================================
-# CORS (Frontend ↔ API 계약)
+# CORS
 # ==================================================
-
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     "https://hakwonplus.com",
@@ -50,10 +45,13 @@ CORS_ALLOWED_ORIGINS = [
 ]
 CORS_ALLOW_CREDENTIALS = True
 
+# 🔥 추가: tenant header 허용
+from corsheaders.defaults import default_headers
+CORS_ALLOW_HEADERS = list(default_headers) + ["X-Tenant-Code"]
+
 # ==================================================
 # CSRF
 # ==================================================
-
 CSRF_TRUSTED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
@@ -63,68 +61,47 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # ==================================================
-# API BASE (🔥 중요)
+# API BASE
 # ==================================================
-
 API_BASE_URL = "https://api.hakwonplus.com"
 
 # ==================================================
 # ✅ MULTI TENANT (PROD 운영 기준)
 # ==================================================
-
 TENANT_STRICT = True
 TENANT_HEADER_NAME = os.environ.get("TENANT_HEADER_NAME", TENANT_HEADER_NAME)
-# ✅ 최소 수정: prod에서도 기본 tenant 풀백 제거
-TENANT_DEFAULT_CODE = None
+TENANT_DEFAULT_CODE = None  # 🔥 풀백 제거
 
 # ==================================================
-# LOGGING (운영 최소 기준)
+# LOGGING
 # ==================================================
-
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "formatters": {
-        "simple": {
-            "format": "[{levelname}] {asctime} {name}: {message}",
-            "style": "{",
-        },
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "simple",
-        },
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "INFO",
-    },
+    "formatters": {"simple": {"format": "[{levelname}] {asctime} {name}: {message}", "style": "{"}},
+    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "simple"}},
+    "root": {"handlers": ["console"], "level": "INFO"},
 }
 
 # ==================================================
 # STATIC / MEDIA
 # ==================================================
-
 STATICFILES_STORAGE = "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"
 
 # ==================================================
 # WORKER SAFETY GUARD
 # ==================================================
-
 INTERNAL_WORKER_TOKEN = os.environ.get("INTERNAL_WORKER_TOKEN", "")
 AI_WORKER_INSTANCE_ID = None
 VIDEO_WORKER_INSTANCE_ID = None
 
 # ==================================================
-# FINAL ASSERTIONS (운영 안정성)
+# FINAL ASSERTIONS
 # ==================================================
-
 assert DEBUG is False, "prod.py must run with DEBUG=False"
 assert API_BASE_URL.startswith("https://"), "API_BASE_URL must be external HTTPS URL"
 
 # ==================================================
-# REDIS 레가시 버그 방지
+# REDIS
 # ==================================================
-
 REDIS_URL = os.getenv("REDIS_URL")
