@@ -216,13 +216,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = Session.objects.get(id=session_id)
+        session = Session.objects.select_related("lecture", "lecture__tenant").get(id=session_id)
+        tenant_code = session.lecture.tenant.code
         order = (
             session.videos.aggregate(max_order=models.Max("order")).get("max_order") or 0
         ) + 1
 
         ext = filename.split(".")[-1].lower() if "." in filename else "mp4"
-        key = f"videos/{session_id}/{uuid4()}.{ext}"
+        key = f"videos/{tenant_code}/{session_id}/{uuid4()}.{ext}"
 
         video = Video.objects.create(
             session=session,
