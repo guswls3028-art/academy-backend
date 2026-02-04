@@ -2825,7 +2825,7 @@ class VideoWorkerClaimNextView(APIView):
       GET  /.../internal/video-worker/next/   (compat alias)
 
     Returns:
-      200 { "job": { video_id, file_key } }
+      200 { "job": { video_id, file_key, tenant_code } }
       204 no content
 
     ✅ SSOT:
@@ -2857,8 +2857,18 @@ class VideoWorkerClaimNextView(APIView):
         if video is None:
             return JsonResponse({}, status=204)
 
+        # ✅ tenant context (R2 / HLS path isolation)
+        lecture = video.session.lecture
+        tenant = lecture.tenant
+
         return JsonResponse(
-            {"job": {"video_id": int(video.id), "file_key": str(video.file_key or "")}},
+            {
+                "job": {
+                    "video_id": int(video.id),
+                    "file_key": str(video.file_key or ""),
+                    "tenant_code": str(tenant.code),
+                }
+            },
             status=200,
         )
 
@@ -4204,13 +4214,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = Session.objects.get(id=session_id)
+        session = Session.objects.select_related("lecture", "lecture__tenant").get(id=session_id)
+        tenant_code = session.lecture.tenant.code
         order = (
             session.videos.aggregate(max_order=models.Max("order")).get("max_order") or 0
         ) + 1
 
         ext = filename.split(".")[-1].lower() if "." in filename else "mp4"
-        key = f"videos/{session_id}/{uuid4()}.{ext}"
+        key = f"videos/{tenant_code}/{session_id}/{uuid4()}.{ext}"
 
         video = Video.objects.create(
             session=session,

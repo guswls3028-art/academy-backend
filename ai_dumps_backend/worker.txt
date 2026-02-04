@@ -3325,26 +3325,29 @@ def _build_source_url_from_file_key(*, file_key: str) -> str:
         raise RuntimeError(f"presigned_get_failed:{trim_tail(str(e))}") from e
 
 
-def _hls_r2_prefix(cfg: Config, video_id: int) -> str:
-    base = (cfg.R2_PREFIX or "media/hls/videos").strip("/")
-    return f"{base}/{int(video_id)}"
+def _hls_r2_prefix(cfg: Config, tenant_code: str, video_id: int) -> str:
+    base = (cfg.R2_PREFIX or "media/hls").strip("/")
+    return f"{base}/{tenant_code}/videos/{int(video_id)}"
 
 
-def _hls_master_relpath(cfg: Config, video_id: int) -> str:
-    return f"{_hls_r2_prefix(cfg, video_id)}/master.m3u8"
+def _hls_master_relpath(cfg: Config, tenant_code: str, video_id: int) -> str:
+    return f"{_hls_r2_prefix(cfg, tenant_code, video_id)}/master.m3u8"
 
 
 def process_video_job(*, job: Dict[str, Any], cfg: Config, client: VideoAPIClient) -> None:
     """
     main.py 계약:
     - process_video_job(job=job, cfg=cfg, client=client)
-    - job은 dict이며, 최소 {"video_id": int, "file_key": str} 기대
+    - job은 dict이며, 최소 {"video_id": int, "file_key": str, "tenant_code": str} 기대
     """
     video_id = _safe_int(job.get("video_id"))
     file_key = (job.get("file_key") or "").strip()
+    tenant_code = (job.get("tenant_code") or "").strip()
 
     if not video_id:
         raise KeyError("video_id")
+    if not tenant_code:
+        raise KeyError("tenant_code")
 
     # single-host idempotency lock
     lock = None
@@ -3426,7 +3429,7 @@ def process_video_job(*, job: Dict[str, Any], cfg: Config, client: VideoAPIClien
             upload_directory(
                 local_dir=out_dir,
                 bucket=cfg.R2_BUCKET,
-                prefix=_hls_r2_prefix(cfg, int(video_id)),
+                prefix=_hls_r2_prefix(cfg, tenant_code, int(video_id)),
                 endpoint_url=cfg.R2_ENDPOINT,
                 access_key=cfg.R2_ACCESS_KEY,
                 secret_key=cfg.R2_SECRET_KEY,
@@ -3441,7 +3444,7 @@ def process_video_job(*, job: Dict[str, Any], cfg: Config, client: VideoAPIClien
         client.notify_complete(
             int(video_id),
             {
-                "hls_path": _hls_master_relpath(cfg, int(video_id)),
+                "hls_path": _hls_master_relpath(cfg, tenant_code, int(video_id)),
                 "duration": int(duration),
             },
         )
