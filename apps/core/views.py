@@ -1,5 +1,4 @@
-# apps/core/views.py
-
+# PATH: apps/core/views.py
 from datetime import datetime
 from django.db.models import Sum
 
@@ -12,6 +11,10 @@ from rest_framework.response import Response
 from drf_yasg.utils import swagger_auto_schema
 
 from apps.core.models import Attendance, Expense
+from apps.core.permissions import (
+    TenantResolvedAndMember,
+    TenantResolvedAndStaff,
+)
 from apps.core.serializers import (
     UserSerializer,
     ProfileSerializer,
@@ -25,22 +28,29 @@ from apps.core.serializers import (
 # --------------------------------------------------
 
 class MeView(APIView):
-    permission_classes = [IsAuthenticated]
+    """
+    인증 + 테넌트 확정 + 멤버십 존재 확인
+    (role 비해석)
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     @swagger_auto_schema(auto_schema=None)
     def get(self, request):
-        print("AUTH HEADER:", request.headers.get("Authorization"))
-        print("USER:", request.user, request.user.is_authenticated)
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
 
 # --------------------------------------------------
-# Profile
+# Profile (Staff 영역)
 # --------------------------------------------------
 
 class ProfileViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    """
+    직원/강사/관리자 전용 Profile API
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     @swagger_auto_schema(auto_schema=None)
     @action(detail=False, methods=["get"])
@@ -79,18 +89,26 @@ class ProfileViewSet(viewsets.ViewSet):
 
 
 # --------------------------------------------------
-# Attendance
+# Attendance (Staff 전용)
 # --------------------------------------------------
 
 class MyAttendanceViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    """
+    직원 근태 관리 (tenant 단위 격리)
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     serializer_class = AttendanceSerializer
 
     def get_queryset(self):
         user = self.request.user
+        tenant = getattr(self.request, "tenant", None)
         month = self.request.query_params.get("month")
 
-        qs = Attendance.objects.filter(user=user)
+        qs = Attendance.objects.filter(
+            user=user,
+            tenant=tenant,
+        )
 
         if month:
             qs = qs.filter(date__startswith=month)
@@ -99,6 +117,7 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = self.request.user
+        tenant = getattr(self.request, "tenant", None)
 
         start = self.request.data.get("start_time")
         end = self.request.data.get("end_time")
@@ -114,6 +133,7 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
         amount = int(duration * hourly)
 
         serializer.save(
+            tenant=tenant,
             user=user,
             duration_hours=duration,
             amount=amount,
@@ -123,9 +143,13 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):
         user = request.user
+        tenant = getattr(request, "tenant", None)
         month = self.request.query_params.get("month")
 
-        qs = Attendance.objects.filter(user=user)
+        qs = Attendance.objects.filter(
+            user=user,
+            tenant=tenant,
+        )
 
         if month:
             qs = qs.filter(date__startswith=month)
@@ -134,26 +158,36 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
         total_amount = qs.aggregate(Sum("amount"))["amount__sum"] or 0
         after_tax = int(total_amount * 0.967)
 
-        return Response({
-            "total_hours": total_hours,
-            "total_amount": total_amount,
-            "total_after_tax": after_tax,
-        })
+        return Response(
+            {
+                "total_hours": total_hours,
+                "total_amount": total_amount,
+                "total_after_tax": after_tax,
+            }
+        )
 
 
 # --------------------------------------------------
-# Expense
+# Expense (Staff 전용)
 # --------------------------------------------------
 
 class MyExpenseViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    """
+    직원 지출 관리 (tenant 단위 격리)
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     serializer_class = ExpenseSerializer
 
     def get_queryset(self):
         user = self.request.user
+        tenant = getattr(self.request, "tenant", None)
         month = self.request.query_params.get("month")
 
-        qs = Expense.objects.filter(user=user)
+        qs = Expense.objects.filter(
+            user=user,
+            tenant=tenant,
+        )
 
         if month:
             qs = qs.filter(date__startswith=month)
@@ -161,4 +195,8 @@ class MyExpenseViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        tenant = getattr(self.request, "tenant", None)
+        serializer.save(
+            tenant=tenant,
+            user=self.request.user,
+        )

@@ -1,5 +1,6 @@
+# ======================================================================
 # PATH: apps/api/config/settings/base.py
-
+# ======================================================================
 from pathlib import Path
 from datetime import timedelta
 import os
@@ -25,6 +26,38 @@ AWS_DEFAULT_REGION = os.getenv("AWS_DEFAULT_REGION", AWS_REGION)
 
 AI_WORKER_INSTANCE_ID = os.getenv("AI_WORKER_INSTANCE_ID")
 VIDEO_WORKER_INSTANCE_ID = os.getenv("VIDEO_WORKER_INSTANCE_ID")
+
+# ==================================================
+# ✅ MULTI TENANT (SSOT)  --- Enterprise baseline
+# ==================================================
+# - Header 기반 테넌트 분리
+# - 단일 테넌트(dev/초기) 즉시 동작:
+#     * TENANT_DEFAULT_CODE 있으면 그걸 사용
+#     * 없으면 active tenant가 1개면 자동 선택
+# - 멀티 테넌트 운영에서 강제하려면:
+#     * prod.py 에서 TENANT_STRICT=True 권장
+TENANT_HEADER_NAME = os.getenv("TENANT_HEADER_NAME", "X-Tenant-Code")
+TENANT_QUERY_PARAM_NAME = os.getenv("TENANT_QUERY_PARAM_NAME", "tenant")
+
+# optional: dev/초기 운영에서 header 없이 기본 tenant 지정
+TENANT_DEFAULT_CODE = os.getenv("TENANT_DEFAULT_CODE", "")
+
+# strict: tenant 미지정 시 400 (멀티테넌트 운영에서는 True 권장)
+TENANT_STRICT = os.getenv("TENANT_STRICT", "false").lower() == "true"
+
+# inactive tenant 허용 여부 (운영에서는 False 유지)
+TENANT_ALLOW_INACTIVE = os.getenv("TENANT_ALLOW_INACTIVE", "false").lower() == "true"
+
+# 테넌트 없어도 되는 prefix (기존 호환/내부 워커 보장)
+TENANT_BYPASS_PATH_PREFIXES = [
+    "/admin/",
+    "/api/v1/token/",
+    "/api/v1/token/refresh/",
+    "/internal/",
+    "/api/v1/internal/",
+    "/swagger",
+    "/redoc",
+]
 
 # ==================================================
 # ALLOWED HOSTS
@@ -132,17 +165,21 @@ INSTALLED_APPS = [
 # ==================================================
 # MIDDLEWARE
 # ==================================================
-
+# ✅ TenantMiddleware는 "뷰 실행 전에" tenant가 확정되어야 하므로
+# 가능한 한 앞쪽(세션/커먼 이후)에 둔다.
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+
+    # ✅ Tenant must be resolved before auth/views use request.tenant
+    "apps.core.middleware.tenant.TenantMiddleware",
+
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "apps.core.middleware.tenant.TenantMiddleware",
 ]
 
 # ==================================================

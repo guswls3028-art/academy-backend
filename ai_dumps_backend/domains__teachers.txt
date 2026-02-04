@@ -38,11 +38,23 @@ class TeachersConfig(AppConfig):
 ==========================================================================================
 # FILE: models.py
 ==========================================================================================
+# PATH: apps/domains/teachers/models.py
 from django.db import models
 from apps.api.common.models import TimestampModel
+from apps.core.models import Tenant
+from apps.core.db import TenantQuerySet
 
 
 class Teacher(TimestampModel):
+    # 🔐 tenant-safe manager
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="teachers",
+    )
+
     name = models.CharField(max_length=50)
     phone = models.CharField(max_length=20, null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
@@ -86,11 +98,12 @@ class TeacherSerializer(serializers.ModelSerializer):
 ==========================================================================================
 # FILE: urls.py
 ==========================================================================================
+# PATH: apps/domains/teachers/urls.py
 from rest_framework.routers import DefaultRouter
 from .views import TeacherViewSet
 
 router = DefaultRouter()
-router.register(r"", TeacherViewSet)
+router.register(r"", TeacherViewSet, basename="teacher")
 
 urlpatterns = router.urls
 
@@ -98,14 +111,17 @@ urlpatterns = router.urls
 ==========================================================================================
 # FILE: views.py
 ==========================================================================================
+# PATH: apps/domains/teachers/views.py
 from rest_framework.viewsets import ModelViewSet
 from .models import Teacher
 from .serializers import TeacherSerializer
 
 
 class TeacherViewSet(ModelViewSet):
-    queryset = Teacher.objects.all()
     serializer_class = TeacherSerializer
+
+    def get_queryset(self):
+        return Teacher.objects.filter(tenant=self.request.tenant)
 
 
 ==========================================================================================
@@ -147,6 +163,106 @@ class Migration(migrations.Migration):
             options={
                 "ordering": ["-id"],
             },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0002_add_teacher_tenant.py
+==========================================================================================
+# PATH: apps/domains/teachers/migrations/0002_add_teacher_tenant.py
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0001_initial"),
+        ("teachers", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="teacher",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="teachers",
+                to="core.tenant",
+                null=True,
+                blank=True,
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0003_backfill_teacher_tenant.py
+==========================================================================================
+# PATH: apps/domains/teachers/migrations/0003_backfill_teacher_tenant.py
+from __future__ import annotations
+
+from django.db import migrations
+
+
+def backfill_teacher_tenant(apps, schema_editor):
+    Tenant = apps.get_model("core", "Tenant")
+    Teacher = apps.get_model("teachers", "Teacher")
+
+    if not Teacher.objects.filter(tenant__isnull=True).exists():
+        return
+
+    active_qs = Tenant.objects.filter(is_active=True).order_by("id")
+    active_count = active_qs.count()
+
+    if active_count == 1:
+        tenant = active_qs.first()
+        Teacher.objects.filter(tenant__isnull=True).update(tenant=tenant)
+        return
+
+    raise RuntimeError(
+        "Cannot auto-backfill tenant for teachers.Teacher: "
+        f"active_tenant_count={active_count}, but tenant NULL rows exist."
+    )
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("teachers", "0002_add_teacher_tenant"),
+    ]
+
+    operations = [
+        migrations.RunPython(backfill_teacher_tenant, migrations.RunPython.noop),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0004_make_teacher_tenant_not_null.py
+==========================================================================================
+# PATH: apps/domains/teachers/migrations/0004_make_teacher_tenant_not_null.py
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("teachers", "0003_backfill_teacher_tenant"),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="teacher",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="teachers",
+                to="core.tenant",
+                null=False,
+                blank=False,
+            ),
         ),
     ]
 

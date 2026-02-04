@@ -166,6 +166,7 @@ from django.conf import settings
 
 from apps.api.common.models import TimestampModel
 from apps.domains.students.models import Student
+from apps.core.models import Tenant
 
 
 # --------------------------------------------------
@@ -173,18 +174,20 @@ from apps.domains.students.models import Student
 # --------------------------------------------------
 
 class Session(TimestampModel):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="clinic_sessions",
+    )
+
     date = models.DateField()
     start_time = models.TimeField()
 
-    # ✅ [ADD] 수업 소요 시간 (분 단위)
-    # - 종료시간은 저장하지 않음 (파생값)
-    # - 기존 데이터 안정성 확보를 위해 default=60
     duration_minutes = models.PositiveIntegerField(default=60)
 
     location = models.CharField(max_length=255)
     max_participants = models.PositiveIntegerField()
 
-    # ✅ [ADD] 생성자 (운영/감사 추적용)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -193,29 +196,43 @@ class Session(TimestampModel):
         related_name="created_clinic_sessions",
     )
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "date", "start_time", "location"],
+                name="uniq_clinic_session_per_tenant_time_location",
+            )
+        ]
+
     def __str__(self):
         return f"{self.date} {self.start_time} @ {self.location}"
 
 
 # --------------------------------------------------
-# Session Participant (✅ SaaS 운영 상태 확장)
+# Session Participant
 # --------------------------------------------------
 
 class SessionParticipant(TimestampModel):
     class Status(models.TextChoices):
-        BOOKED = "booked", "Booked"         # 예약됨
-        ATTENDED = "attended", "Attended"   # 출석(수업 완료)
-        NO_SHOW = "no_show", "NoShow"       # 미이행(예약했지만 수업 성립 X)
-        CANCELLED = "cancelled", "Cancelled"  # 취소
+        BOOKED = "booked", "Booked"
+        ATTENDED = "attended", "Attended"
+        NO_SHOW = "no_show", "NoShow"
+        CANCELLED = "cancelled", "Cancelled"
 
     class Source(models.TextChoices):
-        AUTO = "auto", "Auto"       # 자동(Results 판정)
-        MANUAL = "manual", "Manual" # 수동 등록
+        AUTO = "auto", "Auto"
+        MANUAL = "manual", "Manual"
 
     class Reason(models.TextChoices):
         EXAM = "exam", "Exam"
         HOMEWORK = "homework", "Homework"
         BOTH = "both", "Both"
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="clinic_participants",
+    )
 
     session = models.ForeignKey(
         Session,
@@ -228,14 +245,12 @@ class SessionParticipant(TimestampModel):
         related_name="clinic_participations",
     )
 
-    # ✅ 운영 상태
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
         default=Status.BOOKED,
     )
 
-    # ✅ Results 연계 메타 (판정은 results 단일진실, clinic은 “기록/추적”만)
     source = models.CharField(
         max_length=20,
         choices=Source.choices,
@@ -249,14 +264,12 @@ class SessionParticipant(TimestampModel):
         blank=True,
     )
 
-    # ✅ [ADD] 대상자 / 수동 구분
     participant_role = models.CharField(
         max_length=20,
         choices=(("target", "Target"), ("manual", "Manual")),
         default="target",
     )
 
-    # ✅ [ADD] 상태 변경 로그
     status_changed_at = models.DateTimeField(null=True, blank=True)
     status_changed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -266,14 +279,18 @@ class SessionParticipant(TimestampModel):
         related_name="clinic_participant_status_changes",
     )
 
-    # ✅ [ADD] 출석 확장 대비
     checked_in_at = models.DateTimeField(null=True, blank=True)
     is_late = models.BooleanField(default=False)
 
     memo = models.TextField(blank=True, null=True)
 
     class Meta:
-        unique_together = ("session", "student")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "session", "student"],
+                name="uniq_clinic_participant_per_tenant",
+            )
+        ]
         ordering = ["-created_at"]
 
     def __str__(self):
@@ -285,6 +302,12 @@ class SessionParticipant(TimestampModel):
 # --------------------------------------------------
 
 class Test(TimestampModel):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="clinic_tests",
+    )
+
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
@@ -296,24 +319,32 @@ class Test(TimestampModel):
 
     class Meta:
         ordering = ["-date", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "session", "round"],
+                name="uniq_clinic_test_per_tenant_session_round",
+            )
+        ]
 
     def __str__(self):
         return f"{self.title} ({self.round}차)"
 
 
 # --------------------------------------------------
-# Submission Upload Path
+# Submission
 # --------------------------------------------------
 
 def submission_upload_path(instance, filename):
     return f"clinic/submissions/{instance.student_id}/{instance.test_id}/{filename}"
 
 
-# --------------------------------------------------
-# Submission
-# --------------------------------------------------
-
 class Submission(TimestampModel):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="clinic_submissions",
+    )
+
     test = models.ForeignKey(
         Test,
         on_delete=models.CASCADE,
@@ -338,12 +369,15 @@ class Submission(TimestampModel):
         default="pending",
     )
     remark = models.TextField(blank=True, null=True)
-
-    # ✅ [ADD] 채점 완료 시각
     graded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        unique_together = ("test", "student")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "test", "student"],
+                name="uniq_clinic_submission_per_tenant",
+            )
+        ]
         ordering = ["-created_at"]
 
     def __str__(self):
@@ -542,8 +576,10 @@ class SessionViewSet(viewsets.ModelViewSet):
     ordering = ["-date", "-start_time"]
 
     def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
         return (
-            Session.objects.all()
+            Session.objects
+            .filter(tenant=tenant)
             .annotate(
                 participant_count=Count("participants"),
                 booked_count=Count(
@@ -576,10 +612,11 @@ class SessionViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """
         ✅ created_by 자동 기록 (운영/감사 기준)
-        - 0004 이후 created_by 필드 존재 전제
-        - 아직 migrate 전이라도 코드 반영은 무해함
         """
-        serializer.save(created_by=self.request.user)
+        serializer.save(
+            tenant=getattr(self.request, "tenant", None),
+            created_by=self.request.user,
+        )
 
     @action(detail=True, methods=["post"])
     def send_reminder(self, request, pk=None):
@@ -601,6 +638,8 @@ class SessionViewSet(viewsets.ModelViewSet):
         - 운영 페이지 좌측 트리 전용
         - serializer 우회 (UI 최적화 목적)
         """
+        tenant = getattr(request, "tenant", None)
+
         year = request.query_params.get("year")
         month = request.query_params.get("month")
 
@@ -612,7 +651,11 @@ class SessionViewSet(viewsets.ModelViewSet):
 
         qs = (
             Session.objects
-            .filter(date__year=year, date__month=month)
+            .filter(
+                tenant=tenant,
+                date__year=year,
+                date__month=month,
+            )
             .annotate(
                 participant_count=Count("participants"),
                 booked_count=Count(
@@ -659,10 +702,11 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
         return (
             SessionParticipant.objects
+            .filter(tenant=tenant)
             .select_related("student", "session", "status_changed_by")
-            .all()
         )
 
     def get_serializer_class(self):
@@ -674,6 +718,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         """
         ✅ 예약 생성
         """
+        tenant = getattr(request, "tenant", None)
+
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -683,6 +729,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         source = serializer.validated_data.get("source")
 
         exists = SessionParticipant.objects.filter(
+            tenant=tenant,
             session=session,
             student=student,
         ).exists()
@@ -692,18 +739,17 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        # ✅ participant_role 자동 판정 (운영/감사 정합성)
-        # - MANUAL 등록이면 manual, 그 외(auto/default)는 target
-        # - 아직 migrate 전이라도 코드 반영은 무해함
         participant_role = (
             "manual"
             if source == SessionParticipant.Source.MANUAL
             else "target"
         )
 
-        obj = serializer.save(participant_role=participant_role)
+        obj = serializer.save(
+            tenant=tenant,
+            participant_role=participant_role,
+        )
 
-        # 자동 클리닉 링크 해제
         if enrollment_id:
             ClinicLink.objects.filter(
                 session=session,
@@ -752,7 +798,6 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             ]
         )
 
-        # NO_SHOW / CANCELLED → 클리닉 링크 복구
         if next_status in {
             SessionParticipant.Status.NO_SHOW,
             SessionParticipant.Status.CANCELLED,
@@ -768,9 +813,6 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         ).data
         return Response(out)
 
-    # ------------------------------------------------------------
-    # 운영 UI 편의 API
-    # ------------------------------------------------------------
     @action(detail=False, methods=["get"])
     def by_session(self, request):
         """
@@ -799,7 +841,11 @@ class TestViewSet(viewsets.ModelViewSet):
     ordering = ["-date", "-created_at"]
 
     def get_queryset(self):
-        return Test.objects.select_related("session").all()
+        tenant = getattr(self.request, "tenant", None)
+        return Test.objects.filter(tenant=tenant).select_related("session")
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=getattr(self.request, "tenant", None))
 
 
 # ============================================================
@@ -814,9 +860,15 @@ class SubmissionViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        return Submission.objects.select_related(
-            "student", "test", "test__session"
-        ).all()
+        tenant = getattr(self.request, "tenant", None)
+        return (
+            Submission.objects
+            .filter(tenant=tenant)
+            .select_related("student", "test", "test__session")
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=getattr(self.request, "tenant", None))
 
 
 ==========================================================================================
@@ -1223,6 +1275,178 @@ class Migration(migrations.Migration):
                 on_delete=django.db.models.deletion.SET_NULL,
                 related_name="clinic_participant_status_changes",
                 to=settings.AUTH_USER_MODEL,
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0007_add_tenant_to_clinic_domain.py
+==========================================================================================
+# PATH: apps/domains/clinic/migrations/0007_add_tenant_to_clinic_domain.py
+
+from django.db import migrations, models
+import django.db.models.deletion
+from django.conf import settings
+
+
+def forwards_fill_tenant(apps, schema_editor):
+    """
+    기존 clinic 데이터 tenant 백필
+    """
+    Tenant = apps.get_model("core", "Tenant")
+
+    default_tenant_id = getattr(settings, "DEFAULT_TENANT_ID", None)
+
+    if default_tenant_id:
+        tenant = Tenant.objects.filter(id=default_tenant_id).first()
+    else:
+        tenant = Tenant.objects.order_by("id").first()
+
+    if tenant is None:
+        raise RuntimeError("Tenant not found. Cannot backfill clinic.tenant")
+
+    Session = apps.get_model("clinic", "Session")
+    SessionParticipant = apps.get_model("clinic", "SessionParticipant")
+    Test = apps.get_model("clinic", "Test")
+    Submission = apps.get_model("clinic", "Submission")
+
+    Session.objects.filter(tenant__isnull=True).update(tenant=tenant)
+    SessionParticipant.objects.filter(tenant__isnull=True).update(tenant=tenant)
+    Test.objects.filter(tenant__isnull=True).update(tenant=tenant)
+    Submission.objects.filter(tenant__isnull=True).update(tenant=tenant)
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("clinic", "0006_alter_session_created_by_and_more"),
+        ("core", "0001_initial"),
+    ]
+
+    operations = [
+        # -------------------------------------------------
+        # 1. tenant 필드 추가 (NULL 허용)
+        # -------------------------------------------------
+        migrations.AddField(
+            model_name="session",
+            name="tenant",
+            field=models.ForeignKey(
+                null=True,
+                blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="clinic_sessions",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddField(
+            model_name="sessionparticipant",
+            name="tenant",
+            field=models.ForeignKey(
+                null=True,
+                blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="clinic_participants",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddField(
+            model_name="test",
+            name="tenant",
+            field=models.ForeignKey(
+                null=True,
+                blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="clinic_tests",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddField(
+            model_name="submission",
+            name="tenant",
+            field=models.ForeignKey(
+                null=True,
+                blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="clinic_submissions",
+                to="core.tenant",
+            ),
+        ),
+
+        # -------------------------------------------------
+        # 2. tenant 데이터 백필
+        # -------------------------------------------------
+        migrations.RunPython(forwards_fill_tenant, migrations.RunPython.noop),
+
+        # -------------------------------------------------
+        # 3. tenant NOT NULL 전환
+        # -------------------------------------------------
+        migrations.AlterField(
+            model_name="session",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="clinic_sessions",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AlterField(
+            model_name="sessionparticipant",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="clinic_participants",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AlterField(
+            model_name="test",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="clinic_tests",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AlterField(
+            model_name="submission",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="clinic_submissions",
+                to="core.tenant",
+            ),
+        ),
+
+        # -------------------------------------------------
+        # 4. tenant 포함 신규 제약만 추가 (기존 제약 제거 ❌)
+        # -------------------------------------------------
+        migrations.AddConstraint(
+            model_name="session",
+            constraint=models.UniqueConstraint(
+                fields=["tenant", "date", "start_time", "location"],
+                name="uniq_clinic_session_per_tenant_time_location",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="sessionparticipant",
+            constraint=models.UniqueConstraint(
+                fields=["tenant", "session", "student"],
+                name="uniq_clinic_participant_per_tenant",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="test",
+            constraint=models.UniqueConstraint(
+                fields=["tenant", "session", "round"],
+                name="uniq_clinic_test_per_tenant_session_round",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="submission",
+            constraint=models.UniqueConstraint(
+                fields=["tenant", "test", "student"],
+                name="uniq_clinic_submission_per_tenant",
             ),
         ),
     ]

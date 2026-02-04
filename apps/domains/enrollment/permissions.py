@@ -1,3 +1,5 @@
+# PATH: apps/domains/enrollment/permissions.py
+
 from rest_framework.permissions import BasePermission
 from apps.domains.enrollment.models import Enrollment
 
@@ -5,6 +7,7 @@ from apps.domains.enrollment.models import Enrollment
 class HasEnrollmentAccess(BasePermission):
     """
     학생이 해당 Enrollment(수강 정보)에 접근 가능한지 검증
+    (tenant 기준 강제)
     """
     message = "You do not have access to this enrollment."
 
@@ -14,7 +17,6 @@ class HasEnrollmentAccess(BasePermission):
         if not user or not user.is_authenticated:
             return False
 
-        # IsStudent에서 이미 student_profile 보장됨
         student = getattr(user, "student_profile", None)
         if not student:
             return False
@@ -26,8 +28,11 @@ class HasEnrollmentAccess(BasePermission):
         if not enrollment_id:
             return False
 
+        tenant = getattr(request, "tenant", None)
+
         return Enrollment.objects.filter(
             id=enrollment_id,
             student=student,
-            status="ACTIVE",  # ✅ 여기만 핵심 수정
+            tenant=tenant,          # ✅ tenant 안전장치
+            status="ACTIVE",
         ).exists()

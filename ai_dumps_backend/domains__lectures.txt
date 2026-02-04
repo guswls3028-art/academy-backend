@@ -13,18 +13,17 @@
 ==========================================================================================
 # FILE: admin.py
 ==========================================================================================
+# PATH: apps/domains/lectures/admin.py
+
 from django.contrib import admin
 from .models import Lecture, Session
 
-
-# --------------------------------------------------
-# Lecture
-# --------------------------------------------------
 
 @admin.register(Lecture)
 class LectureAdmin(admin.ModelAdmin):
     list_display = (
         "id",
+        "tenant",
         "title",
         "name",
         "subject",
@@ -33,47 +32,27 @@ class LectureAdmin(admin.ModelAdmin):
         "is_active",
     )
     list_display_links = ("id", "title")
-    list_filter = ("is_active", "subject")
+    list_filter = ("tenant", "is_active", "subject")
     search_fields = ("title", "name", "subject")
     ordering = ("-id",)
 
 
-# --------------------------------------------------
-# Session
-# --------------------------------------------------
-
 @admin.register(Session)
 class SessionAdmin(admin.ModelAdmin):
-    """
-    Session Admin (차시 관리)
-
-    ⚠️ 중요:
-    - Session.exam FK는 제거됨
-    - 시험은 Exam.sessions (ManyToMany)로만 연결됨
-    - admin에서는 '시험 개수 / 요약'만 노출
-    """
-
     list_display = (
         "id",
         "lecture",
         "order",
         "title",
         "date",
-        "exam_count",     # ✅ 대체 컬럼
+        "exam_count",
     )
     list_display_links = ("id", "title")
     list_filter = ("lecture",)
     search_fields = ("title",)
     ordering = ("lecture", "order")
 
-    # --------------------------------------------
-    # ✅ 연결된 시험 개수 표시
-    # --------------------------------------------
-    def exam_count(self, obj: Session) -> int:
-        """
-        이 차시에 연결된 시험 개수
-        (Exam.sessions M2M 기준)
-        """
+    def exam_count(self, obj):
         return obj.exams.count()
 
     exam_count.short_description = "시험 수"
@@ -195,20 +174,26 @@ class AttendanceFilter(django_filters.FilterSet):
 
 from django.db import models
 from apps.api.common.models import TimestampModel
+from apps.core.models import Tenant
+from apps.core.db import TenantQuerySet  # ✅ 추가
 
-
-# ========================================================
-# Lecture
-# ========================================================
 
 class Lecture(TimestampModel):
     """
     강의 (Course / Lecture)
 
+    - 학원(Tenant) 단위로 완전 분리
     - 여러 Session(차시)을 가진다
-    - 시험과 직접 연결되지 않는다
-      (시험은 Session 단위로 운영됨)
     """
+
+    # 🔐 tenant-safe manager
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="lectures",
+    )
 
     title = models.CharField(max_length=255)
     name = models.CharField(max_length=255)
@@ -220,55 +205,27 @@ class Lecture(TimestampModel):
 
     is_active = models.BooleanField(default=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "title"],
+                name="uniq_lecture_title_per_tenant",
+            )
+        ]
+
     def __str__(self):
         return self.title
 
 
-# ========================================================
-# Session
-# ========================================================
-
 class Session(TimestampModel):
-    """
-    차시 (Session)
-
-    🔥 핵심 설계 결정 (중요):
-
-    ❌ Session.exam (ForeignKey) 제거
-    ✅ Exam.sessions (ManyToManyField) 를 단일 진실로 사용
-
-    이유:
-    - Session : Exam = 1:N / N:M 구조 공식 지원
-    - "차시에 시험이 1개"라는 암묵적 가정 제거
-    - 성적/Progress/통계 로직의 안정성 확보
-    - Django reverse accessor 충돌(E302/E303) 해결
-
-    연결 방식:
-    - Session → Exam:
-        session.exams.all()        (reverse M2M)
-    - Exam → Session:
-        exam.sessions.all()        (정방향 M2M)
-
-    ⚠️ 주의:
-    - "이 차시에 시험이 있었는가?"
-        → SessionProgress.exam_attempted 로 판단
-    - "시험 결과 / 합불 / 점수"
-        → Result + Progress 집계 책임
-    """
-
     lecture = models.ForeignKey(
         Lecture,
         on_delete=models.CASCADE,
         related_name="sessions",
     )
 
-    # 차시 순서 (1차시, 2차시 ...)
     order = models.PositiveIntegerField()
-
-    # 차시 제목
     title = models.CharField(max_length=255)
-
-    # 차시 날짜 (선택)
     date = models.DateField(null=True, blank=True)
 
     class Meta:
@@ -287,10 +244,6 @@ from rest_framework import serializers
 from .models import Lecture, Session
 
 
-# ========================================================
-# Lecture
-# ========================================================
-
 class LectureSerializer(serializers.ModelSerializer):
     class Meta:
         model = Lecture
@@ -298,16 +251,7 @@ class LectureSerializer(serializers.ModelSerializer):
         ref_name = "Lecture"
 
 
-# ========================================================
-# Session
-# ========================================================
-
 class SessionSerializer(serializers.ModelSerializer):
-    """
-    ✅ 프론트 표준 계약:
-    - exam: 연결된 시험 ID (nullable)
-    - Session 상세에서 examId는 여기서 가져온다
-    """
     class Meta:
         model = Session
         fields = "__all__"
@@ -346,28 +290,31 @@ urlpatterns = [
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.filters import SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 
 from .models import Lecture, Session
 from .serializers import LectureSerializer, SessionSerializer
 
 
-# ========================================================
-# Lecture
-# ========================================================
-
 class LectureViewSet(ModelViewSet):
-    queryset = Lecture.objects.all()
     serializer_class = LectureSerializer
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["is_active", "subject"]
     search_fields = ["title", "name", "subject"]
 
+    def get_queryset(self):
+        """
+        🔐 tenant 단일 진실
+        """
+        return Lecture.objects.filter(tenant=self.request.tenant)
 
-# ========================================================
-# Session
-# ========================================================
+    def perform_create(self, serializer):
+        """
+        🔐 Lecture 생성 시 tenant 강제 주입
+        """
+        serializer.save(tenant=self.request.tenant)
+
 
 class SessionViewSet(ModelViewSet):
     serializer_class = SessionSerializer
@@ -377,7 +324,11 @@ class SessionViewSet(ModelViewSet):
     search_fields = ["title"]
 
     def get_queryset(self):
-        qs = Session.objects.all()
+        """
+        Session은 lecture를 통해 tenant가 결정됨
+        """
+        qs = Session.objects.select_related("lecture")
+        qs = qs.filter(lecture__tenant=self.request.tenant)
 
         lecture = self.request.query_params.get("lecture")
         if lecture:
@@ -387,47 +338,17 @@ class SessionViewSet(ModelViewSet):
         if date:
             qs = qs.filter(date=date)
 
-        # ✅ 선택: exam_id로도 필터 가능
-        exam = self.request.query_params.get("exam")
-        if exam:
-            qs = qs.filter(exam_id=exam)
-
         return qs.order_by("order", "id")
 
-    def create(self, request, *args, **kwargs):
-        lecture_id = request.data.get("lecture")
-        title = request.data.get("title")
-        date = request.data.get("date")
+    def perform_create(self, serializer):
+        """
+        🔐 Session 생성 시 lecture.tenant 검증
+        """
+        lecture = serializer.validated_data["lecture"]
+        if lecture.tenant_id != self.request.tenant.id:
+            raise PermissionDenied("다른 학원의 강의에는 세션을 추가할 수 없습니다.")
 
-        # ✅ NEW: exam은 optional
-        exam_id = request.data.get("exam")
-
-        if not lecture_id:
-            return Response({"detail": "lecture 필드는 필수입니다"}, status=400)
-        if not title:
-            return Response({"detail": "title 필드는 필수입니다"}, status=400)
-
-        last_session = (
-            Session.objects.filter(lecture_id=lecture_id)
-            .order_by("-order")
-            .first()
-        )
-        next_order = last_session.order + 1 if last_session else 1
-
-        data = {
-            "lecture": lecture_id,
-            "title": title,
-            "date": date,
-            "order": next_order,
-            # ✅ 시험 연결 (없으면 None)
-            "exam": exam_id if exam_id else None,
-        }
-
-        serializer = self.get_serializer(data=data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-
-        return Response(serializer.data, status=201)
+        serializer.save()
 
 
 ==========================================================================================
@@ -535,6 +456,56 @@ class Migration(migrations.Migration):
         migrations.RemoveField(
             model_name="session",
             name="exam",
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0003_add_tenant_to_lecture.py
+==========================================================================================
+# PATH: apps/domains/lectures/migrations/0003_add_tenant_to_lecture.py
+
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("lectures", "0002_remove_session_exam"),
+        ("core", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="lecture",
+            name="tenant",
+            field=models.ForeignKey(
+                to="core.tenant",
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="lectures",
+                null=True,
+            ),
+        ),
+        migrations.RunSQL(
+            sql="UPDATE lectures_lecture SET tenant_id = 1 WHERE tenant_id IS NULL;",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
+        migrations.AlterField(
+            model_name="lecture",
+            name="tenant",
+            field=models.ForeignKey(
+                to="core.tenant",
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="lectures",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="lecture",
+            constraint=models.UniqueConstraint(
+                fields=("tenant", "title"),
+                name="uniq_lecture_title_per_tenant",
+            ),
         ),
     ]
 

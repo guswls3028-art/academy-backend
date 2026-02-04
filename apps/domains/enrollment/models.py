@@ -1,8 +1,11 @@
+# PATH: apps/domains/enrollment/models.py
+
 from django.db import models
 
 from apps.api.common.models import TimestampModel
 from apps.domains.students.models import Student
 from apps.domains.lectures.models import Lecture, Session
+from apps.core.models import Tenant
 
 
 # ========================================================
@@ -13,7 +16,18 @@ class Enrollment(TimestampModel):
     """
     학생이 특정 강의를 수강하는 행위.
     강의 정의(Lecture)와 분리된 '수강 행위' 도메인이다.
+
+    ✅ 운영 기준:
+    - Enrollment는 반드시 tenant 단위로 격리됨
     """
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="enrollments",
+        null=True,      # 🔥 기존 데이터 마이그레이션 안전
+        blank=True,
+    )
 
     student = models.ForeignKey(
         Student,
@@ -41,8 +55,8 @@ class Enrollment(TimestampModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["student", "lecture"],
-                name="unique_enrollment_per_lecture",
+                fields=["tenant", "student", "lecture"],
+                name="unique_enrollment_per_tenant_lecture",
             )
         ]
 
@@ -60,6 +74,14 @@ class SessionEnrollment(models.Model):
     출결/영상/자료 접근의 기준이 되는 중간 테이블.
     """
 
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="session_enrollments",
+        null=True,      # 🔥 기존 데이터 마이그레이션 안전
+        blank=True,
+    )
+
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
@@ -74,7 +96,7 @@ class SessionEnrollment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ("session", "enrollment")
+        unique_together = ("tenant", "session", "enrollment")
 
     def __str__(self):
         return f"{self.session} - {self.enrollment.student.name}"

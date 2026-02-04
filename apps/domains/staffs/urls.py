@@ -16,13 +16,13 @@ from .views import (
 router = DefaultRouter()
 
 # ===========================
-# ⚠️ 서브 리소스 먼저 등록
+# 서브 리소스
 # ===========================
-router.register(r"work-types", WorkTypeViewSet)
-router.register(r"staff-work-types", StaffWorkTypeViewSet)
-router.register(r"work-records", WorkRecordViewSet)
-router.register(r"expense-records", ExpenseRecordViewSet)
-router.register(r"work-month-locks", WorkMonthLockViewSet)
+router.register(r"work-types", WorkTypeViewSet, basename="work-type")
+router.register(r"staff-work-types", StaffWorkTypeViewSet, basename="staff-work-type")
+router.register(r"work-records", WorkRecordViewSet, basename="work-record")
+router.register(r"expense-records", ExpenseRecordViewSet, basename="expense-record")
+router.register(r"work-month-locks", WorkMonthLockViewSet, basename="work-month-lock")
 router.register(
     r"payroll-snapshots",
     PayrollSnapshotViewSet,
@@ -30,9 +30,9 @@ router.register(
 )
 
 # ===========================
-# ⚠️ Staff는 반드시 마지막
+# Staff (루트)
 # ===========================
-router.register(r"", StaffViewSet)
+router.register(r"", StaffViewSet, basename="staff")
 
 urlpatterns = [
     path("", include(router.urls)),

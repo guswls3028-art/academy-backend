@@ -1,4 +1,5 @@
-# apps/domains/attendance/views.py
+# PATH: apps/domains/attendance/views.py
+
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse
@@ -26,21 +27,25 @@ from .utils.excel import build_attendance_excel
 class AttendanceViewSet(ModelViewSet):
     """
     lectures/attendance
-    - 세션 기준 학생 등록
-    - 강의 × 차시 출결 매트릭스
-    - 엑셀 다운로드
     """
 
-    queryset = Attendance.objects.all().select_related(
-        "session",
-        "enrollment",
-        "enrollment__student",
-    )
     serializer_class = AttendanceSerializer
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_class = AttendanceFilter
     search_fields = ["enrollment__student__name"]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        return (
+            Attendance.objects
+            .filter(tenant=tenant)
+            .select_related(
+                "session",
+                "enrollment",
+                "enrollment__student",
+            )
+        )
 
     # =========================================================
     # 1️⃣ 세션 기준 학생 등록
@@ -48,6 +53,8 @@ class AttendanceViewSet(ModelViewSet):
     @transaction.atomic
     @action(detail=False, methods=["post"])
     def bulk_create(self, request):
+        tenant = getattr(request, "tenant", None)
+
         session_id = request.data.get("session")
         student_ids = request.data.get("students", [])
 
@@ -62,17 +69,20 @@ class AttendanceViewSet(ModelViewSet):
 
         for sid in student_ids:
             enrollment, _ = Enrollment.objects.get_or_create(
+                tenant=tenant,
                 student_id=sid,
                 lecture=session.lecture,
                 defaults={"status": "ACTIVE"},
             )
 
             SessionEnrollment.objects.get_or_create(
+                tenant=tenant,
                 enrollment=enrollment,
                 session=session,
             )
 
             attendance, _ = Attendance.objects.get_or_create(
+                tenant=tenant,
                 enrollment=enrollment,
                 session=session,
                 defaults={"status": "PRESENT"},
@@ -90,29 +100,36 @@ class AttendanceViewSet(ModelViewSet):
     # =========================================================
     @action(detail=False, methods=["get"], url_path="matrix")
     def matrix(self, request):
-        lecture_id = request.query_params.get("lecture")
+        tenant = getattr(request, "tenant", None)
 
+        lecture_id = request.query_params.get("lecture")
         if not lecture_id:
             return Response(
                 {"detail": "lecture 파라미터는 필수입니다"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        lecture = get_object_or_404(Lecture, id=lecture_id)
+        lecture = get_object_or_404(
+            Lecture,
+            id=lecture_id,
+            tenant=tenant,
+        )
 
         sessions = Session.objects.filter(
             lecture=lecture
         ).order_by("order", "id")
 
         enrollments = Enrollment.objects.filter(
+            tenant=tenant,
             lecture=lecture,
             status="ACTIVE",
         ).select_related("student").order_by("student__name", "id")
 
         attendances = Attendance.objects.filter(
+            tenant=tenant,
             session__lecture=lecture,
             enrollment__in=enrollments,
-        ).select_related("session", "enrollment")
+        )
 
         attendance_map = {
             (a.enrollment_id, a.session_id): a
@@ -157,8 +174,7 @@ class AttendanceViewSet(ModelViewSet):
                 "students": AttendanceMatrixStudentSerializer(
                     students_payload, many=True
                 ).data,
-            },
-            status=status.HTTP_200_OK,
+            }
         )
 
     # =========================================================
@@ -166,15 +182,20 @@ class AttendanceViewSet(ModelViewSet):
     # =========================================================
     @action(detail=False, methods=["get"], url_path="excel")
     def excel(self, request):
-        lecture_id = request.query_params.get("lecture")
+        tenant = getattr(request, "tenant", None)
 
+        lecture_id = request.query_params.get("lecture")
         if not lecture_id:
             return Response(
                 {"detail": "lecture 파라미터는 필수입니다"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        lecture = get_object_or_404(Lecture, id=lecture_id)
+        lecture = get_object_or_404(
+            Lecture,
+            id=lecture_id,
+            tenant=tenant,
+        )
 
         workbook, filename = build_attendance_excel(lecture)
 

@@ -41,8 +41,10 @@ class SessionViewSet(viewsets.ModelViewSet):
     ordering = ["-date", "-start_time"]
 
     def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
         return (
-            Session.objects.all()
+            Session.objects
+            .filter(tenant=tenant)
             .annotate(
                 participant_count=Count("participants"),
                 booked_count=Count(
@@ -75,10 +77,11 @@ class SessionViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """
         ✅ created_by 자동 기록 (운영/감사 기준)
-        - 0004 이후 created_by 필드 존재 전제
-        - 아직 migrate 전이라도 코드 반영은 무해함
         """
-        serializer.save(created_by=self.request.user)
+        serializer.save(
+            tenant=getattr(self.request, "tenant", None),
+            created_by=self.request.user,
+        )
 
     @action(detail=True, methods=["post"])
     def send_reminder(self, request, pk=None):
@@ -100,6 +103,8 @@ class SessionViewSet(viewsets.ModelViewSet):
         - 운영 페이지 좌측 트리 전용
         - serializer 우회 (UI 최적화 목적)
         """
+        tenant = getattr(request, "tenant", None)
+
         year = request.query_params.get("year")
         month = request.query_params.get("month")
 
@@ -111,7 +116,11 @@ class SessionViewSet(viewsets.ModelViewSet):
 
         qs = (
             Session.objects
-            .filter(date__year=year, date__month=month)
+            .filter(
+                tenant=tenant,
+                date__year=year,
+                date__month=month,
+            )
             .annotate(
                 participant_count=Count("participants"),
                 booked_count=Count(
@@ -158,10 +167,11 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
         return (
             SessionParticipant.objects
+            .filter(tenant=tenant)
             .select_related("student", "session", "status_changed_by")
-            .all()
         )
 
     def get_serializer_class(self):
@@ -173,6 +183,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         """
         ✅ 예약 생성
         """
+        tenant = getattr(request, "tenant", None)
+
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -182,6 +194,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         source = serializer.validated_data.get("source")
 
         exists = SessionParticipant.objects.filter(
+            tenant=tenant,
             session=session,
             student=student,
         ).exists()
@@ -191,18 +204,17 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        # ✅ participant_role 자동 판정 (운영/감사 정합성)
-        # - MANUAL 등록이면 manual, 그 외(auto/default)는 target
-        # - 아직 migrate 전이라도 코드 반영은 무해함
         participant_role = (
             "manual"
             if source == SessionParticipant.Source.MANUAL
             else "target"
         )
 
-        obj = serializer.save(participant_role=participant_role)
+        obj = serializer.save(
+            tenant=tenant,
+            participant_role=participant_role,
+        )
 
-        # 자동 클리닉 링크 해제
         if enrollment_id:
             ClinicLink.objects.filter(
                 session=session,
@@ -251,7 +263,6 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             ]
         )
 
-        # NO_SHOW / CANCELLED → 클리닉 링크 복구
         if next_status in {
             SessionParticipant.Status.NO_SHOW,
             SessionParticipant.Status.CANCELLED,
@@ -267,9 +278,6 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         ).data
         return Response(out)
 
-    # ------------------------------------------------------------
-    # 운영 UI 편의 API
-    # ------------------------------------------------------------
     @action(detail=False, methods=["get"])
     def by_session(self, request):
         """
@@ -298,7 +306,11 @@ class TestViewSet(viewsets.ModelViewSet):
     ordering = ["-date", "-created_at"]
 
     def get_queryset(self):
-        return Test.objects.select_related("session").all()
+        tenant = getattr(self.request, "tenant", None)
+        return Test.objects.filter(tenant=tenant).select_related("session")
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=getattr(self.request, "tenant", None))
 
 
 # ============================================================
@@ -313,6 +325,12 @@ class SubmissionViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        return Submission.objects.select_related(
-            "student", "test", "test__session"
-        ).all()
+        tenant = getattr(self.request, "tenant", None)
+        return (
+            Submission.objects
+            .filter(tenant=tenant)
+            .select_related("student", "test", "test__session")
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=getattr(self.request, "tenant", None))

@@ -1,4 +1,7 @@
+# PATH: apps/domains/attendance/models.py
+
 from django.db import models
+from apps.core.models import Tenant
 
 
 # ========================================================
@@ -6,6 +9,14 @@ from django.db import models
 # ========================================================
 
 class Attendance(models.Model):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="lecture_attendances",  # ✅ 변경 (충돌 방지)
+        null=True,
+        blank=True,
+    )
+
     enrollment = models.ForeignKey(
         "enrollment.Enrollment",
         on_delete=models.CASCADE,
@@ -40,8 +51,8 @@ class Attendance(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["enrollment", "session"],
-                name="unique_attendance_per_session",
+                fields=["tenant", "enrollment", "session"],
+                name="unique_attendance_per_tenant_session",
             )
         ]
 

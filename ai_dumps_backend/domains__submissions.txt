@@ -331,6 +331,119 @@ class Migration(migrations.Migration):
 
 
 ==========================================================================================
+# FILE: migrations/0004_add_submissions_tenant.py
+==========================================================================================
+# PATH: apps/domains/submissions/migrations/0004_add_submissions_tenant.py
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0001_initial"),
+        ("submissions", "0003_alter_submission_status"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="submission",
+            name="tenant",
+            field=models.ForeignKey(
+                to="core.tenant",
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="submissions",
+                null=True,
+                blank=True,
+            ),
+        ),
+        migrations.AddField(
+            model_name="submissionanswer",
+            name="tenant",
+            field=models.ForeignKey(
+                to="core.tenant",
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="submission_answers",
+                null=True,
+                blank=True,
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0005_backfill_submissions_tenant.py
+==========================================================================================
+# PATH: apps/domains/submissions/migrations/0005_backfill_submissions_tenant.py
+from django.db import migrations
+
+
+def backfill_submissions_tenant(apps, schema_editor):
+    Tenant = apps.get_model("core", "Tenant")
+    Submission = apps.get_model("submissions", "Submission")
+    SubmissionAnswer = apps.get_model("submissions", "SubmissionAnswer")
+
+    tenants = Tenant.objects.filter(is_active=True).order_by("id")
+    if tenants.count() != 1:
+        raise RuntimeError("Cannot auto-backfill tenant for submissions domain")
+
+    tenant = tenants.first()
+    Submission.objects.filter(tenant__isnull=True).update(tenant=tenant)
+    SubmissionAnswer.objects.filter(tenant__isnull=True).update(tenant=tenant)
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("submissions", "0004_add_submissions_tenant"),
+    ]
+
+    operations = [
+        migrations.RunPython(backfill_submissions_tenant, migrations.RunPython.noop),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0006_make_submissions_tenant_not_null.py
+==========================================================================================
+# PATH: apps/domains/submissions/migrations/0006_make_submissions_tenant_not_null.py
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("submissions", "0005_backfill_submissions_tenant"),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="submission",
+            name="tenant",
+            field=models.ForeignKey(
+                to="core.tenant",
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="submissions",
+                null=False,
+                blank=False,
+            ),
+        ),
+        migrations.AlterField(
+            model_name="submissionanswer",
+            name="tenant",
+            field=models.ForeignKey(
+                to="core.tenant",
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="submission_answers",
+                null=False,
+                blank=False,
+            ),
+        ),
+    ]
+
+
+==========================================================================================
 # FILE: migrations/__init__.py
 ==========================================================================================
 
@@ -351,11 +464,13 @@ __all__ = [
 ==========================================================================================
 # FILE: models/submission.py
 ==========================================================================================
+# PATH: apps/domains/submissions/models/submission.py
 from __future__ import annotations
 
 from django.db import models
 from django.conf import settings
 from apps.api.common.models import TimestampModel
+from apps.core.models import Tenant
 
 
 class Submission(TimestampModel):
@@ -379,8 +494,6 @@ class Submission(TimestampModel):
         GRADING = "grading", "Grading"
         DONE = "done", "Done"
         FAILED = "failed", "Failed"
-
-        # ✅ 추가: OMR 식별 실패(조교 수동 개입 필요)
         NEEDS_IDENTIFICATION = "needs_identification", "Needs Identification"
 
     STATUS_FLOW = {
@@ -389,13 +502,18 @@ class Submission(TimestampModel):
         Status.ANSWERS_READY: {Status.GRADING},
         Status.GRADING: {Status.DONE, Status.FAILED},
         Status.FAILED: {Status.SUBMITTED},
-        # NEEDS_IDENTIFICATION 은 수동 처리 후 ANSWERS_READY 로만 복귀
         Status.NEEDS_IDENTIFICATION: {Status.ANSWERS_READY},
     }
 
     @classmethod
     def can_transit(cls, from_status: str, to_status: str) -> bool:
         return to_status in cls.STATUS_FLOW.get(from_status, set())
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="submissions",
+    )
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -437,13 +555,21 @@ class Submission(TimestampModel):
 ==========================================================================================
 # FILE: models/submission_answer.py
 ==========================================================================================
+# PATH: apps/domains/submissions/models/submission_answer.py
 from __future__ import annotations
 
 from django.db import models
 from apps.api.common.models import BaseModel
+from apps.core.models import Tenant
 
 
 class SubmissionAnswer(BaseModel):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="submission_answers",
+    )
+
     submission = models.ForeignKey(
         "submissions.Submission",
         on_delete=models.CASCADE,

@@ -1,8 +1,10 @@
+# PATH: apps/domains/submissions/models/submission.py
 from __future__ import annotations
 
 from django.db import models
 from django.conf import settings
 from apps.api.common.models import TimestampModel
+from apps.core.models import Tenant
 
 
 class Submission(TimestampModel):
@@ -26,8 +28,6 @@ class Submission(TimestampModel):
         GRADING = "grading", "Grading"
         DONE = "done", "Done"
         FAILED = "failed", "Failed"
-
-        # ✅ 추가: OMR 식별 실패(조교 수동 개입 필요)
         NEEDS_IDENTIFICATION = "needs_identification", "Needs Identification"
 
     STATUS_FLOW = {
@@ -36,13 +36,18 @@ class Submission(TimestampModel):
         Status.ANSWERS_READY: {Status.GRADING},
         Status.GRADING: {Status.DONE, Status.FAILED},
         Status.FAILED: {Status.SUBMITTED},
-        # NEEDS_IDENTIFICATION 은 수동 처리 후 ANSWERS_READY 로만 복귀
         Status.NEEDS_IDENTIFICATION: {Status.ANSWERS_READY},
     }
 
     @classmethod
     def can_transit(cls, from_status: str, to_status: str) -> bool:
         return to_status in cls.STATUS_FLOW.get(from_status, set())
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="submissions",
+    )
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

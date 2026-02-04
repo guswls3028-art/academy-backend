@@ -1,6 +1,6 @@
+# PATH: apps/domains/students/serializers.py
 
 from rest_framework import serializers
-
 
 from apps.domains.students.models import Student, Tag
 from apps.domains.enrollment.models import Enrollment
@@ -8,20 +8,12 @@ from apps.domains.interactions.counseling.models import Counseling
 from apps.domains.interactions.questions.models import Question
 
 
-# -------------------------------
-# Tag
-# -------------------------------
-
 class TagSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tag
         fields = "__all__"
         ref_name = "StudentTagSerializer"
 
-
-# -------------------------------
-# Nested
-# -------------------------------
 
 class CounselingSerializer(serializers.ModelSerializer):
     class Meta:
@@ -45,10 +37,6 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         fields = "__all__"
         ref_name = "StudentEnrollment"
 
-
-# -------------------------------
-# Student
-# -------------------------------
 
 class StudentListSerializer(serializers.ModelSerializer):
     tags = TagSerializer(many=True, read_only=True)
@@ -87,22 +75,11 @@ class AddTagSerializer(serializers.Serializer):
     tag_id = serializers.IntegerField()
 
 
-# -------------------------------
-# Student Create (with User)
-# -------------------------------
-
 class StudentCreateSerializer(serializers.ModelSerializer):
-    """
-    학생 생성 전용 Serializer
-    - 교사가 초기 비밀번호 설정
-    - phone → User.username 으로 사용
-    """
-
     initial_password = serializers.CharField(
         write_only=True,
         required=True,
         min_length=4,
-        help_text="학생 초기 비밀번호 (교사 설정)",
     )
 
     class Meta:

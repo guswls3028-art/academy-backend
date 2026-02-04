@@ -1,15 +1,24 @@
+# PATH: apps/domains/students/models.py
+
 from django.db import models
 from django.conf import settings
 
 from apps.api.common.models import TimestampModel
+from apps.core.models import Tenant
+from apps.core.db import TenantQuerySet  # ✅ 추가
 
 
 class Student(TimestampModel):
-    # =========================
-    # 🔐 로그인 사용자 연결 (신규)
-    # =========================
-    # - 상용 SaaS에서 재생 권한/로그인을 증명하려면 User ↔ Student 매핑이 필수
-    # - 기존 데이터/운영 고려: null 허용
+    # 🔐 tenant-safe manager (실수 방지)
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="students",
+        help_text="소속 학원 (Tenant)",
+    )
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -19,9 +28,6 @@ class Student(TimestampModel):
         help_text="학생이 로그인 계정을 가지는 경우 연결",
     )
 
-    # =========================
-    # 기본 정보
-    # =========================
     name = models.CharField(max_length=50)
 
     gender = models.CharField(
@@ -31,14 +37,12 @@ class Student(TimestampModel):
         blank=True,
     )
 
-    # 중/고 공통 학년 (1~3)
     grade = models.PositiveSmallIntegerField(
         choices=[(1, "1"), (2, "2"), (3, "3")],
         null=True,
         blank=True,
     )
 
-    # 🔴 중학생 / 고등학생 구분
     SCHOOL_TYPE_CHOICES = (
         ("MIDDLE", "중등"),
         ("HIGH", "고등"),
@@ -51,13 +55,8 @@ class Student(TimestampModel):
     )
 
     phone = models.CharField(max_length=20, null=True, blank=True)
-
-    # legacy 유지 (학생 기준 빠른 조회용)
     parent_phone = models.CharField(max_length=20, null=True, blank=True)
 
-    # =========================
-    # 보호자 (1:N 구조)
-    # =========================
     parent = models.ForeignKey(
         "parents.Parent",
         on_delete=models.SET_NULL,
@@ -66,26 +65,14 @@ class Student(TimestampModel):
         related_name="students",
     )
 
-    # =========================
-    # 학교 정보
-    # =========================
-    # 고등학생용
     high_school = models.CharField(max_length=100, null=True, blank=True)
     high_school_class = models.CharField(max_length=100, null=True, blank=True)
     major = models.CharField(max_length=50, null=True, blank=True)
-
-    # 중학생용
     middle_school = models.CharField(max_length=100, null=True, blank=True)
 
-    # =========================
-    # 기타
-    # =========================
     memo = models.TextField(null=True, blank=True)
     is_managed = models.BooleanField(default=True)
 
-    # =========================
-    # 태그 (주의학생 등)
-    # =========================
     tags = models.ManyToManyField(
         "Tag",
         through="StudentTag",
@@ -97,8 +84,8 @@ class Student(TimestampModel):
         ordering = ["-id"]
         constraints = [
             models.UniqueConstraint(
-                fields=["user"],
-                name="uniq_student_user",
+                fields=["tenant", "user"],
+                name="uniq_student_user_per_tenant",
                 condition=models.Q(user__isnull=False),
             )
         ]
@@ -107,9 +94,6 @@ class Student(TimestampModel):
         return self.name
 
 
-# =========================
-# Tag
-# =========================
 class Tag(models.Model):
     name = models.CharField(max_length=50)
     color = models.CharField(max_length=20, default="#000000")
@@ -126,9 +110,6 @@ class Tag(models.Model):
         return self.name
 
 
-# =========================
-# Student - Tag 연결
-# =========================
 class StudentTag(models.Model):
     student = models.ForeignKey(
         Student,

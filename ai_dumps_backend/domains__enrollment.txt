@@ -74,11 +74,14 @@ class EnrollmentFilter(django_filters.FilterSet):
 ==========================================================================================
 # FILE: models.py
 ==========================================================================================
+# PATH: apps/domains/enrollment/models.py
+
 from django.db import models
 
 from apps.api.common.models import TimestampModel
 from apps.domains.students.models import Student
 from apps.domains.lectures.models import Lecture, Session
+from apps.core.models import Tenant
 
 
 # ========================================================
@@ -89,7 +92,18 @@ class Enrollment(TimestampModel):
     """
     학생이 특정 강의를 수강하는 행위.
     강의 정의(Lecture)와 분리된 '수강 행위' 도메인이다.
+
+    ✅ 운영 기준:
+    - Enrollment는 반드시 tenant 단위로 격리됨
     """
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="enrollments",
+        null=True,      # 🔥 기존 데이터 마이그레이션 안전
+        blank=True,
+    )
 
     student = models.ForeignKey(
         Student,
@@ -117,8 +131,8 @@ class Enrollment(TimestampModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["student", "lecture"],
-                name="unique_enrollment_per_lecture",
+                fields=["tenant", "student", "lecture"],
+                name="unique_enrollment_per_tenant_lecture",
             )
         ]
 
@@ -136,6 +150,14 @@ class SessionEnrollment(models.Model):
     출결/영상/자료 접근의 기준이 되는 중간 테이블.
     """
 
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="session_enrollments",
+        null=True,      # 🔥 기존 데이터 마이그레이션 안전
+        blank=True,
+    )
+
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
@@ -150,7 +172,7 @@ class SessionEnrollment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ("session", "enrollment")
+        unique_together = ("tenant", "session", "enrollment")
 
     def __str__(self):
         return f"{self.session} - {self.enrollment.student.name}"
@@ -159,6 +181,8 @@ class SessionEnrollment(models.Model):
 ==========================================================================================
 # FILE: permissions.py
 ==========================================================================================
+# PATH: apps/domains/enrollment/permissions.py
+
 from rest_framework.permissions import BasePermission
 from apps.domains.enrollment.models import Enrollment
 
@@ -166,6 +190,7 @@ from apps.domains.enrollment.models import Enrollment
 class HasEnrollmentAccess(BasePermission):
     """
     학생이 해당 Enrollment(수강 정보)에 접근 가능한지 검증
+    (tenant 기준 강제)
     """
     message = "You do not have access to this enrollment."
 
@@ -175,7 +200,6 @@ class HasEnrollmentAccess(BasePermission):
         if not user or not user.is_authenticated:
             return False
 
-        # IsStudent에서 이미 student_profile 보장됨
         student = getattr(user, "student_profile", None)
         if not student:
             return False
@@ -187,10 +211,13 @@ class HasEnrollmentAccess(BasePermission):
         if not enrollment_id:
             return False
 
+        tenant = getattr(request, "tenant", None)
+
         return Enrollment.objects.filter(
             id=enrollment_id,
             student=student,
-            status="ACTIVE",  # ✅ 여기만 핵심 수정
+            tenant=tenant,          # ✅ tenant 안전장치
+            status="ACTIVE",
         ).exists()
 
 
@@ -268,6 +295,8 @@ urlpatterns = router.urls
 ==========================================================================================
 # FILE: views.py
 ==========================================================================================
+# PATH: apps/domains/enrollment/views.py
+
 from django.db import transaction
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
@@ -280,20 +309,30 @@ from rest_framework.exceptions import ValidationError
 from .models import Enrollment, SessionEnrollment
 from .serializers import EnrollmentSerializer, SessionEnrollmentSerializer
 from .filters import EnrollmentFilter
-from apps.domains.lectures.models import Session
+from apps.domains.lectures.models import Session, Lecture
+from apps.domains.students.models import Student
 
 
 class EnrollmentViewSet(ModelViewSet):
-    queryset = Enrollment.objects.all().select_related("student", "lecture")
     serializer_class = EnrollmentSerializer
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_class = EnrollmentFilter
     search_fields = ["student__name"]
 
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        return (
+            Enrollment.objects
+            .filter(tenant=tenant)
+            .select_related("student", "lecture")
+        )
+
     @transaction.atomic
     @action(detail=False, methods=["post"])
     def bulk_create(self, request):
+        tenant = getattr(request, "tenant", None)
+
         lecture_id = request.data.get("lecture")
         student_ids = request.data.get("students", [])
 
@@ -303,10 +342,25 @@ class EnrollmentViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # ✅ lecture tenant 검증
+        lecture = Lecture.objects.filter(
+            id=lecture_id,
+            tenant=tenant,
+        ).first()
+        if not lecture:
+            raise ValidationError({"detail": "해당 학원의 강의가 아닙니다."})
+
         created = []
         for sid in student_ids:
+            # ✅ student tenant 검증
+            if not Student.objects.filter(id=sid, tenant=tenant).exists():
+                raise ValidationError(
+                    {"detail": f"학생(id={sid})은 현재 학원 소속이 아닙니다."}
+                )
+
             obj, _ = Enrollment.objects.get_or_create(
-                lecture_id=lecture_id,
+                tenant=tenant,
+                lecture=lecture,
                 student_id=sid,
                 defaults={"status": "ACTIVE"},
             )
@@ -317,32 +371,43 @@ class EnrollmentViewSet(ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    # 수강 등록 삭제 시 세션 등록도 함께 삭제
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         enrollment = self.get_object()
 
-        SessionEnrollment.objects.filter(enrollment=enrollment).delete()
-        enrollment.delete()
+        SessionEnrollment.objects.filter(
+            tenant=enrollment.tenant,
+            enrollment=enrollment,
+        ).delete()
 
+        enrollment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class SessionEnrollmentViewSet(ModelViewSet):
-    queryset = SessionEnrollment.objects.all().select_related(
-        "session",
-        "enrollment",
-        "enrollment__student",
-    )
     serializer_class = SessionEnrollmentSerializer
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["session", "enrollment"]
     search_fields = ["enrollment__student__name"]
 
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        return (
+            SessionEnrollment.objects
+            .filter(tenant=tenant)
+            .select_related(
+                "session",
+                "enrollment",
+                "enrollment__student",
+            )
+        )
+
     @transaction.atomic
     @action(detail=False, methods=["post"])
     def bulk_create(self, request):
+        tenant = getattr(request, "tenant", None)
+
         session_id = request.data.get("session")
         enrollment_ids = request.data.get("enrollments", [])
 
@@ -354,23 +419,24 @@ class SessionEnrollmentViewSet(ModelViewSet):
 
         session = Session.objects.select_related("lecture").get(id=session_id)
 
+        # ✅ session 소속 lecture tenant 검증
+        if session.lecture.tenant_id != tenant.id:
+            raise ValidationError({"detail": "다른 학원의 세션입니다."})
+
         created = []
         for eid in enrollment_ids:
-            enrollment = Enrollment.objects.select_related("lecture").get(id=eid)
+            enrollment = Enrollment.objects.select_related("lecture").get(
+                id=eid,
+                tenant=tenant,
+            )
 
-            # 🔥 보호 로직 핵심:
-            # 다른 강의 enrollment를 현재 세션에 연결하는 것 차단
             if enrollment.lecture_id != session.lecture_id:
                 raise ValidationError(
-                    {
-                        "detail": (
-                            "다른 강의에 등록된 학생은 "
-                            "이 세션에 추가할 수 없습니다."
-                        )
-                    }
+                    {"detail": "다른 강의 수강자는 이 세션에 추가할 수 없습니다."}
                 )
 
             obj, _ = SessionEnrollment.objects.get_or_create(
+                tenant=tenant,
                 session=session,
                 enrollment=enrollment,
             )
@@ -486,6 +552,84 @@ class Migration(migrations.Migration):
         migrations.AlterUniqueTogether(
             name="sessionenrollment",
             unique_together={("session", "enrollment")},
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0002_add_tenant.py
+==========================================================================================
+# PATH: apps/domains/enrollment/migrations/0002_add_tenant.py
+
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0001_initial"),
+        ("enrollment", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="enrollment",
+            name="tenant",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="enrollments",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddField(
+            model_name="sessionenrollment",
+            name="tenant",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="session_enrollments",
+                to="core.tenant",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0003_remove_enrollment_unique_enrollment_per_lecture_and_more.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-04 07:17
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0003_attendance_expense_add_tenant"),
+        ("enrollment", "0002_add_tenant"),
+        ("lectures", "0002_remove_session_exam"),
+        ("students", "0002_add_tenant"),
+    ]
+
+    operations = [
+        migrations.RemoveConstraint(
+            model_name="enrollment",
+            name="unique_enrollment_per_lecture",
+        ),
+        migrations.AlterUniqueTogether(
+            name="sessionenrollment",
+            unique_together={("tenant", "session", "enrollment")},
+        ),
+        migrations.AddConstraint(
+            model_name="enrollment",
+            constraint=models.UniqueConstraint(
+                fields=("tenant", "student", "lecture"),
+                name="unique_enrollment_per_tenant_lecture",
+            ),
         ),
     ]
 

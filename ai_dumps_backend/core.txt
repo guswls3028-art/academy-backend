@@ -43,555 +43,22 @@ class CsrfExemptSessionAuthentication(SessionAuthentication):
 
 
 ==========================================================================================
-# FILE: core_code.html
-==========================================================================================
-
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<title>core Code Browser</title>
-<style>
-body {
-    background:#0f1115;
-    color:#eaeaea;
-    font-family:Consolas, monospace;
-    padding:24px;
-}
-h1 { margin-bottom:24px; }
-h2 { color:#7dd3fc; font-size:15px; }
-pre {
-    background:#111418;
-    padding:16px;
-    border-radius:8px;
-    overflow-x:auto;
-    font-size:13px;
-    line-height:1.5;
-}
-section { margin-bottom:32px; }
-</style>
-</head>
-<body>
-<h1>📦 apps\core</h1>
-
-        <section>
-            <h2>__init__.py</h2>
-            <pre><code></code></pre>
-        </section>
-        
-        <section>
-            <h2>apps.py</h2>
-            <pre><code># apps/core/apps.py
-
-from django.apps import AppConfig
-
-
-class CoreConfig(AppConfig):
-    default_auto_field = &quot;django.db.models.BigAutoField&quot;
-    name = &quot;apps.core&quot;
-    label = &quot;core&quot;
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>authentication.py</h2>
-            <pre><code># apps/core/authentication.py
-
-from rest_framework.authentication import SessionAuthentication
-
-
-class CsrfExemptSessionAuthentication(SessionAuthentication):
-    &quot;&quot;&quot;
-    API 전용 SessionAuthentication
-    - 로그인 세션은 유지
-    - CSRF 검사는 비활성화
-    &quot;&quot;&quot;
-    def enforce_csrf(self, request):
-        return
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>middleware\__init__.py</h2>
-            <pre><code></code></pre>
-        </section>
-        
-        <section>
-            <h2>middleware\tenant.py</h2>
-            <pre><code># apps/core/middleware/tenant.py
-
-class TenantMiddleware:
-    &quot;&quot;&quot;
-    Tenant middleware (placeholder)
-    현재는 멀티테넌시 로직 없이 통과만 시킨다.
-    &quot;&quot;&quot;
-
-    def __init__(self, get_response):
-        self.get_response = get_response
-
-    def __call__(self, request):
-        response = self.get_response(request)
-        return response
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>models\__init__.py</h2>
-            <pre><code>from .tenant import Tenant
-from .user import User, Attendance, Expense
-
-__all__ = [
-    &quot;Tenant&quot;,
-    &quot;User&quot;,
-    &quot;Attendance&quot;,
-    &quot;Expense&quot;,
-]
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>models\tenant.py</h2>
-            <pre><code>from django.db import models
-
-
-class Tenant(models.Model):
-    &quot;&quot;&quot;
-    Tenant == Academy
-    SaaS 단위의 학원
-    &quot;&quot;&quot;
-
-    name = models.CharField(max_length=255)
-    code = models.CharField(max_length=50, unique=True)
-
-    owner_name = models.CharField(max_length=100, blank=True)
-    phone = models.CharField(max_length=50, blank=True)
-    address = models.CharField(max_length=255, blank=True)
-
-    logo = models.ImageField(
-        upload_to=&quot;academy/logo/&quot;,
-        null=True,
-        blank=True,
-    )
-
-    is_active = models.BooleanField(default=True)
-
-    class Meta:
-        app_label = &quot;core&quot;
-        verbose_name = &quot;Tenant&quot;
-        verbose_name_plural = &quot;Tenants&quot;
-
-    def __str__(self):
-        return self.name
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>models\user.py</h2>
-            <pre><code>from django.db import models
-from django.conf import settings
-from django.contrib.auth.models import AbstractUser, Group, Permission
-
-from apps.api.common.models import TimestampModel
-
-
-# --------------------------------------------------
-# Custom User (AUTH_USER_MODEL)
-# --------------------------------------------------
-
-class User(AbstractUser):
-    &quot;&quot;&quot;
-    Custom User 모델
-    - AUTH_USER_MODEL = core.User
-    - auth.User 와의 groups / permissions reverse accessor 충돌 방지
-    &quot;&quot;&quot;
-
-    name = models.CharField(max_length=50, blank=True, null=True)
-    phone = models.CharField(max_length=20, blank=True, null=True)
-
-    # 🔥 핵심: auth.User 와 reverse accessor 충돌 방지
-    groups = models.ManyToManyField(
-        Group,
-        related_name=&quot;core_users&quot;,
-        blank=True,
-    )
-    user_permissions = models.ManyToManyField(
-        Permission,
-        related_name=&quot;core_users&quot;,
-        blank=True,
-    )
-
-    class Meta:
-        app_label = &quot;core&quot;
-        db_table = &quot;accounts_user&quot;
-        ordering = [&quot;-id&quot;]
-
-    def __str__(self):
-        return self.username
-
-
-# --------------------------------------------------
-# Attendance
-# --------------------------------------------------
-
-class Attendance(TimestampModel):
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name=&quot;attendances&quot;,
-    )
-
-    date = models.DateField()
-    start_time = models.TimeField()
-    end_time = models.TimeField()
-
-    work_type = models.CharField(max_length=50)
-    memo = models.TextField(blank=True, null=True)
-
-    duration_hours = models.FloatField(default=0)
-    amount = models.IntegerField(default=0)
-
-    class Meta:
-        app_label = &quot;core&quot;
-        ordering = [&quot;-date&quot;, &quot;-start_time&quot;]
-
-    def __str__(self):
-        return f&quot;{self.user.username} - {self.date}&quot;
-
-
-# --------------------------------------------------
-# Expense
-# --------------------------------------------------
-
-class Expense(TimestampModel):
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name=&quot;expenses&quot;,
-    )
-
-    date = models.DateField()
-    title = models.CharField(max_length=255)
-    amount = models.IntegerField()
-    memo = models.TextField(blank=True, null=True)
-
-    class Meta:
-        app_label = &quot;core&quot;
-        ordering = [&quot;-date&quot;]
-
-    def __str__(self):
-        return f&quot;{self.user.username} - {self.title}&quot;
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>permissions.py</h2>
-            <pre><code>#apps/core/permissions.py
-
-from rest_framework.permissions import BasePermission
-
-
-class IsAdminOrStaff(BasePermission):
-    &quot;&quot;&quot;
-    관리자 / 운영자 전용 Permission
-    &quot;&quot;&quot;
-    def has_permission(self, request, view):
-        user = request.user
-        return bool(
-            user
-            and user.is_authenticated
-            and (user.is_superuser or user.is_staff)
-        )
-
-
-class IsStudent(BasePermission):
-    &quot;&quot;&quot;
-    학생 전용 Permission
-    - 로그인 필수
-    - User ↔ Student OneToOne 연결 필수
-    &quot;&quot;&quot;
-    message = &quot;Student account required.&quot;
-
-    def has_permission(self, request, view):
-        user = request.user
-        return bool(
-            user
-            and user.is_authenticated
-            and hasattr(user, &quot;student_profile&quot;)
-        )
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>serializers.py</h2>
-            <pre><code># apps/core/serializers.py
-
-from rest_framework import serializers
-from django.contrib.auth import get_user_model
-
-from apps.core.models import Attendance, Expense
-
-User = get_user_model()
-
-
-# ------------------------------------
-# User Base
-# ------------------------------------
-
-class UserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = [
-            &quot;id&quot;, 
-            &quot;username&quot;, 
-            &quot;name&quot;, 
-            &quot;phone&quot;,
-            &quot;is_staff&quot;,        # ✅ 추가
-            &quot;is_superuser&quot;    # (선택) 있으면 좋음
-        ]
-
-
-# ------------------------------------
-# Profile
-# ------------------------------------
-
-class ProfileSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = [&quot;id&quot;, &quot;name&quot;, &quot;phone&quot;]
-
-
-# ------------------------------------
-# Attendance
-# ------------------------------------
-
-class AttendanceSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Attendance
-        fields = &quot;__all__&quot;
-        read_only_fields = [&quot;user&quot;, &quot;duration_hours&quot;, &quot;amount&quot;]
-
-
-# ------------------------------------
-# Expense
-# ------------------------------------
-
-class ExpenseSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Expense
-        fields = &quot;__all__&quot;
-        read_only_fields = [&quot;user&quot;]
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>urls.py</h2>
-            <pre><code># apps/core/urls.py
-
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-
-from apps.core.views import (
-    MeView,
-    ProfileViewSet,
-    MyAttendanceViewSet,
-    MyExpenseViewSet,
-)
-
-router = DefaultRouter()
-router.register(&quot;profile&quot;, ProfileViewSet, basename=&quot;profile&quot;)
-router.register(&quot;profile/attendance&quot;, MyAttendanceViewSet, basename=&quot;my-attendance&quot;)
-router.register(&quot;profile/expenses&quot;, MyExpenseViewSet, basename=&quot;my-expense&quot;)
-
-urlpatterns = [
-    path(&quot;me/&quot;, MeView.as_view(), name=&quot;core-me&quot;),
-    path(&quot;&quot;, include(router.urls)),
-]
-</code></pre>
-        </section>
-        
-        <section>
-            <h2>views.py</h2>
-            <pre><code># apps/core/views.py
-
-from datetime import datetime
-from django.db.models import Sum
-
-from rest_framework.views import APIView
-from rest_framework import viewsets
-from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-
-from drf_yasg.utils import swagger_auto_schema
-
-from apps.core.models import Attendance, Expense
-from apps.core.serializers import (
-    UserSerializer,
-    ProfileSerializer,
-    AttendanceSerializer,
-    ExpenseSerializer,
-)
-
-
-# --------------------------------------------------
-# Auth: /core/me/
-# --------------------------------------------------
-
-class MeView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @swagger_auto_schema(auto_schema=None)
-    def get(self, request):
-        serializer = UserSerializer(request.user)
-        return Response(serializer.data)
-
-
-# --------------------------------------------------
-# Profile
-# --------------------------------------------------
-
-class ProfileViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
-
-    @swagger_auto_schema(auto_schema=None)
-    @action(detail=False, methods=[&quot;get&quot;])
-    def me(self, request):
-        serializer = ProfileSerializer(request.user)
-        return Response(serializer.data)
-
-    @swagger_auto_schema(auto_schema=None)
-    @action(detail=False, methods=[&quot;patch&quot;])
-    def update_me(self, request):
-        serializer = ProfileSerializer(
-            request.user,
-            data=request.data,
-            partial=True,
-        )
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data)
-
-    @swagger_auto_schema(auto_schema=None)
-    @action(detail=False, methods=[&quot;post&quot;], url_path=&quot;change-password&quot;)
-    def change_password(self, request):
-        old_pw = request.data.get(&quot;old_password&quot;)
-        new_pw = request.data.get(&quot;new_password&quot;)
-
-        if not old_pw or not new_pw:
-            return Response({&quot;error&quot;: &quot;old_password, new_password 필요&quot;}, status=400)
-
-        if not request.user.check_password(old_pw):
-            return Response({&quot;error&quot;: &quot;현재 비밀번호가 올바르지 않습니다.&quot;}, status=400)
-
-        request.user.set_password(new_pw)
-        request.user.save()
-
-        return Response({&quot;message&quot;: &quot;비밀번호 변경 완료&quot;})
-
-
-# --------------------------------------------------
-# Attendance
-# --------------------------------------------------
-
-class MyAttendanceViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
-    serializer_class = AttendanceSerializer
-
-    def get_queryset(self):
-        user = self.request.user
-        month = self.request.query_params.get(&quot;month&quot;)
-
-        qs = Attendance.objects.filter(user=user)
-
-        if month:
-            qs = qs.filter(date__startswith=month)
-
-        return qs
-
-    def perform_create(self, serializer):
-        user = self.request.user
-
-        start = self.request.data.get(&quot;start_time&quot;)
-        end = self.request.data.get(&quot;end_time&quot;)
-
-        try:
-            start_dt = datetime.strptime(start, &quot;%H:%M&quot;)
-            end_dt = datetime.strptime(end, &quot;%H:%M&quot;)
-            duration = (end_dt - start_dt).seconds / 3600
-        except Exception:
-            duration = 0
-
-        hourly = 15000
-        amount = int(duration * hourly)
-
-        serializer.save(
-            user=user,
-            duration_hours=duration,
-            amount=amount,
-        )
-
-    @swagger_auto_schema(auto_schema=None)
-    @action(detail=False, methods=[&quot;get&quot;], url_path=&quot;summary&quot;)
-    def summary(self, request):
-        user = request.user
-        month = self.request.query_params.get(&quot;month&quot;)
-
-        qs = Attendance.objects.filter(user=user)
-
-        if month:
-            qs = qs.filter(date__startswith=month)
-
-        total_hours = qs.aggregate(Sum(&quot;duration_hours&quot;))[&quot;duration_hours__sum&quot;] or 0
-        total_amount = qs.aggregate(Sum(&quot;amount&quot;))[&quot;amount__sum&quot;] or 0
-        after_tax = int(total_amount * 0.967)
-
-        return Response({
-            &quot;total_hours&quot;: total_hours,
-            &quot;total_amount&quot;: total_amount,
-            &quot;total_after_tax&quot;: after_tax,
-        })
-
-
-# --------------------------------------------------
-# Expense
-# --------------------------------------------------
-
-class MyExpenseViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
-    serializer_class = ExpenseSerializer
-
-    def get_queryset(self):
-        user = self.request.user
-        month = self.request.query_params.get(&quot;month&quot;)
-
-        qs = Expense.objects.filter(user=user)
-
-        if month:
-            qs = qs.filter(date__startswith=month)
-
-        return qs
-
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
-</code></pre>
-        </section>
-        
-</body>
-</html>
-
-
-==========================================================================================
 # FILE: permissions.py
 ==========================================================================================
-#apps/core/permissions.py
-
+# ======================================================================
+# PATH: apps/core/permissions.py
+# ======================================================================
 from rest_framework.permissions import BasePermission
+
+from apps.core.models import TenantMembership
 
 
 class IsAdminOrStaff(BasePermission):
     """
-    관리자 / 운영자 전용 Permission
+    Django admin / staff 계정 전용
+    (테넌트 무관, 내부 관리용)
     """
+
     def has_permission(self, request, view):
         user = request.user
         return bool(
@@ -607,6 +74,7 @@ class IsStudent(BasePermission):
     - 로그인 필수
     - User ↔ Student OneToOne 연결 필수
     """
+
     message = "Student account required."
 
     def has_permission(self, request, view):
@@ -618,11 +86,75 @@ class IsStudent(BasePermission):
         )
 
 
+class TenantResolvedAndMember(BasePermission):
+    """
+    ✅ Core 기본 Permission (SSOT)
+
+    - request.tenant 가 resolve 되어야 함
+    - 인증된 사용자
+    - 활성 TenantMembership 존재
+
+    ❗ role 은 여기서 절대 해석하지 않음
+    """
+
+    message = "Tenant membership required."
+
+    def has_permission(self, request, view):
+        tenant = getattr(request, "tenant", None)
+        user = request.user
+
+        if not tenant:
+            return False
+
+        if not user or not user.is_authenticated:
+            return False
+
+        return TenantMembership.objects.filter(
+            tenant=tenant,
+            user=user,
+            is_active=True,
+        ).exists()
+
+
+class TenantResolvedAndStaff(BasePermission):
+    """
+    ✅ 운영레벨 Staff 전용 Permission
+
+    허용 role:
+    - owner
+    - admin
+    - staff
+    - teacher
+
+    학생 / 학부모 접근 차단용
+    """
+
+    message = "Staff membership required."
+
+    STAFF_ROLES = ("owner", "admin", "staff", "teacher")
+
+    def has_permission(self, request, view):
+        tenant = getattr(request, "tenant", None)
+        user = request.user
+
+        if not tenant:
+            return False
+
+        if not user or not user.is_authenticated:
+            return False
+
+        return TenantMembership.objects.filter(
+            tenant=tenant,
+            user=user,
+            is_active=True,
+            role__in=self.STAFF_ROLES,
+        ).exists()
+
+
 ==========================================================================================
 # FILE: serializers.py
 ==========================================================================================
-# apps/core/serializers.py
-
+# PATH: apps/core/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
@@ -639,12 +171,12 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "id", 
-            "username", 
-            "name", 
+            "id",
+            "username",
+            "name",
             "phone",
-            "is_staff",        # ✅ 추가
-            "is_superuser"    # (선택) 있으면 좋음
+            "is_staff",
+            "is_superuser",
         ]
 
 
@@ -666,7 +198,12 @@ class AttendanceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Attendance
         fields = "__all__"
-        read_only_fields = ["user", "duration_hours", "amount"]
+        read_only_fields = [
+            "user",
+            "tenant",
+            "duration_hours",
+            "amount",
+        ]
 
 
 # ------------------------------------
@@ -677,7 +214,10 @@ class ExpenseSerializer(serializers.ModelSerializer):
     class Meta:
         model = Expense
         fields = "__all__"
-        read_only_fields = ["user"]
+        read_only_fields = [
+            "user",
+            "tenant",
+        ]
 
 
 ==========================================================================================
@@ -709,8 +249,7 @@ urlpatterns = [
 ==========================================================================================
 # FILE: views.py
 ==========================================================================================
-# apps/core/views.py
-
+# PATH: apps/core/views.py
 from datetime import datetime
 from django.db.models import Sum
 
@@ -723,6 +262,10 @@ from rest_framework.response import Response
 from drf_yasg.utils import swagger_auto_schema
 
 from apps.core.models import Attendance, Expense
+from apps.core.permissions import (
+    TenantResolvedAndMember,
+    TenantResolvedAndStaff,
+)
 from apps.core.serializers import (
     UserSerializer,
     ProfileSerializer,
@@ -736,22 +279,29 @@ from apps.core.serializers import (
 # --------------------------------------------------
 
 class MeView(APIView):
-    permission_classes = [IsAuthenticated]
+    """
+    인증 + 테넌트 확정 + 멤버십 존재 확인
+    (role 비해석)
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     @swagger_auto_schema(auto_schema=None)
     def get(self, request):
-        print("AUTH HEADER:", request.headers.get("Authorization"))
-        print("USER:", request.user, request.user.is_authenticated)
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
 
 # --------------------------------------------------
-# Profile
+# Profile (Staff 영역)
 # --------------------------------------------------
 
 class ProfileViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    """
+    직원/강사/관리자 전용 Profile API
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     @swagger_auto_schema(auto_schema=None)
     @action(detail=False, methods=["get"])
@@ -790,18 +340,26 @@ class ProfileViewSet(viewsets.ViewSet):
 
 
 # --------------------------------------------------
-# Attendance
+# Attendance (Staff 전용)
 # --------------------------------------------------
 
 class MyAttendanceViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    """
+    직원 근태 관리 (tenant 단위 격리)
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     serializer_class = AttendanceSerializer
 
     def get_queryset(self):
         user = self.request.user
+        tenant = getattr(self.request, "tenant", None)
         month = self.request.query_params.get("month")
 
-        qs = Attendance.objects.filter(user=user)
+        qs = Attendance.objects.filter(
+            user=user,
+            tenant=tenant,
+        )
 
         if month:
             qs = qs.filter(date__startswith=month)
@@ -810,6 +368,7 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = self.request.user
+        tenant = getattr(self.request, "tenant", None)
 
         start = self.request.data.get("start_time")
         end = self.request.data.get("end_time")
@@ -825,6 +384,7 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
         amount = int(duration * hourly)
 
         serializer.save(
+            tenant=tenant,
             user=user,
             duration_hours=duration,
             amount=amount,
@@ -834,9 +394,13 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):
         user = request.user
+        tenant = getattr(request, "tenant", None)
         month = self.request.query_params.get("month")
 
-        qs = Attendance.objects.filter(user=user)
+        qs = Attendance.objects.filter(
+            user=user,
+            tenant=tenant,
+        )
 
         if month:
             qs = qs.filter(date__startswith=month)
@@ -845,26 +409,36 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
         total_amount = qs.aggregate(Sum("amount"))["amount__sum"] or 0
         after_tax = int(total_amount * 0.967)
 
-        return Response({
-            "total_hours": total_hours,
-            "total_amount": total_amount,
-            "total_after_tax": after_tax,
-        })
+        return Response(
+            {
+                "total_hours": total_hours,
+                "total_amount": total_amount,
+                "total_after_tax": after_tax,
+            }
+        )
 
 
 # --------------------------------------------------
-# Expense
+# Expense (Staff 전용)
 # --------------------------------------------------
 
 class MyExpenseViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    """
+    직원 지출 관리 (tenant 단위 격리)
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     serializer_class = ExpenseSerializer
 
     def get_queryset(self):
         user = self.request.user
+        tenant = getattr(self.request, "tenant", None)
         month = self.request.query_params.get("month")
 
-        qs = Expense.objects.filter(user=user)
+        qs = Expense.objects.filter(
+            user=user,
+            tenant=tenant,
+        )
 
         if month:
             qs = qs.filter(date__startswith=month)
@@ -872,7 +446,57 @@ class MyExpenseViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        tenant = getattr(self.request, "tenant", None)
+        serializer.save(
+            tenant=tenant,
+            user=self.request.user,
+        )
+
+
+==========================================================================================
+# FILE: db/__init__.py
+==========================================================================================
+from .tenant_queryset import TenantQuerySet
+
+__all__ = ["TenantQuerySet"]
+
+
+==========================================================================================
+# FILE: db/tenant_queryset.py
+==========================================================================================
+# ======================================================================
+# PATH: apps/core/db/tenant_queryset.py
+# ======================================================================
+from __future__ import annotations
+
+from django.db import models
+
+from apps.core.tenant.context import get_current_tenant
+
+
+class TenantQuerySet(models.QuerySet):
+    """
+    Tenant-aware QuerySet (SSOT)
+
+    규칙:
+    - tenant가 resolve되지 않으면 결과는 항상 empty
+    - domain 모델에 tenant FK가 붙는 순간 바로 사용 가능
+    """
+
+    def for_current_tenant(self):
+        tenant = get_current_tenant()
+        if tenant is None:
+            return self.none()
+        return self.filter(tenant=tenant)
+
+    def require_tenant(self):
+        """
+        내부/운영 로직에서 tenant 강제용
+        """
+        tenant = get_current_tenant()
+        if tenant is None:
+            raise RuntimeError("Tenant is required but not resolved")
+        return self.filter(tenant=tenant)
 
 
 ==========================================================================================
@@ -884,19 +508,84 @@ class MyExpenseViewSet(viewsets.ModelViewSet):
 ==========================================================================================
 # FILE: middleware/tenant.py
 ==========================================================================================
-# apps/core/middleware/tenant.py
+# ======================================================================
+# PATH: apps/core/middleware/tenant.py
+# ======================================================================
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+from django.conf import settings
+from django.http import JsonResponse
+
+from apps.core.models import Tenant
+from apps.core.tenant.context import set_current_tenant, clear_current_tenant
+from apps.core.tenant.resolver import resolve_tenant_from_request
+from apps.core.tenant.exceptions import TenantResolutionError
+
+
+@dataclass(frozen=True)
+class TenantResolutionResult:
+    tenant: Optional[Tenant]
+    reason: str
+
 
 class TenantMiddleware:
     """
-    Tenant middleware (placeholder)
-    현재는 멀티테넌시 로직 없이 통과만 시킨다.
+    ✅ Enterprise-grade Tenant Middleware (SSOT)
+
+    Goals:
+    - Request 단위로 tenant 확정 (request.tenant + contextvar)
+    - 단일 테넌트(dev/초기 운영)에서는 헤더 없이도 "즉시 동작"
+      - TENANT_DEFAULT_CODE 있으면 우선
+      - 없으면 활성 tenant가 1개면 자동 선택
+    - 멀티 테넌트 운영에서는 tenant header 강제 가능 (settings.TENANT_STRICT=True)
+
+    Resolution priority:
+    1) Header (default: X-Tenant-Code)
+    2) Query param (optional: ?tenant=CODE)
+    3) settings.TENANT_DEFAULT_CODE / env
+    4) If active tenant count == 1 -> auto
+    5) If exempt path -> tenant=None (bypass)
+    6) Else error (400)
+
+    Response:
+    - X-Tenant-Code / X-Tenant-Id 헤더 주입 (tenant 있을 때)
     """
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
+        # 항상 초기화 (안전)
+        clear_current_tenant()
+        request.tenant = None  # type: ignore[attr-defined]
+
+        try:
+            tenant = resolve_tenant_from_request(request)
+        except TenantResolutionError as e:
+            return JsonResponse(
+                {
+                    "detail": "tenant resolution failed",
+                    "code": e.code,
+                    "message": e.message,
+                },
+                status=e.http_status,
+            )
+
+        # tenant context attach
+        if tenant is not None:
+            request.tenant = tenant  # type: ignore[attr-defined]
+            set_current_tenant(tenant)
+
         response = self.get_response(request)
+
+        # response headers (helpful for debugging / ops)
+        if tenant is not None:
+            response["X-Tenant-Code"] = tenant.code
+            response["X-Tenant-Id"] = str(tenant.id)
+
         return response
 
 
@@ -1124,6 +813,215 @@ class Migration(migrations.Migration):
 
 
 ==========================================================================================
+# FILE: migrations/0002_tenantmembership.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-04 06:36
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="TenantMembership",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "role",
+                    models.CharField(
+                        choices=[
+                            ("owner", "Owner"),
+                            ("admin", "Admin"),
+                            ("teacher", "Teacher"),
+                            ("staff", "Staff"),
+                            ("student", "Student"),
+                            ("parent", "Parent"),
+                        ],
+                        max_length=20,
+                    ),
+                ),
+                ("is_active", models.BooleanField(default=True)),
+                ("joined_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "tenant",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="memberships",
+                        to="core.tenant",
+                    ),
+                ),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="tenant_memberships",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+            ],
+            options={
+                "indexes": [
+                    models.Index(
+                        fields=["tenant", "user"], name="core_tenant_tenant__644160_idx"
+                    )
+                ],
+                "unique_together": {("user", "tenant")},
+            },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0003_attendance_expense_add_tenant.py
+==========================================================================================
+# PATH: apps/core/migrations/0003_attendance_expense_add_tenant.py
+# Generated by Django 5.2.9 on 2026-02-04
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0002_tenantmembership"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="attendance",
+            name="tenant",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="attendances",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddField(
+            model_name="expense",
+            name="tenant",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="expenses",
+                to="core.tenant",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0004_backfill_attendance_expense_tenant.py
+==========================================================================================
+# PATH: apps/core/migrations/0004_backfill_attendance_expense_tenant.py
+from __future__ import annotations
+
+from django.db import migrations
+
+
+def backfill_core_attendance_expense_tenant(apps, schema_editor):
+    Tenant = apps.get_model("core", "Tenant")
+    Attendance = apps.get_model("core", "Attendance")
+    Expense = apps.get_model("core", "Expense")
+
+    # 이미 다 채워져 있으면 끝
+    if not Attendance.objects.filter(tenant__isnull=True).exists() and not Expense.objects.filter(tenant__isnull=True).exists():
+        return
+
+    # ✅ 안전 가드:
+    # - 단일 활성 tenant면 자동 백필
+    # - TENANT_DEFAULT_CODE(환경)로 이미 운영 기준 tenant를 고정하는 경우도 안전하지만,
+    #   마이그레이션 레벨에서는 settings 접근을 안 쓰고 “DB 사실”만 본다.
+    active_qs = Tenant.objects.filter(is_active=True).order_by("id")
+    active_count = active_qs.count()
+
+    if active_count == 1:
+        t = active_qs.first()
+        Attendance.objects.filter(tenant__isnull=True).update(tenant=t)
+        Expense.objects.filter(tenant__isnull=True).update(tenant=t)
+        return
+
+    # 활성 tenant가 0개/여러개인데 tenant null 데이터가 존재하면
+    # 자동 추론은 운영사고. 명시적으로 실패해서 수동 정리 유도.
+    raise RuntimeError(
+        "Cannot auto-backfill tenant for core.Attendance/core.Expense: "
+        f"active_tenant_count={active_count}, but tenant NULL rows exist. "
+        "Fix data manually (assign correct tenant) then re-run migration."
+    )
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0003_attendance_expense_add_tenant"),
+    ]
+
+    operations = [
+        migrations.RunPython(backfill_core_attendance_expense_tenant, migrations.RunPython.noop),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0005_make_attendance_expense_tenant_not_null.py
+==========================================================================================
+# PATH: apps/core/migrations/0005_make_attendance_expense_tenant_not_null.py
+from __future__ import annotations
+
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0004_backfill_attendance_expense_tenant"),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="attendance",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="attendances",
+                to="core.tenant",
+                null=False,
+                blank=False,
+            ),
+        ),
+        migrations.AlterField(
+            model_name="expense",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="expenses",
+                to="core.tenant",
+                null=False,
+                blank=False,
+            ),
+        ),
+    ]
+
+
+==========================================================================================
 # FILE: migrations/__init__.py
 ==========================================================================================
 
@@ -1132,11 +1030,15 @@ class Migration(migrations.Migration):
 ==========================================================================================
 # FILE: models/__init__.py
 ==========================================================================================
+# PATH: apps/core/models/__init__.py
+
 from .tenant import Tenant
+from .tenant_membership import TenantMembership
 from .user import User, Attendance, Expense
 
 __all__ = [
     "Tenant",
+    "TenantMembership",
     "User",
     "Attendance",
     "Expense",
@@ -1180,13 +1082,102 @@ class Tenant(models.Model):
 
 
 ==========================================================================================
+# FILE: models/tenant_membership.py
+==========================================================================================
+# PATH: apps/core/models/tenant_membership.py
+from __future__ import annotations
+
+from django.conf import settings
+from django.db import models, transaction
+
+from apps.core.models.tenant import Tenant
+
+
+class TenantMembership(models.Model):
+    """
+    User ↔ Tenant 관계 SSOT
+
+    - 한 User는 여러 Tenant에 속할 수 있음 (M2M)
+    - Tenant 내에서 role / 활성 상태를 명시
+    - unique_together로 "같은 tenant에 중복 가입" 방지
+    """
+
+    ROLE_CHOICES = [
+        ("owner", "Owner"),
+        ("admin", "Admin"),
+        ("teacher", "Teacher"),
+        ("staff", "Staff"),
+        ("student", "Student"),
+        ("parent", "Parent"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tenant_memberships",
+    )
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="memberships",
+    )
+
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    is_active = models.BooleanField(default=True)
+
+    joined_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "core"
+        unique_together = ("user", "tenant")
+        indexes = [
+            models.Index(fields=["tenant", "user"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.user} @ {self.tenant} ({self.role})"
+
+    # ------------------------------------------------------------------
+    # ✅ 운영 SSOT helper
+    # - “학생/부모 role 연결”을 테넌트 단위로 항상 일관되게 만드는 최소 API
+    # - 도메인에서 user만 있으면 이걸 호출해서 membership을 확정하면 됨
+    # ------------------------------------------------------------------
+    @classmethod
+    @transaction.atomic
+    def ensure_active(cls, *, tenant: Tenant, user, role: str) -> "TenantMembership":
+        role = str(role).strip().lower()
+        allowed = {c[0] for c in cls.ROLE_CHOICES}
+        if role not in allowed:
+            raise ValueError(f"invalid role: {role}")
+
+        obj = cls.objects.select_for_update().filter(tenant=tenant, user=user).first()
+        if obj:
+            # role 변경은 “운영 정책” 영역이라 여기서 강제 변경하지 않음.
+            # 단, 비활성이면 활성화는 SSOT로 허용
+            if not obj.is_active:
+                obj.is_active = True
+                obj.save(update_fields=["is_active"])
+            return obj
+
+        return cls.objects.create(
+            tenant=tenant,
+            user=user,
+            role=role,
+            is_active=True,
+        )
+
+
+==========================================================================================
 # FILE: models/user.py
 ==========================================================================================
+# PATH: apps/core/models/user.py
 from django.db import models
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, Group, Permission
 
 from apps.api.common.models import TimestampModel
+from apps.core.models.tenant import Tenant
+from apps.core.db import TenantQuerySet
 
 
 # --------------------------------------------------
@@ -1229,6 +1220,23 @@ class User(AbstractUser):
 # --------------------------------------------------
 
 class Attendance(TimestampModel):
+    """
+    ✅ 운영레벨 핵심:
+    - Attendance는 tenant 단위로 격리되어야 함 (13+ 학원 전제)
+    - tenant 없으면 조회/생성 불가(코드 레벨에서 강제)
+    """
+
+    # ✅ 최소수정: tenant-aware manager (운영 사고 방지)
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="attendances",
+        null=False,
+        blank=False,
+    )
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -1258,6 +1266,23 @@ class Attendance(TimestampModel):
 # --------------------------------------------------
 
 class Expense(TimestampModel):
+    """
+    ✅ 운영레벨 핵심:
+    - Expense도 tenant 단위로 격리되어야 함 (13+ 학원 전제)
+    - tenant 없으면 조회/생성 불가(코드 레벨에서 강제)
+    """
+
+    # ✅ 최소수정: tenant-aware manager (운영 사고 방지)
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="expenses",
+        null=False,
+        blank=False,
+    )
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -1275,3 +1300,291 @@ class Expense(TimestampModel):
 
     def __str__(self):
         return f"{self.user.username} - {self.title}"
+
+
+==========================================================================================
+# FILE: tenant/__init__.py
+==========================================================================================
+# ======================================================================
+# PATH: apps/core/tenant/__init__.py
+# ======================================================================
+from .context import (
+    get_current_tenant,
+    set_current_tenant,
+    clear_current_tenant,
+)
+from .resolver import resolve_tenant_from_request
+from .exceptions import TenantResolutionError
+
+__all__ = [
+    "get_current_tenant",
+    "set_current_tenant",
+    "clear_current_tenant",
+    "resolve_tenant_from_request",
+    "TenantResolutionError",
+]
+
+
+==========================================================================================
+# FILE: tenant/context.py
+==========================================================================================
+# ======================================================================
+# PATH: apps/core/tenant/context.py
+# ======================================================================
+from __future__ import annotations
+
+from contextvars import ContextVar
+from typing import Optional
+
+from apps.core.models import Tenant
+
+_current_tenant: ContextVar[Optional[Tenant]] = ContextVar("current_tenant", default=None)
+
+
+def set_current_tenant(tenant: Tenant) -> None:
+    _current_tenant.set(tenant)
+
+
+def get_current_tenant() -> Optional[Tenant]:
+    return _current_tenant.get()
+
+
+def clear_current_tenant() -> None:
+    _current_tenant.set(None)
+
+
+==========================================================================================
+# FILE: tenant/exceptions.py
+==========================================================================================
+# ======================================================================
+# PATH: apps/core/tenant/exceptions.py
+# ======================================================================
+from __future__ import annotations
+
+
+class TenantResolutionError(Exception):
+    """
+    Tenant resolution failures are explicit & ops-friendly.
+
+    code:
+      - tenant_missing
+      - tenant_invalid
+      - tenant_inactive
+      - tenant_ambiguous
+    """
+
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        http_status: int = 400,
+    ):
+        super().__init__(message)
+        self.code = str(code)
+        self.message = str(message)
+        self.http_status = int(http_status)
+
+
+==========================================================================================
+# FILE: tenant/resolver.py
+==========================================================================================
+# ======================================================================
+# PATH: apps/core/tenant/resolver.py
+# ======================================================================
+from __future__ import annotations
+
+from typing import Optional
+
+from django.conf import settings
+
+from apps.core.models import Tenant
+from apps.core.tenant.exceptions import TenantResolutionError
+
+
+def _normalize_code(v: object) -> str:
+    return str(v or "").strip()
+
+
+def _header_name() -> str:
+    return str(getattr(settings, "TENANT_HEADER_NAME", "X-Tenant-Code") or "X-Tenant-Code").strip()
+
+
+def _query_name() -> str:
+    return str(getattr(settings, "TENANT_QUERY_PARAM_NAME", "tenant") or "tenant").strip()
+
+
+def _default_code() -> str:
+    return _normalize_code(getattr(settings, "TENANT_DEFAULT_CODE", ""))
+
+
+def _strict_mode() -> bool:
+    return bool(getattr(settings, "TENANT_STRICT", False))
+
+
+def _allow_inactive() -> bool:
+    return bool(getattr(settings, "TENANT_ALLOW_INACTIVE", False))
+
+
+def _bypass_paths() -> list[str]:
+    """
+    Tenant가 없어도 되는 endpoint들.
+    - 토큰 발급/갱신은 tenant 선행이 어려운 경우가 있어 기본 bypass
+    - 내부 워커 루트는 기존 호환 위해 기본 bypass (worker가 헤더 보내면 자동 적용됨)
+    """
+    return list(
+        getattr(
+            settings,
+            "TENANT_BYPASS_PATH_PREFIXES",
+            [
+                "/admin/",
+                "/api/v1/token/",
+                "/api/v1/token/refresh/",
+                "/internal/",          # root-level internal (video worker)
+                "/api/v1/internal/",   # api v1 internal (ai/video worker)
+                "/swagger",
+                "/redoc",
+            ],
+        )
+    )
+
+
+def _is_bypass_path(path: str) -> bool:
+    p = str(path or "/")
+    for prefix in _bypass_paths():
+        if p.startswith(prefix):
+            return True
+    return False
+
+
+def _get_header_value(request, header_name: str) -> str:
+    # Django request.headers handles normalization
+    v = request.headers.get(header_name) or ""
+    return _normalize_code(v)
+
+
+def _get_query_value(request, query_name: str) -> str:
+    try:
+        v = request.GET.get(query_name) or ""
+    except Exception:
+        v = ""
+    return _normalize_code(v)
+
+
+def _find_tenant_by_code(code: str) -> Optional[Tenant]:
+    if not code:
+        return None
+
+    qs = Tenant.objects.filter(code=code)
+    if not _allow_inactive():
+        qs = qs.filter(is_active=True)
+    return qs.first()
+
+
+def _auto_pick_single_active_tenant() -> Optional[Tenant]:
+    qs = Tenant.objects.filter(is_active=True).order_by("id")
+    cnt = qs.count()
+    if cnt == 1:
+        return qs.first()
+    return None
+
+
+def resolve_tenant_from_request(request) -> Optional[Tenant]:
+    """
+    Returns:
+      - Tenant instance, or
+      - None (bypass path only)
+
+    Raises:
+      - TenantResolutionError
+    """
+    path = getattr(request, "path", "") or "/"
+
+    # 0) bypass path: don't require tenant, but still allow if provided
+    bypass = _is_bypass_path(path)
+
+    header_name = _header_name()
+    query_name = _query_name()
+
+    # 1) explicit from header
+    code = _get_header_value(request, header_name)
+    if code:
+        tenant = _find_tenant_by_code(code)
+        if not tenant:
+            # if exists but inactive, make it explicit
+            exists = Tenant.objects.filter(code=code).exists()
+            if exists:
+                raise TenantResolutionError(
+                    code="tenant_inactive",
+                    message=f"Tenant '{code}' is inactive",
+                    http_status=403,
+                )
+            raise TenantResolutionError(
+                code="tenant_invalid",
+                message=f"Tenant '{code}' not found",
+                http_status=404,
+            )
+        return tenant
+
+    # 2) optional query param
+    code = _get_query_value(request, query_name)
+    if code:
+        tenant = _find_tenant_by_code(code)
+        if not tenant:
+            exists = Tenant.objects.filter(code=code).exists()
+            if exists:
+                raise TenantResolutionError(
+                    code="tenant_inactive",
+                    message=f"Tenant '{code}' is inactive",
+                    http_status=403,
+                )
+            raise TenantResolutionError(
+                code="tenant_invalid",
+                message=f"Tenant '{code}' not found",
+                http_status=404,
+            )
+        return tenant
+
+    # 3) settings default code
+    code = _default_code()
+    if code:
+        tenant = _find_tenant_by_code(code)
+        if not tenant:
+            exists = Tenant.objects.filter(code=code).exists()
+            if exists:
+                raise TenantResolutionError(
+                    code="tenant_inactive",
+                    message=f"Default tenant '{code}' is inactive",
+                    http_status=403,
+                )
+            raise TenantResolutionError(
+                code="tenant_invalid",
+                message=f"Default tenant '{code}' not found",
+                http_status=404,
+            )
+        return tenant
+
+    # 4) auto-pick (single-tenant bootstrap)
+    tenant = _auto_pick_single_active_tenant()
+    if tenant:
+        return tenant
+
+    # 5) bypass path -> allow None
+    if bypass:
+        return None
+
+    # 6) strict / non-strict handling
+    # - strict: must specify tenant (and cannot infer)
+    # - non-strict: still cannot proceed because ambiguous (multiple tenants)
+    if _strict_mode():
+        raise TenantResolutionError(
+            code="tenant_missing",
+            message=f"Tenant header '{header_name}' required",
+            http_status=400,
+        )
+
+    raise TenantResolutionError(
+        code="tenant_ambiguous",
+        message=f"Tenant not resolved. Provide '{header_name}' header.",
+        http_status=400,
+    )

@@ -1,8 +1,11 @@
+# PATH: apps/core/models/user.py
 from django.db import models
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, Group, Permission
 
 from apps.api.common.models import TimestampModel
+from apps.core.models.tenant import Tenant
+from apps.core.db import TenantQuerySet
 
 
 # --------------------------------------------------
@@ -45,6 +48,23 @@ class User(AbstractUser):
 # --------------------------------------------------
 
 class Attendance(TimestampModel):
+    """
+    ✅ 운영레벨 핵심:
+    - Attendance는 tenant 단위로 격리되어야 함 (13+ 학원 전제)
+    - tenant 없으면 조회/생성 불가(코드 레벨에서 강제)
+    """
+
+    # ✅ 최소수정: tenant-aware manager (운영 사고 방지)
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="attendances",
+        null=False,
+        blank=False,
+    )
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -74,6 +94,23 @@ class Attendance(TimestampModel):
 # --------------------------------------------------
 
 class Expense(TimestampModel):
+    """
+    ✅ 운영레벨 핵심:
+    - Expense도 tenant 단위로 격리되어야 함 (13+ 학원 전제)
+    - tenant 없으면 조회/생성 불가(코드 레벨에서 강제)
+    """
+
+    # ✅ 최소수정: tenant-aware manager (운영 사고 방지)
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="expenses",
+        null=False,
+        blank=False,
+    )
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,

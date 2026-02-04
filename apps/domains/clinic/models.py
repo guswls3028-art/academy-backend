@@ -5,6 +5,7 @@ from django.conf import settings
 
 from apps.api.common.models import TimestampModel
 from apps.domains.students.models import Student
+from apps.core.models import Tenant
 
 
 # --------------------------------------------------
@@ -12,18 +13,20 @@ from apps.domains.students.models import Student
 # --------------------------------------------------
 
 class Session(TimestampModel):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="clinic_sessions",
+    )
+
     date = models.DateField()
     start_time = models.TimeField()
 
-    # ✅ [ADD] 수업 소요 시간 (분 단위)
-    # - 종료시간은 저장하지 않음 (파생값)
-    # - 기존 데이터 안정성 확보를 위해 default=60
     duration_minutes = models.PositiveIntegerField(default=60)
 
     location = models.CharField(max_length=255)
     max_participants = models.PositiveIntegerField()
 
-    # ✅ [ADD] 생성자 (운영/감사 추적용)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -32,29 +35,43 @@ class Session(TimestampModel):
         related_name="created_clinic_sessions",
     )
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "date", "start_time", "location"],
+                name="uniq_clinic_session_per_tenant_time_location",
+            )
+        ]
+
     def __str__(self):
         return f"{self.date} {self.start_time} @ {self.location}"
 
 
 # --------------------------------------------------
-# Session Participant (✅ SaaS 운영 상태 확장)
+# Session Participant
 # --------------------------------------------------
 
 class SessionParticipant(TimestampModel):
     class Status(models.TextChoices):
-        BOOKED = "booked", "Booked"         # 예약됨
-        ATTENDED = "attended", "Attended"   # 출석(수업 완료)
-        NO_SHOW = "no_show", "NoShow"       # 미이행(예약했지만 수업 성립 X)
-        CANCELLED = "cancelled", "Cancelled"  # 취소
+        BOOKED = "booked", "Booked"
+        ATTENDED = "attended", "Attended"
+        NO_SHOW = "no_show", "NoShow"
+        CANCELLED = "cancelled", "Cancelled"
 
     class Source(models.TextChoices):
-        AUTO = "auto", "Auto"       # 자동(Results 판정)
-        MANUAL = "manual", "Manual" # 수동 등록
+        AUTO = "auto", "Auto"
+        MANUAL = "manual", "Manual"
 
     class Reason(models.TextChoices):
         EXAM = "exam", "Exam"
         HOMEWORK = "homework", "Homework"
         BOTH = "both", "Both"
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="clinic_participants",
+    )
 
     session = models.ForeignKey(
         Session,
@@ -67,14 +84,12 @@ class SessionParticipant(TimestampModel):
         related_name="clinic_participations",
     )
 
-    # ✅ 운영 상태
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
         default=Status.BOOKED,
     )
 
-    # ✅ Results 연계 메타 (판정은 results 단일진실, clinic은 “기록/추적”만)
     source = models.CharField(
         max_length=20,
         choices=Source.choices,
@@ -88,14 +103,12 @@ class SessionParticipant(TimestampModel):
         blank=True,
     )
 
-    # ✅ [ADD] 대상자 / 수동 구분
     participant_role = models.CharField(
         max_length=20,
         choices=(("target", "Target"), ("manual", "Manual")),
         default="target",
     )
 
-    # ✅ [ADD] 상태 변경 로그
     status_changed_at = models.DateTimeField(null=True, blank=True)
     status_changed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -105,14 +118,18 @@ class SessionParticipant(TimestampModel):
         related_name="clinic_participant_status_changes",
     )
 
-    # ✅ [ADD] 출석 확장 대비
     checked_in_at = models.DateTimeField(null=True, blank=True)
     is_late = models.BooleanField(default=False)
 
     memo = models.TextField(blank=True, null=True)
 
     class Meta:
-        unique_together = ("session", "student")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "session", "student"],
+                name="uniq_clinic_participant_per_tenant",
+            )
+        ]
         ordering = ["-created_at"]
 
     def __str__(self):
@@ -124,6 +141,12 @@ class SessionParticipant(TimestampModel):
 # --------------------------------------------------
 
 class Test(TimestampModel):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="clinic_tests",
+    )
+
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
@@ -135,24 +158,32 @@ class Test(TimestampModel):
 
     class Meta:
         ordering = ["-date", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "session", "round"],
+                name="uniq_clinic_test_per_tenant_session_round",
+            )
+        ]
 
     def __str__(self):
         return f"{self.title} ({self.round}차)"
 
 
 # --------------------------------------------------
-# Submission Upload Path
+# Submission
 # --------------------------------------------------
 
 def submission_upload_path(instance, filename):
     return f"clinic/submissions/{instance.student_id}/{instance.test_id}/{filename}"
 
 
-# --------------------------------------------------
-# Submission
-# --------------------------------------------------
-
 class Submission(TimestampModel):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="clinic_submissions",
+    )
+
     test = models.ForeignKey(
         Test,
         on_delete=models.CASCADE,
@@ -177,12 +208,15 @@ class Submission(TimestampModel):
         default="pending",
     )
     remark = models.TextField(blank=True, null=True)
-
-    # ✅ [ADD] 채점 완료 시각
     graded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        unique_together = ("test", "student")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "test", "student"],
+                name="uniq_clinic_submission_per_tenant",
+            )
+        ]
         ordering = ["-created_at"]
 
     def __str__(self):

@@ -1,22 +1,24 @@
+# PATH: apps/domains/homework/models/homework_assignment.py
+
 from __future__ import annotations
 
 from django.db import models
 
 from apps.domains.homework_results.models import Homework
 from apps.domains.lectures.models import Session
+from apps.core.models import Tenant
 
 
 class HomeworkAssignment(models.Model):
     """
     HomeworkAssignment (과제별 대상자)
-
-    ✅ 단일 진실:
-    - 특정 Homework(과제)에 대해
-      어떤 enrollment_id가 대상자인지 관리
-
-    기존 HomeworkEnrollment(session 단위)는 유지하되
-    개별 과제에서는 이 테이블을 우선 사용한다.
     """
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="homework_assignments",
+    )
 
     homework = models.ForeignKey(
         Homework,
@@ -24,7 +26,6 @@ class HomeworkAssignment(models.Model):
         related_name="assignments",
     )
 
-    # 성능/필터 편의용 (중복 저장 허용)
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
@@ -39,14 +40,15 @@ class HomeworkAssignment(models.Model):
         db_table = "homework_assignment"
         constraints = [
             models.UniqueConstraint(
-                fields=["homework", "enrollment_id"],
-                name="uniq_homework_assignment_homework_enrollment",
+                fields=["tenant", "homework", "enrollment_id"],
+                name="uniq_homework_assignment_per_tenant",
             )
         ]
 
     def __str__(self) -> str:
         return (
             f"HomeworkAssignment("
+            f"tenant={self.tenant_id}, "
             f"homework={self.homework_id}, "
             f"enrollment={self.enrollment_id})"
         )

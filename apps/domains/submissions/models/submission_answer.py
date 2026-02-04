@@ -1,10 +1,18 @@
+# PATH: apps/domains/submissions/models/submission_answer.py
 from __future__ import annotations
 
 from django.db import models
 from apps.api.common.models import BaseModel
+from apps.core.models import Tenant
 
 
 class SubmissionAnswer(BaseModel):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="submission_answers",
+    )
+
     submission = models.ForeignKey(
         "submissions.Submission",
         on_delete=models.CASCADE,

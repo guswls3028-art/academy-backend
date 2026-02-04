@@ -1,17 +1,4 @@
 # PATH: apps/domains/homework/models/homework_policy.py
-"""
-HomeworkPolicy Model
-
-✅ 설계 고정(중요)
-- homework 도메인은 "정의/정책" 레이어다.
-- 런타임 결과(점수/락/스냅샷)는 homework_results 도메인 소유.
-
-✅ homework 도메인의 책임
-- Session 단위 과제 판정 정책(HomeworkPolicy)
-  - 커트라인 (%)
-  - 반올림 단위 (%)
-  - 클리닉 연동 여부
-"""
 
 from __future__ import annotations
 
@@ -19,16 +6,19 @@ from django.db import models
 
 from apps.api.common.models import TimestampModel
 from apps.domains.lectures.models import Session
+from apps.core.models import Tenant
 
 
 class HomeworkPolicy(TimestampModel):
     """
     Session 단위 과제 판정 정책
-
-    ✅ 요구사항
-    - 커트라인은 % 기반 (cutline_percent)
-    - 점수는 score/max_score 기반으로 percent 계산 후 cutline 비교
     """
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="homework_policies",
+    )
 
     session = models.OneToOneField(
         Session,
@@ -36,23 +26,24 @@ class HomeworkPolicy(TimestampModel):
         related_name="homework_policy",
     )
 
-    # 통과 커트라인 (%)
     cutline_percent = models.PositiveSmallIntegerField(default=80)
-
-    # 반올림 단위(%) - 예: 5면 83% → 85%로 반올림
     round_unit_percent = models.PositiveSmallIntegerField(default=5)
 
-    # 클리닉 연동 여부
     clinic_enabled = models.BooleanField(default=True)
-
-    # 과제 불합격 시 클리닉 대상 여부
     clinic_on_fail = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "session"],
+                name="uniq_homework_policy_per_tenant_session",
+            )
+        ]
 
     def __str__(self):
         return (
-            f"HomeworkPolicy(session={self.session_id}, "
-            f"cutline={self.cutline_percent}%, unit={self.round_unit_percent}%)"
+            f"HomeworkPolicy("
+            f"tenant={self.tenant_id}, "
+            f"session={self.session_id})"
         )

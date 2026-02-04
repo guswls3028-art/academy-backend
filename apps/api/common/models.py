@@ -1,3 +1,4 @@
+# PATH: apps/api/common/models.py
 from django.db import models
 
 
@@ -10,8 +11,6 @@ class TimestampModel(models.Model):
 
     class Meta:
         abstract = True
-
-from django.db import models
 
 
 class BaseModel(TimestampModel):

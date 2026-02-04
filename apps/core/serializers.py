@@ -1,5 +1,4 @@
-# apps/core/serializers.py
-
+# PATH: apps/core/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
@@ -16,12 +15,12 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "id", 
-            "username", 
-            "name", 
+            "id",
+            "username",
+            "name",
             "phone",
-            "is_staff",        # ✅ 추가
-            "is_superuser"    # (선택) 있으면 좋음
+            "is_staff",
+            "is_superuser",
         ]
 
 
@@ -43,7 +42,12 @@ class AttendanceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Attendance
         fields = "__all__"
-        read_only_fields = ["user", "duration_hours", "amount"]
+        read_only_fields = [
+            "user",
+            "tenant",
+            "duration_hours",
+            "amount",
+        ]
 
 
 # ------------------------------------
@@ -54,4 +58,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
     class Meta:
         model = Expense
         fields = "__all__"
-        read_only_fields = ["user"]
+        read_only_fields = [
+            "user",
+            "tenant",
+        ]

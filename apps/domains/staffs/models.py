@@ -7,12 +7,22 @@ from django.db import models
 from django.core.exceptions import ValidationError
 
 from apps.api.common.models import TimestampModel
+from apps.core.models import Tenant
+from apps.core.db import TenantQuerySet
 
 
 class Staff(TimestampModel):
     """
     조교 / 아르바이트생
     """
+
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="staffs",
+    )
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -47,6 +57,14 @@ class WorkType(TimestampModel):
     근무 유형
     """
 
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="work_types",
+    )
+
     name = models.CharField(max_length=100)
     base_hourly_wage = models.PositiveIntegerField(default=0)
 
@@ -67,6 +85,14 @@ class StaffWorkType(TimestampModel):
     조교별 근무유형/시급
     """
 
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="staff_work_types",
+    )
+
     staff = models.ForeignKey(
         Staff,
         on_delete=models.CASCADE,
@@ -85,7 +111,7 @@ class StaffWorkType(TimestampModel):
     )
 
     class Meta:
-        unique_together = ("staff", "work_type")
+        unique_together = ("tenant", "staff", "work_type")
 
     @property
     def effective_hourly_wage(self) -> int:
@@ -99,6 +125,14 @@ class WorkRecord(TimestampModel):
     """
     출퇴근 기록
     """
+
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="work_records",
+    )
 
     staff = models.ForeignKey(
         Staff,
@@ -144,6 +178,7 @@ class WorkRecord(TimestampModel):
 
         try:
             swt = StaffWorkType.objects.get(
+                tenant=self.tenant,
                 staff=self.staff,
                 work_type=self.work_type,
             )
@@ -164,6 +199,14 @@ class ExpenseRecord(TimestampModel):
     """
     기타 비용 (승인 워크플로우 포함)
     """
+
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="expense_records",
+    )
 
     staff = models.ForeignKey(
         Staff,
@@ -208,6 +251,14 @@ class WorkMonthLock(TimestampModel):
     근무 월 마감
     """
 
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="work_month_locks",
+    )
+
     staff = models.ForeignKey(
         Staff,
         on_delete=models.CASCADE,
@@ -226,7 +277,7 @@ class WorkMonthLock(TimestampModel):
     )
 
     class Meta:
-        unique_together = ("staff", "year", "month")
+        unique_together = ("tenant", "staff", "year", "month")
         ordering = ["-year", "-month"]
 
     def __str__(self):
@@ -237,6 +288,14 @@ class PayrollSnapshot(TimestampModel):
     """
     월별 급여 정산 스냅샷 (불변)
     """
+
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="payroll_snapshots",
+    )
 
     staff = models.ForeignKey(
         Staff,
@@ -261,7 +320,7 @@ class PayrollSnapshot(TimestampModel):
     )
 
     class Meta:
-        unique_together = ("staff", "year", "month")
+        unique_together = ("tenant", "staff", "year", "month")
         ordering = ["-year", "-month"]
 
     def save(self, *args, **kwargs):

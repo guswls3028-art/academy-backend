@@ -93,18 +93,27 @@ class StudentFilter(django_filters.FilterSet):
 ==========================================================================================
 # FILE: models.py
 ==========================================================================================
+# PATH: apps/domains/students/models.py
+
 from django.db import models
 from django.conf import settings
 
 from apps.api.common.models import TimestampModel
+from apps.core.models import Tenant
+from apps.core.db import TenantQuerySet  # ✅ 추가
 
 
 class Student(TimestampModel):
-    # =========================
-    # 🔐 로그인 사용자 연결 (신규)
-    # =========================
-    # - 상용 SaaS에서 재생 권한/로그인을 증명하려면 User ↔ Student 매핑이 필수
-    # - 기존 데이터/운영 고려: null 허용
+    # 🔐 tenant-safe manager (실수 방지)
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="students",
+        help_text="소속 학원 (Tenant)",
+    )
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -114,9 +123,6 @@ class Student(TimestampModel):
         help_text="학생이 로그인 계정을 가지는 경우 연결",
     )
 
-    # =========================
-    # 기본 정보
-    # =========================
     name = models.CharField(max_length=50)
 
     gender = models.CharField(
@@ -126,14 +132,12 @@ class Student(TimestampModel):
         blank=True,
     )
 
-    # 중/고 공통 학년 (1~3)
     grade = models.PositiveSmallIntegerField(
         choices=[(1, "1"), (2, "2"), (3, "3")],
         null=True,
         blank=True,
     )
 
-    # 🔴 중학생 / 고등학생 구분
     SCHOOL_TYPE_CHOICES = (
         ("MIDDLE", "중등"),
         ("HIGH", "고등"),
@@ -146,13 +150,8 @@ class Student(TimestampModel):
     )
 
     phone = models.CharField(max_length=20, null=True, blank=True)
-
-    # legacy 유지 (학생 기준 빠른 조회용)
     parent_phone = models.CharField(max_length=20, null=True, blank=True)
 
-    # =========================
-    # 보호자 (1:N 구조)
-    # =========================
     parent = models.ForeignKey(
         "parents.Parent",
         on_delete=models.SET_NULL,
@@ -161,26 +160,14 @@ class Student(TimestampModel):
         related_name="students",
     )
 
-    # =========================
-    # 학교 정보
-    # =========================
-    # 고등학생용
     high_school = models.CharField(max_length=100, null=True, blank=True)
     high_school_class = models.CharField(max_length=100, null=True, blank=True)
     major = models.CharField(max_length=50, null=True, blank=True)
-
-    # 중학생용
     middle_school = models.CharField(max_length=100, null=True, blank=True)
 
-    # =========================
-    # 기타
-    # =========================
     memo = models.TextField(null=True, blank=True)
     is_managed = models.BooleanField(default=True)
 
-    # =========================
-    # 태그 (주의학생 등)
-    # =========================
     tags = models.ManyToManyField(
         "Tag",
         through="StudentTag",
@@ -192,8 +179,8 @@ class Student(TimestampModel):
         ordering = ["-id"]
         constraints = [
             models.UniqueConstraint(
-                fields=["user"],
-                name="uniq_student_user",
+                fields=["tenant", "user"],
+                name="uniq_student_user_per_tenant",
                 condition=models.Q(user__isnull=False),
             )
         ]
@@ -202,9 +189,6 @@ class Student(TimestampModel):
         return self.name
 
 
-# =========================
-# Tag
-# =========================
 class Tag(models.Model):
     name = models.CharField(max_length=50)
     color = models.CharField(max_length=20, default="#000000")
@@ -221,9 +205,6 @@ class Tag(models.Model):
         return self.name
 
 
-# =========================
-# Student - Tag 연결
-# =========================
 class StudentTag(models.Model):
     student = models.ForeignKey(
         Student,
@@ -247,9 +228,9 @@ class StudentTag(models.Model):
 ==========================================================================================
 # FILE: serializers.py
 ==========================================================================================
+# PATH: apps/domains/students/serializers.py
 
 from rest_framework import serializers
-
 
 from apps.domains.students.models import Student, Tag
 from apps.domains.enrollment.models import Enrollment
@@ -257,20 +238,12 @@ from apps.domains.interactions.counseling.models import Counseling
 from apps.domains.interactions.questions.models import Question
 
 
-# -------------------------------
-# Tag
-# -------------------------------
-
 class TagSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tag
         fields = "__all__"
         ref_name = "StudentTagSerializer"
 
-
-# -------------------------------
-# Nested
-# -------------------------------
 
 class CounselingSerializer(serializers.ModelSerializer):
     class Meta:
@@ -294,10 +267,6 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         fields = "__all__"
         ref_name = "StudentEnrollment"
 
-
-# -------------------------------
-# Student
-# -------------------------------
 
 class StudentListSerializer(serializers.ModelSerializer):
     tags = TagSerializer(many=True, read_only=True)
@@ -336,22 +305,11 @@ class AddTagSerializer(serializers.Serializer):
     tag_id = serializers.IntegerField()
 
 
-# -------------------------------
-# Student Create (with User)
-# -------------------------------
-
 class StudentCreateSerializer(serializers.ModelSerializer):
-    """
-    학생 생성 전용 Serializer
-    - 교사가 초기 비밀번호 설정
-    - phone → User.username 으로 사용
-    """
-
     initial_password = serializers.CharField(
         write_only=True,
         required=True,
         min_length=4,
-        help_text="학생 초기 비밀번호 (교사 설정)",
     )
 
     class Meta:
@@ -374,12 +332,16 @@ class StudentCreateSerializer(serializers.ModelSerializer):
 ==========================================================================================
 # FILE: urls.py
 ==========================================================================================
+# PATH: apps/domains/students/urls.py
+
 from rest_framework.routers import DefaultRouter
 from .views import StudentViewSet, TagViewSet
 
 router = DefaultRouter()
-router.register(r"", StudentViewSet)
-router.register(r"tags", TagViewSet)
+
+# 🔥 basename 명시 (queryset 없는 ViewSet 대응)
+router.register(r"", StudentViewSet, basename="student")
+router.register(r"tags", TagViewSet, basename="student-tag")
 
 urlpatterns = router.urls
 
@@ -387,7 +349,8 @@ urlpatterns = router.urls
 ==========================================================================================
 # FILE: views.py
 ==========================================================================================
-# FILE: views.py
+# PATH: apps/domains/students/views.py
+
 from django.db import transaction
 from django.contrib.auth import get_user_model
 
@@ -419,10 +382,13 @@ class TagViewSet(ModelViewSet):
     """
     학생 태그 관리
     - 관리자 / 스태프 전용
+    - Tag 자체는 테넌트에 종속되지 않음 (공통 분류)
     """
-    queryset = Tag.objects.all()
     serializer_class = TagSerializer
     permission_classes = [IsAdminOrStaff]
+
+    def get_queryset(self):
+        return Tag.objects.all()
 
 
 # ======================================================
@@ -433,20 +399,30 @@ class StudentViewSet(ModelViewSet):
     """
     학생 관리 ViewSet
 
+    ✔ tenant 단위 완전 분리
     ✔ 학생 생성 시 User 계정 자동 생성
     ✔ phone = username
     ✔ 초기 비밀번호는 교사가 설정
     ✔ 학생 CRUD는 관리자만 가능
     """
-    queryset = Student.objects.all()
+
     permission_classes = [IsAdminOrStaff]
+
+    # ------------------------------
+    # Tenant-aware QuerySet
+    # ------------------------------
+    def get_queryset(self):
+        """
+        🔐 핵심 보안 포인트
+        - request.tenant 기준으로만 학생 노출
+        """
+        return Student.objects.filter(tenant=self.request.tenant)
 
     # ------------------------------
     # Serializer 선택
     # ------------------------------
     def get_serializer_class(self):
         if self.action == "create":
-            # 생성 전용 (initial_password 포함)
             from .serializers import StudentCreateSerializer
             return StudentCreateSerializer
 
@@ -465,9 +441,12 @@ class StudentViewSet(ModelViewSet):
 
         1. 입력값 검증 (StudentCreateSerializer)
         2. User 생성 (username = phone)
-        3. Student 생성 + user 연결
+        3. Student 생성 + tenant / user 연결
         """
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(
+            data=request.data,
+            context={"request": request},
+        )
         serializer.is_valid(raise_exception=True)
 
         User = get_user_model()
@@ -484,8 +463,9 @@ class StudentViewSet(ModelViewSet):
         user.set_password(password)
         user.save()
 
-        # 2️⃣ Student 생성 + User 연결
+        # 2️⃣ Student 생성 + tenant / user 연결
         student = Student.objects.create(
+            tenant=request.tenant,   # ✅ tenant 강제 주입
             user=user,
             **serializer.validated_data,
         )
@@ -497,7 +477,7 @@ class StudentViewSet(ModelViewSet):
         return Response(output.data, status=201)
 
     # ------------------------------
-    # ✅ DELETE: Student 삭제 시 User도 같이 삭제 (옵션 A)
+    # DELETE: Student 삭제 시 User도 같이 삭제
     # ------------------------------
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
@@ -505,12 +485,12 @@ class StudentViewSet(ModelViewSet):
         학생 삭제 시 처리 흐름
 
         ✔ Student 삭제
-        ✔ 연결된 User도 같이 삭제 (전화번호 재사용 가능)
+        ✔ 연결된 User도 같이 삭제
         """
         student = self.get_object()
         user = student.user
 
-        # Student 먼저 삭제 (StudentTag 등 through는 CASCADE로 정리됨)
+        # Student 삭제 (StudentTag 등은 CASCADE)
         self.perform_destroy(student)
 
         # User 같이 삭제
@@ -573,15 +553,12 @@ class StudentViewSet(ModelViewSet):
         학생 본인 정보 조회 (Anchor API)
 
         🔒 보안 포인트
-        - request.user 기준 강제
-        - 다른 학생 ID 접근 불가
-        - staff가 호출하면 403
+        - request.user + request.tenant 기준 강제
+        - 다른 학원 / 다른 학생 접근 불가
         """
-        student = (
-            Student.objects
-            .select_related("user")
-            .prefetch_related("tags", "enrollments")
-            .get(user=request.user)
+        student = Student.objects.get(
+            tenant=request.tenant,
+            user=request.user,
         )
 
         serializer = StudentDetailSerializer(
@@ -766,6 +743,82 @@ class Migration(migrations.Migration):
                 condition=models.Q(("user__isnull", False)),
                 fields=("user",),
                 name="uniq_student_user",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0002_add_tenant.py
+==========================================================================================
+# PATH: apps/domains/students/migrations/0002_add_tenant.py
+
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0001_initial"),
+        ("students", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="student",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="students",
+                to="core.tenant",
+                default=1,  # ⚠️ 초기 데이터용 (운영에서 조정)
+            ),
+            preserve_default=False,
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0003_remove_student_uniq_student_user_and_more.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-04 07:17
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0003_attendance_expense_add_tenant"),
+        ("parents", "0001_initial"),
+        ("students", "0002_add_tenant"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.RemoveConstraint(
+            model_name="student",
+            name="uniq_student_user",
+        ),
+        migrations.AlterField(
+            model_name="student",
+            name="tenant",
+            field=models.ForeignKey(
+                help_text="소속 학원 (Tenant)",
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="students",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="student",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("user__isnull", False)),
+                fields=("tenant", "user"),
+                name="uniq_student_user_per_tenant",
             ),
         ),
     ]
