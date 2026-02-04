@@ -154,20 +154,33 @@ class TenantResolvedAndStaff(BasePermission):
 ==========================================================================================
 # FILE: serializers.py
 ==========================================================================================
+# ======================================================================
 # PATH: apps/core/serializers.py
+# ======================================================================
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
-from apps.core.models import Attendance, Expense
+from apps.core.models import Attendance, Expense, TenantMembership
 
 User = get_user_model()
 
 
 # ------------------------------------
-# User Base
+# User Base (SSOT 강화)
 # ------------------------------------
 
 class UserSerializer(serializers.ModelSerializer):
+    """
+    ✅ Core User Serializer (Enterprise SSOT)
+
+    - request.tenant 기준 TenantMembership.role 을
+      tenantRole 필드로 반환
+    - 프론트는 절대 role 추론 금지
+    - 멀티테넌트 / 부모 / 학생 / 교직원 전부 대응
+    """
+
+    tenantRole = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
@@ -177,7 +190,29 @@ class UserSerializer(serializers.ModelSerializer):
             "phone",
             "is_staff",
             "is_superuser",
+            "tenantRole",
         ]
+
+    def get_tenantRole(self, user):
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None)
+
+        # tenant 미확정 (bypass path 등)
+        if not tenant:
+            return None
+
+        membership = (
+            TenantMembership.objects
+            .filter(
+                tenant=tenant,
+                user=user,
+                is_active=True,
+            )
+            .only("role")
+            .first()
+        )
+
+        return membership.role if membership else None
 
 
 # ------------------------------------
@@ -249,7 +284,9 @@ urlpatterns = [
 ==========================================================================================
 # FILE: views.py
 ==========================================================================================
+# ======================================================================
 # PATH: apps/core/views.py
+# ======================================================================
 from datetime import datetime
 from django.db.models import Sum
 
@@ -280,15 +317,23 @@ from apps.core.serializers import (
 
 class MeView(APIView):
     """
-    인증 + 테넌트 확정 + 멤버십 존재 확인
-    (role 비해석)
+    ✅ Core Auth Endpoint (Enterprise Final)
+
+    - 인증 필수
+    - tenant 확정 필수
+    - TenantMembership 존재 필수
+    - tenant 기준 role 을 tenantRole 로 반환
+    - 프론트는 이 응답만 신뢰 (SSOT)
     """
 
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     @swagger_auto_schema(auto_schema=None)
     def get(self, request):
-        serializer = UserSerializer(request.user)
+        serializer = UserSerializer(
+            request.user,
+            context={"request": request},  # ✅ 핵심
+        )
         return Response(serializer.data)
 
 
@@ -394,7 +439,7 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):
         user = request.user
-        tenant = getattr(request, "tenant", None)
+        tenant = getattr(self.request, "tenant", None)
         month = self.request.query_params.get("month")
 
         qs = Attendance.objects.filter(

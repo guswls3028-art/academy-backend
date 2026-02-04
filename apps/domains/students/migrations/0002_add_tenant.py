@@ -1,3 +1,4 @@
+
 # PATH: apps/domains/students/migrations/0002_add_tenant.py
 
 from django.db import migrations, models
