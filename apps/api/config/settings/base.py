@@ -262,6 +262,9 @@ CORS_ALLOWED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
     "https://academy-frontend.pages.dev",
+    "https://limglish.kr",
+    "https://www.limglish.kr",
+
 ]
 
 CORS_ALLOW_CREDENTIALS = True

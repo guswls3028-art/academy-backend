@@ -59,6 +59,8 @@ CORS_ALLOWED_ORIGINS = [
     "https://www.hakwonplus.com",
     "https://academy-frontend.pages.dev",
     "http://localhost:5173",  # local dev
+    "https://limglish.kr",
+    "https://www.limglish.kr",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -71,6 +73,8 @@ CSRF_TRUSTED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
     "https://academy-frontend.pages.dev",
+    "https://limglish.kr",
+    "https://www.limglish.kr",
 ]
 
 # ==================================================

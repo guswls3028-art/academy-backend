@@ -212,9 +212,14 @@ class StudentExamDetailView(APIView):
 
 
 ==========================================================================================
+# FILE: media/__init__.py
+==========================================================================================
+# apps/domains/student_app/media/__init__.py
+
+
+==========================================================================================
 # FILE: media/serializers.py
 ==========================================================================================
-# PATH: C:\academy\apps\domains\student_app\media\serializers.py
 from rest_framework import serializers
 
 
@@ -226,31 +231,31 @@ class StudentVideoListItemSerializer(serializers.Serializer):
     status = serializers.CharField()
     thumbnail_url = serializers.CharField(allow_null=True, required=False)
 
-    # 정책(현재 적용값) - 단일진실
+    # 정책(단일 진실)
     allow_skip = serializers.BooleanField()
     max_speed = serializers.FloatField()
     show_watermark = serializers.BooleanField()
 
     # 학생별 적용 룰
-    effective_rule = serializers.ChoiceField(choices=["free", "once", "blocked"])
+    effective_rule = serializers.ChoiceField(
+        choices=["free", "once", "blocked"]
+    )
 
 
 class StudentVideoPlaybackSerializer(serializers.Serializer):
     """
-    학생 플레이어가 재생할 수 있게 '단일 진실'로 내려주는 payload
+    학생 플레이어가 신뢰하는 단일 진실 payload
     """
     video = StudentVideoListItemSerializer()
     hls_url = serializers.CharField(allow_null=True, required=False)
     mp4_url = serializers.CharField(allow_null=True, required=False)
 
-    # 플레이어가 단일진실로 신뢰해야 하는 정책
     policy = serializers.DictField()
 
 
 ==========================================================================================
 # FILE: media/views.py
 ==========================================================================================
-# PATH: C:\academy\apps\domains\student_app\media\views.py
 from typing import Any, Dict, Optional, Tuple
 
 from django.http import Http404
@@ -267,22 +272,18 @@ from .serializers import (
 )
 
 
+# ======================================================
+# 내부 유틸 (운영 안정성 우선)
+# ======================================================
+
 def _import_media_models():
-    """
-    ✅ 대기업 운영 관점:
-    - 모델이 없으면 조용히 빈값 반환 ❌
-    - 즉시 500으로 터뜨려서 배포/설정 문제를 빨리 찾는다 ✅
-    """
     try:
-        # 프로젝트에 존재한다고 가정되는 media 도메인 모델들
         from apps.domains.media.models import Video  # type: ignore
     except Exception as e:
         raise RuntimeError(
-            "apps.domains.media.models.Video import 실패. "
-            "media 도메인 모델 경로를 확인하세요."
+            "[CRITICAL] apps.domains.media.models.Video import 실패"
         ) from e
 
-    # optional: 학생별 권한 override 모델 (있으면 사용)
     VideoPermission = None
     try:
         from apps.domains.media.models import VideoPermission  # type: ignore
@@ -294,11 +295,6 @@ def _import_media_models():
 
 
 def _get_student_enrollment_id(request) -> Optional[int]:
-    """
-    학생별 룰 산정을 위한 enrollment_id 결정.
-    - 프론트에서 enrollmentId를 쿼리로 넘길 수 있음 (권장)
-    - 없으면 student_profile에서 최대한 추론
-    """
     q = request.query_params.get("enrollment")
     if q:
         try:
@@ -311,16 +307,14 @@ def _get_student_enrollment_id(request) -> Optional[int]:
     if not sp:
         return None
 
-    # 가능한 케이스들을 최대한 지원
     for key in ["enrollment_id", "current_enrollment_id", "enrollment"]:
         v = getattr(sp, key, None)
         if isinstance(v, int):
             return v
 
-    # 관계형으로 들고 있을 수 있음: enrollments.first().id
     enrollments = getattr(sp, "enrollments", None)
     try:
-        if enrollments is not None and hasattr(enrollments, "first"):
+        if enrollments and hasattr(enrollments, "first"):
             first = enrollments.first()
             if first and hasattr(first, "id"):
                 return int(first.id)
@@ -331,41 +325,22 @@ def _get_student_enrollment_id(request) -> Optional[int]:
 
 
 def _pick_urls(video) -> Tuple[Optional[str], Optional[str]]:
-    """
-    video 객체에서 URL 후보를 추출.
-    - hls_url property가 있으면 사용
-    - 없으면 hls_path 같은 필드로 조합은 하지 않음 (추론 금지)
-    """
-    hls_url = getattr(video, "hls_url", None)
-    mp4_url = getattr(video, "mp4_url", None)
-
-    # 가끔 thumbnail 처럼 *_url이 serializer에서만 붙는 경우가 있어서
-    # 단순히 필드 fallback만 시도
-    if not hls_url:
-        hls_url = getattr(video, "hls_path", None)
-    if not mp4_url:
-        mp4_url = getattr(video, "file_url", None)
-
-    return (hls_url, mp4_url)
+    hls_url = getattr(video, "hls_url", None) or getattr(video, "hls_path", None)
+    mp4_url = getattr(video, "mp4_url", None) or getattr(video, "file_url", None)
+    return hls_url, mp4_url
 
 
 def _effective_rule(video_permission_obj) -> str:
-    """
-    VideoPermission이 있으면 rule 기반. 없으면 free.
-    """
     if not video_permission_obj:
         return "free"
 
-    rule = getattr(video_permission_obj, "rule", None) or getattr(video_permission_obj, "effective_rule", None)
-    if rule in ("free", "once", "blocked"):
-        return rule
-    return "free"
+    rule = getattr(video_permission_obj, "rule", None) or getattr(
+        video_permission_obj, "effective_rule", None
+    )
+    return rule if rule in ("free", "once", "blocked") else "free"
 
 
 def _policy_from_video(video) -> Dict[str, Any]:
-    """
-    ✅ 단일 진실: Video 객체가 가진 현재 정책 상태를 그대로 전달
-    """
     return {
         "allow_skip": bool(getattr(video, "allow_skip", False)),
         "max_speed": float(getattr(video, "max_speed", 1.0) or 1.0),
@@ -373,11 +348,13 @@ def _policy_from_video(video) -> Dict[str, Any]:
     }
 
 
+# ======================================================
+# Views
+# ======================================================
+
 class StudentSessionVideoListView(APIView):
     """
-    GET /student/media/sessions/{session_id}/videos/?enrollment={id}
-    - 세션에 속한 영상 목록
-    - 학생별 effective_rule 포함
+    GET /student/media/sessions/{session_id}/videos/
     """
 
     permission_classes = [IsAuthenticated, IsStudent]
@@ -386,46 +363,38 @@ class StudentSessionVideoListView(APIView):
         Video, VideoPermission = _import_media_models()
         enrollment_id = _get_student_enrollment_id(request)
 
-        # 세션 필터 (추론 금지: session_id 필드가 존재한다고 가정)
         videos = Video.objects.filter(session_id=session_id).order_by("order", "id")
 
         items = []
         for v in videos:
             perm_obj = None
             if VideoPermission and enrollment_id:
-                try:
-                    perm_obj = VideoPermission.objects.filter(video_id=v.id, enrollment_id=enrollment_id).first()
-                except Exception:
-                    perm_obj = None
+                perm_obj = (
+                    VideoPermission.objects
+                    .filter(video_id=v.id, enrollment_id=enrollment_id)
+                    .first()
+                )
 
-            rule = _effective_rule(perm_obj)
+            thumb = getattr(v, "thumbnail_url", None) or getattr(v, "thumbnail", None)
 
-            # thumbnail_url: 모델/프로퍼티 둘 다 가능
-            thumb = getattr(v, "thumbnail_url", None)
-            if not thumb:
-                thumb = getattr(v, "thumbnail", None)
-
-            data = {
-                "id": int(getattr(v, "id")),
-                "session_id": int(getattr(v, "session_id", session_id)),
-                "title": str(getattr(v, "title", f"Video {getattr(v, 'id')}")),
+            items.append({
+                "id": int(v.id),
+                "session_id": int(v.session_id),
+                "title": str(v.title),
                 "status": str(getattr(v, "status", "READY")),
                 "thumbnail_url": thumb,
                 **_policy_from_video(v),
-                "effective_rule": rule,
-            }
-            items.append(data)
+                "effective_rule": _effective_rule(perm_obj),
+            })
 
-        return Response({"items": StudentVideoListItemSerializer(items, many=True).data})
+        return Response({
+            "items": StudentVideoListItemSerializer(items, many=True).data
+        })
 
 
 class StudentVideoPlaybackView(APIView):
     """
-    GET /student/media/videos/{video_id}/playback/?enrollment={id}
-
-    ✅ 학생 플레이어 단일 진실 엔드포인트
-    - blocked면 403
-    - 정책/룰 그대로 내려줌
+    GET /student/media/videos/{video_id}/playback/
     """
 
     permission_classes = [IsAuthenticated, IsStudent]
@@ -441,43 +410,41 @@ class StudentVideoPlaybackView(APIView):
 
         perm_obj = None
         if VideoPermission and enrollment_id:
-            try:
-                perm_obj = VideoPermission.objects.filter(video_id=video.id, enrollment_id=enrollment_id).first()
-            except Exception:
-                perm_obj = None
+            perm_obj = (
+                VideoPermission.objects
+                .filter(video_id=video.id, enrollment_id=enrollment_id)
+                .first()
+            )
 
         rule = _effective_rule(perm_obj)
         if rule == "blocked":
             raise PermissionDenied("이 영상은 시청이 제한되었습니다.")
 
         hls_url, mp4_url = _pick_urls(video)
-
-        thumb = getattr(video, "thumbnail_url", None)
-        if not thumb:
-            thumb = getattr(video, "thumbnail", None)
-
-        video_payload = {
-            "id": int(getattr(video, "id")),
-            "session_id": int(getattr(video, "session_id", 0) or 0),
-            "title": str(getattr(video, "title", f"Video {video_id}")),
-            "status": str(getattr(video, "status", "READY")),
-            "thumbnail_url": thumb,
-            **_policy_from_video(video),
-            "effective_rule": rule,
-        }
+        thumb = getattr(video, "thumbnail_url", None) or getattr(video, "thumbnail", None)
 
         payload = {
-            "video": video_payload,
+            "video": {
+                "id": int(video.id),
+                "session_id": int(video.session_id),
+                "title": str(video.title),
+                "status": str(getattr(video, "status", "READY")),
+                "thumbnail_url": thumb,
+                **_policy_from_video(video),
+                "effective_rule": rule,
+            },
             "hls_url": hls_url,
             "mp4_url": mp4_url,
             "policy": {
                 **_policy_from_video(video),
                 "effective_rule": rule,
-                # once 룰의 구체적 소진/잔여는 여기서 추론하지 않음 (단일진실 위반)
             },
         }
 
-        return Response(StudentVideoPlaybackSerializer(payload).data, status=status.HTTP_200_OK)
+        return Response(
+            StudentVideoPlaybackSerializer(payload).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 ==========================================================================================
