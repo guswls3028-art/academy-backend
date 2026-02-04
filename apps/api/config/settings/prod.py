@@ -32,6 +32,10 @@ ALLOWED_HOSTS = [
     "www.hakwonplus.com",
     "api.hakwonplus.com",
 
+    # limglish
+    "limglish.kr",
+    "www.limglish.kr",
+
     # =========================
     # Cloudflare Pages (frontend)
     # =========================
