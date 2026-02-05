@@ -97,13 +97,15 @@ def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
     return True, {"duration": duration, "has_video": True}, ""
 
 
-def _try_start_video_worker_instance(retry_count=0) -> None:
+def _try_start_video_worker_instance() -> None:
     """
     upload_complete 시점에 video-worker EC2 인스턴스 자동 기동 (로그 분석 강화)
-    - 수정사항: 중지 중(Stopping) 상태 대응을 위해 10초 간격으로 최대 120초(12회) 재시도 수행
+
+    ✅ 운영 안정화:
+    - 요청 처리 중 "백그라운드 쓰레드/Timer"로 재시도하지 않는다 (프로세스 누수/스레드 폭주 방지)
+    - boto3 네트워크 타임아웃을 강제하여 API 서버가 오래 붙잡히지 않게 한다
+    - IncorrectInstanceState(Stopping 등) 는 "이미 전환 중"으로 보고 조용히 종료
     """
-    import threading
-    
     instance_id = getattr(settings, "VIDEO_WORKER_INSTANCE_ID", None) or ""
     region = (
         getattr(settings, "AWS_REGION", None)
@@ -115,34 +117,38 @@ def _try_start_video_worker_instance(retry_count=0) -> None:
         logger.error("[EC2-START] VIDEO_WORKER_INSTANCE_ID 설정이 없습니다.")
         return
 
-    # 재시도 설정: 10초 간격으로 최대 12번 (총 120초)
-    MAX_RETRIES = 12
-    RETRY_INTERVAL = 10
-
     try:
         import boto3  # type: ignore
-        ec2 = boto3.client("ec2", region_name=region)
-        
-        # 기동 시도 및 응답 로그 기록
+        from botocore.config import Config  # type: ignore
+
+        # ✅ 타임아웃 강제 + boto3 자체 재시도 최소화
+        cfg = Config(
+            connect_timeout=2,
+            read_timeout=3,
+            retries={"max_attempts": 2, "mode": "standard"},
+        )
+        ec2 = boto3.client("ec2", region_name=region, config=cfg)
+
         response = ec2.start_instances(InstanceIds=[str(instance_id)])
-        logger.info(f"[EC2-START] 성공: {instance_id} 기동 명령 전송 (시도 {retry_count + 1}회). 응답: {response.get('StartingInstances')}")
-        
+        logger.info(
+            "[EC2-START] start_instances sent instance_id=%s resp=%s",
+            str(instance_id),
+            str(response.get("StartingInstances")),
+        )
+
     except Exception as e:
         error_str = str(e)
-        # 인스턴스가 중지 중(Stopping)이거나 일시적인 상태 오류인 경우
+
+        # ✅ Stopping/Transient 상태면: 서버가 재시도/대기하지 않고 즉시 종료(안전)
         if "IncorrectInstanceState" in error_str or "InstanceInterrupted" in error_str:
-            if retry_count < MAX_RETRIES:
-                logger.warning(f"[EC2-START] 인스턴스가 준비되지 않음. {RETRY_INTERVAL}초 후 재시도... ({retry_count + 1}/{MAX_RETRIES})")
-                threading.Timer(
-                    RETRY_INTERVAL, 
-                    _try_start_video_worker_instance, 
-                    args=[retry_count + 1]
-                ).start()
-            else:
-                logger.error(f"[EC2-START] 최대 재시도(120초) 초과. 기동 실패: {error_str}")
-        else:
-            # 실패 시 구체적인 에러 메시지 로깅
-            logger.error(f"[EC2-START] 실패: {error_str}", exc_info=True)
+            logger.warning(
+                "[EC2-START] ignored transient state instance_id=%s err=%s",
+                str(instance_id),
+                error_str,
+            )
+            return
+
+        logger.error(f"[EC2-START] 실패: {error_str}", exc_info=True)
 
 
 def _try_start_video_worker_instance_after_job_creation() -> None:
