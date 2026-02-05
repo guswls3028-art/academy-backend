@@ -13,6 +13,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.core.permissions import IsAdminOrStaff, IsStudent
 from apps.core.models import TenantMembership
+from apps.core.permissions import TenantResolvedAndStaff
 
 from .models import Student, Tag, StudentTag
 from .filters import StudentFilter
@@ -60,7 +61,7 @@ class StudentViewSet(ModelViewSet):
     - Student 삭제 시 User 삭제(고아유저 방지)
     """
 
-    permission_classes = [IsAdminOrStaff]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     # ------------------------------
     # Tenant-aware QuerySet
