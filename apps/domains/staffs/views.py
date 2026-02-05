@@ -65,16 +65,6 @@ class IsPayrollManager(BasePermission):
 # Helpers
 # ===========================
 
-def is_month_locked(staff, date):
-    return WorkMonthLock.objects.filter(
-        tenant=staff.tenant,
-        staff=staff,
-        year=date.year,
-        month=date.month,
-        is_locked=True,
-    ).exists()
-
-
 def can_manage_payroll(user) -> bool:
     if not user or not user.is_authenticated:
         return False
@@ -99,7 +89,6 @@ def generate_payroll_snapshot(staff, year, month, user):
             date__year=year,
             date__month=month,
         )
-
         er_qs = ExpenseRecord.objects.filter(
             tenant=staff.tenant,
             staff=staff,
@@ -336,8 +325,7 @@ class ExpenseRecordViewSet(viewsets.ModelViewSet):
         new_status = serializer.validated_data.get("status", instance.status)
 
         if new_status != instance.status:
-            user = self.request.user
-            if not can_manage_payroll(user):
+            if not can_manage_payroll(self.request.user):
                 raise PermissionDenied("비용 승인/반려는 관리자만 가능합니다.")
 
             if instance.status != "PENDING":
@@ -348,7 +336,7 @@ class ExpenseRecordViewSet(viewsets.ModelViewSet):
 
             serializer.save(
                 approved_at=timezone.now(),
-                approved_by=user,
+                approved_by=self.request.user,
             )
             return
 
