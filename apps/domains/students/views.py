@@ -111,7 +111,7 @@ class StudentViewSet(ModelViewSet):
 
         # 1️⃣ User 생성 (항상 Student와 같은 트랜잭션에서)
         user = User.objects.create_user(
-            username=phone,
+            username=serializer.validated_data["ps_number"],  # 🔥 핵심
             phone=phone,
             name=serializer.validated_data.get("name", ""),
         )
