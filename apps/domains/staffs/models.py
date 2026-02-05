@@ -11,9 +11,67 @@ from apps.core.models import Tenant
 from apps.core.db import TenantQuerySet
 
 
+# ======================================================
+# Payroll Calculation Policies (Enterprise Level)
+# ======================================================
+
+class WorkHourCalculationPolicy:
+    """
+    근무 시간 계산 정책
+    - 시간 왜곡 금지
+    - 휴게시간은 분 단위로 차감
+    """
+
+    @staticmethod
+    def calculate(date, start_time, end_time, break_minutes) -> Decimal:
+        start_dt = datetime.combine(date, start_time)
+        end_dt = datetime.combine(date, end_time)
+        if end_dt < start_dt:
+            end_dt += timedelta(days=1)
+
+        total_minutes = (end_dt - start_dt).total_seconds() / 60
+        total_minutes = max(0, total_minutes - break_minutes)
+
+        return Decimal(total_minutes / 60).quantize(Decimal("0.01"))
+
+
+class WageResolutionPolicy:
+    """
+    단가 결정 정책
+    """
+
+    @staticmethod
+    def resolve(*, tenant, staff, work_type) -> int:
+        from .models import StaffWorkType
+
+        try:
+            swt = StaffWorkType.objects.get(
+                tenant=tenant,
+                staff=staff,
+                work_type=work_type,
+            )
+            return swt.effective_hourly_wage
+        except StaffWorkType.DoesNotExist:
+            return work_type.base_hourly_wage
+
+
+class PayrollAmountPolicy:
+    """
+    금액 계산 정책
+    """
+
+    @staticmethod
+    def calculate(hours: Decimal, hourly_wage: int) -> int:
+        return int(hours * Decimal(hourly_wage))
+
+
+# ======================================================
+# Domain Models
+# ======================================================
+
 class Staff(TimestampModel):
     """
-    조교 / 아르바이트생
+    직원 / 강사
     """
 
     objects = TenantQuerySet.as_manager()
@@ -54,7 +112,7 @@ class Staff(TimestampModel):
 
 class WorkType(TimestampModel):
     """
-    근무 유형
+    급여 블록
     """
 
     objects = TenantQuerySet.as_manager()
@@ -82,7 +140,7 @@ class WorkType(TimestampModel):
 
 class StaffWorkType(TimestampModel):
     """
-    조교별 근무유형/시급
+    Staff ↔ WorkType 연결
     """
 
     objects = TenantQuerySet.as_manager()
@@ -107,7 +165,7 @@ class StaffWorkType(TimestampModel):
     hourly_wage = models.PositiveIntegerField(
         null=True,
         blank=True,
-        help_text="비우면 WorkType 기본 시급",
+        help_text="비우면 WorkType 기본 단가",
     )
 
     class Meta:
@@ -123,7 +181,7 @@ class StaffWorkType(TimestampModel):
 
 class WorkRecord(TimestampModel):
     """
-    출퇴근 기록
+    근무 사실(Fact)
     """
 
     objects = TenantQuerySet.as_manager()
@@ -147,8 +205,11 @@ class WorkRecord(TimestampModel):
 
     date = models.DateField()
     start_time = models.TimeField()
-    end_time = models.TimeField()
+    end_time = models.TimeField(null=True, blank=True)
     break_minutes = models.PositiveIntegerField(default=0)
+
+    # ✅ 원본에 있었던 필드 복구
+    current_break_started_at = models.DateTimeField(null=True, blank=True)
 
     work_hours = models.DecimalField(
         max_digits=5,
@@ -161,39 +222,44 @@ class WorkRecord(TimestampModel):
         blank=True,
     )
 
+    # ✅ 원본에 있었던 필드 복구
+    resolved_hourly_wage = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="급여 계산에 실제 사용된 시급",
+    )
+
     memo = models.TextField(blank=True)
 
     class Meta:
         ordering = ["-date", "-start_time"]
 
-    def _calculate_hours_and_amount(self):
-        start_dt = datetime.combine(self.date, self.start_time)
-        end_dt = datetime.combine(self.date, self.end_time)
-        if end_dt < start_dt:
-            end_dt += timedelta(days=1)
+    def calculate_payroll(self):
+        hours = WorkHourCalculationPolicy.calculate(
+            self.date,
+            self.start_time,
+            self.end_time,
+            self.break_minutes,
+        )
 
-        total_minutes = (end_dt - start_dt).total_seconds() / 60
-        total_minutes = max(0, total_minutes - self.break_minutes)
-        hours = Decimal(total_minutes / 60).quantize(Decimal("0.01"))
+        wage = WageResolutionPolicy.resolve(
+            tenant=self.tenant,
+            staff=self.staff,
+            work_type=self.work_type,
+        )
 
-        try:
-            swt = StaffWorkType.objects.get(
-                tenant=self.tenant,
-                staff=self.staff,
-                work_type=self.work_type,
-            )
-            wage = swt.effective_hourly_wage
-        except StaffWorkType.DoesNotExist:
-            wage = self.work_type.base_hourly_wage
-
-        amount = int(hours * Decimal(wage))
-        return hours, amount
+        amount = PayrollAmountPolicy.calculate(hours, wage)
+        return hours, amount, wage
 
     def save(self, *args, **kwargs):
-        if self.work_hours is None or self.amount is None:
-            self.work_hours, self.amount = self._calculate_hours_and_amount()
+        if self.end_time and (self.work_hours is None or self.amount is None):
+            self.work_hours, self.amount, self.resolved_hourly_wage = self.calculate_payroll()
         super().save(*args, **kwargs)
 
+
+# ======================================================
+# ↓↓↓ 원본에 있었던 하단 모델들 복구 ↓↓↓
+# ======================================================
 
 class ExpenseRecord(TimestampModel):
     """

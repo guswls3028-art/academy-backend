@@ -1,9 +1,10 @@
 # PATH: apps/domains/staffs/views.py
 from io import BytesIO
+
+from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 from django.http import HttpResponse
-from django.db import transaction
 from django.contrib.auth import get_user_model
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -19,9 +20,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib import colors
 
 from .models import (
     Staff,
@@ -75,6 +75,14 @@ def is_month_locked(staff, date):
     ).exists()
 
 
+def can_manage_payroll(user) -> bool:
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser or user.is_staff:
+        return True
+    return getattr(getattr(user, "staff_profile", None), "is_manager", False)
+
+
 def generate_payroll_snapshot(staff, year, month, user):
     if PayrollSnapshot.objects.filter(
         tenant=staff.tenant,
@@ -82,46 +90,39 @@ def generate_payroll_snapshot(staff, year, month, user):
         year=year,
         month=month,
     ).exists():
-        return
+        raise ValidationError("이미 급여 스냅샷이 생성된 월입니다.")
 
-    wr_qs = WorkRecord.objects.filter(
-        tenant=staff.tenant,
-        staff=staff,
-        date__year=year,
-        date__month=month,
-    )
+    with transaction.atomic():
+        wr_qs = WorkRecord.objects.filter(
+            tenant=staff.tenant,
+            staff=staff,
+            date__year=year,
+            date__month=month,
+        )
 
-    er_qs = ExpenseRecord.objects.filter(
-        tenant=staff.tenant,
-        staff=staff,
-        date__year=year,
-        date__month=month,
-        status="APPROVED",
-    )
+        er_qs = ExpenseRecord.objects.filter(
+            tenant=staff.tenant,
+            staff=staff,
+            date__year=year,
+            date__month=month,
+            status="APPROVED",
+        )
 
-    work_hours = wr_qs.aggregate(total=Sum("work_hours"))["total"] or 0
-    work_amount = wr_qs.aggregate(total=Sum("amount"))["total"] or 0
-    approved_expense_amount = er_qs.aggregate(total=Sum("amount"))["total"] or 0
+        work_hours = wr_qs.aggregate(total=Sum("work_hours"))["total"] or 0
+        work_amount = wr_qs.aggregate(total=Sum("amount"))["total"] or 0
+        approved_expense_amount = er_qs.aggregate(total=Sum("amount"))["total"] or 0
 
-    PayrollSnapshot.objects.create(
-        tenant=staff.tenant,
-        staff=staff,
-        year=year,
-        month=month,
-        work_hours=work_hours,
-        work_amount=work_amount,
-        approved_expense_amount=approved_expense_amount,
-        total_amount=work_amount + approved_expense_amount,
-        generated_by=user,
-    )
-
-
-def can_manage_payroll(user) -> bool:
-    if not user or not user.is_authenticated:
-        return False
-    if user.is_superuser or user.is_staff:
-        return True
-    return getattr(getattr(user, "staff_profile", None), "is_manager", False)
+        PayrollSnapshot.objects.create(
+            tenant=staff.tenant,
+            staff=staff,
+            year=year,
+            month=month,
+            work_hours=work_hours,
+            work_amount=work_amount,
+            approved_expense_amount=approved_expense_amount,
+            total_amount=work_amount + approved_expense_amount,
+            generated_by=user,
+        )
 
 # ===========================
 # WorkType
@@ -179,9 +180,9 @@ class StaffViewSet(viewsets.ModelViewSet):
     def me(self, request):
         return Response(
             {
-                "is_authenticated": bool(request.user and request.user.is_authenticated),
-                "is_superuser": bool(getattr(request.user, "is_superuser", False)),
-                "is_staff": bool(getattr(request.user, "is_staff", False)),
+                "is_authenticated": True,
+                "is_superuser": bool(request.user.is_superuser),
+                "is_staff": bool(request.user.is_staff),
                 "is_payroll_manager": can_manage_payroll(request.user),
             }
         )
@@ -275,16 +276,17 @@ class StaffViewSet(viewsets.ModelViewSet):
             wr_qs = wr_qs.filter(date__lte=date_to)
             er_qs = er_qs.filter(date__lte=date_to)
 
+        work_hours = wr_qs.aggregate(total=Sum("work_hours"))["total"] or 0
+        work_amount = wr_qs.aggregate(total=Sum("amount"))["total"] or 0
+        expense_amount = er_qs.aggregate(total=Sum("amount"))["total"] or 0
+
         return Response(
             {
                 "staff_id": staff.id,
-                "work_hours": wr_qs.aggregate(total=Sum("work_hours"))["total"] or 0,
-                "work_amount": wr_qs.aggregate(total=Sum("amount"))["total"] or 0,
-                "expense_amount": er_qs.aggregate(total=Sum("amount"))["total"] or 0,
-                "total_amount": (
-                    (wr_qs.aggregate(total=Sum("amount"))["total"] or 0)
-                    + (er_qs.aggregate(total=Sum("amount"))["total"] or 0)
-                ),
+                "work_hours": work_hours,
+                "work_amount": work_amount,
+                "expense_amount": expense_amount,
+                "total_amount": work_amount + expense_amount,
             }
         )
 
@@ -307,45 +309,6 @@ class StaffWorkTypeViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.tenant)
-
-# ===========================
-# WorkRecord
-# ===========================
-
-class WorkRecordViewSet(viewsets.ModelViewSet):
-    serializer_class = WorkRecordSerializer
-    permission_classes = [IsAuthenticated, IsPayrollManager]
-
-    filter_backends = (DjangoFilterBackend, OrderingFilter)
-    filterset_class = WorkRecordFilter
-    ordering_fields = ["date", "created_at", "amount"]
-
-    def get_queryset(self):
-        return (
-            WorkRecord.objects.filter(tenant=self.request.tenant)
-            .select_related("staff", "work_type")
-            .order_by("-date", "-start_time")
-        )
-
-    def perform_create(self, serializer):
-        staff = serializer.validated_data["staff"]
-        date = serializer.validated_data["date"]
-
-        if is_month_locked(staff, date):
-            raise ValidationError("마감된 월의 근무기록은 추가할 수 없습니다.")
-
-        serializer.save(tenant=self.request.tenant)
-
-    def perform_update(self, serializer):
-        instance = self.get_object()
-        if is_month_locked(instance.staff, instance.date):
-            raise ValidationError("마감된 월의 근무기록은 수정할 수 없습니다.")
-        serializer.save()
-
-    def perform_destroy(self, instance):
-        if is_month_locked(instance.staff, instance.date):
-            raise ValidationError("마감된 월의 근무기록은 삭제할 수 없습니다.")
-        instance.delete()
 
 # ===========================
 # ExpenseRecord
@@ -558,3 +521,119 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
         )
         response.write(pdf)
         return response
+
+# ===========================
+# WorkRecord (통합 + 실시간 근무)
+# ===========================
+
+class WorkRecordViewSet(viewsets.ModelViewSet):
+    serializer_class = WorkRecordSerializer
+    permission_classes = [IsAuthenticated, IsPayrollManager]
+
+    filter_backends = (DjangoFilterBackend, OrderingFilter)
+    filterset_class = WorkRecordFilter
+    ordering_fields = ["date", "created_at", "amount"]
+
+    def get_queryset(self):
+        return (
+            WorkRecord.objects
+            .filter(tenant=self.request.tenant)
+            .select_related("staff", "work_type")
+            .order_by("-date", "-start_time")
+        )
+
+    @action(detail=True, methods=["get"], url_path="current")
+    def current_status(self, request, pk=None):
+        staff = Staff.objects.get(pk=pk, tenant=request.tenant)
+
+        record = (
+            WorkRecord.objects
+            .filter(staff=staff, tenant=staff.tenant, end_time__isnull=True)
+            .order_by("-start_time")
+            .first()
+        )
+
+        if not record:
+            return Response({"status": "OFF"})
+
+        if record.current_break_started_at:
+            return Response({
+                "status": "BREAK",
+                "work_record_id": record.id,
+                "started_at": record.start_time,
+                "break_started_at": record.current_break_started_at,
+            })
+
+        return Response({
+            "status": "WORKING",
+            "work_record_id": record.id,
+            "started_at": record.start_time,
+            "break_minutes": record.break_minutes,
+        })
+
+    @action(detail=True, methods=["post"])
+    def start_work(self, request, pk=None):
+        staff = Staff.objects.get(pk=pk, tenant=request.tenant)
+        now = timezone.now()
+
+        if WorkRecord.objects.filter(
+            staff=staff,
+            tenant=staff.tenant,
+            end_time__isnull=True,
+        ).exists():
+            raise ValidationError("이미 근무 중입니다.")
+
+        record = WorkRecord.objects.create(
+            tenant=staff.tenant,
+            staff=staff,
+            work_type_id=request.data.get("work_type"),
+            date=now.date(),
+            start_time=now.time(),
+        )
+
+        return Response(WorkRecordSerializer(record).data, status=201)
+
+    @action(detail=True, methods=["post"])
+    def start_break(self, request, pk=None):
+        record = WorkRecord.objects.get(pk=pk, tenant=request.tenant)
+
+        if record.current_break_started_at:
+            raise ValidationError("이미 휴게 중입니다.")
+
+        record.current_break_started_at = timezone.now()
+        record.save(update_fields=["current_break_started_at"])
+
+        return Response({"status": "BREAK_STARTED"})
+
+    @action(detail=True, methods=["post"])
+    def end_break(self, request, pk=None):
+        record = WorkRecord.objects.get(pk=pk, tenant=request.tenant)
+
+        if not record.current_break_started_at:
+            raise ValidationError("휴게 중이 아닙니다.")
+
+        now = timezone.now()
+        delta = now - record.current_break_started_at
+        record.break_minutes += int(delta.total_seconds() / 60)
+        record.current_break_started_at = None
+        record.save(update_fields=["break_minutes", "current_break_started_at"])
+
+        return Response({"status": "BREAK_ENDED"})
+
+    @action(detail=True, methods=["post"])
+    def end_work(self, request, pk=None):
+        record = WorkRecord.objects.get(pk=pk, tenant=request.tenant)
+
+        if record.end_time:
+            raise ValidationError("이미 종료된 근무입니다.")
+
+        if record.current_break_started_at:
+            now = timezone.now()
+            delta = now - record.current_break_started_at
+            record.break_minutes += int(delta.total_seconds() / 60)
+            record.current_break_started_at = None
+
+        record.end_time = timezone.now().time()
+        record.save()
+
+        return Response(WorkRecordSerializer(record).data)
