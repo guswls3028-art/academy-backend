@@ -367,7 +367,7 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         from django.contrib.auth import get_user_model
         User = get_user_model()
 
-        if User.objects.filter(username=value).exists():
+        if User.objects.filter(phone=value).exists():
             raise serializers.ValidationError("이미 사용 중인 전화번호입니다.")
 
         return value
