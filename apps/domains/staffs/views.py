@@ -188,7 +188,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         )
 
     # ===========================
-    # 실시간 근무 (Staff 기준, pk 혼용 봉인)
+    # 실시간 근무 (Staff 기준)
     # ===========================
 
     @action(detail=True, methods=["get"], url_path="work-records/current")
@@ -357,7 +357,7 @@ class WorkMonthLockViewSet(viewsets.ModelViewSet):
         )
 
 # ===========================
-# PayrollSnapshot
+# PayrollSnapshot (ReadOnly + Export)
 # ===========================
 
 class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
@@ -368,6 +368,105 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
         return PayrollSnapshot.objects.filter(
             tenant=self.request.tenant
         ).select_related("staff", "generated_by")
+
+    @action(detail=False, methods=["get"], url_path="export-excel")
+    def export_excel(self, request):
+        year = request.query_params.get("year")
+        month = request.query_params.get("month")
+
+        if not year or not month:
+            raise ValidationError("year, month는 필수입니다.")
+
+        qs = self.get_queryset().filter(year=year, month=month)
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = f"{year}-{month} 급여정산"
+
+        headers = [
+            "직원명", "연도", "월", "근무시간",
+            "급여", "승인된 비용", "총 지급액", "확정자", "확정일시"
+        ]
+        ws.append(headers)
+
+        for c in ws[1]:
+            c.font = Font(bold=True)
+            c.alignment = Alignment(horizontal="center")
+
+        for s in qs:
+            ws.append([
+                s.staff.name,
+                s.year,
+                s.month,
+                float(s.work_hours),
+                s.work_amount,
+                s.approved_expense_amount,
+                s.total_amount,
+                getattr(s.generated_by, "username", "") if s.generated_by else "",
+                s.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            ])
+
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="payroll_{year}_{month}.xlsx"'
+        )
+        wb.save(response)
+        return response
+
+    @action(detail=False, methods=["get"], url_path="export-pdf")
+    def export_pdf(self, request):
+        staff_id = request.query_params.get("staff")
+        year = request.query_params.get("year")
+        month = request.query_params.get("month")
+
+        if not staff_id or not year or not month:
+            raise ValidationError("staff, year, month는 필수입니다.")
+
+        snap = self.get_queryset().filter(
+            staff_id=staff_id,
+            year=year,
+            month=month,
+        ).first()
+
+        if not snap:
+            return Response({"detail": "급여 스냅샷 없음"}, status=404)
+
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        styles = getSampleStyleSheet()
+        story = []
+
+        story.append(Paragraph("급여 명세서", styles["Title"]))
+        story.append(Spacer(1, 12))
+
+        meta = [
+            ["직원명", snap.staff.name],
+            ["정산월", f"{snap.year}-{snap.month:02d}"],
+            ["확정자", getattr(snap.generated_by, "username", "-") if snap.generated_by else "-"],
+        ]
+        story.append(Table(meta, colWidths=[120, 360]))
+        story.append(Spacer(1, 16))
+
+        rows = [
+            ["근무시간", f"{snap.work_hours} h"],
+            ["급여", f"{snap.work_amount:,} 원"],
+            ["승인 비용", f"{snap.approved_expense_amount:,} 원"],
+            ["총 지급액", f"{snap.total_amount:,} 원"],
+        ]
+        story.append(Table(rows, colWidths=[120, 360]))
+
+        doc.build(story)
+        pdf = buffer.getvalue()
+        buffer.close()
+
+        response = HttpResponse(content_type="application/pdf")
+        response["Content-Disposition"] = (
+            f'attachment; filename="payroll_{snap.staff.id}_{snap.year}_{snap.month:02d}.pdf"'
+        )
+        response.write(pdf)
+        return response
 
 # ===========================
 # WorkRecord (Record 기준: 휴게/종료만)
