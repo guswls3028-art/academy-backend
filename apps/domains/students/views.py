@@ -143,22 +143,15 @@ class StudentViewSet(ModelViewSet):
     # ------------------------------
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
-        """
-        학생 삭제 시 처리 흐름
-
-        ✔ Student 삭제
-        ✔ 연결된 User도 같이 삭제 (고아유저 방지)
-        ✔ TenantMembership은 user FK CASCADE로 자동 정리
-        """
         student = self.get_object()
         user = student.user
 
-        # Student 삭제
-        self.perform_destroy(student)
-
-        # User 같이 삭제 (Membership도 CASCADE)
+        # 🔥 User 먼저 삭제
         if user:
             user.delete()
+
+        # 🔥 그 다음 Student 삭제
+        self.perform_destroy(student)
 
         return Response(status=204)
 
