@@ -1,3 +1,4 @@
+# PATH: apps/core/models/tenant.py
 from django.db import models
 
 

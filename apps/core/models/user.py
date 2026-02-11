@@ -8,10 +8,6 @@ from apps.core.models.tenant import Tenant
 from apps.core.db import TenantQuerySet
 
 
-# --------------------------------------------------
-# Custom User (AUTH_USER_MODEL)
-# --------------------------------------------------
-
 class User(AbstractUser):
     """
     Custom User 모델
@@ -22,7 +18,6 @@ class User(AbstractUser):
     name = models.CharField(max_length=50, blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
 
-    # 🔥 핵심: auth.User 와 reverse accessor 충돌 방지
     groups = models.ManyToManyField(
         Group,
         related_name="core_users",
@@ -43,10 +38,6 @@ class User(AbstractUser):
         return self.username
 
 
-# --------------------------------------------------
-# Attendance
-# --------------------------------------------------
-
 class Attendance(TimestampModel):
     """
     ✅ 운영레벨 핵심:
@@ -54,7 +45,6 @@ class Attendance(TimestampModel):
     - tenant 없으면 조회/생성 불가(코드 레벨에서 강제)
     """
 
-    # ✅ 최소수정: tenant-aware manager (운영 사고 방지)
     objects = TenantQuerySet.as_manager()
 
     tenant = models.ForeignKey(
@@ -89,10 +79,6 @@ class Attendance(TimestampModel):
         return f"{self.user.username} - {self.date}"
 
 
-# --------------------------------------------------
-# Expense
-# --------------------------------------------------
-
 class Expense(TimestampModel):
     """
     ✅ 운영레벨 핵심:
@@ -100,7 +86,6 @@ class Expense(TimestampModel):
     - tenant 없으면 조회/생성 불가(코드 레벨에서 강제)
     """
 
-    # ✅ 최소수정: tenant-aware manager (운영 사고 방지)
     objects = TenantQuerySet.as_manager()
 
     tenant = models.ForeignKey(

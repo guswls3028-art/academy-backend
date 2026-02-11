@@ -51,11 +51,6 @@ class TenantMembership(models.Model):
     def __str__(self) -> str:
         return f"{self.user} @ {self.tenant} ({self.role})"
 
-    # ------------------------------------------------------------------
-    # ✅ 운영 SSOT helper
-    # - “학생/부모 role 연결”을 테넌트 단위로 항상 일관되게 만드는 최소 API
-    # - 도메인에서 user만 있으면 이걸 호출해서 membership을 확정하면 됨
-    # ------------------------------------------------------------------
     @classmethod
     @transaction.atomic
     def ensure_active(cls, *, tenant: Tenant, user, role: str) -> "TenantMembership":
@@ -66,8 +61,6 @@ class TenantMembership(models.Model):
 
         obj = cls.objects.select_for_update().filter(tenant=tenant, user=user).first()
         if obj:
-            # role 변경은 “운영 정책” 영역이라 여기서 강제 변경하지 않음.
-            # 단, 비활성이면 활성화는 SSOT로 허용
             if not obj.is_active:
                 obj.is_active = True
                 obj.save(update_fields=["is_active"])

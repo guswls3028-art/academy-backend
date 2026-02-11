@@ -459,8 +459,9 @@ from .views import StudentViewSet, TagViewSet
 router = DefaultRouter()
 
 # 🔥 basename 명시 (queryset 없는 ViewSet 대응)
-router.register(r"", StudentViewSet, basename="student")
 router.register(r"tags", TagViewSet, basename="student-tag")
+router.register(r"", StudentViewSet, basename="student")
+
 
 urlpatterns = router.urls
 
@@ -483,6 +484,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.core.permissions import IsAdminOrStaff, IsStudent
 from apps.core.models import TenantMembership
+from apps.core.permissions import TenantResolvedAndStaff
 
 from .models import Student, Tag, StudentTag
 from .filters import StudentFilter
@@ -505,7 +507,7 @@ class TagViewSet(ModelViewSet):
     - Tag 자체는 테넌트에 종속되지 않음 (공통 분류)
     """
     serializer_class = TagSerializer
-    permission_classes = [IsAdminOrStaff]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get_queryset(self):
         return Tag.objects.all()
@@ -530,7 +532,7 @@ class StudentViewSet(ModelViewSet):
     - Student 삭제 시 User 삭제(고아유저 방지)
     """
 
-    permission_classes = [IsAdminOrStaff]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     # ------------------------------
     # Tenant-aware QuerySet
@@ -581,7 +583,7 @@ class StudentViewSet(ModelViewSet):
 
         # 1️⃣ User 생성 (항상 Student와 같은 트랜잭션에서)
         user = User.objects.create_user(
-            username=phone,
+            username=serializer.validated_data["ps_number"],  # 🔥 핵심
             phone=phone,
             name=serializer.validated_data.get("name", ""),
         )
@@ -613,22 +615,15 @@ class StudentViewSet(ModelViewSet):
     # ------------------------------
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
-        """
-        학생 삭제 시 처리 흐름
-
-        ✔ Student 삭제
-        ✔ 연결된 User도 같이 삭제 (고아유저 방지)
-        ✔ TenantMembership은 user FK CASCADE로 자동 정리
-        """
         student = self.get_object()
         user = student.user
 
-        # Student 삭제
-        self.perform_destroy(student)
-
-        # User 같이 삭제 (Membership도 CASCADE)
+        # 🔥 User 먼저 삭제
         if user:
             user.delete()
+
+        # 🔥 그 다음 Student 삭제
+        self.perform_destroy(student)
 
         return Response(status=204)
 

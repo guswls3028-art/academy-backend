@@ -5117,8 +5117,8 @@ class AdminExamResultDetailView(APIView):
 # apps/domains/results/views/admin_exam_results_view.py
 from __future__ import annotations
 
-from rest_framework.views import APIView
-from rest_framework.response import Response
+from rest_framework.generics import ListAPIView
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
@@ -5138,7 +5138,7 @@ from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 
 
-class AdminExamResultsView(APIView):
+class AdminExamResultsView(ListAPIView):
     """
     GET /results/admin/exams/<exam_id>/results/
 
@@ -5153,49 +5153,55 @@ class AdminExamResultsView(APIView):
       pass/fail은 Exam.pass_score 기준으로 제공한다.
     - 세션 종합 통과(SessionProgress.exam_passed)는
       /admin/sessions/... summary API에서 제공하는 것이 정석.
+
+    응답: { "count", "next", "previous", "results": AdminExamResultRow[] }
+    ?page=1 로 페이지 접근 가능.
     """
 
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    pagination_class = PageNumberPagination
+    serializer_class = AdminExamResultRowSerializer
 
-    def get(self, request, exam_id: int):
-        exam_id = int(exam_id)
+    def get_queryset(self):
+        exam_id = self.kwargs.get("exam_id")
+        if exam_id is None:
+            return Result.objects.none()
+        return (
+            latest_results_per_enrollment(
+                target_type="exam",
+                target_id=int(exam_id),
+            )
+            .order_by("enrollment_id")
+        )
+
+    def list(self, request, *args, **kwargs):
+        exam_id = int(self.kwargs["exam_id"])
 
         exam = Exam.objects.filter(id=exam_id).first()
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
-        # -------------------------------------------------
-        # 1️⃣ Result (중복 enrollment 방어: 최신 1개만)
-        # -------------------------------------------------
-        results = latest_results_per_enrollment(
-            target_type="exam",
-            target_id=exam_id,
-        ).order_by("enrollment_id")
+        queryset = self.get_queryset()
 
         # -------------------------------------------------
-        # 2️⃣ Session 찾기 (clinic 판단용)
-        #    - 세션 1 : 시험 N 구조에서도 대표 session은 필요할 수 있음(legacy UI 등)
+        # 페이지네이션: Result queryset을 먼저 페이지 처리
+        # -------------------------------------------------
+        page = self.paginate_queryset(queryset)
+        if page is None:
+            return self.get_paginated_response([])
+
+        results = page
+
+        # -------------------------------------------------
+        # Session 찾기 (clinic 판단용)
         # -------------------------------------------------
         session = get_primary_session_for_exam(exam_id)
 
         # -------------------------------------------------
-        # 3️⃣ Student 조회 (원본 로직 존중: progress_map 기반 추론이었지만
-        #    SessionProgress에 student_id가 있다고 가정하면 깨질 수 있음)
-        #
-        #    여기서는 "Result.enrollment_id"를 학생으로 직접 매핑할 수 없으므로
-        #    프로젝트의 Enrollment/Student 연결 방식이 필요하다.
-        #    원본처럼 SessionProgress에서 student/user를 추론하던 방식이 있으면 유지해야 함.
-        #
-        #    ✅ 하지만 현재 제공된 코드 스냅샷만으로는
-        #    enrollment_id -> student_name 해석이 프로젝트마다 달라 안전하지 않다.
-        #
-        #    그래서:
-        #    - 원본의 Student 조회 루틴을 "가능하면" 수행하되
-        #    - 실패해도 "-" 로 안전하게 반환한다.
+        # Student 조회 (원본 로직 유지)
         # -------------------------------------------------
         student_map = {}
         try:
-            # 원본 코드의 의도: SessionProgress에 student_id/user_id가 붙어있을 수 있다.
-            from apps.domains.progress.models import SessionProgress  # 지연 import
+            from apps.domains.progress.models import SessionProgress
 
             if session:
                 progress_rows = SessionProgress.objects.filter(session=session)
@@ -5216,9 +5222,7 @@ class AdminExamResultsView(APIView):
             student_map = {}
 
         # -------------------------------------------------
-        # 4️⃣ enrollment_id → 최신 attempt/submission 맵
-        #    - ResultFact가 있으면 가장 최신 attempt를 우선 사용
-        #    - 없으면 Result.attempt_id fallback
+        # enrollment_id → 최신 attempt/submission 맵 (exam 전체 기준)
         # -------------------------------------------------
         fact_qs = (
             ResultFact.objects
@@ -5237,7 +5241,7 @@ class AdminExamResultsView(APIView):
                     "submission_id": int(row["submission_id"]),
                 }
 
-        # Result.attempt_id fallback
+        # Result.attempt_id fallback (현재 페이지 결과만)
         attempt_ids = [r.attempt_id for r in results if getattr(r, "attempt_id", None)]
         attempt_map = {
             a.id: a
@@ -5258,39 +5262,46 @@ class AdminExamResultsView(APIView):
                     "submission_id": int(a.submission_id),
                 }
 
-        # Submission.status
-        submission_ids = [v["submission_id"] for v in latest_map.values() if v.get("submission_id")]
-        submission_status_map = {
-            s.id: s.status
-            for s in Submission.objects.filter(id__in=submission_ids)
-        }
+        # Submission.status (현재 페이지에서 참조하는 submission만)
+        submission_ids = [
+            v["submission_id"]
+            for v in latest_map.values()
+            if v.get("submission_id")
+        ]
+        submission_status_map = (
+            {s.id: s.status for s in Submission.objects.filter(id__in=submission_ids)}
+            if submission_ids
+            else {}
+        )
 
         # -------------------------------------------------
-        # 5️⃣ rows 구성
+        # rows 구성 (기존 로직 유지)
         # -------------------------------------------------
         rows = []
         for r in results:
             enrollment_id = int(r.enrollment_id)
 
-            # student_name (가능하면 매핑, 아니면 "-")
             student_name = "-"
             try:
-                # 원본 로직: progress row에 student/user id가 있을 때만 표시 가능
-                # 여기서는 확정 매핑이 없으므로 안전 fallback
                 student_name = "-"
             except Exception:
                 student_name = "-"
 
             latest = latest_map.get(enrollment_id, {})
             submission_id = latest.get("submission_id")
-            submission_status = submission_status_map.get(submission_id) if submission_id else None
+            submission_status = (
+                submission_status_map.get(submission_id) if submission_id else None
+            )
 
-            # ✅ pass/fail은 exam 단위 => Exam.pass_score 기준
             passed = bool(float(r.total_score or 0.0) >= float(pass_score))
 
-            # ✅ clinic_required 단일 규칙
             clinic_required = bool(
-                session and is_clinic_required(session=session, enrollment_id=enrollment_id, include_manual=False)
+                session
+                and is_clinic_required(
+                    session=session,
+                    enrollment_id=enrollment_id,
+                    include_manual=False,
+                )
             )
 
             rows.append({
@@ -5300,7 +5311,6 @@ class AdminExamResultsView(APIView):
                 "exam_score": float(r.total_score or 0.0),
                 "exam_max_score": float(r.max_score or 0.0),
 
-                # 이후 세션 집계 확장 대비 (현재는 동일)
                 "final_score": float(r.total_score or 0.0),
 
                 "passed": passed,
@@ -5312,7 +5322,8 @@ class AdminExamResultsView(APIView):
                 "submission_status": submission_status,
             })
 
-        return Response(AdminExamResultRowSerializer(rows, many=True).data)
+        serializer = AdminExamResultRowSerializer(rows, many=True)
+        return self.get_paginated_response(serializer.data)
 
 
 ==========================================================================================

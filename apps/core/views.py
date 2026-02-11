@@ -1,19 +1,18 @@
-# ======================================================================
 # PATH: apps/core/views.py
-# ======================================================================
 from datetime import datetime
 from django.db.models import Sum
 
 from rest_framework.views import APIView
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
 from drf_yasg.utils import swagger_auto_schema
 
-from apps.core.models import Attendance, Expense
+from apps.core.models import Attendance, Expense, Program
 from apps.core.permissions import (
+    TenantResolved,
     TenantResolvedAndMember,
     TenantResolvedAndStaff,
 )
@@ -22,7 +21,11 @@ from apps.core.serializers import (
     ProfileSerializer,
     AttendanceSerializer,
     ExpenseSerializer,
+    ProgramPublicSerializer,
+    ProgramUpdateSerializer,
 )
+from apps.core.services.attendance_policy import calculate_duration_hours, calculate_amount
+from apps.core.services.expense_policy import normalize_expense_amount
 
 
 # --------------------------------------------------
@@ -49,6 +52,80 @@ class MeView(APIView):
             context={"request": request},  # ✅ 핵심
         )
         return Response(serializer.data)
+
+
+# --------------------------------------------------
+# Program: /core/program/
+# --------------------------------------------------
+
+class ProgramView(APIView):
+    """
+    ✅ Program SSOT Endpoint (Enterprise)
+
+    GET  /api/v1/core/program/
+      - 로그인 전 AllowAny
+      - tenant resolve 필수
+      - DB write 발생 금지 (read-only 보장)
+
+    PATCH /api/v1/core/program/
+      - Staff only
+      - tenant resolve 필수
+      - 해당 tenant의 Program만 수정 가능 (1:1)
+    """
+
+    @swagger_auto_schema(auto_schema=None)
+    def get(self, request):
+        tenant = getattr(request, "tenant", None)
+        if tenant is None:
+            return Response({"detail": "tenant must be resolved"}, status=400)
+
+        program = Program.objects.filter(tenant=tenant).first()
+        if program is None:
+            # ✅ write-on-read 금지 원칙:
+            # 이 상태는 운영 데이터 무결성 위반이므로 명시적으로 실패한다.
+            return Response(
+                {
+                    "detail": "program not initialized for tenant",
+                    "code": "program_missing",
+                    "tenant": tenant.code,
+                },
+                status=500,
+            )
+
+        data = ProgramPublicSerializer(program).data
+        return Response(data)
+
+    @swagger_auto_schema(auto_schema=None)
+    def patch(self, request):
+        tenant = getattr(request, "tenant", None)
+        if tenant is None:
+            return Response({"detail": "tenant must be resolved"}, status=400)
+
+        program = Program.objects.filter(tenant=tenant).first()
+        if program is None:
+            return Response(
+                {
+                    "detail": "program not initialized for tenant",
+                    "code": "program_missing",
+                    "tenant": tenant.code,
+                },
+                status=500,
+            )
+
+        serializer = ProgramUpdateSerializer(
+            program,
+            data=(request.data if isinstance(request.data, dict) else {}),
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(ProgramPublicSerializer(program).data)
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [AllowAny(), TenantResolved()]
+        return [IsAuthenticated(), TenantResolvedAndStaff()]
 
 
 # --------------------------------------------------
@@ -132,15 +209,8 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
         start = self.request.data.get("start_time")
         end = self.request.data.get("end_time")
 
-        try:
-            start_dt = datetime.strptime(start, "%H:%M")
-            end_dt = datetime.strptime(end, "%H:%M")
-            duration = (end_dt - start_dt).seconds / 3600
-        except Exception:
-            duration = 0
-
-        hourly = 15000
-        amount = int(duration * hourly)
+        duration = calculate_duration_hours(start, end)
+        amount = calculate_amount(tenant, duration) if tenant is not None else 0
 
         serializer.save(
             tenant=tenant,
@@ -206,7 +276,9 @@ class MyExpenseViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, "tenant", None)
+        raw_amount = self.request.data.get("amount")
         serializer.save(
             tenant=tenant,
             user=self.request.user,
+            amount=normalize_expense_amount(raw_amount),
         )

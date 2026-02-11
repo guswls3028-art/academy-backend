@@ -1,6 +1,4 @@
-# ======================================================================
 # PATH: apps/core/permissions.py
-# ======================================================================
 from rest_framework.permissions import BasePermission
 
 from apps.core.models import TenantMembership
@@ -37,6 +35,24 @@ class IsStudent(BasePermission):
             and user.is_authenticated
             and hasattr(user, "student_profile")
         )
+
+
+class TenantResolved(BasePermission):
+    """
+    ✅ Tenant Resolve only (SSOT)
+
+    - request.tenant 가 resolve 되어야 함
+    - 인증/멤버십은 요구하지 않음
+
+    사용처:
+    - 로그인 전 Public bootstrap (Program config, Tenant-bound public metadata)
+    """
+
+    message = "Tenant must be resolved."
+
+    def has_permission(self, request, view):
+        tenant = getattr(request, "tenant", None)
+        return bool(tenant)
 
 
 class TenantResolvedAndMember(BasePermission):

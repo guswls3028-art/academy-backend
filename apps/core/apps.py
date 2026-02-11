@@ -1,5 +1,4 @@
-# apps/core/apps.py
-
+# PATH: apps/core/apps.py
 from django.apps import AppConfig
 
 
@@ -7,3 +6,7 @@ class CoreConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.core"
     label = "core"
+
+    def ready(self):
+        # signals import (tenant bootstrap SSOT)
+        from . import signals  # noqa: F401

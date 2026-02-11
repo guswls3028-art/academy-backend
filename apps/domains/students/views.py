@@ -36,7 +36,7 @@ class TagViewSet(ModelViewSet):
     - Tag 자체는 테넌트에 종속되지 않음 (공통 분류)
     """
     serializer_class = TagSerializer
-    permission_classes = [IsAdminOrStaff]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get_queryset(self):
         return Tag.objects.all()

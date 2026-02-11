@@ -1,10 +1,15 @@
-# libs/redis_client/client.py
+# PATH: libs/redis_client/client.py
 
-import os
 import redis
 from django.conf import settings
 
-redis_client = redis.Redis.from_url(
-    settings.REDIS_URL,
-    decode_responses=False,  # 🔥 이게 정석
-)
+REDIS_URL = getattr(settings, "REDIS_URL", None)
+
+# ✅ Redis 미설정 환경(local/dev)에서는 클라이언트 생성 ❌
+if not REDIS_URL:
+    redis_client = None
+else:
+    redis_client = redis.Redis.from_url(
+        REDIS_URL,
+        decode_responses=False,  # 🔥 네 말대로 정석 유지
+    )
