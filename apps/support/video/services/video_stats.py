@@ -2,7 +2,8 @@
 
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.attendance.models import Attendance
-from apps.support.video.models import VideoProgress, VideoPermission
+from apps.support.video.models import VideoProgress, VideoAccess, Video
+from apps.support.video.services.access_resolver import resolve_access_mode
 
 
 def build_video_stats_students(video):
@@ -28,7 +29,7 @@ def build_video_stats_students(video):
 
     perms = {
         p.enrollment_id: p
-        for p in VideoPermission.objects.filter(video=video)
+        for p in VideoAccess.objects.filter(video=video)
     }
 
     attendance = {
@@ -42,10 +43,12 @@ def build_video_stats_students(video):
         vp = progresses.get(e.id)
         perm = perms.get(e.id)
 
+        # Use SSOT access resolver
+        access_mode = resolve_access_mode(video=video, enrollment=e)
+        
+        # Legacy rule for backward compatibility
         rule = perm.rule if perm else "free"
         effective_rule = rule
-
-        # once → completed 시 free 승격
         if rule == "once" and vp and vp.completed:
             effective_rule = "free"
 
@@ -55,8 +58,9 @@ def build_video_stats_students(video):
             "attendance_status": attendance.get(e.id),
             "progress": vp.progress if vp else 0,
             "completed": vp.completed if vp else False,
-            "rule": rule,
-            "effective_rule": effective_rule,
+            "rule": rule,  # Legacy field
+            "effective_rule": effective_rule,  # Legacy field
+            "access_mode": access_mode.value,  # New field
         })
 
     return students

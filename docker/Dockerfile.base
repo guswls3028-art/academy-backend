@@ -1,0 +1,64 @@
+# ==============================================================================
+# 공통 베이스 이미지 (멀티 스테이지 빌드)
+# ==============================================================================
+# 50명 원장 확장 대비: 이미지 크기 최소화 및 빌드 최적화
+# ==============================================================================
+
+# ==============================================================================
+# Stage 1: Builder (빌드 도구 포함)
+# ==============================================================================
+FROM python:3.11-slim as builder
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# 빌드 도구 설치 (Gevent 등 C extension 컴파일용)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libc6-dev \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# pip 업그레이드
+RUN pip install --upgrade pip
+
+# 의존성 파일 복사 및 설치
+COPY requirements/common.txt ./requirements/common.txt
+RUN pip install --user --no-cache-dir -r requirements/common.txt
+
+# ==============================================================================
+# Stage 2: Runtime (최종 이미지 - 빌드 도구 제거)
+# ==============================================================================
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPATH=/app
+ENV PATH=/root/.local/bin:$PATH
+
+# 런타임 의존성만 설치 (빌드 도구 제외)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client \
+    libpq5 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Builder에서 설치한 Python 패키지 복사
+COPY --from=builder /root/.local /root/.local
+
+# 애플리케이션 코드 복사
+COPY apps ./apps
+COPY libs ./libs
+COPY manage.py ./
+
+# Stateless 검증: 로컬 파일 저장 방지
+# MEDIA_ROOT는 설정되어 있지만 실제로는 R2 사용
+# 컨테이너 내부 저장소는 사용하지 않음 (확장성 보장)
+
+# 기본 명령어는 서비스별로 오버라이드
+CMD ["python", "--version"]

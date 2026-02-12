@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from rest_framework import status
 
-from apps.domains.student_app.permissions import IsStudent
+from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from .serializers import (
     StudentVideoListItemSerializer,
     StudentVideoPlaybackSerializer,
@@ -44,8 +44,7 @@ def _get_student_enrollment_id(request) -> Optional[int]:
         except Exception:
             return None
 
-    user = request.user
-    sp = getattr(user, "student_profile", None)
+    sp = get_request_student(request)
     if not sp:
         return None
 
@@ -96,10 +95,10 @@ def _policy_from_video(video) -> Dict[str, Any]:
 
 class StudentSessionVideoListView(APIView):
     """
-    GET /student/media/sessions/{session_id}/videos/
+    GET /student/video/sessions/{session_id}/videos/
     """
 
-    permission_classes = [IsAuthenticated, IsStudent]
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request, session_id: int):
         Video, VideoPermission = _import_media_models()
@@ -119,6 +118,18 @@ class StudentSessionVideoListView(APIView):
 
             thumb = getattr(v, "thumbnail_url", None) or getattr(v, "thumbnail", None)
 
+            # Use SSOT access resolver
+            from apps.support.video.services.access_resolver import resolve_access_mode
+            from apps.domains.enrollment.models import Enrollment
+            
+            enrollment_obj = None
+            if enrollment_id:
+                enrollment_obj = Enrollment.objects.filter(id=enrollment_id).first()
+            
+            access_mode_value = None
+            if enrollment_obj:
+                access_mode_value = resolve_access_mode(video=v, enrollment=enrollment_obj).value
+            
             items.append({
                 "id": int(v.id),
                 "session_id": int(v.session_id),
@@ -126,7 +137,8 @@ class StudentSessionVideoListView(APIView):
                 "status": str(getattr(v, "status", "READY")),
                 "thumbnail_url": thumb,
                 **_policy_from_video(v),
-                "effective_rule": _effective_rule(perm_obj),
+                "effective_rule": _effective_rule(perm_obj),  # Legacy field
+                "access_mode": access_mode_value,  # New field
             })
 
         return Response({
@@ -136,10 +148,10 @@ class StudentSessionVideoListView(APIView):
 
 class StudentVideoPlaybackView(APIView):
     """
-    GET /student/media/videos/{video_id}/playback/
+    GET /student/video/videos/{video_id}/playback/
     """
 
-    permission_classes = [IsAuthenticated, IsStudent]
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request, video_id: int):
         Video, VideoPermission = _import_media_models()
@@ -162,6 +174,17 @@ class StudentVideoPlaybackView(APIView):
         if rule == "blocked":
             raise PermissionDenied("이 영상은 시청이 제한되었습니다.")
 
+        # Use SSOT access resolver
+        from apps.support.video.services.access_resolver import resolve_access_mode
+        from apps.domains.enrollment.models import Enrollment
+        
+        enrollment_obj = None
+        access_mode_value = None
+        if enrollment_id:
+            enrollment_obj = Enrollment.objects.filter(id=enrollment_id).first()
+            if enrollment_obj:
+                access_mode_value = resolve_access_mode(video=video, enrollment=enrollment_obj).value
+
         hls_url, mp4_url = _pick_urls(video)
         thumb = getattr(video, "thumbnail_url", None) or getattr(video, "thumbnail", None)
 
@@ -173,13 +196,15 @@ class StudentVideoPlaybackView(APIView):
                 "status": str(getattr(video, "status", "READY")),
                 "thumbnail_url": thumb,
                 **_policy_from_video(video),
-                "effective_rule": rule,
+                "effective_rule": rule,  # Legacy field
+                "access_mode": access_mode_value,  # New field
             },
             "hls_url": hls_url,
             "mp4_url": mp4_url,
             "policy": {
                 **_policy_from_video(video),
-                "effective_rule": rule,
+                "effective_rule": rule,  # Legacy field
+                "access_mode": access_mode_value,  # New field
             },
         }
 

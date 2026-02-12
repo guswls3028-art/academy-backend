@@ -1,20 +1,24 @@
 # apps/domains/ai/queueing/publisher.py
 from __future__ import annotations
 
+import logging
 from apps.shared.contracts.ai_job import AIJob
-from apps.domains.ai.queueing.db_queue import DBJobQueue
+from apps.domains.ai.models import AIJobModel
+
+logger = logging.getLogger(__name__)
 
 
-def publish_ai_job_db(job: AIJob) -> None:
+def publish_ai_job_sqs(job_model: AIJobModel) -> None:
     """
-    DBQueue 발행 (운영 기본)
-
-    - gateway에서 AIJobModel row를 선생성하고,
-      여기서는 DBJobQueue.publish 로 "PENDING + next_run_at"만 세팅한다.
-    - DB가 SSOT(단일진실)이며, 워커는 /internal endpoint로 pull 한다.
+    SQS 큐에 AI 작업 발행 (Tier별 라우팅)
+    
+    Args:
+        job_model: AIJobModel 객체 (tier 필드 포함)
     """
-    q = DBJobQueue()
-    q.publish(job_id=str(job.id))
+    from apps.support.ai.services.sqs_queue import AISQSQueue
+    
+    queue = AISQSQueue()
+    queue.enqueue(job_model)
 
 
 # ----------------------------------------------------------------------
@@ -24,6 +28,24 @@ def publish_ai_job_db(job: AIJob) -> None:
 def publish_job(job: AIJob) -> None:
     """
     Public publisher entrypoint (SSOT).
-    Keep this name stable to avoid import breaks.
+    
+    SQS 큐만 사용 (Redis 제거됨)
+    Tier는 AIJobModel에서 가져옴
     """
-    publish_ai_job_db(job)
+    from apps.domains.ai.models import AIJobModel
+    
+    # AIJobModel에서 tier 가져오기
+    job_model = AIJobModel.objects.filter(job_id=str(job.id)).first()
+    if job_model:
+        publish_ai_job_sqs(job_model)
+    else:
+        logger.warning("AIJobModel not found for job %s, using basic tier", job.id)
+        # 기본값으로 basic tier 사용
+        job_model = AIJobModel.objects.create(
+            job_id=job.id,
+            job_type=job.type,
+            payload=job.payload or {},
+            status="PENDING",
+            tier="basic",
+        )
+        publish_ai_job_sqs(job_model)

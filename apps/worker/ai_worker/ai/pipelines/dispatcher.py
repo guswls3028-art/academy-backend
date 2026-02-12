@@ -14,6 +14,7 @@ from apps.worker.ai_worker.ai.handwriting.detector import analyze_handwriting
 from apps.worker.ai_worker.ai.embedding.service import get_embeddings
 from apps.worker.ai_worker.ai.problem.generator import generate_problem_from_ocr
 from apps.worker.ai_worker.ai.pipelines.homework_video_analyzer import analyze_homework_video
+from apps.worker.ai_worker.ai.utils.image_resizer import resize_if_large
 from apps.worker.ai_worker.storage.downloader import download_to_tmp
 def handle_ai_job(job: AIJob) -> AIResult:
     try:
@@ -102,10 +103,17 @@ def handle_ai_job(job: AIJob) -> AIResult:
         if job.type == "homework_video_analysis":
             frame_stride = int(payload.get("frame_stride") or 10)
             min_frame_count = int(payload.get("min_frame_count") or 30)
+            use_key_frames = payload.get("use_key_frames", True)  # 기본값: 키 프레임 사용
+            max_pages = int(payload.get("max_pages") or 10)
+            processing_timeout = int(payload.get("processing_timeout") or 60)
+            
             analysis = analyze_homework_video(
                 video_path=local_path,
                 frame_stride=frame_stride,
                 min_frame_count=min_frame_count,
+                use_key_frames=use_key_frames,
+                max_pages=max_pages,
+                processing_timeout=processing_timeout,
             )
             return AIResult.done(job.id, analysis)
 
@@ -177,10 +185,13 @@ def handle_ai_job(job: AIJob) -> AIResult:
                         meta = None
                         meta_fetch_error = str(e)[:500]
 
-            # 2) 이미지 로드
+            # 2) 이미지 로드 및 리사이징
             img_bgr = cv2.imread(local_path)
             if img_bgr is None:
                 return AIResult.failed(job.id, "cannot read image")
+            
+            # 대용량 이미지 리사이징 (처리 전)
+            img_bgr, was_resized = resize_if_large(img_bgr, max_megapixels=4.0)
 
             aligned = img_bgr
 

@@ -31,9 +31,9 @@ urlpatterns = [
     path("results/me/exams/<int:exam_id>/", MyExamResultView.as_view()),
     path("results/me/exams/<int:exam_id>/items/", MyExamResultItemsView.as_view()),
 
-    # ✅ Media (Student Consumer)
+    # ✅ Video (Student Consumer)
     # 세션별 영상 목록
-    path("media/sessions/<int:session_id>/videos/", StudentSessionVideoListView.as_view()),
+    path("video/sessions/<int:session_id>/videos/", StudentSessionVideoListView.as_view()),
     # 영상 재생 정보 (정책 포함)
-    path("media/videos/<int:video_id>/playback/", StudentVideoPlaybackView.as_view()),
+    path("video/videos/<int:video_id>/playback/", StudentVideoPlaybackView.as_view()),
 ]

@@ -1,5 +1,7 @@
 # PATH: apps/domains/lectures/views.py
 
+from django.db.models import Max
+
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.filters import SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
@@ -56,9 +58,14 @@ class SessionViewSet(ModelViewSet):
     def perform_create(self, serializer):
         """
         🔐 Session 생성 시 lecture.tenant 검증
+        order 미제공 시 해당 강의의 max(order)+1 자동 설정
         """
         lecture = serializer.validated_data["lecture"]
         if lecture.tenant_id != self.request.tenant.id:
             raise PermissionDenied("다른 학원의 강의에는 세션을 추가할 수 없습니다.")
 
-        serializer.save()
+        order = serializer.validated_data.get("order")
+        if order is None:
+            agg = Session.objects.filter(lecture=lecture).aggregate(Max("order"))
+            order = (agg["order__max"] or 0) + 1
+        serializer.save(order=order)

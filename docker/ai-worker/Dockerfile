@@ -1,36 +1,36 @@
-FROM python:3.11-slim
+# ==============================================================================
+# AI Worker Dockerfile
+# ==============================================================================
+# 베이스 이미지 사용 + AI Worker 전용 의존성
+# ==============================================================================
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONPATH=/app
+ARG BASE_IMAGE=academy-base:latest
+FROM ${BASE_IMAGE} as base
 
-# ✅ 운영 기준: Worker → API 는 무조건 VPC 내부 통신
-# (Cloudflare / HTTPS / 외부 LB 절대 통과 안 함)
-ENV API_BASE_URL=http://172.31.32.253:8000
-
-RUN apt-get update && apt-get install -y \
+# AI Worker 전용 시스템 의존성 (OCR, 이미지 처리)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
+    tesseract-ocr-kor \
     ffmpeg \
     libgl1 \
-    ca-certificates \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-# pip 안정화
-RUN pip install --upgrade pip
-
-# 🔥 캐시 최적화 포인트
-COPY requirements/common.txt ./requirements/common.txt
+# AI Worker 전용 Python 의존성
 COPY requirements/worker-ai.txt ./requirements/worker-ai.txt
-RUN pip install --no-cache-dir -r requirements/worker-ai.txt
+RUN pip install --user --no-cache-dir -r requirements/worker-ai.txt
 
-# 코드
-COPY apps ./apps
-COPY libs ./libs
+# 헬스체크
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)" || exit 1
 
-# Google Vision Key
-COPY docker/ai-worker/keys/google-vision.json /keys/google-vision.json
-ENV GOOGLE_APPLICATION_CREDENTIALS=/keys/google-vision.json
-
-CMD ["python", "-m", "apps.worker.ai_worker.run"]
+# Worker 모드에 따라 다른 진입점 실행
+# 환경 변수:
+# - AI_WORKER_MODE: cpu (기본값) 또는 gpu
+# - EC2_IDLE_STOP_THRESHOLD: 자동 종료 임계값 (기본값: 5)
+CMD ["sh", "-c", \
+    "if [ \"$AI_WORKER_MODE\" = \"gpu\" ]; then \
+        python -m apps.worker.ai_worker.sqs_main_gpu; \
+    else \
+        python -m apps.worker.ai_worker.sqs_main_cpu; \
+    fi"]

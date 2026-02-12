@@ -18,6 +18,7 @@ class HomeworkPolicy(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="homework_policies",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     session = models.OneToOneField(

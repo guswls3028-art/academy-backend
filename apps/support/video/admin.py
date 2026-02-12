@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     Video,
-    VideoPermission,
+    VideoAccess,
     VideoProgress,
     VideoPlaybackSession,
     VideoPlaybackEvent,
@@ -17,12 +17,13 @@ class VideoAdmin(admin.ModelAdmin):
     ordering = ("session", "order")
 
 
-@admin.register(VideoPermission)
-class VideoPermissionAdmin(admin.ModelAdmin):
+@admin.register(VideoAccess)
+class VideoAccessAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "video",
         "enrollment",
+        "access_mode",
         "rule",
         "allow_skip_override",
         "max_speed_override",
@@ -30,9 +31,10 @@ class VideoPermissionAdmin(admin.ModelAdmin):
         "block_seek",
         "block_speed_control",
         "is_override",
+        "proctored_completed_at",
     )
     list_display_links = ("id", "video")
-    list_filter = ("rule", "video__session__lecture", "block_seek", "block_speed_control")
+    list_filter = ("access_mode", "rule", "video__session__lecture", "block_seek", "block_speed_control")
     search_fields = ("enrollment__student__name",)
     ordering = ("-id",)
 

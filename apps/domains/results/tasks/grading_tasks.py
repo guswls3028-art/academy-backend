@@ -5,21 +5,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-try:
-    from celery import shared_task  # type: ignore
-except Exception:  # pragma: no cover
-    # Celery 미사용 환경에서도 import error로 서버가 죽으면 안 된다.
-    def shared_task(*dargs, **dkwargs):  # type: ignore
-        def _decorator(fn):
-            return fn
-        return _decorator
 
-
-@shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 5})
-def grade_submission_task(self, submission_id: int) -> dict:
+def grade_submission_task(submission_id: int) -> dict:
     """
-    AI callbacks → 채점 enqueue 용.
-    - 재시도는 Celery 레벨에서 처리(운영 정석).
+    채점 작업 실행 함수
+    
+    Celery 제거됨: 동기적으로 실행되도록 변경됨.
+    필요시 호출부에서 비동기 처리 구현.
     """
     from apps.domains.results.services.grading_service import grade_submission
 

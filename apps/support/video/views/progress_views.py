@@ -4,7 +4,8 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 
-from ..models import VideoProgress, VideoPermission
+from django.utils import timezone
+from ..models import VideoProgress, VideoAccess, AccessMode
 from ..serializers import VideoProgressSerializer
 
 
@@ -21,13 +22,20 @@ class VideoProgressViewSet(ModelViewSet):
 
         vp = serializer.save()
 
-        # 🔥 once → free 자동 승격 (completed False → True 순간)
+        # PROCTORED_CLASS → FREE_REVIEW on completion (SSOT)
         if not prev_completed and vp.completed:
-            VideoPermission.objects.filter(
+            now = timezone.now()
+            VideoAccess.objects.filter(
+                video=vp.video,
+                enrollment=vp.enrollment,
+                access_mode=AccessMode.PROCTORED_CLASS,
+            ).update(
+                access_mode=AccessMode.FREE_REVIEW,
+                proctored_completed_at=now,
+                is_override=False,
+            )
+            VideoAccess.objects.filter(
                 video=vp.video,
                 enrollment=vp.enrollment,
                 rule="once",
-            ).update(
-                rule="free",
-                is_override=False,
-            )
+            ).update(rule="free", is_override=False)

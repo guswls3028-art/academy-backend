@@ -1,0 +1,270 @@
+# ==============================================================================
+# Docker Compose 설정 (50명 원장 확장 대비)
+# ==============================================================================
+# Stateless 환경: 모든 파일은 R2에 저장, 로그는 stdout/stderr로 출력
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  # ============================================================================
+  # PostgreSQL 데이터베이스 (개발용)
+  # ============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: academy-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-academy}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - academy-network
+
+  # ============================================================================
+  # API 서버
+  # ============================================================================
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+      target: base
+      args:
+        BASE_IMAGE: academy-base:latest
+    image: academy-api:latest
+    container_name: academy-api
+    environment:
+      # Django 설정
+      SECRET_KEY: ${SECRET_KEY}
+      DEBUG: ${DEBUG:-false}
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-apps.api.config.settings.prod}
+      
+      # Database
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_CONN_MAX_AGE: ${DB_CONN_MAX_AGE:-60}
+      
+      # Cloudflare R2 Storage
+      R2_ACCESS_KEY: ${R2_ACCESS_KEY}
+      R2_SECRET_KEY: ${R2_SECRET_KEY}
+      R2_ENDPOINT: ${R2_ENDPOINT}
+      R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
+      R2_AI_BUCKET: ${R2_AI_BUCKET:-academy-ai}
+      R2_VIDEO_BUCKET: ${R2_VIDEO_BUCKET:-academy-video}
+      
+      # CDN
+      CDN_HLS_BASE_URL: ${CDN_HLS_BASE_URL}
+      CDN_HLS_SIGNING_SECRET: ${CDN_HLS_SIGNING_SECRET:-}
+      CDN_HLS_SIGNING_KEY_ID: ${CDN_HLS_SIGNING_KEY_ID:-v1}
+      
+      # AWS SQS
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      VIDEO_SQS_QUEUE_NAME: ${VIDEO_SQS_QUEUE_NAME:-academy-video-jobs}
+      AI_SQS_QUEUE_NAME_LITE: ${AI_SQS_QUEUE_NAME_LITE:-academy-ai-jobs-lite}
+      AI_SQS_QUEUE_NAME_BASIC: ${AI_SQS_QUEUE_NAME_BASIC:-academy-ai-jobs-basic}
+      AI_SQS_QUEUE_NAME_PREMIUM: ${AI_SQS_QUEUE_NAME_PREMIUM:-academy-ai-jobs-premium}
+      
+      # Worker 통신
+      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
+      
+      # Site
+      SITE_URL: ${SITE_URL:-https://hakwonplus.com}
+      
+      # Gunicorn 설정 (확장성)
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
+      GUNICORN_WORKER_CONNECTIONS: ${GUNICORN_WORKER_CONNECTIONS:-1000}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - academy-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # Video Worker
+  # ============================================================================
+  video-worker:
+    build:
+      context: .
+      dockerfile: docker/video-worker/Dockerfile
+      target: base
+      args:
+        BASE_IMAGE: academy-base:latest
+    image: academy-video-worker:latest
+    container_name: academy-video-worker
+    environment:
+      # API 연결
+      API_BASE_URL: ${API_BASE_URL:-http://api:8000}
+      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
+      
+      # Worker 설정
+      WORKER_ID: ${VIDEO_WORKER_ID:-video-worker-1}
+      EC2_IDLE_STOP_THRESHOLD: ${EC2_IDLE_STOP_THRESHOLD:-5}
+      SQS_WAIT_TIME_SECONDS: ${SQS_WAIT_TIME_SECONDS:-20}
+      
+      # AWS SQS
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      VIDEO_SQS_QUEUE_NAME: ${VIDEO_SQS_QUEUE_NAME:-academy-video-jobs}
+      
+      # Cloudflare R2 Storage
+      R2_ACCESS_KEY: ${R2_ACCESS_KEY}
+      R2_SECRET_KEY: ${R2_SECRET_KEY}
+      R2_ENDPOINT: ${R2_ENDPOINT}
+      R2_BUCKET: ${R2_VIDEO_BUCKET:-academy-video}
+      R2_PREFIX: ${R2_PREFIX:-media/hls/videos}
+      R2_REGION: ${R2_REGION:-auto}
+      
+      # Video Worker 설정
+      TEMP_DIR: ${VIDEO_WORKER_TEMP_DIR:-/tmp}
+      FFMEG_BIN: ${FFMPEG_BIN:-ffmpeg}
+      FFPROBE_BIN: ${FFPROBE_BIN:-ffprobe}
+      HLS_TIME_SECONDS: ${HLS_TIME_SECONDS:-6}
+      MIN_SEGMENTS_PER_VARIANT: ${MIN_SEGMENTS_PER_VARIANT:-3}
+      THUMBNAIL_AT_SECONDS: ${THUMBNAIL_AT_SECONDS:-5}
+      UPLOAD_MAX_CONCURRENCY: ${UPLOAD_MAX_CONCURRENCY:-4}
+      RETRY_MAX_ATTEMPTS: ${RETRY_MAX_ATTEMPTS:-5}
+      BACKOFF_BASE_SECONDS: ${BACKOFF_BASE_SECONDS:-0.5}
+      BACKOFF_CAP_SECONDS: ${BACKOFF_CAP_SECONDS:-10.0}
+    depends_on:
+      - api
+    networks:
+      - academy-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Stateless: 로컬 파일 저장 없음 (R2 사용)
+    # volumes는 사용하지 않음 (확장성 보장)
+
+  # ============================================================================
+  # AI Worker CPU (Lite + Basic 큐 처리)
+  # ============================================================================
+  ai-worker-cpu:
+    build:
+      context: .
+      dockerfile: docker/ai-worker/Dockerfile
+      target: base
+      args:
+        BASE_IMAGE: academy-base:latest
+    image: academy-ai-worker:latest
+    container_name: academy-ai-worker-cpu
+    environment:
+      # API 연결
+      API_BASE_URL: ${API_BASE_URL:-http://api:8000}
+      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
+      
+      # Worker 설정
+      AI_WORKER_MODE: cpu
+      WORKER_ID: ${AI_WORKER_ID_CPU:-ai-worker-cpu-1}
+      EC2_IDLE_STOP_THRESHOLD: ${EC2_IDLE_STOP_THRESHOLD:-5}
+      SQS_WAIT_TIME_SECONDS: ${SQS_WAIT_TIME_SECONDS:-20}
+      AI_WORKER_BASIC_POLL_WEIGHT: ${AI_WORKER_BASIC_POLL_WEIGHT:-3}
+      AI_WORKER_LITE_POLL_WEIGHT: ${AI_WORKER_LITE_POLL_WEIGHT:-1}
+      
+      # AWS SQS
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      AI_SQS_QUEUE_NAME_LITE: ${AI_SQS_QUEUE_NAME_LITE:-academy-ai-jobs-lite}
+      AI_SQS_QUEUE_NAME_BASIC: ${AI_SQS_QUEUE_NAME_BASIC:-academy-ai-jobs-basic}
+      
+      # Cloudflare R2 Storage
+      R2_ACCESS_KEY: ${R2_ACCESS_KEY}
+      R2_SECRET_KEY: ${R2_SECRET_KEY}
+      R2_ENDPOINT: ${R2_ENDPOINT}
+      R2_AI_BUCKET: ${R2_AI_BUCKET:-academy-ai}
+      
+      # Google Vision (선택사항)
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    depends_on:
+      - api
+    networks:
+      - academy-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Stateless: 로컬 파일 저장 없음 (R2 사용)
+
+  # ============================================================================
+  # AI Worker GPU (Premium 큐 처리)
+  # ============================================================================
+  ai-worker-gpu:
+    build:
+      context: .
+      dockerfile: docker/ai-worker/Dockerfile
+      target: base
+      args:
+        BASE_IMAGE: academy-base:latest
+    image: academy-ai-worker:latest
+    container_name: academy-ai-worker-gpu
+    environment:
+      # API 연결
+      API_BASE_URL: ${API_BASE_URL:-http://api:8000}
+      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
+      
+      # Worker 설정
+      AI_WORKER_MODE: gpu
+      WORKER_ID: ${AI_WORKER_ID_GPU:-ai-worker-gpu-1}
+      EC2_IDLE_STOP_THRESHOLD: ${EC2_IDLE_STOP_THRESHOLD:-5}
+      SQS_WAIT_TIME_SECONDS: ${SQS_WAIT_TIME_SECONDS:-20}
+      
+      # AWS SQS
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      AI_SQS_QUEUE_NAME_PREMIUM: ${AI_SQS_QUEUE_NAME_PREMIUM:-academy-ai-jobs-premium}
+      
+      # Cloudflare R2 Storage
+      R2_ACCESS_KEY: ${R2_ACCESS_KEY}
+      R2_SECRET_KEY: ${R2_SECRET_KEY}
+      R2_ENDPOINT: ${R2_ENDPOINT}
+      R2_AI_BUCKET: ${R2_AI_BUCKET:-academy-ai}
+      
+      # Google Vision (선택사항)
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    depends_on:
+      - api
+    networks:
+      - academy-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # GPU 리소스 제한 (필요시)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    # Stateless: 로컬 파일 저장 없음 (R2 사용)
+
+networks:
+  academy-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local

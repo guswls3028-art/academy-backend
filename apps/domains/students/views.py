@@ -1,12 +1,14 @@
 # PATH: apps/domains/students/views.py
 
-from django.db import transaction
+from django.db import transaction, connection
+from django.utils import timezone
 from django.contrib.auth import get_user_model
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
 
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -15,13 +17,19 @@ from apps.core.permissions import IsAdminOrStaff, IsStudent
 from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
 
+from apps.domains.parents.services import ensure_parent_for_student
+from apps.support.messaging.services import send_welcome_messages, get_site_url
+
 from .models import Student, Tag, StudentTag
 from .filters import StudentFilter
+from apps.domains.enrollment.models import Enrollment
 from .serializers import (
+    _generate_unique_ps_number,
     StudentListSerializer,
     StudentDetailSerializer,
     TagSerializer,
     AddTagSerializer,
+    StudentBulkCreateSerializer,
 )
 
 
@@ -46,6 +54,12 @@ class TagViewSet(ModelViewSet):
 # Student
 # ======================================================
 
+class StudentListPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
 class StudentViewSet(ModelViewSet):
     """
     학생 관리 ViewSet
@@ -62,6 +76,7 @@ class StudentViewSet(ModelViewSet):
     """
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    pagination_class = StudentListPagination
 
     # ------------------------------
     # Tenant-aware QuerySet
@@ -70,8 +85,21 @@ class StudentViewSet(ModelViewSet):
         """
         🔐 핵심 보안 포인트
         - request.tenant 기준으로만 학생 노출
+        - list: ?deleted=true 시 삭제된 학생만, 기본은 활성 학생만
         """
-        return Student.objects.filter(tenant=self.request.tenant)
+        qs = Student.objects.filter(tenant=self.request.tenant)
+
+        if self.action == "list":
+            show_deleted = self.request.query_params.get("deleted") == "true"
+            if show_deleted:
+                qs = qs.filter(deleted_at__isnull=False)
+            else:
+                qs = qs.filter(deleted_at__isnull=True)
+            qs = qs.prefetch_related("enrollments__lecture")
+        elif self.action == "retrieve":
+            qs = qs.prefetch_related("enrollments__lecture")
+
+        return qs
 
     # ------------------------------
     # Serializer 선택
@@ -95,9 +123,11 @@ class StudentViewSet(ModelViewSet):
         학생 생성 시 처리 흐름
 
         1. 입력값 검증 (StudentCreateSerializer)
-        2. User 생성 (username = phone)
-        3. Student 생성 + tenant / user 연결
-        4. TenantMembership(role=student) SSOT 강제 생성
+        2. 학부모 계정 생성/연결 (ensure_parent_for_student)
+        3. User 생성 (username = ps_number)
+        4. Student 생성 + tenant / user / parent 연결
+        5. TenantMembership(role=student) SSOT 강제 생성
+        6. (옵션) 가입 성공 메시지 일괄 발송
         """
         serializer = self.get_serializer(
             data=request.data,
@@ -106,32 +136,57 @@ class StudentViewSet(ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         User = get_user_model()
+        data = serializer.validated_data
+        send_welcome = data.pop("send_welcome_message", False)
 
-        phone = serializer.validated_data["phone"]
-        password = serializer.validated_data.pop("initial_password")
+        phone = data.get("phone")  # nullable
+        password = data.pop("initial_password")
+        parent_phone = data.get("parent_phone", "")
+        ps_number = data.get("ps_number")
 
-        # 1️⃣ User 생성 (항상 Student와 같은 트랜잭션에서)
+        # 1️⃣ 학부모 계정 생성 (ID = 학부모 전화번호)
+        parent = None
+        if parent_phone:
+            parent = ensure_parent_for_student(
+                tenant=request.tenant,
+                parent_phone=parent_phone,
+                student_name=data.get("name", ""),
+                parent_password=password,
+            )
+
+        # 2️⃣ User 생성 (phone이 없으면 username만 사용)
         user = User.objects.create_user(
-            username=serializer.validated_data["ps_number"],  # 🔥 핵심
-            phone=phone,
-            name=serializer.validated_data.get("name", ""),
+            username=ps_number,
+            phone=phone or "",  # phone이 None이면 빈 문자열
+            name=data.get("name", ""),
         )
         user.set_password(password)
         user.save()
 
-        # 2️⃣ Student 생성 + tenant / user 연결
+        # 3️⃣ Student 생성 + parent 연결
         student = Student.objects.create(
-            tenant=request.tenant,   # ✅ tenant 강제 주입
-            user=user,               # ✅ user 필수
-            **serializer.validated_data,
+            tenant=request.tenant,
+            user=user,
+            parent=parent,
+            **data,
         )
 
-        # 3️⃣ SSOT: TenantMembership 강제 생성 (고아/권한누락 봉인)
+        # 4️⃣ TenantMembership
         TenantMembership.ensure_active(
             tenant=request.tenant,
             user=user,
             role="student",
         )
+
+        # 5️⃣ 가입 성공 메시지 발송
+        if send_welcome:
+            site_url = get_site_url(request)
+            send_welcome_messages(
+                created_students=[student],
+                student_password=password,
+                parent_password_by_phone={parent_phone: password} if parent_phone else {},
+                site_url=site_url,
+            )
 
         output = StudentDetailSerializer(
             student,
@@ -140,20 +195,19 @@ class StudentViewSet(ModelViewSet):
         return Response(output.data, status=201)
 
     # ------------------------------
-    # DELETE: Student 삭제 시 User도 같이 삭제 (봉인)
+    # DELETE: 소프트 삭제 (30일 보관)
     # ------------------------------
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         student = self.get_object()
-        user = student.user
-
-        # 🔥 User 먼저 삭제
-        if user:
-            user.delete()
-
-        # 🔥 그 다음 Student 삭제
-        self.perform_destroy(student)
-
+        if student.deleted_at:
+            return Response({"detail": "이미 삭제된 학생입니다."}, status=400)
+        now = timezone.now()
+        student.deleted_at = now
+        student.save(update_fields=["deleted_at"])
+        if student.user:
+            student.user.is_active = False
+            student.user.save(update_fields=["is_active"])
         return Response(status=204)
 
     # ------------------------------
@@ -166,7 +220,7 @@ class StudentViewSet(ModelViewSet):
     ]
     filterset_class = StudentFilter
     search_fields = ["ps_number", "omr_code", "name", "high_school", "major", "phone"]
-    ordering_fields = ["id", "created_at", "updated_at"]
+    ordering_fields = ["id", "created_at", "updated_at", "deleted_at"]
     ordering = ["-id"]
 
     # ------------------------------
@@ -199,6 +253,455 @@ class StudentViewSet(ModelViewSet):
     # --------------------------------------------------
     # Anchor API: /students/me/ (원본 100% 유지)
     # --------------------------------------------------
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk_create",
+    )
+    def bulk_create(self, request):
+        """
+        엑셀 일괄 등록 — 600명+ 대량 업로드 대응
+        POST body: { "initial_password": "...", "students": [ {...}, ... ] }
+        """
+        serializer = StudentBulkCreateSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        password = serializer.validated_data["initial_password"]
+        students_data = serializer.validated_data["students"]
+        send_welcome = serializer.validated_data.get("send_welcome_message", False)
+        User = get_user_model()
+        tenant = request.tenant
+
+        created_count = 0
+        failed = []
+        created_students = []
+
+        for idx, item in enumerate(students_data):
+            phone = item.get("phone")  # nullable
+            parent_phone = item.get("parent_phone", "")
+            # ps_number: 임의 6자리 자동 부여 (학생이 추후 변경 가능)
+            ps_number = _generate_unique_ps_number()
+            # omr_code: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
+            if phone and len(phone) >= 8:
+                omr_code = phone[-8:]
+            elif parent_phone and len(parent_phone) >= 8:
+                omr_code = parent_phone[-8:]
+            else:
+                failed.append({
+                    "row": idx + 1,
+                    "name": item.get("name", ""),
+                    "error": "학생 전화번호 또는 부모 전화번호가 필요합니다.",
+                })
+                continue
+
+            try:
+                with transaction.atomic():
+                    # 학생 전화번호가 있으면 중복 체크
+                    if phone:
+                        conflict_deleted = Student.objects.filter(
+                            tenant=tenant, phone=phone, deleted_at__isnull=False
+                        ).values_list("id", flat=True).first()
+                        if conflict_deleted:
+                            raise ValueError("삭제된 학생과 전화번호 충돌. 복원 또는 삭제 후 재등록을 선택하세요.", conflict_deleted)
+                        # 활성 User만 체크 (삭제된 학생의 User는 is_active=False)
+                        if User.objects.filter(phone=phone, is_active=True).exists():
+                            raise ValueError("이미 사용 중인 전화번호입니다.")
+                    if Student.objects.filter(tenant=tenant, ps_number=ps_number, deleted_at__isnull=True).exists():
+                        raise ValueError("이미 사용 중인 PS 번호입니다.")
+
+                    # 학부모 계정 생성
+                    parent = None
+                    if parent_phone:
+                        parent = ensure_parent_for_student(
+                            tenant=tenant,
+                            parent_phone=parent_phone,
+                            student_name=item.get("name", ""),
+                            parent_password=password,
+                        )
+
+                    user = User.objects.create_user(
+                        username=ps_number,
+                        phone=phone or "",  # phone이 None이면 빈 문자열
+                        name=item.get("name", ""),
+                    )
+                    user.set_password(password)
+                    user.save()
+
+                    school_val = (item.get("school") or "").strip() or None
+                    st = item.get("school_type", "HIGH")
+                    high_school = school_val if st == "HIGH" else None
+                    middle_school = school_val if st == "MIDDLE" else None
+                    high_school_class = (item.get("high_school_class") or "").strip() or None if st == "HIGH" else None
+                    major = (item.get("major") or "").strip() or None if st == "HIGH" else None
+
+                    student = Student.objects.create(
+                        tenant=tenant,
+                        user=user,
+                        parent=parent,
+                        name=item["name"],
+                        phone=phone,  # nullable
+                        parent_phone=item["parent_phone"],
+                        ps_number=ps_number,
+                        omr_code=omr_code,
+                        uses_identifier=item.get("uses_identifier", False) or (phone is None),
+                        gender=item.get("gender") or None,
+                        school_type=item.get("school_type", "HIGH"),
+                        high_school=high_school,
+                        middle_school=middle_school,
+                        high_school_class=high_school_class,
+                        major=major,
+                        grade=item.get("grade"),
+                        memo=item.get("memo") or None,
+                        is_managed=item.get("is_managed", True),
+                    )
+
+                    TenantMembership.ensure_active(
+                        tenant=tenant,
+                        user=user,
+                        role="student",
+                    )
+                    created_count += 1
+                    created_students.append(student)
+            except Exception as e:
+                err_msg = str(e)
+                conflict_student_id = None
+                if isinstance(e, ValueError) and len(e.args) >= 2:
+                    conflict_student_id = e.args[1]
+                    err_msg = e.args[0]
+                failed.append({
+                    "row": idx + 1,
+                    "name": item.get("name", ""),
+                    "error": err_msg,
+                    "conflict_student_id": conflict_student_id,
+                })
+
+        if send_welcome and created_students:
+            site_url = get_site_url(request)
+            parent_pw = {s.parent_phone: password for s in created_students if getattr(s, "parent_phone", None)}
+            send_welcome_messages(
+                created_students=created_students,
+                student_password=password,
+                parent_password_by_phone=parent_pw,
+                site_url=site_url,
+            )
+
+        return Response({
+            "created": created_count,
+            "failed": failed,
+            "total": len(students_data),
+        }, status=201)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk_resolve_conflicts",
+    )
+    def bulk_resolve_conflicts(self, request):
+        """
+        충돌 해결 후 재시도 — 삭제된 학생과 번호 충돌 시 복원 또는 영구 삭제 후 재등록
+        POST body: {
+          "initial_password": "...",
+          "send_welcome_message": false,
+          "resolutions": [ { "row": 1, "student_id": 123, "action": "restore"|"delete", "student_data": {...} } ]
+        }
+        """
+        password = request.data.get("initial_password") or ""
+        if len(str(password)) < 4:
+            return Response({"detail": "초기 비밀번호는 4자 이상이어야 합니다."}, status=400)
+        send_welcome = request.data.get("send_welcome_message", False)
+        resolutions = request.data.get("resolutions") or []
+        if not isinstance(resolutions, (list, tuple)):
+            return Response({"detail": "resolutions는 배열이어야 합니다."}, status=400)
+
+        tenant = request.tenant
+        User = get_user_model()
+        created_count = 0
+        restored_count = 0
+        failed = []
+        created_students = []
+
+        for r in resolutions:
+            row = r.get("row")
+            student_id = r.get("student_id")
+            action = r.get("action")
+            student_data = r.get("student_data") or {}
+            if not student_id or action not in ("restore", "delete"):
+                failed.append({"row": row, "name": student_data.get("name", ""), "error": "잘못된 resolution"})
+                continue
+
+            try:
+                student = Student.objects.filter(
+                    tenant=tenant, id=student_id, deleted_at__isnull=False
+                ).select_related("user").first()
+                if not student:
+                    failed.append({"row": row, "name": student_data.get("name", ""), "error": "삭제된 학생을 찾을 수 없습니다."})
+                    continue
+
+                if action == "restore":
+                    with transaction.atomic():
+                        student.deleted_at = None
+                        student.name = (student_data.get("name") or student.name or "").strip()
+                        school_val = (student_data.get("school") or "").strip() or None
+                        st = student_data.get("school_type", "HIGH") or "HIGH"
+                        student.high_school = school_val if st == "HIGH" else None
+                        student.middle_school = school_val if st == "MIDDLE" else None
+                        student.high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
+                        student.major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
+                        student.gender = student_data.get("gender") or None
+                        student.grade = student_data.get("grade")
+                        student.memo = (student_data.get("memo") or "") or None
+                        student.uses_identifier = student_data.get("uses_identifier", False)
+                        student.save()
+                        if student.user:
+                            student.user.is_active = True
+                            student.user.save(update_fields=["is_active"])
+                        TenantMembership.ensure_active(tenant=tenant, user=student.user, role="student")
+                    restored_count += 1
+                    created_students.append(student)
+                else:
+                    with transaction.atomic():
+                        Enrollment.objects.filter(student_id=student.id).delete()
+                        if student.user_id:
+                            student.user.delete()
+                        else:
+                            student.delete()
+                    parent = None
+                    parent_phone_raw = str(student_data.get("parent_phone") or student_data.get("parentPhone", "")).replace(" ", "").replace("-", "").replace(".", "")
+                    parent_phone = parent_phone_raw if len(parent_phone_raw) >= 11 else ""
+                    if parent_phone:
+                        parent = ensure_parent_for_student(
+                            tenant=tenant,
+                            parent_phone=parent_phone,
+                            student_name=student_data.get("name", ""),
+                            parent_password=password,
+                        )
+                    phone_raw = str(student_data.get("phone", "")).replace(" ", "").replace("-", "").replace(".", "")
+                    phone = phone_raw if phone_raw and len(phone_raw) == 11 and phone_raw.startswith("010") else None
+                    parent_phone_val = student_data.get("parent_phone") or student_data.get("parentPhone", "")
+                    parent_phone = str(parent_phone_val).replace(" ", "").replace("-", "").replace(".", "")
+                    # ps_number: 임의 6자리 자동 부여
+                    ps_number = _generate_unique_ps_number()
+                    # omr_code: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
+                    if phone and len(phone) >= 8:
+                        omr_code = phone[-8:]
+                    elif parent_phone and len(parent_phone) >= 8:
+                        omr_code = parent_phone[-8:]
+                    else:
+                        raise ValueError("학생 전화번호 또는 부모 전화번호가 필요합니다.")
+                    user = User.objects.create_user(
+                        username=ps_number,
+                        phone=phone or "",  # phone이 None이면 빈 문자열
+                        name=student_data.get("name", ""),
+                    )
+                    user.set_password(password)
+                    user.save()
+                    school_val = (student_data.get("school") or "").strip() or None
+                    st = student_data.get("school_type", "HIGH")
+                    high_school = school_val if st == "HIGH" else None
+                    middle_school = school_val if st == "MIDDLE" else None
+                    high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
+                    major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
+                    new_student = Student.objects.create(
+                        tenant=tenant,
+                        user=user,
+                        parent=parent,
+                        name=student_data.get("name", ""),
+                        phone=phone,  # nullable
+                        parent_phone=parent_phone,
+                        ps_number=ps_number,
+                        omr_code=omr_code,
+                        uses_identifier=student_data.get("uses_identifier", False) or (phone is None),
+                        gender=student_data.get("gender") or None,
+                        school_type=st,
+                        high_school=high_school,
+                        middle_school=middle_school,
+                        high_school_class=high_school_class,
+                        major=major,
+                        grade=student_data.get("grade"),
+                        memo=student_data.get("memo") or None,
+                        is_managed=student_data.get("is_managed", True),
+                    )
+                    TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
+                    created_count += 1
+                    created_students.append(new_student)
+            except Exception as e:
+                failed.append({"row": row, "name": student_data.get("name", ""), "error": str(e)})
+
+        if send_welcome and created_students:
+            site_url = get_site_url(request)
+            parent_pw = {s.parent_phone: password for s in created_students if getattr(s, "parent_phone", None)}
+            send_welcome_messages(
+                created_students=created_students,
+                student_password=password,
+                parent_password_by_phone=parent_pw,
+                site_url=site_url,
+            )
+
+        return Response({
+            "created": created_count,
+            "restored": restored_count,
+            "failed": failed,
+        }, status=200)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk_delete",
+    )
+    def bulk_delete(self, request):
+        """
+        선택 학생 일괄 소프트 삭제 (30일 보관)
+        POST body: { "ids": [1, 2, 3, ...] }
+        """
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, (list, tuple)):
+            return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
+        ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
+        if not ids:
+            return Response({"detail": "삭제할 ID가 없습니다."}, status=400)
+
+        tenant = request.tenant
+        to_delete = list(
+            Student.objects.filter(
+                tenant=tenant, id__in=ids, deleted_at__isnull=True
+            ).select_related("user")
+        )
+        now = timezone.now()
+        with transaction.atomic():
+            for student in to_delete:
+                student.deleted_at = now
+                student.save(update_fields=["deleted_at"])
+                if student.user:
+                    student.user.is_active = False
+                    student.user.save(update_fields=["is_active"])
+        return Response({"deleted": len(to_delete)}, status=200)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk_restore",
+    )
+    def bulk_restore(self, request):
+        """
+        삭제된 학생 일괄 복원
+        POST body: { "ids": [1, 2, 3, ...] }
+        """
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, (list, tuple)):
+            return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
+        ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
+        if not ids:
+            return Response({"detail": "복원할 ID가 없습니다."}, status=400)
+
+        tenant = request.tenant
+        to_restore = list(
+            Student.objects.filter(
+                tenant=tenant, id__in=ids, deleted_at__isnull=False
+            ).select_related("user")
+        )
+        with transaction.atomic():
+            for student in to_restore:
+                student.deleted_at = None
+                student.save(update_fields=["deleted_at"])
+                if student.user:
+                    student.user.is_active = True
+                    student.user.save(update_fields=["is_active"])
+                    TenantMembership.ensure_active(
+                        tenant=tenant, user=student.user, role="student"
+                    )
+        return Response({"restored": len(to_restore)}, status=200)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk_permanent_delete",
+    )
+    def bulk_permanent_delete(self, request):
+        """
+        삭제된 학생 즉시 영구 삭제
+        POST body: { "ids": [1, 2, 3, ...] }
+        """
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, (list, tuple)):
+            return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
+        ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
+        if not ids:
+            return Response({"detail": "삭제할 ID가 없습니다."}, status=400)
+
+        tenant = request.tenant
+        to_delete = list(
+            Student.objects.filter(
+                tenant=tenant, id__in=ids, deleted_at__isnull=False
+            ).select_related("user")
+        )
+        if not to_delete:
+            return Response({"deleted": 0}, status=200)
+
+        student_ids = [s.id for s in to_delete]
+        user_ids = [s.user_id for s in to_delete if s.user_id]
+        deleted = 0
+        try:
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    # Enrollment를 참조하는 테이블들을 먼저 삭제 (존재하는 테이블만)
+                    sub = "SELECT id FROM enrollment_enrollment WHERE student_id IN %s"
+                    enrollment_child_tables = [
+                        "attendance_attendance",
+                        "enrollment_sessionenrollment",
+                        "video_videopermission",
+                        "video_videoprogress",
+                        "video_playbacksession",
+                        "video_videoplaybackevent",
+                        "counseling_counseling",
+                        "questions_question",
+                        "boards_boardreadstatus",
+                    ]
+                    params = [tuple(student_ids)]
+                    for tbl in enrollment_child_tables:
+                        cursor.execute(
+                            "SELECT 1 FROM information_schema.tables "
+                            "WHERE table_schema = %s AND table_name = %s",
+                            ["public", tbl],
+                        )
+                        if cursor.fetchone():
+                            cursor.execute(
+                                f"DELETE FROM {tbl} WHERE enrollment_id IN ({sub})",
+                                params,
+                            )
+                    cursor.execute(
+                        "DELETE FROM enrollment_enrollment WHERE student_id IN %s",
+                        [tuple(student_ids)],
+                    )
+                    cursor.execute(
+                        "DELETE FROM students_studenttag WHERE student_id IN %s",
+                        [tuple(student_ids)],
+                    )
+                    cursor.execute(
+                        "DELETE FROM students_student WHERE id IN %s",
+                        [tuple(student_ids)],
+                    )
+                    if user_ids:
+                        cursor.execute(
+                            "DELETE FROM core_tenantmembership WHERE user_id IN %s",
+                            [tuple(user_ids)],
+                        )
+                        cursor.execute(
+                            "DELETE FROM accounts_user WHERE id IN %s",
+                            [tuple(user_ids)],
+                        )
+                    deleted = len(to_delete)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception("bulk_permanent_delete failed")
+            return Response(
+                {"detail": f"영구 삭제 중 오류: {str(e)}"},
+                status=500,
+            )
+        return Response({"deleted": deleted}, status=200)
+
     @action(
         detail=False,
         methods=["get"],

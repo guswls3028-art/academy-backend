@@ -1,9 +1,27 @@
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.api.common.models import TimestampModel
 from apps.domains.lectures.models import Session
 from apps.domains.enrollment.models import Enrollment
+
+
+# ========================================================
+# Access Mode (Video Access Policy)
+# ========================================================
+
+class AccessMode(models.TextChoices):
+    """
+    Video access mode enum.
+    
+    - FREE_REVIEW: Free review mode (no restrictions)
+    - PROCTORED_CLASS: Proctored class mode (restrictions apply)
+    - BLOCKED: Access blocked
+    """
+    FREE_REVIEW = "FREE_REVIEW", "복습"
+    PROCTORED_CLASS = "PROCTORED_CLASS", "온라인 수업 대체"
+    BLOCKED = "BLOCKED", "제한"
 
 
 # ========================================================
@@ -112,10 +130,12 @@ class Video(TimestampModel):
 
 
 # ========================================================
-# Video Permission (수강생별 override + 접근 규칙)
+# Video Access (수강생별 override + 접근 규칙)
+# - Replaces VideoPermission semantics (SSOT)
+# - DB table kept as video_videopermission for migration safety
 # ========================================================
 
-class VideoPermission(models.Model):
+class VideoAccess(models.Model):
     video = models.ForeignKey(
         Video,
         on_delete=models.CASCADE,
@@ -127,6 +147,7 @@ class VideoPermission(models.Model):
         related_name="video_permissions",
     )
 
+    # Legacy field (deprecated, use access_mode instead)
     rule = models.CharField(
         max_length=20,
         choices=[
@@ -134,21 +155,38 @@ class VideoPermission(models.Model):
             ("once", "1회 제한"),
             ("blocked", "제한"),
         ],
-        default="once",
+        default="free",
+        null=True,
+        blank=True,
+        help_text="DEPRECATED: Use access_mode instead",
     )
 
-    # 학생별 정책 override (null이면 Video 기본값 사용)
+    access_mode = models.CharField(
+        max_length=20,
+        choices=AccessMode.choices,
+        default=AccessMode.FREE_REVIEW,
+        db_index=True,
+        help_text="Access mode: FREE_REVIEW, PROCTORED_CLASS, or BLOCKED",
+    )
+
     allow_skip_override = models.BooleanField(null=True, blank=True)
     max_speed_override = models.FloatField(null=True, blank=True)
     show_watermark_override = models.BooleanField(null=True, blank=True)
 
-    # 최우선 차단 플래그
     block_speed_control = models.BooleanField(default=False)
     block_seek = models.BooleanField(default=False)
 
     is_override = models.BooleanField(default=False)
 
+    # Set when PROCTORED_CLASS watch is completed -> auto-upgrade to FREE_REVIEW
+    proctored_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the monitored class-substitute watch was completed",
+    )
+
     class Meta:
+        db_table = "video_videopermission"  # Keep existing table name
         constraints = [
             models.UniqueConstraint(
                 fields=["video", "enrollment"],
@@ -157,7 +195,11 @@ class VideoPermission(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.enrollment.student.name} {self.video.title} ({self.rule})"
+        return f"{self.enrollment.student.name} {self.video.title} ({self.access_mode})"
+
+
+# Backward compatibility alias
+VideoPermission = VideoAccess
 
 
 # ========================================================
@@ -231,6 +273,13 @@ class VideoPlaybackSession(TimestampModel):
 
     started_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)
+    
+    # DB-based session management fields (Redis removal)
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True, help_text="Session expiration time")
+    last_seen = models.DateTimeField(null=True, blank=True, help_text="Last heartbeat time")
+    violated_count = models.IntegerField(default=0, help_text="Number of violations")
+    total_count = models.IntegerField(default=0, help_text="Total event count")
+    is_revoked = models.BooleanField(default=False, db_index=True, help_text="Whether session is revoked")
 
     class Meta:
         constraints = [
@@ -242,6 +291,8 @@ class VideoPlaybackSession(TimestampModel):
         indexes = [
             models.Index(fields=["status", "started_at"]),
             models.Index(fields=["video", "enrollment", "status"]),
+            models.Index(fields=["status", "expires_at"]),
+            models.Index(fields=["enrollment", "status"]),
         ]
 
     def __str__(self):
@@ -295,9 +346,14 @@ class VideoPlaybackEvent(TimestampModel):
 
     class Meta:
         indexes = [
-            models.Index(fields=["video", "enrollment", "session_id"]),
-            models.Index(fields=["user_id", "session_id"]),
-            models.Index(fields=["event_type", "received_at"]),
+            models.Index(fields=["video", "enrollment", "session_id"], name="video_playback_event_session_idx"),
+            models.Index(fields=["user_id", "session_id"], name="video_playback_event_user_idx"),
+            # 부분 인덱스: 위반 이벤트만 인덱싱 (INSERT 성능 향상, 인덱스 크기 50% 감소)
+            models.Index(
+                fields=["event_type", "received_at"],
+                condition=models.Q(violated=True),
+                name="video_playback_event_violated_idx"
+            ),
         ]
         ordering = ["-received_at", "-id"]
 

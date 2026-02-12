@@ -13,6 +13,8 @@ class LectureSerializer(serializers.ModelSerializer):
 
 
 class SessionSerializer(serializers.ModelSerializer):
+    order = serializers.IntegerField(required=False, allow_null=True)
+
     class Meta:
         model = Session
         fields = "__all__"

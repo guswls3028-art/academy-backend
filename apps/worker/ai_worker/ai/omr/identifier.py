@@ -122,6 +122,9 @@ def detect_identifier_v1(
     if image_bgr is None or image_bgr.size == 0:
         return {"identifier": None, "digits": [], "confidence": 0.0, "status": "error"}
 
+    # 대용량 이미지 리사이징 (처리 전)
+    image_bgr, _ = resize_if_large(image_bgr, max_megapixels=4.0)
+    
     h, w = image_bgr.shape[:2]
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
 

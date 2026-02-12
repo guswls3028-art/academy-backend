@@ -13,15 +13,24 @@ logger = logging.getLogger("video_worker")
 
 @contextmanager
 def temp_workdir(base_dir: str, prefix: str):
+    """
+    Temporary working directory context manager.
+    
+    Ensures cleanup on exit (success or failure).
+    Logs errors if cleanup fails.
+    """
     Path(base_dir).mkdir(parents=True, exist_ok=True)
     path = Path(tempfile.mkdtemp(prefix=prefix, dir=base_dir))
     try:
         yield path
     finally:
         try:
-            shutil.rmtree(path, ignore_errors=True)
-        except Exception:
-            logger.warning("Failed to cleanup temp dir: %s", path)
+            if path.exists():
+                shutil.rmtree(path, ignore_errors=False)
+                logger.debug("Cleaned up temp dir: %s", path)
+        except Exception as e:
+            logger.error("Failed to cleanup temp dir: %s, error: %s", path, e)
+            # Don't re-raise - allow processing to continue, but log error for monitoring
 
 
 def ensure_dir(path: Path) -> None:

@@ -16,7 +16,13 @@ class User(AbstractUser):
     """
 
     name = models.CharField(max_length=50, blank=True, null=True)
-    phone = models.CharField(max_length=20, blank=True, null=True)
+    phone = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        db_index=True,  # ✅ phone 인덱스 추가 (검색 성능 향상)
+        help_text="정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
+    )
 
     groups = models.ManyToManyField(
         Group,
@@ -53,6 +59,7 @@ class Attendance(TimestampModel):
         related_name="attendances",
         null=False,
         blank=False,
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     user = models.ForeignKey(
@@ -74,6 +81,9 @@ class Attendance(TimestampModel):
     class Meta:
         app_label = "core"
         ordering = ["-date", "-start_time"]
+        indexes = [
+            models.Index(fields=["tenant", "date"]),  # ✅ 복합 인덱스 추가
+        ]
 
     def __str__(self):
         return f"{self.user.username} - {self.date}"
@@ -94,6 +104,7 @@ class Expense(TimestampModel):
         related_name="expenses",
         null=False,
         blank=False,
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     user = models.ForeignKey(
@@ -110,6 +121,9 @@ class Expense(TimestampModel):
     class Meta:
         app_label = "core"
         ordering = ["-date"]
+        indexes = [
+            models.Index(fields=["tenant", "date"]),  # ✅ 복합 인덱스 추가
+        ]
 
     def __str__(self):
         return f"{self.user.username} - {self.title}"

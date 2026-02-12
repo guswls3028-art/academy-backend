@@ -1,0 +1,94 @@
+#!/usr/bin/env python
+"""
+AWS SQS 리소스 생성 스크립트
+
+Video Worker용 SQS 큐 및 DLQ 생성
+"""
+
+import boto3
+import json
+from botocore.exceptions import ClientError
+
+
+def create_sqs_resources(region_name: str = "ap-northeast-2"):
+    """
+    Video Worker용 SQS 리소스 생성
+    
+    생성 리소스:
+    1. academy-video-jobs (메인 큐)
+    2. academy-video-jobs-dlq (Dead Letter Queue)
+    """
+    sqs = boto3.client("sqs", region_name=region_name)
+    
+    # 1. DLQ 생성
+    dlq_name = "academy-video-jobs-dlq"
+    dlq_arn = None
+    
+    try:
+        dlq_response = sqs.create_queue(
+            QueueName=dlq_name,
+            Attributes={
+                "MessageRetentionPeriod": "1209600",  # 14일
+            },
+        )
+        dlq_url = dlq_response["QueueUrl"]
+        dlq_attributes = sqs.get_queue_attributes(
+            QueueUrl=dlq_url,
+            AttributeNames=["QueueArn"],
+        )
+        dlq_arn = dlq_attributes["Attributes"]["QueueArn"]
+        print(f"✅ DLQ 생성 완료: {dlq_name}")
+        print(f"   URL: {dlq_url}")
+        print(f"   ARN: {dlq_arn}")
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "QueueAlreadyExists":
+            print(f"⚠️  DLQ가 이미 존재함: {dlq_name}")
+            dlq_url = sqs.get_queue_url(QueueName=dlq_name)["QueueUrl"]
+            dlq_attributes = sqs.get_queue_attributes(
+                QueueUrl=dlq_url,
+                AttributeNames=["QueueArn"],
+            )
+            dlq_arn = dlq_attributes["Attributes"]["QueueArn"]
+        else:
+            raise
+    
+    # 2. 메인 큐 생성 (DLQ 연결)
+    queue_name = "academy-video-jobs"
+    
+    try:
+        queue_response = sqs.create_queue(
+            QueueName=queue_name,
+            Attributes={
+                "VisibilityTimeout": "300",  # 5분
+                "MessageRetentionPeriod": "1209600",  # 14일
+                "ReceiveMessageWaitTimeSeconds": "20",  # Long Polling
+                "RedrivePolicy": json.dumps({
+                    "deadLetterTargetArn": dlq_arn,
+                    "maxReceiveCount": "3",  # 3회 재시도 후 DLQ로 이동
+                }),
+            },
+        )
+        queue_url = queue_response["QueueUrl"]
+        print(f"✅ 메인 큐 생성 완료: {queue_name}")
+        print(f"   URL: {queue_url}")
+        print(f"   DLQ 연결: {dlq_name}")
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "QueueAlreadyExists":
+            print(f"⚠️  메인 큐가 이미 존재함: {queue_name}")
+            queue_url = sqs.get_queue_url(QueueName=queue_name)["QueueUrl"]
+        else:
+            raise
+    
+    print("\n✅ SQS 리소스 생성 완료!")
+    print(f"\n환경변수 설정:")
+    print(f"  VIDEO_SQS_QUEUE_NAME={queue_name}")
+    print(f"  VIDEO_SQS_DLQ_NAME={dlq_name}")
+    print(f"  AWS_REGION={region_name}")
+    print(f"  QUEUE_BACKEND=sqs")
+
+
+if __name__ == "__main__":
+    import sys
+    
+    region = sys.argv[1] if len(sys.argv) > 1 else "ap-northeast-2"
+    create_sqs_resources(region_name=region)

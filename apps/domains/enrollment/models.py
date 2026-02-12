@@ -25,8 +25,9 @@ class Enrollment(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="enrollments",
-        null=True,      # 🔥 기존 데이터 마이그레이션 안전
-        blank=True,
+        null=False,  # ✅ NOT NULL로 변경 (프로덕션 준비)
+        blank=False,
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     student = models.ForeignKey(
@@ -53,6 +54,9 @@ class Enrollment(TimestampModel):
     enrolled_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        indexes = [
+            models.Index(fields=["tenant", "created_at"]),  # ✅ 복합 인덱스 추가
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["tenant", "student", "lecture"],
@@ -78,8 +82,9 @@ class SessionEnrollment(models.Model):
         Tenant,
         on_delete=models.CASCADE,
         related_name="session_enrollments",
-        null=True,      # 🔥 기존 데이터 마이그레이션 안전
-        blank=True,
+        null=False,  # ✅ NOT NULL로 변경 (프로덕션 준비)
+        blank=False,
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     session = models.ForeignKey(

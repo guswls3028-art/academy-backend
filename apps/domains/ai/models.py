@@ -35,6 +35,19 @@ class AIJobModel(BaseModel):
     tenant_id = models.CharField(max_length=64, null=True, blank=True)
     source_domain = models.CharField(max_length=64, null=True, blank=True)
     source_id = models.CharField(max_length=64, null=True, blank=True)
+    
+    # ---- tier routing ----
+    tier = models.CharField(
+        max_length=20,
+        choices=[
+            ("lite", "Lite"),
+            ("basic", "Basic"),
+            ("premium", "Premium"),
+        ],
+        default="basic",
+        db_index=True,
+        help_text="Tier determines queue routing and processing capabilities",
+    )
 
     # ---- retry / lease ----
     attempt_count = models.IntegerField(default=0)
@@ -54,10 +67,11 @@ class AIJobModel(BaseModel):
             models.Index(fields=["status", "next_run_at"], name="ai_job_status_next_run_idx"),
             models.Index(fields=["lease_expires_at"], name="ai_job_lease_idx"),
             models.Index(fields=["source_domain", "source_id"], name="ai_job_source_idx"),
+            models.Index(fields=["tier", "status", "next_run_at"], name="ai_job_tier_stat_next_idx"),
         ]
 
     def __str__(self) -> str:
-        return f"AIJobModel<{self.job_id}>({self.job_type})[{self.status}]"
+        return f"AIJobModel<{self.job_id}>({self.job_type})[{self.tier}][{self.status}]"
 
 
 class AIResultModel(BaseModel):

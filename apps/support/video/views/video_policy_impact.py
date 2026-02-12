@@ -6,7 +6,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.domains.enrollment.models import Enrollment
-from ..models import Video, VideoPermission, VideoProgress
+from apps.domains.attendance.models import Attendance
+from ..models import Video, VideoAccess, VideoProgress
+from ..services.access_resolver import resolve_access_mode
 
 
 class VideoPolicyImpactAPIView(APIView):
@@ -27,12 +29,17 @@ class VideoPolicyImpactAPIView(APIView):
 
         perms = {
             p.enrollment_id: p
-            for p in VideoPermission.objects.filter(video=video)
+            for p in VideoAccess.objects.filter(video=video)
         }
 
         progresses = {
             p.enrollment_id: p
             for p in VideoProgress.objects.filter(video=video)
+        }
+
+        attendance = {
+            a.enrollment_id: a.status
+            for a in Attendance.objects.filter(session=video.session)
         }
 
         rows = []
@@ -41,8 +48,11 @@ class VideoPolicyImpactAPIView(APIView):
             perm = perms.get(e.id)
             prog = progresses.get(e.id)
 
+            # Use SSOT access resolver
+            access_mode = resolve_access_mode(video=video, enrollment=e)
+            
+            # Legacy rule for backward compatibility
             rule = perm.rule if perm else "free"
-
             effective = rule
             if rule == "once" and prog and prog.completed:
                 effective = "free"
@@ -50,8 +60,10 @@ class VideoPolicyImpactAPIView(APIView):
             rows.append({
                 "enrollment": e.id,
                 "student_name": e.student.name,
-                "rule": rule,
-                "effective_rule": effective,
+                "attendance_status": attendance.get(e.id),
+                "rule": rule,  # Legacy field
+                "effective_rule": effective,  # Legacy field
+                "access_mode": access_mode.value,  # New field
                 "completed": bool(prog.completed) if prog else False,
             })
 

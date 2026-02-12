@@ -47,6 +47,7 @@ class Submission(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="submissions",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     user = models.ForeignKey(
@@ -83,4 +84,5 @@ class Submission(TimestampModel):
             models.Index(fields=["user", "created_at"]),
             models.Index(fields=["status"]),
             models.Index(fields=["source"]),
+            models.Index(fields=["tenant", "created_at"]),  # ✅ 복합 인덱스 추가
         ]

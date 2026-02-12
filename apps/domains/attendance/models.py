@@ -13,8 +13,9 @@ class Attendance(models.Model):
         Tenant,
         on_delete=models.CASCADE,
         related_name="lecture_attendances",  # ✅ 변경 (충돌 방지)
-        null=True,
-        blank=True,
+        null=False,  # ✅ NOT NULL로 변경 (프로덕션 준비)
+        blank=False,
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     enrollment = models.ForeignKey(
@@ -49,6 +50,9 @@ class Attendance(models.Model):
     recorded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        indexes = [
+            models.Index(fields=["tenant", "recorded_at"]),  # ✅ 복합 인덱스 추가
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["tenant", "enrollment", "session"],

@@ -5,28 +5,46 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from ..models import VideoPermission, Video
-from ..serializers import VideoPermissionSerializer
+from ..models import VideoAccess, Video, AccessMode
+from ..serializers import VideoAccessSerializer
 
 
 class VideoPermissionViewSet(ModelViewSet):
-    queryset = VideoPermission.objects.all()
-    serializer_class = VideoPermissionSerializer
+    """Video access overrides (API: video-permissions for backward compat)."""
+    queryset = VideoAccess.objects.all()
+    serializer_class = VideoAccessSerializer
 
     @transaction.atomic
     @action(detail=False, methods=["post"])
     def bulk_set(self, request):
         video_id = request.data.get("video_id")
         enrollments = request.data.get("enrollments", [])
-        rule = request.data.get("rule", "once")
+        
+        # Support both legacy 'rule' and new 'access_mode'
+        rule = request.data.get("rule")  # Legacy
+        access_mode_str = request.data.get("access_mode")  # New
+        
+        # Map legacy rule to access_mode if needed
+        if rule and not access_mode_str:
+            rule_to_mode = {
+                "free": AccessMode.FREE_REVIEW,
+                "once": AccessMode.PROCTORED_CLASS,
+                "blocked": AccessMode.BLOCKED,
+            }
+            access_mode = rule_to_mode.get(rule, AccessMode.FREE_REVIEW)
+        elif access_mode_str:
+            access_mode = AccessMode(access_mode_str)
+        else:
+            access_mode = AccessMode.PROCTORED_CLASS  # Default
 
         objs = []
         for enrollment_id in enrollments:
-            obj, _ = VideoPermission.objects.update_or_create(
+            obj, _ = VideoAccess.objects.update_or_create(
                 video_id=video_id,
                 enrollment_id=enrollment_id,
                 defaults={
-                    "rule": rule,
+                    "access_mode": access_mode,
+                    "rule": rule or "free",  # Legacy field
                     "is_override": True,
                 },
             )
@@ -37,4 +55,4 @@ class VideoPermissionViewSet(ModelViewSet):
             policy_version=models.F("policy_version") + 1
         )
 
-        return Response(VideoPermissionSerializer(objs, many=True).data)
+        return Response(VideoAccessSerializer(objs, many=True).data)

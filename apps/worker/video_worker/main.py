@@ -37,43 +37,9 @@ def _handle_signal(sig, frame):
 
 
 # ------------------------------------------------------------------------------
-# EC2 SELF-STOP (AI WORKER와 동일 패턴)
+# EC2 SELF-STOP 제거됨 (SQS 기반 아키텍처에서는 불필요)
 # ------------------------------------------------------------------------------
-def _self_stop_ec2() -> None:
-    """
-    Best-effort EC2 self stop.
-    """
-    try:
-        import boto3
-
-        # IMDSv2 token
-        token = requests.put(
-            "http://169.254.169.254/latest/api/token",
-            headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
-            timeout=2,
-        ).text
-
-        headers = {"X-aws-ec2-metadata-token": token}
-
-        instance_id = requests.get(
-            "http://169.254.169.254/latest/meta-data/instance-id",
-            headers=headers,
-            timeout=2,
-        ).text
-
-        region = requests.get(
-            "http://169.254.169.254/latest/meta-data/placement/region",
-            headers=headers,
-            timeout=2,
-        ).text
-
-        ec2 = boto3.client("ec2", region_name=region)
-        ec2.stop_instances(InstanceIds=[instance_id])
-
-        logger.info("EC2 self-stop requested (instance_id=%s)", instance_id)
-
-    except Exception as e:
-        logger.exception("EC2 self-stop failed (ignored): %s", e)
+# ECS/Fargate 환경에서는 컨테이너가 자동으로 관리되므로 EC2 자동 종료 로직 불필요
 
 
 # ------------------------------------------------------------------------------
@@ -157,7 +123,6 @@ def main() -> int:
         except Exception:
             pass
 
-        _self_stop_ec2()
         logger.info("Video Worker shutdown complete")
 
 

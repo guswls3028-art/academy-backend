@@ -19,7 +19,8 @@ from ..models import (
     VideoPlaybackSession,
     VideoPlaybackEvent,
     VideoProgress,
-    VideoPermission,
+    VideoAccess,
+    AccessMode,
 )
 from ..serializers import (
     PlaybackStartRequestSerializer,
@@ -62,10 +63,12 @@ def _policy_version_of(video: Video) -> int:
 def _is_policy_token_valid(payload: dict) -> bool:
     """
     token payload의 pv와 현재 video.policy_version 비교.
-    - 불일치 시 즉시 차단 (문제 6)
+    - 불일치 시 즉시 차단
+    - access_mode도 검증 (정책 변경 시 토큰 무효화)
     """
     try:
         video_id = int(payload.get("video_id"))
+        enrollment_id = int(payload.get("enrollment_id"))
     except Exception:
         return False
 
@@ -81,7 +84,26 @@ def _is_policy_token_valid(payload: dict) -> bool:
     except Exception:
         pv = 0
 
-    return pv == current
+    if pv != current:
+        return False
+
+    # Validate access_mode consistency
+    try:
+        from apps.domains.enrollment.models import Enrollment
+        from ..services.access_resolver import get_effective_access_mode
+        
+        enrollment = Enrollment.objects.filter(id=enrollment_id).first()
+        if enrollment:
+            current_access_mode = get_effective_access_mode(video=v, enrollment=enrollment)
+            token_access_mode = payload.get("access_mode")
+            
+            if token_access_mode and token_access_mode != current_access_mode.value:
+                return False
+    except Exception:
+        # If access_mode validation fails, still allow (backward compatibility)
+        pass
+
+    return True
 
 
 def _deny(detail: str, *, code=status.HTTP_403_FORBIDDEN):
@@ -147,48 +169,73 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
 
         ttl = int(getattr(settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600))
 
-        ok, sess, err = issue_session(
-            user_id=request.user.id,
-            device_id=device_id,
-            ttl_seconds=ttl,
-            max_sessions=int(getattr(settings, "VIDEO_MAX_SESSIONS", 9999)),
-            max_devices=int(getattr(settings, "VIDEO_MAX_DEVICES", 9999)),
-        )
+        # Resolve access mode BEFORE creating session
+        from ..services.access_resolver import get_effective_access_mode
+        access_mode = get_effective_access_mode(video=video, enrollment=enrollment)
+        
+        # Determine if monitoring is required
+        monitoring_enabled = (access_mode == AccessMode.PROCTORED_CLASS)
+        
+        session_id = None
+        expires_at = None
+        
+        # Only create DB session for PROCTORED_CLASS
+        student_id = enrollment.student_id
+        if monitoring_enabled:
+            ok, sess, err = issue_session(
+                student_id=student_id,
+                device_id=device_id,
+                ttl_seconds=ttl,
+                max_sessions=int(getattr(settings, "VIDEO_MAX_SESSIONS", 9999)),
+                max_devices=int(getattr(settings, "VIDEO_MAX_DEVICES", 9999)),
+            )
 
-        if not ok:
-            return Response({"detail": err}, status=409)
+            if not ok:
+                return Response({"detail": err}, status=409)
 
-        session_id = sess["session_id"]
-        expires_at = sess["expires_at"]
+            session_id = sess["session_id"]
+            expires_at_timestamp = int(sess["expires_at"])
+            expires_at = timezone.datetime.fromtimestamp(expires_at_timestamp, tz=timezone.utc)
 
-        VideoPlaybackSession.objects.create(
-            video=video,
-            enrollment=enrollment,
-            session_id=session_id,
-            device_id=device_id,
-            status=VideoPlaybackSession.Status.ACTIVE,
-            started_at=timezone.now(),
-        )
+            VideoPlaybackSession.objects.create(
+                video=video,
+                enrollment=enrollment,
+                session_id=session_id,
+                device_id=device_id,
+                status=VideoPlaybackSession.Status.ACTIVE,
+                started_at=timezone.now(),
+                expires_at=expires_at,
+                last_seen=timezone.now(),
+                violated_count=0,
+                total_count=0,
+                is_revoked=False,
+            )
+        else:
+            # FREE_REVIEW: No DB session, calculate expires_at for token only
+            expires_at = timezone.now() + timezone.timedelta(seconds=ttl)
 
         perm = self._load_permission(video=video, enrollment=enrollment)
-        policy = self._effective_policy(video=video, perm=perm)
+        policy = self._effective_policy(video=video, enrollment=enrollment, perm=perm)
 
-        # ✅ token에 pv(policy_version) 포함
+        # ✅ token에 pv, access_mode, monitoring_enabled, student_id 포함
         token = create_playback_token(
             payload={
                 "video_id": video.id,
                 "enrollment_id": enrollment.id,
-                "session_id": session_id,
+                "session_id": session_id,  # None for FREE_REVIEW
                 "user_id": request.user.id,
+                "student_id": student_id,
+                "access_mode": access_mode.value,
+                "monitoring_enabled": monitoring_enabled,
                 "pv": _policy_version_of(video),
-                "rid": request_id,  # trace
+                "rid": request_id,
             },
             ttl_seconds=ttl,
         )
 
         play_url = self._public_play_url(
             video=video,
-            expires_at=expires_at,
+            expires_at=int(expires_at.timestamp()) if expires_at else int(timezone.now().timestamp()) + ttl,
             user_id=request.user.id,
         )
 
@@ -196,14 +243,18 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
             PlaybackResponseSerializer({
                 "token": token,
                 "session_id": session_id,
-                "expires_at": expires_at,
+                "expires_at": int(expires_at.timestamp()) if expires_at else None,
+                "access_mode": access_mode.value,
+                "monitoring_enabled": monitoring_enabled,
                 "policy": policy,
                 "play_url": play_url,
             }).data,
             status=201,
         )
 
-        self._set_signed_cookies(resp, video_id=video.id, expires_at=expires_at)
+        # Set signed cookies only if we have expires_at
+        if expires_at:
+            self._set_signed_cookies(resp, video_id=video.id, expires_at=int(expires_at.timestamp()))
         return resp
 
 
@@ -225,14 +276,22 @@ class PlaybackRefreshView(APIView):
         if not _is_policy_token_valid(payload):
             return _deny("policy_changed", code=403)
 
+        # FREE_REVIEW: Skip DB operations (session_id=null, no DB)
+        monitoring_enabled = payload.get("monitoring_enabled")
+        if monitoring_enabled is None:
+            monitoring_enabled = bool(payload.get("session_id"))
+        if not monitoring_enabled:
+            return Response({"ok": True})
+
         sid = str(payload.get("session_id") or "")
+        student_id = int(payload.get("student_id") or payload.get("user_id", 0))
         if sid:
             st = _session_db_status(sid)
             if _db_session_is_inactive(st):
                 return Response({"detail": "session_inactive"}, status=409)
 
         if not is_session_active(
-            user_id=int(payload["user_id"]),
+            student_id=student_id,
             session_id=str(payload["session_id"]),
         ):
             return Response({"detail": "session_inactive"}, status=409)
@@ -258,14 +317,22 @@ class PlaybackHeartbeatView(APIView):
         if not _is_policy_token_valid(payload):
             return _deny("policy_changed", code=403)
 
+        # FREE_REVIEW: Skip DB operations
+        monitoring_enabled = payload.get("monitoring_enabled")
+        if monitoring_enabled is None:
+            monitoring_enabled = bool(payload.get("session_id"))
+        if not monitoring_enabled:
+            return Response({"ok": True})
+
         sid = str(payload.get("session_id") or "")
+        student_id = int(payload.get("student_id") or payload.get("user_id", 0))
         if sid:
             st = _session_db_status(sid)
             if _db_session_is_inactive(st):
                 return Response({"detail": "session_inactive"}, status=409)
 
         ok2 = heartbeat_session(
-            user_id=int(payload["user_id"]),
+            student_id=student_id,
             session_id=str(payload["session_id"]),
             ttl_seconds=int(getattr(settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600)),
         )
@@ -290,17 +357,25 @@ class PlaybackEndView(APIView):
         if not ok:
             return _deny(err, code=403)
 
-        end_session(
-            user_id=int(payload["user_id"]),
-            session_id=str(payload["session_id"]),
-        )
+        # FREE_REVIEW: Skip DB operations
+        monitoring_enabled = payload.get("monitoring_enabled")
+        if monitoring_enabled is None:
+            monitoring_enabled = bool(payload.get("session_id"))
+        if monitoring_enabled:
+            session_id = str(payload.get("session_id") or "")
+            student_id = int(payload.get("student_id") or payload.get("user_id", 0))
+            if session_id:
+                end_session(
+                    student_id=student_id,
+                    session_id=session_id,
+                )
 
-        VideoPlaybackSession.objects.filter(
-            session_id=str(payload["session_id"])
-        ).update(
-            status=VideoPlaybackSession.Status.ENDED,
-            ended_at=timezone.now(),
-        )
+                VideoPlaybackSession.objects.filter(
+                    session_id=session_id
+                ).update(
+                    status=VideoPlaybackSession.Status.ENDED,
+                    ended_at=timezone.now(),
+                )
 
         return Response({"ok": True})
 
@@ -323,7 +398,18 @@ class PlaybackEventBatchView(APIView):
         if not _is_policy_token_valid(payload):
             return _deny("policy_changed", code=403)
 
+        # FREE_REVIEW: Skip all DB operations
+        monitoring_enabled = payload.get("monitoring_enabled")
+        if monitoring_enabled is None:
+            monitoring_enabled = bool(payload.get("session_id"))
+        if not monitoring_enabled:
+            return Response(
+                PlaybackEventBatchResponseSerializer({"stored": 0}).data,
+                status=201,
+            )
+
         user_id = int(payload["user_id"])
+        student_id = int(payload.get("student_id") or user_id)
         session_id = str(payload["session_id"])
 
         # DB 상태 차단
@@ -331,8 +417,8 @@ class PlaybackEventBatchView(APIView):
         if _db_session_is_inactive(st):
             return Response({"detail": "session_inactive"}, status=409)
 
-        # Redis 상태 차단
-        if not is_session_active(user_id=user_id, session_id=session_id):
+        # 세션 활성 상태 확인 (DB 기반)
+        if not is_session_active(student_id=student_id, session_id=session_id):
             return Response({"detail": "session_inactive"}, status=409)
 
         events = serializer.validated_data["events"]
@@ -350,23 +436,31 @@ class PlaybackEventBatchView(APIView):
         enrollment = Enrollment.objects.filter(id=int(payload["enrollment_id"])).first()
         perm = None
         if video and enrollment:
-            perm = VideoPermission.objects.filter(video=video, enrollment=enrollment).first()
+            perm = VideoAccess.objects.filter(video=video, enrollment=enrollment).first()
 
         policy_snapshot = {}
         try:
-            if video:
+            if video and enrollment:
                 m = VideoPlaybackMixin()
-                policy_snapshot = m._effective_policy(video=video, perm=perm)
+                policy_snapshot = m._effective_policy(video=video, enrollment=enrollment, perm=perm)
         except Exception:
             policy_snapshot = {}
 
         def _is_violation(ev_type: str, snap: dict) -> tuple[bool, str]:
             """
             ✅ 최소 강제 위반 판정(서버 단):
+            - Violation logic ONLY applies when access_mode == PROCTORED_CLASS
+            - This function is only called when monitoring_enabled == True
             - seek blocked/bounded 환경에서 SEEK_ATTEMPT는 violated
             - speed 제한 환경에서 SPEED_CHANGE_ATTEMPT는 violated
-            (추가 강화는 여기만 수정하면 됨 → 구조 유지)
             """
+            # Double-check access mode (should already be PROCTORED_CLASS if we're here)
+            access_mode_value = (snap or {}).get("access_mode")
+            if access_mode_value != AccessMode.PROCTORED_CLASS.value:
+                # Safety check: no violations in FREE_REVIEW mode
+                return False, ""
+            
+            # Only check violations for PROCTORED_CLASS
             if ev_type == "SEEK_ATTEMPT":
                 seek = (snap or {}).get("seek") or {}
                 allow_seek = bool((snap or {}).get("allow_seek", True))
@@ -382,7 +476,7 @@ class PlaybackEventBatchView(APIView):
             return False, ""
 
         # ✅ 세션 단위 누적 위반 판단
-        # - 각 이벤트마다 Redis 카운터 갱신 → batch 쪼개기 우회 불가
+        # - 각 이벤트마다 DB 카운터 갱신 → batch 쪼개기 우회 불가
         latest_stats = None
         revoke_reason = ""
 
@@ -394,9 +488,9 @@ class PlaybackEventBatchView(APIView):
             if violated and reason:
                 revoke_reason = reason
 
-            # ✅ Redis 누적 갱신
+            # ✅ DB 누적 갱신
             latest_stats = record_session_event(
-                user_id=user_id,
+                student_id=student_id,
                 session_id=session_id,
                 violated=bool(violated),
                 reason=reason or "",
@@ -417,23 +511,19 @@ class PlaybackEventBatchView(APIView):
                 )
             )
 
+        # 트랜잭션 범위 최소화: bulk_create와 통계 업데이트 분리 (50명 원장 확장 대비)
+        # 긴 트랜잭션은 DB 전체를 멈출 수 있음
         with transaction.atomic():
             VideoPlaybackEvent.objects.bulk_create(objs, batch_size=500)
+        
+        # 통계 업데이트는 별도 트랜잭션으로 분리 (lock 시간 단축)
+        stats = latest_stats or get_session_violation_stats(session_id=session_id)
+        violated_cnt = int(stats.get("violated") or 0)
+        total_cnt = int(stats.get("total") or 0)
 
-            # ✅ 누적 기준으로 revoke 결정
-            stats = latest_stats or get_session_violation_stats(session_id=session_id)
-            violated_cnt = int(stats.get("violated") or 0)
-            total_cnt = int(stats.get("total") or 0)
-
-            if should_revoke_by_stats(violated=violated_cnt, total=total_cnt):
-                # Redis 세션 즉시 제거
-                revoke_session(user_id=user_id, session_id=session_id)
-
-                # DB 반영
-                VideoPlaybackSession.objects.filter(session_id=session_id).update(
-                    status=VideoPlaybackSession.Status.REVOKED,
-                    ended_at=timezone.now(),
-                )
+        if should_revoke_by_stats(violated=violated_cnt, total=total_cnt):
+            with transaction.atomic():
+                revoke_session(student_id=student_id, session_id=session_id)
 
         return Response(
             PlaybackEventBatchResponseSerializer({"stored": len(objs)}).data,

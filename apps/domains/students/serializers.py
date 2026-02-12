@@ -1,8 +1,21 @@
 # PATH: apps/domains/students/serializers.py
 
+import random
+
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.domains.students.models import Student, Tag
+
+
+def _generate_unique_ps_number() -> str:
+    """임의의 6자리 숫자 중복 없이 부여 (User.username 전역 유일)"""
+    User = get_user_model()
+    for _ in range(100):
+        candidate = str(random.randint(100000, 999999))
+        if not User.objects.filter(username=candidate).exists():
+            return candidate
+    raise ValueError("아이디 생성에 실패했습니다. 다시 시도해 주세요.")
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.interactions.counseling.models import Counseling
 from apps.domains.interactions.questions.models import Question
@@ -31,6 +44,7 @@ class QuestionSerializer(serializers.ModelSerializer):
 
 class EnrollmentSerializer(serializers.ModelSerializer):
     lecture_name = serializers.CharField(source="lecture.title", read_only=True)
+    lecture_color = serializers.CharField(source="lecture.color", read_only=True, default="#3b82f6")
 
     class Meta:
         model = Enrollment
@@ -40,6 +54,7 @@ class EnrollmentSerializer(serializers.ModelSerializer):
 
 class StudentListSerializer(serializers.ModelSerializer):
     tags = TagSerializer(many=True, read_only=True)
+    enrollments = EnrollmentSerializer(many=True, read_only=True)
     is_enrolled = serializers.SerializerMethodField()
 
     class Meta:
@@ -54,7 +69,11 @@ class StudentListSerializer(serializers.ModelSerializer):
 
         lecture_id = request.query_params.get("lecture")
         if lecture_id:
-            return obj.enrollments.filter(lecture_id=lecture_id).exists()
+            try:
+                lid = int(lecture_id)
+            except (TypeError, ValueError):
+                return False
+            return obj.enrollments.filter(lecture_id=lid).exists()
 
         return False
 
@@ -75,11 +94,68 @@ class AddTagSerializer(serializers.Serializer):
     tag_id = serializers.IntegerField()
 
 
+class StudentBulkItemSerializer(serializers.Serializer):
+    """엑셀 일괄 등록용 단일 학생 데이터"""
+
+    name = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    phone = serializers.CharField(allow_blank=True, trim_whitespace=True, required=False, default="")
+    parent_phone = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    uses_identifier = serializers.BooleanField(required=False, default=False)
+    gender = serializers.CharField(allow_blank=True, default="")
+    school_type = serializers.ChoiceField(
+        choices=[("HIGH", "고등"), ("MIDDLE", "중등")],
+        default="HIGH",
+    )
+    school = serializers.CharField(allow_blank=True, default="", required=False)
+    high_school_class = serializers.CharField(allow_blank=True, default="", required=False)
+    major = serializers.CharField(allow_blank=True, default="", required=False)
+    grade = serializers.IntegerField(allow_null=True, required=False)
+    memo = serializers.CharField(allow_blank=True, default="", required=False)
+    is_managed = serializers.BooleanField(default=True, required=False)
+
+    def validate_phone(self, value):
+        # 학생 전화번호는 선택사항
+        if not value:
+            return None
+        v = str(value or "").replace(" ", "").replace("-", "").replace(".", "")
+        if v and (len(v) != 11 or not v.startswith("010")):
+            raise serializers.ValidationError("전화번호는 010XXXXXXXX 11자리여야 합니다.")
+        return v if v else None
+
+    def validate_parent_phone(self, value):
+        v = str(value or "").replace(" ", "").replace("-", "").replace(".", "")
+        if not v or len(v) != 11 or not v.startswith("010"):
+            raise serializers.ValidationError("학부모 전화번호는 010XXXXXXXX 11자리여야 합니다.")
+        return v
+
+
+class StudentBulkCreateSerializer(serializers.Serializer):
+    initial_password = serializers.CharField(min_length=4, write_only=True)
+    students = StudentBulkItemSerializer(many=True)
+    send_welcome_message = serializers.BooleanField(required=False, default=False)
+
+
 class StudentCreateSerializer(serializers.ModelSerializer):
     initial_password = serializers.CharField(
         write_only=True,
         required=True,
         min_length=4,
+    )
+    send_welcome_message = serializers.BooleanField(
+        write_only=True,
+        required=False,
+        default=False,
+    )
+    no_phone = serializers.BooleanField(
+        write_only=True,
+        required=False,
+        default=False,
+        help_text="True면 식별자로 가입 (uses_identifier=True)",
+    )
+    ps_number = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="미입력 시 임의 6자리 자동 부여 (학생이 추후 변경 가능)",
     )
 
     class Meta:
@@ -95,8 +171,9 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         return v
 
     def validate_phone(self, value):
+        # 학생 전화번호는 선택사항 (없으면 None)
         if not value or not str(value).strip():
-            raise serializers.ValidationError("전화번호는 필수입니다.")
+            return None
 
         from django.contrib.auth import get_user_model
         User = get_user_model()
@@ -106,11 +183,7 @@ class StudentCreateSerializer(serializers.ModelSerializer):
 
         return value
 
-    def validate_omr_code(self, value):
-        v = str(value or "").strip()
-        if len(v) != 8 or not v.isdigit():
-            raise serializers.ValidationError("OMR 식별자는 숫자 8자리여야 합니다.")
-        return v
+    # omr_code는 validate에서 자동 설정되므로 별도 validate 불필요
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -118,29 +191,37 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         if tenant is None:
             raise serializers.ValidationError("Tenant가 resolve되지 않았습니다.")
 
-        ps_number = str(self._require(attrs, "ps_number")).strip()
-        omr_code = str(self._require(attrs, "omr_code")).strip()
-        phone = str(self._require(attrs, "phone")).strip()
+        ps_number_raw = attrs.get("ps_number") or ""
+        ps_number = str(ps_number_raw).strip() if ps_number_raw else ""
+        if not ps_number:
+            try:
+                ps_number = _generate_unique_ps_number()
+            except ValueError as e:
+                raise serializers.ValidationError({"ps_number": str(e)})
         parent_phone = str(self._require(attrs, "parent_phone")).strip()
         name = str(self._require(attrs, "name")).strip()
+        phone = attrs.get("phone")
+        phone_str = str(phone).strip() if phone else None
+
+        # OMR 코드: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
+        if phone_str and len(phone_str) >= 8:
+            omr_code = phone_str[-8:]
+        elif parent_phone and len(parent_phone) >= 8:
+            omr_code = parent_phone[-8:]
+        else:
+            raise serializers.ValidationError({"omr_code": "학생 전화번호 또는 부모 전화번호가 필요합니다."})
 
         attrs["ps_number"] = ps_number
         attrs["omr_code"] = omr_code
-        attrs["phone"] = phone
+        attrs["phone"] = phone_str if phone_str else None
         attrs["parent_phone"] = parent_phone
         attrs["name"] = name
 
-        if len(phone) < 8 or phone[-8:] != omr_code:
-            raise serializers.ValidationError(
-                {"omr_code": "OMR 식별자는 전화번호 뒤 8자리와 일치해야 합니다."}
-            )
-
-        if Student.objects.filter(tenant=tenant, ps_number=ps_number).exists():
+        # 사용자가 직접 입력한 경우에만 중복 체크 (자동 생성은 이미 User 중복 검사됨)
+        if ps_number_raw and Student.objects.filter(tenant=tenant, ps_number=ps_number).exists():
             raise serializers.ValidationError({"ps_number": "이미 사용 중인 PS 번호입니다."})
 
-        if Student.objects.filter(tenant=tenant, omr_code=omr_code).exists():
-            raise serializers.ValidationError({"omr_code": "이미 사용 중인 OMR 식별자입니다."})
-
+        attrs["uses_identifier"] = attrs.pop("no_phone", False) or (phone_str is None)
         return attrs
 
 
@@ -158,25 +239,26 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
         instance = self.instance
 
         phone = attrs.get("phone", instance.phone)
-        omr_code = attrs.get("omr_code", instance.omr_code)
+        parent_phone = attrs.get("parent_phone", instance.parent_phone)
         ps_number = attrs.get("ps_number", instance.ps_number)
 
-        if phone and omr_code:
-            if len(phone) < 8 or phone[-8:] != omr_code:
-                raise serializers.ValidationError(
-                    {"omr_code": "OMR 식별자는 전화번호 뒤 8자리와 일치해야 합니다."}
-                )
+        # OMR 코드: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
+        phone_str = str(phone).strip() if phone else None
+        parent_phone_str = str(parent_phone).strip() if parent_phone else None
+        
+        if phone_str and len(phone_str) >= 8:
+            omr_code = phone_str[-8:]
+        elif parent_phone_str and len(parent_phone_str) >= 8:
+            omr_code = parent_phone_str[-8:]
+        else:
+            omr_code = attrs.get("omr_code", instance.omr_code)  # 기존 값 유지
+
+        attrs["omr_code"] = omr_code
 
         if ps_number:
             if Student.objects.filter(
                 tenant=tenant, ps_number=ps_number
             ).exclude(id=instance.id).exists():
                 raise serializers.ValidationError({"ps_number": "이미 사용 중인 PS 번호입니다."})
-
-        if omr_code:
-            if Student.objects.filter(
-                tenant=tenant, omr_code=omr_code
-            ).exclude(id=instance.id).exists():
-                raise serializers.ValidationError({"omr_code": "이미 사용 중인 OMR 식별자입니다."})
 
         return attrs

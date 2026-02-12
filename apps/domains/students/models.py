@@ -17,6 +17,7 @@ class Student(TimestampModel):
         on_delete=models.CASCADE,
         related_name="students",
         help_text="소속 학원 (Tenant)",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     # ✅ 봉인: Student는 User 없이 존재 불가 / User 삭제되면 Student도 같이 삭제
@@ -37,12 +38,12 @@ class Student(TimestampModel):
         help_text="PS 번호 (학원 학생 ID)",
     )
 
-    # ✅ NEW: OMR 식별자 (전화번호 뒤 8자리)
+    # ✅ NEW: OMR 식별자 (학생 전화번호 또는 부모 전화번호 뒤 8자리)
     omr_code = models.CharField(
         max_length=8,
         null=False,
         blank=False,
-        help_text="OMR 자동채점 식별자 (전화번호 뒤 8자리)",
+        help_text="OMR 자동채점 식별자 (학생 전화번호 또는 부모 전화번호 뒤 8자리)",
     )
 
     name = models.CharField(max_length=50)
@@ -71,9 +72,25 @@ class Student(TimestampModel):
         default="HIGH",
     )
 
-    # ✅ 봉인: phone/parent_phone 운영 필수 (NULL/BLANK 차단)
-    phone = models.CharField(max_length=20, null=False, blank=False)
-    parent_phone = models.CharField(max_length=20, null=False, blank=False)
+    # 학생 전화번호 (선택사항, 없으면 null)
+    phone = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        help_text="정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
+    )
+    # 부모 전화번호 (필수)
+    parent_phone = models.CharField(
+        max_length=20,
+        null=False,
+        blank=False,
+        help_text="정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
+    )
+
+    uses_identifier = models.BooleanField(
+        default=False,
+        help_text="True면 학생 전화 없음, 식별자(010+8자리)로 가입. 표시 시 '식별자 XXXX-XXXX'",
+    )
 
     parent = models.ForeignKey(
         "parents.Parent",
@@ -91,6 +108,13 @@ class Student(TimestampModel):
     memo = models.TextField(null=True, blank=True)
     is_managed = models.BooleanField(default=True)
 
+    deleted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="삭제일시. 설정 시 30일 보관 후 자동 삭제",
+    )
+
     tags = models.ManyToManyField(
         "Tag",
         through="StudentTag",
@@ -100,6 +124,9 @@ class Student(TimestampModel):
 
     class Meta:
         ordering = ["-id"]
+        indexes = [
+            models.Index(fields=["tenant", "created_at"]),  # ✅ 복합 인덱스 추가
+        ]
         constraints = [
             # ✅ tenant 단위 User 유일 (기존 유지, 단 user는 이제 null 불가)
             models.UniqueConstraint(
@@ -111,11 +138,7 @@ class Student(TimestampModel):
                 fields=["tenant", "ps_number"],
                 name="uniq_student_ps_number_per_tenant",
             ),
-            # ✅ NEW: tenant 단위 OMR 코드 유일
-            models.UniqueConstraint(
-                fields=["tenant", "omr_code"],
-                name="uniq_student_omr_code_per_tenant",
-            ),
+            # OMR 코드는 unique 제거 (쌍둥이 등 중복 허용, 자동 채점 후 수동 매칭)
         ]
 
     def __str__(self):

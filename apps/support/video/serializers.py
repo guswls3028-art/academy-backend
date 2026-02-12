@@ -6,7 +6,7 @@ from rest_framework import serializers
 from apps.domains.lectures.models import Session
 from .models import (
     Video,
-    VideoPermission,
+    VideoAccess,
     VideoProgress,
     VideoPlaybackEvent,
 )
@@ -148,16 +148,21 @@ class VideoDetailSerializer(VideoSerializer):
 # Permission / Progress
 # ========================================================
 
-class VideoPermissionSerializer(serializers.ModelSerializer):
+class VideoAccessSerializer(serializers.ModelSerializer):
+    """API uses access_mode (SSOT). DB table kept as video_videopermission."""
     student_name = serializers.CharField(
         source="enrollment.student.name",
         read_only=True,
     )
 
     class Meta:
-        model = VideoPermission
+        model = VideoAccess
         fields = "__all__"
-        ref_name = "SealedVideoPermission"
+        ref_name = "SealedVideoAccess"
+
+
+# Backward compat alias
+VideoPermissionSerializer = VideoAccessSerializer
 
 
 class VideoProgressSerializer(serializers.ModelSerializer):
@@ -204,8 +209,13 @@ class PlaybackEndRequestSerializer(serializers.Serializer):
 
 class PlaybackResponseSerializer(serializers.Serializer):
     token = serializers.CharField()
-    session_id = serializers.CharField()
-    expires_at = serializers.IntegerField()
+    session_id = serializers.CharField(allow_null=True, required=False)  # None for FREE_REVIEW
+    expires_at = serializers.IntegerField(allow_null=True, required=False)  # None for FREE_REVIEW
+    access_mode = serializers.ChoiceField(
+        choices=["FREE_REVIEW", "PROCTORED_CLASS", "BLOCKED"],
+        required=True,
+    )
+    monitoring_enabled = serializers.BooleanField()
     policy = serializers.JSONField()
     play_url = serializers.CharField()
 

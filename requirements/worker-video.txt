@@ -10,15 +10,6 @@ sqlparse
 asgiref
 
 # =========================
-# Celery / Queue
-# =========================
-celery
-billiard
-kombu
-amqp
-redis
-
-# =========================
 # DB
 # =========================
 psycopg2-binary

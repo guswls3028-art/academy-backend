@@ -21,6 +21,7 @@ class Lecture(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="lectures",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     title = models.CharField(max_length=255)
@@ -31,9 +32,16 @@ class Lecture(TimestampModel):
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
 
+    lecture_time = models.CharField(max_length=100, blank=True, help_text="강의 시간 (예: 토 12:00 ~ 13:00)")
+
+    color = models.CharField(max_length=20, default="#3b82f6", help_text="아이콘/라벨 색상")
+
     is_active = models.BooleanField(default=True)
 
     class Meta:
+        indexes = [
+            models.Index(fields=["tenant", "created_at"]),  # ✅ 복합 인덱스 추가
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["tenant", "title"],

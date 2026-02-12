@@ -35,11 +35,12 @@ from apps.domains.attendance.models import Attendance
 
 from ..models import (
     Video,
-    VideoPermission,
+    VideoAccess,
     VideoProgress,
     VideoPlaybackEvent,
 )
 from ..serializers import VideoSerializer, VideoDetailSerializer
+from ..services.sqs_queue import VideoSQSQueue
 from .playback_mixin import VideoPlaybackMixin
 
 # 로거 설정
@@ -97,66 +98,14 @@ def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
     return True, {"duration": duration, "has_video": True}, ""
 
 
-def _try_start_video_worker_instance() -> None:
-    """
-    upload_complete 시점에 video-worker EC2 인스턴스 자동 기동 (로그 분석 강화)
-
-    ✅ 운영 안정화:
-    - 요청 처리 중 "백그라운드 쓰레드/Timer"로 재시도하지 않는다 (프로세스 누수/스레드 폭주 방지)
-    - boto3 네트워크 타임아웃을 강제하여 API 서버가 오래 붙잡히지 않게 한다
-    - IncorrectInstanceState(Stopping 등) 는 "이미 전환 중"으로 보고 조용히 종료
-    """
-    instance_id = getattr(settings, "VIDEO_WORKER_INSTANCE_ID", None) or ""
-    region = (
-        getattr(settings, "AWS_REGION", None)
-        or getattr(settings, "AWS_DEFAULT_REGION", None)
-        or "ap-northeast-2"
-    )
-
-    if not instance_id:
-        logger.error("[EC2-START] VIDEO_WORKER_INSTANCE_ID 설정이 없습니다.")
-        return
-
-    try:
-        import boto3  # type: ignore
-        from botocore.config import Config  # type: ignore
-
-        # ✅ 타임아웃 강제 + boto3 자체 재시도 최소화
-        cfg = Config(
-            connect_timeout=2,
-            read_timeout=3,
-            retries={"max_attempts": 2, "mode": "standard"},
-        )
-        ec2 = boto3.client("ec2", region_name=region, config=cfg)
-
-        response = ec2.start_instances(InstanceIds=[str(instance_id)])
-        logger.info(
-            "[EC2-START] start_instances sent instance_id=%s resp=%s",
-            str(instance_id),
-            str(response.get("StartingInstances")),
-        )
-
-    except Exception as e:
-        error_str = str(e)
-
-        # ✅ Stopping/Transient 상태면: 서버가 재시도/대기하지 않고 즉시 종료(안전)
-        if "IncorrectInstanceState" in error_str or "InstanceInterrupted" in error_str:
-            logger.warning(
-                "[EC2-START] ignored transient state instance_id=%s err=%s",
-                str(instance_id),
-                error_str,
-            )
-            return
-
-        logger.error(f"[EC2-START] 실패: {error_str}", exc_info=True)
-
-
-def _try_start_video_worker_instance_after_job_creation() -> None:
-    """
-    job 생성 이후 EC2 인스턴스 활성화:
-    - 쓰레드 딜레이 제거: 요청 응답 전/프로세스 종료 전 안정적인 호출 보장
-    """
-    _try_start_video_worker_instance()
+# ==================================================
+# ✅ EC2 자동 시작 로직 제거됨 (SQS 기반 아키텍처로 전환)
+#
+# SQS 기반 아키텍처에서는:
+# - Worker는 ECS/Fargate에서 자동으로 관리됨
+# - 작업이 SQS에 있으면 Worker가 자동으로 처리
+# - EC2 인스턴스 수동 관리 불필요
+# ==================================================
 
 
 # ==================================================
@@ -300,7 +249,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.error_reason = ""
             video.save(update_fields=["status", "error_reason"])
 
-            transaction.on_commit(_try_start_video_worker_instance_after_job_creation)
+            # SQS에 작업 추가
+            transaction.on_commit(lambda: VideoSQSQueue().enqueue(video))
             return Response(VideoSerializer(video).data)
 
         min_dur = _safe_int(getattr(settings, "VIDEO_MIN_DURATION_SECONDS", 3), 3)
@@ -312,7 +262,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.error_reason = ""
             video.save(update_fields=["status", "duration", "error_reason"])
 
-            transaction.on_commit(_try_start_video_worker_instance_after_job_creation)
+            # SQS에 작업 추가
+            transaction.on_commit(lambda: VideoSQSQueue().enqueue(video))
             return Response(VideoSerializer(video).data)
 
         video.duration = duration
@@ -320,7 +271,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         video.error_reason = ""
         video.save(update_fields=["status", "duration", "error_reason"])
 
-        transaction.on_commit(_try_start_video_worker_instance_after_job_creation)
+        # SQS에 작업 추가
+        transaction.on_commit(lambda: VideoSQSQueue().enqueue(video))
         return Response(VideoSerializer(video).data)
 
     # ==================================================
@@ -340,9 +292,10 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         video.status = Video.Status.UPLOADED
         video.save(update_fields=["status"])
 
-        transaction.on_commit(_try_start_video_worker_instance_after_job_creation)
+        # SQS에 작업 추가
+        transaction.on_commit(lambda: VideoSQSQueue().enqueue(video))
         return Response(
-            {"detail": "Video reprocessing queued (HTTP worker polling)"},
+            {"detail": "Video reprocessing queued (SQS)"},
             status=status.HTTP_202_ACCEPTED,
         )
 
@@ -365,7 +318,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         }
         perms = {
             p.enrollment_id: p
-            for p in VideoPermission.objects.filter(video=video)
+            for p in VideoAccess.objects.filter(video=video)
         }
         attendance = {
             a.enrollment_id: a.status
@@ -377,6 +330,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             vp = progresses.get(e.id)
             perm = perms.get(e.id)
 
+            # Use SSOT access resolver
+            from apps.support.video.services.access_resolver import resolve_access_mode
+            access_mode = resolve_access_mode(video=video, enrollment=e)
+            
+            # Legacy rule for backward compatibility
             rule = perm.rule if perm else "free"
             effective_rule = rule
             if rule == "once" and vp and vp.completed:
@@ -389,8 +347,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     "attendance_status": attendance.get(e.id),
                     "progress": vp.progress if vp else 0,
                     "completed": vp.completed if vp else False,
-                    "rule": rule,
-                    "effective_rule": effective_rule,
+                    "rule": rule,  # Legacy field
+                    "effective_rule": effective_rule,  # Legacy field
+                    "access_mode": access_mode.value,  # New field
                     "parent_phone": getattr(e.student, "parent_phone", None),
                     "student_phone": getattr(e.student, "phone", None),
                     "school": getattr(e.student, "school", None),

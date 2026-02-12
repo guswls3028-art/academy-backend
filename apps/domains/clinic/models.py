@@ -17,6 +17,7 @@ class Session(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="clinic_sessions",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     date = models.DateField()
@@ -71,6 +72,7 @@ class SessionParticipant(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="clinic_participants",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     session = models.ForeignKey(
@@ -145,6 +147,7 @@ class Test(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="clinic_tests",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     session = models.ForeignKey(
@@ -182,6 +185,7 @@ class Submission(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="clinic_submissions",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     test = models.ForeignKey(

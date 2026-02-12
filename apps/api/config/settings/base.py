@@ -184,6 +184,10 @@ DATABASES = {
         "PASSWORD": os.getenv("DB_PASSWORD"),
         "HOST": os.getenv("DB_HOST"),
         "PORT": os.getenv("DB_PORT", "5432"),
+        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),  # 1 minute connection persistence (10k DAU 확장성 최적화)
+        "OPTIONS": {
+            "connect_timeout": 10,
+        },
     }
 }
 
@@ -297,8 +301,13 @@ R2_AI_BUCKET = os.getenv("R2_AI_BUCKET", "academy-ai")
 R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
 
 # ==================================================
-# INTERNAL WORKER / REDIS
+# SITE (메시지 발송용 홈페이지 링크)
+# ==================================================
+
+SITE_URL = os.getenv("SITE_URL", "")  # 예: https://academy.example.com
+
+# ==================================================
+# INTERNAL WORKER
 # ==================================================
 
 INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "")
-REDIS_URL = os.getenv("REDIS_URL")

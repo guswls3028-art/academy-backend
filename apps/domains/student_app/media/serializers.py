@@ -14,9 +14,16 @@ class StudentVideoListItemSerializer(serializers.Serializer):
     max_speed = serializers.FloatField()
     show_watermark = serializers.BooleanField()
 
-    # 학생별 적용 룰
+    # 학생별 적용 룰 (Legacy)
     effective_rule = serializers.ChoiceField(
-        choices=["free", "once", "blocked"]
+        choices=["free", "once", "blocked"],
+        required=False,
+    )
+    
+    # 새로운 접근 모드
+    access_mode = serializers.ChoiceField(
+        choices=["FREE_REVIEW", "PROCTORED_CLASS", "BLOCKED"],
+        required=False,
     )
 
 

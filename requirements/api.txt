@@ -16,15 +16,6 @@ asgiref
 djangorestframework_simplejwt
 PyJWT
 
-# Celery / Queue
-celery
-billiard
-kombu
-amqp
-redis
-django-celery-beat
-django_celery_results
-
 # DB
 psycopg2-binary
 
@@ -35,5 +26,6 @@ inflection
 
 # Server
 gunicorn
+gevent>=23.0.0
 
 reportlab

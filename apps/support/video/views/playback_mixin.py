@@ -8,10 +8,10 @@ from rest_framework.response import Response
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.lectures.models import Session
 
-from ..models import Video, VideoPermission, VideoProgress
+from ..models import Video, VideoAccess, VideoProgress, AccessMode
 from ..serializers import VideoSerializer
 from ..drm import create_playback_token, verify_playback_token
-from ..cdn.cloudfront import build_signed_cookies_for_path, default_cookie_options
+from ..services.access_resolver import resolve_access_mode, get_effective_access_mode
 
 # ✅ 추가: Cloudflare signed url (있으면 사용, 없으면 기존 public)
 from ..cdn.cloudflare_signing import CloudflareSignedURL
@@ -21,10 +21,10 @@ class VideoPlaybackMixin:
     """
     재생 권한 / 정책 / 공통 로직
 
-    정책 정의:
-    - free    : 항상 무제한
-    - once    : 1회차에만 정책 적용, 완료 후 free로 승격됨
-    - blocked : 항상 차단
+    Access Mode 정의:
+    - FREE_REVIEW: 복습 모드 (제한 없음)
+    - PROCTORED_CLASS: 온라인 수업 대체 (제한 적용)
+    - BLOCKED: 접근 차단
     """
 
     def _get_student_for_user(self, request):
@@ -36,7 +36,7 @@ class VideoPlaybackMixin:
     def _check_access(self, *, video, enrollment):
         """
         접근 가능 여부만 판단한다.
-        once는 접근을 차단하지 않는다.
+        PROCTORED_CLASS는 접근을 차단하지 않는다 (제한만 적용).
         """
         if video.status != video.Status.READY:
             return False, "video_not_ready"
@@ -47,24 +47,20 @@ class VideoPlaybackMixin:
         ).exists():
             return False, "no_session_access"
 
-        perm = VideoPermission.objects.filter(
-            video=video,
-            enrollment=enrollment,
-        ).first()
+        # Use SSOT access resolver
+        access_mode = resolve_access_mode(video=video, enrollment=enrollment)
 
-        rule = perm.rule if perm else "free"
-
-        if rule == "blocked":
+        if access_mode == AccessMode.BLOCKED:
             return False, "blocked"
 
-        # free / once 모두 접근 허용
+        # FREE_REVIEW / PROCTORED_CLASS 모두 접근 허용
         return True, None
 
     # ==================================================
     # Permission Loader
     # ==================================================
     def _load_permission(self, *, video, enrollment):
-        return VideoPermission.objects.filter(
+        return VideoAccess.objects.filter(
             video=video,
             enrollment=enrollment,
         ).first()
@@ -72,12 +68,18 @@ class VideoPlaybackMixin:
     # ==================================================
     # Playback Policy
     # ==================================================
-    def _effective_policy(self, *, video, perm):
+    def _effective_policy(self, *, video, enrollment, perm=None):
         """
         실제 재생 제약 정책 계산
-        - once : 완료 전까지 탐색 제한
-        - 완료 후에는 free와 동일
+        
+        Policy behavior:
+        - PROCTORED_CLASS: allow_seek=False or bounded_forward, max_speed=1.0, watermark enabled
+        - FREE_REVIEW: allow_seek=True, no restrictions, minimal logging
         """
+        # Resolve access mode using SSOT
+        access_mode = get_effective_access_mode(video=video, enrollment=enrollment)
+        
+        # Base policy from video defaults
         allow_seek = bool(video.allow_skip)
         max_rate = float(video.max_speed or 1.0)
         watermark_enabled = bool(video.show_watermark)
@@ -89,6 +91,7 @@ class VideoPlaybackMixin:
             "grace_seconds": 3,
         }
 
+        # Apply permission overrides
         if perm:
             if perm.allow_skip_override is not None:
                 allow_seek = bool(perm.allow_skip_override)
@@ -99,20 +102,6 @@ class VideoPlaybackMixin:
             if perm.show_watermark_override is not None:
                 watermark_enabled = bool(perm.show_watermark_override)
 
-            if perm.rule == "once":
-                completed = VideoProgress.objects.filter(
-                    video=video,
-                    enrollment=perm.enrollment,
-                    completed=True,
-                ).exists()
-
-                if not completed:
-                    seek_policy = {
-                        "mode": "bounded_forward",
-                        "forward_limit": "max_watched",
-                        "grace_seconds": 3,
-                    }
-
             if perm.block_seek:
                 allow_seek = False
                 seek_policy = {"mode": "blocked"}
@@ -121,7 +110,44 @@ class VideoPlaybackMixin:
                 ui_speed_control = False
                 max_rate = 1.0
 
+        # Apply access mode restrictions
+        if access_mode == AccessMode.PROCTORED_CLASS:
+            # PROCTORED_CLASS: restrictions apply
+            if not perm or not perm.block_seek:
+                # If not explicitly blocked, use bounded forward
+                progress = VideoProgress.objects.filter(
+                    video=video,
+                    enrollment=enrollment,
+                ).first()
+                
+                if not progress or not progress.completed:
+                    seek_policy = {
+                        "mode": "bounded_forward",
+                        "forward_limit": "max_watched",
+                        "grace_seconds": 3,
+                    }
+            
+            # Force max speed to 1.0 for proctored class
+            if not perm or perm.max_speed_override is None:
+                max_rate = 1.0
+                ui_speed_control = True
+            
+            # Watermark enabled for proctored class
+            if not perm or perm.show_watermark_override is None:
+                watermark_enabled = True
+        elif access_mode == AccessMode.FREE_REVIEW:
+            # FREE_REVIEW: no restrictions
+            if not perm or perm.allow_skip_override is None:
+                allow_seek = True
+                seek_policy = {
+                    "mode": "free",
+                    "forward_limit": None,
+                    "grace_seconds": 3,
+                }
+
         return {
+            "access_mode": access_mode.value,
+            "monitoring_enabled": (access_mode == AccessMode.PROCTORED_CLASS),
             "allow_seek": allow_seek,
             "seek": seek_policy,
             "playback_rate": {
@@ -189,13 +215,15 @@ class VideoPlaybackMixin:
         )
 
     def _set_signed_cookies(self, response: Response, *, video_id: int, expires_at: int):
-        path_prefix = self._hls_path_prefix_for_video(video_id)
-        cookies = build_signed_cookies_for_path(path_prefix=path_prefix, expires_at=expires_at)
-        opts = default_cookie_options(path_prefix=path_prefix)
-
-        max_age = max(0, expires_at - int(time.time()))
-        for k, v in cookies.items():
-            response.set_cookie(k, v, max_age=max_age, **opts)
+        """
+        Cloudflare CDN 사용으로 signed cookies 불필요
+        
+        Cloudflare는 쿠키 대신 query parameter 기반 signed URL 사용
+        호환성을 위해 빈 함수로 유지
+        """
+        # Cloudflare CDN은 쿠키 대신 query parameter 사용
+        # 빈 함수 유지 (호환성)
+        pass
 
     # ==================================================
     # 학생 영상 목록 (재생 가능 여부 판단)

@@ -80,6 +80,7 @@ class Staff(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="staffs",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     user = models.OneToOneField(
@@ -91,7 +92,11 @@ class Staff(TimestampModel):
     )
 
     name = models.CharField(max_length=100)
-    phone = models.CharField(max_length=20, blank=True)
+    phone = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
+    )
 
     is_active = models.BooleanField(default=True)
     is_manager = models.BooleanField(default=False)
@@ -105,6 +110,19 @@ class Staff(TimestampModel):
         choices=PAY_TYPE_CHOICES,
         default="HOURLY",
     )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["tenant", "created_at"]),  # ✅ 복합 인덱스 추가
+        ]
+        constraints = [
+            # ✅ tenant 단위 전화번호 유일성 (phone이 있는 경우만)
+            models.UniqueConstraint(
+                fields=["tenant", "phone"],
+                condition=models.Q(phone__isnull=False) & ~models.Q(phone=""),
+                name="uniq_staff_phone_per_tenant",
+            ),
+        ]
 
     def __str__(self) -> str:
         return self.name
@@ -121,6 +139,7 @@ class WorkType(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="work_types",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     name = models.CharField(max_length=100)
@@ -149,6 +168,7 @@ class StaffWorkType(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="staff_work_types",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     staff = models.ForeignKey(
@@ -190,6 +210,7 @@ class WorkRecord(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="work_records",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     staff = models.ForeignKey(
@@ -233,6 +254,9 @@ class WorkRecord(TimestampModel):
 
     class Meta:
         ordering = ["-date", "-start_time"]
+        indexes = [
+            models.Index(fields=["tenant", "date"]),  # ✅ 복합 인덱스 추가
+        ]
 
     def calculate_payroll(self):
         hours = WorkHourCalculationPolicy.calculate(
@@ -272,6 +296,7 @@ class ExpenseRecord(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="expense_records",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     staff = models.ForeignKey(
@@ -323,6 +348,7 @@ class WorkMonthLock(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="work_month_locks",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     staff = models.ForeignKey(
@@ -361,6 +387,7 @@ class PayrollSnapshot(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="payroll_snapshots",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
     staff = models.ForeignKey(

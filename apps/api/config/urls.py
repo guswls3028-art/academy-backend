@@ -9,8 +9,14 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
+from apps.api.common.views import health_check
 
 urlpatterns = [
+    # =========================
+    # Health Check
+    # =========================
+    path("health", health_check, name="health_check"),
+    
     # =========================
     # Admin
     # =========================
@@ -29,13 +35,13 @@ urlpatterns = [
 
     # ==================================================
     # ✅ INTERNAL (ROOT LEVEL)
-    # - Video Worker 전용
-    # - 워커가 /internal/video-worker/* 직접 호출함
+    # - Video Worker HTTP polling 엔드포인트 제거됨 (SQS 기반으로 전환)
+    # - Legacy 호환성을 위해 일부 엔드포인트는 유지
     # ==================================================
-    path(
-        "internal/",
-        include("apps.support.video.urls_internal"),
-    ),
+    # path(
+    #     "internal/",
+    #     include("apps.support.video.urls_internal"),
+    # ),
 ]
 
 # =========================

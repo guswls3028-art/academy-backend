@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from apps.domains.student_app.permissions import IsStudent
+from apps.domains.student_app.permissions import IsStudentOrParent
 from .serializers import StudentExamSerializer
 
 
@@ -12,7 +12,7 @@ class StudentExamListView(APIView):
     GET /exams/
     """
 
-    permission_classes = [IsAuthenticated, IsStudent]
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request):
         return Response({"items": []})
@@ -23,7 +23,7 @@ class StudentExamDetailView(APIView):
     GET /exams/{id}/
     """
 
-    permission_classes = [IsAuthenticated, IsStudent]
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request, pk):
         data = {
