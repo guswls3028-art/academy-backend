@@ -81,15 +81,14 @@ class ProgramView(APIView):
 
         program = Program.objects.filter(tenant=tenant).first()
         if program is None:
-            # ✅ write-on-read 금지 원칙:
-            # 이 상태는 운영 데이터 무결성 위반이므로 명시적으로 실패한다.
+            # 운영에서는 Tenant 생성 시 signal으로 Program 생성. 없으면 404 (프론트에서 처리)
             return Response(
                 {
                     "detail": "program not initialized for tenant",
                     "code": "program_missing",
                     "tenant": tenant.code,
                 },
-                status=500,
+                status=404,
             )
 
         data = ProgramPublicSerializer(program).data
@@ -109,7 +108,7 @@ class ProgramView(APIView):
                     "code": "program_missing",
                     "tenant": tenant.code,
                 },
-                status=500,
+                status=404,
             )
 
         serializer = ProgramUpdateSerializer(

@@ -1,4 +1,5 @@
-#common.txt
+# common.txt — API/Worker 공통
+# HTTP, AWS, Django(ORM), DB, Redis
 
 # HTTP / Utils
 requests
@@ -22,5 +23,16 @@ tzdata
 pydantic
 typing_extensions
 
-
 python-dotenv
+
+# Django (ORM — Worker/API 공통)
+Django
+django-extensions
+sqlparse
+asgiref
+
+# DB
+psycopg2-binary
+
+# Redis (멱등성 레이어)
+redis>=5.0.0

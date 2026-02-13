@@ -32,6 +32,13 @@ AWS infrastructure setup for production deployment. All resources are designed f
 - **Quantity**: 1 (as needed)
 - **Cost**: ~$200/month
 
+#### Messaging Worker
+- **Type**: ECS Fargate (or EC2)
+- **Spec**: 0.25 vCPU, 512MB RAM
+- **Quantity**: 1 (24/7 상시 운영 권장)
+- **Purpose**: SMS/LMS 발송 (Solapi), 예약 발송, 알림톡
+- **Cost**: ~$10/month
+
 ### 2. Load Balancer
 
 #### Application Load Balancer (ALB)
@@ -77,10 +84,11 @@ AWS infrastructure setup for production deployment. All resources are designed f
 - **AI Lite Queue**: `academy-ai-jobs-lite`
 - **AI Basic Queue**: `academy-ai-jobs-basic`
 - **AI Premium Queue**: `academy-ai-jobs-premium`
+- **Messaging Queue**: `academy-messaging-jobs`
 - **Cost**: ~$2/month (initial) → ~$10/month (10k DAU)
 
 #### Dead Letter Queues (DLQ)
-- One DLQ per queue (4 total)
+- One DLQ per queue (5 total)
 - **Cost**: Included (SQS request cost)
 
 ### 6. Networking
@@ -128,7 +136,7 @@ AWS infrastructure setup for production deployment. All resources are designed f
 
 ### SQS Queue Creation
 
-**Video Queue:**
+**Video + Messaging Queues:**
 ```bash
 python scripts/create_sqs_resources.py ap-northeast-2
 ```

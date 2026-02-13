@@ -349,17 +349,25 @@ class AISQSQueue:
         job = AIJobModel.objects.select_for_update().filter(job_id=job_id).first()
         if not job:
             return False, "not_found"
-        
-        # 멱등성: 이미 FAILED 상태면 OK
-        if job.status == "FAILED":
+
+        from apps.domains.ai.services.status_resolver import status_for_exception
+
+        final_status, _ = status_for_exception(job.tier or "basic")
+
+        # 멱등성: 이미 최종 상태면 OK
+        if job.status == final_status:
             return True, "idempotent"
-        
-        job.status = "FAILED"
+        if job.status == "FAILED" and final_status == "FAILED":
+            return True, "idempotent"
+        if job.status == "DONE" and final_status == "DONE":
+            return True, "idempotent"
+
+        job.status = final_status
         job.error_message = str(error_message)[:2000]
         job.last_error = str(error_message)[:2000]
         job.locked_at = None
         job.locked_by = None
-        
+
         update_fields = ["status", "error_message", "last_error", "locked_at", "locked_by"]
         job.save(update_fields=update_fields)
         return True, "ok"

@@ -1,0 +1,834 @@
+====================================================================================================
+# BACKEND APP: domains__attendance
+# ROOT PATH: C:\academy\apps\domains\attendance
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+default_app_config = "apps.domains.attendance.apps.AttendanceConfig"
+
+
+==========================================================================================
+# FILE: admin.py
+==========================================================================================
+from django.contrib import admin
+from .models import Attendance
+
+
+@admin.register(Attendance)
+class AttendanceAdmin(admin.ModelAdmin):
+    list_display = ("id", "enrollment", "session", "status", "recorded_at")
+    list_display_links = ("id", "enrollment")
+    list_filter = ("status", "session__lecture")
+    search_fields = ("enrollment__student__name",)
+    ordering = ("-recorded_at",)
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class AttendanceConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.attendance"
+
+
+==========================================================================================
+# FILE: filters.py
+==========================================================================================
+import django_filters
+from .models import Attendance
+
+
+class AttendanceFilter(django_filters.FilterSet):
+    """
+    Attendance 기본 필터
+    - session 기준 조회 (프론트 필수)
+    - enrollment 기준 조회 (확장 대비)
+    """
+
+    session = django_filters.NumberFilter(field_name="session_id")
+    enrollment = django_filters.NumberFilter(field_name="enrollment_id")
+
+    class Meta:
+        model = Attendance
+        fields = [
+            "session",
+            "enrollment",
+        ]
+
+
+==========================================================================================
+# FILE: models.py
+==========================================================================================
+# PATH: apps/domains/attendance/models.py
+
+from django.db import models
+from apps.core.models import Tenant
+
+
+# ========================================================
+# Attendance
+# ========================================================
+
+class Attendance(models.Model):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="lecture_attendances",  # ✅ 변경 (충돌 방지)
+        null=False,  # ✅ NOT NULL로 변경 (프로덕션 준비)
+        blank=False,
+        db_index=True,  # ✅ tenant_id 인덱스 추가
+    )
+
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        related_name="attendances",
+    )
+    session = models.ForeignKey(
+        "lectures.Session",
+        on_delete=models.CASCADE,
+        related_name="attendances",
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("PRESENT", "출석"),
+            ("LATE", "지각"),
+            ("ONLINE", "온라인"),
+            ("SUPPLEMENT", "보강"),
+            ("EARLY_LEAVE", "조퇴"),
+            ("ABSENT", "결석"),
+            ("RUNAWAY", "출튀"),
+            ("MATERIAL", "자료"),
+            ("INACTIVE", "부재"),
+            ("SECESSION", "탈퇴"),
+        ],
+        default="PRESENT",
+    )
+
+    memo = models.TextField(blank=True)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["tenant", "recorded_at"]),  # ✅ 복합 인덱스 추가
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "enrollment", "session"],
+                name="unique_attendance_per_tenant_session",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.enrollment.student.name} / {self.session.title} / {self.status}"
+
+
+==========================================================================================
+# FILE: serializers.py
+==========================================================================================
+# apps/domains/attendance/serializers.py
+
+from rest_framework import serializers
+from .models import Attendance
+
+
+class AttendanceSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(
+        source="enrollment.student.name",
+        read_only=True,
+    )
+    parent_phone = serializers.CharField(
+        source="enrollment.student.parent_phone",
+        read_only=True,
+    )
+    phone = serializers.CharField(
+        source="enrollment.student.phone",
+        read_only=True,
+    )
+
+    class Meta:
+        model = Attendance
+        fields = [
+            "id",
+            "session",
+            "enrollment_id",
+            "status",
+            "memo",
+            "name",
+            "parent_phone",
+            "phone",
+        ]
+        
+class AttendanceMatrixStudentSerializer(serializers.Serializer):
+    student_id = serializers.IntegerField()
+    name = serializers.CharField()
+    phone = serializers.CharField(allow_null=True)
+    parent_phone = serializers.CharField(allow_null=True)
+    attendance = serializers.DictField()
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+# apps/domains/attendance/urls.py
+
+from rest_framework.routers import DefaultRouter
+from .views import AttendanceViewSet
+
+router = DefaultRouter()
+router.register(
+    r"attendance",
+    AttendanceViewSet,
+    basename="lecture-attendance",
+)
+
+urlpatterns = router.urls
+
+
+==========================================================================================
+# FILE: views.py
+==========================================================================================
+# PATH: apps/domains/attendance/views.py
+
+from django.db import transaction
+from django.shortcuts import get_object_or_404
+from django.http import HttpResponse
+
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.response import Response
+from rest_framework import status
+
+from .models import Attendance
+from .serializers import (
+    AttendanceSerializer,
+    AttendanceMatrixStudentSerializer,
+)
+from .filters import AttendanceFilter
+
+from apps.domains.lectures.models import Lecture, Session
+from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+
+from .utils.excel import build_attendance_excel
+
+
+class AttendanceViewSet(ModelViewSet):
+    """
+    lectures/attendance
+    """
+
+    serializer_class = AttendanceSerializer
+
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_class = AttendanceFilter
+    search_fields = ["enrollment__student__name"]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        return (
+            Attendance.objects
+            .filter(tenant=tenant)
+            .select_related(
+                "session",
+                "enrollment",
+                "enrollment__student",
+            )
+        )
+
+    # =========================================================
+    # 1️⃣ 세션 기준 학생 등록
+    # =========================================================
+    @transaction.atomic
+    @action(detail=False, methods=["post"])
+    def bulk_create(self, request):
+        tenant = getattr(request, "tenant", None)
+
+        session_id = request.data.get("session")
+        student_ids = request.data.get("students", [])
+
+        if not session_id or not isinstance(student_ids, list):
+            return Response(
+                {"detail": "session, students(list)는 필수입니다"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session = get_object_or_404(Session, id=session_id)
+        created = []
+
+        for sid in student_ids:
+            enrollment, _ = Enrollment.objects.get_or_create(
+                tenant=tenant,
+                student_id=sid,
+                lecture=session.lecture,
+                defaults={"status": "ACTIVE"},
+            )
+
+            SessionEnrollment.objects.get_or_create(
+                tenant=tenant,
+                enrollment=enrollment,
+                session=session,
+            )
+
+            attendance, _ = Attendance.objects.get_or_create(
+                tenant=tenant,
+                enrollment=enrollment,
+                session=session,
+                defaults={"status": "PRESENT"},
+            )
+
+            created.append(attendance)
+
+        return Response(
+            AttendanceSerializer(created, many=True).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    # =========================================================
+    # 2️⃣ 강의 × 차시 출결 매트릭스
+    # =========================================================
+    @action(detail=False, methods=["get"], url_path="matrix")
+    def matrix(self, request):
+        tenant = getattr(request, "tenant", None)
+
+        lecture_id = request.query_params.get("lecture")
+        if not lecture_id:
+            return Response(
+                {"detail": "lecture 파라미터는 필수입니다"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        lecture = get_object_or_404(
+            Lecture,
+            id=lecture_id,
+            tenant=tenant,
+        )
+
+        sessions = Session.objects.filter(
+            lecture=lecture
+        ).order_by("order", "id")
+
+        enrollments = Enrollment.objects.filter(
+            tenant=tenant,
+            lecture=lecture,
+            status="ACTIVE",
+        ).select_related("student").order_by("student__name", "id")
+
+        attendances = Attendance.objects.filter(
+            tenant=tenant,
+            session__lecture=lecture,
+            enrollment__in=enrollments,
+        )
+
+        attendance_map = {
+            (a.enrollment_id, a.session_id): a
+            for a in attendances
+        }
+
+        students_payload = []
+
+        for en in enrollments:
+            row = {
+                "student_id": en.student.id,
+                "name": en.student.name,
+                "phone": en.student.phone,
+                "parent_phone": en.student.parent_phone,
+                "attendance": {},
+            }
+
+            for s in sessions:
+                att = attendance_map.get((en.id, s.id))
+                if att:
+                    row["attendance"][str(s.id)] = {
+                        "attendance_id": att.id,
+                        "status": att.status,
+                    }
+
+            students_payload.append(row)
+
+        return Response(
+            {
+                "lecture": {
+                    "id": lecture.id,
+                    "title": lecture.title,
+                },
+                "sessions": [
+                    {
+                        "id": s.id,
+                        "order": s.order,
+                        "date": s.date,
+                    }
+                    for s in sessions
+                ],
+                "students": AttendanceMatrixStudentSerializer(
+                    students_payload, many=True
+                ).data,
+            }
+        )
+
+    # =========================================================
+    # 3️⃣ 엑셀 다운로드
+    # =========================================================
+    @action(detail=False, methods=["get"], url_path="excel")
+    def excel(self, request):
+        tenant = getattr(request, "tenant", None)
+
+        lecture_id = request.query_params.get("lecture")
+        if not lecture_id:
+            return Response(
+                {"detail": "lecture 파라미터는 필수입니다"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        lecture = get_object_or_404(
+            Lecture,
+            id=lecture_id,
+            tenant=tenant,
+        )
+
+        workbook, filename = build_attendance_excel(lecture)
+
+        response = HttpResponse(
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        workbook.save(response)
+        return response
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-06 02:52
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = []
+
+    operations = [
+        migrations.CreateModel(
+            name="Attendance",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("PRESENT", "출석"),
+                            ("LATE", "지각"),
+                            ("ONLINE", "온라인"),
+                            ("SUPPLEMENT", "보강"),
+                            ("EARLY_LEAVE", "조퇴"),
+                            ("ABSENT", "결석"),
+                            ("RUNAWAY", "출튀"),
+                            ("MATERIAL", "자료"),
+                            ("INACTIVE", "부재"),
+                            ("SECESSION", "탈퇴"),
+                        ],
+                        default="PRESENT",
+                        max_length=20,
+                    ),
+                ),
+                ("memo", models.TextField(blank=True)),
+                ("recorded_at", models.DateTimeField(auto_now_add=True)),
+            ],
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0002_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-06 02:52
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("attendance", "0001_initial"),
+        ("enrollment", "0001_initial"),
+        ("lectures", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="attendance",
+            name="enrollment",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="attendances",
+                to="enrollment.enrollment",
+            ),
+        ),
+        migrations.AddField(
+            model_name="attendance",
+            name="session",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="attendances",
+                to="lectures.session",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="attendance",
+            constraint=models.UniqueConstraint(
+                fields=("enrollment", "session"), name="unique_attendance_per_session"
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0003_add_tenant.py
+==========================================================================================
+# PATH: apps/domains/attendance/migrations/0003_add_tenant.py
+
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0001_initial"),
+        ("attendance", "0002_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="attendance",
+            name="tenant",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="attendances",
+                to="core.tenant",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0004_remove_attendance_unique_attendance_per_session_and_more.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-04 07:17
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("attendance", "0003_add_tenant"),
+        ("core", "0003_attendance_expense_add_tenant"),
+        ("enrollment", "0002_add_tenant"),
+        ("lectures", "0002_remove_session_exam"),
+    ]
+
+    operations = [
+        migrations.RemoveConstraint(
+            model_name="attendance",
+            name="unique_attendance_per_session",
+        ),
+        migrations.AlterField(
+            model_name="attendance",
+            name="tenant",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="lecture_attendances",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="attendance",
+            constraint=models.UniqueConstraint(
+                fields=("tenant", "enrollment", "session"),
+                name="unique_attendance_per_tenant_session",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0005_backfill_attendance_tenant.py
+==========================================================================================
+# Generated migration: Backfill tenant for Attendance
+
+from django.db import migrations
+
+
+def backfill_attendance_tenant(apps, schema_editor):
+    """
+    Attendance의 tenant_id를 enrollment를 통해 채움
+    
+    Attendance -> Enrollment -> Student.tenant 또는 Lecture.tenant
+    """
+    Attendance = apps.get_model("attendance", "Attendance")
+    Enrollment = apps.get_model("enrollment", "Enrollment")
+    Student = apps.get_model("students", "Student")
+    Lecture = apps.get_model("lectures", "Lecture")
+    
+    # tenant가 null인 Attendance 레코드 처리
+    attendances_without_tenant = Attendance.objects.filter(tenant__isnull=True).select_related('enrollment')
+    
+    updated_count = 0
+    skipped_count = 0
+    
+    for attendance in attendances_without_tenant:
+        try:
+            enrollment = Enrollment.objects.select_related('student', 'lecture').get(id=attendance.enrollment_id)
+            
+            # 1순위: Enrollment의 tenant 사용
+            if enrollment.tenant_id:
+                attendance.tenant_id = enrollment.tenant_id
+                attendance.save(update_fields=["tenant_id"])
+                updated_count += 1
+                continue
+            
+            # 2순위: Student를 통해 tenant 가져오기
+            if enrollment.student_id:
+                try:
+                    student = Student.objects.get(id=enrollment.student_id)
+                    if student.tenant_id:
+                        attendance.tenant_id = student.tenant_id
+                        attendance.save(update_fields=["tenant_id"])
+                        updated_count += 1
+                        continue
+                except Student.DoesNotExist:
+                    pass
+            
+            # 3순위: Lecture를 통해 tenant 가져오기
+            if enrollment.lecture_id:
+                try:
+                    lecture = Lecture.objects.get(id=enrollment.lecture_id)
+                    if lecture.tenant_id:
+                        attendance.tenant_id = lecture.tenant_id
+                        attendance.save(update_fields=["tenant_id"])
+                        updated_count += 1
+                        continue
+                except Lecture.DoesNotExist:
+                    pass
+            
+            # 모든 방법이 실패하면 건너뛰기
+            skipped_count += 1
+            print(f"Warning: Could not determine tenant for Attendance {attendance.id} (enrollment_id={attendance.enrollment_id})")
+            
+        except Enrollment.DoesNotExist:
+            skipped_count += 1
+            print(f"Warning: Enrollment {attendance.enrollment_id} not found for Attendance {attendance.id}")
+        except Exception as e:
+            skipped_count += 1
+            print(f"Error processing Attendance {attendance.id}: {e}")
+    
+    print(f"Updated {updated_count} Attendance records with tenant_id")
+    if skipped_count > 0:
+        print(f"Skipped {skipped_count} Attendance records (could not determine tenant)")
+    
+    # 여전히 tenant가 null인 레코드가 있으면 경고
+    remaining_null = Attendance.objects.filter(tenant__isnull=True).count()
+    if remaining_null > 0:
+        print(f"Warning: {remaining_null} Attendance records still have null tenant_id")
+        print("These records need manual intervention before applying NOT NULL constraint")
+
+
+def reverse_backfill(apps, schema_editor):
+    """역방향 마이그레이션: tenant를 null로 설정 (필요시)"""
+    # 일반적으로 역방향 마이그레이션은 필요 없음
+    pass
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("attendance", "0004_remove_attendance_unique_attendance_per_session_and_more"),
+        ("enrollment", "0002_add_tenant"),  # Enrollment 모델 필요
+    ]
+
+    operations = [
+        migrations.RunPython(backfill_attendance_tenant, reverse_backfill),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0006_alter_attendance_tenant_and_more.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-12 12:00
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("attendance", "0005_backfill_attendance_tenant"),
+        ("core", "0014_alter_user_phone_and_more"),
+        ("enrollment", "0004_alter_enrollment_tenant_and_more"),
+        ("lectures", "0006_alter_lecture_lecture_time_and_more"),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="attendance",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="lecture_attendances",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="attendance",
+            index=models.Index(
+                fields=["tenant", "recorded_at"], name="attendance__tenant__65bff1_idx"
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: utils/excel.py
+==========================================================================================
+# apps/domains/attendance/utils/excel.py
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+
+from apps.domains.lectures.models import Session
+from apps.domains.enrollment.models import Enrollment
+from apps.domains.attendance.models import Attendance
+
+
+STATUS_LABEL_MAP = {
+    "PRESENT": "현장",
+    "LATE": "지각",
+    "ONLINE": "영상",
+    "SUPPLEMENT": "보강",
+    "EARLY_LEAVE": "조퇴",
+    "ABSENT": "결석",
+    "RUNAWAY": "출튀",
+    "MATERIAL": "자료",
+    "INACTIVE": "부재",
+    "SECESSION": "퇴원",
+}
+
+STATUS_FILL_MAP = {
+    "PRESENT": "C6EFCE",
+    "ABSENT": "FFC7CE",
+    "LATE": "FFEB9C",
+    "ONLINE": "BDD7EE",
+}
+
+
+def build_attendance_excel(lecture):
+    sessions = Session.objects.filter(
+        lecture=lecture
+    ).order_by("order", "id")
+
+    enrollments = Enrollment.objects.filter(
+        lecture=lecture,
+        status="ACTIVE",
+    ).select_related("student").order_by("student__name", "id")
+
+    attendances = Attendance.objects.filter(
+        session__lecture=lecture,
+        enrollment__in=enrollments,
+    )
+
+    attendance_map = {
+        (a.enrollment_id, a.session_id): a
+        for a in attendances
+    }
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "출결"
+
+    # Header
+    header = ["학생명", "학생번호", "학부모번호"]
+    for s in sessions:
+        label = f"{s.order}차시"
+        if s.date:
+            label += f" ({s.date})"
+        header.append(label)
+
+    ws.append(header)
+
+    header_font = Font(bold=True)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    for col in range(1, len(header) + 1):
+        cell = ws.cell(row=1, column=col)
+        cell.font = header_font
+        cell.alignment = center
+        ws.column_dimensions[get_column_letter(col)].width = 16
+
+    ws.freeze_panes = "D2"
+
+    for en in enrollments:
+        row = [
+            en.student.name,
+            en.student.phone or "",
+            en.student.parent_phone or "",
+        ]
+
+        for s in sessions:
+            att = attendance_map.get((en.id, s.id))
+            code = att.status if att else ""
+            label = STATUS_LABEL_MAP.get(code, code)
+            row.append(label)
+
+        ws.append(row)
+        r = ws.max_row
+
+        for idx, s in enumerate(sessions, start=4):
+            att = attendance_map.get((en.id, s.id))
+            if att and att.status in STATUS_FILL_MAP:
+                ws.cell(row=r, column=idx).fill = PatternFill(
+                    start_color=STATUS_FILL_MAP[att.status],
+                    end_color=STATUS_FILL_MAP[att.status],
+                    fill_type="solid",
+                )
+            ws.cell(row=r, column=idx).alignment = center
+
+    filename = f"출결_{lecture.title}_{lecture.id}.xlsx"
+    return wb, filename

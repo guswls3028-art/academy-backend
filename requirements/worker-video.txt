@@ -1,38 +1,9 @@
-# ---- base ----
--r common.txt
--r api.txt
+# worker-video.txt — Video Worker 전용
+-r ./common.txt
 
-# =========================
-# Django (ORM 사용)
-# =========================
-Django
-sqlparse
-asgiref
-
-# =========================
-# DB
-# =========================
-psycopg2-binary
-
-# =========================
 # Video processing
-# =========================
 ffmpeg-python
 
-# =========================
 # Image (thumbnail)
-# =========================
 pillow
 opencv-python-headless
-
-# =========================
-# HTTP (API callback, download)
-# =========================
-requests
-
-# Django REST (settings에서 사용됨)
-djangorestframework
-djangorestframework-simplejwt
-django-filter
-drf-yasg
-

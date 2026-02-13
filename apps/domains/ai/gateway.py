@@ -4,12 +4,15 @@ from typing import Any, Dict, Optional
 
 import logging
 
+from django.db import IntegrityError
+
 from apps.shared.contracts.ai_job import AIJob
 from apps.domains.ai.types import ensure_payload_dict, AIJobType
 from apps.domains.ai.safe import safe_dispatch
 from apps.domains.ai.queueing.publisher import publish_job
 from apps.domains.ai.models import AIJobModel
 from apps.domains.ai.services.tier_resolver import resolve_tier, validate_tier_for_job_type
+from apps.domains.ai.services.pre_validation import validate_input_for_basic
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,9 @@ def dispatch_job(
     source_domain: Optional[str] = None,
     source_id: Optional[str] = None,
     tier: Optional[str] = None,  # "lite" | "basic" | "premium"
+    idempotency_key: Optional[str] = None,
+    force_rerun: bool = False,
+    rerun_reason: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     AI 작업 발행
@@ -56,6 +62,29 @@ def dispatch_job(
         )
         tier = "basic"
 
+    # Pre-Validation (Lite/Basic): 거부 정책 해당 시 job 생성 없이 반환
+    if tier in ("lite", "basic"):
+        ok, error_message, rejection_code = validate_input_for_basic(
+            tier=tier,
+            job_type=job_type,
+            payload=payload,
+        )
+        if not ok:
+            logger.info(
+                "ai_pre_validation_rejected tier=%s job_type=%s rejection_code=%s",
+                tier,
+                job_type,
+                rejection_code or "unknown",
+                extra={"rejection_code": rejection_code, "job_type": job_type, "tenant_id": tenant_id},
+            )
+            return {
+                "ok": False,
+                "job_id": None,
+                "type": job_type,
+                "error": error_message or "Validation failed",
+                "rejection_code": rejection_code,
+            }
+
     job = AIJob.new(
         type=job_type,
         payload=payload,
@@ -65,17 +94,40 @@ def dispatch_job(
     )
 
     def _do():
-        # ✅ callbacks가 AIJobModel을 조회하므로, 발행 시점에 반드시 저장
-        job_model = AIJobModel.objects.create(
-            job_id=job.id,
-            job_type=job.type,
-            payload=job.payload,
-            status="PENDING",
-            tier=tier,
-            tenant_id=tenant_id,
-            source_domain=source_domain,
-            source_id=source_id,
-        )
+        # Idempotency: 동시 요청 시 500 방지 (IntegrityError → 기존 Job 반환)
+        effective_key = idempotency_key
+        if effective_key and force_rerun:
+            effective_key = f"{effective_key}:rerun:{job.id}"
+
+        if effective_key:
+            try:
+                job_model = AIJobModel.objects.create(
+                    job_id=job.id,
+                    job_type=job.type,
+                    payload=job.payload,
+                    status="PENDING",
+                    tier=tier,
+                    tenant_id=tenant_id,
+                    source_domain=source_domain,
+                    source_id=source_id,
+                    idempotency_key=effective_key,
+                    force_rerun=force_rerun,
+                    rerun_reason=(rerun_reason or ""),
+                )
+            except IntegrityError:
+                job_model = AIJobModel.objects.get(idempotency_key=effective_key)
+                return {"ok": True, "job_id": str(job_model.job_id), "type": job_model.job_type}
+        else:
+            job_model = AIJobModel.objects.create(
+                job_id=job.id,
+                job_type=job.type,
+                payload=job.payload,
+                status="PENDING",
+                tier=tier,
+                tenant_id=tenant_id,
+                source_domain=source_domain,
+                source_id=source_id,
+            )
 
         try:
             publish_job(job)

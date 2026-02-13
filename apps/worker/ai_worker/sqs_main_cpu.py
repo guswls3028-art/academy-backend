@@ -19,12 +19,11 @@ from typing import Optional
 import boto3
 import requests
 
-from apps.worker.ai_worker.config import load_config
 from apps.worker.ai_worker.ai.pipelines.dispatcher import handle_ai_job
 from apps.worker.ai_worker.ai.pipelines.tier_enforcer import enforce_tier_limits
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
-from apps.support.ai.services.sqs_queue import AISQSQueue
+from src.infrastructure.ai import AISQSAdapter
 
 logging.basicConfig(
     level=logging.INFO,
@@ -103,7 +102,7 @@ def _stop_self_ec2() -> None:
         logger.exception("EC2 self-stop failed (ignored): %s", e)
 
 
-def _weighted_poll(queue: AISQSQueue) -> tuple[Optional[dict], str]:
+def _weighted_poll(queue: AISQSAdapter) -> tuple[Optional[dict], str]:
     """
     Weighted polling으로 Basic과 Lite 큐에서 메시지 수신
     
@@ -143,7 +142,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
     
-    queue = AISQSQueue()
+    queue = AISQSAdapter()
     
     logger.info(
         "AI Worker CPU started | queues=[lite, basic] | weights=[lite=%d, basic=%d] | wait_time=%ss",

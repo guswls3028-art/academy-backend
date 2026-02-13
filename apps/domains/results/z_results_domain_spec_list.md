@@ -86,8 +86,4 @@
 
 ## 4) Worker API (WrongNote PDF)
 
-- GET  /api/v1/internal/wrong-note-worker/next/
-- GET  /api/v1/internal/wrong-note-worker/{job_id}/data/
-- POST /api/v1/internal/wrong-note-worker/{job_id}/prepare-upload/
-- POST /api/v1/internal/wrong-note-worker/{job_id}/complete/
-- POST /api/v1/internal/wrong-note-worker/{job_id}/fail/
+- 제거됨. 오답노트 PDF 생성은 AI CPU 워커로 통합됨.

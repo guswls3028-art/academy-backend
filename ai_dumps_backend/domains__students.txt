@@ -1,0 +1,1877 @@
+====================================================================================================
+# BACKEND APP: domains__students
+# ROOT PATH: C:\academy\apps\domains\students
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: admin.py
+==========================================================================================
+from django.contrib import admin
+from .models import Student, Tag, StudentTag
+
+
+@admin.register(Student)
+class StudentAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "ps_number",   # ✅ NEW
+        "omr_code",    # ✅ NEW
+        "name",
+        "gender",
+        "grade",
+        "phone",
+        "parent_phone",  # ✅ 운영 확인용
+        "parent",
+        "high_school",
+        "is_managed",
+        "created_at",
+    )
+    list_filter = (
+        "gender",
+        "grade",
+        "high_school",
+        "is_managed",
+    )
+    search_fields = ("ps_number", "omr_code", "name", "phone")
+
+
+@admin.register(Tag)
+class TagAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "color")
+    search_fields = ("name",)
+
+
+@admin.register(StudentTag)
+class StudentTagAdmin(admin.ModelAdmin):
+    list_display = ("student", "tag")
+    list_filter = ("tag",)
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class StudentsConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.students"
+    label = "students"
+
+
+==========================================================================================
+# FILE: filters.py
+==========================================================================================
+import django_filters
+from .models import Student
+
+
+class StudentFilter(django_filters.FilterSet):
+    ps_number = django_filters.CharFilter(field_name="ps_number", lookup_expr="icontains")  # ✅ NEW
+    omr_code = django_filters.CharFilter(field_name="omr_code", lookup_expr="icontains")    # ✅ NEW
+
+    name = django_filters.CharFilter(field_name="name", lookup_expr="icontains")
+    gender = django_filters.CharFilter()
+    grade = django_filters.NumberFilter()
+    high_school = django_filters.CharFilter(lookup_expr="icontains")
+    major = django_filters.CharFilter(lookup_expr="icontains")
+    is_managed = django_filters.BooleanFilter()
+
+    class Meta:
+        model = Student
+        fields = [
+            "ps_number",
+            "omr_code",
+            "name",
+            "gender",
+            "grade",
+            "high_school",
+            "major",
+            "is_managed",
+        ]
+
+
+==========================================================================================
+# FILE: models.py
+==========================================================================================
+# PATH: apps/domains/students/models.py
+
+from django.db import models
+from django.conf import settings
+
+from apps.api.common.models import TimestampModel
+from apps.core.models import Tenant
+from apps.core.db import TenantQuerySet  # ✅ 추가
+
+
+class Student(TimestampModel):
+    # 🔐 tenant-safe manager (실수 방지)
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="students",
+        help_text="소속 학원 (Tenant)",
+        db_index=True,  # ✅ tenant_id 인덱스 추가
+    )
+
+    # ✅ 봉인: Student는 User 없이 존재 불가 / User 삭제되면 Student도 같이 삭제
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=False,
+        blank=False,
+        related_name="student_profile",
+        help_text="학생 로그인 계정 (필수)",
+    )
+
+    # ✅ NEW: PS 번호 (학원 공식 학생 ID)
+    ps_number = models.CharField(
+        max_length=20,
+        null=False,
+        blank=False,
+        help_text="PS 번호 (학원 학생 ID)",
+    )
+
+    # ✅ NEW: OMR 식별자 (학생 전화번호 또는 부모 전화번호 뒤 8자리)
+    omr_code = models.CharField(
+        max_length=8,
+        null=False,
+        blank=False,
+        help_text="OMR 자동채점 식별자 (학생 전화번호 또는 부모 전화번호 뒤 8자리)",
+    )
+
+    name = models.CharField(max_length=50)
+
+    gender = models.CharField(
+        max_length=1,
+        choices=[("M", "남"), ("F", "여")],
+        null=True,
+        blank=True,
+    )
+
+    grade = models.PositiveSmallIntegerField(
+        choices=[(1, "1"), (2, "2"), (3, "3")],
+        null=True,
+        blank=True,
+    )
+
+    SCHOOL_TYPE_CHOICES = (
+        ("MIDDLE", "중등"),
+        ("HIGH", "고등"),
+    )
+
+    school_type = models.CharField(
+        max_length=10,
+        choices=SCHOOL_TYPE_CHOICES,
+        default="HIGH",
+    )
+
+    # 학생 전화번호 (선택사항, 없으면 null)
+    phone = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        help_text="정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
+    )
+    # 부모 전화번호 (필수)
+    parent_phone = models.CharField(
+        max_length=20,
+        null=False,
+        blank=False,
+        help_text="정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
+    )
+
+    uses_identifier = models.BooleanField(
+        default=False,
+        help_text="True면 학생 전화 없음, 식별자(010+8자리)로 가입. 표시 시 '식별자 XXXX-XXXX'",
+    )
+
+    parent = models.ForeignKey(
+        "parents.Parent",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="students",
+    )
+
+    high_school = models.CharField(max_length=100, null=True, blank=True)
+    high_school_class = models.CharField(max_length=100, null=True, blank=True)
+    major = models.CharField(max_length=50, null=True, blank=True)
+    middle_school = models.CharField(max_length=100, null=True, blank=True)
+
+    memo = models.TextField(null=True, blank=True)
+    is_managed = models.BooleanField(default=True)
+
+    deleted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="삭제일시. 설정 시 30일 보관 후 자동 삭제",
+    )
+
+    tags = models.ManyToManyField(
+        "Tag",
+        through="StudentTag",
+        related_name="students",
+        blank=True,
+    )
+
+    class Meta:
+        ordering = ["-id"]
+        indexes = [
+            models.Index(fields=["tenant", "created_at"]),  # ✅ 복합 인덱스 추가
+        ]
+        constraints = [
+            # ✅ tenant 단위 User 유일 (기존 유지, 단 user는 이제 null 불가)
+            models.UniqueConstraint(
+                fields=["tenant", "user"],
+                name="uniq_student_user_per_tenant",
+            ),
+            # ✅ NEW: tenant 단위 PS 번호 유일
+            models.UniqueConstraint(
+                fields=["tenant", "ps_number"],
+                name="uniq_student_ps_number_per_tenant",
+            ),
+            # OMR 코드는 unique 제거 (쌍둥이 등 중복 허용, 자동 채점 후 수동 매칭)
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class Tag(models.Model):
+    name = models.CharField(max_length=50)
+    color = models.CharField(max_length=20, default="#000000")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["name"],
+                name="uniq_tag_name",
+            )
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class StudentTag(models.Model):
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name="student_tags",
+    )
+    tag = models.ForeignKey(Tag, on_delete=models.CASCADE)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["student", "tag"],
+                name="uniq_student_tag",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.student.name} - {self.tag.name}"
+
+
+==========================================================================================
+# FILE: serializers.py
+==========================================================================================
+# PATH: apps/domains/students/serializers.py
+
+import random
+
+from django.contrib.auth import get_user_model
+from rest_framework import serializers
+
+from apps.domains.students.models import Student, Tag
+
+
+def _generate_unique_ps_number() -> str:
+    """임의의 6자리 숫자 중복 없이 부여 (User.username 전역 유일)"""
+    User = get_user_model()
+    for _ in range(100):
+        candidate = str(random.randint(100000, 999999))
+        if not User.objects.filter(username=candidate).exists():
+            return candidate
+    raise ValueError("아이디 생성에 실패했습니다. 다시 시도해 주세요.")
+from apps.domains.enrollment.models import Enrollment
+
+
+class TagSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Tag
+        fields = "__all__"
+        ref_name = "StudentTagSerializer"
+
+
+class EnrollmentSerializer(serializers.ModelSerializer):
+    lecture_name = serializers.CharField(source="lecture.title", read_only=True)
+    lecture_color = serializers.CharField(source="lecture.color", read_only=True, default="#3b82f6")
+
+    class Meta:
+        model = Enrollment
+        fields = "__all__"
+        ref_name = "StudentEnrollment"
+
+
+class StudentListSerializer(serializers.ModelSerializer):
+    tags = TagSerializer(many=True, read_only=True)
+    enrollments = EnrollmentSerializer(many=True, read_only=True)
+    is_enrolled = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Student
+        fields = "__all__"
+        ref_name = "StudentList"
+
+    def get_is_enrolled(self, obj):
+        request = self.context.get("request")
+        if not request:
+            return False
+
+        lecture_id = request.query_params.get("lecture")
+        if lecture_id:
+            try:
+                lid = int(lecture_id)
+            except (TypeError, ValueError):
+                return False
+            return obj.enrollments.filter(lecture_id=lid).exists()
+
+        return False
+
+
+class StudentDetailSerializer(serializers.ModelSerializer):
+    tags = TagSerializer(many=True, read_only=True)
+    enrollments = EnrollmentSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Student
+        fields = "__all__"
+        ref_name = "StudentDetail"
+
+
+class AddTagSerializer(serializers.Serializer):
+    tag_id = serializers.IntegerField()
+
+
+class StudentBulkItemSerializer(serializers.Serializer):
+    """엑셀 일괄 등록용 단일 학생 데이터"""
+
+    name = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    phone = serializers.CharField(allow_blank=True, trim_whitespace=True, required=False, default="")
+    parent_phone = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    uses_identifier = serializers.BooleanField(required=False, default=False)
+    gender = serializers.CharField(allow_blank=True, default="")
+    school_type = serializers.ChoiceField(
+        choices=[("HIGH", "고등"), ("MIDDLE", "중등")],
+        default="HIGH",
+    )
+    school = serializers.CharField(allow_blank=True, default="", required=False)
+    high_school_class = serializers.CharField(allow_blank=True, default="", required=False)
+    major = serializers.CharField(allow_blank=True, default="", required=False)
+    grade = serializers.IntegerField(allow_null=True, required=False)
+    memo = serializers.CharField(allow_blank=True, default="", required=False)
+    is_managed = serializers.BooleanField(default=True, required=False)
+
+    def validate_phone(self, value):
+        # 학생 전화번호는 선택사항
+        if not value:
+            return None
+        v = str(value or "").replace(" ", "").replace("-", "").replace(".", "")
+        if v and (len(v) != 11 or not v.startswith("010")):
+            raise serializers.ValidationError("전화번호는 010XXXXXXXX 11자리여야 합니다.")
+        return v if v else None
+
+    def validate_parent_phone(self, value):
+        v = str(value or "").replace(" ", "").replace("-", "").replace(".", "")
+        if not v or len(v) != 11 or not v.startswith("010"):
+            raise serializers.ValidationError("학부모 전화번호는 010XXXXXXXX 11자리여야 합니다.")
+        return v
+
+
+class StudentBulkCreateSerializer(serializers.Serializer):
+    initial_password = serializers.CharField(min_length=4, write_only=True)
+    students = StudentBulkItemSerializer(many=True)
+    send_welcome_message = serializers.BooleanField(required=False, default=False)
+
+
+class StudentCreateSerializer(serializers.ModelSerializer):
+    initial_password = serializers.CharField(
+        write_only=True,
+        required=True,
+        min_length=4,
+    )
+    send_welcome_message = serializers.BooleanField(
+        write_only=True,
+        required=False,
+        default=False,
+    )
+    no_phone = serializers.BooleanField(
+        write_only=True,
+        required=False,
+        default=False,
+        help_text="True면 식별자로 가입 (uses_identifier=True)",
+    )
+    ps_number = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="미입력 시 임의 6자리 자동 부여 (학생이 추후 변경 가능)",
+    )
+
+    class Meta:
+        model = Student
+        exclude = ("tenant", "user")
+
+    def _require(self, attrs, key: str):
+        v = attrs.get(key)
+        if v is None:
+            raise serializers.ValidationError({key: "필수입니다."})
+        if isinstance(v, str) and not v.strip():
+            raise serializers.ValidationError({key: "필수입니다."})
+        return v
+
+    def validate_phone(self, value):
+        # 학생 전화번호는 선택사항 (없으면 None)
+        if not value or not str(value).strip():
+            return None
+
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        if User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError("이미 사용 중인 전화번호입니다.")
+
+        return value
+
+    # omr_code는 validate에서 자동 설정되므로 별도 validate 불필요
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        if tenant is None:
+            raise serializers.ValidationError("Tenant가 resolve되지 않았습니다.")
+
+        ps_number_raw = attrs.get("ps_number") or ""
+        ps_number = str(ps_number_raw).strip() if ps_number_raw else ""
+        if not ps_number:
+            try:
+                ps_number = _generate_unique_ps_number()
+            except ValueError as e:
+                raise serializers.ValidationError({"ps_number": str(e)})
+        parent_phone = str(self._require(attrs, "parent_phone")).strip()
+        name = str(self._require(attrs, "name")).strip()
+        phone = attrs.get("phone")
+        phone_str = str(phone).strip() if phone else None
+
+        # OMR 코드: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
+        if phone_str and len(phone_str) >= 8:
+            omr_code = phone_str[-8:]
+        elif parent_phone and len(parent_phone) >= 8:
+            omr_code = parent_phone[-8:]
+        else:
+            raise serializers.ValidationError({"omr_code": "학생 전화번호 또는 부모 전화번호가 필요합니다."})
+
+        attrs["ps_number"] = ps_number
+        attrs["omr_code"] = omr_code
+        attrs["phone"] = phone_str if phone_str else None
+        attrs["parent_phone"] = parent_phone
+        attrs["name"] = name
+
+        # 사용자가 직접 입력한 경우에만 중복 체크 (자동 생성은 이미 User 중복 검사됨)
+        if ps_number_raw and Student.objects.filter(tenant=tenant, ps_number=ps_number).exists():
+            raise serializers.ValidationError({"ps_number": "이미 사용 중인 PS 번호입니다."})
+
+        attrs["uses_identifier"] = attrs.pop("no_phone", False) or (phone_str is None)
+        return attrs
+
+
+class StudentUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Student
+        exclude = ("tenant", "user")
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        if tenant is None:
+            raise serializers.ValidationError("Tenant가 resolve되지 않았습니다.")
+
+        instance = self.instance
+
+        phone = attrs.get("phone", instance.phone)
+        parent_phone = attrs.get("parent_phone", instance.parent_phone)
+        ps_number = attrs.get("ps_number", instance.ps_number)
+
+        # OMR 코드: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
+        phone_str = str(phone).strip() if phone else None
+        parent_phone_str = str(parent_phone).strip() if parent_phone else None
+        
+        if phone_str and len(phone_str) >= 8:
+            omr_code = phone_str[-8:]
+        elif parent_phone_str and len(parent_phone_str) >= 8:
+            omr_code = parent_phone_str[-8:]
+        else:
+            omr_code = attrs.get("omr_code", instance.omr_code)  # 기존 값 유지
+
+        attrs["omr_code"] = omr_code
+
+        if ps_number:
+            if Student.objects.filter(
+                tenant=tenant, ps_number=ps_number
+            ).exclude(id=instance.id).exists():
+                raise serializers.ValidationError({"ps_number": "이미 사용 중인 PS 번호입니다."})
+
+        return attrs
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+# PATH: apps/domains/students/urls.py
+
+from rest_framework.routers import DefaultRouter
+from .views import StudentViewSet, TagViewSet
+
+router = DefaultRouter()
+
+# 🔥 basename 명시 (queryset 없는 ViewSet 대응)
+router.register(r"tags", TagViewSet, basename="student-tag")
+router.register(r"", StudentViewSet, basename="student")
+
+
+urlpatterns = router.urls
+
+
+==========================================================================================
+# FILE: views.py
+==========================================================================================
+# PATH: apps/domains/students/views.py
+
+from django.db import transaction, connection
+from django.utils import timezone
+from django.contrib.auth import get_user_model
+
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
+
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+
+from apps.core.permissions import IsAdminOrStaff, IsStudent
+from apps.core.models import TenantMembership
+from apps.core.permissions import TenantResolvedAndStaff
+
+from apps.domains.parents.services import ensure_parent_for_student
+from apps.support.messaging.services import send_welcome_messages, get_site_url
+
+from .models import Student, Tag, StudentTag
+from .filters import StudentFilter
+from apps.domains.enrollment.models import Enrollment
+from .serializers import (
+    _generate_unique_ps_number,
+    StudentListSerializer,
+    StudentDetailSerializer,
+    TagSerializer,
+    AddTagSerializer,
+    StudentBulkCreateSerializer,
+)
+
+
+# ======================================================
+# Tag
+# ======================================================
+
+class TagViewSet(ModelViewSet):
+    """
+    학생 태그 관리
+    - 관리자 / 스태프 전용
+    - Tag 자체는 테넌트에 종속되지 않음 (공통 분류)
+    """
+    serializer_class = TagSerializer
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def get_queryset(self):
+        return Tag.objects.all()
+
+
+# ======================================================
+# Student
+# ======================================================
+
+class StudentListPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
+class StudentViewSet(ModelViewSet):
+    """
+    학생 관리 ViewSet
+
+    ✔ tenant 단위 완전 분리
+    ✔ 학생 생성 시 User 계정 자동 생성
+    ✔ phone = username
+    ✔ 초기 비밀번호는 교사가 설정
+    ✔ 학생 CRUD는 관리자만 가능
+
+    ✅ 봉인 강화:
+    - Student 생성 시 TenantMembership(role=student) 반드시 생성
+    - Student 삭제 시 User 삭제(고아유저 방지)
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    pagination_class = StudentListPagination
+
+    # ------------------------------
+    # Tenant-aware QuerySet
+    # ------------------------------
+    def get_queryset(self):
+        """
+        🔐 핵심 보안 포인트
+        - request.tenant 기준으로만 학생 노출
+        - list: ?deleted=true 시 삭제된 학생만, 기본은 활성 학생만
+        """
+        qs = Student.objects.filter(tenant=self.request.tenant)
+
+        if self.action == "list":
+            show_deleted = self.request.query_params.get("deleted") == "true"
+            if show_deleted:
+                qs = qs.filter(deleted_at__isnull=False)
+            else:
+                qs = qs.filter(deleted_at__isnull=True)
+            qs = qs.prefetch_related("enrollments__lecture")
+        elif self.action == "retrieve":
+            qs = qs.prefetch_related("enrollments__lecture")
+
+        return qs
+
+    # ------------------------------
+    # Serializer 선택
+    # ------------------------------
+    def get_serializer_class(self):
+        if self.action == "create":
+            from .serializers import StudentCreateSerializer
+            return StudentCreateSerializer
+
+        if self.action == "list":
+            return StudentListSerializer
+
+        return StudentDetailSerializer
+
+    # ------------------------------
+    # Student + User + Membership 생성 (봉인)
+    # ------------------------------
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        """
+        학생 생성 시 처리 흐름
+
+        1. 입력값 검증 (StudentCreateSerializer)
+        2. 학부모 계정 생성/연결 (ensure_parent_for_student)
+        3. User 생성 (username = ps_number)
+        4. Student 생성 + tenant / user / parent 연결
+        5. TenantMembership(role=student) SSOT 강제 생성
+        6. (옵션) 가입 성공 메시지 일괄 발송
+        """
+        serializer = self.get_serializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        User = get_user_model()
+        data = serializer.validated_data
+        send_welcome = data.pop("send_welcome_message", False)
+
+        phone = data.get("phone")  # nullable
+        password = data.pop("initial_password")
+        parent_phone = data.get("parent_phone", "")
+        ps_number = data.get("ps_number")
+
+        # 1️⃣ 학부모 계정 생성 (ID = 학부모 전화번호)
+        parent = None
+        if parent_phone:
+            parent = ensure_parent_for_student(
+                tenant=request.tenant,
+                parent_phone=parent_phone,
+                student_name=data.get("name", ""),
+                parent_password=password,
+            )
+
+        # 2️⃣ User 생성 (phone이 없으면 username만 사용)
+        user = User.objects.create_user(
+            username=ps_number,
+            phone=phone or "",  # phone이 None이면 빈 문자열
+            name=data.get("name", ""),
+        )
+        user.set_password(password)
+        user.save()
+
+        # 3️⃣ Student 생성 + parent 연결
+        student = Student.objects.create(
+            tenant=request.tenant,
+            user=user,
+            parent=parent,
+            **data,
+        )
+
+        # 4️⃣ TenantMembership
+        TenantMembership.ensure_active(
+            tenant=request.tenant,
+            user=user,
+            role="student",
+        )
+
+        # 5️⃣ 가입 성공 메시지 발송
+        if send_welcome:
+            site_url = get_site_url(request)
+            send_welcome_messages(
+                created_students=[student],
+                student_password=password,
+                parent_password_by_phone={parent_phone: password} if parent_phone else {},
+                site_url=site_url,
+            )
+
+        output = StudentDetailSerializer(
+            student,
+            context={"request": request},
+        )
+        return Response(output.data, status=201)
+
+    # ------------------------------
+    # DELETE: 소프트 삭제 (30일 보관)
+    # ------------------------------
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        student = self.get_object()
+        if student.deleted_at:
+            return Response({"detail": "이미 삭제된 학생입니다."}, status=400)
+        now = timezone.now()
+        student.deleted_at = now
+        student.save(update_fields=["deleted_at"])
+        if student.user:
+            student.user.is_active = False
+            student.user.save(update_fields=["is_active"])
+        return Response(status=204)
+
+    # ------------------------------
+    # Filtering / Searching / Ordering
+    # ------------------------------
+    filter_backends = [
+        DjangoFilterBackend,
+        SearchFilter,
+        OrderingFilter,
+    ]
+    filterset_class = StudentFilter
+    search_fields = ["ps_number", "omr_code", "name", "high_school", "major", "phone"]
+    ordering_fields = ["id", "created_at", "updated_at", "deleted_at"]
+    ordering = ["-id"]
+
+    # ------------------------------
+    # Tag 관리
+    # ------------------------------
+    @action(detail=True, methods=["post"])
+    def add_tag(self, request, pk=None):
+        student = self.get_object()
+        serializer = AddTagSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        tag = Tag.objects.get(id=serializer.validated_data["tag_id"])
+        StudentTag.objects.get_or_create(student=student, tag=tag)
+
+        return Response({"status": "ok"}, status=201)
+
+    @action(detail=True, methods=["post"])
+    def remove_tag(self, request, pk=None):
+        student = self.get_object()
+        serializer = AddTagSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        StudentTag.objects.filter(
+            student=student,
+            tag_id=serializer.validated_data["tag_id"],
+        ).delete()
+
+        return Response({"status": "ok"}, status=200)
+
+    # --------------------------------------------------
+    # Anchor API: /students/me/ (원본 100% 유지)
+    # --------------------------------------------------
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk_create",
+    )
+    def bulk_create(self, request):
+        """
+        엑셀 일괄 등록 — 600명+ 대량 업로드 대응
+        POST body: { "initial_password": "...", "students": [ {...}, ... ] }
+        """
+        serializer = StudentBulkCreateSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        password = serializer.validated_data["initial_password"]
+        students_data = serializer.validated_data["students"]
+        send_welcome = serializer.validated_data.get("send_welcome_message", False)
+        User = get_user_model()
+        tenant = request.tenant
+
+        created_count = 0
+        failed = []
+        created_students = []
+
+        for idx, item in enumerate(students_data):
+            phone = item.get("phone")  # nullable
+            parent_phone = item.get("parent_phone", "")
+            # ps_number: 임의 6자리 자동 부여 (학생이 추후 변경 가능)
+            ps_number = _generate_unique_ps_number()
+            # omr_code: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
+            if phone and len(phone) >= 8:
+                omr_code = phone[-8:]
+            elif parent_phone and len(parent_phone) >= 8:
+                omr_code = parent_phone[-8:]
+            else:
+                failed.append({
+                    "row": idx + 1,
+                    "name": item.get("name", ""),
+                    "error": "학생 전화번호 또는 부모 전화번호가 필요합니다.",
+                })
+                continue
+
+            try:
+                with transaction.atomic():
+                    # 학생 전화번호가 있으면 중복 체크
+                    if phone:
+                        conflict_deleted = Student.objects.filter(
+                            tenant=tenant, phone=phone, deleted_at__isnull=False
+                        ).values_list("id", flat=True).first()
+                        if conflict_deleted:
+                            raise ValueError("삭제된 학생과 전화번호 충돌. 복원 또는 삭제 후 재등록을 선택하세요.", conflict_deleted)
+                        # 활성 User만 체크 (삭제된 학생의 User는 is_active=False)
+                        if User.objects.filter(phone=phone, is_active=True).exists():
+                            raise ValueError("이미 사용 중인 전화번호입니다.")
+                    if Student.objects.filter(tenant=tenant, ps_number=ps_number, deleted_at__isnull=True).exists():
+                        raise ValueError("이미 사용 중인 PS 번호입니다.")
+
+                    # 학부모 계정 생성
+                    parent = None
+                    if parent_phone:
+                        parent = ensure_parent_for_student(
+                            tenant=tenant,
+                            parent_phone=parent_phone,
+                            student_name=item.get("name", ""),
+                            parent_password=password,
+                        )
+
+                    user = User.objects.create_user(
+                        username=ps_number,
+                        phone=phone or "",  # phone이 None이면 빈 문자열
+                        name=item.get("name", ""),
+                    )
+                    user.set_password(password)
+                    user.save()
+
+                    school_val = (item.get("school") or "").strip() or None
+                    st = item.get("school_type", "HIGH")
+                    high_school = school_val if st == "HIGH" else None
+                    middle_school = school_val if st == "MIDDLE" else None
+                    high_school_class = (item.get("high_school_class") or "").strip() or None if st == "HIGH" else None
+                    major = (item.get("major") or "").strip() or None if st == "HIGH" else None
+
+                    student = Student.objects.create(
+                        tenant=tenant,
+                        user=user,
+                        parent=parent,
+                        name=item["name"],
+                        phone=phone,  # nullable
+                        parent_phone=item["parent_phone"],
+                        ps_number=ps_number,
+                        omr_code=omr_code,
+                        uses_identifier=item.get("uses_identifier", False) or (phone is None),
+                        gender=item.get("gender") or None,
+                        school_type=item.get("school_type", "HIGH"),
+                        high_school=high_school,
+                        middle_school=middle_school,
+                        high_school_class=high_school_class,
+                        major=major,
+                        grade=item.get("grade"),
+                        memo=item.get("memo") or None,
+                        is_managed=item.get("is_managed", True),
+                    )
+
+                    TenantMembership.ensure_active(
+                        tenant=tenant,
+                        user=user,
+                        role="student",
+                    )
+                    created_count += 1
+                    created_students.append(student)
+            except Exception as e:
+                err_msg = str(e)
+                conflict_student_id = None
+                if isinstance(e, ValueError) and len(e.args) >= 2:
+                    conflict_student_id = e.args[1]
+                    err_msg = e.args[0]
+                failed.append({
+                    "row": idx + 1,
+                    "name": item.get("name", ""),
+                    "error": err_msg,
+                    "conflict_student_id": conflict_student_id,
+                })
+
+        if send_welcome and created_students:
+            site_url = get_site_url(request)
+            parent_pw = {s.parent_phone: password for s in created_students if getattr(s, "parent_phone", None)}
+            send_welcome_messages(
+                created_students=created_students,
+                student_password=password,
+                parent_password_by_phone=parent_pw,
+                site_url=site_url,
+            )
+
+        return Response({
+            "created": created_count,
+            "failed": failed,
+            "total": len(students_data),
+        }, status=201)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk_resolve_conflicts",
+    )
+    def bulk_resolve_conflicts(self, request):
+        """
+        충돌 해결 후 재시도 — 삭제된 학생과 번호 충돌 시 복원 또는 영구 삭제 후 재등록
+        POST body: {
+          "initial_password": "...",
+          "send_welcome_message": false,
+          "resolutions": [ { "row": 1, "student_id": 123, "action": "restore"|"delete", "student_data": {...} } ]
+        }
+        """
+        password = request.data.get("initial_password") or ""
+        if len(str(password)) < 4:
+            return Response({"detail": "초기 비밀번호는 4자 이상이어야 합니다."}, status=400)
+        send_welcome = request.data.get("send_welcome_message", False)
+        resolutions = request.data.get("resolutions") or []
+        if not isinstance(resolutions, (list, tuple)):
+            return Response({"detail": "resolutions는 배열이어야 합니다."}, status=400)
+
+        tenant = request.tenant
+        User = get_user_model()
+        created_count = 0
+        restored_count = 0
+        failed = []
+        created_students = []
+
+        for r in resolutions:
+            row = r.get("row")
+            student_id = r.get("student_id")
+            action = r.get("action")
+            student_data = r.get("student_data") or {}
+            if not student_id or action not in ("restore", "delete"):
+                failed.append({"row": row, "name": student_data.get("name", ""), "error": "잘못된 resolution"})
+                continue
+
+            try:
+                student = Student.objects.filter(
+                    tenant=tenant, id=student_id, deleted_at__isnull=False
+                ).select_related("user").first()
+                if not student:
+                    failed.append({"row": row, "name": student_data.get("name", ""), "error": "삭제된 학생을 찾을 수 없습니다."})
+                    continue
+
+                if action == "restore":
+                    with transaction.atomic():
+                        student.deleted_at = None
+                        student.name = (student_data.get("name") or student.name or "").strip()
+                        school_val = (student_data.get("school") or "").strip() or None
+                        st = student_data.get("school_type", "HIGH") or "HIGH"
+                        student.high_school = school_val if st == "HIGH" else None
+                        student.middle_school = school_val if st == "MIDDLE" else None
+                        student.high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
+                        student.major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
+                        student.gender = student_data.get("gender") or None
+                        student.grade = student_data.get("grade")
+                        student.memo = (student_data.get("memo") or "") or None
+                        student.uses_identifier = student_data.get("uses_identifier", False)
+                        student.save()
+                        if student.user:
+                            student.user.is_active = True
+                            student.user.save(update_fields=["is_active"])
+                        TenantMembership.ensure_active(tenant=tenant, user=student.user, role="student")
+                    restored_count += 1
+                    created_students.append(student)
+                else:
+                    with transaction.atomic():
+                        Enrollment.objects.filter(student_id=student.id).delete()
+                        if student.user_id:
+                            student.user.delete()
+                        else:
+                            student.delete()
+                    parent = None
+                    parent_phone_raw = str(student_data.get("parent_phone") or student_data.get("parentPhone", "")).replace(" ", "").replace("-", "").replace(".", "")
+                    parent_phone = parent_phone_raw if len(parent_phone_raw) >= 11 else ""
+                    if parent_phone:
+                        parent = ensure_parent_for_student(
+                            tenant=tenant,
+                            parent_phone=parent_phone,
+                            student_name=student_data.get("name", ""),
+                            parent_password=password,
+                        )
+                    phone_raw = str(student_data.get("phone", "")).replace(" ", "").replace("-", "").replace(".", "")
+                    phone = phone_raw if phone_raw and len(phone_raw) == 11 and phone_raw.startswith("010") else None
+                    parent_phone_val = student_data.get("parent_phone") or student_data.get("parentPhone", "")
+                    parent_phone = str(parent_phone_val).replace(" ", "").replace("-", "").replace(".", "")
+                    # ps_number: 임의 6자리 자동 부여
+                    ps_number = _generate_unique_ps_number()
+                    # omr_code: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
+                    if phone and len(phone) >= 8:
+                        omr_code = phone[-8:]
+                    elif parent_phone and len(parent_phone) >= 8:
+                        omr_code = parent_phone[-8:]
+                    else:
+                        raise ValueError("학생 전화번호 또는 부모 전화번호가 필요합니다.")
+                    user = User.objects.create_user(
+                        username=ps_number,
+                        phone=phone or "",  # phone이 None이면 빈 문자열
+                        name=student_data.get("name", ""),
+                    )
+                    user.set_password(password)
+                    user.save()
+                    school_val = (student_data.get("school") or "").strip() or None
+                    st = student_data.get("school_type", "HIGH")
+                    high_school = school_val if st == "HIGH" else None
+                    middle_school = school_val if st == "MIDDLE" else None
+                    high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
+                    major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
+                    new_student = Student.objects.create(
+                        tenant=tenant,
+                        user=user,
+                        parent=parent,
+                        name=student_data.get("name", ""),
+                        phone=phone,  # nullable
+                        parent_phone=parent_phone,
+                        ps_number=ps_number,
+                        omr_code=omr_code,
+                        uses_identifier=student_data.get("uses_identifier", False) or (phone is None),
+                        gender=student_data.get("gender") or None,
+                        school_type=st,
+                        high_school=high_school,
+                        middle_school=middle_school,
+                        high_school_class=high_school_class,
+                        major=major,
+                        grade=student_data.get("grade"),
+                        memo=student_data.get("memo") or None,
+                        is_managed=student_data.get("is_managed", True),
+                    )
+                    TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
+                    created_count += 1
+                    created_students.append(new_student)
+            except Exception as e:
+                failed.append({"row": row, "name": student_data.get("name", ""), "error": str(e)})
+
+        if send_welcome and created_students:
+            site_url = get_site_url(request)
+            parent_pw = {s.parent_phone: password for s in created_students if getattr(s, "parent_phone", None)}
+            send_welcome_messages(
+                created_students=created_students,
+                student_password=password,
+                parent_password_by_phone=parent_pw,
+                site_url=site_url,
+            )
+
+        return Response({
+            "created": created_count,
+            "restored": restored_count,
+            "failed": failed,
+        }, status=200)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk_delete",
+    )
+    def bulk_delete(self, request):
+        """
+        선택 학생 일괄 소프트 삭제 (30일 보관)
+        POST body: { "ids": [1, 2, 3, ...] }
+        """
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, (list, tuple)):
+            return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
+        ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
+        if not ids:
+            return Response({"detail": "삭제할 ID가 없습니다."}, status=400)
+
+        tenant = request.tenant
+        to_delete = list(
+            Student.objects.filter(
+                tenant=tenant, id__in=ids, deleted_at__isnull=True
+            ).select_related("user")
+        )
+        now = timezone.now()
+        with transaction.atomic():
+            for student in to_delete:
+                student.deleted_at = now
+                student.save(update_fields=["deleted_at"])
+                if student.user:
+                    student.user.is_active = False
+                    student.user.save(update_fields=["is_active"])
+        return Response({"deleted": len(to_delete)}, status=200)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk_restore",
+    )
+    def bulk_restore(self, request):
+        """
+        삭제된 학생 일괄 복원
+        POST body: { "ids": [1, 2, 3, ...] }
+        """
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, (list, tuple)):
+            return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
+        ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
+        if not ids:
+            return Response({"detail": "복원할 ID가 없습니다."}, status=400)
+
+        tenant = request.tenant
+        to_restore = list(
+            Student.objects.filter(
+                tenant=tenant, id__in=ids, deleted_at__isnull=False
+            ).select_related("user")
+        )
+        with transaction.atomic():
+            for student in to_restore:
+                student.deleted_at = None
+                student.save(update_fields=["deleted_at"])
+                if student.user:
+                    student.user.is_active = True
+                    student.user.save(update_fields=["is_active"])
+                    TenantMembership.ensure_active(
+                        tenant=tenant, user=student.user, role="student"
+                    )
+        return Response({"restored": len(to_restore)}, status=200)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk_permanent_delete",
+    )
+    def bulk_permanent_delete(self, request):
+        """
+        삭제된 학생 즉시 영구 삭제
+        POST body: { "ids": [1, 2, 3, ...] }
+        """
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, (list, tuple)):
+            return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
+        ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
+        if not ids:
+            return Response({"detail": "삭제할 ID가 없습니다."}, status=400)
+
+        tenant = request.tenant
+        to_delete = list(
+            Student.objects.filter(
+                tenant=tenant, id__in=ids, deleted_at__isnull=False
+            ).select_related("user")
+        )
+        if not to_delete:
+            return Response({"deleted": 0}, status=200)
+
+        student_ids = [s.id for s in to_delete]
+        user_ids = [s.user_id for s in to_delete if s.user_id]
+        deleted = 0
+        try:
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    # Enrollment를 참조하는 테이블들을 먼저 삭제 (존재하는 테이블만)
+                    sub = "SELECT id FROM enrollment_enrollment WHERE student_id IN %s"
+                    enrollment_child_tables = [
+                        "attendance_attendance",
+                        "enrollment_sessionenrollment",
+                        "video_videopermission",
+                        "video_videoprogress",
+                        "video_playbacksession",
+                        "video_videoplaybackevent",
+                    ]
+                    params = [tuple(student_ids)]
+                    for tbl in enrollment_child_tables:
+                        cursor.execute(
+                            "SELECT 1 FROM information_schema.tables "
+                            "WHERE table_schema = %s AND table_name = %s",
+                            ["public", tbl],
+                        )
+                        if cursor.fetchone():
+                            cursor.execute(
+                                f"DELETE FROM {tbl} WHERE enrollment_id IN ({sub})",
+                                params,
+                            )
+                    cursor.execute(
+                        "DELETE FROM enrollment_enrollment WHERE student_id IN %s",
+                        [tuple(student_ids)],
+                    )
+                    cursor.execute(
+                        "DELETE FROM students_studenttag WHERE student_id IN %s",
+                        [tuple(student_ids)],
+                    )
+                    cursor.execute(
+                        "DELETE FROM students_student WHERE id IN %s",
+                        [tuple(student_ids)],
+                    )
+                    if user_ids:
+                        cursor.execute(
+                            "DELETE FROM core_tenantmembership WHERE user_id IN %s",
+                            [tuple(user_ids)],
+                        )
+                        cursor.execute(
+                            "DELETE FROM accounts_user WHERE id IN %s",
+                            [tuple(user_ids)],
+                        )
+                    deleted = len(to_delete)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception("bulk_permanent_delete failed")
+            return Response(
+                {"detail": f"영구 삭제 중 오류: {str(e)}"},
+                status=500,
+            )
+        return Response({"deleted": deleted}, status=200)
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="me",
+        permission_classes=[IsAuthenticated, IsStudent],
+    )
+    def me(self, request):
+        """
+        학생 본인 정보 조회 (Anchor API)
+
+        🔒 보안 포인트
+        - request.user + request.tenant 기준 강제
+        - 다른 학원 / 다른 학생 접근 불가
+        """
+        student = Student.objects.get(
+            tenant=request.tenant,
+            user=request.user,
+        )
+
+        serializer = StudentDetailSerializer(
+            student,
+            context={"request": request},
+        )
+        return Response(serializer.data)
+
+
+==========================================================================================
+# FILE: management/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: management/commands/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: management/commands/purge_deleted_students.py
+==========================================================================================
+# PATH: apps/domains/students/management/commands/purge_deleted_students.py
+"""
+삭제된 학생 중 30일 경과분 영구 삭제.
+
+- soft delete된 학생(deleted_at 설정) 중 deleted_at이 30일 초과된 경우 영구 삭제
+- cron으로 매일 실행 권장
+
+사용:
+  python manage.py purge_deleted_students
+"""
+from datetime import timedelta
+
+from django.core.management.base import BaseCommand
+from django.db import transaction
+from django.utils import timezone
+
+from django.contrib.auth import get_user_model
+
+from apps.domains.students.models import Student
+from apps.domains.enrollment.models import Enrollment
+
+
+class Command(BaseCommand):
+    help = "30일 초과된 삭제된 학생을 영구 삭제합니다."
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--days",
+            type=int,
+            default=30,
+            help="이 기간(일) 초과 시 삭제 (기본 30)",
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="실제 삭제 없이 대상만 출력",
+        )
+
+    def handle(self, *args, **options):
+        days = options["days"]
+        dry_run = options["dry_run"]
+        cutoff = timezone.now() - timedelta(days=days)
+
+        to_purge = list(
+            Student.objects.filter(deleted_at__lt=cutoff).select_related("user")
+        )
+
+        if not to_purge:
+            self.stdout.write(f"삭제 대상 없음 (deleted_at < {cutoff})")
+            return
+
+        self.stdout.write(f"영구 삭제 대상: {len(to_purge)}명")
+        for s in to_purge[:5]:
+            self.stdout.write(f"  - {s.name} (id={s.id}, deleted_at={s.deleted_at})")
+        if len(to_purge) > 5:
+            self.stdout.write(f"  ... 외 {len(to_purge) - 5}명")
+
+        if dry_run:
+            self.stdout.write(self.style.WARNING("--dry-run: 실제 삭제하지 않음"))
+            return
+
+        User = get_user_model()
+        deleted = 0
+        with transaction.atomic():
+            student_ids = [s.id for s in to_purge]
+            Enrollment.objects.filter(student_id__in=student_ids).delete()
+            for student in to_purge:
+                user = student.user
+                student.delete()
+                if user:
+                    user.delete()
+                deleted += 1
+
+        self.stdout.write(self.style.SUCCESS(f"영구 삭제 완료: {deleted}명"))
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-01-06 02:52
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("parents", "0001_initial"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="Student",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("name", models.CharField(max_length=50)),
+                (
+                    "gender",
+                    models.CharField(
+                        blank=True,
+                        choices=[("M", "남"), ("F", "여")],
+                        max_length=1,
+                        null=True,
+                    ),
+                ),
+                (
+                    "grade",
+                    models.PositiveSmallIntegerField(
+                        blank=True, choices=[(1, "1"), (2, "2"), (3, "3")], null=True
+                    ),
+                ),
+                (
+                    "school_type",
+                    models.CharField(
+                        choices=[("MIDDLE", "중등"), ("HIGH", "고등")],
+                        default="HIGH",
+                        max_length=10,
+                    ),
+                ),
+                ("phone", models.CharField(blank=True, max_length=20, null=True)),
+                (
+                    "parent_phone",
+                    models.CharField(blank=True, max_length=20, null=True),
+                ),
+                (
+                    "high_school",
+                    models.CharField(blank=True, max_length=100, null=True),
+                ),
+                (
+                    "high_school_class",
+                    models.CharField(blank=True, max_length=100, null=True),
+                ),
+                ("major", models.CharField(blank=True, max_length=50, null=True)),
+                (
+                    "middle_school",
+                    models.CharField(blank=True, max_length=100, null=True),
+                ),
+                ("memo", models.TextField(blank=True, null=True)),
+                ("is_managed", models.BooleanField(default=True)),
+                (
+                    "parent",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="students",
+                        to="parents.parent",
+                    ),
+                ),
+                (
+                    "user",
+                    models.OneToOneField(
+                        blank=True,
+                        help_text="학생이 로그인 계정을 가지는 경우 연결",
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="student_profile",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-id"],
+            },
+        ),
+        migrations.CreateModel(
+            name="Tag",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("name", models.CharField(max_length=50)),
+                ("color", models.CharField(default="#000000", max_length=20)),
+            ],
+            options={
+                "constraints": [
+                    models.UniqueConstraint(fields=("name",), name="uniq_tag_name")
+                ],
+            },
+        ),
+        migrations.CreateModel(
+            name="StudentTag",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "student",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="student_tags",
+                        to="students.student",
+                    ),
+                ),
+                (
+                    "tag",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE, to="students.tag"
+                    ),
+                ),
+            ],
+        ),
+        migrations.AddField(
+            model_name="student",
+            name="tags",
+            field=models.ManyToManyField(
+                blank=True,
+                related_name="students",
+                through="students.StudentTag",
+                to="students.tag",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="studenttag",
+            constraint=models.UniqueConstraint(
+                fields=("student", "tag"), name="uniq_student_tag"
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="student",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("user__isnull", False)),
+                fields=("user",),
+                name="uniq_student_user",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0002_add_tenant.py
+==========================================================================================
+
+# PATH: apps/domains/students/migrations/0002_add_tenant.py
+
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0001_initial"),
+        ("students", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="student",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="students",
+                to="core.tenant",
+                default=1,  # ⚠️ 초기 데이터용 (운영에서 조정)
+            ),
+            preserve_default=False,
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0003_remove_student_uniq_student_user_and_more.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-04 07:17
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0003_attendance_expense_add_tenant"),
+        ("parents", "0001_initial"),
+        ("students", "0002_add_tenant"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.RemoveConstraint(
+            model_name="student",
+            name="uniq_student_user",
+        ),
+        migrations.AlterField(
+            model_name="student",
+            name="tenant",
+            field=models.ForeignKey(
+                help_text="소속 학원 (Tenant)",
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="students",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="student",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("user__isnull", False)),
+                fields=("tenant", "user"),
+                name="uniq_student_user_per_tenant",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0004_remove_student_uniq_student_user_per_tenant_and_more.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-04 19:33
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0005_make_attendance_expense_tenant_not_null"),
+        ("parents", "0004_make_parent_tenant_not_null"),
+        ("students", "0003_remove_student_uniq_student_user_and_more"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.RemoveConstraint(
+            model_name="student",
+            name="uniq_student_user_per_tenant",
+        ),
+        migrations.AddField(
+            model_name="student",
+            name="omr_code",
+            field=models.CharField(blank=True, max_length=8, null=True),
+        ),
+        migrations.AddField(
+            model_name="student",
+            name="ps_number",
+            field=models.CharField(blank=True, max_length=20, null=True),
+        ),
+        migrations.AlterField(
+            model_name="student",
+            name="parent_phone",
+            field=models.CharField(max_length=20),
+        ),
+        migrations.AlterField(
+            model_name="student",
+            name="phone",
+            field=models.CharField(max_length=20),
+        ),
+        migrations.AlterField(
+            model_name="student",
+            name="user",
+            field=models.OneToOneField(
+                help_text="학생 로그인 계정 (필수)",
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="student_profile",
+                to=settings.AUTH_USER_MODEL,
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="student",
+            constraint=models.UniqueConstraint(
+                fields=("tenant", "user"), name="uniq_student_user_per_tenant"
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="student",
+            constraint=models.UniqueConstraint(
+                fields=("tenant", "ps_number"), name="uniq_student_ps_number_per_tenant"
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="student",
+            constraint=models.UniqueConstraint(
+                fields=("tenant", "omr_code"), name="uniq_student_omr_code_per_tenant"
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0005_alter_student_omr_code_alter_student_ps_number.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-04 19:36
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("students", "0004_remove_student_uniq_student_user_per_tenant_and_more"),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="student",
+            name="omr_code",
+            field=models.CharField(
+                help_text="OMR 자동채점 식별자 (전화번호 뒤 8자리)", max_length=8
+            ),
+        ),
+        migrations.AlterField(
+            model_name="student",
+            name="ps_number",
+            field=models.CharField(help_text="PS 번호 (학원 학생 ID)", max_length=20),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0006_add_student_deleted_at.py
+==========================================================================================
+# Generated manually
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("students", "0005_alter_student_omr_code_alter_student_ps_number"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="student",
+            name="deleted_at",
+            field=models.DateTimeField(
+                blank=True,
+                db_index=True,
+                help_text="삭제일시. 설정 시 30일 보관 후 자동 삭제",
+                null=True,
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0007_add_student_uses_identifier.py
+==========================================================================================
+# Generated manually
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("students", "0006_add_student_deleted_at"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="student",
+            name="uses_identifier",
+            field=models.BooleanField(
+                default=False,
+                help_text="True면 학생 전화 없음, 식별자(010+8자리)로 가입. 표시 시 '식별자 XXXX-XXXX'",
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0008_make_phone_nullable_remove_omr_unique.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-12 10:32
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("students", "0007_add_student_uses_identifier"),
+    ]
+
+    operations = [
+        migrations.RemoveConstraint(
+            model_name="student",
+            name="uniq_student_omr_code_per_tenant",
+        ),
+        migrations.AlterField(
+            model_name="student",
+            name="omr_code",
+            field=models.CharField(
+                help_text="OMR 자동채점 식별자 (학생 전화번호 또는 부모 전화번호 뒤 8자리)",
+                max_length=8,
+            ),
+        ),
+        migrations.AlterField(
+            model_name="student",
+            name="phone",
+            field=models.CharField(blank=True, max_length=20, null=True),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0009_alter_student_parent_phone_alter_student_phone_and_more.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-12 12:00
+
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("core", "0014_alter_user_phone_and_more"),
+        ("parents", "0006_alter_parent_phone_and_more"),
+        ("students", "0008_make_phone_nullable_remove_omr_unique"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="student",
+            name="parent_phone",
+            field=models.CharField(
+                help_text="정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
+                max_length=20,
+            ),
+        ),
+        migrations.AlterField(
+            model_name="student",
+            name="phone",
+            field=models.CharField(
+                blank=True,
+                help_text="정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
+                max_length=20,
+                null=True,
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="student",
+            index=models.Index(
+                fields=["tenant", "created_at"], name="students_st_tenant__c32d68_idx"
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+

@@ -1,23 +1,15 @@
-#api.txt
+# api.txt — API 전용 (표현 계층)
+-r ./common.txt
 
-# ---- base ----
--r common.txt
-
-# Django
-Django
+# Django REST / API
 djangorestframework
 django-filter
 django-cors-headers
 django-timezone-field
-sqlparse
-asgiref
 
 # Auth / Security
 djangorestframework_simplejwt
 PyJWT
-
-# DB
-psycopg2-binary
 
 # API Docs
 drf-yasg
@@ -29,3 +21,6 @@ gunicorn
 gevent>=23.0.0
 
 reportlab
+
+# Solapi (support.messaging views)
+solapi>=5.0.0

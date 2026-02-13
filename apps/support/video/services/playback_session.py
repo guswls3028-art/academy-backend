@@ -15,6 +15,33 @@ from apps.support.video.models import (
     VideoPlaybackSession,
 )
 
+# Redis 보호 레이어 (선택적, 장애 시 DB fallback)
+try:
+    from libs.redis import is_redis_available
+    from libs.redis.watch_buffer import (
+        init_session_redis,
+        buffer_heartbeat_session_ttl,
+        buffer_session_event,
+        get_session_violation_stats_redis,
+        flush_session_stats,
+        flush_session_buffer,
+    )
+except ImportError:
+    def is_redis_available():
+        return False
+    def init_session_redis(*args, **kwargs):
+        return False
+    def buffer_heartbeat_session_ttl(*args, **kwargs):
+        return False
+    def buffer_session_event(*args, **kwargs):
+        return False, {"total": 0, "violated": 0}
+    def get_session_violation_stats_redis(*args, **kwargs):
+        return None
+    def flush_session_stats(*args, **kwargs):
+        pass
+    def flush_session_buffer(*args, **kwargs):
+        return False
+
 
 # =======================================================
 # DB-based Session Management (Redis 제거됨)
@@ -82,9 +109,16 @@ def issue_session(
 
 def heartbeat_session(*, student_id: int, session_id: str, ttl_seconds: int) -> bool:
     """
-    세션 TTL 연장 (DB 기반)
-    - student_id 소유 검증 포함
+    세션 TTL 연장
+    - Redis 사용 시: DB 쓰기 없이 Redis에만 버퍼링 (Write-Behind)
+    - Redis 미사용/장애 시: 기존 DB 기반 로직
     """
+    if is_redis_available():
+        ok = buffer_heartbeat_session_ttl(session_id=session_id, ttl_seconds=ttl_seconds)
+        if ok:
+            return True
+        # Redis 실패 시 DB fallback
+
     now = timezone.now()
     new_expires_at = now + timedelta(seconds=ttl_seconds)
 
@@ -102,7 +136,6 @@ def heartbeat_session(*, student_id: int, session_id: str, ttl_seconds: int) -> 
     if session.is_revoked:
         return False
 
-    # TTL 연장
     session.expires_at = new_expires_at
     session.last_seen = now
     session.save(update_fields=["expires_at", "last_seen"])
@@ -112,38 +145,93 @@ def heartbeat_session(*, student_id: int, session_id: str, ttl_seconds: int) -> 
 
 def end_session(*, student_id: int, session_id: str) -> None:
     """
-    명시적 세션 종료 (DB 기반)
+    명시적 세션 종료
+    - Redis 사용 시: Write-Behind flush (Redis stats → DB) 후 종료
+    - Redis 미사용 시: 기존 DB 기반
     """
+    now = timezone.now()
+
+    if is_redis_available():
+        stats = get_session_violation_stats_redis(session_id)
+        if stats is not None:
+            VideoPlaybackSession.objects.filter(
+                session_id=session_id,
+                enrollment__student_id=student_id,
+                status=VideoPlaybackSession.Status.ACTIVE,
+            ).update(
+                last_seen=now,
+                violated_count=stats.get("violated", 0),
+                total_count=stats.get("total", 0),
+                status=VideoPlaybackSession.Status.ENDED,
+                ended_at=now,
+            )
+            flush_session_stats(session_id)
+            flush_session_buffer(session_id)
+            return
+
     VideoPlaybackSession.objects.filter(
         session_id=session_id,
         enrollment__student_id=student_id,
         status=VideoPlaybackSession.Status.ACTIVE,
     ).update(
         status=VideoPlaybackSession.Status.ENDED,
-        ended_at=timezone.now(),
+        ended_at=now,
     )
 
 
 def revoke_session(*, student_id: int, session_id: str) -> None:
     """
-    서버 강제 차단 (DB 기반)
+    서버 강제 차단
+    - Redis 사용 시: Write-Behind flush 후 차단
     """
+    now = timezone.now()
+
+    if is_redis_available():
+        stats = get_session_violation_stats_redis(session_id)
+        if stats is not None:
+            VideoPlaybackSession.objects.filter(
+                session_id=session_id,
+                enrollment__student_id=student_id,
+            ).update(
+                last_seen=now,
+                violated_count=stats.get("violated", 0),
+                total_count=stats.get("total", 0),
+                status=VideoPlaybackSession.Status.REVOKED,
+                is_revoked=True,
+                ended_at=now,
+            )
+            flush_session_stats(session_id)
+            flush_session_buffer(session_id)
+            return
+
     VideoPlaybackSession.objects.filter(
         session_id=session_id,
         enrollment__student_id=student_id,
     ).update(
         status=VideoPlaybackSession.Status.REVOKED,
         is_revoked=True,
-        ended_at=timezone.now(),
+        ended_at=now,
     )
 
 
 def is_session_active(*, student_id: int, session_id: str) -> bool:
     """
-    세션 활성 여부 확인 (DB 기반)
+    세션 활성 여부 확인
+    - Redis 사용 시: session:{session_id}:meta 존재 여부 (heartbeat로 TTL 연장)
+    - Redis 미사용/장애 시: DB 기반
     """
+    if is_redis_available():
+        try:
+            from libs.redis.client import get_redis_client
+            client = get_redis_client()
+            if client and client.exists(f"session:{session_id}:meta"):
+                return True
+            # Redis에 키 없으면 DB fallback (세션 시작 직후 첫 heartbeat 전)
+        except Exception:
+            pass
+
     now = timezone.now()
-    
+
     try:
         session = VideoPlaybackSession.objects.select_related(
             "enrollment"
@@ -161,7 +249,6 @@ def is_session_active(*, student_id: int, session_id: str) -> bool:
         return False
 
     if session.expires_at and session.expires_at <= now:
-        # 만료 처리
         session.status = VideoPlaybackSession.Status.EXPIRED
         session.ended_at = now
         session.save(update_fields=["status", "ended_at"])
@@ -182,8 +269,21 @@ def record_session_event(
     reason: str = "",
 ) -> Dict[str, int]:
     """
-    세션 단위 누적 카운터 (DB 기반)
+    세션 단위 누적 카운터
+    - Redis 사용 시: DB 쓰기 없이 Redis에만 버퍼링 (Write-Behind)
+    - Redis 미사용/장애 시: DB 기반
     """
+    if is_redis_available():
+        ok, stats = buffer_session_event(
+            session_id=session_id,
+            user_id=student_id,
+            violated=violated,
+            reason=reason,
+        )
+        if ok:
+            return stats
+        # Redis 실패 시 DB fallback
+
     try:
         session = VideoPlaybackSession.objects.select_related(
             "enrollment"
@@ -209,8 +309,15 @@ def record_session_event(
 
 def get_session_violation_stats(*, session_id: str) -> Dict[str, int]:
     """
-    세션 위반 통계 조회 (DB 기반)
+    세션 위반 통계 조회
+    - Redis 사용 시: Redis에서 조회 (실시간)
+    - Redis 미사용/장애 시: DB 기반
     """
+    if is_redis_available():
+        stats = get_session_violation_stats_redis(session_id)
+        if stats is not None:
+            return stats
+
     try:
         session = VideoPlaybackSession.objects.get(session_id=session_id)
         return {

@@ -18,12 +18,11 @@ from typing import Optional
 import boto3
 import requests
 
-from apps.worker.ai_worker.config import load_config
 from apps.worker.ai_worker.ai.pipelines.dispatcher import handle_ai_job
 from apps.worker.ai_worker.ai.pipelines.tier_enforcer import enforce_tier_limits
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
-from apps.support.ai.services.sqs_queue import AISQSQueue
+from src.infrastructure.ai import AISQSAdapter
 
 logging.basicConfig(
     level=logging.INFO,
@@ -110,7 +109,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
     
-    queue = AISQSQueue()
+    queue = AISQSAdapter()
     
     logger.info(
         "AI Worker GPU started | queue=premium | wait_time=%ss",

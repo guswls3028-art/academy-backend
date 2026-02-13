@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 from apps.shared.contracts.ai_job import AIJob as AIJobContract
 from apps.domains.ai.models import AIJobModel, AIResultModel
 from apps.domains.ai.queueing.db_queue import DBJobQueue
+from apps.domains.ai.services.status_resolver import status_for_exception
 
 
 def _require_worker_auth(request) -> Optional[Response]:
@@ -109,10 +110,21 @@ class InternalAIJobResultView(APIView):
         if AIResultModel.objects.filter(job=job).exists():
             return Response({"ok": True, "detail": "duplicate_ignored"}, status=status.HTTP_200_OK)
 
+        q = DBJobQueue()
+        tier = (job.tier or "basic").lower()
+
+        # Lite/Basic 실패 없음: 워커가 FAILED를 보내도 DONE + review_candidate로 저장
+        if status_in == "FAILED" and tier in ("lite", "basic"):
+            _, flags = status_for_exception(tier)
+            payload_to_store = dict(result or {})
+            payload_to_store["flags"] = {**(payload_to_store.get("flags") or {}), **flags}
+            AIResultModel.objects.create(job=job, payload=payload_to_store)
+            q.mark_done(job_id=job.job_id)
+            return Response({"ok": True, "detail": "done_lite_basic_no_fail"}, status=status.HTTP_200_OK)
+
         # store result fact
         AIResultModel.objects.create(job=job, payload=(result or None))
 
-        q = DBJobQueue()
         if status_in == "FAILED":
             q.mark_failed(job_id=job.job_id, error=error or "failed", retryable=True)
             return Response({"ok": True, "detail": "failed_recorded"}, status=status.HTTP_200_OK)

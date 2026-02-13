@@ -19,11 +19,10 @@ from typing import Optional
 import boto3
 import requests
 
-from apps.worker.ai_worker.config import load_config
 from apps.worker.ai_worker.ai.pipelines.dispatcher import handle_ai_job
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
-from apps.support.ai.services.sqs_queue import AISQSQueue
+from src.infrastructure.ai import AISQSAdapter
 
 logging.basicConfig(
     level=logging.INFO,
@@ -112,7 +111,7 @@ def main() -> int:
     
     # GPU 사용 여부 확인 (환경변수)
     use_gpu = os.getenv("AI_WORKER_USE_GPU", "false").lower() == "true"
-    queue = AISQSQueue()
+    queue = AISQSAdapter()
     
     logger.info(
         "AI Worker (SQS) started | queue=%s | use_gpu=%s | wait_time=%ss",

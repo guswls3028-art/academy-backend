@@ -3,7 +3,7 @@ from django.db import models
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, Group, Permission
 
-from apps.api.common.models import TimestampModel
+from apps.core.models.base import TimestampModel
 from apps.core.models.tenant import Tenant
 from apps.core.db import TenantQuerySet
 

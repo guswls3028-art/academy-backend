@@ -79,7 +79,7 @@ def create_sqs_resources(region_name: str = "ap-northeast-2"):
         else:
             raise
     
-    print("\n✅ SQS 리소스 생성 완료!")
+    print("\n✅ Video SQS 리소스 생성 완료!")
     print(f"\n환경변수 설정:")
     print(f"  VIDEO_SQS_QUEUE_NAME={queue_name}")
     print(f"  VIDEO_SQS_DLQ_NAME={dlq_name}")
@@ -87,8 +87,71 @@ def create_sqs_resources(region_name: str = "ap-northeast-2"):
     print(f"  QUEUE_BACKEND=sqs")
 
 
+def create_messaging_sqs_resources(region_name: str = "ap-northeast-2"):
+    """
+    Messaging Worker용 SQS 큐 및 DLQ 생성
+
+    생성 리소스:
+    1. academy-messaging-jobs (메인 큐)
+    2. academy-messaging-jobs-dlq (Dead Letter Queue)
+    """
+    sqs = boto3.client("sqs", region_name=region_name)
+    dlq_name = "academy-messaging-jobs-dlq"
+    queue_name = "academy-messaging-jobs"
+    dlq_arn = None
+
+    try:
+        dlq_response = sqs.create_queue(
+            QueueName=dlq_name,
+            Attributes={"MessageRetentionPeriod": "1209600"},
+        )
+        dlq_url = dlq_response["QueueUrl"]
+        dlq_attributes = sqs.get_queue_attributes(
+            QueueUrl=dlq_url, AttributeNames=["QueueArn"]
+        )
+        dlq_arn = dlq_attributes["Attributes"]["QueueArn"]
+        print(f"✅ Messaging DLQ 생성 완료: {dlq_name}")
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "QueueAlreadyExists":
+            print(f"⚠️  Messaging DLQ가 이미 존재함: {dlq_name}")
+            dlq_url = sqs.get_queue_url(QueueName=dlq_name)["QueueUrl"]
+            dlq_attributes = sqs.get_queue_attributes(
+                QueueUrl=dlq_url, AttributeNames=["QueueArn"]
+            )
+            dlq_arn = dlq_attributes["Attributes"]["QueueArn"]
+        else:
+            raise
+
+    # VisibilityTimeout: 솔라피 타임아웃(약 5~10초)보다 넉넉히 30~60초 (중복 발송 방지)
+    # DLQ: 3번 재시도 후 실패 메시지 격리 → "왜 문자 안 왔냐" 민원 확인용 로그
+    # Long Polling: WaitTimeSeconds 20초 → SQS 빈 쿼리 비용 최소화
+    try:
+        queue_response = sqs.create_queue(
+            QueueName=queue_name,
+            Attributes={
+                "VisibilityTimeout": "60",  # 30~60초 권장 (Solapi 5~10초 대비 여유)
+                "MessageRetentionPeriod": "1209600",
+                "ReceiveMessageWaitTimeSeconds": "20",
+                "RedrivePolicy": json.dumps({
+                    "deadLetterTargetArn": dlq_arn,
+                    "maxReceiveCount": "3",  # 3회 재시도 후 DLQ로 격리
+                }),
+            },
+        )
+        print(f"✅ Messaging 메인 큐 생성 완료: {queue_name}")
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "QueueAlreadyExists":
+            print(f"⚠️  Messaging 메인 큐가 이미 존재함: {queue_name}")
+        else:
+            raise
+
+    print(f"\n환경변수: MESSAGING_SQS_QUEUE_NAME={queue_name}")
+
+
 if __name__ == "__main__":
     import sys
-    
+
     region = sys.argv[1] if len(sys.argv) > 1 else "ap-northeast-2"
     create_sqs_resources(region_name=region)
+    print()
+    create_messaging_sqs_resources(region_name=region)

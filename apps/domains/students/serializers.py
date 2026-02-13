@@ -17,8 +17,6 @@ def _generate_unique_ps_number() -> str:
             return candidate
     raise ValueError("아이디 생성에 실패했습니다. 다시 시도해 주세요.")
 from apps.domains.enrollment.models import Enrollment
-from apps.domains.interactions.counseling.models import Counseling
-from apps.domains.interactions.questions.models import Question
 
 
 class TagSerializer(serializers.ModelSerializer):
@@ -26,20 +24,6 @@ class TagSerializer(serializers.ModelSerializer):
         model = Tag
         fields = "__all__"
         ref_name = "StudentTagSerializer"
-
-
-class CounselingSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Counseling
-        fields = "__all__"
-        ref_name = "StudentCounseling"
-
-
-class QuestionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Question
-        fields = "__all__"
-        ref_name = "StudentQuestion"
 
 
 class EnrollmentSerializer(serializers.ModelSerializer):
@@ -81,8 +65,6 @@ class StudentListSerializer(serializers.ModelSerializer):
 class StudentDetailSerializer(serializers.ModelSerializer):
     tags = TagSerializer(many=True, read_only=True)
     enrollments = EnrollmentSerializer(many=True, read_only=True)
-    counselings = CounselingSerializer(many=True, read_only=True)
-    questions = QuestionSerializer(many=True, read_only=True)
 
     class Meta:
         model = Student

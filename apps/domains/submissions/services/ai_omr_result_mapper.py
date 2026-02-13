@@ -13,6 +13,10 @@ logger = logging.getLogger(__name__)
 
 @transaction.atomic
 def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
+    """
+    OMR AI 결과를 Submission에 반영. 순서: identifier 매칭 → NEEDS_IDENTIFICATION 결정 → 답안 저장.
+    AI job 최종 상태(DONE/REVIEW_REQUIRED/FAILED)는 InternalAIJobResultView + status_resolver에서 결정.
+    """
     submission_id = payload.get("submission_id")
     if not submission_id:
         return None
@@ -117,3 +121,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     submission.save(update_fields=["meta", "status", "enrollment_id", "error_message", "updated_at"])
 
     return submission.id
+
+
+# 콜백에서 사용 (apply_omr_ai_result와 동일, 네이밍 일관용)
+apply_ai_result = apply_omr_ai_result

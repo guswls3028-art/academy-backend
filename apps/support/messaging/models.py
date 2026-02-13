@@ -1,2 +1,87 @@
 # apps/support/messaging/models.py
-# 서버 부팅용 더미 (아직 모델 없음)
+"""
+알림톡 발송 로그 — 성공/실패, 차감 금액 기록
+"""
+
+from decimal import Decimal
+
+from django.db import models
+
+
+class NotificationLog(models.Model):
+    """
+    발송 1건당 1행. 워커가 Solapi 호출 후 성공 시 차감·기록, 실패 시 롤백 후 기록(선택).
+    """
+
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="notification_logs",
+        db_index=True,
+    )
+    sent_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    success = models.BooleanField(default=False)
+    amount_deducted = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal("0")
+    )
+    recipient_summary = models.CharField(max_length=500, blank=True, default="")
+    template_summary = models.CharField(max_length=255, blank=True, default="")
+    failure_reason = models.CharField(max_length=500, blank=True, default="")
+
+    class Meta:
+        app_label = "messaging"
+        ordering = ["-sent_at"]
+        verbose_name = "Notification log"
+        verbose_name_plural = "Notification logs"
+
+
+class MessageTemplate(models.Model):
+    """
+    메시지 양식 템플릿 — 테넌트별 저장, 카테고리별 사용처 구분
+    - default: 기본(어디서나), 기본 블록만
+    - lecture: 강의·차시(세션) 내 학생 선택 발송용
+    - clinic: 클리닉 내 학생 선택 발송용
+    """
+    class Category(models.TextChoices):
+        DEFAULT = "default", "기본"
+        LECTURE = "lecture", "강의"
+        CLINIC = "clinic", "클리닉"
+
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="message_templates",
+        db_index=True,
+    )
+    category = models.CharField(
+        max_length=20,
+        choices=Category.choices,
+        default=Category.DEFAULT,
+        db_index=True,
+    )
+    name = models.CharField(max_length=120, help_text="템플릿 이름")
+    subject = models.CharField(max_length=200, blank=True, default="", help_text="제목(선택)")
+    body = models.TextField(help_text="본문")
+
+    # 솔라피 알림톡 검수 신청 연동
+    solapi_template_id = models.CharField(max_length=100, blank=True, default="")
+    solapi_status = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        choices=[
+            ("", "미신청"),
+            ("PENDING", "검수 대기"),
+            ("APPROVED", "승인"),
+            ("REJECTED", "반려"),
+        ],
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "messaging"
+        ordering = ["-updated_at"]
+        verbose_name = "Message template"
+        verbose_name_plural = "Message templates"

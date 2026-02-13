@@ -25,6 +25,10 @@ docker build -f docker/ai-worker/Dockerfile -t academy-ai-worker:latest .
 echo "📦 Building Video worker image..."
 docker build -f docker/video-worker/Dockerfile -t academy-video-worker:latest .
 
+# Messaging Worker 이미지 빌드
+echo "📦 Building Messaging worker image..."
+docker build -f docker/messaging-worker/Dockerfile -t academy-messaging-worker:latest .
+
 echo "✅ All images built successfully!"
 echo ""
 echo "📋 Available images:"

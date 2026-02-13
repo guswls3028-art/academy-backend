@@ -655,9 +655,6 @@ class StudentViewSet(ModelViewSet):
                         "video_videoprogress",
                         "video_playbacksession",
                         "video_videoplaybackevent",
-                        "counseling_counseling",
-                        "questions_question",
-                        "boards_boardreadstatus",
                     ]
                     params = [tuple(student_ids)]
                     for tbl in enrollment_child_tables:

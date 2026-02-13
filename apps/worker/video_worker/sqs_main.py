@@ -19,8 +19,12 @@ import boto3
 import requests
 
 from apps.worker.video_worker.config import load_config
-from apps.worker.video_worker.video.processor import process_video_job
-from apps.support.video.services.sqs_queue import VideoSQSQueue
+from src.infrastructure.video import VideoSQSAdapter
+from src.infrastructure.video.processor import process_video
+from src.infrastructure.db.video_repository import VideoRepository
+from src.infrastructure.cache.redis_idempotency_adapter import RedisIdempotencyAdapter
+from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
+from src.application.video.handler import ProcessVideoJobHandler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -108,8 +112,17 @@ def main() -> int:
     signal.signal(signal.SIGINT, _handle_signal)
     
     cfg = load_config()
-    queue = VideoSQSQueue()
-    
+    queue = VideoSQSAdapter()
+    repo = VideoRepository()
+    idempotency = RedisIdempotencyAdapter()
+    progress = RedisProgressAdapter()
+    handler = ProcessVideoJobHandler(
+        repo=repo,
+        idempotency=idempotency,
+        progress=progress,
+        process_fn=process_video,
+    )
+
     logger.info(
         "Video Worker (SQS) started | queue=%s | wait_time=%ss",
         queue._get_queue_name(),
@@ -158,15 +171,13 @@ def main() -> int:
                 
                 if not video_id or not tenant_code:
                     logger.error("Invalid message format: %s", message)
-                    # 잘못된 메시지는 삭제하여 DLQ로 이동하지 않도록
                     queue.delete_message(receipt_handle)
                     continue
-                
-                # 로그 가시성: request_id 생성 및 메시지 수명 추적
+
                 request_id = str(uuid.uuid4())[:8]
                 message_received_at = time.time()
                 queue_wait_time = message_received_at - (float(message_created_at) if message_created_at else message_received_at)
-                
+
                 logger.info(
                     "SQS_MESSAGE_RECEIVED | request_id=%s | video_id=%s | tenant_code=%s | queue_wait_sec=%.2f | created_at=%s",
                     request_id,
@@ -175,105 +186,62 @@ def main() -> int:
                     queue_wait_time,
                     message_created_at or "unknown",
                 )
-                
-                # Graceful shutdown: 현재 작업 추적 시작
+
                 global _current_job_receipt_handle, _current_job_start_time
                 _current_job_receipt_handle = receipt_handle
                 _current_job_start_time = time.time()
-                
-                # 비디오를 PROCESSING 상태로 변경 (멱등성 보장)
-                if not queue.mark_processing(int(video_id)):
-                    logger.warning(
-                        "Cannot mark video %s as PROCESSING, skipping",
-                        video_id,
-                    )
-                    # 상태 변경 실패 시 메시지 삭제 (재시도하지 않음)
-                    queue.delete_message(receipt_handle)
-                    continue
-                
-                # 작업 데이터 구성
+
                 job = {
                     "video_id": int(video_id),
                     "file_key": str(file_key or ""),
                     "tenant_code": str(tenant_code),
                 }
-                
-                # 비디오 처리
-                try:
-                    processing_start = time.time()
-                    # 기존 processor 사용 (HTTP client 대신 SQS queue 사용)
-                    process_video_job_sqs(
-                        job=job,
-                        cfg=cfg,
-                        queue=queue,
-                    )
-                    processing_duration = time.time() - processing_start
-                    
-                    # 성공 시 메시지 삭제
-                    complete_start = time.time()
+
+                result = handler.handle(job, cfg)
+
+                processing_duration = time.time() - _current_job_start_time
+                _current_job_receipt_handle = None
+                _current_job_start_time = None
+
+                if result == "ok":
                     queue.delete_message(receipt_handle)
-                    complete_duration = time.time() - complete_start
-                    total_duration = time.time() - _current_job_start_time
-                    
-                    # 로그 가시성: 전체 처리 시간 추적
                     logger.info(
-                        "SQS_JOB_COMPLETED | request_id=%s | video_id=%s | tenant_code=%s | processing_duration=%.2f | complete_duration=%.2f | total_duration=%.2f | queue_wait_sec=%.2f",
+                        "SQS_JOB_COMPLETED | request_id=%s | video_id=%s | tenant_code=%s | processing_duration=%.2f | queue_wait_sec=%.2f",
                         request_id,
                         video_id,
                         tenant_code,
                         processing_duration,
-                        complete_duration,
-                        total_duration,
                         queue_wait_time,
                     )
                     consecutive_errors = 0
-                    
-                    # Graceful shutdown: 작업 완료
-                    _current_job_receipt_handle = None
-                    _current_job_start_time = None
-                    
-                    # 종료 신호를 받았으면 루프 종료
+
                     if _shutdown:
                         logger.info("Graceful shutdown: current job completed, exiting")
                         break
-                    
-                except Exception as e:
-                    processing_duration = time.time() - _current_job_start_time if _current_job_start_time else 0
-                    
+
+                elif result == "skip":
+                    queue.delete_message(receipt_handle)
+                    consecutive_errors = 0
+
+                else:
                     logger.exception(
-                        "SQS_JOB_FAILED | request_id=%s | video_id=%s | tenant_code=%s | error=%s | processing_duration=%.2f | queue_wait_sec=%.2f",
+                        "SQS_JOB_FAILED | request_id=%s | video_id=%s | tenant_code=%s | processing_duration=%.2f | queue_wait_sec=%.2f",
                         request_id,
                         video_id,
                         tenant_code,
-                        str(e)[:200],
                         processing_duration,
                         queue_wait_time,
                     )
-                    
-                    # 실패 처리 (비디오 상태를 FAILED로 변경)
-                    queue.fail_video(
-                        video_id=int(video_id),
-                        reason=str(e)[:2000],
-                    )
-                    
-                    # SQS Visibility Timeout 확인: 처리 시간이 timeout을 초과하면 메시지가 다시 보임
                     if processing_duration > SQS_VISIBILITY_TIMEOUT:
                         logger.warning(
-                            "SQS_VISIBILITY_TIMEOUT_EXCEEDED | request_id=%s | video_id=%s | processing_duration=%.2f | visibility_timeout=%d | message_will_reappear",
+                            "SQS_VISIBILITY_TIMEOUT_EXCEEDED | request_id=%s | video_id=%s | processing_duration=%.2f | visibility_timeout=%d",
                             request_id,
                             video_id,
                             processing_duration,
                             SQS_VISIBILITY_TIMEOUT,
                         )
-                    
-                    # 메시지는 삭제하지 않음 (SQS가 자동으로 재시도)
-                    # 재시도 횟수 초과 시 자동으로 DLQ로 이동
                     consecutive_errors += 1
-                    
-                    # Graceful shutdown: 작업 실패 처리 완료
-                    _current_job_receipt_handle = None
-                    _current_job_start_time = None
-                    
+
                     if consecutive_errors >= max_consecutive_errors:
                         logger.error(
                             "Too many consecutive errors (%s), shutting down",
@@ -311,131 +279,6 @@ def main() -> int:
     except Exception:
         logger.exception("Fatal error in Video Worker")
         return 1
-
-
-def process_video_job_sqs(
-    *,
-    job: dict,
-    cfg,
-    queue: VideoSQSQueue,
-) -> None:
-    """
-    SQS 기반 비디오 작업 처리
-    
-    기존 process_video_job과 유사하지만 HTTP client 대신 SQS queue 사용
-    """
-    """
-    SQS 기반 비디오 작업 처리
-    
-    기존 process_video_job과 유사하지만 HTTP client 대신 SQS queue 사용
-    """
-    from pathlib import Path
-    from apps.worker.video_worker.download import download_to_file
-    from apps.worker.video_worker.utils import temp_workdir, trim_tail
-    from apps.worker.video_worker.video.duration import probe_duration_seconds
-    from apps.worker.video_worker.video.thumbnail import generate_thumbnail
-    from apps.worker.video_worker.video.transcoder import transcode_to_hls
-    from apps.worker.video_worker.video.validate import validate_hls_output
-    from apps.worker.video_worker.video.r2_uploader import upload_directory
-    
-    video_id = int(job.get("video_id"))
-    file_key = str(job.get("file_key") or "")
-    tenant_code = str(job.get("tenant_code") or "")
-    
-    if not video_id or not tenant_code:
-        raise ValueError("video_id and tenant_code required")
-    
-    # Source URL 생성
-    try:
-        from libs.s3_client.presign import create_presigned_get_url
-        source_url = create_presigned_get_url(key=file_key, expires_in=600)
-    except Exception as e:
-        raise RuntimeError(f"presigned_get_failed:{trim_tail(str(e))}") from e
-    
-    # HLS 경로 생성
-    base = (cfg.R2_PREFIX or "media/hls").strip("/")
-    hls_prefix = f"{base}/{tenant_code}/videos/{video_id}"
-    hls_master_path = f"{hls_prefix}/master.m3u8"
-    
-    # 작업 디렉토리에서 처리
-    with temp_workdir(cfg.TEMP_DIR, prefix=f"video-{video_id}-") as wd:
-        wd = Path(wd)
-        src_path = wd / "source.mp4"
-        out_dir = wd / "hls"
-        
-        # 1) 다운로드
-        download_to_file(url=source_url, dst=src_path, cfg=cfg)
-        
-        # 2) Duration 추출
-        duration = probe_duration_seconds(
-            input_path=str(src_path),
-            ffprobe_bin=cfg.FFPROBE_BIN,
-            timeout=int(cfg.FFPROBE_TIMEOUT_SECONDS),
-        )
-        if not duration or duration <= 0:
-            raise RuntimeError("duration_probe_failed")
-        
-        # 3) Transcode to HLS
-        transcode_to_hls(
-            video_id=video_id,
-            input_path=str(src_path),
-            output_root=out_dir,
-            ffmpeg_bin=cfg.FFMPEG_BIN,
-            ffprobe_bin=cfg.FFPROBE_BIN,
-            hls_time=int(cfg.HLS_TIME_SECONDS),
-            timeout=int(cfg.FFMPEG_TIMEOUT_SECONDS),
-        )
-        
-        # 4) Validate
-        validate_hls_output(out_dir, int(cfg.MIN_SEGMENTS_PER_VARIANT))
-        
-        # 5) Thumbnail 생성
-        try:
-            at = float(cfg.THUMBNAIL_AT_SECONDS)
-            if duration >= 10:
-                at = float(int(duration * 0.5))
-            elif duration >= 3:
-                at = float(max(1, duration // 2))
-            else:
-                at = 0.0
-            
-            thumb_path = out_dir / "thumbnail.jpg"
-            generate_thumbnail(
-                input_path=str(src_path),
-                output_path=thumb_path,
-                ffmpeg_bin=cfg.FFMPEG_BIN,
-                at_seconds=float(at),
-                timeout=min(int(cfg.FFMPEG_TIMEOUT_SECONDS), 120),
-            )
-        except Exception as e:
-            logger.warning("thumbnail failed video_id=%s err=%s", video_id, e)
-        
-        # 6) R2에 업로드
-        upload_directory(
-            local_dir=out_dir,
-            bucket=cfg.R2_BUCKET,
-            prefix=hls_prefix,
-            endpoint_url=cfg.R2_ENDPOINT,
-            access_key=cfg.R2_ACCESS_KEY,
-            secret_key=cfg.R2_SECRET_KEY,
-            region=cfg.R2_REGION,
-            max_concurrency=int(cfg.UPLOAD_MAX_CONCURRENCY),
-            retry_max=int(cfg.RETRY_MAX_ATTEMPTS),
-            backoff_base=float(cfg.BACKOFF_BASE_SECONDS),
-            backoff_cap=float(cfg.BACKOFF_CAP_SECONDS),
-        )
-    
-    # 7) 완료 처리 (SQS queue 사용)
-    ok, reason = queue.complete_video(
-        video_id=video_id,
-        hls_path=hls_master_path,
-        duration=int(duration),
-    )
-    
-    if not ok:
-        raise RuntimeError(f"Failed to complete video: {reason}")
-    
-    logger.info("Video processing completed: video_id=%s, duration=%s", video_id, duration)
 
 
 if __name__ == "__main__":

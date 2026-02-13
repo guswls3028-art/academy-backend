@@ -5,10 +5,10 @@
 # ==============================================================================
 
 ARG BASE_IMAGE=academy-base:latest
-FROM ${BASE_IMAGE} as base
+FROM ${BASE_IMAGE} AS base
 
-# API 전용 의존성 설치
-COPY requirements/api.txt ./requirements/api.txt
+# API 전용 의존성 설치 (-r common.txt 참조)
+COPY requirements/common.txt requirements/api.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/api.txt
 
 # 헬스체크

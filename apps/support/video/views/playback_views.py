@@ -42,6 +42,7 @@ from ..services.playback_session import (
     get_session_violation_stats,
     should_revoke_by_stats,
 )
+from ..services.playback_session import init_session_redis  # Redis 세션 초기화 (선택적)
 from .playback_mixin import VideoPlaybackMixin
 
 
@@ -210,6 +211,7 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
                 total_count=0,
                 is_revoked=False,
             )
+            init_session_redis(session_id=session_id, ttl_seconds=ttl)
         else:
             # FREE_REVIEW: No DB session, calculate expires_at for token only
             expires_at = timezone.now() + timezone.timedelta(seconds=ttl)

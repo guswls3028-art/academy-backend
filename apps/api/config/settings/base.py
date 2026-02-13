@@ -118,10 +118,7 @@ INSTALLED_APPS = [
     "apps.domains.enrollment",
     "apps.domains.attendance",
     "apps.domains.schedule",
-    "apps.domains.interactions.materials",
-    "apps.domains.interactions.questions",
-    "apps.domains.interactions.counseling",
-    "apps.domains.interactions.boards",
+    "apps.domains.community",
     "apps.domains.exams",
     "apps.domains.homework",
     "apps.domains.submissions",
@@ -133,6 +130,7 @@ INSTALLED_APPS = [
     "apps.domains.assets",
 
     "apps.support.video",
+    "apps.support.messaging",
 
     "rest_framework",
     "rest_framework_simplejwt",
@@ -305,6 +303,20 @@ R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
 # ==================================================
 
 SITE_URL = os.getenv("SITE_URL", "")  # 예: https://academy.example.com
+
+# ==================================================
+# SOLAPI (SMS/LMS 발송) — 환경변수 권장, 코드에 키 노출 금지
+# ==================================================
+
+SOLAPI_API_KEY = os.getenv("SOLAPI_API_KEY", "")
+SOLAPI_API_SECRET = os.getenv("SOLAPI_API_SECRET", "")
+SOLAPI_SENDER = os.getenv("SOLAPI_SENDER", "")  # 발신 번호 (예: 01012345678)
+# 알림톡: 카카오 검수 완료 템플릿만 ENV로 관리 (코드 수정 없이 교체)
+SOLAPI_KAKAO_PF_ID = os.getenv("SOLAPI_KAKAO_PF_ID", "")
+SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
+
+# 메시지 발송 SQS 큐 (워커가 소비)
+MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-messaging-jobs")
 
 # ==================================================
 # INTERNAL WORKER

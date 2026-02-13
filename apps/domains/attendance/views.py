@@ -119,11 +119,19 @@ class AttendanceViewSet(ModelViewSet):
             lecture=lecture
         ).order_by("order", "id")
 
-        enrollments = Enrollment.objects.filter(
-            tenant=tenant,
-            lecture=lecture,
-            status="ACTIVE",
-        ).select_related("student").order_by("student__name", "id")
+        # 강의 내 모든 차시에 등록된 수강생(Enrollment)만 출결 기준으로 사용
+        enrollment_ids = (
+            SessionEnrollment.objects
+            .filter(tenant=tenant, session__lecture=lecture)
+            .values_list("enrollment_id", flat=True)
+            .distinct()
+        )
+        enrollments = (
+            Enrollment.objects
+            .filter(id__in=enrollment_ids, status="ACTIVE")
+            .select_related("student")
+            .order_by("student__name", "id")
+        )
 
         attendances = Attendance.objects.filter(
             tenant=tenant,

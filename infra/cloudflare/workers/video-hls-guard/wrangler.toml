@@ -1,9 +1,0 @@
-# PATH: C:\academy\infra\cloudflare\workers\video-hls-guard\wrangler.toml
-
-name = "video-hls-guard"
-main = "src/index.js"
-compatibility_date = "2026-01-01"
-
-# 배포 환경별로 secret을 다르게 두는 걸 추천
-# wrangler secret put CDN_HLS_SIGNING_SECRET
-# wrangler secret put CDN_HLS_SIGNING_SECRET --env production

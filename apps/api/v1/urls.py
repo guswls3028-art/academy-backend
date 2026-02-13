@@ -44,6 +44,16 @@ urlpatterns = [
     path("assets/", include("apps.domains.assets.urls")),
 
     # =========================
+    # Community (SSOT)
+    # =========================
+    path("community/", include("apps.domains.community.api.urls")),
+
+    # =========================
+    # Messaging (알림톡 잔액/충전/연동/로그)
+    # =========================
+    path("messaging/", include("apps.support.messaging.urls")),
+
+    # =========================
     # Core
     # =========================
     path("core/", include("apps.core.urls")),

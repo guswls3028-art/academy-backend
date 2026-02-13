@@ -1,0 +1,5 @@
+# worker-messaging.txt — Messaging Worker 전용
+-r ./common.txt
+
+# Solapi SMS/LMS
+solapi>=5.0.0

@@ -1,0 +1,15 @@
+# worker-ai-gpu.txt - AI Worker GPU 전용 (CUDA 포함)
+-r ./worker-ai-common.txt
+
+# PyTorch CUDA (cu121 기준)
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch
+
+# ONNX Runtime GPU
+onnxruntime-gpu
+
+# Sentence Transformers (torch CUDA 위에 설치)
+sentence-transformers
+
+# OpenCV (이미지 처리)
+opencv-python-headless

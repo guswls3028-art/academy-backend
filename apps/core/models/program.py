@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from django.db import models
 
-from apps.api.common.models import TimestampModel
+from apps.core.models.base import TimestampModel
 from apps.core.models.tenant import Tenant
 
 

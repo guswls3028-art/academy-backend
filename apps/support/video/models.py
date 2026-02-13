@@ -2,7 +2,7 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.api.common.models import TimestampModel
+from apps.core.models.base import TimestampModel
 from apps.domains.lectures.models import Session
 from apps.domains.enrollment.models import Enrollment
 
@@ -346,13 +346,13 @@ class VideoPlaybackEvent(TimestampModel):
 
     class Meta:
         indexes = [
-            models.Index(fields=["video", "enrollment", "session_id"], name="video_playback_event_session_idx"),
+            models.Index(fields=["video", "enrollment", "session_id"], name="vpe_session_idx"),
             models.Index(fields=["user_id", "session_id"], name="video_playback_event_user_idx"),
             # 부분 인덱스: 위반 이벤트만 인덱싱 (INSERT 성능 향상, 인덱스 크기 50% 감소)
             models.Index(
                 fields=["event_type", "received_at"],
                 condition=models.Q(violated=True),
-                name="video_playback_event_violated_idx"
+                name="vpe_violated_idx",
             ),
         ]
         ordering = ["-received_at", "-id"]

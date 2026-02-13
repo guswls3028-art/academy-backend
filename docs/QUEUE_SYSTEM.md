@@ -2,11 +2,12 @@
 
 ## Overview
 
-The system uses AWS SQS exclusively for asynchronous job processing. Redis has been completely removed.
+AWS SQS 기반 비동기 Job 처리. Redis는 보호 레이어(멱등성, heartbeat 버퍼 등)로 선택 도입. 미설정 시 DB fallback.
 
 **Queue Architecture:**
 - Video Queue: Video processing jobs
 - AI Queues: 3-tier system (Lite, Basic, Premium)
+- Messaging Queue: SMS/LMS 발송 (Solapi)
 - Dead Letter Queues: One per queue for failed jobs
 
 ## Queue Structure
@@ -61,6 +62,31 @@ The system uses AWS SQS exclusively for asynchronous job processing. Redis has b
 - All job types (full OCR, advanced analysis)
 
 **Worker:** AI Worker GPU (future)
+
+### Messaging Queue
+
+**Queue Name:** `academy-messaging-jobs`
+**DLQ Name:** `academy-messaging-jobs-dlq`
+
+**Message Format:**
+```json
+{
+  "to": "01012345678",
+  "text": "메시지 본문",
+  "sender": "발신번호",
+  "tenant_id": 1,
+  "reservation_id": 123,
+  "use_alimtalk_first": false,
+  "alimtalk_replacements": [{"key": "name", "value": "홍길동"}]
+}
+```
+
+**Processing:**
+- Solapi SMS/LMS 발송
+- 알림톡 우선 발송 (실패 시 SMS fallback)
+- 예약 발송 지원
+
+**Worker:** Messaging Worker
 
 **Message Format (All AI Queues):**
 ```json
@@ -134,6 +160,25 @@ The system uses AWS SQS exclusively for asynchronous job processing. Redis has b
 2. Process Premium tier jobs
 3. GPU-accelerated OCR and analysis
 
+### Messaging Worker
+
+**Type:** CPU-based
+**Queue:** `academy-messaging-jobs`
+**Deployment:** Docker container (EC2 or ECS Fargate, 24/7)
+
+**Processing Flow:**
+1. Long poll SQS (20 seconds)
+2. Receive message
+3. Check reservation cancellation
+4. Deduct tenant credits
+5. Send via Solapi (SMS/LMS/Alimtalk)
+6. Log to NotificationLog
+7. Delete message on success / Rollback credits on failure
+
+**Concurrency:**
+- Initial: 1-2 concurrent jobs
+- Target (10k DAU): 2-4 concurrent jobs
+
 ## Tier Resolution
 
 **Automatic Tier Determination:**
@@ -180,7 +225,7 @@ The system uses AWS SQS exclusively for asynchronous job processing. Redis has b
 
 ### Scripts
 
-**Video Queue:**
+**Video + Messaging Queues:**
 ```bash
 python scripts/create_sqs_resources.py ap-northeast-2
 ```
@@ -197,6 +242,12 @@ python scripts/create_ai_sqs_resources.py ap-northeast-2
 - Visibility timeout: 300 seconds (5 minutes)
 - Message retention: 14 days
 - DLQ: `academy-video-jobs-dlq` (max receive count: 3)
+
+**Messaging Queue:**
+- Queue name: `academy-messaging-jobs`
+- Visibility timeout: 60 seconds (Solapi 타임아웃 대비 여유)
+- Message retention: 14 days
+- DLQ: `academy-messaging-jobs-dlq` (max receive count: 3)
 
 **AI Queues:**
 - Queue names: `academy-ai-jobs-lite`, `academy-ai-jobs-basic`, `academy-ai-jobs-premium`
@@ -235,6 +286,15 @@ AI_WORKER_LITE_POLL_WEIGHT=1
 AWS_REGION=ap-northeast-2
 AI_WORKER_MODE=gpu
 AI_SQS_QUEUE_NAME_PREMIUM=academy-ai-jobs-premium
+```
+
+### Messaging Worker
+```env
+AWS_REGION=ap-northeast-2
+MESSAGING_SQS_QUEUE_NAME=academy-messaging-jobs
+SOLAPI_API_KEY=...
+SOLAPI_API_SECRET=...
+SOLAPI_MOCK=false
 ```
 
 ## Monitoring

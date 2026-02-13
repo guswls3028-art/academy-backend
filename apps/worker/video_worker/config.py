@@ -120,5 +120,7 @@ def load_config() -> Config:
             DOWNLOAD_CHUNK_BYTES=_int("DOWNLOAD_CHUNK_BYTES", str(1024 * 1024)),
         )
     except Exception as e:
-        print(f"[fatal] config error: {e}", file=sys.stderr)
+        import logging
+        logging.basicConfig(level=logging.INFO)
+        logging.getLogger(__name__).critical("config error: %s", e)
         sys.exit(1)

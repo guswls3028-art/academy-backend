@@ -7,7 +7,7 @@
 # ==============================================================================
 # Stage 1: Builder (빌드 도구 포함)
 # ==============================================================================
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -51,7 +51,8 @@ WORKDIR /app
 # Builder에서 설치한 Python 패키지 복사
 COPY --from=builder /root/.local /root/.local
 
-# 애플리케이션 코드 복사
+# 애플리케이션 코드 복사 (Hexagonal: src/ = domain, application, infrastructure, interfaces)
+COPY src ./src
 COPY apps ./apps
 COPY libs ./libs
 COPY manage.py ./

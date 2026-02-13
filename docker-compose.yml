@@ -30,6 +30,25 @@ services:
       - academy-network
 
   # ============================================================================
+  # Redis (상태/보호 레이어 - 선택적)
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: academy-redis
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - academy-network
+
+  # ============================================================================
   # API 서버
   # ============================================================================
   api:
@@ -67,6 +86,12 @@ services:
       CDN_HLS_BASE_URL: ${CDN_HLS_BASE_URL}
       CDN_HLS_SIGNING_SECRET: ${CDN_HLS_SIGNING_SECRET:-}
       CDN_HLS_SIGNING_KEY_ID: ${CDN_HLS_SIGNING_KEY_ID:-v1}
+      
+      # Redis (선택적, 미설정 시 DB fallback)
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
       
       # AWS SQS
       AWS_REGION: ${AWS_REGION:-ap-northeast-2}
@@ -111,6 +136,12 @@ services:
     image: academy-video-worker:latest
     container_name: academy-video-worker
     environment:
+      DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_PORT: ${DB_PORT:-5432}
       # API 연결
       API_BASE_URL: ${API_BASE_URL:-http://api:8000}
       INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
@@ -123,6 +154,12 @@ services:
       # AWS SQS
       AWS_REGION: ${AWS_REGION:-ap-northeast-2}
       VIDEO_SQS_QUEUE_NAME: ${VIDEO_SQS_QUEUE_NAME:-academy-video-jobs}
+      
+      # Redis (선택적)
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
       
       # Cloudflare R2 Storage
       R2_ACCESS_KEY: ${R2_ACCESS_KEY}
@@ -169,6 +206,12 @@ services:
     image: academy-ai-worker:latest
     container_name: academy-ai-worker-cpu
     environment:
+      DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_PORT: ${DB_PORT:-5432}
       # API 연결
       API_BASE_URL: ${API_BASE_URL:-http://api:8000}
       INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
@@ -219,6 +262,12 @@ services:
     image: academy-ai-worker:latest
     container_name: academy-ai-worker-gpu
     environment:
+      DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_PORT: ${DB_PORT:-5432}
       # API 연결
       API_BASE_URL: ${API_BASE_URL:-http://api:8000}
       INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
@@ -261,10 +310,54 @@ services:
     #           capabilities: [gpu]
     # Stateless: 로컬 파일 저장 없음 (R2 사용)
 
+  # ============================================================================
+  # Messaging Worker (SQS + Solapi SMS/알림톡)
+  # ============================================================================
+  messaging-worker:
+    build:
+      context: .
+      dockerfile: docker/messaging-worker/Dockerfile
+      target: base
+      args:
+        BASE_IMAGE: academy-base:latest
+    image: academy-messaging-worker:latest
+    container_name: academy-messaging-worker
+    environment:
+      DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_PORT: ${DB_PORT:-5432}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      MESSAGING_SQS_QUEUE_NAME: ${MESSAGING_SQS_QUEUE_NAME:-academy-messaging-jobs}
+      SOLAPI_API_KEY: ${SOLAPI_API_KEY}
+      SOLAPI_API_SECRET: ${SOLAPI_API_SECRET}
+      SOLAPI_SENDER: ${SOLAPI_SENDER}
+      SOLAPI_KAKAO_PF_ID: ${SOLAPI_KAKAO_PF_ID:-}
+      SOLAPI_KAKAO_TEMPLATE_ID: ${SOLAPI_KAKAO_TEMPLATE_ID:-}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+    depends_on:
+      - api
+      - postgres
+    networks:
+      - academy-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   academy-network:
     driver: bridge
 
 volumes:
   postgres_data:
+    driver: local
+  redis_data:
     driver: local

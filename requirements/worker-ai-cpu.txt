@@ -1,0 +1,15 @@
+# worker-ai-cpu.txt - AI Worker CPU 전용 (CUDA 제외)
+-r ./worker-ai-common.txt
+
+# PyTorch CPU only (CUDA wheel 미포함)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+
+# ONNX Runtime CPU
+onnxruntime
+
+# Sentence Transformers (torch CPU 위에 설치)
+sentence-transformers
+
+# OpenCV (이미지 처리)
+opencv-python-headless

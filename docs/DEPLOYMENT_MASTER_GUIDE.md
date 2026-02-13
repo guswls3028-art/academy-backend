@@ -1,8 +1,10 @@
 # 배포 마스터 가이드 (Deployment Master Guide)
 
-**최종 업데이트**: 2026-02-12  
+**최종 업데이트**: 2026-02-13  
 **목적**: 프로덕션 배포를 위한 단일 진실의 원천 (Single Source of Truth)  
 **대상**: DevOps 엔지니어, 인프라 관리자, 배포 담당자
+
+**워커 구성 (3종)**: Video Worker, AI Worker (CPU/GPU), Messaging Worker
 
 ---
 
@@ -34,11 +36,12 @@ Cloudflare CDN (pub-*.r2.dev)
          │
          ├─── RDS PostgreSQL (db.t4g.micro → db.t4g.medium)
          ├─── Cloudflare R2 Storage (academy-ai, academy-video)
-         └─── AWS SQS (Video + AI 3-Tier Queues)
+         └─── AWS SQS (Video + AI 3-Tier + Messaging Queues)
                 │
                 ├─── Video Worker (EC2/Fargate)
                 ├─── AI Worker CPU (EC2/Fargate)
-                └─── AI Worker GPU (EC2 g4dn.xlarge, 향후)
+                ├─── AI Worker GPU (EC2 g4dn.xlarge, 향후)
+                └─── Messaging Worker (EC2/Fargate)
 ```
 
 ### 1.2 스토리지 계층 (Storage Layer)
@@ -85,6 +88,7 @@ R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
 - **AI Lite Queue**: `academy-ai-jobs-lite` + DLQ
 - **AI Basic Queue**: `academy-ai-jobs-basic` + DLQ
 - **AI Premium Queue**: `academy-ai-jobs-premium` + DLQ
+- **Messaging Queue**: `academy-messaging-jobs` + DLQ
 
 **특징**:
 - ✅ Long Polling 사용 (20초, 비용 절감)
@@ -93,7 +97,7 @@ R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
 
 **큐 생성 스크립트**:
 ```bash
-# Video Queue
+# Video + Messaging Queues (한 스크립트에서 모두 생성)
 python scripts/create_sqs_resources.py ap-northeast-2
 
 # AI Queues (3-Tier)
@@ -142,6 +146,12 @@ python scripts/create_ai_sqs_resources.py ap-northeast-2
 - **Queue**: `academy-ai-jobs-premium`
 - **배포**: EC2 g4dn.xlarge
 
+#### Messaging Worker
+- **Runtime**: Docker Container
+- **Queue**: `academy-messaging-jobs`
+- **기능**: SMS/LMS 발송 (Solapi), 예약 발송, 알림톡
+- **배포**: EC2 또는 ECS Fargate (24/7 상시 운영 권장)
+
 ---
 
 ## 2. 비용 방어 전략
@@ -150,8 +160,7 @@ python scripts/create_ai_sqs_resources.py ap-northeast-2
 
 **목적**: Idle 상태 EC2 인스턴스 자동 종료로 비용 절감
 
-**구현 위치**:
-- `apps/worker/ai_worker/sqs_main.py`
+**구현 위치** (Video, AI Worker 전용 — Messaging Worker는 24/7 상시 운영 권장):
 - `apps/worker/ai_worker/sqs_main_cpu.py`
 - `apps/worker/ai_worker/sqs_main_gpu.py`
 - `apps/worker/video_worker/sqs_main.py`
@@ -276,7 +285,7 @@ nano .env  # 필수 환경 변수 입력
 
 #### 2. 인프라 리소스 생성
 ```bash
-# SQS 큐 생성
+# SQS 큐 생성 (Video + Messaging 큐 포함)
 python scripts/create_sqs_resources.py ap-northeast-2
 python scripts/create_ai_sqs_resources.py ap-northeast-2
 
@@ -288,9 +297,15 @@ python scripts/create_ai_sqs_resources.py ap-northeast-2
 
 #### 방법 1: 빌드 스크립트 사용 (권장)
 ```bash
+# Linux/macOS
 chmod +x docker/build.sh
 ./docker/build.sh
+
+# Windows PowerShell
+.\docker\build.ps1
 ```
+
+**빌드 순서**: `academy-base` → `api` → `video-worker` → `ai-worker` → `messaging-worker` (base 없으면 worker 빌드 실패)
 
 #### 방법 2: 수동 빌드
 ```bash
@@ -299,21 +314,24 @@ docker build -f docker/Dockerfile.base -t academy-base:latest .
 
 # 서비스별 이미지 빌드
 docker build -f docker/api/Dockerfile -t academy-api:latest .
-docker build -f docker/ai-worker/Dockerfile -t academy-ai-worker:latest .
 docker build -f docker/video-worker/Dockerfile -t academy-video-worker:latest .
+docker build -f docker/ai-worker/Dockerfile -t academy-ai-worker:latest .
+docker build -f docker/messaging-worker/Dockerfile -t academy-messaging-worker:latest .
 ```
 
 **예상 시간**:
 - 베이스 이미지: 2-3분
 - API 서버: 1-2분
-- AI Worker: 1-2분
 - Video Worker: 1-2분
+- AI Worker: 1-2분
+- Messaging Worker: ~1분
 
 **이미지 크기**:
 - 베이스: ~500MB
 - API: ~600MB
-- AI Worker: ~2GB (ML 라이브러리 포함)
 - Video Worker: ~800MB
+- AI Worker: ~2GB (ML 라이브러리 포함)
+- Messaging Worker: ~600MB
 
 ### 3.3 서비스 시작
 
@@ -323,7 +341,7 @@ docker build -f docker/video-worker/Dockerfile -t academy-video-worker:latest .
 docker-compose up -d
 
 # 특정 서비스만 시작
-docker-compose up -d api video-worker ai-worker-cpu
+docker-compose up -d api video-worker ai-worker-cpu messaging-worker
 
 # 로그 확인
 docker-compose logs -f api
@@ -347,6 +365,11 @@ docker run -d \
   --name academy-ai-worker-cpu \
   --env-file .env \
   academy-ai-worker:latest
+
+docker run -d \
+  --name academy-messaging-worker \
+  --env-file .env \
+  academy-messaging-worker:latest
 ```
 
 ### 3.4 데이터베이스 마이그레이션
@@ -387,6 +410,7 @@ docker-compose logs -f
 docker-compose logs -f api
 docker-compose logs -f video-worker
 docker-compose logs -f ai-worker-cpu
+docker-compose logs -f messaging-worker
 
 # 구조화된 로그 확인 (SQS 메시지 수명 추적)
 docker-compose logs api | grep "SQS_MESSAGE_RECEIVED\|SQS_JOB_COMPLETED"
@@ -462,12 +486,20 @@ VIDEO_SQS_QUEUE_NAME=academy-video-jobs
 AI_SQS_QUEUE_NAME_LITE=academy-ai-jobs-lite
 AI_SQS_QUEUE_NAME_BASIC=academy-ai-jobs-basic
 AI_SQS_QUEUE_NAME_PREMIUM=academy-ai-jobs-premium
+MESSAGING_SQS_QUEUE_NAME=academy-messaging-jobs
 SQS_WAIT_TIME_SECONDS=20  # Long Polling 대기 시간
 ```
 
 ### 4.6 Worker 설정
 
+**DJANGO_SETTINGS_MODULE**: Worker는 `apps.api.config.settings.worker` 사용 (API와 분리)
+- API: `prod` (corsheaders, DRF, admin 포함)
+- Worker: `worker` (corsheaders, rest_framework, django_extensions, admin 제외)
+
 ```bash
+# docker-compose에서 Worker 서비스에 자동 적용
+DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker
+
 INTERNAL_WORKER_TOKEN=your-internal-worker-token-min-32-chars
 API_BASE_URL=https://api.hakwonplus.com
 
@@ -475,6 +507,7 @@ API_BASE_URL=https://api.hakwonplus.com
 VIDEO_WORKER_ID=video-worker-1
 AI_WORKER_ID_CPU=ai-worker-cpu-1
 AI_WORKER_ID_GPU=ai-worker-gpu-1
+MESSAGING_WORKER_ID=messaging-worker-1
 
 # EC2 Self-Stop 설정
 EC2_IDLE_STOP_THRESHOLD=5  # 연속 빈 폴링 횟수
@@ -512,7 +545,17 @@ BACKOFF_CAP_SECONDS=10.0
 SITE_URL=https://hakwonplus.com
 ```
 
-### 4.10 Google Vision (선택사항)
+### 4.10 Messaging Worker 설정
+
+```bash
+MESSAGING_SQS_QUEUE_NAME=academy-messaging-jobs
+SOLAPI_API_KEY=your-solapi-api-key
+SOLAPI_API_SECRET=your-solapi-api-secret
+SOLAPI_MOCK=false  # true면 실제 발송 없이 로그만 (개발용)
+DEBUG=false        # true면 SOLAPI_MOCK과 동일
+```
+
+### 4.11 Google Vision (선택사항)
 
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/google-vision.json
@@ -530,6 +573,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/google-vision.json
 - API 서버: t4g.micro 1대 (4 workers)
 - Video Worker: t4g.small 1대 (Self-stop)
 - AI Worker CPU: t4g.medium 1대 (Self-stop)
+- Messaging Worker: t4g.micro 1대 (24/7)
 - RDS: db.t4g.micro (87 max_connections)
 - 예상 트래픽: ~100-500 DAU
 
@@ -578,6 +622,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/google-vision.json
 #### 3. Worker 확장
 - **Video Worker**: 2-4 인스턴스
 - **AI Worker CPU**: 2-4 인스턴스
+- **Messaging Worker**: 1-2 인스턴스 (트래픽에 따라)
 - **Auto Scaling**: CloudWatch 기반 자동 확장
 
 #### 4. 모니터링 강화

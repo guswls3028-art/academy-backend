@@ -4,7 +4,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from apps.domains.lectures.models import Session
-from apps.domains.enrollment.models import Enrollment
+from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.attendance.models import Attendance
 
 
@@ -34,10 +34,19 @@ def build_attendance_excel(lecture):
         lecture=lecture
     ).order_by("order", "id")
 
-    enrollments = Enrollment.objects.filter(
-        lecture=lecture,
-        status="ACTIVE",
-    ).select_related("student").order_by("student__name", "id")
+    # 강의 내 모든 차시에 등록된 수강생만 출결 대상(매트릭스와 동일 기준)
+    enrollment_ids = (
+        SessionEnrollment.objects
+        .filter(session__lecture=lecture)
+        .values_list("enrollment_id", flat=True)
+        .distinct()
+    )
+    enrollments = (
+        Enrollment.objects
+        .filter(id__in=enrollment_ids, status="ACTIVE")
+        .select_related("student")
+        .order_by("student__name", "id")
+    )
 
     attendances = Attendance.objects.filter(
         session__lecture=lecture,

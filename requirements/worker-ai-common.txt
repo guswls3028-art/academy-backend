@@ -1,0 +1,32 @@
+# worker-ai-common.txt - AI Worker 공통 (torch/onnx 제외)
+-r ./common.txt
+
+# Core numeric
+numpy
+scipy
+
+# Image / OCR (torch 의존 없음)
+pillow
+pytesseract
+scikit-image
+
+# Google OCR
+google-cloud-vision
+google-api-core
+google-auth
+googleapis-common-protos
+grpcio
+grpcio-status
+protobuf
+
+# Embedding / NLP (torch 제외 - cpu/gpu에서 각각 설치)
+transformers
+huggingface-hub
+tokenizers
+safetensors
+
+# LLM
+openai
+
+# Video (AI 쪽)
+ffmpeg-python

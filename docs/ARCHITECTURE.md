@@ -12,8 +12,8 @@ Production-grade architecture for Korea-focused multi-tenant education SaaS.
 - Clean migration path (EC2 → ECS)
 
 **Current Implementation:**
-- SQS-only queue system (Redis removed)
-- PostgreSQL-only data layer (Redis removed)
+- SQS queue system + Redis 보호 레이어 (멱등성, heartbeat 버퍼, Write-Behind)
+- PostgreSQL + Redis (선택, 미설정 시 DB fallback)
 - Stateless services
 - Docker containerization
 - pnpm-based frontend builds
@@ -22,8 +22,8 @@ Production-grade architecture for Korea-focused multi-tenant education SaaS.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    CloudFront CDN                           │
-│              (Static Assets + Media CDN)                    │
+│                    CDN (Cloudflare)                         │
+│              (Static Assets + Media)                        │
 └───────────────────────┬─────────────────────────────────────┘
                         │
         ┌───────────────┴───────────────┐
@@ -31,7 +31,7 @@ Production-grade architecture for Korea-focused multi-tenant education SaaS.
         ▼                               ▼
 ┌───────────────┐            ┌──────────────────┐
 │   Frontend    │            │   API Server      │
-│   (S3 Static) │            │   (EC2/ECS)       │
+│   (Static)    │            │   (EC2/ECS)       │
 │               │            │                   │
 │  React/Vite   │            │  Django API       │
 │  pnpm build   │            │  Container        │
@@ -41,7 +41,7 @@ Production-grade architecture for Korea-focused multi-tenant education SaaS.
                     │                  │                  │
                     ▼                  ▼                  ▼
             ┌──────────────┐                    ┌──────────────┐
-            │ RDS Postgres │                    │ S3 Bucket    │
+            │ RDS Postgres │                    │ R2 Storage   │
             │ (Single AZ)  │                    │  (Media)     │
             └──────────────┘                    └──────────────┘
                     │
