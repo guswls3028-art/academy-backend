@@ -1,6 +1,7 @@
 # PATH: apps/domains/students/serializers.py
 
 import random
+import string
 
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
@@ -9,10 +10,13 @@ from apps.domains.students.models import Student, Tag
 
 
 def _generate_unique_ps_number() -> str:
-    """임의의 6자리 숫자 중복 없이 부여 (User.username 전역 유일)"""
+    """영어 1자리 + 숫자 5자리 (예: A12345) 중복 없이 부여 (User.username 전역 유일)"""
     User = get_user_model()
-    for _ in range(100):
-        candidate = str(random.randint(100000, 999999))
+    letters = string.ascii_uppercase
+    for _ in range(200):
+        letter = random.choice(letters)
+        num = random.randint(0, 99999)
+        candidate = f"{letter}{num:05d}"
         if not User.objects.filter(username=candidate).exists():
             return candidate
     raise ValueError("아이디 생성에 실패했습니다. 다시 시도해 주세요.")

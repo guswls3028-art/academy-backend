@@ -14,6 +14,7 @@ from .serializers import EnrollmentSerializer, SessionEnrollmentSerializer
 from .filters import EnrollmentFilter
 from apps.domains.lectures.models import Session, Lecture
 from apps.domains.students.models import Student
+from apps.domains.attendance.models import Attendance
 
 
 class EnrollmentViewSet(ModelViewSet):
@@ -144,6 +145,13 @@ class SessionEnrollmentViewSet(ModelViewSet):
                 enrollment=enrollment,
             )
             created.append(obj)
+            # 차시 수강생 등록 시 기본 출결 행 생성 → 출결 탭에서 학생 목록이 바로 보이도록
+            Attendance.objects.get_or_create(
+                tenant=tenant,
+                enrollment=enrollment,
+                session=session,
+                defaults={"status": "PRESENT"},
+            )
 
         return Response(
             SessionEnrollmentSerializer(created, many=True).data,

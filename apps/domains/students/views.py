@@ -22,6 +22,7 @@ from apps.support.messaging.services import send_welcome_messages, get_site_url
 
 from .models import Student, Tag, StudentTag
 from .filters import StudentFilter
+from .services import normalize_school_from_name
 from apps.domains.enrollment.models import Enrollment
 from .serializers import (
     _generate_unique_ps_number,
@@ -220,7 +221,17 @@ class StudentViewSet(ModelViewSet):
     ]
     filterset_class = StudentFilter
     search_fields = ["ps_number", "omr_code", "name", "high_school", "major", "phone"]
-    ordering_fields = ["id", "created_at", "updated_at", "deleted_at"]
+    ordering_fields = [
+        "id",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+        "name",
+        "phone",
+        "parent_phone",
+        "high_school",
+        "grade",
+    ]
     ordering = ["-id"]
 
     # ------------------------------
@@ -331,9 +342,9 @@ class StudentViewSet(ModelViewSet):
                     user.save()
 
                     school_val = (item.get("school") or "").strip() or None
-                    st = item.get("school_type", "HIGH")
-                    high_school = school_val if st == "HIGH" else None
-                    middle_school = school_val if st == "MIDDLE" else None
+                    st, high_school, middle_school = normalize_school_from_name(
+                        school_val, item.get("school_type")
+                    )
                     high_school_class = (item.get("high_school_class") or "").strip() or None if st == "HIGH" else None
                     major = (item.get("major") or "").strip() or None if st == "HIGH" else None
 
@@ -348,7 +359,7 @@ class StudentViewSet(ModelViewSet):
                         omr_code=omr_code,
                         uses_identifier=item.get("uses_identifier", False) or (phone is None),
                         gender=item.get("gender") or None,
-                        school_type=item.get("school_type", "HIGH"),
+                        school_type=st,
                         high_school=high_school,
                         middle_school=middle_school,
                         high_school_class=high_school_class,
@@ -445,9 +456,12 @@ class StudentViewSet(ModelViewSet):
                         student.deleted_at = None
                         student.name = (student_data.get("name") or student.name or "").strip()
                         school_val = (student_data.get("school") or "").strip() or None
-                        st = student_data.get("school_type", "HIGH") or "HIGH"
-                        student.high_school = school_val if st == "HIGH" else None
-                        student.middle_school = school_val if st == "MIDDLE" else None
+                        st, high_school, middle_school = normalize_school_from_name(
+                            school_val, student_data.get("school_type")
+                        )
+                        student.school_type = st
+                        student.high_school = high_school
+                        student.middle_school = middle_school
                         student.high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
                         student.major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
                         student.gender = student_data.get("gender") or None
@@ -499,9 +513,9 @@ class StudentViewSet(ModelViewSet):
                     user.set_password(password)
                     user.save()
                     school_val = (student_data.get("school") or "").strip() or None
-                    st = student_data.get("school_type", "HIGH")
-                    high_school = school_val if st == "HIGH" else None
-                    middle_school = school_val if st == "MIDDLE" else None
+                    st, high_school, middle_school = normalize_school_from_name(
+                        school_val, student_data.get("school_type")
+                    )
                     high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
                     major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
                     new_student = Student.objects.create(

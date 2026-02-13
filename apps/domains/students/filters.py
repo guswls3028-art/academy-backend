@@ -12,6 +12,12 @@ class StudentFilter(django_filters.FilterSet):
     high_school = django_filters.CharFilter(lookup_expr="icontains")
     major = django_filters.CharFilter(lookup_expr="icontains")
     is_managed = django_filters.BooleanFilter()
+    # 고등학교 = HIGH만, 중학교 = MIDDLE만 (미입력/빈값 제외, 완전 일치)
+    school_type = django_filters.ChoiceFilter(
+        choices=Student.SCHOOL_TYPE_CHOICES,
+        field_name="school_type",
+        lookup_expr="exact",
+    )
 
     class Meta:
         model = Student
@@ -24,4 +30,5 @@ class StudentFilter(django_filters.FilterSet):
             "high_school",
             "major",
             "is_managed",
+            "school_type",
         ]
