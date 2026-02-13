@@ -42,6 +42,7 @@ class AttendanceViewSet(ModelViewSet):
             .filter(tenant=tenant)
             .select_related(
                 "session",
+                "session__lecture",
                 "enrollment",
                 "enrollment__student",
             )

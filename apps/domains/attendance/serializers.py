@@ -17,6 +17,15 @@ class AttendanceSerializer(serializers.ModelSerializer):
         source="enrollment.student.phone",
         read_only=True,
     )
+    lecture_title = serializers.CharField(
+        source="session.lecture.title",
+        read_only=True,
+    )
+    lecture_color = serializers.CharField(
+        source="session.lecture.color",
+        read_only=True,
+        default="#3b82f6",
+    )
 
     class Meta:
         model = Attendance
@@ -29,6 +38,8 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "name",
             "parent_phone",
             "phone",
+            "lecture_title",
+            "lecture_color",
         ]
         
 class AttendanceMatrixStudentSerializer(serializers.Serializer):
