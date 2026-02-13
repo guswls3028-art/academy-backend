@@ -9,7 +9,7 @@ from apps.domains.attendance.models import Attendance
 
 
 STATUS_LABEL_MAP = {
-    "PRESENT": "현장",
+    "PRESENT": "출석",
     "LATE": "지각",
     "ONLINE": "영상",
     "SUPPLEMENT": "보강",
