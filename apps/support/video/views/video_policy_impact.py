@@ -57,10 +57,13 @@ class VideoPolicyImpactAPIView(APIView):
             if rule == "once" and prog and prog.completed:
                 effective = "free"
 
+            lecture = getattr(video.session, "lecture", None) if video.session else None
             rows.append({
                 "enrollment": e.id,
                 "student_name": e.student.name,
                 "attendance_status": attendance.get(e.id),
+                "lecture_title": lecture.title if lecture else None,
+                "lecture_color": getattr(lecture, "color", None) if lecture else None,
                 "rule": rule,  # Legacy field
                 "effective_rule": effective,  # Legacy field
                 "access_mode": access_mode.value,  # New field

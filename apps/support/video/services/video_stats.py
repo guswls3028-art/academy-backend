@@ -52,10 +52,13 @@ def build_video_stats_students(video):
         if rule == "once" and vp and vp.completed:
             effective_rule = "free"
 
+        lecture = getattr(video.session, "lecture", None) if video.session else None
         students.append({
             "enrollment": e.id,
             "student_name": e.student.name,
             "attendance_status": attendance.get(e.id),
+            "lecture_title": lecture.title if lecture else None,
+            "lecture_color": getattr(lecture, "color", None) if lecture else None,
             "progress": vp.progress if vp else 0,
             "completed": vp.completed if vp else False,
             "rule": rule,  # Legacy field
