@@ -171,6 +171,7 @@ class AttendanceViewSet(ModelViewSet):
                 "lecture": {
                     "id": lecture.id,
                     "title": lecture.title,
+                    "color": getattr(lecture, "color", "#3b82f6") or "#3b82f6",
                 },
                 "sessions": [
                     {
