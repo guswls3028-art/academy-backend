@@ -26,6 +26,12 @@ STATUS_FILL_MAP = {
     "ABSENT": "FFC7CE",
     "LATE": "FFEB9C",
     "ONLINE": "BDD7EE",
+    "SUPPLEMENT": "B7DEE8",
+    "EARLY_LEAVE": "FFEB9C",
+    "RUNAWAY": "FFC7CE",
+    "MATERIAL": "D9D9D9",
+    "INACTIVE": "F2F2F2",
+    "SECESSION": "BDBCBC",
 }
 
 
