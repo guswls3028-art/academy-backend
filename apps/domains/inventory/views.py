@@ -4,9 +4,10 @@
 from django.http import JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.db.models import Sum
+from django.conf import settings
 
 from apps.core.models import Program
 from .models import InventoryFolder, InventoryFile
@@ -41,6 +42,7 @@ def _tenant_required(view_func):
 class QuotaView(View):
     """GET /storage/quota/ — 테넌트 사용량 및 플랜 한도."""
 
+    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     def get(self, request):
         tenant = request.tenant
@@ -49,13 +51,19 @@ class QuotaView(View):
             plan = (program.plan or "basic").lower()
         except Exception:
             plan = "basic"
-        limit = QUOTA_BYTES.get(plan, QUOTA_BYTES["basic"])
-        used = InventoryFile.objects.filter(tenant=tenant).aggregate(s=Sum("size_bytes"))["s"] or 0
-        return JsonResponse({
-            "usedBytes": used,
-            "limitBytes": limit,
-            "plan": plan,
-        })
+        try:
+            limit = QUOTA_BYTES.get(plan, QUOTA_BYTES["basic"])
+            used = InventoryFile.objects.filter(tenant=tenant).aggregate(s=Sum("size_bytes"))["s"] or 0
+            return JsonResponse({
+                "usedBytes": used,
+                "limitBytes": limit,
+                "plan": plan,
+            })
+        except Exception as e:
+            return JsonResponse(
+                {"detail": str(e) if settings.DEBUG else "Internal Server Error"},
+                status=500,
+            )
 
 
 class InventoryListView(View):
