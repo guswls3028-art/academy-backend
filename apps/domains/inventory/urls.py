@@ -11,4 +11,5 @@ urlpatterns = [
     path("inventory/folders/<int:folder_id>/", views.FolderDeleteView.as_view()),
     path("inventory/files/<int:file_id>/", views.FileDeleteView.as_view()),
     path("inventory/presign/", views.PresignView.as_view()),
+    path("inventory/move/", views.MoveView.as_view()),
 ]

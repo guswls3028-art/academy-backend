@@ -11,6 +11,7 @@ from django.db.models import Sum
 from apps.core.models import Program
 from .models import InventoryFolder, InventoryFile
 from .r2_path import build_r2_key, safe_filename, folder_path_string
+from .services import move_file as do_move_file, move_folder as do_move_folder
 
 # R2 Storage 버킷 (인벤토리 전용)
 try:
