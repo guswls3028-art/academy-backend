@@ -78,11 +78,20 @@ class StudentListSerializer(serializers.ModelSerializer):
 class StudentDetailSerializer(serializers.ModelSerializer):
     tags = TagSerializer(many=True, read_only=True)
     enrollments = EnrollmentSerializer(many=True, read_only=True)
+    profile_photo_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Student
         fields = "__all__"
         ref_name = "StudentDetail"
+
+    def get_profile_photo_url(self, obj):
+        if not obj.profile_photo:
+            return None
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.profile_photo.url)
+        return obj.profile_photo.url
 
 
 class AddTagSerializer(serializers.Serializer):
