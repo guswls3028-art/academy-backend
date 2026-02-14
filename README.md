@@ -124,24 +124,14 @@ curl http://localhost:8000/health
 
 ---
 
-## 📚 주요 문서
+## 📚 문서 (SSOT)
 
-### 배포 및 운영
-- **[DEPLOYMENT_MASTER_GUIDE.md](docs/DEPLOYMENT_MASTER_GUIDE.md)** ⭐ **메인 문서**
-- [INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) - 인프라 아키텍처 상세
-- [COST_FORECAST.md](docs/COST_FORECAST.md) - 비용 예측 및 최적화
-- [QUEUE_SYSTEM.md](docs/QUEUE_SYSTEM.md) - 큐 시스템 상세
+**문서 인덱스**: [docs/README.md](docs/README.md) — 최소 구성 유지
 
-### 아키텍처
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - 전체 아키텍처 개요
-- [ARCH_VIDEO_MIGRATION.md](docs/ARCH_VIDEO_MIGRATION.md) - 비디오 마이그레이션 히스토리
-- [ARCH_VIDEO_SSOT.md](docs/ARCH_VIDEO_SSOT.md) - 비디오 SSOT
-
-### ADR (Architecture Decision Records)
-- [ADR-001](docs/adr/ADR-001)
-- [ADR-002](docs/adr/ADR-002)
-- [ADR-003](docs/adr/ADR-003)
-- [ADR-004](docs/adr/ADR-004)
+- **[DEPLOYMENT_MASTER_GUIDE.md](docs/DEPLOYMENT_MASTER_GUIDE.md)** — 배포·인프라·ENV (프론트/백 공통)
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — 아키텍처 개요
+- [INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) — AWS·R2·SQS 설정
+- [COST_FORECAST.md](docs/COST_FORECAST.md) — 비용 예측
 
 ---
 
