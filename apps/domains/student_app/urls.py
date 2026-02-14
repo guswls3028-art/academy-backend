@@ -8,6 +8,7 @@ from .results.views import (
     MyExamResultView,
     MyExamResultItemsView,
 )
+from .profile.views import StudentProfileView
 
 # ✅ NEW
 from .media.views import (
@@ -16,6 +17,9 @@ from .media.views import (
 )
 
 urlpatterns = [
+    # 내 프로필 (학생 전용) — GET/PATCH
+    path("me/", StudentProfileView.as_view()),
+
     # Dashboard
     path("dashboard/", StudentDashboardView.as_view()),
 
