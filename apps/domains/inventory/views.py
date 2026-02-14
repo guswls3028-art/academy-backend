@@ -69,6 +69,7 @@ class QuotaView(View):
 class InventoryListView(View):
     """GET /storage/inventory/?scope=admin|student&student_ps=... — 폴더/파일 목록 (전체, 클라이언트에서 필터)."""
 
+    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     def get(self, request):
         scope = (request.GET.get("scope") or "admin").lower()
@@ -78,39 +79,46 @@ class InventoryListView(View):
         if scope == "student" and not student_ps:
             return JsonResponse({"detail": "student_ps required for student scope"}, status=400)
 
-        tenant = request.tenant
-        qs_folders = InventoryFolder.objects.filter(tenant=tenant, scope=scope)
-        if scope == "student":
-            qs_folders = qs_folders.filter(student_ps=student_ps)
-        qs_files = InventoryFile.objects.filter(tenant=tenant, scope=scope)
-        if scope == "student":
-            qs_files = qs_files.filter(student_ps=student_ps)
+        try:
+            tenant = request.tenant
+            qs_folders = InventoryFolder.objects.filter(tenant=tenant, scope=scope)
+            if scope == "student":
+                qs_folders = qs_folders.filter(student_ps=student_ps)
+            qs_files = InventoryFile.objects.filter(tenant=tenant, scope=scope)
+            if scope == "student":
+                qs_files = qs_files.filter(student_ps=student_ps)
 
-        folders = [
-            {"id": str(f.id), "name": f.name, "parentId": str(f.parent_id) if f.parent_id else None}
-            for f in qs_folders
-        ]
-        files = [
-            {
-                "id": str(f.id),
-                "name": f.original_name,
-                "displayName": f.display_name,
-                "description": f.description or "",
-                "icon": f.icon or "file-text",
-                "folderId": str(f.folder_id) if f.folder_id else None,
-                "sizeBytes": f.size_bytes,
-                "r2Key": f.r2_key,
-                "contentType": f.content_type or "",
-                "createdAt": f.created_at.isoformat() if f.created_at else "",
-            }
-            for f in qs_files
-        ]
-        return JsonResponse({"folders": folders, "files": files})
+            folders = [
+                {"id": str(f.id), "name": f.name, "parentId": str(f.parent_id) if f.parent_id else None}
+                for f in qs_folders
+            ]
+            files = [
+                {
+                    "id": str(f.id),
+                    "name": f.original_name,
+                    "displayName": f.display_name,
+                    "description": f.description or "",
+                    "icon": f.icon or "file-text",
+                    "folderId": str(f.folder_id) if f.folder_id else None,
+                    "sizeBytes": f.size_bytes,
+                    "r2Key": f.r2_key,
+                    "contentType": f.content_type or "",
+                    "createdAt": f.created_at.isoformat() if f.created_at else "",
+                }
+                for f in qs_files
+            ]
+            return JsonResponse({"folders": folders, "files": files})
+        except Exception as e:
+            return JsonResponse(
+                {"detail": str(e) if settings.DEBUG else "Internal Server Error"},
+                status=500,
+            )
 
 
 class FolderCreateView(View):
     """POST /storage/inventory/folders/ — 폴더 생성."""
 
+    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     def post(self, request):
         import json
