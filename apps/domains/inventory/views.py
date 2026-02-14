@@ -274,6 +274,7 @@ class FolderDeleteView(View):
 class FileDeleteView(View):
     """DELETE /storage/inventory/files/:id/ — DB 삭제 후 R2 객체 삭제."""
 
+    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     def delete(self, request, file_id):
         tenant = request.tenant
