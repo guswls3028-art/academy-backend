@@ -64,6 +64,7 @@ class Command(BaseCommand):
         tenant_code = (options["tenant"] or "admin97").strip()
         password = (options["password"] or "kjkszpj123").strip()
         username = (options["username"] or tenant_code).strip()
+        display_name = (options["name"] or "개발용").strip()
         hosts_str = options["hosts"] or "localhost,127.0.0.1"
         hosts = [normalize_host(h) for h in hosts_str.split(",") if normalize_host(h)]
 
