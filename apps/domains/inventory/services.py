@@ -88,7 +88,7 @@ def move_file(
                 delete_object_r2_storage(key=existing_key)
             except Exception:
                 pass
-        else:
+        elif on_duplicate == "rename":
             base, ext = "", ""
             if "." in display_name:
                 idx = display_name.rfind(".")
@@ -97,6 +97,8 @@ def move_file(
                 base = display_name
             display_name = f"{base}_복사본{ext}" if ext else f"{base}_복사본"
             current_filename = safe_filename(display_name)
+        else:
+            return {"ok": False, "status": 409, "code": "duplicate", "existing_name": display_name, "detail": "File with same name exists"}
 
     new_key = build_r2_key(
         tenant_id=tenant.id,
