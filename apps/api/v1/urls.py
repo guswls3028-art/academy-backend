@@ -44,6 +44,11 @@ urlpatterns = [
     path("assets/", include("apps.domains.assets.urls")),
 
     # =========================
+    # Storage (인벤토리)
+    # =========================
+    path("storage/", include("apps.domains.inventory.urls")),
+
+    # =========================
     # Community (SSOT)
     # =========================
     path("community/", include("apps.domains.community.api.urls")),

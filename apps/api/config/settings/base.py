@@ -128,6 +128,7 @@ INSTALLED_APPS = [
     "apps.domains.progress",
     "apps.domains.ai.apps.AIDomainConfig",
     "apps.domains.assets",
+    "apps.domains.inventory",
 
     "apps.support.video",
     "apps.support.messaging",
