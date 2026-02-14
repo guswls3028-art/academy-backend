@@ -355,5 +355,10 @@ class MoveView(View):
 
         if not result.get("ok"):
             status = result.get("status", 400)
-            return JsonResponse({"detail": result.get("detail", "Move failed")}, status=status)
+            payload = {"detail": result.get("detail", "Move failed")}
+            if result.get("code"):
+                payload["code"] = result["code"]
+            if result.get("existing_name") is not None:
+                payload["existing_name"] = result["existing_name"]
+            return JsonResponse(payload, status=status)
         return JsonResponse({"ok": True})
