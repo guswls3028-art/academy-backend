@@ -159,6 +159,7 @@ class FolderCreateView(View):
 class FileUploadView(View):
     """POST /storage/inventory/upload/ — R2 업로드 후 DB 저장. 플랜 한도 체크."""
 
+    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     def post(self, request):
         scope = (request.POST.get("scope") or "admin").lower()
@@ -248,6 +249,7 @@ class FileUploadView(View):
 class FolderDeleteView(View):
     """DELETE /storage/inventory/folders/:id/ — 비어있을 때만 삭제."""
 
+    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     def delete(self, request, folder_id):
         tenant = request.tenant
