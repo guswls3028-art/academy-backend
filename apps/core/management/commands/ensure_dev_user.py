@@ -48,6 +48,12 @@ class Command(BaseCommand):
             help="Login username (default: same as --tenant)",
         )
         parser.add_argument(
+            "--name",
+            type=str,
+            default="개발용",
+            help="Display name when creating user (default: 개발용)",
+        )
+        parser.add_argument(
             "--hosts",
             type=str,
             default="localhost,127.0.0.1",
