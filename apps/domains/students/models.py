@@ -108,6 +108,14 @@ class Student(TimestampModel):
     memo = models.TextField(null=True, blank=True)
     is_managed = models.BooleanField(default=True)
 
+    # 학생이 학생앱에서만 설정 (관리자 편집 불가)
+    profile_photo = models.ImageField(
+        upload_to="student_profile/%Y/%m/",
+        null=True,
+        blank=True,
+        help_text="학생이 학생앱에서 업로드한 프로필 사진",
+    )
+
     deleted_at = models.DateTimeField(
         null=True,
         blank=True,
