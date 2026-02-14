@@ -298,6 +298,7 @@ R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 R2_AI_BUCKET = os.getenv("R2_AI_BUCKET", "academy-ai")
 R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
+R2_STORAGE_BUCKET = os.getenv("R2_STORAGE_BUCKET", "academy-storage")
 
 # ==================================================
 # SITE (메시지 발송용 홈페이지 링크)
