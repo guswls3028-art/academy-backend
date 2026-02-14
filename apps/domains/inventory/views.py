@@ -191,9 +191,9 @@ class FileUploadView(View):
             file_name=safe_name,
         )
 
-        if upload_fileobj_to_r2:
+        if upload_fileobj_to_r2_storage:
             try:
-                upload_fileobj_to_r2(
+                upload_fileobj_to_r2_storage(
                     fileobj=file_obj,
                     key=r2_key,
                     content_type=file_obj.content_type or "application/octet-stream",
