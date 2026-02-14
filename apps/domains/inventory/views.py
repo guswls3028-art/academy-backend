@@ -298,6 +298,7 @@ class FileDeleteView(View):
 class PresignView(View):
     """POST /storage/inventory/presign/ — R2 presigned GET URL."""
 
+    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     def post(self, request):
         import json
