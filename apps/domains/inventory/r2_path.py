@@ -4,6 +4,7 @@
 # 선생님: tenants/{tenant_id}/admin/inventory/{folder_path}/{file_name}
 
 import re
+import secrets
 from datetime import datetime
 
 
@@ -16,7 +17,7 @@ def safe_filename(original: str) -> str:
     else:
         base = original
     stamp = datetime.now().strftime("%y%m%d")
-    hash_s = f"{id(original) % 0xFFFF:04x}"  # 짧은 구분용
+    hash_s = secrets.token_hex(2)
     return f"{base}_{stamp}_{hash_s}{ext}"
 
 
