@@ -131,20 +131,6 @@ def delete_object_r2_storage(*, key: str) -> None:
 
 def head_object_r2_storage(*, key: str) -> tuple[bool, int]:
     """객체 존재 여부 및 크기(bytes)."""
-    try:
-        resp = s3.head_object(Bucket=_storage_bucket(), Key=key)
-        return True, int(resp.get("ContentLength") or 0)
-    except Exception:
-        e = s3.exceptions
-        s3 = _get_s3_client()
-        try:
-            resp = s3.head_object(Bucket=_storage_bucket(), Key=key)
-            return True, int(resp.get("ContentLength") or 0)
-        except s3.exceptions.ClientError as err:
-            code = (err.response.get("Error") or {}).get("Code", "")
-            if code in ("404", "NoSuchKey", "NotFound"):
-                return False, 0
-            raise
     from botocore.exceptions import ClientError
     s3 = _get_s3_client()
     try:
