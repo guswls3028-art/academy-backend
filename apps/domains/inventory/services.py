@@ -82,11 +82,9 @@ def move_file(
     existing = _check_duplicate_file(target_folder_id, tenant, scope, student_ps, display_name)
     if existing and existing.id != source_file_id:
         if on_duplicate == "overwrite":
-            pass  # 새 파일로 덮어쓸 것이므로 기존 existing는 R2/DB에서 제거할 수 있음. 단, 이동은 copy+delete이므로 목적지에 같은 이름이 있으면: 기존 건 삭제 후 우리가 복사. 순서: copy source→new_key, DB update source (folder, r2_key), delete source old_key. 목적지 기존 건은? 사용자가 덮어쓰기 선택 시 기존 건 삭제(DB+R2) 후 우리 파일을 new_key로 복사하고 source를 업데이트 후 source 원본 삭제.
             existing_key = existing.r2_key
             existing.delete()
             try:
-                from apps.infrastructure.storage.r2 import delete_object_r2_storage
                 delete_object_r2_storage(key=existing_key)
             except Exception:
                 pass
