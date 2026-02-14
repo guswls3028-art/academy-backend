@@ -289,7 +289,7 @@ class PresignView(View):
         expires_in = int(body.get("expires_in") or 3600)
         if not r2_key:
             return JsonResponse({"detail": "r2_key required"}, status=400)
-        if not generate_presigned_get_url:
+        if not generate_presigned_get_url_storage:
             return JsonResponse({"url": ""}, status=200)
-        url = generate_presigned_get_url(key=r2_key, expires_in=expires_in)
+        url = generate_presigned_get_url_storage(key=r2_key, expires_in=expires_in)
         return JsonResponse({"url": url})
