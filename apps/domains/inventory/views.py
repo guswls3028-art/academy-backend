@@ -294,3 +294,65 @@ class PresignView(View):
             return JsonResponse({"url": ""}, status=200)
         url = generate_presigned_get_url_storage(key=r2_key, expires_in=expires_in)
         return JsonResponse({"url": url})
+
+
+class MoveView(View):
+    """
+    POST /storage/inventory/move/
+    Body: { type: "file"|"folder", source_id: str, target_folder_id: str|null, on_duplicate?: "overwrite"|"rename" }
+    Copy & Delete 방식: R2 복사 성공 → DB 업데이트 → R2 원본 삭제. 실패 시 원본 삭제 안 함.
+    """
+
+    @method_decorator(_tenant_required)
+    def post(self, request):
+        import json
+        try:
+            body = json.loads(request.body)
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+        move_type = (body.get("type") or "file").lower()
+        source_id = body.get("source_id")
+        target_folder_id = body.get("target_folder_id")
+        on_duplicate = (body.get("on_duplicate") or "rename").lower()
+        if move_type not in ("file", "folder") or not source_id:
+            return JsonResponse({"detail": "type and source_id required"}, status=400)
+        scope = (body.get("scope") or request.GET.get("scope") or "admin").lower()
+        student_ps = (body.get("student_ps") or request.GET.get("student_ps") or "").strip()
+        if scope == "student" and not student_ps:
+            return JsonResponse({"detail": "student_ps required for student scope"}, status=400)
+
+        tenant = request.tenant
+        try:
+            sid = int(source_id)
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "Invalid source_id"}, status=400)
+        tid = None
+        if target_folder_id is not None and target_folder_id != "":
+            try:
+                tid = int(target_folder_id)
+            except (TypeError, ValueError):
+                return JsonResponse({"detail": "Invalid target_folder_id"}, status=400)
+
+        if move_type == "file":
+            result = do_move_file(
+                tenant=tenant,
+                scope=scope,
+                student_ps=student_ps,
+                source_file_id=sid,
+                target_folder_id=tid,
+                on_duplicate=on_duplicate,
+            )
+        else:
+            result = do_move_folder(
+                tenant=tenant,
+                scope=scope,
+                student_ps=student_ps,
+                source_folder_id=sid,
+                target_folder_id=tid,
+                on_duplicate=on_duplicate,
+            )
+
+        if not result.get("ok"):
+            status = result.get("status", 400)
+            return JsonResponse({"detail": result.get("detail", "Move failed")}, status=status)
+        return JsonResponse({"ok": True})
