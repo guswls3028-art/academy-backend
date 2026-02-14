@@ -12,12 +12,19 @@ from apps.core.models import Program
 from .models import InventoryFolder, InventoryFile
 from .r2_path import build_r2_key, safe_filename, folder_path_string
 
-# R2 버킷은 settings.R2_AI_BUCKET 사용 (기존 인프라)
+# R2 Storage 버킷 (인벤토리 전용)
 try:
-    from apps.infrastructure.storage.r2 import upload_fileobj_to_r2, generate_presigned_get_url
+    from apps.infrastructure.storage.r2 import (
+        upload_fileobj_to_r2_storage,
+        generate_presigned_get_url_storage,
+        copy_object_r2_storage,
+        delete_object_r2_storage,
+    )
 except ImportError:
-    upload_fileobj_to_r2 = None
-    generate_presigned_get_url = None
+    upload_fileobj_to_r2_storage = None
+    generate_presigned_get_url_storage = None
+    copy_object_r2_storage = None
+    delete_object_r2_storage = None
 
 QUOTA_BYTES = {"lite": 0, "basic": 10 * 1024**3, "premium": 200 * 1024**3}
 
