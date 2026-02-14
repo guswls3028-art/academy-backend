@@ -185,11 +185,22 @@ def move_folder(
     if source_folder.parent_id == target_folder_id:
         return {"ok": True, "detail": "Already in target"}
 
+    q = InventoryFolder.objects.filter(tenant=tenant, parent_id=target_folder_id, name=source_folder.name)
+    if scope == "student":
+        q = q.filter(student_ps=student_ps)
+    existing_sibling = q.first()
+    if existing_sibling and existing_sibling.id != source_folder_id:
+        if on_duplicate == "overwrite":
+            _delete_folder_tree_r2_and_db(existing_sibling, tenant, scope, student_ps)
+        elif on_duplicate == "rename":
+            source_folder.name = f"{source_folder.name}_복사본"
+            source_folder.save(update_fields=["name", "updated_at"])
+        else:
+            return {"ok": False, "status": 409, "code": "duplicate", "existing_name": source_folder.name, "detail": "Folder with same name exists"}
+
     folders, files = _collect_folder_tree(source_folder, tenant, scope, student_ps)
     source_folder_path = _get_folder_path_str(source_folder, tenant, scope, student_ps)
     target_path_str = _get_folder_path_str(target_folder, tenant, scope, student_ps)
-
-    prefix = f"tenants/{tenant.id}/students/{student_ps}/inventory" if scope == "student" else f"tenants/{tenant.id}/admin/inventory"
 
     copy_plans = []
     for inv_file in files:
