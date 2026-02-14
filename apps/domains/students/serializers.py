@@ -33,6 +33,12 @@ class TagSerializer(serializers.ModelSerializer):
 class EnrollmentSerializer(serializers.ModelSerializer):
     lecture_name = serializers.CharField(source="lecture.title", read_only=True)
     lecture_color = serializers.CharField(source="lecture.color", read_only=True, default="#3b82f6")
+    lecture_chip_label = serializers.CharField(
+        source="lecture.chip_label",
+        read_only=True,
+        allow_blank=True,
+        default="",
+    )
 
     class Meta:
         model = Enrollment
