@@ -151,6 +151,24 @@ def _file_folder_path(inv_file: InventoryFile, tenant: Tenant, scope: str, stude
     return _get_folder_path_str(inv_file.folder, tenant, scope, student_ps)
 
 
+def _delete_folder_tree_r2_and_db(folder: InventoryFolder, tenant: Tenant, scope: str, student_ps: str) -> None:
+    """폴더와 하위 모든 파일·폴더를 R2 및 DB에서 삭제 (이동 시 덮어쓰기용)."""
+    for child in InventoryFolder.objects.filter(tenant=tenant, parent=folder):
+        if scope == "student" and child.student_ps != student_ps:
+            continue
+        _delete_folder_tree_r2_and_db(child, tenant, scope, student_ps)
+    files = list(InventoryFile.objects.filter(tenant=tenant, scope=scope, folder=folder))
+    if scope == "student":
+        files = [f for f in files if f.student_ps == student_ps]
+    for inv_file in files:
+        try:
+            delete_object_r2_storage(key=inv_file.r2_key)
+        except Exception:
+            pass
+        inv_file.delete()
+    folder.delete()
+
+
 def move_folder(
     *,
     tenant: Tenant,
