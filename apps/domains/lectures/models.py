@@ -35,6 +35,12 @@ class Lecture(TimestampModel):
     lecture_time = models.CharField(max_length=100, blank=True, help_text="강의 시간 (예: 토 12:00 ~ 13:00)")
 
     color = models.CharField(max_length=20, default="#3b82f6", help_text="아이콘/라벨 색상")
+    chip_label = models.CharField(
+        max_length=2,
+        blank=True,
+        default="",
+        help_text="강의딱지 2글자 (미입력 시 제목 앞 2자 사용)",
+    )
 
     is_active = models.BooleanField(default=True)
 
