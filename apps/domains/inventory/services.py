@@ -146,6 +146,11 @@ def _collect_folder_tree(folder: InventoryFolder, tenant: Tenant, scope: str, st
     return folders, files
 
 
+def _file_folder_path(inv_file: InventoryFile, tenant: Tenant, scope: str, student_ps: str) -> str:
+    """파일이 속한 폴더의 경로 문자열 (prefix 제외)."""
+    return _get_folder_path_str(inv_file.folder, tenant, scope, student_ps)
+
+
 def move_folder(
     *,
     tenant: Tenant,
@@ -181,26 +186,32 @@ def move_folder(
         return {"ok": True, "detail": "Already in target"}
 
     folders, files = _collect_folder_tree(source_folder, tenant, scope, student_ps)
-    source_path_parts = _folder_path_parts(source_folder.parent, tenant, scope, student_ps)
+    source_folder_path = _get_folder_path_str(source_folder, tenant, scope, student_ps)
     target_path_str = _get_folder_path_str(target_folder, tenant, scope, student_ps)
 
-    # 경로 접두사: source 쪽 prefix 길이 (같은 tenant/scope/student_ps)
     prefix = f"tenants/{tenant.id}/students/{student_ps}/inventory" if scope == "student" else f"tenants/{tenant.id}/admin/inventory"
-    if source_path_parts:
-        source_prefix = f"{prefix}/{folder_path_string(source_path_parts)}"
-    else:
-        source_prefix = prefix
 
     copy_plans = []
     for inv_file in files:
-        rel = inv_file.r2_key
-        if not rel.startswith(prefix + "/") and not rel.startswith(prefix):
-            rel = inv_file.r2_key.replace(prefix, "", 1).lstrip("/")
+        old_key = inv_file.r2_key
+        file_name = _filename_from_r2_key(old_key)
+        current_folder_path = _file_folder_path(inv_file, tenant, scope, student_ps)
+        if current_folder_path.startswith(source_folder_path):
+            rel = current_folder_path[len(source_folder_path):].lstrip("/")
         else:
-            rel = inv_file.r2_key[len(prefix) :].lstrip("/")
-        file_name = _filename_from_r2_key(inv_file.r2_key)
-        new_key = f"{prefix}/{target_path_str}/{file_name}" if target_path_str else f"{prefix}/{file_name}"
-        copy_plans.append((inv_file, inv_file.r2_key, new_key))
+            rel = ""
+        if rel:
+            new_folder_path = f"{target_path_str}/{source_folder.name}/{rel}" if target_path_str else f"{source_folder.name}/{rel}"
+        else:
+            new_folder_path = f"{target_path_str}/{source_folder.name}" if target_path_str else source_folder.name
+        new_key = build_r2_key(
+            tenant_id=tenant.id,
+            scope=scope,
+            student_ps=student_ps,
+            folder_path=new_folder_path,
+            file_name=file_name,
+        )
+        copy_plans.append((inv_file, old_key, new_key))
 
     for inv_file, old_key, new_key in copy_plans:
         try:
