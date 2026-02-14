@@ -98,6 +98,11 @@ class StudentDetailSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(obj.profile_photo.url)
         return obj.profile_photo.url
 
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        data["profile_photo_url"] = self.get_profile_photo_url(obj)
+        return data
+
 
 class AddTagSerializer(serializers.Serializer):
     tag_id = serializers.IntegerField()
