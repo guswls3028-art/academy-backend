@@ -1,15 +1,15 @@
 # PATH: apps/core/management/commands/ensure_dev_user.py
 """
-로컬 개발용 테넌트 + 관리자 유저 + localhost 도메인 한 번에 채우기.
+로컬 개발용 테넌트 + 기존 유저(admin97 / 개발용) 비밀번호·멤버십 + localhost 도메인 채우기.
 
 - Tenant(code=admin97) 없으면 생성
 - Program(tenant 1:1) 없으면 생성
 - localhost, 127.0.0.1 → 해당 테넌트로 TenantDomain 연결
-- 로그인용 User 생성/비밀번호 설정 + TenantMembership(admin)
+- username=admin97 유저 있으면 비밀번호만 kjkszpj123으로 맞추고 TenantMembership(admin) 연결
+  없으면 User 생성 (이름 개발용) + 비밀번호 + TenantMembership
 
-사용:
-  python manage.py ensure_dev_user --tenant=admin97 --password=kjkszpj123
-  python manage.py ensure_dev_user --tenant=admin97 --password=kjkszpj123 --username=admin97
+사용 (이미 ID admin97 이름 개발용 유저 있을 때):
+  python manage.py ensure_dev_user --tenant=admin97 --password=kjkszpj123 --username=admin97 --name=개발용
 """
 from django.core.management.base import BaseCommand
 from django.db import transaction
