@@ -1,15 +1,12 @@
-# Documentation
+# 문서 인덱스 (SSOT)
 
-## 핵심 문서
+**원칙**: 문서 개수 최소 유지. 이 인덱스가 docs의 단일 진입점입니다.
 
-| 문서 | 설명 |
+| 문서 | 용도 |
 |------|------|
-| [DEPLOYMENT_MASTER_GUIDE.md](DEPLOYMENT_MASTER_GUIDE.md) | 배포 가이드 (인프라, 비용, 절차, ENV) — **워커 3종**: Video, AI, Messaging |
-| [FULLSTACK_VERIFICATION_CHECKLIST.md](FULLSTACK_VERIFICATION_CHECKLIST.md) | 풀스택 검증 체크리스트 (의존성·멱등성·헥사고날·하트비트) |
-| [DEPLOYMENT_READINESS_GAP.md](DEPLOYMENT_READINESS_GAP.md) | 배포 가능 4조건 및 격차 분석 |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 시스템 아키텍처 |
-| [REDIS_PROTECTION_LAYER.md](REDIS_PROTECTION_LAYER.md) | Redis 보호 레이어 |
-| [INFRASTRUCTURE.md](INFRASTRUCTURE.md) | AWS 리소스 설정 |
-| [QUEUE_SYSTEM.md](QUEUE_SYSTEM.md) | SQS 큐 시스템 |
-| [COST_FORECAST.md](COST_FORECAST.md) | 비용 예측 |
-| [COMMUNITY.md](COMMUNITY.md) | Community 도메인 구조 |
+| [DEPLOYMENT_MASTER_GUIDE.md](DEPLOYMENT_MASTER_GUIDE.md) | 배포·인프라·ENV·워커 (프론트/백 공통 참조) |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 시스템 아키텍처 개요 |
+| [INFRASTRUCTURE.md](INFRASTRUCTURE.md) | AWS·R2·SQS 등 리소스 설정 |
+| [COST_FORECAST.md](COST_FORECAST.md) | 비용 예측 및 최적화 |
+
+프론트 저장소(`academyfront`) 최상위 문서는 **README.md**이며, 학생 앱(`src/student/**`) / 관리자 앱 구분이 명시되어 있습니다.
