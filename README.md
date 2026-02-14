@@ -2,6 +2,8 @@
 
 학원 관리 시스템 백엔드 API 서버
 
+**프론트 구분 (SSOT)**: 학생 앱 = `academyfront/src/student/**` 전용. 그 외는 모두 관리자 앱 (`academyfront` 나머지 전체).
+
 ---
 
 ## 🚀 빠른 시작
