@@ -314,7 +314,7 @@ class MoveView(View):
         source_id = body.get("source_id")
         target_folder_id = body.get("target_folder_id")
         on_duplicate_raw = body.get("on_duplicate")
-        on_duplicate = (on_duplicate_raw or "rename").strip().lower() if on_duplicate_raw is not None and str(on_duplicate_raw).strip() else "rename"
+        on_duplicate = (on_duplicate_raw.strip().lower() if on_duplicate_raw and str(on_duplicate_raw).strip() else None)
         if move_type not in ("file", "folder") or not source_id:
             return JsonResponse({"detail": "type and source_id required"}, status=400)
         scope = (body.get("scope") or request.GET.get("scope") or "admin").lower()

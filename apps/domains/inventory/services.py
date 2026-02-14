@@ -53,7 +53,7 @@ def move_file(
     student_ps: str,
     source_file_id: int,
     target_folder_id: int | None,
-    on_duplicate: str = "rename",
+    on_duplicate: str | None = None,
 ) -> dict:
     """
     파일 이동: R2 Copy → DB 업데이트 → R2 Delete.
