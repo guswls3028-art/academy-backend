@@ -1,13 +1,11 @@
 # ==============================================================================
-# push 시 GitHub이 Docker 이미지 빌드(캐시) → ECR 푸시
-# 전부 ARM64 (모든 EC2가 Graviton/ARM)
+# ECR 푸시 (노캐시) — workflow_dispatch 전용
+# 캐시 없이 풀 빌드 후 ECR 푸시 (ARM64)
 # ==============================================================================
 
-name: Build and Push to ECR
+name: Build and Push to ECR (No Cache)
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 env:
@@ -38,7 +36,7 @@ jobs:
       - name: Ensure ECR repo academy-base
         run: aws ecr describe-repositories --repository-names academy-base --region ${{ env.AWS_REGION }} 2>/dev/null || aws ecr create-repository --repository-name academy-base --region ${{ env.AWS_REGION }}
 
-      - name: Build and push base (arm64)
+      - name: Build and push base (arm64, no cache)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -46,10 +44,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: ${{ env.ECR_REGISTRY }}/academy-base:latest
-          cache-from: type=gha,scope=base
-          cache-to: type=gha,mode=max,scope=base
 
-      - name: Build and push API (arm64)
+      - name: Build and push API (arm64, no cache)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -58,10 +54,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: ${{ env.ECR_REGISTRY }}/academy-api:latest
-          cache-from: type=gha,scope=api
-          cache-to: type=gha,mode=max,scope=api
 
-      - name: Build and push messaging-worker (arm64)
+      - name: Build and push messaging-worker (arm64, no cache)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -70,10 +64,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: ${{ env.ECR_REGISTRY }}/academy-messaging-worker:latest
-          cache-from: type=gha,scope=messaging
-          cache-to: type=gha,mode=max,scope=messaging
 
-      - name: Build and push ai-worker-cpu (arm64)
+      - name: Build and push ai-worker-cpu (arm64, no cache)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -82,10 +74,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:latest
-          cache-from: type=gha,scope=ai-cpu
-          cache-to: type=gha,mode=max,scope=ai-cpu
 
-      - name: Build and push video-worker (arm64)
+      - name: Build and push video-worker (arm64, no cache)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -94,5 +84,3 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: ${{ env.ECR_REGISTRY }}/academy-video-worker:latest
-          cache-from: type=gha,scope=video
-          cache-to: type=gha,mode=max,scope=video
