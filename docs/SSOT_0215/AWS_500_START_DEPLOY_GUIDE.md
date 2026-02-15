@@ -15,10 +15,29 @@
 | 3 | SQS 큐 생성 (로컬에서 스크립트 실행) | §3 | 4로 |
 | 4 | IAM 역할 생성 (EC2용, SQS·ECR·Self-stop) | §4 | 5로 |
 | 5 | 보안 그룹 생성 (API, Worker, RDS) | §5 | 6으로 |
-| 6 | EC2 API 서버 (t4g.small, 30GB) + Docker + ECR 푸시 | §6 | 7으로 |
-| 7 | EC2 Messaging Worker (t4g.micro, 상시) | §7 | 8으로 |
-| 8 | EC2 Video Worker (t4g.medium, 4GB, 100GB EBS 마운트) | §8 | 9·검증 |
-| 9 | (선택) AI Worker CPU 별도 EC2 | §9 | §10 환경 변수 → §11 검증 |
+| 6 | EC2 API 서버 (t4g.small, 30GB) + Docker + ECR 푸시 | §6 | 6.5 → 7 |
+| 6.5 | 배포용 .env 생성·EC2 복사, migrate, `/health` 확인 | §6.3 아래 | 7으로 |
+| 7 | EC2 Messaging Worker (t4g.micro 상시, 또는 API EC2에 동시 실행) | §7 | 8으로 |
+| 8 | EC2 Video Worker (t4g.medium, 4GB, 100GB EBS → `/mnt/transcode`) | §8 | 9으로 |
+| 9 | AI Worker CPU (별도 EC2 또는 Video 호스트 공유) | §9 | §10 → §11 검증 |
+
+---
+
+## ✅ 필수 완료 목록 (전부 해야 끝)
+
+아래는 **선택이 아닌 필수** 항목이다. 다 끝내야 500명 스타트 배포가 끝난다.
+
+| # | 구분 | 필수 항목 | 비고 |
+|---|------|-----------|------|
+| 1 | 인프라 | 리전 ap-northeast-2, RDS(academy-db, 퍼블릭 아니오), SQS(Video/Messaging/AI 큐), IAM 역할, 보안 그룹(API/Worker/RDS) | §1~§5 |
+| 2 | 로컬 | 베이스·API·Messaging·Video·AI 워커 이미지 빌드(ARM64) + ECR 푸시 | §6.2 + 워커 3종 |
+| 3 | 환경 | 배포용 .env 생성(DB_HOST 등 RDS 반영), 각 EC2에 .env 복사, API_BASE_URL=API 주소 | §10, scripts/prepare_deploy_env.py |
+| 4 | API EC2 | Docker 설치, ECR 로그인, academy-api pull·실행, **migrate**, `/health` 200 확인, `docker update --restart unless-stopped academy-api` | §6.3 |
+| 5 | Messaging EC2 | academy-messaging-worker pull·실행, `docker update --restart unless-stopped academy-messaging-worker` | §7 (API EC2에 같이 띄워도 됨) |
+| 6 | Video EC2 | 100GB EBS `/mnt/transcode` 마운트 확인(`df -h`) → academy-video-worker pull·실행(`-v /mnt/transcode:/tmp`, `--memory 4g`), `docker update --restart unless-stopped academy-video-worker` | §8 |
+| 7 | AI Worker | academy-ai-worker-cpu pull·실행(별도 EC2 또는 Video EC2), `docker update --restart unless-stopped academy-ai-worker-cpu` | §9 |
+| 8 | 배포 전 5가지 | RDS 퍼블릭 끄기, Video 100GB 확인, CloudWatch 보관 7~14일, Idle Stop 1회 테스트, 8000은 테스트용·오픈 전 ALB+HTTPS | 상단 🔥 |
+| 9 | 오픈 전 4개 | ALB+HTTPS 적용, RDS max_connections 확인, Self-Stop 실제 동작 1회, Swap 모니터링 | 상단 🔎 |
 
 ---
 
@@ -239,6 +258,14 @@ docker tag academy-api:latest 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/
 docker push 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest
 ```
 
+**워커 이미지 (필수)**  
+§7·§8·§9 진행 전에 아래 3종도 같은 방식으로 ARM64 빌드 후 ECR 푸시해야 한다.  
+- `academy-messaging-worker` (docker/messaging-worker/Dockerfile)  
+- `academy-video-worker` (docker/video-worker/Dockerfile)  
+- `academy-ai-worker-cpu` (docker/ai-worker-cpu/Dockerfile)  
+
+ECR 레포: `aws ecr create-repository --repository-name academy-messaging-worker --region ap-northeast-2` 등으로 없으면 생성 후 푸시.
+
 - 로컬이 이미 ARM(M1/M2 등)이면 `--platform linux/arm64` 없이 일반 `docker build` 로 빌드 후 tag/push 해도 됨.
 
 ### 6.3 EC2 접속 후 API 컨테이너 실행
@@ -263,12 +290,20 @@ docker run -d --name academy-api --restart unless-stopped \
   <계정ID>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest
 ```
 
-마이그레이션:
+**배포용 .env (필수)**  
+로컬에서 RDS 연결값이 반영된 .env를 만들어 EC2에 둬야 한다.  
+로컬: `python scripts/prepare_deploy_env.py -o .env.deploy` → 생성된 `.env.deploy`를 scp로 EC2 `~/.env`에 복사.  
+(또는 `.env.admin97` 등에 `DB_HOST_RDS` 등이 있으면 위 스크립트가 `DB_*`를 RDS 값으로 채운 .env.deploy를 생성한다.)
+
+마이그레이션 및 헬스 확인:
 
 ```bash
-docker exec academy-api python manage.py migrate
+docker exec academy-api python manage.py migrate --no-input
 curl http://localhost:8000/health
 ```
+
+→ `{"status":"healthy",...}` 가 나와야 한다.  
+API 퍼블릭 IP가 확정되면 `.env`에 `API_BASE_URL=http://<API-IP>:8000` 설정 후, 워커가 있는 EC2에는 갱신된 .env를 다시 복사.
 
 ### 6.4 EC2 재시작 시 컨테이너 자동 실행 (재시작 정책)
 
@@ -381,10 +416,10 @@ docker run -d --name academy-ai-worker-cpu --restart unless-stopped \
   --env-file .env \
   -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker \
   -e EC2_IDLE_STOP_THRESHOLD=5 \
-  <계정ID>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-ai-worker:latest
+  <계정ID>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-ai-worker-cpu:latest
 ```
 
-(이미지 이름은 프로젝트 빌드 스크립트에 맞게 `academy-ai-worker-cpu` 등으로 조정.)
+(ECR 레포·이미지 이름: `academy-ai-worker-cpu`, 프로젝트 Dockerfile: `docker/ai-worker-cpu/Dockerfile`.)
 
 ---
 

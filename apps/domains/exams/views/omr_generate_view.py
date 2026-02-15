@@ -14,7 +14,7 @@ from rest_framework import status
 from apps.domains.exams.models import Exam, ExamAsset
 from apps.domains.exams.serializers.exam_asset import ExamAssetSerializer
 from apps.domains.exams.services.template_builder_service import TemplateBuilderService
-from apps.domains.exams.services.omr_pdf_generator import generate_simple_objective_omr_pdf
+from apps.domains.assets.omr.renderer.v245_final import render_to_bytes as render_omr_v245_pdf
 from apps.domains.exams.services.template_resolver import assert_template_editable
 from apps.core.r2_paths import ai_exam_asset_key
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
@@ -48,14 +48,11 @@ class GenerateOMRSheetAssetView(APIView):
         if question_count <= 0:
             question_count = int(request.data.get("question_count") or 20)
 
-        if question_count not in (10, 20, 30):
-            return Response({"detail": "question_count must be 10|20|30"}, status=status.HTTP_400_BAD_REQUEST)
+        if question_count not in (10, 20, 30, 45):
+            return Response({"detail": "question_count must be 10|20|30|45"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1) PDF 생성 (in-memory)
-        pdf_bytes = generate_simple_objective_omr_pdf(
-            title=template_exam.title,
-            question_count=question_count,
-        )
+        # 1) PDF 생성 — v245 OMR 시험지 (좌: 로고/시험명/과목/성명/전화/OMR 8자리, 우: 답란 1~15/16~30/31~45)
+        pdf_bytes = render_omr_v245_pdf(question_count=question_count, debug_grid=False)
         bio = io.BytesIO(pdf_bytes)
 
         # 2) 업로드 (경로 통일: tenants/{id}/ai/exams/...)

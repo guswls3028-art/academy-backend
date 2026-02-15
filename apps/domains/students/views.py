@@ -57,9 +57,19 @@ class TagViewSet(ModelViewSet):
 # ======================================================
 
 class StudentListPagination(PageNumberPagination):
+    """SSOT: 프론트엔드가 총 개수(count)와 results를 기대하므로 응답에 count 포함."""
     page_size = 50
     page_size_query_param = "page_size"
     max_page_size = 100
+
+    def get_paginated_response(self, data):
+        return Response({
+            "count": self.page.paginator.count,
+            "page_size": self.page.paginator.per_page,
+            "next": self.get_next_link(),
+            "previous": self.get_previous_link(),
+            "results": data,
+        })
 
 
 class StudentViewSet(ModelViewSet):

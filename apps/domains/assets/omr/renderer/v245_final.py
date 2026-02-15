@@ -1,11 +1,12 @@
 # ⚠️ SSOT
-# ⚠️ DO NOT MODIFY
 # ⚠️ Source of Truth for OMR rendering
+# 요청 스펙: 감독관/필적/결시자/문형/안내/평가원로고 제거, 성명·전화번호·OMR 8자리, 답란 1~15/16~30/31~45
 
 # apps/domains/assets/omr/renderer/v245_final.py
 
 from __future__ import annotations
 
+import io
 import os
 from dataclasses import dataclass
 from typing import Tuple
@@ -148,22 +149,22 @@ MARGIN_B = 3
 FRAME_LW = 1.2
 DIVIDER_LW = 1.0
 
-# Left area
-LEFT_W = 28  # left column width in grid units
+# Left area — 전체 하단 정렬 (감독관/필적/결시자 없음, 로고만 좌상단)
+LEFT_W = 28
 LEFT_AREA = R(MARGIN_L, MARGIN_B, LEFT_W, GRID_ROWS - (MARGIN_T + MARGIN_B))
 
-# Logo (top-left remain area)
+# Logo (좌상단 유일 영역)
 LOGO_BOX = R(MARGIN_L + 2, GRID_ROWS - MARGIN_T - 18, 16, 16)
 
-# Bottom-aligned left info block region (we anchor to bottom of LEFT_AREA)
+# 좌측 블록: 시험명, 과목, 성명, 전화번호, OMR 8자리 — 하단 정렬
 LEFT_INFO_INSET_X = 2.0
 LEFT_INFO_INSET_Y = 2.0
 
-# Name/Phone boxes
-NAME_BOX_H = 4.2
-IDENT_BOX_H = 4.2
+TITLE_BOX_H = 3.8   # 시험명
+SUBJECT_BOX_H = 3.5 # 과목
+NAME_BOX_H = 4.2    # 성명
+IDENT_BOX_H = 4.2   # 전화번호
 
-# Identifier bubble card
 IDENT_CARD_H = 22.0
 IDENT_BUBBLE_ROWS = 9
 IDENT_DIGITS = 8
@@ -223,30 +224,35 @@ def draw_page_frame(c: canvas.Canvas):
 
 
 def draw_left_side(c: canvas.Canvas):
-    # Logo placeholder (top-left empty box)
+    # Logo (좌상단)
     round_rect(c, LOGO_BOX.X, LOGO_BOX.Y, LOGO_BOX.W, LOGO_BOX.H, r=gw(1.0), lw=0.9)
 
-    # Bottom-aligned block inside LEFT_AREA:
-    # Layout order (bottom-up):
-    # [ident bubble card]
-    # gap
-    # [id text box (Phone number text box)]
-    # gap
-    # [name text box]
+    # 좌측 블록 하단 정렬 (bottom-up): OMR 8자리 → 전화번호 → 성명 → 과목 → 시험명
     area = LEFT_AREA.inset(LEFT_INFO_INSET_X, LEFT_INFO_INSET_Y)
+    gap = 2.0
 
-    gap = 2.2
-
-    ident_card = R(area.x, area.y, area.w, IDENT_CARD_H)  # at very bottom
+    ident_card = R(area.x, area.y, area.w, IDENT_CARD_H)
     ident_text = R(area.x, ident_card.y + ident_card.h + gap, area.w, IDENT_BOX_H)
     name_text = R(area.x, ident_text.y + ident_text.h + gap, area.w, NAME_BOX_H)
+    subject_text = R(area.x, name_text.y + name_text.h + gap, area.w, SUBJECT_BOX_H)
+    title_text = R(area.x, subject_text.y + subject_text.h + gap, area.w, TITLE_BOX_H)
 
-    # Name box
+    # 시험명
+    _set_font(c, 8)
+    c.drawString(title_text.X, title_text.Y + title_text.H + gh(0.6), "TITLE")
+    round_rect(c, title_text.X, title_text.Y, title_text.W, title_text.H, r=gw(1.0), lw=1.0)
+
+    # 과목
+    _set_font(c, 8)
+    c.drawString(subject_text.X, subject_text.Y + subject_text.H + gh(0.6), "SUBJECT")
+    round_rect(c, subject_text.X, subject_text.Y, subject_text.W, subject_text.H, r=gw(1.0), lw=1.0)
+
+    # 성명
     _set_font(c, 9)
     c.drawString(name_text.X, name_text.Y + name_text.H + gh(0.8), "NAME")
     round_rect(c, name_text.X, name_text.Y, name_text.W, name_text.H, r=gw(1.0), lw=1.0)
 
-    # Phone box (replacing exam ID)
+    # 전화번호 (OMR 식별자 8자리)
     _set_font(c, 9)
     c.drawString(ident_text.X, ident_text.Y + ident_text.H + gh(0.8), "PHONE")
     round_rect(c, ident_text.X, ident_text.Y, ident_text.W, ident_text.H, r=gw(1.0), lw=1.0)
@@ -292,30 +298,29 @@ def _card_rect(idx: int) -> R:
     return R(CARDS_X[idx], CARD_TOP_Y, CARD_W, CARD_H)
 
 
-def draw_right_cards(c: canvas.Canvas, question_count: int = 45):
-    # Optional small label (ASCII to avoid CJK font dependency)
-    _set_font(c, 12)
-    c.drawString(gx(RIGHT_X0 + 3.2), gy(GRID_ROWS - MARGIN_T - 4.0), "ANSWER AREA")
+# A~E 선택지 (저작권 없는 기술용어)
+CHOICE_LABELS = ["A", "B", "C", "D", "E"]
 
-    q = 1
+
+def draw_right_cards(c: canvas.Canvas, question_count: int = 45):
+    # 답란 (기술용어, 저작권 없음)
+    _set_font(c, 11)
+    c.drawString(gx(RIGHT_X0 + 3.2), gy(GRID_ROWS - MARGIN_T - 4.0), "1~15    16~30    31~45")
+
     ranges = [(1, 15), (16, 30), (31, 45)]
 
     for i, (start, end) in enumerate(ranges):
-        if start > question_count:
-            break
-
+        # 카드 3개 항상 유지 (1~15, 16~30, 31~45), 문항 수만큼만 행 채움
         card = _card_rect(i)
         inner = card.inset(PAD_X, PAD_B)
-        inner = R(inner.x, inner.y, inner.w, inner.h - (PAD_T + PAD_B))  # keep same idea
+        inner = R(inner.x, inner.y, inner.w, inner.h - (PAD_T + PAD_B))
 
-        # Outer
         round_rect(c, card.X, card.Y, card.W, card.H, r=gw(1.0), lw=CARD_OUTER_LW)
 
-        # Header band line + label
         header_y = card.Y + card.H - gh(HEADER_H)
         hline(c, card.X + gw(2.5), header_y, card.X + card.W - gw(2.5), lw=HEADER_RULE_LW)
         _set_font(c, 9)
-        c.drawCentredString(card.X + card.W / 2, header_y - gh(2.1), f"{start} - {end}")
+        c.drawCentredString(card.X + card.W / 2, header_y - gh(2.1), f"{start}~{end}")
 
         # Compute row area (below header, inside card)
         rows_top = header_y - gh(0.8)
@@ -342,47 +347,56 @@ def draw_right_cards(c: canvas.Canvas, question_count: int = 45):
             if cur_q > min(end, question_count):
                 break
 
-            # Bubble Y centered in row
             y = rows_top - (row + 1) * row_h + (row_h - gh(BUBBLE_H)) / 2
 
-            # Question number (tight to left)
             _set_font(c, 9)
             c.drawString(card.X + gw(0.8), y + gh(0.85), str(cur_q))
 
-            # Bubbles
             for k in range(5):
                 bx = bubble_start_x + gw(k * (BUBBLE_W + BUBBLE_GAP))
                 oval_bubble(c, bx, y, gw(BUBBLE_W), gh(BUBBLE_H), outer_lw=0.65, inner_lw=0.40, inset=0.20 * mm)
-
                 _set_font(c, 7)
-                c.drawCentredString(bx + gw(BUBBLE_W) / 2, y + gh(BUBBLE_H) / 2 - gh(0.30), str(k + 1))
+                c.drawCentredString(bx + gw(BUBBLE_W) / 2, y + gh(BUBBLE_H) / 2 - gh(0.30), CHOICE_LABELS[k])
 
-            # Group rule (every 5, excluding last)
             if (row + 1) % GROUP_SIZE == 0 and row != ROWS_PER_CARD - 1:
                 ry = rows_top - (row + 1) * row_h
                 hline(c, card.X + gw(2.0), ry, card.X + card.W - gw(2.0), lw=GROUP_RULE_LW)
 
-        q += ROWS_PER_CARD
+
+def draw_footer(c: canvas.Canvas):
+    """하단 안내 (※ 컴퓨터용 연필 사용 — ASCII로 출력하여 CJK 폰트 불필요)"""
+    _set_font(c, 8)
+    c.drawCentredString(
+        gx(GRID_COLS / 2),
+        gy(MARGIN_B) + 1.5 * mm,
+        "Use No.2 pencil only",
+    )
 
 
 def render(out_path: str, *, question_count: int = 45, debug_grid: bool = False):
     c = canvas.Canvas(out_path, pagesize=PAGE_SIZE)
-
-    # Frame + divider
-    draw_page_frame(c)
-
-    # Left
-    draw_left_side(c)
-
-    # Right
-    draw_right_cards(c, question_count=question_count)
-
-    # Debug overlay on top (optional)
-    if debug_grid:
-        draw_debug_grid(c)
-
+    _draw_all(c, question_count=question_count, debug_grid=debug_grid)
     c.showPage()
     c.save()
+
+
+def render_to_bytes(*, question_count: int = 45, debug_grid: bool = False) -> bytes:
+    """API에서 PDF 바이트로 받을 때 사용 (파일 경로 없이)."""
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=PAGE_SIZE)
+    _draw_all(c, question_count=question_count, debug_grid=debug_grid)
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def _draw_all(c: canvas.Canvas, *, question_count: int = 45, debug_grid: bool = False):
+    draw_page_frame(c)
+    draw_left_side(c)
+    draw_right_cards(c, question_count=question_count)
+    draw_footer(c)
+    if debug_grid:
+        draw_debug_grid(c)
 
 
 def main():

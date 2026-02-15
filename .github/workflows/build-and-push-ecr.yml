@@ -1,0 +1,71 @@
+# ==============================================================================
+# push 시 GitHub이 Docker 이미지 빌드 → AWS ECR 푸시
+# deploy.ps1 / DEPLOY_COPYPASTE_WHILE_VIDEO_BUILDS.md 와 동일한 4개 이미지
+# ==============================================================================
+# 필수: Repo Settings → Secrets and variables → Actions 에서
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY 설정
+# ==============================================================================
+
+name: Build and Push to ECR
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REGISTRY: 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build base image
+        run: |
+          docker build -f docker/Dockerfile.base -t academy-base:latest .
+
+      - name: Build API image
+        run: |
+          docker build -f docker/api/Dockerfile -t academy-api:latest .
+
+      - name: Build messaging-worker image
+        run: |
+          docker build -f docker/messaging-worker/Dockerfile -t academy-messaging-worker:latest .
+
+      - name: Build ai-worker-cpu image
+        run: |
+          docker build -f docker/ai-worker-cpu/Dockerfile -t academy-ai-worker-cpu:latest .
+
+      - name: Build video-worker image
+        run: |
+          docker build -f docker/video-worker/Dockerfile -t academy-video-worker:latest .
+
+      - name: Tag and push to ECR
+        run: |
+          docker tag academy-api:latest ${{ env.ECR_REGISTRY }}/academy-api:latest
+          docker tag academy-messaging-worker:latest ${{ env.ECR_REGISTRY }}/academy-messaging-worker:latest
+          docker tag academy-ai-worker-cpu:latest ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:latest
+          docker tag academy-video-worker:latest ${{ env.ECR_REGISTRY }}/academy-video-worker:latest
+
+          docker push ${{ env.ECR_REGISTRY }}/academy-api:latest
+          docker push ${{ env.ECR_REGISTRY }}/academy-messaging-worker:latest
+          docker push ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:latest
+          docker push ${{ env.ECR_REGISTRY }}/academy-video-worker:latest
