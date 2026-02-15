@@ -1,0 +1,72 @@
+# ==============================================================================
+# Docker 빌드 컨텍스트 제외 목록 (보고서 5.2절 기준)
+# ==============================================================================
+# venv, .env, __pycache__ 가 빌드에 포함되지 않도록 반드시 유지할 것.
+# ==============================================================================
+
+# Python — 가상환경·캐시 (빌드 컨텍스트 제외 필수)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+*.egg-info/
+*.egg
+
+# Environment — 로컬 설정 (빌드 시 포함 금지)
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# Django / Local
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+/media
+/static
+/storage
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Testing (소스는 COPY 안 함 — 컨텍스트만 축소)
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+tests/
+
+# 문서 (빌드 불필요 — 컨텍스트 축소)
+docs/
+
+# 스크립트·덤프 (ai-worker-cpu만 COPY scripts 사용 — 해당 빌드 시 컨텍스트에 포함됨)
+# scripts/ 제거: ai-worker-cpu Dockerfile에서 COPY scripts 필요 (500/10K 가이드)
+ai_dumps_backend/
+
+# Build
+dist/
+build/
+node_modules/
+
+# Cursor/IDE
+.cursor/
+
+# Misc
+.DS_Store
+*.bak
+*.tmp

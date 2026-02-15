@@ -66,10 +66,10 @@ def check_video_pipeline():
         fail("process_video", str(e))
 
     try:
-        from src.infrastructure.db.video_repository import VideoRepository
-        ok("VideoRepository")
+        from academy.adapters.db.django.repositories_video import DjangoVideoRepository
+        ok("DjangoVideoRepository (academy)")
     except Exception as e:
-        fail("VideoRepository", str(e))
+        fail("DjangoVideoRepository", str(e))
 
     try:
         from src.infrastructure.cache.redis_idempotency_adapter import RedisIdempotencyAdapter

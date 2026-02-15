@@ -10,7 +10,7 @@ No Celery. No Redis.
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.support.video.models import VideoPlaybackSession
+from academy.adapters.db.django import repositories_video as video_repo
 
 
 class Command(BaseCommand):
@@ -18,11 +18,5 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         now = timezone.now()
-        updated = VideoPlaybackSession.objects.filter(
-            status=VideoPlaybackSession.Status.ACTIVE,
-            expires_at__lt=now,
-        ).update(
-            status=VideoPlaybackSession.Status.EXPIRED,
-            ended_at=now,
-        )
+        updated = video_repo.playback_session_update_expired(now)
         self.stdout.write(self.style.SUCCESS(f"Marked {updated} session(s) as EXPIRED"))

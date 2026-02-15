@@ -26,19 +26,19 @@ def create_ai_sqs_resources(region_name: str = "ap-northeast-2"):
         {
             "name": "academy-ai-jobs-lite",
             "dlq_name": "academy-ai-jobs-lite-dlq",
-            "visibility_timeout": "300",  # 5분
+            "visibility_timeout": "3600",  # 60분 (lease 3540, safety_margin 60)
             "tier": "lite",
         },
         {
             "name": "academy-ai-jobs-basic",
             "dlq_name": "academy-ai-jobs-basic-dlq",
-            "visibility_timeout": "300",  # 5분
+            "visibility_timeout": "3600",  # 60분
             "tier": "basic",
         },
         {
             "name": "academy-ai-jobs-premium",
             "dlq_name": "academy-ai-jobs-premium-dlq",
-            "visibility_timeout": "600",  # 10분 (GPU 작업은 더 오래 걸릴 수 있음)
+            "visibility_timeout": "3600",  # 60분
             "tier": "premium",
         },
     ]

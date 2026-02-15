@@ -41,9 +41,14 @@ academy/
 │       └── video_worker/   # Video Worker
 ├── docker/                 # Docker 설정
 │   ├── Dockerfile.base    # 공통 베이스 이미지
-│   ├── api/               # API 서버 Dockerfile
-│   ├── ai-worker/         # AI Worker Dockerfile
-│   └── video-worker/      # Video Worker Dockerfile
+│   ├── api/               # API 서버
+│   ├── video-worker/      # Video Worker
+│   ├── ai-worker/         # AI Worker (단일 모드)
+│   ├── ai-worker-cpu/     # AI Worker CPU 전용
+│   ├── ai-worker-gpu/     # AI Worker GPU 전용
+│   ├── messaging-worker/  # Messaging Worker
+│   ├── build.ps1 / build.sh
+│   └── README-COMPOSE.md
 ├── docs/                   # 문서
 │   ├── DEPLOYMENT_MASTER_GUIDE.md  ⭐ 메인 문서
 │   ├── INFRASTRUCTURE.md
@@ -60,8 +65,8 @@ academy/
 ## 🏗️ 인프라 아키텍처
 
 ### 스토리지
-- **Cloudflare R2**: 모든 미디어 파일 저장 (S3-compatible)
-- **버킷**: `academy-ai`, `academy-video`
+- **Cloudflare R2**: 모든 미디어·파일 저장 (S3-compatible)
+- **버킷**: `academy-ai`, `academy-video`, `academy-excel`, `academy-storage` (설정: `.env.example`, `apps/api/config/settings/base.py`)
 
 ### CDN
 - **Cloudflare CDN**: `pub-*.r2.dev` 도메인 사용
@@ -128,12 +133,13 @@ curl http://localhost:8000/health
 
 ## 📚 문서 (SSOT)
 
-**문서 인덱스**: [docs/README.md](docs/README.md) — 최소 구성 유지
+**문서 인덱스**: [docs/README.md](docs/README.md) — 전체 목록 및 용도
 
 - **[DEPLOYMENT_MASTER_GUIDE.md](docs/DEPLOYMENT_MASTER_GUIDE.md)** — 배포·인프라·ENV (프론트/백 공통)
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — 아키텍처 개요
 - [INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) — AWS·R2·SQS 설정
 - [COST_FORECAST.md](docs/COST_FORECAST.md) — 비용 예측
+- [PRODUCTION_READINESS_CHECKLIST.md](docs/PRODUCTION_READINESS_CHECKLIST.md) — 배포 전 체크리스트
 
 ---
 
@@ -146,11 +152,12 @@ curl http://localhost:8000/health
 cp .env.example .env
 nano .env
 
-# 2. Docker 이미지 빌드
+# 2. Docker 이미지 빌드 (권장: .\docker\build.ps1 한 번에 실행)
 docker build -f docker/Dockerfile.base -t academy-base:latest .
 docker build -f docker/api/Dockerfile -t academy-api:latest .
-docker build -f docker/ai-worker/Dockerfile -t academy-ai-worker:latest .
 docker build -f docker/video-worker/Dockerfile -t academy-video-worker:latest .
+docker build -f docker/ai-worker/Dockerfile -t academy-ai-worker:latest .
+docker build -f docker/messaging-worker/Dockerfile -t academy-messaging-worker:latest .
 
 # 3. 서비스 시작
 docker-compose up -d
@@ -233,4 +240,4 @@ DevOps 팀 또는 프로젝트 관리자에게 문의
 
 ---
 
-**최종 업데이트**: 2026-02-12
+**최종 업데이트**: 2026-02-15

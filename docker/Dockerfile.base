@@ -22,22 +22,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# pip 업그레이드
-RUN pip install --upgrade pip
-
-# 의존성 파일 복사 및 설치
+# 의존성 파일 복사 및 설치 (pip 업그레이드와 단일 RUN으로 레이어 최소화)
 COPY requirements/common.txt ./requirements/common.txt
-RUN pip install --user --no-cache-dir -r requirements/common.txt
+RUN pip install --upgrade pip && pip install --user --no-cache-dir -r requirements/common.txt
 
 # ==============================================================================
-# Stage 2: Runtime (최종 이미지 - 빌드 도구 제거)
+# Stage 2: Runtime (최종 이미지 - 빌드 도구 제거, non-root)
 # ==============================================================================
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
-ENV PATH=/root/.local/bin:$PATH
 
 # 런타임 의존성만 설치 (빌드 도구 제외)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -46,20 +42,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# non-root 사용자 (보안·감사 대비, CMD/경로 규칙 유지)
+RUN groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid appuser --create-home --home-dir /home/appuser appuser
+
 WORKDIR /app
 
-# Builder에서 설치한 Python 패키지 복사
-COPY --from=builder /root/.local /root/.local
+# Builder에서 설치한 Python 패키지를 appuser 홈으로 복사
+COPY --from=builder /root/.local /home/appuser/.local
+ENV PATH=/home/appuser/.local/bin:$PATH
 
-# 애플리케이션 코드 복사 (Hexagonal: src/ = domain, application, infrastructure, interfaces)
-COPY src ./src
-COPY apps ./apps
-COPY libs ./libs
-COPY manage.py ./
+# appuser가 .local 읽기 가능 (앱 코드는 각 서비스 Dockerfile에서 COPY)
+RUN chown -R appuser:appuser /home/appuser
 
-# Stateless 검증: 로컬 파일 저장 방지
-# MEDIA_ROOT는 설정되어 있지만 실제로는 R2 사용
-# 컨테이너 내부 저장소는 사용하지 않음 (확장성 보장)
+# Base = 런타임·공통 의존성만. 비즈니스 로직(src, academy, apps)은 서비스별 Dockerfile에서 복사.
+# → 코드 변경 시 base 재빌드 불필요, 워커별 필요 코드만 포함 가능.
+
+USER appuser
 
 # 기본 명령어는 서비스별로 오버라이드
 CMD ["python", "--version"]

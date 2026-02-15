@@ -12,7 +12,6 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from apps.core.permissions import IsStudent
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 
 from ..models import (
     Video,
@@ -22,6 +21,7 @@ from ..models import (
     VideoAccess,
     AccessMode,
 )
+from academy.adapters.db.django import repositories_video as video_repo
 from ..serializers import (
     PlaybackStartRequestSerializer,
     PlaybackRefreshRequestSerializer,
@@ -75,7 +75,7 @@ def _is_policy_token_valid(payload: dict) -> bool:
 
     # NOTE: migrations 적용 전에는 policy_version 컬럼이 없으면 SELECT에서 터질 수 있음.
     # 실서비스는 migration 이후를 전제로 한다.
-    v = Video.objects.filter(id=video_id).only("id", "policy_version").first()
+    v = video_repo.video_get_by_id_only_policy(video_id)
     if not v:
         return False
 
@@ -90,10 +90,9 @@ def _is_policy_token_valid(payload: dict) -> bool:
 
     # Validate access_mode consistency
     try:
-        from apps.domains.enrollment.models import Enrollment
         from ..services.access_resolver import get_effective_access_mode
-        
-        enrollment = Enrollment.objects.filter(id=enrollment_id).first()
+
+        enrollment = video_repo.enrollment_get_by_id(enrollment_id)
         if enrollment:
             current_access_mode = get_effective_access_mode(video=v, enrollment=enrollment)
             token_access_mode = payload.get("access_mode")
@@ -144,24 +143,13 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         if not video_id:
             return Response({"detail": "video_id_required"}, status=400)
 
-        enrollment = Enrollment.objects.select_related(
-            "student",
-            "lecture",
-        ).get(id=enrollment_id, status="ACTIVE")
+        enrollment = video_repo.enrollment_get_by_id_active_with_student_lecture(enrollment_id)
+        video = video_repo.video_get_by_id_with_relations(int(video_id))
 
-        video = Video.objects.select_related(
-            "session",
-            "session__lecture",
-        ).get(id=int(video_id))
-
-        # 수강 검증
         if enrollment.lecture_id != video.session.lecture_id:
             return _deny("enrollment_mismatch", code=403)
 
-        if not SessionEnrollment.objects.filter(
-            session=video.session,
-            enrollment=enrollment,
-        ).exists():
+        if not video_repo.session_enrollment_exists(video.session, enrollment):
             return _deny("no_session_access", code=403)
 
         ok, reason = self._check_access(video=video, enrollment=enrollment)
@@ -198,7 +186,7 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
             expires_at_timestamp = int(sess["expires_at"])
             expires_at = timezone.datetime.fromtimestamp(expires_at_timestamp, tz=timezone.utc)
 
-            VideoPlaybackSession.objects.create(
+            video_repo.playback_session_create(
                 video=video,
                 enrollment=enrollment,
                 session_id=session_id,
@@ -372,12 +360,7 @@ class PlaybackEndView(APIView):
                     session_id=session_id,
                 )
 
-                VideoPlaybackSession.objects.filter(
-                    session_id=session_id
-                ).update(
-                    status=VideoPlaybackSession.Status.ENDED,
-                    ended_at=timezone.now(),
-                )
+                video_repo.playback_session_end_by_session_id(session_id)
 
         return Response({"ok": True})
 
@@ -434,11 +417,9 @@ class PlaybackEventBatchView(APIView):
         objs = []
 
         # policy snapshot 계산 (원본 믹스인 재사용)
-        video = Video.objects.filter(id=int(payload["video_id"])).first()
-        enrollment = Enrollment.objects.filter(id=int(payload["enrollment_id"])).first()
-        perm = None
-        if video and enrollment:
-            perm = VideoAccess.objects.filter(video=video, enrollment=enrollment).first()
+        video = video_repo.video_get_by_id(int(payload["video_id"]))
+        enrollment = video_repo.enrollment_get_by_id(int(payload["enrollment_id"]))
+        perm = video_repo.video_access_get(video, enrollment) if video and enrollment else None
 
         policy_snapshot = {}
         try:
@@ -516,7 +497,7 @@ class PlaybackEventBatchView(APIView):
         # 트랜잭션 범위 최소화: bulk_create와 통계 업데이트 분리 (50명 원장 확장 대비)
         # 긴 트랜잭션은 DB 전체를 멈출 수 있음
         with transaction.atomic():
-            VideoPlaybackEvent.objects.bulk_create(objs, batch_size=500)
+            video_repo.playback_event_bulk_create(objs, batch_size=500)
         
         # 통계 업데이트는 별도 트랜잭션으로 분리 (lock 시간 단축)
         stats = latest_stats or get_session_violation_stats(session_id=session_id)

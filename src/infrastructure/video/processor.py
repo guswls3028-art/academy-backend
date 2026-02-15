@@ -3,6 +3,11 @@ VideoProcessor - 실제 비디오 처리 (다운로드, 트랜스코딩, R2 업�
 
 진행률은 IProgress에 기록 (Write-Behind, Redis 우선).
 완료는 호출부(Handler)에서 repo.complete_video() 호출.
+
+R2 raw 삭제: Lifecycle만 믿지 않고, 인코딩 성공 직후 반드시 삭제.
+  → 구현 위치: 워커 성공 콜백 (apps/worker/video_worker/sqs_main.py).
+  → 순서: HLS 업로드 완료(process_video) → DB 상태 '완료'(handler/repo.complete_video) → R2 raw_key 삭제(sqs_main).
+  → 3시간 영상도 인코딩 직후 수 GB 즉시 반환.
 """
 from __future__ import annotations
 
@@ -38,11 +43,13 @@ def process_video(
 
     video_id = int(job.get("video_id"))
     file_key = str(job.get("file_key") or "")
-    tenant_code = str(job.get("tenant_code") or "")
+    tenant_id = job.get("tenant_id")
+    if tenant_id is not None:
+        tenant_id = int(tenant_id)
     job_id = f"video:{video_id}"
 
-    if not video_id or not tenant_code:
-        raise ValueError("video_id and tenant_code required")
+    if not video_id or tenant_id is None:
+        raise ValueError("video_id and tenant_id required")
 
     progress.record_progress(job_id, "presigning")
     try:
@@ -50,9 +57,10 @@ def process_video(
     except Exception as e:
         raise RuntimeError(f"presigned_get_failed:{trim_tail(str(e))}") from e
 
-    base = (cfg.R2_PREFIX or "media/hls").strip("/")
-    hls_prefix = f"{base}/{tenant_code}/videos/{video_id}"
-    hls_master_path = f"{hls_prefix}/master.m3u8"
+    from apps.core.r2_paths import video_hls_prefix, video_hls_master_path
+
+    hls_prefix = video_hls_prefix(tenant_id=tenant_id, video_id=video_id)
+    hls_master_path = video_hls_master_path(tenant_id=tenant_id, video_id=video_id)
 
     with temp_workdir(cfg.TEMP_DIR, prefix=f"video-{video_id}-") as wd:
         wd = Path(wd)

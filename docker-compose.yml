@@ -2,6 +2,14 @@
 # Docker Compose 설정 (50명 원장 확장 대비)
 # ==============================================================================
 # Stateless 환경: 모든 파일은 R2에 저장, 로그는 stdout/stderr로 출력
+#
+# 로컬 한 번에 빌드·실행:
+#   1) 베이스 이미지 빌드: docker build -f docker/Dockerfile.base -t academy-base:latest .
+#   2) 서비스 기동:         docker compose up --build
+# 또는 (베이스 이미지 이미 있을 때): docker compose up --build
+#
+# 각 서비스는 .env 파일을 로드하며, api/video-worker/messaging-worker는
+# 로컬 소스(src, apps, libs)를 /app에 볼륨 매핑하여 개발 편의를 제공합니다.
 # ==============================================================================
 
 version: '3.8'
@@ -60,6 +68,7 @@ services:
         BASE_IMAGE: academy-base:latest
     image: academy-api:latest
     container_name: academy-api
+    env_file: .env
     environment:
       # Django 설정
       SECRET_KEY: ${SECRET_KEY}
@@ -81,6 +90,7 @@ services:
       R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
       R2_AI_BUCKET: ${R2_AI_BUCKET:-academy-ai}
       R2_VIDEO_BUCKET: ${R2_VIDEO_BUCKET:-academy-video}
+      R2_EXCEL_BUCKET: ${R2_EXCEL_BUCKET:-academy-excel}
       
       # CDN
       CDN_HLS_BASE_URL: ${CDN_HLS_BASE_URL}
@@ -111,6 +121,11 @@ services:
       GUNICORN_WORKER_CONNECTIONS: ${GUNICORN_WORKER_CONNECTIONS:-1000}
     ports:
       - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./src:/app/src
+      - ./apps:/app/apps
+      - ./libs:/app/libs
+      - ./manage.py:/app/manage.py
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,6 +150,7 @@ services:
         BASE_IMAGE: academy-base:latest
     image: academy-video-worker:latest
     container_name: academy-video-worker
+    env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
       DB_HOST: ${DB_HOST:-postgres}
@@ -171,7 +187,7 @@ services:
       
       # Video Worker 설정
       TEMP_DIR: ${VIDEO_WORKER_TEMP_DIR:-/tmp}
-      FFMEG_BIN: ${FFMPEG_BIN:-ffmpeg}
+      FFMPEG_BIN: ${FFMPEG_BIN:-ffmpeg}
       FFPROBE_BIN: ${FFPROBE_BIN:-ffprobe}
       HLS_TIME_SECONDS: ${HLS_TIME_SECONDS:-6}
       MIN_SEGMENTS_PER_VARIANT: ${MIN_SEGMENTS_PER_VARIANT:-3}
@@ -180,18 +196,24 @@ services:
       RETRY_MAX_ATTEMPTS: ${RETRY_MAX_ATTEMPTS:-5}
       BACKOFF_BASE_SECONDS: ${BACKOFF_BASE_SECONDS:-0.5}
       BACKOFF_CAP_SECONDS: ${BACKOFF_CAP_SECONDS:-10.0}
+    volumes:
+      - ./src:/app/src
+      - ./apps:/app/apps
+      - ./libs:/app/libs
+      - ./manage.py:/app/manage.py
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - academy-network
     restart: unless-stopped
+    # 로컬용 2GB. 프로덕션은 반드시 4GB(EC2 t4g.medium 또는 Fargate 4GB). 3시간 영상은 4GB 미만 시 OOM 다발.
+    mem_limit: 2048m
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    # Stateless: 로컬 파일 저장 없음 (R2 사용)
-    # volumes는 사용하지 않음 (확장성 보장)
 
   # ============================================================================
   # AI Worker CPU (Lite + Basic 큐 처리)
@@ -205,6 +227,7 @@ services:
         BASE_IMAGE: academy-base:latest
     image: academy-ai-worker:latest
     container_name: academy-ai-worker-cpu
+    env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
       DB_HOST: ${DB_HOST:-postgres}
@@ -234,11 +257,14 @@ services:
       R2_SECRET_KEY: ${R2_SECRET_KEY}
       R2_ENDPOINT: ${R2_ENDPOINT}
       R2_AI_BUCKET: ${R2_AI_BUCKET:-academy-ai}
+      R2_EXCEL_BUCKET: ${R2_EXCEL_BUCKET:-academy-excel}
+      EXCEL_BUCKET_NAME: ${R2_EXCEL_BUCKET:-academy-excel}
       
       # Google Vision (선택사항)
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - academy-network
     restart: unless-stopped
@@ -261,6 +287,7 @@ services:
         BASE_IMAGE: academy-base:latest
     image: academy-ai-worker:latest
     container_name: academy-ai-worker-gpu
+    env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
       DB_HOST: ${DB_HOST:-postgres}
@@ -287,11 +314,14 @@ services:
       R2_SECRET_KEY: ${R2_SECRET_KEY}
       R2_ENDPOINT: ${R2_ENDPOINT}
       R2_AI_BUCKET: ${R2_AI_BUCKET:-academy-ai}
+      R2_EXCEL_BUCKET: ${R2_EXCEL_BUCKET:-academy-excel}
+      EXCEL_BUCKET_NAME: ${R2_EXCEL_BUCKET:-academy-excel}
       
       # Google Vision (선택사항)
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - academy-network
     restart: unless-stopped
@@ -322,6 +352,7 @@ services:
         BASE_IMAGE: academy-base:latest
     image: academy-messaging-worker:latest
     container_name: academy-messaging-worker
+    env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
       DB_HOST: ${DB_HOST:-postgres}
@@ -340,9 +371,16 @@ services:
       REDIS_PORT: ${REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
+    volumes:
+      - ./src:/app/src
+      - ./apps:/app/apps
+      - ./libs:/app/libs
+      - ./manage.py:/app/manage.py
     depends_on:
-      - api
-      - postgres
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     networks:
       - academy-network
     restart: unless-stopped

@@ -13,6 +13,7 @@ from rest_framework.exceptions import ValidationError
 from apps.domains.exams.models import Exam, ExamAsset
 from apps.domains.exams.serializers.exam_asset import ExamAssetSerializer
 from apps.domains.exams.services.template_resolver import resolve_template_exam, assert_template_editable
+from apps.core.r2_paths import ai_exam_asset_key
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
@@ -55,9 +56,18 @@ class ExamAssetView(APIView):
         if asset_type not in valid:
             raise ValidationError({"asset_type": f"must be one of {sorted(valid)}"})
 
+        tenant_id = getattr(request, "tenant", None) and request.tenant.id
+        if not tenant_id:
+            return Response({"detail": "tenant required for upload"}, status=status.HTTP_400_BAD_REQUEST)
         name = upload_file.name or ""
         ext = name.split(".")[-1] if "." in name else "bin"
-        key = f"exams/{exam.id}/assets/{asset_type}/{uuid.uuid4().hex}.{ext}"
+        key = ai_exam_asset_key(
+            tenant_id=tenant_id,
+            exam_id=exam.id,
+            asset_type=asset_type,
+            unique_id=uuid.uuid4().hex,
+            ext=ext,
+        )
 
         upload_fileobj_to_r2(
             fileobj=upload_file,

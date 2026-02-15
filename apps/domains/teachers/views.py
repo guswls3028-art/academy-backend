@@ -1,11 +1,11 @@
 # PATH: apps/domains/teachers/views.py
 from rest_framework.viewsets import ModelViewSet
-from .models import Teacher
 from .serializers import TeacherSerializer
+from academy.adapters.db.django import repositories_teachers as teacher_repo
 
 
 class TeacherViewSet(ModelViewSet):
     serializer_class = TeacherSerializer
 
     def get_queryset(self):
-        return Teacher.objects.filter(tenant=self.request.tenant)
+        return teacher_repo.teacher_filter_tenant(self.request.tenant)

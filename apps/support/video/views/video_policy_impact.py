@@ -5,9 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.attendance.models import Attendance
-from ..models import Video, VideoAccess, VideoProgress
+from academy.adapters.db.django import repositories_video as video_repo
 from ..services.access_resolver import resolve_access_mode
 
 
@@ -20,26 +18,13 @@ class VideoPolicyImpactAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, video_id: int):
-        video = Video.objects.select_related("session", "session__lecture").get(id=video_id)
-
-        enrollments = Enrollment.objects.filter(
-            lecture=video.session.lecture,
-            status="ACTIVE",
-        ).select_related("student")
-
-        perms = {
-            p.enrollment_id: p
-            for p in VideoAccess.objects.filter(video=video)
-        }
-
-        progresses = {
-            p.enrollment_id: p
-            for p in VideoProgress.objects.filter(video=video)
-        }
-
+        video = video_repo.video_get_by_id_with_relations(video_id)
+        enrollments = video_repo.enrollment_filter_by_lecture_active(video.session.lecture)
+        perms = {p.enrollment_id: p for p in video_repo.get_video_access_for_video(video)}
+        progresses = {p.enrollment_id: p for p in video_repo.get_video_progresses_for_video(video)}
         attendance = {
             a.enrollment_id: a.status
-            for a in Attendance.objects.filter(session=video.session)
+            for a in video_repo.get_attendance_for_session(video.session)
         }
 
         rows = []

@@ -1,0 +1,5 @@
+# worker-ai-excel.txt - AI Worker CPU 전용 엑셀 파싱 (ai-worker-cpu 이미지만 사용)
+# API/다른 서비스 이미지에는 포함하지 않음 — 레이어 캐싱 유지
+
+# 엑셀 파싱 (무적의 엑셀 로직)
+openpyxl>=3.1.0

@@ -21,6 +21,10 @@ class VideoSQSAdapter(IVideoQueue):
     def delete_message(self, receipt_handle: str) -> bool:
         return self._impl.delete_message(receipt_handle=receipt_handle)
 
+    def change_message_visibility(self, receipt_handle: str, visibility_timeout: int = 10800) -> bool:
+        """장시간 인코딩 시 재노출 방지 (작업 시작 직후 호출)."""
+        return self._impl.change_message_visibility(receipt_handle, visibility_timeout)
+
     def _get_queue_name(self) -> str:
         """로깅용"""
         return self._impl._get_queue_name()

@@ -5,10 +5,9 @@ import time
 from django.conf import settings
 from rest_framework.response import Response
 
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.lectures.models import Session
 
 from ..models import Video, VideoAccess, VideoProgress, AccessMode
+from academy.adapters.db.django import repositories_video as video_repo
 from ..serializers import VideoSerializer
 from ..drm import create_playback_token, verify_playback_token
 from ..services.access_resolver import resolve_access_mode, get_effective_access_mode
@@ -41,10 +40,7 @@ class VideoPlaybackMixin:
         if video.status != video.Status.READY:
             return False, "video_not_ready"
 
-        if not SessionEnrollment.objects.filter(
-            session=video.session,
-            enrollment=enrollment,
-        ).exists():
+        if not video_repo.session_enrollment_exists(video.session, enrollment):
             return False, "no_session_access"
 
         # Use SSOT access resolver
@@ -60,10 +56,7 @@ class VideoPlaybackMixin:
     # Permission Loader
     # ==================================================
     def _load_permission(self, *, video, enrollment):
-        return VideoAccess.objects.filter(
-            video=video,
-            enrollment=enrollment,
-        ).first()
+        return video_repo.video_access_get(video, enrollment)
 
     # ==================================================
     # Playback Policy
@@ -115,10 +108,7 @@ class VideoPlaybackMixin:
             # PROCTORED_CLASS: restrictions apply
             if not perm or not perm.block_seek:
                 # If not explicitly blocked, use bounded forward
-                progress = VideoProgress.objects.filter(
-                    video=video,
-                    enrollment=enrollment,
-                ).first()
+                progress = video_repo.video_progress_get(video, enrollment)
                 
                 if not progress or not progress.completed:
                     seek_policy = {
@@ -196,8 +186,16 @@ class VideoPlaybackMixin:
             rel = self._normalize_media_path(str(video.hls_path))
             path = "/" + rel if not rel.startswith("/") else rel
         else:
-            # 2) 기존 fallback (원본 유지)
-            path = f"/media/hls/videos/{video.id}/master.m3u8"
+            # 2) 기존 fallback (경로 통일: tenants/{id}/video/hls/...)
+            try:
+                tenant_id = video.session.lecture.tenant_id
+            except Exception:
+                tenant_id = None
+            if tenant_id is not None:
+                from apps.core.r2_paths import video_hls_master_path
+                path = "/" + video_hls_master_path(tenant_id=tenant_id, video_id=video.id)
+            else:
+                path = f"/media/hls/videos/{video.id}/master.m3u8"
 
         secret = getattr(settings, "CDN_HLS_SIGNING_SECRET", None)
         if not secret:
@@ -237,19 +235,10 @@ class VideoPlaybackMixin:
         if student is None:
             return Response({"detail": "student_profile_not_linked"}, status=403)
 
-        qs = Video.objects.filter(
-            session_id=session_id,
-            status=Video.Status.READY,
-        ).order_by("order", "id")
-
-        session = Session.objects.select_related("lecture").get(id=session_id)
+        qs = video_repo.video_filter_by_session_ready(session_id)
+        session = video_repo.session_get_by_id_with_lecture(session_id)
         lecture = session.lecture
-
-        enrollment = Enrollment.objects.filter(
-            student=student,
-            lecture=lecture,
-            status="ACTIVE",
-        ).first()
+        enrollment = video_repo.enrollment_get_by_student_lecture_active(student, lecture)
 
         data = []
         for v in qs:
@@ -261,10 +250,7 @@ class VideoPlaybackMixin:
                 data.append(d)
                 continue
 
-            if not SessionEnrollment.objects.filter(
-                session=session,
-                enrollment=enrollment,
-            ).exists():
+            if not video_repo.session_enrollment_exists(session, enrollment):
                 d["can_play"] = False
                 d["reason"] = "no_session_access"
                 data.append(d)

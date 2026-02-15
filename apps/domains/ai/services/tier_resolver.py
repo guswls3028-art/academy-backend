@@ -52,8 +52,8 @@ def resolve_tier(
         # 기본값: basic (향후 tenant 설정으로 lite 가능)
         return "basic"
     
-    # OMR/status detection -> Basic 이상 필요
-    if job_type_lower in ("omr_grading", "homework_video_analysis"):
+    # OMR/status detection, 엑셀 파싱 -> Basic 이상 필요
+    if job_type_lower in ("omr_grading", "homework_video_analysis", "excel_parsing"):
         return "basic"
     
     # 고급 분석 -> Premium 필요 (향후)
@@ -82,9 +82,16 @@ def validate_tier_for_job_type(tier: str, job_type: str) -> bool:
     if tier == "lite":
         return job_type_lower in ("ocr",)
     
-    # Basic: OCR + OMR/status detection
+    # Basic: OCR + OMR/status detection + 엑셀 파싱/내보내기
     if tier == "basic":
-        return job_type_lower in ("ocr", "omr_grading", "homework_video_analysis")
+        return job_type_lower in (
+            "ocr",
+            "omr_grading",
+            "homework_video_analysis",
+            "excel_parsing",
+            "attendance_excel_export",
+            "staff_excel_export",
+        )
     
     # Premium: 모든 작업 허용
     if tier == "premium":

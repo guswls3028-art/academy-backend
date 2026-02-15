@@ -1,19 +1,26 @@
 # ==============================================================================
-# AI Worker CPU - 경량 최적화
+# AI Worker CPU - academy-base 기반 (500 배포 + 10K 확장 대비)
 # ==============================================================================
-# python:3.11-slim 기반, torch CPU only, CUDA 미포함
-# 예상 크기: 700MB~1GB
+# Base = 런타임·공통 의존성만. 앱 코드·scripts는 여기서 복사.
 # ==============================================================================
 
-FROM python:3.11-slim
+ARG BASE_IMAGE=academy-base:latest
+FROM ${BASE_IMAGE} AS base
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONPATH=/app
-ENV PATH=/root/.local/bin:$PATH
 ENV WORKER_TYPE=CPU
 
-# 시스템 의존성 (OCR, 비디오 - 최소화)
+USER root
+# 앱 코드 (Base에 두지 않음)
+COPY src ./src
+COPY academy ./academy
+COPY apps ./apps
+COPY libs ./libs
+COPY manage.py ./
+# AI Worker만 scripts 필요 (gate10 등)
+COPY scripts ./scripts
+RUN chown -R appuser:appuser /app
+
+# AI Worker CPU 전용 시스템 의존성 (OCR, 비디오)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-kor \
@@ -22,18 +29,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-# 공통 + AI CPU 의존성 (torch CPU, onnxruntime CPU)
+USER appuser
+# AI 전용 Python 의존성
 COPY requirements/common.txt requirements/worker-ai-common.txt requirements/worker-ai-cpu.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/worker-ai-cpu.txt
 
-# 애플리케이션 코드 (Hexagonal: src + apps + libs)
-COPY src ./src
-COPY apps ./apps
-COPY libs ./libs
-COPY scripts ./scripts
-COPY manage.py ./
+COPY requirements/worker-ai-excel.txt ./requirements/
+RUN pip install --user --no-cache-dir -r requirements/worker-ai-excel.txt
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import sys; sys.exit(0)" || exit 1

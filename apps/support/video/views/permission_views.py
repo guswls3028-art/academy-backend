@@ -5,13 +5,14 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from ..models import VideoAccess, Video, AccessMode
+from ..models import AccessMode
 from ..serializers import VideoAccessSerializer
+from academy.adapters.db.django import repositories_video as video_repo
 
 
 class VideoPermissionViewSet(ModelViewSet):
     """Video access overrides (API: video-permissions for backward compat)."""
-    queryset = VideoAccess.objects.all()
+    queryset = video_repo.video_access_all()
     serializer_class = VideoAccessSerializer
 
     @transaction.atomic
@@ -19,12 +20,10 @@ class VideoPermissionViewSet(ModelViewSet):
     def bulk_set(self, request):
         video_id = request.data.get("video_id")
         enrollments = request.data.get("enrollments", [])
-        
-        # Support both legacy 'rule' and new 'access_mode'
-        rule = request.data.get("rule")  # Legacy
-        access_mode_str = request.data.get("access_mode")  # New
-        
-        # Map legacy rule to access_mode if needed
+
+        rule = request.data.get("rule")
+        access_mode_str = request.data.get("access_mode")
+
         if rule and not access_mode_str:
             rule_to_mode = {
                 "free": AccessMode.FREE_REVIEW,
@@ -35,24 +34,20 @@ class VideoPermissionViewSet(ModelViewSet):
         elif access_mode_str:
             access_mode = AccessMode(access_mode_str)
         else:
-            access_mode = AccessMode.PROCTORED_CLASS  # Default
+            access_mode = AccessMode.PROCTORED_CLASS
 
         objs = []
         for enrollment_id in enrollments:
-            obj, _ = VideoAccess.objects.update_or_create(
-                video_id=video_id,
-                enrollment_id=enrollment_id,
+            obj, _ = video_repo.video_access_update_or_create_by_ids(
+                video_id,
+                enrollment_id,
                 defaults={
                     "access_mode": access_mode,
-                    "rule": rule or "free",  # Legacy field
+                    "rule": rule or "free",
                     "is_override": True,
                 },
             )
             objs.append(obj)
 
-        # ✅ 정책 변경 → policy_version 증가 (기존 토큰 즉시 무효화)
-        Video.objects.filter(id=video_id).update(
-            policy_version=models.F("policy_version") + 1
-        )
-
+        video_repo.video_update(video_id, policy_version=models.F("policy_version") + 1)
         return Response(VideoAccessSerializer(objs, many=True).data)

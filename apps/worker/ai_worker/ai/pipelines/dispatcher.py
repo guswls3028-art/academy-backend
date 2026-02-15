@@ -14,10 +14,26 @@ from apps.worker.ai_worker.ai.handwriting.detector import analyze_handwriting
 from apps.worker.ai_worker.ai.embedding.service import get_embeddings
 from apps.worker.ai_worker.ai.problem.generator import generate_problem_from_ocr
 from apps.worker.ai_worker.ai.pipelines.homework_video_analyzer import analyze_homework_video
+from apps.worker.ai_worker.ai.pipelines.excel_handler import handle_excel_parsing_job
+from apps.worker.ai_worker.ai.pipelines.excel_export_handler import (
+    handle_attendance_excel_export,
+    handle_staff_excel_export,
+)
 from apps.worker.ai_worker.ai.utils.image_resizer import resize_if_large
 from apps.worker.ai_worker.storage.downloader import download_to_tmp
+
+
 def handle_ai_job(job: AIJob) -> AIResult:
     try:
+        # 작업 분기: type / task / job_type 으로 EXCEL_PARSING vs AI 작업 분리
+        job_type_lower = (job.type or "").strip().lower()
+        if job_type_lower == "excel_parsing":
+            return handle_excel_parsing_job(job)
+        if job_type_lower == "attendance_excel_export":
+            return handle_attendance_excel_export(job)
+        if job_type_lower == "staff_excel_export":
+            return handle_staff_excel_export(job)
+
         cfg = AIConfig.load()
         payload: Dict[str, Any] = job.payload or {}
 

@@ -9,6 +9,7 @@ from django.db import transaction
 from .models import InventoryFolder, InventoryFile
 from .r2_path import build_r2_key, folder_path_string, safe_filename
 from apps.core.models import Tenant
+from academy.adapters.db.django import repositories_inventory as inv_repo
 
 try:
     from apps.infrastructure.storage.r2 import (
@@ -40,7 +41,7 @@ def _filename_from_r2_key(r2_key: str) -> str:
 
 
 def _check_duplicate_file(target_folder_id: int | None, tenant: Tenant, scope: str, student_ps: str, display_name: str):
-    qs = InventoryFile.objects.filter(tenant=tenant, scope=scope, folder_id=target_folder_id)
+    qs = inv_repo.inventory_file_filter_folder(tenant, scope, target_folder_id)
     if scope == "student":
         qs = qs.filter(student_ps=student_ps)
     return qs.filter(display_name=display_name).first()
@@ -62,13 +63,13 @@ def move_file(
     if not copy_object_r2_storage or not delete_object_r2_storage:
         return {"ok": False, "detail": "R2 storage not configured"}
 
-    source = InventoryFile.objects.filter(tenant=tenant, id=source_file_id).first()
+    source = inv_repo.inventory_file_get_by_id(tenant, source_file_id)
     if not source or source.scope != scope or (scope == "student" and source.student_ps != student_ps):
         return {"ok": False, "detail": "Source file not found", "status": 404}
 
     target_folder = None
     if target_folder_id:
-        target_folder = InventoryFolder.objects.filter(tenant=tenant, id=target_folder_id).first()
+        target_folder = inv_repo.inventory_folder_get_by_id(tenant, target_folder_id)
         if not target_folder or target_folder.scope != scope or (scope == "student" and target_folder.student_ps != student_ps):
             return {"ok": False, "detail": "Target folder not found", "status": 404}
 
@@ -134,10 +135,10 @@ def move_file(
 def _collect_folder_tree(folder: InventoryFolder, tenant: Tenant, scope: str, student_ps: str):
     """폴더와 그 하위 모든 폴더·파일 수집."""
     folders = [folder]
-    files = list(InventoryFile.objects.filter(tenant=tenant, scope=scope, folder=folder))
+    files = list(inv_repo.inventory_file_filter_scope_folder(tenant, scope, folder))
     if scope == "student":
         files = [f for f in files if f.student_ps == student_ps]
-    for child in InventoryFolder.objects.filter(tenant=tenant, parent=folder):
+    for child in inv_repo.inventory_folder_filter_parent(tenant, folder):
         if scope == "student" and child.student_ps != student_ps:
             continue
         sub_f, sub_files = _collect_folder_tree(child, tenant, scope, student_ps)
@@ -153,11 +154,11 @@ def _file_folder_path(inv_file: InventoryFile, tenant: Tenant, scope: str, stude
 
 def _delete_folder_tree_r2_and_db(folder: InventoryFolder, tenant: Tenant, scope: str, student_ps: str) -> None:
     """폴더와 하위 모든 파일·폴더를 R2 및 DB에서 삭제 (이동 시 덮어쓰기용)."""
-    for child in InventoryFolder.objects.filter(tenant=tenant, parent=folder):
+    for child in inv_repo.inventory_folder_filter_parent(tenant, folder):
         if scope == "student" and child.student_ps != student_ps:
             continue
         _delete_folder_tree_r2_and_db(child, tenant, scope, student_ps)
-    files = list(InventoryFile.objects.filter(tenant=tenant, scope=scope, folder=folder))
+    files = list(inv_repo.inventory_file_filter_scope_folder(tenant, scope, folder))
     if scope == "student":
         files = [f for f in files if f.student_ps == student_ps]
     for inv_file in files:
@@ -185,13 +186,13 @@ def move_folder(
     if not copy_object_r2_storage or not delete_object_r2_storage:
         return {"ok": False, "detail": "R2 storage not configured"}
 
-    source_folder = InventoryFolder.objects.filter(tenant=tenant, id=source_folder_id).first()
+    source_folder = inv_repo.inventory_folder_get_by_id(tenant, source_folder_id)
     if not source_folder or source_folder.scope != scope or (scope == "student" and source_folder.student_ps != student_ps):
         return {"ok": False, "detail": "Source folder not found", "status": 404}
 
     target_folder = None
     if target_folder_id:
-        target_folder = InventoryFolder.objects.filter(tenant=tenant, id=target_folder_id).first()
+        target_folder = inv_repo.inventory_folder_get_by_id(tenant, target_folder_id)
         if not target_folder or target_folder.scope != scope or (scope == "student" and target_folder.student_ps != student_ps):
             return {"ok": False, "detail": "Target folder not found", "status": 404}
         f = target_folder
@@ -203,7 +204,7 @@ def move_folder(
     if source_folder.parent_id == target_folder_id:
         return {"ok": True, "detail": "Already in target"}
 
-    q = InventoryFolder.objects.filter(tenant=tenant, parent_id=target_folder_id, name=source_folder.name)
+    q = inv_repo.inventory_folder_filter_parent_id_name(tenant, target_folder_id, source_folder.name)
     if scope == "student":
         q = q.filter(student_ps=student_ps)
     existing_sibling = q.first()

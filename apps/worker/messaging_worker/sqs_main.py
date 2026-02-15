@@ -15,7 +15,7 @@ import sys
 import time
 from typing import Optional
 
-from libs.queue import get_queue_client
+from libs.queue import get_queue_client, QueueUnavailableError
 from libs.redis.idempotency import acquire_job_lock, release_job_lock
 
 from apps.worker.messaging_worker.config import load_config
@@ -149,10 +149,18 @@ def main() -> int:
     try:
         while not _shutdown:
             try:
-                raw = queue_client.receive_message(
-                    queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
-                    wait_time_seconds=cfg.SQS_WAIT_TIME_SECONDS,
-                )
+                try:
+                    raw = queue_client.receive_message(
+                        queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                        wait_time_seconds=cfg.SQS_WAIT_TIME_SECONDS,
+                    )
+                except QueueUnavailableError as e:
+                    logger.warning(
+                        "SQS unavailable (AWS credentials invalid or missing?). Waiting 60s. %s",
+                        e,
+                    )
+                    time.sleep(60)
+                    continue
                 if not raw:
                     continue
 
@@ -258,14 +266,14 @@ def main() -> int:
                         if info and float(base_price) > 0 and tenant_id is not None:
                             from decimal import Decimal
                             from apps.support.messaging.credit_services import deduct_credits
-                            from apps.support.messaging.models import NotificationLog
+                            from academy.adapters.db.django.repositories_messaging import create_notification_log
                             bal = info.get("credit_balance", "0")
                             if float(bal) < float(base_price):
                                 logger.warning(
                                     "tenant_id=%s insufficient_balance balance=%s base_price=%s, skip send",
                                     tenant_id, bal, base_price,
                                 )
-                                NotificationLog.objects.create(
+                                create_notification_log(
                                     tenant_id=int(tenant_id),
                                     success=False,
                                     amount_deducted=Decimal("0"),
@@ -306,9 +314,9 @@ def main() -> int:
                         try:
                             from decimal import Decimal
                             from apps.support.messaging.credit_services import rollback_credits
-                            from apps.support.messaging.models import NotificationLog
+                            from academy.adapters.db.django.repositories_messaging import create_notification_log
                             if result.get("status") == "ok":
-                                NotificationLog.objects.create(
+                                create_notification_log(
                                     tenant_id=int(tenant_id),
                                     success=True,
                                     amount_deducted=Decimal(str(base_price)),
@@ -318,7 +326,7 @@ def main() -> int:
                             else:
                                 if deducted:
                                     rollback_credits(int(tenant_id), base_price)
-                                NotificationLog.objects.create(
+                                create_notification_log(
                                     tenant_id=int(tenant_id),
                                     success=False,
                                     amount_deducted=Decimal("0"),
@@ -356,6 +364,10 @@ def main() -> int:
 
             except KeyboardInterrupt:
                 break
+            except QueueUnavailableError:
+                # 이미 내부 try에서 처리하지만, 다른 경로로 올 수 있음
+                time.sleep(60)
+                continue
             except Exception as e:
                 logger.exception("Unexpected error in main loop: %s", e)
                 consecutive_errors += 1

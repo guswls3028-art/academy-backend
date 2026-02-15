@@ -1,11 +1,20 @@
 # ==============================================================================
 # Messaging Worker Dockerfile
 # ==============================================================================
-# SQS + Solapi SMS/알림톡 (Django ORM 사용)
+# Base = 런타임·공통 의존성만. 앱 코드는 여기서 복사.
 # ==============================================================================
 
 ARG BASE_IMAGE=academy-base:latest
 FROM ${BASE_IMAGE} AS base
+
+USER root
+COPY src ./src
+COPY academy ./academy
+COPY apps ./apps
+COPY libs ./libs
+COPY manage.py ./
+RUN chown -R appuser:appuser /app
+USER appuser
 
 # Messaging Worker 전용 Python 의존성 (-r ./common.txt만, api.txt 미사용)
 COPY requirements/common.txt requirements/worker-messaging.txt ./requirements/

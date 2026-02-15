@@ -14,8 +14,9 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from academy.adapters.db.django.repositories_video import get_video_for_update
 from apps.support.video.models import Video
-from libs.queue import get_queue_client
+from libs.queue import get_queue_client, QueueUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -69,16 +70,19 @@ class VideoSQSQueue:
             )
             return False
         
-        # tenant_code 가져오기
+        # tenant (경로 통일: tenants/{tenant_id}/...)
         try:
-            tenant_code = video.session.lecture.tenant.code
+            tenant = video.session.lecture.tenant
+            tenant_id = int(tenant.id)
+            tenant_code = tenant.code
         except Exception:
-            logger.error("Cannot get tenant_code for video %s", video.id)
+            logger.error("Cannot get tenant for video %s", video.id)
             return False
-        
+
         message = {
             "video_id": int(video.id),
             "file_key": str(video.file_key or ""),
+            "tenant_id": tenant_id,
             "tenant_code": str(tenant_code),
             "created_at": timezone.now().isoformat(),
             "attempt": 1,
@@ -100,7 +104,39 @@ class VideoSQSQueue:
         except Exception as e:
             logger.exception("Error enqueuing video job: video_id=%s, error=%s", video.id, e)
             return False
-    
+
+    def enqueue_delete_r2(
+        self,
+        *,
+        tenant_id: int,
+        video_id: int,
+        file_key: str,
+        hls_prefix: str,
+    ) -> bool:
+        """
+        영상 삭제 후 R2 정리를 워커에 위임 (비동기).
+        API에서 DB 삭제 직후 호출. 동일 Video 큐에 delete_r2 메시지 발행.
+        """
+        message = {
+            "action": "delete_r2",
+            "tenant_id": tenant_id,
+            "video_id": video_id,
+            "file_key": (file_key or "").strip(),
+            "hls_prefix": hls_prefix,
+            "created_at": timezone.now().isoformat(),
+        }
+        try:
+            success = self.queue_client.send_message(
+                queue_name=self._get_queue_name(),
+                message=message,
+            )
+            if success:
+                logger.info("R2 delete job enqueued: video_id=%s hls_prefix=%s", video_id, hls_prefix)
+            return bool(success)
+        except Exception as e:
+            logger.exception("Error enqueuing R2 delete job: video_id=%s, error=%s", video_id, e)
+            return False
+
     def receive_message(self, wait_time_seconds: int = 20) -> Optional[dict]:
         """
         SQS에서 메시지 수신 (Long Polling)
@@ -135,8 +171,28 @@ class VideoSQSQueue:
                 job_data = body
             
             # 메시지 형식 검증
-            if not isinstance(job_data, dict) or "video_id" not in job_data:
+            if not isinstance(job_data, dict):
                 logger.error("Invalid message format: %s", job_data)
+                return None
+
+            # R2 삭제 작업 (비동기 삭제용)
+            if job_data.get("action") == "delete_r2":
+                if not receipt_handle:
+                    logger.error("Missing ReceiptHandle in SQS message")
+                    return None
+                return {
+                    "action": "delete_r2",
+                    "tenant_id": int(job_data["tenant_id"]),
+                    "video_id": int(job_data["video_id"]),
+                    "file_key": str(job_data.get("file_key", "")),
+                    "hls_prefix": str(job_data.get("hls_prefix", "")),
+                    "receipt_handle": receipt_handle,
+                    "message_id": message.get("MessageId"),
+                }
+
+            # 인코딩 작업: video_id 필수
+            if "video_id" not in job_data:
+                logger.error("Invalid message format (video_id required): %s", job_data)
                 return None
             
             # ReceiptHandle 필수 (SQS)
@@ -144,16 +200,19 @@ class VideoSQSQueue:
                 logger.error("Missing ReceiptHandle in SQS message")
                 return None
             
-            # 작업 데이터 반환 (로그 가시성: created_at 포함)
+            # 작업 데이터 반환 (tenant_id: 경로 통일용)
             return {
                 "video_id": int(job_data.get("video_id")),
                 "file_key": str(job_data.get("file_key", "")),
+                "tenant_id": int(job_data["tenant_id"]) if job_data.get("tenant_id") is not None else None,
                 "tenant_code": str(job_data.get("tenant_code", "")),
                 "receipt_handle": receipt_handle,
                 "message_id": message.get("MessageId"),
-                "created_at": job_data.get("created_at"),  # SQS 메시지 수명 추적용
+                "created_at": job_data.get("created_at"),
             }
             
+        except QueueUnavailableError:
+            raise
         except Exception as e:
             logger.exception("Error receiving message from SQS: %s", e)
             return None
@@ -175,6 +234,21 @@ class VideoSQSQueue:
             )
         except Exception as e:
             logger.exception("Error deleting message: receipt_handle=%s, error=%s", receipt_handle, e)
+            return False
+
+    def change_message_visibility(self, receipt_handle: str, visibility_timeout: int = 10800) -> bool:
+        """
+        장시간 작업 시 메시지 재노출 방지 (ChangeMessageVisibility).
+        인코딩 시작 직후 호출 권장.
+        """
+        try:
+            return self.queue_client.change_message_visibility(
+                queue_name=self._get_queue_name(),
+                receipt_handle=receipt_handle,
+                visibility_timeout=visibility_timeout,
+            )
+        except Exception as e:
+            logger.warning("ChangeMessageVisibility failed (continuing): %s", e)
             return False
     
     def mark_failed(self, receipt_handle: str, reason: str) -> bool:
@@ -220,7 +294,7 @@ class VideoSQSQueue:
         Returns:
             tuple[bool, str]: (성공 여부, 이유)
         """
-        video = Video.objects.select_for_update().filter(id=int(video_id)).first()
+        video = get_video_for_update(video_id)
         if not video:
             return False, "not_found"
         
@@ -274,7 +348,7 @@ class VideoSQSQueue:
         Returns:
             tuple[bool, str]: (성공 여부, 이유)
         """
-        video = Video.objects.select_for_update().filter(id=int(video_id)).first()
+        video = get_video_for_update(video_id)
         if not video:
             return False, "not_found"
         
@@ -314,7 +388,7 @@ class VideoSQSQueue:
         Returns:
             bool: 성공 여부
         """
-        video = Video.objects.select_for_update().filter(id=int(video_id)).first()
+        video = get_video_for_update(video_id)
         if not video:
             return False
         

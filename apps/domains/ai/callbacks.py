@@ -1,6 +1,5 @@
 # apps/domains/ai/callbacks.py
 from apps.shared.contracts.ai_result import AIResult
-from apps.domains.ai.models import AIJobModel
 from apps.domains.submissions.services.ai_omr_result_mapper import apply_ai_result
 from apps.domains.results.tasks.grading_tasks import grade_submission_task
 
@@ -16,7 +15,8 @@ def handle_ai_result(result: AIResult) -> None:
         이 경우 result.status는 여전히 FAILED이므로, job.tier가 lite/basic이면 DONE으로 간주하고
         submission 쪽 적용을 진행한다.
     """
-    job = AIJobModel.objects.filter(job_id=result.job_id).first()
+    from academy.adapters.db.django import repositories_ai as ai_repo
+    job = ai_repo.get_job_model_by_job_id(result.job_id)
     if not job:
         return
 

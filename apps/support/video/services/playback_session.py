@@ -9,11 +9,9 @@ from django.utils import timezone
 from django.db import transaction
 from django.db.models import Q, Count
 
+from academy.adapters.db.django import repositories_video as video_repo
 from apps.domains.enrollment.models import Enrollment
-from apps.support.video.models import (
-    Video,
-    VideoPlaybackSession,
-)
+from apps.support.video.models import VideoPlaybackSession
 
 # Redis 보호 레이어 (선택적, 장애 시 DB fallback)
 try:
@@ -48,18 +46,7 @@ except ImportError:
 # =======================================================
 
 def _cleanup_expired_sessions(student_id: int) -> None:
-    """
-    만료된 세션 정리 (DB 기반)
-    """
-    now = timezone.now()
-    VideoPlaybackSession.objects.filter(
-        enrollment__student_id=student_id,
-        status=VideoPlaybackSession.Status.ACTIVE,
-        expires_at__lt=now,
-    ).update(
-        status=VideoPlaybackSession.Status.EXPIRED,
-        ended_at=now,
-    )
+    video_repo.playback_session_cleanup_expired(student_id)
 
 
 def issue_session(
@@ -81,23 +68,13 @@ def issue_session(
     now = timezone.now()
     expires_at = now + timedelta(seconds=ttl_seconds)
 
-    # 기기 제한 확인
-    active_devices = VideoPlaybackSession.objects.filter(
-        enrollment__student_id=student_id,
-        status=VideoPlaybackSession.Status.ACTIVE,
-        expires_at__gt=now,
-    ).values_list("device_id", flat=True).distinct()
-
+    qs_active = video_repo.playback_session_filter_active(student_id, now, now)
+    active_devices = qs_active.values_list("device_id", flat=True).distinct()
     unique_devices = set(active_devices)
     if device_id not in unique_devices and len(unique_devices) >= int(max_devices):
         return False, None, "device_limit_exceeded"
 
-    # 동시 세션 제한 확인
-    active_count = VideoPlaybackSession.objects.filter(
-        enrollment__student_id=student_id,
-        status=VideoPlaybackSession.Status.ACTIVE,
-        expires_at__gt=now,
-    ).count()
+    active_count = qs_active.count()
 
     if active_count >= int(max_sessions):
         return False, None, "concurrency_limit_exceeded"
@@ -123,13 +100,7 @@ def heartbeat_session(*, student_id: int, session_id: str, ttl_seconds: int) -> 
     new_expires_at = now + timedelta(seconds=ttl_seconds)
 
     try:
-        session = VideoPlaybackSession.objects.select_related(
-            "enrollment"
-        ).get(
-            session_id=session_id,
-            enrollment__student_id=student_id,
-            status=VideoPlaybackSession.Status.ACTIVE,
-        )
+        session = video_repo.playback_session_get_by_session_id_and_student(session_id, student_id)
     except VideoPlaybackSession.DoesNotExist:
         return False
 
@@ -154,11 +125,8 @@ def end_session(*, student_id: int, session_id: str) -> None:
     if is_redis_available():
         stats = get_session_violation_stats_redis(session_id)
         if stats is not None:
-            VideoPlaybackSession.objects.filter(
-                session_id=session_id,
-                enrollment__student_id=student_id,
-                status=VideoPlaybackSession.Status.ACTIVE,
-            ).update(
+            video_repo.playback_session_filter_update_active(
+                session_id, student_id,
                 last_seen=now,
                 violated_count=stats.get("violated", 0),
                 total_count=stats.get("total", 0),
@@ -169,11 +137,8 @@ def end_session(*, student_id: int, session_id: str) -> None:
             flush_session_buffer(session_id)
             return
 
-    VideoPlaybackSession.objects.filter(
-        session_id=session_id,
-        enrollment__student_id=student_id,
-        status=VideoPlaybackSession.Status.ACTIVE,
-    ).update(
+    video_repo.playback_session_filter_update_active(
+        session_id, student_id,
         status=VideoPlaybackSession.Status.ENDED,
         ended_at=now,
     )
@@ -189,10 +154,8 @@ def revoke_session(*, student_id: int, session_id: str) -> None:
     if is_redis_available():
         stats = get_session_violation_stats_redis(session_id)
         if stats is not None:
-            VideoPlaybackSession.objects.filter(
-                session_id=session_id,
-                enrollment__student_id=student_id,
-            ).update(
+            video_repo.playback_session_filter_update_any(
+                session_id, student_id,
                 last_seen=now,
                 violated_count=stats.get("violated", 0),
                 total_count=stats.get("total", 0),
@@ -204,10 +167,8 @@ def revoke_session(*, student_id: int, session_id: str) -> None:
             flush_session_buffer(session_id)
             return
 
-    VideoPlaybackSession.objects.filter(
-        session_id=session_id,
-        enrollment__student_id=student_id,
-    ).update(
+    video_repo.playback_session_filter_update_any(
+        session_id, student_id,
         status=VideoPlaybackSession.Status.REVOKED,
         is_revoked=True,
         ended_at=now,
@@ -233,12 +194,7 @@ def is_session_active(*, student_id: int, session_id: str) -> bool:
     now = timezone.now()
 
     try:
-        session = VideoPlaybackSession.objects.select_related(
-            "enrollment"
-        ).get(
-            session_id=session_id,
-            enrollment__student_id=student_id,
-        )
+        session = video_repo.playback_session_get_by_session_id_and_student_any(session_id, student_id)
     except VideoPlaybackSession.DoesNotExist:
         return False
 
@@ -285,12 +241,7 @@ def record_session_event(
         # Redis 실패 시 DB fallback
 
     try:
-        session = VideoPlaybackSession.objects.select_related(
-            "enrollment"
-        ).get(
-            session_id=session_id,
-            enrollment__student_id=student_id,
-        )
+        session = video_repo.playback_session_get_by_session_id_and_student_any(session_id, student_id)
     except VideoPlaybackSession.DoesNotExist:
         return {"total": 0, "violated": 0}
 
@@ -319,7 +270,7 @@ def get_session_violation_stats(*, session_id: str) -> Dict[str, int]:
             return stats
 
     try:
-        session = VideoPlaybackSession.objects.get(session_id=session_id)
+        session = video_repo.playback_session_get_by_session_id(session_id)
         return {
             "total": session.total_count,
             "violated": session.violated_count,
@@ -373,18 +324,8 @@ def create_playback_session(
     if not device_id:
         return {"ok": False, "error": "device_id_required"}
 
-    video = Video.objects.select_related(
-        "session",
-        "session__lecture",
-    ).get(id=video_id)
-
-    enrollment = Enrollment.objects.select_related(
-        "student",
-        "lecture",
-    ).get(
-        id=enrollment_id,
-        status="ACTIVE",
-    )
+    video = video_repo.video_get_by_id_with_relations(video_id)
+    enrollment = video_repo.enrollment_get_by_id_active_with_student_lecture(enrollment_id)
 
     # 🛡️ 안전 가드 (View 누락 방지용)
     if enrollment.lecture_id != video.session.lecture_id:
@@ -413,7 +354,7 @@ def create_playback_session(
     expires_at_timestamp = int(sess["expires_at"])
     expires_at = timezone.datetime.fromtimestamp(expires_at_timestamp, tz=timezone.utc)
 
-    VideoPlaybackSession.objects.create(
+    video_repo.playback_session_create(
         video=video,
         enrollment=enrollment,
         session_id=session_id,

@@ -109,11 +109,8 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
         range_key = request.query_params.get("range", "24h")
         since = _range_to_since(range_key)
 
-        qs = VideoPlaybackEvent.objects.filter(video_id=video_id).select_related(
-            "enrollment", "enrollment__student"
-        )
-        if since:
-            qs = qs.filter(occurred_at__gte=since)
+        from academy.adapters.db.django import repositories_video as video_repo
+        qs = video_repo.playback_event_filter_by_video_id(video_id, since=since)
 
         agg = {}
         for ev in qs.iterator():
@@ -165,11 +162,8 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
         range_key = request.query_params.get("range", "24h")
         since = _range_to_since(range_key)
 
-        qs = VideoPlaybackEvent.objects.filter(video_id=video_id).select_related(
-            "enrollment", "enrollment__student"
-        )
-        if since:
-            qs = qs.filter(occurred_at__gte=since)
+        from academy.adapters.db.django import repositories_video as video_repo
+        qs = video_repo.playback_event_filter_by_video_id(video_id, since=since)
 
         qs = qs.order_by("-occurred_at", "-id")
 

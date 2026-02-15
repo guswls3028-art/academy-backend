@@ -3,9 +3,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from apps.domains.lectures.models import Session
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.attendance.models import Attendance
+from academy.adapters.db.django import repositories_enrollment as enroll_repo
 
 
 STATUS_LABEL_MAP = {
@@ -36,28 +34,11 @@ STATUS_FILL_MAP = {
 
 
 def build_attendance_excel(lecture):
-    sessions = Session.objects.filter(
-        lecture=lecture
-    ).order_by("order", "id")
-
-    # 강의 내 모든 차시에 등록된 수강생만 출결 대상(매트릭스와 동일 기준)
-    enrollment_ids = (
-        SessionEnrollment.objects
-        .filter(session__lecture=lecture)
-        .values_list("enrollment_id", flat=True)
-        .distinct()
-    )
-    enrollments = (
-        Enrollment.objects
-        .filter(id__in=enrollment_ids, status="ACTIVE")
-        .select_related("student")
-        .order_by("student__name", "id")
-    )
-
-    attendances = Attendance.objects.filter(
-        session__lecture=lecture,
-        enrollment__in=enrollments,
-    )
+    sessions = enroll_repo.get_sessions_for_lecture_ordered(lecture)
+    enrollment_ids = list(enroll_repo.get_session_enrollment_enrollment_ids_by_lecture(lecture))
+    tenant = getattr(lecture, "tenant", None) or getattr(lecture, "tenant_id", None)
+    enrollments = enroll_repo.get_enrollments_by_ids_active(enrollment_ids, tenant)
+    attendances = enroll_repo.get_attendances_for_lecture_by_lecture(lecture, enrollments)
 
     attendance_map = {
         (a.enrollment_id, a.session_id): a

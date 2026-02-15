@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import logging
 from apps.shared.contracts.ai_job import AIJob
-from apps.domains.ai.models import AIJobModel
+from apps.domains.ai.models import AIJobModel  # type hint only
+from academy.adapters.db.django import repositories_ai as ai_repo
 
 logger = logging.getLogger(__name__)
 
@@ -28,20 +29,14 @@ def publish_ai_job_sqs(job_model: AIJobModel) -> None:
 def publish_job(job: AIJob) -> None:
     """
     Public publisher entrypoint (SSOT).
-    
-    SQS 큐만 사용 (Redis 제거됨)
-    Tier는 AIJobModel에서 가져옴
+    SQS 큐만 사용. Tier는 AIJobModel에서 가져옴.
     """
-    from apps.domains.ai.models import AIJobModel
-    
-    # AIJobModel에서 tier 가져오기
-    job_model = AIJobModel.objects.filter(job_id=str(job.id)).first()
+    job_model = ai_repo.get_job_model_by_job_id(str(job.id))
     if job_model:
         publish_ai_job_sqs(job_model)
     else:
         logger.warning("AIJobModel not found for job %s, using basic tier", job.id)
-        # 기본값으로 basic tier 사용
-        job_model = AIJobModel.objects.create(
+        job_model = ai_repo.job_create(
             job_id=job.id,
             job_type=job.type,
             payload=job.payload or {},

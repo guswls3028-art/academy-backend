@@ -14,9 +14,9 @@ Business Logic (SSOT):
 
 from typing import Optional
 
-from apps.domains.attendance.models import Attendance
 from apps.domains.enrollment.models import Enrollment
-from apps.support.video.models import Video, VideoProgress, VideoAccess, AccessMode
+from apps.support.video.models import Video, AccessMode
+from academy.adapters.db.django import repositories_video as video_repo
 
 
 def resolve_access_mode(
@@ -36,29 +36,18 @@ def resolve_access_mode(
        - Completed => FREE_REVIEW
        - Not completed => PROCTORED_CLASS
     """
-    perm = VideoAccess.objects.filter(
-        video=video,
-        enrollment=enrollment,
-    ).first()
+    perm = video_repo.video_access_get(video, enrollment)
 
     if perm and perm.access_mode == AccessMode.BLOCKED:
         return AccessMode.BLOCKED
 
     session = video.session
-    attendance = Attendance.objects.filter(
-        session=session,
-        enrollment=enrollment,
-    ).first()
+    attendance = video_repo.attendance_filter_session_enrollment(session, enrollment).first()
 
-    # Only ONLINE attendance gets PROCTORED_CLASS (not SUPPLEMENT per spec)
     if not attendance or attendance.status != "ONLINE":
         return AccessMode.FREE_REVIEW
 
-    # Online: check if already completed (first watch done)
-    progress = VideoProgress.objects.filter(
-        video=video,
-        enrollment=enrollment,
-    ).first()
+    progress = video_repo.video_progress_get(video, enrollment)
 
     if progress and progress.completed:
         return AccessMode.FREE_REVIEW
@@ -78,10 +67,7 @@ def get_effective_access_mode(
     """
     Effective access mode considering admin overrides.
     """
-    perm = VideoAccess.objects.filter(
-        video=video,
-        enrollment=enrollment,
-    ).first()
+    perm = video_repo.video_access_get(video, enrollment)
 
     if perm and perm.is_override:
         return perm.access_mode

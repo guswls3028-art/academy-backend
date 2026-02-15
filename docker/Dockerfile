@@ -48,7 +48,8 @@ WORKDIR /app
 # Builder에서 설치한 Python 패키지 복사
 COPY --from=builder /root/.local /root/.local
 
-# 애플리케이션 코드 복사
+# 애플리케이션 코드 복사 (Hexagonal: src + apps + libs)
+COPY src ./src
 COPY apps ./apps
 COPY libs ./libs
 COPY manage.py ./

@@ -3,13 +3,13 @@
 from django.conf import settings
 from rest_framework import serializers
 
-from apps.domains.lectures.models import Session
 from .models import (
     Video,
     VideoAccess,
     VideoProgress,
     VideoPlaybackEvent,
 )
+from academy.adapters.db.django import repositories_video as video_repo
 
 # ========================================================
 # Video
@@ -27,7 +27,7 @@ class VideoSerializer(serializers.ModelSerializer):
 
     # write
     session = serializers.PrimaryKeyRelatedField(
-        queryset=Session.objects.all(),
+        queryset=video_repo.session_all_queryset(),
         write_only=True,
     )
 
@@ -119,10 +119,18 @@ class VideoSerializer(serializers.ModelSerializer):
             path = self._normalize_media_path(obj.thumbnail.name)
             return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
-        # 2️⃣ READY fallback
+        # 2️⃣ READY fallback (경로 통일: tenants/{id}/video/hls/...)
         if obj.status == obj.Status.READY:
-            path = self._normalize_media_path(
-                f"media/hls/videos/{obj.session.lecture.tenant.code}/videos/{obj.id}/thumbnail.jpg"            )
+            try:
+                tenant_id = obj.session.lecture.tenant_id
+                from apps.core.r2_paths import video_hls_prefix
+                path = self._normalize_media_path(
+                    f"{video_hls_prefix(tenant_id=tenant_id, video_id=obj.id)}/thumbnail.jpg"
+                )
+            except Exception:
+                path = self._normalize_media_path(
+                    f"media/hls/videos/{obj.session.lecture.tenant.code}/videos/{obj.id}/thumbnail.jpg"
+                )
             return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
         return None

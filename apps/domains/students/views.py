@@ -20,6 +20,7 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.parents.services import ensure_parent_for_student
 from apps.support.messaging.services import send_welcome_messages, get_site_url
 
+from academy.adapters.db.django import repositories_students as student_repo
 from .models import Student, Tag, StudentTag
 from .filters import StudentFilter
 from .services import normalize_school_from_name
@@ -48,7 +49,7 @@ class TagViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get_queryset(self):
-        return Tag.objects.all()
+        return student_repo.tag_all()
 
 
 # ======================================================
@@ -88,7 +89,7 @@ class StudentViewSet(ModelViewSet):
         - request.tenant 기준으로만 학생 노출
         - list: ?deleted=true 시 삭제된 학생만, 기본은 활성 학생만
         """
-        qs = Student.objects.filter(tenant=self.request.tenant)
+        qs = student_repo.student_filter_tenant(self.request.tenant)
 
         if self.action == "list":
             show_deleted = self.request.query_params.get("deleted") == "true"
@@ -156,16 +157,16 @@ class StudentViewSet(ModelViewSet):
             )
 
         # 2️⃣ User 생성 (phone이 없으면 username만 사용)
-        user = User.objects.create_user(
+        user = student_repo.user_create_user(
             username=ps_number,
-            phone=phone or "",  # phone이 None이면 빈 문자열
+            phone=phone or "",
             name=data.get("name", ""),
         )
         user.set_password(password)
         user.save()
 
         # 3️⃣ Student 생성 + parent 연결
-        student = Student.objects.create(
+        student = student_repo.student_create(
             tenant=request.tenant,
             user=user,
             parent=parent,
@@ -243,8 +244,8 @@ class StudentViewSet(ModelViewSet):
         serializer = AddTagSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        tag = Tag.objects.get(id=serializer.validated_data["tag_id"])
-        StudentTag.objects.get_or_create(student=student, tag=tag)
+        tag = student_repo.tag_get(serializer.validated_data["tag_id"])
+        student_repo.student_tag_get_or_create(student, tag)
 
         return Response({"status": "ok"}, status=201)
 
@@ -254,10 +255,7 @@ class StudentViewSet(ModelViewSet):
         serializer = AddTagSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        StudentTag.objects.filter(
-            student=student,
-            tag_id=serializer.validated_data["tag_id"],
-        ).delete()
+        student_repo.student_tag_filter_delete(student, serializer.validated_data["tag_id"])
 
         return Response({"status": "ok"}, status=200)
 
@@ -312,15 +310,14 @@ class StudentViewSet(ModelViewSet):
                 with transaction.atomic():
                     # 학생 전화번호가 있으면 중복 체크
                     if phone:
-                        conflict_deleted = Student.objects.filter(
-                            tenant=tenant, phone=phone, deleted_at__isnull=False
+                        conflict_deleted = student_repo.student_filter_tenant_phone_deleted(
+                            tenant, phone
                         ).values_list("id", flat=True).first()
                         if conflict_deleted:
                             raise ValueError("삭제된 학생과 전화번호 충돌. 복원 또는 삭제 후 재등록을 선택하세요.", conflict_deleted)
-                        # 활성 User만 체크 (삭제된 학생의 User는 is_active=False)
-                        if User.objects.filter(phone=phone, is_active=True).exists():
+                        if student_repo.user_filter_phone_active(phone).exists():
                             raise ValueError("이미 사용 중인 전화번호입니다.")
-                    if Student.objects.filter(tenant=tenant, ps_number=ps_number, deleted_at__isnull=True).exists():
+                    if student_repo.student_filter_tenant_ps_number(tenant, ps_number).exists():
                         raise ValueError("이미 사용 중인 PS 번호입니다.")
 
                     # 학부모 계정 생성
@@ -333,9 +330,9 @@ class StudentViewSet(ModelViewSet):
                             parent_password=password,
                         )
 
-                    user = User.objects.create_user(
+                    user = student_repo.user_create_user(
                         username=ps_number,
-                        phone=phone or "",  # phone이 None이면 빈 문자열
+                        phone=phone or "",
                         name=item.get("name", ""),
                     )
                     user.set_password(password)
@@ -348,12 +345,12 @@ class StudentViewSet(ModelViewSet):
                     high_school_class = (item.get("high_school_class") or "").strip() or None if st == "HIGH" else None
                     major = (item.get("major") or "").strip() or None if st == "HIGH" else None
 
-                    student = Student.objects.create(
+                    student = student_repo.student_create(
                         tenant=tenant,
                         user=user,
                         parent=parent,
                         name=item["name"],
-                        phone=phone,  # nullable
+                        phone=phone,
                         parent_phone=item["parent_phone"],
                         ps_number=ps_number,
                         omr_code=omr_code,
@@ -444,9 +441,7 @@ class StudentViewSet(ModelViewSet):
                 continue
 
             try:
-                student = Student.objects.filter(
-                    tenant=tenant, id=student_id, deleted_at__isnull=False
-                ).select_related("user").first()
+                student = student_repo.student_filter_tenant_id_deleted_first(tenant, student_id)
                 if not student:
                     failed.append({"row": row, "name": student_data.get("name", ""), "error": "삭제된 학생을 찾을 수 없습니다."})
                     continue
@@ -477,7 +472,7 @@ class StudentViewSet(ModelViewSet):
                     created_students.append(student)
                 else:
                     with transaction.atomic():
-                        Enrollment.objects.filter(student_id=student.id).delete()
+                        student_repo.enrollment_filter_student_delete(student.id)
                         if student.user_id:
                             student.user.delete()
                         else:
@@ -505,9 +500,9 @@ class StudentViewSet(ModelViewSet):
                         omr_code = parent_phone[-8:]
                     else:
                         raise ValueError("학생 전화번호 또는 부모 전화번호가 필요합니다.")
-                    user = User.objects.create_user(
+                    user = student_repo.user_create_user(
                         username=ps_number,
-                        phone=phone or "",  # phone이 None이면 빈 문자열
+                        phone=phone or "",
                         name=student_data.get("name", ""),
                     )
                     user.set_password(password)
@@ -518,12 +513,12 @@ class StudentViewSet(ModelViewSet):
                     )
                     high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
                     major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
-                    new_student = Student.objects.create(
+                    new_student = student_repo.student_create(
                         tenant=tenant,
                         user=user,
                         parent=parent,
                         name=student_data.get("name", ""),
-                        phone=phone,  # nullable
+                        phone=phone,
                         parent_phone=parent_phone,
                         ps_number=ps_number,
                         omr_code=omr_code,
@@ -578,11 +573,7 @@ class StudentViewSet(ModelViewSet):
             return Response({"detail": "삭제할 ID가 없습니다."}, status=400)
 
         tenant = request.tenant
-        to_delete = list(
-            Student.objects.filter(
-                tenant=tenant, id__in=ids, deleted_at__isnull=True
-            ).select_related("user")
-        )
+        to_delete = list(student_repo.student_filter_tenant_ids_active(tenant, ids))
         now = timezone.now()
         with transaction.atomic():
             for student in to_delete:
@@ -611,11 +602,7 @@ class StudentViewSet(ModelViewSet):
             return Response({"detail": "복원할 ID가 없습니다."}, status=400)
 
         tenant = request.tenant
-        to_restore = list(
-            Student.objects.filter(
-                tenant=tenant, id__in=ids, deleted_at__isnull=False
-            ).select_related("user")
-        )
+        to_restore = list(student_repo.student_filter_tenant_ids_deleted(tenant, ids))
         with transaction.atomic():
             for student in to_restore:
                 student.deleted_at = None
@@ -646,11 +633,7 @@ class StudentViewSet(ModelViewSet):
             return Response({"detail": "삭제할 ID가 없습니다."}, status=400)
 
         tenant = request.tenant
-        to_delete = list(
-            Student.objects.filter(
-                tenant=tenant, id__in=ids, deleted_at__isnull=False
-            ).select_related("user")
-        )
+        to_delete = list(student_repo.student_filter_tenant_ids_deleted(tenant, ids))
         if not to_delete:
             return Response({"deleted": 0}, status=200)
 
@@ -716,6 +699,63 @@ class StudentViewSet(ModelViewSet):
     @action(
         detail=False,
         methods=["get"],
+        url_path="deleted_duplicates_check",
+    )
+    def deleted_duplicates_check(self, request):
+        """
+        삭제된 학생 중 (이름+학부모전화) 중복 검사 — 고객 셀프 복구용.
+        GET → { "duplicate_groups": int, "records_to_remove": int }
+        """
+        from django.db.models import Count, Min
+
+        tenant = request.tenant
+        dup_groups = student_repo.student_filter_tenant_deleted_dup_groups(tenant)
+        groups_list = list(dup_groups)
+        records_to_remove = sum(g["cnt"] - 1 for g in groups_list)
+        return Response({
+            "duplicate_groups": len(groups_list),
+            "records_to_remove": records_to_remove,
+        })
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="deleted_duplicates_fix",
+    )
+    def deleted_duplicates_fix(self, request):
+        """
+        삭제된 학생 중 (이름+학부모전화) 중복 정리 — 그룹당 1명만 유지, 나머지 영구 삭제.
+        POST → { "removed": int }
+        """
+        tenant = request.tenant
+        dup_groups = student_repo.student_filter_tenant_deleted_dup_groups(tenant)
+        groups_list = list(dup_groups)
+        if not groups_list:
+            return Response({"removed": 0}, status=200)
+
+        removed = 0
+        with transaction.atomic():
+            for g in groups_list:
+                keep = student_repo.student_filter_dup_keep_first(
+                    g["tenant_id"], g["name"], g["parent_phone"]
+                )
+                to_remove = list(
+                    student_repo.student_filter_dup_to_remove(
+                        g["tenant_id"], g["name"], g["parent_phone"], keep.id
+                    )
+                )
+                for s in to_remove:
+                    student_repo.enrollment_filter_student_delete_obj(s)
+                    user = s.user
+                    s.delete()
+                    if user:
+                        user.delete()
+                    removed += 1
+        return Response({"removed": removed}, status=200)
+
+    @action(
+        detail=False,
+        methods=["get"],
         url_path="me",
         permission_classes=[IsAuthenticated, IsStudent],
     )
@@ -727,10 +767,7 @@ class StudentViewSet(ModelViewSet):
         - request.user + request.tenant 기준 강제
         - 다른 학원 / 다른 학생 접근 불가
         """
-        student = Student.objects.get(
-            tenant=request.tenant,
-            user=request.user,
-        )
+        student = student_repo.student_get_tenant_user(request.tenant, request.user)
 
         serializer = StudentDetailSerializer(
             student,

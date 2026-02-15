@@ -1,16 +1,16 @@
 # PATH: apps/domains/attendance/views.py
 
+import logging
 from django.db import transaction
-from django.shortcuts import get_object_or_404
-from django.http import HttpResponse
-
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.exceptions import NotFound
 
+from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from .models import Attendance
 from .serializers import (
     AttendanceSerializer,
@@ -20,8 +20,9 @@ from .filters import AttendanceFilter
 
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.domains.ai.gateway import dispatch_job
 
-from .utils.excel import build_attendance_excel
+logger = logging.getLogger(__name__)
 
 
 class AttendanceViewSet(ModelViewSet):
@@ -40,6 +41,7 @@ class AttendanceViewSet(ModelViewSet):
         return (
             Attendance.objects
             .filter(tenant=tenant)
+            .filter(enrollment__student__deleted_at__isnull=True)
             .select_related(
                 "session",
                 "session__lecture",
@@ -65,24 +67,26 @@ class AttendanceViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = get_object_or_404(Session, id=session_id)
+        session = enroll_repo.get_session_by_id(session_id)
+        if not session:
+            raise NotFound("세션을 찾을 수 없습니다.")
         created = []
 
         for sid in student_ids:
-            enrollment, _ = Enrollment.objects.get_or_create(
+            enrollment, _ = enroll_repo.enrollment_get_or_create(
                 tenant=tenant,
-                student_id=sid,
                 lecture=session.lecture,
+                student_id=sid,
                 defaults={"status": "ACTIVE"},
             )
 
-            SessionEnrollment.objects.get_or_create(
+            enroll_repo.session_enrollment_get_or_create_tenant(
                 tenant=tenant,
-                enrollment=enrollment,
                 session=session,
+                enrollment=enrollment,
             )
 
-            attendance, _ = Attendance.objects.get_or_create(
+            attendance, _ = enroll_repo.attendance_get_or_create_tenant(
                 tenant=tenant,
                 enrollment=enrollment,
                 session=session,
@@ -110,35 +114,16 @@ class AttendanceViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        lecture = get_object_or_404(
-            Lecture,
-            id=lecture_id,
-            tenant=tenant,
-        )
+        lecture = enroll_repo.get_lecture_by_id_tenant_raw(lecture_id, tenant)
+        if not lecture:
+            raise NotFound("강의를 찾을 수 없습니다.")
 
-        sessions = Session.objects.filter(
-            lecture=lecture
-        ).order_by("order", "id")
+        sessions = enroll_repo.get_sessions_for_lecture_ordered(lecture)
 
-        # 강의 내 모든 차시에 등록된 수강생(Enrollment)만 출결 기준으로 사용
-        enrollment_ids = (
-            SessionEnrollment.objects
-            .filter(tenant=tenant, session__lecture=lecture)
-            .values_list("enrollment_id", flat=True)
-            .distinct()
-        )
-        enrollments = (
-            Enrollment.objects
-            .filter(id__in=enrollment_ids, status="ACTIVE")
-            .select_related("student")
-            .order_by("student__name", "id")
-        )
+        enrollment_ids = list(enroll_repo.get_session_enrollment_enrollment_ids(tenant, lecture))
+        enrollments = enroll_repo.get_enrollments_by_ids_active(enrollment_ids, tenant)
 
-        attendances = Attendance.objects.filter(
-            tenant=tenant,
-            session__lecture=lecture,
-            enrollment__in=enrollments,
-        )
+        attendances = enroll_repo.get_attendances_for_lecture(tenant, lecture, enrollments)
 
         attendance_map = {
             (a.enrollment_id, a.session_id): a
@@ -188,32 +173,54 @@ class AttendanceViewSet(ModelViewSet):
         )
 
     # =========================================================
-    # 3️⃣ 엑셀 다운로드
+    # 3️⃣ 엑셀 내보내기 (워커 비동기)
+    # POST /api/v1/lectures/attendance/excel/ body: { "lecture_id": int }
+    # 응답: { "job_id", "status": "PENDING" } → 클라이언트는 GET /api/v1/jobs/<job_id>/ 폴링 후 result.download_url 로 다운로드
     # =========================================================
-    @action(detail=False, methods=["get"], url_path="excel")
+    @action(detail=False, methods=["post"], url_path="excel")
     def excel(self, request):
         tenant = getattr(request, "tenant", None)
-
-        lecture_id = request.query_params.get("lecture")
-        if not lecture_id:
+        if not tenant:
             return Response(
-                {"detail": "lecture 파라미터는 필수입니다"},
+                {"detail": "tenant가 필요합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        lecture = get_object_or_404(
-            Lecture,
-            id=lecture_id,
-            tenant=tenant,
-        )
-
-        workbook, filename = build_attendance_excel(lecture)
-
-        response = HttpResponse(
-            content_type=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        lecture_id = request.data.get("lecture_id") or request.query_params.get("lecture")
+        if not lecture_id:
+            return Response(
+                {"detail": "lecture_id(또는 lecture)는 필수입니다."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
+
+        lecture = enroll_repo.get_lecture_by_id_tenant_raw(lecture_id, tenant)
+        if not lecture:
+            raise NotFound("강의를 찾을 수 없습니다.")
+
+        out = dispatch_job(
+            job_type="attendance_excel_export",
+            payload={
+                "tenant_id": str(tenant.id),
+                "lecture_id": int(lecture.id),
+            },
+            tenant_id=str(tenant.id),
+            source_domain="attendance",
+            source_id=str(lecture.id),
+            tier="basic",
+            idempotency_key=f"attendance_export:{tenant.id}:{lecture.id}",
         )
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
-        workbook.save(response)
-        return response
+        if not out.get("ok"):
+            return Response(
+                {"detail": out.get("error", "job 등록 실패")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        logger.info(
+            "ATTENDANCE_EXCEL_EXPORT dispatch job_id=%s tenant_id=%s lecture_id=%s",
+            out["job_id"],
+            tenant.id,
+            lecture.id,
+        )
+        return Response(
+            {"job_id": out["job_id"], "status": "PENDING"},
+            status=status.HTTP_202_ACCEPTED,
+        )

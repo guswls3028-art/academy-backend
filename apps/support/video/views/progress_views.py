@@ -7,10 +7,11 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from ..models import VideoProgress, VideoAccess, AccessMode
 from ..serializers import VideoProgressSerializer
+from academy.adapters.db.django import repositories_video as video_repo
 
 
 class VideoProgressViewSet(ModelViewSet):
-    queryset = VideoProgress.objects.all()
+    queryset = video_repo.video_progress_all()
     serializer_class = VideoProgressSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["video", "enrollment"]
@@ -25,17 +26,13 @@ class VideoProgressViewSet(ModelViewSet):
         # PROCTORED_CLASS → FREE_REVIEW on completion (SSOT)
         if not prev_completed and vp.completed:
             now = timezone.now()
-            VideoAccess.objects.filter(
-                video=vp.video,
-                enrollment=vp.enrollment,
+            video_repo.video_access_filter(vp.video, vp.enrollment).filter(
                 access_mode=AccessMode.PROCTORED_CLASS,
             ).update(
                 access_mode=AccessMode.FREE_REVIEW,
                 proctored_completed_at=now,
                 is_override=False,
             )
-            VideoAccess.objects.filter(
-                video=vp.video,
-                enrollment=vp.enrollment,
+            video_repo.video_access_filter(vp.video, vp.enrollment).filter(
                 rule="once",
             ).update(rule="free", is_override=False)

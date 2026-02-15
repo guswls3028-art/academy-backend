@@ -15,7 +15,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.contrib.auth import get_user_model
 
-from apps.core.models import Tenant, TenantDomain, Program, TenantMembership
+from academy.adapters.db.django import repositories_core as core_repo
 
 
 def normalize_host(host: str) -> str:
@@ -68,16 +68,15 @@ class Command(BaseCommand):
         hosts_str = options["hosts"] or "localhost,127.0.0.1"
         hosts = [normalize_host(h) for h in hosts_str.split(",") if normalize_host(h)]
 
+        from apps.core.models import Program
+
         User = get_user_model()
 
         with transaction.atomic():
             # 1) Tenant
-            tenant, tenant_created = Tenant.objects.get_or_create(
-                code=tenant_code,
-                defaults={
-                    "name": tenant_code,
-                    "is_active": True,
-                },
+            tenant, tenant_created = core_repo.tenant_get_or_create(
+                tenant_code,
+                defaults={"name": tenant_code, "is_active": True},
             )
             if tenant_created:
                 self.stdout.write(self.style.SUCCESS(f"Created Tenant: code={tenant.code}, name={tenant.name}"))
@@ -88,8 +87,8 @@ class Command(BaseCommand):
                 self.stdout.write(f"Tenant already exists: code={tenant.code}")
 
             # 2) Program (tenant 1:1)
-            program, program_created = Program.objects.get_or_create(
-                tenant=tenant,
+            program, program_created = core_repo.program_get_or_create(
+                tenant,
                 defaults={
                     "display_name": "HakwonPlus",
                     "brand_key": "hakwonplus",
@@ -111,8 +110,8 @@ class Command(BaseCommand):
 
             # 3) TenantDomain (localhost, 127.0.0.1 → this tenant)
             for host in hosts:
-                domain, dom_created = TenantDomain.objects.get_or_create(
-                    host=host,
+                domain, dom_created = core_repo.tenant_domain_get_or_create_by_defaults(
+                    host,
                     defaults={
                         "tenant": tenant,
                         "is_primary": False,
@@ -130,27 +129,30 @@ class Command(BaseCommand):
                     else:
                         self.stdout.write(f"TenantDomain already exists: {host} -> {tenant.code}")
 
-            # 4) User (login)
-            user, user_created = User.objects.get_or_create(
-                username=username,
+            # 4) User (기존 admin97 / 개발용 있으면 비밀번호만 맞추고, 없으면 생성)
+            user, user_created = core_repo.user_get_or_create(
+                username,
                 defaults={
                     "is_active": True,
                     "is_staff": True,
                     "is_superuser": False,
                     "email": f"{username}@local.dev",
+                    "name": display_name,
                 },
             )
             user.set_password(password)
             user.is_active = True
             user.is_staff = True
-            user.save(update_fields=["password", "is_active", "is_staff"])
+            if user.name != display_name and not user_created:
+                user.name = display_name
+            user.save(update_fields=["password", "is_active", "is_staff", "name"])
             if user_created:
-                self.stdout.write(self.style.SUCCESS(f"Created User: username={username}"))
+                self.stdout.write(self.style.SUCCESS(f"Created User: username={username}, name={display_name}"))
             else:
-                self.stdout.write(self.style.SUCCESS(f"Updated User password: username={username}"))
+                self.stdout.write(self.style.SUCCESS(f"Updated User: username={username}, password set, name={getattr(user, 'name', display_name)}"))
 
             # 5) TenantMembership (admin)
-            membership = TenantMembership.ensure_active(tenant=tenant, user=user, role="admin")
+            membership = core_repo.membership_ensure_active(tenant=tenant, user=user, role="admin")
             self.stdout.write(self.style.SUCCESS(f"TenantMembership: {user.username} @ {tenant.code} ({membership.role})"))
 
         self.stdout.write(

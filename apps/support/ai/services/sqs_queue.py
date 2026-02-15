@@ -10,12 +10,17 @@ import json
 import logging
 from typing import Optional
 
+from datetime import timedelta
+from typing import TYPE_CHECKING
+
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from apps.domains.ai.models import AIJobModel
-from libs.queue import get_queue_client
+from libs.queue import get_queue_client, QueueUnavailableError
+
+if TYPE_CHECKING:
+    from apps.domains.ai.models import AIJobModel
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +103,7 @@ class AISQSQueue:
             # 기본값: basic
             return getattr(settings, "AI_SQS_DLQ_NAME_BASIC", self.DLQ_NAME_BASIC)
     
-    def enqueue(self, job: AIJobModel) -> bool:
+    def enqueue(self, job: "AIJobModel") -> bool:
         """
         AI 작업을 Tier별 SQS 큐에 추가
         
@@ -225,11 +230,13 @@ class AISQSQueue:
                 "message_id": message.get("MessageId"),
                 "created_at": job_data.get("created_at"),  # SQS 메시지 수명 추적용
             }
-            
+
+        except QueueUnavailableError:
+            raise
         except Exception as e:
             logger.exception("Error receiving message from SQS: %s", e)
             return None
-    
+
     def delete_message(self, receipt_handle: str, tier: str) -> bool:
         """
         처리 완료된 메시지 삭제
@@ -251,123 +258,71 @@ class AISQSQueue:
         except Exception as e:
             logger.exception("Error deleting message: receipt_handle=%s, error=%s", receipt_handle, e)
             return False
-    
-    @transaction.atomic
-    def mark_processing(self, job_id: str) -> bool:
+
+    def change_message_visibility(
+        self, receipt_handle: str, tier: str, visibility_timeout: int
+    ) -> bool:
         """
-        작업을 RUNNING 상태로 변경 (멱등성 보장)
-        
+        SQS 메시지 visibility 연장 (장시간 AI 작업 시 재노출 방지).
+
         Args:
-            job_id: Job ID
-            
+            receipt_handle: SQS ReceiptHandle
+            tier: 큐 tier ("lite" | "basic" | "premium")
+            visibility_timeout: 연장할 초 단위 (예: 3600)
+
         Returns:
             bool: 성공 여부
         """
-        job = AIJobModel.objects.select_for_update().filter(job_id=job_id).first()
-        if not job:
-            return False
-        
-        # 이미 RUNNING이면 OK
-        if job.status == "RUNNING":
-            return True
-        
-        # PENDING 상태만 RUNNING으로 변경 가능
-        if job.status != "PENDING":
-            logger.warning(
-                "Cannot mark AI job %s as RUNNING: status=%s",
-                job_id,
-                job.status,
+        queue_name = self._get_queue_name(tier=tier)
+        try:
+            return self.queue_client.change_message_visibility(
+                queue_name=queue_name,
+                receipt_handle=receipt_handle,
+                visibility_timeout=visibility_timeout,
+            )
+        except Exception as e:
+            logger.exception(
+                "Error changing message visibility: receipt_handle=%s tier=%s error=%s",
+                receipt_handle, tier, e,
             )
             return False
-        
-        job.status = "RUNNING"
-        job.locked_at = timezone.now()
-        job.locked_by = "sqs-worker"
-        
-        update_fields = ["status", "locked_at", "locked_by"]
-        job.save(update_fields=update_fields)
-        return True
-    
+
+    def _ai_repo(self):
+        from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
+        return DjangoAIJobRepository()
+
+    @transaction.atomic
+    def mark_processing(self, job_id: str) -> bool:
+        """작업을 RUNNING 상태로 변경 (academy repository 경유)."""
+        now = timezone.now()
+        return self._ai_repo().mark_running(
+            job_id, "sqs-worker", now + timedelta(seconds=3600), now
+        )
+
     @transaction.atomic
     def complete_job(
         self,
         job_id: str,
         result_payload: dict,
     ) -> tuple[bool, str]:
-        """
-        작업 완료 처리
-        
-        Args:
-            job_id: Job ID
-            result_payload: 결과 페이로드
-            
-        Returns:
-            tuple[bool, str]: (성공 여부, 이유)
-        """
-        job = AIJobModel.objects.select_for_update().filter(job_id=job_id).first()
-        if not job:
+        """작업 완료 처리 (academy repository 경유)."""
+        if not self._ai_repo().get_by_job_id(job_id):
             return False, "not_found"
-        
-        # 멱등성: 이미 DONE 상태면 OK
-        if job.status == "DONE":
-            return True, "idempotent"
-        
-        job.status = "DONE"
-        job.locked_at = None
-        job.locked_by = None
-        
-        # 결과 저장
-        from apps.domains.ai.models import AIResultModel
-        result, _ = AIResultModel.objects.get_or_create(
-            job=job,
-            defaults={"payload": result_payload},
-        )
-        if result.payload != result_payload:
-            result.payload = result_payload
-            result.save(update_fields=["payload"])
-        
-        update_fields = ["status", "locked_at", "locked_by"]
-        job.save(update_fields=update_fields)
-        return True, "ok"
-    
+        if self._ai_repo().mark_done(job_id, timezone.now(), result_payload):
+            return True, "ok"
+        return True, "idempotent"
+
     @transaction.atomic
     def fail_job(
         self,
         job_id: str,
         error_message: str,
     ) -> tuple[bool, str]:
-        """
-        작업 실패 처리
-        
-        Args:
-            job_id: Job ID
-            error_message: 에러 메시지
-            
-        Returns:
-            tuple[bool, str]: (성공 여부, 이유)
-        """
-        job = AIJobModel.objects.select_for_update().filter(job_id=job_id).first()
+        """작업 실패 처리 (academy repository 경유)."""
+        job = self._ai_repo().get_by_job_id(job_id)
+        tier = job.tier if job else "basic"
+        if self._ai_repo().mark_failed(job_id, error_message, tier, timezone.now()):
+            return True, "ok"
         if not job:
             return False, "not_found"
-
-        from apps.domains.ai.services.status_resolver import status_for_exception
-
-        final_status, _ = status_for_exception(job.tier or "basic")
-
-        # 멱등성: 이미 최종 상태면 OK
-        if job.status == final_status:
-            return True, "idempotent"
-        if job.status == "FAILED" and final_status == "FAILED":
-            return True, "idempotent"
-        if job.status == "DONE" and final_status == "DONE":
-            return True, "idempotent"
-
-        job.status = final_status
-        job.error_message = str(error_message)[:2000]
-        job.last_error = str(error_message)[:2000]
-        job.locked_at = None
-        job.locked_by = None
-
-        update_fields = ["status", "error_message", "last_error", "locked_at", "locked_by"]
-        job.save(update_fields=update_fields)
-        return True, "ok"
+        return True, "idempotent"

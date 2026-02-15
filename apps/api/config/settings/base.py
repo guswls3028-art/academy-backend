@@ -299,6 +299,8 @@ R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 R2_AI_BUCKET = os.getenv("R2_AI_BUCKET", "academy-ai")
 R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
 R2_STORAGE_BUCKET = os.getenv("R2_STORAGE_BUCKET", "academy-storage")
+# 엑셀 수강등록 업로드용 (워커와 동일 버킷 사용)
+R2_EXCEL_BUCKET = os.getenv("R2_EXCEL_BUCKET", os.getenv("EXCEL_BUCKET_NAME", "academy-excel"))
 
 # ==================================================
 # SITE (메시지 발송용 홈페이지 링크)

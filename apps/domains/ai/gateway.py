@@ -10,7 +10,7 @@ from apps.shared.contracts.ai_job import AIJob
 from apps.domains.ai.types import ensure_payload_dict, AIJobType
 from apps.domains.ai.safe import safe_dispatch
 from apps.domains.ai.queueing.publisher import publish_job
-from apps.domains.ai.models import AIJobModel
+from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.domains.ai.services.tier_resolver import resolve_tier, validate_tier_for_job_type
 from apps.domains.ai.services.pre_validation import validate_input_for_basic
 
@@ -101,7 +101,7 @@ def dispatch_job(
 
         if effective_key:
             try:
-                job_model = AIJobModel.objects.create(
+                job_model = ai_repo.job_create(
                     job_id=job.id,
                     job_type=job.type,
                     payload=job.payload,
@@ -115,10 +115,10 @@ def dispatch_job(
                     rerun_reason=(rerun_reason or ""),
                 )
             except IntegrityError:
-                job_model = AIJobModel.objects.get(idempotency_key=effective_key)
+                job_model = ai_repo.job_get_by_idempotency_key(effective_key)
                 return {"ok": True, "job_id": str(job_model.job_id), "type": job_model.job_type}
         else:
-            job_model = AIJobModel.objects.create(
+            job_model = ai_repo.job_create(
                 job_id=job.id,
                 job_type=job.type,
                 payload=job.payload,
@@ -132,10 +132,7 @@ def dispatch_job(
         try:
             publish_job(job)
         except Exception as e:
-            job_model.status = "FAILED"
-            job_model.error_message = str(e)
-            job_model.last_error = str(e)
-            job_model.save(update_fields=["status", "error_message", "last_error", "updated_at"])
+            ai_repo.job_save_failed(job_model, str(e), str(e))
             raise
 
         return {"ok": True, "job_id": job.id, "type": job.type}

@@ -71,6 +71,11 @@ urlpatterns = [
     path("media/", include("apps.support.video.urls")),
 
     # =========================
+    # AI job 상태 조회 (엑셀 내보내기 등)
+    # =========================
+    path("jobs/", include("apps.domains.ai.urls")),
+
+    # =========================
     # AI (internal)
     # =========================
     path("internal/ai/", include("apps.api.v1.internal.ai.urls")),

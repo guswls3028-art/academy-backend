@@ -1,8 +1,6 @@
 # PATH: apps/support/video/services/video_stats.py
 
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.attendance.models import Attendance
-from apps.support.video.models import VideoProgress, VideoAccess, Video
+from academy.adapters.db.django import repositories_video as video_repo
 from apps.support.video.services.access_resolver import resolve_access_mode
 
 
@@ -16,25 +14,12 @@ def build_video_stats_students(video):
     """
 
     lecture = video.session.lecture
-
-    enrollments = Enrollment.objects.filter(
-        lecture=lecture,
-        status="ACTIVE",
-    ).select_related("student")
-
-    progresses = {
-        p.enrollment_id: p
-        for p in VideoProgress.objects.filter(video=video)
-    }
-
-    perms = {
-        p.enrollment_id: p
-        for p in VideoAccess.objects.filter(video=video)
-    }
-
+    enrollments = video_repo.enrollment_filter_by_lecture_active(lecture)
+    progresses = {p.enrollment_id: p for p in video_repo.get_video_progresses_for_video(video)}
+    perms = {p.enrollment_id: p for p in video_repo.get_video_access_for_video(video)}
     attendance = {
         a.enrollment_id: a.status
-        for a in Attendance.objects.filter(session=video.session)
+        for a in video_repo.get_attendance_for_session(video.session)
     }
 
     students = []

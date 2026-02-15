@@ -16,6 +16,7 @@ from apps.domains.exams.serializers.exam_asset import ExamAssetSerializer
 from apps.domains.exams.services.template_builder_service import TemplateBuilderService
 from apps.domains.exams.services.omr_pdf_generator import generate_simple_objective_omr_pdf
 from apps.domains.exams.services.template_resolver import assert_template_editable
+from apps.core.r2_paths import ai_exam_asset_key
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
@@ -57,8 +58,17 @@ class GenerateOMRSheetAssetView(APIView):
         )
         bio = io.BytesIO(pdf_bytes)
 
-        # 2) 업로드
-        key = f"exams/{template_exam.id}/assets/omr_sheet/{uuid.uuid4().hex}.pdf"
+        # 2) 업로드 (경로 통일: tenants/{id}/ai/exams/...)
+        tenant_id = getattr(request, "tenant", None) and request.tenant.id
+        if not tenant_id:
+            return Response({"detail": "tenant required for upload"}, status=status.HTTP_400_BAD_REQUEST)
+        key = ai_exam_asset_key(
+            tenant_id=tenant_id,
+            exam_id=template_exam.id,
+            asset_type="omr_sheet",
+            unique_id=uuid.uuid4().hex,
+            ext="pdf",
+        )
         upload_fileobj_to_r2(
             fileobj=bio,
             key=key,

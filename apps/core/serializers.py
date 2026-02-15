@@ -3,6 +3,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
 from apps.core.models import Attendance, Expense, TenantMembership, Program
+from academy.adapters.db.django import repositories_core as core_repo
 
 User = get_user_model()
 
@@ -31,13 +32,7 @@ class UserSerializer(serializers.ModelSerializer):
         if not tenant:
             return None
 
-        membership = (
-            TenantMembership.objects
-            .filter(tenant=tenant, user=user, is_active=True)
-            .only("role")
-            .first()
-        )
-
+        membership = core_repo.membership_get(tenant=tenant, user=user, is_active=True)
         return membership.role if membership else None
 
     def get_linkedStudentId(self, user):
@@ -47,17 +42,11 @@ class UserSerializer(serializers.ModelSerializer):
         if not tenant:
             return None
 
-        membership = (
-            TenantMembership.objects
-            .filter(tenant=tenant, user=user, is_active=True)
-            .only("role")
-            .first()
-        )
+        membership = core_repo.membership_get(tenant=tenant, user=user, is_active=True)
         if not membership or membership.role != "parent":
             return None
 
-        from apps.domains.parents.models import Parent
-        parent = Parent.objects.filter(user=user).first()
+        parent = core_repo.parent_get_by_user(user)
         if not parent:
             return None
         first_student = parent.students.filter(deleted_at__isnull=True).first()

@@ -4,32 +4,23 @@ from rest_framework.response import Response
 
 from django.db.models import Avg, Sum
 
-from apps.domains.attendance.models import Attendance
-from apps.domains.enrollment.models import Enrollment
-from ..models import Video, VideoProgress
+from academy.adapters.db.django import repositories_video as video_repo
+from ..models import VideoProgress
 
 
 class VideoAchievementView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, video_id: int):
-        video = Video.objects.select_related("session").get(id=video_id)
+        video = video_repo.video_get_by_id_with_session(video_id)
         lecture = video.session.lecture
 
-        # 영상 수강 대상 학생 (출석이 ONLINE)
-        online_attendance = Attendance.objects.filter(
-            session=video.session,
-            status="ONLINE",
-        )
-
+        online_attendance = video_repo.attendance_filter_session_status(video.session, "ONLINE")
         enrollment_ids = online_attendance.values_list("enrollment_id", flat=True)
 
         progresses = {
             p.enrollment_id: p
-            for p in VideoProgress.objects.filter(
-                video=video,
-                enrollment_id__in=enrollment_ids,
-            )
+            for p in video_repo.video_progress_filter_video_enrollment_ids(video, enrollment_ids)
         }
 
         students = []

@@ -11,6 +11,8 @@ from rest_framework.response import Response
 from drf_yasg.utils import swagger_auto_schema
 
 from apps.core.models import Attendance, Expense, Program
+from academy.adapters.db.django import repositories_core as core_repo
+from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.core.permissions import (
     TenantResolved,
     TenantResolvedAndMember,
@@ -79,7 +81,7 @@ class ProgramView(APIView):
         if tenant is None:
             return Response({"detail": "tenant must be resolved"}, status=400)
 
-        program = Program.objects.filter(tenant=tenant).first()
+        program = core_repo.program_get_by_tenant(tenant)
         if program is None:
             # 운영에서는 Tenant 생성 시 signal으로 Program 생성. 없으면 404 (프론트에서 처리)
             return Response(
@@ -100,7 +102,7 @@ class ProgramView(APIView):
         if tenant is None:
             return Response({"detail": "tenant must be resolved"}, status=400)
 
-        program = Program.objects.filter(tenant=tenant).first()
+        program = core_repo.program_get_by_tenant(tenant)
         if program is None:
             return Response(
                 {
@@ -191,14 +193,7 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         month = self.request.query_params.get("month")
 
-        qs = Attendance.objects.filter(
-            user=user,
-            tenant=tenant,
-        )
-
-        if month:
-            qs = qs.filter(date__startswith=month)
-
+        qs = core_repo.attendance_filter(user=user, tenant=tenant, month=month)
         return qs
 
     def perform_create(self, serializer):
@@ -225,14 +220,7 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         month = self.request.query_params.get("month")
 
-        qs = Attendance.objects.filter(
-            user=user,
-            tenant=tenant,
-        )
-
-        if month:
-            qs = qs.filter(date__startswith=month)
-
+        qs = core_repo.attendance_filter(user=user, tenant=tenant, month=month)
         total_hours = qs.aggregate(Sum("duration_hours"))["duration_hours__sum"] or 0
         total_amount = qs.aggregate(Sum("amount"))["amount__sum"] or 0
         after_tax = int(total_amount * 0.967)
@@ -263,14 +251,7 @@ class MyExpenseViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         month = self.request.query_params.get("month")
 
-        qs = Expense.objects.filter(
-            user=user,
-            tenant=tenant,
-        )
-
-        if month:
-            qs = qs.filter(date__startswith=month)
-
+        qs = core_repo.expense_filter(user=user, tenant=tenant, month=month)
         return qs
 
     def perform_create(self, serializer):
@@ -281,3 +262,34 @@ class MyExpenseViewSet(viewsets.ModelViewSet):
             user=self.request.user,
             amount=normalize_expense_amount(raw_amount),
         )
+
+
+# --------------------------------------------------
+# Worker job progress (Redis) — 우하단 실시간 프로그래스바용
+# --------------------------------------------------
+
+
+class JobProgressView(APIView):
+    """
+    GET /api/v1/core/job_progress/<job_id>/
+    Redis에 기록된 워커 진행률 조회. tenant 소속 job만 허용.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, job_id: str):
+        from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
+
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant가 필요합니다."}, status=400)
+        job = ai_repo.get_job_model_for_status(job_id, str(tenant.id))
+        if not job:
+            return Response({"detail": "해당 작업을 찾을 수 없습니다."}, status=404)
+        progress = RedisProgressAdapter().get_progress(job_id)
+        if not progress:
+            return Response({"step": None, "percent": None})
+        return Response({
+            "step": progress.get("step"),
+            "percent": progress.get("percent"),
+            **{k: v for k, v in progress.items() if k not in ("step", "percent")},
+        })

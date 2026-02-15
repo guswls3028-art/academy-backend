@@ -10,12 +10,13 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.exceptions import PermissionDenied, NotFound
 
+from academy.adapters.db.django import repositories_enrollment as enroll_repo
+from academy.adapters.db.django import repositories_teachers as teacher_repo
+from academy.adapters.db.django import repositories_video as video_repo
 from .models import Lecture, Session
 from .serializers import LectureSerializer, SessionSerializer
 
-from apps.domains.enrollment.models import Enrollment
 from apps.domains.attendance.models import Attendance
-from apps.support.video.models import Video
 
 
 class LectureViewSet(ModelViewSet):
@@ -29,13 +30,29 @@ class LectureViewSet(ModelViewSet):
         """
         🔐 tenant 단일 진실
         """
-        return Lecture.objects.filter(tenant=self.request.tenant)
+        return enroll_repo.lecture_filter_tenant(self.request.tenant)
 
     def perform_create(self, serializer):
         """
         🔐 Lecture 생성 시 tenant 강제 주입
         """
         serializer.save(tenant=self.request.tenant)
+
+    @action(detail=False, methods=["get"], url_path="instructor-options")
+    def instructor_options(self, request):
+        """
+        강의 담당자 선택지: 오너 + 강사(Teacher) 목록
+        GET /api/v1/lectures/lectures/instructor-options/
+        """
+        tenant = request.tenant
+        options = []
+        if tenant.owner_name and tenant.owner_name.strip():
+            options.append({"name": tenant.owner_name.strip(), "type": "owner"})
+        for t in teacher_repo.teacher_filter_tenant_active(tenant):
+            name = (t.name or "").strip()
+            if name and not any(o["name"] == name and o["type"] == "teacher" for o in options):
+                options.append({"name": name, "type": "teacher"})
+        return Response(options)
 
     @action(detail=True, methods=["get"], url_path="report")
     def report(self, request, pk=None):
@@ -46,26 +63,18 @@ class LectureViewSet(ModelViewSet):
         lecture = self.get_object()
         tenant = request.tenant
 
-        # 수강생 수
-        enrollments = Enrollment.objects.filter(
-            tenant=tenant,
-            lecture=lecture,
-            status="ACTIVE"
-        ).select_related("student")
+        # 수강생 수 (일단 삭제 학생 제외)
+        enrollments = enroll_repo.enrollment_filter_lecture_active_students(tenant, lecture)
 
         # 세션 수
-        sessions = Session.objects.filter(lecture=lecture)
+        sessions = enroll_repo.get_sessions_by_lecture(lecture)
 
         # 비디오 수
-        videos = Video.objects.filter(
-            session__lecture=lecture
-        ).distinct()
+        videos = video_repo.video_filter_by_lecture(lecture)
 
         # 출결 통계
-        attendances = Attendance.objects.filter(
-            tenant=tenant,
-            session__lecture=lecture,
-            enrollment__in=enrollments
+        attendances = enroll_repo.get_attendances_for_lecture(
+            tenant, lecture, enrollments
         ).select_related("session", "enrollment")
 
         attendance_by_status = {}
@@ -93,9 +102,7 @@ class LectureViewSet(ModelViewSet):
             student = enrollment.student
 
             # 비디오 진행률 계산
-            student_videos = Video.objects.filter(
-                session__lecture=lecture
-            ).distinct()
+            student_videos = video_repo.video_filter_by_lecture(lecture)
 
             # TODO: 실제 비디오 진행률 계산 로직 필요
             # 현재는 기본값 반환
@@ -151,7 +158,7 @@ class SessionViewSet(ModelViewSet):
         """
         Session은 lecture를 통해 tenant가 결정됨
         """
-        qs = Session.objects.select_related("lecture")
+        qs = enroll_repo.session_queryset_select_related_lecture()
         qs = qs.filter(lecture__tenant=self.request.tenant)
 
         lecture = self.request.query_params.get("lecture")
@@ -175,6 +182,6 @@ class SessionViewSet(ModelViewSet):
 
         order = serializer.validated_data.get("order")
         if order is None:
-            agg = Session.objects.filter(lecture=lecture).aggregate(Max("order"))
-            order = (agg["order__max"] or 0) + 1
+            agg = enroll_repo.session_aggregate_max_order(lecture)
+            order = (agg["max_order"] or 0) + 1
         serializer.save(order=order)

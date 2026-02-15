@@ -6,12 +6,14 @@ from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
-from django.db.models import Sum
 from django.conf import settings
+
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.core.models import Program
 from .models import InventoryFolder, InventoryFile
 from .r2_path import build_r2_key, safe_filename, folder_path_string
+from academy.adapters.db.django import repositories_inventory as inv_repo
 from .services import move_file as do_move_file, move_folder as do_move_folder
 
 # R2 Storage 버킷 (인벤토리 전용)
@@ -39,11 +41,27 @@ def _tenant_required(view_func):
     return wrapped
 
 
+def _jwt_required(view_func):
+    """JWT 인증 필수. 미인증 시 401 (저장소 API는 로그인 사용자만 허용)."""
+    def wrapped(request, *args, **kwargs):
+        auth = JWTAuthentication()
+        result = auth.authenticate(request)
+        if result is None:
+            return JsonResponse(
+                {"detail": "Authentication required", "code": "auth_required"},
+                status=401,
+            )
+        request.user, request.auth = result[0], result[1]
+        return view_func(request, *args, **kwargs)
+    return wrapped
+
+
 class QuotaView(View):
     """GET /storage/quota/ — 테넌트 사용량 및 플랜 한도."""
 
     @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
+    @method_decorator(_jwt_required)
     def get(self, request):
         tenant = request.tenant
         try:
@@ -53,7 +71,7 @@ class QuotaView(View):
             plan = "basic"
         try:
             limit = QUOTA_BYTES.get(plan, QUOTA_BYTES["basic"])
-            used = InventoryFile.objects.filter(tenant=tenant).aggregate(s=Sum("size_bytes"))["s"] or 0
+            used = inv_repo.inventory_file_aggregate_size(tenant)
             return JsonResponse({
                 "usedBytes": used,
                 "limitBytes": limit,
@@ -71,6 +89,7 @@ class InventoryListView(View):
 
     @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
+    @method_decorator(_jwt_required)
     def get(self, request):
         scope = (request.GET.get("scope") or "admin").lower()
         if scope not in ("admin", "student"):
@@ -81,12 +100,9 @@ class InventoryListView(View):
 
         try:
             tenant = request.tenant
-            qs_folders = InventoryFolder.objects.filter(tenant=tenant, scope=scope)
-            if scope == "student":
-                qs_folders = qs_folders.filter(student_ps=student_ps)
-            qs_files = InventoryFile.objects.filter(tenant=tenant, scope=scope)
-            if scope == "student":
-                qs_files = qs_files.filter(student_ps=student_ps)
+            student_ps_arg = student_ps if scope == "student" else None
+            qs_folders = inv_repo.inventory_folder_filter(tenant, scope, student_ps_arg)
+            qs_files = inv_repo.inventory_file_filter(tenant, scope, student_ps_arg)
 
             folders = [
                 {"id": str(f.id), "name": f.name, "parentId": str(f.parent_id) if f.parent_id else None}
@@ -116,10 +132,21 @@ class InventoryListView(View):
 
 
 class FolderCreateView(View):
-    """POST /storage/inventory/folders/ — 폴더 생성."""
+    """
+    POST /storage/inventory/folders/ — 폴더 생성.
+
+    필수: tenant(요청 host로 해석), name
+    선택: scope(기본 admin), student_ps(scope=student일 때 필수), parent_id(숫자 또는 null/빈값=루트)
+
+    404 가능 원인:
+    - 미들웨어: 요청 host가 TenantDomain에 없음 (새 테넌트면 해당 host 등록 필요)
+    - parent_id에 해당하는 폴더가 해당 테넌트에 없음
+    500: create 실패 시 DEBUG면 상세 메시지 반환
+    """
 
     @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
+    @method_decorator(_jwt_required)
     def post(self, request):
         import json
         try:
@@ -137,18 +164,25 @@ class FolderCreateView(View):
 
         tenant = request.tenant
         parent = None
-        if parent_id:
-            parent = InventoryFolder.objects.filter(tenant=tenant, id=parent_id).first()
+        pid = None
+        if parent_id is not None and parent_id != "":
+            try:
+                pid = int(parent_id)
+            except (TypeError, ValueError):
+                return JsonResponse({"detail": "parent_id must be a number"}, status=400)
+            parent = inv_repo.inventory_folder_get(tenant, pid)
             if not parent:
                 return JsonResponse({"detail": "Parent folder not found"}, status=404)
 
-        folder = InventoryFolder.objects.create(
-            tenant=tenant,
-            scope=scope,
-            student_ps=student_ps,
-            parent=parent,
-            name=name,
-        )
+        try:
+            folder = inv_repo.inventory_folder_create(
+                tenant, pid if parent_id not in (None, "") else None, name, scope, student_ps or "",
+            )
+        except Exception as e:
+            return JsonResponse(
+                {"detail": str(e) if settings.DEBUG else "Failed to create folder"},
+                status=500,
+            )
         return JsonResponse({
             "id": str(folder.id),
             "name": folder.name,
@@ -161,6 +195,7 @@ class FileUploadView(View):
 
     @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
+    @method_decorator(_jwt_required)
     def post(self, request):
         scope = (request.POST.get("scope") or "admin").lower()
         student_ps = (request.POST.get("student_ps") or "").strip()
@@ -184,14 +219,14 @@ class FileUploadView(View):
         limit = QUOTA_BYTES.get(plan, QUOTA_BYTES["basic"])
         if plan == "lite":
             return JsonResponse({"detail": "인벤토리 기능을 사용할 수 없는 플랜입니다.", "code": "plan_lite"}, status=403)
-        used = InventoryFile.objects.filter(tenant=tenant).aggregate(s=Sum("size_bytes"))["s"] or 0
+        used = inv_repo.inventory_file_aggregate_size(tenant)
         if used + file_obj.size > limit:
             return JsonResponse({"detail": "용량 한도를 초과했습니다. 플랜 업그레이드가 필요합니다.", "code": "quota_exceeded"}, status=403)
 
         folder = None
         folder_path = ""
         if folder_id:
-            folder = InventoryFolder.objects.filter(tenant=tenant, id=folder_id).first()
+            folder = inv_repo.inventory_folder_get(tenant, int(folder_id))
             if folder:
                 path_parts = []
                 p = folder
@@ -219,7 +254,7 @@ class FileUploadView(View):
             except Exception as e:
                 return JsonResponse({"detail": f"R2 upload failed: {e}"}, status=502)
 
-        inv_file = InventoryFile.objects.create(
+        inv_file = inv_repo.inventory_file_create(
             tenant=tenant,
             scope=scope,
             student_ps=student_ps,
@@ -251,20 +286,21 @@ class FolderDeleteView(View):
 
     @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
+    @method_decorator(_jwt_required)
     def delete(self, request, folder_id):
         tenant = request.tenant
         scope = (request.GET.get("scope") or "admin").lower()
         student_ps = (request.GET.get("student_ps") or "").strip()
 
-        folder = InventoryFolder.objects.filter(tenant=tenant, id=folder_id).first()
+        folder = inv_repo.inventory_folder_get(tenant, folder_id)
         if not folder:
             return JsonResponse({"detail": "Not found"}, status=404)
         if folder.scope != scope or (scope == "student" and folder.student_ps != student_ps):
             return JsonResponse({"detail": "Forbidden"}, status=403)
 
-        if InventoryFolder.objects.filter(tenant=tenant, parent=folder).exists():
+        if inv_repo.inventory_folder_has_children(tenant, folder):
             return JsonResponse({"detail": "비어있지 않은 폴더는 지울 수 없습니다. 먼저 하위 파일·폴더를 비우거나 삭제하세요.", "code": "folder_not_empty"}, status=400)
-        if InventoryFile.objects.filter(tenant=tenant, folder=folder).exists():
+        if inv_repo.inventory_folder_has_files(tenant, folder):
             return JsonResponse({"detail": "비어있지 않은 폴더는 지울 수 없습니다. 먼저 하위 파일·폴더를 비우거나 삭제하세요.", "code": "folder_not_empty"}, status=400)
 
         folder.delete()
@@ -276,12 +312,13 @@ class FileDeleteView(View):
 
     @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
+    @method_decorator(_jwt_required)
     def delete(self, request, file_id):
         tenant = request.tenant
         scope = (request.GET.get("scope") or "admin").lower()
         student_ps = (request.GET.get("student_ps") or "").strip()
 
-        inv_file = InventoryFile.objects.filter(tenant=tenant, id=file_id).first()
+        inv_file = inv_repo.inventory_file_get(tenant, file_id)
         if not inv_file:
             return JsonResponse({"detail": "Not found"}, status=404)
         if inv_file.scope != scope or (scope == "student" and inv_file.student_ps != student_ps):
@@ -300,6 +337,7 @@ class PresignView(View):
 
     @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
+    @method_decorator(_jwt_required)
     def post(self, request):
         import json
         try:
@@ -325,6 +363,7 @@ class MoveView(View):
 
     @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
+    @method_decorator(_jwt_required)
     def post(self, request):
         import json
         try:

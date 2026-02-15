@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 import boto3
 from django.conf import settings
 
@@ -44,6 +46,48 @@ def upload_fileobj_to_r2(
         ExtraArgs={
             "ContentType": content_type or "application/octet-stream"
         },
+    )
+
+
+def _excel_bucket():
+    return getattr(settings, "R2_EXCEL_BUCKET", "academy-excel")
+
+
+def upload_fileobj_to_r2_excel(
+    *,
+    fileobj,
+    key: str,
+    content_type: str | None = None,
+) -> None:
+    """
+    Django UploadedFile -> R2 엑셀 버킷 업로드.
+    워커 EXCEL_PARSING job이 동일 버킷에서 다운로드하므로 R2_EXCEL_BUCKET 일치 필요.
+    """
+    s3 = _get_s3_client()
+    s3.upload_fileobj(
+        Fileobj=fileobj,
+        Bucket=_excel_bucket(),
+        Key=key,
+        ExtraArgs={
+            "ContentType": content_type or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        },
+    )
+
+
+def generate_presigned_get_url_excel(
+    *,
+    key: str,
+    expires_in: int = 3600,
+) -> str:
+    """R2 엑셀 버킷 presigned GET URL (다운로드용)."""
+    s3 = _get_s3_client()
+    return s3.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": _excel_bucket(),
+            "Key": key,
+        },
+        ExpiresIn=expires_in,
     )
 
 
@@ -141,3 +185,61 @@ def head_object_r2_storage(*, key: str) -> tuple[bool, int]:
         if code in ("404", "NoSuchKey", "NotFound"):
             return False, 0
         raise
+
+
+# ---------------------------------------------------------------------
+# Video 버킷 (R2_VIDEO_BUCKET) — raw/HLS 삭제
+# ---------------------------------------------------------------------
+
+def _video_bucket():
+    return getattr(settings, "R2_VIDEO_BUCKET", "academy-video")
+
+
+def delete_object_r2_video(*, key: str) -> None:
+    """R2 Video 버킷에서 객체 1건 삭제 (raw 등)."""
+    s3 = _get_s3_client()
+    s3.delete_object(Bucket=_video_bucket(), Key=key)
+
+
+def delete_prefix_r2_video(
+    *,
+    prefix: str,
+    on_batch_deleted: Callable[[int], None] | None = None,
+) -> int:
+    """
+    R2 Video 버킷에서 prefix 아래 모든 객체 일괄 삭제 (HLS 등).
+    delete_objects 최대 1000건씩 배치 처리.
+    on_batch_deleted(total_deleted): 배치 삭제 직후 호출 (visibility 연장 등, 장시간 삭제 대비).
+    Returns:
+        삭제한 객체 수.
+    """
+    s3 = _get_s3_client()
+    bucket = _video_bucket()
+    total_deleted = 0
+    continuation_token = None
+    list_page = 1000
+    delete_batch = 1000
+
+    while True:
+        list_kw = {"Bucket": bucket, "MaxKeys": list_page, "Prefix": prefix}
+        if continuation_token:
+            list_kw["ContinuationToken"] = continuation_token
+        resp = s3.list_objects_v2(**list_kw)
+        contents = resp.get("Contents") or []
+        if not contents:
+            if not resp.get("IsTruncated"):
+                break
+            continuation_token = resp.get("NextContinuationToken")
+            continue
+        keys = [{"Key": obj["Key"]} for obj in contents]
+        for i in range(0, len(keys), delete_batch):
+            batch = keys[i : i + delete_batch]
+            s3.delete_objects(Bucket=bucket, Delete={"Objects": batch, "Quiet": True})
+            total_deleted += len(batch)
+            if callable(on_batch_deleted):
+                on_batch_deleted(total_deleted)
+        if not resp.get("IsTruncated"):
+            break
+        continuation_token = resp.get("NextContinuationToken")
+
+    return total_deleted

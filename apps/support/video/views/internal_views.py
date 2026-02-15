@@ -43,7 +43,8 @@ class VideoProcessingCompleteView(APIView):
         except Exception:
             duration_int = None
 
-        video = Video.objects.filter(id=int(video_id)).first()
+        from academy.adapters.db.django import repositories_video as video_repo
+        video = video_repo.video_get_by_id(int(video_id))
         if not video:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 

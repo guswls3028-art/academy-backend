@@ -16,9 +16,6 @@ from rest_framework.permissions import IsAuthenticated, BasePermission
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.viewsets import ReadOnlyModelViewSet
 
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment
-
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
 from reportlab.lib.styles import getSampleStyleSheet
@@ -43,6 +40,7 @@ from .serializers import (
     WorkMonthLockSerializer,
     PayrollSnapshotSerializer,
 )
+from academy.adapters.db.django import repositories_staffs as staff_repo
 from .filters import StaffFilter, WorkRecordFilter, ExpenseRecordFilter
 from apps.domains.teachers.models import Teacher
 
@@ -66,13 +64,7 @@ class IsPayrollManager(BasePermission):
 # ===========================
 
 def is_month_locked(staff, date):
-    return WorkMonthLock.objects.filter(
-        tenant=staff.tenant,
-        staff=staff,
-        year=date.year,
-        month=date.month,
-        is_locked=True,
-    ).exists()
+    return staff_repo.is_month_locked(staff, date.year, date.month)
 
 
 def can_manage_payroll(user) -> bool:
@@ -84,35 +76,19 @@ def can_manage_payroll(user) -> bool:
 
 
 def generate_payroll_snapshot(staff, year, month, user):
-    if PayrollSnapshot.objects.filter(
-        tenant=staff.tenant,
-        staff=staff,
-        year=year,
-        month=month,
-    ).exists():
+    if staff_repo.payroll_snapshot_exists_staff(staff, year, month):
         raise ValidationError("이미 급여 스냅샷이 생성된 월입니다.")
 
     with transaction.atomic():
-        wr_qs = WorkRecord.objects.filter(
-            tenant=staff.tenant,
-            staff=staff,
-            date__year=year,
-            date__month=month,
-        )
-
-        er_qs = ExpenseRecord.objects.filter(
-            tenant=staff.tenant,
-            staff=staff,
-            date__year=year,
-            date__month=month,
-            status="APPROVED",
-        )
+        wr_qs = staff_repo.work_record_queryset_staff_date_ym(staff, year, month)
+        er_qs = staff_repo.expense_record_queryset_staff_date_ym(staff, year, month, status="APPROVED")
 
         work_hours = wr_qs.aggregate(total=Sum("work_hours"))["total"] or 0
         work_amount = wr_qs.aggregate(total=Sum("amount"))["total"] or 0
         approved_expense_amount = er_qs.aggregate(total=Sum("amount"))["total"] or 0
+        total_amount = work_amount + approved_expense_amount
 
-        PayrollSnapshot.objects.create(
+        staff_repo.payroll_snapshot_create_full(
             tenant=staff.tenant,
             staff=staff,
             year=year,
@@ -120,7 +96,7 @@ def generate_payroll_snapshot(staff, year, month, user):
             work_hours=work_hours,
             work_amount=work_amount,
             approved_expense_amount=approved_expense_amount,
-            total_amount=work_amount + approved_expense_amount,
+            total_amount=total_amount,
             generated_by=user,
         )
 
@@ -138,9 +114,7 @@ class WorkTypeViewSet(viewsets.ModelViewSet):
     ordering_fields = ["name", "base_hourly_wage", "created_at"]
 
     def get_queryset(self):
-        return WorkType.objects.filter(
-            tenant=self.request.tenant
-        ).order_by("name")
+        return staff_repo.work_type_queryset_tenant(self.request.tenant)
 
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.tenant)
@@ -158,12 +132,7 @@ class StaffViewSet(viewsets.ModelViewSet):
     ordering_fields = ["name", "created_at", "is_active"]
 
     def get_queryset(self):
-        return (
-            Staff.objects.filter(tenant=self.request.tenant)
-            .select_related("user")
-            .prefetch_related("staff_work_types__work_type")
-            .order_by("name")
-        )
+        return staff_repo.staff_queryset_tenant(self.request.tenant)
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -171,6 +140,9 @@ class StaffViewSet(viewsets.ModelViewSet):
         if self.action == "retrieve":
             return StaffDetailSerializer
         return StaffCreateUpdateSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.tenant)
 
     def perform_destroy(self, instance):
         serializer = self.get_serializer(instance)
@@ -228,19 +200,14 @@ class StaffViewSet(viewsets.ModelViewSet):
         if is_month_locked(staff, now.date()):
             raise ValidationError("마감된 월입니다.")
 
-        if WorkRecord.objects.filter(
-            staff=staff,
-            tenant=staff.tenant,
-            end_time__isnull=True,
-        ).exists():
+        if staff_repo.work_record_filter_open(staff).exists():
             raise ValidationError("이미 근무 중입니다.")
 
         work_type_id = request.data.get("work_type")
         if not work_type_id:
             raise ValidationError("work_type은 필수입니다.")
 
-        record = WorkRecord.objects.create(
-            tenant=staff.tenant,
+        record = staff_repo.work_record_create_start(
             staff=staff,
             work_type_id=work_type_id,
             date=now.date(),
@@ -262,9 +229,7 @@ class StaffWorkTypeViewSet(viewsets.ModelViewSet):
     ordering_fields = ["created_at"]
 
     def get_queryset(self):
-        return StaffWorkType.objects.filter(
-            tenant=self.request.tenant
-        ).select_related("staff", "work_type")
+        return staff_repo.staff_work_type_queryset_tenant(self.request.tenant)
 
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.tenant)
@@ -282,9 +247,7 @@ class ExpenseRecordViewSet(viewsets.ModelViewSet):
     ordering_fields = ["date", "amount", "created_at"]
 
     def get_queryset(self):
-        return ExpenseRecord.objects.filter(
-            tenant=self.request.tenant
-        ).select_related("staff", "approved_by")
+        return staff_repo.expense_record_queryset_tenant(self.request.tenant)
 
     def perform_update(self, serializer):
         instance = self.get_object()
@@ -324,24 +287,19 @@ class WorkMonthLockViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsPayrollManager]
 
     def get_queryset(self):
-        return WorkMonthLock.objects.filter(
-            tenant=self.request.tenant
-        ).select_related("staff", "locked_by")
+        return staff_repo.work_month_lock_queryset_tenant(self.request.tenant)
 
     def create(self, request, *args, **kwargs):
-        staff = Staff.objects.get(id=request.data.get("staff"), tenant=request.tenant)
+        staff = staff_repo.staff_get(request.tenant, request.data.get("staff"))
         year = int(request.data.get("year"))
         month = int(request.data.get("month"))
 
-        obj, _ = WorkMonthLock.objects.update_or_create(
-            tenant=request.tenant,
-            staff=staff,
-            year=year,
-            month=month,
-            defaults={
-                "is_locked": True,
-                "locked_by": request.user,
-            },
+        obj, _ = staff_repo.work_month_lock_update_or_create_defaults(
+            request.tenant,
+            staff,
+            year,
+            month,
+            defaults={"is_locked": True, "locked_by": request.user},
         )
 
         generate_payroll_snapshot(
@@ -365,55 +323,48 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated, IsPayrollManager]
 
     def get_queryset(self):
-        return PayrollSnapshot.objects.filter(
-            tenant=self.request.tenant
-        ).select_related("staff", "generated_by")
+        return staff_repo.payroll_snapshot_queryset_tenant(self.request.tenant)
 
-    @action(detail=False, methods=["get"], url_path="export-excel")
+    @action(detail=False, methods=["post"], url_path="export-excel")
     def export_excel(self, request):
-        year = request.query_params.get("year")
-        month = request.query_params.get("month")
+        """급여 엑셀 내보내기(워커 비동기). POST body: { "year", "month" } → job_id 반환. GET /api/v1/jobs/<job_id>/ 폴링 후 result.download_url 로 다운로드."""
+        year = request.data.get("year") or request.query_params.get("year")
+        month = request.data.get("month") or request.query_params.get("month")
 
         if not year or not month:
             raise ValidationError("year, month는 필수입니다.")
 
-        qs = self.get_queryset().filter(year=year, month=month)
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "tenant가 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        wb = Workbook()
-        ws = wb.active
-        ws.title = f"{year}-{month} 급여정산"
+        from apps.domains.ai.gateway import dispatch_job
 
-        headers = [
-            "직원명", "연도", "월", "근무시간",
-            "급여", "승인된 비용", "총 지급액", "확정자", "확정일시"
-        ]
-        ws.append(headers)
-
-        for c in ws[1]:
-            c.font = Font(bold=True)
-            c.alignment = Alignment(horizontal="center")
-
-        for s in qs:
-            ws.append([
-                s.staff.name,
-                s.year,
-                s.month,
-                float(s.work_hours),
-                s.work_amount,
-                s.approved_expense_amount,
-                s.total_amount,
-                getattr(s.generated_by, "username", "") if s.generated_by else "",
-                s.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-            ])
-
-        response = HttpResponse(
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        out = dispatch_job(
+            job_type="staff_excel_export",
+            payload={
+                "tenant_id": str(tenant.id),
+                "year": int(year),
+                "month": int(month),
+            },
+            tenant_id=str(tenant.id),
+            source_domain="staffs",
+            source_id=f"{year}-{month}",
+            tier="basic",
+            idempotency_key=f"staff_export:{tenant.id}:{year}:{month}",
         )
-        response["Content-Disposition"] = (
-            f'attachment; filename="payroll_{year}_{month}.xlsx"'
+        if not out.get("ok"):
+            return Response(
+                {"detail": out.get("error", "job 등록 실패")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            {"job_id": out["job_id"], "status": "PENDING"},
+            status=status.HTTP_202_ACCEPTED,
         )
-        wb.save(response)
-        return response
 
     @action(detail=False, methods=["get"], url_path="export-pdf")
     def export_pdf(self, request):

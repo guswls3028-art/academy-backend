@@ -1,12 +1,12 @@
-# 문서 인덱스 (SSOT)
+# 문서 인덱스 (최소 구성)
 
-**원칙**: 문서 개수 최소 유지. 이 인덱스가 docs의 단일 진입점입니다.
+**원칙**: 문서 개수 최소. 이 인덱스가 docs의 단일 진입점. **SSOT는 `SSOT_0215/`** (변경 금지).
 
 | 문서 | 용도 |
 |------|------|
-| [DEPLOYMENT_MASTER_GUIDE.md](DEPLOYMENT_MASTER_GUIDE.md) | 배포·인프라·ENV·워커 (프론트/백 공통 참조) |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 시스템 아키텍처 개요 |
-| [INFRASTRUCTURE.md](INFRASTRUCTURE.md) | AWS·R2·SQS 등 리소스 설정 |
-| [COST_FORECAST.md](COST_FORECAST.md) | 비용 예측 및 최적화 |
+| [SSOT_0215/AWS_500_START_DEPLOY_GUIDE.md](SSOT_0215/AWS_500_START_DEPLOY_GUIDE.md) | **500명 스타트** AWS 따라하기 |
+| [cursor_docs/README.md](cursor_docs/README.md) | 배포 체크리스트·Gate 10·Docker 정렬 (인덱스) |
+| [ARCHITECTURE_AND_INFRASTRUCTURE.md](ARCHITECTURE_AND_INFRASTRUCTURE.md) | 아키텍처·SQS·R2·Docker (코드 기반) |
+| [OPERATIONS.md](OPERATIONS.md) | 배포·엑셀 흐름·학생 복구·R2·비용·배포 후 할 일 |
 
-프론트 저장소(`academyfront`) 최상위 문서는 **README.md**이며, 학생 앱(`src/student/**`) / 관리자 앱 구분이 명시되어 있습니다.
+프론트 저장소(`academyfront`)는 별도 repo.

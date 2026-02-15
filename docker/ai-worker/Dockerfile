@@ -1,12 +1,14 @@
 # ==============================================================================
 # AI Worker Dockerfile
 # ==============================================================================
-# 베이스 이미지 사용 + AI Worker 전용 의존성
+# 베이스 이미지(Dockerfile.base) 사용. src, apps, libs는 베이스에서 상속.
 # ==============================================================================
 
 ARG BASE_IMAGE=academy-base:latest
 FROM ${BASE_IMAGE} AS base
 
+# apt는 root 필요 (설치 후 pip은 appuser로)
+USER root
 # AI Worker 전용 시스템 의존성 (OCR, 이미지 처리)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
@@ -16,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+USER appuser
 # AI Worker 전용 Python 의존성 (-r ./common.txt만, api.txt 미사용)
 COPY requirements/common.txt requirements/worker-ai-common.txt requirements/worker-ai-cpu.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/worker-ai-cpu.txt

@@ -15,6 +15,7 @@ class Dday(models.Model):
         Lecture,
         on_delete=models.CASCADE,
         related_name="ddays",
+        db_index=True,
     )
 
     title = models.CharField(max_length=255)

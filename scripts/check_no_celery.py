@@ -10,8 +10,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXCLUDES = {
-    "ai_dumps_backend",
-    "libs_ai_dump.txt",
     ".git",
     "node_modules",
     "__pycache__",

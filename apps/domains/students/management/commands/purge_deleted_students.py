@@ -14,10 +14,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
-from django.contrib.auth import get_user_model
-
-from apps.domains.students.models import Student
-from apps.domains.enrollment.models import Enrollment
+from academy.adapters.db.django import repositories_students as student_repo
 
 
 class Command(BaseCommand):
@@ -40,10 +37,7 @@ class Command(BaseCommand):
         days = options["days"]
         dry_run = options["dry_run"]
         cutoff = timezone.now() - timedelta(days=days)
-
-        to_purge = list(
-            Student.objects.filter(deleted_at__lt=cutoff).select_related("user")
-        )
+        to_purge = list(student_repo.student_filter_deleted_before_cutoff(cutoff))
 
         if not to_purge:
             self.stdout.write(f"삭제 대상 없음 (deleted_at < {cutoff})")
@@ -59,11 +53,10 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("--dry-run: 실제 삭제하지 않음"))
             return
 
-        User = get_user_model()
         deleted = 0
         with transaction.atomic():
             student_ids = [s.id for s in to_purge]
-            Enrollment.objects.filter(student_id__in=student_ids).delete()
+            student_repo.enrollment_filter_student_ids_bulk(student_ids)
             for student in to_purge:
                 user = student.user
                 student.delete()

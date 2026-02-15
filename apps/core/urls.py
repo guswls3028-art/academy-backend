@@ -8,6 +8,7 @@ from apps.core.views import (
     ProfileViewSet,
     MyAttendanceViewSet,
     MyExpenseViewSet,
+    JobProgressView,
 )
 
 router = DefaultRouter()
@@ -18,5 +19,6 @@ router.register("profile/expenses", MyExpenseViewSet, basename="my-expense")
 urlpatterns = [
     path("me/", MeView.as_view(), name="core-me"),
     path("program/", ProgramView.as_view(), name="core-program"),
+    path("job_progress/<str:job_id>/", JobProgressView.as_view(), name="core-job-progress"),
     path("", include(router.urls)),
 ]

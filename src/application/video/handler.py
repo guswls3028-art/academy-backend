@@ -51,7 +51,7 @@ class ProcessVideoJobHandler:
             "ok" | "skip" | "failed"
         """
         video_id = int(job.get("video_id", 0))
-        job_id = f"video:{video_id}"
+        job_id = f"encode:{video_id}"  # action별 멱등 키 분리 (delete_r2는 delete_r2:{video_id})
 
         if not self._idempotency.acquire_lock(job_id):
             return "skip"

@@ -31,6 +31,9 @@ class SessionEnrollmentSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(
         source="enrollment.student.name", read_only=True
     )
+    student_id = serializers.IntegerField(
+        source="enrollment.student_id", read_only=True
+    )
 
     class Meta:
         model = SessionEnrollment

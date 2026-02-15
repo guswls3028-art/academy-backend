@@ -5,8 +5,9 @@ from typing import Optional
 
 from django.conf import settings
 
-from apps.core.models import Tenant, TenantDomain
+from apps.core.models import Tenant
 from apps.core.tenant.exceptions import TenantResolutionError
+from academy.adapters.db.django import repositories_core as core_repo
 
 
 def _is_bypass_path(path: str) -> bool:
@@ -40,7 +41,7 @@ def _resolve_tenant_from_host(host: str) -> Optional[Tenant]:
     if not host:
         return None
 
-    qs = TenantDomain.objects.select_related("tenant").filter(host=host)
+    qs = core_repo.tenant_domain_filter_by_host(host)
     # host 는 unique 가 정상이나, 운영 사고/수동 SQL 등 최악의 상황 대비
     cnt = qs.count()
     if cnt == 0:

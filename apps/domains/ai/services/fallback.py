@@ -32,8 +32,8 @@ def _get_tenant_config(tenant_id: Optional[str]) -> Dict[str, Any]:
             "gpu_fallback_threshold": 0.5,
         }
     try:
-        from apps.domains.ai.models import TenantConfigModel
-        config = TenantConfigModel.objects.filter(tenant_id=tenant_id).first()
+        from academy.adapters.db.django import repositories_ai as ai_repo
+        config = ai_repo.get_tenant_config(tenant_id)
         if config:
             return {
                 "has_premium_subscription": getattr(config, "has_premium_subscription", False),

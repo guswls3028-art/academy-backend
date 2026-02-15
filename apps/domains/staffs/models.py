@@ -42,17 +42,12 @@ class WageResolutionPolicy:
 
     @staticmethod
     def resolve(*, tenant, staff, work_type) -> int:
-        from .models import StaffWorkType
+        from academy.adapters.db.django import repositories_staffs as staff_repo
 
-        try:
-            swt = StaffWorkType.objects.get(
-                tenant=tenant,
-                staff=staff,
-                work_type=work_type,
-            )
+        swt = staff_repo.staff_work_type_get_or_none(tenant=tenant, staff=staff, work_type=work_type)
+        if swt:
             return swt.effective_hourly_wage
-        except StaffWorkType.DoesNotExist:
-            return work_type.base_hourly_wage
+        return work_type.base_hourly_wage
 
 
 class PayrollAmountPolicy:

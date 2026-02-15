@@ -78,11 +78,8 @@ class TenantResolvedAndMember(BasePermission):
         if not user or not user.is_authenticated:
             return False
 
-        return TenantMembership.objects.filter(
-            tenant=tenant,
-            user=user,
-            is_active=True,
-        ).exists()
+        from academy.adapters.db.django import repositories_core as core_repo
+        return core_repo.membership_exists(tenant=tenant, user=user, is_active=True)
 
 
 class TenantResolvedAndStaff(BasePermission):
@@ -112,9 +109,5 @@ class TenantResolvedAndStaff(BasePermission):
         if not user or not user.is_authenticated:
             return False
 
-        return TenantMembership.objects.filter(
-            tenant=tenant,
-            user=user,
-            is_active=True,
-            role__in=self.STAFF_ROLES,
-        ).exists()
+        from academy.adapters.db.django import repositories_core as core_repo
+        return core_repo.membership_exists_staff(tenant=tenant, user=user, staff_roles=self.STAFF_ROLES)

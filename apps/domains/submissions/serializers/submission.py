@@ -13,6 +13,7 @@ from rest_framework import serializers
 from apps.domains.submissions.models import Submission
 
 # ✅ API 서버 전용 R2 업로드
+from apps.core.r2_paths import ai_submission_key
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
 
 
@@ -78,8 +79,13 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
         submission = Submission.objects.create(**validated_data)
 
         if upload_file:
-            ext = upload_file.name.split(".")[-1]
-            key = f"submissions/{submission.id}/{uuid.uuid4().hex}.{ext}"
+            ext = (upload_file.name or "").split(".")[-1] if "." in (upload_file.name or "") else "bin"
+            key = ai_submission_key(
+                tenant_id=submission.tenant_id,
+                submission_id=submission.id,
+                unique_id=uuid.uuid4().hex,
+                ext=ext,
+            )
 
             upload_fileobj_to_r2(
                 fileobj=upload_file,

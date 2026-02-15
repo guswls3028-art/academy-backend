@@ -26,6 +26,8 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from libs.s3_client.presign import create_presigned_put_url, create_presigned_get_url
 from libs.s3_client.client import head_object
 
+
+from apps.core.r2_paths import video_raw_key, video_hls_prefix
 from apps.core.permissions import IsAdminOrStaff, IsStudent
 from apps.core.authentication import CsrfExemptSessionAuthentication
 
@@ -33,6 +35,7 @@ from apps.domains.lectures.models import Session
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.attendance.models import Attendance
 
+from academy.adapters.db.django import repositories_video as video_repo
 from ..models import (
     Video,
     VideoAccess,
@@ -116,7 +119,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     Video 관리 + 통계 + 학생 목록
     """
 
-    queryset = Video.objects.all().select_related("session", "session__lecture")
+    queryset = video_repo.get_video_queryset_with_relations()
     serializer_class = VideoSerializer
 
     parser_classes = [JSONParser]
@@ -146,6 +149,30 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     filterset_fields = ["session", "status"]
     search_fields = ["title"]
 
+    def perform_destroy(self, instance):
+        """
+        영상 삭제: DB 삭제 후 R2 정리는 SQS로 워커에 위임 (동기 prefix 삭제 시 API 지연 방지).
+        """
+        video = video_repo.get_video_by_pk_with_relations(instance.pk)
+        tenant_id = None
+        video_id = instance.id
+        file_key = (instance.file_key or "").strip()
+        hls_prefix = ""
+        if video and video.session and video.session.lecture:
+            tenant_id = video.session.lecture.tenant_id
+            hls_prefix = video_hls_prefix(tenant_id=tenant_id, video_id=video_id)
+        super().perform_destroy(instance)
+        if tenant_id is not None and hls_prefix:
+            try:
+                VideoSQSQueue().enqueue_delete_r2(
+                    tenant_id=tenant_id,
+                    video_id=video_id,
+                    file_key=file_key,
+                    hls_prefix=hls_prefix,
+                )
+            except Exception as e:
+                logger.warning("R2 delete job enqueue failed video_id=%s: %s", video_id, e)
+
     # ==================================================
     # upload/init
     # ==================================================
@@ -171,16 +198,23 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = Session.objects.select_related("lecture", "lecture__tenant").get(id=session_id)
-        tenant_code = session.lecture.tenant.code
+        session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
+        tenant = session.lecture.tenant
+        tenant_code = tenant.code
+        tenant_id = tenant.id
         order = (
             session.videos.aggregate(max_order=models.Max("order")).get("max_order") or 0
         ) + 1
 
         ext = filename.split(".")[-1].lower() if "." in filename else "mp4"
-        key = f"videos/{tenant_code}/{session_id}/{uuid4()}.{ext}"
+        key = video_raw_key(
+            tenant_id=tenant_id,
+            session_id=session_id,
+            unique_id=str(uuid4()),
+            ext=ext,
+        )
 
-        video = Video.objects.create(
+        video = video_repo.create_video(
             session=session,
             title=title,
             file_key=key,
@@ -307,22 +341,19 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         video = self.get_object()
         lecture = video.session.lecture
 
-        enrollments = Enrollment.objects.filter(
-            lecture=lecture,
-            status="ACTIVE",
-        ).select_related("student")
+        enrollments = video_repo.get_enrollments_for_lecture_active(lecture)
 
         progresses = {
             p.enrollment_id: p
-            for p in VideoProgress.objects.filter(video=video)
+            for p in video_repo.get_video_progresses_for_video(video)
         }
         perms = {
             p.enrollment_id: p
-            for p in VideoAccess.objects.filter(video=video)
+            for p in video_repo.get_video_access_for_video(video)
         }
         attendance = {
             a.enrollment_id: a.status
-            for a in Attendance.objects.filter(session=video.session)
+            for a in video_repo.get_attendance_for_session(video.session)
         }
 
         students = []
@@ -385,10 +416,10 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         elif range_key == "7d":
             since = now - timedelta(days=7)
 
-        enrollments = Enrollment.objects.filter(lecture=lecture)
+        enrollments = video_repo.get_enrollments_for_lecture(lecture)
         total = enrollments.count()
 
-        progresses = VideoProgress.objects.filter(video=video)
+        progresses = video_repo.get_video_progresses_for_video(video)
         completed_count = progresses.filter(completed=True).count()
 
         duration = int(video.duration or 0)
@@ -399,12 +430,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         completion_rate = (completed_count / total) if total else 0.0
 
-        ev_qs = VideoPlaybackEvent.objects.filter(video=video).select_related(
-            "enrollment", "enrollment__student"
-        )
-
-        if since:
-            ev_qs = ev_qs.filter(occurred_at__gte=since)
+        ev_qs = video_repo.get_playback_events_queryset_for_video(video, since=since)
 
         weights = {
             "VISIBILITY_HIDDEN": 1,

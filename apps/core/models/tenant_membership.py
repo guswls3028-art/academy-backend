@@ -54,21 +54,5 @@ class TenantMembership(models.Model):
     @classmethod
     @transaction.atomic
     def ensure_active(cls, *, tenant: Tenant, user, role: str) -> "TenantMembership":
-        role = str(role).strip().lower()
-        allowed = {c[0] for c in cls.ROLE_CHOICES}
-        if role not in allowed:
-            raise ValueError(f"invalid role: {role}")
-
-        obj = cls.objects.select_for_update().filter(tenant=tenant, user=user).first()
-        if obj:
-            if not obj.is_active:
-                obj.is_active = True
-                obj.save(update_fields=["is_active"])
-            return obj
-
-        return cls.objects.create(
-            tenant=tenant,
-            user=user,
-            role=role,
-            is_active=True,
-        )
+        from academy.adapters.db.django import repositories_core as core_repo
+        return core_repo.membership_ensure_active(tenant=tenant, user=user, role=role)

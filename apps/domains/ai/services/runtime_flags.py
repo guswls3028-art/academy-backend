@@ -33,8 +33,8 @@ def get_runtime_flag(key: str, default: bool = False) -> bool:
         return _parse_bool(raw, default)
 
     try:
-        from apps.domains.ai.models import AIRuntimeConfigModel
-        row = AIRuntimeConfigModel.objects.filter(key=key).first()
+        from academy.adapters.db.django import repositories_ai as ai_repo
+        row = ai_repo.get_airuntime_config(key)
         if row is None:
             _runtime_flag_cache[key] = None
             return default

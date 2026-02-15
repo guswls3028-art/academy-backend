@@ -5,7 +5,8 @@ from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from apps.core.models import Tenant, TenantDomain, Program
+from apps.core.models import Tenant, Program
+from academy.adapters.db.django import repositories_core as core_repo
 
 
 def _normalize_host(host: str) -> str:
@@ -23,8 +24,8 @@ def bootstrap_tenant_core_rows(sender, instance: Tenant, created: bool, **kwargs
     host = _normalize_host(instance.code)
 
     with transaction.atomic():
-        Program.objects.get_or_create(
-            tenant=instance,
+        core_repo.program_get_or_create(
+            instance,
             defaults={
                 "display_name": "HakwonPlus",
                 "brand_key": "hakwonplus",
@@ -44,8 +45,8 @@ def bootstrap_tenant_core_rows(sender, instance: Tenant, created: bool, **kwargs
         )
 
         if host:
-            TenantDomain.objects.get_or_create(
-                host=host,
+            core_repo.tenant_domain_get_or_create_by_defaults(
+                host,
                 defaults={
                     "tenant": instance,
                     "is_primary": True,

@@ -7,10 +7,52 @@ Queue 클라이언트 추상화
 import os
 import json
 import logging
+import time
 from typing import Optional, Dict, Any
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
+
+# 로컬에서 AWS 자격 증명 없을 때 로그 스팸 방지: 인증 오류는 한 번만 로그
+_last_auth_error_log = 0.0
+_AUTH_ERROR_LOG_INTERVAL = 60.0  # 초
+
+
+class QueueUnavailableError(Exception):
+    """SQS 접근 불가 (자격 증명 없음/만료 등). 로컬에서 흔함. 워커는 이걸 잡고 백오프 후 재시도."""
+
+    def __init__(self, message: str, cause: Optional[Exception] = None):
+        self.cause = cause
+        super().__init__(message)
+
+
+def _is_auth_error(e: Exception) -> bool:
+    try:
+        from botocore.exceptions import ClientError
+        if isinstance(e, ClientError):
+            code = (e.response or {}).get("Error", {}).get("Code", "")
+            return code in (
+                "InvalidClientTokenId",
+                "UnrecognizedClientException",
+                "SignatureDoesNotMatch",
+                "InvalidSignatureException",
+            )
+    except ImportError:
+        pass
+    return False
+
+
+def _log_auth_error_once(queue_name: str, op: str, e: Exception) -> None:
+    global _last_auth_error_log
+    now = time.time()
+    if now - _last_auth_error_log >= _AUTH_ERROR_LOG_INTERVAL:
+        logger.warning(
+            "SQS %s (%s): %s — 로컬에서는 AWS 자격 증명이 없을 수 있음. 60초마다 재시도합니다.",
+            op,
+            queue_name,
+            e,
+        )
+        _last_auth_error_log = now
 
 
 class QueueClient(ABC):
@@ -31,6 +73,10 @@ class QueueClient(ABC):
         """메시지 삭제"""
         pass
 
+    def change_message_visibility(self, queue_name: str, receipt_handle: str, visibility_timeout: int) -> bool:
+        """메시지 visibility 연장 (Long job 시 재노출 방지). 기본 구현은 no-op."""
+        return True
+
 
 class SQSQueueClient(QueueClient):
     """AWS SQS 기반 큐 클라이언트 (프로덕션용)"""
@@ -50,6 +96,9 @@ class SQSQueueClient(QueueClient):
             response = self.sqs.get_queue_url(QueueName=queue_name)
             return response["QueueUrl"]
         except Exception as e:
+            if _is_auth_error(e):
+                _log_auth_error_once(queue_name, "get_queue_url", e)
+                raise QueueUnavailableError(f"Queue URL unavailable: {e}", cause=e) from e
             logger.error(f"Failed to get queue URL for {queue_name}: {e}")
             raise
     
@@ -78,12 +127,16 @@ class SQSQueueClient(QueueClient):
                 WaitTimeSeconds=wait_time_seconds,
                 MessageAttributeNames=["All"],
             )
-            
             messages = response.get("Messages", [])
             if messages:
                 return messages[0]
             return None
+        except QueueUnavailableError:
+            raise
         except Exception as e:
+            if _is_auth_error(e):
+                _log_auth_error_once(queue_name, "receive_message", e)
+                raise QueueUnavailableError(f"Receive unavailable: {e}", cause=e) from e
             logger.error(f"Failed to receive message from {queue_name}: {e}")
             return None
     
@@ -98,6 +151,22 @@ class SQSQueueClient(QueueClient):
             return True
         except Exception as e:
             logger.error(f"Failed to delete message: {e}")
+            return False
+
+    def change_message_visibility(
+        self, queue_name: str, receipt_handle: str, visibility_timeout: int
+    ) -> bool:
+        """SQS 메시지 visibility 연장 (장시간 인코딩 시 재노출 방지)."""
+        try:
+            queue_url = self._get_queue_url(queue_name)
+            self.sqs.change_message_visibility(
+                QueueUrl=queue_url,
+                ReceiptHandle=receipt_handle,
+                VisibilityTimeout=visibility_timeout,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to change message visibility: {e}")
             return False
 
 

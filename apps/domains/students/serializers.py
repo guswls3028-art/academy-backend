@@ -3,7 +3,6 @@
 import random
 import string
 
-from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.domains.students.models import Student, Tag
@@ -11,13 +10,13 @@ from apps.domains.students.models import Student, Tag
 
 def _generate_unique_ps_number() -> str:
     """영어 1자리 + 숫자 5자리 (예: A12345) 중복 없이 부여 (User.username 전역 유일)"""
-    User = get_user_model()
+    from academy.adapters.db.django import repositories_students as student_repo
     letters = string.ascii_uppercase
     for _ in range(200):
         letter = random.choice(letters)
         num = random.randint(0, 99999)
         candidate = f"{letter}{num:05d}"
-        if not User.objects.filter(username=candidate).exists():
+        if not student_repo.user_filter_username_exists(candidate):
             return candidate
     raise ValueError("아이디 생성에 실패했습니다. 다시 시도해 주세요.")
 from apps.domains.enrollment.models import Enrollment
@@ -195,10 +194,8 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         if not value or not str(value).strip():
             return None
 
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
-
-        if User.objects.filter(phone=value).exists():
+        from academy.adapters.db.django import repositories_students as student_repo
+        if student_repo.user_filter_phone_exists(value):
             raise serializers.ValidationError("이미 사용 중인 전화번호입니다.")
 
         return value
@@ -238,7 +235,8 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         attrs["name"] = name
 
         # 사용자가 직접 입력한 경우에만 중복 체크 (자동 생성은 이미 User 중복 검사됨)
-        if ps_number_raw and Student.objects.filter(tenant=tenant, ps_number=ps_number).exists():
+        from academy.adapters.db.django import repositories_students as student_repo
+        if ps_number_raw and student_repo.student_filter_tenant_ps(tenant, ps_number).exists():
             raise serializers.ValidationError({"ps_number": "이미 사용 중인 PS 번호입니다."})
 
         attrs["uses_identifier"] = attrs.pop("no_phone", False) or (phone_str is None)
@@ -275,10 +273,11 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
 
         attrs["omr_code"] = omr_code
 
+        from academy.adapters.db.django import repositories_students as student_repo
         if ps_number:
-            if Student.objects.filter(
-                tenant=tenant, ps_number=ps_number
-            ).exclude(id=instance.id).exists():
+            if student_repo.student_filter_tenant_ps_exclude_id(
+                tenant, ps_number, instance.id
+            ).exists():
                 raise serializers.ValidationError({"ps_number": "이미 사용 중인 PS 번호입니다."})
 
         return attrs

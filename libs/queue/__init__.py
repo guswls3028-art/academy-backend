@@ -11,6 +11,6 @@ AWS SQS만 사용 (Redis 제거됨)
     message = queue.receive_message(queue_name="ai-jobs")
 """
 
-from .client import QueueClient, get_queue_client
+from .client import QueueClient, QueueUnavailableError, get_queue_client
 
-__all__ = ["QueueClient", "get_queue_client"]
+__all__ = ["QueueClient", "QueueUnavailableError", "get_queue_client"]

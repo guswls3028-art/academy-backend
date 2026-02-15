@@ -1,11 +1,21 @@
 # ==============================================================================
 # API 서버 Dockerfile
 # ==============================================================================
-# 베이스 이미지 사용 + API 전용 의존성
+# Base = 런타임·공통 의존성만. 앱 코드는 여기서만 복사 (헥사고날·레이어 분리).
 # ==============================================================================
 
 ARG BASE_IMAGE=academy-base:latest
 FROM ${BASE_IMAGE} AS base
+
+# 앱 코드 (Base에 두지 않음 → 코드 변경 시 base 재빌드 불필요)
+USER root
+COPY src ./src
+COPY academy ./academy
+COPY apps ./apps
+COPY libs ./libs
+COPY manage.py ./
+RUN chown -R appuser:appuser /app
+USER appuser
 
 # API 전용 의존성 설치 (-r common.txt 참조)
 COPY requirements/common.txt requirements/api.txt ./requirements/

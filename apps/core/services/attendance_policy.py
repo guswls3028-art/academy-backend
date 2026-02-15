@@ -58,7 +58,8 @@ def get_hourly_rate_for_tenant(tenant: Tenant) -> int:
     - 시급은 Program.feature_flags['attendance_hourly_rate'] 로 제공
     - 없으면 15000 기본값
     """
-    program = Program.objects.filter(tenant=tenant).only("feature_flags").first()
+    from academy.adapters.db.django import repositories_core as core_repo
+    program = core_repo.program_get_by_tenant_only_feature_flags(tenant)
     flags = getattr(program, "feature_flags", {}) or {}
     try:
         v = int(flags.get("attendance_hourly_rate", 15000))

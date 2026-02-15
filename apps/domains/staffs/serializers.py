@@ -2,7 +2,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
-from apps.domains.teachers.models import Teacher
 from .models import (
     Staff,
     WorkType,
@@ -12,6 +11,10 @@ from .models import (
     WorkMonthLock,
     PayrollSnapshot,
 )
+from academy.adapters.db.django import repositories_staffs as staff_repo
+from academy.adapters.db.django import repositories_teachers as teacher_repo
+from academy.adapters.db.django import repositories_students as students_repo
+from academy.adapters.db.django import repositories_core as core_repo
 
 User = get_user_model()
 
@@ -43,10 +46,18 @@ class StaffWorkTypeSerializer(serializers.ModelSerializer):
     work_type = WorkTypeSerializer(read_only=True)
     work_type_id = serializers.PrimaryKeyRelatedField(
         source="work_type",
-        queryset=WorkType.objects.all(),
+        queryset=staff_repo.work_type_empty_queryset(),
         write_only=True,
     )
     effective_hourly_wage = serializers.IntegerField(read_only=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request") if self.context else None
+        tenant = getattr(request, "tenant", None) if request else None
+        self.fields["work_type_id"].queryset = (
+            staff_repo.work_type_queryset_tenant(tenant) if tenant else staff_repo.work_type_all()
+        )
 
     class Meta:
         model = StaffWorkType
@@ -70,6 +81,7 @@ class StaffWorkTypeSerializer(serializers.ModelSerializer):
 
 class StaffListSerializer(serializers.ModelSerializer):
     staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
+    role = serializers.SerializerMethodField()
 
     class Meta:
         model = Staff
@@ -80,17 +92,23 @@ class StaffListSerializer(serializers.ModelSerializer):
             "is_active",
             "is_manager",
             "pay_type",
+            "role",
             "staff_work_types",
             "created_at",
             "updated_at",
         ]
         ref_name = "StaffList"
 
+    def get_role(self, obj):
+        if teacher_repo.teacher_exists_tenant_name_phone(obj.tenant, obj.name, obj.phone or ""):
+            return "TEACHER"
+        return "ASSISTANT"
+
 
 class StaffDetailSerializer(serializers.ModelSerializer):
     staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
+    role = serializers.SerializerMethodField()
 
-    # 🔥 CHANGED: 계정 정보 read-only
     user_username = serializers.CharField(
         source="user.username",
         read_only=True,
@@ -105,18 +123,24 @@ class StaffDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "user",
-            "user_username",   # 🔥 CHANGED
-            "user_is_staff",   # 🔥 CHANGED
+            "user_username",
+            "user_is_staff",
             "name",
             "phone",
             "is_active",
             "is_manager",
             "pay_type",
+            "role",
             "staff_work_types",
             "created_at",
             "updated_at",
         ]
         ref_name = "StaffDetail"
+
+    def get_role(self, obj):
+        if teacher_repo.teacher_exists_tenant_name_phone(obj.tenant, obj.name, obj.phone or ""):
+            return "TEACHER"
+        return "ASSISTANT"
 
 
 # ======================================================
@@ -129,11 +153,15 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
         write_only=True,
         required=True,
     )
+    username = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = Staff
         fields = [
             "user",
+            "username",
+            "password",
             "name",
             "phone",
             "is_active",
@@ -142,12 +170,34 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             "role",
         ]
         ref_name = "StaffWrite"
+        extra_kwargs = {"user": {"required": False}}
 
     # =========================
     # CREATE
     # =========================
     def create(self, validated_data):
         role = validated_data.pop("role")
+        username = (validated_data.pop("username", None) or "").strip()
+        password = validated_data.pop("password", None) or ""
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+
+        user = None
+        if username and password and tenant:
+            user = students_repo.user_create_user(
+                username=username,
+                password=password,
+                name=validated_data.get("name") or username,
+                phone=validated_data.get("phone") or "",
+            )
+            core_repo.membership_ensure_active(
+                tenant=tenant,
+                user=user,
+                role="teacher" if role == "TEACHER" else "staff",
+            )
+            validated_data["user"] = user
+
+        validated_data["tenant"] = tenant
         staff = super().create(validated_data)
 
         if role == "TEACHER":
@@ -157,17 +207,15 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
         return staff
 
     # =========================
-    # UPDATE (is_active sync)
+    # UPDATE (is_active sync, role 무시)
     # =========================
     def update(self, instance, validated_data):
+        validated_data.pop("role", None)  # role은 create 전용
         is_active_before = instance.is_active
         staff = super().update(instance, validated_data)
 
         if is_active_before and staff.is_active is False:
-            Teacher.objects.filter(
-                name=staff.name,
-                phone=staff.phone,
-            ).update(is_active=False)
+            teacher_repo.teacher_update_is_active_by_name_phone(staff.name, staff.phone or "", False)
 
         return staff
 
@@ -177,11 +225,7 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
     def delete(self, instance):
         user = instance.user
 
-        # 🔥 Teacher 삭제
-        Teacher.objects.filter(
-            name=instance.name,
-            phone=instance.phone,
-        ).delete()
+        teacher_repo.teacher_delete_by_name_phone(instance.name, instance.phone or "")
 
         # 🔥 Staff 삭제
         instance.delete()
@@ -194,9 +238,10 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
     # Helpers
     # =========================
     def _create_teacher(self, staff: Staff):
-        Teacher.objects.create(
-            name=staff.name,
-            phone=staff.phone,
+        teacher_repo.teacher_create(
+            staff.tenant,
+            staff.name,
+            staff.phone or "",
             is_active=True,
         )
 

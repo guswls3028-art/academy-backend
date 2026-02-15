@@ -73,7 +73,8 @@ class Program(TimestampModel):
 
     @classmethod
     def ensure_for_tenant(cls, *, tenant: Tenant) -> "Program":
-        obj = cls.objects.filter(tenant=tenant).first()
+        from academy.adapters.db.django import repositories_core as core_repo
+        obj = core_repo.program_get_by_tenant(tenant)
         if obj:
             return obj
         raise RuntimeError(

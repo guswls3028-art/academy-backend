@@ -16,6 +16,9 @@ AIJobType = Literal[
     "problem_generation",
     "homework_video_analysis",
     "omr_grading",
+    "excel_parsing",
+    "attendance_excel_export",
+    "staff_excel_export",
 ]
 
 
