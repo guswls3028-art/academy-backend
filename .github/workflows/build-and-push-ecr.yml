@@ -1,9 +1,6 @@
 # ==============================================================================
-# push 시 GitHub이 Docker 이미지 빌드 → AWS ECR 푸시
-# deploy.ps1 / DEPLOY_COPYPASTE_WHILE_VIDEO_BUILDS.md 와 동일한 4개 이미지
-# ==============================================================================
-# 필수: Repo Settings → Secrets and variables → Actions 에서
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY 설정
+# push 시 GitHub이 Docker 이미지 빌드(캐시 사용) → ECR 푸시
+# 원터치: 로컬에서 go.bat 더블클릭 → git push → 여기서 빌드·푸시
 # ==============================================================================
 
 name: Build and Push to ECR
@@ -24,6 +21,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -35,28 +35,55 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Build base image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.base
+          load: true
+          tags: academy-base:latest
+          cache-from: type=gha,scope=base
+          cache-to: type=gha,mode=max,scope=base
 
-      - name: Build base image
-        run: |
-          docker build -f docker/Dockerfile.base -t academy-base:latest .
+      - name: Build API image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/api/Dockerfile
+          load: true
+          tags: academy-api:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
 
-      - name: Build API image
-        run: |
-          docker build -f docker/api/Dockerfile -t academy-api:latest .
+      - name: Build messaging-worker image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/messaging-worker/Dockerfile
+          load: true
+          tags: academy-messaging-worker:latest
+          cache-from: type=gha,scope=messaging
+          cache-to: type=gha,mode=max,scope=messaging
 
-      - name: Build messaging-worker image
-        run: |
-          docker build -f docker/messaging-worker/Dockerfile -t academy-messaging-worker:latest .
+      - name: Build ai-worker-cpu image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/ai-worker-cpu/Dockerfile
+          load: true
+          tags: academy-ai-worker-cpu:latest
+          cache-from: type=gha,scope=ai-cpu
+          cache-to: type=gha,mode=max,scope=ai-cpu
 
-      - name: Build ai-worker-cpu image
-        run: |
-          docker build -f docker/ai-worker-cpu/Dockerfile -t academy-ai-worker-cpu:latest .
-
-      - name: Build video-worker image
-        run: |
-          docker build -f docker/video-worker/Dockerfile -t academy-video-worker:latest .
+      - name: Build video-worker image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/video-worker/Dockerfile
+          load: true
+          tags: academy-video-worker:latest
+          cache-from: type=gha,scope=video
+          cache-to: type=gha,mode=max,scope=video
 
       - name: Tag and push to ECR
         run: |
@@ -64,7 +91,6 @@ jobs:
           docker tag academy-messaging-worker:latest ${{ env.ECR_REGISTRY }}/academy-messaging-worker:latest
           docker tag academy-ai-worker-cpu:latest ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:latest
           docker tag academy-video-worker:latest ${{ env.ECR_REGISTRY }}/academy-video-worker:latest
-
           docker push ${{ env.ECR_REGISTRY }}/academy-api:latest
           docker push ${{ env.ECR_REGISTRY }}/academy-messaging-worker:latest
           docker push ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:latest
