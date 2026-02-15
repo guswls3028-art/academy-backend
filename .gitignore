@@ -11,6 +11,7 @@ __pycache__/
 # Virtualenv / Env
 # =========================
 venv/
+.venv/
 .env
 .env.admin97
 .env.*
