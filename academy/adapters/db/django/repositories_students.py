@@ -15,10 +15,12 @@ def student_filter_tenant(tenant):
 
 
 def user_create_user(username, tenant=None, **kwargs):
-    """테넌트별 격리: tenant 전달 시 (tenant, username) 기준 생성."""
+    """테넌트별 격리: tenant 전달 시 내부 username t{id}_{입력} 으로 저장."""
     from django.contrib.auth import get_user_model
+    from apps.core.models.user import user_internal_username
     if tenant is not None:
         kwargs["tenant"] = tenant
+        username = user_internal_username(tenant, username)
     return get_user_model().objects.create_user(username=username, **kwargs)
 
 

@@ -116,12 +116,14 @@ def user_get_by_username(username: str) -> Optional[Any]:
     return get_user_model().objects.filter(username=username, tenant__isnull=True).first()
 
 
-def user_get_by_tenant_username(tenant, username: str) -> Optional[Any]:
-    """테넌트별 유저 조회. 1테넌트=1프로그램 격리."""
+def user_get_by_tenant_username(tenant, display_username: str) -> Optional[Any]:
+    """테넌트별 유저 조회. 내부 저장형 t{tenant_id}_{display} 로 조회."""
     from django.contrib.auth import get_user_model
-    if not tenant or not (username or "").strip():
+    from apps.core.models.user import user_internal_username
+    if not tenant or not (display_username or "").strip():
         return None
-    return get_user_model().objects.filter(tenant=tenant, username=username.strip()).first()
+    internal = user_internal_username(tenant, display_username)
+    return get_user_model().objects.filter(tenant=tenant, username=internal).first()
 
 
 def user_get_or_create(username: str, defaults: dict) -> tuple[Any, bool]:
