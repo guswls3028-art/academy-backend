@@ -227,28 +227,28 @@ echo BUILD_AND_PUSH_OK
         Write-Host "Build timeout. Instance kept: $buildInstanceId" -ForegroundColor Yellow
         exit 1
     }
-    Write-Host "빌드 및 ECR 푸시 완료. 빌드 인스턴스 중지 (다음에 캐시 재사용, 돈 절약)..." -ForegroundColor Green
+    Write-Host "Build and ECR push done. Stopping build instance (cache reuse next time)..." -ForegroundColor Green
     aws ec2 stop-instances --instance-ids $buildInstanceId --region $Region 2>&1 | Out-Null
     $buildInstanceId = $null
 } else {
-    Write-Host "`n=== 1/3 빌드 단계 생략 (-SkipBuild) ===`n" -ForegroundColor Cyan
+    Write-Host "`n=== 1/3 Build step skipped (-SkipBuild) ===`n" -ForegroundColor Cyan
 }
 
 # ---------- 2) API 배포 (DeployTarget이 all 또는 api 일 때만) ----------
 $deployApi = ($DeployTarget -eq "all" -or $DeployTarget -eq "api")
 if ($deployApi) {
-    Write-Host "`n=== 2/3 API 서버 배포 (EC2 SSH) ===`n" -ForegroundColor Cyan
+    Write-Host "`n=== 2/3 API server deploy (EC2 SSH) ===`n" -ForegroundColor Cyan
 }
 if ($StartStoppedInstances) { Start-StoppedAcademyInstances }
 $ips = Get-Ec2PublicIps
 if ($ips.Count -eq 0) {
-    Write-Host "실행 중인 academy 인스턴스가 없습니다." -ForegroundColor Red
+    Write-Host "No running academy instances found." -ForegroundColor Red
     exit 1
 }
 if ($deployApi) {
     $apiIp = $ips["academy-api"]
     if (-not $apiIp) {
-        Write-Host "academy-api 인스턴스를 찾을 수 없습니다." -ForegroundColor Red
+        Write-Host "academy-api instance not found." -ForegroundColor Red
         exit 1
     }
     $apiOk = Deploy-One -Name "academy-api" -Ip $apiIp -KeyFile $INSTANCE_KEYS["academy-api"] -RemoteCmd $REMOTE_CMDS["academy-api"]
