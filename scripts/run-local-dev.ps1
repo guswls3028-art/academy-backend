@@ -7,6 +7,23 @@ Write-Host "  Backend + Frontend" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
+# 기존에 떠 있는 백엔드/프론트 포트 프로세스 모두 종료 (8000, 5174, 5175, 5176)
+Write-Host "[CLEANUP] Stopping any process on ports 8000, 5174, 5175, 5176..." -ForegroundColor Yellow
+$portsToFree = @(8000, 5174, 5175, 5176)
+foreach ($port in $portsToFree) {
+    try {
+        $conns = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
+        foreach ($c in $conns) {
+            if ($c.OwningProcess) {
+                Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
+                Write-Host "  Port $port : stopped PID $($c.OwningProcess)" -ForegroundColor Gray
+            }
+        }
+    } catch { }
+}
+Start-Sleep -Seconds 1
+Write-Host ""
+
 # 가상환경 Python 경로 확인
 $pythonPath = "python"
 if (Test-Path "C:\academy\venv\Scripts\python.exe") {
