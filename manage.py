@@ -2,22 +2,21 @@
 """Django's command-line utility for administrative tasks."""
 # manage.py (상단)
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
 import sys
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# .env (배포용) 먼저, .env.local (로컬) 이 있으면 덮어씀
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env.local")
 
 
 def main():
     """Run administrative tasks."""
 
-    # 🔥 프로젝트 루트 (academy/)
-    BASE_DIR = Path(__file__).resolve().parent
-
-    # 🔥 핵심: PYTHONPATH에 'apps'를 직접 올리지 않는다
-    # academy/ 만 올리고, apps는 네임스페이스로만 사용
+    # 🔥 프로젝트 루트 (academy/), PYTHONPATH에 apps 직접 올리지 않음
     if str(BASE_DIR) not in sys.path:
         sys.path.insert(0, str(BASE_DIR))
 

@@ -243,3 +243,58 @@ def delete_prefix_r2_video(
         continuation_token = resp.get("NextContinuationToken")
 
     return total_deleted
+
+
+# ---------------------------------------------------------------------
+# Admin 버킷 (R2_ADMIN_BUCKET) — 테넌트 로고 등
+# ---------------------------------------------------------------------
+
+def _admin_bucket():
+    return getattr(settings, "R2_ADMIN_BUCKET", "academy-admin")
+
+
+def upload_fileobj_to_r2_admin(
+    *,
+    fileobj,
+    key: str,
+    content_type: str | None = None,
+) -> None:
+    """Django UploadedFile -> R2 Admin 버킷 업로드 (테넌트 로고 등)."""
+    s3 = _get_s3_client()
+    s3.upload_fileobj(
+        Fileobj=fileobj,
+        Bucket=_admin_bucket(),
+        Key=key,
+        ExtraArgs={
+            "ContentType": content_type or "application/octet-stream"
+        },
+    )
+
+
+def get_admin_object_public_url(*, key: str) -> str | None:
+    """
+    Admin 버킷 객체의 공개 URL.
+    R2_ADMIN_PUBLIC_BASE_URL이 설정된 경우에만 반환 (없으면 None → presigned 사용).
+    """
+    base = getattr(settings, "R2_ADMIN_PUBLIC_BASE_URL", "") or ""
+    base = (base or "").strip().rstrip("/")
+    if not base:
+        return None
+    return f"{base}/{key}" if key else base
+
+
+def generate_presigned_get_url_admin(
+    *,
+    key: str,
+    expires_in: int = 3600,
+) -> str:
+    """R2 Admin 버킷 presigned GET URL (공개 URL 미설정 시 로고 등 조회용)."""
+    s3 = _get_s3_client()
+    return s3.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": _admin_bucket(),
+            "Key": key,
+        },
+        ExpiresIn=expires_in,
+    )

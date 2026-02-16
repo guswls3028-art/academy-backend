@@ -13,7 +13,6 @@ __pycache__/
 venv/
 .venv/
 .env
-.env.admin97
 .env.*
 !.env.example
 

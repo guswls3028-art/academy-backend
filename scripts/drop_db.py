@@ -10,15 +10,17 @@ import sys
 # 프로젝트 루트
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# .env 로드 (있으면)
-env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
-if os.path.isfile(env_path):
-    with open(env_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+# .env (배포) + .env.local (로컬) 로드 — .env.local 이 있으면 덮어씀
+_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for name in (".env", ".env.local"):
+    p = os.path.join(_root, name)
+    if os.path.isfile(p):
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ[k.strip()] = v.strip().strip('"').strip("'")
 
 name = os.getenv("DB_NAME")
 user = os.getenv("DB_USER")

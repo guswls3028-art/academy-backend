@@ -9,6 +9,8 @@ from apps.core.views import (
     MyAttendanceViewSet,
     MyExpenseViewSet,
     JobProgressView,
+    TenantBrandingView,
+    TenantBrandingUploadLogoView,
 )
 
 router = DefaultRouter()
@@ -20,5 +22,7 @@ urlpatterns = [
     path("me/", MeView.as_view(), name="core-me"),
     path("program/", ProgramView.as_view(), name="core-program"),
     path("job_progress/<str:job_id>/", JobProgressView.as_view(), name="core-job-progress"),
+    path("tenant-branding/<int:tenant_id>/", TenantBrandingView.as_view(), name="core-tenant-branding"),
+    path("tenant-branding/<int:tenant_id>/upload-logo/", TenantBrandingUploadLogoView.as_view(), name="core-tenant-branding-upload-logo"),
     path("", include(router.urls)),
 ]

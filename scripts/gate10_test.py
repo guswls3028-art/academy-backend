@@ -20,6 +20,7 @@ sys.path.insert(0, str(_root))
 try:
     from dotenv import load_dotenv
     load_dotenv(_root / ".env")
+    load_dotenv(_root / ".env.local")
 except ImportError:
     pass
 

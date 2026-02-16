@@ -27,6 +27,7 @@ param(
     [switch]$SkipBuild = $false,
     [switch]$WorkersViaASG = $false,             # true면 워커는 ASG 인스턴스 리프레시만, 고정 EC2 3대 SSH 안 함
     [switch]$StartStoppedInstances = $true,
+    [switch]$NoCache = $false,                   # true면 --no-cache로 빌드 (설정 파일 수정 시 사용)
     [ValidateSet("all", "api", "video", "ai", "messaging", "workers")]
     [string]$DeployTarget = "all"               # all=API+3워커, api/video/ai/messaging=해당 1종만, workers=워커 3종만
 )
@@ -175,19 +176,20 @@ echo 'Build instance ready'
         exit 1
     }
     Start-Sleep -Seconds 15
-    # 캐시 재사용: /home/ec2-user/build/academy 에서 git pull 후 빌드 (재사용 시 빠름)
+    # 빌드: git pull 후 캐시 활용 빌드 (설정 파일만 변경 시 -NoCache 사용)
+    $noCacheFlag = if ($NoCache) { "--no-cache" } else { "" }
     $buildScript = @"
 set -e
 export PATH=/usr/local/bin:/usr/bin:$PATH
 cd /home/ec2-user/build
-if [ -d academy ]; then cd academy && git pull; else git clone '$GitRepoUrl' academy && cd academy; fi
+if [ -d academy ]; then cd academy && git fetch && git reset --hard origin/main && git pull; else git clone '$GitRepoUrl' academy && cd academy; fi
 cd /home/ec2-user/build/academy
 aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $ECR
-docker build -f docker/Dockerfile.base -t academy-base:latest .
-docker build -f docker/api/Dockerfile -t academy-api:latest .
-docker build -f docker/messaging-worker/Dockerfile -t academy-messaging-worker:latest .
-docker build -f docker/video-worker/Dockerfile -t academy-video-worker:latest .
-docker build -f docker/ai-worker-cpu/Dockerfile -t academy-ai-worker-cpu:latest .
+docker build $noCacheFlag -f docker/Dockerfile.base -t academy-base:latest .
+docker build $noCacheFlag -f docker/api/Dockerfile -t academy-api:latest .
+docker build $noCacheFlag -f docker/messaging-worker/Dockerfile -t academy-messaging-worker:latest .
+docker build $noCacheFlag -f docker/video-worker/Dockerfile -t academy-video-worker:latest .
+docker build $noCacheFlag -f docker/ai-worker-cpu/Dockerfile -t academy-ai-worker-cpu:latest .
 docker tag academy-api:latest $ECR/academy-api:latest
 docker tag academy-messaging-worker:latest $ECR/academy-messaging-worker:latest
 docker tag academy-video-worker:latest $ECR/academy-video-worker:latest
@@ -198,8 +200,10 @@ docker push $ECR/academy-video-worker:latest
 docker push $ECR/academy-ai-worker-cpu:latest
 echo BUILD_AND_PUSH_OK
 "@
+    # SSM on Linux runs the script with bash; CRLF causes "set -e" to be parsed as "set -" (invalid option)
+    $buildScript = ($buildScript.Trim() -replace "`r`n", "`n" -replace "`r", "`n")
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-    $paramsJson = @{ commands = @($buildScript.Trim()) } | ConvertTo-Json -Depth 10 -Compress
+    $paramsJson = @{ commands = @($buildScript) } | ConvertTo-Json -Depth 10 -Compress
     $paramsFile = Join-Path $RepoRoot "ssm_build_params.json"
     [System.IO.File]::WriteAllText($paramsFile, $paramsJson, $utf8NoBom)
     $paramsUri = "file://$($paramsFile -replace '\\','/' -replace ' ', '%20')"
@@ -276,10 +280,16 @@ if ($deployWorkers) {
         }
         $asgNames = $workerList | ForEach-Object { $asgMap[$_] } | Where-Object { $_ }
         foreach ($asgName in $asgNames) {
-            $asg = aws autoscaling describe-auto-scaling-groups --region $Region --auto-scaling-group-names $asgName --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>&1
-            if ($asg -and $asg -ne "None") {
-                aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName 2>&1 | Out-Null
-                if ($LASTEXITCODE -eq 0) { Write-Host "  $asgName instance refresh started" -ForegroundColor Green }
+            $asgCheck = aws autoscaling describe-auto-scaling-groups --region $Region --auto-scaling-group-names $asgName --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>&1
+            if ($LASTEXITCODE -ne 0 -or -not $asgCheck -or $asgCheck -eq "None") {
+                Write-Host "  $asgName - ASG not found or error: $asgCheck" -ForegroundColor Yellow
+                continue
+            }
+            $refreshOut = aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  $asgName instance refresh started" -ForegroundColor Green
+            } else {
+                Write-Host "  $asgName instance refresh FAILED: $refreshOut" -ForegroundColor Red
             }
         }
     } else {

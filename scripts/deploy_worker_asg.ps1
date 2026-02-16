@@ -123,7 +123,8 @@ $videoUserDataRaw = $videoUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRRegistry
 $videoUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($videoUserDataRaw))
 
 $LtVideoName = "academy-video-worker-asg"
-$blockDevices = '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":8,"VolumeType":"gp3"}},{"DeviceName":"/dev/sdb","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]'
+# Root volume >= 30GB (AMI snapshot requirement); second volume 100GB for transcode
+$blockDevices = '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":30,"VolumeType":"gp3"}},{"DeviceName":"/dev/sdb","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]'
 $ltVideoJson = @"
 {"ImageId":"$AmiId","InstanceType":"t4g.medium","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"],"UserData":"$videoUserDataB64","BlockDeviceMappings":$blockDevices,"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-video-worker"}]}]}
 "@
@@ -337,18 +338,19 @@ if ($GrantSsmPutToCaller) {
 }
 
 # ------------------------------------------------------------------------------
-# 선택) .env → SSM 업로드
+# 선택) .env → SSM 업로드 (Windows 인코딩/경로 대응)
 # ------------------------------------------------------------------------------
-$envPath = Join-Path $RepoRoot ".env"
-if ($UploadEnvToSsm -and (Test-Path $envPath)) {
-    Write-Host "[+SSM] Uploading .env to /academy/workers/env..." -ForegroundColor Cyan
-    $envUri = "file://$($envPath -replace '\\','/' -replace ' ', '%20')"
-    $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    aws ssm put-parameter --name /academy/workers/env --type SecureString --value $envUri --overwrite --region $Region 2>$null
-    if ($LASTEXITCODE -eq 0) { Write-Host "      SSM /academy/workers/env updated." -ForegroundColor Gray } else { Write-Host "      SSM upload failed (try from repo root: aws ssm put-parameter --name /academy/workers/env --type SecureString --value file://.env --overwrite --region $Region)" -ForegroundColor Yellow }
-    $ErrorActionPreference = $ea
-} elseif ($UploadEnvToSsm -and -not (Test-Path $envPath)) {
-    Write-Host "      .env not found; skip SSM upload. To upload later: aws ssm put-parameter --name /academy/workers/env --type SecureString --value file://.env --overwrite --region $Region" -ForegroundColor Yellow
+if ($UploadEnvToSsm) {
+    $uploadScript = Join-Path $ScriptRoot "upload_env_to_ssm.ps1"
+    if (Test-Path $uploadScript) {
+        Write-Host "[+SSM] Uploading .env to /academy/workers/env..." -ForegroundColor Cyan
+        & $uploadScript -RepoRoot $RepoRoot -Region $Region
+        if ($LASTEXITCODE -ne 0) { Write-Host "      SSM upload failed. Run: .\scripts\upload_env_to_ssm.ps1" -ForegroundColor Yellow }
+    } else {
+        $envPath = Join-Path $RepoRoot ".env"
+        if (Test-Path $envPath) { Write-Host "      upload_env_to_ssm.ps1 not found; skip. Run: .\scripts\upload_env_to_ssm.ps1" -ForegroundColor Yellow }
+        else { Write-Host "      .env not found; skip SSM upload. Run: .\scripts\upload_env_to_ssm.ps1 after adding .env" -ForegroundColor Yellow }
+    }
 }
 
 # ------------------------------------------------------------------------------

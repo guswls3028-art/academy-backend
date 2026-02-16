@@ -1,9 +1,7 @@
 # ==============================================================================
 # AWS 500 배포: Docker 이미지 빌드 + ECR 푸시
 # ==============================================================================
-# 전제: .env.admin97 로드됨 (ECR_REGISTRY, AWS_ACCOUNT_ID 등)
-# 사용: . .\scripts\build_and_push_ecr.ps1
-# 또는: Get-Content .env.admin97 | ForEach-Object { if($_ -match '^([^#=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }; .\scripts\build_and_push_ecr.ps1
+# 전제: .env 로드됨 (ECR_REGISTRY, AWS_ACCOUNT_ID 등). 터미널에서: Get-Content .env | ForEach-Object { if($_ -match '^([^#=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2].Trim(), 'Process') } }; .\scripts\build_and_push_ecr.ps1
 # ==============================================================================
 
 $ErrorActionPreference = "Stop"

@@ -19,6 +19,19 @@ class IsAdminOrStaff(BasePermission):
         )
 
 
+class IsSuperuserOnly(BasePermission):
+    """
+    슈퍼유저 전용 (개발자 전용).
+    admin_app 등 본인만 쓰는 관리 기능용.
+    """
+
+    message = "Superuser only."
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and user.is_superuser)
+
+
 class IsStudent(BasePermission):
     """
     학생 전용 Permission

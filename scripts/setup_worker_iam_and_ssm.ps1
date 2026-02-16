@@ -38,17 +38,14 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "      OK." -ForegroundColor Green
 $ErrorActionPreference = $ea
 
-# 2) .env -> SSM
+# 2) .env -> SSM (Windows-safe via upload_env_to_ssm.ps1)
 Write-Host "[2/3] Uploading .env to /academy/workers/env..." -ForegroundColor Cyan
-$envPath = Join-Path $RepoRoot ".env"
-if (-not (Test-Path $envPath)) {
-    Write-Host "      .env not found at $envPath; skip." -ForegroundColor Yellow
+$uploadScript = Join-Path $ScriptRoot "upload_env_to_ssm.ps1"
+if (-not (Test-Path $uploadScript)) {
+    Write-Host "      upload_env_to_ssm.ps1 not found; skip." -ForegroundColor Yellow
 } else {
-    $envContent = Get-Content $envPath -Raw
-    $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    aws ssm put-parameter --name /academy/workers/env --type SecureString --value "$envContent" --overwrite --region $Region 2>$null
-    if ($LASTEXITCODE -eq 0) { Write-Host "      OK." -ForegroundColor Green } else { Write-Host "      FAILED." -ForegroundColor Red }
-    $ErrorActionPreference = $ea
+    & $uploadScript -RepoRoot $RepoRoot -Region $Region
+    if ($LASTEXITCODE -eq 0) { Write-Host "      OK." -ForegroundColor Green } else { Write-Host "      FAILED (or .env missing)." -ForegroundColor Red }
 }
 
 # 3) EC2 역할에 SSM+ECR 정책

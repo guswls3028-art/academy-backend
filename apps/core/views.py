@@ -12,6 +12,7 @@ from drf_yasg.utils import swagger_auto_schema
 
 from apps.core.models import Attendance, Expense, Program
 from academy.adapters.db.django import repositories_core as core_repo
+from apps.core.permissions import IsAdminOrStaff, IsSuperuserOnly
 from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.core.permissions import (
     TenantResolved,
@@ -293,3 +294,100 @@ class JobProgressView(APIView):
             "percent": progress.get("percent"),
             **{k: v for k, v in progress.items() if k not in ("step", "percent")},
         })
+
+
+# --------------------------------------------------
+# Tenant Branding (admin_app) — 테넌트별 로고·로그인 타이틀, R2 academy-admin
+# --------------------------------------------------
+
+
+def _tenant_branding_dto(program):
+    """Program.ui_config → TenantBrandingDto 형태."""
+    cfg = getattr(program, "ui_config", None) or {}
+    return {
+        "tenantId": program.tenant_id,
+        "loginTitle": cfg.get("login_title") or "",
+        "loginSubtitle": cfg.get("login_subtitle") or "",
+        "logoUrl": cfg.get("logo_url") or None,
+    }
+
+
+class TenantBrandingView(APIView):
+    """
+    GET/PATCH /api/v1/core/tenant-branding/<tenant_id>/
+    admin_app 전용 — 개발자(superuser)만. Program.ui_config 기반.
+    """
+    permission_classes = [IsAuthenticated, IsSuperuserOnly]
+
+    def get(self, request, tenant_id: int):
+        tenant = core_repo.tenant_get_by_id_any(tenant_id)
+        if not tenant:
+            return Response({"detail": "Tenant not found."}, status=404)
+        program = core_repo.program_get_by_tenant(tenant)
+        if not program:
+            return Response({"detail": "Program not found for tenant."}, status=404)
+        return Response(_tenant_branding_dto(program))
+
+    def patch(self, request, tenant_id: int):
+        tenant = core_repo.tenant_get_by_id_any(tenant_id)
+        if not tenant:
+            return Response({"detail": "Tenant not found."}, status=404)
+        program = core_repo.program_get_by_tenant(tenant)
+        if not program:
+            return Response({"detail": "Program not found for tenant."}, status=404)
+        cfg = dict(program.ui_config or {})
+        if "loginTitle" in request.data:
+            cfg["login_title"] = request.data.get("loginTitle")
+        if "loginSubtitle" in request.data:
+            cfg["login_subtitle"] = request.data.get("loginSubtitle")
+        if "logoUrl" in request.data:
+            cfg["logo_url"] = request.data.get("logoUrl") or None
+        program.ui_config = cfg
+        program.save(update_fields=["ui_config"])
+        return Response(_tenant_branding_dto(program))
+
+
+class TenantBrandingUploadLogoView(APIView):
+    """
+    POST /api/v1/core/tenant-branding/<tenant_id>/upload-logo/
+    multipart/form-data file → R2 academy-admin, Program.ui_config.logo_url 저장.
+    admin_app 전용 — 개발자(superuser)만.
+    """
+    permission_classes = [IsAuthenticated, IsSuperuserOnly]
+
+    def post(self, request, tenant_id: int):
+        tenant = core_repo.tenant_get_by_id_any(tenant_id)
+        if not tenant:
+            return Response({"detail": "Tenant not found."}, status=404)
+        program = core_repo.program_get_by_tenant(tenant)
+        if not program:
+            return Response({"detail": "Program not found for tenant."}, status=404)
+
+        file = request.FILES.get("file")
+        if not file:
+            return Response({"detail": "file is required."}, status=400)
+        if not (getattr(file, "content_type", "") or "").startswith("image/"):
+            return Response({"detail": "Image file required."}, status=400)
+
+        ext = (file.name or "").split(".")[-1].lower() or "png"
+        if ext not in ("png", "jpg", "jpeg", "gif", "webp", "svg"):
+            ext = "png"
+        key = f"tenant-logos/{tenant_id}/logo.{ext}"
+
+        from apps.infrastructure.storage import r2 as r2_storage
+        r2_storage.upload_fileobj_to_r2_admin(
+            fileobj=file,
+            key=key,
+            content_type=file.content_type or "image/png",
+        )
+
+        logo_url = r2_storage.get_admin_object_public_url(key=key)
+        if not logo_url:
+            logo_url = r2_storage.generate_presigned_get_url_admin(key=key, expires_in=86400 * 7)
+
+        cfg = dict(program.ui_config or {})
+        cfg["logo_url"] = logo_url
+        program.ui_config = cfg
+        program.save(update_fields=["ui_config"])
+
+        return Response({"logoUrl": logo_url})

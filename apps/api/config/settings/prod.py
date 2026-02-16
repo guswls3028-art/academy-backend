@@ -51,6 +51,8 @@ CORS_ALLOWED_ORIGINS = [
     "https://limglish.kr",
     "https://www.limglish.kr",
     "https://dev-web.hakwonplus.com",
+    # 로컬 개발용 (프론트엔드 localhost:5174에서 배포된 API 서버 사용)
+    "http://localhost:5174",
 ]
 
 from corsheaders.defaults import default_headers
