@@ -17,6 +17,14 @@ $FrontendShortcut.WorkingDirectory = "C:\academyfront"
 $FrontendShortcut.Description = "Local Frontend Server"
 $FrontendShortcut.Save()
 
+# RDS Tunnel shortcut
+$TunnelShortcut = $WshShell.CreateShortcut("$Desktop\RDS Tunnel.lnk")
+$TunnelShortcut.TargetPath = "C:\academy\scripts\run-rds-tunnel.bat"
+$TunnelShortcut.WorkingDirectory = "C:\academy"
+$TunnelShortcut.Description = "RDS SSH Tunnel"
+$TunnelShortcut.Save()
+
 Write-Host "Desktop shortcuts created:" -ForegroundColor Green
 Write-Host "  - Academy Backend.lnk" -ForegroundColor Cyan
 Write-Host "  - Academy Frontend.lnk" -ForegroundColor Cyan
+Write-Host "  - RDS Tunnel.lnk" -ForegroundColor Cyan
