@@ -211,41 +211,59 @@ echo BUILD_AND_PUSH_OK
     Write-Host "`n=== 1/3 빌드 단계 생략 (-SkipBuild) ===`n" -ForegroundColor Cyan
 }
 
-# ---------- 2) API + 워커 배포 (고정 EC2 SSH) ----------
-Write-Host "`n=== 2/3 API 서버 배포 (EC2 SSH) ===`n" -ForegroundColor Cyan
+# ---------- 2) API 배포 (DeployTarget이 all 또는 api 일 때만) ----------
+$deployApi = ($DeployTarget -eq "all" -or $DeployTarget -eq "api")
+if ($deployApi) {
+    Write-Host "`n=== 2/3 API 서버 배포 (EC2 SSH) ===`n" -ForegroundColor Cyan
+}
 if ($StartStoppedInstances) { Start-StoppedAcademyInstances }
 $ips = Get-Ec2PublicIps
 if ($ips.Count -eq 0) {
     Write-Host "실행 중인 academy 인스턴스가 없습니다." -ForegroundColor Red
     exit 1
 }
-$apiIp = $ips["academy-api"]
-if (-not $apiIp) {
-    Write-Host "academy-api 인스턴스를 찾을 수 없습니다." -ForegroundColor Red
-    exit 1
+if ($deployApi) {
+    $apiIp = $ips["academy-api"]
+    if (-not $apiIp) {
+        Write-Host "academy-api 인스턴스를 찾을 수 없습니다." -ForegroundColor Red
+        exit 1
+    }
+    $apiOk = Deploy-One -Name "academy-api" -Ip $apiIp -KeyFile $INSTANCE_KEYS["academy-api"] -RemoteCmd $REMOTE_CMDS["academy-api"]
+    if (-not $apiOk) { exit 1 }
 }
-$apiOk = Deploy-One -Name "academy-api" -Ip $apiIp -KeyFile $INSTANCE_KEYS["academy-api"] -RemoteCmd $REMOTE_CMDS["academy-api"]
-if (-not $apiOk) { exit 1 }
 
-# ---------- 3) 워커: 고정 EC2 3대 SSH 또는 ASG 리프레시 ----------
-Write-Host "`n=== 3/3 워커 배포 ===`n" -ForegroundColor Cyan
-if ($WorkersViaASG) {
-    Write-Host "워커 ASG 인스턴스 리프레시만 수행 (고정 EC2 SSH 생략)..." -ForegroundColor Gray
-    $asgNames = @("academy-ai-worker-asg", "academy-messaging-worker-asg", "academy-video-worker-asg")
-    foreach ($asgName in $asgNames) {
-        $asg = aws autoscaling describe-auto-scaling-groups --region $Region --auto-scaling-group-names $asgName --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>&1
-        if ($asg -and $asg -ne "None") {
-            aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) { Write-Host "  $asgName instance refresh 시작" -ForegroundColor Green }
+# ---------- 3) 워커 배포 (DeployTarget이 all / workers / video / ai / messaging 일 때) ----------
+$deployWorkers = ($DeployTarget -eq "all" -or $DeployTarget -eq "workers" -or $DeployTarget -eq "video" -or $DeployTarget -eq "ai" -or $DeployTarget -eq "messaging")
+if ($deployWorkers) {
+    Write-Host "`n=== 3/3 워커 배포 ===`n" -ForegroundColor Cyan
+    $workerList = @("academy-messaging-worker", "academy-ai-worker-cpu", "academy-video-worker")
+    if ($DeployTarget -eq "video") { $workerList = @("academy-video-worker") }
+    if ($DeployTarget -eq "ai")    { $workerList = @("academy-ai-worker-cpu") }
+    if ($DeployTarget -eq "messaging") { $workerList = @("academy-messaging-worker") }
+
+    if ($WorkersViaASG) {
+        Write-Host "워커 ASG 인스턴스 리프레시만 수행 (고정 EC2 SSH 생략)..." -ForegroundColor Gray
+        $asgMap = @{
+            "academy-video-worker"     = "academy-video-worker-asg"
+            "academy-ai-worker-cpu"    = "academy-ai-worker-asg"
+            "academy-messaging-worker" = "academy-messaging-worker-asg"
         }
+        $asgNames = $workerList | ForEach-Object { $asgMap[$_] } | Where-Object { $_ }
+        foreach ($asgName in $asgNames) {
+            $asg = aws autoscaling describe-auto-scaling-groups --region $Region --auto-scaling-group-names $asgName --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>&1
+            if ($asg -and $asg -ne "None") {
+                aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) { Write-Host "  $asgName instance refresh 시작" -ForegroundColor Green }
+            }
+        }
+    } else {
+        $ok = 0
+        foreach ($name in $workerList) {
+            $ip = $ips[$name]
+            if (Deploy-One -Name $name -Ip $ip -KeyFile $INSTANCE_KEYS[$name] -RemoteCmd $REMOTE_CMDS[$name]) { $ok++ }
+        }
+        Write-Host "워커 배포: $ok/$($workerList.Count) 성공" -ForegroundColor $(if ($ok -eq $workerList.Count) { "Green" } else { "Yellow" })
     }
-} else {
-    $ok = 0
-    foreach ($name in @("academy-messaging-worker", "academy-ai-worker-cpu", "academy-video-worker")) {
-        $ip = $ips[$name]
-        if (Deploy-One -Name $name -Ip $ip -KeyFile $INSTANCE_KEYS[$name] -RemoteCmd $REMOTE_CMDS[$name]) { $ok++ }
-    }
-    Write-Host "워커 배포: $ok/3 성공" -ForegroundColor $(if ($ok -eq 3) { "Green" } else { "Yellow" })
 }
 
-Write-Host "`n=== Full Redeploy 완료 ===`n" -ForegroundColor Green
+Write-Host "`n=== Redeploy 완료 (Target: $DeployTarget) ===`n" -ForegroundColor Green
