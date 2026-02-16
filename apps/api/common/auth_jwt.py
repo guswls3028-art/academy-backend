@@ -29,6 +29,11 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
         tenant = _tenant_for_auth(request) if request else None
         if tenant:
             user = core_repo.user_get_by_tenant_username(tenant, username)
+            if not user:
+                # 기존 레거시: tenant=null 사용자 중 이 테넌트 멤버십 있는 경우
+                user = core_repo.user_get_by_username(username)
+                if user and not core_repo.membership_get(tenant, user):
+                    user = None
         else:
             user = core_repo.user_get_by_username(username)
 
