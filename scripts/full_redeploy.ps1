@@ -167,18 +167,17 @@ echo 'Build instance ready'
         if ($info -eq "Online") { $ssmReady = $true; break }
     }
     if (-not $ssmReady) {
-        Write-Host "SSM 에서 인스턴스가 Online 이 아닙니다. academy-ec2-role 에 SSM 권한이 있는지 확인하세요. 빌드 인스턴스는 종료하지 않고 유지합니다: $buildInstanceId" -ForegroundColor Yellow
-        Write-Host "수동으로 SSM 연결 후 빌드하거나, 아래로 수동 빌드 후 이 스크립트를 -SkipBuild 로 다시 실행하세요." -ForegroundColor Yellow
+        Write-Host "SSM 에서 인스턴스가 Online 이 아닙니다. academy-ec2-role 에 SSM 권한이 있는지 확인하세요. 빌드 인스턴스는 중지 상태로 유지: $buildInstanceId" -ForegroundColor Yellow
         exit 1
     }
-    # Docker/유저데이터 적용 여유
-    Start-Sleep -Seconds 60
+    Start-Sleep -Seconds 15
+    # 캐시 재사용: /home/ec2-user/build/academy 에서 git pull 후 빌드 (재사용 시 빠름)
     $buildScript = @"
 set -e
-cd /tmp
-rm -rf academy
-git clone '$GitRepoUrl' academy
-cd academy
+export PATH=/usr/local/bin:/usr/bin:$PATH
+cd /home/ec2-user/build
+if [ -d academy ]; then cd academy && git pull; else git clone '$GitRepoUrl' academy && cd academy; fi
+cd /home/ec2-user/build/academy
 aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $ECR
 docker build -f docker/Dockerfile.base -t academy-base:latest .
 docker build -f docker/api/Dockerfile -t academy-api:latest .
@@ -228,8 +227,8 @@ echo BUILD_AND_PUSH_OK
         Write-Host "빌드 타임아웃. 인스턴스는 유지: $buildInstanceId" -ForegroundColor Yellow
         exit 1
     }
-    Write-Host "빌드 및 ECR 푸시 완료. 빌드 인스턴스 종료 중..." -ForegroundColor Green
-    aws ec2 terminate-instances --instance-ids $buildInstanceId --region $Region 2>&1 | Out-Null
+    Write-Host "빌드 및 ECR 푸시 완료. 빌드 인스턴스 중지 (다음에 캐시 재사용, 돈 절약)..." -ForegroundColor Green
+    aws ec2 stop-instances --instance-ids $buildInstanceId --region $Region 2>&1 | Out-Null
     $buildInstanceId = $null
 } else {
     Write-Host "`n=== 1/3 빌드 단계 생략 (-SkipBuild) ===`n" -ForegroundColor Cyan
