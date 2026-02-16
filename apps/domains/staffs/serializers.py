@@ -192,27 +192,42 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             with transaction.atomic():
                 user = None
                 if username and password:
-            user = students_repo.user_create_user(
-                username=username,
-                password=password,
-                name=validated_data.get("name") or username,
-                phone=validated_data.get("phone") or "",
+                    user = students_repo.user_create_user(
+                        username=username,
+                        password=password,
+                        name=validated_data.get("name") or username,
+                        phone=validated_data.get("phone") or "",
+                    )
+                    core_repo.membership_ensure_active(
+                        tenant=tenant,
+                        user=user,
+                        role="teacher" if role == "TEACHER" else "staff",
+                    )
+                    validated_data["user"] = user
+
+                validated_data["tenant"] = tenant
+                staff = super().create(validated_data)
+
+                if role == "TEACHER":
+                    self._create_teacher(staff)
+                    self._grant_user_staff_permission(staff)
+
+                return staff
+        except IntegrityError as e:
+            err_msg = str(e).lower()
+            if "username" in err_msg or ("unique" in err_msg and "username" in err_msg):
+                raise serializers.ValidationError(
+                    {"username": "이미 사용 중인 로그인 아이디입니다."}
+                )
+            if "phone" in err_msg or "uniq_staff_phone" in err_msg or "uniq_teacher_phone" in err_msg:
+                raise serializers.ValidationError(
+                    {"phone": "이미 등록된 전화번호입니다."}
+                )
+            raise serializers.ValidationError(
+                {"detail": "이미 등록된 정보와 충돌합니다. 로그인 아이디·전화번호를 확인해 주세요."}
             )
-            core_repo.membership_ensure_active(
-                tenant=tenant,
-                user=user,
-                role="teacher" if role == "TEACHER" else "staff",
-            )
-            validated_data["user"] = user
-
-        validated_data["tenant"] = tenant
-        staff = super().create(validated_data)
-
-        if role == "TEACHER":
-            self._create_teacher(staff)
-            self._grant_user_staff_permission(staff)
-
-        return staff
+        except ValueError as e:
+            raise serializers.ValidationError({"detail": str(e)})
 
     # =========================
     # UPDATE (is_active sync, role 무시)
