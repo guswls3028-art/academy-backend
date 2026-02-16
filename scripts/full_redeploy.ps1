@@ -107,7 +107,7 @@ if (-not $SkipBuild) {
         Write-Host "-GitRepoUrl is required for build step (or use -SkipBuild for deploy only)." -ForegroundColor Red
         exit 1
     }
-    Write-Host "`n=== 1/3 빌드 인스턴스 기동 & 빌드/ECR 푸시 (캐시 재사용) ===`n" -ForegroundColor Cyan
+    Write-Host "`n=== 1/3 Build instance start & build/ECR push (cache reuse) ===`n" -ForegroundColor Cyan
 
     # 기존 academy-build-arm64 인스턴스 찾기 (running 또는 stopped)
     $existing = aws ec2 describe-instances --region $Region `
