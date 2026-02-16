@@ -1,55 +1,49 @@
 # 백엔드 재배포 명령어
 
----
-
-# 원테이크 풀셋팅 (빌드 서버까지 한 번에)
-
-**최초 1회**: 아래 블록 순서대로 복붙. 루트 키로 빌드 EC2 생성 → 빌드 → ECR 푸시 → 전체 배포 → 빌드 인스턴스 중지.  
-이후 버그 수정 등은 **재배포** 블록만 쓰면 됨.
-
-## 1) 루트 액세스 키 (초기 셋팅용, 한 번만)
-
-실제 값은 로컬에서만 설정. 저장소에 커밋하지 말 것.
-
-```powershell
+#루트 엑세스 키
 $env:AWS_ACCESS_KEY_ID = "YOUR_ROOT_ACCESS_KEY_ID"
 $env:AWS_SECRET_ACCESS_KEY = "YOUR_ROOT_SECRET_ACCESS_KEY"
 $env:AWS_DEFAULT_REGION = "ap-northeast-2"
-```
 
-## 2) 풀셋팅 실행 (빌드 서버 생성 + 빌드 + 전부 배포 + 빌드 서버 중지)
-
-```powershell
-cd C:\academy
-.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git"
-```
-
-## 3) admin97 액세스 키 (일상 재배포용)
-
-실제 값은 로컬에서만 설정. 저장소에 커밋하지 말 것.
-
-```powershell
+#admin97 엑세스 키
 Remove-Item Env:AWS_ACCESS_KEY_ID, Env:AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
 $env:AWS_ACCESS_KEY_ID = "YOUR_ADMIN97_ACCESS_KEY_ID"
 $env:AWS_SECRET_ACCESS_KEY = "YOUR_ADMIN97_SECRET_ACCESS_KEY"
 $env:AWS_DEFAULT_REGION = "ap-northeast-2"
-```
 
-## 4) 재배포
 
-- **빌드 미포함** (이미지만 배포):
-```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -SkipBuild
-```
 
-- **빌드 포함** (코드 푸시 후 이미지 다시 빌드):
-```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git"
-```
 
-## 5) 배포 확인 (원테이크)
+#코드수정 캐시기반 (빌드용서버 사용)
+Remove-Item Env:AWS_ACCESS_KEY_ID, Env:AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+$env:AWS_ACCESS_KEY_ID = "YOUR_ADMIN97_ACCESS_KEY_ID"
+$env:AWS_SECRET_ACCESS_KEY = "YOUR_ADMIN97_SECRET_ACCESS_KEY"
+$env:AWS_DEFAULT_REGION = "ap-northeast-2"
+cd C:\academy
+.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git"
 
-```powershell
+
+
+#노캐시 풀배포 (빌드용서버 사용)
+$env:AWS_ACCESS_KEY_ID = "YOUR_ROOT_ACCESS_KEY_ID"
+$env:AWS_SECRET_ACCESS_KEY = "YOUR_ROOT_SECRET_ACCESS_KEY"
+$env:AWS_DEFAULT_REGION = "ap-northeast-2"
+cd C:\academy
+.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git"
+
+
+
+#빌드용서버 수동중지
+Remove-Item Env:AWS_ACCESS_KEY_ID, Env:AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+$env:AWS_ACCESS_KEY_ID = "YOUR_ADMIN97_ACCESS_KEY_ID"
+$env:AWS_SECRET_ACCESS_KEY = "YOUR_ADMIN97_SECRET_ACCESS_KEY"
+$env:AWS_DEFAULT_REGION = "ap-northeast-2"
+$id = aws ec2 describe-instances --region ap-northeast-2 --filters "Name=tag:Name,Values=academy-build-arm64" "Name=instance-state-name,Values=running" --query "Reservations[0].Instances[0].InstanceId" --output text
+if ($id -and $id -ne "None") { aws ec2 stop-instances --instance-ids $id --region ap-northeast-2; Write-Host "중지 요청함: $id" } else { Write-Host "실행 중인 academy-build-arm64 없음" }
+
+
+
+#배포 확인 명령어
 $region = "ap-northeast-2"
 Write-Host "`n=== Worker deploy final check ===`n" -ForegroundColor Cyan
 Write-Host "[1] Lambda" -ForegroundColor White
@@ -70,7 +64,6 @@ Write-Host "`n[6] API SG <- Worker" -ForegroundColor White
 $ing = aws ec2 describe-security-groups --group-ids sg-0051cc8f79c04b058 --region $region --query "SecurityGroups[0].IpPermissions" --output json 2>$null
 if ($ing -match "sg-02692600fbf8e26f7") { Write-Host "  OK" -ForegroundColor Green } else { Write-Host "  Check" -ForegroundColor Yellow }
 Write-Host "`n=== Done ===`n" -ForegroundColor Cyan
-```
 
 ---
 
