@@ -48,7 +48,7 @@ from apps.core.models import TenantMembership
 User = get_user_model()
 
 
-def _owner_display_for_tenant(tenant):
+def _owner_display_for_tenant(tenant, request=None):
     """테넌트 원장(owner) 표시용 딕셔너리. 직원 목록 상단 노출용."""
     if not tenant:
         return None
@@ -64,6 +64,12 @@ def _owner_display_for_tenant(tenant):
         return {"id": None, "name": name, "role": "OWNER", "is_owner": True}
     if (getattr(tenant, "owner_name", None) or "").strip():
         return {"id": None, "name": (tenant.owner_name or "").strip(), "role": "OWNER", "is_owner": True}
+    # DB에 owner 없어도, 현재 요청 사용자가 이 테넌트 owner면 표시 (직원관리에서 원장 항상 노출)
+    if request and request.user and request.user.is_authenticated:
+        from academy.adapters.db.django import repositories_core as core_repo
+        if core_repo.membership_exists_staff(tenant=tenant, user=request.user, staff_roles=("owner",)):
+            name = (getattr(request.user, "name", None) or "").strip() or request.user.username
+            return {"id": None, "name": name, "role": "OWNER", "is_owner": True}
     return None
 
 # ===========================
