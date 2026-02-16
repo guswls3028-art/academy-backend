@@ -558,7 +558,7 @@ class TenantOwnerView(APIView):
             User = get_user_model()
 
             with transaction.atomic():
-                user = core_repo.user_get_by_username(username)
+                user = core_repo.user_get_by_tenant_username(tenant, username)
 
                 if user:
                     if password:
@@ -579,6 +579,7 @@ class TenantOwnerView(APIView):
                     user = User.objects.create_user(
                         username=username,
                         password=password,
+                        tenant=tenant,
                         email="",
                         name=name or "",
                         phone=phone or "",
