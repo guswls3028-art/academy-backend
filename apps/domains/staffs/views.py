@@ -180,7 +180,7 @@ class StaffViewSet(viewsets.ModelViewSet):
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
         tenant = getattr(request, "tenant", None)
-        owner = _owner_display_for_tenant(tenant)
+        owner = _owner_display_for_tenant(tenant, request)
         # Pagination 없으면 response.data 가 list 이므로 dict 로 감싼 뒤 owner 추가
         if isinstance(response.data, list):
             response.data = {"results": response.data, "owner": owner}
