@@ -1,17 +1,19 @@
 # ==============================================================================
-# API + 워커 전부 재배포 (한 방): 빌드 인스턴스 생성 → 빌드/ECR 푸시 → 인스턴스 종료 → API/워커 배포
-# 전제: 루트 또는 배포 권한 있는 액세스 키, C:\key\*.pem (API/워커 EC2 SSH용)
-#       빌드 인스턴스용 IAM 역할(academy-ec2-role)에 SSM + ECR push 권한 필요
+# API + 워커 재배포: 빌드(선택) → ECR 푸시 → API/워커 배포
+# 전제: 루트 또는 배포 권한 액세스 키, C:\key\*.pem (EC2 SSH용), 빌드 시 -GitRepoUrl
 #
-# 한 방 실행 (Git 레포 URL 필수):
-#   cd C:\academy
-#   .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git"
+# DeployTarget: all(기본) | api | video | ai | messaging | workers
 #
-# 빌드 생략하고 배포만 (이미 ECR에 최신 이미지 있을 때):
-#   .\scripts\full_redeploy.ps1 -SkipBuild
+# --- Git 푸시 후 한 방 재배포 (6종) ---
+# 1) API만:     cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget api
+# 2) Video만:   cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget video
+# 3) AI만:      cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget ai
+# 4) Messaging만: cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget messaging
+# 5) 전부(API+3워커): cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git"
+# 6) 워커만(3종): cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget workers
 #
-# 워커는 ASG로만 배포 (고정 EC2 3대 SSH 배포 생략, ASG 인스턴스 리프레시만):
-#   .\scripts\full_redeploy.ps1 -GitRepoUrl "..." -WorkersViaASG
+# 빌드 생략(ECR 이미지 그대로 배포만): 위 명령에 -SkipBuild 추가
+# 워커 ASG 리프레시만: -WorkersViaASG
 # ==============================================================================
 
 param(
