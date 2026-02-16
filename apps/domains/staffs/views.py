@@ -43,8 +43,28 @@ from .serializers import (
 from academy.adapters.db.django import repositories_staffs as staff_repo
 from .filters import StaffFilter, WorkRecordFilter, ExpenseRecordFilter
 from apps.domains.teachers.models import Teacher
+from apps.core.models import TenantMembership
 
 User = get_user_model()
+
+
+def _owner_display_for_tenant(tenant):
+    """테넌트 원장(owner) 표시용 딕셔너리. 직원 목록 상단 노출용."""
+    if not tenant:
+        return None
+    m = (
+        TenantMembership.objects.filter(
+            tenant=tenant, role="owner", is_active=True
+        )
+        .select_related("user")
+        .first()
+    )
+    if m:
+        name = (getattr(m.user, "name", None) or "").strip() or m.user.username
+        return {"id": None, "name": name, "role": "OWNER", "is_owner": True}
+    if (getattr(tenant, "owner_name", None) or "").strip():
+        return {"id": None, "name": (tenant.owner_name or "").strip(), "role": "OWNER", "is_owner": True}
+    return None
 
 # ===========================
 # Permissions
