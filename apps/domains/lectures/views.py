@@ -42,13 +42,31 @@ class LectureViewSet(ModelViewSet):
     @action(detail=False, methods=["get"], url_path="instructor-options")
     def instructor_options(self, request):
         """
-        강의 담당자 선택지: 오너 + 강사(Teacher) 목록
-        GET /api/v1/lectures/lectures/instructor-options/
+        강의 담당자 선택지: 원장(owner) + 강사(Teacher) 목록.
+        원장 = TenantMembership role=owner 인 사용자(테넌트당 전체 권한). 없으면 tenant.owner_name 폴백.
         """
         tenant = request.tenant
         options = []
-        if tenant.owner_name and tenant.owner_name.strip():
-            options.append({"name": tenant.owner_name.strip(), "type": "owner"})
+        seen_owner_names = set()
+        # 1) 실제 등록된 원장(owner) — TenantMembership에서 조회
+        for m in (
+            TenantMembership.objects.filter(
+                tenant=tenant,
+                role="owner",
+                is_active=True,
+            )
+            .select_related("user")
+            .order_by("user__username")
+        ):
+            name = (getattr(m.user, "name", None) or m.user.username or "").strip()
+            if name and name not in seen_owner_names:
+                seen_owner_names.add(name)
+                options.append({"name": name, "type": "owner"})
+        # 2) owner가 한 명도 없을 때만 tenant.owner_name 폴백
+        if not seen_owner_names and tenant.owner_name and tenant.owner_name.strip():
+            n = tenant.owner_name.strip()
+            options.append({"name": n, "type": "owner"})
+        # 3) 강사(Teacher) 목록
         for t in teacher_repo.teacher_filter_tenant_active(tenant):
             name = (t.name or "").strip()
             if name and not any(o["name"] == name and o["type"] == "teacher" for o in options):
