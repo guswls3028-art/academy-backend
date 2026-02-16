@@ -123,10 +123,10 @@ if (-not $SkipBuild) {
 
     if ($existingId) {
         $buildInstanceId = $existingId
-        Write-Host "기존 빌드 인스턴스 사용: $buildInstanceId (상태: $existingState)" -ForegroundColor Cyan
+        Write-Host "Using existing build instance: $buildInstanceId (state: $existingState)" -ForegroundColor Cyan
         if ($existingState -eq "stopped") {
             aws ec2 start-instances --instance-ids $buildInstanceId --region $Region 2>&1 | Out-Null
-            Write-Host "인스턴스 기동 중..." -ForegroundColor Gray
+            Write-Host "Starting instance..." -ForegroundColor Gray
             aws ec2 wait instance-running --instance-ids $buildInstanceId --region $Region
             Start-Sleep -Seconds 20
         }
