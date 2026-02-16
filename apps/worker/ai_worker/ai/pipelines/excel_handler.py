@@ -59,10 +59,9 @@ def handle_excel_parsing_job(job: AIJob) -> AIResult:
         return AIResult.done(job.id, result)
     except Exception as e:
         logger.exception(
-            "EXCEL_PARSING failed job_id=%s tenant_id=%s lecture_id=%s: %s",
+            "EXCEL_PARSING failed job_id=%s tenant_id=%s: %s",
             job.id,
             payload.get("tenant_id"),
-            payload.get("lecture_id"),
             e,
         )
         return AIResult.failed(job.id, str(e)[:2000])

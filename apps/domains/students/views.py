@@ -1,7 +1,10 @@
 # PATH: apps/domains/students/views.py
 
+import uuid
+
 from django.db import transaction, connection
 from django.utils import timezone
+from django.conf import settings
 from django.contrib.auth import get_user_model
 
 from rest_framework.viewsets import ModelViewSet
@@ -9,6 +12,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.exceptions import NotFound, ValidationError
 
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -19,6 +23,8 @@ from apps.core.permissions import TenantResolvedAndStaff
 
 from apps.domains.parents.services import ensure_parent_for_student
 from apps.support.messaging.services import send_welcome_messages, get_site_url
+from apps.domains.ai.gateway import dispatch_job
+from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 
 from academy.adapters.db.django import repositories_students as student_repo
 from .models import Student, Tag, StudentTag
@@ -270,6 +276,83 @@ class StudentViewSet(ModelViewSet):
         return Response({"status": "ok"}, status=200)
 
     # --------------------------------------------------
+    # 엑셀 일괄 등록 (워커 전용) — 파일 업로드 → excel_parsing job
+    # --------------------------------------------------
+    @action(detail=False, methods=["post"], url_path="bulk_create_from_excel")
+    def bulk_create_from_excel(self, request):
+        """
+        학생 엑셀 일괄 등록 — 워커 전담.
+        POST: multipart — file (엑셀), initial_password (4자 이상).
+        응답: 202 { job_id, status }.
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "tenant가 필요합니다."},
+                status=400,
+            )
+        upload_file = request.FILES.get("file")
+        initial_password = (request.data.get("initial_password") or "").strip()
+        if not upload_file:
+            raise ValidationError({"detail": "file(엑셀)은 필수입니다."})
+        if len(initial_password) < 4:
+            raise ValidationError({"detail": "initial_password는 4자 이상 필요합니다."})
+
+        ext = "xlsx"
+        if getattr(upload_file, "name", "") and "." in upload_file.name:
+            ext = upload_file.name.rsplit(".", 1)[-1].lower() or "xlsx"
+        file_key = f"excel/{tenant.id}/{uuid.uuid4().hex}.{ext}"
+        bucket = getattr(settings, "R2_EXCEL_BUCKET", getattr(settings, "EXCEL_BUCKET_NAME", "academy-excel"))
+        upload_fileobj_to_r2_excel(
+            fileobj=upload_file,
+            key=file_key,
+            content_type=getattr(upload_file, "content_type", None)
+            or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        payload = {
+            "file_key": file_key,
+            "bucket": bucket,
+            "tenant_id": tenant.id,
+            "initial_password": initial_password,
+        }
+        out = dispatch_job(
+            job_type="excel_parsing",
+            payload=payload,
+            tenant_id=str(tenant.id),
+            source_domain="students",
+            source_id=None,
+            tier="basic",
+            idempotency_key=f"excel:{file_key}",
+        )
+        if not out.get("ok"):
+            return Response(
+                {"detail": out.get("error", "job 등록 실패")},
+                status=400,
+            )
+        return Response(
+            {"job_id": out["job_id"], "status": "PENDING"},
+            status=202,
+        )
+
+    @action(detail=False, methods=["get"], url_path="excel_job_status/<str:job_id>")
+    def excel_job_status(self, request, job_id=None):
+        """
+        엑셀 일괄등록(excel_parsing) job 상태 조회 (폴링용).
+        GET /api/v1/students/excel_job_status/<job_id>/
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant가 필요합니다."}, status=400)
+        from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
+        from apps.domains.ai.services.job_status_response import build_job_status_response
+
+        repo = DjangoAIJobRepository()
+        job = repo.get_job_model_for_status(job_id, str(tenant.id), job_type="excel_parsing")
+        if not job:
+            raise NotFound("해당 job을 찾을 수 없습니다.")
+        return Response(build_job_status_response(job))
+
+    # --------------------------------------------------
     # Anchor API: /students/me/ (원본 100% 유지)
     # --------------------------------------------------
     @action(
@@ -279,7 +362,7 @@ class StudentViewSet(ModelViewSet):
     )
     def bulk_create(self, request):
         """
-        엑셀 일괄 등록 — 600명+ 대량 업로드 대응
+        JSON 일괄 등록 (레거시·비엑셀용). 엑셀 등록은 bulk_create_from_excel + 워커 사용.
         POST body: { "initial_password": "...", "students": [ {...}, ... ] }
         """
         serializer = StudentBulkCreateSerializer(

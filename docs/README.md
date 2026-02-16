@@ -8,5 +8,8 @@
 | **10K 기준** | [10K_기준.md](10K_기준.md) |
 | **30K 기준** | [30K_기준.md](30K_기준.md) |
 | **ADR** | [adr/](adr/) |
+| **Cursor SSOT (날짜 스냅샷)** | [SSOT_0217/](SSOT_0217/) |
 
-배포·운영·설계 + 10K/30K 기준점 + adr.
+배포·운영·설계 + 10K/30K 기준점 + adr.  
+**SSOT_0217**: 2025-02-17 현시점 문서 스냅샷.  
+**SSOT_0218 이후**: `docs/SSOT_MMDD/` 안에 **cursor_only**(AI 전용, 사람 미확인) / **admin97**(사람이 보는 문서만) 두 폴더 필수. 사람용 문서는 반드시 admin97에만 작성. 규칙: `.cursor/rules/ssot-folder-structure.mdc`

@@ -1,0 +1,17 @@
+ADR-001: Result / Progress / Enrollment 분리 설계
+
+# ADR-001: 시험 결과(Result)와 진행 상태(Progress) 분리
+
+## Context
+시험 점수, 문항별 정답, 시도 이력은 자주 변경/재채점되며
+진행 상태(차시 통과, 위험도, 클리닉)는 정책 기반 집계 결과이다.
+
+## Decision
+- 시험 결과는 results 도메인에서 관리한다.
+- 차시/강의 단위 통과 여부는 progress 도메인에서 집계한다.
+- Enrollment는 모든 학습 행위의 anchor id로만 사용한다.
+
+## Consequences
+- Result는 원자 데이터(single source of truth)
+- Progress는 의사결정 결과(snapshot)
+- 재채점/정책 변경 시 progress만 재계산하면 된다.

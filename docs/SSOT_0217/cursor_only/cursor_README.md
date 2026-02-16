@@ -1,0 +1,31 @@
+# docs_cursor — Cursor 작업용 SSOT (스냅샷 2025-02-17)
+
+이 폴더는 **Cursor(AI)가 이 저장소에서 작업할 때** 문서만 읽어도 필요한 정보를 얻을 수 있도록 정리한 문서 모음입니다.  
+추측·가정 없이 **실제 코드·설정 기준**으로만 기술합니다.
+
+## 문서 목록 (읽는 순서 권장)
+
+| 문서 | 내용 | 작업 시 참고 |
+|------|------|--------------|
+| [cursor_01-core-tenant-program.md](cursor_01-core-tenant-program.md) | 테넌트 resolve, Program, 권한, bypass | core/테넌트/멀티테넌트 관련 수정 시 |
+| [cursor_02-core-apis.md](cursor_02-core-apis.md) | core URL·View·권한·요청/응답 DTO | API 추가·수정, admin_app 연동 |
+| [cursor_03-settings-env.md](cursor_03-settings-env.md) | CORS, CSRF, ALLOWED_HOSTS, DB, TENANT_BYPASS, 주요 ENV | 배포·환경·CORS/도메인 이슈 |
+| [cursor_04-deployment.md](cursor_04-deployment.md) | 배포 순서, Docker 이미지, EC2, 스크립트 경로 | 배포·인프라 작업 |
+| [cursor_05-conventions.md](cursor_05-conventions.md) | 문서/코드 규칙, core 봉인, 추측 금지 | 모든 작업 전 참고 |
+| [cursor_06-front-infra-and-excel.md](cursor_06-front-infra-and-excel.md) | 프론트·인프라 계약 요약, 백엔드 엑셀 파싱 사실 | CORS·도메인·엑셀 에러 시 참조 |
+
+## 원본 문서 위치
+
+- **Core 봉인(헌법)**: `apps/core/CORE_SEAL.md`
+- **배포 상세**: `docs/배포.md`
+- **문서 인덱스**: `docs/README.md`
+
+## 규칙
+
+- **문서만으로 판단**: 이 폴더 + 위 원본만 보고도 구현/수정이 가능해야 함.
+- **코드가 진실**: 문서와 코드 불일치 시 코드가 우선. 문서를 코드에 맞게 수정할 것.
+- **추측 금지**: 문서에 없는 동작은 코드/설정을 직접 확인한 뒤 반영할 것.
+
+## 스냅샷
+
+- **SSOT_0217**: 2025-02-17 현시점. 이후 날짜별로 SSOT_0218, SSOT_0219 … 생성하여 섞이지 않게 관리.

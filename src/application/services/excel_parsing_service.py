@@ -201,8 +201,9 @@ def parse_student_excel_file(local_path: str) -> list[dict[str, Any]]:
 
 class ExcelParsingService:
     """
-    엑셀 파싱 + 강의 수강 등록 원테이크.
-    R2에서 파일 다운로드 → 파싱 → lecture_enroll_from_excel_rows 호출.
+    엑셀 파싱 + 등록 원테이크 (워커 전용).
+    - lecture_id 있음: R2 다운로드 → 파싱 → 강의 수강 등록.
+    - lecture_id 없음: R2 다운로드 → 파싱 → 학생만 일괄 생성.
     """
 
     def __init__(self, storage: IObjectStorage) -> None:
@@ -216,10 +217,11 @@ class ExcelParsingService:
         """
         payload:
           - file_key: str (R2 객체 키)
-          - bucket: str (선택, 없으면 EXCEL_BUCKET_NAME 환경변수, 기본 academy-excel)
-          - tenant_id: int
-          - lecture_id: int
-          - initial_password: str
+          - bucket: str (선택)
+          - tenant_id: int (필수)
+          - initial_password: str (필수, 4자 이상)
+          - lecture_id: int (선택) — 있으면 수강등록, 없으면 학생만 일괄 생성
+          - session_id: int (선택, lecture_id 있을 때만)
         """
         import tempfile
 
@@ -234,32 +236,41 @@ class ExcelParsingService:
         )
         tenant_id = payload.get("tenant_id")
         lecture_id = payload.get("lecture_id")
-        session_id = payload.get("session_id")  # optional: 해당 차시에만 등록
+        session_id = payload.get("session_id")
         initial_password = (payload.get("initial_password") or "").strip()
 
-        if not tenant_id or not lecture_id:
-            raise ValueError("payload.tenant_id and payload.lecture_id required")
+        if not tenant_id:
+            raise ValueError("payload.tenant_id required")
         if len(initial_password) < 4:
             raise ValueError("payload.initial_password 4자 이상 필요")
 
         tmp_dir = Path(tempfile.gettempdir())
         local_path = tmp_dir / f"excel_job_{job_id}.xlsx"
 
-        # 어떤 상황(예외 포함)에서도 로컬 임시 파일 정리 — 더블 체크로 누락 방지
         try:
             self._storage.download_to_path(bucket, file_key, str(local_path))
             rows = parse_student_excel_file(str(local_path))
             if not rows:
                 raise ValueError("등록할 학생 데이터가 없습니다.")
 
-            from apps.domains.enrollment.services import lecture_enroll_from_excel_rows
+            if lecture_id is not None:
+                from apps.domains.enrollment.services import lecture_enroll_from_excel_rows
 
-            result = lecture_enroll_from_excel_rows(
+                result = lecture_enroll_from_excel_rows(
+                    tenant_id=int(tenant_id),
+                    lecture_id=int(lecture_id),
+                    students_data=rows,
+                    initial_password=initial_password,
+                    session_id=int(session_id) if session_id is not None else None,
+                )
+                return result
+
+            from apps.domains.students.services import bulk_create_students_from_excel_rows
+
+            result = bulk_create_students_from_excel_rows(
                 tenant_id=int(tenant_id),
-                lecture_id=int(lecture_id),
                 students_data=rows,
                 initial_password=initial_password,
-                session_id=int(session_id) if session_id is not None else None,
             )
             return result
         finally:

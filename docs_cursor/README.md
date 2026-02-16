@@ -12,6 +12,11 @@
 | [03-settings-env.md](03-settings-env.md) | CORS, CSRF, ALLOWED_HOSTS, DB, TENANT_BYPASS, 주요 ENV | 배포·환경·CORS/도메인 이슈 |
 | [04-deployment.md](04-deployment.md) | 배포 순서, Docker 이미지, EC2, 스크립트 경로 | 배포·인프라 작업 |
 | [05-conventions.md](05-conventions.md) | 문서/코드 규칙, core 봉인, 추측 금지 | 모든 작업 전 참고 |
+| [06-front-infra-and-excel.md](06-front-infra-and-excel.md) | 프론트·인프라 계약 요약, 백엔드 엑셀 파싱 사실 (상세는 academyfront/06-implemented-features) | CORS·도메인·엑셀 에러 시 참조 |
+
+## 날짜별 스냅샷
+
+- **docs/SSOT_0217/**: 2025-02-17 현시점 전체 문서 스냅샷 (cursor_* + 배포·설계·운영·0216·adr). 이후 SSOT_0218, SSOT_0219 … 생성하여 섞이지 않게 관리.
 
 ## 원본 문서 위치
 
