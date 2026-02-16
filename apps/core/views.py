@@ -596,7 +596,8 @@ class TenantOwnerView(APIView):
                     membership.save(update_fields=["role"])
 
                 # 테넌트 원장명 동기화: 비어 있으면 이 사용자로 설정 (강의 담당자 등에서 참조)
-                owner_display = (getattr(user, "name", None) or user.username or "").strip()
+                from apps.core.models.user import user_display_username
+                owner_display = (getattr(user, "name", None) or user_display_username(user) or "").strip()
                 if owner_display and not (tenant.owner_name or "").strip():
                     tenant.owner_name = owner_display[:100]
                     tenant.save(update_fields=["owner_name"])
