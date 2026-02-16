@@ -258,14 +258,14 @@ if ($deployApi) {
 # ---------- 3) 워커 배포 (DeployTarget이 all / workers / video / ai / messaging 일 때) ----------
 $deployWorkers = ($DeployTarget -eq "all" -or $DeployTarget -eq "workers" -or $DeployTarget -eq "video" -or $DeployTarget -eq "ai" -or $DeployTarget -eq "messaging")
 if ($deployWorkers) {
-    Write-Host "`n=== 3/3 워커 배포 ===`n" -ForegroundColor Cyan
+    Write-Host "`n=== 3/3 Worker deploy ===`n" -ForegroundColor Cyan
     $workerList = @("academy-messaging-worker", "academy-ai-worker-cpu", "academy-video-worker")
     if ($DeployTarget -eq "video") { $workerList = @("academy-video-worker") }
     if ($DeployTarget -eq "ai")    { $workerList = @("academy-ai-worker-cpu") }
     if ($DeployTarget -eq "messaging") { $workerList = @("academy-messaging-worker") }
 
     if ($WorkersViaASG) {
-        Write-Host "워커 ASG 인스턴스 리프레시만 수행 (고정 EC2 SSH 생략)..." -ForegroundColor Gray
+        Write-Host "Worker ASG instance refresh only (skipping fixed EC2 SSH)..." -ForegroundColor Gray
         $asgMap = @{
             "academy-video-worker"     = "academy-video-worker-asg"
             "academy-ai-worker-cpu"    = "academy-ai-worker-asg"
@@ -276,7 +276,7 @@ if ($deployWorkers) {
             $asg = aws autoscaling describe-auto-scaling-groups --region $Region --auto-scaling-group-names $asgName --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>&1
             if ($asg -and $asg -ne "None") {
                 aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName 2>&1 | Out-Null
-                if ($LASTEXITCODE -eq 0) { Write-Host "  $asgName instance refresh 시작" -ForegroundColor Green }
+                if ($LASTEXITCODE -eq 0) { Write-Host "  $asgName instance refresh started" -ForegroundColor Green }
             }
         }
     } else {
@@ -285,7 +285,7 @@ if ($deployWorkers) {
             $ip = $ips[$name]
             if (Deploy-One -Name $name -Ip $ip -KeyFile $INSTANCE_KEYS[$name] -RemoteCmd $REMOTE_CMDS[$name]) { $ok++ }
         }
-        Write-Host "워커 배포: $ok/$($workerList.Count) 성공" -ForegroundColor $(if ($ok -eq $workerList.Count) { "Green" } else { "Yellow" })
+        Write-Host "Worker deploy: $ok/$($workerList.Count) succeeded" -ForegroundColor $(if ($ok -eq $workerList.Count) { "Green" } else { "Yellow" })
     }
 }
 
