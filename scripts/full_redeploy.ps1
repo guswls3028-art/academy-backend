@@ -227,8 +227,7 @@ echo BUILD_AND_PUSH_OK
         Write-Host "Build timeout. Instance kept: $buildInstanceId" -ForegroundColor Yellow
         exit 1
     }
-    Write-Host "Build and ECR push done. Stopping build instance (cache reuse next time)..." -ForegroundColor Green
-    aws ec2 stop-instances --instance-ids $buildInstanceId --region $Region 2>&1 | Out-Null
+    Write-Host "Build and ECR push done. Build instance left running (stop manually if needed): $buildInstanceId" -ForegroundColor Green
     $buildInstanceId = $null
 } else {
     Write-Host "`n=== 1/3 Build step skipped (-SkipBuild) ===`n" -ForegroundColor Cyan
