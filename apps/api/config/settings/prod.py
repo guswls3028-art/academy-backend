@@ -50,6 +50,10 @@ CORS_ALLOWED_ORIGINS = [
     "https://academy-frontend.pages.dev",
     "https://limglish.kr",
     "https://www.limglish.kr",
+    "https://tchul.com",
+    "https://www.tchul.com",
+    "https://ymath.co.kr",
+    "https://www.ymath.co.kr",
     "https://dev-web.hakwonplus.com",
     # 로컬 개발용 (프론트엔드 localhost:5174에서 배포된 API 서버 사용)
     "http://localhost:5174",
@@ -71,6 +75,10 @@ CSRF_TRUSTED_ORIGINS = [
     "https://academy-frontend.pages.dev",
     "https://limglish.kr",
     "https://www.limglish.kr",
+    "https://tchul.com",
+    "https://www.tchul.com",
+    "https://ymath.co.kr",
+    "https://www.ymath.co.kr",
 ]
 
 # ==================================================

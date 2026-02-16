@@ -11,6 +11,10 @@ from apps.core.views import (
     JobProgressView,
     TenantBrandingView,
     TenantBrandingUploadLogoView,
+    TenantListView,
+    TenantDetailView,
+    TenantCreateView,
+    TenantOwnerView,
 )
 
 router = DefaultRouter()
@@ -24,5 +28,9 @@ urlpatterns = [
     path("job_progress/<str:job_id>/", JobProgressView.as_view(), name="core-job-progress"),
     path("tenant-branding/<int:tenant_id>/", TenantBrandingView.as_view(), name="core-tenant-branding"),
     path("tenant-branding/<int:tenant_id>/upload-logo/", TenantBrandingUploadLogoView.as_view(), name="core-tenant-branding-upload-logo"),
+    path("tenants/", TenantListView.as_view(), name="core-tenants"),
+    path("tenants/<int:tenant_id>/", TenantDetailView.as_view(), name="core-tenant-detail"),
+    path("tenants/create/", TenantCreateView.as_view(), name="core-tenant-create"),
+    path("tenants/<int:tenant_id>/owner/", TenantOwnerView.as_view(), name="core-tenant-owner"),
     path("", include(router.urls)),
 ]

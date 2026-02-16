@@ -17,14 +17,15 @@ $FrontendShortcut.WorkingDirectory = "C:\academyfront"
 $FrontendShortcut.Description = "Local Frontend Server"
 $FrontendShortcut.Save()
 
-# RDS Tunnel shortcut
-$TunnelShortcut = $WshShell.CreateShortcut("$Desktop\RDS Tunnel.lnk")
-$TunnelShortcut.TargetPath = "C:\academy\scripts\run-rds-tunnel.bat"
-$TunnelShortcut.WorkingDirectory = "C:\academy"
-$TunnelShortcut.Description = "RDS SSH Tunnel"
-$TunnelShortcut.Save()
+# Local Dev (Backend + Frontend) shortcut
+$DevShortcut = $WshShell.CreateShortcut("$Desktop\Academy Local Dev.lnk")
+$DevShortcut.TargetPath = "powershell.exe"
+$DevShortcut.Arguments = "-NoExit -ExecutionPolicy Bypass -File `"C:\academy\scripts\run-local-dev.ps1`""
+$DevShortcut.WorkingDirectory = "C:\academy"
+$DevShortcut.Description = "Local Backend + Frontend Servers"
+$DevShortcut.Save()
 
 Write-Host "Desktop shortcuts created:" -ForegroundColor Green
 Write-Host "  - Academy Backend.lnk" -ForegroundColor Cyan
 Write-Host "  - Academy Frontend.lnk" -ForegroundColor Cyan
-Write-Host "  - RDS Tunnel.lnk" -ForegroundColor Cyan
+Write-Host "  - Academy Local Dev.lnk" -ForegroundColor Cyan

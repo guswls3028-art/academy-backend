@@ -124,3 +124,26 @@ class TenantResolvedAndStaff(BasePermission):
 
         from academy.adapters.db.django import repositories_core as core_repo
         return core_repo.membership_exists_staff(tenant=tenant, user=user, staff_roles=self.STAFF_ROLES)
+
+
+class TenantResolvedAndOwner(BasePermission):
+    """
+    ✅ Owner 전용 Permission
+
+    admin_app 등 owner만 접근 가능한 기능용.
+    """
+
+    message = "Owner membership required."
+
+    def has_permission(self, request, view):
+        tenant = getattr(request, "tenant", None)
+        user = request.user
+
+        if not tenant:
+            return False
+
+        if not user or not user.is_authenticated:
+            return False
+
+        from academy.adapters.db.django import repositories_core as core_repo
+        return core_repo.membership_exists_staff(tenant=tenant, user=user, staff_roles=("owner",))

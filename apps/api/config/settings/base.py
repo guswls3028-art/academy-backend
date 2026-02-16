@@ -265,6 +265,10 @@ CORS_ALLOWED_ORIGINS = [
     "https://academy-frontend.pages.dev",
     "https://limglish.kr",
     "https://www.limglish.kr",
+    "https://tchul.com",
+    "https://www.tchul.com",
+    "https://ymath.co.kr",
+    "https://www.ymath.co.kr",
     "https://dev-web.hakwonplus.com",
 ]
 
@@ -272,6 +276,12 @@ CSRF_TRUSTED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
     "https://academy-frontend.pages.dev",
+    "https://limglish.kr",
+    "https://www.limglish.kr",
+    "https://tchul.com",
+    "https://www.tchul.com",
+    "https://ymath.co.kr",
+    "https://www.ymath.co.kr",
     "https://*.trycloudflare.com",  # dev only
 ]
 

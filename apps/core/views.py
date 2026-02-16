@@ -10,7 +10,7 @@ from rest_framework.response import Response
 
 from drf_yasg.utils import swagger_auto_schema
 
-from apps.core.models import Attendance, Expense, Program
+from apps.core.models import Attendance, Expense, Program, Tenant, TenantDomain, TenantMembership
 from academy.adapters.db.django import repositories_core as core_repo
 from apps.core.permissions import IsAdminOrStaff, IsSuperuserOnly
 from academy.adapters.db.django import repositories_ai as ai_repo
@@ -18,6 +18,7 @@ from apps.core.permissions import (
     TenantResolved,
     TenantResolvedAndMember,
     TenantResolvedAndStaff,
+    TenantResolvedAndOwner,
 )
 from apps.core.serializers import (
     UserSerializer,
@@ -309,15 +310,17 @@ def _tenant_branding_dto(program):
         "loginTitle": cfg.get("login_title") or "",
         "loginSubtitle": cfg.get("login_subtitle") or "",
         "logoUrl": cfg.get("logo_url") or None,
+        "windowTitle": cfg.get("window_title") or "",
+        "displayName": program.display_name,
     }
 
 
 class TenantBrandingView(APIView):
     """
     GET/PATCH /api/v1/core/tenant-branding/<tenant_id>/
-    admin_app 전용 — 개발자(superuser)만. Program.ui_config 기반.
+    admin_app 전용 — owner role만. Program.ui_config 기반.
     """
-    permission_classes = [IsAuthenticated, IsSuperuserOnly]
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
     def get(self, request, tenant_id: int):
         tenant = core_repo.tenant_get_by_id_any(tenant_id)
@@ -342,6 +345,11 @@ class TenantBrandingView(APIView):
             cfg["login_subtitle"] = request.data.get("loginSubtitle")
         if "logoUrl" in request.data:
             cfg["logo_url"] = request.data.get("logoUrl") or None
+        if "windowTitle" in request.data:
+            cfg["window_title"] = request.data.get("windowTitle") or None
+        if "displayName" in request.data:
+            program.display_name = request.data.get("displayName")
+            program.save(update_fields=["display_name"])
         program.ui_config = cfg
         program.save(update_fields=["ui_config"])
         return Response(_tenant_branding_dto(program))
@@ -351,9 +359,9 @@ class TenantBrandingUploadLogoView(APIView):
     """
     POST /api/v1/core/tenant-branding/<tenant_id>/upload-logo/
     multipart/form-data file → R2 academy-admin, Program.ui_config.logo_url 저장.
-    admin_app 전용 — 개발자(superuser)만.
+    admin_app 전용 — owner role만.
     """
-    permission_classes = [IsAuthenticated, IsSuperuserOnly]
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
     def post(self, request, tenant_id: int):
         tenant = core_repo.tenant_get_by_id_any(tenant_id)
@@ -391,3 +399,199 @@ class TenantBrandingUploadLogoView(APIView):
         program.save(update_fields=["ui_config"])
 
         return Response({"logoUrl": logo_url})
+
+
+# --------------------------------------------------
+# Tenant Management: /core/tenants/
+# --------------------------------------------------
+
+class TenantListView(APIView):
+    """
+    GET /api/v1/core/tenants/
+    admin_app 전용 — owner role만. 모든 테넌트 목록.
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
+
+    def get(self, request):
+        tenants = Tenant.objects.all().order_by('id')
+        data = []
+        for tenant in tenants:
+            domains = TenantDomain.objects.filter(tenant=tenant, is_active=True)
+            primary_domain = domains.filter(is_primary=True).first()
+            data.append({
+                "id": tenant.id,
+                "code": tenant.code,
+                "name": tenant.name,
+                "isActive": tenant.is_active,
+                "primaryDomain": primary_domain.host if primary_domain else None,
+                "domains": [d.host for d in domains],
+            })
+        return Response(data)
+
+
+class TenantDetailView(APIView):
+    """
+    GET/PATCH /api/v1/core/tenants/<tenant_id>/
+    admin_app 전용 — owner role만. 테넌트 상세 정보.
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
+
+    def get(self, request, tenant_id: int):
+        tenant = core_repo.tenant_get_by_id_any(tenant_id)
+        if not tenant:
+            return Response({"detail": "Tenant not found."}, status=404)
+        
+        domains = TenantDomain.objects.filter(tenant=tenant, is_active=True)
+        primary_domain = domains.filter(is_primary=True).first()
+        program = core_repo.program_get_by_tenant(tenant)
+        
+        data = {
+            "id": tenant.id,
+            "code": tenant.code,
+            "name": tenant.name,
+            "isActive": tenant.is_active,
+            "primaryDomain": primary_domain.host if primary_domain else None,
+            "domains": [{"host": d.host, "isPrimary": d.is_primary} for d in domains],
+            "hasProgram": program is not None,
+        }
+        return Response(data)
+
+    def patch(self, request, tenant_id: int):
+        tenant = core_repo.tenant_get_by_id_any(tenant_id)
+        if not tenant:
+            return Response({"detail": "Tenant not found."}, status=404)
+        
+        if "name" in request.data:
+            tenant.name = request.data["name"]
+        if "isActive" in request.data:
+            tenant.is_active = bool(request.data["isActive"])
+        tenant.save(update_fields=["name", "is_active"])
+        
+        return self.get(request, tenant_id)
+
+
+class TenantCreateView(APIView):
+    """
+    POST /api/v1/core/tenants/
+    admin_app 전용 — owner role만. 새 테넌트 생성.
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
+
+    def post(self, request):
+        code = request.data.get("code")
+        name = request.data.get("name")
+        domain = request.data.get("domain")
+        
+        if not code or not name:
+            return Response({"detail": "code and name are required."}, status=400)
+        
+        # 테넌트 생성
+        tenant, created = core_repo.tenant_get_or_create(
+            code,
+            defaults={"name": name, "is_active": True}
+        )
+        
+        if not created:
+            return Response({"detail": f"Tenant with code '{code}' already exists."}, status=400)
+        
+        # 도메인 설정
+        if domain:
+            domain_obj, _ = core_repo.tenant_domain_get_or_create_by_defaults(
+                domain,
+                defaults={
+                    "tenant": tenant,
+                    "is_primary": True,
+                    "is_active": True,
+                }
+            )
+        
+        # Program 생성
+        program, _ = core_repo.program_get_or_create(
+            tenant,
+            defaults={
+                "display_name": name,
+                "brand_key": code,
+                "login_variant": Program.LoginVariant.HAKWONPLUS,
+                "plan": Program.Plan.PREMIUM,
+                "feature_flags": {
+                    "student_app_enabled": True,
+                    "admin_enabled": True,
+                },
+                "ui_config": {"login_title": name},
+                "is_active": True,
+            }
+        )
+        
+        return Response({
+            "id": tenant.id,
+            "code": tenant.code,
+            "name": tenant.name,
+        }, status=201)
+
+
+class TenantOwnerView(APIView):
+    """
+    POST /api/v1/core/tenants/<tenant_id>/owner/
+    admin_app 전용 — owner role만. 테넌트에 owner 등록.
+    User가 없으면 생성 가능 (username, password, name 필수).
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
+
+    def post(self, request, tenant_id: int):
+        tenant = core_repo.tenant_get_by_id_any(tenant_id)
+        if not tenant:
+            return Response({"detail": "Tenant not found."}, status=404)
+        
+        username = request.data.get("username")
+        password = request.data.get("password")
+        name = request.data.get("name")
+        phone = request.data.get("phone")
+        
+        if not username:
+            return Response({"detail": "username is required."}, status=400)
+        
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        
+        # User가 존재하는지 확인
+        user = core_repo.user_get_by_username(username)
+        
+        if user:
+            # 기존 User가 있으면 그대로 사용
+            if password:
+                # 비밀번호 업데이트
+                user.set_password(password)
+                user.save(update_fields=["password"])
+            if name is not None:
+                user.name = name
+            if phone is not None:
+                user.phone = phone
+            if name is not None or phone is not None:
+                user.save(update_fields=["name", "phone"])
+        else:
+            # User가 없으면 생성
+            if not password:
+                return Response({"detail": "password is required when creating a new user."}, status=400)
+            
+            user = User.objects.create_user(
+                username=username,
+                password=password,
+                name=name or "",
+                phone=phone or None,
+            )
+        
+        # Owner 멤버십 생성/업데이트
+        membership = core_repo.membership_ensure_active(
+            tenant=tenant,
+            user=user,
+            role="owner"
+        )
+        
+        return Response({
+            "tenantId": tenant.id,
+            "tenantCode": tenant.code,
+            "userId": user.id,
+            "username": user.username,
+            "name": user.name,
+            "role": membership.role,
+        })
