@@ -175,10 +175,11 @@ class StaffViewSet(viewsets.ModelViewSet):
         response = super().list(request, *args, **kwargs)
         tenant = getattr(request, "tenant", None)
         owner = _owner_display_for_tenant(tenant)
-        if owner is not None:
-            response.data["owner"] = owner
+        # Pagination 없으면 response.data 가 list 이므로 dict 로 감싼 뒤 owner 추가
+        if isinstance(response.data, list):
+            response.data = {"results": response.data, "owner": owner}
         else:
-            response.data["owner"] = None
+            response.data["owner"] = owner
         return response
 
     def perform_create(self, serializer):
