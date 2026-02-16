@@ -177,14 +177,21 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
     # CREATE
     # =========================
     def create(self, validated_data):
-        role = validated_data.pop("role")
-        username = (validated_data.pop("username", None) or "").strip()
-        password = validated_data.pop("password", None) or ""
         request = self.context.get("request")
         tenant = getattr(request, "tenant", None) if request else None
+        if not tenant:
+            raise serializers.ValidationError(
+                {"detail": "테넌트를 확인할 수 없습니다. 요청 헤더 또는 접속 주소를 확인해 주세요."}
+            )
 
-        user = None
-        if username and password and tenant:
+        role = validated_data.pop("role")
+        username = (validated_data.pop("username", None) or "").strip()
+        password = (validated_data.pop("password", None) or "")
+
+        try:
+            with transaction.atomic():
+                user = None
+                if username and password:
             user = students_repo.user_create_user(
                 username=username,
                 password=password,
