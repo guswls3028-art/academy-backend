@@ -1,7 +1,17 @@
-# 백엔드 재배포 명령어 (Git 푸시 이후)
+# 백엔드 재배포 — ECR 이미지 있을 때 (코드 수정용만)
 
-AWS 액세스 키 설정 후 `cd C:\academy` 에서 실행.  
-`YOUR_ORG` 는 실제 GitHub 조직/유저로 바꾸세요.
+ECR에 이미지가 이미 있을 때, **빌드 없이 배포만** 할 때 사용.  
+먼저 AWS 액세스 키 설정 후 `cd C:\academy` 에서 아래 명령 실행.
+
+---
+
+## AWS 환경 변수 (루트 액세스 키)
+
+```powershell
+$env:AWS_ACCESS_KEY_ID = "YOUR_ROOT_ACCESS_KEY_ID"
+$env:AWS_SECRET_ACCESS_KEY = "YOUR_ROOT_SECRET_ACCESS_KEY"
+$env:AWS_DEFAULT_REGION = "ap-northeast-2"
+```
 
 ---
 
@@ -9,7 +19,7 @@ AWS 액세스 키 설정 후 `cd C:\academy` 에서 실행.
 
 ```powershell
 cd C:\academy
-.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget api
+.\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget api
 ```
 
 ---
@@ -18,7 +28,7 @@ cd C:\academy
 
 ```powershell
 cd C:\academy
-.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget video
+.\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget video
 ```
 
 ---
@@ -27,7 +37,7 @@ cd C:\academy
 
 ```powershell
 cd C:\academy
-.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget ai
+.\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget ai
 ```
 
 ---
@@ -36,7 +46,7 @@ cd C:\academy
 
 ```powershell
 cd C:\academy
-.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget messaging
+.\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget messaging
 ```
 
 ---
@@ -45,7 +55,7 @@ cd C:\academy
 
 ```powershell
 cd C:\academy
-.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git"
+.\scripts\full_redeploy.ps1 -SkipBuild
 ```
 
 ---
@@ -54,24 +64,16 @@ cd C:\academy
 
 ```powershell
 cd C:\academy
-.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget workers
+.\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget workers
 ```
 
 ---
 
-## 빌드 생략 (이미 ECR에 최신 이미지 있을 때)
+## 워커만 ASG 리프레시로 배포
 
-위 명령 끝에 **`-SkipBuild`** 추가. 예:
-
-```powershell
-.\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget api
-.\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget workers
-```
-
-## 워커를 ASG 리프레시로만 배포
-
-고정 EC2 SSH 대신 ASG 인스턴스 리프레시만 하려면 **`-WorkersViaASG`** 추가.
+고정 EC2 SSH 대신 ASG 인스턴스 리프레시만 할 때:
 
 ```powershell
-.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget workers -WorkersViaASG
+cd C:\academy
+.\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget workers -WorkersViaASG
 ```
