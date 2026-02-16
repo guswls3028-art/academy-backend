@@ -84,14 +84,14 @@ function Start-StoppedAcademyInstances {
     if ($LASTEXITCODE -ne 0) { return }
     aws ec2 wait instance-running --region $Region --instance-ids $ids 2>&1 | Out-Null
     Start-Sleep -Seconds 15
-    Write-Host "[EC2] 기동 완료." -ForegroundColor Green
+    Write-Host "[EC2] Started." -ForegroundColor Green
 }
 
 function Deploy-One {
     param ([string]$Name, [string]$Ip, [string]$KeyFile, [string]$RemoteCmd)
     $keyPath = Join-Path $KeyDir $KeyFile
-    if (-not (Test-Path $keyPath)) { Write-Host "[$Name] SKIP - 키 없음: $keyPath" -ForegroundColor Yellow; return $false }
-    if (-not $Ip) { Write-Host "[$Name] SKIP - Public IP 없음" -ForegroundColor Yellow; return $false }
+    if (-not (Test-Path $keyPath)) { Write-Host "[$Name] SKIP - Key not found: $keyPath" -ForegroundColor Yellow; return $false }
+    if (-not $Ip) { Write-Host "[$Name] SKIP - No public IP" -ForegroundColor Yellow; return $false }
     Write-Host "[$Name] $Ip ..." -ForegroundColor Cyan
     $cmd = "ssh -o StrictHostKeyChecking=accept-new -i `"$keyPath`" ${EC2_USER}@${Ip} `"$RemoteCmd`""
     Invoke-Expression $cmd
@@ -104,7 +104,7 @@ function Deploy-One {
 $buildInstanceId = $null
 if (-not $SkipBuild) {
     if (-not $GitRepoUrl) {
-        Write-Host "빌드 단계에서는 -GitRepoUrl 이 필요합니다. (또는 -SkipBuild 로 배포만)" -ForegroundColor Red
+        Write-Host "-GitRepoUrl is required for build step (or use -SkipBuild for deploy only)." -ForegroundColor Red
         exit 1
     }
     Write-Host "`n=== 1/3 빌드 인스턴스 기동 & 빌드/ECR 푸시 (캐시 재사용) ===`n" -ForegroundColor Cyan
