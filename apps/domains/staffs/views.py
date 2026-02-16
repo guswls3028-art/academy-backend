@@ -1,4 +1,5 @@
 # PATH: apps/domains/staffs/views.py
+# 원칙: 1테넌트 = 1프로그램. 도메인(테넌트)별 완전 격리. 조회/생성/수정/삭제는 항상 request.tenant 기준.
 from io import BytesIO
 
 from django.db import transaction

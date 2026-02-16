@@ -61,12 +61,12 @@ class PayrollAmountPolicy:
 
 
 # ======================================================
-# Domain Models
+# Domain Models (테넌트별 격리: 모든 쿼리는 tenant 기준)
 # ======================================================
 
 class Staff(TimestampModel):
     """
-    직원 / 강사
+    직원 / 강사. 1테넌트 = 1프로그램, 해당 테넌트 내에서만 유효.
     """
 
     objects = TenantQuerySet.as_manager()

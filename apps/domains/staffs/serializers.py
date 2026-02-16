@@ -1,4 +1,5 @@
 # PATH: apps/domains/staffs/serializers.py
+# 원칙: 테넌트별 완전 격리. 직원/User는 해당 테넌트 컨텍스트 내에서만 사용.
 import logging
 
 from rest_framework import serializers
