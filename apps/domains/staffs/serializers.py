@@ -198,6 +198,7 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
                     user = students_repo.user_create_user(
                         username=username,
                         password=password,
+                        tenant=tenant,
                         name=validated_data.get("name") or username,
                         phone=validated_data.get("phone") or "",
                     )
