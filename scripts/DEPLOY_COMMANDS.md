@@ -9,6 +9,8 @@
 
 ## 1) 루트 액세스 키 (초기 셋팅용, 한 번만)
 
+실제 값은 로컬에서만 설정. 저장소에 커밋하지 말 것.
+
 ```powershell
 $env:AWS_ACCESS_KEY_ID = "YOUR_ROOT_ACCESS_KEY_ID"
 $env:AWS_SECRET_ACCESS_KEY = "YOUR_ROOT_SECRET_ACCESS_KEY"
