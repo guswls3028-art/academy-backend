@@ -230,6 +230,11 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             )
         except ValueError as e:
             raise serializers.ValidationError({"detail": str(e)})
+        except Exception as e:
+            logging.exception("Staff create failed: %s", e)
+            raise serializers.ValidationError(
+                {"detail": "직원 등록 중 오류가 발생했습니다. 입력값을 확인해 주세요."}
+            )
 
     # =========================
     # UPDATE (is_active sync, role 무시)
