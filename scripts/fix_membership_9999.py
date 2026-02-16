@@ -23,8 +23,10 @@ User = get_user_model()
 
 with transaction.atomic():
     # Get tenant 9999
-    tenant = core_repo.tenant_get_by_code("9999")
-    if not tenant:
+    from apps.core.models import Tenant
+    try:
+        tenant = Tenant.objects.get(code="9999")
+    except Tenant.DoesNotExist:
         print("✗ Tenant 9999 not found!")
         sys.exit(1)
     
