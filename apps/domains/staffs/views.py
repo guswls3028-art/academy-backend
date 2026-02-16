@@ -197,12 +197,24 @@ class StaffViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="me", permission_classes=[IsAuthenticated])
     def me(self, request):
+        tenant = getattr(request, "tenant", None)
+        from academy.adapters.db.django import repositories_core as core_repo
+        is_owner = bool(
+            tenant
+            and request.user.is_authenticated
+            and core_repo.membership_exists_staff(tenant=tenant, user=request.user, staff_roles=("owner",))
+        )
+        owner_display_name = None
+        if is_owner and request.user:
+            owner_display_name = (getattr(request.user, "name", None) or "").strip() or getattr(request.user, "username", "") or "원장"
         return Response(
             {
                 "is_authenticated": True,
                 "is_superuser": bool(request.user.is_superuser),
                 "is_staff": bool(request.user.is_staff),
-                "is_payroll_manager": can_manage_payroll(request.user, getattr(request, "tenant", None)),
+                "is_payroll_manager": can_manage_payroll(request.user, tenant),
+                "is_owner": is_owner,
+                "owner_display_name": owner_display_name,
             }
         )
 
