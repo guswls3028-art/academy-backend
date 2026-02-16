@@ -210,7 +210,7 @@ echo BUILD_AND_PUSH_OK
         Write-Host "빌드 인스턴스 유지: $buildInstanceId" -ForegroundColor Yellow
         exit 1
     }
-    Write-Host "SSM Run Command 시작: $cmdId (완료까지 대기, 최대 30분)..." -ForegroundColor Cyan
+    Write-Host "SSM Run Command started: $cmdId (waiting up to 30 min)..." -ForegroundColor Cyan
     $done = $false
     for ($i = 0; $i -lt 60; $i++) {
         Start-Sleep -Seconds 30
@@ -218,13 +218,13 @@ echo BUILD_AND_PUSH_OK
         if ($status -eq "Success") { $done = $true; break }
         if ($status -eq "Failed" -or $status -eq "Cancelled") {
             $detail = aws ssm get-command-invocation --region $Region --command-id $cmdId --instance-id $buildInstanceId --output text 2>&1
-            Write-Host "빌드 명령 실패: $detail" -ForegroundColor Red
+            Write-Host "Build command failed: $detail" -ForegroundColor Red
             exit 1
         }
         Write-Host "  ... $status ($($i*30)s)" -ForegroundColor Gray
     }
     if (-not $done) {
-        Write-Host "빌드 타임아웃. 인스턴스는 유지: $buildInstanceId" -ForegroundColor Yellow
+        Write-Host "Build timeout. Instance kept: $buildInstanceId" -ForegroundColor Yellow
         exit 1
     }
     Write-Host "빌드 및 ECR 푸시 완료. 빌드 인스턴스 중지 (다음에 캐시 재사용, 돈 절약)..." -ForegroundColor Green
