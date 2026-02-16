@@ -2,6 +2,7 @@
 from django.db import models
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, Group, Permission
+from django.contrib.auth.validators import UnicodeUsernameValidator
 
 from apps.core.models.base import TimestampModel
 from apps.core.models.tenant import Tenant
@@ -10,17 +11,31 @@ from apps.core.db import TenantQuerySet
 
 class User(AbstractUser):
     """
-    Custom User 모델
-    - AUTH_USER_MODEL = core.User
-    - auth.User 와의 groups / permissions reverse accessor 충돌 방지
+    Custom User 모델. 1테넌트 = 1프로그램 격리: username은 (tenant, username) 기준 유일.
+    - tenant not null: 해당 테넌트 내에서만 username 유일 (다른 테넌트와 무관).
+    - tenant null: 전역 관리자 등, username 전역 유일.
     """
 
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="users",
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    username = models.CharField(
+        max_length=150,
+        unique=False,
+        validators=[UnicodeUsernameValidator()],
+        help_text="Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.",
+    )
     name = models.CharField(max_length=50, blank=True, null=True)
     phone = models.CharField(
         max_length=20,
         blank=True,
         null=True,
-        db_index=True,  # ✅ phone 인덱스 추가 (검색 성능 향상)
+        db_index=True,
         help_text="정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
     )
 
@@ -39,6 +54,18 @@ class User(AbstractUser):
         app_label = "core"
         db_table = "accounts_user"
         ordering = ["-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "username"],
+                condition=models.Q(tenant__isnull=False),
+                name="core_user_tenant_username_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["username"],
+                condition=models.Q(tenant__isnull=True),
+                name="core_user_username_global_uniq",
+            ),
+        ]
 
     def __str__(self):
         return self.username
