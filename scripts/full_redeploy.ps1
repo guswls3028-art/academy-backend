@@ -163,7 +163,11 @@ echo 'Build instance ready'
     $ssmReady = $false
     for ($i = 0; $i -lt 18; $i++) {
         Start-Sleep -Seconds 10
-        $info = aws ssm describe-instance-information --region $Region --filters "Key=InstanceIds,Values=$buildInstanceId" --query "InstanceInformationList[0].PingStatus" --output text 2>$null
+        try {
+            $info = aws ssm describe-instance-information --region $Region --filters "Key=InstanceIds,Values=$buildInstanceId" --query "InstanceInformationList[0].PingStatus" --output text 2>$null
+        } catch {
+            $info = $null
+        }
         if ($info -eq "Online") { $ssmReady = $true; break }
     }
     if (-not $ssmReady) {
