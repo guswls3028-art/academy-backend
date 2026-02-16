@@ -100,7 +100,7 @@ class TenantResolvedAndStaff(BasePermission):
     ✅ 운영레벨 Staff 전용 Permission
 
     허용 role:
-    - owner
+    - owner (원장, 테넌트당 1명. 마스터키 = 프로그램 내 전체 권한)
     - admin
     - staff
     - teacher
