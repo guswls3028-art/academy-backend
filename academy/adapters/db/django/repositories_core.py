@@ -111,8 +111,17 @@ def tenant_domain_filter_by_tenant(tenant):
 
 
 def user_get_by_username(username: str) -> Optional[Any]:
+    """전역 조회 (tenant=null 사용자). 레거시/관리자용."""
     from django.contrib.auth import get_user_model
-    return get_user_model().objects.filter(username=username).first()
+    return get_user_model().objects.filter(username=username, tenant__isnull=True).first()
+
+
+def user_get_by_tenant_username(tenant, username: str) -> Optional[Any]:
+    """테넌트별 유저 조회. 1테넌트=1프로그램 격리."""
+    from django.contrib.auth import get_user_model
+    if not tenant or not (username or "").strip():
+        return None
+    return get_user_model().objects.filter(tenant=tenant, username=username.strip()).first()
 
 
 def user_get_or_create(username: str, defaults: dict) -> tuple[Any, bool]:
