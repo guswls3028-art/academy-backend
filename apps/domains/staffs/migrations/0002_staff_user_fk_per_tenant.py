@@ -1,6 +1,7 @@
 # Generated manually for multi-tenant: allow same username in different tenants
 # Staff.user: OneToOneField -> ForeignKey, add UniqueConstraint (tenant, user)
 
+from django.conf import settings
 from django.db import migrations, models
 import django.db.models.deletion
 
