@@ -100,43 +100,65 @@ function Deploy-One {
     return $false
 }
 
-# ---------- 1) 빌드 인스턴스 기동 + 빌드/푸시 + 종료 ----------
+# ---------- 1) 빌드 인스턴스: 기존 academy-build-arm64 재사용 또는 새로 생성 → 빌드 → 중지(캐시 유지) ----------
 $buildInstanceId = $null
 if (-not $SkipBuild) {
     if (-not $GitRepoUrl) {
         Write-Host "빌드 단계에서는 -GitRepoUrl 이 필요합니다. (또는 -SkipBuild 로 배포만)" -ForegroundColor Red
         exit 1
     }
-    Write-Host "`n=== 1/3 빌드 인스턴스 기동 & 빌드/ECR 푸시 ===`n" -ForegroundColor Cyan
-    $AmiId = (aws ec2 describe-images --region $Region --owners amazon `
-        --filters "Name=name,Values=al2023-ami-*-kernel-6.1-arm64" "Name=state,Values=available" `
-        --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
-    $userData = @"
+    Write-Host "`n=== 1/3 빌드 인스턴스 기동 & 빌드/ECR 푸시 (캐시 재사용) ===`n" -ForegroundColor Cyan
+
+    # 기존 academy-build-arm64 인스턴스 찾기 (running 또는 stopped)
+    $existing = aws ec2 describe-instances --region $Region `
+        --filters "Name=tag:Name,Values=academy-build-arm64" "Name=instance-state-name,Values=running,stopped" `
+        --query "Reservations[].Instances[].[InstanceId,State.Name]" --output text 2>&1
+    $existingId = $null
+    $existingState = $null
+    if ($existing -match "i-\S+\s+(running|stopped)") {
+        $parts = $existing.Trim() -split "\s+", 2
+        $existingId = $parts[0]
+        $existingState = $parts[1]
+    }
+
+    if ($existingId) {
+        $buildInstanceId = $existingId
+        Write-Host "기존 빌드 인스턴스 사용: $buildInstanceId (상태: $existingState)" -ForegroundColor Cyan
+        if ($existingState -eq "stopped") {
+            aws ec2 start-instances --instance-ids $buildInstanceId --region $Region 2>&1 | Out-Null
+            Write-Host "인스턴스 기동 중..." -ForegroundColor Gray
+            aws ec2 wait instance-running --instance-ids $buildInstanceId --region $Region
+            Start-Sleep -Seconds 20
+        }
+    } else {
+        Write-Host "기존 빌드 인스턴스 없음 → 새로 생성 (On-Demand, 빌드 후 중지하여 다음에 캐시 재사용)" -ForegroundColor Gray
+        $AmiId = (aws ec2 describe-images --region $Region --owners amazon `
+            --filters "Name=name,Values=al2023-ami-*-kernel-6.1-arm64" "Name=state,Values=available" `
+            --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
+        $userData = @"
 #!/bin/bash
 yum update -y
 yum install -y docker git
 systemctl start docker
 usermod -aG docker ec2-user
+mkdir -p /home/ec2-user/build
 echo 'Build instance ready'
 "@
-    $userDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($userData))
-    $spotFile = Join-Path $RepoRoot "spot_options.json"
-    '{"MarketType":"spot","SpotOptions":{"SpotInstanceType":"one-time","MaxPrice":"0.05"}}' | Set-Content $spotFile -Encoding ASCII -NoNewline
-    $spotUri = "file://$($spotFile -replace '\\','/' -replace ' ', '%20')"
-    $runResult = aws ec2 run-instances --image-id $AmiId --instance-type $BuildInstanceType `
-        --count 1 --subnet-id $SubnetId --security-group-ids $SecurityGroupId `
-        --iam-instance-profile "Name=$RoleName" --user-data $userDataB64 `
-        --instance-market-options $spotUri `
-        --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=academy-build-arm64}]" `
-        --region $Region --output json 2>&1 | ConvertFrom-Json
-    Remove-Item $spotFile -Force -ErrorAction SilentlyContinue
-    if (-not $runResult.Instances -or $runResult.Instances.Count -eq 0) {
-        Write-Host "run-instances 실패." -ForegroundColor Red
-        exit 1
+        $userDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($userData))
+        $runResult = aws ec2 run-instances --image-id $AmiId --instance-type $BuildInstanceType `
+            --count 1 --subnet-id $SubnetId --security-group-ids $SecurityGroupId `
+            --iam-instance-profile "Name=$RoleName" --user-data $userDataB64 `
+            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=academy-build-arm64}]" `
+            --region $Region --output json 2>&1 | ConvertFrom-Json
+        if (-not $runResult.Instances -or $runResult.Instances.Count -eq 0) {
+            Write-Host "run-instances 실패." -ForegroundColor Red
+            exit 1
+        }
+        $buildInstanceId = $runResult.Instances[0].InstanceId
+        Write-Host "빌드 인스턴스: $buildInstanceId (running 대기 중)..." -ForegroundColor Gray
+        aws ec2 wait instance-running --instance-ids $buildInstanceId --region $Region
+        Start-Sleep -Seconds 30
     }
-    $buildInstanceId = $runResult.Instances[0].InstanceId
-    Write-Host "빌드 인스턴스: $buildInstanceId (running 대기 중)..." -ForegroundColor Gray
-    aws ec2 wait instance-running --instance-ids $buildInstanceId --region $Region
     Write-Host "SSM 등록 대기 (최대 3분)..." -ForegroundColor Gray
     $ssmReady = $false
     for ($i = 0; $i -lt 18; $i++) {
