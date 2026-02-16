@@ -85,7 +85,7 @@ $registry = "${AccountId}.dkr.ecr.${Region}.amazonaws.com"
 Write-Host @"
 
 cd /tmp
-git clone https://github.com/guswls3028-art/academy.git academy 2>/dev/null || (echo 'git clone 실패 - 레포 주소/토큰 확인')
+git clone https://github.com/guswls3028-art/academy-backend.git academy 2>/dev/null || (echo 'git clone 실패 - 레포 주소/토큰 확인')
 cd academy
 
 registry='$registry'

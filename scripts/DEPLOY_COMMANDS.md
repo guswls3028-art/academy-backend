@@ -21,7 +21,7 @@ $env:AWS_DEFAULT_REGION = "ap-northeast-2"
 
 ```powershell
 cd C:\academy
-.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git"
+.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git"
 ```
 
 ## 3) admin97 액세스 키 (일상 재배포용)
@@ -44,7 +44,7 @@ cd C:\academy; .\scripts\full_redeploy.ps1 -SkipBuild
 
 - **빌드 포함** (코드 푸시 후 이미지 다시 빌드):
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git"
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git"
 ```
 
 ## 5) 배포 확인 (원테이크)
@@ -183,35 +183,35 @@ cd C:\academy; .\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget workers -Wor
 ## 1) API만
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget api
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -DeployTarget api
 ```
 
 ## 2) Video만
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget video
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -DeployTarget video
 ```
 
 ## 3) AI만
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget ai
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -DeployTarget ai
 ```
 
 ## 4) Messaging만
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget messaging
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -DeployTarget messaging
 ```
 
 ## 5) 전부
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git"
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git"
 ```
 
 ## 6) 워커만
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget workers
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -DeployTarget workers
 ```
