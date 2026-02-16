@@ -50,12 +50,13 @@ try {
         "messaging"  { docker buildx build --platform linux/arm64 -f docker/messaging-worker/Dockerfile -t academy-messaging-worker:latest --load .
                        docker tag academy-messaging-worker:latest "${ECR}/academy-messaging-worker:latest"
                        $toPush = @("academy-messaging-worker") }
-        "workers"    { foreach ($name in @("academy-messaging-worker","academy-video-worker","academy-ai-worker-cpu")) {
-                           $f = switch -Regex ($name) { "messaging" { "docker/messaging-worker/Dockerfile" } "video" { "docker/video-worker/Dockerfile" } "ai" { "docker/ai-worker-cpu/Dockerfile" } }
-                           docker buildx build --platform linux/arm64 -f $f -t "${name}:latest" --load .
-                           docker tag "${name}:latest" "${ECR}/${name}:latest"
-                           $toPush += $name
-                       } }
+        "workers"    { docker buildx build --platform linux/arm64 -f docker/messaging-worker/Dockerfile -t academy-messaging-worker:latest --load .
+                       docker tag academy-messaging-worker:latest "${ECR}/academy-messaging-worker:latest"
+                       docker buildx build --platform linux/arm64 -f docker/video-worker/Dockerfile -t academy-video-worker:latest --load .
+                       docker tag academy-video-worker:latest "${ECR}/academy-video-worker:latest"
+                       docker buildx build --platform linux/arm64 -f docker/ai-worker-cpu/Dockerfile -t academy-ai-worker-cpu:latest --load .
+                       docker tag academy-ai-worker-cpu:latest "${ECR}/academy-ai-worker-cpu:latest"
+                       $toPush = @("academy-messaging-worker","academy-video-worker","academy-ai-worker-cpu") }
         "all"        { docker buildx build --platform linux/arm64 -f docker/api/Dockerfile -t academy-api:latest --load .
                        docker tag academy-api:latest "${ECR}/academy-api:latest"
                        docker buildx build --platform linux/arm64 -f docker/messaging-worker/Dockerfile -t academy-messaging-worker:latest --load .
