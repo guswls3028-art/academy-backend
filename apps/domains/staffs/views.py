@@ -211,8 +211,10 @@ class StaffViewSet(viewsets.ModelViewSet):
             and request.user.is_authenticated
             and core_repo.membership_exists_staff(tenant=tenant, user=request.user, staff_roles=("owner",))
         )
+        # DB에 원장 없을 때 대표 표시용: 슈퍼유저/스태프도 원장 행에 이름 노출
+        is_de facto_owner = is_owner or (request.user.is_authenticated and (request.user.is_superuser or request.user.is_staff))
         owner_display_name = None
-        if is_owner and request.user:
+        if is_de_facto_owner and request.user:
             owner_display_name = (getattr(request.user, "name", None) or "").strip() or getattr(request.user, "username", "") or "원장"
         return Response(
             {
