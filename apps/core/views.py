@@ -1,5 +1,6 @@
 # PATH: apps/core/views.py
 from datetime import datetime
+from django.db import transaction
 from django.db.models import Sum
 
 from rest_framework.views import APIView
@@ -533,65 +534,76 @@ class TenantOwnerView(APIView):
     """
     POST /api/v1/core/tenants/<tenant_id>/owner/
     admin_app 전용 — owner role만. 테넌트에 owner 등록.
-    User가 없으면 생성 가능 (username, password, name 필수).
+    User가 없으면 생성 가능 (username, password 필수; name, phone 선택).
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
     def post(self, request, tenant_id: int):
-        tenant = core_repo.tenant_get_by_id_any(tenant_id)
-        if not tenant:
-            return Response({"detail": "Tenant not found."}, status=404)
-        
-        username = request.data.get("username")
-        password = request.data.get("password")
-        name = request.data.get("name")
-        phone = request.data.get("phone")
-        
-        if not username:
-            return Response({"detail": "username is required."}, status=400)
-        
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
-        
-        # User가 존재하는지 확인
-        user = core_repo.user_get_by_username(username)
-        
-        if user:
-            # 기존 User가 있으면 그대로 사용
-            if password:
-                # 비밀번호 업데이트
-                user.set_password(password)
-                user.save(update_fields=["password"])
-            if name is not None:
-                user.name = name
-            if phone is not None:
-                user.phone = phone
-            if name is not None or phone is not None:
-                user.save(update_fields=["name", "phone"])
-        else:
-            # User가 없으면 생성
-            if not password:
-                return Response({"detail": "password is required when creating a new user."}, status=400)
-            
-            user = User.objects.create_user(
-                username=username,
-                password=password,
-                name=name or "",
-                phone=phone or None,
+        import logging
+        logger = logging.getLogger(__name__)
+        try:
+            tenant = core_repo.tenant_get_by_id_any(tenant_id)
+            if not tenant:
+                return Response({"detail": "Tenant not found."}, status=404)
+
+            username = request.data.get("username")
+            password = request.data.get("password")
+            name = request.data.get("name")
+            phone = request.data.get("phone")
+
+            if not username:
+                return Response({"detail": "username is required."}, status=400)
+
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+
+            with transaction.atomic():
+                user = core_repo.user_get_by_username(username)
+
+                if user:
+                    if password:
+                        user.set_password(password)
+                        user.save(update_fields=["password"])
+                    if name is not None:
+                        user.name = name
+                    if phone is not None:
+                        user.phone = phone
+                    if name is not None or phone is not None:
+                        user.save(update_fields=["name", "phone"])
+                else:
+                    if not password:
+                        return Response(
+                            {"detail": "password is required when creating a new user."},
+                            status=400,
+                        )
+                    user = User.objects.create_user(
+                        username=username,
+                        password=password,
+                        email="",
+                        name=name or "",
+                        phone=phone or "",
+                    )
+
+                membership = core_repo.membership_ensure_active(
+                    tenant=tenant,
+                    user=user,
+                    role="owner",
+                )
+                if membership.role != "owner":
+                    membership.role = "owner"
+                    membership.save(update_fields=["role"])
+
+            return Response({
+                "tenantId": tenant.id,
+                "tenantCode": tenant.code,
+                "userId": user.id,
+                "username": user.username,
+                "name": getattr(user, "name", "") or "",
+                "role": membership.role,
+            })
+        except Exception as e:
+            logger.exception("TenantOwnerView post failed: %s", e)
+            return Response(
+                {"detail": str(e)},
+                status=500,
             )
-        
-        # Owner 멤버십 생성/업데이트
-        membership = core_repo.membership_ensure_active(
-            tenant=tenant,
-            user=user,
-            role="owner"
-        )
-        
-        return Response({
-            "tenantId": tenant.id,
-            "tenantCode": tenant.code,
-            "userId": user.id,
-            "username": user.username,
-            "name": user.name,
-            "role": membership.role,
-        })

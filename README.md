@@ -4,20 +4,16 @@
 
 **프론트 구분 (SSOT)**: 학생 앱 = `academyfront/src/student/**` 전용. 그 외는 모두 관리자 앱 (`academyfront` 나머지 전체).
 
+**Cursor 작업 시**: [docs_cursor/README.md](docs_cursor/README.md) — 문서만으로 필요한 정보를 얻을 수 있도록 정리된 SSOT.
+
 ---
 
 ## 🚀 빠른 시작
 
-### 배포 가이드
+### 배포·문서
 
-**⭐ 배포 전 필수 문서**: [`docs/DEPLOYMENT_MASTER_GUIDE.md`](docs/DEPLOYMENT_MASTER_GUIDE.md)
-
-이 문서 하나만 보면 프로덕션 배포가 가능합니다:
-- 인프라 아키텍처 (R2, SQS, EC2, RDS)
-- 비용 방어 전략 (Self-stop, Long Polling, Budgets)
-- 배포 절차 (Docker build, Migration, 실행)
-- 환경 변수 리스트 (모든 필수 ENV)
-- 확장 로드맵 (3명 → 50명 원장)
+- **배포 절차**: [docs/배포.md](docs/배포.md)
+- **문서 인덱스**: [docs/README.md](docs/README.md) — 전체 목록
 
 ---
 
@@ -25,39 +21,26 @@
 
 ```
 academy/
-├── apps/                    # Django 애플리케이션
-│   ├── api/                # API 서버 설정
-│   ├── core/               # 공통 모델 및 유틸리티
-│   ├── domains/            # 도메인별 모듈
-│   │   ├── ai/            # AI 작업 처리
-│   │   ├── students/       # 학생 관리
-│   │   ├── lectures/      # 강의 관리
-│   │   └── ...
-│   ├── support/            # 지원 모듈
-│   │   ├── video/         # 비디오 처리
-│   │   └── ai/            # AI 서비스
-│   └── worker/            # Worker 프로세스
-│       ├── ai_worker/     # AI Worker
-│       └── video_worker/   # Video Worker
-├── docker/                 # Docker 설정
-│   ├── Dockerfile.base    # 공통 베이스 이미지
-│   ├── api/               # API 서버
-│   ├── video-worker/      # Video Worker
-│   ├── ai-worker/         # AI Worker (단일 모드)
-│   ├── ai-worker-cpu/     # AI Worker CPU 전용
-│   ├── ai-worker-gpu/     # AI Worker GPU 전용
-│   ├── messaging-worker/  # Messaging Worker
-│   ├── build.ps1 / build.sh
+├── apps/
+│   ├── api/                # API 설정 (config/settings)
+│   ├── core/               # Tenant, Program, TenantDomain, TenantMembership, 권한 (apps/core/CORE_SEAL.md)
+│   ├── domains/            # 도메인 모듈 (students, lectures, exams, results, ...)
+│   ├── support/            # video, messaging 등
+│   └── worker/             # ai_worker, video_worker, messaging_worker
+├── academy/                # adapters (repositories_core 등)
+├── docker/
+│   ├── Dockerfile.base
+│   ├── api/Dockerfile
+│   ├── video-worker/Dockerfile
+│   ├── ai-worker/Dockerfile
+│   ├── ai-worker-cpu/Dockerfile
+│   ├── ai-worker-gpu/Dockerfile
+│   ├── messaging-worker/Dockerfile
+│   ├── build.ps1, build.sh
 │   └── README-COMPOSE.md
-├── docs/                   # 문서
-│   ├── DEPLOYMENT_MASTER_GUIDE.md  ⭐ 메인 문서
-│   ├── INFRASTRUCTURE.md
-│   ├── COST_FORECAST.md
-│   └── ...
-├── libs/                   # 공통 라이브러리
-├── requirements/           # Python 의존성
-├── docker-compose.yml      # Docker Compose 설정
-└── .env.example            # 환경 변수 템플릿
+├── docs/                   # 배포.md, 운영.md, 설계.md, 10K_기준.md, 30K_기준.md, adr/
+├── requirements/
+└── manage.py
 ```
 
 ---
@@ -87,7 +70,7 @@ academy/
 - **AI Worker CPU**: Docker Container (EC2/Fargate)
 - **AI Worker GPU**: Docker Container (EC2 g4dn.xlarge, 향후)
 
-**상세 아키텍처**: [`docs/INFRASTRUCTURE.md`](docs/INFRASTRUCTURE.md)
+**설계·인프라**: [docs/설계.md](docs/설계.md)
 
 ---
 
@@ -101,7 +84,7 @@ academy/
 - **월 비용**: ~$420
 - **주요 항목**: Compute ($200), RDS ($80), Storage ($100)
 
-**상세 비용 분석**: [`docs/COST_FORECAST.md`](docs/COST_FORECAST.md)
+**비용·기준**: [docs/10K_기준.md](docs/10K_기준.md), [docs/30K_기준.md](docs/30K_기준.md)
 
 ---
 
@@ -133,13 +116,14 @@ curl http://localhost:8000/health
 
 ## 📚 문서 (SSOT)
 
-**문서 인덱스**: [docs/README.md](docs/README.md) — 전체 목록 및 용도
+**문서 인덱스**: [docs/README.md](docs/README.md)
 
-- **[DEPLOYMENT_MASTER_GUIDE.md](docs/DEPLOYMENT_MASTER_GUIDE.md)** — 배포·인프라·ENV (프론트/백 공통)
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — 아키텍처 개요
-- [INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) — AWS·R2·SQS 설정
-- [COST_FORECAST.md](docs/COST_FORECAST.md) — 비용 예측
-- [PRODUCTION_READINESS_CHECKLIST.md](docs/PRODUCTION_READINESS_CHECKLIST.md) — 배포 전 체크리스트
+- [배포.md](docs/배포.md) — 500 배포 순서, Docker 빌드, EC2/ECR
+- [운영.md](docs/운영.md) — 운영
+- [설계.md](docs/설계.md) — 인프라·워커 설계
+- [10K_기준.md](docs/10K_기준.md), [30K_기준.md](docs/30K_기준.md) — 기준점
+- [apps/core/CORE_SEAL.md](apps/core/CORE_SEAL.md) — Core 봉인(테넌트·권한 규칙)
+- [docs/adr/](docs/adr/) — ADR
 
 ---
 
@@ -166,7 +150,7 @@ docker-compose up -d
 docker-compose exec api python manage.py migrate
 ```
 
-**상세 배포 가이드**: [`docs/DEPLOYMENT_MASTER_GUIDE.md`](docs/DEPLOYMENT_MASTER_GUIDE.md)
+**상세 배포**: [docs/배포.md](docs/배포.md)
 
 ---
 
@@ -211,7 +195,7 @@ docker-compose exec api python manage.py migrate
 - **비용**: ~$400-500/월
 - **인프라**: t4g.small 4-8대, db.t4g.medium, PgBouncer
 
-**상세 확장 계획**: [`docs/DEPLOYMENT_MASTER_GUIDE.md#5-확장-로드맵`](docs/DEPLOYMENT_MASTER_GUIDE.md#5-확장-로드맵)
+**확장·기준**: [docs/10K_기준.md](docs/10K_기준.md), [docs/30K_기준.md](docs/30K_기준.md)
 
 ---
 

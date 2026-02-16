@@ -25,10 +25,12 @@ Core는 **아래 항목만** 책임진다.
 2. TenantMembership (tenant 내 사용자 역할 SSOT)
 3. Program (tenant 1:1, 브랜딩/로그인/UI/기능토글 SSOT)
 4. TenantDomain (host → tenant resolve SSOT)
-5. 최소 권한 계층
+5. 최소 권한 계층 (apps/core/permissions.py)
    - TenantResolved
    - TenantResolvedAndMember
    - TenantResolvedAndStaff
+   - TenantResolvedAndOwner (admin_app 전용)
+   - IsAdminOrStaff, IsSuperuserOnly (Django admin/개발자용)
 
 ❌ Core는 다음을 **절대 포함하지 않는다**:
 - 과금 로직
@@ -44,13 +46,10 @@ Core는 **아래 항목만** 책임진다.
 
 Tenant 결정 경로는 **오직 하나**만 허용한다.
 
-request.get_host()
-→ normalize
-→ TenantDomain.host
+request.get_host() (apps/core/tenant/resolver.py)
+→ _normalize_host (포트 제거, 소문자)
+→ TenantDomain.host 조회 (core_repo.tenant_domain_filter_by_host)
 → TenantDomain.tenant
-
-yaml
-코드 복사
 
 - Header / Query / Cookie / Env 기반 fallback ❌
 - 테스트 편의용 우회 ❌
@@ -59,12 +58,19 @@ yaml
 
 ### 2.2 bypass 규칙
 
-아래 경로만 tenant=None 허용:
+아래 경로만 tenant=None 허용 (apps/api/config/settings/base.py):
 
-settings.TENANT_BYPASS_PATH_PREFIXES
-
-yaml
-코드 복사
+```
+TENANT_BYPASS_PATH_PREFIXES = [
+    "/admin/",
+    "/api/v1/token/",
+    "/api/v1/token/refresh/",
+    "/internal/",
+    "/api/v1/internal/",
+    "/swagger",
+    "/redoc",
+]
+```
 
 의도:
 - 로그인 전 bootstrap
@@ -139,13 +145,10 @@ Program row 생성은 다음 시점에서만 허용:
 ### 4.3 누락은 운영 사고
 
 - Program 누락 상태는 **정상 상태가 아님**
-- 반드시 다음으로 실패한다:
+- 반드시 다음으로 실패한다 (apps/core/views.py ProgramView.get):
 
-HTTP 500
-code = program_missing
-
-yaml
-코드 복사
+HTTP 404
+body: { "detail": "program not initialized for tenant", "code": "program_missing", "tenant": "<tenant.code>" }
 
 자동 생성은 장애를 숨기는 행위로 간주한다.
 
@@ -161,11 +164,12 @@ yaml
 
 ---
 
-### 5.2 허용 Permission 계층
+### 5.2 허용 Permission 계층 (실제 코드 기준)
 
-- TenantResolved
+- TenantResolved (apps/core/permissions.py)
 - TenantResolvedAndMember
 - TenantResolvedAndStaff
+- TenantResolvedAndOwner (role=owner 전용, tenant-branding/tenants API 등)
 
 ❌ View 내부 if role 분기 금지  
 ❌ 프론트 조건문 기반 권한 처리 금지
