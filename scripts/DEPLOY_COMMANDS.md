@@ -26,6 +26,8 @@ cd C:\academy
 
 ## 3) admin97 액세스 키 (일상 재배포용)
 
+실제 값은 로컬에서만 설정. 저장소에 커밋하지 말 것.
+
 ```powershell
 Remove-Item Env:AWS_ACCESS_KEY_ID, Env:AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
 $env:AWS_ACCESS_KEY_ID = "YOUR_ADMIN97_ACCESS_KEY_ID"
@@ -78,9 +80,11 @@ Write-Host "`n=== Done ===`n" -ForegroundColor Cyan
 
 ## AWS 환경 변수 (먼저 한 번만)
 
+실제 값은 로컬에서만 설정.
+
 ```powershell
-$env:AWS_ACCESS_KEY_ID = "YOUR_ROOT_ACCESS_KEY_ID"
-$env:AWS_SECRET_ACCESS_KEY = "YOUR_ROOT_SECRET_ACCESS_KEY"
+$env:AWS_ACCESS_KEY_ID = "YOUR_ACCESS_KEY_ID"
+$env:AWS_SECRET_ACCESS_KEY = "YOUR_SECRET_ACCESS_KEY"
 $env:AWS_DEFAULT_REGION = "ap-northeast-2"
 ```
 
