@@ -57,6 +57,15 @@ def tenant_get_by_id_any(tenant_id) -> Optional[Any]:
     return Tenant.objects.filter(id=tenant_id).first()
 
 
+def tenant_get_by_code(code: str) -> Optional[Any]:
+    """테넌트 코드로 조회 (활성만, 대소문자 무시). X-Tenant-Code 헤더 해석용."""
+    from apps.core.models import Tenant
+    raw = (code and str(code).strip()) or ""
+    if not raw:
+        return None
+    return Tenant.objects.filter(code__iexact=raw, is_active=True).first()
+
+
 def tenant_get_or_create(code: str, defaults: dict) -> tuple[Any, bool]:
     from apps.core.models import Tenant
     return Tenant.objects.get_or_create(code=code, defaults=defaults)

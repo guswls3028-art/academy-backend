@@ -607,3 +607,90 @@ class TenantOwnerView(APIView):
                 {"detail": str(e)},
                 status=500,
             )
+
+
+class TenantOwnerListView(APIView):
+    """
+    GET /api/v1/core/tenants/<tenant_id>/owners/
+    admin_app 전용 — owner role만. 해당 테넌트의 Owner 목록 조회.
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
+
+    def get(self, request, tenant_id: int):
+        tenant = core_repo.tenant_get_by_id_any(tenant_id)
+        if not tenant:
+            return Response({"detail": "Tenant not found."}, status=404)
+        memberships = (
+            TenantMembership.objects.filter(
+                tenant=tenant,
+                role="owner",
+                is_active=True,
+            )
+            .select_related("user")
+            .order_by("user__username")
+        )
+        data = [
+            {
+                "userId": m.user_id,
+                "username": m.user.username,
+                "name": getattr(m.user, "name", "") or "",
+                "phone": getattr(m.user, "phone", "") or "",
+                "role": m.role,
+            }
+            for m in memberships
+        ]
+        return Response(data)
+
+
+class TenantOwnerDetailView(APIView):
+    """
+    PATCH /api/v1/core/tenants/<tenant_id>/owners/<user_id>/
+      - owner 사용자 이름/전화번호 수정
+    DELETE /api/v1/core/tenants/<tenant_id>/owners/<user_id>/
+      - 해당 테넌트에서 owner 제거 (TenantMembership is_active=False)
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
+
+    def _get_owner_membership(self, tenant_id: int, user_id: int):
+        tenant = core_repo.tenant_get_by_id_any(tenant_id)
+        if not tenant:
+            return None, None, 404
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user = User.objects.filter(id=user_id).first()
+        if not user:
+            return None, None, 404
+        membership = TenantMembership.objects.filter(
+            tenant=tenant,
+            user=user,
+            role="owner",
+            is_active=True,
+        ).first()
+        if not membership:
+            return None, None, 404
+        return tenant, membership, None
+
+    def patch(self, request, tenant_id: int, user_id: int):
+        tenant, membership, err = self._get_owner_membership(tenant_id, user_id)
+        if err:
+            return Response({"detail": "Owner not found."}, status=err)
+        user = membership.user
+        if "name" in request.data:
+            user.name = request.data.get("name") or ""
+        if "phone" in request.data:
+            user.phone = request.data.get("phone") or ""
+        user.save(update_fields=["name", "phone"])
+        return Response({
+            "userId": user.id,
+            "username": user.username,
+            "name": getattr(user, "name", "") or "",
+            "role": membership.role,
+        })
+
+    def delete(self, request, tenant_id: int, user_id: int):
+        tenant, membership, err = self._get_owner_membership(tenant_id, user_id)
+        if err:
+            return Response({"detail": "Owner not found."}, status=err)
+        membership.is_active = False
+        membership.save(update_fields=["is_active"])
+        return Response(status=204)

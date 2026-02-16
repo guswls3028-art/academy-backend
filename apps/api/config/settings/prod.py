@@ -63,6 +63,7 @@ from corsheaders.defaults import default_headers
 CORS_ALLOW_HEADERS = list(default_headers) + [
     "X-Client-Version",
     "X-Client",
+    "X-Tenant-Code",
 ]
 
 # ==================================================

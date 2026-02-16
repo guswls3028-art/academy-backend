@@ -1,0 +1,739 @@
+====================================================================================================
+# BACKEND APP: domains__student_app
+# ROOT PATH: C:\academy\apps\domains\student_app
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+# apps/domains/student_app/apps.py
+from django.apps import AppConfig
+
+
+class StudentAppConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.student_app"
+    label = "student_app"
+
+
+==========================================================================================
+# FILE: permissions.py
+==========================================================================================
+# apps/domains/student_app/permissions.py
+from rest_framework.permissions import BasePermission
+
+from apps.core.models import TenantMembership
+
+
+class IsStudent(BasePermission):
+    """
+    학생 로그인 전용
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and hasattr(user, "student_profile")
+        )
+
+
+class IsStudentOrParent(BasePermission):
+    """
+    학생 또는 학부모 로그인 전용
+    - 학생: user.student_profile 존재
+    - 학부모: TenantMembership role=parent
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if hasattr(user, "student_profile"):
+            return True
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return False
+        return TenantMembership.objects.filter(
+            tenant=tenant, user=user, is_active=True, role="parent"
+        ).exists()
+
+
+def get_request_student(request):
+    """
+    요청자에 해당하는 Student 반환
+    - 학생: user.student_profile
+    - 학부모: 연결된 첫 번째 학생 (parent.students.first())
+    """
+    user = request.user
+    if hasattr(user, "student_profile") and user.student_profile:
+        return user.student_profile
+    from apps.domains.parents.models import Parent
+    parent = getattr(user, "parent_profile", None)
+    if parent:
+        return parent.students.filter(deleted_at__isnull=True).first()
+    return None
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+# PATH: C:\academy\apps\domains\student_app\urls.py
+from django.urls import path
+
+from .dashboard.views import StudentDashboardView
+from .sessions.views import StudentSessionListView, StudentSessionDetailView
+from .exams.views import StudentExamListView, StudentExamDetailView
+from .results.views import (
+    MyExamResultView,
+    MyExamResultItemsView,
+)
+from .profile.views import StudentProfileView
+
+# ✅ NEW
+from .media.views import (
+    StudentSessionVideoListView,
+    StudentVideoPlaybackView,
+)
+
+urlpatterns = [
+    # 내 프로필 (학생 전용) — GET/PATCH
+    path("me/", StudentProfileView.as_view()),
+
+    # Dashboard
+    path("dashboard/", StudentDashboardView.as_view()),
+
+    # Sessions
+    path("sessions/me/", StudentSessionListView.as_view()),
+    path("sessions/<int:pk>/", StudentSessionDetailView.as_view()),
+
+    # Exams
+    path("exams/", StudentExamListView.as_view()),
+    path("exams/<int:pk>/", StudentExamDetailView.as_view()),
+
+    # Results
+    path("results/me/exams/<int:exam_id>/", MyExamResultView.as_view()),
+    path("results/me/exams/<int:exam_id>/items/", MyExamResultItemsView.as_view()),
+
+    # ✅ Video (Student Consumer)
+    # 세션별 영상 목록
+    path("video/sessions/<int:session_id>/videos/", StudentSessionVideoListView.as_view()),
+    # 영상 재생 정보 (정책 포함)
+    path("video/videos/<int:video_id>/playback/", StudentVideoPlaybackView.as_view()),
+]
+
+
+==========================================================================================
+# FILE: dashboard/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: dashboard/serializers.py
+==========================================================================================
+# apps/domains/student_app/dashboard/serializers.py
+from rest_framework import serializers
+
+
+class DashboardNoticeSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    created_at = serializers.DateTimeField(allow_null=True, required=False)
+
+
+class DashboardSessionSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    date = serializers.DateField(allow_null=True, required=False)
+    status = serializers.CharField(allow_null=True, required=False)
+
+
+class StudentDashboardSerializer(serializers.Serializer):
+    notices = DashboardNoticeSerializer(many=True)
+    today_sessions = DashboardSessionSerializer(many=True)
+    badges = serializers.DictField(required=False)
+
+
+==========================================================================================
+# FILE: dashboard/views.py
+==========================================================================================
+# apps/domains/student_app/dashboard/views.py
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.student_app.permissions import IsStudentOrParent
+from .serializers import StudentDashboardSerializer
+
+
+class StudentDashboardView(APIView):
+    """
+    GET /student/dashboard/
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request):
+        data = {
+            "notices": [],
+            "today_sessions": [],
+            "badges": {},
+        }
+        return Response(StudentDashboardSerializer(data).data)
+
+
+==========================================================================================
+# FILE: exams/serializers.py
+==========================================================================================
+# apps/domains/student_app/exams/serializers.py
+from rest_framework import serializers
+
+
+class StudentExamSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    open_at = serializers.DateTimeField(allow_null=True)
+    close_at = serializers.DateTimeField(allow_null=True)
+    allow_retake = serializers.BooleanField()
+    max_attempts = serializers.IntegerField()
+    pass_score = serializers.IntegerField()
+    description = serializers.CharField(allow_null=True, required=False)
+    session_id = serializers.IntegerField(allow_null=True, required=False)
+
+
+==========================================================================================
+# FILE: exams/views.py
+==========================================================================================
+# apps/domains/student_app/exams/views.py
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.student_app.permissions import IsStudentOrParent
+from .serializers import StudentExamSerializer
+
+
+class StudentExamListView(APIView):
+    """
+    GET /exams/
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request):
+        return Response({"items": []})
+
+
+class StudentExamDetailView(APIView):
+    """
+    GET /exams/{id}/
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request, pk):
+        data = {
+            "id": pk,
+            "title": f"Exam {pk}",
+            "open_at": None,
+            "close_at": None,
+            "allow_retake": True,
+            "max_attempts": 1,
+            "pass_score": 60,
+            "description": None,
+            "session_id": None,
+        }
+        return Response(StudentExamSerializer(data).data)
+
+
+==========================================================================================
+# FILE: media/__init__.py
+==========================================================================================
+# apps/domains/student_app/media/__init__.py
+
+
+==========================================================================================
+# FILE: media/serializers.py
+==========================================================================================
+from rest_framework import serializers
+
+
+class StudentVideoListItemSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    session_id = serializers.IntegerField()
+    title = serializers.CharField()
+
+    status = serializers.CharField()
+    thumbnail_url = serializers.CharField(allow_null=True, required=False)
+
+    # 정책(단일 진실)
+    allow_skip = serializers.BooleanField()
+    max_speed = serializers.FloatField()
+    show_watermark = serializers.BooleanField()
+
+    # 학생별 적용 룰 (Legacy)
+    effective_rule = serializers.ChoiceField(
+        choices=["free", "once", "blocked"],
+        required=False,
+    )
+    
+    # 새로운 접근 모드
+    access_mode = serializers.ChoiceField(
+        choices=["FREE_REVIEW", "PROCTORED_CLASS", "BLOCKED"],
+        required=False,
+    )
+
+
+class StudentVideoPlaybackSerializer(serializers.Serializer):
+    """
+    학생 플레이어가 신뢰하는 단일 진실 payload
+    """
+    video = StudentVideoListItemSerializer()
+    hls_url = serializers.CharField(allow_null=True, required=False)
+    mp4_url = serializers.CharField(allow_null=True, required=False)
+
+    policy = serializers.DictField()
+
+
+==========================================================================================
+# FILE: media/views.py
+==========================================================================================
+from typing import Any, Dict, Optional, Tuple
+
+from django.http import Http404
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
+from rest_framework import status
+
+from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
+from .serializers import (
+    StudentVideoListItemSerializer,
+    StudentVideoPlaybackSerializer,
+)
+
+
+# ======================================================
+# 내부 유틸 (운영 안정성 우선)
+# ======================================================
+
+def _import_media_models():
+    try:
+        from apps.domains.media.models import Video  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "[CRITICAL] apps.domains.media.models.Video import 실패"
+        ) from e
+
+    VideoPermission = None
+    try:
+        from apps.domains.media.models import VideoPermission  # type: ignore
+        VideoPermission = VideoPermission
+    except Exception:
+        VideoPermission = None
+
+    return Video, VideoPermission
+
+
+def _get_student_enrollment_id(request) -> Optional[int]:
+    q = request.query_params.get("enrollment")
+    if q:
+        try:
+            return int(q)
+        except Exception:
+            return None
+
+    sp = get_request_student(request)
+    if not sp:
+        return None
+
+    for key in ["enrollment_id", "current_enrollment_id", "enrollment"]:
+        v = getattr(sp, key, None)
+        if isinstance(v, int):
+            return v
+
+    enrollments = getattr(sp, "enrollments", None)
+    try:
+        if enrollments and hasattr(enrollments, "first"):
+            first = enrollments.first()
+            if first and hasattr(first, "id"):
+                return int(first.id)
+    except Exception:
+        pass
+
+    return None
+
+
+def _pick_urls(video) -> Tuple[Optional[str], Optional[str]]:
+    hls_url = getattr(video, "hls_url", None) or getattr(video, "hls_path", None)
+    mp4_url = getattr(video, "mp4_url", None) or getattr(video, "file_url", None)
+    return hls_url, mp4_url
+
+
+def _effective_rule(video_permission_obj) -> str:
+    if not video_permission_obj:
+        return "free"
+
+    rule = getattr(video_permission_obj, "rule", None) or getattr(
+        video_permission_obj, "effective_rule", None
+    )
+    return rule if rule in ("free", "once", "blocked") else "free"
+
+
+def _policy_from_video(video) -> Dict[str, Any]:
+    return {
+        "allow_skip": bool(getattr(video, "allow_skip", False)),
+        "max_speed": float(getattr(video, "max_speed", 1.0) or 1.0),
+        "show_watermark": bool(getattr(video, "show_watermark", True)),
+    }
+
+
+# ======================================================
+# Views
+# ======================================================
+
+class StudentSessionVideoListView(APIView):
+    """
+    GET /student/video/sessions/{session_id}/videos/
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request, session_id: int):
+        Video, VideoPermission = _import_media_models()
+        enrollment_id = _get_student_enrollment_id(request)
+
+        videos = Video.objects.filter(session_id=session_id).order_by("order", "id")
+
+        items = []
+        for v in videos:
+            perm_obj = None
+            if VideoPermission and enrollment_id:
+                perm_obj = (
+                    VideoPermission.objects
+                    .filter(video_id=v.id, enrollment_id=enrollment_id)
+                    .first()
+                )
+
+            thumb = getattr(v, "thumbnail_url", None) or getattr(v, "thumbnail", None)
+
+            # Use SSOT access resolver
+            from apps.support.video.services.access_resolver import resolve_access_mode
+            from apps.domains.enrollment.models import Enrollment
+            
+            enrollment_obj = None
+            if enrollment_id:
+                enrollment_obj = Enrollment.objects.filter(id=enrollment_id).first()
+            
+            access_mode_value = None
+            if enrollment_obj:
+                access_mode_value = resolve_access_mode(video=v, enrollment=enrollment_obj).value
+            
+            items.append({
+                "id": int(v.id),
+                "session_id": int(v.session_id),
+                "title": str(v.title),
+                "status": str(getattr(v, "status", "READY")),
+                "thumbnail_url": thumb,
+                **_policy_from_video(v),
+                "effective_rule": _effective_rule(perm_obj),  # Legacy field
+                "access_mode": access_mode_value,  # New field
+            })
+
+        return Response({
+            "items": StudentVideoListItemSerializer(items, many=True).data
+        })
+
+
+class StudentVideoPlaybackView(APIView):
+    """
+    GET /student/video/videos/{video_id}/playback/
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request, video_id: int):
+        Video, VideoPermission = _import_media_models()
+        enrollment_id = _get_student_enrollment_id(request)
+
+        try:
+            video = Video.objects.get(id=video_id)
+        except Video.DoesNotExist:
+            raise Http404
+
+        perm_obj = None
+        if VideoPermission and enrollment_id:
+            perm_obj = (
+                VideoPermission.objects
+                .filter(video_id=video.id, enrollment_id=enrollment_id)
+                .first()
+            )
+
+        rule = _effective_rule(perm_obj)
+        if rule == "blocked":
+            raise PermissionDenied("이 영상은 시청이 제한되었습니다.")
+
+        # Use SSOT access resolver
+        from apps.support.video.services.access_resolver import resolve_access_mode
+        from apps.domains.enrollment.models import Enrollment
+        
+        enrollment_obj = None
+        access_mode_value = None
+        if enrollment_id:
+            enrollment_obj = Enrollment.objects.filter(id=enrollment_id).first()
+            if enrollment_obj:
+                access_mode_value = resolve_access_mode(video=video, enrollment=enrollment_obj).value
+
+        hls_url, mp4_url = _pick_urls(video)
+        thumb = getattr(video, "thumbnail_url", None) or getattr(video, "thumbnail", None)
+
+        payload = {
+            "video": {
+                "id": int(video.id),
+                "session_id": int(video.session_id),
+                "title": str(video.title),
+                "status": str(getattr(video, "status", "READY")),
+                "thumbnail_url": thumb,
+                **_policy_from_video(video),
+                "effective_rule": rule,  # Legacy field
+                "access_mode": access_mode_value,  # New field
+            },
+            "hls_url": hls_url,
+            "mp4_url": mp4_url,
+            "policy": {
+                **_policy_from_video(video),
+                "effective_rule": rule,  # Legacy field
+                "access_mode": access_mode_value,  # New field
+            },
+        }
+
+        return Response(
+            StudentVideoPlaybackSerializer(payload).data,
+            status=status.HTTP_200_OK,
+        )
+
+
+==========================================================================================
+# FILE: profile/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: profile/serializers.py
+==========================================================================================
+# apps/domains/student_app/profile/serializers.py
+from rest_framework import serializers
+
+
+class StudentProfileSerializer(serializers.Serializer):
+    """학생 본인 프로필 (GET 응답)"""
+    id = serializers.IntegerField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    profile_photo_url = serializers.URLField(allow_null=True, read_only=True)
+
+
+class StudentProfilePhotoUpdateSerializer(serializers.Serializer):
+    """프로필 사진 업로드 (PATCH)"""
+    profile_photo = serializers.ImageField(required=True)
+
+
+==========================================================================================
+# FILE: profile/views.py
+==========================================================================================
+# apps/domains/student_app/profile/views.py
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+
+from apps.domains.student_app.permissions import IsStudent, get_request_student
+
+
+class StudentProfileView(APIView):
+    """
+    GET/PATCH /api/student-app/me/
+    - 학생만 접근 가능 (본인 프로필)
+    - GET: 프로필 정보 (id, name, profile_photo_url)
+    - PATCH: profile_photo 업로드 (multipart/form-data)
+    """
+    permission_classes = [IsAuthenticated, IsStudent]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request):
+        student = get_request_student(request)
+        if not student:
+            return Response({"detail": "학생 프로필이 없습니다."}, status=404)
+        url = None
+        if student.profile_photo:
+            url = request.build_absolute_uri(student.profile_photo.url)
+        return Response({
+            "id": student.id,
+            "name": student.name,
+            "profile_photo_url": url,
+        })
+
+    def patch(self, request):
+        student = get_request_student(request)
+        if not student:
+            return Response({"detail": "학생 프로필이 없습니다."}, status=404)
+        photo = request.FILES.get("profile_photo")
+        if not photo:
+            return Response({"detail": "profile_photo 파일이 필요합니다."}, status=400)
+        # 이미지 타입 제한 (선택)
+        if not photo.content_type or not photo.content_type.startswith("image/"):
+            return Response({"detail": "이미지 파일만 업로드할 수 있습니다."}, status=400)
+        student.profile_photo = photo
+        student.save(update_fields=["profile_photo"])
+        url = request.build_absolute_uri(student.profile_photo.url) if student.profile_photo else None
+        return Response({
+            "id": student.id,
+            "name": student.name,
+            "profile_photo_url": url,
+        })
+
+
+==========================================================================================
+# FILE: results/serializers.py
+==========================================================================================
+# apps/domains/student_app/results/serializers.py
+from rest_framework import serializers
+
+
+class MyExamResultSerializer(serializers.Serializer):
+    exam_id = serializers.IntegerField()
+    attempt_id = serializers.IntegerField()
+    total_score = serializers.IntegerField()
+    max_score = serializers.IntegerField()
+    is_pass = serializers.BooleanField()
+    submitted_at = serializers.DateTimeField(allow_null=True)
+    can_retake = serializers.BooleanField()
+
+
+class MyExamResultItemSerializer(serializers.Serializer):
+    question_id = serializers.IntegerField()
+    question_number = serializers.IntegerField()
+    student_answer = serializers.CharField(allow_null=True)
+    correct_answer = serializers.CharField(allow_null=True)
+    score = serializers.IntegerField()
+    max_score = serializers.IntegerField()
+    is_correct = serializers.BooleanField()
+    meta = serializers.DictField(required=False)
+
+
+==========================================================================================
+# FILE: results/views.py
+==========================================================================================
+# apps/domains/student_app/results/views.py
+"""
+GET /student/results/me/exams/<exam_id>/ 및 /items/
+→ results 도메인 단일 진실(get_my_exam_result_data) 사용.
+"""
+from django.http import Http404
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.student_app.permissions import IsStudentOrParent
+from apps.domains.results.services.student_result_service import get_my_exam_result_data
+
+
+class MyExamResultView(APIView):
+    """
+    GET /student/results/me/exams/{exam_id}/
+    결과 도메인 Result 기준 실제 채점 데이터 반환.
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request, exam_id):
+        try:
+            data = get_my_exam_result_data(request, int(exam_id))
+        except Http404:
+            return Response({"detail": "result not found"}, status=404)
+        return Response(data)
+
+
+class MyExamResultItemsView(APIView):
+    """
+    GET /student/results/me/exams/{exam_id}/items/
+    동일 데이터의 items 배열만 반환 (프론트 문항별 결과 조회).
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request, exam_id):
+        try:
+            data = get_my_exam_result_data(request, int(exam_id))
+        except Http404:
+            return Response({"detail": "result not found"}, status=404)
+        return Response({"items": data.get("items") or []})
+
+
+==========================================================================================
+# FILE: sessions/serializers.py
+==========================================================================================
+# apps/domains/student_app/sessions/serializers.py
+from rest_framework import serializers
+
+
+class StudentSessionSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    date = serializers.DateField(allow_null=True, required=False)
+    status = serializers.CharField(allow_null=True, required=False)
+    exam_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_null=True,
+    )
+
+
+==========================================================================================
+# FILE: sessions/views.py
+==========================================================================================
+# apps/domains/student_app/sessions/views.py
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.domains.student_app.permissions import IsStudentOrParent
+from .serializers import StudentSessionSerializer
+
+
+class StudentSessionListView(APIView):
+    """
+    GET /sessions/me/
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request):
+        return Response(StudentSessionSerializer([], many=True).data)
+
+
+class StudentSessionDetailView(APIView):
+    """
+    GET /sessions/{id}/
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request, pk):
+        data = {
+            "id": pk,
+            "title": f"Session {pk}",
+            "date": None,
+            "status": None,
+            "exam_ids": [],
+        }
+        return Response(StudentSessionSerializer(data).data)

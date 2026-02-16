@@ -1,0 +1,1336 @@
+====================================================================================================
+# BACKEND APP: domains__community
+# ROOT PATH: C:\academy\apps\domains\community
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: admin.py
+==========================================================================================
+from django.contrib import admin
+from .models import BlockType, ScopeNode, PostEntity, PostMapping, PostReply, PostTemplate
+
+
+@admin.register(BlockType)
+class BlockTypeAdmin(admin.ModelAdmin):
+    list_display = ("id", "tenant", "code", "label", "order")
+    list_filter = ("tenant",)
+
+
+@admin.register(ScopeNode)
+class ScopeNodeAdmin(admin.ModelAdmin):
+    list_display = ("id", "tenant", "level", "lecture", "session", "parent")
+    list_filter = ("tenant", "level")
+
+
+@admin.register(PostEntity)
+class PostEntityAdmin(admin.ModelAdmin):
+    list_display = ("id", "tenant", "title", "block_type", "created_by", "created_at")
+    list_filter = ("tenant", "block_type")
+
+
+@admin.register(PostMapping)
+class PostMappingAdmin(admin.ModelAdmin):
+    list_display = ("id", "post", "node", "created_at")
+
+
+@admin.register(PostReply)
+class PostReplyAdmin(admin.ModelAdmin):
+    list_display = ("id", "tenant", "post", "created_by", "created_at")
+
+
+@admin.register(PostTemplate)
+class PostTemplateAdmin(admin.ModelAdmin):
+    list_display = ("id", "tenant", "name", "block_type", "order", "updated_at")
+    list_filter = ("tenant",)
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class CommunityConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.community"
+    verbose_name = "Community (SSOT)"
+
+    def ready(self):
+        import apps.domains.community.signals  # noqa: F401
+
+
+==========================================================================================
+# FILE: signals.py
+==========================================================================================
+"""Lecture/Session 저장 시 ScopeNode 자동 생성."""
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+
+from apps.domains.lectures.models import Lecture, Session
+from apps.domains.community.services.scope_node_service import (
+    ensure_scope_node_for_lecture,
+    ensure_scope_node_for_session,
+)
+
+
+@receiver(post_save, sender=Lecture)
+def on_lecture_saved(sender, instance, created, **kwargs):
+    if created:
+        ensure_scope_node_for_lecture(instance)
+
+
+@receiver(post_save, sender=Session)
+def on_session_saved(sender, instance, created, **kwargs):
+    if created:
+        ensure_scope_node_for_session(instance)
+
+
+==========================================================================================
+# FILE: api/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: api/serializers.py
+==========================================================================================
+from rest_framework import serializers
+from apps.domains.community.models import PostEntity, PostMapping, ScopeNode, BlockType, PostTemplate
+
+
+class ScopeNodeMinimalSerializer(serializers.ModelSerializer):
+    """매핑된 노드 태그용. session이 null(COURSE 노드)일 때 session_title 안전 처리."""
+    lecture_title = serializers.CharField(source="lecture.title", read_only=True)
+    session_title = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = ScopeNode
+        fields = ["id", "level", "lecture", "session", "lecture_title", "session_title"]
+
+    def get_session_title(self, obj):
+        if not getattr(obj, "session_id", None):
+            return None
+        session = getattr(obj, "session", None)
+        return getattr(session, "title", None) if session else None
+
+
+class PostMappingSerializer(serializers.ModelSerializer):
+    node_detail = ScopeNodeMinimalSerializer(source="node", read_only=True)
+
+    class Meta:
+        model = PostMapping
+        fields = ["id", "post", "node", "node_detail", "created_at"]
+
+
+class PostEntitySerializer(serializers.ModelSerializer):
+    mappings = PostMappingSerializer(many=True, read_only=True)
+    block_type_label = serializers.CharField(source="block_type.label", read_only=True)
+
+    class Meta:
+        model = PostEntity
+        fields = [
+            "id",
+            "tenant",
+            "block_type",
+            "block_type_label",
+            "title",
+            "content",
+            "created_by",
+            "created_at",
+            "mappings",
+        ]
+        read_only_fields = ["tenant"]
+
+
+class BlockTypeSerializer(serializers.ModelSerializer):
+    code = serializers.CharField(max_length=32, required=False, allow_blank=True)
+
+    class Meta:
+        model = BlockType
+        fields = ["id", "code", "label", "order"]
+        read_only_fields = ["id"]
+
+    def validate_code(self, value):
+        if not value or not value.strip():
+            return value
+        value = value.strip()[:32]
+        if not value:
+            raise serializers.ValidationError("code는 1자 이상 필요합니다.")
+        return value
+
+    def validate_label(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("표시명을 입력하세요.")
+        return value.strip()[:64]
+
+
+class PostTemplateSerializer(serializers.ModelSerializer):
+    block_type_label = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = PostTemplate
+        fields = [
+            "id",
+            "name",
+            "block_type",
+            "block_type_label",
+            "title",
+            "content",
+            "order",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_block_type_label(self, obj):
+        return obj.block_type.label if obj.block_type_id else None
+
+
+==========================================================================================
+# FILE: api/urls.py
+==========================================================================================
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import PostViewSet, AdminPostViewSet, BlockTypeViewSet, ScopeNodeViewSet, PostTemplateViewSet
+
+router = DefaultRouter()
+router.register("posts", PostViewSet, basename="community-post")
+router.register("block-types", BlockTypeViewSet, basename="community-block-type")
+router.register("scope-nodes", ScopeNodeViewSet, basename="community-scope-node")
+router.register("post-templates", PostTemplateViewSet, basename="community-post-template")
+
+admin_router = DefaultRouter()
+admin_router.register("posts", AdminPostViewSet, basename="community-admin-post")
+
+urlpatterns = [
+    path("", include(router.urls)),
+    path("admin/", include(admin_router.urls)),
+]
+
+
+==========================================================================================
+# FILE: api/views.py
+==========================================================================================
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+from apps.domains.community.api.serializers import (
+    PostEntitySerializer,
+    BlockTypeSerializer,
+    ScopeNodeMinimalSerializer,
+    PostTemplateSerializer,
+)
+from apps.domains.community.selectors import (
+    get_posts_for_node,
+    get_admin_post_list,
+    get_post_by_id,
+    get_all_posts_for_tenant,
+    get_empty_post_queryset,
+    get_block_types_for_tenant,
+    get_empty_block_type_queryset,
+    get_scope_nodes_for_tenant,
+    get_empty_scope_node_queryset,
+)
+from apps.domains.community.services import CommunityService
+from apps.domains.community.models import PostTemplate
+
+
+class PostViewSet(viewsets.ModelViewSet):
+    """Post CRUD. tenant from request. list: ?node_id= or admin list."""
+    serializer_class = PostEntitySerializer
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return get_empty_post_queryset()
+        raw = self.request.query_params.get("node_id")
+        try:
+            node_id = int(raw) if raw not in (None, "") else None
+        except (TypeError, ValueError):
+            node_id = None
+        if node_id is not None:
+            return get_posts_for_node(tenant, node_id, include_inherited=True)
+        return get_all_posts_for_tenant(tenant)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        node_ids = request.data.get("node_ids") or []
+        data = {
+            "block_type": serializer.validated_data["block_type"],
+            "title": serializer.validated_data["title"],
+            "content": serializer.validated_data["content"],
+            "created_by": serializer.validated_data.get("created_by"),
+        }
+        svc = CommunityService(tenant)
+        post = svc.create_post(data, node_ids)
+        return Response(PostEntitySerializer(post).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["patch"], url_path="nodes")
+    def update_nodes(self, request, pk=None):
+        """PATCH /posts/:id/nodes/ body: { node_ids: [1,2,3] }"""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        node_ids = request.data.get("node_ids") or []
+        svc = CommunityService(tenant)
+        svc.update_post_nodes(int(pk), node_ids)
+        post = get_post_by_id(tenant, int(pk))
+        if not post:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        return Response(PostEntitySerializer(post).data)
+
+
+class AdminPostViewSet(viewsets.ModelViewSet):
+    """Admin list with filters. block_type_id, lecture_id, page, page_size."""
+    serializer_class = PostEntitySerializer
+
+    def list(self, request, *args, **kwargs):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        def _int_or_none(val):
+            if val is None or val == "":
+                return None
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return None
+
+        block_type_id = _int_or_none(request.query_params.get("block_type_id"))
+        lecture_id = _int_or_none(request.query_params.get("lecture_id"))
+        try:
+            page = int(request.query_params.get("page") or 1)
+            page_size = int(request.query_params.get("page_size") or 20)
+        except (TypeError, ValueError):
+            page, page_size = 1, 20
+        qs, total = get_admin_post_list(
+            tenant,
+            block_type_id=block_type_id,
+            lecture_id=lecture_id,
+            page=page,
+            page_size=page_size,
+        )
+        serializer = self.get_serializer(qs, many=True)
+        return Response({"results": serializer.data, "count": total})
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return get_empty_post_queryset()
+        return get_all_posts_for_tenant(tenant)
+
+
+class BlockTypeViewSet(viewsets.ModelViewSet):
+    """블록 유형 CRUD. 커스텀 유형 생성/수정/삭제."""
+    serializer_class = BlockTypeSerializer
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return get_empty_block_type_queryset()
+        return get_block_types_for_tenant(tenant)
+
+    def perform_create(self, serializer):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return
+        data = dict(serializer.validated_data)
+        code = (data.pop("code", None) or "").strip()[:32]
+        if not code:
+            import re
+            code = re.sub(r"[^a-zA-Z0-9가-힣_]", "_", data.get("label", ""))[:32] or "CUSTOM"
+        serializer.save(tenant=tenant, code=code, **data)
+
+
+class PostTemplateViewSet(viewsets.ModelViewSet):
+    """글 양식 CRUD. 자주 쓰는 제목/본문/유형 저장·불러오기."""
+    serializer_class = PostTemplateSerializer
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return PostTemplate.objects.none()
+        return (
+            PostTemplate.objects.filter(tenant=tenant)
+            .select_related("block_type")
+            .order_by("order", "id")
+        )
+
+    def perform_create(self, serializer):
+        tenant = getattr(self.request, "tenant", None)
+        if tenant:
+            serializer.save(tenant=tenant)
+
+
+class ScopeNodeViewSet(viewsets.ReadOnlyModelViewSet):
+    """ScopeNode list for tree. Filter by tenant (from request)."""
+    serializer_class = ScopeNodeMinimalSerializer
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return get_empty_scope_node_queryset()
+        return get_scope_nodes_for_tenant(tenant)
+
+
+==========================================================================================
+# FILE: comments/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-15 06:03
+
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = []
+
+    operations = [
+        migrations.CreateModel(
+            name="BlockType",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("code", models.CharField(max_length=32)),
+                ("label", models.CharField(max_length=64)),
+                ("order", models.PositiveIntegerField(default=1)),
+            ],
+            options={
+                "ordering": ["order", "id"],
+            },
+        ),
+        migrations.CreateModel(
+            name="PostEntity",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("title", models.CharField(max_length=255)),
+                ("content", models.TextField()),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+            ],
+            options={
+                "verbose_name": "Post",
+                "verbose_name_plural": "Posts",
+                "ordering": ["-created_at"],
+            },
+        ),
+        migrations.CreateModel(
+            name="PostMapping",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+            ],
+        ),
+        migrations.CreateModel(
+            name="PostReply",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("content", models.TextField()),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+            ],
+            options={
+                "verbose_name": "Post Reply",
+                "verbose_name_plural": "Post Replies",
+                "ordering": ["created_at"],
+            },
+        ),
+        migrations.CreateModel(
+            name="PostTemplate",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "name",
+                    models.CharField(
+                        help_text="양식 이름 (예: 중간고사 공지)", max_length=128
+                    ),
+                ),
+                ("title", models.CharField(blank=True, default="", max_length=255)),
+                ("content", models.TextField(blank=True, default="")),
+                (
+                    "order",
+                    models.PositiveIntegerField(default=0, help_text="목록 정렬용"),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+            ],
+            options={
+                "ordering": ["order", "id"],
+            },
+        ),
+        migrations.CreateModel(
+            name="ScopeNode",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "level",
+                    models.CharField(
+                        choices=[("COURSE", "강의"), ("SESSION", "차시")], max_length=16
+                    ),
+                ),
+            ],
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/0002_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-15 06:03
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("community", "0001_initial"),
+        ("core", "0001_initial"),
+        ("lectures", "0001_initial"),
+        ("students", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="blocktype",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="community_block_types",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddField(
+            model_name="postentity",
+            name="block_type",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.PROTECT,
+                related_name="posts",
+                to="community.blocktype",
+            ),
+        ),
+        migrations.AddField(
+            model_name="postentity",
+            name="created_by",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="post_entities",
+                to="students.student",
+            ),
+        ),
+        migrations.AddField(
+            model_name="postentity",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="post_entities",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddField(
+            model_name="postmapping",
+            name="post",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="mappings",
+                to="community.postentity",
+            ),
+        ),
+        migrations.AddField(
+            model_name="postreply",
+            name="created_by",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="post_replies",
+                to="students.student",
+            ),
+        ),
+        migrations.AddField(
+            model_name="postreply",
+            name="post",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="replies",
+                to="community.postentity",
+            ),
+        ),
+        migrations.AddField(
+            model_name="postreply",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="post_replies",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddField(
+            model_name="posttemplate",
+            name="block_type",
+            field=models.ForeignKey(
+                blank=True,
+                help_text="기본 유형 (선택)",
+                null=True,
+                on_delete=django.db.models.deletion.PROTECT,
+                related_name="post_templates",
+                to="community.blocktype",
+            ),
+        ),
+        migrations.AddField(
+            model_name="posttemplate",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="post_templates",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddField(
+            model_name="scopenode",
+            name="lecture",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="scope_nodes",
+                to="lectures.lecture",
+            ),
+        ),
+        migrations.AddField(
+            model_name="scopenode",
+            name="parent",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="children",
+                to="community.scopenode",
+            ),
+        ),
+        migrations.AddField(
+            model_name="scopenode",
+            name="session",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="scope_nodes",
+                to="lectures.session",
+            ),
+        ),
+        migrations.AddField(
+            model_name="scopenode",
+            name="tenant",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="scope_nodes",
+                to="core.tenant",
+            ),
+        ),
+        migrations.AddField(
+            model_name="postmapping",
+            name="node",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="post_mappings",
+                to="community.scopenode",
+            ),
+        ),
+        migrations.AlterUniqueTogether(
+            name="blocktype",
+            unique_together={("tenant", "code")},
+        ),
+        migrations.AddIndex(
+            model_name="postentity",
+            index=models.Index(
+                fields=["tenant", "created_at"], name="community_p_tenant__da765e_idx"
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="postentity",
+            index=models.Index(
+                fields=["tenant", "block_type"], name="community_p_tenant__0d6a8b_idx"
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="posttemplate",
+            index=models.Index(
+                fields=["tenant", "order"], name="community_p_tenant__90af91_idx"
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="scopenode",
+            index=models.Index(
+                fields=["tenant", "level"], name="community_s_tenant__d27e3e_idx"
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="scopenode",
+            index=models.Index(
+                fields=["tenant", "parent"], name="community_s_tenant__c58eec_idx"
+            ),
+        ),
+        migrations.AlterUniqueTogether(
+            name="scopenode",
+            unique_together={("tenant", "lecture", "session")},
+        ),
+        migrations.AddIndex(
+            model_name="postmapping",
+            index=models.Index(fields=["node"], name="community_p_node_id_547bf8_idx"),
+        ),
+        migrations.AddConstraint(
+            model_name="postmapping",
+            constraint=models.UniqueConstraint(
+                fields=("post", "node"), name="community_postmapping_post_node_uniq"
+            ),
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: models/__init__.py
+==========================================================================================
+from .block_type import BlockType
+from .scope_node import ScopeNode
+from .post import PostEntity
+from .post_mapping import PostMapping
+from .post_template import PostTemplate
+from .reply import PostReply
+
+__all__ = [
+    "BlockType",
+    "ScopeNode",
+    "PostEntity",
+    "PostMapping",
+    "PostTemplate",
+    "PostReply",
+]
+
+
+==========================================================================================
+# FILE: models/block_type.py
+==========================================================================================
+from django.db import models
+from apps.core.models import Tenant
+
+
+class BlockType(models.Model):
+    """공지/질의/오탈자/숙제 등 블록 타입. tenant 필수."""
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="community_block_types",
+        null=False,
+        db_index=True,
+    )
+    code = models.CharField(max_length=32)
+    label = models.CharField(max_length=64)
+    order = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["order", "id"]
+        unique_together = [("tenant", "code")]
+
+    def __str__(self):
+        return f"[{self.tenant_id}] {self.label}"
+
+
+==========================================================================================
+# FILE: models/post.py
+==========================================================================================
+from django.db import models
+from apps.core.models import Tenant
+from apps.domains.students.models import Student
+from .block_type import BlockType
+
+
+class PostEntity(models.Model):
+    """콘텐츠 단일 객체. 노출 위치는 PostMapping으로 관리. tenant 필수."""
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="post_entities",
+        null=False,
+        db_index=True,
+    )
+    block_type = models.ForeignKey(
+        BlockType,
+        on_delete=models.PROTECT,
+        related_name="posts",
+    )
+    title = models.CharField(max_length=255)
+    content = models.TextField()
+    created_by = models.ForeignKey(
+        Student,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="post_entities",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["tenant", "created_at"]),
+            models.Index(fields=["tenant", "block_type"]),
+        ]
+        verbose_name = "Post"
+        verbose_name_plural = "Posts"
+
+    def __str__(self):
+        return self.title
+
+
+==========================================================================================
+# FILE: models/post_mapping.py
+==========================================================================================
+from django.db import models
+from .post import PostEntity
+from .scope_node import ScopeNode
+
+
+class PostMapping(models.Model):
+    """PostEntity ↔ ScopeNode M:N. 한 게시물을 여러 노드에 노출. UniqueConstraint(post, node)."""
+    post = models.ForeignKey(
+        PostEntity,
+        on_delete=models.CASCADE,
+        related_name="mappings",
+    )
+    node = models.ForeignKey(
+        ScopeNode,
+        on_delete=models.CASCADE,
+        related_name="post_mappings",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["post", "node"],
+                name="community_postmapping_post_node_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["node"]),
+        ]
+
+    def __str__(self):
+        return f"Post#{self.post_id} → Node#{self.node_id}"
+
+
+==========================================================================================
+# FILE: models/post_template.py
+==========================================================================================
+from django.db import models
+from apps.core.models import Tenant
+from .block_type import BlockType
+
+
+class PostTemplate(models.Model):
+    """자주 쓰는 글 양식. 제목/본문/유형 저장 후 불러와서 재사용."""
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="post_templates",
+        null=False,
+        db_index=True,
+    )
+    name = models.CharField(max_length=128, help_text="양식 이름 (예: 중간고사 공지)")
+    block_type = models.ForeignKey(
+        BlockType,
+        on_delete=models.PROTECT,
+        related_name="post_templates",
+        null=True,
+        blank=True,
+        help_text="기본 유형 (선택)",
+    )
+    title = models.CharField(max_length=255, default="", blank=True)
+    content = models.TextField(default="", blank=True)
+    order = models.PositiveIntegerField(default=0, help_text="목록 정렬용")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["order", "id"]
+        indexes = [
+            models.Index(fields=["tenant", "order"]),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+==========================================================================================
+# FILE: models/reply.py
+==========================================================================================
+from django.db import models
+from apps.core.models import Tenant
+from apps.domains.students.models import Student
+from .post import PostEntity
+
+
+class PostReply(models.Model):
+    """PostEntity(예: QNA)에 대한 답변. tenant 필수."""
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="post_replies",
+        null=False,
+        db_index=True,
+    )
+    post = models.ForeignKey(
+        PostEntity,
+        on_delete=models.CASCADE,
+        related_name="replies",
+    )
+    content = models.TextField()
+    created_by = models.ForeignKey(
+        Student,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="post_replies",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        verbose_name = "Post Reply"
+        verbose_name_plural = "Post Replies"
+
+    def __str__(self):
+        return f"Reply to Post#{self.post_id}"
+
+
+==========================================================================================
+# FILE: models/scope_node.py
+==========================================================================================
+from django.db import models
+from apps.core.models import Tenant
+from apps.domains.lectures.models import Lecture, Session
+
+
+class ScopeNode(models.Model):
+    """노출 위치 트리: COURSE(강의) > SESSION(차시). tenant 필수."""
+    class Level(models.TextChoices):
+        COURSE = "COURSE", "강의"
+        SESSION = "SESSION", "차시"
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="scope_nodes",
+        null=False,
+        db_index=True,
+    )
+    level = models.CharField(max_length=16, choices=Level.choices)
+    lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name="scope_nodes",
+    )
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="scope_nodes",
+        null=True,
+        blank=True,
+    )
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="children",
+    )
+
+    class Meta:
+        unique_together = [("tenant", "lecture", "session")]
+        indexes = [
+            models.Index(fields=["tenant", "level"]),
+            models.Index(fields=["tenant", "parent"]),
+        ]
+
+    def __str__(self):
+        if self.session_id:
+            return f"{self.lecture.title} — {self.session.title}"
+        return f"{self.lecture.title} (전체)"
+
+
+==========================================================================================
+# FILE: posts/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: selectors/__init__.py
+==========================================================================================
+from .block_type_selector import get_block_types_for_tenant, get_empty_block_type_queryset
+from .post_selector import (
+    get_posts_for_node,
+    get_admin_post_list,
+    get_post_by_id,
+    get_all_posts_for_tenant,
+    get_empty_post_queryset,
+)
+from .scope_node_selector import get_scope_nodes_for_tenant, get_empty_scope_node_queryset
+
+__all__ = [
+    "get_block_types_for_tenant",
+    "get_empty_block_type_queryset",
+    "get_posts_for_node",
+    "get_admin_post_list",
+    "get_post_by_id",
+    "get_all_posts_for_tenant",
+    "get_empty_post_queryset",
+    "get_scope_nodes_for_tenant",
+    "get_empty_scope_node_queryset",
+]
+
+
+==========================================================================================
+# FILE: selectors/block_type_selector.py
+==========================================================================================
+from django.db.models import QuerySet
+
+from apps.domains.community.models import BlockType
+
+
+def get_block_types_for_tenant(tenant) -> QuerySet:
+    """tenant별 BlockType 목록. order, id 순."""
+    return BlockType.objects.filter(tenant=tenant).order_by("order", "id")
+
+
+def get_empty_block_type_queryset() -> QuerySet:
+    return BlockType.objects.none()
+
+
+==========================================================================================
+# FILE: selectors/post_selector.py
+==========================================================================================
+from typing import Optional
+
+from django.db.models import Prefetch, QuerySet, Q
+
+from apps.domains.community.models import PostEntity, PostMapping, ScopeNode
+
+
+def get_empty_post_queryset() -> QuerySet:
+    """tenant 없을 때 등 빈 목록용."""
+    return PostEntity.objects.none()
+
+
+def get_post_by_id(tenant, post_id: int):
+    """단건 조회. mappings prefetch. 없으면 None."""
+    return (
+        PostEntity.objects.filter(tenant=tenant, id=post_id)
+        .select_related("block_type", "created_by")
+        .prefetch_related(
+            Prefetch(
+                "mappings",
+                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
+            )
+        )
+        .first()
+    )
+
+
+def get_all_posts_for_tenant(tenant) -> QuerySet:
+    """tenant 전체 Post 목록 (node_id 없을 때 list용). N+1 방지."""
+    return (
+        PostEntity.objects.filter(tenant=tenant)
+        .select_related("block_type", "created_by")
+        .prefetch_related(
+            Prefetch(
+                "mappings",
+                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
+            )
+        )
+        .order_by("-created_at")
+    )
+
+
+def get_posts_for_node(
+    tenant,
+    node_id: int,
+    *,
+    include_inherited: bool = True,
+) -> QuerySet:
+    """
+    SESSION: 해당 SESSION + (include_inherited 시) 상위 COURSE 노드에 매핑된 Post.
+    COURSE: 해당 COURSE + (include_inherited 시) 하위 SESSION 노드에 매핑된 Post.
+    N+1 방지: select_related / prefetch_related.
+    """
+    node = (
+        ScopeNode.objects.filter(id=node_id, tenant=tenant)
+        .select_related("lecture", "session", "parent")
+        .first()
+    )
+    if not node:
+        return PostEntity.objects.none()
+
+    if include_inherited:
+        if node.level == ScopeNode.Level.SESSION:
+            scope_node_ids = [node.id]
+            if node.parent_id:
+                scope_node_ids.append(node.parent_id)
+        else:
+            scope_node_ids = list(
+                ScopeNode.objects.filter(tenant=tenant)
+                .filter(Q(id=node.id) | Q(parent_id=node.id))
+                .values_list("id", flat=True)
+            )
+    else:
+        scope_node_ids = [node.id]
+
+    post_ids = (
+        PostMapping.objects.filter(node_id__in=scope_node_ids)
+        .values_list("post_id", flat=True)
+        .distinct()
+    )
+    return (
+        PostEntity.objects.filter(id__in=post_ids, tenant=tenant)
+        .select_related("block_type", "created_by")
+        .prefetch_related(
+            Prefetch(
+                "mappings",
+                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
+            )
+        )
+        .order_by("-created_at")
+    )
+
+
+def get_admin_post_list(
+    tenant,
+    *,
+    block_type_id: Optional[int] = None,
+    lecture_id: Optional[int] = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[QuerySet, int]:
+    """관리자용 목록. 필터: block_type, lecture(해당 강의 노드에 매핑된 것만). 페이지네이션."""
+    qs = (
+        PostEntity.objects.filter(tenant=tenant)
+        .select_related("block_type", "created_by")
+        .prefetch_related(
+            Prefetch(
+                "mappings",
+                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
+            )
+        )
+        .order_by("-created_at")
+        .distinct()
+    )
+    if block_type_id is not None:
+        qs = qs.filter(block_type_id=block_type_id)
+    if lecture_id is not None:
+        node_ids = ScopeNode.objects.filter(tenant=tenant, lecture_id=lecture_id).values_list("id", flat=True)
+        qs = qs.filter(mappings__node_id__in=node_ids).distinct()
+    total = qs.count()
+    offset = (page - 1) * page_size
+    return qs[offset : offset + page_size], total
+
+
+==========================================================================================
+# FILE: selectors/scope_node_selector.py
+==========================================================================================
+from django.db.models import QuerySet
+
+from apps.domains.community.models import ScopeNode
+
+
+def get_scope_nodes_for_tenant(tenant) -> QuerySet:
+    """tenant별 ScopeNode 전체. 트리 구성용. lecture, session, parent select_related."""
+    return (
+        ScopeNode.objects.filter(tenant=tenant)
+        .select_related("lecture", "session", "parent")
+        .order_by("lecture__title", "session__order")
+    )
+
+
+def get_empty_scope_node_queryset() -> QuerySet:
+    return ScopeNode.objects.none()
+
+
+==========================================================================================
+# FILE: services/__init__.py
+==========================================================================================
+from .community_service import CommunityService
+
+__all__ = ["CommunityService"]
+
+
+==========================================================================================
+# FILE: services/community_service.py
+==========================================================================================
+from django.db import transaction
+from django.db.models import Q
+
+from apps.domains.community.models import PostEntity, PostMapping, ScopeNode
+
+
+class CommunityService:
+    """PostEntity + PostMapping 생성/수정. 트랜잭션·중복 제거."""
+
+    def __init__(self, tenant):
+        self.tenant = tenant
+
+    def create_post(self, data: dict, node_ids: list[int], *, include_children: bool = False):
+        with transaction.atomic():
+            post = PostEntity.objects.create(tenant=self.tenant, **{k: v for k, v in data.items() if v is not None})
+            resolved_ids = self._resolve_node_ids_for_mapping(node_ids, include_children=include_children)
+            self._replace_mappings_for_post(post.id, resolved_ids)
+        return post
+
+    def _resolve_node_ids_for_mapping(self, node_ids: list[int], *, include_children: bool = False) -> list[int]:
+        if not node_ids:
+            return []
+        nodes = ScopeNode.objects.filter(id__in=node_ids, tenant=self.tenant).select_related("lecture")
+        seen = set()
+        result = []
+        for node in nodes:
+            if node.id in seen:
+                continue
+            seen.add(node.id)
+            result.append(node.id)
+            if include_children and node.level == ScopeNode.Level.COURSE:
+                for cid in ScopeNode.objects.filter(tenant=self.tenant, parent_id=node.id).values_list("id", flat=True):
+                    if cid not in seen:
+                        seen.add(cid)
+                        result.append(cid)
+        return result
+
+    def update_post_nodes(self, post_id: int, node_ids: list[int]) -> None:
+        with transaction.atomic():
+            self._replace_mappings_for_post(post_id, node_ids)
+
+    def _replace_mappings_for_post(self, post_id: int, node_ids: list[int]) -> None:
+        post = PostEntity.objects.filter(id=post_id, tenant=self.tenant).first()
+        if not post:
+            return
+        unique_ids = list(dict.fromkeys(node_ids))
+        existing = set(PostMapping.objects.filter(post_id=post_id).values_list("node_id", flat=True))
+        to_remove = existing - set(unique_ids)
+        to_add = [nid for nid in unique_ids if nid not in existing]
+        if to_remove:
+            PostMapping.objects.filter(post_id=post_id, node_id__in=to_remove).delete()
+        if to_add:
+            valid_ids = set(ScopeNode.objects.filter(id__in=to_add, tenant=self.tenant).values_list("id", flat=True))
+            PostMapping.objects.bulk_create(
+                [PostMapping(post_id=post_id, node_id=nid) for nid in to_add if nid in valid_ids]
+            )
+
+
+==========================================================================================
+# FILE: services/scope_node_service.py
+==========================================================================================
+"""ScopeNode 자동 생성: Lecture/Session 생성 시 대응 노드 1:1 생성."""
+from apps.domains.community.models import ScopeNode
+
+
+def ensure_scope_node_for_lecture(lecture) -> ScopeNode:
+    """강의 1개당 COURSE 노드 1개. 있으면 반환, 없으면 생성."""
+    node, _ = ScopeNode.objects.get_or_create(
+        tenant_id=lecture.tenant_id,
+        lecture_id=lecture.id,
+        session_id=None,
+        defaults={
+            "level": ScopeNode.Level.COURSE,
+            "parent_id": None,
+        },
+    )
+    return node
+
+
+def ensure_scope_node_for_session(session) -> ScopeNode:
+    """차시 1개당 SESSION 노드 1개. 상위 COURSE 노드 확보 후 생성."""
+    lecture = session.lecture
+    parent = ensure_scope_node_for_lecture(lecture)
+    node, _ = ScopeNode.objects.get_or_create(
+        tenant_id=lecture.tenant_id,
+        lecture_id=lecture.id,
+        session_id=session.id,
+        defaults={
+            "level": ScopeNode.Level.SESSION,
+            "parent_id": parent.id,
+        },
+    )
+    return node

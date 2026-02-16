@@ -74,24 +74,50 @@ def _resolve_tenant_from_host(host: str) -> Optional[Tenant]:
     return td.tenant
 
 
+def _resolve_tenant_from_header(request) -> Optional[Tenant]:
+    """
+    중앙 API(api.hakwonplus.com 등)로 요청이 올 때,
+    프론트가 보낸 X-Tenant-Code 로 테넌트 결정.
+    (SPA가 tchul.com에서 열리지만 API는 api.hakwonplus.com으로 가는 경우)
+    """
+    allowed_hosts = getattr(
+        settings,
+        "TENANT_HEADER_CODE_ALLOWED_HOSTS",
+        ("api.hakwonplus.com",),
+    )
+    host = _normalize_host(request.get_host())
+    if host not in allowed_hosts:
+        return None
+    raw = (request.META.get("HTTP_X_TENANT_CODE") or "").strip()
+    if not raw:
+        return None
+    tenant = core_repo.tenant_get_by_code(raw)
+    return tenant
+
+
 def resolve_tenant_from_request(request) -> Optional[Tenant]:
     """
     Enterprise Resolver (Domain 1:1 with operational flexibility)
 
     Rules:
-    - tenant는 request.get_host() -> TenantDomain.host 로만 결정
+    - 1) Host가 중앙 API이고 X-Tenant-Code 있으면 → 코드로 테넌트 결정
+    - 2) 그 외 tenant는 request.get_host() -> TenantDomain.host 로만 결정
     - fallback 없음
     - bypass path만 tenant=None 허용
     """
     path = getattr(request, "path", "") or "/"
     bypass = _is_bypass_path(path)
 
+    # 중앙 API + X-Tenant-Code 우선 (tchul.com SPA → api.hakwonplus.com 호출 시)
+    tenant = _resolve_tenant_from_header(request)
+    if tenant:
+        return tenant
+
     host = _normalize_host(request.get_host())
 
     try:
         tenant = _resolve_tenant_from_host(host)
     except TenantResolutionError:
-        # 여기서 그대로 propagate (middleware가 ops-friendly JSON으로 변환)
         raise
 
     if tenant:

@@ -15,6 +15,8 @@ from apps.core.views import (
     TenantDetailView,
     TenantCreateView,
     TenantOwnerView,
+    TenantOwnerListView,
+    TenantOwnerDetailView,
 )
 
 router = DefaultRouter()
@@ -32,5 +34,7 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/", TenantDetailView.as_view(), name="core-tenant-detail"),
     path("tenants/create/", TenantCreateView.as_view(), name="core-tenant-create"),
     path("tenants/<int:tenant_id>/owner/", TenantOwnerView.as_view(), name="core-tenant-owner"),
+    path("tenants/<int:tenant_id>/owners/", TenantOwnerListView.as_view(), name="core-tenant-owners"),
+    path("tenants/<int:tenant_id>/owners/<int:user_id>/", TenantOwnerDetailView.as_view(), name="core-tenant-owner-detail"),
     path("", include(router.urls)),
 ]

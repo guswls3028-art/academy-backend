@@ -1,0 +1,2833 @@
+====================================================================================================
+# BACKEND APP: domains__exams
+# ROOT PATH: C:\academy\apps\domains\exams
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+from django.apps import AppConfig
+
+
+class ExamsConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.exams"
+    label = "exams"
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+# apps/domains/exams/urls.py
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+
+from apps.domains.exams.views.exam_view import ExamViewSet
+from apps.domains.exams.views.sheet_view import SheetViewSet
+from apps.domains.exams.views.question_view import QuestionViewSet
+from apps.domains.exams.views.answer_key_view import AnswerKeyViewSet
+
+from apps.domains.exams.views.exam_asset_view import ExamAssetView
+from apps.domains.exams.views.omr_generate_view import GenerateOMRSheetAssetView
+
+from apps.domains.exams.views.template_builder_view import TemplateBuilderView
+from apps.domains.exams.views.template_editor_view import TemplateEditorView
+from apps.domains.exams.views.template_status_view import TemplateStatusView
+from apps.domains.exams.views.template_validation_view import TemplateValidationView
+
+from apps.domains.exams.views.regular_from_template_view import RegularExamFromTemplateView
+from apps.domains.exams.views.exam_questions_by_exam_view import ExamQuestionsByExamView
+from apps.domains.exams.views.question_auto_view import SheetAutoQuestionsView
+from apps.domains.exams.views.exam_enrollment_view import ExamEnrollmentManageView
+from apps.domains.exams.views.student_exam_view import StudentAvailableExamListView
+
+router = DefaultRouter()
+router.register(r"", ExamViewSet, basename="exams")
+router.register(r"sheets", SheetViewSet, basename="exam-sheets")
+router.register(r"questions", QuestionViewSet, basename="exam-questions")
+router.register(r"answer-keys", AnswerKeyViewSet, basename="answer-keys")
+
+urlpatterns = [
+    # =========================
+    # Core
+    # =========================
+    path("", include(router.urls)),
+
+    # =========================
+    # Template lifecycle
+    # =========================
+    path("<int:exam_id>/builder/", TemplateBuilderView.as_view()),
+    path("<int:exam_id>/template-editor/", TemplateEditorView.as_view()),
+    path("<int:exam_id>/template-status/", TemplateStatusView.as_view()),
+    path("<int:exam_id>/template-validation/", TemplateValidationView.as_view()),
+
+    # =========================
+    # Regular exam creation
+    # =========================
+    path("<int:exam_id>/spawn-regular/", RegularExamFromTemplateView.as_view()),
+
+    # =========================
+    # Assets / OMR
+    # =========================
+    path("<int:exam_id>/assets/", ExamAssetView.as_view()),
+    path("<int:exam_id>/generate-omr/", GenerateOMRSheetAssetView.as_view()),
+
+    # =========================
+    # Questions
+    # =========================
+    path("<int:exam_id>/questions/", ExamQuestionsByExamView.as_view()),
+    path("sheets/<int:sheet_id>/auto-questions/", SheetAutoQuestionsView.as_view()),
+
+    # =========================
+    # Enrollment
+    # =========================
+    path("<int:exam_id>/enrollments/", ExamEnrollmentManageView.as_view()),
+
+    # =========================
+    # Student
+    # =========================
+    path("me/available/", StudentAvailableExamListView.as_view()),
+]
+
+
+==========================================================================================
+# FILE: dto/omr_blueprint.py
+==========================================================================================
+# apps/domains/exams/dto/omr_blueprint.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal, List, Dict, Any, Optional
+
+
+Axis = Literal["x", "y"]
+Choice = Literal["A", "B", "C", "D", "E"]
+
+
+@dataclass(frozen=True)
+class Point:
+    x: float
+    y: float
+
+
+@dataclass(frozen=True)
+class ROI:
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+@dataclass(frozen=True)
+class Bubble:
+    choice: Choice
+    center: Point
+    radius: float
+
+
+@dataclass(frozen=True)
+class QuestionBlueprint:
+    question_number: int
+    axis: Axis
+    roi: ROI
+    choices: List[Bubble]
+
+
+@dataclass(frozen=True)
+class IdentifierDigitBlueprint:
+    digit: int
+    bubbles: List[Dict[str, Any]]  # 계약은 assets/meta 쪽이 이미 있으니 느슨하게
+
+
+@dataclass(frozen=True)
+class OMRBlueprint:
+    version: Literal["objective_v1"]
+    units: Literal["mm"]
+    question_count: int
+    page: Dict[str, Any]
+    identifier: Optional[Dict[str, Any]]
+    questions: List[QuestionBlueprint]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "version": self.version,
+            "units": self.units,
+            "question_count": self.question_count,
+            "page": self.page,
+            "identifier": self.identifier,
+            "questions": [
+                {
+                    "question_number": q.question_number,
+                    "axis": q.axis,
+                    "roi": {"x": q.roi.x, "y": q.roi.y, "w": q.roi.w, "h": q.roi.h},
+                    "choices": [
+                        {
+                            "choice": b.choice,
+                            "center": {"x": b.center.x, "y": b.center.y},
+                            "radius": b.radius,
+                        }
+                        for b in q.choices
+                    ],
+                }
+                for q in self.questions
+            ],
+        }
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-15 06:03
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("enrollment", "0001_initial"),
+        ("lectures", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="Exam",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("title", models.CharField(max_length=255)),
+                ("description", models.TextField(blank=True)),
+                ("subject", models.CharField(max_length=100)),
+                (
+                    "exam_type",
+                    models.CharField(
+                        choices=[("template", "Template"), ("regular", "Regular")],
+                        default="regular",
+                        max_length=50,
+                    ),
+                ),
+                ("is_active", models.BooleanField(default=True)),
+                ("allow_retake", models.BooleanField(default=False)),
+                ("max_attempts", models.PositiveIntegerField(default=1)),
+                ("pass_score", models.FloatField(default=0.0)),
+                ("open_at", models.DateTimeField(blank=True, null=True)),
+                ("close_at", models.DateTimeField(blank=True, null=True)),
+                (
+                    "sessions",
+                    models.ManyToManyField(
+                        blank=True,
+                        help_text="이 시험이 속한 차시들",
+                        related_name="exams",
+                        to="lectures.session",
+                    ),
+                ),
+                (
+                    "template_exam",
+                    models.ForeignKey(
+                        blank=True,
+                        help_text="regular 시험이 참조하는 template 시험",
+                        null=True,
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="derived_exams",
+                        to="exams.exam",
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "exams_exam",
+                "ordering": ["-created_at"],
+            },
+        ),
+        migrations.CreateModel(
+            name="AnswerKey",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                (
+                    "answers",
+                    models.JSONField(
+                        help_text="key=ExamQuestion.id (string), value=correct answer"
+                    ),
+                ),
+                (
+                    "exam",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="answer_key",
+                        to="exams.exam",
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "exams_answer_key",
+            },
+        ),
+        migrations.CreateModel(
+            name="ExamAsset",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                (
+                    "asset_type",
+                    models.CharField(
+                        choices=[
+                            ("problem_pdf", "Problem PDF"),
+                            ("omr_sheet", "OMR Sheet"),
+                        ],
+                        max_length=30,
+                    ),
+                ),
+                ("file_key", models.CharField(max_length=512)),
+                ("file_type", models.CharField(blank=True, max_length=50, null=True)),
+                ("file_size", models.PositiveIntegerField(blank=True, null=True)),
+                (
+                    "exam",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="assets",
+                        to="exams.exam",
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "exams_exam_asset",
+            },
+        ),
+        migrations.CreateModel(
+            name="ExamEnrollment",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "enrollment",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="exam_enrollments",
+                        to="enrollment.enrollment",
+                    ),
+                ),
+                (
+                    "exam",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="exam_enrollments",
+                        to="exams.exam",
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "exams_exam_enrollment",
+            },
+        ),
+        migrations.CreateModel(
+            name="Sheet",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("name", models.CharField(default="MAIN", max_length=50)),
+                ("total_questions", models.PositiveIntegerField(default=0)),
+                (
+                    "file",
+                    models.FileField(blank=True, null=True, upload_to="exams/sheets/"),
+                ),
+                (
+                    "exam",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="sheet",
+                        to="exams.exam",
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "exams_sheet",
+            },
+        ),
+        migrations.CreateModel(
+            name="ExamQuestion",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("number", models.PositiveIntegerField()),
+                ("score", models.FloatField(default=1.0)),
+                (
+                    "image",
+                    models.ImageField(
+                        blank=True, null=True, upload_to="exams/questions/"
+                    ),
+                ),
+                ("region_meta", models.JSONField(blank=True, null=True)),
+                (
+                    "sheet",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="questions",
+                        to="exams.sheet",
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "exams_question",
+                "ordering": ["number"],
+            },
+        ),
+        migrations.AddConstraint(
+            model_name="exam",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(("exam_type", "template"), _negated=True),
+                    ("template_exam__isnull", True),
+                    _connector="OR",
+                ),
+                name="exams_exam_template_has_no_template_exam",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="exam",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(("exam_type", "regular"), _negated=True),
+                    ("template_exam__isnull", False),
+                    _connector="OR",
+                ),
+                name="exams_exam_regular_requires_template_exam",
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="examasset",
+            index=models.Index(
+                fields=["exam", "asset_type"], name="exams_exam__exam_id_1b856d_idx"
+            ),
+        ),
+        migrations.AlterUniqueTogether(
+            name="examasset",
+            unique_together={("exam", "asset_type")},
+        ),
+        migrations.AlterUniqueTogether(
+            name="examenrollment",
+            unique_together={("exam", "enrollment")},
+        ),
+        migrations.AlterUniqueTogether(
+            name="examquestion",
+            unique_together={("sheet", "number")},
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: models/__init__.py
+==========================================================================================
+# apps/domains/exams/models/__init__.py
+from .exam import Exam
+from .sheet import Sheet
+from .question import ExamQuestion
+from .answer_key import AnswerKey
+from .exam_asset import ExamAsset
+from .exam_enrollment import ExamEnrollment
+
+__all__ = [
+    "Exam",
+    "Sheet",
+    "ExamQuestion",
+    "AnswerKey",
+    "ExamAsset",
+    "ExamEnrollment",
+]
+
+
+==========================================================================================
+# FILE: models/answer_key.py
+==========================================================================================
+# PATH: apps/domains/exams/models/answer_key.py
+from __future__ import annotations
+
+from django.db import models
+from apps.api.common.models import BaseModel
+from .exam import Exam
+
+
+class AnswerKey(BaseModel):
+    """
+    AnswerKey
+
+    ✅ 단일 진실:
+    - template exam에만 존재
+    - regular exam에서는 template_exam을 통해 resolve
+    """
+
+    exam = models.OneToOneField(
+        Exam,
+        on_delete=models.CASCADE,
+        related_name="answer_key",
+    )
+
+    answers = models.JSONField(
+        help_text="key=ExamQuestion.id (string), value=correct answer"
+    )
+
+    class Meta:
+        db_table = "exams_answer_key"
+
+    def __str__(self) -> str:
+        return f"AnswerKey for template exam {self.exam_id}"
+
+
+==========================================================================================
+# FILE: models/exam.py
+==========================================================================================
+# PATH: apps/domains/exams/models/exam.py
+from __future__ import annotations
+
+from django.db import models
+from django.db.models import Q
+from apps.api.common.models import BaseModel
+from apps.domains.lectures.models import Session
+
+
+class Exam(BaseModel):
+    """
+    Exam
+
+    ✅ 확정 정책
+    - exam_type="template": 양식 전용 (응시/제출/결과/대상자 ❌)
+    - exam_type="regular" : 운영 시험 (반드시 template_exam 기반)
+
+    ✅ 핵심
+    - 시험의 정체성은 exam.id
+    - 같은 시험(regular)을 여러 세션에 붙여 재사용 가능 (N:M)
+    - Sheet/Question/AnswerKey/Asset는 template_exam이 단일 진실
+    """
+
+    class ExamType(models.TextChoices):
+        TEMPLATE = "template", "Template"
+        REGULAR = "regular", "Regular"
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    subject = models.CharField(max_length=100)
+
+    exam_type = models.CharField(
+        max_length=50,
+        choices=ExamType.choices,
+        default=ExamType.REGULAR,
+    )
+    is_active = models.BooleanField(default=True)
+
+    # ===============================
+    # 🔥 Session : Exam = N:M
+    # ===============================
+    sessions = models.ManyToManyField(
+        Session,
+        related_name="exams",
+        blank=True,
+        help_text="이 시험이 속한 차시들",
+    )
+
+    # ===============================
+    # 🔥 Template binding (단일 진실)
+    # ===============================
+    template_exam = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="derived_exams",
+        help_text="regular 시험이 참조하는 template 시험",
+    )
+
+    allow_retake = models.BooleanField(default=False)
+    max_attempts = models.PositiveIntegerField(default=1)
+    pass_score = models.FloatField(default=0.0)
+
+    open_at = models.DateTimeField(null=True, blank=True)
+    close_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "exams_exam"
+        ordering = ["-created_at"]
+        constraints = [
+            # template는 template_exam을 가질 수 없음
+            models.CheckConstraint(
+                name="exams_exam_template_has_no_template_exam",
+                check=~Q(exam_type="template") | Q(template_exam__isnull=True),
+            ),
+            # regular은 template_exam이 반드시 필요
+            models.CheckConstraint(
+                name="exams_exam_regular_requires_template_exam",
+                check=~Q(exam_type="regular") | Q(template_exam__isnull=False),
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.title
+
+    @property
+    def effective_template_exam_id(self) -> int:
+        """
+        ✅ 단일 진실 resolver
+        - template이면 자기 자신
+        - regular이면 template_exam
+        """
+        if self.exam_type == self.ExamType.TEMPLATE:
+            return int(self.id)
+        return int(self.template_exam_id)
+
+    def assert_template(self):
+        if self.exam_type != self.ExamType.TEMPLATE:
+            raise ValueError("This operation is allowed only for template exams.")
+
+    def assert_regular(self):
+        if self.exam_type != self.ExamType.REGULAR:
+            raise ValueError("This operation is allowed only for regular exams.")
+
+
+==========================================================================================
+# FILE: models/exam_asset.py
+==========================================================================================
+# apps/domains/exams/models/exam_asset.py
+from __future__ import annotations
+
+from django.db import models
+from apps.api.common.models import BaseModel
+
+
+class ExamAsset(BaseModel):
+    """
+    시험 배포용 파일 자산 (R2 기반)
+
+    ✅ 책임:
+    - 문제 PDF / OMR 답안지 등 "다운로드 가능한 파일"만 관리
+    - 업로드/다운로드 URL은 serializer에서 presigned GET으로 제공
+
+    ⚠️ 운영 규칙:
+    - exam + asset_type는 1개만 유지(update_or_create)
+      → teacher가 최신 파일로 교체해도 식별은 동일
+    """
+
+    class AssetType(models.TextChoices):
+        PROBLEM_PDF = "problem_pdf", "Problem PDF"
+        OMR_SHEET = "omr_sheet", "OMR Sheet"
+
+    exam = models.ForeignKey(
+        "exams.Exam",
+        on_delete=models.CASCADE,
+        related_name="assets",
+    )
+
+    asset_type = models.CharField(
+        max_length=30,
+        choices=AssetType.choices,
+    )
+
+    # ✅ R2
+    file_key = models.CharField(max_length=512)
+    file_type = models.CharField(max_length=50, null=True, blank=True)
+    file_size = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = "exams_exam_asset"
+        unique_together = ("exam", "asset_type")
+        indexes = [
+            models.Index(fields=["exam", "asset_type"]),
+        ]
+
+    def __str__(self):
+        return f"{self.exam_id}:{self.asset_type}"
+
+
+==========================================================================================
+# FILE: models/exam_enrollment.py
+==========================================================================================
+# PATH: apps/domains/exams/models/exam_enrollment.py
+
+from __future__ import annotations
+
+from django.db import models
+
+
+class ExamEnrollment(models.Model):
+    """
+    ExamEnrollment
+    - 시험(Exam) 응시 대상자 엔티티
+    - 세션 등록(SessionEnrollment)의 부분집합만 가능
+    - "시험마다 응시생이 달라질 수 있음"을 지원하기 위한 구조
+
+    ✅ 단일 진실:
+    - 수강생/세션 등록: SessionEnrollment
+    - 시험 응시 대상자: ExamEnrollment
+    """
+
+    exam = models.ForeignKey(
+        "exams.Exam",
+        on_delete=models.CASCADE,
+        related_name="exam_enrollments",
+    )
+
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        related_name="exam_enrollments",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "exams_exam_enrollment"
+        unique_together = [("exam", "enrollment")]
+
+    def __str__(self) -> str:
+        return f"ExamEnrollment(exam={self.exam_id}, enrollment={self.enrollment_id})"
+
+
+==========================================================================================
+# FILE: models/question.py
+==========================================================================================
+# apps/domains/exams/models/question.py
+from django.db import models
+from apps.api.common.models import BaseModel
+from .sheet import Sheet
+
+
+class ExamQuestion(BaseModel):
+    """
+    시험 문항 정의
+
+    설계 원칙:
+    - 문항의 '의미'는 number로만 식별
+    - 채점/정답 여부/점수 계산 ❌ (results 도메인 책임)
+    - 이 모델은 "시험지 위의 문항 위치 + 점수 단위"만 관리
+
+    region_meta:
+    - OMR / Vision Worker가 제공한 문항 영역 정보
+    - 예: {"x": 12, "y": 34, "w": 120, "h": 45}
+    - 재채점 / 오답노트 / 문항 하이라이트에 필수
+    """
+
+    sheet = models.ForeignKey(
+        Sheet,
+        on_delete=models.CASCADE,
+        related_name="questions",
+    )
+
+    number = models.PositiveIntegerField()  # 1번, 2번 ...
+    score = models.FloatField(default=1.0)
+
+    # 문항 이미지 (AI로 잘라낸 결과 포함 가능)
+    image = models.ImageField(
+        upload_to="exams/questions/",
+        null=True,
+        blank=True,
+    )
+
+    # 🔥 STEP 2 필수: 문항 영역 메타 (bbox)
+    # worker segmentation 결과를 그대로 저장
+    # 형식 예: {"x": 10, "y": 20, "w": 100, "h": 40}
+    region_meta = models.JSONField(
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = "exams_question"
+        unique_together = ("sheet", "number")
+        ordering = ["number"]
+
+    def __str__(self):
+        return f"{self.sheet} Q{self.number}"
+
+
+==========================================================================================
+# FILE: models/sheet.py
+==========================================================================================
+# PATH: apps/domains/exams/models/sheet.py
+from __future__ import annotations
+
+from django.db import models
+from apps.api.common.models import BaseModel
+from .exam import Exam
+
+
+class Sheet(BaseModel):
+    """
+    Sheet
+
+    ✅ 확정 정책
+    - Sheet는 template exam에만 귀속된다 (단일 진실)
+    - 1 Exam : 1 Sheet (OneToOne)
+    - regular exam은 sheet를 직접 가지지 않는다 (template을 통해 resolve)
+    """
+
+    exam = models.OneToOneField(
+        Exam,
+        on_delete=models.CASCADE,
+        related_name="sheet",
+    )
+
+    name = models.CharField(max_length=50, default="MAIN")
+
+    total_questions = models.PositiveIntegerField(default=0)
+
+    file = models.FileField(
+        upload_to="exams/sheets/",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = "exams_sheet"
+
+    def __str__(self) -> str:
+        return f"{self.exam.title} - {self.name}"
+
+
+==========================================================================================
+# FILE: serializers/__init__.py
+==========================================================================================
+# apps/domains/exams/serializers/__init__.py
+# intentionally empty (avoid side-effect imports)
+
+
+==========================================================================================
+# FILE: serializers/answer_key.py
+==========================================================================================
+from rest_framework import serializers
+from apps.domains.exams.models import AnswerKey
+
+class AnswerKeySerializer(serializers.ModelSerializer):
+    def validate_answers(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("answers must be an object")
+
+        normalized = {}
+        for k, v in value.items():
+            normalized[str(k)] = str(v).strip()
+
+        return normalized
+
+    class Meta:
+        model = AnswerKey
+        fields = [
+            "id",
+            "exam",
+            "answers",
+            "created_at",
+            "updated_at",
+        ]
+
+
+==========================================================================================
+# FILE: serializers/exam.py
+==========================================================================================
+# apps/domains/exams/serializers/exam.py
+from rest_framework import serializers
+from apps.domains.exams.models import Exam
+
+
+class ExamSerializer(serializers.ModelSerializer):
+    
+    # 과목 자동으로 입력되게.
+    subject = serializers.CharField(read_only=True)
+
+    """
+    ✅ Exam 조회/수정 serializer
+
+    프론트에서:
+    - allow_retake / max_attempts / pass_score로 재시험 정책 표시/토글
+    - open_at / close_at로 시험 공개/마감 UX 구현
+    """
+
+    class Meta:
+        model = Exam
+        fields = [
+            "id",
+            "title",
+            "description",
+            "subject",
+            "exam_type",
+            "is_active",
+            # ✅ STEP 1/3
+            "allow_retake",
+            "max_attempts",
+            "pass_score",
+            "open_at",
+            "close_at",
+            
+            "created_at",
+            "updated_at",
+        ]
+
+
+==========================================================================================
+# FILE: serializers/exam_asset.py
+==========================================================================================
+# apps/domains/exams/serializers/exam_asset.py
+from __future__ import annotations
+
+from rest_framework import serializers
+
+from apps.domains.exams.models import ExamAsset
+from apps.infrastructure.storage.r2 import generate_presigned_get_url
+
+
+class ExamAssetSerializer(serializers.ModelSerializer):
+    """
+    ✅ ExamAsset 응답 serializer
+
+    download_url:
+    - R2 presigned GET URL
+    - expires_in은 짧게 (보통 1시간) 권장
+    """
+
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ExamAsset
+        fields = [
+            "id",
+            "exam",
+            "asset_type",
+            "file_key",
+            "file_type",
+            "file_size",
+            "download_url",
+            "created_at",
+            "updated_at",
+        ]
+        # 업로드는 View에서 처리하고 DB 필드는 서버가 확정하는 방식(정석)
+        read_only_fields = ["file_key", "file_type", "file_size", "download_url"]
+
+    def get_download_url(self, obj: ExamAsset) -> str:
+        return generate_presigned_get_url(key=obj.file_key, expires_in=60 * 60)
+
+
+==========================================================================================
+# FILE: serializers/exam_create.py
+==========================================================================================
+from rest_framework import serializers
+from apps.domains.exams.models import Exam
+
+
+class ExamCreateSerializer(serializers.ModelSerializer):
+    """
+    생성 전용 serializer (Production Grade)
+
+    정책:
+    - template:
+        - subject 필수
+    - regular:
+        - subject 입력 금지 (template에서 자동 복사)
+    """
+
+    # 🔥 핵심 수정
+    subject = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
+
+    class Meta:
+        model = Exam
+        fields = [
+            "title",
+            "description",
+            "subject",
+            "exam_type",
+        ]
+
+    def validate_exam_type(self, value):
+        if value not in {Exam.ExamType.TEMPLATE, Exam.ExamType.REGULAR}:
+            raise serializers.ValidationError("invalid exam_type")
+        return value
+
+    def validate(self, attrs):
+        exam_type = attrs.get("exam_type")
+        subject = attrs.get("subject")
+
+        # ✅ TEMPLATE
+        if exam_type == Exam.ExamType.TEMPLATE:
+            if not subject:
+                raise serializers.ValidationError(
+                    {"subject": "subject is required for template exam"}
+                )
+
+        # ✅ REGULAR
+        if exam_type == Exam.ExamType.REGULAR:
+            if subject:
+                raise serializers.ValidationError(
+                    {"subject": "regular exam must not set subject"}
+                )
+
+        return attrs
+
+
+==========================================================================================
+# FILE: serializers/exam_enrollment_serializer.py
+==========================================================================================
+# PATH: apps/domains/exams/serializers/exam_enrollment_serializer.py
+
+from __future__ import annotations
+
+from rest_framework import serializers
+
+
+class ExamEnrollmentRowSerializer(serializers.Serializer):
+    """
+    GET 응답 row (UI 편의를 위해 is_selected 포함)
+    """
+    enrollment_id = serializers.IntegerField()
+    student_name = serializers.CharField(allow_blank=True)
+    is_selected = serializers.BooleanField()
+
+
+class ExamEnrollmentUpdateSerializer(serializers.Serializer):
+    """
+    PUT 요청 payload
+    """
+    enrollment_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=True,
+        required=True,
+    )
+
+
+==========================================================================================
+# FILE: serializers/exam_list_student.py
+==========================================================================================
+from rest_framework import serializers
+from apps.domains.exams.models import Exam
+
+
+class StudentExamListSerializer(serializers.ModelSerializer):
+    """
+    학생 노출용 시험 serializer
+    """
+
+    class Meta:
+        model = Exam
+        fields = [
+            "id",
+            "title",
+            "description",
+            "open_at",
+            "close_at",
+        ]
+
+
+==========================================================================================
+# FILE: serializers/exam_update.py
+==========================================================================================
+from rest_framework import serializers
+from apps.domains.exams.models import Exam
+
+
+class ExamUpdateSerializer(serializers.ModelSerializer):
+    """
+    수정 전용 serializer
+
+    핵심 봉인:
+    - exam_type 변경 ❌
+    - template_exam 변경 ❌
+    - subject 변경 ❌
+    """
+
+    class Meta:
+        model = Exam
+        fields = [
+            "title",
+            "description",
+            "is_active",
+            "allow_retake",
+            "max_attempts",
+            "pass_score",
+            "open_at",
+            "close_at",
+        ]
+
+    def validate(self, attrs):
+        exam: Exam = self.instance
+
+        if exam.exam_type == Exam.ExamType.TEMPLATE:
+            # 템플릿은 구조/정책 정의까지만 허용
+            # (의미상 open/close가 있어도, 실제 동작은 regular에서만)
+            return attrs
+
+        return attrs
+
+
+==========================================================================================
+# FILE: serializers/question.py
+==========================================================================================
+from rest_framework import serializers
+from apps.domains.exams.models import ExamQuestion
+
+
+class QuestionSerializer(serializers.ModelSerializer):
+    """
+    🔧 PATCH:
+    - ExamQuestion.region_meta(bbox)가 이미 모델/서비스에서 저장되는데
+      serializer에서 누락되면 프론트에서 하이라이트/오답노트 영역표시 불가.
+    """
+
+    class Meta:
+        model = ExamQuestion
+        fields = [
+            "id",
+            "sheet",
+            "number",
+            "score",
+            "image",
+            "region_meta",  # ✅ 추가
+            "created_at",
+            "updated_at",
+        ]
+
+
+==========================================================================================
+# FILE: serializers/question_auto.py
+==========================================================================================
+# apps/domains/exams/serializers/question_auto.py
+from __future__ import annotations
+
+from rest_framework import serializers
+
+
+class QuestionAutoCreateSerializer(serializers.Serializer):
+    """
+    worker segmentation 결과 boxes를 그대로 받는다.
+    boxes: [[x,y,w,h], ...]
+    """
+    boxes = serializers.ListField(
+        child=serializers.ListField(
+            child=serializers.IntegerField(),
+            min_length=4,
+            max_length=4,
+        ),
+        allow_empty=False,
+    )
+
+    def validate_boxes(self, v):
+        # x,y,w,h 모두 0 이상, w/h는 1 이상
+        out = []
+        for row in v:
+            x, y, w, h = row
+            if x < 0 or y < 0 or w <= 0 or h <= 0:
+                raise serializers.ValidationError("Each box must be [x>=0, y>=0, w>0, h>0].")
+            out.append([int(x), int(y), int(w), int(h)])
+        return out
+
+
+==========================================================================================
+# FILE: serializers/sheet.py
+==========================================================================================
+from rest_framework import serializers
+from apps.domains.exams.models import Sheet
+
+class SheetSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Sheet
+        fields = [
+            "id",
+            "exam",
+            "name",
+            "total_questions",
+            "file",
+            "created_at",
+            "updated_at",
+        ]
+
+
+==========================================================================================
+# FILE: serializers/template_builder.py
+==========================================================================================
+# PATH: apps/domains/exams/serializers/template_builder.py
+from rest_framework import serializers
+
+
+class TemplateBuilderResultSerializer(serializers.Serializer):
+    """
+    Template Builder 결과 계약
+
+    프론트 보장:
+    - sheet_id / answer_key_id는 항상 존재
+    """
+    exam_id = serializers.IntegerField()
+    sheet_id = serializers.IntegerField()
+    answer_key_id = serializers.IntegerField()
+    total_questions = serializers.IntegerField()
+
+
+==========================================================================================
+# FILE: serializers/template_editor.py
+==========================================================================================
+# PATH: apps/domains/exams/serializers/template_editor.py
+from __future__ import annotations
+
+from rest_framework import serializers
+
+
+class TemplateEditorSummarySerializer(serializers.Serializer):
+    """
+    템플릿 편집 화면 초기 로딩용 요약 정보
+
+    프론트 보장:
+    - 이 응답만으로 템플릿 편집 화면 구성 가능
+    """
+    exam_id = serializers.IntegerField()
+    title = serializers.CharField()
+    subject = serializers.CharField()
+
+    sheet_id = serializers.IntegerField()
+    total_questions = serializers.IntegerField()
+
+    has_answer_key = serializers.BooleanField()
+    is_locked = serializers.BooleanField()  # derived regular 존재 여부
+
+
+==========================================================================================
+# FILE: services/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: services/omr_blueprint_builder.py
+==========================================================================================
+# apps/domains/exams/services/omr_blueprint_builder.py
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from apps.domains.exams.dto.omr_blueprint import OMRBlueprint, QuestionBlueprint, ROI, Bubble, Point
+
+# ✅ IMPORTANT
+# OMR Objective v1의 "레이아웃/좌표"는 assets 도메인이 SSOT.
+# exams는 "템플릿이 어떤 규격을 쓰는지"만 결정하고,
+# 실제 meta는 assets의 /api/v1/assets/omr/objective/meta/ 에서 가져온다.
+#
+# 따라서 exams 쪽 Blueprint는 "assets meta를 proxy/캐싱해서 제공"하거나,
+# 시험 템플릿에서 "question_count를 확정"하여 프론트/서브미션에서 참조하도록 한다.
+
+
+class OMRBlueprintBuilder:
+    """
+    - exams 템플릿의 question_count 기준으로
+      assets meta(JSON)를 그대로 반환하거나, 필요한 최소 필드만 normalize.
+    """
+
+    def __init__(self, fetch_assets_meta_fn):
+        """
+        fetch_assets_meta_fn(question_count:int) -> dict
+        - 외부 의존을 주입해서 테스트/도메인 분리를 유지
+        """
+        self._fetch = fetch_assets_meta_fn
+
+    def build_from_assets_meta(self, *, question_count: int) -> Dict[str, Any]:
+        meta = self._fetch(int(question_count))
+        if not isinstance(meta, dict) or meta.get("version") != "objective_v1":
+            raise ValueError("Invalid OMR meta from assets")
+        return meta
+
+    def build_strict(self, *, question_count: int) -> OMRBlueprint:
+        """
+        (선택) meta를 DTO로 엄격 변환.
+        지금은 assets meta 계약을 신뢰하는 구조라 strict는 보조용.
+        """
+        meta = self.build_from_assets_meta(question_count=question_count)
+        qs = []
+        for q in meta.get("questions", []) or []:
+            choices = []
+            for c in q.get("choices", []) or []:
+                choices.append(
+                    Bubble(
+                        choice=c["choice"],
+                        center=Point(x=float(c["center"]["x"]), y=float(c["center"]["y"])),
+                        radius=float(c["radius"]),
+                    )
+                )
+            qs.append(
+                QuestionBlueprint(
+                    question_number=int(q["question_number"]),
+                    axis=q["axis"],
+                    roi=ROI(
+                        x=float(q["roi"]["x"]),
+                        y=float(q["roi"]["y"]),
+                        w=float(q["roi"]["w"]),
+                        h=float(q["roi"]["h"]),
+                    ),
+                    choices=choices,
+                )
+            )
+
+        return OMRBlueprint(
+            version="objective_v1",
+            units="mm",
+            question_count=int(meta["question_count"]),
+            page=meta.get("page") or {},
+            identifier=meta.get("identifier"),
+            questions=qs,
+        )
+
+
+==========================================================================================
+# FILE: services/omr_pdf_generator.py
+==========================================================================================
+# PATH: apps/domains/exams/services/omr_pdf_generator.py
+from __future__ import annotations
+
+import io
+from typing import Optional
+
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+
+
+def generate_simple_objective_omr_pdf(*, title: str, question_count: int) -> bytes:
+    """
+    Objective OMR PDF (간단 생성 버전)
+
+    ⚠️ 주의:
+    - 이 버전은 "인쇄 가능한 OMR"을 최소 기능으로 생성한다.
+    - 네 프로젝트의 좌표 SSOT를 assets/meta로 완전히 맞추려면,
+      다음 단계에서 assets meta 기반 렌더링으로 업그레이드하면 된다.
+    """
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+
+    # header
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(20 * mm, h - 20 * mm, f"OMR Answer Sheet")
+    c.setFont("Helvetica", 11)
+    c.drawString(20 * mm, h - 28 * mm, f"Title: {title}")
+    c.drawString(20 * mm, h - 35 * mm, f"Questions: {question_count}")
+
+    # layout
+    # 10/20/30을 2~3열로 분산
+    cols = 2 if question_count <= 20 else 3
+    per_col = (question_count + cols - 1) // cols
+
+    start_x = 20 * mm
+    start_y = h - 50 * mm
+    col_w = 60 * mm
+    row_h = 7 * mm
+
+    bubble_r = 2.2 * mm
+    choices = ["A", "B", "C", "D", "E"]
+    choice_gap = 8 * mm
+
+    c.setFont("Helvetica", 9)
+
+    qn = 1
+    for col in range(cols):
+        x0 = start_x + col * col_w
+        y = start_y
+        for _ in range(per_col):
+            if qn > question_count:
+                break
+
+            # number
+            c.drawString(x0, y, f"{qn:02d}")
+
+            # bubbles
+            bx = x0 + 12 * mm
+            for ch in choices:
+                c.circle(bx, y + 2.2 * mm, bubble_r, stroke=1, fill=0)
+                c.drawString(bx - 1.5 * mm, y - 2.2 * mm, ch)
+                bx += choice_gap
+
+            y -= row_h
+            qn += 1
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+==========================================================================================
+# FILE: services/question_factory.py
+==========================================================================================
+# apps/domains/exams/services/question_factory.py
+from __future__ import annotations
+
+from typing import List, Tuple
+
+from django.db import transaction
+from rest_framework.exceptions import ValidationError
+
+from apps.domains.exams.models import Sheet, ExamQuestion, Exam
+from apps.domains.exams.services.template_resolver import assert_template_editable
+
+BBox = Tuple[int, int, int, int]  # (x, y, w, h)
+
+
+@transaction.atomic
+def create_questions_from_boxes(*, sheet_id: int, boxes: List[BBox]) -> List[ExamQuestion]:
+    """
+    Segmentation 결과(boxes)를 기반으로 ExamQuestion 자동 생성.
+
+    봉인 규칙:
+    - template exam의 sheet에서만 수행 가능
+    - template이 이미 regular에 의해 참조 중이면 구조 변경 금지
+    - idempotent: (sheet, number) update_or_create
+    - boxes 개수 변화 시 기존 문제 삭제/추가 동기화
+    - score는 절대 건드리지 않음
+    - bbox(region_meta) 저장 필수
+    """
+
+    sheet = (
+        Sheet.objects
+        .select_for_update()
+        .select_related("exam")
+        .get(id=int(sheet_id))
+    )
+
+    exam: Exam = sheet.exam
+    if exam.exam_type != Exam.ExamType.TEMPLATE:
+        raise ValidationError({"detail": "Questions can be auto-generated only for template exams."})
+
+    # template이 regular에 의해 사용 중이면 구조 봉인
+    assert_template_editable(exam)
+
+    total = int(len(boxes or []))
+
+    # 1) total_questions 동기화
+    if sheet.total_questions != total:
+        sheet.total_questions = total
+        sheet.save(update_fields=["total_questions", "updated_at"])
+
+    # 2) 기존 문항 정리
+    existing_numbers = set(
+        ExamQuestion.objects.filter(sheet=sheet).values_list("number", flat=True)
+    )
+    new_numbers = set(range(1, total + 1))
+
+    to_delete = existing_numbers - new_numbers
+    if to_delete:
+        ExamQuestion.objects.filter(sheet=sheet, number__in=to_delete).delete()
+
+    # 3) 생성/갱신
+    created: List[ExamQuestion] = []
+    for idx in range(1, total + 1):
+        x, y, w, h = boxes[idx - 1]
+
+        obj, _ = ExamQuestion.objects.update_or_create(
+            sheet=sheet,
+            number=idx,
+            defaults={
+                "region_meta": {"x": int(x), "y": int(y), "w": int(w), "h": int(h)},
+            },
+        )
+        created.append(obj)
+
+    return created
+
+
+==========================================================================================
+# FILE: services/regular_exam_factory.py
+==========================================================================================
+# PATH: apps/domains/exams/services/regular_exam_factory.py
+from __future__ import annotations
+
+from typing import Optional
+
+from django.db import transaction
+from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import ValidationError
+
+from apps.domains.exams.models import Exam
+from apps.domains.exams.services.template_builder_service import TemplateBuilderService
+from apps.domains.exams.services.template_validation_service import TemplateValidationService
+from apps.domains.lectures.models import Session
+
+
+class RegularExamFactory:
+    """
+    ✅ PHASE 2-A
+    템플릿(ExamType.TEMPLATE) 기반으로 실제 시험(regular)을 생성한다.
+
+    원칙:
+    - template은 SSOT, regular은 template_exam만 참조
+    - template이 "regular 생성 가능한 상태"인지 서버에서 검증
+    """
+
+    @transaction.atomic
+    def create_regular_from_template(
+        self,
+        *,
+        template_exam: Exam,
+        session_id: int,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> Exam:
+        if template_exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise ValidationError({"detail": "template exam required"})
+
+        # 1) 최소 구조 보장(시트/정답키 등)
+        TemplateBuilderService.ensure_initialized(template_exam)
+
+        # 2) regular 생성 가능 검증(questions/answerkey 등)
+        valid = TemplateValidationService.validate_for_regular(template_exam)
+        if not valid.get("ok"):
+            raise ValidationError({"detail": f"template not ready: {valid.get('reason')}"})
+
+        session = get_object_or_404(Session, id=int(session_id))
+
+        # 3) regular 생성
+        regular = Exam.objects.create(
+            title=(title or template_exam.title).strip(),
+            description=(description if description is not None else template_exam.description) or "",
+            subject=template_exam.subject,
+            exam_type=Exam.ExamType.REGULAR,
+            template_exam=template_exam,
+            is_active=True,
+        )
+        regular.sessions.add(session)
+
+        return regular
+
+
+==========================================================================================
+# FILE: services/template_builder_service.py
+==========================================================================================
+# PATH: apps/domains/exams/services/template_builder_service.py
+from __future__ import annotations
+
+from typing import Dict, Any
+
+from django.db import transaction
+from rest_framework.exceptions import ValidationError
+
+from apps.domains.exams.models import Exam, Sheet, AnswerKey
+from apps.domains.exams.services.template_resolver import assert_template_editable
+
+
+class TemplateBuilderService:
+    """
+    Template Builder Service (SSOT)
+
+    책임:
+    - 템플릿 시험의 '생성 직후 필수 구조'를 보장
+    - 프론트/운영이 신뢰할 수 있는 최소 상태를 강제
+
+    보장 사항:
+    - template exam은 반드시 Sheet(1:1)를 가진다
+    - AnswerKey는 반드시 존재한다 (빈 answers라도)
+    - total_questions는 항상 Sheet 기준으로 신뢰 가능
+    """
+
+    @staticmethod
+    @transaction.atomic
+    def ensure_initialized(template_exam: Exam) -> Dict[str, Any]:
+        if template_exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise ValidationError({"detail": "template exam required"})
+
+        # 이미 운영 시험에서 사용 중이면 구조 변경 불가
+        assert_template_editable(template_exam)
+
+        # 1️⃣ Sheet 보장 (1:1)
+        sheet, _ = Sheet.objects.get_or_create(
+            exam=template_exam,
+            defaults={
+                "name": "MAIN",
+                "total_questions": 0,
+            },
+        )
+
+        # 2️⃣ AnswerKey 보장 (빈 answers 허용)
+        answer_key, _ = AnswerKey.objects.get_or_create(
+            exam=template_exam,
+            defaults={
+                "answers": {},
+            },
+        )
+
+        return {
+            "exam_id": template_exam.id,
+            "sheet_id": sheet.id,
+            "answer_key_id": answer_key.id,
+            "total_questions": sheet.total_questions,
+        }
+
+
+==========================================================================================
+# FILE: services/template_resolver.py
+==========================================================================================
+# apps/domains/exams/services/template_resolver.py
+from __future__ import annotations
+
+from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import ValidationError
+
+from apps.domains.exams.models import Exam
+
+
+def resolve_template_exam(exam: Exam) -> Exam:
+    """
+    시험 단일진실 resolver
+
+    - template → 자기 자신
+    - regular → template_exam (반드시 존재해야 함)
+    """
+    if exam.exam_type == Exam.ExamType.TEMPLATE:
+        return exam
+
+    # regular은 template_exam이 필수 (DB constraint + 여기서도 방어)
+    if not getattr(exam, "template_exam_id", None):
+        raise ValidationError({"detail": "regular exam must have template_exam"})
+
+    # select_related가 아닐 수 있으므로 안전하게 fetch
+    return get_object_or_404(Exam, id=int(exam.template_exam_id), exam_type=Exam.ExamType.TEMPLATE)
+
+
+def assert_template_editable(template_exam: Exam) -> None:
+    """
+    template exam의 구조(Sheet/Question/AnswerKey/Asset)를 수정할 수 있는지 확인.
+
+    봉인 규칙:
+    - template이 이미 regular에 의해 참조(derived_exams 존재)되면
+      구조 변경은 금지한다. (운영 사고 차단)
+    """
+    if template_exam.exam_type != Exam.ExamType.TEMPLATE:
+        raise ValidationError({"detail": "template exam required"})
+
+    if template_exam.derived_exams.exists():
+        raise ValidationError(
+            {"detail": "This template is already used by regular exams; structural edits are locked."}
+        )
+
+
+==========================================================================================
+# FILE: services/template_validation_service.py
+==========================================================================================
+# PATH: apps/domains/exams/services/template_validation_service.py
+from __future__ import annotations
+
+from typing import Dict, Any
+
+from apps.domains.exams.models import Exam, ExamQuestion, AnswerKey
+
+
+class TemplateValidationService:
+    """
+    Template Validation Service
+
+    책임:
+    - 템플릿이 실제 시험(regular)로 생성 가능한지 판단
+    - 프론트 추측 금지, 서버 단 판단만 신뢰
+    """
+
+    @staticmethod
+    def validate_for_regular(template_exam: Exam) -> Dict[str, Any]:
+        sheet = getattr(template_exam, "sheet", None)
+        if not sheet:
+            return {"ok": False, "reason": "SHEET_MISSING"}
+
+        q_count = (
+            ExamQuestion.objects
+            .filter(sheet=sheet)
+            .count()
+        )
+        if q_count <= 0:
+            return {"ok": False, "reason": "NO_QUESTIONS"}
+
+        if not AnswerKey.objects.filter(exam=template_exam).exists():
+            return {"ok": False, "reason": "ANSWER_KEY_MISSING"}
+
+        return {"ok": True}
+
+
+==========================================================================================
+# FILE: views/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: views/answer_key_view.py
+==========================================================================================
+from __future__ import annotations
+
+from django.shortcuts import get_object_or_404
+
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied, ValidationError
+
+from apps.domains.exams.models import AnswerKey, Exam
+from apps.domains.exams.serializers.answer_key import AnswerKeySerializer
+from apps.domains.exams.services.template_resolver import resolve_template_exam, assert_template_editable
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+
+
+class AnswerKeyViewSet(ModelViewSet):
+    """
+    AnswerKey API (봉인)
+
+    - list/retrieve: 로그인만
+      - ?exam=<id> 로 regular 접근 시 template로 resolve해서 단일진실 조회
+    - create/update/destroy: Teacher/Admin + template only
+    - template이 regular에 의해 사용 중이면 정답 변경 금지(운영 사고 차단)
+    """
+
+    queryset = AnswerKey.objects.select_related("exam")
+    serializer_class = AnswerKeySerializer
+
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsTeacherOrAdmin()]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        exam_id = self.request.query_params.get("exam")
+        if not exam_id:
+            return qs
+
+        try:
+            eid = int(exam_id)
+        except (TypeError, ValueError):
+            raise ValidationError({"exam": "must be integer"})
+
+        exam = get_object_or_404(Exam, id=eid)
+        template = resolve_template_exam(exam)
+        return qs.filter(exam=template)
+
+    def perform_create(self, serializer):
+        exam: Exam = serializer.validated_data["exam"]
+        if exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise PermissionDenied("AnswerKey can be created only for template exams.")
+        assert_template_editable(exam)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        obj: AnswerKey = self.get_object()
+        if obj.exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise PermissionDenied("AnswerKey can be updated only for template exams.")
+        assert_template_editable(obj.exam)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise PermissionDenied("AnswerKey can be deleted only for template exams.")
+        assert_template_editable(instance.exam)
+        return super().perform_destroy(instance)
+
+
+==========================================================================================
+# FILE: views/exam_asset_view.py
+==========================================================================================
+from __future__ import annotations
+
+import mimetypes
+import uuid
+
+from django.shortcuts import get_object_or_404
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.exceptions import ValidationError
+
+from apps.domains.exams.models import Exam, ExamAsset
+from apps.domains.exams.serializers.exam_asset import ExamAssetSerializer
+from apps.domains.exams.services.template_resolver import resolve_template_exam, assert_template_editable
+from apps.core.r2_paths import ai_exam_asset_key
+from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
+from apps.domains.results.permissions import IsTeacherOrAdmin
+
+
+class ExamAssetView(APIView):
+    """
+    ExamAsset API (봉인)
+
+    - GET: 로그인만, regular → template resolve
+    - POST: Teacher/Admin + template only
+    - template이 regular에 의해 사용 중이면 자산 교체 금지(운영 사고 차단)
+    """
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsTeacherOrAdmin()]
+
+    def get(self, request, exam_id: int):
+        exam = get_object_or_404(Exam, id=int(exam_id))
+        template = resolve_template_exam(exam)
+
+        qs = ExamAsset.objects.filter(exam=template).order_by("asset_type")
+        return Response(ExamAssetSerializer(qs, many=True).data)
+
+    def post(self, request, exam_id: int):
+        exam = get_object_or_404(Exam, id=int(exam_id))
+        if exam.exam_type != Exam.ExamType.TEMPLATE:
+            return Response({"detail": "Assets can be uploaded only to template exams."}, status=403)
+
+        # template이 사용 중이면 구조 봉인 (asset 포함)
+        assert_template_editable(exam)
+
+        asset_type = request.data.get("asset_type")
+        upload_file = request.FILES.get("file")
+        if not asset_type or not upload_file:
+            return Response({"detail": "asset_type and file are required"}, status=400)
+
+        valid = {t for t, _ in ExamAsset.AssetType.choices}
+        if asset_type not in valid:
+            raise ValidationError({"asset_type": f"must be one of {sorted(valid)}"})
+
+        tenant_id = getattr(request, "tenant", None) and request.tenant.id
+        if not tenant_id:
+            return Response({"detail": "tenant required for upload"}, status=status.HTTP_400_BAD_REQUEST)
+        name = upload_file.name or ""
+        ext = name.split(".")[-1] if "." in name else "bin"
+        key = ai_exam_asset_key(
+            tenant_id=tenant_id,
+            exam_id=exam.id,
+            asset_type=asset_type,
+            unique_id=uuid.uuid4().hex,
+            ext=ext,
+        )
+
+        upload_fileobj_to_r2(
+            fileobj=upload_file,
+            key=key,
+            content_type=upload_file.content_type,
+        )
+
+        obj, _ = ExamAsset.objects.update_or_create(
+            exam=exam,
+            asset_type=asset_type,
+            defaults={
+                "file_key": key,
+                "file_type": upload_file.content_type or mimetypes.guess_type(upload_file.name)[0],
+                "file_size": upload_file.size,
+            },
+        )
+
+        return Response(ExamAssetSerializer(obj).data, status=status.HTTP_201_CREATED)
+
+
+==========================================================================================
+# FILE: views/exam_enrollment_view.py
+==========================================================================================
+# PATH: apps/domains/exams/views/exam_enrollment_view.py
+
+from __future__ import annotations
+
+from typing import List, Set
+
+from django.db import transaction
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+
+from apps.domains.exams.models import ExamEnrollment
+from apps.domains.exams.models.exam import Exam
+
+from apps.domains.enrollment.models import SessionEnrollment
+
+from apps.domains.exams.serializers.exam_enrollment_serializer import (
+    ExamEnrollmentRowSerializer,
+    ExamEnrollmentUpdateSerializer,
+)
+
+
+class ExamEnrollmentManageView(APIView):
+    """
+    Exam Enrollment Manage API
+
+    ✅ 요구사항:
+    - 세션(SessionEnrollment) 학생 중에서 선택하여
+      시험(Exam)에 응시 대상자로 등록/제거 가능
+
+    Endpoint:
+    - GET /api/v1/exams/{exam_id}/enrollments/?session_id=123
+    - PUT /api/v1/exams/{exam_id}/enrollments/?session_id=123
+
+    규칙:
+    - session_id는 반드시 필요 (M:N 구조이므로)
+    - 해당 session_id는 exam.sessions에 포함된 session만 허용
+    - enrollment_ids는 반드시 "해당 세션 등록 학생"의 enrollment_id만 허용
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_session_id_or_400(self, request, exam: Exam) -> int:
+        """
+        ✅ M:N 구조 대응:
+        - session_id는 query param으로 받는다.
+        - 해당 session이 exam.sessions에 포함되지 않으면 400.
+        """
+        raw = request.query_params.get("session_id") or request.data.get("session_id")
+        if not raw:
+            raise ValueError("session_id is required")
+
+        try:
+            session_id = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError("session_id must be integer")
+
+        # ✅ exam.sessions에 포함된 세션인지 검증
+        if hasattr(exam, "sessions"):
+            ok = exam.sessions.filter(id=session_id).exists()
+            if not ok:
+                raise ValueError("This exam is not linked to the given session_id")
+        # (legacy) 단일 session 필드가 있는 경우만 fallback
+        elif hasattr(exam, "session_id"):
+            if int(getattr(exam, "session_id", 0) or 0) != session_id:
+                raise ValueError("This exam is not linked to the given session_id")
+
+        return session_id
+
+    def get(self, request, exam_id: int):
+        exam = get_object_or_404(Exam, pk=exam_id)
+
+        try:
+            session_id = self._get_session_id_or_400(request, exam)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1) 세션 등록 학생 목록
+        session_enrollments = (
+            SessionEnrollment.objects
+            .filter(session_id=session_id)
+            .select_related("enrollment")
+            .order_by("id")
+        )
+
+        # 2) 현재 시험에 선택된 enrollment_id set
+        selected_ids: Set[int] = set(
+            ExamEnrollment.objects
+            .filter(exam_id=exam_id)
+            .values_list("enrollment_id", flat=True)
+        )
+
+        # 3) UI row 구성
+        items: List[dict] = []
+        for se in session_enrollments:
+            enrollment = getattr(se, "enrollment", None)
+            student_name = ""
+
+            if enrollment is not None:
+                student = getattr(enrollment, "student", None)
+                if student is not None:
+                    student_name = str(getattr(student, "name", "") or "")
+                else:
+                    student_name = str(getattr(enrollment, "student_name", "") or "")
+
+            items.append(
+                {
+                    "enrollment_id": int(se.enrollment_id),
+                    "student_name": student_name,
+                    "is_selected": int(se.enrollment_id) in selected_ids,
+                }
+            )
+
+        return Response(
+            {
+                "exam_id": exam_id,
+                "session_id": int(session_id),
+                "items": ExamEnrollmentRowSerializer(items, many=True).data,
+            }
+        )
+
+    @transaction.atomic
+    def put(self, request, exam_id: int):
+        exam = get_object_or_404(Exam, pk=exam_id)
+
+        try:
+            session_id = self._get_session_id_or_400(request, exam)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        ser = ExamEnrollmentUpdateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        incoming_ids = set(map(int, ser.validated_data["enrollment_ids"]))
+
+        # ✅ 세션 등록 학생에 포함되는 enrollment_id만 허용
+        valid_ids = set(
+            SessionEnrollment.objects
+            .filter(session_id=session_id)
+            .values_list("enrollment_id", flat=True)
+        )
+
+        invalid = list(incoming_ids - valid_ids)
+        if invalid:
+            return Response(
+                {
+                    "detail": "세션 등록 학생이 아닌 enrollment_id가 포함되어 있습니다.",
+                    "invalid_enrollment_ids": invalid,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ✅ 완전 치환 방식
+        ExamEnrollment.objects.filter(exam_id=exam_id).delete()
+
+        bulk = [
+            ExamEnrollment(exam_id=exam_id, enrollment_id=eid)
+            for eid in sorted(incoming_ids)
+        ]
+        if bulk:
+            ExamEnrollment.objects.bulk_create(bulk, ignore_conflicts=True)
+
+        return Response(
+            {
+                "exam_id": exam_id,
+                "session_id": int(session_id),
+                "selected_count": len(incoming_ids),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+==========================================================================================
+# FILE: views/exam_questions_by_exam_view.py
+==========================================================================================
+from __future__ import annotations
+
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from apps.domains.exams.models import ExamQuestion, Exam
+from apps.domains.exams.serializers.question import QuestionSerializer
+from apps.domains.exams.services.template_resolver import resolve_template_exam
+
+
+class ExamQuestionsByExamView(APIView):
+    """
+    시험 기준 문항 조회
+    - template → self
+    - regular → template_exam
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, exam_id: int):
+        exam = Exam.objects.get(id=exam_id)
+        template = resolve_template_exam(exam)
+
+        qs = (
+            ExamQuestion.objects
+            .filter(sheet__exam=template)
+            .select_related("sheet")
+            .order_by("number")
+        )
+
+        return Response(QuestionSerializer(qs, many=True).data)
+
+
+==========================================================================================
+# FILE: views/exam_view.py
+==========================================================================================
+from __future__ import annotations
+
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.response import Response
+
+from apps.domains.exams.models import Exam
+from apps.domains.exams.serializers.exam import ExamSerializer
+from apps.domains.exams.serializers.exam_create import ExamCreateSerializer
+from apps.domains.exams.serializers.exam_update import ExamUpdateSerializer
+from apps.domains.lectures.models import Session
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+
+
+class ExamViewSet(ModelViewSet):
+    """
+    Exam 생성/조회/수정/삭제 API (봉인)
+
+    봉인 규칙:
+    - create/update/delete는 Teacher/Admin만
+    - template: subject 필수, session_id/template_exam_id 입력 금지
+    - regular: template_exam_id + session_id 필수, subject는 template 기반으로 봉인
+    - update/patch에서 exam_type/subject/template_exam 변경 시도는 즉시 400
+    - template 삭제: derived regular 존재 시 금지
+    """
+
+    queryset = Exam.objects.all()
+    permission_classes = [IsAuthenticated]
+
+    # ================================
+    # Serializer 선택
+    # ================================
+    def get_serializer_class(self):
+        if self.action == "create":
+            return ExamCreateSerializer
+        if self.action in {"update", "partial_update"}:
+            return ExamUpdateSerializer
+        return ExamSerializer
+
+    # ================================
+    # Permissions
+    # ================================
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsTeacherOrAdmin()]
+
+    # ================================
+    # 🔥 핵심 FIX: create 응답을 read serializer로
+    # ================================
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        self.perform_create(serializer)
+        instance = serializer.instance
+
+        # ✅ 응답은 반드시 read serializer
+        read_serializer = ExamSerializer(instance)
+        headers = self.get_success_headers(read_serializer.data)
+
+        return Response(
+            read_serializer.data,
+            status=201,
+            headers=headers,
+        )
+
+    # ================================
+    # Immutable 필드 방어
+    # ================================
+    def _reject_immutable_fields_on_update(self, request):
+        forbidden = {"exam_type", "subject", "template_exam", "template_exam_id"}
+        incoming = set(request.data.keys())
+        bad = sorted(list(incoming & forbidden))
+        if bad:
+            raise ValidationError(
+                {"detail": f"Immutable fields in update are forbidden: {bad}"}
+            )
+
+    # ================================
+    # CREATE 로직
+    # ================================
+    def perform_create(self, serializer):
+        exam_type = serializer.validated_data.get("exam_type")
+
+        # =========================
+        # TEMPLATE CREATE
+        # =========================
+        if exam_type == Exam.ExamType.TEMPLATE:
+            if self.request.data.get("session_id"):
+                raise ValidationError(
+                    {"session_id": "template exam must not receive session_id"}
+                )
+            if self.request.data.get("template_exam_id"):
+                raise ValidationError(
+                    {"template_exam_id": "template exam must not receive template_exam_id"}
+                )
+
+            serializer.save(
+                exam_type=Exam.ExamType.TEMPLATE,
+                template_exam=None,
+            )
+            return
+
+        # =========================
+        # REGULAR CREATE
+        # =========================
+        template_exam_id = self.request.data.get("template_exam_id")
+        if not template_exam_id:
+            raise ValidationError({"template_exam_id": "required"})
+
+        try:
+            template_exam_id = int(template_exam_id)
+        except (TypeError, ValueError):
+            raise ValidationError({"template_exam_id": "must be integer"})
+
+        try:
+            template_exam = Exam.objects.get(id=template_exam_id)
+        except Exam.DoesNotExist:
+            raise ValidationError({"template_exam_id": "invalid"})
+
+        if template_exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise ValidationError({"template_exam_id": "must be template exam"})
+
+        session_id = self.request.data.get("session_id")
+        if not session_id:
+            raise ValidationError({"session_id": "required"})
+
+        try:
+            session_id = int(session_id)
+        except (TypeError, ValueError):
+            raise ValidationError({"session_id": "must be integer"})
+
+        try:
+            session = Session.objects.get(id=session_id)
+        except Session.DoesNotExist:
+            raise ValidationError({"session_id": "invalid"})
+
+        exam = serializer.save(
+            exam_type=Exam.ExamType.REGULAR,
+            subject=template_exam.subject,
+            template_exam=template_exam,
+        )
+
+        exam.sessions.add(session)
+
+    # ================================
+    # UPDATE 방어
+    # ================================
+    def update(self, request, *args, **kwargs):
+        self._reject_immutable_fields_on_update(request)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._reject_immutable_fields_on_update(request)
+        return super().partial_update(request, *args, **kwargs)
+
+    # ================================
+    # DELETE 봉인
+    # ================================
+    def destroy(self, request, *args, **kwargs):
+        obj: Exam = self.get_object()
+
+        if obj.exam_type == Exam.ExamType.TEMPLATE and obj.derived_exams.exists():
+            raise PermissionDenied(
+                "This template is used by regular exams and cannot be deleted."
+            )
+
+        return super().destroy(request, *args, **kwargs)
+
+    # ================================
+    # Query Filters
+    # ================================
+    def get_queryset(self):
+        qs = super().get_queryset()
+
+        exam_type = self.request.query_params.get("exam_type")
+        if exam_type:
+            qs = qs.filter(exam_type=exam_type)
+
+        session_id = self.request.query_params.get("session_id")
+        if session_id:
+            try:
+                sid = int(session_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"session_id": "must be integer"})
+            qs = qs.filter(sessions__id=sid)
+
+        lecture_id = self.request.query_params.get("lecture_id")
+        if lecture_id:
+            try:
+                lid = int(lecture_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"lecture_id": "must be integer"})
+            qs = qs.filter(sessions__lecture_id=lid)
+
+        return qs.distinct().order_by("-created_at")
+
+
+==========================================================================================
+# FILE: views/omr_generate_view.py
+==========================================================================================
+# PATH: apps/domains/exams/views/omr_generate_view.py
+from __future__ import annotations
+
+import io
+import uuid
+
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
+
+from apps.domains.exams.models import Exam, ExamAsset
+from apps.domains.exams.serializers.exam_asset import ExamAssetSerializer
+from apps.domains.exams.services.template_builder_service import TemplateBuilderService
+from apps.domains.assets.omr.renderer.v245_final import render_to_bytes as render_omr_v245_pdf
+from apps.domains.exams.services.template_resolver import assert_template_editable
+from apps.core.r2_paths import ai_exam_asset_key
+from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
+from apps.domains.results.permissions import IsTeacherOrAdmin
+
+
+class GenerateOMRSheetAssetView(APIView):
+    """
+    ✅ PHASE 2-B
+    POST /api/v1/exams/<template_exam_id>/generate-omr/
+
+    - template exam에 대해서만 생성
+    - derived regular 존재 시(봉인) 생성 금지(운영 사고 방지)
+    - 생성 결과를 ExamAsset(omr_sheet)로 저장
+    """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def post(self, request, exam_id: int):
+        template_exam = get_object_or_404(Exam, id=int(exam_id), exam_type=Exam.ExamType.TEMPLATE)
+
+        # 봉인: 이미 regular로 사용 중이면 구조/자산 변경 금지
+        assert_template_editable(template_exam)
+
+        init = TemplateBuilderService.ensure_initialized(template_exam)
+        sheet = getattr(template_exam, "sheet", None)
+        question_count = int(getattr(sheet, "total_questions", 0) or 0)
+
+        # question_count가 0이면 최소한 template_exam의 OMR preset으로 생성하도록 fallback
+        # (원하면 프론트에서 total_questions 먼저 확정시키는 흐름이 정석)
+        if question_count <= 0:
+            question_count = int(request.data.get("question_count") or 20)
+
+        if question_count not in (10, 20, 30, 45):
+            return Response({"detail": "question_count must be 10|20|30|45"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1) PDF 생성 — v245 OMR 시험지 (좌: 로고/시험명/과목/성명/전화/OMR 8자리, 우: 답란 1~15/16~30/31~45)
+        pdf_bytes = render_omr_v245_pdf(question_count=question_count, debug_grid=False)
+        bio = io.BytesIO(pdf_bytes)
+
+        # 2) 업로드 (경로 통일: tenants/{id}/ai/exams/...)
+        tenant_id = getattr(request, "tenant", None) and request.tenant.id
+        if not tenant_id:
+            return Response({"detail": "tenant required for upload"}, status=status.HTTP_400_BAD_REQUEST)
+        key = ai_exam_asset_key(
+            tenant_id=tenant_id,
+            exam_id=template_exam.id,
+            asset_type="omr_sheet",
+            unique_id=uuid.uuid4().hex,
+            ext="pdf",
+        )
+        upload_fileobj_to_r2(
+            fileobj=bio,
+            key=key,
+            content_type="application/pdf",
+        )
+
+        # 3) ExamAsset 저장/갱신(최신 교체)
+        obj, _ = ExamAsset.objects.update_or_create(
+            exam=template_exam,
+            asset_type=ExamAsset.AssetType.OMR_SHEET,
+            defaults={
+                "file_key": key,
+                "file_type": "application/pdf",
+                "file_size": len(pdf_bytes),
+            },
+        )
+
+        return Response(ExamAssetSerializer(obj).data, status=status.HTTP_201_CREATED)
+
+
+==========================================================================================
+# FILE: views/question_auto_view.py
+==========================================================================================
+from __future__ import annotations
+
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
+
+from apps.domains.exams.models import Sheet, Exam
+from apps.domains.exams.serializers.question import QuestionSerializer
+from apps.domains.exams.serializers.question_auto import QuestionAutoCreateSerializer
+from apps.domains.exams.services.question_factory import create_questions_from_boxes
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+
+
+class SheetAutoQuestionsView(APIView):
+    """
+    POST /exams/sheets/<sheet_id>/auto-questions/
+
+    봉인:
+    - Teacher/Admin만 가능
+    - template exam에서만 가능
+    - template이 regular에 의해 사용 중이면 불가(서비스에서 방어)
+    """
+
+    def get_permissions(self):
+        return [IsAuthenticated(), IsTeacherOrAdmin()]
+
+    def post(self, request, sheet_id: int):
+        sheet = get_object_or_404(Sheet.objects.select_related("exam"), id=int(sheet_id))
+        if sheet.exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise PermissionDenied("Auto-question is allowed only for template exams.")
+
+        s = QuestionAutoCreateSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+
+        boxes = [tuple(b) for b in s.validated_data["boxes"]]
+        questions = create_questions_from_boxes(sheet_id=int(sheet_id), boxes=boxes)
+
+        return Response(QuestionSerializer(questions, many=True).data)
+
+
+==========================================================================================
+# FILE: views/question_view.py
+==========================================================================================
+from __future__ import annotations
+
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
+
+from apps.domains.exams.models import ExamQuestion, Exam
+from apps.domains.exams.serializers.question import QuestionSerializer
+from apps.domains.exams.services.template_resolver import assert_template_editable
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+
+
+class QuestionViewSet(ModelViewSet):
+    """
+    ExamQuestion API (봉인)
+
+    - list/retrieve: 로그인만
+    - update/partial_update/destroy: Teacher/Admin + template exam만
+    - template이 regular에 의해 사용 중이면 구조 변경 금지
+    """
+
+    queryset = ExamQuestion.objects.select_related("sheet", "sheet__exam")
+    serializer_class = QuestionSerializer
+
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsTeacherOrAdmin()]
+
+    def _assert_template_editable(self, obj: ExamQuestion):
+        if obj.sheet.exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise PermissionDenied("Questions can be modified only in template exams.")
+        assert_template_editable(obj.sheet.exam)
+
+    def perform_update(self, serializer):
+        obj = self.get_object()
+        self._assert_template_editable(obj)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._assert_template_editable(instance)
+        return super().perform_destroy(instance)
+
+
+==========================================================================================
+# FILE: views/regular_from_template_view.py
+==========================================================================================
+# PATH: apps/domains/exams/views/regular_from_template_view.py
+from __future__ import annotations
+
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
+
+from apps.domains.exams.models import Exam
+from apps.domains.exams.serializers.exam import ExamSerializer
+from apps.domains.exams.services.regular_exam_factory import RegularExamFactory
+from apps.domains.results.permissions import IsTeacherOrAdmin
+
+
+class RegularExamFromTemplateView(APIView):
+    """
+    ✅ PHASE 2-A
+    POST /api/v1/exams/<template_exam_id>/spawn-regular/
+
+    목적:
+    - 기존 ExamViewSet.create(regular)도 그대로 유지
+    - 템플릿 화면에서 "이 템플릿으로 실제 시험 만들기"를 더 단순하게 제공
+    """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def post(self, request, exam_id: int):
+        template_exam = get_object_or_404(Exam, id=int(exam_id), exam_type=Exam.ExamType.TEMPLATE)
+
+        session_id = request.data.get("session_id")
+        title = request.data.get("title")  # optional
+        description = request.data.get("description")  # optional
+
+        if not session_id:
+            return Response({"detail": "session_id required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            session_id = int(session_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "session_id must be integer"}, status=status.HTTP_400_BAD_REQUEST)
+
+        factory = RegularExamFactory()
+        regular = factory.create_regular_from_template(
+            template_exam=template_exam,
+            session_id=session_id,
+            title=str(title).strip() if title else None,
+            description=str(description).strip() if description else None,
+        )
+
+        return Response(ExamSerializer(regular).data, status=status.HTTP_201_CREATED)
+
+
+==========================================================================================
+# FILE: views/sheet_view.py
+==========================================================================================
+from __future__ import annotations
+
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied, ValidationError
+
+from apps.domains.exams.models import Sheet, Exam
+from apps.domains.exams.serializers.sheet import SheetSerializer
+from apps.domains.exams.services.template_resolver import assert_template_editable
+
+from apps.domains.results.permissions import IsTeacherOrAdmin
+
+
+class SheetViewSet(ModelViewSet):
+    queryset = Sheet.objects.select_related("exam")
+    serializer_class = SheetSerializer
+
+    def get_permissions(self):
+        # 조회는 로그인만
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticated()]
+        # 생성/수정/삭제는 Teacher/Admin
+        return [IsAuthenticated(), IsTeacherOrAdmin()]
+
+    def _assert_exam_is_template(self, exam_id: int) -> Exam:
+        try:
+            exam = Exam.objects.get(id=int(exam_id))
+        except Exam.DoesNotExist:
+            raise ValidationError({"exam": "invalid exam id"})
+
+        if exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise PermissionDenied("Sheet can be created/updated only for template exams.")
+
+        # template이 regular에 의해 사용 중이면 구조 봉인
+        assert_template_editable(exam)
+        return exam
+
+    def perform_create(self, serializer):
+        exam_id = self.request.data.get("exam")
+        if not exam_id:
+            raise ValidationError({"exam": "exam is required"})
+        exam = self._assert_exam_is_template(int(exam_id))
+
+        # 1:1 강제
+        if hasattr(exam, "sheet") and getattr(exam, "sheet", None) is not None:
+            raise ValidationError({"exam": "This template exam already has a sheet (1:1)."})
+
+        serializer.save(exam=exam)
+
+    def perform_update(self, serializer):
+        obj: Sheet = self.get_object()
+        if obj.exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise PermissionDenied("Sheet can be updated only for template exams.")
+        assert_template_editable(obj.exam)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.exam.exam_type != Exam.ExamType.TEMPLATE:
+            raise PermissionDenied("Sheet can be deleted only for template exams.")
+        assert_template_editable(instance.exam)
+        return super().perform_destroy(instance)
+
+
+==========================================================================================
+# FILE: views/student_exam_view.py
+==========================================================================================
+from __future__ import annotations
+
+from django.utils import timezone
+from django.db.models import Q
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from apps.domains.exams.models import Exam
+from apps.domains.exams.serializers.exam_list_student import StudentExamListSerializer
+
+
+class StudentAvailableExamListView(APIView):
+    """
+    학생 기준 접근 가능한 시험 목록
+
+    봉인 규칙:
+    - regular exam만 노출
+    - ExamEnrollment에 포함된 시험만 노출
+    - is_active/open_at/close_at 기간 필터 적용
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        now = timezone.now()
+
+        qs = (
+            Exam.objects.filter(
+                exam_type=Exam.ExamType.REGULAR,
+                exam_enrollments__enrollment__user=user,
+                is_active=True,
+            )
+            .filter(
+                Q(open_at__isnull=True) | Q(open_at__lte=now),
+                Q(close_at__isnull=True) | Q(close_at__gte=now),
+            )
+            .distinct()
+            .order_by("open_at", "id")
+        )
+
+        return Response(StudentExamListSerializer(qs, many=True).data)
+
+
+==========================================================================================
+# FILE: views/template_builder_view.py
+==========================================================================================
+# PATH: apps/domains/exams/views/template_builder_view.py
+from __future__ import annotations
+
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from apps.domains.exams.models import Exam
+from apps.domains.exams.services.template_builder_service import TemplateBuilderService
+from apps.domains.results.permissions import IsTeacherOrAdmin
+
+
+class TemplateBuilderView(APIView):
+    """
+    Template Builder API
+
+    POST /api/v1/exams/<exam_id>/builder/
+
+    역할:
+    - 템플릿 시험을 '편집 가능한 최소 완성 상태'로 보강
+    - 프론트에서 템플릿 편집 화면 진입 시 단일 호출
+    """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def post(self, request, exam_id: int):
+        exam = get_object_or_404(Exam, id=int(exam_id))
+
+        result = TemplateBuilderService.ensure_initialized(exam)
+
+        return Response(result, status=200)
+
+
+==========================================================================================
+# FILE: views/template_editor_view.py
+==========================================================================================
+# PATH: apps/domains/exams/views/template_editor_view.py
+from __future__ import annotations
+
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from apps.domains.exams.models import Exam
+from apps.domains.exams.services.template_builder_service import TemplateBuilderService
+from apps.domains.exams.serializers.template_editor import TemplateEditorSummarySerializer
+from apps.domains.results.permissions import IsTeacherOrAdmin
+
+
+class TemplateEditorView(APIView):
+    """
+    Template Editor 초기 진입 API
+
+    GET /api/v1/exams/<exam_id>/template-editor/
+
+    역할:
+    - 템플릿 시험을 편집 화면에 로딩하기 위한 단일 엔드포인트
+    - builder 보장 + 상태 요약 반환
+    """
+
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def get(self, request, exam_id: int):
+        exam = get_object_or_404(Exam, id=int(exam_id))
+
+        # 🔥 편집 진입 시 항상 최소 구조 보장
+        init = TemplateBuilderService.ensure_initialized(exam)
+
+        is_locked = exam.derived_exams.exists()
+
+        payload = {
+            "exam_id": exam.id,
+            "title": exam.title,
+            "subject": exam.subject,
+            "sheet_id": init["sheet_id"],
+            "total_questions": init["total_questions"],
+            "has_answer_key": True,
+            "is_locked": bool(is_locked),
+        }
+
+        return Response(TemplateEditorSummarySerializer(payload).data)
+
+
+==========================================================================================
+# FILE: views/template_status_view.py
+==========================================================================================
+# PATH: apps/domains/exams/views/template_status_view.py
+from __future__ import annotations
+
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from apps.domains.exams.models import Exam, ExamQuestion
+from apps.domains.exams.services.template_resolver import resolve_template_exam
+
+
+class TemplateStatusView(APIView):
+    """
+    Template 상태 점검 API
+
+    GET /api/v1/exams/<exam_id>/template-status/
+
+    목적:
+    - 이 템플릿으로 '실제 시험 생성 가능 여부' 판단
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, exam_id: int):
+        exam = get_object_or_404(Exam, id=int(exam_id))
+        template = resolve_template_exam(exam)
+
+        has_sheet = hasattr(template, "sheet")
+        question_count = (
+            ExamQuestion.objects
+            .filter(sheet__exam=template)
+            .count()
+        )
+
+        ready = bool(has_sheet and question_count > 0)
+
+        return Response(
+            {
+                "template_exam_id": template.id,
+                "has_sheet": has_sheet,
+                "question_count": question_count,
+                "is_ready_for_regular_exam": ready,
+            }
+        )
+
+
+==========================================================================================
+# FILE: views/template_validation_view.py
+==========================================================================================
+# PATH: apps/domains/exams/views/template_validation_view.py
+from __future__ import annotations
+
+from django.shortcuts import get_object_or_404
+
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from apps.domains.exams.models import Exam
+from apps.domains.exams.services.template_resolver import resolve_template_exam
+from apps.domains.exams.services.template_validation_service import TemplateValidationService
+
+
+class TemplateValidationView(APIView):
+    """
+    Template Validation API
+
+    GET /api/v1/exams/<exam_id>/template-validation/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, exam_id: int):
+        exam = get_object_or_404(Exam, id=int(exam_id))
+        template = resolve_template_exam(exam)
+
+        result = TemplateValidationService.validate_for_regular(template)
+
+        return Response(
+            {
+                "template_exam_id": template.id,
+                **result,
+            }
+        )

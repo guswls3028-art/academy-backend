@@ -285,10 +285,11 @@ CSRF_TRUSTED_ORIGINS = [
     "https://*.trycloudflare.com",  # dev only
 ]
 
-# ❌ Tenant header intentionally excluded (Host-only SSOT)
+# 중앙 API(api.hakwonplus.com) 호출 시 SPA가 테넌트 식별용으로 보내는 헤더 허용
 CORS_ALLOW_HEADERS = list(default_headers) + [
     "X-Client-Version",
     "X-Client",
+    "X-Tenant-Code",
 ]
 
 # ==================================================

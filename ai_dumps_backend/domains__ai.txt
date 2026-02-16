@@ -1,0 +1,1513 @@
+====================================================================================================
+# BACKEND APP: domains__ai
+# ROOT PATH: C:\academy\apps\domains\ai
+====================================================================================================
+
+
+==========================================================================================
+# FILE: __init__.py
+==========================================================================================
+# apps/domains/ai/__init__.py
+
+
+==========================================================================================
+# FILE: apps.py
+==========================================================================================
+# apps/domains/ai/apps.py
+from django.apps import AppConfig
+
+
+class AIDomainConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.domains.ai"
+    label = "ai_domain"
+
+
+==========================================================================================
+# FILE: callbacks.py
+==========================================================================================
+# apps/domains/ai/callbacks.py
+from apps.shared.contracts.ai_result import AIResult
+from apps.domains.submissions.services.ai_omr_result_mapper import apply_ai_result
+from apps.domains.results.tasks.grading_tasks import grade_submission_task
+
+
+def handle_ai_result(result: AIResult) -> None:
+    """
+    Worker → API callback entry
+
+    규칙(무퇴화/정규화):
+    - 상태(status) 변경은 Queue/API(SQS Queue)가 SSOT로 처리한다.
+    - callbacks는 "도메인 후속 처리"만 담당한다.
+    - Lite/Basic 실패 없음: 워커가 FAILED를 보내도 job은 이미 View에서 DONE으로 저장됐을 수 있음.
+        이 경우 result.status는 여전히 FAILED이므로, job.tier가 lite/basic이면 DONE으로 간주하고
+        submission 쪽 적용을 진행한다.
+    """
+    from academy.adapters.db.django import repositories_ai as ai_repo
+    job = ai_repo.get_job_model_by_job_id(result.job_id)
+    if not job:
+        return
+
+    raw_payload = result.result if isinstance(result.result, dict) else {}
+
+    # 워커가 FAILED를 보냈을 때: Lite/Basic이면 DONE으로 간주하고 submission 적용
+    if result.status == "FAILED":
+        tier = (job.tier or "basic").lower()
+        if tier in ("lite", "basic"):
+            payload = {
+                "submission_id": raw_payload.get("submission_id"),
+                "status": "DONE",
+                "result": raw_payload,
+                "error": None,
+            }
+            submission_id = apply_ai_result(payload)
+            if submission_id:
+                grade_submission_task(int(submission_id))
+        return
+
+    # DONE: submissions 로 위임 (답안 중간산물 저장)
+    submission_id = apply_ai_result(raw_payload)
+
+    if submission_id:
+        grade_submission_task(int(submission_id))
+
+
+==========================================================================================
+# FILE: gateway.py
+==========================================================================================
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+import logging
+
+from django.db import IntegrityError
+
+from apps.shared.contracts.ai_job import AIJob
+from apps.domains.ai.types import ensure_payload_dict, AIJobType
+from apps.domains.ai.safe import safe_dispatch
+from apps.domains.ai.queueing.publisher import publish_job
+from academy.adapters.db.django import repositories_ai as ai_repo
+from apps.domains.ai.services.tier_resolver import resolve_tier, validate_tier_for_job_type
+from apps.domains.ai.services.pre_validation import validate_input_for_basic
+
+logger = logging.getLogger(__name__)
+
+
+def dispatch_job(
+    *,
+    job_type: AIJobType,
+    payload: Dict[str, Any],
+    tenant_id: Optional[str] = None,
+    source_domain: Optional[str] = None,
+    source_id: Optional[str] = None,
+    tier: Optional[str] = None,  # "lite" | "basic" | "premium"
+    idempotency_key: Optional[str] = None,
+    force_rerun: bool = False,
+    rerun_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    AI 작업 발행
+    
+    Args:
+        job_type: 작업 타입
+        payload: 작업 페이로드
+        tenant_id: Tenant ID
+        source_domain: 소스 도메인
+        source_id: 소스 ID
+        tier: Tier ("lite" | "basic" | "premium"), 기본값: "basic"
+    """
+    payload = ensure_payload_dict(payload)
+    
+    # Tier 결정 (명시적 tier 또는 자동 결정)
+    if not tier:
+        tier = resolve_tier(
+            tenant_id=tenant_id,
+            job_type=job_type,
+            payload=payload,
+        )
+    tier = tier.lower()
+    if tier not in ("lite", "basic", "premium"):
+        tier = "basic"
+    
+    # Tier와 작업 타입 호환성 검증
+    if not validate_tier_for_job_type(tier, job_type):
+        logger.warning(
+            "Tier %s is not compatible with job_type %s, using basic",
+            tier,
+            job_type,
+        )
+        tier = "basic"
+
+    # Pre-Validation (Lite/Basic): 거부 정책 해당 시 job 생성 없이 반환
+    if tier in ("lite", "basic"):
+        ok, error_message, rejection_code = validate_input_for_basic(
+            tier=tier,
+            job_type=job_type,
+            payload=payload,
+        )
+        if not ok:
+            logger.info(
+                "ai_pre_validation_rejected tier=%s job_type=%s rejection_code=%s",
+                tier,
+                job_type,
+                rejection_code or "unknown",
+                extra={"rejection_code": rejection_code, "job_type": job_type, "tenant_id": tenant_id},
+            )
+            return {
+                "ok": False,
+                "job_id": None,
+                "type": job_type,
+                "error": error_message or "Validation failed",
+                "rejection_code": rejection_code,
+            }
+
+    job = AIJob.new(
+        type=job_type,
+        payload=payload,
+        tenant_id=tenant_id,
+        source_domain=source_domain,
+        source_id=source_id,
+    )
+
+    def _do():
+        # Idempotency: 동시 요청 시 500 방지 (IntegrityError → 기존 Job 반환)
+        effective_key = idempotency_key
+        if effective_key and force_rerun:
+            effective_key = f"{effective_key}:rerun:{job.id}"
+
+        if effective_key:
+            try:
+                job_model = ai_repo.job_create(
+                    job_id=job.id,
+                    job_type=job.type,
+                    payload=job.payload,
+                    status="PENDING",
+                    tier=tier,
+                    tenant_id=tenant_id,
+                    source_domain=source_domain,
+                    source_id=source_id,
+                    idempotency_key=effective_key,
+                    force_rerun=force_rerun,
+                    rerun_reason=(rerun_reason or ""),
+                )
+            except IntegrityError:
+                job_model = ai_repo.job_get_by_idempotency_key(effective_key)
+                return {"ok": True, "job_id": str(job_model.job_id), "type": job_model.job_type}
+        else:
+            job_model = ai_repo.job_create(
+                job_id=job.id,
+                job_type=job.type,
+                payload=job.payload,
+                status="PENDING",
+                tier=tier,
+                tenant_id=tenant_id,
+                source_domain=source_domain,
+                source_id=source_id,
+            )
+
+        try:
+            publish_job(job)
+        except Exception as e:
+            ai_repo.job_save_failed(job_model, str(e), str(e))
+            raise
+
+        return {"ok": True, "job_id": job.id, "type": job.type}
+
+    return safe_dispatch(_do, fallback={"ok": False, "job_id": job.id, "type": job.type})
+
+
+==========================================================================================
+# FILE: models.py
+==========================================================================================
+# apps/domains/ai/models.py
+from __future__ import annotations
+
+from django.db import models
+from django.utils import timezone
+
+from apps.core.models.base import BaseModel
+
+
+class AIJobModel(BaseModel):
+    """
+    AI Job Meta (DB is SSOT)
+    - API server owns lifecycle
+    - Worker pulls via internal endpoints
+    """
+
+    job_id = models.CharField(max_length=64, unique=True)
+    job_type = models.CharField(max_length=50)
+
+    status = models.CharField(
+        max_length=32,
+        choices=[
+            ("PENDING", "PENDING"),
+            ("VALIDATING", "VALIDATING"),
+            ("RUNNING", "RUNNING"),
+            ("DONE", "DONE"),
+            ("FAILED", "FAILED"),
+            ("REJECTED_BAD_INPUT", "REJECTED_BAD_INPUT"),
+            ("FALLBACK_TO_GPU", "FALLBACK_TO_GPU"),
+            ("RETRYING", "RETRYING"),
+            ("REVIEW_REQUIRED", "REVIEW_REQUIRED"),
+        ],
+        default="PENDING",
+        db_index=True,
+    )
+
+    payload = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True, default="")
+
+    # ---- routing / trace ----
+    tenant_id = models.CharField(max_length=64, null=True, blank=True)
+    source_domain = models.CharField(max_length=64, null=True, blank=True)
+    source_id = models.CharField(max_length=64, null=True, blank=True)
+    
+    # ---- tier routing ----
+    tier = models.CharField(
+        max_length=20,
+        choices=[
+            ("lite", "Lite"),
+            ("basic", "Basic"),
+            ("premium", "Premium"),
+        ],
+        default="basic",
+        db_index=True,
+        help_text="Tier determines queue routing and processing capabilities",
+    )
+
+    # ---- retry / lease ----
+    attempt_count = models.IntegerField(default=0)
+    max_attempts = models.IntegerField(default=5)
+
+    locked_by = models.CharField(max_length=128, null=True, blank=True)
+    locked_at = models.DateTimeField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+
+    next_run_at = models.DateTimeField(default=timezone.now)
+    last_error = models.TextField(blank=True, default="")
+
+    # ---- idempotency (Phase 0 안정성) ----
+    idempotency_key = models.CharField(
+        max_length=256,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="tenant_id:exam_id:student_id:job_type:file_hash, 중복 요청 방지",
+    )
+    force_rerun = models.BooleanField(default=False)
+    rerun_reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "ai_job"
+        indexes = [
+            models.Index(fields=["status", "next_run_at"], name="ai_job_status_next_run_idx"),
+            models.Index(fields=["lease_expires_at"], name="ai_job_lease_idx"),
+            models.Index(fields=["source_domain", "source_id"], name="ai_job_source_idx"),
+            models.Index(fields=["tier", "status", "next_run_at"], name="ai_job_tier_stat_next_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"AIJobModel<{self.job_id}>({self.job_type})[{self.tier}][{self.status}]"
+
+
+class AIResultModel(BaseModel):
+    """
+    AI Result Fact (write-once, idempotency anchor)
+    - OneToOne to enforce single fact row per job
+    """
+
+    job = models.OneToOneField(
+        AIJobModel,
+        on_delete=models.CASCADE,
+        related_name="result",
+    )
+    payload = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = "ai_result"
+
+    def __str__(self) -> str:
+        return f"AIResultModel(job_id={self.job_id})"
+
+
+class TenantConfigModel(BaseModel):
+    """
+    학원별 AI 설정 (GPU Fallback 등).
+    Phase 0에서 선택 사용, 없으면 기본값.
+    """
+
+    tenant_id = models.CharField(max_length=64, unique=True, db_index=True)
+
+    has_premium_subscription = models.BooleanField(default=False)
+    allow_gpu_fallback = models.BooleanField(default=False)
+    gpu_fallback_threshold = models.FloatField(default=0.5)
+
+    class Meta:
+        db_table = "ai_tenant_config"
+
+    def __str__(self) -> str:
+        return f"TenantConfig(tenant_id={self.tenant_id})"
+
+
+class AIRuntimeConfigModel(BaseModel):
+    """
+    전역 런타임 플래그 (배포 없이 ON/OFF).
+    예: ai_shadow_mode → REVIEW Shadow Mode
+    """
+
+    key = models.CharField(max_length=128, unique=True, db_index=True)
+    value = models.CharField(max_length=512, blank=True)
+
+    class Meta:
+        db_table = "ai_runtime_config"
+
+    def __str__(self) -> str:
+        return f"AIRuntimeConfig({self.key}={self.value})"
+
+
+==========================================================================================
+# FILE: safe.py
+==========================================================================================
+# apps/domains/ai/safe.py
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+
+def safe_dispatch(fn, *, fallback: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+    """
+    AI Job 발행을 안전하게 감싼다.
+    API는 실패해도 깨지면 안 된다. 실패 시 fallback에 error 메시지를 합쳐 반환.
+    """
+    try:
+        return fn(**kwargs)
+    except Exception as e:
+        logger.exception("AI job dispatch failed", exc_info=e)
+        base = dict(fallback) if fallback else {}
+        base["ok"] = False
+        base["error"] = str(e)
+        return base
+
+
+==========================================================================================
+# FILE: types.py
+==========================================================================================
+from __future__ import annotations
+
+from typing import Any, Dict, Literal, Optional, TypedDict
+
+
+AIJobType = Literal[
+    "ocr",
+    "question_segmentation",
+    "handwriting_analysis",
+    "embedding",
+    "problem_generation",
+    "homework_video_analysis",
+    "excel_parsing",
+]
+
+
+class OCRPayload(TypedDict, total=False):
+    image_path: str
+    engine: Optional[Literal["google", "tesseract", "auto"]]
+    academy_id: Optional[int]
+
+
+class SegmentationPayload(TypedDict, total=False):
+    image_path: str
+    engine: Optional[Literal["yolo", "opencv", "template", "auto"]]
+
+
+class HandwritingPayload(TypedDict, total=False):
+    image_path: str
+
+
+class EmbeddingPayload(TypedDict, total=False):
+    texts: list[str]
+    backend: Optional[Literal["local", "openai", "auto"]]
+
+
+class ProblemGenerationPayload(TypedDict, total=False):
+    ocr_text: str
+    model: Optional[str]
+
+
+class HomeworkVideoPayload(TypedDict, total=False):
+    video_path: str
+    frame_stride: Optional[int]
+    min_frame_count: Optional[int]
+
+
+def ensure_payload_dict(payload: Any) -> Dict[str, Any]:
+    if payload is None:
+        return {}
+    if isinstance(payload, dict):
+        return payload
+    raise TypeError("payload must be a dict")
+
+
+==========================================================================================
+# FILE: urls.py
+==========================================================================================
+# PATH: apps/domains/ai/urls.py
+from django.urls import path
+
+from apps.domains.ai.views.job_status_view import JobStatusView
+
+# ==================================================
+# 공개(인증) 엔드포인트: 엑셀 내보내기 등 job 상태 조회
+# ==================================================
+
+urlpatterns = [
+    path("<str:job_id>/", JobStatusView.as_view(), name="job-status"),
+]
+
+
+==========================================================================================
+# FILE: migrations/0001_initial.py
+==========================================================================================
+# Generated by Django 5.2.9 on 2026-02-15 06:03
+
+import django.db.models.deletion
+import django.utils.timezone
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = []
+
+    operations = [
+        migrations.CreateModel(
+            name="AIRuntimeConfigModel",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("key", models.CharField(db_index=True, max_length=128, unique=True)),
+                ("value", models.CharField(blank=True, max_length=512)),
+            ],
+            options={
+                "db_table": "ai_runtime_config",
+            },
+        ),
+        migrations.CreateModel(
+            name="TenantConfigModel",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                (
+                    "tenant_id",
+                    models.CharField(db_index=True, max_length=64, unique=True),
+                ),
+                ("has_premium_subscription", models.BooleanField(default=False)),
+                ("allow_gpu_fallback", models.BooleanField(default=False)),
+                ("gpu_fallback_threshold", models.FloatField(default=0.5)),
+            ],
+            options={
+                "db_table": "ai_tenant_config",
+            },
+        ),
+        migrations.CreateModel(
+            name="AIJobModel",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("job_id", models.CharField(max_length=64, unique=True)),
+                ("job_type", models.CharField(max_length=50)),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("PENDING", "PENDING"),
+                            ("VALIDATING", "VALIDATING"),
+                            ("RUNNING", "RUNNING"),
+                            ("DONE", "DONE"),
+                            ("FAILED", "FAILED"),
+                            ("REJECTED_BAD_INPUT", "REJECTED_BAD_INPUT"),
+                            ("FALLBACK_TO_GPU", "FALLBACK_TO_GPU"),
+                            ("RETRYING", "RETRYING"),
+                            ("REVIEW_REQUIRED", "REVIEW_REQUIRED"),
+                        ],
+                        db_index=True,
+                        default="PENDING",
+                        max_length=32,
+                    ),
+                ),
+                ("payload", models.JSONField(blank=True, default=dict)),
+                ("error_message", models.TextField(blank=True, default="")),
+                ("tenant_id", models.CharField(blank=True, max_length=64, null=True)),
+                (
+                    "source_domain",
+                    models.CharField(blank=True, max_length=64, null=True),
+                ),
+                ("source_id", models.CharField(blank=True, max_length=64, null=True)),
+                (
+                    "tier",
+                    models.CharField(
+                        choices=[
+                            ("lite", "Lite"),
+                            ("basic", "Basic"),
+                            ("premium", "Premium"),
+                        ],
+                        db_index=True,
+                        default="basic",
+                        help_text="Tier determines queue routing and processing capabilities",
+                        max_length=20,
+                    ),
+                ),
+                ("attempt_count", models.IntegerField(default=0)),
+                ("max_attempts", models.IntegerField(default=5)),
+                ("locked_by", models.CharField(blank=True, max_length=128, null=True)),
+                ("locked_at", models.DateTimeField(blank=True, null=True)),
+                ("lease_expires_at", models.DateTimeField(blank=True, null=True)),
+                ("last_heartbeat_at", models.DateTimeField(blank=True, null=True)),
+                (
+                    "next_run_at",
+                    models.DateTimeField(default=django.utils.timezone.now),
+                ),
+                ("last_error", models.TextField(blank=True, default="")),
+                (
+                    "idempotency_key",
+                    models.CharField(
+                        blank=True,
+                        db_index=True,
+                        help_text="tenant_id:exam_id:student_id:job_type:file_hash, 중복 요청 방지",
+                        max_length=256,
+                        null=True,
+                        unique=True,
+                    ),
+                ),
+                ("force_rerun", models.BooleanField(default=False)),
+                ("rerun_reason", models.TextField(blank=True, default="")),
+            ],
+            options={
+                "db_table": "ai_job",
+                "indexes": [
+                    models.Index(
+                        fields=["status", "next_run_at"],
+                        name="ai_job_status_next_run_idx",
+                    ),
+                    models.Index(fields=["lease_expires_at"], name="ai_job_lease_idx"),
+                    models.Index(
+                        fields=["source_domain", "source_id"], name="ai_job_source_idx"
+                    ),
+                    models.Index(
+                        fields=["tier", "status", "next_run_at"],
+                        name="ai_job_tier_stat_next_idx",
+                    ),
+                ],
+            },
+        ),
+        migrations.CreateModel(
+            name="AIResultModel",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("payload", models.JSONField(blank=True, null=True)),
+                (
+                    "job",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="result",
+                        to="ai_domain.aijobmodel",
+                    ),
+                ),
+            ],
+            options={
+                "db_table": "ai_result",
+            },
+        ),
+    ]
+
+
+==========================================================================================
+# FILE: migrations/__init__.py
+==========================================================================================
+
+
+
+==========================================================================================
+# FILE: queueing/__init__.py
+==========================================================================================
+# apps/domains/ai/queueing/__init__.py
+
+
+==========================================================================================
+# FILE: queueing/db_queue.py
+==========================================================================================
+# apps/domains/ai/queueing/db_queue.py
+"""DB Job Queue — ORM 접근은 academy.adapters.db.django.ai_db_queue_impl 로 위임 (Gate 7)."""
+from __future__ import annotations
+
+from academy.adapters.db.django.ai_db_queue_impl import DjangoDBJobQueue, DBQueueConfig
+
+DBJobQueue = DjangoDBJobQueue
+__all__ = ["DBJobQueue", "DBQueueConfig"]
+
+
+==========================================================================================
+# FILE: queueing/interfaces.py
+==========================================================================================
+# apps/domains/ai/queueing/interfaces.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional, Protocol, Dict, Any
+
+
+@dataclass(frozen=True)
+class ClaimedJob:
+    job_id: str
+    job_type: str
+    payload: Dict[str, Any]
+    tenant_id: Optional[str] = None
+    source_domain: Optional[str] = None
+    source_id: Optional[str] = None
+
+    # lease/debug
+    locked_by: Optional[str] = None
+
+
+class JobQueue(Protocol):
+    def publish(self, *, job_id: str) -> None:
+        ...
+
+    def claim(self, *, worker_id: str) -> Optional[ClaimedJob]:
+        ...
+
+    def heartbeat(self, *, job_id: str, worker_id: str) -> None:
+        ...
+
+    def mark_done(self, *, job_id: str) -> None:
+        ...
+
+    def mark_failed(self, *, job_id: str, error: str, retryable: bool = True) -> None:
+        ...
+
+
+==========================================================================================
+# FILE: queueing/publisher.py
+==========================================================================================
+# apps/domains/ai/queueing/publisher.py
+from __future__ import annotations
+
+import logging
+from apps.shared.contracts.ai_job import AIJob
+from apps.domains.ai.models import AIJobModel  # type hint only
+from academy.adapters.db.django import repositories_ai as ai_repo
+
+logger = logging.getLogger(__name__)
+
+
+def publish_ai_job_sqs(job_model: AIJobModel) -> None:
+    """
+    SQS 큐에 AI 작업 발행 (Tier별 라우팅)
+    
+    Args:
+        job_model: AIJobModel 객체 (tier 필드 포함)
+    """
+    from apps.support.ai.services.sqs_queue import AISQSQueue
+    
+    queue = AISQSQueue()
+    queue.enqueue(job_model)
+
+
+# ----------------------------------------------------------------------
+# Backward-compat export (SSOT)
+# gateway.py 등에서 publish_job 이름을 기대하는 경우가 많아 alias로 봉인한다.
+# ----------------------------------------------------------------------
+def publish_job(job: AIJob) -> None:
+    """
+    Public publisher entrypoint (SSOT).
+    SQS 큐만 사용. Tier는 AIJobModel에서 가져옴.
+    """
+    job_model = ai_repo.get_job_model_by_job_id(str(job.id))
+    if job_model:
+        publish_ai_job_sqs(job_model)
+    else:
+        logger.warning("AIJobModel not found for job %s, using basic tier", job.id)
+        job_model = ai_repo.job_create(
+            job_id=job.id,
+            job_type=job.type,
+            payload=job.payload or {},
+            status="PENDING",
+            tier="basic",
+        )
+        publish_ai_job_sqs(job_model)
+
+
+==========================================================================================
+# FILE: services/fallback.py
+==========================================================================================
+"""
+GPU Fallback 로직
+
+정책: Basic processing 실패도 Premium이면 Fallback 시도 (단, 비용 제어 조건 통과 시)
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+# 처리 실패 시 Fallback 대상 에러 코드 (error_code와 비교)
+FALLBACK_ERROR_CODES = frozenset({
+    "library_error",
+    "corrupted_file",
+    "timeout",
+    "low_quality",
+})
+
+
+def _get_tenant_config(tenant_id: Optional[str]) -> Dict[str, Any]:
+    """
+    Tenant별 Fallback 설정 조회.
+    TenantConfigModel 미구현 시 기본값 반환.
+    """
+    if not tenant_id:
+        return {
+            "has_premium_subscription": False,
+            "allow_gpu_fallback": False,
+            "gpu_fallback_threshold": 0.5,
+        }
+    try:
+        from academy.adapters.db.django import repositories_ai as ai_repo
+        config = ai_repo.get_tenant_config(tenant_id)
+        if config:
+            return {
+                "has_premium_subscription": getattr(config, "has_premium_subscription", False),
+                "allow_gpu_fallback": getattr(config, "allow_gpu_fallback", False),
+                "gpu_fallback_threshold": getattr(config, "gpu_fallback_threshold", 0.5),
+            }
+    except Exception as e:
+        logger.debug("TenantConfigModel not available: %s", e)
+    return {
+        "has_premium_subscription": False,
+        "allow_gpu_fallback": False,
+        "gpu_fallback_threshold": 0.5,
+    }
+
+
+def should_fallback_to_gpu(
+    job: Any,
+    error_type: Optional[str] = None,
+    error_code: Optional[str] = None,
+    result: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    GPU Fallback 여부 판단.
+
+    Args:
+        job: AIJob 또는 tenant_id를 가진 객체
+        error_type: "validation_failed" | "processing_failed"
+        error_code: 상세 에러 코드 (library_error, corrupted_file, timeout 등)
+        result: 처리 결과 (confidence 등)
+
+    Returns:
+        Premium이고 비용 제어 조건 통과 시 True
+
+    동작 정책:
+        - error_type == "validation_failed" → 즉시 fallback
+        - error_type == "processing_failed" 인 경우:
+            - result["confidence"] <= threshold → fallback
+            - error_code in FALLBACK_ERROR_CODES → fallback
+        - Premium + allow_gpu_fallback 설정을 반드시 통과해야 fallback 허용
+    """
+    tenant_id = getattr(job, "tenant_id", None)
+    config = _get_tenant_config(tenant_id)
+
+    if not config["has_premium_subscription"]:
+        return False
+    if not config["allow_gpu_fallback"]:
+        return False
+
+    if error_type == "validation_failed":
+        return True
+
+    if error_type == "processing_failed":
+        if result is not None:
+            confidence = result.get("confidence", 1.0)
+            if confidence <= config["gpu_fallback_threshold"]:
+                return True
+        if error_code is not None and error_code in FALLBACK_ERROR_CODES:
+            return True
+
+    return False
+
+
+==========================================================================================
+# FILE: services/job_status_response.py
+==========================================================================================
+# apps/domains/ai/services/job_status_response.py
+# Job 상태 조회 응답 생성 (GET /jobs/<id>/ 및 enrollments/excel_job_status 공통)
+
+from __future__ import annotations
+
+
+def build_job_status_response(job, result_payload=None) -> dict:
+    """
+    AIJobModel 인스턴스로부터 API 응답 dict 생성.
+    - result: result_payload (caller 전달 또는 repository에서 조회)
+    - progress: Redis 진행률 (있으면)
+    """
+    if result_payload is None:
+        from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
+        result_payload = DjangoAIJobRepository().get_result_payload_for_job(job)
+    progress = None
+    try:
+        from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
+        progress = RedisProgressAdapter().get_progress(job.job_id)
+    except Exception:
+        pass
+
+    return {
+        "job_id": job.job_id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "result": result_payload,
+        "error_message": job.error_message or None,
+        "progress": progress,
+    }
+
+
+==========================================================================================
+# FILE: services/pre_validation.py
+==========================================================================================
+"""
+Pre-Validation Layer (설계 2.3 반영)
+
+Lite/Basic에서 "실패 없음"을 위한 거부 정책.
+거부 사유(rejection_code)는 프론트에서 사용자 안내 문구로 노출 가능.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+# 거부 코드 (운영 문장 매핑용, 설계 문서와 일치)
+REJECTION_CODES = {
+    "RESOLUTION_TOO_LOW": "해상도가 낮습니다. 더 선명하게 촬영해 주세요.",
+    "FILE_TOO_LARGE": "파일 크기가 제한을 초과했습니다.",
+    "VIDEO_TOO_LONG": "동영상 길이 제한을 초과했습니다.",
+    "BLUR_OR_SHAKE": "흔들리거나 흐릿합니다. 고정해서 다시 촬영해 주세요.",
+    "TOO_DARK": "너무 어둡습니다. 밝은 곳에서 촬영해 주세요.",
+    "INVALID_FORMAT": "지원하지 않는 파일 형식입니다.",
+    "OMR_PHOTO_NOT_ALLOWED": (
+        "Basic 요금제에서는 스캔된 OMR만 가능합니다. 촬영물은 Premium에서 이용해 주세요."
+    ),
+}
+
+# job_type별 파일 크기 상한 (MB)
+MAX_FILE_SIZE_MB = {
+    "omr_grading": 50,
+    "essay_answer_extraction": 50,
+    "homework_photo_analysis": 20,
+    "homework_video_analysis": 500,
+}
+
+# 동영상 길이 상한 (초)
+MAX_VIDEO_DURATION_SEC = 600
+
+# 해상도 최소 (짧은 변 px)
+MIN_RESOLUTION_SHORT_SIDE = 600
+
+# 허용 이미지 포맷
+ALLOWED_IMAGE_FORMATS = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+ALLOWED_VIDEO_FORMATS = {"video/mp4", "video/quicktime"}
+
+
+def validate_input_for_basic(
+    tier: str,
+    job_type: str,
+    payload: dict,
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Lite/Basic 입력 품질 게이트.
+
+    Returns:
+        (ok, error_message, rejection_code)
+        - ok: True면 통과, False면 거부
+        - error_message: 사용자/로그용 메시지 (REJECTION_CODES 값 또는 커스텀)
+        - rejection_code: 프론트 매핑용 (REJECTION_CODES 키)
+    """
+    tier = (tier or "").lower()
+    job_type = (job_type or "").lower()
+
+    # Basic에서 OMR 촬영물 거부 (mode=photo/video)
+    if tier in ("lite", "basic") and job_type == "omr_grading":
+        mode = (payload.get("mode") or "").lower()
+        if mode in ("photo", "video"):
+            return False, REJECTION_CODES["OMR_PHOTO_NOT_ALLOWED"], "OMR_PHOTO_NOT_ALLOWED"
+
+    # 파일 크기 (payload에 file_size_bytes 또는 file_size_mb 있으면 검사)
+    size_mb = payload.get("file_size_mb")
+    if size_mb is None and payload.get("file_size_bytes") is not None:
+        try:
+            size_mb = int(payload["file_size_bytes"]) / (1024 * 1024)
+        except (TypeError, ValueError):
+            size_mb = None
+    if size_mb is not None:
+        max_mb = MAX_FILE_SIZE_MB.get(job_type, 50)
+        if size_mb > max_mb:
+            return False, REJECTION_CODES["FILE_TOO_LARGE"], "FILE_TOO_LARGE"
+
+    # 동영상 길이 (homework_video_analysis 등)
+    if job_type == "homework_video_analysis":
+        duration_sec = payload.get("duration_seconds")
+        if duration_sec is not None and float(duration_sec) > MAX_VIDEO_DURATION_SEC:
+            return False, REJECTION_CODES["VIDEO_TOO_LONG"], "VIDEO_TOO_LONG"
+
+    # content_type / format (헤더에서 올 수 있음)
+    content_type = (payload.get("content_type") or payload.get("file_type") or "").strip().lower()
+    if content_type:
+        allowed = ALLOWED_IMAGE_FORMATS | ALLOWED_VIDEO_FORMATS
+        if content_type not in allowed and "/" in content_type:
+            # image/*, video/* 부분 일치
+            main = content_type.split("/")[0]
+            if main not in ("image", "video"):
+                return False, REJECTION_CODES["INVALID_FORMAT"], "INVALID_FORMAT"
+
+    return True, None, None
+
+
+def get_rejection_message(rejection_code: Optional[str]) -> str:
+    """rejection_code → 사용자 노출 문구."""
+    if not rejection_code:
+        return ""
+    return REJECTION_CODES.get(rejection_code, "입력 조건을 확인해 주세요.")
+
+
+==========================================================================================
+# FILE: services/runtime_flags.py
+==========================================================================================
+"""
+전역 런타임 플래그 (배포 없이 ON/OFF).
+
+Shadow Mode 등 운영 중 즉시 변경 가능한 설정.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# 메모리 캐시 (선택): DB 부하 감소, TTL 없이 프로세스 내 일관성만
+_runtime_flag_cache: dict[str, Optional[str]] = {}
+
+
+def get_runtime_flag(key: str, default: bool = False) -> bool:
+    """
+    DB(ai_runtime_config) 기반 플래그 조회.
+    운영 중 즉시 ON/OFF 가능.
+
+    Args:
+        key: 예) "ai_shadow_mode"
+        default: 레코드 없을 때 기본값
+
+    Returns:
+        value가 "1", "true", "yes" (대소문자 무관)이면 True
+    """
+    global _runtime_flag_cache
+    if key in _runtime_flag_cache:
+        raw = _runtime_flag_cache[key]
+        return _parse_bool(raw, default)
+
+    try:
+        from academy.adapters.db.django import repositories_ai as ai_repo
+        row = ai_repo.get_airuntime_config(key)
+        if row is None:
+            _runtime_flag_cache[key] = None
+            return default
+        _runtime_flag_cache[key] = row.value
+        return _parse_bool(row.value, default)
+    except Exception as e:
+        logger.debug("get_runtime_flag %s: %s", key, e)
+        return default
+
+
+def _parse_bool(value: Optional[str], default: bool) -> bool:
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes")
+
+
+def clear_runtime_flag_cache(key: Optional[str] = None) -> None:
+    """캐시 무효화 (설정 변경 후 호출 권장)."""
+    global _runtime_flag_cache
+    if key is None:
+        _runtime_flag_cache.clear()
+    else:
+        _runtime_flag_cache.pop(key, None)
+
+
+==========================================================================================
+# FILE: services/status_resolver.py
+==========================================================================================
+"""
+결과 상태 결정 (설계 REVIEW_REQUIRED 전략 반영)
+
+Lite/Basic: 실패 없음 → SUCCESS + review_candidate 플래그.
+Premium: confidence 구간에 따라 FAILED / REVIEW_REQUIRED / SUCCESS.
+
+⚠️ Lite/Basic에서는 REVIEW_REQUIRED를 반환하지 않음 (항상 DONE + review_candidate만).
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, Tuple
+
+from apps.domains.ai.services.runtime_flags import get_runtime_flag
+
+logger = logging.getLogger(__name__)
+
+
+def status_for_exception(tier: str) -> Tuple[str, Dict[str, Any]]:
+    """
+    예외/실패 시 최종 상태 (Lite/Basic 실패 없음 정책).
+
+    워커 예외, mark_failed 등에서 FAILED로 쓰기 전에 호출.
+    - Lite/Basic → DONE + review_candidate (정책상 FAILED 미사용)
+    - Premium → FAILED
+    """
+    t = (tier or "basic").lower()
+    if t in ("lite", "basic"):
+        return "DONE", {"review_candidate": True, "from_exception": True}
+    return "FAILED", {}
+
+
+def determine_status(
+    confidence: float,
+    threshold_low: float = 0.5,
+    threshold_high: float = 0.8,
+    tier: str = "basic",
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Lite/Basic은 FAIL 없이 SUCCESS + review_candidate만.
+    Premium은 REVIEW_REQUIRED 노출 가능.
+
+    Returns:
+        (status, flags)
+        - status: "DONE" | "FAILED" | "REVIEW_REQUIRED"
+        - flags: {"review_candidate": bool, "confidence": float, ...}
+    """
+    tier = (tier or "basic").lower()
+    shadow_mode = get_runtime_flag("ai_shadow_mode", default=True)
+
+    if tier in ("lite", "basic"):
+        # Lite/Basic: 실패 없음. 낮은 confidence도 DONE + 후보 플래그만
+        if confidence < threshold_low:
+            return "DONE", {"review_candidate": True, "confidence": confidence}
+        if threshold_low <= confidence < threshold_high:
+            return "DONE", {"review_candidate": True, "confidence": confidence}
+        return "DONE", {"review_candidate": False, "confidence": confidence}
+
+    # Premium: REVIEW_REQUIRED 노출 가능
+    if confidence < threshold_low:
+        return "FAILED", {"confidence": confidence}
+    if threshold_low <= confidence < threshold_high:
+        if shadow_mode:
+            return "DONE", {"review_candidate": True, "confidence": confidence}
+        return "REVIEW_REQUIRED", {"confidence": confidence}
+    return "DONE", {"review_candidate": False, "confidence": confidence}
+
+
+==========================================================================================
+# FILE: services/tier_resolver.py
+==========================================================================================
+"""
+Tier 결정 로직
+
+비즈니스 규칙:
+- Lite: CPU OCR만 허용 (복지 티어)
+- Basic: CPU 기반 OMR/status detection + 개선된 CPU OCR
+- Premium: GPU 기반 전체 OCR + 고급 분석 (향후)
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from django.conf import settings
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_tier(
+    *,
+    tenant_id: Optional[str] = None,
+    job_type: str,
+    payload: dict,
+) -> str:
+    """
+    작업의 Tier 결정
+    
+    Args:
+        tenant_id: Tenant ID (선택사항, tenant별 tier 설정 가능)
+        job_type: 작업 타입 (예: "ocr", "omr_grading")
+        payload: 작업 페이로드
+        
+    Returns:
+        str: "lite" | "basic" | "premium"
+    """
+    # 1. 명시적 tier 지정 (payload에서)
+    explicit_tier = payload.get("tier")
+    if explicit_tier in ("lite", "basic", "premium"):
+        return explicit_tier.lower()
+    
+    # 2. Tenant별 tier 설정 (향후 확장 가능)
+    # tenant_tier = get_tenant_tier(tenant_id) if tenant_id else None
+    # if tenant_tier:
+    #     return tenant_tier
+    
+    # 3. 작업 타입 기반 기본 tier 결정
+    job_type_lower = job_type.lower()
+    
+    # OCR만 필요한 작업 -> Lite 가능
+    if job_type_lower in ("ocr",):
+        # 기본값: basic (향후 tenant 설정으로 lite 가능)
+        return "basic"
+    
+    # OMR/status detection, 엑셀 파싱 -> Basic 이상 필요
+    if job_type_lower in ("omr_grading", "homework_video_analysis", "excel_parsing"):
+        return "basic"
+    
+    # 고급 분석 -> Premium 필요 (향후)
+    if job_type_lower in ("advanced_analysis", "full_ocr"):
+        return "premium"
+    
+    # 기본값: basic
+    return "basic"
+
+
+def validate_tier_for_job_type(tier: str, job_type: str) -> bool:
+    """
+    Tier와 작업 타입의 호환성 검증
+    
+    Args:
+        tier: Tier ("lite" | "basic" | "premium")
+        job_type: 작업 타입
+        
+    Returns:
+        bool: 호환 가능 여부
+    """
+    tier = tier.lower()
+    job_type_lower = job_type.lower()
+    
+    # Lite: OCR만 허용
+    if tier == "lite":
+        return job_type_lower in ("ocr",)
+    
+    # Basic: OCR + OMR/status detection + 엑셀 파싱/내보내기
+    if tier == "basic":
+        return job_type_lower in (
+            "ocr",
+            "omr_grading",
+            "homework_video_analysis",
+            "excel_parsing",
+            "attendance_excel_export",
+            "staff_excel_export",
+        )
+    
+    # Premium: 모든 작업 허용
+    if tier == "premium":
+        return True
+    
+    return False
+
+
+==========================================================================================
+# FILE: services/worker_instance_control.py
+==========================================================================================
+# PATH: apps/domains/ai/services/worker_instance_control.py
+
+import boto3
+import logging
+
+logger = logging.getLogger(__name__)
+
+REGION = "ap-northeast-2"
+AI_WORKER_INSTANCE_ID = "i-0f52f9d89481385a8"  # 네 실제 워커 EC2
+
+def start_ai_worker_instance():
+    """
+    API 서버에서 호출
+    - AI 워커 EC2를 켜기만 함
+    - stop은 절대 여기서 하지 않음
+    """
+    ec2 = boto3.client("ec2", region_name=REGION)
+
+    logger.info("[AI] Starting AI worker EC2 instance")
+
+    ec2.start_instances(
+        InstanceIds=[AI_WORKER_INSTANCE_ID]
+    )
+
+
+==========================================================================================
+# FILE: views/__init__.py
+==========================================================================================
+# PATH: apps/domains/ai/views/__init__.py
+# empty
+
+
+==========================================================================================
+# FILE: views/exam_sheet.py
+==========================================================================================
+# PATH: apps/domains/exams/models/exam_sheet.py
+from django.db import models
+
+
+class ExamSheet(models.Model):
+    """
+    시험(exam)에서 사용하는 시험지(sheet)
+    - 시험 실행 시 단일 진실
+    """
+
+    exam_id = models.PositiveIntegerField(db_index=True)
+    sheet_id = models.PositiveIntegerField(db_index=True)
+
+    class Meta:
+        db_table = "exams_exam_sheet"
+        unique_together = ("exam_id", "sheet_id")
+
+
+==========================================================================================
+# FILE: views/internal_ai_job_view.py
+==========================================================================================
+# PATH: apps/domains/ai/views/internal_ai_job_view.py
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from django.conf import settings
+from rest_framework import status
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.shared.contracts.ai_job import AIJob as AIJobContract
+from apps.domains.ai.queueing.db_queue import DBJobQueue
+from apps.domains.ai.services.status_resolver import status_for_exception
+from academy.adapters.db.django import repositories_ai as ai_repo
+
+
+def _get_worker_token_secret() -> str:
+    v = getattr(settings, "INTERNAL_WORKER_TOKEN", None)
+    return str(v or "")
+
+
+def _require_worker_auth(request) -> Optional[Response]:
+    expected = _get_worker_token_secret()
+    if not expected:
+        return Response(
+            {"detail": "INTERNAL_WORKER_TOKEN not configured"},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    token = request.headers.get("X-Worker-Token") or request.META.get("HTTP_X_WORKER_TOKEN") or ""
+    if str(token) != str(expected):
+        return Response({"detail": "Unauthorized worker"}, status=status.HTTP_401_UNAUTHORIZED)
+    return None
+
+
+def _worker_id(request) -> str:
+    return request.headers.get("X-Worker-Id") or request.META.get("HTTP_X_WORKER_ID") or "ai-worker"
+
+
+class InternalAIJobNextView(APIView):
+    """
+    GET /api/v1/internal/ai/job/next/
+    response: { "job": {...} | null }
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        auth = _require_worker_auth(request)
+        if auth:
+            return auth
+
+        q = DBJobQueue()
+        claimed = q.claim(worker_id=_worker_id(request))
+        if not claimed:
+            return Response({"job": None}, status=status.HTTP_200_OK)
+
+        job = AIJobContract.from_dict(
+            {
+                "id": claimed.job_id,
+                "type": claimed.job_type,
+                "payload": claimed.payload,
+                "tenant_id": claimed.tenant_id,
+                "source_domain": claimed.source_domain,
+                "source_id": claimed.source_id,
+            }
+        )
+        return Response({"job": job.to_dict()}, status=status.HTTP_200_OK)
+
+
+class InternalAIJobResultView(APIView):
+    """
+    POST /api/v1/internal/ai/job/result/
+    payload:
+      {
+        "job_id": "...",
+        "submission_id": 123,      # optional legacy
+        "status": "DONE|FAILED",
+        "result": {...} | null,
+        "error": "..." | null
+      }
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        auth = _require_worker_auth(request)
+        if auth:
+            return auth
+
+        data: Dict[str, Any] = request.data if isinstance(request.data, dict) else {}
+
+        job_id = data.get("job_id")
+        if not job_id:
+            return Response({"detail": "job_id required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        status_in = str(data.get("status") or "DONE").upper().strip()
+        if status_in not in ("DONE", "FAILED"):
+            return Response({"detail": "status must be DONE or FAILED"}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = data.get("result")
+        if result is not None and not isinstance(result, dict):
+            return Response({"detail": "result must be object or null"}, status=status.HTTP_400_BAD_REQUEST)
+
+        error = str(data.get("error") or "")
+
+        job = ai_repo.get_job_model_by_job_id(str(job_id))
+        if not job:
+            return Response({"detail": "job not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if ai_repo.result_exists_for_job(job):
+            return Response({"ok": True, "detail": "duplicate_ignored"}, status=status.HTTP_200_OK)
+
+        q = DBJobQueue()
+        tier = (job.tier or "basic").lower()
+
+        if status_in == "FAILED" and tier in ("lite", "basic"):
+            _, flags = status_for_exception(tier)
+            payload_to_store = dict(result or {})
+            payload_to_store["flags"] = {**(payload_to_store.get("flags") or {}), **flags}
+            ai_repo.result_create(job, payload_to_store)
+            q.mark_done(job_id=job.job_id)
+            return Response({"ok": True, "detail": "done_lite_basic_no_fail"}, status=status.HTTP_200_OK)
+
+        ai_repo.result_create(job, result or None)
+
+        if status_in == "FAILED":
+            q.mark_failed(job_id=job.job_id, error=error or "failed", retryable=True)
+            return Response({"ok": True, "detail": "failed_recorded"}, status=status.HTTP_200_OK)
+
+        q.mark_done(job_id=job.job_id)
+        return Response({"ok": True, "detail": "done"}, status=status.HTTP_200_OK)
+
+
+==========================================================================================
+# FILE: views/job_status_view.py
+==========================================================================================
+# PATH: apps/domains/ai/views/job_status_view.py
+# GET /api/v1/jobs/<job_id>/ — 엑셀 내보내기·엑셀 파싱 등 AI job 상태·결과 조회 (tenant-scoped)
+
+from __future__ import annotations
+
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
+from apps.domains.ai.services.job_status_response import build_job_status_response
+
+
+def _ai_repo():
+    return DjangoAIJobRepository()
+
+
+class JobStatusView(APIView):
+    """
+    GET /api/v1/jobs/<job_id>/
+    응답: { "job_id", "job_type", "status", "result"?, "error_message"?, "progress"? }
+    - result.download_url: 엑셀 내보내기 완료 시 다운로드 URL (presigned)
+    - result.filename: 권장 파일명
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, job_id: str):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "tenant가 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        repo = _ai_repo()
+        job = repo.get_job_model_for_status(job_id, str(tenant.id))
+        if not job:
+            return Response(
+                {"detail": "해당 job을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        result_payload = repo.get_result_payload_for_job(job)
+        return Response(build_job_status_response(job, result_payload=result_payload))
