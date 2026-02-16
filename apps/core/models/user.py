@@ -2,18 +2,36 @@
 from django.db import models
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, Group, Permission
-from django.contrib.auth.validators import UnicodeUsernameValidator
 
 from apps.core.models.base import TimestampModel
 from apps.core.models.tenant import Tenant
 from apps.core.db import TenantQuerySet
 
+# 테넌트별 격리: tenant 소속 User의 username은 DB에 "t{tenant_id}_{로그인아이디}" 형태로 저장 (전역 유일 유지).
+USERNAME_TENANT_PREFIX = "t"
+
+
+def user_internal_username(tenant, display_username: str) -> str:
+    """저장용 username. tenant가 있으면 t{id}_{display} 로 전역 유일."""
+    if not tenant or not (display_username or "").strip():
+        return (display_username or "").strip()
+    return f"{USERNAME_TENANT_PREFIX}{tenant.id}_{(display_username or '').strip()}"
+
+
+def user_display_username(user) -> str:
+    """API/화면 노출용. tenant 소속이면 t{id}_ 접두어 제거."""
+    if not user or not getattr(user, "username", None):
+        return ""
+    uname = user.username
+    if getattr(user, "tenant_id", None) and uname.startswith(f"{USERNAME_TENANT_PREFIX}{user.tenant_id}_"):
+        return uname[len(f"{USERNAME_TENANT_PREFIX}{user.tenant_id}_"):]
+    return uname
+
 
 class User(AbstractUser):
     """
-    Custom User 모델. 1테넌트 = 1프로그램 격리: username은 (tenant, username) 기준 유일.
-    - tenant not null: 해당 테넌트 내에서만 username 유일 (다른 테넌트와 무관).
-    - tenant null: 전역 관리자 등, username 전역 유일.
+    Custom User. 1테넌트=1프로그램 격리: tenant 소속 시 username은 내부적으로 t{tenant_id}_{로그인아이디} 저장.
+    - USERNAME_FIELD(username)는 DB에서 전역 유일 유지 (Django 요구사항).
     """
 
     tenant = models.ForeignKey(
@@ -23,12 +41,6 @@ class User(AbstractUser):
         null=True,
         blank=True,
         db_index=True,
-    )
-    username = models.CharField(
-        max_length=150,
-        unique=False,
-        validators=[UnicodeUsernameValidator()],
-        help_text="Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.",
     )
     name = models.CharField(max_length=50, blank=True, null=True)
     phone = models.CharField(
@@ -54,18 +66,6 @@ class User(AbstractUser):
         app_label = "core"
         db_table = "accounts_user"
         ordering = ["-id"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["tenant", "username"],
-                condition=models.Q(tenant__isnull=False),
-                name="core_user_tenant_username_uniq",
-            ),
-            models.UniqueConstraint(
-                fields=["username"],
-                condition=models.Q(tenant__isnull=True),
-                name="core_user_username_global_uniq",
-            ),
-        ]
 
     def __str__(self):
         return self.username
