@@ -87,5 +87,6 @@ docker buildx build --platform linux/arm64 -f docker/api/Dockerfile -t academy-a
 | 상태 확인 | `crontab -l` |
 | 로그 보기 | `tail -f /home/ec2-user/auto_deploy.log` |
 
+- **cron 미설치 시**: `sudo yum install -y cronie && sudo systemctl start crond && sudo systemctl enable crond` (Amazon Linux 2)
 - lock 파일(`/tmp/academy_deploy.lock`)으로 중복 실행 방지.
 - 경로 변경 시: `REPO_DIR=/path/to/repo LOG_FILE=/path/to/log bash scripts/auto_deploy_cron_on.sh`
