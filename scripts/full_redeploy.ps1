@@ -5,12 +5,12 @@
 # DeployTarget: all(기본) | api | video | ai | messaging | workers
 #
 # --- Git 푸시 후 한 방 재배포 (6종) ---
-# 1) API만:     cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget api
-# 2) Video만:   cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget video
-# 3) AI만:      cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget ai
-# 4) Messaging만: cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget messaging
-# 5) 전부(API+3워커): cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git"
-# 6) 워커만(3종): cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget workers
+# 1) API만:     cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget api
+# 2) Video만:   cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget video
+# 3) AI만:      cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget ai
+# 4) Messaging만: cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget messaging
+# 5) 전부(API+3워커): cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git"
+# 6) 워커만(3종): cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget workers
 #
 # 빌드 생략(ECR 이미지 그대로 배포만): 위 명령에 -SkipBuild 추가
 # 워커 ASG 리프레시만: -WorkersViaASG

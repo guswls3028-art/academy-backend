@@ -17,11 +17,11 @@ $env:AWS_DEFAULT_REGION = "ap-northeast-2"
 
 ## 2) 풀셋팅 실행 (빌드 서버 생성 + 빌드 + 전부 배포 + 빌드 서버 중지)
 
-`YOUR_ORG` 를 실제 GitHub 조직/계정으로 바꾼 뒤 실행.
+`guswls3028-art` 를 실제 GitHub 조직/계정으로 바꾼 뒤 실행.
 
 ```powershell
 cd C:\academy
-.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git"
+.\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git"
 ```
 
 ## 3) admin97 액세스 키 (일상 재배포용)
@@ -42,7 +42,7 @@ cd C:\academy; .\scripts\full_redeploy.ps1 -SkipBuild
 
 - **빌드 포함** (코드 푸시 후 이미지 다시 빌드):
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git"
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git"
 ```
 
 ## 5) 배포 확인 (원테이크)
@@ -174,40 +174,40 @@ cd C:\academy; .\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget workers -Wor
 # ③ 임시 빌드 인스턴스로 빌드 후 배포
 
 로컬 Docker 없이 할 때. **임시 EC2 한 대**를 띄워서 그 위에서 빌드 → ECR 푸시 → 인스턴스 종료 → **기존** API/워커 EC2에만 배포.  
-`YOUR_ORG` 를 실제 GitHub 조직/계정으로 바꾸고, **AWS 환경 변수**는 ①과 동일하게 설정한 뒤 아래 중 하나만 복붙.
+`guswls3028-art` 를 실제 GitHub 조직/계정으로 바꾸고, **AWS 환경 변수**는 ①과 동일하게 설정한 뒤 아래 중 하나만 복붙.
 
 ## 1) API만
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget api
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget api
 ```
 
 ## 2) Video만
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget video
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget video
 ```
 
 ## 3) AI만
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget ai
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget ai
 ```
 
 ## 4) Messaging만
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget messaging
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget messaging
 ```
 
 ## 5) 전부
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git"
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git"
 ```
 
 ## 6) 워커만
 
 ```powershell
-cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/YOUR_ORG/academy.git" -DeployTarget workers
+cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git" -DeployTarget workers
 ```
