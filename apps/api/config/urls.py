@@ -5,11 +5,9 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 
-from rest_framework_simplejwt.views import (
-    TokenObtainPairView,
-    TokenRefreshView,
-)
+from rest_framework_simplejwt.views import TokenRefreshView
 from apps.api.common.views import health_check
+from apps.api.common.auth_jwt import TenantAwareTokenObtainPairView
 
 urlpatterns = [
     # =========================
@@ -25,7 +23,7 @@ urlpatterns = [
     # =========================
     # Auth (JWT)
     # =========================
-    path("api/v1/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
+    path("api/v1/token/", TenantAwareTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/v1/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 
     # =========================
