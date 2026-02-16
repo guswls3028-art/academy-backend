@@ -113,10 +113,11 @@ class StaffDetailSerializer(serializers.ModelSerializer):
     staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
     role = serializers.SerializerMethodField()
 
-    user_username = serializers.CharField(
-        source="user.username",
-        read_only=True,
-    )
+    user_username = serializers.SerializerMethodField()
+
+    def get_user_username(self, obj):
+        from apps.core.models.user import user_display_username
+        return user_display_username(obj.user) if obj.user else ""
     user_is_staff = serializers.BooleanField(
         source="user.is_staff",
         read_only=True,

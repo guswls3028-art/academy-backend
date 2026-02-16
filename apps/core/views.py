@@ -601,11 +601,12 @@ class TenantOwnerView(APIView):
                     tenant.owner_name = owner_display[:100]
                     tenant.save(update_fields=["owner_name"])
 
+            from apps.core.models.user import user_display_username
             return Response({
                 "tenantId": tenant.id,
                 "tenantCode": tenant.code,
                 "userId": user.id,
-                "username": user.username,
+                "username": user_display_username(user),
                 "name": getattr(user, "name", "") or "",
                 "role": membership.role,
             })
@@ -637,10 +638,11 @@ class TenantOwnerListView(APIView):
             .select_related("user")
             .order_by("user__username")
         )
+        from apps.core.models.user import user_display_username
         data = [
             {
                 "userId": m.user_id,
-                "username": m.user.username,
+                "username": user_display_username(m.user),
                 "name": getattr(m.user, "name", "") or "",
                 "phone": getattr(m.user, "phone", "") or "",
                 "role": m.role,
