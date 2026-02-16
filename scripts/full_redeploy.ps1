@@ -131,7 +131,7 @@ if (-not $SkipBuild) {
             Start-Sleep -Seconds 20
         }
     } else {
-        Write-Host "기존 빌드 인스턴스 없음 → 새로 생성 (On-Demand, 빌드 후 중지하여 다음에 캐시 재사용)" -ForegroundColor Gray
+        Write-Host "No existing build instance -> creating new one (On-Demand, will stop after build for cache reuse)" -ForegroundColor Gray
         $AmiId = (aws ec2 describe-images --region $Region --owners amazon `
             --filters "Name=name,Values=al2023-ami-*-kernel-6.1-arm64" "Name=state,Values=available" `
             --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
@@ -151,15 +151,15 @@ echo 'Build instance ready'
             --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=academy-build-arm64}]" `
             --region $Region --output json 2>&1 | ConvertFrom-Json
         if (-not $runResult.Instances -or $runResult.Instances.Count -eq 0) {
-            Write-Host "run-instances 실패." -ForegroundColor Red
+            Write-Host "run-instances failed." -ForegroundColor Red
             exit 1
         }
         $buildInstanceId = $runResult.Instances[0].InstanceId
-        Write-Host "빌드 인스턴스: $buildInstanceId (running 대기 중)..." -ForegroundColor Gray
+        Write-Host "Build instance: $buildInstanceId (waiting for running)..." -ForegroundColor Gray
         aws ec2 wait instance-running --instance-ids $buildInstanceId --region $Region
         Start-Sleep -Seconds 30
     }
-    Write-Host "SSM 등록 대기 (최대 3분)..." -ForegroundColor Gray
+    Write-Host "Waiting for SSM registration (max 3 min)..." -ForegroundColor Gray
     $ssmReady = $false
     for ($i = 0; $i -lt 18; $i++) {
         Start-Sleep -Seconds 10
@@ -167,7 +167,7 @@ echo 'Build instance ready'
         if ($info -eq "Online") { $ssmReady = $true; break }
     }
     if (-not $ssmReady) {
-        Write-Host "SSM 에서 인스턴스가 Online 이 아닙니다. academy-ec2-role 에 SSM 권한이 있는지 확인하세요. 빌드 인스턴스는 중지 상태로 유지: $buildInstanceId" -ForegroundColor Yellow
+        Write-Host "Instance not Online in SSM. Check academy-ec2-role has SSM permissions. Build instance left as-is: $buildInstanceId" -ForegroundColor Yellow
         exit 1
     }
     Start-Sleep -Seconds 15
