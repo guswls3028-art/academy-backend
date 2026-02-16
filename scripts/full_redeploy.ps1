@@ -206,8 +206,8 @@ echo BUILD_AND_PUSH_OK
         --output text --query "Command.CommandId" 2>&1
     Remove-Item $paramsFile -Force -ErrorAction SilentlyContinue
     if (-not $cmdId -or $cmdId -match "error|Error") {
-        Write-Host "Send-Command 실패: $cmdId" -ForegroundColor Red
-        Write-Host "빌드 인스턴스 유지: $buildInstanceId" -ForegroundColor Yellow
+        Write-Host "Send-Command failed: $cmdId" -ForegroundColor Red
+        Write-Host "Build instance kept: $buildInstanceId" -ForegroundColor Yellow
         exit 1
     }
     Write-Host "SSM Run Command started: $cmdId (waiting up to 30 min)..." -ForegroundColor Cyan
