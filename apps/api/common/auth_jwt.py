@@ -52,7 +52,6 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
         return {
             "refresh": str(refresh),
             "access": str(refresh.access_token),
-            "user": user,
         }
 
 
