@@ -64,9 +64,11 @@ def _owner_display_for_tenant(tenant, request=None):
         name = (getattr(m.user, "name", None) or "").strip() or m.user.username
         phone = (getattr(m.user, "phone", None) or "").strip() or None
         return {"id": None, "name": name, "phone": phone, "role": "OWNER", "is_owner": True}
-    # 2) tenant.owner_name
+    # 2) tenant.owner_name (+ tenant.phone 있으면 원장 연락처로)
     if (getattr(tenant, "owner_name", None) or "").strip():
-        return {"id": None, "name": (tenant.owner_name or "").strip(), "phone": None, "role": "OWNER", "is_owner": True}
+        name = (tenant.owner_name or "").strip()
+        phone = (getattr(tenant, "phone", None) or "").strip() or None
+        return {"id": None, "name": name, "phone": phone, "role": "OWNER", "is_owner": True}
     # 3) 현재 사용자가 이 테넌트 owner 멤버십 보유
     if request and request.user and request.user.is_authenticated:
         from academy.adapters.db.django import repositories_core as core_repo
