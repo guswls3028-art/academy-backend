@@ -194,17 +194,30 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             with transaction.atomic():
                 user = None
                 if username and password:
-                    user = students_repo.user_create_user(
-                        username=username,
-                        password=password,
-                        name=validated_data.get("name") or username,
-                        phone=validated_data.get("phone") or "",
-                    )
-                    core_repo.membership_ensure_active(
-                        tenant=tenant,
-                        user=user,
-                        role="teacher" if role == "TEACHER" else "staff",
-                    )
+                    existing_user = core_repo.user_get_by_username(username)
+                    if existing_user:
+                        if staff_repo.staff_exists_tenant_user(tenant, existing_user):
+                            raise serializers.ValidationError(
+                                {"username": "이미 이 학원에 등록된 로그인 아이디입니다."}
+                            )
+                        user = existing_user
+                        core_repo.membership_ensure_active(
+                            tenant=tenant,
+                            user=user,
+                            role="teacher" if role == "TEACHER" else "staff",
+                        )
+                    else:
+                        user = students_repo.user_create_user(
+                            username=username,
+                            password=password,
+                            name=validated_data.get("name") or username,
+                            phone=validated_data.get("phone") or "",
+                        )
+                        core_repo.membership_ensure_active(
+                            tenant=tenant,
+                            user=user,
+                            role="teacher" if role == "TEACHER" else "staff",
+                        )
                     validated_data["user"] = user
 
                 validated_data["tenant"] = tenant
@@ -260,8 +273,8 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
         # 🔥 Staff 삭제
         instance.delete()
 
-        # 🔥 User 삭제
-        if user:
+        # 🔥 User 삭제: 다른 테넌트에 직원으로 등록된 적이 없을 때만 삭제 (멀티테넌트)
+        if user and user.staff_profiles.count() == 0:
             user.delete()
 
     # =========================
