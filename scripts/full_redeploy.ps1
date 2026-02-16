@@ -37,7 +37,7 @@ $RepoRoot = Split-Path -Parent $ScriptRoot
 $AsgInfra = Join-Path $RepoRoot "infra\worker_asg"
 
 $AccountId = (aws sts get-caller-identity --query Account --output text 2>&1)
-if ($LASTEXITCODE -ne 0) { Write-Host "AWS identity 확인 실패. 로그인/권한 확인." -ForegroundColor Red; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Host "AWS identity check failed. Check login/permissions." -ForegroundColor Red; exit 1 }
 $ECR = "${AccountId}.dkr.ecr.${Region}.amazonaws.com"
 $EC2_USER = "ec2-user"
 
@@ -79,7 +79,7 @@ function Start-StoppedAcademyInstances {
     if ($LASTEXITCODE -ne 0 -or -not $raw) { return }
     $ids = $raw.Trim() -split "\s+" | Where-Object { $_ }
     if ($ids.Count -eq 0) { return }
-    Write-Host "[EC2] 중지된 인스턴스 기동: $($ids -join ',')" -ForegroundColor Cyan
+    Write-Host "[EC2] Starting stopped instances: $($ids -join ',')" -ForegroundColor Cyan
     aws ec2 start-instances --region $Region --instance-ids $ids 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { return }
     aws ec2 wait instance-running --region $Region --instance-ids $ids 2>&1 | Out-Null
