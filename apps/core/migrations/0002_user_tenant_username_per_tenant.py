@@ -1,4 +1,4 @@
-# 1테넌트 1프로그램: username을 (tenant, username) 기준 유일로 변경. 테넌트별 완전 격리.
+# 1테넌트 1프로그램: User에 tenant FK 추가. username은 tenant 소속 시 내부적으로 t{id}_{로그인아이디} 저장해 전역 유일 유지.
 
 from django.db import migrations, models
 import django.db.models.deletion
@@ -21,31 +21,6 @@ class Migration(migrations.Migration):
                 on_delete=django.db.models.deletion.CASCADE,
                 related_name="users",
                 to="core.tenant",
-            ),
-        ),
-        migrations.AlterField(
-            model_name="user",
-            name="username",
-            field=models.CharField(
-                help_text="Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.",
-                max_length=150,
-                validators=[django.contrib.auth.validators.UnicodeUsernameValidator()],
-            ),
-        ),
-        migrations.AddConstraint(
-            model_name="user",
-            constraint=models.UniqueConstraint(
-                condition=models.Q(("tenant__isnull", False)),
-                fields=("tenant", "username"),
-                name="core_user_tenant_username_uniq",
-            ),
-        ),
-        migrations.AddConstraint(
-            model_name="user",
-            constraint=models.UniqueConstraint(
-                condition=models.Q(("tenant__isnull", True)),
-                fields=("username",),
-                name="core_user_username_global_uniq",
             ),
         ),
     ]
