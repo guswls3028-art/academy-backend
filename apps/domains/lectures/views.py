@@ -16,6 +16,7 @@ from academy.adapters.db.django import repositories_video as video_repo
 from .models import Lecture, Session
 from .serializers import LectureSerializer, SessionSerializer
 
+from apps.core.models import TenantMembership
 from apps.domains.attendance.models import Attendance
 
 
