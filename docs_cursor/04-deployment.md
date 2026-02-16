@@ -73,3 +73,19 @@ docker buildx build --platform linux/arm64 -f docker/api/Dockerfile -t academy-a
 
 - docs/배포.md §7(배포 전 필수 6개), §8(오픈 전 4개) 참고.
 - 8000 포트는 테스트용; 오픈 전 ALB + HTTPS.
+
+---
+
+## 8. EC2 API 자동 배포 (cron ON/OFF)
+
+**위치**: EC2 API 서버(`/home/ec2-user/academy`)에서 실행. 1분마다 `origin/main` 변경 감지 시 `scripts/deploy_api_on_server.sh` 실행.
+
+| 동작 | 명령어 |
+|------|--------|
+| **ON** | `cd /home/ec2-user/academy && bash scripts/auto_deploy_cron_on.sh` |
+| **OFF** | `cd /home/ec2-user/academy && bash scripts/auto_deploy_cron_off.sh` |
+| 상태 확인 | `crontab -l` |
+| 로그 보기 | `tail -f /home/ec2-user/auto_deploy.log` |
+
+- lock 파일(`/tmp/academy_deploy.lock`)으로 중복 실행 방지.
+- 경로 변경 시: `REPO_DIR=/path/to/repo LOG_FILE=/path/to/log bash scripts/auto_deploy_cron_on.sh`
