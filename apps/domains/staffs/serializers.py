@@ -1,6 +1,7 @@
 # PATH: apps/domains/staffs/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.db import transaction, IntegrityError
 
 from .models import (
     Staff,
