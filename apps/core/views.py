@@ -690,9 +690,10 @@ class TenantOwnerDetailView(APIView):
         if "phone" in request.data:
             user.phone = request.data.get("phone") or ""
         user.save(update_fields=["name", "phone"])
+        from apps.core.models.user import user_display_username
         return Response({
             "userId": user.id,
-            "username": user.username,
+            "username": user_display_username(user),
             "name": getattr(user, "name", "") or "",
             "role": membership.role,
         })
