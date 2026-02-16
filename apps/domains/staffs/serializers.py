@@ -116,8 +116,10 @@ class StaffDetailSerializer(serializers.ModelSerializer):
     user_username = serializers.SerializerMethodField()
 
     def get_user_username(self, obj):
+        if not getattr(obj, "user", None):
+            return ""
         from apps.core.models.user import user_display_username
-        return user_display_username(obj.user) if obj.user else ""
+        return user_display_username(obj.user)
     user_is_staff = serializers.BooleanField(
         source="user.is_staff",
         read_only=True,
