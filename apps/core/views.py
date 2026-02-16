@@ -576,8 +576,9 @@ class TenantOwnerView(APIView):
                             {"detail": "password is required when creating a new user."},
                             status=400,
                         )
+                    from apps.core.models.user import user_internal_username
                     user = User.objects.create_user(
-                        username=username,
+                        username=user_internal_username(tenant, username),
                         password=password,
                         tenant=tenant,
                         email="",
