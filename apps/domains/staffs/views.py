@@ -121,7 +121,8 @@ def can_manage_payroll(user, tenant=None) -> bool:
         from academy.adapters.db.django import repositories_core as core_repo
         if core_repo.membership_exists_staff(tenant=tenant, user=user, staff_roles=("owner",)):
             return True
-    return getattr(getattr(user, "staff_profile", None), "is_manager", False)
+    staff = staff_repo.staff_get_by_user_tenant(tenant, user)
+    return getattr(staff, "is_manager", False)
 
 
 def generate_payroll_snapshot(staff, year, month, user):
