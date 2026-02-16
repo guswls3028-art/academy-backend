@@ -9,6 +9,12 @@ echo   Backend + Frontend
 echo ========================================
 echo.
 
+REM 8000, 5174, 5175, 5176 포트 사용 중인 프로세스 모두 종료
+echo [CLEANUP] Stopping any process on ports 8000, 5174, 5175, 5176...
+powershell -NoProfile -Command "$ports=8000,5174,5175,5176; foreach ($p in $ports) { Get-NetTCPConnection -LocalPort $p -ErrorAction SilentlyContinue | ForEach-Object { if ($_.OwningProcess) { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } } }"
+timeout /t 1 /nobreak >nul
+echo.
+
 cd /d C:\academy
 
 REM 가상환경 활성화 (있는 경우)
