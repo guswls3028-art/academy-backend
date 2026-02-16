@@ -289,4 +289,4 @@ if ($deployWorkers) {
     }
 }
 
-Write-Host "`n=== Redeploy 완료 (Target: $DeployTarget) ===`n" -ForegroundColor Green
+Write-Host "`n=== Redeploy done (Target: $DeployTarget) ===`n" -ForegroundColor Green
