@@ -17,8 +17,6 @@ $env:AWS_DEFAULT_REGION = "ap-northeast-2"
 
 ## 2) 풀셋팅 실행 (빌드 서버 생성 + 빌드 + 전부 배포 + 빌드 서버 중지)
 
-`guswls3028-art` 를 실제 GitHub 조직/계정으로 바꾼 뒤 실행.
-
 ```powershell
 cd C:\academy
 .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy.git"
