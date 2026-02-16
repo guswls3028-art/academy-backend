@@ -101,7 +101,7 @@ def _stop_self_ec2() -> None:
         ec2 = boto3.client("ec2", region_name=region)
         ec2.stop_instances(InstanceIds=[instance_id])
         
-        logger.info("EC2 instance stopped due to idle queues: instance_id=%s", instance_id)
+        logger.info("EC2 instance stopped due to idle queues: instance_id=%s (video worker)", instance_id)
         
     except Exception as e:
         logger.exception("EC2 self-stop failed (ignored): %s", e)
@@ -164,10 +164,12 @@ def main() -> int:
                     # 연속 빈 폴링이 임계값을 초과하면 EC2 인스턴스 종료 (실제 큐가 비었을 때만)
                     if consecutive_empty_polls >= IDLE_STOP_THRESHOLD:
                         logger.info(
-                            "Queue empty for %d consecutive polls (threshold=%d), stopping EC2 instance",
+                            "Queue empty for %d consecutive polls (threshold=%d), stopping EC2 instance in 10s",
                             consecutive_empty_polls,
                             IDLE_STOP_THRESHOLD,
                         )
+                        time.sleep(10)  # 500 plan: Dead zone 완화를 위해 Stop 직전 대기
+                        logger.info("EC2 self-stop initiating (video worker)")
                         _stop_self_ec2()
                         return 0
 

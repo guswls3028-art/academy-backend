@@ -85,7 +85,7 @@ def _stop_self_ec2() -> None:
         ).text
         import boto3
         boto3.client("ec2", region_name=region).stop_instances(InstanceIds=[instance_id])
-        logger.info("EC2 self-stop: instance_id=%s", instance_id)
+        logger.info("EC2 self-stop: instance_id=%s (ai worker)", instance_id)
     except Exception as e:
         logger.exception("EC2 self-stop failed (ignored): %s", e)
 
@@ -147,7 +147,9 @@ def run_ai_sqs_worker() -> int:
                     consecutive_empty += 1
                     consecutive_errors = 0
                     if consecutive_empty >= IDLE_STOP_THRESHOLD:
-                        logger.info("Queues empty %d polls, EC2 self-stop", consecutive_empty)
+                        logger.info("Queues empty %d polls, EC2 self-stop in 10s", consecutive_empty)
+                        time.sleep(10)  # 500 plan: Dead zone 완화를 위해 Stop 직전 대기
+                        logger.info("EC2 self-stop initiating (ai worker)")
                         _stop_self_ec2()
                         return 0
                     continue

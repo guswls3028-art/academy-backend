@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SQSGetQueueAttributes",
+      "Effect": "Allow",
+      "Action": ["sqs:GetQueueUrl", "sqs:GetQueueAttributes"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchPutMetric",
+      "Effect": "Allow",
+      "Action": ["cloudwatch:PutMetricData"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "cloudwatch:namespace": "Academy/Workers"
+        }
+      }
+    }
+  ]
+}

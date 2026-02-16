@@ -1,0 +1,337 @@
+# ==============================================================================
+# ASG Target Tracking 워커 배포 (Min=0, SQS 큐 깊이 기반)
+# 전제: AWS CLI 설정, SSM /academy/workers/env 에 .env 내용 저장됨
+# 실행: .\scripts\deploy_worker_asg.ps1 -SubnetIds "subnet-xxx,subnet-yyy" -SecurityGroupId "sg-xxx" -IamInstanceProfileName "academy-ec2-role"
+# ==============================================================================
+
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$SubnetIds,          # comma-separated, e.g. "subnet-aaa,subnet-bbb"
+    [Parameter(Mandatory = $true)]
+    [string]$SecurityGroupId,
+    [Parameter(Mandatory = $true)]
+    [string]$IamInstanceProfileName,
+    [string]$KeyName = "",       # optional, for SSH
+    [string]$Region = "ap-northeast-2",
+    [string]$AmiId = "",         # optional, default latest Amazon Linux 2023
+    [int]$MaxCapacity = 20,
+    [int]$TargetMessagesPerInstance = 20,
+    [switch]$UploadEnvToSsm = $true,   # .env 있으면 SSM /academy/workers/env 에 업로드
+    [switch]$AttachEc2Policy = $true   # EC2 역할에 SSM+ECR 정책 인라인 첨부 시도
+)
+
+$ErrorActionPreference = "Stop"
+$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = Split-Path -Parent $ScriptRoot
+$AsgInfra = Join-Path $RepoRoot "infra\worker_asg"
+$QueueDepthLambdaDir = Join-Path $AsgInfra "queue_depth_lambda"
+$UserDataDir = Join-Path $AsgInfra "user_data"
+
+$AccountId = (aws sts get-caller-identity --query Account --output text)
+$ECRRegistry = "${AccountId}.dkr.ecr.${Region}.amazonaws.com"
+
+# Lambda 실행 역할 (기존 academy-lambda 사용 가능; 큐 깊이만 필요하면 새 정책 인라인으로 추가)
+$LambdaRoleName = "academy-lambda"
+$QueueDepthLambdaName = "academy-worker-queue-depth-metric"
+$EventBridgeRuleName = "academy-worker-queue-depth-rate"
+
+# ------------------------------------------------------------------------------
+# 0) AMI (Amazon Linux 2023)
+# ------------------------------------------------------------------------------
+if (-not $AmiId) {
+    Write-Host "[0/8] Resolving latest Amazon Linux 2023 AMI..." -ForegroundColor Cyan
+    $AmiId = (aws ec2 describe-images --region $Region --owners amazon `
+        --filters "Name=name,Values=al2023-ami-*-kernel-6.1-x86_64" "Name=state,Values=available" `
+        --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
+    if (-not $AmiId) {
+        $AmiId = (aws ec2 describe-images --region $Region --owners amazon `
+            --filters "Name=name,Values=amzn2-ami-*-x86_64-gp2" "Name=state,Values=available" `
+            --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
+    }
+    Write-Host "      AMI: $AmiId" -ForegroundColor Gray
+}
+
+# ------------------------------------------------------------------------------
+# 1) Queue depth Lambda + EventBridge
+# ------------------------------------------------------------------------------
+Write-Host "[1/8] Queue depth Lambda + EventBridge (1 min)..." -ForegroundColor Cyan
+$ZipPath = Join-Path $RepoRoot "worker_queue_depth_lambda.zip"
+if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
+Compress-Archive -Path (Join-Path $QueueDepthLambdaDir "lambda_function.py") -DestinationPath $ZipPath -Force
+
+$RoleArn = "arn:aws:iam::${AccountId}:role/${LambdaRoleName}"
+$lambdaExists = $false
+try { aws lambda get-function --function-name $QueueDepthLambdaName --region $Region 2>$null | Out-Null; $lambdaExists = $true } catch {}
+
+if ($lambdaExists) {
+    aws lambda update-function-code --function-name $QueueDepthLambdaName --zip-file "fileb://$ZipPath" --region $Region | Out-Null
+} else {
+    aws lambda create-function --function-name $QueueDepthLambdaName --runtime python3.11 --role $RoleArn `
+        --handler lambda_function.lambda_handler --zip-file "fileb://$ZipPath" --timeout 30 --memory-size 128 `
+        --region $Region | Out-Null
+}
+Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
+
+aws events put-rule --name $EventBridgeRuleName --schedule-expression "rate(1 minute)" --state ENABLED --region $Region | Out-Null
+$LambdaArn = (aws lambda get-function --function-name $QueueDepthLambdaName --region $Region --query "Configuration.FunctionArn" --output text)
+aws events put-targets --rule $EventBridgeRuleName --targets "Id=1,Arn=$LambdaArn" --region $Region | Out-Null
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+aws lambda add-permission --function-name $QueueDepthLambdaName --statement-id "EventBridgeInvoke" `
+    --action "lambda:InvokeFunction" --principal "events.amazonaws.com" `
+    --source-arn "arn:aws:events:${Region}:${AccountId}:rule/${EventBridgeRuleName}" --region $Region 2>$null
+$ErrorActionPreference = $ea
+
+# Lambda 역할에 SQS/CloudWatch 권한 필요 (iam_policy_queue_depth_lambda.json 인라인 추가 또는 별도 정책)
+Write-Host "      Ensure role $LambdaRoleName has SQS GetQueueAttributes + CloudWatch PutMetricData (Academy/Workers)." -ForegroundColor Yellow
+
+# ------------------------------------------------------------------------------
+# 2) Launch Template AI
+# ------------------------------------------------------------------------------
+Write-Host "[2/8] Launch Template (AI worker)..." -ForegroundColor Cyan
+$aiUserDataPath = Join-Path $UserDataDir "ai_worker_user_data.sh"
+$aiUserDataRaw = Get-Content $aiUserDataPath -Raw
+$aiUserDataRaw = $aiUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRRegistry
+$aiUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($aiUserDataRaw))
+
+$LtAiName = "academy-ai-worker-asg"
+$ltAiJson = @"
+{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"],"UserData":"$aiUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-ai-worker-cpu"}]}]}
+"@
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$ltAiFile = Join-Path $RepoRoot "lt_ai_data.json"
+[System.IO.File]::WriteAllText($ltAiFile, $ltAiJson.Trim(), $utf8NoBom)
+$ltAiPath = "file://$($ltAiFile -replace '\\','/' -replace ' ', '%20')"
+$ltAiExists = $false
+try { aws ec2 describe-launch-templates --launch-template-names $LtAiName --region $Region 2>$null | Out-Null; $ltAiExists = $true } catch {}
+if (-not $ltAiExists) {
+    aws ec2 create-launch-template --launch-template-name $LtAiName --version-description "ASG AI worker" --launch-template-data $ltAiPath --region $Region | Out-Null
+} else {
+    aws ec2 create-launch-template-version --launch-template-name $LtAiName --launch-template-data $ltAiPath --region $Region | Out-Null
+}
+Remove-Item $ltAiFile -Force -ErrorAction SilentlyContinue
+
+# ------------------------------------------------------------------------------
+# 3) Launch Template Video
+# ------------------------------------------------------------------------------
+Write-Host "[3/8] Launch Template (Video worker)..." -ForegroundColor Cyan
+$videoUserDataPath = Join-Path $UserDataDir "video_worker_user_data.sh"
+$videoUserDataRaw = Get-Content $videoUserDataPath -Raw
+$videoUserDataRaw = $videoUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRRegistry
+$videoUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($videoUserDataRaw))
+
+$LtVideoName = "academy-video-worker-asg"
+$blockDevices = '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":8,"VolumeType":"gp3"}},{"DeviceName":"/dev/sdb","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]'
+$ltVideoJson = @"
+{"ImageId":"$AmiId","InstanceType":"t4g.medium","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"],"UserData":"$videoUserDataB64","BlockDeviceMappings":$blockDevices,"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-video-worker"}]}]}
+"@
+$ltVideoFile = Join-Path $RepoRoot "lt_video_data.json"
+[System.IO.File]::WriteAllText($ltVideoFile, $ltVideoJson.Trim(), $utf8NoBom)
+$ltVideoPath = "file://$($ltVideoFile -replace '\\','/' -replace ' ', '%20')"
+$ltVideoExists = $false
+try { aws ec2 describe-launch-templates --launch-template-names $LtVideoName --region $Region 2>$null | Out-Null; $ltVideoExists = $true } catch {}
+if (-not $ltVideoExists) {
+    aws ec2 create-launch-template --launch-template-name $LtVideoName --version-description "ASG Video worker" --launch-template-data $ltVideoPath --region $Region | Out-Null
+} else {
+    aws ec2 create-launch-template-version --launch-template-name $LtVideoName --launch-template-data $ltVideoPath --region $Region | Out-Null
+}
+Remove-Item $ltVideoFile -Force -ErrorAction SilentlyContinue
+
+# ------------------------------------------------------------------------------
+# 3.5) Launch Template Messaging (Min=1 항시 대기)
+# ------------------------------------------------------------------------------
+Write-Host "[3.5/8] Launch Template (Messaging worker)..." -ForegroundColor Cyan
+$messagingUserDataPath = Join-Path $UserDataDir "messaging_worker_user_data.sh"
+$messagingUserDataRaw = Get-Content $messagingUserDataPath -Raw
+$messagingUserDataRaw = $messagingUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRRegistry
+$messagingUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($messagingUserDataRaw))
+
+$LtMessagingName = "academy-messaging-worker-asg"
+$ltMessagingJson = @"
+{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"],"UserData":"$messagingUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-messaging-worker"}]}]}
+"@
+$ltMessagingFile = Join-Path $RepoRoot "lt_messaging_data.json"
+[System.IO.File]::WriteAllText($ltMessagingFile, $ltMessagingJson.Trim(), $utf8NoBom)
+$ltMessagingPath = "file://$($ltMessagingFile -replace '\\','/' -replace ' ', '%20')"
+$ltMessagingExists = $false
+try { aws ec2 describe-launch-templates --launch-template-names $LtMessagingName --region $Region 2>$null | Out-Null; $ltMessagingExists = $true } catch {}
+if (-not $ltMessagingExists) {
+    aws ec2 create-launch-template --launch-template-name $LtMessagingName --version-description "ASG Messaging worker" --launch-template-data $ltMessagingPath --region $Region | Out-Null
+} else {
+    aws ec2 create-launch-template-version --launch-template-name $LtMessagingName --launch-template-data $ltMessagingPath --region $Region | Out-Null
+}
+Remove-Item $ltMessagingFile -Force -ErrorAction SilentlyContinue
+
+$SubnetList = $SubnetIds -split "," | ForEach-Object { $_.Trim() }
+$SubnetListJson = ($SubnetList | ForEach-Object { "`"$_`"" }) -join ","
+
+# ------------------------------------------------------------------------------
+# 4) ASG AI
+# ------------------------------------------------------------------------------
+Write-Host "[4/8] ASG (AI worker, Min=0 Max=$MaxCapacity)..." -ForegroundColor Cyan
+$AsgAiName = "academy-ai-worker-asg"
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgAiName `
+    --launch-template "LaunchTemplateName=$LtAiName,Version=`$Default" `
+    --min-size 0 --max-size $MaxCapacity --desired-capacity 0 `
+    --vpc-zone-identifier $SubnetIds --region $Region 2>$null
+if ($LASTEXITCODE -ne 0) {
+    aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgAiName `
+        --launch-template "LaunchTemplateName=$LtAiName,Version=`$Default" `
+        --min-size 0 --max-size $MaxCapacity --desired-capacity 0 --region $Region 2>$null
+}
+$ErrorActionPreference = $ea
+
+# ------------------------------------------------------------------------------
+# 5) ASG Video
+# ------------------------------------------------------------------------------
+Write-Host "[5/8] ASG (Video worker, Min=0 Max=$MaxCapacity)..." -ForegroundColor Cyan
+$AsgVideoName = "academy-video-worker-asg"
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
+    --launch-template "LaunchTemplateName=$LtVideoName,Version=`$Default" `
+    --min-size 0 --max-size $MaxCapacity --desired-capacity 0 `
+    --vpc-zone-identifier $SubnetIds --region $Region 2>$null
+if ($LASTEXITCODE -ne 0) {
+    aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
+        --launch-template "LaunchTemplateName=$LtVideoName,Version=`$Default" `
+        --min-size 0 --max-size $MaxCapacity --desired-capacity 0 --region $Region 2>$null
+}
+$ErrorActionPreference = $ea
+
+# ------------------------------------------------------------------------------
+# 5.5) ASG Messaging (Min=1 항시 대기, Max=$MaxCapacity)
+# ------------------------------------------------------------------------------
+Write-Host "[6/8] ASG (Messaging worker, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
+$AsgMessagingName = "academy-messaging-worker-asg"
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgMessagingName `
+    --launch-template "LaunchTemplateName=$LtMessagingName,Version=`$Default" `
+    --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
+    --vpc-zone-identifier $SubnetIds --region $Region 2>$null
+if ($LASTEXITCODE -ne 0) {
+    aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgMessagingName `
+        --launch-template "LaunchTemplateName=$LtMessagingName,Version=`$Default" `
+        --min-size 1 --max-size $MaxCapacity --desired-capacity 1 --region $Region 2>$null
+}
+$ErrorActionPreference = $ea
+
+# ------------------------------------------------------------------------------
+# 6) Application Auto Scaling - Register targets
+# ------------------------------------------------------------------------------
+Write-Host "[7/8] Application Auto Scaling (register targets)..." -ForegroundColor Cyan
+$ResourceIdAi = "auto-scaling-group/$AsgAiName"
+$ResourceIdVideo = "auto-scaling-group/$AsgVideoName"
+$ResourceIdMessaging = "auto-scaling-group/$AsgMessagingName"
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $ResourceIdAi `
+    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 0 --max-capacity $MaxCapacity --region $Region 2>$null
+aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $ResourceIdVideo `
+    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 0 --max-capacity $MaxCapacity --region $Region 2>$null
+aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $ResourceIdMessaging `
+    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 1 --max-capacity $MaxCapacity --region $Region 2>$null
+$ErrorActionPreference = $ea
+
+# ------------------------------------------------------------------------------
+# 7) Target Tracking policies (custom metric Academy/Workers QueueDepth)
+# ------------------------------------------------------------------------------
+Write-Host "[8/8] Target Tracking (target $TargetMessagesPerInstance msgs/instance)..." -ForegroundColor Cyan
+$policyAi = @"
+{
+  "TargetTrackingScalingPolicyConfiguration": {
+    "TargetValue": $TargetMessagesPerInstance,
+    "PredefinedMetricSpecification": null,
+    "CustomizedMetricSpecification": {
+      "MetricName": "QueueDepth",
+      "Namespace": "Academy/Workers",
+      "Dimensions": [{"Name": "WorkerType", "Value": "AI"}],
+      "Statistic": "Average"
+    },
+    "ScaleInCooldown": 300,
+    "ScaleOutCooldown": 60
+  }
+}
+"@
+$policyVideo = @"
+{
+  "TargetTrackingScalingPolicyConfiguration": {
+    "TargetValue": $TargetMessagesPerInstance,
+    "CustomizedMetricSpecification": {
+      "MetricName": "QueueDepth",
+      "Namespace": "Academy/Workers",
+      "Dimensions": [{"Name": "WorkerType", "Value": "Video"}],
+      "Statistic": "Average"
+    },
+    "ScaleInCooldown": 300,
+    "ScaleOutCooldown": 60
+  }
+}
+"@
+$policyMessaging = @"
+{
+  "TargetTrackingScalingPolicyConfiguration": {
+    "TargetValue": $TargetMessagesPerInstance,
+    "CustomizedMetricSpecification": {
+      "MetricName": "QueueDepth",
+      "Namespace": "Academy/Workers",
+      "Dimensions": [{"Name": "WorkerType", "Value": "Messaging"}],
+      "Statistic": "Average"
+    },
+    "ScaleInCooldown": 300,
+    "ScaleOutCooldown": 60
+  }
+}
+"@
+$policyAiFile = Join-Path $RepoRoot "asg_policy_ai.json"
+$policyVideoFile = Join-Path $RepoRoot "asg_policy_video.json"
+$policyMessagingFile = Join-Path $RepoRoot "asg_policy_messaging.json"
+[System.IO.File]::WriteAllText($policyAiFile, $policyAi, $utf8NoBom)
+[System.IO.File]::WriteAllText($policyVideoFile, $policyVideo, $utf8NoBom)
+[System.IO.File]::WriteAllText($policyMessagingFile, $policyMessaging, $utf8NoBom)
+$policyAiPath = "file://$($policyAiFile -replace '\\','/' -replace ' ', '%20')"
+$policyVideoPath = "file://$($policyVideoFile -replace '\\','/' -replace ' ', '%20')"
+$policyMessagingPath = "file://$($policyMessagingFile -replace '\\','/' -replace ' ', '%20')"
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $ResourceIdAi `
+    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" `
+    --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyAiPath --region $Region 2>$null
+aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $ResourceIdVideo `
+    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" `
+    --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyVideoPath --region $Region 2>$null
+aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $ResourceIdMessaging `
+    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" `
+    --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyMessagingPath --region $Region 2>$null
+$ErrorActionPreference = $ea
+Remove-Item $policyAiFile, $policyVideoFile, $policyMessagingFile -Force -ErrorAction SilentlyContinue
+
+Write-Host "Done. Lambda: $QueueDepthLambdaName | ASG: $AsgAiName, $AsgVideoName, $AsgMessagingName | AI/Video Min=0 Messaging Min=1 Max=$MaxCapacity Target=$TargetMessagesPerInstance" -ForegroundColor Green
+
+# ------------------------------------------------------------------------------
+# 선택) .env → SSM 업로드
+# ------------------------------------------------------------------------------
+$envPath = Join-Path $RepoRoot ".env"
+if ($UploadEnvToSsm -and (Test-Path $envPath)) {
+    Write-Host "[+SSM] Uploading .env to /academy/workers/env..." -ForegroundColor Cyan
+    $envUri = "file://$($envPath -replace '\\','/' -replace ' ', '%20')"
+    $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    aws ssm put-parameter --name /academy/workers/env --type SecureString --value $envUri --overwrite --region $Region 2>$null
+    if ($LASTEXITCODE -eq 0) { Write-Host "      SSM /academy/workers/env updated." -ForegroundColor Gray } else { Write-Host "      SSM upload failed (try from repo root: aws ssm put-parameter --name /academy/workers/env --type SecureString --value file://.env --overwrite --region $Region)" -ForegroundColor Yellow }
+    $ErrorActionPreference = $ea
+} elseif ($UploadEnvToSsm -and -not (Test-Path $envPath)) {
+    Write-Host "      .env not found; skip SSM upload. To upload later: aws ssm put-parameter --name /academy/workers/env --type SecureString --value file://.env --overwrite --region $Region" -ForegroundColor Yellow
+}
+
+# ------------------------------------------------------------------------------
+# 선택) EC2 역할에 SSM+ECR 인라인 정책 첨부
+# ------------------------------------------------------------------------------
+$ec2PolicyPath = Join-Path $AsgInfra "iam_policy_ec2_worker.json"
+if ($AttachEc2Policy -and (Test-Path $ec2PolicyPath)) {
+    Write-Host "[+IAM] Attaching SSM+ECR policy to role $IamInstanceProfileName..." -ForegroundColor Cyan
+    $policyDocUri = "file://$($ec2PolicyPath -replace '\\','/' -replace ' ', '%20')"
+    $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    aws iam put-role-policy --role-name $IamInstanceProfileName --policy-name academy-workers-ssm-ecr --policy-document $policyDocUri 2>$null
+    if ($LASTEXITCODE -eq 0) { Write-Host "      Role $IamInstanceProfileName policy academy-workers-ssm-ecr attached." -ForegroundColor Gray } else { Write-Host "      (Role name may differ from instance profile; attach infra/worker_asg/iam_policy_ec2_worker.json manually.)" -ForegroundColor Yellow }
+    $ErrorActionPreference = $ea
+}
+
+Write-Host "If ECR images missing: .\scripts\build_and_push_ecr.ps1" -ForegroundColor Yellow
+Write-Host "After validation, disable old Lambda scaling + self-stop (see ARCH_CHANGE_PROPOSAL_LAMBDA_TO_ASG.md)." -ForegroundColor Yellow
