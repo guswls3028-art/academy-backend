@@ -14,8 +14,11 @@ def student_filter_tenant(tenant):
     return Student.objects.filter(tenant=tenant)
 
 
-def user_create_user(username, **kwargs):
+def user_create_user(username, tenant=None, **kwargs):
+    """테넌트별 격리: tenant 전달 시 (tenant, username) 기준 생성."""
     from django.contrib.auth import get_user_model
+    if tenant is not None:
+        kwargs["tenant"] = tenant
     return get_user_model().objects.create_user(username=username, **kwargs)
 
 
