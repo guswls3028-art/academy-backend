@@ -171,6 +171,16 @@ class StaffViewSet(viewsets.ModelViewSet):
             return StaffDetailSerializer
         return StaffCreateUpdateSerializer
 
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        tenant = getattr(request, "tenant", None)
+        owner = _owner_display_for_tenant(tenant)
+        if owner is not None:
+            response.data["owner"] = owner
+        else:
+            response.data["owner"] = None
+        return response
+
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.tenant)
 
