@@ -78,12 +78,12 @@ class Staff(TimestampModel):
         db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
-    user = models.ForeignKey(
+    user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="staff_profiles",
+        related_name="staff_profile",
     )
 
     name = models.CharField(max_length=100)
@@ -116,12 +116,6 @@ class Staff(TimestampModel):
                 fields=["tenant", "phone"],
                 condition=models.Q(phone__isnull=False) & ~models.Q(phone=""),
                 name="uniq_staff_phone_per_tenant",
-            ),
-            # ✅ 테넌트별 동일 User 한 명만 직원 등록 (멀티테넌트에서 학원마다 같은 로그인 아이디 허용)
-            models.UniqueConstraint(
-                fields=["tenant", "user"],
-                condition=models.Q(user__isnull=False),
-                name="uniq_staff_user_per_tenant",
             ),
         ]
 
