@@ -271,7 +271,7 @@ class ExpenseRecordViewSet(viewsets.ModelViewSet):
         new_status = serializer.validated_data.get("status", instance.status)
 
         if new_status != instance.status:
-            if not can_manage_payroll(self.request.user):
+            if not can_manage_payroll(self.request.user, getattr(self.request, "tenant", None)):
                 raise PermissionDenied("관리자만 승인/반려 가능")
 
             if instance.status != "PENDING":
