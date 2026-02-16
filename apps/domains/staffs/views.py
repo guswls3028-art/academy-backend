@@ -52,6 +52,7 @@ def _owner_display_for_tenant(tenant, request=None):
     """테넌트 원장(owner) 표시용 딕셔너리. 직원 목록 상단 노출용."""
     if not tenant:
         return None
+    # 1) TenantMembership role=owner
     m = (
         TenantMembership.objects.filter(
             tenant=tenant, role="owner", is_active=True
@@ -62,13 +63,19 @@ def _owner_display_for_tenant(tenant, request=None):
     if m:
         name = (getattr(m.user, "name", None) or "").strip() or m.user.username
         return {"id": None, "name": name, "role": "OWNER", "is_owner": True}
+    # 2) tenant.owner_name
     if (getattr(tenant, "owner_name", None) or "").strip():
         return {"id": None, "name": (tenant.owner_name or "").strip(), "role": "OWNER", "is_owner": True}
-    # DB에 owner 없어도, 현재 요청 사용자가 이 테넌트 owner면 표시 (직원관리에서 원장 항상 노출)
+    # 3) 현재 사용자가 이 테넌트 owner 멤버십 보유
     if request and request.user and request.user.is_authenticated:
         from academy.adapters.db.django import repositories_core as core_repo
         if core_repo.membership_exists_staff(tenant=tenant, user=request.user, staff_roles=("owner",)):
             name = (getattr(request.user, "name", None) or "").strip() or request.user.username
+            return {"id": None, "name": name, "role": "OWNER", "is_owner": True}
+    # 4) DB에 원장 없을 때: 이 페이지 접근 가능한 사용자(슈퍼유저/스태프)를 대표로 표시
+    if request and request.user and request.user.is_authenticated:
+        if request.user.is_superuser or request.user.is_staff:
+            name = (getattr(request.user, "name", None) or "").strip() or request.user.username or "원장"
             return {"id": None, "name": name, "role": "OWNER", "is_owner": True}
     return None
 
