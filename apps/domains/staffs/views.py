@@ -165,7 +165,7 @@ class StaffViewSet(viewsets.ModelViewSet):
                 "is_authenticated": True,
                 "is_superuser": bool(request.user.is_superuser),
                 "is_staff": bool(request.user.is_staff),
-                "is_payroll_manager": can_manage_payroll(request.user),
+                "is_payroll_manager": can_manage_payroll(request.user, getattr(request, "tenant", None)),
             }
         )
 
