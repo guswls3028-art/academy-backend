@@ -24,7 +24,9 @@ param(
     [string]$RoleName = "academy-ec2-role",
     [switch]$SkipBuild = $false,
     [switch]$WorkersViaASG = $false,             # true면 워커는 ASG 인스턴스 리프레시만, 고정 EC2 3대 SSH 안 함
-    [switch]$StartStoppedInstances = $true
+    [switch]$StartStoppedInstances = $true,
+    [ValidateSet("all", "api", "video", "ai", "messaging", "workers")]
+    [string]$DeployTarget = "all"               # all=API+3워커, api/video/ai/messaging=해당 1종만, workers=워커 3종만
 )
 
 $ErrorActionPreference = "Stop"
