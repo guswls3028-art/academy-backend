@@ -7,7 +7,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework import serializers
 
 
-def _tenant_for_auth(request) -> "Optional[Any]":
+def _tenant_for_auth(request):
     """로그인 요청에서 테넌트 결정: X-Tenant-Code 헤더 또는 body tenant_code."""
     raw = (
         (request.META.get("HTTP_X_TENANT_CODE") or "").strip()
