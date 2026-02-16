@@ -19,7 +19,7 @@ def _tenant_for_auth(request):
 
 
 class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """테넌트별 User 조회 후 비밀번호 검증. (tenant, username) 격리."""
+    """테넌트별 User만 로그인 허용. tenant=null 계정은 로그인 불가."""
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -27,19 +27,21 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
         password = attrs.get("password") or ""
 
         tenant = _tenant_for_auth(request) if request else None
-        if tenant:
-            user = core_repo.user_get_by_tenant_username(tenant, username)
-            if not user:
-                # 기존 레거시: tenant=null 사용자 중 이 테넌트 멤버십 있는 경우
-                user = core_repo.user_get_by_username(username)
-                if user and not core_repo.membership_get(tenant, user):
-                    user = None
-        else:
-            user = core_repo.user_get_by_username(username)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"detail": "테넌트(학원) 정보가 필요합니다. 로그인 페이지에서 학원을 선택해 주세요."},
+                code="authorization",
+            )
 
+        user = core_repo.user_get_by_tenant_username(tenant, username)
         if not user or not user.check_password(password):
             raise serializers.ValidationError(
                 {"detail": "로그인 아이디 또는 비밀번호가 올바르지 않습니다."},
+                code="authorization",
+            )
+        if user.tenant_id is None:
+            raise serializers.ValidationError(
+                {"detail": "로그인할 수 없는 계정입니다."},
                 code="authorization",
             )
         if not user.is_active:
