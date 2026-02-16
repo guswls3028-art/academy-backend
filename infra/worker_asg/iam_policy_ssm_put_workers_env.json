@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SSMPutGetWorkersEnv",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter",
+        "ssm:GetParameter"
+      ],
+      "Resource": "arn:aws:ssm:{{Region}}:{{AccountId}}:parameter/academy/workers/env"
+    }
+  ]
+}

@@ -17,7 +17,9 @@ param(
     [int]$MaxCapacity = 20,
     [int]$TargetMessagesPerInstance = 20,
     [switch]$UploadEnvToSsm = $true,   # .env 있으면 SSM /academy/workers/env 에 업로드
-    [switch]$AttachEc2Policy = $true   # EC2 역할에 SSM+ECR 정책 인라인 첨부 시도
+    [switch]$AttachEc2Policy = $true,   # EC2 역할에 SSM+ECR 정책 인라인 첨부 시도
+    [switch]$GrantSsmPutToCaller = $true,   # SSM PutParameter 권한 부여 시도
+    [string]$SsmPutGrantUser = ""           # 비어 있으면 현재 호출자에게 부여; 지정 시 해당 IAM 사용자(예: admin97)에게 부여
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,13 +41,13 @@ $EventBridgeRuleName = "academy-worker-queue-depth-rate"
 # 0) AMI (Amazon Linux 2023)
 # ------------------------------------------------------------------------------
 if (-not $AmiId) {
-    Write-Host "[0/8] Resolving latest Amazon Linux 2023 AMI..." -ForegroundColor Cyan
+    Write-Host "[0/8] Resolving latest Amazon Linux 2023 AMI (arm64 for t4g)..." -ForegroundColor Cyan
     $AmiId = (aws ec2 describe-images --region $Region --owners amazon `
-        --filters "Name=name,Values=al2023-ami-*-kernel-6.1-x86_64" "Name=state,Values=available" `
+        --filters "Name=name,Values=al2023-ami-*-kernel-6.1-arm64" "Name=state,Values=available" `
         --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
     if (-not $AmiId) {
         $AmiId = (aws ec2 describe-images --region $Region --owners amazon `
-            --filters "Name=name,Values=amzn2-ami-*-x86_64-gp2" "Name=state,Values=available" `
+            --filters "Name=name,Values=amzn2-ami-*-arm64-gp2" "Name=state,Values=available" `
             --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
     }
     Write-Host "      AMI: $AmiId" -ForegroundColor Gray
@@ -106,7 +108,8 @@ try { aws ec2 describe-launch-templates --launch-template-names $LtAiName --regi
 if (-not $ltAiExists) {
     aws ec2 create-launch-template --launch-template-name $LtAiName --version-description "ASG AI worker" --launch-template-data $ltAiPath --region $Region | Out-Null
 } else {
-    aws ec2 create-launch-template-version --launch-template-name $LtAiName --launch-template-data $ltAiPath --region $Region | Out-Null
+    $newVer = aws ec2 create-launch-template-version --launch-template-name $LtAiName --launch-template-data $ltAiPath --region $Region --query "LaunchTemplateVersion.VersionNumber" --output text 2>$null
+    if ($newVer) { aws ec2 modify-launch-template --launch-template-name $LtAiName --default-version $newVer --region $Region | Out-Null }
 }
 Remove-Item $ltAiFile -Force -ErrorAction SilentlyContinue
 
@@ -132,7 +135,8 @@ try { aws ec2 describe-launch-templates --launch-template-names $LtVideoName --r
 if (-not $ltVideoExists) {
     aws ec2 create-launch-template --launch-template-name $LtVideoName --version-description "ASG Video worker" --launch-template-data $ltVideoPath --region $Region | Out-Null
 } else {
-    aws ec2 create-launch-template-version --launch-template-name $LtVideoName --launch-template-data $ltVideoPath --region $Region | Out-Null
+    $newVer = aws ec2 create-launch-template-version --launch-template-name $LtVideoName --launch-template-data $ltVideoPath --region $Region --query "LaunchTemplateVersion.VersionNumber" --output text 2>$null
+    if ($newVer) { aws ec2 modify-launch-template --launch-template-name $LtVideoName --default-version $newVer --region $Region | Out-Null }
 }
 Remove-Item $ltVideoFile -Force -ErrorAction SilentlyContinue
 
@@ -157,7 +161,8 @@ try { aws ec2 describe-launch-templates --launch-template-names $LtMessagingName
 if (-not $ltMessagingExists) {
     aws ec2 create-launch-template --launch-template-name $LtMessagingName --version-description "ASG Messaging worker" --launch-template-data $ltMessagingPath --region $Region | Out-Null
 } else {
-    aws ec2 create-launch-template-version --launch-template-name $LtMessagingName --launch-template-data $ltMessagingPath --region $Region | Out-Null
+    $newVer = aws ec2 create-launch-template-version --launch-template-name $LtMessagingName --launch-template-data $ltMessagingPath --region $Region --query "LaunchTemplateVersion.VersionNumber" --output text 2>$null
+    if ($newVer) { aws ec2 modify-launch-template --launch-template-name $LtMessagingName --default-version $newVer --region $Region | Out-Null }
 }
 Remove-Item $ltMessagingFile -Force -ErrorAction SilentlyContinue
 
@@ -304,6 +309,32 @@ $ErrorActionPreference = $ea
 Remove-Item $policyAiFile, $policyVideoFile, $policyMessagingFile -Force -ErrorAction SilentlyContinue
 
 Write-Host "Done. Lambda: $QueueDepthLambdaName | ASG: $AsgAiName, $AsgVideoName, $AsgMessagingName | AI/Video Min=0 Messaging Min=1 Max=$MaxCapacity Target=$TargetMessagesPerInstance" -ForegroundColor Green
+
+# ------------------------------------------------------------------------------
+# 선택) 현재 호출자(IAM 사용자)에게 SSM PutParameter 권한 부여
+# ------------------------------------------------------------------------------
+if ($GrantSsmPutToCaller) {
+    $callerArn = (aws sts get-caller-identity --query Arn --output text 2>$null)
+    $iamUserName = $null
+    if ($SsmPutGrantUser) { $iamUserName = $SsmPutGrantUser.Trim() } elseif ($callerArn -match 'arn:aws:iam::\d+:user/(.+)$') { $iamUserName = $Matches[1] }
+    if ($iamUserName) {
+        Write-Host "[+IAM] Granting SSM PutParameter to user '$iamUserName' (for /academy/workers/env)..." -ForegroundColor Cyan
+        $ssmPolicyPath = Join-Path $AsgInfra "iam_policy_ssm_put_workers_env.json"
+        if (Test-Path $ssmPolicyPath) {
+            $ssmPolicyJson = (Get-Content $ssmPolicyPath -Raw) -replace '\{\{Region\}\}', $Region -replace '\{\{AccountId\}\}', $AccountId
+            $ssmPolicyFile = Join-Path $RepoRoot "iam_ssm_put_temp.json"
+            [System.IO.File]::WriteAllText($ssmPolicyFile, $ssmPolicyJson, $utf8NoBom)
+            $ssmPolicyUri = "file://$($ssmPolicyFile -replace '\\','/' -replace ' ', '%20')"
+            $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            aws iam put-user-policy --user-name $iamUserName --policy-name academy-ssm-put-workers-env --policy-document $ssmPolicyUri 2>$null
+            if ($LASTEXITCODE -eq 0) { Write-Host "      User $iamUserName now has ssm:PutParameter on /academy/workers/env." -ForegroundColor Gray } else { Write-Host "      (Need IAM permission put-user-policy; run as admin or add policy manually.)" -ForegroundColor Yellow }
+            $ErrorActionPreference = $ea
+            Remove-Item $ssmPolicyFile -Force -ErrorAction SilentlyContinue
+        }
+    } else {
+        Write-Host "      Caller is not an IAM user and -SsmPutGrantUser not set; skip. Use -SsmPutGrantUser admin97 to grant that user." -ForegroundColor Yellow
+    }
+}
 
 # ------------------------------------------------------------------------------
 # 선택) .env → SSM 업로드
