@@ -132,6 +132,22 @@ def staff_get(tenant, pk):
     return Staff.objects.get(id=pk, tenant=tenant)
 
 
+def staff_get_by_user_tenant(tenant, user):
+    """테넌트·유저 기준 직원 한 건 (멀티테넌트에서 user.staff_profile 대체)."""
+    from apps.domains.staffs.models import Staff
+    if not tenant or not user:
+        return None
+    return Staff.objects.filter(tenant=tenant, user=user).first()
+
+
+def staff_exists_tenant_user(tenant, user) -> bool:
+    """이 테넌트에 해당 유저 직원이 이미 있는지."""
+    from apps.domains.staffs.models import Staff
+    if not tenant or not user:
+        return False
+    return Staff.objects.filter(tenant=tenant, user=user).exists()
+
+
 def staff_get_by_name_phone(name, phone):
     from apps.domains.staffs.models import Staff
     return Staff.objects.filter(name=name, phone=phone or "").first()
