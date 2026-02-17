@@ -22,6 +22,7 @@
 | [14-solapi-check-guide.md](14-solapi-check-guide.md) | 솔라피 콘솔 확인 (발신번호·잔액·IP) | 메시지 발송 실패 시 |
 | [15-messaging-worker-and-message-flow.md](15-messaging-worker-and-message-flow.md) | Messaging Worker · message_mode · 자동발송 · API | 메시징 수정·운영 시 |
 | [16-verification-report-0218.md](16-verification-report-0218.md) | 검증 보고서 (0218) 문서·코드 대조, API 정합성, 빌드 | 변경사항 점검·배포 전 확인 |
+| [17-project-structure-and-doc-verification.md](17-project-structure-and-doc-verification.md) | 프로젝트 구조, 문서–코드 검증 (구조 파악·일치 여부) | 신규 참여·문서 정합성 점검 시 |
 
 ## 날짜별 스냅샷
 
