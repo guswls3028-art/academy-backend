@@ -51,7 +51,7 @@ def process_video(
     if not video_id or tenant_id is None:
         raise ValueError("video_id and tenant_id required")
 
-    progress.record_progress(job_id, "presigning")
+    progress.record_progress(job_id, "presigning", {"percent": 5})
     try:
         source_url = create_presigned_get_url(key=file_key, expires_in=600)
     except Exception as e:
@@ -67,10 +67,10 @@ def process_video(
         src_path = wd / "source.mp4"
         out_dir = wd / "hls"
 
-        progress.record_progress(job_id, "downloading", {"file_key": file_key})
+        progress.record_progress(job_id, "downloading", {"file_key": file_key, "percent": 15})
         download_to_file(url=source_url, dst=src_path, cfg=cfg)
 
-        progress.record_progress(job_id, "probing")
+        progress.record_progress(job_id, "probing", {"percent": 25})
         duration = probe_duration_seconds(
             input_path=str(src_path),
             ffprobe_bin=cfg.FFPROBE_BIN,
@@ -79,7 +79,7 @@ def process_video(
         if not duration or duration <= 0:
             raise RuntimeError("duration_probe_failed")
 
-        progress.record_progress(job_id, "transcoding", {"duration": duration})
+        progress.record_progress(job_id, "transcoding", {"duration": duration, "percent": 50})
         transcode_to_hls(
             video_id=video_id,
             input_path=str(src_path),
