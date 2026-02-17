@@ -61,15 +61,18 @@ def rollback_credits(tenant_id: int, amount: str | Decimal) -> Decimal:
 
 
 def get_tenant_messaging_info(tenant_id: int) -> Optional[dict]:
-    """워커/API용: 테넌트 메시징 정보 (잔액, PFID, 활성화, 단가)"""
+    """워커/API용: 테넌트 메시징 정보 (잔액, PFID, 발신번호, 활성화, 단가)"""
     t = Tenant.objects.filter(pk=tenant_id).values(
-        "kakao_pfid", "credit_balance", "messaging_is_active", "messaging_base_price"
+        "kakao_pfid", "credit_balance", "messaging_is_active", "messaging_base_price",
+        "messaging_sender",
     ).first()
     if not t:
         return None
+    sender = (t.get("messaging_sender") or "").strip()
     return {
         "kakao_pfid": t["kakao_pfid"] or None,
         "credit_balance": str(t["credit_balance"]),
         "is_active": t["messaging_is_active"],
         "base_price": str(t["messaging_base_price"]),
+        "sender": sender if sender else None,
     }

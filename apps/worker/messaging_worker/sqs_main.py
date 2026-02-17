@@ -248,7 +248,7 @@ def main() -> int:
 
                     to = str(data.get("to", ""))
                     text = str(data.get("text", ""))
-                    sender = (data.get("sender") or "").strip() or cfg.SOLAPI_SENDER
+                    sender = (data.get("sender") or "").strip()
                     use_alimtalk_first = bool(data.get("use_alimtalk_first"))
                     alimtalk_replacements = data.get("alimtalk_replacements") or []
                     template_id_msg = data.get("template_id") or ""
