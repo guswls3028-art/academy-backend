@@ -81,6 +81,12 @@
 - AI 워커 이미지 재빌드 후 배포 시 반영
 - `full_redeploy.ps1` 또는 `build_and_push_ecr` → ASG refresh
 
+### 배포 전 확인 (실무 포인트)
+
+- **Git push**: 로컬 수정이 repo에 push됐는지 확인 (full_redeploy는 Git clone 후 빌드)
+- **ECR tag/digest**: 새 이미지가 푸시됐는지 확인
+- **ASG Instance Refresh**: 실제로 새 인스턴스에 반영됐는지 확인
+
 ---
 
 ## 6. AI 하이브리드 (구현 예정)
