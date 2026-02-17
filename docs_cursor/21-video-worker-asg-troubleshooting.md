@@ -62,9 +62,11 @@ aws ec2 describe-instances --region ap-northeast-2 `
   `academy-video-worker-asg` 등에 대해 기존 인스턴스 교체(종료 후 새 인스턴스 기동)만 합니다.
 - 새 인스턴스는 **Launch Template user_data** 로:
   - Docker 설치
-  - `/mnt/transcode` 마운트 (100GB)
+  - **100GB 추가 EBS**(LT의 `/dev/sdb`)를 nvme1n1 등으로 찾아 `/mnt/transcode`에 마운트
   - SSM에서 `.env` 받기
   - ECR pull → `docker run academy-video-worker`
+
+**Video 워커만** 100GB 추가 볼륨을 쓰므로, LT에 BlockDeviceMapping이 있어야 하고 user_data 마운트가 성공해야 함. 마운트 실패 시 `-v /mnt/transcode:/tmp` 가 빈 디렉터리를 써서 트랜스코딩 중 디스크 부족 등 발생 가능. 문제 시 `cloud-init-output.log` 확인 후, 필요하면 `deploy_worker_asg.ps1` 실행해 LT 재적용 후 instance refresh.
 
 그래서 **비디오 워커가 돌아가는 곳은 “이름이 academy-video-worker 인 ASG에서 띄운 인스턴스”** 한 대(또는 scale-out 시 여러 대)입니다.  
 **ECS Optimized 인스턴스(ecs-agent만 있는 서버)에는 비디오 워커가 없습니다.**
