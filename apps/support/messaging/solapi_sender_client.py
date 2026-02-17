@@ -8,7 +8,6 @@
 
 import logging
 import re
-from typing import Optional
 
 import requests
 
