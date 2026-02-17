@@ -30,7 +30,7 @@ Base path: `/api/v1/staffs/` (ROOT_URLCONF에서 prefix).
   - `work_type_id`: 해당 테넌트 소속 WorkType PK.
   - `hourly_wage`: 선택. 비우면 WorkType.base_hourly_wage 사용.
 - **perform_create**: `serializer.save(tenant=self.request.tenant)` 로 tenant 주입.
-- **응답**: 201, 생성된 StaffWorkType 단일 객체 (id, staff, work_type, work_type_id 없음/read, hourly_wage, effective_hourly_wage, created_at, updated_at).
+- **응답**: 201, 생성된 StaffWorkType 단일 객체 (id, staff, work_type 중첩, hourly_wage, effective_hourly_wage, created_at, updated_at).
 
 ---
 

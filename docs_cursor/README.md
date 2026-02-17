@@ -13,6 +13,7 @@
 | [04-deployment.md](04-deployment.md) | 배포 순서, Docker 이미지, EC2, 스크립트 경로 | 배포·인프라 작업 |
 | [05-conventions.md](05-conventions.md) | 문서/코드 규칙, core 봉인, 추측 금지 | 모든 작업 전 참고 |
 | [06-front-infra-and-excel.md](06-front-infra-and-excel.md) | 프론트·인프라 계약 요약, 백엔드 엑셀 파싱 사실 (상세는 academyfront/06-implemented-features) | CORS·도메인·엑셀 에러 시 참조 |
+| [07-staffs-api.md](07-staffs-api.md) | staffs 도메인 API: work-types, staff-work-types (POST body: staff, work_type_id), Staff | 시급태그·직원 API 연동·수정 시 |
 
 ## 날짜별 스냅샷
 
