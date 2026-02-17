@@ -17,7 +17,14 @@ logger = logging.getLogger(__name__)
 
 
 class ExcelValidationError(ValueError):
-    """학부모 전화 필수 검증 등 엑셀 파싱 검증 실패 시 (Fail-Fast)."""
+    """
+    학부모 전화 필수 검증 등 엑셀 파싱 검증 실패 시 (Fail-Fast).
+    errors: [{"row": int, "reason": str}, ...] — 전체 오류 목록(1행 단위).
+    """
+
+    def __init__(self, message: str, *, errors: list[dict[str, Any]] | None = None) -> None:
+        super().__init__(message)
+        self.errors = errors or []
 
 
 # 헤더 별칭 (학원별 양식 대응 — 양식 안 맞춰도 인식되도록 넓게)
