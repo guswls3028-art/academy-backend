@@ -61,7 +61,7 @@ class ProcessVideoJobHandler:
                 logger.warning("Cannot mark video %s as PROCESSING, skipping", video_id)
                 return "skip"
 
-            hls_path, duration = self._process_fn(job, cfg, self._progress)
+            hls_path, duration = self._process_fn(job=job, cfg=cfg, progress=self._progress)
 
             ok, reason = self._repo.complete_video(
                 video_id=video_id,
