@@ -4,6 +4,7 @@ from apps.support.messaging import views
 
 urlpatterns = [
     path("info/", views.MessagingInfoView.as_view(), name="messaging-info"),
+    path("verify-sender/", views.VerifySenderView.as_view(), name="messaging-verify-sender"),
     path("charge/", views.ChargeView.as_view(), name="messaging-charge"),
     path("log/", views.NotificationLogListView.as_view(), name="messaging-log"),
     path("channel-check/", views.ChannelCheckView.as_view(), name="messaging-channel-check"),

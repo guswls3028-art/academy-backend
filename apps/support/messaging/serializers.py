@@ -27,6 +27,11 @@ class MessagingInfoUpdateSerializer(serializers.Serializer):
     messaging_sender = serializers.CharField(max_length=20, required=False, allow_blank=True)
 
 
+class VerifySenderRequestSerializer(serializers.Serializer):
+    """발신번호 인증 요청"""
+    phone_number = serializers.CharField(max_length=20, allow_blank=False)
+
+
 class ChargeRequestSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=12, decimal_places=0, min_value=1)
 

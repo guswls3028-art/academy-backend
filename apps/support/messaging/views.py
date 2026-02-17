@@ -111,6 +111,39 @@ class NotificationLogListView(APIView):
         return Response({"results": items, "count": count})
 
 
+class VerifySenderView(APIView):
+    """
+    POST: 입력한 발신번호가 솔라피에 등록·활성화된 번호인지 조회.
+    - Body: { "phone_number": "01031217466" }
+    - Response: { "verified": bool, "message": str }
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def post(self, request):
+        from django.conf import settings
+
+        ser = VerifySenderRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        phone = (ser.validated_data["phone_number"] or "").strip()
+
+        api_key = getattr(settings, "SOLAPI_API_KEY", None) or ""
+        api_secret = getattr(settings, "SOLAPI_API_SECRET", None) or ""
+        if not api_key or not api_secret:
+            return Response(
+                {"verified": False, "message": "솔라피 API가 설정되지 않았습니다."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        try:
+            verified, message = verify_sender_number(api_key, api_secret, phone)
+            return Response({"verified": verified, "message": message})
+        except ValueError as e:
+            return Response(
+                {"verified": False, "message": str(e)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+
 class ChannelCheckView(APIView):
     """GET: 채널 공유 확인 (파트너 등록 여부) — 4단계, 스텁 가능"""
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
