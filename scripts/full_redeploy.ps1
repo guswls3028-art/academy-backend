@@ -280,7 +280,7 @@ if ($deployWorkers) {
         }
         $asgNames = $workerList | ForEach-Object { $asgMap[$_] } | Where-Object { $_ }
         foreach ($asgName in $asgNames) {
-            $asgCheck = aws autoscaling describe-auto-scaling-groups --region $Region --auto-scaling-group-names $asgName --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>$null
+            $asgCheck = aws autoscaling describe-auto-scaling-groups --region $Region --auto-scaling-group-names $asgName --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>&1
             if ($LASTEXITCODE -ne 0 -or -not $asgCheck -or $asgCheck -eq "None") {
                 Write-Host "  $asgName - ASG not found or error: $asgCheck" -ForegroundColor Yellow
                 continue
