@@ -71,3 +71,42 @@
 - **오픈 전**: ALB + Target Group `/health` + ACM 443, RDS max_connections 모니터링, ASG scale-in 확인, Video EC2 `free -h` Swap 확인.
 
 워커 테스트 시: 로컬은 `test_worker_action.py` + `run-worker-*.ps1`, 배포 후는 EC2/ASG 인스턴스에서 `docker logs academy-*-worker` 및 SQS 큐 적재·소비 확인.
+
+---
+
+## 6. 비동기 워커(영상·엑셀) 안 될 때 점검
+
+**영상**: 업로드 완료 → API가 `VideoSQSQueue().enqueue(video)` → Video Worker가 SQS Long Polling → 인코딩 → DB READY.  
+**엑셀**: 파일 업로드 → R2 → API가 AI SQS enqueue → AI Worker(EXCEL_PARSING) → DB 반영.
+
+### 6.1 공통
+
+| 항목 | 확인 |
+|------|------|
+| **SQS 큐 생성** | `scripts/create_sqs_resources.py`, `create_ai_sqs_resources.py` 실행 여부. 큐 이름: `academy-video-jobs`, `academy-ai-jobs-lite` 등. |
+| **환경변수 일치** | API와 워커가 **동일한** `VIDEO_SQS_QUEUE_NAME` / `AI_SQS_QUEUE_NAME_*` 사용. API는 `apps.api.config.settings.base`, 워커는 `apps.api.config.settings.worker`. |
+| **AWS 자격 증명** | 워커 컨테이너/EC2에 `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`(또는 IAM 역할) 설정. 없으면 SQS 수신 불가. |
+| **워커 프로세스** | Video: `docker run ... academy-video-worker` 또는 ASG 인스턴스에서 동일 이미지 실행 중인지. `docker logs academy-video-worker` 로 SQS 수신·처리 로그 확인. |
+
+### 6.2 영상만
+
+| 항목 | 확인 |
+|------|------|
+| **R2 (원본 업로드)** | API에서 `upload/complete` 시 R2에 원본 존재해야 함. `R2_VIDEO_BUCKET`, `R2_ACCESS_KEY` 등 API·워커 동일. |
+| **워커 R2/Redis** | 워커에 `R2_*`, `CDN_HLS_BASE_URL`, Redis(진행률/멱등) env 있으면 확인. |
+| **DB 상태** | Video.status가 `UPLOADED`일 때만 enqueue. `PENDING`이면 업로드 완료 호출이 안 된 것. |
+
+### 6.3 엑셀만
+
+| 항목 | 확인 |
+|------|------|
+| **AI SQS 큐** | `academy-ai-jobs-lite` 등 생성 여부. 엑셀 파싱은 AI 워커(CPU)가 처리. |
+| **R2 Excel 버킷** | `R2_EXCEL_BUCKET`(또는 `EXCEL_BUCKET_NAME`) API·워커 동일. |
+| **Job 상태** | 프론트는 `GET /api/v1/jobs/<job_id>/` 폴링. 백엔드에 해당 Job 레코드가 있고 status가 DONE/FAILED로 갱신되는지 확인. |
+
+### 6.4 프론트 400 / API 경로 오류
+
+- 콘솔에 `https://api.hakwonplus.com/amectures/lectures/:1` 처럼 **`api/v1` 없이** 잘못된 경로가 보이면:
+  - **프론트 baseURL**: `VITE_API_BASE_URL` 은 `https://api.hakwonplus.com` 만 넣고, **끝에 `/api/v1` 붙이지 않기**. (axios에서 이미 `baseURL: ${API_BASE}/api/v1` 로 붙임.)
+  - 빌드 후 실제 요청 URL이 `https://api.hakwonplus.com/api/v1/lectures/lectures/<id>/` 인지 Network 탭에서 확인.
+- API 400이면: 백엔드 로그에서 해당 요청의 path/body 확인.
