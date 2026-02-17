@@ -25,6 +25,7 @@ from apps.support.messaging.serializers import (
     ChargeRequestSerializer,
     NotificationLogSerializer,
     MessageTemplateSerializer,
+    SendMessageRequestSerializer,
 )
 
 
