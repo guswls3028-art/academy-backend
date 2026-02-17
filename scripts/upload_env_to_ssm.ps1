@@ -36,17 +36,23 @@ try {
         $lastErr = $_
     }
 }
-if (-not $content) {
+if ($null -eq $content) {
     try {
         $content = [System.IO.File]::ReadAllText($envPath, [System.Text.Encoding]::UTF8)
     } catch {
         $lastErr = $_
     }
 }
-if (-not $content) {
+if ($null -eq $content) {
     Write-Host "upload_env_to_ssm: could not read .env at: $envPath" -ForegroundColor Red
     if ($lastErr) { Write-Host "  Error: $($lastErr.Exception.Message)" -ForegroundColor Gray }
     Write-Host "  Tip: Close .env in other apps (editor, terminal) and retry." -ForegroundColor Gray
+    exit 1
+}
+if ([string]::IsNullOrWhiteSpace($content)) {
+    Write-Host "upload_env_to_ssm: .env is empty at: $envPath" -ForegroundColor Yellow
+    Write-Host "  Add your environment variables (e.g. DATABASE_URL, SECRET_KEY) to .env and run again." -ForegroundColor Gray
+    Write-Host "  You can copy from .env.example if present." -ForegroundColor Gray
     exit 1
 }
 $content = $content -replace "`r`n", "`n" -replace "`r", "`n"
