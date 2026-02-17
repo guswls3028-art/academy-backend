@@ -3,6 +3,3 @@
 
 # 엑셀 파싱 (무적의 엑셀 로직)
 openpyxl>=3.1.0
-
-# 학생 일괄 등록: apps.domains.students가 rest_framework 사용
-djangorestframework
