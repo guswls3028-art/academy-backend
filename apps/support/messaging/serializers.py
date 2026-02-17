@@ -65,3 +65,27 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+
+class SendMessageRequestSerializer(serializers.Serializer):
+    """메시지 발송 요청: 수신자(학생 ID) + 직접 입력 본문 또는 템플릿 ID"""
+    student_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+        help_text="수신 대상 학생 ID 목록",
+    )
+    send_to = serializers.ChoiceField(
+        choices=[("student", "학생"), ("parent", "학부모")],
+        default="parent",
+        help_text="학생 번호로 보낼지 학부모 번호로 보낼지",
+    )
+    template_id = serializers.IntegerField(required=False, allow_null=True)
+    raw_body = serializers.CharField(required=False, allow_blank=True)
+    raw_subject = serializers.CharField(required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        if not attrs.get("template_id") and not (attrs.get("raw_body") or "").strip():
+            raise serializers.ValidationError(
+                {"raw_body": "직접 입력 본문을 넣거나 템플릿을 선택해 주세요."}
+            )
+        return attrs
