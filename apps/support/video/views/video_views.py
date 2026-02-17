@@ -283,8 +283,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.error_reason = ""
             video.save(update_fields=["status", "error_reason"])
 
-            # SQS에 작업 추가
-            transaction.on_commit(lambda: VideoSQSQueue().enqueue(video))
+            # SQS에 작업 추가 (동기 호출 — 실패 시 클라이언트에 503 반환)
+            if not VideoSQSQueue().enqueue(video):
+                return Response(
+                    {"detail": "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             return Response(VideoSerializer(video).data)
 
         min_dur = _safe_int(getattr(settings, "VIDEO_MIN_DURATION_SECONDS", 3), 3)
