@@ -296,7 +296,7 @@ class ExcelParsingService:
 
         try:
             self._storage.download_to_path(bucket, file_key, str(local_path))
-            rows = parse_student_excel_file(str(local_path))
+            rows, lecture_title = parse_student_excel_file(str(local_path))
             if not rows:
                 raise ValueError("등록할 학생 데이터가 없습니다.")
 
