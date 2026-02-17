@@ -6,13 +6,20 @@ API 서버와 동일한 환경변수로 실행하여, SQS 큐 접근 가능 여�
 - 영상: academy-video-jobs
 - 엑셀(수강등록): academy-ai-jobs-basic
 
-사용법 (API 서버 또는 API와 동일한 .env 사용):
-  cd C:\academy
-  set DJANGO_SETTINGS_MODULE=apps.api.config.settings.base
-  python scripts/check_sqs_worker_connectivity.py
+사용법:
 
-  또는 Docker API 컨테이너 내부:
-  docker exec -it <api_container> python scripts/check_sqs_worker_connectivity.py
+  [Linux/EC2] API와 동일한 환경에서:
+    cd /home/ec2-user/academy
+    export DJANGO_SETTINGS_MODULE=apps.api.config.settings.base
+    python3 scripts/check_sqs_worker_connectivity.py
+
+  [Linux/EC2] API가 Docker로 실행 중일 때 (권장 — API와 동일 env):
+    docker exec -it academy-api python scripts/check_sqs_worker_connectivity.py
+
+  [Windows]
+    cd C:\academy
+    set DJANGO_SETTINGS_MODULE=apps.api.config.settings.base
+    python scripts/check_sqs_worker_connectivity.py
 """
 from __future__ import annotations
 
