@@ -332,7 +332,7 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
             student_phone = ""
             uses_identifier = True
 
-        parent_final = parent_phone_raw if len(parent_phone_raw) >= 10 else "010" + parent_phone_raw
+        parent_final = parent_phone_raw  # 이미 _validate_parent_phone 통과 (010 10~11자리)
 
         school_cell = _cell_str(row, school_col)
         grade_cell = _cell_str(row, grade_col)
