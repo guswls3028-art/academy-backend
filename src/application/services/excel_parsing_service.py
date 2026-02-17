@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "name": (
         "이름", "성명", "학생명", "학생 이름", "이름(학생)", "성함", "학생성명",
-        "이름(학생)", "학생",
     ),
     "parent_phone": (
         "학부모전화번호", "부모핸드폰", "부모 전화", "학부모 전화", "보호자 전화", "보호자전화",
