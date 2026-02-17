@@ -1,6 +1,6 @@
 # apps/support/messaging/models.py
 """
-알림톡 발송 로그 — 성공/실패, 차감 금액 기록
+알림톡 발송 로그 · 메시지 템플릿 · 자동발송 설정
 """
 
 from decimal import Decimal
@@ -85,3 +85,49 @@ class MessageTemplate(models.Model):
         ordering = ["-updated_at"]
         verbose_name = "Message template"
         verbose_name_plural = "Message templates"
+
+
+class AutoSendConfig(models.Model):
+    """
+    자동발송 설정 — 트리거별 사용할 템플릿.
+    특정 이벤트 발생 시 해당 템플릿으로 메시지 자동 발송.
+    """
+    class Trigger(models.TextChoices):
+        STUDENT_SIGNUP = "student_signup", "가입 완료"
+        CLINIC_REMINDER = "clinic_reminder", "클리닉 알림"
+        CLINIC_RESERVATION_CREATED = "clinic_reservation_created", "클리닉 예약 생성"
+        CLINIC_RESERVATION_CHANGED = "clinic_reservation_changed", "클리닉 예약 변경"
+
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="auto_send_configs",
+        db_index=True,
+    )
+    trigger = models.CharField(
+        max_length=60,
+        choices=Trigger.choices,
+        db_index=True,
+        unique=True,  # per-tenant: (tenant, trigger) unique via constraint below
+    )
+    template = models.ForeignKey(
+        MessageTemplate,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="auto_send_configs",
+    )
+    enabled = models.BooleanField(default=False)
+    message_mode = models.CharField(
+        max_length=20,
+        choices=[("sms", "SMS만"), ("alimtalk", "알림톡만"), ("both", "알림톡→SMS폴백")],
+        default="sms",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "messaging"
+        unique_together = [("tenant", "trigger")]
+        verbose_name = "Auto-send config"
+        verbose_name_plural = "Auto-send configs"
