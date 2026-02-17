@@ -10,6 +10,7 @@ FROM ${BASE_IMAGE} AS base
 # 앱 코드 (Base에 두지 않음 → 코드 변경 시 base 재빌드 불필요)
 USER root
 COPY src ./src
+COPY src/infrastructure ./src/infrastructure
 COPY academy ./academy
 COPY apps ./apps
 COPY libs ./libs
