@@ -1,0 +1,15 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Register academy-ai-worker-asg with Application Auto Scaling
+Resources:
+  AIWorkerScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: ec2
+      ResourceId: !Sub 'auto-scaling-group/${ASGName}'
+      ScalableDimension: ec2:autoScalingGroup:DesiredCapacity
+      MinCapacity: 0
+      MaxCapacity: 20
+Parameters:
+  ASGName:
+    Type: String
+    Default: academy-ai-worker-asg
