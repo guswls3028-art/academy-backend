@@ -374,4 +374,4 @@ if ($AttachEc2Policy -and (Test-Path $ec2PolicyPath)) {
 }
 
 Write-Host "If ECR images missing: .\scripts\build_and_push_ecr.ps1" -ForegroundColor Yellow
-Write-Host "After validation, disable old Lambda scaling + self-stop (see ARCH_CHANGE_PROPOSAL_LAMBDA_TO_ASG.md)." -ForegroundColor Yellow
+Write-Host "ASG 워커 껐다 켜짐 방지: .\scripts\remove_ec2_stop_from_worker_role.ps1" -ForegroundColor Gray

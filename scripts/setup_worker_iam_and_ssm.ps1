@@ -64,3 +64,4 @@ if (-not $roleName) {
 
 Write-Host ""
 Write-Host "Done. Next: admin97 can run deploy/SSM commands. If ECR images missing: .\scripts\build_and_push_ecr.ps1" -ForegroundColor Green
+Write-Host "ASG 워커 껐다 켜짐 방지: .\scripts\remove_ec2_stop_from_worker_role.ps1 (docs_cursor/11-worker-self-stop-root-cause.md)" -ForegroundColor Gray
