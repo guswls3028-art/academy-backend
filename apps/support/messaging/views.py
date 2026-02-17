@@ -230,3 +230,82 @@ class MessageTemplateSubmitReviewView(APIView):
             {"detail": "검수 신청이 완료되었습니다. 카카오 검수는 영업일 기준 1~3일 소요됩니다.", "template": serializer.data},
             status=status.HTTP_200_OK,
         )
+
+
+class SendMessageView(APIView):
+    """
+    POST: 선택 학생(들)에게 메시지 발송 (SQS enqueue → 워커가 Solapi 발송).
+    - student_ids: 학생 ID 목록
+    - send_to: "student" | "parent"
+    - template_id 있으면 해당 템플릿 본문 사용, 없으면 raw_body 사용 (raw_subject 선택)
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def post(self, request):
+        ser = SendMessageRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+        tenant = request.tenant
+        student_ids = data["student_ids"]
+        send_to = data["send_to"]
+        template_id = data.get("template_id")
+        raw_body = (data.get("raw_body") or "").strip()
+        raw_subject = (data.get("raw_subject") or "").strip()
+
+        from apps.domains.students.models import Student
+        from apps.support.messaging.services import enqueue_sms
+
+        students = list(
+            Student.objects.filter(tenant=tenant, id__in=student_ids, deleted_at__isnull=True).only(
+                "id", "name", "phone", "parent_phone"
+            )
+        )
+        if not students:
+            return Response(
+                {"detail": "선택한 학생을 찾을 수 없거나 삭제된 학생입니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        body_base = raw_body
+        subject_base = raw_subject
+        if template_id:
+            t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
+            if not t:
+                return Response(
+                    {"detail": "템플릿을 찾을 수 없습니다."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            body_base = (t.body or "").strip()
+            subject_base = (t.subject or "").strip()
+        if not body_base:
+            return Response(
+                {"detail": "발송할 본문이 비어 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        enqueued = 0
+        skipped_no_phone = 0
+        for s in students:
+            phone = None
+            if send_to == "student":
+                phone = (s.phone or "").replace("-", "").strip()
+            else:
+                phone = (s.parent_phone or "").replace("-", "").strip()
+            if not phone or len(phone) < 10:
+                skipped_no_phone += 1
+                continue
+            name = (s.name or "").strip()
+            name_2 = name[:2] if len(name) >= 2 else name
+            name_3 = name[:3] if len(name) >= 3 else name
+            text = body_base.replace("#{student_name_2}", name_2).replace("#{student_name_3}", name_3)
+            if subject_base:
+                text = subject_base + "\n" + text
+            ok = enqueue_sms(tenant_id=tenant.id, to=phone, text=text)
+            if ok:
+                enqueued += 1
+
+        return Response({
+            "detail": f"발송 예정 {enqueued}건입니다.",
+            "enqueued": enqueued,
+            "skipped_no_phone": skipped_no_phone,
+        }, status=status.HTTP_200_OK)
