@@ -20,6 +20,7 @@
 | 02-core-apis | urls.py, views.py, permissions.py | 일치 (TenantOwnerListView/DetailView는 urls에 있음, 문서는 "기타"로 안내) |
 | 03-settings-env | CORS_ALLOW_HEADERS | **수정함** — `X-Tenant-Code` 추가 반영 |
 | 07-staffs-api | staffs/urls.py, views.py 권한(IsPayrollManager) | 일치 |
+| **staff 도메인 (스태프 폴더)** | **2025-02-17 검증** | **버그 수정함** — (1) 프론트가 호출하는 GET `/staffs/<id>/summary/` 백엔드 미구현 → StaffViewSet에 `summary` action 추가. (2) WorkMonthLock create 시 staff/year/month 누락·잘못값 시 500 가능 → 필수값·숫자·month 1~12·staff 존재 검증 추가. 07-staffs-api 문서에 summary·WorkMonthLock 검증 반영. |
 
 ---
 
