@@ -73,6 +73,8 @@ if ($id -and $id -ne "None") { aws ec2 stop-instances --instance-ids $id --regio
 
 ## 6. 배포 확인 명령어
 
+**먼저 루트 액세스 키 env 설정** (1번 블록) 한 뒤 실행.
+
 ```powershell
 $region = "ap-northeast-2"
 Write-Host "`n=== Worker deploy final check ===`n" -ForegroundColor Cyan
