@@ -253,7 +253,7 @@ def main() -> int:
                     alimtalk_replacements = data.get("alimtalk_replacements") or []
                     template_id_msg = data.get("template_id") or ""
 
-                    # 테넌트별 잔액·PFID·단가 (Django 있을 때만)
+                    # 테넌트별 잔액·PFID·발신번호·단가 (Django 있을 때만)
                     info = None
                     base_price = "0"
                     pf_id_tenant = ""
@@ -270,8 +270,13 @@ def main() -> int:
                             if info:
                                 base_price = info["base_price"]
                                 pf_id_tenant = (info["kakao_pfid"] or "").strip()
+                                if not sender and info.get("sender"):
+                                    sender = (info["sender"] or "").strip()
                         except Exception as e:
                             logger.warning("get_tenant_messaging_info failed: %s", e)
+
+                    # 발신번호: payload > 테넌트 > 전역 env
+                    sender = (sender or "").strip() or cfg.SOLAPI_SENDER
 
                     # 알림톡 사용 시: 테넌트 PFID 또는 워커 기본 PFID
                     pf_id = pf_id_tenant or cfg.SOLAPI_KAKAO_PF_ID
