@@ -9,7 +9,7 @@ from apps.core.models import TenantMembership
 from apps.domains.parents.services import ensure_parent_for_student
 from .school import normalize_school_from_name
 
-from ..serializers import _generate_unique_ps_number
+from ..ps_number import _generate_unique_ps_number
 
 
 def _grade_value(v):
