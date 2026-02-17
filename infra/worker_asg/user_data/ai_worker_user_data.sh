@@ -7,8 +7,13 @@ yum install -y docker
 systemctl start docker && systemctl enable docker
 
 ENV_FILE="/opt/academy/.env"
-mkdir -p /opt/academy
+SECRETS_DIR="/opt/academy/secrets"
+GOOGLE_JSON="$SECRETS_DIR/google-vision.json"
+mkdir -p "$SECRETS_DIR"
 aws ssm get-parameter --name /academy/workers/env --with-decryption --query Parameter.Value --output text --region ap-northeast-2 > "$ENV_FILE" 2>/dev/null || true
+
+# Google Vision OCR credentials (optional)
+aws ssm get-parameter --name /academy/google-vision-credentials --with-decryption --query Parameter.Value --output text --region ap-northeast-2 > "$GOOGLE_JSON" 2>/dev/null && chmod 600 "$GOOGLE_JSON" || true
 
 ECR="{{ECR_REGISTRY}}"
 aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin "$ECR"
