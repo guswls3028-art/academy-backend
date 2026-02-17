@@ -370,8 +370,23 @@ def _ai_infer_parent_phone(
         return None, 0.0
 
 
+def _header_similarity(h1: str, h2: str) -> float:
+    """
+    두 헤더 간 유사도 0~1. Levenshtein 기반 SequenceMatcher 사용.
+    학원별 매핑 재사용 시: 기존 저장 헤더와 새 업로드 헤더가 유사하면 캐시 사용.
+    """
+    if not h1 or not h2:
+        return 0.0
+    n1, n2 = _normalize_header(h1), _normalize_header(h2)
+    return SequenceMatcher(None, n1, n2).ratio()
+
+
 def _get_academy_parent_mapping(_academy_id: int, _headers: list[str]) -> int | None:
-    """academy_id 기반 parent_phone 매핑 재사용 확장 포인트."""
+    """
+    academy_id 기반 parent_phone 매핑 재사용 확장 포인트.
+    구현 시: DB에서 캐시된 매핑 조회 → _header_similarity(cached_header, current_header) >= 0.8
+    이면 기존 col_index 반환, 아니면 None 반환하여 재추론 유도.
+    """
     return None
 
 
