@@ -161,7 +161,7 @@ $messagingUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes
 
 $LtMessagingName = "academy-messaging-worker-asg"
 $ltMessagingJson = @"
-{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"NetworkInterfaces":[{"DeviceIndex":0,"Groups":["$SecurityGroupId"],"AssociatePublicIpAddress":true}],"UserData":"$messagingUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-messaging-worker"}]}]}
+{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"],"UserData":"$messagingUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-messaging-worker"}]}]}
 "@
 $ltMessagingFile = Join-Path $RepoRoot "lt_messaging_data.json"
 [System.IO.File]::WriteAllText($ltMessagingFile, $ltMessagingJson.Trim(), $utf8NoBom)
