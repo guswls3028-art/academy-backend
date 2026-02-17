@@ -22,10 +22,17 @@ if ([string]::IsNullOrWhiteSpace($content)) {
     exit 1
 }
 
-# file:// avoids shell interpretation of JSON (e.g. -----BEGIN)
-$fileUri = "file:///" + ($jsonPath -replace '\\', '/')
-$tier = if ($content.Length -gt 4096) { "Advanced" } else { "Standard" }
-aws ssm put-parameter --name $ParameterName --type SecureString --value $fileUri --overwrite --tier $tier --region $Region
+# file:// with temp copy: AWS CLI on Windows has issues with absolute file:// paths
+$tempDir = [System.IO.Path]::GetTempPath()
+$tempFile = Join-Path $tempDir "academy-google-vision-upload.json"
+$content | Set-Content -LiteralPath $tempFile -Encoding UTF8 -NoNewline
+try {
+    $tier = if ($content.Length -gt 4096) { "Advanced" } else { "Standard" }
+    $fileUri = "file://" + ($tempFile -replace '\\', '/')
+    aws ssm put-parameter --name $ParameterName --type SecureString --value $fileUri --overwrite --tier $tier --region $Region
+} finally {
+    Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+}
 if ($LASTEXITCODE -eq 0) {
     Write-Host "SSM $ParameterName updated. AI Worker user_data will fetch this on boot." -ForegroundColor Green
     exit 0
