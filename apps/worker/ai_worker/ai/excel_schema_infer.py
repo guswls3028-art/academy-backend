@@ -5,18 +5,10 @@ from __future__ import annotations
 
 import json
 import logging
-import re
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-
-def _mask_phone(v: str) -> str:
-    """01012345678 → 010****5678"""
-    raw = re.sub(r"\D", "", str(v))
-    if len(raw) >= 7 and raw.startswith("010"):
-        return raw[:3] + "****" + raw[-4:]
-    return "***"
 
 
 def infer_parent_phone_column(
