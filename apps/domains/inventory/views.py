@@ -332,10 +332,10 @@ class FileDeleteView(View):
         return JsonResponse({}, status=204)
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class PresignView(View):
     """POST /storage/inventory/presign/ — R2 presigned GET URL."""
 
-    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
     def post(self, request):
@@ -354,6 +354,7 @@ class PresignView(View):
         return JsonResponse({"url": url})
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class MoveView(View):
     """
     POST /storage/inventory/move/
@@ -361,7 +362,6 @@ class MoveView(View):
     Copy & Delete 방식: R2 복사 성공 → DB 업데이트 → R2 원본 삭제. 실패 시 원본 삭제 안 함.
     """
 
-    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
     def post(self, request):
