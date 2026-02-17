@@ -110,4 +110,5 @@ docker ps | grep video
 |------|------|
 | 접속한 서버가 **ECS Optimized** 배너 | 다른 서버에 접속한 것. 위 2번으로 **Name=academy-video-worker** 인스턴스 찾아서 접속 |
 | **academy-video-worker** 인스턴스인데 컨테이너 없음 | `cloud-init-output.log` 확인 후, 필요 시 위 4번 수동 기동 |
+| **100GB 볼륨** 마운트 실패·디스크 부족 | `cloud-init-output.log`에서 `DEV=`/`mount` 확인. LT에 BlockDeviceMapping 반영돼 있는지 확인 후 `deploy_worker_asg.ps1` 재실행 + instance refresh |
 | ASG Min=0 이라 인스턴스가 0대 | 영상 작업 넣으면 scale-out 되도록 되어 있음. 상시 1대 원하면 ASG Min=1 로 변경 |
