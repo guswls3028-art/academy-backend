@@ -56,10 +56,10 @@ def _jwt_required(view_func):
     return wrapped
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class QuotaView(View):
     """GET /storage/quota/ — 테넌트 사용량 및 플랜 한도."""
 
-    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
     def get(self, request):
@@ -84,10 +84,10 @@ class QuotaView(View):
             )
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class InventoryListView(View):
     """GET /storage/inventory/?scope=admin|student&student_ps=... — 폴더/파일 목록 (전체, 클라이언트에서 필터)."""
 
-    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
     def get(self, request):
