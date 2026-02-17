@@ -218,6 +218,13 @@ if ($lambda) { Write-Host "  OK" -ForegroundColor Green } else { Write-Host "  M
 Write-Host "`n[2] Launch Template" -ForegroundColor White
 $lt = aws ec2 describe-launch-templates --launch-template-names academy-ai-worker-asg academy-video-worker-asg academy-messaging-worker-asg --region $region 2>$null
 if ($lt -match "LaunchTemplateName") { Write-Host "  OK" -ForegroundColor Green } else { Write-Host "  Missing" -ForegroundColor Red }
+Write-Host "`n[2.5] LT AMI (ECS 아님)" -ForegroundColor White
+foreach ($ltName in @("academy-ai-worker-asg","academy-video-worker-asg","academy-messaging-worker-asg")) {
+  $amiId = aws ec2 describe-launch-template-versions --launch-template-name $ltName --region $region --query "LaunchTemplateVersions[0].LaunchTemplateData.ImageId" --output text 2>$null
+  if (-not $amiId -or $amiId -eq "None") { Write-Host "  $ltName - (no image)" -ForegroundColor Yellow; continue }
+  $amiName = aws ec2 describe-images --image-ids $amiId --region $region --query "Images[0].Name" --output text 2>$null
+  if ($amiName -match "ecs") { Write-Host "  $ltName ECS AMI: $amiName -> run 5.5 deploy_worker_asg" -ForegroundColor Red } else { Write-Host "  $ltName OK" -ForegroundColor Green }
+}
 Write-Host "`n[3] ASG" -ForegroundColor White
 $asg = aws autoscaling describe-auto-scaling-groups --region $region --output json 2>$null | ConvertFrom-Json
 if ($asg.AutoScalingGroups.Count -gt 0) { $asg.AutoScalingGroups | ForEach-Object { Write-Host "  $($_.AutoScalingGroupName) Desired=$($_.DesiredCapacity) Min=$($_.MinSize) Max=$($_.MaxSize)" -ForegroundColor Green } } else { Write-Host "  (0 - check console)" -ForegroundColor Yellow }
