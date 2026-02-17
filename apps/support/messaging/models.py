@@ -108,7 +108,6 @@ class AutoSendConfig(models.Model):
         max_length=60,
         choices=Trigger.choices,
         db_index=True,
-        unique=True,  # per-tenant: (tenant, trigger) unique via constraint below
     )
     template = models.ForeignKey(
         MessageTemplate,
