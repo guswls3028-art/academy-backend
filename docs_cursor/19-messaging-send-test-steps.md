@@ -62,18 +62,8 @@ for t in Tenant.objects.filter(is_active=True).values('id','code','credit_balanc
 ```powershell
 cd C:\academy
 .\venv\Scripts\activate
-python -c "
-import os
-import boto3
-region = os.environ.get('AWS_REGION', 'ap-northeast-2')
-name = os.environ.get('MESSAGING_SQS_QUEUE_NAME', 'academy-messaging-jobs')
-try:
-    sqs = boto3.client('sqs', region_name=region)
-    r = sqs.get_queue_url(QueueName=name)
-    print('Queue URL:', r.get('QueueUrl'))
-except Exception as e:
-    print('Error:', e)
-"
+# .env 로드 후 boto3 호출 (AWS 자격증명이 env에 있으면)
+python -c "import os; from pathlib import Path; from dotenv import load_dotenv; load_dotenv(Path('.')/'.env'); load_dotenv(Path('.')/'.env.local'); import boto3; region=os.environ.get('AWS_REGION','ap-northeast-2'); name=os.environ.get('MESSAGING_SQS_QUEUE_NAME','academy-messaging-jobs'); sqs=boto3.client('sqs',region_name=region); r=sqs.get_queue_url(QueueName=name); print('Queue URL:', r.get('QueueUrl'))"
 ```
 
 - 실패하면: AWS 자격증명(프로필/환경변수), 리전, 큐 이름이 실제와 일치하는지 확인.  
