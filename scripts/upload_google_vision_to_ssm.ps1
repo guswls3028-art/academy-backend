@@ -22,10 +22,11 @@ if ([string]::IsNullOrWhiteSpace($content)) {
     exit 1
 }
 
-# file:// with temp copy: AWS CLI on Windows needs simple path; use repo root
+# file:// with temp copy: UTF8 no BOM (AWS CLI fails on BOM)
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $tempFile = Join-Path $repoRoot "temp_google_vision_upload.json"
-$content | Set-Content -LiteralPath $tempFile -Encoding UTF8 -NoNewline
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($tempFile, $content, $utf8NoBom)
 try {
     Push-Location $repoRoot
     $tier = if ($content.Length -gt 4096) { "Advanced" } else { "Standard" }
