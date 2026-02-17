@@ -79,6 +79,7 @@ class VideoSerializer(serializers.ModelSerializer):
             "hls_path",
             "thumbnail_url",
             "hls_url",
+            "encoding_progress",
         ]
         ref_name = "SealedVideo"
 
