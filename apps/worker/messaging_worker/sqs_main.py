@@ -249,7 +249,11 @@ def main() -> int:
                     to = str(data.get("to", ""))
                     text = str(data.get("text", ""))
                     sender = (data.get("sender") or "").strip()
-                    use_alimtalk_first = bool(data.get("use_alimtalk_first"))
+                    message_mode = (data.get("message_mode") or "").strip().lower()
+                    if not message_mode:
+                        message_mode = "both" if data.get("use_alimtalk_first") else "sms"
+                    if message_mode not in ("sms", "alimtalk", "both"):
+                        message_mode = "sms"
                     alimtalk_replacements = data.get("alimtalk_replacements") or []
                     template_id_msg = data.get("template_id") or ""
 
