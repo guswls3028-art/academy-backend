@@ -102,7 +102,6 @@ def _infer_missing_columns(
     - 010 11자리 패턴이 여러 행에 나오는 컬럼 → parent_phone 후보
     - 2~4글자 한글(이름형)이 여러 행에 나오는 컬럼 → name 후보
     """
-    import copy
     out = dict(col)
     sample = rows[header_idx + 1 : header_idx + 21]  # 최대 20행 샘플
     if not sample:
