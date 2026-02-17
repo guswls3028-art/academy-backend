@@ -27,26 +27,29 @@ cd C:\academy
 
 (quick_redeploy가 푸시까지 하면, quick_api_restart는 그 이미지 pull 후 재시작.)
 
-## 3. 502 나면 서버 쪽 확인 (복붙용)
+## 3. 502 나면: ALB/보안그룹 점검 (한 번에)
 
-**API 인스턴스에서:**
-
-```bash
-# 컨테이너 로그 (최근 에러)
-docker logs academy-api --tail 200 2>&1
-
-# 컨테이너 살아 있는지
-docker ps | grep academy-api
-```
-
-**로컬에서 API 응답 확인:**
+**루트 키 env 넣은 뒤:**
 
 ```powershell
-# 로그인 토큰 있으면 (실제 job_id로)
-curl -s -o NUL -w "%{http_code}" -H "Authorization: Bearer YOUR_TOKEN" "https://api.hakwonplus.com/api/v1/jobs/실제job_id/"
-# 200/404/500 나오면 API까지는 도달한 것. 502면 ALB/인스턴스 문제.
+cd C:\academy
+.\scripts\check_api_alb.ps1
+```
+
+- **[3] 8000 포트 인바운드 없음** 이면 → API SG에 8000 포트가 안 열려 있어서 ALB가 API에 못 붙는 상태.  
+  ALB 보안그룹 ID 확인 (콘솔: EC2 → 로드밸런싱 → 로드밸런서 → 보안 그룹) 후:
+  ```powershell
+  aws ec2 authorize-security-group-ingress --group-id sg-0051cc8f79c04b058 --protocol tcp --port 8000 --source-group <ALB_SG_ID> --region ap-northeast-2
+  ```
+- 타깃 그룹에서 academy-api 인스턴스가 **healthy**인지 확인. unhealthy면 헬스체크 경로가 `/health` 인지, 포트 8000인지 확인.
+
+## 4. API 서버에서 로그 확인
+
+```bash
+docker logs academy-api --tail 200 2>&1
+docker ps | grep academy-api
 ```
 
 ---
 
-요약: **코드 수정은 완료.** → `quick_redeploy.ps1 -DeployTarget api` 로 이미지 빌드·푸시 후 `quick_api_restart.ps1` 한 번 돌리면 됨.
+요약: **1) check_api_alb.ps1** 로 원인 확인 → **2) 8000 인바운드 없으면** 위 `authorize-security-group-ingress` 실행 → **3) 코드 반영**은 API 서버에서 `git pull && bash scripts/deploy_api_on_server.sh` 또는 풀배포.
