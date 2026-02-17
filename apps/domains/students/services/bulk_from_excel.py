@@ -36,9 +36,13 @@ def bulk_create_students_from_excel_rows(
     failed: list[dict] = []
     total = len(students_data)
 
+    last_reported_pct = -1
     for row_index, raw in enumerate(students_data, start=1):
         if on_row_progress and total > 0:
-            on_row_progress(row_index, total)
+            pct = int(100 * row_index / total)
+            if pct > last_reported_pct or row_index == total:
+                last_reported_pct = pct
+                on_row_progress(row_index, total)
         item = dict(raw) if isinstance(raw, dict) else {}
         name = (item.get("name") or "").strip()
         parent_phone = (item.get("parent_phone") or item.get("parentPhone") or "")
