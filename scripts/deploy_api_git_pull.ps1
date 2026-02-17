@@ -95,5 +95,5 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "[academy-api] FAIL (exit $LASTEXITCODE)" -ForegroundColor Red
     exit 1
 }
-Write-Host "[academy-api] OK — 코드 반영 완료" -ForegroundColor Green
-Write-Host "`n=== 완료 ===`n" -ForegroundColor Green
+Write-Host "[academy-api] OK - code applied" -ForegroundColor Green
+Write-Host "`n=== Done ===`n" -ForegroundColor Green

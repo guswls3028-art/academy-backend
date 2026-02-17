@@ -1,19 +1,12 @@
 # ==============================================================================
-# API 서버만 재시작 (ECR 최신 이미지 pull → 컨테이너 재시작). 빌드/워커 없음 → 1~2분 컷.
+# API server restart only (ECR latest pull -> container restart). No build/worker. ~1-2 min.
 #
-# 전제:
-#   - ECR에 이미 academy-api:latest 가 올라와 있어야 함.
-#     (한 번은 로컬/빌드인스턴스에서 빌드·푸시: quick_redeploy.ps1 -DeployTarget api 또는 full_redeploy)
-#   - C:\key\backend-api-key.pem (API EC2 SSH용)
+# Requires: ECR has academy-api:latest (build/push once: quick_redeploy.ps1 -DeployTarget api or full_redeploy)
+#   C:\key\backend-api-key.pem (API EC2 SSH)
 #
-# 사용:
-#   cd C:\academy
-#   .\scripts\quick_api_restart.ps1
+# Usage: cd C:\academy; .\scripts\quick_api_restart.ps1
 #
-# 코드 수정 후 흐름 예:
-#   1) 로컬에서 API 이미지 빌드·푸시: .\scripts\quick_redeploy.ps1 -DeployTarget api
-#   2) 그 다음부터는 재시작만:       .\scripts\quick_api_restart.ps1
-#   또는 이미지 그대로 두고 재시작만: .\scripts\quick_api_restart.ps1
+# After code change: 1) quick_redeploy.ps1 -DeployTarget api  2) then just quick_api_restart.ps1 (or restart only)
 # ==============================================================================
 
 param(

@@ -1,14 +1,8 @@
 # ==============================================================================
-# 캐시 기반 로컬 빌드 → ECR 푸시 → 배포 (코드 수정 후 즉시 반영용)
-# 전제: Docker 로컬 설치, AWS 액세스 키 설정, C:\key\*.pem (EC2 SSH용)
+# Cache-based local build -> ECR push -> deploy (quick code change rollout)
+# Requires: Docker local, AWS keys, C:\key\*.pem (EC2 SSH)
 #
-# 사용 (한 방):
-#   $env:AWS_ACCESS_KEY_ID = "..."
-#   $env:AWS_SECRET_ACCESS_KEY = "..."
-#   $env:AWS_DEFAULT_REGION = "ap-northeast-2"
-#   cd C:\academy
-#   .\scripts\quick_redeploy.ps1 -DeployTarget api
-#
+# Usage: set AWS env then cd C:\academy; .\scripts\quick_redeploy.ps1 -DeployTarget api
 # DeployTarget: api | video | ai | messaging | all | workers
 # ==============================================================================
 
@@ -26,12 +20,12 @@ Push-Location $RepoRoot
 
 try {
     $AccountId = (aws sts get-caller-identity --query Account --output text 2>&1)
-    if ($LASTEXITCODE -ne 0) { Write-Host "AWS identity 확인 실패. 액세스 키 설정 후 재시도." -ForegroundColor Red; exit 1 }
+    if ($LASTEXITCODE -ne 0) { Write-Host "AWS identity check failed. Set access key and retry." -ForegroundColor Red; exit 1 }
     $ECR = "${AccountId}.dkr.ecr.${Region}.amazonaws.com"
 
-    Write-Host "`n=== 1/2 로컬 빌드 (캐시 사용) + ECR 푸시 ===`n" -ForegroundColor Cyan
+    Write-Host "`n=== 1/2 Local build (cache) + ECR push ===`n" -ForegroundColor Cyan
 
-    # 베이스는 항상 (다른 이미지가 이걸 참조하므로 캐시 유지)
+    # Base always (other images depend on it for cache)
     Write-Host "[base] academy-base:latest ..." -ForegroundColor Gray
     docker buildx build --platform linux/arm64 -f docker/Dockerfile.base -t academy-base:latest --load .
     if ($LASTEXITCODE -ne 0) { exit 1 }
