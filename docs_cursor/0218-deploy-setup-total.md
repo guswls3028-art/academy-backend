@@ -36,8 +36,9 @@ cd C:\academy
 .\scripts\deploy_preflight.ps1
 ```
 
-- 현재 AWS 계정, SSH 키 존재, 실행 중 인스턴스·ASG 확인.  
-- 문제 없으면 **같은 터미널·같은 env**로 아래 풀배포 실행.
+- 계정, SSH 키, **ECR**, **SSM /academy/workers/env**, 빌드 인스턴스, 실행 중 인스턴스·ASG 확인.  
+- **SSH까지 검증:** `.\scripts\deploy_preflight.ps1 -TestSsh` (academy-api 실제 접속 시도).  
+- 통과해도 **같은 터미널·같은 env**로 풀배포. 중간에 키 바꾸지 말 것.
 
 ---
 
