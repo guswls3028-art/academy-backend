@@ -324,7 +324,7 @@ Remove-Item $policyAiFile, $policyVideoFile, $policyMessagingFile -Force -ErrorA
 Write-Host "Done. Lambda: $QueueDepthLambdaName | ASG: $AsgAiName, $AsgVideoName, $AsgMessagingName | AI/Video/Messaging Min=1 Max=$MaxCapacity Target=$TargetMessagesPerInstance" -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
-# 선택) 현재 호출자(IAM 사용자)에게 SSM PutParameter 권한 부여
+# Optional: grant SSM PutParameter to current caller (IAM user)
 # ------------------------------------------------------------------------------
 if ($GrantSsmPutToCaller) {
     $callerArn = (aws sts get-caller-identity --query Arn --output text 2>$null)
@@ -350,7 +350,7 @@ if ($GrantSsmPutToCaller) {
 }
 
 # ------------------------------------------------------------------------------
-# 선택) .env → SSM 업로드 (Windows 인코딩/경로 대응)
+# Optional: upload .env to SSM (Windows encoding/path safe)
 # ------------------------------------------------------------------------------
 if ($UploadEnvToSsm) {
     $uploadScript = Join-Path $ScriptRoot "upload_env_to_ssm.ps1"
@@ -379,4 +379,4 @@ if ($AttachEc2Policy -and (Test-Path $ec2PolicyPath)) {
 }
 
 Write-Host "If ECR images missing: .\scripts\build_and_push_ecr.ps1" -ForegroundColor Yellow
-Write-Host "ASG 워커 껐다 켜짐 방지: .\scripts\remove_ec2_stop_from_worker_role.ps1" -ForegroundColor Gray
+Write-Host "Prevent ASG worker stop loop: .\scripts\remove_ec2_stop_from_worker_role.ps1" -ForegroundColor Gray
