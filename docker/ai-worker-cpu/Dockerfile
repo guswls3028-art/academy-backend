@@ -37,6 +37,9 @@ RUN pip install --user --no-cache-dir -r requirements/worker-ai-cpu.txt
 COPY requirements/worker-ai-excel.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/worker-ai-excel.txt
 
+# Excel 파싱 워커 의존: src.infrastructure.storage (빌드 실패 시 누락 즉시 발견)
+RUN python -c "from src.infrastructure.storage import R2ObjectStorageAdapter" || (echo "ERROR: src.infrastructure.storage not importable" && exit 1)
+
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import sys; sys.exit(0)" || exit 1
 
