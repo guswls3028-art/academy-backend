@@ -434,6 +434,7 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
     remark_col = col.get("remark")
 
     result: list[dict[str, Any]] = []
+    validation_errors: list[dict[str, Any]] = []
     for r in range(header_idx + 1, len(rows)):
         row = rows[r]
         if remark_col is not None and "예시" in _cell_str(row, remark_col):
@@ -450,9 +451,14 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
             continue
 
         if not _validate_parent_phone(parent_phone_raw):
-            raise ExcelValidationError(
-                f"{r + 2}행: 학부모 전화번호가 없거나 형식이 잘못되었습니다(010 10~11자리)."
-            )
+            display_val = _cell_str(row, parent_col) or parent_phone_raw or "(비어있음)"
+            validation_errors.append({
+                "row": r + 2,
+                "value": display_val[:20] + ("..." if len(str(display_val)) > 20 else ""),
+                "reason": "학부모 전화번호가 없거나 형식이 잘못되었습니다(010 10~11자리).",
+            })
+            continue
+
 
         if len(student_phone_raw) == 8 and student_phone_raw.isdigit():
             student_phone = "010" + student_phone_raw
