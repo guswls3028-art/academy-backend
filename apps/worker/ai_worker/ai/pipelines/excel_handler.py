@@ -9,7 +9,7 @@ import os
 from apps.shared.contracts.ai_result import AIResult
 from apps.shared.contracts.ai_job import AIJob
 from src.application.services.excel_parsing_service import ExcelParsingService
-from src.infrastructure.storage import R2ObjectStorageAdapter
+from apps.infrastructure.storage.r2_adapter import R2ObjectStorageAdapter
 
 logger = logging.getLogger(__name__)
 
