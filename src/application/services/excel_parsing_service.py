@@ -310,6 +310,8 @@ class ExcelParsingService:
                     initial_password=initial_password,
                     session_id=int(session_id) if session_id is not None else None,
                 )
+                if isinstance(result, dict) and lecture_title:
+                    result["lecture_title"] = lecture_title
                 return result
 
             from apps.domains.students.services import bulk_create_students_from_excel_rows
@@ -329,6 +331,8 @@ class ExcelParsingService:
                 initial_password=initial_password,
                 on_row_progress=_row_progress if on_progress else None,
             )
+            if isinstance(result, dict) and lecture_title:
+                result["lecture_title"] = lecture_title
             return result
         finally:
             # 더블 체크: 다운로드 성공/실패/부분 생성 여부와 관계없이 로컬 파일 삭제 시도
