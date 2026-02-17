@@ -18,8 +18,6 @@ COPY libs ./libs
 COPY manage.py ./
 # AI Worker만 scripts 필요 (gate10 등)
 COPY scripts ./scripts
-# Excel 파싱 워커 의존: src.infrastructure.storage
-RUN test -d src/infrastructure/storage || (echo "ERROR: src/infrastructure/storage missing in build context" && exit 1)
 RUN chown -R appuser:appuser /app
 
 # AI Worker CPU 전용 시스템 의존성 (OCR, 비디오)
