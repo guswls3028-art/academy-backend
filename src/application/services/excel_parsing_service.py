@@ -51,7 +51,7 @@ def _normalize_header(label: str) -> str:
 
 
 def _match_header(cell: str, key: str) -> bool:
-    """완전 일치 또는 헤더가 별칭을 포함하면 매칭."""
+    """완전 일치 또는 짧은 별칭이 헤더 시작/포함 시 매칭 (전각 숫자 정규화)."""
     norm = _normalize_header(cell)
     if not norm:
         return False
@@ -61,9 +61,9 @@ def _match_header(cell: str, key: str) -> bool:
             continue
         if norm == a:
             return True
-        if len(a) >= 2 and a in norm:
+        if len(a) >= 3 and a in norm:
             return True
-        if len(norm) >= 2 and norm in a:
+        if len(a) >= 2 and norm.startswith(a) and len(norm) <= len(a) + 4:
             return True
     return False
 
