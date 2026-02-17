@@ -27,9 +27,16 @@ $env:AWS_DEFAULT_REGION = "ap-northeast-2"
 
 ## 2. API 서버에서 (SSH 접속 후)
 
+**최초 1회:** 서버에 `.env` 없으면 SSM에서 받기:
+```bash
+aws ssm get-parameter --name /academy/workers/env --with-decryption --query Parameter.Value --output text --region ap-northeast-2 > /home/ec2-user/.env
+```
+
+그 다음 배포:
 ```bash
 cd /home/ec2-user/academy && bash scripts/deploy_api_on_server.sh
 ```
+(스크립트는 `--env-file /home/ec2-user/.env` 사용)
 
 ---
 
