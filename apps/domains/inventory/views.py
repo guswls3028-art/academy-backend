@@ -131,6 +131,7 @@ class InventoryListView(View):
             )
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class FolderCreateView(View):
     """
     POST /storage/inventory/folders/ — 폴더 생성.
@@ -144,7 +145,6 @@ class FolderCreateView(View):
     500: create 실패 시 DEBUG면 상세 메시지 반환
     """
 
-    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
     def post(self, request):
