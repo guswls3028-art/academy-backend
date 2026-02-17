@@ -245,7 +245,7 @@ echo BUILD_AND_PUSH_OK
     Write-Host "`n=== 1/3 Build step skipped (-SkipBuild) ===`n" -ForegroundColor Cyan
 }
 
-# ---------- 2) API 배포 (DeployTarget이 all 또는 api 일 때만) ----------
+# ---------- 2) API deploy (when DeployTarget is all or api) ----------
 $deployApi = ($DeployTarget -eq "all" -or $DeployTarget -eq "api")
 if ($deployApi) {
     Write-Host "`n=== 2/3 API server deploy (EC2 SSH) ===`n" -ForegroundColor Cyan
@@ -266,7 +266,7 @@ if ($deployApi) {
     if (-not $apiOk) { exit 1 }
 }
 
-# ---------- 3) 워커 배포 (DeployTarget이 all / workers / video / ai / messaging 일 때) ----------
+# ---------- 3) Worker deploy (when DeployTarget is all|workers|video|ai|messaging) ----------
 $deployWorkers = ($DeployTarget -eq "all" -or $DeployTarget -eq "workers" -or $DeployTarget -eq "video" -or $DeployTarget -eq "ai" -or $DeployTarget -eq "messaging")
 if ($deployWorkers) {
     Write-Host "`n=== 3/3 Worker deploy ===`n" -ForegroundColor Cyan
