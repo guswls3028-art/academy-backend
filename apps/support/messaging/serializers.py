@@ -2,7 +2,7 @@
 from rest_framework import serializers
 
 from apps.core.models import Tenant
-from apps.support.messaging.models import MessageTemplate
+from apps.support.messaging.models import MessageTemplate, AutoSendConfig
 
 
 class MessagingInfoSerializer(serializers.ModelSerializer):
