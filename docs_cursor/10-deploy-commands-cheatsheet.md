@@ -148,7 +148,7 @@ ssh -i "C:\path\to\ai-worker-key.pem" ec2-user@$ip
 aws ssm get-parameter --name /academy/workers/env --with-decryption --query Parameter.Value --output text --region ap-northeast-2 > /opt/academy/.env
 
 # ECR 주소 (같은 리전 계정)
-ECR=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-northeast-2.amazonaws.com
+ECR="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-northeast-2.amazonaws.com"
 
 # 컨테이너 재시작 (env-file 다시 로드)
 docker stop academy-ai-worker-cpu 2>/dev/null; docker rm academy-ai-worker-cpu 2>/dev/null
