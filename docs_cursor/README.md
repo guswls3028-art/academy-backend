@@ -24,6 +24,7 @@
 | [16-verification-report-0218.md](16-verification-report-0218.md) | 검증 보고서 (0218) 문서·코드 대조, API 정합성, 빌드 | 변경사항 점검·배포 전 확인 |
 | [17-project-structure-and-doc-verification.md](17-project-structure-and-doc-verification.md) | 프로젝트 구조, 문서–코드 검증 (구조 파악·일치 여부) | 신규 참여·문서 정합성 점검 시 |
 | [18-messaging-runtime-checklist.md](18-messaging-runtime-checklist.md) | 메시징 **런타임 4계층** 진단 (API→SQS→Worker→Solapi), 수집할 3가지 | 메시지 안 갈 때 진단용 |
+| [19-messaging-send-test-steps.md](19-messaging-send-test-steps.md) | 메시지 **발송 테스트 절차** (명령어·확인만, 추측 없음) | 발송 E2E 테스트 시 |
 
 ## 날짜별 스냅샷
 
