@@ -24,8 +24,6 @@ def infer_parent_phone_column(
     except ImportError:
         raise RuntimeError("openai not installed")
 
-    import os
-
     api_key = os.getenv("OPENAI_API_KEY") or os.getenv("EMBEDDING_OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
@@ -33,7 +31,6 @@ def infer_parent_phone_column(
     masked = []
     for c in candidates:
         samples = c.get("samples", [])[:5]
-        masked_samples = [_mask_phone(s) for s in samples]
         masked.append({
             "col_index": c["col_index"],
             "header": c["header"],
