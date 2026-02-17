@@ -52,20 +52,11 @@ docker exec -it academy-api python scripts/check_sqs_worker_connectivity.py
 ```bash
 cd /home/ec2-user/academy
 docker exec academy-api env > /tmp/api_env.txt
-docker run --rm -v "$(pwd):/app" --env-file /tmp/api_env.txt $(docker images -q academy-api | head -1) python scripts/check_sqs_worker_connectivity.py
+IMAGE=$(docker inspect academy-api --format '{{.Config.Image}}')
+docker run --rm -v "$(pwd):/app" --env-file /tmp/api_env.txt "$IMAGE" python scripts/check_sqs_worker_connectivity.py
 ```
 
-(이미지 이름이 `123456789.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest` 형태면 그걸로 바꿔도 됨.)
-
-```bash
-docker images --format "{{.Repository}}:{{.Tag}}"
-```
-
-에서 `academy-api` 이미지 전체 이름 확인 후, 위 `$(docker images -q academy-api | head -1)` 대신 그 이름 넣어도 됨. 예:
-
-```bash
-docker run --rm -v "$(pwd):/app" --env-file /tmp/api_env.txt 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest python scripts/check_sqs_worker_connectivity.py
-```
+(실행 중인 API 컨테이너와 같은 이미지를 자동으로 씁니다.)
 
 **1-2 출력 전체**를 저장해 두고, 문서 상단 "결과 해석" 표와 비교.
 
