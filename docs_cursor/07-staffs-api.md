@@ -38,10 +38,18 @@ Base path: `/api/v1/staffs/` (ROOT_URLCONF에서 prefix).
 
 | Method | Path | ViewSet | 비고 |
 |--------|------|---------|------|
-| GET | `` | StaffViewSet | 목록. |
+| GET | `` | StaffViewSet | 목록. 응답에 owner(원장) 포함. |
 | GET | `<id>/` | StaffViewSet | 상세. |
+| GET | `<id>/summary/` | StaffViewSet.summary | 기간 집계. 쿼리: date_from, date_to (YYYY-MM-DD). 응답: staff_id, work_hours, work_amount, expense_amount, total_amount. |
 | POST | `` | StaffViewSet | 직원 등록. |
 | PATCH | `<id>/` | StaffViewSet | 수정. |
-| ... | `<id>/work-records/start-work/` 등 | StaffViewSet action | 근무 시작 등. |
+| GET | `<id>/work-records/current` | work_current | 실시간 근무 상태 (OFF / WORKING / BREAK). |
+| POST | `<id>/work-records/start-work/` | start_work | 근무 시작. body: work_type (필수). |
 
 상세 라우트는 `apps/domains/staffs/urls.py` + router 등록 참고.
+
+---
+
+## 4. WorkMonthLock create 검증
+
+- POST `work-month-locks/` body: staff, year, month 필수. staff 없거나 해당 테넌트 직원이 아니면 400. year/month 숫자·month 1~12 검증.
