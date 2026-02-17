@@ -28,8 +28,9 @@ class MessagingSQSQueue:
         "text": str,
         "sender": str | None,
         "reservation_id": int | None,
-        "use_alimtalk_first": bool,
-        "alimtalk_replacements": list[{"key": str, "value": str}] | None,  # #{name}, #{date}, #{clinic_name} 등
+        "message_mode": "sms" | "alimtalk" | "both",  # sms=SMS만, alimtalk=알림톡만, both=알림톡→SMS폴백
+        "use_alimtalk_first": bool,  # 하위호환: True면 both, False면 sms
+        "alimtalk_replacements": list[{"key": str, "value": str}] | None,
     }
     """
 
