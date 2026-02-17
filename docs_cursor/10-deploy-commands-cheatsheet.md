@@ -40,6 +40,21 @@ $env:AWS_DEFAULT_REGION = "ap-northeast-2"
 
 ---
 
+## 1.5 Google Vision OCR 키 → AI Worker (최초 1회)
+
+로컬 JSON을 SSM에 올리면 AI Worker 부팅 시 자동 적용:
+
+```powershell
+cd C:\academy
+.\scripts\upload_google_vision_to_ssm.ps1 -JsonPath "C:\key\ocrkey\mystic-benefit-480904-h1-93331a58ea78.json"
+```
+
+- SSM `/academy/google-vision-credentials`에 JSON 저장
+- IAM `academy-ec2-role`에 GetParameter 권한 필요 (`infra/worker_asg/iam_policy_ec2_worker.json` 기준)
+- 적용: Launch Template 재배포 + ASG instance refresh 후 새 인스턴스부터 반영
+
+---
+
 ## 2. API 서버에서 (SSH 접속 후)
 
 **최초 1회:** 서버에 `.env` 없으면 SSM에서 받기:
