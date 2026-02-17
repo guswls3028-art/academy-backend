@@ -152,7 +152,11 @@ def parse_student_excel_file(local_path: str) -> list[dict[str, Any]]:
 
     header_idx = _find_header_row(rows)
     if header_idx < 0:
-        raise ValueError("양식이 맞지 않습니다. 이름·전화번호 컬럼이 있는 행을 찾을 수 없습니다.")
+        header_idx = _find_header_row_fallback(rows)
+    if header_idx < 0:
+        raise ValueError(
+            "헤더 행을 찾을 수 없습니다. 첫 행에 '이름'(또는 성명/학생명), '연락처'(또는 학부모전화/전화번호) 등 컬럼명이 있어야 합니다."
+        )
 
     header_row = rows[header_idx]
     col = _build_header_map(header_row)
