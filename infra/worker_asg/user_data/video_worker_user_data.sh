@@ -6,15 +6,13 @@ yum update -y
 yum install -y docker
 systemctl start docker && systemctl enable docker
 
-# 100GB 볼륨 마운트 (NVMe nvme1n1 또는 nvme1n1p1)
-DEV=$(lsblk -d -n -o NAME | grep nvme | tail -1)
-if [ -n "$DEV" ]; then
-  if [ -b "/dev/${DEV}" ]; then
-    mkfs -t ext4 "/dev/${DEV}" 2>/dev/null || true
-    mkdir -p /mnt/transcode
-    mount "/dev/${DEV}" /mnt/transcode
-    echo "/dev/${DEV} /mnt/transcode ext4 defaults,nofail 0 2" >> /etc/fstab
-  fi
+# 100GB 볼륨 마운트 (루트 nvme0n1 제외, nvme1n1 사용)
+DEV=$(lsblk -d -n -o NAME | grep nvme | grep -v nvme0n1 | tail -1)
+if [ -n "$DEV" ] && [ -b "/dev/${DEV}" ]; then
+  mkfs -t ext4 "/dev/${DEV}" 2>/dev/null || true
+  mkdir -p /mnt/transcode
+  mount "/dev/${DEV}" /mnt/transcode || true
+  grep -q "/mnt/transcode" /etc/fstab 2>/dev/null || echo "/dev/${DEV} /mnt/transcode ext4 defaults,nofail 0 2" >> /etc/fstab
 fi
 
 ENV_FILE="/opt/academy/.env"
