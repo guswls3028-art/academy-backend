@@ -1,8 +1,8 @@
 #!/bin/bash
 # ASG AI Worker: Docker + ECR pull + run academy-ai-worker-cpu
 # EC2_IDLE_STOP_THRESHOLD=0 → self-stop 비활성화 (ASG가 scale-in으로 종료)
+# yum update 생략: 기동 시간 단축·상태검사 통과 안정화 (켜졌다 꺼짐 반복 방지)
 set -e
-yum update -y
 yum install -y docker
 systemctl start docker && systemctl enable docker
 
