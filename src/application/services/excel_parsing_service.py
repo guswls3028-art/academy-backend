@@ -186,6 +186,39 @@ def _infer_school_type(school: str) -> str:
     return "HIGH"
 
 
+def _row_looks_like_student(
+    name: str,
+    parent_phone_raw: str,
+    student_phone_raw: str,
+    row: list[Any],
+) -> bool:
+    """
+    학생 행 여부 스코어링. 소제목/날짜/빈 행 등 비학생 행 제외.
+    - 이름이 날짜패턴(01월, 2/7~)이면 제외
+    - 이름이 순수 숫자/너무 길면 제외
+    - 최소 name 또는 유효 전화번호 1개 이상 필요
+    """
+    name = (name or "").strip()
+    if not name and not parent_phone_raw and not student_phone_raw:
+        return False
+    if re.match(r"^\d{1,2}/\d{1,2}", name) or re.match(r"^\d{1,2}월\s*$", name):
+        return False
+    if name and re.match(r"^\d+$", name):
+        return False
+    if len(name) > 20:
+        return False
+    has_phone = (
+        (len(parent_phone_raw) == 11 and parent_phone_raw.startswith("010"))
+        or (len(student_phone_raw) == 11 and student_phone_raw.startswith("010"))
+        or (len(parent_phone_raw) == 8 and parent_phone_raw.isdigit())
+        or (len(student_phone_raw) == 8 and student_phone_raw.isdigit())
+    )
+    has_name = bool(re.match(r"^[가-힣]{2,4}[A-Za-z0-9]*\*?$", name))
+    if not has_name and not has_phone:
+        return False
+    return True
+
+
 def _extract_lecture_title(rows: list[list[Any]], header_idx: int) -> str:
     """헤더 행 위(0 ~ header_idx-1)에서 강의 제목처럼 보이는 셀 추출."""
     candidates: list[str] = []
