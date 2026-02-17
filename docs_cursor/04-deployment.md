@@ -12,7 +12,7 @@
 4. IAM EC2용 (SQS, ECR, Self-stop)  
 5. 보안 그룹: API(8000, 22), Worker(22), RDS(5432 from API·Worker)  
 6. EC2 API t4g.small 30GB → Docker, ECR pull, .env, migrate, `/health`  
-7. EC2 Messaging t4g.micro 상시  
+7. EC2 Messaging t4g.small 상시 (ASG Launch Template 기준; 문서 구버전은 t4g.micro)  
 8. EC2 Video t4g.medium 4GB+100GB → `/mnt/transcode` 확인 후 컨테이너  
 9. Video·AI 워커 ASG(Min=0) 또는 수동 EC2  
 
