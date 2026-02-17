@@ -8,6 +8,7 @@
 ## 검증일
 
 - **2025-02-17**
+- **2026-02-18** — 프로젝트 구조 파악, 문서–코드 일치 점검. 01/02/03 수정, base.py bypass에 `/api-auth/` 추가. 상세: [17-project-structure-and-doc-verification.md](17-project-structure-and-doc-verification.md).
 
 ---
 
