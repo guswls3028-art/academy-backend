@@ -1,4 +1,5 @@
 # apps/support/messaging/serializers.py
+from decimal import Decimal
 from rest_framework import serializers
 
 from apps.core.models import Tenant
