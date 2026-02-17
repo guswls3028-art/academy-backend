@@ -95,13 +95,29 @@ indicating it has been terminated or stopped.
 .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -WorkersViaASG -SkipBuild
 ```
 
-### 방법 2: IAM에서 ec2:StopInstances 제거 (즉시 차단)
+### 방법 2: IAM에서 ec2:StopInstances 차단 (즉시 안정화, 복붙용)
 
-Worker IAM Role(`academy-ec2-role`)에서 `ec2:StopInstances` 권한 제거.
+Worker IAM Role에 **Deny 정책**을 추가하여 `ec2:StopInstances` 호출을 차단.
 
-- **효과**: 코드가 StopInstances를 호출해도 실패 → 인스턴스 유지.
-- **주의**: 고정 EC2에서 self-stop으로 비용 절감하던 구성이 있으면 그 기능도 막힘.
-- **운영**: ASG만 사용한다면 안전.
+- **효과**: 코드가 StopInstances를 호출해도 AccessDenied → 인스턴스 유지.
+- **ASG 스케일 인**: 영향 없음 (ASG는 TerminateInstances 사용, 별도 서비스 권한).
+- **운영**: ASG만 사용 시 안전.
+
+**복붙 명령어 (PowerShell):**
+
+```powershell
+cd C:\academy
+.\scripts\remove_ec2_stop_from_worker_role.ps1
+```
+
+**수동 CLI (스크립트 없이):**
+
+```powershell
+# Deny 정책 JSON 생성 후 적용
+$policy = '{"Version":"2012-10-17","Statement":[{"Sid":"DenyStopInstances","Effect":"Deny","Action":"ec2:StopInstances","Resource":"*"}]}'
+$policy | Out-File -FilePath "$env:TEMP\deny_stop.json" -Encoding utf8
+aws iam put-role-policy --role-name academy-ec2-role --policy-name academy-deny-ec2-stop-instances --policy-document "file://$env:TEMP/deny_stop.json" --region ap-northeast-2
+```
 
 ---
 
