@@ -129,7 +129,19 @@ cd C:\academy
 ```
 
 **중요:** `full_redeploy.ps1 -WorkersViaASG`는 **Launch Template을 수정하지 않음**. 인스턴스 새로 고침만 함.  
-→ Video 워커가 ECS AMI로 뜨고 컨테이너가 없으면, **아래 5.5 한 번 실행 후** 다시 instance refresh.
+→ 워커가 **AMI/컨테이너/100GB** 문제로 잘못 뜨면 **아래 5.4·5.5** 참고.
+
+---
+
+## 5.4 풀배포(-WorkersViaASG) 후 워커가 잘못 뜰 때 (요약)
+
+| 증상 | 원인 | 조치 |
+|------|------|------|
+| **Video 워커**에 `academy-video-worker` 컨테이너 없음, ecs-agent만 있음 | Launch Template이 **ECS 최적화 AMI**(`al2023-ami-ecs-hvm-*`)를 쓰고 있음 | **5.5** 실행 → `deploy_worker_asg.ps1`로 LT를 일반 AL2023 AMI로 갱신 후 instance refresh |
+| Video 워커만 **100GB 추가 볼륨** 때문에 user_data 실패(마운트 안 됨 등) | LT의 BlockDeviceMapping(`/dev/sdb` 100GB)은 있는데, OS에서 디바이스 이름/순서가 달라 마운트 스크립트 실패 | 해당 인스턴스 SSH → `sudo cat /var/log/cloud-init-output.log` 확인. 필요 시 **5.5**로 LT 재배포 후 refresh. 상세: `docs_cursor/21-video-worker-asg-troubleshooting.md` |
+
+**정리:** `full_redeploy -WorkersViaASG`는 **이미지(ECR)만 갱신**하고 Launch Template은 건드리지 않음.  
+그래서 **최초 ASG 구성 시** 또는 **AMI/볼륨 구성을 바꿀 때**는 `deploy_worker_asg.ps1`을 한 번 실행한 뒤, 그다음부터 `full_redeploy -WorkersViaASG`로 이미지만 올리는 흐름이 안전함.
 
 ---
 
