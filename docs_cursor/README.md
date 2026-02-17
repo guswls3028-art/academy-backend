@@ -25,6 +25,7 @@
 | [17-project-structure-and-doc-verification.md](17-project-structure-and-doc-verification.md) | 프로젝트 구조, 문서–코드 검증 (구조 파악·일치 여부) | 신규 참여·문서 정합성 점검 시 |
 | [18-messaging-runtime-checklist.md](18-messaging-runtime-checklist.md) | 메시징 **런타임 4계층** 진단 (API→SQS→Worker→Solapi), 수집할 3가지 | 메시지 안 갈 때 진단용 |
 | [19-messaging-send-test-steps.md](19-messaging-send-test-steps.md) | 메시지 **발송 테스트 절차** (명령어·확인만, 추측 없음) | 발송 E2E 테스트 시 |
+| [20-messaging-4layer-code-analysis.md](20-messaging-4layer-code-analysis.md) | 메시징 **4계층 코드 분석** (파일·라인·코드 근거, 막히는 조건) | Messaging 미동작 진단 시 |
 
 ## 날짜별 스냅샷
 
