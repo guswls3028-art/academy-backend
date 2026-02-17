@@ -47,15 +47,17 @@ Base path: `/api/v1/core/` (ROOT_URLCONF에서 prefix).
 
 ---
 
-## 4. Tenant Owner 등록 (admin_app 전용)
+## 4. Tenant Owner 등록·목록 (admin_app 전용)
 
 **권한**: `IsAuthenticated`, `TenantResolvedAndOwner`.
 
 | Method | Path | View | 비고 |
 |--------|------|------|------|
 | POST | `tenants/<int:tenant_id>/owner/` | TenantOwnerView | username 필수. User 없으면 생성 시 password 필수. name, phone 선택. Owner 멤버십 생성/갱신. |
+| GET | `tenants/<int:tenant_id>/owners/` | TenantOwnerListView | 해당 테넌트 owner 목록. |
+| GET | `tenants/<int:tenant_id>/owners/<int:user_id>/` | TenantOwnerDetailView | owner 상세. |
 
-**응답**: `tenantId`, `tenantCode`, `userId`, `username`, `name`, `role`(owner).
+**POST owner/ 응답**: `tenantId`, `tenantCode`, `userId`, `username`, `name`, `role`(owner).
 
 ---
 
