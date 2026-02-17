@@ -36,7 +36,12 @@ def get_active_sender_numbers(api_key: str, api_secret: str) -> list[str]:
         "Authorization": _create_auth_header(api_key, api_secret),
         "Content-Type": "application/json",
     }
-    resp = requests.get(url, headers=headers, timeout=15)
+    try:
+        resp = requests.get(url, headers=headers, timeout=15)
+    except requests.RequestException as e:
+        logger.warning("Solapi sender list request failed: %s", e)
+        raise ValueError(f"솔라피 서버 연결 실패: {e!s}") from e
+
     if resp.status_code != 200:
         try:
             err = resp.json()
