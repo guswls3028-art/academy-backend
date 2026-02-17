@@ -38,13 +38,18 @@ $QueueDepthLambdaName = "academy-worker-queue-depth-metric"
 $EventBridgeRuleName = "academy-worker-queue-depth-rate"
 
 # ------------------------------------------------------------------------------
-# 0) AMI (Amazon Linux 2023)
+# 0) AMI (Amazon Linux 2023 — ECS 최적화 AMI 제외, 일반 AL2023만 사용)
 # ------------------------------------------------------------------------------
 if (-not $AmiId) {
-    Write-Host "[0/8] Resolving latest Amazon Linux 2023 AMI (arm64 for t4g)..." -ForegroundColor Cyan
-    $AmiId = (aws ec2 describe-images --region $Region --owners amazon `
+    Write-Host "[0/8] Resolving latest Amazon Linux 2023 AMI (arm64, non-ECS)..." -ForegroundColor Cyan
+    $all = aws ec2 describe-images --region $Region --owners amazon `
         --filters "Name=name,Values=al2023-ami-*-kernel-6.1-arm64" "Name=state,Values=available" `
-        --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
+        --query "sort_by(Images, &CreationDate)" --output json | ConvertFrom-Json
+    # ECS 최적화 AMI(al2023-ami-ecs-hvm-*) 제외 — 워커는 user_data로 docker run만 사용
+    $nonEcs = $all | Where-Object { $_.Name -notmatch "ecs" }
+    if ($nonEcs) {
+        $AmiId = ($nonEcs | Select-Object -Last 1).ImageId
+    }
     if (-not $AmiId) {
         $AmiId = (aws ec2 describe-images --region $Region --owners amazon `
             --filters "Name=name,Values=amzn2-ami-*-arm64-gp2" "Name=state,Values=available" `
