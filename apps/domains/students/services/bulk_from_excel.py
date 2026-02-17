@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from .lecture_enroll import get_or_create_student_for_lecture_enroll
@@ -16,6 +17,7 @@ def bulk_create_students_from_excel_rows(
     tenant_id: int,
     students_data: list[dict],
     initial_password: str,
+    on_row_progress: Callable[[int, int], None] | None = None,
 ) -> dict:
     """
     엑셀 파싱된 행으로 학생만 일괄 생성. 수강 등록은 하지 않음.
@@ -35,6 +37,8 @@ def bulk_create_students_from_excel_rows(
     total = len(students_data)
 
     for row_index, raw in enumerate(students_data, start=1):
+        if on_row_progress and total > 0:
+            on_row_progress(row_index, total)
         item = dict(raw) if isinstance(raw, dict) else {}
         name = (item.get("name") or "").strip()
         parent_phone = (item.get("parent_phone") or item.get("parentPhone") or "")
