@@ -131,10 +131,10 @@ $videoUserDataRaw = $videoUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRRegistry
 $videoUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($videoUserDataRaw))
 
 $LtVideoName = "academy-video-worker-asg"
-# Root volume >= 30GB (AMI snapshot requirement); second volume 100GB for transcode
+# Root volume >= 30GB (AMI snapshot requirement); second volume 100GB for transcode. AssociatePublicIpAddress for Instance Connect/SSH.
 $blockDevices = '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":30,"VolumeType":"gp3"}},{"DeviceName":"/dev/sdb","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]'
 $ltVideoJson = @"
-{"ImageId":"$AmiId","InstanceType":"t4g.medium","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"],"UserData":"$videoUserDataB64","BlockDeviceMappings":$blockDevices,"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-video-worker"}]}]}
+{"ImageId":"$AmiId","InstanceType":"t4g.medium","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"NetworkInterfaces":[{"DeviceIndex":0,"Groups":["$SecurityGroupId"],"AssociatePublicIpAddress":true}],"UserData":"$videoUserDataB64","BlockDeviceMappings":$blockDevices,"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-video-worker"}]}]}
 "@
 $ltVideoFile = Join-Path $RepoRoot "lt_video_data.json"
 [System.IO.File]::WriteAllText($ltVideoFile, $ltVideoJson.Trim(), $utf8NoBom)
@@ -162,7 +162,7 @@ $messagingUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes
 
 $LtMessagingName = "academy-messaging-worker-asg"
 $ltMessagingJson = @"
-{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"],"UserData":"$messagingUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-messaging-worker"}]}]}
+{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"NetworkInterfaces":[{"DeviceIndex":0,"Groups":["$SecurityGroupId"],"AssociatePublicIpAddress":true}],"UserData":"$messagingUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-messaging-worker"}]}]}
 "@
 $ltMessagingFile = Join-Path $RepoRoot "lt_messaging_data.json"
 [System.IO.File]::WriteAllText($ltMessagingFile, $ltMessagingJson.Trim(), $utf8NoBom)
