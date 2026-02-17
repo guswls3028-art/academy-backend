@@ -34,7 +34,7 @@ def infer_parent_phone_column(
         masked.append({
             "col_index": c["col_index"],
             "header": c["header"],
-            "samples": masked_samples,
+            "samples": samples,
         })
 
     prompt = f"""You are classifying which column is the PARENT phone number in a Korean academy spreadsheet.
