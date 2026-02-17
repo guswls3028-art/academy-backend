@@ -132,7 +132,7 @@ parent_phone 확정
 
 ---
 
-## 7. Fail-Fast 검증
+## 7. Fail-Fast 검증 및 상세 리포트
 
 ```python
 def validate_parent_phone(phone):
@@ -143,6 +143,17 @@ def validate_parent_phone(phone):
 - parent_phone 컬럼 미확정 → 즉시 실패
 - 모든 학생 행에 대해 parent_phone 검사
 - 하나라도 실패 시 전체 롤백
+
+### 상세 리포트 (2026-02-17 반영)
+
+실패 시 **몇 번째 행의 어떤 값이 잘못되었는지**를 목록으로 반환. `ExcelValidationError.errors`:
+
+```python
+errors = [
+    {"row": 5, "value": "02-1234-5678...", "reason": "학부모 전화번호가 없거나 형식이 잘못되었습니다(010 10~11자리)."},
+    {"row": 12, "value": "(비어있음)", "reason": "..."},
+]
+```
 
 ---
 
