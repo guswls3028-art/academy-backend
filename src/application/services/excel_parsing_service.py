@@ -127,8 +127,9 @@ def _infer_missing_columns(
 ) -> dict[str, int]:
     """
     필수 컬럼(name, parent_phone)이 없을 때, 샘플 데이터로 컬럼 추측.
-    - 전화 컬럼: rule_guess_parent_score로 parent_phone 후보 점수화, conf < 0.9면 확정 불가
-    - 이름 컬럼: 2~4글자 한글(이름형)이 여러 행에 나오는 컬럼 → name 후보
+    - phone_candidate: 010 패턴 비율(phone_hits) 2행 이상인 컬럼만 후보. 바로 학부모 단정 금지.
+    - Rule score >= 0.9 → parent_phone 확정
+    - 0.6 <= score < 0.9 → AI 2차 판정, AI conf < 0.8 시 업로드 실패
     """
     out = dict(col)
     sample = rows[header_idx + 1 : header_idx + 21]  # 최대 20행 샘플
