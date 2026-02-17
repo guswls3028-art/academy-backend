@@ -144,7 +144,7 @@ Write-Host "`n[5] SSM" -ForegroundColor White
 $ssm = aws ssm get-parameter --name /academy/workers/env --region $region --query "Parameter.Name" --output text 2>$null
 if ($ssm) { Write-Host "  OK" -ForegroundColor Green } else { Write-Host "  Missing" -ForegroundColor Red }
 Write-Host "`n[6] IAM ec2:StopInstances Deny (Worker self-stop 차단)" -ForegroundColor White
-$deny = aws iam get-role-policy --role-name academy-ec2-role --policy-name academy-deny-ec2-stop-instances --region $region 2>$null
+$deny = aws iam get-role-policy --role-name academy-ec2-role --policy-name academy-deny-ec2-stop-instances 2>$null
 if ($deny -match "DenyStopInstances") { Write-Host "  OK" -ForegroundColor Green } else { Write-Host "  없음 (필요시: .\scripts\remove_ec2_stop_from_worker_role.ps1)" -ForegroundColor Yellow }
 Write-Host "`n[7] API SG <- Worker" -ForegroundColor White
 $ing = aws ec2 describe-security-groups --group-ids sg-0051cc8f79c04b058 --region $region --query "SecurityGroups[0].IpPermissions" --output json 2>$null
