@@ -142,6 +142,13 @@ class VerifySenderView(APIView):
                 {"verified": False, "message": str(e)},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception("verify_sender unexpected error")
+            return Response(
+                {"verified": False, "message": f"인증 확인 중 오류: {str(e)}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
 
 class ChannelCheckView(APIView):
