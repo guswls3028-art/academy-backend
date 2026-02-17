@@ -34,6 +34,10 @@ storage/
 !apps/infrastructure/storage/
 !apps/infrastructure/storage/**
 
+# 🔥 EXCEPTION: AI worker storage (downloader)는 코드
+!apps/worker/ai_worker/storage/
+!apps/worker/ai_worker/storage/**
+
 # =========================
 # ML / CV
 # =========================
