@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from src.application.ports.storage import IObjectStorage
 
