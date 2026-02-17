@@ -3,7 +3,7 @@
 **이 문서 하나로 배포 관련 전부 가능.**  
 실제 액세스 키는 문서/채팅에 넣지 말 것. 노출 시 즉시 AWS에서 비활성화·삭제 후 새 키 발급.
 
-**배포 스크립트 정리(진짜 쓰는 것만):** [docs/SSOT_0218/admin97/deploy-scripts-truth.md](../SSOT_0218/admin97/deploy-scripts-truth.md)
+**배포 스크립트 정리(진짜 쓰는 것만):** [docs/SSOT_0218/admin97/deploy-scripts-truth.md](../docs/SSOT_0218/admin97/deploy-scripts-truth.md)
 
 ---
 
