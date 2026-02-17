@@ -146,7 +146,7 @@ def run_ai_sqs_worker() -> int:
                 if not message:
                     consecutive_empty += 1
                     consecutive_errors = 0
-                    if consecutive_empty >= IDLE_STOP_THRESHOLD:
+                    if IDLE_STOP_THRESHOLD > 0 and consecutive_empty >= IDLE_STOP_THRESHOLD:
                         logger.info("Queues empty %d polls, EC2 self-stop in 10s", consecutive_empty)
                         time.sleep(10)  # 500 plan: Dead zone 완화를 위해 Stop 직전 대기
                         logger.info("EC2 self-stop initiating (ai worker)")

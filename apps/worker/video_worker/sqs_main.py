@@ -161,8 +161,8 @@ def main() -> int:
                     consecutive_empty_polls += 1
                     consecutive_errors = 0
 
-                    # 연속 빈 폴링이 임계값을 초과하면 EC2 인스턴스 종료 (실제 큐가 비었을 때만)
-                    if consecutive_empty_polls >= IDLE_STOP_THRESHOLD:
+                    # 연속 빈 폴링이 임계값을 초과하면 EC2 인스턴스 종료 (IDLE_STOP_THRESHOLD=0이면 비활성화)
+                    if IDLE_STOP_THRESHOLD > 0 and consecutive_empty_polls >= IDLE_STOP_THRESHOLD:
                         logger.info(
                             "Queue empty for %d consecutive polls (threshold=%d), stopping EC2 instance in 10s",
                             consecutive_empty_polls,
