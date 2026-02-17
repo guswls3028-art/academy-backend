@@ -72,8 +72,10 @@ python -m apps.worker.messaging_worker.sqs_main
 ## 7. API/서비스에서 발송 요청
 
 - **비동기 (권장)**  
-  `enqueue_sms(tenant_id=request.tenant.id, to="01012345678", text="내용", reservation_id=123, use_alimtalk_first=True)`
-  → SQS 적재, 워커가 tenant 잔액 검증·차감 후 알림톡(테넌트 PFID) 우선 → 실패 시 롤백·SMS, 예약 취소 시 스킵.
+  `enqueue_sms(tenant_id=..., to="01012345678", text="내용", message_mode="sms")` → SMS만  
+  `enqueue_sms(..., message_mode="alimtalk", template_id="...", alimtalk_replacements=[...])` → 알림톡만  
+  `enqueue_sms(..., message_mode="both", use_alimtalk_first=True)` → 알림톡 우선, 실패 시 SMS 폴백  
+  → SQS 적재, 워커가 tenant 잔액 검증·차감 후 해당 모드로 발송.
 - **동기**  
   `send_sms(to="01012345678", text="내용")` (API 서버에 solapi 설치 필요).
 
