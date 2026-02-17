@@ -65,7 +65,7 @@ def set_ai_worker_asg_desired(autoscaling_client, ai_visible: int, ai_in_flight:
     """보이는 메시지 + 처리 중(in flight) 둘 다 0일 때만 desired=0. 처리 중인데 종료되지 않도록."""
     ai_total_for_scale = ai_visible + ai_in_flight
     if ai_total_for_scale > 0:
-        new_desired = min(AI_WORKER_ASG_MAX, max(1, math.ceil(ai_total / 20)))
+        new_desired = min(AI_WORKER_ASG_MAX, max(1, math.ceil(ai_total_for_scale / 20)))
     else:
         new_desired = 0
 
@@ -84,8 +84,8 @@ def set_ai_worker_asg_desired(autoscaling_client, ai_visible: int, ai_in_flight:
             DesiredCapacity=new_desired,
         )
         logger.info(
-            "ai_worker_asg desired %s -> %s (ai_queue_depth=%d)",
-            current, new_desired, ai_total,
+            "ai_worker_asg desired %s -> %s (visible=%d in_flight=%d)",
+            current, new_desired, ai_visible, ai_in_flight,
         )
     except Exception as e:
         logger.warning("set_ai_worker_asg_desired failed: %s", e)
