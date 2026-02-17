@@ -100,7 +100,7 @@ Solapi 응답의 **group_id**(및 messageId)를 발송 로그/예약 테이블�
 
 ---
 
-## 9. Fake Solapi (DEBUG / 테스트)
+## 10. Fake Solapi (DEBUG / 테스트)
 
 - **DEBUG=True** 또는 **SOLAPI_MOCK=true** 이면 실제 API를 호출하지 않고, 발송될 JSON만 콘솔에 예쁘게 로그합니다.
 - 잔액 차감·템플릿 미승인 에러를 피하려면 개발/스트레스 테스트 시 이 모드로 실행하세요.
