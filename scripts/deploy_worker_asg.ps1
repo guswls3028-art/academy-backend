@@ -38,14 +38,14 @@ $QueueDepthLambdaName = "academy-worker-queue-depth-metric"
 $EventBridgeRuleName = "academy-worker-queue-depth-rate"
 
 # ------------------------------------------------------------------------------
-# 0) AMI (Amazon Linux 2023 — ECS 최적화 AMI 제외, 일반 AL2023만 사용)
+# 0) AMI (Amazon Linux 2023 - exclude ECS optimized, use plain AL2023 only)
 # ------------------------------------------------------------------------------
 if (-not $AmiId) {
     Write-Host "[0/8] Resolving latest Amazon Linux 2023 AMI (arm64, non-ECS)..." -ForegroundColor Cyan
     $all = aws ec2 describe-images --region $Region --owners amazon `
         --filters "Name=name,Values=al2023-ami-*-kernel-6.1-arm64" "Name=state,Values=available" `
         --query "sort_by(Images, &CreationDate)" --output json | ConvertFrom-Json
-    # ECS 최적화 AMI(al2023-ami-ecs-hvm-*) 제외 — 워커는 user_data로 docker run만 사용
+    # Exclude ECS optimized AMI (al2023-ami-ecs-hvm-*); workers use user_data for docker run only
     $nonEcs = $all | Where-Object { $_.Name -notmatch "ecs" }
     if ($nonEcs) {
         $AmiId = ($nonEcs | Select-Object -Last 1).ImageId
@@ -88,7 +88,7 @@ aws lambda add-permission --function-name $QueueDepthLambdaName --statement-id "
     --source-arn "arn:aws:events:${Region}:${AccountId}:rule/${EventBridgeRuleName}" --region $Region 2>$null
 $ErrorActionPreference = $ea
 
-# Lambda 역할에 SQS/CloudWatch 권한 필요 (iam_policy_queue_depth_lambda.json 인라인 추가 또는 별도 정책)
+# Lambda role needs SQS/CloudWatch (add iam_policy_queue_depth_lambda.json inline or separate policy)
 Write-Host "      Ensure role $LambdaRoleName has SQS GetQueueAttributes + CloudWatch PutMetricData (Academy/Workers)." -ForegroundColor Yellow
 
 # ------------------------------------------------------------------------------
@@ -151,7 +151,7 @@ $ErrorActionPreference = $ea
 Remove-Item $ltVideoFile -Force -ErrorAction SilentlyContinue
 
 # ------------------------------------------------------------------------------
-# 3.5) Launch Template Messaging (Min=1 항시 대기)
+# 3.5) Launch Template Messaging (Min=1 always on)
 # ------------------------------------------------------------------------------
 Write-Host "[3.5/8] Launch Template (Messaging worker)..." -ForegroundColor Cyan
 $messagingUserDataPath = Join-Path $UserDataDir "messaging_worker_user_data.sh"
@@ -216,7 +216,7 @@ if ($LASTEXITCODE -ne 0) {
 $ErrorActionPreference = $ea
 
 # ------------------------------------------------------------------------------
-# 5.5) ASG Messaging (Min=1 항시 대기, Max=$MaxCapacity)
+# 5.5) ASG Messaging (Min=1 always on, Max=$MaxCapacity)
 # ------------------------------------------------------------------------------
 Write-Host "[6/8] ASG (Messaging worker, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
 $AsgMessagingName = "academy-messaging-worker-asg"
@@ -240,7 +240,7 @@ $ResourceIdAi = "auto-scaling-group/$AsgAiName"
 $ResourceIdVideo = "auto-scaling-group/$AsgVideoName"
 $ResourceIdMessaging = "auto-scaling-group/$AsgMessagingName"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-# AI/Video/Messaging 모두 상시 1대 대기 (min-capacity 1)
+# AI/Video/Messaging all min 1 instance (min-capacity 1)
 aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $ResourceIdAi `
     --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 1 --max-capacity $MaxCapacity --region $Region 2>$null
 aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $ResourceIdVideo `
