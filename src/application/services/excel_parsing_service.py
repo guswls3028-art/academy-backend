@@ -276,6 +276,14 @@ def _extract_lecture_title(rows: list[list[Any]], header_idx: int) -> str:
     return candidates[0] if candidates else ""
 
 
+def _get_academy_parent_mapping(_academy_id: int, _headers: list[str]) -> int | None:
+    """
+    확장 포인트: academy_id 기반 parent_phone 매핑 재사용.
+    TODO: DB에서 academy별 저장된 header->col_index 조회.
+    """
+    return None
+
+
 def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str]:
     """
     로컬 엑셀 파일을 파싱하여 강의 수강 등록용 행 리스트와 강의 제목 반환.
