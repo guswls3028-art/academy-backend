@@ -14,6 +14,7 @@ COPY academy ./academy
 COPY apps ./apps
 COPY libs ./libs
 COPY manage.py ./
+COPY scripts ./scripts
 RUN chown -R appuser:appuser /app
 USER appuser
 
