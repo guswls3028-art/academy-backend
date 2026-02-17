@@ -52,7 +52,7 @@ AI 워커 2차 판정
 parent_phone 확정
     ↓
 행 단위 Fail-Fast 검증
-    ↓
+    ↓ (순서 필수: 학생 행 판별 → parent_phone 검증)
 학생 생성
 ```
 
