@@ -9,10 +9,10 @@ from __future__ import annotations
 import os
 import sys
 
-# Django 설정이 있으면 앱 로드 — 아래 import들이 Django 모델을 쓰므로 setup을 먼저 호출
-if os.environ.get("DJANGO_SETTINGS_MODULE"):
-    import django
-    django.setup()
+# Django 설정 필수 — VideoRepository 등이 ORM 사용. 미설정 시 worker 전용 설정으로 고정
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "apps.api.config.settings.worker")
+import django
+django.setup()
 
 import json
 import logging
