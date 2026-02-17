@@ -163,12 +163,25 @@ def _infer_missing_columns(
     if out.get("parent_phone") is None and phone_col_candidates:
         phone_col_candidates.sort(key=lambda x: (-x[2], -x[1]))  # score desc, then hits
         best_idx, _, best_score = phone_col_candidates[0]
-        if best_score < 0.9:
-            raise ExcelValidationError(
-                "학부모 전화번호 컬럼을 자동으로 식별할 수 없습니다. "
-                "헤더에 '학부모전화', '부모핸드폰', '보호자 전화' 등을 명확히 표기해 주세요."
+
+        if best_score >= 0.9:
+            out["parent_phone"] = best_idx
+        elif best_score >= 0.6:
+            ai_col, ai_conf = _ai_infer_parent_phone(
+                header_row, sample, phone_col_candidates
             )
-        out["parent_phone"] = best_idx
+            if ai_col is not None and ai_conf >= 0.8:
+                out["parent_phone"] = ai_col
+            else:
+                raise ExcelValidationError(
+                    "학부모 전화번호 컬럼을 자동으로 식별할 수 없습니다. "
+                    "헤더에 '학부모전화', '부모핸드폰', '보호자 전화' 등을 명확히 표기해 주세요."
+                )
+        else:
+            raise ExcelValidationError(
+                "학부모 전화번호 컬럼을 찾을 수 없습니다. "
+                "헤더에 '학부모전화', '부모핸드폰', '보호자 전화' 등이 있어야 합니다."
+            )
     if out.get("name") is None and name_col_candidates:
         name_col_candidates.sort(key=lambda x: -x[1])
         out["name"] = name_col_candidates[0][0]
