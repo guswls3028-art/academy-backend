@@ -167,6 +167,14 @@ def _to_raw_phone(v: str) -> str:
     return re.sub(r"\D", "", v)
 
 
+def _validate_parent_phone(raw: str) -> bool:
+    """010 10~11자리 형식인지 검사. parent_phone 필수 검증용."""
+    p = _to_raw_phone(raw)
+    if not p or not p.startswith("010"):
+        return False
+    return len(p) in (10, 11)
+
+
 def _parse_school_grade(value: str) -> tuple[str, str]:
     value = (value or "").strip()
     if not value:
