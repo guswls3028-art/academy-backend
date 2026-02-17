@@ -11,7 +11,7 @@
 |------|-----------------|------|
 | **API** | EC2 t4g.small 30GB, Docker `academy-api` | 8000 포트, 오픈 전 ALB+HTTPS |
 | **RDS** | db.t4g.micro 20GB, 비퍼블릭 | .env `DB_HOST` |
-| **Messaging** | EC2 t4g.micro 상시 또는 Docker `academy-messaging-worker` | SQS 수신 → 메시지 발송 |
+| **Messaging** | EC2 t4g.small 상시 또는 Docker `academy-messaging-worker` (ASG/스크립트는 t4g.small) | SQS 수신 → 메시지 발송 |
 | **Video** | EC2 t4g.medium 4GB+**100GB EBS** (`/mnt/transcode`) 또는 ASG Min=0 | Docker `academy-video-worker`, `-v /mnt/transcode:/tmp` |
 | **AI** | EC2 또는 **ASG Min=0** | Docker `academy-ai-worker-cpu` (GPU는 `academy-ai-worker-gpu`) |
 
