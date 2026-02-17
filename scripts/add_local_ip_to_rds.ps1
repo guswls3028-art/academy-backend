@@ -1,6 +1,6 @@
 # ==============================================================================
-# RDS 보안 그룹에 로컬 IP 추가 (직접 접속 허용)
-# 사용: .\scripts\add_local_ip_to_rds.ps1
+# Add local IP to RDS security group (direct access)
+# Usage: .\scripts\add_local_ip_to_rds.ps1
 # ==============================================================================
 
 param(
@@ -10,7 +10,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# AWS 자격 증명 확인
+# Check AWS credentials
 if (-not $env:AWS_ACCESS_KEY_ID -or -not $env:AWS_SECRET_ACCESS_KEY) {
     Write-Host "AWS credentials not set. Please set:" -ForegroundColor Yellow
     Write-Host "  `$env:AWS_ACCESS_KEY_ID = 'YOUR_KEY'" -ForegroundColor White
