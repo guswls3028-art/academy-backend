@@ -229,10 +229,11 @@ $ResourceIdAi = "auto-scaling-group/$AsgAiName"
 $ResourceIdVideo = "auto-scaling-group/$AsgVideoName"
 $ResourceIdMessaging = "auto-scaling-group/$AsgMessagingName"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+# AI/Video/Messaging 모두 상시 1대 대기 (min-capacity 1)
 aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $ResourceIdAi `
-    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 0 --max-capacity $MaxCapacity --region $Region 2>$null
+    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 1 --max-capacity $MaxCapacity --region $Region 2>$null
 aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $ResourceIdVideo `
-    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 0 --max-capacity $MaxCapacity --region $Region 2>$null
+    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 1 --max-capacity $MaxCapacity --region $Region 2>$null
 aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $ResourceIdMessaging `
     --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 1 --max-capacity $MaxCapacity --region $Region 2>$null
 $ErrorActionPreference = $ea
