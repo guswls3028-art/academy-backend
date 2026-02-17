@@ -44,6 +44,9 @@ class VideoSerializer(serializers.ModelSerializer):
     thumbnail_url = serializers.SerializerMethodField()
     hls_url = serializers.SerializerMethodField()
 
+    # Redis 기반 인코딩 진행률 (status=PROCESSING 일 때만 유의미)
+    encoding_progress = serializers.SerializerMethodField()
+
     class Meta:
         model = Video
         fields = [
@@ -55,6 +58,7 @@ class VideoSerializer(serializers.ModelSerializer):
             "duration",
             "order",
             "status",
+            "encoding_progress",
             "allow_skip",
             "max_speed",
             "show_watermark",
