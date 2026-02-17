@@ -33,9 +33,11 @@ $denyPolicy = @'
 '@
 
 $policyPath = Join-Path $env:TEMP "academy_deny_stop_instances.json"
-$denyPolicy | Set-Content $policyPath -Encoding UTF8 -NoNewline
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText($policyPath, $denyPolicy.Trim(), $utf8NoBom)
+$fileUri = "file:///" + ($policyPath -replace '\\', '/')
 
-aws iam put-role-policy --role-name $roleName --policy-name $DenyPolicyName --policy-document "file://$policyPath"
+aws iam put-role-policy --role-name $roleName --policy-name $DenyPolicyName --policy-document $fileUri
 if ($LASTEXITCODE -ne 0) {
     Write-Host "FAILED. IAM put-role-policy 권한 확인." -ForegroundColor Red
     Remove-Item $policyPath -Force -ErrorAction SilentlyContinue
