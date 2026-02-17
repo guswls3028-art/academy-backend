@@ -240,7 +240,19 @@ def main() -> int:
 
                 request_id = str(uuid.uuid4())[:8]
                 message_received_at = time.time()
-                queue_wait_time = message_received_at - (float(message_created_at) if message_created_at else message_received_at)
+                # created_at: Unix float 또는 ISO 8601 문자열 (timezone.now().isoformat())
+                try:
+                    if message_created_at is None:
+                        created_ts = message_received_at
+                    elif isinstance(message_created_at, (int, float)):
+                        created_ts = float(message_created_at)
+                    else:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(str(message_created_at).replace("Z", "+00:00"))
+                        created_ts = dt.timestamp()
+                    queue_wait_time = message_received_at - created_ts
+                except (ValueError, TypeError, AttributeError):
+                    queue_wait_time = 0.0
 
                 logger.info(
                     "SQS_MESSAGE_RECEIVED | request_id=%s | video_id=%s | tenant_id=%s | queue_wait_sec=%.2f | created_at=%s",
