@@ -297,6 +297,9 @@ class SendMessageView(APIView):
         tenant = request.tenant
         student_ids = data["student_ids"]
         send_to = data["send_to"]
+        message_mode = (data.get("message_mode") or "sms").strip().lower()
+        if message_mode not in ("sms", "alimtalk", "both"):
+            message_mode = "sms"
         template_id = data.get("template_id")
         raw_body = (data.get("raw_body") or "").strip()
         raw_subject = (data.get("raw_subject") or "").strip()
@@ -317,6 +320,8 @@ class SendMessageView(APIView):
 
         body_base = raw_body
         subject_base = raw_subject
+        t = None
+        solapi_template_id = ""
         if template_id:
             t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
             if not t:
@@ -326,6 +331,14 @@ class SendMessageView(APIView):
                 )
             body_base = (t.body or "").strip()
             subject_base = (t.subject or "").strip()
+            solapi_template_id = (t.solapi_template_id or "").strip()
+
+        if message_mode in ("alimtalk", "both") and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
+            return Response(
+                {"detail": "알림톡/폴백 모드는 검수 승인된 템플릿이 필요합니다. 템플릿을 선택하거나 SMS만 모드로 발송하세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if not body_base:
             return Response(
                 {"detail": "발송할 본문이 비어 있습니다."},
@@ -354,7 +367,25 @@ class SendMessageView(APIView):
             )
             if subject_base:
                 text = subject_base + "\n" + text
-            ok = enqueue_sms(tenant_id=tenant.id, to=phone, text=text)
+
+            alimtalk_replacements = None
+            template_id_solapi = None
+            if message_mode in ("alimtalk", "both") and solapi_template_id:
+                template_id_solapi = solapi_template_id
+                alimtalk_replacements = [
+                    {"key": "student_name_2", "value": name_2},
+                    {"key": "student_name_3", "value": name_3},
+                    {"key": "site_link", "value": site_url},
+                ]
+
+            ok = enqueue_sms(
+                tenant_id=tenant.id,
+                to=phone,
+                text=text,
+                message_mode=message_mode,
+                template_id=template_id_solapi,
+                alimtalk_replacements=alimtalk_replacements,
+            )
             if ok:
                 enqueued += 1
 
