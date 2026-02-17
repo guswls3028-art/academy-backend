@@ -147,7 +147,8 @@ def validate_parent_phone(phone):
 ```
 
 - parent_phone 컬럼 미확정 → 즉시 실패
-- 모든 학생 행에 대해 parent_phone 검사
+- **parent_phone 검증은 반드시 `_row_looks_like_student()`로 필터링된 학생 행에만 적용** (소제목·날짜 행 제외)
+- parent_phone 컬럼이 존재하더라도 **모든 학생 행에서 유효한 010 번호가 없으면** 업로드 실패
 - 하나라도 실패 시 전체 롤백
 
 ### 상세 리포트 (2026-02-17 반영)
