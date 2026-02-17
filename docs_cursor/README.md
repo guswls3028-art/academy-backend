@@ -14,6 +14,7 @@
 | [05-conventions.md](05-conventions.md) | 문서/코드 규칙, core 봉인, 추측 금지 | 모든 작업 전 참고 |
 | [06-front-infra-and-excel.md](06-front-infra-and-excel.md) | 프론트·인프라 계약 요약, 백엔드 엑셀 파싱 사실 (상세는 academyfront/06-implemented-features) | CORS·도메인·엑셀 에러 시 참조 |
 | [07-staffs-api.md](07-staffs-api.md) | staffs 도메인 API: work-types, staff-work-types (POST body: staff, work_type_id), Staff | 시급태그·직원 API 연동·수정 시 |
+| [08-worker-deployment-and-test.md](08-worker-deployment-and-test.md) | 워커 배포 환경(Messaging/Video/AI, ASG, SSM env), 로컬·배포 후 테스트 방법 | 워커 테스트·배포 시 |
 
 ## 날짜별 스냅샷
 
