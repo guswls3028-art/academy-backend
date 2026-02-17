@@ -116,6 +116,15 @@ class SessionScoresView(APIView):
 
         enrollment_ids = list(enrollment_qs.values_list("id", flat=True))
 
+        # 시험/과제 연결 전: 세션 수강생(SessionEnrollment) 폴백으로 테이블에 학생 노출
+        if not enrollment_ids:
+            session_enrollment_ids = list(
+                SessionEnrollment.objects.filter(session=session)
+                .values_list("enrollment_id", flat=True)
+                .distinct()
+            )
+            enrollment_ids = session_enrollment_ids
+
         # -------------------------------------------------
         # 2) Meta (프론트 계약)
         # -------------------------------------------------
