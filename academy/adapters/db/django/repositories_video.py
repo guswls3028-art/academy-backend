@@ -20,15 +20,19 @@ def get_video_for_update(video_id: int):
 
 
 def get_video_queryset_with_relations():
-    """VideoViewSet 기본 queryset."""
+    """VideoViewSet 기본 queryset. upload_complete enqueue 시 video.session.lecture.tenant 필요."""
     from apps.support.video.models import Video
-    return Video.objects.all().select_related("session", "session__lecture")
+    return Video.objects.all().select_related(
+        "session", "session__lecture", "session__lecture__tenant"
+    )
 
 
 def get_video_by_pk_with_relations(pk):
-    """Video 1건 (session, lecture 포함)."""
+    """Video 1건 (session, lecture, tenant 포함). perform_destroy 등에서 tenant_id 사용."""
     from apps.support.video.models import Video
-    return Video.objects.select_related("session", "session__lecture").filter(pk=pk).first()
+    return Video.objects.select_related(
+        "session", "session__lecture", "session__lecture__tenant"
+    ).filter(pk=pk).first()
 
 
 def get_session_by_id_with_lecture_tenant(session_id):
