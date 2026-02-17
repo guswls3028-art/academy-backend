@@ -65,10 +65,7 @@ class Migration(migrations.Migration):
             options={
                 "verbose_name": "Auto-send config",
                 "verbose_name_plural": "Auto-send configs",
+                "unique_together": {("tenant", "trigger")},
             },
-        ),
-        migrations.AlterUniqueTogether(
-            name="autosendconfig",
-            unique_together={("tenant", "trigger")},
         ),
     ]

@@ -127,11 +127,6 @@ class AutoSendConfig(models.Model):
 
     class Meta:
         app_label = "messaging"
-        constraints = [
-            models.UniqueConstraint(
-                fields=["tenant", "trigger"],
-                name="messaging_autosendconfig_tenant_trigger_unique",
-            ),
-        ]
+        unique_together = [("tenant", "trigger")]
         verbose_name = "Auto-send config"
         verbose_name_plural = "Auto-send configs"
