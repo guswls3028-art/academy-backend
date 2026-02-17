@@ -12,10 +12,15 @@ param(
 $ErrorActionPreference = "Stop"
 $envPath = Join-Path $RepoRoot ".env"
 $envPath = [System.IO.Path]::GetFullPath($envPath)
-
 if (-not (Test-Path -LiteralPath $envPath)) {
-    Write-Host "upload_env_to_ssm: .env not found at: $envPath" -ForegroundColor Yellow
-    Write-Host "  Create .env in repo root or run: .\scripts\upload_env_to_ssm.ps1 -RepoRoot 'C:\academy'" -ForegroundColor Gray
+    $fallbackRoot = (Get-Location).Path
+    $envPathFallback = [System.IO.Path]::GetFullPath((Join-Path $fallbackRoot ".env"))
+    if (Test-Path -LiteralPath $envPathFallback) {
+        $envPath = $envPathFallback
+    }
+}
+if (-not (Test-Path -LiteralPath $envPath)) {
+    Write-Host "upload_env_to_ssm: .env not found at: $envPath" -ForegroundColor Red
     exit 1
 }
 if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) {
