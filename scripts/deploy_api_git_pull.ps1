@@ -89,7 +89,7 @@ if (-not (Test-Path $keyPath)) {
     exit 1
 }
 
-Write-Host "[academy-api] $apiIp — git pull & build & restart ..." -ForegroundColor Cyan
+Write-Host "[academy-api] $apiIp - git pull & build & restart ..." -ForegroundColor Cyan
 & ssh -o StrictHostKeyChecking=accept-new -i $keyPath "${EC2_USER}@${apiIp}" "echo $RemoteScriptB64 | base64 -d | bash"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[academy-api] FAIL (exit $LASTEXITCODE)" -ForegroundColor Red
