@@ -1,8 +1,8 @@
-# AWS CLI/ECR 인증 — .env.aws 에서 읽어서 현재 세션에 설정
-# 사용: . .\scripts\set_aws_env.ps1   또는  & .\scripts\set_aws_env.ps1 (자식 프로세스면 현재 셸엔 반영 안 됨 → 호출: . .\scripts\set_aws_env.ps1)
+# AWS CLI/ECR auth - load from .env.aws into current session
+# Usage: . .\scripts\set_aws_env.ps1   (dot-source so current shell gets env)
 $envFile = Join-Path (Get-Location) ".env.aws"
 if (-not (Test-Path $envFile)) {
-    Write-Host "없음: .env.aws ( .env.aws.example 복사 후 값 채우기 )" -ForegroundColor Yellow
+    Write-Host "Missing: .env.aws (copy .env.aws.example and fill values)" -ForegroundColor Yellow
     exit 1
 }
 Get-Content $envFile | ForEach-Object {

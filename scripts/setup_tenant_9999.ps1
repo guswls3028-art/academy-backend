@@ -1,5 +1,5 @@
 # Setup tenant 9999 for local development
-# Creates tenant with code="9999", localhost domain, and superuser (유현진, admin97, kjkszpj123)
+# Creates tenant with code="9999", localhost domain, and superuser (e.g. admin97, password)
 
 $ErrorActionPreference = "Stop"
 

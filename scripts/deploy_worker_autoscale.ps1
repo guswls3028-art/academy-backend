@@ -26,7 +26,7 @@ Write-Host "[1/4] Creating zip..." -ForegroundColor Cyan
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
 Compress-Archive -Path (Join-Path $LambdaDir "lambda_function.py") -DestinationPath $ZipPath -Force
 
-# 2) Lambda 생성 또는 코드 업데이트
+# 2) Create or update Lambda
 $exists = $false
 try {
     aws lambda get-function --function-name $FunctionName --region $Region 2>$null | Out-Null
@@ -40,7 +40,7 @@ if ($exists) {
         --zip-file "fileb://$ZipPath" `
         --region $Region
     if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] update-function-code failed" -ForegroundColor Red; exit 1 }
-    # 설정 일치 (Reserved Concurrency = 1, Timeout 60)
+    # Match config (Reserved Concurrency = 1, Timeout 60)
     $null = aws lambda put-function-concurrency --function-name $FunctionName --reserved-concurrent-executions 1 --region $Region 2>&1
     if ($LASTEXITCODE -ne 0) { Write-Host "[WARN] ReservedConcurrency=1 not set." -ForegroundColor Yellow }
     aws lambda update-function-configuration --function-name $FunctionName --timeout 60 --memory-size 128 --region $Region 2>$null
@@ -84,7 +84,7 @@ aws events put-targets `
     --region $Region
 if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] put-targets failed" -ForegroundColor Red; exit 1 }
 
-# 4) Lambda 권한 (EventBridge가 Lambda 호출 가능하도록)
+# 4) Lambda permission (EventBridge can invoke)
 Write-Host "[4/4] Adding Lambda permission for EventBridge" -ForegroundColor Cyan
 aws lambda add-permission `
     --function-name $FunctionName `
@@ -93,7 +93,7 @@ aws lambda add-permission `
     --principal "events.amazonaws.com" `
     --source-arn "arn:aws:events:${Region}:${AccountId}:rule/${RuleName}" `
     --region $Region 2>$null
-# 이미 있으면 무시
+# Ignore if already exists
 
 Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
 Write-Host "Done. Lambda: $FunctionName | Rule: $RuleName (rate 1 minute) | ReservedConcurrency=1" -ForegroundColor Green
