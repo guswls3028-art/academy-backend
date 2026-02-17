@@ -242,6 +242,8 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
 
     header_row = rows[header_idx]
     col = _build_header_map(header_row)
+    if col.get("name") is None or col.get("parent_phone") is None:
+        col = _infer_missing_columns(col, header_row, rows, header_idx)
     name_col = col.get("name")
     parent_col = col.get("parent_phone")
     student_col = col.get("student_phone")
