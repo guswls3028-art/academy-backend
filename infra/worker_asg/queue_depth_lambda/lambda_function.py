@@ -39,22 +39,32 @@ AI_WORKER_ASG_MAX = int(os.environ.get("AI_WORKER_ASG_MAX", "20"))
 BOTO_CONFIG = Config(retries={"max_attempts": 3, "mode": "standard"})
 
 
-def get_visible_count(sqs_client, queue_name: str) -> int:
+def get_queue_counts(sqs_client, queue_name: str) -> tuple[int, int]:
+    """(visible, in_flight) = ApproximateNumberOfMessages, ApproximateNumberOfMessagesNotVisible."""
     try:
         url = sqs_client.get_queue_url(QueueName=queue_name)["QueueUrl"]
         attrs = sqs_client.get_queue_attributes(
             QueueUrl=url,
-            AttributeNames=["ApproximateNumberOfMessages"],
+            AttributeNames=["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
         )
-        return int(attrs.get("Attributes", {}).get("ApproximateNumberOfMessages", 0))
+        a = attrs.get("Attributes", {})
+        visible = int(a.get("ApproximateNumberOfMessages", 0))
+        in_flight = int(a.get("ApproximateNumberOfMessagesNotVisible", 0))
+        return visible, in_flight
     except Exception as e:
         logger.warning("SQS get_queue_attributes failed for %s: %s", queue_name, e)
-        return 0
+        return 0, 0
 
 
-def set_ai_worker_asg_desired(autoscaling_client, ai_total: int) -> None:
-    """Application Auto Scaling 대신 EC2 Auto Scaling set_desired_capacity로 조정."""
-    if ai_total > 0:
+def get_visible_count(sqs_client, queue_name: str) -> int:
+    visible, _ = get_queue_counts(sqs_client, queue_name)
+    return visible
+
+
+def set_ai_worker_asg_desired(autoscaling_client, ai_visible: int, ai_in_flight: int) -> None:
+    """보이는 메시지 + 처리 중(in flight) 둘 다 0일 때만 desired=0. 처리 중인데 종료되지 않도록."""
+    ai_total_for_scale = ai_visible + ai_in_flight
+    if ai_total_for_scale > 0:
         new_desired = min(AI_WORKER_ASG_MAX, max(1, math.ceil(ai_total / 20)))
     else:
         new_desired = 0
