@@ -72,7 +72,7 @@ function Start-StoppedApiInstance {
     Write-Host "[EC2] Started." -ForegroundColor Green
 }
 
-Write-Host "`n=== API 서버: git pull → build → restart ===`n" -ForegroundColor Cyan
+Write-Host "`n=== API server: git pull -> build -> restart ===`n" -ForegroundColor Cyan
 Write-Host "Repo: $RepoPath  Branch: $Branch  Env: $EnvPath" -ForegroundColor Gray
 
 if ($StartStoppedInstances) { Start-StoppedApiInstance }
