@@ -1,17 +1,18 @@
 # ==============================================================================
-# 배포 전 검증: AWS 계정·키·인스턴스·ASG 확인 (full_redeploy 실행 전 권장)
-# 사용: .\scripts\deploy_preflight.ps1
+# 배포 전 검증: AWS 계정·키·인스턴스·ASG·ECR·SSM·(선택)SSH 까지 확인
+# 사용: .\scripts\deploy_preflight.ps1   또는  .\scripts\deploy_preflight.ps1 -TestSsh
 # ==============================================================================
 
 param(
     [string]$KeyDir = "C:\key",
-    [string]$Region = "ap-northeast-2"
+    [string]$Region = "ap-northeast-2",
+    [switch]$TestSsh = $false   # true면 academy-api에 SSH 접속 가능한지 실제 시도 (느림)
 )
 
 $ErrorActionPreference = "Stop"
 $failed = $false
 
-Write-Host "`n=== Deploy preflight ===`n" -ForegroundColor Cyan
+Write-Host "`n=== Deploy preflight (strict) ===`n" -ForegroundColor Cyan
 
 # 1) AWS Identity
 $identity = aws sts get-caller-identity --output json 2>&1
@@ -43,26 +44,59 @@ foreach ($r in $requiredKeys) {
     }
 }
 
-# 3) 실행 중인 academy 인스턴스
+# 3) ECR 접근 (빌드 단계에서 push 실패 방지)
+$ecrTest = aws ecr describe-repositories --region $Region --repository-names academy-api 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[FAIL] ECR describe academy-api: no permission or wrong account?" -ForegroundColor Red
+    Write-Host "  $ecrTest" -ForegroundColor Gray
+    $failed = $true
+} else {
+    Write-Host "[OK] ECR access (academy-api repo)" -ForegroundColor Green
+}
+
+# 4) SSM /academy/workers/env (워커·API 배포 시 필요)
+$ssmTest = aws ssm get-parameter --name /academy/workers/env --region $Region --query "Parameter.Name" --output text 2>&1
+if ($LASTEXITCODE -ne 0 -or -not $ssmTest) {
+    Write-Host "[FAIL] SSM /academy/workers/env missing or no permission" -ForegroundColor Red
+    $failed = $true
+} else {
+    Write-Host "[OK] SSM /academy/workers/env" -ForegroundColor Green
+}
+
+# 5) 빌드 인스턴스 (풀배포 시 사용 — 없으면 새로 만드는데 그때 권한/AMI 이슈 나올 수 있음)
+$buildRaw = aws ec2 describe-instances --region $Region `
+    --filters "Name=tag:Name,Values=academy-build-arm64" "Name=instance-state-name,Values=running,stopped" `
+    --query "Reservations[].Instances[].[InstanceId,State.Name]" --output text 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[WARN] EC2 describe (build instance): $buildRaw" -ForegroundColor Yellow
+} elseif (-not $buildRaw -or $buildRaw.Trim() -eq "") {
+    Write-Host "[WARN] No academy-build-arm64 (running/stopped). Full deploy will CREATE new instance (needs EC2 run-instances + SSM)." -ForegroundColor Yellow
+} else {
+    $buildParts = $buildRaw.Trim() -split "\s+", 2
+    Write-Host "[OK] Build instance: $($buildParts[0]) ($($buildParts[1]))" -ForegroundColor Green
+}
+
+# 6) 실행 중인 academy 인스턴스 (API/워커 SSH용)
 $names = "academy-api,academy-ai-worker-cpu,academy-messaging-worker,academy-video-worker"
 $raw = aws ec2 describe-instances --region $Region `
     --filters "Name=instance-state-name,Values=running" "Name=tag:Name,Values=$names" `
     --query "Reservations[].Instances[].[Tags[?Key=='Name'].Value | [0], InstanceId, PublicIpAddress]" `
     --output text 2>&1
+$ips = @{}
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[FAIL] EC2 describe-instances: wrong account or no permission?" -ForegroundColor Red
     $failed = $true
 } elseif (-not $raw -or $raw.Trim() -eq "") {
-    Write-Host "[WARN] No running academy instances in this account/region" -ForegroundColor Yellow
+    Write-Host "[WARN] No running academy instances. full_redeploy will start stopped ones (StartStoppedInstances)." -ForegroundColor Yellow
 } else {
-    Write-Host "[OK] Running instances (this account):" -ForegroundColor Green
+    Write-Host "[OK] Running instances:" -ForegroundColor Green
     foreach ($line in ($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
         $p = $line -split "\s+", 3
-        if ($p.Length -ge 3) { Write-Host "     $($p[0]) $($p[1]) $($p[2])" -ForegroundColor Gray }
+        if ($p.Length -ge 3) { $ips[$p[0]] = $p[2]; Write-Host "     $($p[0]) $($p[1]) $($p[2])" -ForegroundColor Gray }
     }
 }
 
-# 4) ASG (WorkersViaASG 사용 시)
+# 7) ASG (WorkersViaASG 사용 시)
 $asgNames = @("academy-video-worker-asg", "academy-ai-worker-asg", "academy-messaging-worker-asg")
 $asgOut = aws autoscaling describe-auto-scaling-groups --region $Region --output json 2>&1
 if ($LASTEXITCODE -ne 0) {
@@ -71,17 +105,34 @@ if ($LASTEXITCODE -ne 0) {
     $asgJson = $asgOut | ConvertFrom-Json
     $found = $asgJson.AutoScalingGroups | Where-Object { $asgNames -contains $_.AutoScalingGroupName }
     if ($found.Count -ge 1) {
-        Write-Host "[OK] ASG found: $($found.Count)/$($asgNames.Count)" -ForegroundColor Green
+        Write-Host "[OK] ASG: $($found.Count)/$($asgNames.Count)" -ForegroundColor Green
         $found | ForEach-Object { Write-Host "     $($_.AutoScalingGroupName) Desired=$($_.DesiredCapacity)" -ForegroundColor Gray }
     } else {
-        Write-Host "[WARN] No academy ASGs in this account (use -WorkersViaASG only after ASG deploy)" -ForegroundColor Yellow
+        Write-Host "[WARN] No academy ASGs (use -WorkersViaASG only after ASG deploy)" -ForegroundColor Yellow
+    }
+}
+
+# 8) (선택) SSH 실제 접속 테스트 — 키/보안그룹/네트워크 검증
+if ($TestSsh -and $ips["academy-api"]) {
+    $apiKeyPath = Join-Path $KeyDir "backend-api-key.pem"
+    if (Test-Path $apiKeyPath) {
+        Write-Host "`n[SSH] Testing academy-api ($($ips['academy-api']))..." -ForegroundColor Cyan
+        $sshTest = ssh -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=accept-new -i "`"$apiKeyPath`"`" ec2-user@$($ips["academy-api"]) "exit" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] SSH to academy-api works" -ForegroundColor Green
+        } else {
+            Write-Host "[FAIL] SSH to academy-api failed (key/SG/network?). Output: $sshTest" -ForegroundColor Red
+            $failed = $true
+        }
     }
 }
 
 Write-Host ""
 if ($failed) {
     Write-Host "Preflight FAILED. Fix above before full_redeploy." -ForegroundColor Red
+    Write-Host "  Optional: run with -TestSsh to verify SSH: .\scripts\deploy_preflight.ps1 -TestSsh" -ForegroundColor Gray
     exit 1
 }
-Write-Host "Preflight OK. Use same AWS env for: .\scripts\full_redeploy.ps1 -GitRepoUrl ... -WorkersViaASG" -ForegroundColor Green
+Write-Host "Preflight OK. Use SAME terminal/env: .\scripts\full_redeploy.ps1 -GitRepoUrl ... -WorkersViaASG" -ForegroundColor Green
+Write-Host "  (Do not switch to admin97 or other key before deploy.)" -ForegroundColor Gray
 Write-Host ""
