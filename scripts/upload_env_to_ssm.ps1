@@ -18,22 +18,35 @@ if (-not (Test-Path -LiteralPath $envPath)) {
     Write-Host "  Create .env in repo root or run: .\scripts\upload_env_to_ssm.ps1 -RepoRoot 'C:\academy'" -ForegroundColor Gray
     exit 1
 }
+if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) {
+    Write-Host "upload_env_to_ssm: .env is a directory, not a file: $envPath" -ForegroundColor Red
+    exit 1
+}
 
-# Read .env content as string (UTF-8 then Default); normalize LF
+# Read .env: try Get-Content (Windows-friendly) then fallback to ReadAllText
 $content = $null
 $lastErr = $null
-foreach ($enc in @([System.Text.Encoding]::UTF8, [System.Text.Encoding]::Default)) {
+try {
+    $content = Get-Content -LiteralPath $envPath -Raw -Encoding UTF8 -ErrorAction Stop
+} catch {
+    $lastErr = $_
     try {
-        $content = [System.IO.File]::ReadAllText($envPath, $enc)
-        break
+        $content = Get-Content -LiteralPath $envPath -Raw -ErrorAction Stop
     } catch {
         $lastErr = $_
-        continue
+    }
+}
+if (-not $content) {
+    try {
+        $content = [System.IO.File]::ReadAllText($envPath, [System.Text.Encoding]::UTF8)
+    } catch {
+        $lastErr = $_
     }
 }
 if (-not $content) {
     Write-Host "upload_env_to_ssm: could not read .env at: $envPath" -ForegroundColor Red
-    if ($lastErr) { Write-Host "  Error: $($lastErr.Message)" -ForegroundColor Gray }
+    if ($lastErr) { Write-Host "  Error: $($lastErr.Exception.Message)" -ForegroundColor Gray }
+    Write-Host "  Tip: Close .env in other apps (editor, terminal) and retry." -ForegroundColor Gray
     exit 1
 }
 $content = $content -replace "`r`n", "`n" -replace "`r", "`n"
