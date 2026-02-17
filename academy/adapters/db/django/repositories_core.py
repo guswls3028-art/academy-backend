@@ -117,20 +117,13 @@ def user_get_by_username(username: str) -> Optional[Any]:
 
 
 def user_get_by_tenant_username(tenant, display_username: str) -> Optional[Any]:
-    """테넌트별 유저 조회. 내부 저장형 t{tenant_id}_{display} 로 조회.
-    격리 작업 전 생성된 레거시 유저(username이 접두어 없이 저장된 경우)도 fallback으로 조회."""
+    """테넌트별 유저 조회. 내부 저장형 t{tenant_id}_{display} 만 사용. 레거시 형식은 normalize_user_tenant_usernames 로 정규화 후 제거."""
     from django.contrib.auth import get_user_model
     from apps.core.models.user import user_internal_username
     if not tenant or not (display_username or "").strip():
         return None
     internal = user_internal_username(tenant, display_username)
-    user = get_user_model().objects.filter(tenant=tenant, username=internal).first()
-    if user:
-        return user
-    # 레거시: tenant는 있으나 username이 t{id}_ 접두어 없이 저장된 경우 (격리 마이그레이션 이전)
-    return get_user_model().objects.filter(
-        tenant=tenant, username=(display_username or "").strip()
-    ).first()
+    return get_user_model().objects.filter(tenant=tenant, username=internal).first()
 
 
 def user_get_or_create(username: str, defaults: dict) -> tuple[Any, bool]:
