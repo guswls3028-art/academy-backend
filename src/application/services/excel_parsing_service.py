@@ -16,37 +16,55 @@ from src.application.ports.storage import IObjectStorage
 logger = logging.getLogger(__name__)
 
 # 헤더 별칭 (학원별 양식 대응 — 양식 안 맞춰도 인식되도록 넓게)
+# 완전 일치 + 부분 포함(contains) 둘 다 시도
 HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "name": (
         "이름", "성명", "학생명", "학생 이름", "이름(학생)", "성함", "학생성명",
+        "이름(학생)", "학생",
     ),
     "parent_phone": (
         "학부모전화번호", "부모핸드폰", "부모 전화", "학부모 전화", "보호자 전화", "보호자전화",
         "학부모연락처", "부모 연락처", "보호자 연락처", "연락처(학부모)", "전화(학부모)",
         "휴대폰", "핸드폰", "연락처", "전화번호", "전화", "폰", "폰번호",
+        "부모핸드", "학부모", "보호자",
     ),
     "student_phone": (
         "학생전화번호", "학생핸드폰", "학생 전화", "학생연락처", "학생 연락처",
         "연락처(학생)", "전화(학생)", "학생폰", "학생 폰",
+        "학생핸드", "학생전화",
     ),
-    "school": ("학교", "학교(학년)", "학교명", "출신학교"),
+    "school": ("학교", "학교(학년)", "학교명", "출신학교", "학교(학년)"),
     "grade": ("학년", "학년도"),
     "gender": ("성별", "남자", "여자", "남성", "여성", "남", "여", "녀"),
     "school_class": ("반", "학급"),
-    "major": ("계열",),
-    "memo": ("메모", "비고", "특이사항"),
-    "remark": ("구분", "체크", "비고", "비고2"),
+    "major": ("계열", "이과", "문과"),
+    "memo": ("메모", "비고", "특이사항", "비고2"),
+    "remark": ("구분", "체크", "비고", "비고2", "출석", "현장"),
 }
 
 
 def _normalize_header(label: str) -> str:
-    return re.sub(r"\s", "", (label or "").strip().lower())
+    """공백 제거, 전각→반각, 소문자."""
+    s = (label or "").strip()
+    s = re.sub(r"\s", "", s)
+    s = "".join(chr(ord(c) - 0xFEE0) if "\uFF01" <= c <= "\uFF5E" else c for c in s)
+    return s.lower()
 
 
 def _match_header(cell: str, key: str) -> bool:
+    """완전 일치 또는 헤더가 별칭을 포함하면 매칭."""
     norm = _normalize_header(cell)
+    if not norm:
+        return False
     for alias in HEADER_ALIASES.get(key, ()):
-        if _normalize_header(alias) == norm:
+        a = _normalize_header(alias)
+        if not a:
+            continue
+        if norm == a:
+            return True
+        if len(a) >= 2 and a in norm:
+            return True
+        if len(norm) >= 2 and norm in a:
             return True
     return False
 
