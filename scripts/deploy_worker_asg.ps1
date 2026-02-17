@@ -173,34 +173,34 @@ $SubnetListJson = ($SubnetList | ForEach-Object { "`"$_`"" }) -join ","
 # ------------------------------------------------------------------------------
 # 4) ASG AI
 # ------------------------------------------------------------------------------
-Write-Host "[4/8] ASG (AI worker, Min=0 Max=$MaxCapacity)..." -ForegroundColor Cyan
+Write-Host "[4/8] ASG (AI worker, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
 $AsgAiName = "academy-ai-worker-asg"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgAiName `
     --launch-template "LaunchTemplateName=$LtAiName,Version=`$Default" `
-    --min-size 0 --max-size $MaxCapacity --desired-capacity 0 `
+    --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
     --vpc-zone-identifier $SubnetIds --region $Region 2>$null
 if ($LASTEXITCODE -ne 0) {
     aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgAiName `
         --launch-template "LaunchTemplateName=$LtAiName,Version=`$Default" `
-        --min-size 0 --max-size $MaxCapacity --desired-capacity 0 --region $Region 2>$null
+        --min-size 1 --max-size $MaxCapacity --desired-capacity 1 --region $Region 2>$null
 }
 $ErrorActionPreference = $ea
 
 # ------------------------------------------------------------------------------
 # 5) ASG Video
 # ------------------------------------------------------------------------------
-Write-Host "[5/8] ASG (Video worker, Min=0 Max=$MaxCapacity)..." -ForegroundColor Cyan
+Write-Host "[5/8] ASG (Video worker, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
 $AsgVideoName = "academy-video-worker-asg"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
     --launch-template "LaunchTemplateName=$LtVideoName,Version=`$Default" `
-    --min-size 0 --max-size $MaxCapacity --desired-capacity 0 `
+    --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
     --vpc-zone-identifier $SubnetIds --region $Region 2>$null
 if ($LASTEXITCODE -ne 0) {
     aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
         --launch-template "LaunchTemplateName=$LtVideoName,Version=`$Default" `
-        --min-size 0 --max-size $MaxCapacity --desired-capacity 0 --region $Region 2>$null
+        --min-size 1 --max-size $MaxCapacity --desired-capacity 1 --region $Region 2>$null
 }
 $ErrorActionPreference = $ea
 
