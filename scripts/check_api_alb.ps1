@@ -31,14 +31,13 @@ if ($tgs) {
 
 # 3) API 인스턴스가 8000 포트 열었는지 (API SG 인바운드)
 Write-Host "`n[3] API 보안그룹 ($ApiSgId) 인바운드 8000" -ForegroundColor White
-$ing = aws ec2 describe-security-groups --group-ids $ApiSgId --region $Region --query "SecurityGroups[0].IpPermissions[?FromPort==\``8000\`` || ToPort==\```8000\```]" --output json 2>$null
-if ($ing -and $ing -ne "[]" -and $ing -match "8000") {
+$sgJson = aws ec2 describe-security-groups --group-ids $ApiSgId --region $Region --output json 2>$null
+if ($sgJson -match "8000") {
     Write-Host "  8000 포트 규칙 있음" -ForegroundColor Green
 } else {
-    Write-Host "  8000 포트 인바운드 없음 → ALB/클라이언트에서 접속 불가 → 502 가능" -ForegroundColor Red
-    Write-Host "  수정 예 (ALB SG에서 API 8000 허용):" -ForegroundColor Yellow
-    Write-Host "  aws ec2 authorize-security-group-ingress --group-id $ApiSgId --protocol tcp --port 8000 --source-group <ALB보안그룹ID> --region $Region" -ForegroundColor Gray
-    Write-Host "  또는 특정 IP 허용: --cidr 0.0.0.0/0 (테스트용)" -ForegroundColor Gray
+    Write-Host "  8000 포트 인바운드 없음 → ALB에서 API 접속 불가 → 502 가능" -ForegroundColor Red
+    Write-Host "  수정: ALB 보안그룹 ID 확인 후 아래 실행" -ForegroundColor Yellow
+    Write-Host "  aws ec2 authorize-security-group-ingress --group-id $ApiSgId --protocol tcp --port 8000 --source-group <ALB_SG_ID> --region $Region" -ForegroundColor Gray
 }
 
 # 4) academy-api 인스턴스 확인
