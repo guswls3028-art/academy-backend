@@ -190,7 +190,6 @@ def _row_looks_like_student(
     name: str,
     parent_phone_raw: str,
     student_phone_raw: str,
-    row: list[Any],
 ) -> bool:
     """
     학생 행 여부 스코어링. 소제목/날짜/빈 행 등 비학생 행 제외.
