@@ -190,10 +190,10 @@ class FolderCreateView(View):
         })
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class FileUploadView(View):
     """POST /storage/inventory/upload/ — R2 업로드 후 DB 저장. 플랜 한도 체크."""
 
-    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
     def post(self, request):
@@ -281,10 +281,10 @@ class FileUploadView(View):
         })
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class FolderDeleteView(View):
     """DELETE /storage/inventory/folders/:id/ — 비어있을 때만 삭제."""
 
-    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
     def delete(self, request, folder_id):
@@ -307,10 +307,10 @@ class FolderDeleteView(View):
         return JsonResponse({}, status=204)
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class FileDeleteView(View):
     """DELETE /storage/inventory/files/:id/ — DB 삭제 후 R2 객체 삭제."""
 
-    @method_decorator(csrf_exempt)
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
     def delete(self, request, file_id):
