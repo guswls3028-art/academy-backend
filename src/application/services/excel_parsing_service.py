@@ -341,10 +341,7 @@ def _ai_infer_parent_phone(
 
 
 def _get_academy_parent_mapping(_academy_id: int, _headers: list[str]) -> int | None:
-    """
-    확장 포인트: academy_id 기반 parent_phone 매핑 재사용.
-    TODO: DB에서 academy별 저장된 header->col_index 조회.
-    """
+    """academy_id 기반 parent_phone 매핑 재사용 확장 포인트."""
     return None
 
 
