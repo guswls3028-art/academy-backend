@@ -47,6 +47,9 @@ class WorkTypeSerializer(serializers.ModelSerializer):
 # ---------------------------
 
 class StaffWorkTypeSerializer(serializers.ModelSerializer):
+    staff = serializers.PrimaryKeyRelatedField(
+        queryset=Staff.objects.none(),
+    )
     work_type = WorkTypeSerializer(read_only=True)
     work_type_id = serializers.PrimaryKeyRelatedField(
         source="work_type",
@@ -59,6 +62,9 @@ class StaffWorkTypeSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         request = self.context.get("request") if self.context else None
         tenant = getattr(request, "tenant", None) if request else None
+        self.fields["staff"].queryset = (
+            staff_repo.staff_queryset_tenant(tenant) if tenant else Staff.objects.none()
+        )
         self.fields["work_type_id"].queryset = (
             staff_repo.work_type_queryset_tenant(tenant) if tenant else staff_repo.work_type_all()
         )
@@ -75,7 +81,7 @@ class StaffWorkTypeSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["staff", "created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at"]
         ref_name = "StaffWorkType"
 
 
