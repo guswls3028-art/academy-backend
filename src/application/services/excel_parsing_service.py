@@ -297,6 +297,45 @@ def _extract_lecture_title(rows: list[list[Any]], header_idx: int) -> str:
     return candidates[0] if candidates else ""
 
 
+def _ai_infer_parent_phone(
+    header_row: list[Any],
+    sample_rows: list[list[Any]],
+    phone_col_candidates: list[tuple[int, int, float]],
+) -> tuple[int | None, float]:
+    """
+    AI 워커 2차 판정. conf 0.6~0.9 시 호출.
+    Returns: (parent_phone_col_index | None, confidence)
+    """
+    try:
+        from apps.worker.ai_worker.ai.excel_schema_infer import infer_parent_phone_column
+    except ImportError:
+        return None, 0.0
+
+    candidates = []
+    for ci, _hits, score in phone_col_candidates:
+        header_label = str(header_row[ci] if ci < len(header_row) else "").strip()
+        samples = []
+        for row in sample_rows:
+            if ci < len(row):
+                v = str(row[ci] or "").strip()
+                if v:
+                    samples.append(_mask_phone_for_ai(v))
+        candidates.append({
+            "col_index": ci,
+            "header": header_label,
+            "samples": samples[:5],
+            "rule_score": score,
+        })
+
+    if not candidates:
+        return None, 0.0
+    try:
+        return infer_parent_phone_column(candidates)
+    except Exception as e:
+        logger.warning("AI parent_phone infer failed: %s", e)
+        return None, 0.0
+
+
 def _get_academy_parent_mapping(_academy_id: int, _headers: list[str]) -> int | None:
     """
     확장 포인트: academy_id 기반 parent_phone 매핑 재사용.
