@@ -1,12 +1,32 @@
 # 비디오 워커 ASG · 인스턴스 확인 가이드
 
+## 0. ECS AMI로 뜬 경우 (원인 및 수정)
+
+- **증상**: 인스턴스 이름은 `academy-video-worker`인데 `docker ps`에 `academy-video-worker` 없고 **ecs-agent**만 있음.  
+  인스턴스 세부정보에서 **AMI 이름**이 `al2023-ami-ecs-hvm-*` (ECS 최적화)로 나옴.
+- **원인**: Launch Template이 **ECS 최적화 AMI**를 쓰고 있음.  
+  `deploy_worker_asg.ps1`의 AMI 필터(`al2023-ami-*-kernel-6.1-arm64`)가 ECS AMI도 포함해, 최신 AMI가 ECS로 잡혔을 수 있음.
+- **코드 수정**: `scripts/deploy_worker_asg.ps1`에서 ECS AMI를 제외하도록 수정됨(이름에 `ecs` 포함 AMI 미사용).
+- **조치**  
+  1. **Launch Template을 올바른 AMI로 다시 적용**  
+     - 동일 옵션으로 `deploy_worker_asg.ps1` 다시 실행(서브넷·보안그룹·IAM 프로필 등 그대로).  
+     - 그러면 **일반 AL2023** AMI로 새 Launch Template 버전이 생성되고 기본 버전으로 설정됨.  
+  2. **인스턴스 새로 띄우기**  
+     - `full_redeploy.ps1 -WorkersViaASG` 또는 ASG에서 **인스턴스 새로 고침** 실행.  
+     - 새 인스턴스는 일반 AL2023 + user_data로 `academy-video-worker` 컨테이너만 뜸.
+- **당장 한 대만이라도 쓰고 싶을 때**  
+  - 현재 ECS AMI 인스턴스에 SSH 접속 후, 아래 4번처럼 **수동으로** `academy-video-worker` 컨테이너만 실행해 두면 됨.  
+  - 이후 ASG/Launch Template 수정 후 인스턴스 새로 고침하면 정상 구성으로 맞출 수 있음.
+
+---
+
 ## 1. 지금 접속한 인스턴스가 비디오 워커가 아닐 수 있음
 
-- **비디오 워커 ASG** (`academy-video-worker-asg`)는 **Amazon Linux 2023 일반 AMI**로 뜹니다.  
+- **비디오 워커 ASG** (`academy-video-worker-asg`)는 **Amazon Linux 2023 일반 AMI**로 뜨는 것이 맞습니다.  
   배너: `Amazon Linux 2023` (ECS Optimized 아님)
-- 접속한 서버 배너가 **`Amazon Linux 2023 (ECS Optimized)`** 이면 **ECS용 인스턴스**이고,  
-  우리가 띄우는 비디오 워커 호스트가 아닙니다.  
-  → 그 위에는 `ecs-agent`만 있고 `academy-video-worker` 컨테이너는 없습니다.
+- 접속한 서버 배너가 **`Amazon Linux 2023 (ECS Optimized)`** 이면 **ECS용 AMI**로 뜬 것이고,  
+  그 위에는 ecs-agent만 있고 `academy-video-worker`는 user_data 실패 또는 미실행으로 없을 수 있습니다.  
+  → 위 0번(ECS AMI 원인) 참고 후, Launch Template 수정 + 인스턴스 새로 고침 또는 당장은 4번 수동 기동.
 
 ---
 
