@@ -151,6 +151,7 @@ def _infer_missing_columns(
     """
     필수 컬럼(name, parent_phone)이 없을 때, 샘플 데이터로 컬럼 추측.
     - phone_candidate: 010 패턴 비율(phone_hits) 2행 이상인 컬럼만 후보. 바로 학부모 단정 금지.
+    - phone_candidate 2개 이상: 전체 후보를 AI에 동시 전달, AI가 반드시 하나 선택. null/conf<0.8 → 업로드 실패.
     - Rule score >= 0.9 → parent_phone 확정
     - 0.6 <= score < 0.9 → AI 2차 판정, AI conf < 0.8 시 업로드 실패
     """

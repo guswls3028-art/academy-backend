@@ -44,12 +44,15 @@ Rules:
 - Header with parent/guardian/학부모/부모/보호자 → strong signal for parent_phone.
 - Header with student/학생 → usually student_phone, not parent.
 - Korean mobile numbers start with 010 (10-11 digits).
+- You MUST return exactly ONE parent_phone_col_index from the given columns. Null is not allowed when candidates exist.
+- Pick the column most likely to be parent/guardian contact.
 
 Columns (samples are masked for privacy):
 {json.dumps(masked, ensure_ascii=False)}
 
 Return ONLY valid JSON:
-{{"parent_phone_col_index": <int or null>, "confidence": <0.0 to 1.0>}}"""
+{{"parent_phone_col_index": <int>, "confidence": <0.0 to 1.0>}}
+(parent_phone_col_index must be one of the col_index values above)"""
 
     client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(
