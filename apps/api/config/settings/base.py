@@ -335,6 +335,9 @@ SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
 
 # SQS 큐 (API가 enqueue, 워커가 소비 — 큐 이름 일치 필수)
 VIDEO_SQS_QUEUE_NAME = os.getenv("VIDEO_SQS_QUEUE_NAME", "academy-video-jobs")
+AI_SQS_QUEUE_NAME_LITE = os.getenv("AI_SQS_QUEUE_NAME_LITE", "academy-ai-jobs-lite")
+AI_SQS_QUEUE_NAME_BASIC = os.getenv("AI_SQS_QUEUE_NAME_BASIC", "academy-ai-jobs-basic")
+AI_SQS_QUEUE_NAME_PREMIUM = os.getenv("AI_SQS_QUEUE_NAME_PREMIUM", "academy-ai-jobs-premium")
 # 메시지 발송 SQS 큐 (워커가 소비)
 MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-messaging-jobs")
 
