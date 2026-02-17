@@ -126,10 +126,22 @@ def _infer_school_type(school: str) -> str:
     return "HIGH"
 
 
-def parse_student_excel_file(local_path: str) -> list[dict[str, Any]]:
+def _extract_lecture_title(rows: list[list[Any]], header_idx: int) -> str:
+    """헤더 행 위(0 ~ header_idx-1)에서 강의 제목처럼 보이는 셀 추출."""
+    candidates: list[str] = []
+    for r in range(min(header_idx, 5)):  # 최대 5행까지
+        for cell in rows[r] if r < len(rows) else []:
+            s = str(cell or "").strip()
+            if len(s) >= 4 and len(s) <= 120 and not s.isdigit():
+                candidates.append(s)
+    return candidates[0] if candidates else ""
+
+
+def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str]:
     """
-    로컬 엑셀 파일을 파싱하여 강의 수강 등록용 행 리스트 반환.
+    로컬 엑셀 파일을 파싱하여 강의 수강 등록용 행 리스트와 강의 제목 반환.
     양식 안 맞춰도 인식: 헤더 별칭 넓게 지원, 이름+전화 없으면 첫 행 기준으로도 시도.
+    Returns: (rows, lecture_title)
     """
     import openpyxl
 
