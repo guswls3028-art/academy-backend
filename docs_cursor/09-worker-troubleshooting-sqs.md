@@ -8,18 +8,19 @@
 
 **API 서버와 동일한 환경**에서 아래 스크립트를 실행한 뒤, **전체 출력 결과**를 확인하세요.
 
+**EC2/Linux에서 API가 Docker로 실행 중일 때 (권장):**
 ```bash
-cd C:\academy
-set DJANGO_SETTINGS_MODULE=apps.api.config.settings.base
-python scripts/check_sqs_worker_connectivity.py
+docker exec -it academy-api python scripts/check_sqs_worker_connectivity.py
 ```
 
-- **Linux/Mac**: `export DJANGO_SETTINGS_MODULE=apps.api.config.settings.base` 후 실행  
-- **API가 Docker로 돌아가면**: API 컨테이너 안에서 실행  
-  ```bash
-  docker exec -it <api_container_name> python scripts/check_sqs_worker_connectivity.py
-  ```
-- **.env 사용 시**: 해당 터미널에서 `.env`를 로드한 뒤 위처럼 실행 (또는 `python -c "from dotenv import load_dotenv; load_dotenv(); ..."` 등으로 로드 후 스크립트 실행)
+**EC2/Linux 호스트에서 직접 실행할 때:**
+```bash
+cd /home/ec2-user/academy
+export DJANGO_SETTINGS_MODULE=apps.api.config.settings.base
+python3 scripts/check_sqs_worker_connectivity.py
+```
+
+**Windows:** `cd C:\academy`, `set DJANGO_SETTINGS_MODULE=...`, `python scripts/...`
 
 ### 결과 해석
 
