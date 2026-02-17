@@ -21,7 +21,7 @@ if (-not $env:AWS_ACCESS_KEY_ID -or -not $env:AWS_SECRET_ACCESS_KEY) {
 
 Write-Host "Adding local IP to RDS security group..." -ForegroundColor Cyan
 
-# 1) RDS 인스턴스 정보 확인
+# 1) Get RDS instance info
 Write-Host "`n[1/3] Finding RDS instance..." -ForegroundColor Gray
 $rdsInfo = aws rds describe-db-instances --region $Region --db-instance-identifier $RdsIdentifier --query "DBInstances[0].[VpcSecurityGroups[0].VpcSecurityGroupId,Endpoint.Address]" --output text 2>&1
 $rdsExitCode = $LASTEXITCODE
@@ -40,7 +40,7 @@ $rdsEndpoint = $parts[1]
 Write-Host "  RDS Endpoint: $rdsEndpoint" -ForegroundColor Gray
 Write-Host "  Security Group: $securityGroupId" -ForegroundColor Gray
 
-# 2) 현재 공인 IP 확인
+# 2) Get current public IP
 Write-Host "`n[2/3] Getting current public IP..." -ForegroundColor Gray
 try {
     $publicIp = (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5).Trim()
@@ -50,18 +50,18 @@ try {
     $publicIp = "0.0.0.0/0"
 }
 
-# CIDR 형식으로 변환 (단일 IP는 /32 추가)
+# Convert to CIDR (single IP -> /32)
 $cidr = if ($publicIp -match "^(\d+\.\d+\.\d+\.\d+)$") {
     "$publicIp/32"
 } else {
     $publicIp
 }
 
-# 3) 보안 그룹에 인바운드 규칙 추가
+# 3) Add inbound rule to security group
 Write-Host "`n[3/3] Adding inbound rule to security group..." -ForegroundColor Gray
 Write-Host "  Rule: PostgreSQL (5432) from $cidr" -ForegroundColor Gray
 
-# 기존 규칙 확인 (더 정확한 방법)
+# Check existing rules
 $existingRules = aws ec2 describe-security-groups --region $Region --group-ids $securityGroupId --query "SecurityGroups[0].IpPermissions[?FromPort==\`"5432\`" && ToPort==\`"5432\`"].IpRanges[].CidrIp" --output text 2>&1
 
 $ruleExists = $false

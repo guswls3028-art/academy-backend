@@ -1,7 +1,6 @@
 # ==============================================================================
-# AWS 500 배포: Docker 이미지 빌드 + ECR 푸시
-# ==============================================================================
-# 전제: .env 로드됨 (ECR_REGISTRY, AWS_ACCOUNT_ID 등). 터미널에서: Get-Content .env | ForEach-Object { if($_ -match '^([^#=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2].Trim(), 'Process') } }; .\scripts\build_and_push_ecr.ps1
+# Build Docker images + ECR push
+# Requires: .env loaded (ECR_REGISTRY, AWS_ACCOUNT_ID). In terminal: load .env then run this script
 # ==============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -17,7 +16,7 @@ Write-Host "ECR Registry: $registry"
 Write-Host "Region: $region"
 Write-Host ""
 
-# 1. 베이스
+# 1. Base
 Write-Host "[1/5] academy-base..."
 docker buildx build --platform linux/arm64 -f docker/Dockerfile.base -t academy-base:latest --load .
 
