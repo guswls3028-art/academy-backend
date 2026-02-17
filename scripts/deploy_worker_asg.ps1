@@ -134,13 +134,15 @@ $ltVideoFile = Join-Path $RepoRoot "lt_video_data.json"
 [System.IO.File]::WriteAllText($ltVideoFile, $ltVideoJson.Trim(), $utf8NoBom)
 $ltVideoPath = "file://$($ltVideoFile -replace '\\','/' -replace ' ', '%20')"
 $ltVideoExists = $false
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 try { aws ec2 describe-launch-templates --launch-template-names $LtVideoName --region $Region 2>$null | Out-Null; $ltVideoExists = $true } catch {}
 if (-not $ltVideoExists) {
-    aws ec2 create-launch-template --launch-template-name $LtVideoName --version-description "ASG Video worker" --launch-template-data $ltVideoPath --region $Region | Out-Null
+    aws ec2 create-launch-template --launch-template-name $LtVideoName --version-description "ASG Video worker" --launch-template-data $ltVideoPath --region $Region 2>$null | Out-Null
 } else {
     $newVer = aws ec2 create-launch-template-version --launch-template-name $LtVideoName --launch-template-data $ltVideoPath --region $Region --query "LaunchTemplateVersion.VersionNumber" --output text 2>$null
-    if ($newVer) { aws ec2 modify-launch-template --launch-template-name $LtVideoName --default-version $newVer --region $Region | Out-Null }
+    if ($newVer) { aws ec2 modify-launch-template --launch-template-name $LtVideoName --default-version $newVer --region $Region 2>$null | Out-Null }
 }
+$ErrorActionPreference = $ea
 Remove-Item $ltVideoFile -Force -ErrorAction SilentlyContinue
 
 # ------------------------------------------------------------------------------
