@@ -57,10 +57,16 @@ if ([string]::IsNullOrWhiteSpace($content)) {
 }
 $content = $content -replace "`r`n", "`n" -replace "`r", "`n"
 
-# Pass content directly as --value string (avoid file:// encoding issues on Windows)
+# Standard tier limit 4096 chars; use Advanced (up to 64KB) when larger
+$SSM_STANDARD_MAX = 4096
+$tier = if ($content.Length -gt $SSM_STANDARD_MAX) { "Advanced" } else { "Standard" }
+if ($tier -eq "Advanced") {
+    Write-Host "upload_env_to_ssm: .env size $($content.Length) chars > 4096, using SSM Advanced tier." -ForegroundColor Gray
+}
+
 $ea = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-aws ssm put-parameter --name $ParameterName --type SecureString --value "$content" --overwrite --region $Region
+aws ssm put-parameter --name $ParameterName --type SecureString --value "$content" --overwrite --tier $tier --region $Region
 $ok = ($LASTEXITCODE -eq 0)
 $ErrorActionPreference = $ea
 
