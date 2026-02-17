@@ -172,12 +172,19 @@ errors = [
 
 ---
 
-## 9. 학원별 매핑 학습 (확장 구조)
+## 9. 학원별 매핑 학습 및 유사도 체크 (확장 구조)
 
 - `academy_id`, `normalized_header`, `field`, `confidence`, `last_seen` 저장
 - 업로드 성공 시 mapping 저장
 - 동일 학원 재업로드 시 기존 mapping 우선 적용
 - AI 호출 최소화 (현재 확장 포인트만 구현)
+
+### 헤더 유사도 검사 (2026-02-17 반영)
+
+`_header_similarity(h1, h2)` — `difflib.SequenceMatcher` 기반 0~1 유사도.
+
+- 기존 매핑이 있을 때: `similarity(cached_header, current_header) >= 0.8` 이면 캐시 사용
+- 유사도가 낮으면 매핑 갱신 유도 (재추론)
 
 ---
 
