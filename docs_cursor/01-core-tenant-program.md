@@ -9,12 +9,13 @@
 
 ## 2. 테넌트 결정 (Tenant Resolution)
 
-**경로**: `apps/core/tenant/resolver.py`
+**경로**: `apps/core/tenant/resolver.py` — `resolve_tenant_from_request()`
 
-- **단일 경로**: `request.get_host()` → `_normalize_host(포트 제거, 소문자)` → `TenantDomain.host` 조회(`core_repo.tenant_domain_filter_by_host`) → `TenantDomain.tenant`.
-- Header / Query / Cookie / Env 기반 fallback **금지**.
+- **우선순위 1 — 중앙 API + X-Tenant-Code**: `request.get_host()`가 `TENANT_HEADER_CODE_ALLOWED_HOSTS`(예: api.hakwonplus.com)에 포함되고, `X-Tenant-Code` 헤더가 있으면 → `core_repo.tenant_get_by_code(raw)` 로 테넌트 결정. (SPA가 tchul.com에서 열리지만 API는 api.hakwonplus.com으로 보낼 때 사용.)
+- **우선순위 2 — Host**: `_normalize_host(request.get_host())` (포트 제거, 소문자) → `TenantDomain.host` 조회(`core_repo.tenant_domain_filter_by_host`) → `TenantDomain.tenant`.
+- Query / Cookie / Env 기반 fallback **금지**.
 - **에러**:
-  - domain 없음 → `None` (미들웨어에서 400/404 처리)
+  - domain 없음 → bypass 경로가 아니면 `TenantResolutionError`, code=`tenant_invalid`, HTTP 404.
   - domain/tenant inactive → `TenantResolutionError`, code=`tenant_inactive`, HTTP 403.
   - 동일 host 복수 row → `TenantResolutionError`, code=`tenant_ambiguous`, HTTP 500.
 
