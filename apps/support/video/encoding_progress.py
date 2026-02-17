@@ -46,12 +46,8 @@ def get_video_encoding_progress(video_id: int) -> Optional[int]:
     except Exception:
         return None
 
-    # extra.percent 가 있으면 우선 사용 (워커에서 세밀하게 넣을 수 있음)
-    extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
-    if not extra and isinstance(payload.get("extra"), (int, float)):
-        pct = int(payload["extra"])
-        return max(0, min(100, pct))
-    percent = extra.get("percent")
+    # payload에 percent 가 있으면 우선 사용 (record_progress 시 extra에 {"percent": n} 넣으면 병합됨)
+    percent = payload.get("percent")
     if percent is not None:
         try:
             pct = int(percent)
