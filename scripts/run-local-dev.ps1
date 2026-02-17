@@ -7,7 +7,7 @@ Write-Host "  Backend + Frontend" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# 기존에 떠 있는 백엔드/프론트 포트 프로세스 모두 종료 (8000, 5174, 5175, 5176)
+# Kill existing backend/frontend processes on ports 8000, 5174, 5175, 5176
 Write-Host "[CLEANUP] Stopping any process on ports 8000, 5174, 5175, 5176..." -ForegroundColor Yellow
 $portsToFree = @(8000, 5174, 5175, 5176)
 foreach ($port in $portsToFree) {
@@ -24,13 +24,13 @@ foreach ($port in $portsToFree) {
 Start-Sleep -Seconds 1
 Write-Host ""
 
-# 가상환경 Python 경로 확인
+# Check venv Python path
 $pythonPath = "python"
 if (Test-Path "C:\academy\venv\Scripts\python.exe") {
     $pythonPath = "C:\academy\venv\Scripts\python.exe"
 }
 
-# Backend를 Job으로 실행 (출력 포함)
+# Run Backend as Job (with output)
 Write-Host "[BACKEND] Starting..." -ForegroundColor Green
 $backendJob = Start-Job -ScriptBlock {
     Set-Location "C:\academy"
@@ -40,10 +40,10 @@ $backendJob = Start-Job -ScriptBlock {
     python manage.py runserver 0.0.0.0:8000 2>&1
 }
 
-# 잠시 대기
+# Brief wait
 Start-Sleep -Seconds 3
 
-# Frontend를 Job으로 실행
+# Run Frontend as Job
 Write-Host "[FRONTEND] Starting..." -ForegroundColor Green
 Set-Location "C:\academyfront"
 $frontendJob = Start-Job -ScriptBlock {
