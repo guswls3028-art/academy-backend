@@ -52,9 +52,39 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
         return 0
 
 
+def set_ai_worker_asg_desired(autoscaling_client, ai_total: int) -> None:
+    """Application Auto Scaling 대신 EC2 Auto Scaling set_desired_capacity로 조정."""
+    if ai_total > 0:
+        new_desired = min(AI_WORKER_ASG_MAX, max(1, math.ceil(ai_total / 20)))
+    else:
+        new_desired = 0
+
+    try:
+        asgs = autoscaling_client.describe_auto_scaling_groups(
+            AutoScalingGroupNames=[AI_WORKER_ASG_NAME],
+        )
+        if not asgs.get("AutoScalingGroups"):
+            logger.warning("ASG not found: %s", AI_WORKER_ASG_NAME)
+            return
+        current = asgs["AutoScalingGroups"][0]["DesiredCapacity"]
+        if current == new_desired:
+            return
+        autoscaling_client.set_desired_capacity(
+            AutoScalingGroupName=AI_WORKER_ASG_NAME,
+            DesiredCapacity=new_desired,
+        )
+        logger.info(
+            "ai_worker_asg desired %s -> %s (ai_queue_depth=%d)",
+            current, new_desired, ai_total,
+        )
+    except Exception as e:
+        logger.warning("set_ai_worker_asg_desired failed: %s", e)
+
+
 def lambda_handler(event: dict, context: Any) -> dict:
     sqs = boto3.client("sqs", region_name=REGION, config=BOTO_CONFIG)
     cw = boto3.client("cloudwatch", region_name=REGION, config=BOTO_CONFIG)
+    autoscaling = boto3.client("autoscaling", region_name=REGION, config=BOTO_CONFIG)
 
     ai_lite = get_visible_count(sqs, AI_QUEUE_LITE)
     ai_basic = get_visible_count(sqs, AI_QUEUE_BASIC)
@@ -89,6 +119,9 @@ def lambda_handler(event: dict, context: Any) -> dict:
             },
         ],
     )
+
+    set_ai_worker_asg_desired(autoscaling, ai_total)
+
     logger.info(
         "queue_depth_metric | ai=%d (lite=%d+basic=%d) video=%d messaging=%d",
         ai_total, ai_lite, ai_basic, video_count, messaging_count,
