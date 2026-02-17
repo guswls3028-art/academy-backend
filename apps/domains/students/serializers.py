@@ -1,8 +1,5 @@
 # PATH: apps/domains/students/serializers.py
 
-import random
-import string
-
 from rest_framework import serializers
 
 from apps.domains.enrollment.models import Enrollment
