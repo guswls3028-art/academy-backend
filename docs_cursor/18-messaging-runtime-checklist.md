@@ -118,6 +118,50 @@ t.save()
 
 ---
 
+## 잔액 0 / is_active false — "충전했는데 0으로 나올 때"
+
+### GET info 응답이 말해 주는 것
+
+| 필드 | 의미 |
+|------|------|
+| `credit_balance` | **Tenant.credit_balance** — 이 값은 **POST /api/v1/messaging/charge/** 호출 시에만 증가함. |
+| `is_active` | **Tenant.messaging_is_active** — 기본값 False. 현재 **API/워커 모두 이 값을 검사하지 않음** (워커는 잔액만 검사). |
+
+### 왜 충전했는데 잔액이 0인가?
+
+- **실제 결제(PG/계좌이체 등)만 하고, 앱에서 "충전" API를 호출하지 않으면 잔액은 그대로 0이다.**
+- 흐름: 결제 완료 → **앱에서 "충전하기" 모달 열기 → 금액 입력 → "결제 후 충전" 클릭** → `POST /api/v1/messaging/charge/` 호출 → 그때 `credit_balance` 가 증가.
+- 따라서 "5만 원 충전했는데 0"이면:
+  1. **POST charge 를 한 번도 호출하지 않았거나** (결제만 하고 앱에서 충전 버튼을 안 눌렀거나),
+  2. **charge 호출이 실패했거나** (4xx/5xx),
+  3. **다른 테넌트로 로그인해서 본 경우** (X-Tenant-Code / 테넌트 불일치).
+
+### 워커 동작 (실제 코드 기준)
+
+- **messaging_is_active 는 워커가 보지 않는다.**  
+- 워커는 **잔액**만 본다: `base_price > 0` 일 때 `credit_balance < base_price` 이면 `insufficient_balance` 로 NotificationLog 남기고 발송 스킵.  
+- `base_price` 가 0이면 잔액 검사/차감을 하지 않고 그대로 Solapi 발송 시도.
+
+### 즉시 복구 (테스트/운영 반영)
+
+DB에서 해당 테넌트 잔액·활성화 세팅:
+
+```python
+from apps.core.models import Tenant
+t = Tenant.objects.get(code="hakwonplus")
+t.credit_balance = 50000   # 원하는 잔액(원)
+t.messaging_is_active = True  # (선택, 현재 워커는 미사용)
+t.save(update_fields=["credit_balance", "messaging_is_active"])
+```
+
+또는 관리 명령 사용 (아래):
+
+```bash
+python manage.py set_tenant_messaging_credits hakwonplus --balance=50000 --active
+```
+
+---
+
 ## 진단 시 이 3가지 수집
 
 1. **POST /api/v1/messaging/send/ 응답 JSON** (상태코드 + body)
