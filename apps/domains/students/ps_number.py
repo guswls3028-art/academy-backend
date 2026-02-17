@@ -5,7 +5,7 @@ import random
 import string
 
 
-def generate_unique_ps_number() -> str:
+def _generate_unique_ps_number() -> str:
     """영어 1자리 + 숫자 5자리 (예: A12345) 중복 없이 부여 (User.username 전역 유일)"""
     from academy.adapters.db.django import repositories_students as student_repo
     letters = string.ascii_uppercase
