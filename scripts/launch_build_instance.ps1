@@ -77,15 +77,15 @@ Write-Host "Instance: $instanceId" -ForegroundColor Green
 Write-Host "`nWaiting for instance running (2 min)..." -ForegroundColor Yellow
 aws ec2 wait instance-running --instance-ids $instanceId --region $Region
 
-Write-Host "`n=== 연결 및 빌드 ===`n" -ForegroundColor Cyan
-Write-Host "1) SSM 연결 (IAM에 SSM 권한 있으면):" -ForegroundColor White
+Write-Host "`n=== Connect and build ===`n" -ForegroundColor Cyan
+Write-Host "1) SSM connect (if IAM has SSM permission):" -ForegroundColor White
 Write-Host "   aws ssm start-session --target $instanceId --region $Region" -ForegroundColor Gray
-Write-Host "`n2) 인스턴스 안에서 실행할 명령 (복붙):" -ForegroundColor White
+Write-Host "`n2) Commands to run inside instance (copy/paste):" -ForegroundColor White
 $registry = "${AccountId}.dkr.ecr.${Region}.amazonaws.com"
 Write-Host @"
 
 cd /tmp
-git clone https://github.com/guswls3028-art/academy-backend.git academy 2>/dev/null || (echo 'git clone 실패 - 레포 주소/토큰 확인')
+git clone https://github.com/guswls3028-art/academy-backend.git academy 2>/dev/null || (echo 'git clone failed - check repo URL/token')
 cd academy
 
 registry='$registry'
@@ -105,10 +105,10 @@ docker push `$registry/academy-messaging-worker:latest
 docker push `$registry/academy-video-worker:latest
 docker push `$registry/academy-ai-worker-cpu:latest
 
-echo Done. 종료: exit
+echo Done. Exit: exit
 
 "@ -ForegroundColor Gray
 
-Write-Host "`n3) 종료 (로컬 터미널에서):" -ForegroundColor White
+Write-Host "`n3) Terminate (from local terminal):" -ForegroundColor White
 Write-Host "   aws ec2 terminate-instances --instance-ids $instanceId --region $Region" -ForegroundColor Gray
 Write-Host "`nInstanceId: $instanceId" -ForegroundColor Green
