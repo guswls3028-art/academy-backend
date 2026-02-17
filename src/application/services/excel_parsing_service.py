@@ -311,6 +311,9 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
         if not name and not student_phone_raw and not parent_phone_raw:
             continue
 
+        if not _row_looks_like_student(name, parent_phone_raw, student_phone_raw):
+            continue
+
         school_cell = _cell_str(row, school_col)
         grade_cell = _cell_str(row, grade_col)
         school_parsed, grade_parsed = _parse_school_grade(school_cell)
