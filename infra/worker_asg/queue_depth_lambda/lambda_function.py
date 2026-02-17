@@ -96,11 +96,13 @@ def lambda_handler(event: dict, context: Any) -> dict:
     cw = boto3.client("cloudwatch", region_name=REGION, config=BOTO_CONFIG)
     autoscaling = boto3.client("autoscaling", region_name=REGION, config=BOTO_CONFIG)
 
-    ai_lite = get_visible_count(sqs, AI_QUEUE_LITE)
-    ai_basic = get_visible_count(sqs, AI_QUEUE_BASIC)
+    (ai_lite_v, ai_lite_f) = get_queue_counts(sqs, AI_QUEUE_LITE)
+    (ai_basic_v, ai_basic_f) = get_queue_counts(sqs, AI_QUEUE_BASIC)
+    ai_visible = ai_lite_v + ai_basic_v
+    ai_in_flight = ai_lite_f + ai_basic_f
     video_count = get_visible_count(sqs, VIDEO_QUEUE)
     messaging_count = get_visible_count(sqs, MESSAGING_QUEUE)
-    ai_total = ai_lite + ai_basic
+    ai_total = ai_visible  # 메트릭은 visible만 (기존과 동일)
 
     now = __import__("datetime").datetime.utcnow()
     cw.put_metric_data(
