@@ -43,6 +43,7 @@ if ($LASTEXITCODE -ne 0) { Write-Host "AWS identity check failed. Check login/pe
 $CallerArn = (aws sts get-caller-identity --query Arn --output text 2>&1)
 Write-Host "`n[배포 계정] Account=$AccountId  ARN=$CallerArn" -ForegroundColor Cyan
 Write-Host "  풀배포/캐시·노캐시는 이 계정(루트 또는 ECR+EC2+ASG 권한)으로 끝까지 실행하세요. 중간에 다른 키로 바꾸면 SSH/워커 오동작." -ForegroundColor Gray
+Write-Host "  배포 전 검증: .\scripts\deploy_preflight.ps1" -ForegroundColor Gray
 if (-not $SkipBuild) {
     Write-Host "  5초 후 빌드 시작 (잘못된 키면 Ctrl+C)..." -ForegroundColor Yellow
     Start-Sleep -Seconds 5
