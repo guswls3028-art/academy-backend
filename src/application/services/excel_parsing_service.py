@@ -50,6 +50,7 @@ def _match_header(cell: str, key: str) -> bool:
 
 
 def _find_header_row(rows: list[list[Any]]) -> int:
+    """이름 + 전화 컬럼이 모두 있는 첫 행을 헤더로 반환."""
     for i, row in enumerate(rows):
         if not row:
             continue
@@ -59,6 +60,17 @@ def _find_header_row(rows: list[list[Any]]) -> int:
             for c in row
         )
         if has_name and has_phone:
+            return i
+    return -1
+
+
+def _find_header_row_fallback(rows: list[list[Any]]) -> int:
+    """표준 헤더를 못 찾았을 때: 첫 번째 비어 있지 않은 행을 헤더로 시도 (이름 또는 전화만 있어도 인식)."""
+    for i, row in enumerate(rows[:10]):  # 상위 10행만 후보
+        if not row:
+            continue
+        col = _build_header_map(row)
+        if col.get("name") is not None or col.get("parent_phone") is not None or col.get("student_phone") is not None:
             return i
     return -1
 
