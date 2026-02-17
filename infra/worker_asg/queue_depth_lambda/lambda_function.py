@@ -132,7 +132,7 @@ def lambda_handler(event: dict, context: Any) -> dict:
         ],
     )
 
-    set_ai_worker_asg_desired(autoscaling, ai_total)
+    set_ai_worker_asg_desired(autoscaling, ai_visible, ai_in_flight)
 
     logger.info(
         "queue_depth_metric | ai=%d (lite=%d+basic=%d) video=%d messaging=%d",
