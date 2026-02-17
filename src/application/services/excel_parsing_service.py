@@ -149,9 +149,7 @@ def _infer_missing_columns(
                 continue
             v = str(row[ci] or "").strip()
             sample_vals.append(v)
-            if re.match(r"^010[0-9]{8}$", _to_raw_phone(v)) or (
-                len(_to_raw_phone(v)) in (10, 11) and _to_raw_phone(v).startswith("010")
-            ):
+            if _validate_parent_phone(v):
                 phone_hits += 1
             if korean_name.match(v):
                 name_hits += 1
