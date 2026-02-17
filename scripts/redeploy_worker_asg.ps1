@@ -1,16 +1,10 @@
 # ==============================================================================
-# 워커 ASG 재배포 (루트/관리자 한 방)
-# 전제: 루트 또는 IAM 관리자 액세스 키로 로그인 (env 또는 aws configure)
+# Worker ASG redeploy (root/admin one-shot)
+# Requires: root or IAM admin access key (env or aws configure)
 #
-# 한 방 실행 (기본 VPC/서브넷/보안그룹 사용):
-#   cd C:\academy
-#   .\scripts\redeploy_worker_asg.ps1
-#
-# 인프라만 갱신하고 SSM·IAM 설정은 건너뛰기:
-#   .\scripts\redeploy_worker_asg.ps1 -SkipSetup
-#
-# 서브넷/보안그룹 지정:
-#   .\scripts\redeploy_worker_asg.ps1 -SubnetIds "subnet-a,subnet-b" -SecurityGroupId "sg-xxx"
+# Default VPC/subnet/SG: cd C:\academy; .\scripts\redeploy_worker_asg.ps1
+# Infra only (skip SSM/IAM): .\scripts\redeploy_worker_asg.ps1 -SkipSetup
+# Custom: .\scripts\redeploy_worker_asg.ps1 -SubnetIds "subnet-a,subnet-b" -SecurityGroupId "sg-xxx"
 # ==============================================================================
 
 param(
@@ -18,7 +12,7 @@ param(
     [string]$SecurityGroupId = "sg-02692600fbf8e26f7",
     [string]$IamInstanceProfileName = "academy-ec2-role",
     [string]$Region = "ap-northeast-2",
-    [switch]$SkipSetup = $false   # true면 deploy만, SSM/EC2 정책 갱신 생략
+    [switch]$SkipSetup = $false   # if true, deploy only; skip SSM/EC2 policy refresh
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,7 +21,7 @@ $RepoRoot = Split-Path -Parent $ScriptRoot
 
 Write-Host "`n=== Worker ASG Redeploy (root/admin) ===`n" -ForegroundColor Cyan
 
-# 1) 인프라 배포 (Lambda, Launch Template, ASG, Target Tracking)
+# 1) Infra deploy (Lambda, Launch Template, ASG, Target Tracking)
 & (Join-Path $ScriptRoot "deploy_worker_asg.ps1") `
     -SubnetIds $SubnetIds `
     -SecurityGroupId $SecurityGroupId `
