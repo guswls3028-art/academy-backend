@@ -27,6 +27,8 @@ from apps.support.messaging.serializers import (
     MessageTemplateSerializer,
     SendMessageRequestSerializer,
     VerifySenderRequestSerializer,
+    AutoSendConfigSerializer,
+    AutoSendConfigUpdateSerializer,
 )
 from apps.support.messaging.solapi_sender_client import verify_sender_number
 
