@@ -119,18 +119,30 @@ class VideoSerializer(serializers.ModelSerializer):
             path = self._normalize_media_path(obj.thumbnail.name)
             return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
-        # 2️⃣ READY fallback (경로 통일: tenants/{id}/video/hls/...)
+        # 2️⃣ READY fallback (경로 통일: tenants/{id}/video/hls/...) — session/lecture/tenant 없으면 None
         if obj.status == obj.Status.READY:
             try:
-                tenant_id = obj.session.lecture.tenant_id
+                session = getattr(obj, "session", None)
+                lecture = getattr(session, "lecture", None) if session else None
+                tenant = getattr(lecture, "tenant", None) if lecture else None
+                if tenant is None:
+                    return None
+                tenant_id = getattr(tenant, "id", None) or getattr(tenant, "pk", None)
                 from apps.core.r2_paths import video_hls_prefix
                 path = self._normalize_media_path(
                     f"{video_hls_prefix(tenant_id=tenant_id, video_id=obj.id)}/thumbnail.jpg"
                 )
             except Exception:
-                path = self._normalize_media_path(
-                    f"media/hls/videos/{obj.session.lecture.tenant.code}/videos/{obj.id}/thumbnail.jpg"
-                )
+                try:
+                    code = getattr(getattr(getattr(obj, "session", None), "lecture", None), "tenant", None)
+                    code = getattr(code, "code", None) if code else None
+                    if code is None:
+                        return None
+                    path = self._normalize_media_path(
+                        f"media/hls/videos/{code}/videos/{obj.id}/thumbnail.jpg"
+                    )
+                except Exception:
+                    return None
             return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
         return None
