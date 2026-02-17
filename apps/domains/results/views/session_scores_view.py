@@ -48,7 +48,7 @@ from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework.models import HomeworkAssignment
 
-from apps.domains.enrollment.models import Enrollment
+from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import ExamEnrollment
 
 
