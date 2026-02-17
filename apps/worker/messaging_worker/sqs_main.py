@@ -93,16 +93,19 @@ def send_one_alimtalk(
 
 def send_one_sms(cfg, to: str, text: str, sender: str) -> dict:
     """
-    Solapi로 SMS 1건 발송.
+    Solapi로 SMS/LMS 1건 발송.
+    - 90byte 이하: SMS (type 명시로 자동판단 오류 방지)
+    - 90byte 초과: LMS (subject 필수라서 본문 앞 20자 사용)
     Returns: {"status": "ok"|"error", "group_id"?, "reason"?}
     """
     try:
         from solapi.model import RequestMessage
+        from solapi.model.message_type import MessageType
     except ImportError as e:
         logger.error("solapi SDK not installed: %s", e)
         return {"status": "error", "reason": "solapi_not_installed"}
     client = _get_solapi_client(cfg)
-    sender = (sender or cfg.SOLAPI_SENDER or "").strip()
+    sender = (sender or cfg.SOLAPI_SENDER or "").strip().replace("-", "")
     if not sender:
         return {"status": "error", "reason": "sender_required"}
 
@@ -111,8 +114,18 @@ def send_one_sms(cfg, to: str, text: str, sender: str) -> dict:
     if not to or not text:
         return {"status": "error", "reason": "to_and_text_required"}
 
+    # Solapi: SMS 90byte 이하, LMS는 subject 필수. 타입 미지정 시 "발송 가능한 메시지 없음" 발생 가능.
+    text_bytes = text.encode("utf-8")
+    if len(text_bytes) <= 90:
+        message = RequestMessage(from_=sender, to=to, text=text, type=MessageType.SMS)
+    else:
+        # LMS: subject 필수(장문 제목, 30자 내외 권장)
+        subject = (text[:20] + "…") if len(text) > 20 else text
+        message = RequestMessage(
+            from_=sender, to=to, text=text, type=MessageType.LMS, subject=subject
+        )
+
     try:
-        message = RequestMessage(from_=sender, to=to, text=text)
         response = client.send(message)
         group_id = getattr(getattr(response, "group_info", None), "group_id", None)
         logger.info("send_sms ok to=%s**** group_id=%s", to[:4], group_id)
