@@ -63,19 +63,19 @@ try {
     }
     if ($LASTEXITCODE -ne 0) { exit 1 }
 
-    Write-Host "`nECR 로그인 및 푸시..." -ForegroundColor Cyan
+    Write-Host "`nECR login and push..." -ForegroundColor Cyan
     aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $ECR
     foreach ($repo in $toPush) {
         docker push "${ECR}/${repo}:latest"
         if ($LASTEXITCODE -ne 0) { exit 1 }
     }
-    Write-Host "푸시 완료.`n" -ForegroundColor Green
+    Write-Host "Push done.`n" -ForegroundColor Green
 
-    Write-Host "=== 2/2 EC2 배포 ===`n" -ForegroundColor Cyan
+    Write-Host "=== 2/2 EC2 deploy ===`n" -ForegroundColor Cyan
     & "$ScriptRoot\full_redeploy.ps1" -SkipBuild -DeployTarget $DeployTarget -KeyDir $KeyDir -Region $Region
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    Write-Host "`n=== Quick Redeploy 완료 ($DeployTarget) ===`n" -ForegroundColor Green
+    Write-Host "`n=== Quick Redeploy done ($DeployTarget) ===`n" -ForegroundColor Green
 } finally {
     Pop-Location
 }
