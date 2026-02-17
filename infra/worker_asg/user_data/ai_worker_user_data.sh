@@ -22,14 +22,18 @@ docker stop academy-ai-worker-cpu 2>/dev/null || true
 docker rm academy-ai-worker-cpu 2>/dev/null || true
 
 # docker run 재시도 (실패 시 10초 후 최대 3회)
+# Google Vision: SSM에 /academy/google-vision-credentials 있으면 마운트
+GOOGLE_EXTRA=""
+if [ -f "$GOOGLE_JSON" ] && [ -s "$GOOGLE_JSON" ]; then
+  GOOGLE_EXTRA="-v $GOOGLE_JSON:/opt/academy/secrets/google-vision.json:ro -e GOOGLE_APPLICATION_CREDENTIALS=/opt/academy/secrets/google-vision.json"
+fi
 for i in 1 2 3; do
   docker rm -f academy-ai-worker-cpu 2>/dev/null || true
   if docker run -d --name academy-ai-worker-cpu --restart unless-stopped \
     --env-file "$ENV_FILE" \
     -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker \
     -e EC2_IDLE_STOP_THRESHOLD=0 \
-    -v "$GOOGLE_JSON:/opt/academy/secrets/google-vision.json:ro" \
-    -e GOOGLE_APPLICATION_CREDENTIALS=/opt/academy/secrets/google-vision.json \
+    $GOOGLE_EXTRA \
     "$ECR/academy-ai-worker-cpu:latest"; then
     break
   fi
