@@ -13,6 +13,15 @@
 docker exec -it academy-api python scripts/check_sqs_worker_connectivity.py
 ```
 
+**이미지에 `scripts`가 아직 없어 위 명령이 "No such file"일 때 (재배포 전 임시):**  
+호스트의 `academy` 디렉터리를 마운트해 같은 이미지로 스크립트만 실행합니다. API 컨테이너와 동일한 환경 변수를 쓰려면 아래처럼 실행하세요.
+```bash
+cd /home/ec2-user/academy
+docker exec academy-api env > /tmp/api_env.txt
+docker run --rm -v "$(pwd):/app" --env-file /tmp/api_env.txt academy-api:latest python scripts/check_sqs_worker_connectivity.py
+```
+(이미지 태그가 다르면 `docker images`로 확인 후 `academy-api:<태그>`로 바꾸세요.)
+
 **EC2/Linux 호스트에서 직접 실행할 때:**
 ```bash
 cd /home/ec2-user/academy
