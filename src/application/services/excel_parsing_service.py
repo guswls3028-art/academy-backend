@@ -452,6 +452,8 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
 
     result: list[dict[str, Any]] = []
     validation_errors: list[dict[str, Any]] = []
+    # 중요: parent_phone 검증은 반드시 _row_looks_like_student()로 필터링된 학생 행에만 적용.
+    # 소제목/날짜 행 등이 parent_phone 검증 대상이 되면 잘못된 실패 발생.
     for r in range(header_idx + 1, len(rows)):
         row = rows[r]
         if remark_col is not None and "예시" in _cell_str(row, remark_col):
@@ -467,6 +469,7 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
         if not _row_looks_like_student(name, parent_phone_raw, student_phone_raw):
             continue
 
+        # 학생 행에 한해 parent_phone 검증 (순서 필수: 행 판별 → 검증)
         if not _validate_parent_phone(parent_phone_raw):
             display_val = _cell_str(row, parent_col) or parent_phone_raw or "(비어있음)"
             validation_errors.append({
