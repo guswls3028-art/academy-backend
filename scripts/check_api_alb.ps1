@@ -55,6 +55,6 @@ if ($apiIp -and $apiIp -ne "None") {
     Write-Host "  실행 중인 academy-api 없음" -ForegroundColor Red
 }
 
-Write-Host ""
-Write-Host "=== Done ===" -ForegroundColor Cyan
-Write-Host ""
+Write-Host ''
+Write-Host '=== Done ===' -ForegroundColor Cyan
+Write-Host ''
