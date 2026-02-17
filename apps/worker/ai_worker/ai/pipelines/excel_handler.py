@@ -45,10 +45,13 @@ def handle_excel_parsing_job(job: AIJob) -> AIResult:
     storage = R2ObjectStorageAdapter()
     _record_progress(job.id, "downloading", 10)
 
+    def _on_progress(step: str, percent: int) -> None:
+        _record_progress(job.id, step, percent)
+
     try:
         service = ExcelParsingService(storage)
         _record_progress(job.id, "parsing", 40)
-        result = service.run(job.id, payload)
+        result = service.run(job.id, payload, on_progress=_on_progress)
         _record_progress(job.id, "done", 100)
         result["processed_by"] = "worker"
         logger.info(
