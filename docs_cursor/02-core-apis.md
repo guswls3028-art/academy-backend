@@ -65,3 +65,10 @@ Base path: `/api/v1/core/` (ROOT_URLCONF에서 prefix).
 - `job_progress/<str:job_id>/` (JobProgressView)
 
 URL 전체 목록은 `apps/core/urls.py` + router 등록 참고.
+
+---
+
+## 6. Messaging API (support)
+
+Messaging API는 `apps/support/messaging/` 에 있으며, `/api/v1/messaging/` prefix로 include됨.  
+**전체 스펙**: [15-messaging-worker-and-message-flow.md](15-messaging-worker-and-message-flow.md) 참조.
