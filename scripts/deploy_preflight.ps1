@@ -1,12 +1,12 @@
 # ==============================================================================
-# 배포 전 검증: AWS 계정·키·인스턴스·ASG·ECR·SSM·(선택)SSH 까지 확인
-# 사용: .\scripts\deploy_preflight.ps1   또는  .\scripts\deploy_preflight.ps1 -TestSsh
+# Deploy preflight: AWS account, keys, instances, ASG, ECR, SSM, (optional) SSH
+# Usage: .\scripts\deploy_preflight.ps1   or  .\scripts\deploy_preflight.ps1 -TestSsh
 # ==============================================================================
 
 param(
     [string]$KeyDir = "C:\key",
     [string]$Region = "ap-northeast-2",
-    [switch]$TestSsh = $false   # true면 academy-api에 SSH 접속 가능한지 실제 시도 (느림)
+    [switch]$TestSsh = $false   # if true, actually try SSH to academy-api (slower)
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,7 +27,7 @@ $arn = $idJson.Arn
 Write-Host "[OK] Account: $account" -ForegroundColor Green
 Write-Host "     ARN: $arn" -ForegroundColor Gray
 
-# 2) SSH 키 (API + 워커 3종)
+# 2) SSH keys (API + 3 workers)
 $requiredKeys = @(
     @{ Name = "academy-api"; Key = "backend-api-key.pem" },
     @{ Name = "academy-messaging-worker"; Key = "message-key.pem" },
@@ -44,7 +44,7 @@ foreach ($r in $requiredKeys) {
     }
 }
 
-# 3) ECR 접근 (빌드 단계에서 push 실패 방지)
+# 3) ECR access (avoid push failure during build)
 $ecrTest = aws ecr describe-repositories --region $Region --repository-names academy-api 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[FAIL] ECR describe academy-api: no permission or wrong account?" -ForegroundColor Red
