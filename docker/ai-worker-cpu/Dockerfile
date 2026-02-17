@@ -12,6 +12,8 @@ ENV WORKER_TYPE=CPU
 USER root
 # 앱 코드 (Base에 두지 않음)
 COPY src ./src
+# Excel 파싱 의존: src.infrastructure.storage — 없으면 빌드 즉시 실패
+COPY src/infrastructure ./src/infrastructure
 COPY academy ./academy
 COPY apps ./apps
 COPY libs ./libs
