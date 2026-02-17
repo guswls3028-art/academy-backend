@@ -62,12 +62,12 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
 
 
 def set_ai_worker_asg_desired(autoscaling_client, ai_visible: int, ai_in_flight: int) -> None:
-    """보이는 메시지 + 처리 중(in flight) 둘 다 0일 때만 desired=0. 처리 중인데 종료되지 않도록."""
+    """AI 워커 상시 1대 대기. 큐 깊이에 따라 1~MAX 스케일, 0으로 스케일인 안 함."""
     ai_total_for_scale = ai_visible + ai_in_flight
     if ai_total_for_scale > 0:
         new_desired = min(AI_WORKER_ASG_MAX, max(1, math.ceil(ai_total_for_scale / 20)))
     else:
-        new_desired = 0
+        new_desired = 1  # 상시 1대 유지 (Min=1)
 
     try:
         asgs = autoscaling_client.describe_auto_scaling_groups(
