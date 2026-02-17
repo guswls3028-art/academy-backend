@@ -168,6 +168,23 @@ cd C:\academy
 
 ---
 
+## 9.5 배포가 자꾸 실패할 때 (실패 구간별 점검)
+
+preflight은 통과하는데 풀배포만 반복 실패하면, **어디에서 끊기는지** 확인한 뒤 아래에서 해당 구간만 점검.
+
+| 실패 구간 | 가능 원인 | 점검·조치 |
+|-----------|-----------|-----------|
+| **1/3 빌드** | SSM 3분 안에 Online 안 됨 | 빌드 인스턴스에 `academy-ec2-role` 붙어 있는지, 역할에 SSM 매니지드 정책 있는지 확인. preflight에서 "Build instance" 있으면 기존 인스턴스 재사용이라 SSM 지연 가능 — 한 번 더 돌리거나 인스턴스 재부팅. |
+| **1/3 빌드** | Build command Failed / 타임아웃 | SSM Run Command 결과에서 StandardErrorContent 확인. ECR 로그인 실패면 계정/키. Docker 빌드 실패면 빌드 인스턴스 디스크/메모리 또는 `-NoCache`로 재시도. |
+| **1/3 빌드** | ECR push 권한 없음 | preflight에서 "[FAIL] ECR describe" 나오면 수정 후 재실행. IAM에 `ecr:GetDownloadUrlForLayer`, `ecr:BatchCheckLayerAvailability`, `ecr:PutImage`, `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload` 등 필요. |
+| **2/3 API** | No running academy instances | 풀배포가 중지된 인스턴스를 자동으로 시작함. 다른 계정 키로 보면 인스턴스가 안 보임 → **루트 키로 통일** 후 preflight부터 다시. |
+| **2/3 API** | [academy-api] FAIL (exit ...) | SSH 실패. `.\scripts\deploy_preflight.ps1 -TestSsh` 로 키/접속 확인. PEM이 해당 계정 academy-api와 쌍인지, 보안 그룹에서 내 IP 22 허용인지 확인. |
+| **3/3 워커** | ASG instance refresh FAILED | 같은 계정인지, ASG 이름이 academy-video-worker-asg 등 맞는지. IAM에 autoscaling:StartInstanceRefresh 등 필요. |
+
+**한 번에 확인:** preflight을 **실패하면 배포 안 하도록** 쓰고, `-TestSsh`까지 켜서 SSH까지 검증한 뒤 같은 env로 풀배포.
+
+---
+
 ## 10. 로컬 필수 경로·키
 
 - **키 디렉터리:** `C:\key`
