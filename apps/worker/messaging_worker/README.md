@@ -35,11 +35,16 @@ SQS `academy-messaging-jobs` 수신 → message_mode에 따라 SMS만/알림톡�
 
 ---
 
-## 4. 알림톡 / SMS 하이브리드 (Fallback)
+## 4. message_mode: SMS / 알림톡 / 둘 다
 
-1. **1단계 (알림톡)**: 단가 저렴 → `use_alimtalk_first=True` 이고 카카오 pf_id/template_id 설정 시 **최우선 발송**.
-2. **2단계 (SMS 전환)**: 알림톡 발송 실패 또는 수신 거부 시, 워커가 **즉시 일반 문자로 재발송**.
-3. **템플릿 관리**: 카카오 검수 끝난 **템플릿 ID만 ENV**(`SOLAPI_KAKAO_TEMPLATE_ID`)로 관리 → 코드 수정 없이 교체.
+| message_mode | 동작 |
+|--------------|------|
+| `sms` | SMS만 발송. pf_id/template_id 불필요. |
+| `alimtalk` | 알림톡만 발송. 실패 시 폴백 없음. pf_id·template_id 필수. |
+| `both` | 알림톡 우선 시도, 실패 시 SMS 폴백. |
+
+- `use_alimtalk_first=True` (하위호환) → `both`, `False` → `sms`
+- **템플릿 관리**: 카카오 검수 끝난 **템플릿 ID**를 ENV(`SOLAPI_KAKAO_TEMPLATE_ID`) 또는 payload `template_id`로 전달.
 
 ---
 
