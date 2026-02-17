@@ -8,8 +8,8 @@ SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시 + AI 워커 ASG 원하는 �
 
 Application Auto Scaling(ec2:autoScalingGroup:DesiredCapacity)이 일부 계정/리전에서
 허용되지 않으므로, EC2 Auto Scaling API(set_desired_capacity)로 직접 조정함.
-- ai_total > 0 → desired = min(ASG_MAX, max(1, ceil(ai_total / 20)))
-- ai_total == 0 → desired = 0
+- (visible + in_flight) > 0 → desired >= 1 (처리 중인 메시지 있을 때는 scale to 0 안 함)
+- (visible + in_flight) == 0 → desired = 0
 
 설계: docs/SSOT_0215/IMPORTANT/ARCH_CHANGE_PROPOSAL_LAMBDA_TO_ASG.md
 """
@@ -135,8 +135,8 @@ def lambda_handler(event: dict, context: Any) -> dict:
     set_ai_worker_asg_desired(autoscaling, ai_visible, ai_in_flight)
 
     logger.info(
-        "queue_depth_metric | ai=%d (lite=%d+basic=%d) video=%d messaging=%d",
-        ai_total, ai_lite, ai_basic, video_count, messaging_count,
+        "queue_depth_metric | ai visible=%d in_flight=%d video=%d messaging=%d",
+        ai_visible, ai_in_flight, video_count, messaging_count,
     )
     return {
         "ai_queue_depth": ai_total,
