@@ -58,6 +58,7 @@ TENANT_BYPASS_PATH_PREFIXES = [
     "/admin/",
     "/api/v1/token/",
     "/api/v1/token/refresh/",
+    "/api-auth/",  # DRF Browsable API 로그인 (tenant 불필요)
     "/internal/",
     "/api/v1/internal/",
     "/swagger",

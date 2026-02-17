@@ -29,6 +29,7 @@
 /admin/
 /api/v1/token/
 /api/v1/token/refresh/
+/api-auth/
 /internal/
 /api/v1/internal/
 /swagger

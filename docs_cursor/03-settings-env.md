@@ -12,6 +12,7 @@ tenant 미해결 허용 경로:
 /admin/
 /api/v1/token/
 /api/v1/token/refresh/
+/api-auth/
 /internal/
 /api/v1/internal/
 /swagger
