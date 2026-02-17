@@ -280,12 +280,12 @@ if ($deployWorkers) {
         }
         $asgNames = $workerList | ForEach-Object { $asgMap[$_] } | Where-Object { $_ }
         foreach ($asgName in $asgNames) {
-            $asgCheck = aws autoscaling describe-auto-scaling-groups --region $Region --auto-scaling-group-names $asgName --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>&1
+            $asgCheck = aws autoscaling describe-auto-scaling-groups --region $Region --auto-scaling-group-names $asgName --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>$null
             if ($LASTEXITCODE -ne 0 -or -not $asgCheck -or $asgCheck -eq "None") {
                 Write-Host "  $asgName - ASG not found or error: $asgCheck" -ForegroundColor Yellow
                 continue
             }
-            $refreshOut = aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName 2>&1
+            $refreshOut = aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName 2>&1 | Out-String
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "  $asgName instance refresh started" -ForegroundColor Green
             } else {
