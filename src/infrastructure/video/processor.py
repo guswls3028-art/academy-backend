@@ -90,10 +90,10 @@ def process_video(
             timeout=int(cfg.FFMPEG_TIMEOUT_SECONDS),
         )
 
-        progress.record_progress(job_id, "validating")
+        progress.record_progress(job_id, "validating", {"percent": 85})
         validate_hls_output(out_dir, int(cfg.MIN_SEGMENTS_PER_VARIANT))
 
-        progress.record_progress(job_id, "thumbnail")
+        progress.record_progress(job_id, "thumbnail", {"percent": 90})
         try:
             at = float(cfg.THUMBNAIL_AT_SECONDS)
             if duration >= 10:
@@ -114,7 +114,7 @@ def process_video(
         except Exception as e:
             logger.warning("thumbnail failed video_id=%s err=%s", video_id, e)
 
-        progress.record_progress(job_id, "uploading", {"hls_prefix": hls_prefix})
+        progress.record_progress(job_id, "uploading", {"hls_prefix": hls_prefix, "percent": 95})
         upload_directory(
             local_dir=out_dir,
             bucket=cfg.R2_BUCKET,
