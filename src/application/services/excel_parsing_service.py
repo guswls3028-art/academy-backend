@@ -162,7 +162,7 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
     wb.close()
 
     if not rows:
-        return []
+        return [], ""
 
     header_idx = _find_header_row(rows)
     used_fallback = False
