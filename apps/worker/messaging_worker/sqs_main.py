@@ -320,9 +320,19 @@ def main() -> int:
                         consecutive_errors += 1
                         continue
 
-                    # 알림톡 → SMS 폴백: 알림톡 우선 시도, 실패 시 즉시 SMS
+                    # message_mode: sms | alimtalk | both
                     result = None
-                    if use_alimtalk_first and pf_id and template_id:
+                    if message_mode == "sms":
+                        result = send_one_sms(cfg, to=to, text=text, sender=sender)
+                    elif message_mode == "alimtalk" and pf_id and template_id:
+                        result = send_one_alimtalk(
+                            cfg, to=to, sender=sender,
+                            pf_id=pf_id,
+                            template_id=template_id,
+                            replacements=alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
+                        )
+                        # 알림톡만: 폴백 없음
+                    elif message_mode == "both" and pf_id and template_id:
                         result = send_one_alimtalk(
                             cfg, to=to, sender=sender,
                             pf_id=pf_id,
@@ -333,6 +343,9 @@ def main() -> int:
                             logger.info("alimtalk failed, fallback to SMS")
                             result = send_one_sms(cfg, to=to, text=text, sender=sender)
                     else:
+                        # alimtalk/both인데 pf_id·template_id 없으면 SMS로 대체
+                        if message_mode in ("alimtalk", "both") and (not pf_id or not template_id):
+                            logger.warning("alimtalk requested but pf_id/template_id missing, sending SMS")
                         result = send_one_sms(cfg, to=to, text=text, sender=sender)
 
                     # 성공 시 로그, 실패 시 롤백 + 로그
