@@ -101,3 +101,35 @@ class SendMessageRequestSerializer(serializers.Serializer):
                 {"raw_body": "직접 입력 본문을 넣거나 템플릿을 선택해 주세요."}
             )
         return attrs
+
+
+class AutoSendConfigSerializer(serializers.ModelSerializer):
+    template_name = serializers.CharField(source="template.name", read_only=True, default="")
+    template_solapi_status = serializers.CharField(
+        source="template.solapi_status", read_only=True, default=""
+    )
+
+    class Meta:
+        model = AutoSendConfig
+        fields = [
+            "id",
+            "trigger",
+            "template",
+            "template_name",
+            "template_solapi_status",
+            "enabled",
+            "message_mode",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class AutoSendConfigUpdateSerializer(serializers.Serializer):
+    """PATCH: 개별 config 수정"""
+    template_id = serializers.IntegerField(required=False, allow_null=True)
+    enabled = serializers.BooleanField(required=False)
+    message_mode = serializers.ChoiceField(
+        choices=[("sms", "SMS만"), ("alimtalk", "알림톡만"), ("both", "알림톡→SMS폴백")],
+        required=False,
+    )
