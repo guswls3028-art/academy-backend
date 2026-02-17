@@ -15,6 +15,8 @@
 | [06-front-infra-and-excel.md](06-front-infra-and-excel.md) | 프론트·인프라 계약 요약, 백엔드 엑셀 파싱 사실 (상세는 academyfront/06-implemented-features) | CORS·도메인·엑셀 에러 시 참조 |
 | [07-staffs-api.md](07-staffs-api.md) | staffs 도메인 API: work-types, staff-work-types (POST body: staff, work_type_id), Staff | 시급태그·직원 API 연동·수정 시 |
 | [08-worker-deployment-and-test.md](08-worker-deployment-and-test.md) | 워커 배포 환경(Messaging/Video/AI, ASG, SSM env), 로컬·배포 후 테스트 방법 | 워커 테스트·배포 시 |
+| [10-deploy-commands-cheatsheet.md](10-deploy-commands-cheatsheet.md) | 배포 명령어 모음 (풀배포, 워커 리프레시, IAM Deny, ASG 확인 등) | 배포·운영 시 복붙용 |
+| [11-worker-self-stop-root-cause.md](11-worker-self-stop-root-cause.md) | Worker self-stop 루트캐우스 분석, IAM ec2:StopInstances 차단 방법 | 껐다 켜짐 루프 진단·해결 시 |
 
 ## 날짜별 스냅샷
 
