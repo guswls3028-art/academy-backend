@@ -1,4 +1,4 @@
-# 현재 IP를 확인하고 RDS 보안 그룹에 추가
+# Get current IP and add to RDS security group
 
 param(
     [string]$Region = "ap-northeast-2",
@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "Adding current IP to RDS security group..." -ForegroundColor Cyan
 
-# 현재 공인 IP 확인
+# Get current public IP
 Write-Host "`nGetting current public IP..." -ForegroundColor Gray
 try {
     $publicIp = (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5).Trim()
@@ -24,7 +24,7 @@ $cidr = "$publicIp/32"
 Write-Host "`nSecurity Group: $SecurityGroupId" -ForegroundColor Gray
 Write-Host "Adding rule: PostgreSQL (5432) from $cidr" -ForegroundColor Gray
 
-# 기존 규칙 확인
+# Check existing rules
 $existingRules = aws ec2 describe-security-groups --region $Region --group-ids $SecurityGroupId --query "SecurityGroups[0].IpPermissions[?FromPort==\`"5432\`" && ToPort==\`"5432\`"].IpRanges[].CidrIp" --output text 2>&1
 
 $ruleExists = $false
@@ -69,5 +69,5 @@ if ($ruleExists) {
 }
 
 Write-Host "`n✓ Done!" -ForegroundColor Green
-Write-Host "`nNote: If RDS '인터넷 액세스 게이트웨이' is disabled, you still need SSH tunnel." -ForegroundColor Yellow
-Write-Host "Check RDS '연결 및 보안' tab for '인터넷 액세스 게이트웨이' status." -ForegroundColor Yellow
+Write-Host "`nNote: If RDS internet gateway access is disabled, you still need SSH tunnel." -ForegroundColor Yellow
+Write-Host "Check RDS Connectivity & security tab for internet access status." -ForegroundColor Yellow

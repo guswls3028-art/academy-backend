@@ -1,4 +1,4 @@
-# RDS 퍼블릭 액세스 설정 확인
+# Check RDS public access settings
 
 param(
     [string]$Region = "ap-northeast-2",

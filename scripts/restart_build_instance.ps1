@@ -1,4 +1,4 @@
-# 빌드 인스턴스 재시작 (SSM 등록 문제 해결용)
+# Restart build instance (fix SSM registration)
 
 param(
     [string]$Region = "ap-northeast-2",
@@ -12,7 +12,7 @@ Write-Host "  Instance: $BuildInstanceId" -ForegroundColor Gray
 Write-Host "  Region: $Region" -ForegroundColor Gray
 Write-Host ""
 
-# 인스턴스 상태 확인
+# Check instance state
 $state = aws ec2 describe-instances --region $Region --instance-ids $BuildInstanceId --query "Reservations[0].Instances[0].State.Name" --output text 2>&1
 
 if ($LASTEXITCODE -ne 0) {

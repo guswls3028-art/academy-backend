@@ -1,4 +1,4 @@
-# RDS 상태 확인 (퍼블릭 액세스 포함)
+# RDS status check (including public access)
 
 param(
     [string]$Region = "ap-northeast-2",

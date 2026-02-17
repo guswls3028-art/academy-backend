@@ -1,4 +1,4 @@
-# RDS 퍼블릭 액세스 활성화
+# Enable RDS public access
 
 param(
     [string]$Region = "ap-northeast-2",
