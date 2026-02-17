@@ -495,6 +495,13 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
             "high_school_class": _cell_str(row, col.get("school_class")),
         })
 
+    if validation_errors:
+        err_msg = (
+            f"학부모 전화번호 검증 실패: {len(validation_errors)}건. "
+            "010 10~11자리 형식이어야 합니다."
+        )
+        raise ExcelValidationError(err_msg, errors=validation_errors)
+
     lecture_title = _extract_lecture_title(rows, header_idx)
     return result, lecture_title
 
