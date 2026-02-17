@@ -42,10 +42,13 @@ def main():
     queue = MessagingSQSQueue()
     count = max(1, min(args.count, 1000))
 
-    print(f"[stress] Enqueuing {count} messages to {queue_name}...")
+    # tenant_id: 스트레스 테스트용 1 (실제 발송 시 워커가 해당 테넌트 잔액/발신번호 사용)
+    tenant_id = getattr(settings, "STRESS_TEST_TENANT_ID", 1)
+    print(f"[stress] Enqueuing {count} messages to {queue_name} (tenant_id={tenant_id})...")
     ok = 0
     for i in range(count):
         if queue.enqueue(
+            tenant_id=tenant_id,
             to="01000000000",  # 테스트용 더미 번호
             text=f"stress-test-{i+1}/{count}",
             sender=getattr(settings, "SOLAPI_SENDER", "01012345678") or "01012345678",
