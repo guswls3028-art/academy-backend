@@ -26,7 +26,9 @@ from apps.support.messaging.serializers import (
     NotificationLogSerializer,
     MessageTemplateSerializer,
     SendMessageRequestSerializer,
+    VerifySenderRequestSerializer,
 )
+from apps.support.messaging.solapi_sender_client import verify_sender_number
 
 
 class MessagingInfoView(APIView):
