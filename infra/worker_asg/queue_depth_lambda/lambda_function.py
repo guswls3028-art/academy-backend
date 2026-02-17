@@ -1,15 +1,21 @@
 """
-SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시 (ASG Target Tracking용).
+SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시 + AI 워커 ASG 원하는 용량 조정.
 
 - EventBridge rate(1 minute)로 호출.
 - AI: academy-ai-jobs-lite + academy-ai-jobs-basic 합산 → Academy/Workers, WorkerType=AI
 - Video: academy-video-jobs → Academy/Workers, WorkerType=Video
 - Messaging: academy-messaging-jobs → Academy/Workers, WorkerType=Messaging
 
+Application Auto Scaling(ec2:autoScalingGroup:DesiredCapacity)이 일부 계정/리전에서
+허용되지 않으므로, EC2 Auto Scaling API(set_desired_capacity)로 직접 조정함.
+- ai_total > 0 → desired = min(ASG_MAX, max(1, ceil(ai_total / 20)))
+- ai_total == 0 → desired = 0
+
 설계: docs/SSOT_0215/IMPORTANT/ARCH_CHANGE_PROPOSAL_LAMBDA_TO_ASG.md
 """
 from __future__ import annotations
 
+import math
 import os
 import logging
 from typing import Any
@@ -27,6 +33,8 @@ VIDEO_QUEUE = os.environ.get("VIDEO_QUEUE", "academy-video-jobs")
 MESSAGING_QUEUE = os.environ.get("MESSAGING_QUEUE", "academy-messaging-jobs")
 NAMESPACE = os.environ.get("METRIC_NAMESPACE", "Academy/Workers")
 METRIC_NAME = os.environ.get("METRIC_NAME", "QueueDepth")
+AI_WORKER_ASG_NAME = os.environ.get("AI_WORKER_ASG_NAME", "academy-ai-worker-asg")
+AI_WORKER_ASG_MAX = int(os.environ.get("AI_WORKER_ASG_MAX", "20"))
 
 BOTO_CONFIG = Config(retries={"max_attempts": 3, "mode": "standard"})
 
