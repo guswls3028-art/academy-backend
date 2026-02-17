@@ -9,6 +9,7 @@ from .models import (
     VideoProgress,
     VideoPlaybackEvent,
 )
+from .encoding_progress import get_video_encoding_progress
 from academy.adapters.db.django import repositories_video as video_repo
 
 # ========================================================
