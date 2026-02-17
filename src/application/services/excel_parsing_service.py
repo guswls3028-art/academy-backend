@@ -291,6 +291,12 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
     name_col = col.get("name")
     parent_col = col.get("parent_phone")
     student_col = col.get("student_phone")
+
+    if parent_col is None:
+        raise ExcelValidationError(
+            "학부모 전화번호 컬럼을 찾을 수 없습니다. "
+            "헤더에 '학부모전화', '부모핸드폰', '보호자 전화' 등이 있어야 합니다."
+        )
     school_col = col.get("school")
     grade_col = col.get("grade")
     remark_col = col.get("remark")
