@@ -212,7 +212,7 @@ def _row_looks_like_student(
         or (len(parent_phone_raw) == 8 and parent_phone_raw.isdigit())
         or (len(student_phone_raw) == 8 and student_phone_raw.isdigit())
     )
-    has_name = bool(re.match(r"^[가-힣]{2,4}[A-Za-z0-9]*\*?$", name))
+    has_name = bool(re.match(r"^[가-힣]{2,5}[A-Za-z0-9]*\*?$", name))
     if not has_name and not has_phone:
         return False
     return True
