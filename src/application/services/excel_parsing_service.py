@@ -99,42 +99,78 @@ def _find_header_row_fallback(rows: list[list[Any]]) -> int:
     return -1
 
 
+_PARENT_KEYWORDS = ("부모", "학부모", "보호자", "guardian")
+_STUDENT_KEYWORDS = ("학생",)
+
+
+def _rule_guess_parent_score(header: str, values: list[str]) -> float:
+    """
+    Rule 기반 parent_phone 컬럼 점수. 0~1.
+    - parent 키워드 포함 +0.6, student 키워드 -0.5
+    - phone_ratio(010 10~11자리 비율) * 0.7
+    """
+    h = (header or "").replace(" ", "").lower()
+    score = 0.0
+    if any(k in h for k in _PARENT_KEYWORDS):
+        score += 0.6
+    if any(k in h for k in _STUDENT_KEYWORDS):
+        score -= 0.5
+    non_empty = [v for v in values if v]
+    if non_empty:
+        phone_ok = sum(1 for v in non_empty if _validate_parent_phone(v))
+        score += (phone_ok / len(non_empty)) * 0.7
+    return max(0.0, min(1.0, score))
+
+
 def _infer_missing_columns(
     col: dict[str, int], header_row: list[Any], rows: list[list[Any]], header_idx: int
 ) -> dict[str, int]:
     """
     필수 컬럼(name, parent_phone)이 없을 때, 샘플 데이터로 컬럼 추측.
-    - 010 11자리 패턴이 여러 행에 나오는 컬럼 → parent_phone 후보
-    - 2~4글자 한글(이름형)이 여러 행에 나오는 컬럼 → name 후보
+    - 전화 컬럼: rule_guess_parent_score로 parent_phone 후보 점수화, conf < 0.9면 확정 불가
+    - 이름 컬럼: 2~4글자 한글(이름형)이 여러 행에 나오는 컬럼 → name 후보
     """
     out = dict(col)
     sample = rows[header_idx + 1 : header_idx + 21]  # 최대 20행 샘플
     if not sample:
         return out
 
-    phone_col_candidates: list[tuple[int, int]] = []
+    phone_col_candidates: list[tuple[int, int, float]] = []  # (col_idx, phone_hits, parent_score)
     name_col_candidates: list[tuple[int, int]] = []
-    korean_name = re.compile(r"^[가-힣]{2,4}[A-Za-z0-9]*\*?$")
+    korean_name = re.compile(r"^[가-힣]{2,5}[A-Za-z0-9]*\*?$")
 
-    for ci in range(max(len(r) for r in sample) if sample else 0):
+    max_col = max(len(r) for r in sample) if sample else 0
+    for ci in range(max_col):
         phone_hits = 0
         name_hits = 0
+        sample_vals: list[str] = []
         for row in sample:
             if ci >= len(row):
                 continue
             v = str(row[ci] or "").strip()
-            if re.match(r"^010[0-9]{8}$", _to_raw_phone(v)):
+            sample_vals.append(v)
+            if re.match(r"^010[0-9]{8}$", _to_raw_phone(v)) or (
+                len(_to_raw_phone(v)) in (10, 11) and _to_raw_phone(v).startswith("010")
+            ):
                 phone_hits += 1
             if korean_name.match(v):
                 name_hits += 1
         if phone_hits >= 2:
-            phone_col_candidates.append((ci, phone_hits))
+            header_label = str(header_row[ci] if ci < len(header_row) else "").strip()
+            parent_score = _rule_guess_parent_score(header_label, sample_vals)
+            phone_col_candidates.append((ci, phone_hits, parent_score))
         if name_hits >= 2:
             name_col_candidates.append((ci, name_hits))
 
     if out.get("parent_phone") is None and phone_col_candidates:
-        phone_col_candidates.sort(key=lambda x: -x[1])
-        out["parent_phone"] = phone_col_candidates[0][0]
+        phone_col_candidates.sort(key=lambda x: (-x[2], -x[1]))  # score desc, then hits
+        best_idx, _, best_score = phone_col_candidates[0]
+        if best_score < 0.9:
+            raise ExcelValidationError(
+                "학부모 전화번호 컬럼을 자동으로 식별할 수 없습니다. "
+                "헤더에 '학부모전화', '부모핸드폰', '보호자 전화' 등을 명확히 표기해 주세요."
+            )
+        out["parent_phone"] = best_idx
     if out.get("name") is None and name_col_candidates:
         name_col_candidates.sort(key=lambda x: -x[1])
         out["name"] = name_col_candidates[0][0]
