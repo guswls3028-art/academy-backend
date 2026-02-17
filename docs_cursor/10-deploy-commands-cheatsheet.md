@@ -108,6 +108,32 @@ cd C:\academy
 .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -WorkersViaASG -SkipBuild
 ```
 
+**중요:** `full_redeploy.ps1 -WorkersViaASG`는 **Launch Template을 수정하지 않음**. 인스턴스 새로 고침만 함.  
+→ Video 워커가 ECS AMI로 뜨고 컨테이너가 없으면, **아래 5.5 한 번 실행 후** 다시 instance refresh.
+
+---
+
+## 5.5 Launch Template AMI 수정 (Video 워커 ECS AMI 문제 시)
+
+Video 워커 인스턴스에 `academy-video-worker` 컨테이너가 없고, AMI가 `al2023-ami-ecs-hvm-*` 로 뜬 경우.  
+**원인:** LT가 ECS 최적화 AMI를 쓰고 있음. **해결:** `deploy_worker_asg.ps1` 한 번 실행 → LT가 일반 AL2023 AMI로 갱신됨(스크립트에서 ECS AMI 제외됨).
+
+```powershell
+$env:AWS_ACCESS_KEY_ID = "YOUR_ROOT_ACCESS_KEY_ID"
+$env:AWS_SECRET_ACCESS_KEY = "YOUR_ROOT_SECRET_KEY"
+$env:AWS_DEFAULT_REGION = "ap-northeast-2"
+cd C:\academy
+.\scripts\deploy_worker_asg.ps1 -SubnetIds "subnet-07a8427d3306ce910" -SecurityGroupId "sg-02692600fbf8e26f7" -IamInstanceProfileName "academy-ec2-role"
+```
+
+이후 워커 인스턴스를 새로 띄우기:
+
+```powershell
+aws autoscaling start-instance-refresh --region ap-northeast-2 --auto-scaling-group-name academy-video-worker-asg
+```
+
+(또는 `full_redeploy.ps1 -WorkersViaASG -SkipBuild` 로 전체 워커 리프레시.)
+
 ---
 
 ## 6. 빌드용 서버 수동 중지 (admin97 키로)
