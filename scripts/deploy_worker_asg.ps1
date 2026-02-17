@@ -162,13 +162,15 @@ $ltMessagingFile = Join-Path $RepoRoot "lt_messaging_data.json"
 [System.IO.File]::WriteAllText($ltMessagingFile, $ltMessagingJson.Trim(), $utf8NoBom)
 $ltMessagingPath = "file://$($ltMessagingFile -replace '\\','/' -replace ' ', '%20')"
 $ltMessagingExists = $false
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 try { aws ec2 describe-launch-templates --launch-template-names $LtMessagingName --region $Region 2>$null | Out-Null; $ltMessagingExists = $true } catch {}
 if (-not $ltMessagingExists) {
-    aws ec2 create-launch-template --launch-template-name $LtMessagingName --version-description "ASG Messaging worker" --launch-template-data $ltMessagingPath --region $Region | Out-Null
+    aws ec2 create-launch-template --launch-template-name $LtMessagingName --version-description "ASG Messaging worker" --launch-template-data $ltMessagingPath --region $Region 2>$null | Out-Null
 } else {
     $newVer = aws ec2 create-launch-template-version --launch-template-name $LtMessagingName --launch-template-data $ltMessagingPath --region $Region --query "LaunchTemplateVersion.VersionNumber" --output text 2>$null
-    if ($newVer) { aws ec2 modify-launch-template --launch-template-name $LtMessagingName --default-version $newVer --region $Region | Out-Null }
+    if ($newVer) { aws ec2 modify-launch-template --launch-template-name $LtMessagingName --default-version $newVer --region $Region 2>$null | Out-Null }
 }
+$ErrorActionPreference = $ea
 Remove-Item $ltMessagingFile -Force -ErrorAction SilentlyContinue
 
 $SubnetList = $SubnetIds -split "," | ForEach-Object { $_.Trim() }
