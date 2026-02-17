@@ -18,32 +18,13 @@ if (-not $roleName) {
 Write-Host "Role: $roleName" -ForegroundColor Green
 
 Write-Host "`n=== STEP 2: ec2:StopInstances Deny 정책 추가 ===" -ForegroundColor Cyan
-$denyPolicy = @'
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "DenyStopInstances",
-      "Effect": "Deny",
-      "Action": "ec2:StopInstances",
-      "Resource": "*"
-    }
-  ]
-}
-'@
+$denyPolicy = '{"Version":"2012-10-17","Statement":[{"Sid":"DenyStopInstances","Effect":"Deny","Action":"ec2:StopInstances","Resource":"*"}]}'
 
-$policyPath = Join-Path $env:TEMP "academy_deny_stop_instances.json"
-$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-[System.IO.File]::WriteAllText($policyPath, $denyPolicy.Trim(), $utf8NoBom)
-$fileUri = "file:///" + ($policyPath -replace '\\', '/')
-
-aws iam put-role-policy --role-name $roleName --policy-name $DenyPolicyName --policy-document $fileUri
+aws iam put-role-policy --role-name $roleName --policy-name $DenyPolicyName --policy-document $denyPolicy
 if ($LASTEXITCODE -ne 0) {
     Write-Host "FAILED. IAM put-role-policy 권한 확인." -ForegroundColor Red
-    Remove-Item $policyPath -Force -ErrorAction SilentlyContinue
     exit 1
 }
-Remove-Item $policyPath -Force -ErrorAction SilentlyContinue
 
 Write-Host "OK. Deny 정책 '$DenyPolicyName' 적용 완료." -ForegroundColor Green
 Write-Host "`n=== 결과 ===" -ForegroundColor Cyan
