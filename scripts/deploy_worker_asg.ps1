@@ -1,7 +1,7 @@
 # ==============================================================================
-# ASG Target Tracking 워커 배포 (Min=0, SQS 큐 깊이 기반)
-# 전제: AWS CLI 설정, SSM /academy/workers/env 에 .env 내용 저장됨
-# 실행: .\scripts\deploy_worker_asg.ps1 -SubnetIds "subnet-xxx,subnet-yyy" -SecurityGroupId "sg-xxx" -IamInstanceProfileName "academy-ec2-role"
+# ASG Target Tracking worker deploy (Min=0, SQS queue depth based)
+# Requires: AWS CLI configured, SSM /academy/workers/env has .env content
+# Usage: .\scripts\deploy_worker_asg.ps1 -SubnetIds "subnet-xxx,subnet-yyy" -SecurityGroupId "sg-xxx" -IamInstanceProfileName "academy-ec2-role"
 # ==============================================================================
 
 param(
@@ -16,10 +16,10 @@ param(
     [string]$AmiId = "",         # optional, default latest Amazon Linux 2023
     [int]$MaxCapacity = 20,
     [int]$TargetMessagesPerInstance = 20,
-    [switch]$UploadEnvToSsm = $true,   # .env 있으면 SSM /academy/workers/env 에 업로드
-    [switch]$AttachEc2Policy = $true,   # EC2 역할에 SSM+ECR 정책 인라인 첨부 시도
-    [switch]$GrantSsmPutToCaller = $true,   # SSM PutParameter 권한 부여 시도
-    [string]$SsmPutGrantUser = ""           # 비어 있으면 현재 호출자에게 부여; 지정 시 해당 IAM 사용자(예: admin97)에게 부여
+    [switch]$UploadEnvToSsm = $true,   # if .env exists, upload to SSM /academy/workers/env
+    [switch]$AttachEc2Policy = $true,   # attach SSM+ECR inline policy to EC2 role
+    [switch]$GrantSsmPutToCaller = $true,   # grant SSM PutParameter to caller
+    [string]$SsmPutGrantUser = ""           # empty = grant to current caller; set to IAM user (e.g. admin97) to grant to that user
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,7 +32,7 @@ $UserDataDir = Join-Path $AsgInfra "user_data"
 $AccountId = (aws sts get-caller-identity --query Account --output text)
 $ECRRegistry = "${AccountId}.dkr.ecr.${Region}.amazonaws.com"
 
-# Lambda 실행 역할 (기존 academy-lambda 사용 가능; 큐 깊이만 필요하면 새 정책 인라인으로 추가)
+# Lambda execution role (reuse academy-lambda; add inline policy for queue depth if needed)
 $LambdaRoleName = "academy-lambda"
 $QueueDepthLambdaName = "academy-worker-queue-depth-metric"
 $EventBridgeRuleName = "academy-worker-queue-depth-rate"
