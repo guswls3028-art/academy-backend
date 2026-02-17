@@ -10,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.core.models import Tenant
-from apps.support.messaging.models import NotificationLog, MessageTemplate
+from apps.support.messaging.models import NotificationLog, MessageTemplate, AutoSendConfig
 from apps.support.messaging.solapi_template_client import (
     create_kakao_template,
     validate_template_variables,
