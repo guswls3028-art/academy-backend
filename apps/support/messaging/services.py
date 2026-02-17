@@ -100,20 +100,25 @@ def enqueue_sms(
     sender: Optional[str] = None,
     *,
     reservation_id: Optional[int] = None,
+    message_mode: Optional[str] = None,
     use_alimtalk_first: bool = False,
     alimtalk_replacements: Optional[list[dict]] = None,
     template_id: Optional[str] = None,
 ) -> bool:
     """
-    SMS(또는 알림톡→SMS 폴백) 발송을 SQS에 넣어 워커가 비동기로 발송하도록 함.
+    SMS/알림톡 발송을 SQS에 넣어 워커가 비동기로 발송하도록 함.
 
     Args:
         tenant_id: 테넌트 ID (워커에서 잔액/PFID 조회)
         to: 수신 번호
-        text: 본문 (SMS fallback용)
+        text: 본문 (SMS용 또는 알림톡 실패 시 폴백용)
         sender: 발신 번호
         reservation_id: 예약 ID 있으면 워커에서 취소 여부 Double Check 후 발송/스킵
-        use_alimtalk_first: True면 워커가 알림톡 우선 시도, 실패 시 SMS
+        message_mode: "sms" | "alimtalk" | "both"
+            - sms: SMS만 발송
+            - alimtalk: 알림톡만 발송 (실패 시 폴백 없음)
+            - both: 알림톡 우선, 실패 시 SMS 폴백
+        use_alimtalk_first: (하위호환) True면 both, False면 sms. message_mode가 있으면 무시
         alimtalk_replacements: 알림톡 템플릿 치환 [{"key": "name", "value": "홍길동"}, ...]
         template_id: 알림톡 템플릿 ID (선택)
 
@@ -128,6 +133,7 @@ def enqueue_sms(
         text=text,
         sender=sender,
         reservation_id=reservation_id,
+        message_mode=message_mode,
         use_alimtalk_first=use_alimtalk_first,
         alimtalk_replacements=alimtalk_replacements,
         template_id=template_id,
