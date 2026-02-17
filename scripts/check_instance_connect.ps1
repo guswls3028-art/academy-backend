@@ -94,13 +94,35 @@ if ($plList) {
     Write-Host "  (조회 실패 또는 해당 리전에 없음)" -ForegroundColor Gray
 }
 
-# 4) 요약 및 권장
+# 4) 서브넷 NACL (인바운드 22)
+Write-Host ""
+Write-Host "[4] 서브넷 NACL (인바운드 포트 22)" -ForegroundColor White
+$subnetOut = aws ec2 describe-subnets --subnet-ids $subnetId --region $Region --query "Subnets[0].VpcId" --output text 2>$null
+$vpcId = $subnetOut
+$naclOut = aws ec2 describe-network-acls --region $Region --filters "Name=association.subnet-id,Values=$subnetId" --output json 2>$null
+if ($naclOut) {
+    $nacl = ($naclOut | ConvertFrom-Json).NetworkAcls[0]
+    $inbound = $nacl.Entries | Where-Object { $_.Egress -eq $false -and (($_.RuleNumber -ge 1 -and $_.RuleNumber -le 32766)) }
+    $port22Allow = $inbound | Where-Object { ($_.PortRange -and $_.PortRange.From -le 22 -and $_.PortRange.To -ge 22) -or $_.RuleNumber -eq 100 } | Where-Object { $_.RuleAction -eq "allow" }
+    $port22Deny = $inbound | Where-Object { ($_.PortRange -and $_.PortRange.From -le 22 -and $_.PortRange.To -ge 22) } | Where-Object { $_.RuleAction -eq "deny" }
+    if ($port22Deny -and $port22Deny.RuleNumber -lt ($port22Allow | ForEach-Object { $_.RuleNumber } | Sort-Object | Select-Object -First 1)) {
+        Write-Host "  NACL $($nacl.NetworkAclId): 포트 22 인바운드 deny 규칙이 allow보다 우선 -> SSH 차단 가능" -ForegroundColor Red
+    } elseif ($port22Allow) {
+        Write-Host "  NACL $($nacl.NetworkAclId): 포트 22 인바운드 allow 있음" -ForegroundColor Green
+    } else {
+        Write-Host "  NACL $($nacl.NetworkAclId): 포트 22 인바운드 규칙 없음 (기본 deny면 SSH 차단)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  (NACL 조회 생략 또는 기본 NACL)" -ForegroundColor Gray
+}
+
+# 5) 요약 및 권장
 Write-Host ""
 Write-Host "=== 요약 ===" -ForegroundColor Cyan
 if (-not $publicIp) {
     Write-Host "  원인: 퍼블릭 IP 없음. 서브넷/인스턴스에 퍼블릭 IP 할당 필요." -ForegroundColor Red
 } else {
-    Write-Host "  퍼블릭 IP 있음. SG에 22 허용 규칙 확인됨." -ForegroundColor Green
-    Write-Host "  그래도 실패 시: 인스턴스 내 SSHD/ec2-instance-connect 패키지, NACL, IAM(콘솔 사용자 SendSSHPublicKey) 확인." -ForegroundColor Gray
+    Write-Host "  퍼블릭 IP 있음. 위 [2][4]에서 SG/NACL 확인." -ForegroundColor Green
+    Write-Host "  그래도 실패 시: 인스턴스 내 SSHD/ec2-instance-connect 패키지, IAM(콘솔 사용자 SendSSHPublicKey) 확인." -ForegroundColor Gray
 }
 Write-Host ""
