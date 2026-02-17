@@ -324,14 +324,17 @@ def main() -> int:
                     result = None
                     if message_mode == "sms":
                         result = send_one_sms(cfg, to=to, text=text, sender=sender)
-                    elif message_mode == "alimtalk" and pf_id and template_id:
-                        result = send_one_alimtalk(
-                            cfg, to=to, sender=sender,
-                            pf_id=pf_id,
-                            template_id=template_id,
-                            replacements=alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
-                        )
-                        # 알림톡만: 폴백 없음
+                    elif message_mode == "alimtalk":
+                        if pf_id and template_id:
+                            result = send_one_alimtalk(
+                                cfg, to=to, sender=sender,
+                                pf_id=pf_id,
+                                template_id=template_id,
+                                replacements=alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
+                            )
+                            # 알림톡만: 폴백 없음
+                        else:
+                            result = {"status": "error", "reason": "alimtalk_requires_pf_id_and_template_id"}
                     elif message_mode == "both" and pf_id and template_id:
                         result = send_one_alimtalk(
                             cfg, to=to, sender=sender,
