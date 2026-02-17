@@ -396,3 +396,71 @@ class SendMessageView(APIView):
             "enqueued": enqueued,
             "skipped_no_phone": skipped_no_phone,
         }, status=status.HTTP_200_OK)
+
+
+class AutoSendConfigView(APIView):
+    """
+    GET: 테넌트의 모든 자동발송 설정 목록 (트리거별)
+    PATCH: 트리거별 설정 수정. Body: { "configs": [ { "trigger": "...", "template_id": null|int, "enabled": bool, "message_mode": "sms"|"alimtalk"|"both" }, ... ] }
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def get(self, request):
+        tenant = request.tenant
+        configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
+        by_trigger = {c.trigger: c for c in configs}
+        # 모든 트리거에 대해 config 반환 (없으면 기본값)
+        triggers = [c[0] for c in AutoSendConfig.Trigger.choices]
+        result = []
+        for trigger in triggers:
+            c = by_trigger.get(trigger)
+            if c:
+                result.append(AutoSendConfigSerializer(c).data)
+            else:
+                result.append({
+                    "id": None,
+                    "trigger": trigger,
+                    "template": None,
+                    "template_name": "",
+                    "template_solapi_status": "",
+                    "enabled": False,
+                    "message_mode": "sms",
+                    "created_at": None,
+                    "updated_at": None,
+                })
+        return Response(result)
+
+    def patch(self, request):
+        tenant = request.tenant
+        configs_data = request.data.get("configs") or []
+        if not isinstance(configs_data, list):
+            return Response(
+                {"detail": "configs는 배열이어야 합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for item in configs_data:
+            trigger = (item.get("trigger") or "").strip()
+            if not trigger or trigger not in dict(AutoSendConfig.Trigger.choices):
+                continue
+            template_id = item.get("template_id")
+            enabled = item.get("enabled", False)
+            message_mode = (item.get("message_mode") or "sms").strip().lower()
+            if message_mode not in ("sms", "alimtalk", "both"):
+                message_mode = "sms"
+
+            config, _ = AutoSendConfig.objects.get_or_create(
+                tenant=tenant,
+                trigger=trigger,
+                defaults={"enabled": False, "message_mode": "sms"},
+            )
+            if template_id is not None:
+                t = MessageTemplate.objects.filter(
+                    tenant=tenant, pk=template_id
+                ).first()
+                config.template = t
+            config.enabled = enabled
+            config.message_mode = message_mode
+            config.save()
+
+        configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
+        return Response([AutoSendConfigSerializer(c).data for c in configs])
