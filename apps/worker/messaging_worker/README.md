@@ -1,6 +1,6 @@
 # Messaging Worker (SQS + Solapi)
 
-SQS `academy-messaging-jobs` 수신 → 알림톡 우선 시도 → 실패 시 SMS 폴백. 예약 취소 시 발송 직전 Double Check로 스킵.
+SQS `academy-messaging-jobs` 수신 → message_mode에 따라 SMS만/알림톡만/알림톡→SMS폴백. 예약 취소 시 발송 직전 Double Check로 스킵.
 
 ---
 
