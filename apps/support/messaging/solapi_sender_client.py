@@ -60,7 +60,7 @@ def get_active_sender_numbers(api_key: str, api_secret: str) -> list[str]:
             if n and len(n) >= 10:
                 numbers.append(n)
         elif isinstance(item, dict):
-            for key in ("phoneNumber", "number", "senderId", "phone_number"):
+            for key in ("phoneNumber", "number", "senderId", "phone_number", "senderNumber"):
                 val = item.get(key)
                 if val:
                     n = _normalize_phone(str(val))
