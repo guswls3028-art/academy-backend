@@ -23,9 +23,9 @@ param(
     [switch]$SkipBuild = $false,
     [switch]$WorkersViaASG = $false,             # if true, workers via ASG instance refresh only (no SSH to fixed EC2)
     [switch]$StartStoppedInstances = $true,
-    [switch]$NoCache = $false,                   # true면 --no-cache로 빌드 (설정 파일 수정 시 사용)
+    [switch]$NoCache = $false,                   # if true, docker build with --no-cache (e.g. after config change)
     [ValidateSet("all", "api", "video", "ai", "messaging", "workers")]
-    [string]$DeployTarget = "all"               # all=API+3워커, api/video/ai/messaging=해당 1종만, workers=워커 3종만
+    [string]$DeployTarget = "all"               # all=API+3 workers; api|video|ai|messaging=that one only; workers=all 3 workers
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,7 +46,7 @@ if (-not $SkipBuild) {
 $ECR = "${AccountId}.dkr.ecr.${Region}.amazonaws.com"
 $EC2_USER = "ec2-user"
 
-# deploy.ps1 과 동일
+# same as deploy.ps1
 $INSTANCE_KEYS = @{
     "academy-api"                = "backend-api-key.pem"
     "academy-messaging-worker"   = "message-key.pem"
@@ -105,7 +105,7 @@ function Deploy-One {
     return $false
 }
 
-# ---------- 1) 빌드 인스턴스: 기존 academy-build-arm64 재사용 또는 새로 생성 → 빌드 → 중지(캐시 유지) ----------
+# ---------- 1) Build instance: reuse or create academy-build-arm64 -> build -> leave running ----------
 $buildInstanceId = $null
 if (-not $SkipBuild) {
     if (-not $GitRepoUrl) {
@@ -114,7 +114,7 @@ if (-not $SkipBuild) {
     }
     Write-Host "`n=== 1/3 Build instance start & build/ECR push (cache reuse) ===`n" -ForegroundColor Cyan
 
-    # 기존 academy-build-arm64 인스턴스 찾기 (running 또는 stopped)
+    # find existing academy-build-arm64 (running or stopped)
     $existing = aws ec2 describe-instances --region $Region `
         --filters "Name=tag:Name,Values=academy-build-arm64" "Name=instance-state-name,Values=running,stopped" `
         --query "Reservations[].Instances[].[InstanceId,State.Name]" --output text 2>&1
@@ -180,7 +180,7 @@ echo 'Build instance ready'
         exit 1
     }
     Start-Sleep -Seconds 15
-    # 빌드: git pull 후 캐시 활용 빌드 (설정 파일만 변경 시 -NoCache 사용)
+    # build: git pull then cache build (use -NoCache when config/deps change)
     $noCacheFlag = if ($NoCache) { "--no-cache" } else { "" }
     $buildScript = @"
 set -e
