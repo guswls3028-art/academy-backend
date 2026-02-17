@@ -299,10 +299,16 @@ class ExcelParsingService:
 
             from apps.domains.students.services import bulk_create_students_from_excel_rows
 
+            def _row_progress(current: int, total: int) -> None:
+                if on_progress and total > 0:
+                    percent = min(95, 40 + int(55 * current / total))
+                    on_progress("creating", percent)
+
             result = bulk_create_students_from_excel_rows(
                 tenant_id=int(tenant_id),
                 students_data=rows,
                 initial_password=initial_password,
+                on_row_progress=_row_progress if on_progress else None,
             )
             return result
         finally:
