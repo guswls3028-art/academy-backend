@@ -86,6 +86,20 @@ class VideoSerializer(serializers.ModelSerializer):
     # helpers
     # ---------------------------
 
+    def get_encoding_progress(self, obj):
+        """PROCESSING 상태일 때만 Redis에서 진행률 조회 (0..100 또는 null)."""
+        if obj.status != getattr(obj, "Status", None) or getattr(obj.Status, "PROCESSING", None) is None:
+            try:
+                proc = getattr(obj, "Status", None)
+                if proc and getattr(proc, "PROCESSING", None) is not None and obj.status != proc.PROCESSING:
+                    return None
+            except Exception:
+                pass
+        if str(getattr(obj, "status", "")) != "PROCESSING":
+            return None
+        pct = get_video_encoding_progress(int(obj.id))
+        return pct if pct is not None else None
+
     def get_source_type(self, obj):
         return "s3" if obj.file_key else "unknown"
 
