@@ -1,7 +1,8 @@
-# docs_cursor — Cursor 작업용 SSOT
+# docs_cursor — Cursor 작업용 SSOT (참고용)
 
-이 폴더는 **Cursor(AI)가 이 저장소에서 작업할 때** 문서만 읽어도 필요한 정보를 얻을 수 있도록 정리한 문서 모음입니다.  
-추측·가정 없이 **실제 코드·설정 기준**으로만 기술합니다.
+> **신규 문서 작성 위치**: 이 폴더가 아님. **docs/SSOT_MMDD/cursor_only/** 에만 새 문서를 만들 것. (MMDD = 오늘 날짜 4자리. 규칙: `.cursor/rules/ssot-folder-structure.mdc`)
+
+이 폴더는 기존 문서 참고용입니다. Cursor(AI)가 작업할 때 읽을 수 있도록 정리된 문서 모음이며, 추측·가정 없이 **실제 코드·설정 기준**으로만 기술합니다.
 
 ## 문서 목록 (읽는 순서 권장)
 
