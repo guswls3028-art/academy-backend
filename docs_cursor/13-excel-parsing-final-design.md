@@ -108,9 +108,15 @@ parent_phone 확정
 - rule_confidence < 0.9
 - 0.6 ≤ rule_confidence
 
+### 복수 후보 처리 (강제)
+
+- phone_candidate가 2개 이상일 경우 **전체 후보를 AI에 동시 전달**
+- AI는 반드시 **하나의 parent_phone_col_index만** 반환해야 함
+- AI가 null 반환 또는 confidence < 0.8 → **업로드 실패**
+
 ### AI 입력
 
-- header, 샘플 값 최대 5개
+- header, 샘플 값 최대 5개 (후보 컬럼별)
 - 전화번호 반드시 마스킹 — **포맷 다양성 유지**
   - `010-1234-5678` → `010-****-5678`
   - `01012345678` → `010****5678`
