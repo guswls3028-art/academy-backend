@@ -61,7 +61,12 @@ Base path: `/api/v1/staffs/` (ROOT_URLCONF에서 prefix).
 - **표시 소스**: 목록 상단 "대표" 행은 **Staff 테이블이 아님**. `_owner_display_for_tenant(tenant, request)` 결과로 채움.
 - **우선순위**: (1) TenantMembership(tenant, role=owner, is_active=True) → (2) tenant.owner_name → (3) 현재 요청 사용자가 해당 테넌트 owner → (4) 현재 사용자가 Django is_superuser 또는 is_staff(개발자용).
 - **로컬(9999)에서만 보이는 이유**: 같은 계정이 로컬에서만 `is_staff`/`is_superuser`이면 (4) 폴백으로 표시됨. 1번(운영)에서는 보통 is_staff=False라 (4) 미적용.
-- **해결**: 1번 테넌트에 **Owner 멤버십**이 있어야 함. 서버에서 실행:
+- **해결**: 해당 테넌트에 **Owner 멤버십**이 있어야 함. 서버에서 실행:
   - `python manage.py list_tenant_owners hakwonplus` → owner 수 확인 (0이면 원인).
   - `python manage.py ensure_tenant_owner hakwonplus --username=로그인아이디` (기존 유저를 오너로 등록).
   - 유저 없으면: `python manage.py ensure_tenant_owner hakwonplus --username=원장아이디 --password=비밀번호 --name=원장이름`
+
+**1번(개발자용) vs 2·3·4번(실제 이용자) 동일 조건**: 로직은 테넌트 ID/코드에 따라 분기하지 않음. `request.tenant` 기준으로만 동작하므로, 2·3·4번도 같은 방식으로 확인·등록하면 됨.
+- **전체 테넌트 owner 현황 한 번에 확인**: `python manage.py list_tenant_owners` (인자 없음) → 활성 테넌트별로 owner 유무 출력.
+- **2·3·4번 각각 확인**: `python manage.py list_tenant_owners tchul`, `list_tenant_owners limglish`, `list_tenant_owners ymath`.
+- **2·3·4번 오너 등록**: `python manage.py ensure_tenant_owner tchul --username=...` (코드만 hakwonplus → tchul/limglish/ymath 로 변경).
