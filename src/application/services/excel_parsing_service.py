@@ -240,7 +240,8 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
             "high_school_class": _cell_str(row, col.get("school_class")),
         })
 
-    return result
+    lecture_title = _extract_lecture_title(rows, header_idx)
+    return result, lecture_title
 
 
 class ExcelParsingService:
