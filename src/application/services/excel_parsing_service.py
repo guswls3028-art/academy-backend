@@ -15,6 +15,11 @@ from src.application.ports.storage import IObjectStorage
 
 logger = logging.getLogger(__name__)
 
+
+class ExcelValidationError(ValueError):
+    """학부모 전화 필수 검증 등 엑셀 파싱 검증 실패 시 (Fail-Fast)."""
+
+
 # 헤더 별칭 (학원별 양식 대응 — 양식 안 맞춰도 인식되도록 넓게)
 # 완전 일치 + 부분 포함(contains) 둘 다 시도
 HEADER_ALIASES: dict[str, tuple[str, ...]] = {
