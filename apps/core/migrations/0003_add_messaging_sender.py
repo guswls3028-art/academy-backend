@@ -6,13 +6,13 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0002_user_tenant_username_per_tenant'),
+        ("core", "0002_user_tenant_username_per_tenant"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='tenant',
-            name='messaging_sender',
-            field=models.CharField(blank=True, default='', max_length=20),
+            model_name="tenant",
+            name="messaging_sender",
+            field=models.CharField(blank=True, default="", max_length=20),
         ),
     ]
