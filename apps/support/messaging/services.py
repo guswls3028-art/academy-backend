@@ -190,38 +190,117 @@ def send_welcome_messages(
     site_url: str = "",
 ):
     """
-    가입 성공 메시지 일괄 발송 (학생 + 학부모)
+    가입 성공 메시지 일괄 발송 (학생 + 학부모).
 
-    - 학생용: 홈페이지 링크 + 학생이름, 학생ID, 학생비번
-    - 학부모용: 홈페이지 링크 + 학부모ID(학부모폰번호), 학부모비번, 학생이름, 아이디, 비번
-
-    현재는 스텁: 로깅만. 실제 SMS 연동 시 여기서 구현.
+    자동발송 설정(student_signup)이 활성화되어 있고 템플릿이 있으면 enqueue_sms로 발송.
+    없으면 로깅만 (기존 스텁 동작).
     """
     parent_password_by_phone = parent_password_by_phone or {}
     sent = 0
 
-    for student in created_students:
-        name = getattr(student, "name", "")
-        ps_number = getattr(student, "ps_number", "")
-        parent_phone = getattr(student, "parent_phone", "")
+    if not created_students:
+        return {"status": "skip", "enqueued": 0}
 
-        # 학생용 메시지
-        student_msg = (
-            f"[가입 완료]\n{site_url}\n"
-            f"학생이름: {name}\n학생 ID: {ps_number}\n학생 비번: {student_password}"
-        )
-        logger.info("send_welcome (student) %s: %s", parent_phone or "no-phone", student_msg[:80])
-        sent += 1
+    from apps.support.messaging.selectors import get_auto_send_config
 
-        # 학부모용 메시지 (학부모 전화번호가 있으면)
-        if parent_phone:
-            pwd = parent_password_by_phone.get(parent_phone, student_password)
-            parent_msg = (
-                f"[가입 완료]\n{site_url}\n"
-                f"학부모 ID: {parent_phone}\n학부모 비번: {pwd}\n"
-                f"학생이름: {name}\n아이디: {ps_number}\n비번: {student_password}"
-            )
-            logger.info("send_welcome (parent) %s: %s", parent_phone, parent_msg[:80])
+    tenant_id = getattr(created_students[0], "tenant_id", None) or (
+        getattr(created_students[0].tenant, "id", None) if hasattr(created_students[0], "tenant") else None
+    )
+    if not tenant_id:
+        logger.warning("send_welcome: no tenant_id, skip")
+        return {"status": "skip", "enqueued": 0}
+
+    config = get_auto_send_config(tenant_id, "student_signup")
+    if not config or not config.enabled or not config.template:
+        for student in created_students:
+            name = getattr(student, "name", "")
+            logger.info("send_welcome (stub) student=%s", name)
             sent += 1
+        return {"status": "stub", "logged": sent}
 
-    return {"status": "stub", "logged": sent}
+    t = config.template
+    body = (t.body or "").strip()
+    subject = (t.subject or "").strip()
+    solapi_id = (t.solapi_template_id or "").strip()
+    use_alimtalk = config.message_mode in ("alimtalk", "both") and solapi_id and t.solapi_status == "APPROVED"
+
+    for student in created_students:
+        name = (getattr(student, "name", "") or "").strip()
+        ps_number = (getattr(student, "ps_number", "") or "").strip()
+        phone = (getattr(student, "phone", "") or "").replace("-", "").strip()
+        parent_phone = (getattr(student, "parent_phone", "") or "").replace("-", "").strip()
+        name_2 = name[:2] if len(name) >= 2 else name
+        name_3 = name[:3] if len(name) >= 3 else name
+
+        # 학생용
+        if phone and len(phone) >= 10:
+            text = (
+                body.replace("#{student_name_2}", name_2)
+                .replace("#{student_name_3}", name_3)
+                .replace("#{site_link}", site_url)
+                .replace("#{student_id}", ps_number)
+                .replace("#{student_password}", student_password)
+            )
+            if subject:
+                text = subject.strip() + "\n" + text
+            alimtalk_replacements = None
+            template_id_solapi = None
+            if use_alimtalk:
+                template_id_solapi = solapi_id
+                alimtalk_replacements = [
+                    {"key": "student_name_2", "value": name_2},
+                    {"key": "student_name_3", "value": name_3},
+                    {"key": "site_link", "value": site_url},
+                    {"key": "student_id", "value": ps_number},
+                    {"key": "student_password", "value": student_password},
+                ]
+            ok = enqueue_sms(
+                tenant_id=tenant_id,
+                to=phone,
+                text=text,
+                message_mode=config.message_mode,
+                template_id=template_id_solapi,
+                alimtalk_replacements=alimtalk_replacements,
+            )
+            if ok:
+                sent += 1
+
+        # 학부모용
+        if parent_phone and len(parent_phone) >= 10:
+            pwd = parent_password_by_phone.get(parent_phone, student_password)
+            text = (
+                body.replace("#{student_name_2}", name_2)
+                .replace("#{student_name_3}", name_3)
+                .replace("#{site_link}", site_url)
+                .replace("#{student_id}", ps_number)
+                .replace("#{student_password}", student_password)
+                .replace("#{parent_password}", pwd)
+                .replace("#{parent_id}", parent_phone)
+            )
+            if subject:
+                text = subject.strip() + "\n" + text
+            alimtalk_replacements = None
+            template_id_solapi = None
+            if use_alimtalk:
+                template_id_solapi = solapi_id
+                alimtalk_replacements = [
+                    {"key": "student_name_2", "value": name_2},
+                    {"key": "student_name_3", "value": name_3},
+                    {"key": "site_link", "value": site_url},
+                    {"key": "student_id", "value": ps_number},
+                    {"key": "student_password", "value": student_password},
+                    {"key": "parent_password", "value": pwd},
+                    {"key": "parent_id", "value": parent_phone},
+                ]
+            ok = enqueue_sms(
+                tenant_id=tenant_id,
+                to=parent_phone,
+                text=text,
+                message_mode=config.message_mode,
+                template_id=template_id_solapi,
+                alimtalk_replacements=alimtalk_replacements,
+            )
+            if ok:
+                sent += 1
+
+    return {"status": "enqueued", "enqueued": sent}
