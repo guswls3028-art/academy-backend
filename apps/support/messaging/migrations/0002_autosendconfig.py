@@ -67,11 +67,8 @@ class Migration(migrations.Migration):
                 "verbose_name_plural": "Auto-send configs",
             },
         ),
-        migrations.AddConstraint(
-            model_name="autosendconfig",
-            constraint=models.UniqueConstraint(
-                fields=("tenant", "trigger"),
-                name="messaging_autosendconfig_tenant_trigger_unique",
-            ),
+        migrations.AlterUniqueTogether(
+            name="autosendconfig",
+            unique_together={("tenant", "trigger")},
         ),
     ]
