@@ -26,7 +26,7 @@ tenant 미해결 허용 경로:
 - **CORS_ALLOWED_ORIGINS** (base):  
   `http://localhost:5173`, `http://localhost:5174`, `https://hakwonplus.com`, `https://www.hakwonplus.com`, `https://academy-frontend.pages.dev`, `https://limglish.kr`, `https://www.limglish.kr`, `https://tchul.com`, `https://www.tchul.com`, `https://ymath.co.kr`, `https://www.ymath.co.kr`, `https://dev-web.hakwonplus.com`.
 - **prod**: 위와 유사, localhost 5173 제외, `http://localhost:5174` 포함(배포 API + 로컬 프론트용).
-- **CORS_ALLOW_HEADERS**: default_headers + `X-Client-Version`, `X-Client`.
+- **CORS_ALLOW_HEADERS**: default_headers + `X-Client-Version`, `X-Client`, `X-Tenant-Code`.
 
 ---
 
