@@ -104,13 +104,15 @@ $ltAiFile = Join-Path $RepoRoot "lt_ai_data.json"
 [System.IO.File]::WriteAllText($ltAiFile, $ltAiJson.Trim(), $utf8NoBom)
 $ltAiPath = "file://$($ltAiFile -replace '\\','/' -replace ' ', '%20')"
 $ltAiExists = $false
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 try { aws ec2 describe-launch-templates --launch-template-names $LtAiName --region $Region 2>$null | Out-Null; $ltAiExists = $true } catch {}
 if (-not $ltAiExists) {
-    aws ec2 create-launch-template --launch-template-name $LtAiName --version-description "ASG AI worker" --launch-template-data $ltAiPath --region $Region | Out-Null
+    aws ec2 create-launch-template --launch-template-name $LtAiName --version-description "ASG AI worker" --launch-template-data $ltAiPath --region $Region 2>$null | Out-Null
 } else {
     $newVer = aws ec2 create-launch-template-version --launch-template-name $LtAiName --launch-template-data $ltAiPath --region $Region --query "LaunchTemplateVersion.VersionNumber" --output text 2>$null
-    if ($newVer) { aws ec2 modify-launch-template --launch-template-name $LtAiName --default-version $newVer --region $Region | Out-Null }
+    if ($newVer) { aws ec2 modify-launch-template --launch-template-name $LtAiName --default-version $newVer --region $Region 2>$null | Out-Null }
 }
+$ErrorActionPreference = $ea
 Remove-Item $ltAiFile -Force -ErrorAction SilentlyContinue
 
 # ------------------------------------------------------------------------------
