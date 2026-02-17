@@ -285,7 +285,8 @@ if ($deployWorkers) {
                 Write-Host "  $asgName - ASG not found or error: $asgCheck" -ForegroundColor Yellow
                 continue
             }
-            $refreshOut = aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName 2>&1 | Out-String
+            # cmd /c prevents PowerShell from treating aws stderr as terminating error
+            $refreshOut = cmd /c "aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName 2>&1"
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "  $asgName instance refresh started" -ForegroundColor Green
             } else {
