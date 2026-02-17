@@ -311,6 +311,17 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
         student_phone_raw = _to_raw_phone(_cell_str(row, student_col))
         parent_phone_raw = _to_raw_phone(_cell_str(row, parent_col))
 
+        if not _validate_parent_phone(parent_phone_raw):
+            raise ExcelValidationError(
+                f"{r + 2}행: 학부모 전화번호가 없거나 형식이 잘못되었습니다(010 10~11자리)."
+            )
+
+        if not name and not student_phone_raw and not parent_phone_raw:
+            continue
+
+        if not _row_looks_like_student(name, parent_phone_raw, student_phone_raw):
+            continue
+
         if len(student_phone_raw) == 8 and student_phone_raw.isdigit():
             student_phone = "010" + student_phone_raw
             uses_identifier = True
@@ -318,20 +329,10 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
             student_phone = student_phone_raw
             uses_identifier = False
         else:
-            if not parent_phone_raw or len(parent_phone_raw) != 11 or not parent_phone_raw.startswith("010"):
-                if not name:
-                    continue
             student_phone = ""
             uses_identifier = True
 
-        if not parent_phone_raw or len(parent_phone_raw) != 11 or not parent_phone_raw.startswith("010"):
-            parent_phone_raw = student_phone if student_phone else ""
-
-        if not name and not student_phone_raw and not parent_phone_raw:
-            continue
-
-        if not _row_looks_like_student(name, parent_phone_raw, student_phone_raw):
-            continue
+        parent_final = parent_phone_raw if len(parent_phone_raw) >= 10 else "010" + parent_phone_raw
 
         school_cell = _cell_str(row, school_col)
         grade_cell = _cell_str(row, grade_col)
