@@ -313,11 +313,6 @@ class StaffViewSet(viewsets.ModelViewSet):
         wr_qs = WorkRecord.objects.filter(
             staff=staff, tenant=staff.tenant, date__gte=df, date__lte=dt
         )
-        er_qs = staff_repo.expense_record_queryset_staff_date_ym(
-            staff, df.year, df.month, status="APPROVED"
-        )
-        # 기간이 여러 달에 걸릴 수 있으므로 date 범위로 재필터
-        from django.db.models import Q
         er_qs = ExpenseRecord.objects.filter(
             staff=staff, tenant=staff.tenant,
             date__gte=df, date__lte=dt, status="APPROVED",
@@ -413,9 +408,25 @@ class WorkMonthLockViewSet(viewsets.ModelViewSet):
         return staff_repo.work_month_lock_queryset_tenant(self.request.tenant)
 
     def create(self, request, *args, **kwargs):
-        staff = staff_repo.staff_get(request.tenant, request.data.get("staff"))
-        year = int(request.data.get("year"))
-        month = int(request.data.get("month"))
+        staff_id = request.data.get("staff")
+        year_raw = request.data.get("year")
+        month_raw = request.data.get("month")
+        if staff_id is None:
+            raise ValidationError("staff는 필수입니다.")
+        if year_raw is None or month_raw is None:
+            raise ValidationError("year, month는 필수입니다.")
+        try:
+            year = int(year_raw)
+            month = int(month_raw)
+        except (TypeError, ValueError):
+            raise ValidationError("year, month는 숫자여야 합니다.")
+        if not (1 <= month <= 12):
+            raise ValidationError("month는 1~12 사이여야 합니다.")
+
+        try:
+            staff = staff_repo.staff_get(request.tenant, staff_id)
+        except Staff.DoesNotExist:
+            raise ValidationError("해당 직원을 찾을 수 없습니다.")
 
         obj, _ = staff_repo.work_month_lock_update_or_create_defaults(
             request.tenant,
