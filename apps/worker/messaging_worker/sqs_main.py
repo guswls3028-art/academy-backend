@@ -115,12 +115,27 @@ def send_one_sms(cfg, to: str, text: str, sender: str) -> dict:
         message = RequestMessage(from_=sender, to=to, text=text)
         response = client.send(message)
         group_id = getattr(getattr(response, "group_info", None), "group_id", None)
-        # 발송 로그 테이블이 있으면 group_id(및 messageId) 저장 권장 → "문자 안 왔어요" 민원 시 Solapi 콘솔 조회용
         logger.info("send_sms ok to=%s**** group_id=%s", to[:4], group_id)
         return {"status": "ok", "group_id": group_id}
     except Exception as e:
-        logger.exception("send_sms failed to=%s****", to[:4])
-        return {"status": "error", "reason": str(e)[:500]}
+        reason = str(e)[:500]
+        try:
+            from solapi.error.MessageNotReceiveError import MessageNotReceivedError
+            if isinstance(e, MessageNotReceivedError) and getattr(e, "failed_messages", None):
+                parts = []
+                for fm in e.failed_messages[:3]:  # 최대 3건
+                    status_code = getattr(fm, "status_code", "") or ""
+                    status_message = getattr(fm, "status_message", "") or ""
+                    parts.append(f"[{status_code}] {status_message}")
+                if parts:
+                    reason = "; ".join(parts)[:500]
+                    logger.warning(
+                        "send_sms MessageNotReceivedError to=%s**** status_code=%s status_message=%s",
+                        to[:4], status_code, status_message,
+                    )
+        except Exception:
+            logger.exception("send_sms failed to=%s****", to[:4])
+        return {"status": "error", "reason": reason}
 
 
 def main() -> int:
