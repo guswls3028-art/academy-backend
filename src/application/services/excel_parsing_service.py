@@ -330,7 +330,11 @@ def _ai_infer_parent_phone(
     if not candidates:
         return None, 0.0
     try:
-        return infer_parent_phone_column(candidates)
+        col, conf = infer_parent_phone_column(candidates)
+        valid_cols = {c["col_index"] for c in candidates}
+        if col is not None and col in valid_cols:
+            return col, conf
+        return None, conf
     except Exception as e:
         logger.warning("AI parent_phone infer failed: %s", e)
         return None, 0.0
