@@ -45,10 +45,17 @@ class MessagingInfoView(APIView):
         tenant = request.tenant
         ser = MessagingInfoUpdateSerializer(data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
-        pfid = ser.validated_data.get("kakao_pfid")
-        if pfid is not None:
-            tenant.kakao_pfid = (pfid or "").strip()
-            tenant.save(update_fields=["kakao_pfid"])
+        update_fields = []
+        if ser.validated_data.get("kakao_pfid") is not None:
+            tenant.kakao_pfid = (ser.validated_data["kakao_pfid"] or "").strip()
+            update_fields.append("kakao_pfid")
+        if ser.validated_data.get("messaging_sender") is not None:
+            tenant.messaging_sender = (
+                ser.validated_data["messaging_sender"] or ""
+            ).strip().replace("-", "")
+            update_fields.append("messaging_sender")
+        if update_fields:
+            tenant.save(update_fields=update_fields)
         serializer = MessagingInfoSerializer(tenant)
         data = serializer.data
         data["credit_balance"] = str(data["credit_balance"])
