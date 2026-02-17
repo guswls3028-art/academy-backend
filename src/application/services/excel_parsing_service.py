@@ -343,7 +343,7 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
 
         result.append({
             "name": name,
-            "parent_phone": parent_phone_raw or student_phone,
+            "parent_phone": parent_final,
             "phone": student_phone if student_phone else None,
             "studentPhone": student_phone if student_phone else None,
             "school": school,
