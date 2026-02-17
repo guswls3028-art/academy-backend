@@ -1,7 +1,7 @@
 # ==============================================================================
-# 500 스케일 워커 오토스케일 Lambda + EventBridge 배포
-# 전제: AWS CLI 설정됨, Lambda 실행 역할 존재(iam_policy_500.json 부여됨)
-# 실행: .\scripts\deploy_worker_autoscale.ps1 [-RoleArn <arn>] [-FunctionName <name>]
+# Worker autoscale Lambda + EventBridge deploy
+# Requires: AWS CLI configured, Lambda execution role (iam_policy_500.json)
+# Usage: .\scripts\deploy_worker_autoscale.ps1 [-RoleArn <arn>] [-FunctionName <name>]
 # ==============================================================================
 
 param(
@@ -21,7 +21,7 @@ if (-not (Test-Path (Join-Path $LambdaDir "lambda_function.py"))) {
     exit 1
 }
 
-# 1) Zip Lambda (lambda_function.py만)
+# 1) Zip Lambda (lambda_function.py only)
 Write-Host "[1/4] Creating zip..." -ForegroundColor Cyan
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
 Compress-Archive -Path (Join-Path $LambdaDir "lambda_function.py") -DestinationPath $ZipPath -Force
