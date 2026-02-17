@@ -29,7 +29,7 @@ urlpatterns = [
     # =========================
     # DRF Browsable API 로그인 (우측 상단 Log in)
     # =========================
-    path("api-auth/", include("rest_framework.urls", namespace="rest_framework")),
+    path("api-auth/", include("rest_framework.urls")),
 
     # =========================
     # API v1 (기존 구조 유지)
