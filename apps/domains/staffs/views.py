@@ -293,6 +293,52 @@ class StaffViewSet(viewsets.ModelViewSet):
 
         return Response(WorkRecordSerializer(record).data, status=201)
 
+    @action(detail=True, methods=["get"], url_path="summary")
+    def summary(self, request, pk=None):
+        """직원별 기간 집계. 쿼리: date_from, date_to (YYYY-MM-DD)."""
+        staff = self.get_object()
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+        if not date_from or not date_to:
+            raise ValidationError("date_from, date_to는 필수입니다.")
+        from datetime import datetime
+        try:
+            df = datetime.strptime(date_from, "%Y-%m-%d").date()
+            dt = datetime.strptime(date_to, "%Y-%m-%d").date()
+        except ValueError:
+            raise ValidationError("date_from, date_to는 YYYY-MM-DD 형식이어야 합니다.")
+        if df > dt:
+            raise ValidationError("date_from은 date_to 이전이어야 합니다.")
+
+        wr_qs = WorkRecord.objects.filter(
+            staff=staff, tenant=staff.tenant, date__gte=df, date__lte=dt
+        )
+        er_qs = staff_repo.expense_record_queryset_staff_date_ym(
+            staff, df.year, df.month, status="APPROVED"
+        )
+        # 기간이 여러 달에 걸릴 수 있으므로 date 범위로 재필터
+        from django.db.models import Q
+        er_qs = ExpenseRecord.objects.filter(
+            staff=staff, tenant=staff.tenant,
+            date__gte=df, date__lte=dt, status="APPROVED",
+        )
+
+        work_agg = wr_qs.aggregate(total_hours=Sum("work_hours"), total_amount=Sum("amount"))
+        expense_agg = er_qs.aggregate(total=Sum("amount"))
+
+        work_hours = float(work_agg["total_hours"] or 0)
+        work_amount = int(work_agg["total_amount"] or 0)
+        expense_amount = int(expense_agg["total"] or 0)
+        total_amount = work_amount + expense_amount
+
+        return Response({
+            "staff_id": staff.id,
+            "work_hours": work_hours,
+            "work_amount": work_amount,
+            "expense_amount": expense_amount,
+            "total_amount": total_amount,
+        })
+
 # ===========================
 # StaffWorkType
 # ===========================
