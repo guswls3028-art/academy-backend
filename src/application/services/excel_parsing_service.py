@@ -84,14 +84,58 @@ def _find_header_row(rows: list[list[Any]]) -> int:
 
 
 def _find_header_row_fallback(rows: list[list[Any]]) -> int:
-    """표준 헤더를 못 찾았을 때: 첫 번째 비어 있지 않은 행을 헤더로 시도 (이름 또는 전화만 있어도 인식)."""
-    for i, row in enumerate(rows[:10]):  # 상위 10행만 후보
+    """표준 헤더를 못 찾았을 때: 상위 10행 스캔, 이름/전화 컬럼 하나라도 있으면 헤더로 사용."""
+    for i, row in enumerate(rows[:10]):
         if not row:
             continue
         col = _build_header_map(row)
         if col.get("name") is not None or col.get("parent_phone") is not None or col.get("student_phone") is not None:
             return i
     return -1
+
+
+def _infer_missing_columns(
+    col: dict[str, int], header_row: list[Any], rows: list[list[Any]], header_idx: int
+) -> dict[str, int]:
+    """
+    필수 컬럼(name, parent_phone)이 없을 때, 샘플 데이터로 컬럼 추측.
+    - 010 11자리 패턴이 여러 행에 나오는 컬럼 → parent_phone 후보
+    - 2~4글자 한글(이름형)이 여러 행에 나오는 컬럼 → name 후보
+    """
+    import copy
+    out = dict(col)
+    sample = rows[header_idx + 1 : header_idx + 21]  # 최대 20행 샘플
+    if not sample:
+        return out
+
+    phone_col_candidates: list[tuple[int, int]] = []
+    name_col_candidates: list[tuple[int, int]] = []
+    korean_name = re.compile(r"^[가-힣]{2,4}[A-Za-z0-9]*\*?$")
+
+    for ci in range(max(len(r) for r in sample) if sample else 0):
+        phone_hits = 0
+        name_hits = 0
+        for row in sample:
+            if ci >= len(row):
+                continue
+            v = str(row[ci] or "").strip()
+            if re.match(r"^010[0-9]{8}$", _to_raw_phone(v)):
+                phone_hits += 1
+            if korean_name.match(v):
+                name_hits += 1
+        if phone_hits >= 2:
+            phone_col_candidates.append((ci, phone_hits))
+        if name_hits >= 2:
+            name_col_candidates.append((ci, name_hits))
+
+    if out.get("parent_phone") is None and phone_col_candidates:
+        phone_col_candidates.sort(key=lambda x: -x[1])
+        out["parent_phone"] = phone_col_candidates[0][0]
+    if out.get("name") is None and name_col_candidates:
+        name_col_candidates.sort(key=lambda x: -x[1])
+        out["name"] = name_col_candidates[0][0]
+
+    return out
 
 
 def _build_header_map(header_row: list[Any]) -> dict[str, int]:
