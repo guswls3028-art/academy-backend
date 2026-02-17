@@ -25,7 +25,7 @@ if ([string]::IsNullOrWhiteSpace($content)) {
 # file:// avoids shell interpretation of JSON (e.g. -----BEGIN)
 $fileUri = "file:///" + ($jsonPath -replace '\\', '/')
 $tier = if ($content.Length -gt 4096) { "Advanced" } else { "Standard" }
-aws ssm put-parameter --name $ParameterName --type SecureString --value "fileb://$jsonPath" --overwrite --tier $tier --region $Region
+aws ssm put-parameter --name $ParameterName --type SecureString --value $fileUri --overwrite --tier $tier --region $Region
 if ($LASTEXITCODE -eq 0) {
     Write-Host "SSM $ParameterName updated. AI Worker user_data will fetch this on boot." -ForegroundColor Green
     exit 0
