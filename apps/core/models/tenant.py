@@ -28,6 +28,8 @@ class Tenant(models.Model):
     # ---------- 메시징(알림톡) ----------
     # 학원 개별 카카오 프로필 ID (연동 시 저장)
     kakao_pfid = models.CharField(max_length=100, blank=True, default="")
+    # 학원별 SMS 발신번호 (솔라피에 등록·인증된 번호, 예: 01031217466)
+    messaging_sender = models.CharField(max_length=20, blank=True, default="")
     # 선불 충전 잔액 (원)
     credit_balance = models.DecimalField(
         max_digits=12, decimal_places=0, default=Decimal("0")
