@@ -24,10 +24,12 @@ $policyPath = Join-Path $PSScriptRoot "academy_deny_stop_instances.json"
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 [System.IO.File]::WriteAllText($policyPath, $denyPolicy, $utf8)
 
-$absPath = (Resolve-Path $policyPath).Path -replace '\\', '/'
-$fileUri = "file:///$absPath"
-
-aws iam put-role-policy --role-name $roleName --policy-name $DenyPolicyName --policy-document $fileUri
+Push-Location $PSScriptRoot
+try {
+    aws iam put-role-policy --role-name $roleName --policy-name $DenyPolicyName --policy-document "file://academy_deny_stop_instances.json"
+} finally {
+    Pop-Location
+}
 $ok = $LASTEXITCODE -eq 0
 Remove-Item $policyPath -Force -ErrorAction SilentlyContinue
 
