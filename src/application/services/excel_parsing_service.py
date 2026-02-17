@@ -110,22 +110,37 @@ _PARENT_KEYWORDS = ("부모", "학부모", "보호자", "guardian")
 _STUDENT_KEYWORDS = ("학생",)
 
 
+def _duplicate_ratio(values: list[str]) -> float:
+    """전화 컬럼 내 중복 비율. 1 - (unique수/전체수). 부모 전화는 형제로 인해 중복될 가능성 높음."""
+    non_empty = [v for v in values if v and _validate_parent_phone(v)]
+    if len(non_empty) < 2:
+        return 0.0
+    unique_count = len(set(_to_raw_phone(v) for v in non_empty))
+    return 1.0 - (unique_count / len(non_empty))
+
+
 def _rule_guess_parent_score(header: str, values: list[str]) -> float:
     """
     Rule 기반 parent_phone 컬럼 점수. 0~1.
     - parent 키워드 포함 +0.6, student 키워드 -0.5
     - phone_ratio(010 10~11자리 비율) * 0.7
+    - 헤더에 부모/학생 키워드가 둘 다 없을 때: 중복도(duplicate_ratio) 가산 — 부모 전화는 형제로 인해 중복 가능성 높음
     """
     h = (header or "").replace(" ", "").lower()
+    has_parent_kw = any(k in h for k in _PARENT_KEYWORDS)
+    has_student_kw = any(k in h for k in _STUDENT_KEYWORDS)
     score = 0.0
-    if any(k in h for k in _PARENT_KEYWORDS):
+    if has_parent_kw:
         score += 0.6
-    if any(k in h for k in _STUDENT_KEYWORDS):
+    if has_student_kw:
         score -= 0.5
     non_empty = [v for v in values if v]
     if non_empty:
         phone_ok = sum(1 for v in non_empty if _validate_parent_phone(v))
         score += (phone_ok / len(non_empty)) * 0.7
+    if not has_parent_kw and not has_student_kw and non_empty:
+        dup_ratio = _duplicate_ratio(values)
+        score += dup_ratio * 0.3
     return max(0.0, min(1.0, score))
 
 
@@ -223,11 +238,17 @@ def _to_raw_phone(v: str) -> str:
 
 
 def _mask_phone_for_ai(v: str) -> str:
-    """01012345678 → 010****5678 (AI 전송 시 PII 보호)."""
+    """
+    전화번호 마스킹 (AI 전송 시 PII 보호). 포맷 다양성 유지.
+    010-1234-5678 → 010-****-5678, 01012345678 → 010****5678, 010.1234.5678 → 010.****.5678
+    """
     raw = _to_raw_phone(v)
-    if len(raw) >= 7 and raw.startswith("010"):
-        return raw[:3] + "****" + raw[-4:]
-    return "***"
+    if len(raw) < 7 or not raw.startswith("010"):
+        return "***"
+    m = re.search(r"010(\D*)(\d{3,4})(\D*)(\d{4})(?:\D|$)", v)
+    if m:
+        return "010" + m.group(1) + "****" + m.group(3) + m.group(4)
+    return raw[:3] + "****" + raw[-4:]
 
 
 def _validate_parent_phone(raw: str) -> bool:
