@@ -27,6 +27,11 @@ urlpatterns = [
     path("api/v1/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 
     # =========================
+    # DRF Browsable API 로그인 (우측 상단 Log in)
+    # =========================
+    path("api-auth/", include("rest_framework.urls", namespace="rest_framework")),
+
+    # =========================
     # API v1 (기존 구조 유지)
     # =========================
     path("api/v1/", include("apps.api.v1.urls")),
