@@ -201,6 +201,14 @@ def _to_raw_phone(v: str) -> str:
     return re.sub(r"\D", "", v)
 
 
+def _mask_phone_for_ai(v: str) -> str:
+    """01012345678 → 010****5678 (AI 전송 시 PII 보호)."""
+    raw = _to_raw_phone(v)
+    if len(raw) >= 7 and raw.startswith("010"):
+        return raw[:3] + "****" + raw[-4:]
+    return "***"
+
+
 def _validate_parent_phone(raw: str) -> bool:
     """010 10~11자리 형식인지 검사. parent_phone 필수 검증용."""
     p = _to_raw_phone(raw)
