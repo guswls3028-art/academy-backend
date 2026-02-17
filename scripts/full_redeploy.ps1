@@ -2,18 +2,19 @@
 # API + 워커 재배포: 빌드(선택) → ECR 푸시 → API/워커 배포
 # 전제: 루트 또는 배포 권한 액세스 키, C:\key\*.pem (EC2 SSH용), 빌드 시 -GitRepoUrl
 #
-# DeployTarget: all(기본) | api | video | ai | messaging | workers
+# --- 현재 기본 워크플로우 (ASG 워커) ---
+# 풀배포: .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -WorkersViaASG
+# 워커만 리프레시: 위에 -SkipBuild 추가
+# 노캐시 빌드: -NoCache 추가
 #
-# --- Git 푸시 후 한 방 재배포 (6종) ---
-# 1) API만:     cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -DeployTarget api
-# 2) Video만:   cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -DeployTarget video
-# 3) AI만:      cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -DeployTarget ai
-# 4) Messaging만: cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -DeployTarget messaging
-# 5) 전부(API+3워커): cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git"
-# 6) 워커만(3종): cd C:\academy; .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -DeployTarget workers
+# --- DeployTarget: all(기본) | api | video | ai | messaging | workers ---
+# 1) API만:     -DeployTarget api
+# 2) Video만:   -DeployTarget video
+# 3) AI만:      -DeployTarget ai
+# 4) Messaging만: -DeployTarget messaging
+# 5) 워커만(3종): -DeployTarget workers
 #
-# 빌드 생략(ECR 이미지 그대로 배포만): 위 명령에 -SkipBuild 추가
-# 워커 ASG 리프레시만: -WorkersViaASG
+# Worker self-stop 루프 발생 시: .\scripts\remove_ec2_stop_from_worker_role.ps1 (docs_cursor/11-worker-self-stop-root-cause.md)
 # ==============================================================================
 
 param(
