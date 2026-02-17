@@ -453,7 +453,7 @@ class AutoSendConfigView(APIView):
                 trigger=trigger,
                 defaults={"enabled": False, "message_mode": "sms"},
             )
-            if template_id is not None and template_id != "":
+            if template_id:
                 t = MessageTemplate.objects.filter(
                     tenant=tenant, pk=int(template_id)
                 ).first()
