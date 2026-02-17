@@ -18,10 +18,20 @@ if (-not $roleName) {
 Write-Host "Role: $roleName" -ForegroundColor Green
 
 Write-Host "`n=== STEP 2: ec2:StopInstances Deny 정책 추가 ===" -ForegroundColor Cyan
-$denyPolicy = '{"Version":"2012-10-17","Statement":[{"Sid":"DenyStopInstances","Effect":"Deny","Action":"ec2:StopInstances","Resource":"*"}]}'
+$denyPolicy = '{"Version":"2012-10-17","Statement":[{"Sid":"DenyStopInstances","Effect":"Deny","Action":"ec2:StopInstances","Resource":["*"]}]}'
 
-aws iam put-role-policy --role-name $roleName --policy-name $DenyPolicyName --policy-document $denyPolicy
-if ($LASTEXITCODE -ne 0) {
+$policyPath = Join-Path $PSScriptRoot "academy_deny_stop_instances.json"
+$utf8 = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText($policyPath, $denyPolicy, $utf8)
+
+$absPath = (Resolve-Path $policyPath).Path -replace '\\', '/'
+$fileUri = "file:///$absPath"
+
+aws iam put-role-policy --role-name $roleName --policy-name $DenyPolicyName --policy-document $fileUri
+$ok = $LASTEXITCODE -eq 0
+Remove-Item $policyPath -Force -ErrorAction SilentlyContinue
+
+if (-not $ok) {
     Write-Host "FAILED. IAM put-role-policy 권한 확인." -ForegroundColor Red
     exit 1
 }
