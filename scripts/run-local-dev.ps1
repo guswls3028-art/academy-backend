@@ -64,7 +64,7 @@ Write-Host ""
 Write-Host "--- Output (Backend + Frontend) ---" -ForegroundColor Gray
 Write-Host ""
 
-# 두 Job의 출력을 실시간으로 표시
+# Show both Job outputs in real time
 try {
     $jobs = @($backendJob, $frontendJob)
     $running = $true
@@ -95,7 +95,7 @@ try {
     Write-Host ""
     Write-Host "Error occurred: $_" -ForegroundColor Red
 } finally {
-    # 모든 Job 종료
+    # Stop all Jobs
     Write-Host ""
     Write-Host "Stopping servers..." -ForegroundColor Red
     Stop-Job -Job $backendJob, $frontendJob -ErrorAction SilentlyContinue
