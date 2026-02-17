@@ -22,15 +22,16 @@ if ([string]::IsNullOrWhiteSpace($content)) {
     exit 1
 }
 
-# file:// with temp copy: AWS CLI on Windows has issues with absolute file:// paths
-$tempDir = [System.IO.Path]::GetTempPath()
-$tempFile = Join-Path $tempDir "academy-google-vision-upload.json"
+# file:// with temp copy: AWS CLI on Windows needs simple path; use repo root
+$repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$tempFile = Join-Path $repoRoot "temp_google_vision_upload.json"
 $content | Set-Content -LiteralPath $tempFile -Encoding UTF8 -NoNewline
 try {
+    Push-Location $repoRoot
     $tier = if ($content.Length -gt 4096) { "Advanced" } else { "Standard" }
-    $fileUri = "file://" + ($tempFile -replace '\\', '/')
-    aws ssm put-parameter --name $ParameterName --type SecureString --value $fileUri --overwrite --tier $tier --region $Region
+    aws ssm put-parameter --name $ParameterName --type SecureString --value "file://temp_google_vision_upload.json" --overwrite --tier $tier --region $Region
 } finally {
+    Pop-Location
     Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
 }
 if ($LASTEXITCODE -eq 0) {
