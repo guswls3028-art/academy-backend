@@ -366,7 +366,7 @@ if ($UploadEnvToSsm) {
 }
 
 # ------------------------------------------------------------------------------
-# 선택) EC2 역할에 SSM+ECR 인라인 정책 첨부
+# Optional: attach SSM+ECR inline policy to EC2 role
 # ------------------------------------------------------------------------------
 $ec2PolicyPath = Join-Path $AsgInfra "iam_policy_ec2_worker.json"
 if ($AttachEc2Policy -and (Test-Path $ec2PolicyPath)) {
