@@ -16,4 +16,5 @@ urlpatterns = [
         views.MessageTemplateSubmitReviewView.as_view(),
         name="messaging-template-submit-review",
     ),
+    path("auto-send/", views.AutoSendConfigView.as_view(), name="messaging-auto-send"),
 ]
