@@ -1,22 +1,16 @@
 # ==============================================================================
-# API 서버에서 git pull 후 빌드·재시작 (코드 수정 반영)
+# API server: git pull -> build -> restart (apply code changes)
 #
-# 흐름: 로컬에서 코드 수정 → git push 까지는 본인이 하고,
-#       이 스크립트 실행 → API 서버가 git pull → docker build → API 재시작
+# Flow: you do code change -> git push; then run this -> API server git pull -> docker build -> API restart
 #
-# 전제:
-#   - API 서버(academy-api EC2)에 repo가 이미 clone 되어 있음.
-#     없으면 한 번 수동으로 clone 하거나, 아래 -RepoPath 경로에 clone 해둠.
-#   - 해당 경로에 .env 있음 (또는 -EnvPath 로 .env 위치 지정)
-#   - C:\key\backend-api-key.pem (API EC2 SSH용)
+# Requires:
+#   - Repo already cloned on API server (academy-api EC2). If not, clone manually or set -RepoPath.
+#   - .env at that path (or -EnvPath)
+#   - C:\key\backend-api-key.pem (API EC2 SSH)
 #
-# 사용:
-#   cd C:\academy
-#   .\scripts\deploy_api_git_pull.ps1
+# Usage: cd C:\academy; .\scripts\deploy_api_git_pull.ps1
 #
-# 첫 설정 (API 서버에 repo 없을 때):
-#   SSH 접속 후: git clone https://github.com/guswls3028-art/academy-backend.git /home/ec2-user/academy
-#   .env 는 /home/ec2-user/.env 에 두거나 repo 디렉터리로 복사
+# First-time (no repo on API server): SSH then git clone ... /home/ec2-user/academy; put .env in /home/ec2-user/.env or repo dir
 # ==============================================================================
 
 param(
@@ -34,7 +28,7 @@ $RepoRoot = Split-Path -Parent $ScriptRoot
 $EC2_USER = "ec2-user"
 $KeyFile = "backend-api-key.pem"
 
-# 원격: cd repo → pull → base 빌드 → api 빌드 → 기존 컨테이너 제거 → 새 컨테이너 실행
+# Remote: cd repo -> pull -> base build -> api build -> remove old container -> run new container
 $RemoteScript = @"
 set -e
 if [ ! -d '$RepoPath' ]; then echo 'ERROR: Repo not found at $RepoPath. Clone it first (e.g. git clone <url> $RepoPath)'; exit 1; fi
