@@ -30,17 +30,10 @@
 cd C:\academy
 .\venv\Scripts\activate
 $env:DJANGO_SETTINGS_MODULE = "apps.api.config.settings.dev"
-python -c "
-import os
-from pathlib import Path
-from dotenv import load_dotenv
-load_dotenv(Path('.') / '.env')
-load_dotenv(Path('.') / '.env.local')
-for k in ['SOLAPI_API_KEY','SOLAPI_API_SECRET','SOLAPI_SENDER','MESSAGING_SQS_QUEUE_NAME','AWS_REGION']:
-    v = os.getenv(k, '')
-    print(k + '=' + ('(set)' if v else '(empty)'))
-"
+python -c "import os; from pathlib import Path; from dotenv import load_dotenv; load_dotenv(Path('.') / '.env'); load_dotenv(Path('.') / '.env.local'); [print(k + '=' + ('(set)' if os.getenv(k,'') else '(empty)')) for k in ['SOLAPI_API_KEY','SOLAPI_API_SECRET','SOLAPI_SENDER','MESSAGING_SQS_QUEUE_NAME','AWS_REGION']]"
 ```
+
+(PowerShell에서 `&&` 대신 한 줄에 `;` 로 이어서 실행하거나, 위처럼 한 줄로 넣어도 됨.)
 
 - `(empty)` 인 항목이 있으면 **그 환경에서 API/워커가 동작하지 않거나 기본값으로 동작**함.  
   실제로 쓰는 값은 `.env` / `.env.local` / 배포 환경의 env를 직접 열어서 확인.
