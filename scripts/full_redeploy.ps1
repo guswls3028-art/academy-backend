@@ -1,24 +1,19 @@
 # ==============================================================================
-# API + 워커 재배포: 빌드(선택) → ECR 푸시 → API/워커 배포
-# 전제: 루트 또는 배포 권한 액세스 키, C:\key\*.pem (EC2 SSH용), 빌드 시 -GitRepoUrl
+# API + worker redeploy: build(optional) -> ECR push -> API/worker deploy
+# Requires: root or deploy access key, C:\key\*.pem (EC2 SSH), -GitRepoUrl when building
 #
-# --- 현재 기본 워크플로우 (ASG 워커) ---
-# 풀배포: .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -WorkersViaASG
-# 워커만 리프레시: 위에 -SkipBuild 추가
-# 노캐시 빌드: -NoCache 추가
+# --- Default workflow (ASG workers) ---
+# Full:  .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -WorkersViaASG
+# Workers only: add -SkipBuild
+# No-cache build: add -NoCache
 #
-# --- DeployTarget: all(기본) | api | video | ai | messaging | workers ---
-# 1) API만:     -DeployTarget api
-# 2) Video만:   -DeployTarget video
-# 3) AI만:      -DeployTarget ai
-# 4) Messaging만: -DeployTarget messaging
-# 5) 워커만(3종): -DeployTarget workers
+# --- DeployTarget: all | api | video | ai | messaging | workers ---
 #
-# Worker self-stop 루프 발생 시: .\scripts\remove_ec2_stop_from_worker_role.ps1 (docs_cursor/11-worker-self-stop-root-cause.md)
+# Worker self-stop loop: .\scripts\remove_ec2_stop_from_worker_role.ps1 (docs_cursor/11-worker-self-stop-root-cause.md)
 # ==============================================================================
 
 param(
-    [string]$GitRepoUrl = "",                    # 빌드 인스턴스에서 clone 할 URL (SkipBuild 아니면 권장 지정)
+    [string]$GitRepoUrl = "",                    # URL to clone on build instance (required unless -SkipBuild)
     [string]$KeyDir = "C:\key",
     [string]$SubnetId = "subnet-07a8427d3306ce910",
     [string]$SecurityGroupId = "sg-02692600fbf8e26f7",
@@ -26,7 +21,7 @@ param(
     [string]$BuildInstanceType = "t4g.medium",
     [string]$RoleName = "academy-ec2-role",
     [switch]$SkipBuild = $false,
-    [switch]$WorkersViaASG = $false,             # true면 워커는 ASG 인스턴스 리프레시만, 고정 EC2 3대 SSH 안 함
+    [switch]$WorkersViaASG = $false,             # if true, workers via ASG instance refresh only (no SSH to fixed EC2)
     [switch]$StartStoppedInstances = $true,
     [switch]$NoCache = $false,                   # true면 --no-cache로 빌드 (설정 파일 수정 시 사용)
     [ValidateSet("all", "api", "video", "ai", "messaging", "workers")]
