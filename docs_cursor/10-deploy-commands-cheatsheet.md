@@ -123,6 +123,48 @@ if ($id -and $id -ne "None") { aws ec2 stop-instances --instance-ids $id --regio
 
 ---
 
+## 6.5 AI 워커 SSH + env 갱신 후 컨테이너 재시작
+
+SSM `.env` 업로드 후, 기존 AI 워커 인스턴스에 새 env를 적용할 때:
+
+**1) 실행 중인 AI 워커 인스턴스 조회**
+```powershell
+$region = "ap-northeast-2"
+$ids = aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names academy-ai-worker-asg --region $region --query "AutoScalingGroups[0].Instances[*].InstanceId" --output text
+if (-not $ids) { Write-Host "실행 중인 AI 워커 없음 (Min=0이면 scale-out 대기 중)" -ForegroundColor Yellow; exit }
+$id = ($ids -split " ")[0]
+$ip = aws ec2 describe-instances --instance-ids $id --region $region --query "Reservations[0].Instances[0].PublicIpAddress" --output text
+Write-Host "AI Worker Instance: $id | IP: $ip"
+```
+
+**2) SSH 접속** (키 경로는 본인 환경에 맞게 수정)
+```powershell
+ssh -i "C:\path\to\ai-worker-key.pem" ec2-user@$ip
+```
+
+**3) EC2에서 env 갱신 후 컨테이너 재시작**
+```bash
+# SSM에서 .env 다시 받기
+aws ssm get-parameter --name /academy/workers/env --with-decryption --query Parameter.Value --output text --region ap-northeast-2 > /opt/academy/.env
+
+# ECR 주소 (같은 리전 계정)
+ECR=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-northeast-2.amazonaws.com
+
+# 컨테이너 재시작 (env-file 다시 로드)
+docker stop academy-ai-worker-cpu 2>/dev/null; docker rm academy-ai-worker-cpu 2>/dev/null
+aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin $ECR
+docker pull $ECR/academy-ai-worker-cpu:latest
+docker run -d --name academy-ai-worker-cpu --restart unless-stopped \
+  --env-file /opt/academy/.env \
+  -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker \
+  -e EC2_IDLE_STOP_THRESHOLD=0 \
+  $ECR/academy-ai-worker-cpu:latest
+```
+
+(Google Vision JSON이 SSM에 있으면 user_data에서 마운트되지만, 수동 재시작 시에는 `-v` 옵션 추가 필요. 보통은 ASG instance refresh로 새 인스턴스 교체가 더 깔끔함.)
+
+---
+
 ## 7. ASG 워커 상태 확인
 
 ```powershell
