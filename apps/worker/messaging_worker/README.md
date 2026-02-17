@@ -106,7 +106,7 @@ Solapi 응답의 **group_id**(및 messageId)를 발송 로그/예약 테이블�
 - 잔액 차감·템플릿 미승인 에러를 피하려면 개발/스트레스 테스트 시 이 모드로 실행하세요.
 - `apps.support.messaging.solapi_mock.MockSolapiMessageService` 사용.
 
-## 10. 스트레스 테스트
+## 11. 스트레스 테스트
 
 ```bash
 # 100건 enqueue (워커는 별도 터미널에서 DEBUG=True 로 실행)
@@ -116,7 +116,7 @@ python scripts/stress_test_messaging_worker.py
 python scripts/stress_test_messaging_worker.py --run-worker
 ```
 
-## 11. 알림톡 템플릿 변수 (미리 확정)
+## 12. 알림톡 템플릿 변수 (미리 확정)
 
 - `apps.support.messaging.alimtalk_templates` 에 템플릿 변수명 상수 및 치환 헬퍼 정의.
 - **변수명**: `name`, `date`, `time`, `clinic_name`, `place`, `link`, `title` (DB 필드와 매칭).
