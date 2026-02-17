@@ -89,7 +89,7 @@ class MessagingSQSQueue:
         }
         if reservation_id is not None:
             message["reservation_id"] = int(reservation_id)
-        if use_alimtalk_first and not message_mode:
+        if mode in ("alimtalk", "both") and not message_mode:
             message["use_alimtalk_first"] = True
         if alimtalk_replacements:
             message["alimtalk_replacements"] = alimtalk_replacements
