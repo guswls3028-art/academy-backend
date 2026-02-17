@@ -203,8 +203,9 @@ def send_welcome_messages(
 
     from apps.support.messaging.selectors import get_auto_send_config
 
-    tenant_id = getattr(created_students[0], "tenant_id", None) or (
-        getattr(created_students[0].tenant, "id", None) if hasattr(created_students[0], "tenant") else None
+    first = created_students[0]
+    tenant_id = getattr(first, "tenant_id", None) or (
+        first.tenant_id if hasattr(first, "tenant_id") else (getattr(first.tenant, "id", None) if hasattr(first, "tenant") else None)
     )
     if not tenant_id:
         logger.warning("send_welcome: no tenant_id, skip")
