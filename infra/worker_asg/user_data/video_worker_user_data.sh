@@ -13,6 +13,8 @@ if [ -n "$DEV" ] && [ -b "/dev/${DEV}" ]; then
   mkdir -p /mnt/transcode
   mount "/dev/${DEV}" /mnt/transcode || true
   grep -q "/mnt/transcode" /etc/fstab 2>/dev/null || echo "/dev/${DEV} /mnt/transcode ext4 defaults,nofail 0 2" >> /etc/fstab
+  # 컨테이너 appuser(UID 1000)가 /tmp 쓰기 가능하도록
+  chown -R 1000:1000 /mnt/transcode
 fi
 
 ENV_FILE="/opt/academy/.env"
