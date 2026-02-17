@@ -40,18 +40,18 @@ Write-Host "[5/5] academy-ai-worker-cpu..."
 docker buildx build --platform linux/arm64 -f docker/ai-worker-cpu/Dockerfile -t academy-ai-worker-cpu:latest --load .
 docker tag academy-ai-worker-cpu:latest "${registry}/academy-ai-worker-cpu:latest"
 
-# ECR 로그인
-Write-Host "ECR 로그인..."
+# ECR login
+Write-Host "ECR login..."
 aws ecr get-login-password --region $region | docker login --username AWS --password-stdin $registry
 
-# 레포 생성 (없으면)
+# Create repos if missing
 $repos = @("academy-api", "academy-messaging-worker", "academy-video-worker", "academy-ai-worker-cpu")
 foreach ($repo in $repos) {
     aws ecr create-repository --repository-name $repo --region $region 2>$null
 }
 
-# 푸시
-Write-Host "ECR 푸시..."
+# Push
+Write-Host "ECR push..."
 docker push "${registry}/academy-api:latest"
 docker push "${registry}/academy-messaging-worker:latest"
 docker push "${registry}/academy-video-worker:latest"

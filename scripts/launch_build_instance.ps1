@@ -1,6 +1,6 @@
 # ==============================================================================
-# EC2 arm64 스팟 인스턴스 기동 (Docker 이미지 네이티브 빌드용)
-# 사용: .\scripts\launch_build_instance.ps1 -SubnetId "subnet-xxx" -SecurityGroupId "sg-xxx"
+# Launch EC2 arm64 spot instance (native Docker image build)
+# Usage: .\scripts\launch_build_instance.ps1 -SubnetId "subnet-xxx" -SecurityGroupId "sg-xxx"
 # ==============================================================================
 
 param(
@@ -26,7 +26,7 @@ $AmiId = (aws ec2 describe-images --region $Region --owners amazon `
 Write-Host "AMI (arm64): $AmiId" -ForegroundColor Cyan
 Write-Host "Instance: $InstanceType spot" -ForegroundColor Cyan
 
-# ECR push 정책 추가 시도 (권한 없으면 스킵)
+# Try adding ECR push policy (skip if no permission)
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 $hasBuild = $false
 try {
@@ -39,12 +39,12 @@ if (-not $hasBuild) {
     if (Test-Path $policyPath) {
         $policyUri = "file://$($policyPath -replace '\\','/' -replace ' ', '%20')"
         aws iam put-role-policy --role-name $RoleName --policy-name academy-ec2-build --policy-document $policyUri 2>$null
-        if ($LASTEXITCODE -eq 0) { Write-Host "  OK" -ForegroundColor Green } else { Write-Host "  (권한 없음 - 루트로 정책 추가 후 인스턴스에서 ECR push)" -ForegroundColor Yellow }
+        if ($LASTEXITCODE -eq 0) { Write-Host "  OK" -ForegroundColor Green } else { Write-Host "  (No permission - add policy as root then ECR push from instance)" -ForegroundColor Yellow }
     }
 }
 $ErrorActionPreference = $ea
 
-# 스팟 인스턴스 기동
+# Launch spot instance
 $userData = @"
 #!/bin/bash
 yum update -y
