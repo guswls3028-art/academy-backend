@@ -127,7 +127,7 @@ def _infer_school_type(school: str) -> str:
 def parse_student_excel_file(local_path: str) -> list[dict[str, Any]]:
     """
     로컬 엑셀 파일을 파싱하여 강의 수강 등록용 행 리스트 반환.
-    학생 도메인 엑셀 양식 및 별칭 지원 (이름·학부모전화 필수).
+    양식 안 맞춰도 인식: 헤더 별칭 넓게 지원, 이름+전화 없으면 첫 행 기준으로도 시도.
     """
     import openpyxl
 
@@ -151,11 +151,18 @@ def parse_student_excel_file(local_path: str) -> list[dict[str, Any]]:
         return []
 
     header_idx = _find_header_row(rows)
+    used_fallback = False
     if header_idx < 0:
         header_idx = _find_header_row_fallback(rows)
+        used_fallback = header_idx >= 0
     if header_idx < 0:
         raise ValueError(
             "헤더 행을 찾을 수 없습니다. 첫 행에 '이름'(또는 성명/학생명), '연락처'(또는 학부모전화/전화번호) 등 컬럼명이 있어야 합니다."
+        )
+    if used_fallback:
+        logger.info(
+            "excel_parsing: 표준 헤더(이름+전화 동시) 없음 → 첫 행 기준으로 컬럼 매칭 사용 (row=%s)",
+            header_idx,
         )
 
     header_row = rows[header_idx]
