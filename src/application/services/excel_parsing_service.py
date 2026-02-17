@@ -243,6 +243,8 @@ class ExcelParsingService:
         self,
         job_id: str,
         payload: dict[str, Any],
+        *,
+        on_progress: Callable[[str, int], None] | None = None,
     ) -> dict[str, Any]:
         """
         payload:
