@@ -54,7 +54,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "[OK] ECR access (academy-api repo)" -ForegroundColor Green
 }
 
-# 4) SSM /academy/workers/env (워커·API 배포 시 필요)
+# 4) SSM /academy/workers/env (required for worker/API deploy)
 $ssmTest = aws ssm get-parameter --name /academy/workers/env --region $Region --query "Parameter.Name" --output text 2>&1
 if ($LASTEXITCODE -ne 0 -or -not $ssmTest) {
     Write-Host "[FAIL] SSM /academy/workers/env missing or no permission" -ForegroundColor Red
@@ -63,7 +63,7 @@ if ($LASTEXITCODE -ne 0 -or -not $ssmTest) {
     Write-Host "[OK] SSM /academy/workers/env" -ForegroundColor Green
 }
 
-# 5) 빌드 인스턴스 (풀배포 시 사용 — 없으면 새로 만드는데 그때 권한/AMI 이슈 나올 수 있음)
+# 5) Build instance (used by full deploy; if missing, script will create one and may hit permission/AMI issues)
 $buildRaw = aws ec2 describe-instances --region $Region `
     --filters "Name=tag:Name,Values=academy-build-arm64" "Name=instance-state-name,Values=running,stopped" `
     --query "Reservations[].Instances[].[InstanceId,State.Name]" --output text 2>&1
@@ -76,7 +76,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "[OK] Build instance: $($buildParts[0]) ($($buildParts[1]))" -ForegroundColor Green
 }
 
-# 6) 실행 중인 academy 인스턴스 (API/워커 SSH용)
+# 6) Running academy instances (for API/worker SSH)
 $names = "academy-api,academy-ai-worker-cpu,academy-messaging-worker,academy-video-worker"
 $raw = aws ec2 describe-instances --region $Region `
     --filters "Name=instance-state-name,Values=running" "Name=tag:Name,Values=$names" `
@@ -96,7 +96,7 @@ if ($LASTEXITCODE -ne 0) {
     }
 }
 
-# 7) ASG (WorkersViaASG 사용 시)
+# 7) ASG (when using -WorkersViaASG)
 $asgNames = @("academy-video-worker-asg", "academy-ai-worker-asg", "academy-messaging-worker-asg")
 $asgOut = aws autoscaling describe-auto-scaling-groups --region $Region --output json 2>&1
 if ($LASTEXITCODE -ne 0) {
@@ -112,7 +112,7 @@ if ($LASTEXITCODE -ne 0) {
     }
 }
 
-# 8) (선택) SSH 실제 접속 테스트 — 키/보안그룹/네트워크 검증
+# 8) (optional) SSH connectivity test - key/SG/network
 if ($TestSsh -and $ips["academy-api"]) {
     $apiKeyPath = Join-Path $KeyDir "backend-api-key.pem"
     if (Test-Path $apiKeyPath) {
