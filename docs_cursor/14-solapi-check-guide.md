@@ -11,7 +11,8 @@
 3. 확인:
    - 발신번호가 **등록**되어 있는지
    - **인증 완료** 상태인지 (인증 대기/미인증이면 사용 불가)
-   - `.env`의 `SOLAPI_SENDER`가 이 번호와 **정확히 일치**하는지
+   - Worker는 발신번호 우선순위: payload → **Tenant.messaging_sender** → SOLAPI_SENDER
+   - 테넌트별 발신번호는 설정 > 내 정보에서 등록·인증. `.env` SOLAPI_SENDER는 fallback.
 
 > 발신번호 형식: `01012345678` (하이픈 없이)
 

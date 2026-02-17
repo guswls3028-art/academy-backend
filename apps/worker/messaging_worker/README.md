@@ -83,7 +83,18 @@ API 키/시크릿은 **환경변수**로만 설정하고 코드에 노출하지 
 
 ---
 
-## 8. 발송 ID 저장 (민원 대응)
+## 8. 발신번호 우선순위
+
+Worker는 다음 순서로 발신번호를 사용합니다:
+1. **payload.sender** (SQS 메시지에 포함된 경우)
+2. **Tenant.messaging_sender** (get_tenant_messaging_info에서 조회)
+3. **SOLAPI_SENDER** (환경변수, fallback)
+
+테넌트별 발신번호는 설정 > 내 정보에서 등록·인증. 솔라피 콘솔에 등록된 번호만 사용 가능.
+
+---
+
+## 9. 발송 ID 저장 (민원 대응)
 
 Solapi 응답의 **group_id**(및 messageId)를 발송 로그/예약 테이블에 저장해 두면, "문자 안 왔어요" 민원 시 Solapi 콘솔에서 해당 ID로 조회해 원인 파악이 가능합니다.
 

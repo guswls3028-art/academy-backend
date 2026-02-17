@@ -57,6 +57,13 @@ tenant 미해결 허용 경로:
 - `AI_WORKER_INSTANCE_ID`, `VIDEO_WORKER_INSTANCE_ID`
 - R2/CDN 등: `apps/api/config/settings/base.py` 내 변수 참고.
 
+### Messaging Worker (Solapi)
+
+- `SOLAPI_API_KEY`, `SOLAPI_API_SECRET` (필수)
+- `SOLAPI_SENDER`: 기본 발신번호 (테넌트별 messaging_sender가 있으면 그걸 씀)
+- `SOLAPI_KAKAO_PF_ID`, `SOLAPI_KAKAO_TEMPLATE_ID` (알림톡 시)
+- `MESSAGING_SQS_QUEUE_NAME`: academy-messaging-jobs
+
 ---
 
 ## 7. Proxy / Host

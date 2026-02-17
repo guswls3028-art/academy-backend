@@ -19,6 +19,8 @@
 | [11-worker-self-stop-root-cause.md](11-worker-self-stop-root-cause.md) | Worker self-stop 루트캐우스 분석, IAM ec2:StopInstances 차단 방법 | 껐다 켜짐 루프 진단·해결 시 |
 | [12-excel-parsing-improvements.md](12-excel-parsing-improvements.md) | 엑셀 파싱 개선 (헤더 별칭, 행 판별, parent_phone 필수) | 엑셀 업로드 관련 수정 시 |
 | [13-excel-parsing-final-design.md](13-excel-parsing-final-design.md) | 엑셀 파싱 최종 설계 (Parent Phone Mandatory + AI Hybrid) | 설계·운영 정책 참조 시 |
+| [14-solapi-check-guide.md](14-solapi-check-guide.md) | 솔라피 콘솔 확인 (발신번호·잔액·IP) | 메시지 발송 실패 시 |
+| [15-messaging-worker-and-message-flow.md](15-messaging-worker-and-message-flow.md) | Messaging Worker · message_mode · 자동발송 · API | 메시징 수정·운영 시 |
 
 ## 날짜별 스냅샷
 
