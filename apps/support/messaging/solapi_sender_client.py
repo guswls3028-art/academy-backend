@@ -49,9 +49,13 @@ def get_active_sender_numbers(api_key: str, api_secret: str) -> list[str]:
         except Exception:
             msg = resp.text
         logger.warning("Solapi sender list failed status=%s body=%s", resp.status_code, msg)
-        raise ValueError(f"솔라피 발신번호 조회 실패: {msg}")
+        raise ValueError(f"솔라피 발신번호 조회 실패: {msg}") from None
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except Exception as e:
+        logger.warning("Solapi sender list invalid JSON: %s", e)
+        raise ValueError("솔라피 응답 형식 오류") from e
     numbers: list[str] = []
 
     # 응답 형식 유연 처리: list, list[].phoneNumber, list[].number 등
