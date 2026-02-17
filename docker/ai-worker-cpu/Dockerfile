@@ -12,8 +12,6 @@ ENV WORKER_TYPE=CPU
 USER root
 # 앱 코드 (Base에 두지 않음)
 COPY src ./src
-# Excel 파싱 의존: src.infrastructure.storage — 없으면 빌드 즉시 실패
-COPY src/infrastructure ./src/infrastructure
 COPY academy ./academy
 COPY apps ./apps
 COPY libs ./libs
@@ -39,8 +37,8 @@ RUN pip install --user --no-cache-dir -r requirements/worker-ai-cpu.txt
 COPY requirements/worker-ai-excel.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/worker-ai-excel.txt
 
-# Excel 파싱 워커 의존: src.infrastructure.storage (빌드 실패 시 누락 즉시 발견)
-RUN python -c "from src.infrastructure.storage import R2ObjectStorageAdapter" || (echo "ERROR: src.infrastructure.storage not importable" && exit 1)
+# Excel 파싱 워커 의존: apps.infrastructure.storage.r2_adapter (apps SSOT)
+RUN python -c "from apps.infrastructure.storage.r2_adapter import R2ObjectStorageAdapter" || (echo "ERROR: R2ObjectStorageAdapter not importable" && exit 1)
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import sys; sys.exit(0)" || exit 1
