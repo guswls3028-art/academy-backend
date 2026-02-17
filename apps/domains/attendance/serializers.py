@@ -5,6 +5,10 @@ from .models import Attendance
 
 
 class AttendanceSerializer(serializers.ModelSerializer):
+    student_id = serializers.IntegerField(
+        source="enrollment.student_id",
+        read_only=True,
+    )
     name = serializers.CharField(
         source="enrollment.student.name",
         read_only=True,
@@ -33,6 +37,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "id",
             "session",
             "enrollment_id",
+            "student_id",
             "status",
             "memo",
             "name",
