@@ -37,7 +37,8 @@ if ($sgJson -match "8000") {
 } else {
     Write-Host "  8000 포트 인바운드 없음 → ALB에서 API 접속 불가 → 502 가능" -ForegroundColor Red
     Write-Host "  수정: ALB 보안그룹 ID 확인 후 아래 실행" -ForegroundColor Yellow
-    Write-Host "  aws ec2 authorize-security-group-ingress --group-id $ApiSgId --protocol tcp --port 8000 --source-group <ALB_SG_ID> --region $Region" -ForegroundColor Gray
+    Write-Host "  aws ec2 authorize-security-group-ingress --group-id $ApiSgId --protocol tcp --port 8000 --source-group ALB_SG_ID --region $Region" -ForegroundColor Gray
+    Write-Host "  (ALB_SG_ID 자리에 ALB 보안그룹 ID 넣기, 예: sg-0abc1234)" -ForegroundColor Gray
 }
 
 # 4) academy-api 인스턴스 확인
@@ -50,4 +51,4 @@ if ($apiIp -and $apiIp -ne "None") {
     Write-Host "  실행 중인 academy-api 없음" -ForegroundColor Red
 }
 
-Write-Host "`n=== 끝 ===`n" -ForegroundColor Cyan
+Write-Host "`n=== Done ===`n" -ForegroundColor Cyan
