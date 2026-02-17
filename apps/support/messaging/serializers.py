@@ -34,7 +34,7 @@ class VerifySenderRequestSerializer(serializers.Serializer):
 
 
 class ChargeRequestSerializer(serializers.Serializer):
-    amount = serializers.DecimalField(max_digits=12, decimal_places=0, min_value=1)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=0, min_value=Decimal("1"))
 
 
 class ChargeResponseSerializer(serializers.Serializer):
