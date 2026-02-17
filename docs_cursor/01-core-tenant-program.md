@@ -75,3 +75,12 @@
 **위치**: `apps/api/config/settings/base.py` — `MIDDLEWARE`
 
 - `CorsMiddleware` → … → `apps.core.middleware.tenant.TenantMiddleware` → `CsrfViewMiddleware` → `AuthenticationMiddleware` → …
+
+---
+
+## 8. User username (테넌트 격리 · 레거시 없음)
+
+- **테넌트 소속 User**: DB에 `username = t{tenant_id}_{로그인아이디}` 형식만 허용. **레거시(접두어 없는) 형식은 존재하면 안 됨.**
+- **조회**: `core_repo.user_get_by_tenant_username(tenant, display_username)` → 내부적으로 `t{tenant_id}_{display}` 로만 조회. fallback 없음.
+- **신규 생성**: `user_internal_username(tenant, display_username)` 사용 (core, staffs, ensure_tenant_owner 등).
+- **기존 DB 정규화 (격리 마이그레이션 이후 1회)**: `python manage.py normalize_user_tenant_usernames --apply` — tenant가 있는데 username이 `t{id}_` 로 시작하지 않는 유저를 정규 형식으로 변경. **환경(로컬·운영)별로 레거시가 있었으면 1회씩 실행.**
