@@ -139,3 +139,4 @@ for t in Tenant.objects.filter(code="hakwonplus").values("id", "code", "messagin
 - **API**: send 시 NotificationLog 생성 안 함. 200 + `enqueued` 만 반환.
 - **발신번호**: API에서 sender 미전달 → 워커가 `get_tenant_messaging_info(tenant_id)["sender"]` → `Tenant.messaging_sender` 사용. 비어 있으면 `SOLAPI_SENDER` 사용.
 - **NotificationLog**: 워커가 Solapi 호출 후(성공/실패) `create_notification_log()` 로만 생성.
+- **발신번호 비어 있을 때**: SendMessageView에서 `Tenant.messaging_sender` 가 비어 있으면 **400** 반환 (조용히 실패 방지). 설정 > 내 정보에서 등록·인증 후 저장 필요.
