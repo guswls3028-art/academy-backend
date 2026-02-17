@@ -28,6 +28,8 @@ for i in 1 2 3; do
     --env-file "$ENV_FILE" \
     -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker \
     -e EC2_IDLE_STOP_THRESHOLD=0 \
+    -v "$GOOGLE_JSON:/opt/academy/secrets/google-vision.json:ro" \
+    -e GOOGLE_APPLICATION_CREDENTIALS=/opt/academy/secrets/google-vision.json \
     "$ECR/academy-ai-worker-cpu:latest"; then
     break
   fi
