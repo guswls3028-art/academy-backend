@@ -240,6 +240,7 @@ errors = [
 | 2 | AI 마스킹 형태 유지 | `_mask_phone_for_ai`: 010-1234-5678 → 010-****-5678, 010.1234.5678 → 010.****.5678 등 포맷 유지 |
 | 3 | Fail-Fast 상세 리포트 | `ExcelValidationError.errors`: `[{"row": N, "value": "...", "reason": "..."}]` 형태로 전체 오류 목록 반환 |
 | 4 | 학원별 매핑 + 유사도 | `_header_similarity` 유틸 추가, `_get_academy_parent_mapping` 확장 시 유사도 >= 0.8 조건 적용 구조 |
+| 5 | **예외 흐름 3가지** | 복수 후보 AI 전달·값 전부 invalid 실패·검증 순서(행 판별→parent 검증) 명시 |
 
 ---
 
