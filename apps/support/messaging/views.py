@@ -253,7 +253,7 @@ class SendMessageView(APIView):
         raw_subject = (data.get("raw_subject") or "").strip()
 
         from apps.domains.students.models import Student
-        from apps.support.messaging.services import enqueue_sms
+        from apps.support.messaging.services import enqueue_sms, get_site_url
 
         students = list(
             Student.objects.filter(tenant=tenant, id__in=student_ids, deleted_at__isnull=True).only(
@@ -297,7 +297,12 @@ class SendMessageView(APIView):
             name = (s.name or "").strip()
             name_2 = name[:2] if len(name) >= 2 else name
             name_3 = name[:3] if len(name) >= 3 else name
-            text = body_base.replace("#{student_name_2}", name_2).replace("#{student_name_3}", name_3)
+            site_url = get_site_url(request) or ""
+            text = (
+                body_base.replace("#{student_name_2}", name_2)
+                .replace("#{student_name_3}", name_3)
+                .replace("#{site_link}", site_url)
+            )
             if subject_base:
                 text = subject_base + "\n" + text
             ok = enqueue_sms(tenant_id=tenant.id, to=phone, text=text)
