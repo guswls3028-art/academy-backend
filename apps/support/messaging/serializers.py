@@ -85,6 +85,12 @@ class SendMessageRequestSerializer(serializers.Serializer):
         default="parent",
         help_text="학생 번호로 보낼지 학부모 번호로 보낼지",
     )
+    message_mode = serializers.ChoiceField(
+        choices=[("sms", "SMS만"), ("alimtalk", "알림톡만"), ("both", "알림톡→SMS폴백")],
+        default="sms",
+        required=False,
+        help_text="sms | alimtalk | both",
+    )
     template_id = serializers.IntegerField(required=False, allow_null=True)
     raw_body = serializers.CharField(required=False, allow_blank=True)
     raw_subject = serializers.CharField(required=False, allow_blank=True, default="")
