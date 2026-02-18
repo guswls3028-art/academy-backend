@@ -1350,15 +1350,20 @@ progress.record_progress(
 **수정 후 코드**:
 
 ```python:src/infrastructure/video/processor.py
-# VideoProgressAdapter 사용 (IProgress 인터페이스 호환)
+# VideoProgressAdapter 사용 (IProgress 인터페이스 구현)
 from apps.support.video.redis_progress_adapter import VideoProgressAdapter
 
-# processor 함수 내부에서
-video_progress = VideoProgressAdapter(ttl_seconds=VIDEO_PROGRESS_TTL_SECONDS)
+# process_video() 함수 시작 부분에서
+# 기존 progress 파라미터 대신 VideoProgressAdapter 인스턴스 생성
+video_progress = VideoProgressAdapter(
+    video_id=video_id,
+    tenant_id=tenant_id,
+    ttl_seconds=21600  # 6시간
+)
 
+# 기존 progress.record_progress() 호출은 그대로 유지 (IProgress 인터페이스 호환)
 video_progress.record_progress(
-    video_id,  # ✅ video_id 직접 전달
-    tenant_id,  # ✅ tenant_id 직접 전달
+    job_id,  # IProgress 인터페이스 호환 (무시됨)
     "presigning",
     {
         "percent": 5,
@@ -1369,6 +1374,25 @@ video_progress.record_progress(
         "step_name_display": "준비",
         "step_percent": 100,
     },
+)
+```
+
+**또는 호출부에서 VideoProgressAdapter 전달**:
+
+```python:apps/worker/video_worker/sqs_main.py
+# VideoProgressAdapter 생성하여 process_video에 전달
+from apps.support.video.redis_progress_adapter import VideoProgressAdapter
+
+video_progress = VideoProgressAdapter(
+    video_id=video_id,
+    tenant_id=tenant_id,
+    ttl_seconds=21600
+)
+
+hls_path, duration = process_video(
+    job=job,
+    cfg=cfg,
+    progress=video_progress,  # ✅ VideoProgressAdapter 전달
 )
 ```
 
