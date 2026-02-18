@@ -19,6 +19,18 @@ from src.application.ports.progress import IProgress
 
 logger = logging.getLogger(__name__)
 
+# 구간별 진행률 (n/7): 업로드 마법사처럼 단계별 0~100% 제공
+VIDEO_ENCODING_STEP_TOTAL = 7
+VIDEO_ENCODING_STEPS = [
+    (1, "presigning", "준비"),
+    (2, "downloading", "다운로드"),
+    (3, "probing", "분석"),
+    (4, "transcoding", "인코딩"),
+    (5, "validating", "검증"),
+    (6, "thumbnail", "썸네일"),
+    (7, "uploading", "업로드"),
+]
+
 
 def process_video(
     *,
