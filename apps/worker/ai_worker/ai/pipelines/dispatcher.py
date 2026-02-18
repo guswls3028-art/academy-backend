@@ -262,12 +262,12 @@ def handle_ai_job(job: AIJob) -> AIResult:
             
             # 대용량 이미지 리사이징 (처리 전)
             img_bgr, was_resized = resize_if_large(img_bgr, max_megapixels=4.0)
-            _record_progress(job.id, "loading", 40, step_index=3, step_total=7, step_name_display="이미지로드", step_percent=100)
+            _record_progress(job.id, "loading", 40, step_index=3, step_total=7, step_name_display="이미지로드", step_percent=100, tenant_id=tenant_id)
 
             aligned = img_bgr
 
             # 3) mode 정책
-            _record_progress(job.id, "aligning", 45, step_index=4, step_total=7, step_name_display="정렬", step_percent=0)
+            _record_progress(job.id, "aligning", 45, step_index=4, step_total=7, step_name_display="정렬", step_percent=0, tenant_id=tenant_id)
             if mode == "photo":
                 warped = warp_to_a4_landscape(img_bgr)
                 if warped is None:
@@ -278,7 +278,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 warped = warp_to_a4_landscape(img_bgr)
                 if warped is not None:
                     aligned = warped
-            _record_progress(job.id, "aligning", 55, step_index=4, step_total=7, step_name_display="정렬", step_percent=100)
+            _record_progress(job.id, "aligning", 55, step_index=4, step_total=7, step_name_display="정렬", step_percent=100, tenant_id=tenant_id)
 
             # 4) meta 없으면 legacy
             if not meta:
@@ -286,14 +286,14 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 if not questions:
                     return AIResult.failed(job.id, "template_meta/template_fetch failed and legacy questions missing")
 
-                _record_progress(job.id, "detecting", 80, step_index=6, step_total=7, step_name_display="답안감지", step_percent=0)
+                _record_progress(job.id, "detecting", 80, step_index=6, step_total=7, step_name_display="답안감지", step_percent=0, tenant_id=tenant_id)
                 answers = detect_omr_answers_v1(
                     image_path=local_path,
                     questions=list(questions),
                     cfg=None,
                 )
-                _record_progress(job.id, "detecting", 95, step_index=6, step_total=7, step_name_display="답안감지", step_percent=100)
-                _record_progress(job.id, "done", 100, step_index=7, step_total=7, step_name_display="완료", step_percent=100)
+                _record_progress(job.id, "detecting", 95, step_index=6, step_total=7, step_name_display="답안감지", step_percent=100, tenant_id=tenant_id)
+                _record_progress(job.id, "done", 100, step_index=7, step_total=7, step_name_display="완료", step_percent=100, tenant_id=tenant_id)
                 return AIResult.done(
                     job.id,
                     {
