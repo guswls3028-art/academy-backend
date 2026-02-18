@@ -75,8 +75,11 @@ if ($subnetGroupErr -ne 0) {
 }
 
 # 4) Replication group (single node, no failover)
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 $rgExists = aws elasticache describe-replication-groups --replication-group-id $ReplicationGroupId --region $Region 2>&1
-if ($LASTEXITCODE -ne 0) {
+$rgErr = $LASTEXITCODE
+$ErrorActionPreference = $ea
+if ($rgErr -ne 0) {
     Write-Host "[4/5] Creating replication group $ReplicationGroupId (single node, cache.t4g.micro) ..." -ForegroundColor Cyan
     aws elasticache create-replication-group `
         --replication-group-id $ReplicationGroupId `
