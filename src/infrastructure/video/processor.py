@@ -51,7 +51,8 @@ def process_video(
     if not video_id or tenant_id is None:
         raise ValueError("video_id and tenant_id required")
 
-    progress.record_progress(job_id, "presigning", {"percent": 5})
+    # 남은 시간 예상: presigning 시점에선 duration 모름 → 다운로드 후 갱신
+    progress.record_progress(job_id, "presigning", {"percent": 5, "remaining_seconds": 120})
     try:
         source_url = create_presigned_get_url(key=file_key, expires_in=600)
     except Exception as e:
@@ -67,10 +68,10 @@ def process_video(
         src_path = wd / "source.mp4"
         out_dir = wd / "hls"
 
-        progress.record_progress(job_id, "downloading", {"file_key": file_key, "percent": 15})
+        progress.record_progress(job_id, "downloading", {"file_key": file_key, "percent": 15, "remaining_seconds": 300})
         download_to_file(url=source_url, dst=src_path, cfg=cfg)
 
-        progress.record_progress(job_id, "probing", {"percent": 25})
+        progress.record_progress(job_id, "probing", {"percent": 25, "remaining_seconds": 240})
         duration = probe_duration_seconds(
             input_path=str(src_path),
             ffprobe_bin=cfg.FFPROBE_BIN,
@@ -79,7 +80,23 @@ def process_video(
         if not duration or duration <= 0:
             raise RuntimeError("duration_probe_failed")
 
-        progress.record_progress(job_id, "transcoding", {"duration": duration, "percent": 50})
+        # 트랜스코딩: 실시간 진행률 + 남은 시간 (ffmpeg stderr 파싱)
+        def transcode_progress(current_sec: float, total_sec: float) -> None:
+            pct = int(50 + 35 * (current_sec / total_sec)) if total_sec > 0 else 50
+            pct = min(85, max(50, pct))
+            post_sec = 60  # validate + thumbnail + upload 대략
+            remaining = int(max(0, total_sec - current_sec + post_sec))
+            progress.record_progress(
+                job_id,
+                "transcoding",
+                {"duration": duration, "percent": pct, "remaining_seconds": remaining, "current_sec": int(current_sec)},
+            )
+
+        progress.record_progress(
+            job_id,
+            "transcoding",
+            {"duration": duration, "percent": 50, "remaining_seconds": int(duration + 60)},
+        )
         transcode_to_hls(
             video_id=video_id,
             input_path=str(src_path),
@@ -88,9 +105,11 @@ def process_video(
             ffprobe_bin=cfg.FFPROBE_BIN,
             hls_time=int(cfg.HLS_TIME_SECONDS),
             timeout=int(cfg.FFMPEG_TIMEOUT_SECONDS),
+            duration_sec=duration,
+            progress_callback=transcode_progress,
         )
 
-        progress.record_progress(job_id, "validating", {"percent": 85})
+        progress.record_progress(job_id, "validating", {"percent": 85, "remaining_seconds": 45})
         validate_hls_output(out_dir, int(cfg.MIN_SEGMENTS_PER_VARIANT))
 
         progress.record_progress(job_id, "thumbnail", {"percent": 90})
