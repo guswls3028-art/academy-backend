@@ -31,13 +31,6 @@ Write-Host "`n=== Worker ASG Redeploy (root/admin) ===`n" -ForegroundColor Cyan
     -AttachEc2Policy:$false `
     -GrantSsmPutToCaller:$false
 
-# 2) CloudWatch log groups: 7-day retention (avoid unbounded cost)
-$logGroups = @("/aws/ec2/academy-video-worker", "/aws/ec2/academy-messaging-worker", "/aws/ec2/academy-ai-worker")
-foreach ($lg in $logGroups) {
-    aws logs create-log-group --log-group-name $lg --region $Region 2>$null
-    aws logs put-retention-policy --log-group-name $lg --retention-in-days 7 --region $Region 2>$null
-}
-
 if (-not $SkipSetup) {
     Write-Host "`n--- SSM + EC2 role refresh ---`n" -ForegroundColor Cyan
     & (Join-Path $ScriptRoot "setup_worker_iam_and_ssm.ps1") `
