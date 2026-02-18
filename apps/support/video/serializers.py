@@ -171,7 +171,13 @@ class VideoSerializer(serializers.ModelSerializer):
     def get_encoding_step_percent(self, obj):
         if obj.status != Video.Status.PROCESSING:
             return None
-        d = get_video_encoding_step_detail(int(obj.id))
+        # ✅ tenant_id 전달 필수 (tenant namespace 키 사용)
+        tenant_id = None
+        try:
+            tenant_id = obj.session.lecture.tenant_id if hasattr(obj, 'session') and obj.session and hasattr(obj.session, 'lecture') and obj.session.lecture else None
+        except Exception:
+            pass
+        d = get_video_encoding_step_detail(int(obj.id), tenant_id=tenant_id)
         return d.get("step_percent") if d else None
 
     def get_source_type(self, obj):
