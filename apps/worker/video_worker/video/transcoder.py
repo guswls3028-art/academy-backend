@@ -236,13 +236,10 @@ def transcode_to_hls(
         hls_time=hls_time,
     )
 
-    use_callback = (
-        progress_callback is not None
-        and duration_sec is not None
-        and duration_sec > 0
-    )
+    # Always use Popen+stderr when duration is known so progress is parsed (no 50% stick). Callback optional.
+    use_popen = duration_sec is not None and duration_sec > 0
 
-    if use_callback:
+    if use_popen:
         total_sec = float(duration_sec)
         last_pct = -1
         stderr_lines: List[str] = []
