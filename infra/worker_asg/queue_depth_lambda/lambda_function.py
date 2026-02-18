@@ -69,12 +69,15 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
 
 
 def set_asg_desired(autoscaling_client, asg_name: str, visible: int, in_flight: int, min_capacity: int, max_capacity: int) -> None:
-    """워커 ASG desired capacity 조정. 큐 깊이에 따라 스케일."""
+    """워커 ASG desired capacity 조정. total=0이면 MIN, else min(MAX, max(MIN, ceil(total/20))). 항상 set_desired_capacity 호출."""
     total_for_scale = visible + in_flight
-    if total_for_scale > 0:
-        new_desired = min(max_capacity, max(min_capacity, math.ceil(total_for_scale / TARGET_MESSAGES_PER_INSTANCE)))
+    if total_for_scale == 0:
+        new_desired = min_capacity
     else:
-        new_desired = min_capacity  # 최소 용량 유지
+        new_desired = min(
+            max_capacity,
+            max(min_capacity, math.ceil(total_for_scale / TARGET_MESSAGES_PER_INSTANCE)),
+        )
 
     try:
         asgs = autoscaling_client.describe_auto_scaling_groups(
@@ -84,16 +87,15 @@ def set_asg_desired(autoscaling_client, asg_name: str, visible: int, in_flight: 
             logger.warning("ASG not found: %s", asg_name)
             return
         current = asgs["AutoScalingGroups"][0]["DesiredCapacity"]
-        if current == new_desired:
-            return
         autoscaling_client.set_desired_capacity(
             AutoScalingGroupName=asg_name,
             DesiredCapacity=new_desired,
         )
-        logger.info(
-            "%s desired %s -> %s (visible=%d in_flight=%d)",
-            asg_name, current, new_desired, visible, in_flight,
-        )
+        if current != new_desired:
+            logger.info(
+                "%s desired %s -> %s (visible=%d in_flight=%d)",
+                asg_name, current, new_desired, visible, in_flight,
+            )
     except Exception as e:
         logger.warning("set_asg_desired failed for %s: %s", asg_name, e)
 
