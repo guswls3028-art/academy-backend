@@ -10,15 +10,6 @@ $GroupId = "sg-0051cc8f79c04b058"
 Write-Host "`n=== academy-api-sg SSH 22 → 0.0.0.0/0 허용 ===" -ForegroundColor Cyan
 Write-Host "  GroupId: $GroupId" -ForegroundColor Gray
 
-# 0.0.0.0/0 규칙이 이미 있으면 스킵
-$perms = aws ec2 describe-security-groups --group-ids $GroupId --region $Region --query "SecurityGroups[0].IpPermissions" --output json 2>&1
-if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: $perms" -ForegroundColor Red; exit 1 }
-$has22all = $perms | ConvertFrom-Json | ForEach-Object { $_.FromPort -eq 22 -and $_.ToPort -eq 22 -and ($_.IpRanges | Where-Object { $_.CidrIp -eq "0.0.0.0/0" }) }
-if ($has22all) {
-    Write-Host "  Already has 22/tcp from 0.0.0.0/0 (skip)" -ForegroundColor Green
-    exit 0
-}
-
 aws ec2 authorize-security-group-ingress `
   --group-id $GroupId `
   --protocol tcp `
