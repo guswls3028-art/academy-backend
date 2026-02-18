@@ -2285,21 +2285,26 @@ class Migration(migrations.Migration):
 
 ---
 
-### 시나리오 2: Excel Bulk 최적화에서 데이터 불일치
+### 시나리오 2: Excel Bulk 최적화에서 ps_number Race Condition
 
 **장애 상황**:
-- Chunked transaction으로 나눠서 처리 중
-- 중간 chunk 실패 시 부분 롤백
-- 일부 학생만 생성되어 데이터 불일치
+- 동시에 Excel 2개 업로드
+- Worker 2개가 동시에 `_generate_unique_ps_number()` 호출
+- 같은 ps_number 생성
+- bulk_create에서 unique constraint 충돌
 
 **대응 전략**:
-1. 실패한 chunk는 failed 리스트에 추가
-2. 전체 결과 반환: `{"created": X, "failed": [...], "total": Y}`
-3. 호출부에서 failed 확인 후 재시도 또는 수동 처리
+1. `bulk_create(ignore_conflicts=True)` 사용
+2. 충돌된 ps_number 재시도 (재생성)
+3. 재시도 실패 시 failed 리스트에 추가
 
 **롤백 방법**:
 - 기존 `bulk_create_students_from_excel_rows` 함수로 복원
 - 신규 함수 호출부 제거
+
+**추가 보완**:
+- ps_number 생성 시 DB lock 사용 고려 (SELECT FOR UPDATE)
+- 또는 UUID 기반 ps_number로 변경 고려
 
 ---
 
