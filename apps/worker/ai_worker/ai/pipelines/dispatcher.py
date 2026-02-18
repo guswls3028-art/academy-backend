@@ -321,7 +321,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 meta=meta,
                 cfg=IdentifierConfigV1(),
             )
-            _record_progress(job.id, "detecting_id", 80, step_index=6, step_total=7, step_name_display="식별자감지", step_percent=100)
+            _record_progress(job.id, "detecting_id", 80, step_index=6, step_total=7, step_name_display="식별자감지", step_percent=100, tenant_id=tenant_id)
 
             # 6) aligned 저장 후 OMR
             import tempfile, os
@@ -329,15 +329,15 @@ def handle_ai_job(job: AIJob) -> AIResult:
             tmp_path = os.path.join(tempfile.gettempdir(), f"omr_aligned_{job.id}.jpg")
             cv2.imwrite(tmp_path, aligned)
 
-            _record_progress(job.id, "detecting_answers", 85, step_index=7, step_total=7, step_name_display="답안감지", step_percent=0)
+            _record_progress(job.id, "detecting_answers", 85, step_index=7, step_total=7, step_name_display="답안감지", step_percent=0, tenant_id=tenant_id)
             cfg = OMRConfigV1()
             answers = detect_omr_answers_v1(
                 image_path=tmp_path,
                 questions=list(questions_payload),
                 cfg=cfg,
             )
-            _record_progress(job.id, "detecting_answers", 95, step_index=7, step_total=7, step_name_display="답안감지", step_percent=100)
-            _record_progress(job.id, "done", 100, step_index=7, step_total=7, step_name_display="완료", step_percent=100)
+            _record_progress(job.id, "detecting_answers", 95, step_index=7, step_total=7, step_name_display="답안감지", step_percent=100, tenant_id=tenant_id)
+            _record_progress(job.id, "done", 100, step_index=7, step_total=7, step_name_display="완료", step_percent=100, tenant_id=tenant_id)
 
             return AIResult.done(
                 job.id,
