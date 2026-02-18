@@ -186,14 +186,14 @@ def _parse_time_seconds(line: str) -> Optional[float]:
     return h * 3600 + m_ * 60 + s + cs / 100.0
 
 
-# duration 기반 타임아웃: 최소 2시간, 영상 길이의 1.5배, 최대 6시간
+# Duration-based timeout: max(7200, int(duration*1.5)), cap 6h. SQS visibility must be >= this.
 FFMPEG_TIMEOUT_MIN_SECONDS = 7200
 FFMPEG_TIMEOUT_MAX_SECONDS = 21600
 FFMPEG_TIMEOUT_DURATION_MULTIPLIER = 1.5
 
 
 def _effective_ffmpeg_timeout(duration_sec: Optional[float], config_timeout: Optional[int]) -> int:
-    """영상 길이에 비례한 타임아웃. duration 없으면 설정값 사용."""
+    """timeout = max(7200, int(duration * 1.5)), capped at 6h. SQS visibility_timeout must be >= this."""
     if duration_sec is not None and duration_sec > 0:
         from_duration = int(duration_sec * FFMPEG_TIMEOUT_DURATION_MULTIPLIER)
         return min(
