@@ -120,6 +120,30 @@ class VideoSerializer(serializers.ModelSerializer):
             return None
         return get_video_encoding_remaining_seconds(int(obj.id))
 
+    def get_encoding_step_index(self, obj):
+        if obj.status != Video.Status.PROCESSING:
+            return None
+        d = get_video_encoding_step_detail(int(obj.id))
+        return d.get("step_index") if d else None
+
+    def get_encoding_step_total(self, obj):
+        if obj.status != Video.Status.PROCESSING:
+            return None
+        d = get_video_encoding_step_detail(int(obj.id))
+        return d.get("step_total") if d else None
+
+    def get_encoding_step_name(self, obj):
+        if obj.status != Video.Status.PROCESSING:
+            return None
+        d = get_video_encoding_step_detail(int(obj.id))
+        return d.get("step_name_display") if d else None
+
+    def get_encoding_step_percent(self, obj):
+        if obj.status != Video.Status.PROCESSING:
+            return None
+        d = get_video_encoding_step_detail(int(obj.id))
+        return d.get("step_percent") if d else None
+
     def get_source_type(self, obj):
         return "s3" if obj.file_key else "unknown"
 
