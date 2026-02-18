@@ -2122,23 +2122,26 @@ Django DB_CONN_MAX_AGE: 15초 (권장)
 예상: Worker 1개당 4-8개 connection
 ```
 
-**총 Connection 수**:
+**총 Connection 수 (수정)**:
 ```
-AI Worker: 5개 × 4 = 20개
-Video Worker: 3개 × 4 = 12개
-Messaging Worker: 5개 × 4 = 20개
-API 서버: 10-20개
-총: 62-72개 connection
-```
-
-**RDS max_connections 대비 안전 마진**:
-```
-db.t4g.micro: ~20-25개 → ❌ 부족
-db.t4g.small: ~45-50개 → ⚠️ 위험 (80% 사용)
-db.t4g.medium: ~90-100개 → ✅ 안전 (70% 사용)
+AI Worker: 5개 × 1-2 = 5-10개  # ✅ 수정: EC2 worker는 프로세스 1개, connection 1-2개
+Video Worker: 3개 × 1-2 = 3-6개
+Messaging Worker: 5개 × 1-2 = 5-10개
+API 서버: 15-20개
+총: 28-46개 connection
 ```
 
-**결론**: RDS는 최소 small, 권장 medium
+**RDS max_connections 대비 안전 마진 (수정)**:
+```
+db.t4g.micro: ~20-25개 → ⚠️ 위험 (100% 사용)
+db.t4g.small: ~45-50개 → ✅ 충분 (60-90% 사용)
+db.t4g.medium: ~90-100개 → ✅ 여유 (30-50% 사용)
+```
+
+**결론**: 
+- **db.t4g.small로도 충분히 버틸 가능성 있음** ✅
+- micro가 터진 건 Excel row-by-row + 폴링 DB 때문이지 순수 connection saturation 때문은 아님
+- 권장: small (가성비), medium (안정성)
 
 ---
 
