@@ -38,6 +38,7 @@ def _record_progress(
     percent: int,
     step_index: int | None = None,
     step_percent: int | None = None,
+    tenant_id: str | None = None,  # ✅ 추가: tenant_id 전달
 ) -> None:
     """Redis 진행률 기록 (우하단 실시간 프로그래스바용). 구간별 진행률 지원."""
     try:
@@ -51,7 +52,9 @@ def _record_progress(
                 "step_name_display": dict(EXCEL_PARSING_STEPS).get(step, step),
                 "step_percent": step_percent if step_percent is not None else 100,
             })
-        RedisProgressAdapter().record_progress(job_id, step, extra)
+        # ✅ tenant_id 전달 (tenant namespace 키 사용)
+        tenant_id_str = str(tenant_id) if tenant_id else None
+        RedisProgressAdapter().record_progress(job_id, step, extra, tenant_id=tenant_id_str)
     except Exception as e:
         logger.debug("Redis progress record skip: %s", e)
 
