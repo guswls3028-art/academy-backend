@@ -103,8 +103,9 @@ $aiUserDataRaw = $aiUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRRegistry
 $aiUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($aiUserDataRaw))
 
 $LtAiName = "academy-ai-worker-asg"
+$ltAiKey = if ($KeyNameAi) { ",`"KeyName`":`"$KeyNameAi`"" } else { "" }
 $ltAiJson = @"
-{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"],"UserData":"$aiUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-ai-worker-cpu"}]}]}
+{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"]$ltAiKey,"UserData":"$aiUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-ai-worker-cpu"}]}]}
 "@
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $ltAiFile = Join-Path $RepoRoot "lt_ai_data.json"
