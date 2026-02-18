@@ -1283,38 +1283,84 @@ def bulk_create_students_from_excel_rows_optimized(
                     "error": str(e)[:500],
                 })
         
-        # 4-3. Bulk Create로 일괄 생성
-        if new_students:
-            Student.objects.bulk_create(new_students, batch_size=500)
-            created_count = len(new_students)
-            
-            # 4-4. 각 학생에 대해 User, Parent 생성 (필요 시)
-            # 이 부분은 개별 처리 필요 (외래키 관계)
-            for student in new_students:
-                try:
-                    # User 생성 및 TenantMembership
+    # 4-3. 신규 학생 Bulk Create (chunk 단위)
+    # ✅ 개선: bulk_create 후 개별 save 제거
+    # → User, Parent도 bulk 처리로 변경
+    
+    for chunk in [new_students_data[i:i+CHUNK_SIZE] for i in range(0, len(new_students_data), CHUNK_SIZE)]:
+        with transaction.atomic():
+            try:
+                # Chunk 내 학생들 생성
+                students_to_create = []
+                for student_data in chunk:
+                    students_to_create.append(student_data["student"])
+                
+                # ✅ Bulk Create로 일괄 생성
+                Student.objects.bulk_create(students_to_create, batch_size=500)
+                
+                # ✅ User Bulk Create (FK 연결)
+                users_to_create = []
+                for student_data, student in zip(chunk, students_to_create):
                     from apps.core.models import User
-                    user = User.objects.create_user(
+                    user = User(
                         username=f"student_{student.ps_number}",
-                        password=initial_password,
                     )
-                    student.user = user
-                    student.save(update_fields=["user"])
-                    
-                    TenantMembership.ensure_active(
-                        tenant=tenant,
-                        user=user,
-                        role="student",
+                    user.set_password(initial_password)
+                    users_to_create.append(user)
+                
+                User.objects.bulk_create(users_to_create, batch_size=500)
+                
+                # ✅ Student FK 업데이트 (bulk_update)
+                student_user_map = {
+                    s.ps_number: u
+                    for s, u in zip(students_to_create, users_to_create)
+                }
+                for student in students_to_create:
+                    student.user = student_user_map[student.ps_number]
+                
+                Student.objects.bulk_update(
+                    students_to_create,
+                    ["user"],
+                    batch_size=500
+                )
+                
+                # ✅ TenantMembership Bulk Create
+                memberships_to_create = []
+                for student in students_to_create:
+                    memberships_to_create.append(
+                        TenantMembership(
+                            tenant=tenant,
+                            user=student.user,
+                            role="student",
+                        )
                     )
-                    
-                    # Parent 생성
-                    ensure_parent_for_student(student, parent_phone)
-                except Exception as e:
-                    logger.warning("Failed to create user/parent for student: %s", e)
+                TenantMembership.objects.bulk_create(memberships_to_create, batch_size=500)
+                
+                # ✅ Parent 생성 (개별 처리 필요 - 외래키 관계)
+                for student_data in chunk:
+                    try:
+                        ensure_parent_for_student(
+                            student_data["student"],
+                            student_data["parent_phone"]
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to create parent: %s", e)
+                        failed.append({
+                            "row": student_data["row_index"],
+                            "name": student_data["student"].name,
+                            "error": f"Parent 생성 실패: {str(e)[:500]}",
+                        })
+                
+                created_count += len(students_to_create)
+                
+            except Exception as e:
+                logger.exception("Failed to process chunk: %s", e)
+                # Chunk 실패 시 해당 chunk만 실패 처리
+                for student_data in chunk:
                     failed.append({
-                        "row": next((r[0] for r in valid_rows if (r[1].get("name"), _normalize_phone(r[1].get("parent_phone"))) == (student.name, student.parent_phone)), 0),
-                        "name": student.name,
-                        "error": f"User/Parent 생성 실패: {str(e)[:500]}",
+                        "row": student_data["row_index"],
+                        "name": student_data.get("name", "(이름 없음)"),
+                        "error": f"처리 실패: {str(e)[:500]}",
                     })
     
     return {
