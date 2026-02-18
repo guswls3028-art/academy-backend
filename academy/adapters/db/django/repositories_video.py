@@ -469,7 +469,7 @@ class DjangoVideoRepository:
         from apps.support.video.models import Video
 
         with transaction.atomic():
-            video = Video.objects.select_for_update().filter(id=int(video_id)).first()
+            video = get_video_for_update(video_id)
             if not video:
                 return False, "not_found"
             if video.status == Video.Status.READY and bool(video.hls_path):
@@ -495,6 +495,14 @@ class DjangoVideoRepository:
             if hasattr(video, "leased_by"):
                 update_fields.append("leased_by")
             video.save(update_fields=update_fields)
+            tenant_id = _tenant_id_from_video(video)
+        _cache_video_status_safe(
+            video_id, tenant_id,
+            getattr(Video.Status.READY, "value", "READY"),
+            hls_path=str(hls_path),
+            duration=int(duration) if duration is not None and duration >= 0 else None,
+            ttl=None,
+        )
         return True, "ok"
 
     def fail_video(self, video_id: int, reason: str) -> tuple[bool, str]:
