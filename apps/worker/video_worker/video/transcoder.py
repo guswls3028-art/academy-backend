@@ -223,6 +223,7 @@ def transcode_to_hls(
     if use_callback:
         total_sec = float(duration_sec)
         last_pct = -1
+        stderr_lines: List[str] = []
 
         def on_progress(current_sec: float) -> None:
             nonlocal last_pct
@@ -243,13 +244,16 @@ def transcode_to_hls(
             )
             assert p.stderr is not None
             for line in p.stderr:
+                stderr_lines.append(line)
+                if len(stderr_lines) > 50:
+                    stderr_lines.pop(0)
                 t = _parse_time_seconds(line)
                 if t is not None:
                     on_progress(t)
             p.wait(timeout=timeout)
             if p.returncode != 0:
                 raise TranscodeError(
-                    f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(p.stderr.read() if p.stderr else '')}"
+                    f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(''.join(stderr_lines))}"
                 )
         except subprocess.TimeoutExpired:
             p.kill()
