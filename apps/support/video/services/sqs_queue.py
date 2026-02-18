@@ -437,4 +437,26 @@ class VideoSQSQueue:
             update_fields.append("processing_started_at")
         
         video.save(update_fields=update_fields)
+        
+        # ✅ Redis에 PROCESSING 상태 저장 (TTL 6시간)
+        try:
+            from apps.support.video.redis_status_cache import cache_video_status
+            # tenant_id는 video에서 가져오기 (select_related로 이미 로드됨)
+            tenant_id = None
+            if hasattr(video, "session") and video.session:
+                if hasattr(video.session, "lecture") and video.session.lecture:
+                    tenant_id = video.session.lecture.tenant_id
+            
+            if tenant_id:
+                # ✅ 안전한 Status 값 추출 (TextChoices이면 .value, 아니면 그대로)
+                status_value = getattr(Video.Status.PROCESSING, "value", Video.Status.PROCESSING)
+                cache_video_status(
+                    tenant_id=tenant_id,
+                    video_id=video_id,
+                    status=status_value,
+                    ttl=21600,  # 6시간
+                )
+        except Exception as e:
+            logger.warning("Failed to cache video status in Redis: %s", e)
+        
         return True
