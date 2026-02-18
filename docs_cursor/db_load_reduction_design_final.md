@@ -1009,7 +1009,7 @@ with transaction.atomic():  # 전체를 하나의 트랜잭션
 
 ### 🔧 구현 설계
 
-#### 1. Repository에 배치 조회 메서드 추가
+#### 1. Repository에 배치 조회 메서드 추가 (최적화 버전)
 
 **파일**: `academy/adapters/db/django/repositories_students.py`
 
@@ -1019,19 +1019,58 @@ def student_batch_filter_by_name_phone(
     tenant_id: int,
     name_phone_pairs: list[tuple[str, str]],
 ) -> list[Student]:
-    """배치로 기존 활성 학생 조회 (IN 쿼리)"""
+    """배치로 기존 활성 학생 조회 (Tuple IN 방식, Index 활용)"""
     if not name_phone_pairs:
         return []
     
-    # (name, parent_phone) 쌍을 조건으로 조회
-    from django.db.models import Q
     from apps.domains.students.models import Student
+    from django.db import connection
     
-    conditions = Q()
+    # ✅ Tuple IN 방식 (Postgres composite index 활용)
+    # WHERE (tenant_id, name, parent_phone) IN ((...), (...), ...)
+    # Index: idx_student_tenant_name_phone (tenant_id, name, parent_phone)
+    
+    if len(name_phone_pairs) > 1000:
+        # 대량 데이터는 chunk로 나눠서 처리
+        results = []
+        for chunk in [name_phone_pairs[i:i+1000] for i in range(0, len(name_phone_pairs), 1000)]:
+            results.extend(self._student_batch_filter_chunk(tenant_id, chunk))
+        return results
+    
+    return self._student_batch_filter_chunk(tenant_id, name_phone_pairs)
+
+
+def _student_batch_filter_chunk(
+    self,
+    tenant_id: int,
+    name_phone_pairs: list[tuple[str, str]],
+) -> list[Student]:
+    """Chunk 단위 배치 조회 (Raw SQL로 최적화)"""
+    from apps.domains.students.models import Student
+    from django.db import connection
+    
+    if not name_phone_pairs:
+        return []
+    
+    # ✅ Raw SQL로 Tuple IN 쿼리 (Index 활용)
+    placeholders = ','.join(['(%s, %s, %s)'] * len(name_phone_pairs))
+    values = []
     for name, parent_phone in name_phone_pairs:
-        conditions |= Q(tenant_id=tenant_id, name=name, parent_phone=parent_phone, deleted_at__isnull=True)
+        values.extend([tenant_id, name, parent_phone])
     
-    return list(Student.objects.filter(conditions))
+    query = f"""
+        SELECT * FROM students
+        WHERE (tenant_id, name, parent_phone) IN ({placeholders})
+        AND deleted_at IS NULL
+    """
+    
+    with connection.cursor() as cursor:
+        cursor.execute(query, values)
+        columns = [col[0] for col in cursor.description]
+        return [
+            Student(**dict(zip(columns, row)))
+            for row in cursor.fetchall()
+        ]
 
 
 def student_batch_filter_deleted_by_name_phone(
