@@ -8,6 +8,18 @@
 
 ## 1. 현재 스케일링 정책 확인
 
+### PowerShell (Windows)
+
+```powershell
+# Video Worker ASG의 모든 스케일링 정책 확인
+aws application-autoscaling describe-scaling-policies --service-namespace ec2 --resource-id "auto-scaling-group/academy-video-worker-asg" --region ap-northeast-2 --output json
+
+# ASG 자체의 스케일링 정책 확인 (Step Scaling, Simple Scaling 등)
+aws autoscaling describe-policies --auto-scaling-group-name academy-video-worker-asg --region ap-northeast-2 --output json
+```
+
+### Linux/Mac (bash)
+
 ```bash
 # Video Worker ASG의 모든 스케일링 정책 확인
 aws application-autoscaling describe-scaling-policies \
