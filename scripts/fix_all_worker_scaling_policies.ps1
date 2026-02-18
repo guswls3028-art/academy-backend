@@ -28,7 +28,17 @@ $asgConfigs = @(
     }
 )
 
-Write-Host "Creating SQS-based scaling policies for all workers..." -ForegroundColor Cyan
+Write-Host "⚠️  주의: Application Auto Scaling(ec2:autoScalingGroup:DesiredCapacity)은" -ForegroundColor Yellow
+Write-Host "   일부 계정/리전에서 지원되지 않습니다." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "✅ 대신 Lambda 함수(queue_depth_lambda)에서 직접 ASG desired capacity를 조정합니다." -ForegroundColor Green
+Write-Host ""
+Write-Host "Lambda 함수가 다음을 수행합니다:" -ForegroundColor Cyan
+Write-Host "  - SQS 큐 깊이(visible + in_flight) 모니터링" -ForegroundColor Gray
+Write-Host "  - CloudWatch 메트릭 퍼블리시 (Academy/Workers QueueDepth)" -ForegroundColor Gray
+Write-Host "  - 모든 워커(AI, Video, Messaging) ASG desired capacity 직접 조정" -ForegroundColor Gray
+Write-Host ""
+Write-Host "기존 Application Auto Scaling 정책 확인 중..." -ForegroundColor Cyan
 Write-Host ""
 
 foreach ($config in $asgConfigs) {
@@ -38,15 +48,8 @@ foreach ($config in $asgConfigs) {
     
     Write-Host "[$asgName]" -ForegroundColor Yellow
     
-    # 1. Application Auto Scaling 타겟 등록
-    Write-Host "  Registering scalable target..." -ForegroundColor Gray
-    $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $resourceId `
-        --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 1 --max-capacity $MaxCapacity --region $Region 2>$null
-    $ErrorActionPreference = $ea
-    
-    # 2. 기존 CPU 기반 정책 제거 (있다면)
-    Write-Host "  Checking for CPU-based policies..." -ForegroundColor Gray
+    # 기존 Application Auto Scaling 정책 확인 및 제거 (있다면)
+    Write-Host "  Checking for existing Application Auto Scaling policies..." -ForegroundColor Gray
     $existingPolicies = aws application-autoscaling describe-scaling-policies `
         --service-namespace ec2 `
         --resource-id $resourceId `
@@ -56,81 +59,19 @@ foreach ($config in $asgConfigs) {
     if ($existingPolicies.ScalingPolicies) {
         foreach ($policy in $existingPolicies.ScalingPolicies) {
             $policyName = $policy.PolicyName
-            $hasCpuMetric = $false
-            
-            if ($policy.TargetTrackingScalingPolicyConfiguration) {
-                $predefined = $policy.TargetTrackingScalingPolicyConfiguration.PredefinedMetricSpecification
-                if ($predefined -and $predefined.PredefinedMetricType -like "*CPU*") {
-                    $hasCpuMetric = $true
-                }
-            }
-            
-            if ($hasCpuMetric -or $policyName -like "*CPU*") {
-                Write-Host "    Removing CPU-based policy: $policyName" -ForegroundColor Yellow
-                $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-                aws application-autoscaling delete-scaling-policy `
-                    --service-namespace ec2 `
-                    --resource-id $resourceId `
-                    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" `
-                    --policy-name $policyName `
-                    --region $Region 2>$null
-                $ErrorActionPreference = $ea
-            }
+            Write-Host "    Removing policy: $policyName" -ForegroundColor Yellow
+            $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            aws application-autoscaling delete-scaling-policy `
+                --service-namespace ec2 `
+                --resource-id $resourceId `
+                --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" `
+                --policy-name $policyName `
+                --region $Region 2>$null
+            $ErrorActionPreference = $ea
         }
-    }
-    
-    # 3. SQS 기반 Target Tracking 정책 생성/업데이트
-    Write-Host "  Creating QueueDepthTargetTracking policy..." -ForegroundColor Gray
-    
-    # AWS CLI 문서에 따르면 파일 내용은 TargetTrackingScalingPolicyConfiguration 객체의 내용이어야 함
-    # 최상위 레벨에 TargetTrackingScalingPolicyConfiguration 래퍼가 없어야 함
-    $targetValue = $TargetMessagesPerInstance
-    $policyContent = @"
-{
-  "TargetValue": $targetValue,
-  "CustomizedMetricSpecification": {
-    "MetricName": "QueueDepth",
-    "Namespace": "Academy/Workers",
-    "Dimensions": [{"Name": "WorkerType", "Value": "$workerType"}],
-    "Statistic": "Average"
-  },
-  "ScaleInCooldown": 600,
-  "ScaleOutCooldown": 60
-}
-"@
-    
-    $policyFile = Join-Path $RepoRoot "asg_policy_${workerType}_temp.json"
-    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-    [System.IO.File]::WriteAllText($policyFile, $policyContent, $utf8NoBom)
-    
-    # JSON 유효성 검사
-    try {
-        $jsonTest = Get-Content $policyFile -Raw | ConvertFrom-Json
-        if (-not $jsonTest.TargetTrackingScalingPolicyConfiguration) {
-            Write-Host "    ⚠️  JSON structure validation failed" -ForegroundColor Yellow
-        }
-    } catch {
-        Write-Host "    ⚠️  Invalid JSON: $_" -ForegroundColor Yellow
-        Write-Host "    File content:" -ForegroundColor Gray
-        Get-Content $policyFile | ForEach-Object { Write-Host "      $_" -ForegroundColor Gray }
-    }
-    
-    $policyPath = "file://$($policyFile -replace '\\','/' -replace ' ', '%20')"
-    
-    $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    $result = aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $resourceId `
-        --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" `
-        --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyPath --region $Region 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "    ✅ Policy created/updated successfully" -ForegroundColor Green
+        Write-Host "    ✅ All Application Auto Scaling policies removed" -ForegroundColor Green
     } else {
-        Write-Host "    ❌ Policy creation failed" -ForegroundColor Red
-        Write-Host "    Error output:" -ForegroundColor Yellow
-        $result | ForEach-Object { Write-Host "      $_" -ForegroundColor Gray }
-    }
-    $ErrorActionPreference = $ea
-    if (Test-Path $policyFile) {
-        Remove-Item $policyFile -Force -ErrorAction SilentlyContinue
+        Write-Host "    ℹ️  No Application Auto Scaling policies found" -ForegroundColor Gray
     }
     
     Write-Host ""
