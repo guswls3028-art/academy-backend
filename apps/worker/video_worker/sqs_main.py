@@ -104,8 +104,7 @@ def main() -> int:
     
     consecutive_errors = 0
     max_consecutive_errors = 10
-    consecutive_empty_polls = 0  # 비용 최적화: 빈 폴링 카운터
-    
+
     try:
         while not _shutdown:
             try:
@@ -113,7 +112,7 @@ def main() -> int:
                 try:
                     message = queue.receive_message(wait_time_seconds=SQS_WAIT_TIME_SECONDS)
                 except QueueUnavailableError as e:
-                    # 로컬 등 AWS 자격 증명 없을 때: 로그 한 번, 60초 대기 후 재시도 (empty로 세지 않음 → EC2 종료 안 함)
+                    # 로컬 등 AWS 자격 증명 없을 때: 로그 한 번, 60초 대기 후 재시도
                     logger.warning(
                         "SQS unavailable (AWS credentials invalid or missing?). Waiting 60s before retry. %s",
                         e,
@@ -122,25 +121,8 @@ def main() -> int:
                     continue
 
                 if not message:
-                    consecutive_empty_polls += 1
                     consecutive_errors = 0
-
-                    # 연속 빈 폴링이 임계값을 초과하면 EC2 인스턴스 종료 (IDLE_STOP_THRESHOLD=0이면 비활성화)
-                    if IDLE_STOP_THRESHOLD > 0 and consecutive_empty_polls >= IDLE_STOP_THRESHOLD:
-                        logger.info(
-                            "Queue empty for %d consecutive polls (threshold=%d), stopping EC2 instance in 10s",
-                            consecutive_empty_polls,
-                            IDLE_STOP_THRESHOLD,
-                        )
-                        time.sleep(10)  # 500 plan: Dead zone 완화를 위해 Stop 직전 대기
-                        logger.info("EC2 self-stop initiating (video worker)")
-                        _stop_self_ec2()
-                        return 0
-
                     continue
-
-                # 메시지가 있으면 카운터 리셋
-                consecutive_empty_polls = 0
                 
                 receipt_handle = message.get("receipt_handle")
                 if not receipt_handle:
