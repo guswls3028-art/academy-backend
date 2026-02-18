@@ -166,7 +166,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
             max_pages = int(payload.get("max_pages") or 10)
             processing_timeout = int(payload.get("processing_timeout") or 60)
             
-            _record_progress(job.id, "extracting", 30, step_index=2, step_total=4, step_name_display="프레임추출", step_percent=0)
+            _record_progress(job.id, "extracting", 30, step_index=2, step_total=4, step_name_display="프레임추출", step_percent=0, tenant_id=tenant_id)
             
             # analyze_homework_video 내부에서 진행률 콜백을 받도록 수정 필요하지만,
             # 일단 단계별로만 표시
@@ -178,9 +178,9 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 max_pages=max_pages,
                 processing_timeout=processing_timeout,
             )
-            _record_progress(job.id, "extracting", 50, step_index=2, step_total=4, step_name_display="프레임추출", step_percent=100)
-            _record_progress(job.id, "analyzing", 70, step_index=3, step_total=4, step_name_display="분석", step_percent=100)
-            _record_progress(job.id, "done", 100, step_index=4, step_total=4, step_name_display="완료", step_percent=100)
+            _record_progress(job.id, "extracting", 50, step_index=2, step_total=4, step_name_display="프레임추출", step_percent=100, tenant_id=tenant_id)
+            _record_progress(job.id, "analyzing", 70, step_index=3, step_total=4, step_name_display="분석", step_percent=100, tenant_id=tenant_id)
+            _record_progress(job.id, "done", 100, step_index=4, step_total=4, step_name_display="완료", step_percent=100, tenant_id=tenant_id)
             return AIResult.done(job.id, analysis)
 
         # --------------------------------------------------
@@ -225,7 +225,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 mode = "auto"
 
             # 1) meta 확보
-            _record_progress(job.id, "fetching_meta", 20, step_index=2, step_total=7, step_name_display="메타가져오기", step_percent=0)
+            _record_progress(job.id, "fetching_meta", 20, step_index=2, step_total=7, step_name_display="메타가져오기", step_percent=0, tenant_id=tenant_id)
             meta = payload.get("template_meta")
             meta_used = False
             meta_fetch_error = None
@@ -252,10 +252,10 @@ def handle_ai_job(job: AIJob) -> AIResult:
                     except TemplateMetaFetchError as e:
                         meta = None
                         meta_fetch_error = str(e)[:500]
-            _record_progress(job.id, "fetching_meta", 30, step_index=2, step_total=7, step_name_display="메타가져오기", step_percent=100)
+            _record_progress(job.id, "fetching_meta", 30, step_index=2, step_total=7, step_name_display="메타가져오기", step_percent=100, tenant_id=tenant_id)
 
             # 2) 이미지 로드 및 리사이징
-            _record_progress(job.id, "loading", 35, step_index=3, step_total=7, step_name_display="이미지로드", step_percent=0)
+            _record_progress(job.id, "loading", 35, step_index=3, step_total=7, step_name_display="이미지로드", step_percent=0, tenant_id=tenant_id)
             img_bgr = cv2.imread(local_path)
             if img_bgr is None:
                 return AIResult.failed(job.id, "cannot read image")
