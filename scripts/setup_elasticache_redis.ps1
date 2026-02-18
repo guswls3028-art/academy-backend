@@ -38,13 +38,13 @@ $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 $revokeOut = aws ec2 revoke-security-group-ingress --group-id $ClientSecurityGroupId --protocol tcp --port 6379 --source-group $ClientSecurityGroupId --region $Region 2>&1
 $ErrorActionPreference = $ea
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "[1.5/5] Removed wrong 6379 self-ref from Client SG (B-구조 정리)" -ForegroundColor Cyan
+    Write-Host "[1.5/5] Removed wrong 6379 self-ref from Client SG (B-structure cleanup)" -ForegroundColor Cyan
 } else {
-    # 규칙 없음 = 이미 깨끗함
+    # rule not present = already clean
 }
 
 # 2) Security group for ElastiCache (inbound 6379 to Redis SG, source: API/Worker SG)
-$RedisSgId = aws ec2 describe-security-groups --region $Region --filters "Name=group-name,Values=$RedisSgName" "Name=vpc-id,Values=$VpcId" --query "SecurityGroups[0].GroupId" --output text 2>$null
+$RedisSgId = aws ec2 describe-security-groups --region $Region --filters ("Name=group-name,Values=" + $RedisSgName) ("Name=vpc-id,Values=" + $VpcId) --query "SecurityGroups[0].GroupId" --output text 2>$null
 if (-not $RedisSgId -or $RedisSgId -eq "None") {
     Write-Host "[2/5] Creating security group $RedisSgName ..." -ForegroundColor Cyan
     $RedisSgId = aws ec2 create-security-group --group-name $RedisSgName --description "ElastiCache Redis - allow 6379 from API/Worker" --vpc-id $VpcId --region $Region --output text 2>$null
