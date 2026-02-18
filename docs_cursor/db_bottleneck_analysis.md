@@ -15,15 +15,25 @@
 
 ### 자원 경쟁 패턴
 
-#### 1. 비디오 워커의 DB 사용
+#### 1. 비디오 워커의 DB 사용 (실제로는 최소화됨!)
 - **인코딩 중**: CPU 100% 지속 (로컬 리소스)
-- **DB 업데이트**: 인코딩 단계마다 Video 상태 업데이트
+- **Progress 기록**: Redis에만 기록 (DB 없음) ✅
   ```python
-  # apps/support/video/services/sqs_queue.py
-  video.save(update_fields=["hls_path", "status", "duration"])
+  # src/infrastructure/video/processor.py
+  progress.record_progress(job_id, step, extra)  # Redis만 사용
   ```
-- **빈도**: 인코딩 단계마다 (준비, 다운로드, 분석, 인코딩, 검증, 썸네일, 업로드)
-- **특징**: 짧은 트랜잭션, 하지만 자주 호출
+- **DB 업데이트**: 시작 시 1번, 완료 시 1번만
+  ```python
+  # src/application/video/handler.py
+  self._repo.mark_processing(video_id)      # 시작 시 1번
+  self._repo.complete_video(...)            # 완료 시 1번
+  ```
+- **SELECT FOR UPDATE 사용**: Row-level lock
+  ```python
+  # academy/adapters/db/django/repositories_video.py
+  Video.objects.select_for_update().filter(id=video_id).first()
+  ```
+- **특징**: DB 업데이트는 최소화되었지만, AI 워커가 RDS를 포화시키면 간단한 쿼리도 느려짐
 
 #### 2. AI 워커의 DB 사용
 - **Excel 파싱**: 대량의 학생 데이터 처리
