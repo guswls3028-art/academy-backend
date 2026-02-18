@@ -249,6 +249,38 @@ def refresh_job_progress_ttl(tenant_id: str, job_id: str, ttl: int = 21600) -> b
 
 ### 단계 2: Video 워커 저장 로직 수정 (Redis 상태 저장 추가)
 
+#### PATCH 0.1: get_video_for_update()에 select_related 추가 (필수)
+
+**파일**: `academy/adapters/db/django/repositories_video.py`
+
+**수정 전 코드**:
+
+```python:academy/adapters/db/django/repositories_video.py
+def get_video_for_update(video_id: int):
+    """select_for_update로 Video 1건 조회."""
+    from apps.support.video.models import Video
+    return Video.objects.select_for_update().filter(id=int(video_id)).first()
+```
+
+**수정 후 코드**:
+
+```python:academy/adapters/db/django/repositories_video.py
+def get_video_for_update(video_id: int):
+    """select_for_update로 Video 1건 조회 (tenant_id 추출을 위한 select_related 포함)."""
+    from apps.support.video.models import Video
+    return Video.objects.select_for_update().select_related(
+        "session", "session__lecture", "session__lecture__tenant"
+    ).filter(id=int(video_id)).first()
+```
+
+**변경 이유**: tenant_id 추출 시 추가 DB hit 방지 (DB 폴링 제거 목적과 상충)
+
+**영향 범위**: 모든 `get_video_for_update()` 호출부
+
+**롤백 방법**: select_related 제거
+
+---
+
 #### PATCH 2.1: complete_video에 Redis 상태 저장 추가
 
 **파일**: `apps/support/video/services/sqs_queue.py`
