@@ -843,10 +843,19 @@ const getPollInterval = (elapsedSeconds: number): number => {
 
 ## 🎯 구현 체크리스트
 
+### 필수 (DB 폴링 제거)
 - [ ] Redis 키 헬퍼 생성 (Tenant 네임스페이스)
-- [ ] Progress/Status 전용 endpoint 추가
+- [ ] Progress/Status 전용 endpoint 추가 (Redis-only)
 - [ ] 워커 완료 시 Redis 저장 (TTL 없음, result 포함)
-- [ ] 프론트엔드 폴링 전환 (progress endpoint)
+- [ ] 프론트엔드 폴링 전환 (progress endpoint만 사용)
+- [ ] 진행 중 작업: DB 조회 완전 제거
+
+### 권장 (성능 최적화)
 - [ ] 적응형 폴링 간격 구현
 - [ ] DB_CONN_MAX_AGE 15~20 조정
-- [ ] 테스트 및 모니터링
+- [ ] 시청 로그/정채 판단 프로그래스바 DB 조회 제거 확인
+
+### 모니터링
+- [ ] DB 쿼리 수 모니터링 (폴링 제거 확인)
+- [ ] Redis 메모리 사용량 모니터링
+- [ ] RDS CPU 사용률 모니터링 (80% → 20% 목표)
