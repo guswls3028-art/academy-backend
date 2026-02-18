@@ -830,10 +830,9 @@ class JobProgressView(APIView):
         # ✅ 진행률은 Redis에서 조회
         progress = None
         if job_status == "PROCESSING":
-            # 기존 RedisProgressAdapter는 tenant namespace 없이 조회하므로
-            # 마이그레이션 기간 동안 양쪽 키 모두 확인 필요
+            # ✅ tenant_id 전달하여 tenant namespace 키 조회
             progress_adapter = RedisProgressAdapter()
-            progress = progress_adapter.get_progress(job_id)
+            progress = progress_adapter.get_progress(job_id, tenant_id=str(tenant.id))
         
         # ✅ 응답 구성
         response_data = {
