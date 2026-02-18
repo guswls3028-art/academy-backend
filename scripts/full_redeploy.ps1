@@ -210,18 +210,17 @@ echo BUILD_AND_PUSH_OK
     # 멀티라인 스크립트를 배열로 변환
     $scriptLines = $buildScript -split "`n" | Where-Object { $_.Trim() -ne "" }
     # 각 라인을 JSON 문자열로 이스케이프하고 배열로 구성
-    # PowerShell의 ConvertTo-Json을 사용하여 안전하게 이스케이프
-    $commandsArray = $scriptLines | ForEach-Object { 
-        $line = $_.Trim()
-        if ($line) {
-            # ConvertTo-Json을 사용하여 JSON 문자열로 변환 (따옴표 제거)
-            $jsonStr = $line | ConvertTo-Json -Compress
-            # ConvertTo-Json이 추가한 외부 따옴표 제거
-            $jsonStr.Trim('"')
+    $quotedCommands = @()
+    foreach ($line in $scriptLines) {
+        $trimmed = $line.Trim()
+        if ($trimmed) {
+            # JSON 문자열 이스케이프: 따옴표와 백슬래시 처리
+            $escaped = $trimmed -replace '\\', '\\' -replace '"', '\"'
+            $quotedCommands += '"' + $escaped + '"'
         }
     }
     # JSON 배열 문자열 구성: ["cmd1","cmd2"]
-    $commandsJson = "[$($commandsArray | ForEach-Object { "`"$_`"" } -join ',')]"
+    $commandsJson = '[' + ($quotedCommands -join ',') + ']'
     # ✅ PowerShell에서 JSON 문자열을 안전하게 전달
     $cmdResult = aws ssm send-command --region $Region `
         --instance-ids $buildInstanceId `
