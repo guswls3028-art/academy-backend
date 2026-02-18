@@ -86,10 +86,6 @@ sudo docker logs -f academy-ai-worker-cpu
 | 큐 접근 실패 | check_sqs_worker_connectivity.py | create_ai_sqs_resources.py 또는 AWS 자격 증명 |
 | 워커는 켜져 있는데 안 먹음 | 워커 로그, 큐 URL/이름 | .env 의 AI_SQS_QUEUE_NAME_BASIC=academy-ai-jobs-basic 일치 여부 |
 
-- **AI 워커** 인스턴스가 1대 이상 떠 있는지 (ASG desired >= 1).
-- SQS `academy-ai-jobs-basic` 에 메시지가 쌓이는지 (AWS SQS 콘솔에서 확인 가능).
-- 워커 EC2/컨테이너 로그에 excel_parsing 처리 로그 또는 에러가 있는지.
-
 ### 4. 워커가 처리했는데 FAILED
 
 - GET `/api/v1/jobs/<job_id>/` 응답에 `status: "FAILED"`, `error_message` 있음.
