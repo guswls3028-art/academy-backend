@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 # ffmpeg stderr 진행률 파싱 (time=00:01:23.45 형태)
 _RE_TIME = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
+# ffmpeg -progress pipe:1 출력 (out_time_ms=마이크로초)
+_RE_OUT_TIME_MS = re.compile(r"out_time_ms=(\d+)")
 
 # 360p + 720p만 사용 (240p 제거로 CPU 부담 감소, 학원 실사용에 충분)
 # preset 유지 (순서 중요): v1=360p, v2=720p
