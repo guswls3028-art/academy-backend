@@ -214,7 +214,7 @@ deploy_worker_asg.ps1에서 생성하는 ASG 이름과 일치.
 2. [ ] C:\key\backend-api-key.pem 존재 여부
 3. [ ] academy-api tag Name=academy-api 인지
 4. [ ] academy-api instance-state=running 인지
-5. [ ] 로컬 → academy-api Public IP:22 방화벽/SG 허용 여부 (예: 0.0.0.0/0 또는 고정 IP)
+5. [ ] academy-api-sg 22번: 현재 공인 IP가 허용되는지 (`Invoke-RestMethod checkip.amazonaws.com` vs 222.107.38.38/32)
 6. [ ] deploy_preflight.ps1 -TestSsh 실행 결과
 
 ---
