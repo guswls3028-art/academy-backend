@@ -38,7 +38,8 @@ class JobProgressView(APIView):
         
         # ✅ 진행률은 Redis에서 조회 (tenant_id 전달 필수)
         progress = None
-        if job_status == "PROCESSING":
+        # AI Job status는 "RUNNING"이 실제 처리 중 상태임
+        if job_status == "RUNNING":
             # ✅ tenant_id 전달하여 tenant namespace 키 조회
             progress_adapter = RedisProgressAdapter()
             progress = progress_adapter.get_progress(job_id, tenant_id=str(tenant.id))

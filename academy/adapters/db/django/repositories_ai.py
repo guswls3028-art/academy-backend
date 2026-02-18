@@ -103,8 +103,9 @@ class DjangoAIJobRepository:
             except Exception as e:
                 logger.warning("Failed to cache job status in Redis: %s", e)
         
-        # ✅ PROCESSING 상태도 Redis에 저장 (TTL 6시간)
-        elif job.status.value == "PROCESSING":
+        # ✅ RUNNING 상태도 Redis에 저장 (TTL 6시간)
+        # AI Job은 "RUNNING"이 실제 처리 중 상태임
+        elif job.status.value == "RUNNING":
             try:
                 from apps.domains.ai.redis_status_cache import cache_job_status
                 cache_job_status(
