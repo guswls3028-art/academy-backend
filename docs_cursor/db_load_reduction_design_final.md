@@ -445,9 +445,11 @@ def refresh_job_progress_ttl(tenant_id: str, job_id: str, ttl: int = 21600) -> b
         progress_key = _get_job_progress_key(tenant_id, job_id)
         status_key = _get_job_status_key(tenant_id, job_id)
         
-        # 진행률과 상태 모두 TTL 갱신
-        redis_client.expire(progress_key, ttl)
-        redis_client.expire(status_key, ttl)
+        # ✅ exists 체크 후 TTL 갱신 (의도치 않은 상태 방지)
+        if redis_client.exists(progress_key):
+            redis_client.expire(progress_key, ttl)
+        if redis_client.exists(status_key):
+            redis_client.expire(status_key, ttl)
         
         return True
     except Exception as e:
