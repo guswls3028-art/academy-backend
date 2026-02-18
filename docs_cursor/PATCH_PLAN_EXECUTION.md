@@ -2591,4 +2591,39 @@ class Migration(migrations.Migration):
 
 ---
 
-**패치 플랜 완료 (피드백 반영)**
+## 필수 수정 사항 체크리스트
+
+### ✅ 0. Migration CREATE INDEX CONCURRENTLY
+- [x] 모든 Migration 클래스에 `atomic = False` 추가
+- [x] Students, AIJob, Video 인덱스 마이그레이션 모두 수정 완료
+
+### ✅ 1. complete_video/fail_video/mark_processing update_fields
+- [x] 실제 파일 확인: `sqs_queue.py`에 이미 `update_fields` 정의되어 있음
+- [x] 패치 플랜에서 일관성 유지
+
+### ✅ 2. Video Status 값 타입 통일
+- [x] `getattr(Video.Status.READY, "value", Video.Status.READY)` 패턴 적용
+- [x] READY, FAILED, PROCESSING 모두 수정 완료
+
+### ✅ 3. VideoProgressView tenant_id 전달
+- [x] `get_video_encoding_progress(video_id, tenant.id)` 수정 완료
+- [x] step_detail, remaining_seconds도 tenant_id 전달
+
+### ✅ 4. VideoProgressAdapter 적용 방식 통일
+- [x] A안(encoding_progress.py 직접 조회) + B안(Adapter writer) 혼용 명시
+- [x] 최소 변경 추천: 기록은 Adapter, 조회는 직접 get 방식
+
+### ✅ 5. AI Job Progress View tenant_id 전달
+- [x] `progress_adapter.get_progress(job_id, tenant_id=str(tenant.id))` 수정 완료
+
+### ✅ 6. repositories_ai.py logger/result 방어
+- [x] logger 정의 추가 (`logging.getLogger(__name__)`)
+- [x] result 조회 방어적 처리 (`getattr` + `callable` 체크)
+
+### ⚠️ 7. Excel Bulk (Day 4+ 별도 PR)
+- [ ] Student/User 생성 순서 재정렬 필요 (User 먼저 → Student FK 연결)
+- [ ] FK/제약조건 확인 후 구현
+
+---
+
+**패치 플랜 완료 (필수 수정 사항 반영 완료)**
