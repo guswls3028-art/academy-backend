@@ -196,20 +196,28 @@ aws autoscaling describe-policies \
 
 `describe-policies` / `describe-alarms` 가 비어 있으면 ASG에 정책이 없어 스케일 업이 안 됨. 아래 순서로 추가.
 
-#### 4-1) SQS 큐 URL 조회
+#### 4-1) Scale-Out 정책 생성 (먼저 PolicyARN 확보)
 
 ```bash
-QUEUE_URL=$(aws sqs get-queue-url --region ap-northeast-2 --queue-name academy-video-jobs --query QueueUrl --output text)
-echo $QUEUE_URL
+POLICY_ARN=$(aws autoscaling put-scaling-policy \
+  --region ap-northeast-2 \
+  --auto-scaling-group-name academy-video-worker-asg \
+  --policy-name video-queue-scaleout \
+  --policy-type StepScaling \
+  --adjustment-type ChangeInCapacity \
+  --step-adjustments "[{\"MetricIntervalLowerBound\":0,\"ScalingAdjustment\":1}]" \
+  --cooldown 300 \
+  --query PolicyARN --output text)
+echo $POLICY_ARN
 ```
 
-#### 4-2) CloudWatch Alarm 생성 (큐에 메시지 1개 이상이면 ScaleOut)
+#### 4-2) CloudWatch Alarm 생성 (큐 메시지 ≥ 1 → 정책 실행)
 
 ```bash
 aws cloudwatch put-metric-alarm \
   --region ap-northeast-2 \
   --alarm-name academy-video-queue-depth-scaleout \
-  --alarm-description "Video queue has messages" \
+  --alarm-description "Video queue has messages - scale out" \
   --namespace AWS/SQS \
   --metric-name ApproximateNumberOfMessagesVisible \
   --dimensions Name=QueueName,Value=academy-video-jobs \
@@ -217,27 +225,15 @@ aws cloudwatch put-metric-alarm \
   --period 60 \
   --threshold 1 \
   --comparison-operator GreaterThanOrEqualToThreshold \
-  --evaluation-periods 1
+  --evaluation-periods 1 \
+  --alarm-actions "$POLICY_ARN"
 ```
 
-#### 4-3) Scale-Out 정책 생성 (Alarm → +1 인스턴스)
+#### 4-3) 확인
 
 ```bash
-aws application-autoscaling put-scaling-policy \
-  --region ap-northeast-2 \
-  --service-namespace ec2 \
-  --resource-id "auto-scaling-group/academy-video-worker-asg" \
-  --scalable-dimension ec2:autoScalingGroup:DesiredCapacity \
-  --policy-name video-queue-scaleout \
-  --policy-type StepScaling \
-  --step-scaling-policy-configuration '{
-    "AdjustmentType": "ChangeInCapacity",
-    "StepAdjustments": [{"MetricIntervalLowerBound": 0, "ScalingAdjustment": 1}],
-    "MetricAggregationType": "Average",
-    "Cooldown": 300
-  }'
+aws autoscaling describe-policies --region ap-northeast-2 --auto-scaling-group-name academy-video-worker-asg
+aws cloudwatch describe-alarms --region ap-northeast-2 --alarm-names academy-video-queue-depth-scaleout
 ```
 
-이후 콘솔에서 생성한 Alarm의 Actions에 위 정책 연결.
-
-(또는 Target Tracking: CPU 60% 기준 등 더 간단한 정책으로 대체 가능.)
+큐에 메시지가 쌓이면 Alarm → 정책 → DesiredCapacity 증가. (대안: CPU 60% 기준 Target Tracking으로 간단히 설정 가능)
