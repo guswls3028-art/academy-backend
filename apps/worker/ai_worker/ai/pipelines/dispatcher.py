@@ -70,10 +70,13 @@ def handle_ai_job(job: AIJob) -> AIResult:
         if not download_url:
             return AIResult.failed(job.id, "download_url missing")
 
+        # 다운로드 단계 (모든 작업 공통)
+        _record_progress(job.id, "downloading", 10, step_index=1, step_total=1, step_name_display="다운로드", step_percent=0)
         local_path = download_to_tmp(
             download_url=download_url,
             job_id=str(job.id),
         )
+        _record_progress(job.id, "downloading", 10, step_index=1, step_total=1, step_name_display="다운로드", step_percent=100)
 
         # --------------------------------------------------
         # OCR
