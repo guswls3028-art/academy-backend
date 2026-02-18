@@ -205,8 +205,8 @@ echo BUILD_AND_PUSH_OK
 "@
     # SSM on Linux runs the script with bash; CRLF causes "set -e" to be parsed as "set -" (invalid option)
     $buildScript = ($buildScript.Trim() -replace "`r`n", "`n" -replace "`r", "`n")
-    # ✅ JSON 파일 사용 (PowerShell 따옴표 문제 해결)
-    # 멀티라인 스크립트를 배열로 변환하여 JSON 파일로 저장
+    # ✅ --parameters 직접 사용 (Windows --cli-input-json 문제 회피)
+    # 멀티라인 스크립트를 배열로 변환
     $scriptLines = $buildScript -split "`n" | Where-Object { $_.Trim() -ne "" }
     $commandsArray = @()
     foreach ($line in $scriptLines) {
@@ -215,26 +215,15 @@ echo BUILD_AND_PUSH_OK
             $commandsArray += $trimmed
         }
     }
-    # JSON 파일 생성 (UTF-8 BOM 없음)
-    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-    $inputJson = @{
-        InstanceIds = @($buildInstanceId)
-        DocumentName = "AWS-RunShellScript"
-        Parameters = @{
-            commands = $commandsArray
-        }
-        TimeoutSeconds = 3600
-    } | ConvertTo-Json -Depth 10
-    $inputFile = Join-Path $RepoRoot "ssm_input.json"
-    [System.IO.File]::WriteAllText($inputFile, $inputJson, $utf8NoBom)
-    # ✅ 현재 디렉토리를 변경하여 상대 경로 사용 (Windows 절대 경로 문제 회피)
-    Push-Location $RepoRoot
-    try {
-        $cmdResult = aws ssm send-command --region $Region --cli-input-json "ssm_input.json" --output json 2>&1
-    } finally {
-        Pop-Location
-        Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
-    }
+    # PowerShell 배열을 JSON 배열 문자열로 변환
+    $commandsJson = $commandsArray | ConvertTo-Json -Compress
+    # ✅ --parameters에 JSON 배열 직접 전달
+    $cmdResult = aws ssm send-command --region $Region `
+        --instance-ids $buildInstanceId `
+        --document-name "AWS-RunShellScript" `
+        --parameters "commands=$commandsJson" `
+        --timeout-seconds 3600 `
+        --output json 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Send-Command failed with exit code: $LASTEXITCODE" -ForegroundColor Red
         Write-Host "Error output: $cmdResult" -ForegroundColor Red
