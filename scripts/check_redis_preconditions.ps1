@@ -81,9 +81,9 @@ if ($envContent -and $ssmValue) {
     if ($envContent -match 'REDIS_HOST=([^\s#]+)') { $localHost = $Matches[1].Trim() }
     if ($ssmValue -match 'REDIS_HOST=([^\s\r\n#]+)') { $ssmHost = $Matches[1].Trim() }
     if ($localHost -and $ssmHost -and $localHost -eq $ssmHost) {
-        Write-Host "`n[OK] .env REDIS_HOST == SSM REDIS_HOST (일치)" -ForegroundColor Green
+        Write-Host "`nOK   .env REDIS_HOST == SSM REDIS_HOST (일치)" -ForegroundColor Green
     } elseif ($localHost -and $ssmHost) {
-        Write-Host "`n[FAIL] .env REDIS_HOST != SSM REDIS_HOST" -ForegroundColor Red
+        Write-Host "`nFAIL .env REDIS_HOST != SSM REDIS_HOST" -ForegroundColor Red
         Write-Host "       .env: $localHost" -ForegroundColor Gray
         Write-Host "       SSM:  $ssmHost" -ForegroundColor Gray
         Write-Host "       -> upload_env_to_ssm.ps1 실행 후 워커 instance refresh 필요" -ForegroundColor Yellow
