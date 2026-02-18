@@ -205,15 +205,35 @@ GET /api/v1/jobs/{job_id}/ → DB 기반 (기존 유지)
 
 ## 💸 가성비 관점 결론
 
-Redis 최적화는 **DB 부하(특히 SELECT 폭격)**를 거의 제거한다.
+### ❌ DB 폴링은 구조적으로 불필요
 
-하지만 Excel bulk 쿼리 같은 **"쓰기/연산"**은 남는다.
+**지금 DB가 터지는 이유:**
+1. DB 체급 작음 (근본) → RDS 크기 증가 필요
+2. **폴링이 DB 때림 (불필요한 부하)** → Redis-only로 해결
 
-그래서 **"합일점"**은:
-- Redis progress/status endpoint 분리로 폴링 DB 0 만들기
+**Redis-only로 바꾸면:**
+- DB SELECT 폭격 **0으로 만들 수 있음** ✅
+- 진행 상황은 "보기 편하라고 주는 것"일 뿐
+- 진행 상황 때문에 DB 터지는 게 문제
+
+**그래서 "합일점"은:**
+- Redis progress/status endpoint 분리로 **폴링 DB 0 만들기** (핵심)
 - **완료 캐시 TTL 제거(또는 24h)**로 만료 폭탄 방지
 - RDS는 최소 small, 추천 medium (이건 체급 문제라 결국 필요)
 - Excel bulk 최적화는 다음 단계(하지만 이게 장기적으로 비용을 더 줄임)
+
+### 🔥 진짜 답
+
+**❌ DB 폴링은 구조적으로 불필요**
+
+폴링을 해야 한다면:
+- 그건 Redis 설계가 불완전해서임
+- Redis에 모든 데이터가 있으면 DB 폴링 불필요
+
+**더 나아가면?**
+- WebSocket 쓰면 폴링도 필요 없음
+- Worker → Redis → PubSub → WebSocket → Frontend
+- 근데 지금 단계에서는 Redis-only polling이면 충분히 안정적임
 
 ## ✅ 최종 실행 우선순위 (현실적인 로드맵)
 
