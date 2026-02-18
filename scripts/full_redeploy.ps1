@@ -214,7 +214,7 @@ echo BUILD_AND_PUSH_OK
     foreach ($line in $scriptLines) {
         $trimmed = $line.Trim()
         if ($trimmed) {
-            # JSON 문자열 이스케이프: 따옴표와 백슬래시 처리
+            # JSON 문자열 이스케이프: 백슬래시와 따옴표 처리
             $escaped = $trimmed -replace '\\', '\\' -replace '"', '\"'
             $quotedCommands += '"' + $escaped + '"'
         }
