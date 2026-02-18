@@ -108,9 +108,11 @@ $aiUserDataRaw = $aiUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRRegistry
 $aiUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($aiUserDataRaw))
 
 $LtAiName = "academy-ai-worker-asg"
+# AI 워커: 루트 볼륨 20GB (Docker 이미지 + 컨테이너용, Video보다 작지만 충분)
+$aiBlockDevices = '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":20,"VolumeType":"gp3"}}]'
 $ltAiKey = if ($KeyNameAi) { ",`"KeyName`":`"$KeyNameAi`"" } else { "" }
 $ltAiJson = @"
-{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"]$ltAiKey,"UserData":"$aiUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-ai-worker-cpu"}]}]}
+{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"]$ltAiKey,"UserData":"$aiUserDataB64","BlockDeviceMappings":$aiBlockDevices,"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-ai-worker-cpu"}]}]}
 "@
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $ltAiFile = Join-Path $RepoRoot "lt_ai_data.json"
