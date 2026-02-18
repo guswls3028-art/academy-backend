@@ -315,6 +315,14 @@ if ($deployWorkers) {
                 Write-Host "  $asgName - ASG not found or error: $asgCheck" -ForegroundColor Yellow
                 continue
             }
+            
+            # ✅ 진행 중인 Instance Refresh 확인
+            $inProgress = aws autoscaling describe-instance-refreshes --region $Region --auto-scaling-group-name $asgName --query "InstanceRefreshes[?Status=='InProgress'].[InstanceRefreshId,Status]" --output json 2>&1
+            if ($LASTEXITCODE -eq 0 -and $inProgress -and $inProgress -ne "[]" -and $inProgress -ne "null") {
+                Write-Host "  $asgName instance refresh already in progress (skipping)" -ForegroundColor Yellow
+                continue
+            }
+            
             # cmd /c prevents PowerShell from treating aws stderr as terminating error
             $refreshOut = cmd /c "aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName 2>&1"
             if ($LASTEXITCODE -eq 0) {
