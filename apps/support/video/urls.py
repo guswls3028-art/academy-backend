@@ -7,6 +7,7 @@ from .views import (
     VideoViewSet,
     VideoPermissionViewSet,
     VideoProgressViewSet,
+    VideoProgressView,  # ✅ 추가: Redis-only progress endpoint
     VideoPlaybackEventViewSet,
     VideoProcessingCompleteView,
     VideoPolicyImpactAPIView,
