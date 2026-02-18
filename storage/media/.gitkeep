@@ -1,0 +1,1 @@
+# Django MEDIA_ROOT; 디렉터리 존재 보장용 (실제 업로드 파일은 .gitignore로 제외)

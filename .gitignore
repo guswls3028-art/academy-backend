@@ -24,7 +24,9 @@ node_modules/
 # =========================
 # Media / Storage (RUNTIME ONLY)
 # =========================
-storage/
+# storage/ 로 디렉터리 자체를 무시하면 하위 예외(!storage/media/.gitkeep)가 동작하지 않음.
+# storage/* 로 내용만 무시하면 루트 storage 디렉터리는 탐색되어 예외 규칙이 적용됨.
+storage/*
 *.mp4
 *.avi
 *.mov
