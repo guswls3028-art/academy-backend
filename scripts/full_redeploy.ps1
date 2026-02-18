@@ -262,6 +262,14 @@ if ($deployApi) {
         Write-Host "academy-api instance not found." -ForegroundColor Red
         exit 1
     }
+    # .env 복사 (API 서버 --env-file .env 사용)
+    $envPath = Join-Path $RepoRoot ".env"
+    $apiKeyPath = Join-Path $KeyDir $INSTANCE_KEYS["academy-api"]
+    if ((Test-Path $envPath) -and (Test-Path $apiKeyPath)) {
+        Write-Host "[academy-api] Copying .env ..." -ForegroundColor Gray
+        scp -o StrictHostKeyChecking=accept-new -i "$apiKeyPath" "$envPath" "${EC2_USER}@${apiIp}:/home/ec2-user/.env"
+        if ($LASTEXITCODE -ne 0) { Write-Host "[academy-api] WARN: .env copy failed, deploy may use old .env" -ForegroundColor Yellow }
+    }
     $apiOk = Deploy-One -Name "academy-api" -Ip $apiIp -KeyFile $INSTANCE_KEYS["academy-api"] -RemoteCmd $REMOTE_CMDS["academy-api"]
     if (-not $apiOk) { exit 1 }
 }
