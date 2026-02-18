@@ -88,6 +88,7 @@ Write-Host "     - AI: academy-ai-worker-asg" -ForegroundColor White
 Write-Host "     - Video: academy-video-worker-asg" -ForegroundColor White
 Write-Host "     - Messaging: academy-messaging-worker-asg" -ForegroundColor White
 Write-Host ""
-Write-Host "  3. 스케일링 로직:" -ForegroundColor Gray
-Write-Host "     - 큐 깊이(visible + in_flight) / $TargetMessagesPerInstance = desired capacity" -ForegroundColor White
-Write-Host "     - 최소: ASG Min 값, 최대: ASG Max 값" -ForegroundColor White
+Write-Host "  3. Scaling logic:" -ForegroundColor Gray
+$msg = "     - (visible + in_flight) / " + $TargetMessagesPerInstance + " = desired capacity"
+Write-Host $msg -ForegroundColor White
+Write-Host "     - Min/Max: ASG Min/Max capacity" -ForegroundColor White
