@@ -157,30 +157,35 @@ sudo docker restart academy-video-worker
 - 재시작 후 워커 로그에서 `SQS_MESSAGE_RECEIVED | video_id=...` (1111의 id) 확인.
 - video 17은 visibility 만료 후 다시 visible 되고, 나중에 다시 처리될 수 있음.
 
-### 1. 오토스케일 수동 점검 (ASG 사용 시)
+### 1. 오토스케일 구조: Lambda 기반 (ASG 정책 아님)
 
-```bash
+이 프로젝트는 **Lambda `academy-worker-queue-depth-metric`** 가 1분마다 SQS 큐 깊이를 보고 **직접** ASG desired를 조정함.  
+따라서 `describe-policies` / `describe-alarms` 가 **비어 있는 것은 정상**임 (ASG 정책·알람 미사용).
+
+- **Lambda**: `academy-worker-queue-depth-metric` (`infra/worker_asg/queue_depth_lambda/`)
+- **트리거**: EventBridge `academy-worker-queue-depth-rate` (rate 1 minute)
+- **로직**: SQS `academy-video-jobs` visible+in_flight 조회 → `set_desired_capacity` 호출
+
+### 2. 오토스케일 수동 점검
+
+```powershell
 # MaxSize 확인 (1이면 절대 안 늘어남)
-aws autoscaling describe-auto-scaling-groups \
-  --region ap-northeast-2 \
-  --auto-scaling-group-names academy-video-worker-asg \
-  --query "AutoScalingGroups[0].{Min:MinSize,Desired:DesiredCapacity,Max:MaxSize,Instances:length(Instances)}" \
-  --output table
+aws autoscaling describe-auto-scaling-groups --region ap-northeast-2 --auto-scaling-group-names academy-video-worker-asg --query "AutoScalingGroups[0].{Min:MinSize,Desired:DesiredCapacity,Max:MaxSize,Instances:length(Instances)}" --output table
 
 # 수동 desired=2 테스트 (Max >= 2 일 때만)
-aws autoscaling set-desired-capacity \
-  --region ap-northeast-2 \
-  --auto-scaling-group-name academy-video-worker-asg \
-  --desired-capacity 2
+aws autoscaling set-desired-capacity --region ap-northeast-2 --auto-scaling-group-name academy-video-worker-asg --desired-capacity 2
 
-# 스케일 정책 존재 여부
-aws autoscaling describe-policies \
-  --region ap-northeast-2 \
-  --auto-scaling-group-name academy-video-worker-asg \
-  --output table
+# Lambda 존재 여부 (이게 있어야 오토스케일 동작)
+aws lambda get-function --function-name academy-worker-queue-depth-metric --region ap-northeast-2
+
+# EventBridge 규칙(1분 주기) 확인
+aws events list-rules --region ap-northeast-2 --query "Rules[?Name=='academy-worker-queue-depth-rate']"
+
+# Lambda 최근 로그 (큐 깊이, desired 변경 여부)
+# AWS 콘솔 → CloudWatch → Log groups → /aws/lambda/academy-worker-queue-depth-metric
 ```
 
-### 2. SQS visibility 확인 (코드상 이미 6h 설정됨)
+### 3. SQS visibility 확인 (코드상 이미 6h 설정됨)
 
 - 워커가 **작업 시작 시** `change_message_visibility(receipt_handle, 21600)` 호출 (6h).
 - 3시간 영상도 visibility로는 문제 없음.
