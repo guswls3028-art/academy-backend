@@ -310,12 +310,12 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 )
 
             # 5) ROI + identifier
-            _record_progress(job.id, "building_roi", 60, step_index=5, step_total=7, step_name_display="ROI빌드", step_percent=0)
+            _record_progress(job.id, "building_roi", 60, step_index=5, step_total=7, step_name_display="ROI빌드", step_percent=0, tenant_id=tenant_id)
             h, w = aligned.shape[:2]
             questions_payload = build_questions_payload_from_meta(meta, (w, h))
-            _record_progress(job.id, "building_roi", 70, step_index=5, step_total=7, step_name_display="ROI빌드", step_percent=100)
+            _record_progress(job.id, "building_roi", 70, step_index=5, step_total=7, step_name_display="ROI빌드", step_percent=100, tenant_id=tenant_id)
 
-            _record_progress(job.id, "detecting_id", 75, step_index=6, step_total=7, step_name_display="식별자감지", step_percent=0)
+            _record_progress(job.id, "detecting_id", 75, step_index=6, step_total=7, step_name_display="식별자감지", step_percent=0, tenant_id=tenant_id)
             ident = detect_identifier_v1(
                 image_bgr=aligned,
                 meta=meta,
