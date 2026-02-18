@@ -865,10 +865,11 @@ class JobProgressView(APIView):
         cached_status = get_job_status_from_redis(str(tenant.id), job_id)
         
         if not cached_status:
-            # Redis에 없으면 404 (진행 중이 아니거나 완료 후 TTL 만료)
+            # ✅ Redis에 없으면 UNKNOWN 상태 반환 (404는 UX상 위험)
+            # TTL 만료되었지만 아직 DONE/FAILED 상태일 수 있음
             return Response(
-                {"detail": "진행 중인 작업이 아닙니다."},
-                status=status.HTTP_404_NOT_FOUND,
+                {"status": "UNKNOWN", "message": "진행 상태를 확인할 수 없습니다."},
+                status=status.HTTP_200_OK,
             )
         
         job_status = cached_status.get("status")
