@@ -23,13 +23,36 @@ _STEP_PERCENT = {
 
 def _get_progress_payload(video_id: int, tenant_id: Optional[int] = None) -> Optional[dict]:
     """Redis에서 tenant:{tenant_id}:video:{video_id}:progress payload 조회."""
-    if not tenant_id:
+    try:
+        from libs.redis.client import get_redis_client
+    except ImportError:
         return None
+
+    client = get_redis_client()
+    if not client:
+        return None
+
+    # ✅ Tenant namespace 키 우선 조회
+    if tenant_id:
+        key = f"tenant:{tenant_id}:video:{video_id}:progress"
+        try:
+            raw = client.get(key)
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
+        
+        # 하위 호환성: tenant namespace 키가 없으면 기존 키 형식 확인
+        job_id = f"{VIDEO_JOB_ID_PREFIX}{video_id}"
+        legacy_key = f"job:{job_id}:progress"
+        try:
+            raw = client.get(legacy_key)
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
     
-    # ✅ VideoProgressAdapter 사용
-    from apps.support.video.redis_progress_adapter import VideoProgressAdapter
-    adapter = VideoProgressAdapter(video_id=video_id, tenant_id=tenant_id)
-    return adapter.get_progress_direct()
+    return None
 
 
 def get_video_encoding_progress(video_id: int, tenant_id: Optional[int] = None) -> Optional[int]:
