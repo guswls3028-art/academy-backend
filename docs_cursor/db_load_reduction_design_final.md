@@ -1396,19 +1396,55 @@ def bulk_create_students_from_excel_rows_optimized(
 | RDS CPU | 80-100% | 20-40% | **60% 감소** |
 | 트랜잭션 수 | 100개 | 1개 | **99% 감소** |
 
-### ⚠️ 주의사항
+### ⚠️ 주의사항 및 운영 리스크 해결
 
-1. **외래키 관계**
-   - User, Parent 생성은 개별 처리 필요
-   - bulk_create 후 개별 업데이트 필요
+#### 1. Q OR 조건 방식의 위험성 (해결됨)
+**문제:**
+- `Q()` OR 조건을 500개 붙이면 비효율적인 execution plan 생성
+- Index를 잘 타지 않을 수 있음
 
-2. **에러 처리**
-   - 배치 처리 중 일부 실패 시 롤백 전략 필요
-   - 부분 성공 허용 여부 결정
+**해결:**
+- ✅ Tuple IN 방식 사용 (Raw SQL)
+- ✅ Composite index 활용 (`idx_student_tenant_name_phone`)
+- ✅ 1000개 이상이면 chunk로 나눠서 처리
 
-3. **메모리 사용**
-   - 대량 데이터 처리 시 메모리 고려
-   - 배치 크기 조정 (batch_size)
+#### 2. bulk_create 후 개별 save 문제 (해결됨)
+**문제:**
+- bulk_create 후 개별 save로 UPDATE N번 발생
+- bulk_create 장점 반감
+
+**해결:**
+- ✅ User도 bulk_create로 일괄 생성
+- ✅ Student FK는 bulk_update로 일괄 업데이트
+- ✅ 개별 save 제거
+
+#### 3. 하나의 giant transaction 문제 (해결됨)
+**문제:**
+- 학생 1000명 처리 중 중간에 하나라도 터지면 전체 롤백
+- lock 오래 잡음
+- micro에서 CPU spike
+
+**해결:**
+- ✅ Chunked transaction (200개 단위)
+- ✅ Chunk 실패 시 해당 chunk만 롤백
+- ✅ Lock 시간 단축
+
+#### 4. Redis TTL 슬라이딩 갱신 (개선됨)
+**문제:**
+- Key 없을 때 expire 호출 → 무의미
+- 의도치 않은 상태 발생 가능
+
+**해결:**
+- ✅ exists 체크 후 TTL 갱신
+- ✅ 안전한 상태 관리
+
+#### 5. Redis result 영구 저장 메모리 (개선됨)
+**문제:**
+- result payload가 큰 경우 Redis 메모리 압박
+
+**해결:**
+- ✅ result 크기 체크 (10KB 이하만 Redis 저장)
+- ✅ 대용량은 DB만 저장
 
 ## 🚀 10K 대비 구조 정렬 (갈아엎지 않고 확장 가능)
 
