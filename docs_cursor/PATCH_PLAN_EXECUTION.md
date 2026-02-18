@@ -1860,21 +1860,46 @@ def bulk_create_students_from_excel_rows_optimized(
                 for student_data in chunk:
                     students_to_create.append(student_data["student"])
                 
-                # ✅ Bulk Create로 일괄 생성
-                Student.objects.bulk_create(students_to_create, batch_size=500)
+                # ✅ Bulk Create로 일괄 생성 (ignore_conflicts로 ps_number 충돌 처리)
+                Student.objects.bulk_create(students_to_create, batch_size=500, ignore_conflicts=True)
                 
-                # ✅ User Bulk Create (FK 연결)
+                # ✅ 충돌된 ps_number 재시도
+                # bulk_create 후 실제 생성된 학생만 필터링
+                created_ps_numbers = {s.ps_number for s in students_to_create}
+                actual_students = Student.objects.filter(
+                    tenant_id=tenant_id,
+                    ps_number__in=created_ps_numbers
+                )
+                actual_ps_numbers = {s.ps_number for s in actual_students}
+                conflict_students = [s for s in students_to_create if s.ps_number not in actual_ps_numbers]
+                
+                # 충돌된 학생들 재시도 (ps_number 재생성)
+                for conflict_student in conflict_students:
+                    try:
+                        conflict_student.ps_number = _generate_unique_ps_number(tenant_id)
+                        conflict_student.save()
+                        actual_students = list(actual_students) + [conflict_student]
+                    except Exception as e:
+                        logger.warning("Failed to retry ps_number for student: %s", e)
+                        failed.append({
+                            "row": next((d["row_index"] for d in chunk if d["student"].name == conflict_student.name), 0),
+                            "name": conflict_student.name,
+                            "error": f"ps_number 충돌 재시도 실패: {str(e)[:500]}",
+                        })
+                
+                # ✅ User Bulk Create (FK 연결, ignore_conflicts로 username 충돌 처리)
                 users_to_create = []
                 for student_data, student in zip(chunk, students_to_create):
-                    user = User(
-                        username=student.ps_number,
-                        phone=student.phone or "",
-                        name=student.name,
-                    )
-                    user.set_password(student_data["password"])
-                    users_to_create.append(user)
+                    if student.ps_number in actual_ps_numbers:  # 실제 생성된 학생만
+                        user = User(
+                            username=student.ps_number,
+                            phone=student.phone or "",
+                            name=student.name,
+                        )
+                        user.set_password(student_data["password"])
+                        users_to_create.append(user)
                 
-                User.objects.bulk_create(users_to_create, batch_size=500)
+                User.objects.bulk_create(users_to_create, batch_size=500, ignore_conflicts=True)
                 
                 # ✅ Student FK 업데이트 (bulk_update)
                 student_user_map = {
