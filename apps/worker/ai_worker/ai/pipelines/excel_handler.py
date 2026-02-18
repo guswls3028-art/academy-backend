@@ -106,6 +106,12 @@ def handle_excel_parsing_job(job: AIJob) -> AIResult:
         )
         return AIResult.done(job.id, result)
     except Exception as e:
+        # ✅ 예외 발생 시에도 현재 단계를 기록하여 사용자가 어느 단계에서 실패했는지 알 수 있게 함
+        # 파싱 단계에서 실패했을 가능성이 높으므로 파싱 단계로 표시
+        try:
+            _record_progress(job.id, "parsing", 50, step_index=2, step_percent=0, tenant_id=tenant_id)
+        except Exception:
+            pass  # 진행률 기록 실패해도 예외 전파하지 않음
         logger.exception(
             "EXCEL_PARSING failed job_id=%s tenant_id=%s: %s",
             job.id,
