@@ -154,7 +154,7 @@ def process_video(
                 "step_total": VIDEO_ENCODING_STEP_TOTAL,
                 "step_name": "probing",
                 "step_name_display": "분석",
-                "step_percent": 100,
+                "step_percent": 0,  # ✅ 단계 시작: 0%
             },
             tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
@@ -165,6 +165,21 @@ def process_video(
         )
         if not duration or duration <= 0:
             raise RuntimeError("duration_probe_failed")
+        # ✅ 단계 완료: 100%
+        progress.record_progress(
+            job_id,
+            "probing",
+            {
+                "percent": 25,
+                "remaining_seconds": 240,
+                "step_index": 3,
+                "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                "step_name": "probing",
+                "step_name_display": "분석",
+                "step_percent": 100,
+            },
+            tenant_id=tenant_id_str,
+        )
 
         # 트랜스코딩: 구간 내 0~100% (인코딩 단계만 세부 진행률)
         def transcode_progress(current_sec: float, total_sec: float) -> None:
@@ -232,11 +247,26 @@ def process_video(
                 "step_total": VIDEO_ENCODING_STEP_TOTAL,
                 "step_name": "validating",
                 "step_name_display": "검증",
-                "step_percent": 100,
+                "step_percent": 0,  # ✅ 단계 시작: 0%
             },
             tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
         validate_hls_output(out_dir, int(cfg.MIN_SEGMENTS_PER_VARIANT))
+        # ✅ 단계 완료: 100%
+        progress.record_progress(
+            job_id,
+            "validating",
+            {
+                "percent": 85,
+                "remaining_seconds": 45,
+                "step_index": 5,
+                "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                "step_name": "validating",
+                "step_name_display": "검증",
+                "step_percent": 100,
+            },
+            tenant_id=tenant_id_str,
+        )
 
         progress.record_progress(
             job_id,
