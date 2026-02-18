@@ -205,6 +205,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 "meta_used": true|false
               }
             """
+            # 7단계: 다운로드(완료), 메타가져오기, 이미지로드, 정렬, ROI빌드, 식별자감지, 답안감지
             import cv2  # type: ignore
 
             from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v1, OMRConfigV1
@@ -218,6 +219,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 mode = "auto"
 
             # 1) meta 확보
+            _record_progress(job.id, "fetching_meta", 20, step_index=2, step_total=7, step_name_display="메타가져오기", step_percent=0)
             meta = payload.get("template_meta")
             meta_used = False
             meta_fetch_error = None
@@ -244,18 +246,22 @@ def handle_ai_job(job: AIJob) -> AIResult:
                     except TemplateMetaFetchError as e:
                         meta = None
                         meta_fetch_error = str(e)[:500]
+            _record_progress(job.id, "fetching_meta", 30, step_index=2, step_total=7, step_name_display="메타가져오기", step_percent=100)
 
             # 2) 이미지 로드 및 리사이징
+            _record_progress(job.id, "loading", 35, step_index=3, step_total=7, step_name_display="이미지로드", step_percent=0)
             img_bgr = cv2.imread(local_path)
             if img_bgr is None:
                 return AIResult.failed(job.id, "cannot read image")
             
             # 대용량 이미지 리사이징 (처리 전)
             img_bgr, was_resized = resize_if_large(img_bgr, max_megapixels=4.0)
+            _record_progress(job.id, "loading", 40, step_index=3, step_total=7, step_name_display="이미지로드", step_percent=100)
 
             aligned = img_bgr
 
             # 3) mode 정책
+            _record_progress(job.id, "aligning", 45, step_index=4, step_total=7, step_name_display="정렬", step_percent=0)
             if mode == "photo":
                 warped = warp_to_a4_landscape(img_bgr)
                 if warped is None:
@@ -266,6 +272,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 warped = warp_to_a4_landscape(img_bgr)
                 if warped is not None:
                     aligned = warped
+            _record_progress(job.id, "aligning", 55, step_index=4, step_total=7, step_name_display="정렬", step_percent=100)
 
             # 4) meta 없으면 legacy
             if not meta:
@@ -273,11 +280,14 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 if not questions:
                     return AIResult.failed(job.id, "template_meta/template_fetch failed and legacy questions missing")
 
+                _record_progress(job.id, "detecting", 80, step_index=6, step_total=7, step_name_display="답안감지", step_percent=0)
                 answers = detect_omr_answers_v1(
                     image_path=local_path,
                     questions=list(questions),
                     cfg=None,
                 )
+                _record_progress(job.id, "detecting", 95, step_index=6, step_total=7, step_name_display="답안감지", step_percent=100)
+                _record_progress(job.id, "done", 100, step_index=7, step_total=7, step_name_display="완료", step_percent=100)
                 return AIResult.done(
                     job.id,
                     {
@@ -294,14 +304,18 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 )
 
             # 5) ROI + identifier
+            _record_progress(job.id, "building_roi", 60, step_index=5, step_total=7, step_name_display="ROI빌드", step_percent=0)
             h, w = aligned.shape[:2]
             questions_payload = build_questions_payload_from_meta(meta, (w, h))
+            _record_progress(job.id, "building_roi", 70, step_index=5, step_total=7, step_name_display="ROI빌드", step_percent=100)
 
+            _record_progress(job.id, "detecting_id", 75, step_index=6, step_total=7, step_name_display="식별자감지", step_percent=0)
             ident = detect_identifier_v1(
                 image_bgr=aligned,
                 meta=meta,
                 cfg=IdentifierConfigV1(),
             )
+            _record_progress(job.id, "detecting_id", 80, step_index=6, step_total=7, step_name_display="식별자감지", step_percent=100)
 
             # 6) aligned 저장 후 OMR
             import tempfile, os
@@ -309,12 +323,15 @@ def handle_ai_job(job: AIJob) -> AIResult:
             tmp_path = os.path.join(tempfile.gettempdir(), f"omr_aligned_{job.id}.jpg")
             cv2.imwrite(tmp_path, aligned)
 
+            _record_progress(job.id, "detecting_answers", 85, step_index=7, step_total=7, step_name_display="답안감지", step_percent=0)
             cfg = OMRConfigV1()
             answers = detect_omr_answers_v1(
                 image_path=tmp_path,
                 questions=list(questions_payload),
                 cfg=cfg,
             )
+            _record_progress(job.id, "detecting_answers", 95, step_index=7, step_total=7, step_name_display="답안감지", step_percent=100)
+            _record_progress(job.id, "done", 100, step_index=7, step_total=7, step_name_display="완료", step_percent=100)
 
             return AIResult.done(
                 job.id,
