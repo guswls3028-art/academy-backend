@@ -68,14 +68,23 @@ class RedisProgressAdapter(IProgress):
             logger.warning("Redis progress record failed: %s", e)
 
     def get_progress(self, job_id: str, tenant_id: Optional[str] = None) -> Optional[dict[str, Any]]:
-        """진행 상태 조회 - AI Job 전용"""
+        """진행 상태 조회 - AI Job 및 Video Worker 지원"""
         client = get_redis_client()
         if not client:
             return None
 
-        # ✅ AI Job 전용 키 형식
+        # ✅ 키 형식 결정:
+        # - Video Worker: job_id="video:{video_id}" → tenant:{tenant_id}:video:{video_id}:progress
+        # - AI Job: job_id="job_uuid" → tenant:{tenant_id}:job:{job_id}:progress
         if tenant_id:
-            key = f"tenant:{tenant_id}:job:{job_id}:progress"
+            if job_id.startswith("video:"):
+                # Video Worker 케이스: job_id에서 video_id 추출
+                video_id = job_id.replace("video:", "")
+                key = f"tenant:{tenant_id}:video:{video_id}:progress"
+            else:
+                # AI Job 케이스
+                key = f"tenant:{tenant_id}:job:{job_id}:progress"
+            
             try:
                 raw = client.get(key)
                 if raw:
