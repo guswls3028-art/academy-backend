@@ -683,13 +683,25 @@ def save(self, job: AIJob) -> None:
                 repo = DjangoAIJobRepository()
                 result_payload = repo.get_result_payload_for_job(model)
             
+            # ✅ result가 큰 경우 메모리 고려
+            # download_url, 통계 등 작은 JSON이면 OK
+            # 대용량이면 result는 DB만 저장하고 Redis엔 status만 저장
+            result_for_redis = None
+            if result_payload:
+                import json
+                result_size = len(json.dumps(result_payload))
+                if result_size < 10000:  # 10KB 이하면 Redis에 저장
+                    result_for_redis = result_payload
+                else:
+                    logger.info("Result payload too large (%d bytes), skipping Redis cache", result_size)
+            
             cache_job_status(
                 tenant_id=job.tenant_id,
                 job_id=job.job_id,
                 status=job.status.value,
                 job_type=job.job_type,
                 error_message=job.error_message,
-                result=result_payload,  # 완료 시 result 포함
+                result=result_for_redis,  # 완료 시 result 포함 (크기 제한)
                 ttl=None,  # TTL 없음
             )
         except Exception as e:
