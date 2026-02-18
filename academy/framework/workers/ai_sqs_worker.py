@@ -35,7 +35,6 @@ SQS_VISIBILITY_TIMEOUT = int(os.getenv("AI_SQS_VISIBILITY_TIMEOUT", "3600"))  # 
 VISIBILITY_EXTEND_INTERVAL = int(os.getenv("AI_VISIBILITY_EXTEND_INTERVAL", "60"))  # 60초마다 연장
 BASIC_POLL_WEIGHT = int(os.getenv("AI_WORKER_BASIC_POLL_WEIGHT", "3"))
 LITE_POLL_WEIGHT = int(os.getenv("AI_WORKER_LITE_POLL_WEIGHT", "1"))
-IDLE_STOP_THRESHOLD = int(os.getenv("EC2_IDLE_STOP_THRESHOLD", "5"))
 # Lease 전략: (1) 고정. visibility 3600 - safety_margin 60 = 3540. 문서 §8.3.
 LEASE_SECONDS = int(os.getenv("AI_JOB_LEASE_SECONDS", "3540"))
 # inference 최대 60분. 초과 시 fail_ai_job + delete + extender stop. 문서 §8.3.

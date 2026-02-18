@@ -21,9 +21,6 @@ import time
 import uuid
 from typing import Optional
 
-import boto3
-import requests
-
 from apps.worker.video_worker.config import load_config
 from libs.queue import QueueUnavailableError
 from src.infrastructure.video import VideoSQSAdapter
