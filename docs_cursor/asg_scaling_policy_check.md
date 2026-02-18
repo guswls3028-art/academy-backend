@@ -39,6 +39,13 @@ aws autoscaling describe-policies \
 
 ### Application Auto Scaling (Target Tracking) 정책 제거
 
+**PowerShell:**
+```powershell
+# CPU 기반 Target Tracking 정책이 있다면 제거
+aws application-autoscaling delete-scaling-policy --service-namespace ec2 --resource-id "auto-scaling-group/academy-video-worker-asg" --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "CPUTargetTracking" --region ap-northeast-2
+```
+
+**Linux/Mac:**
 ```bash
 # CPU 기반 Target Tracking 정책이 있다면 제거
 aws application-autoscaling delete-scaling-policy \
@@ -51,6 +58,13 @@ aws application-autoscaling delete-scaling-policy \
 
 ### EC2 Auto Scaling 정책 제거
 
+**PowerShell:**
+```powershell
+# CPU 기반 Step Scaling 또는 Simple Scaling 정책 제거
+aws autoscaling delete-policy --auto-scaling-group-name academy-video-worker-asg --policy-name "CPU-based-scaling" --region ap-northeast-2
+```
+
+**Linux/Mac:**
 ```bash
 # CPU 기반 Step Scaling 또는 Simple Scaling 정책 제거
 aws autoscaling delete-policy \
