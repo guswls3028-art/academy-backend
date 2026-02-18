@@ -212,6 +212,7 @@ aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgVideoNam
 if ($LASTEXITCODE -ne 0) {
     aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
         --launch-template "LaunchTemplateName=$LtVideoName,Version=`$Default" `
+        --vpc-zone-identifier $SubnetIds `
         --min-size 1 --max-size $MaxCapacity --desired-capacity 1 --region $Region 2>$null
 }
 $ErrorActionPreference = $ea
@@ -229,6 +230,7 @@ aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgMessagin
 if ($LASTEXITCODE -ne 0) {
     aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgMessagingName `
         --launch-template "LaunchTemplateName=$LtMessagingName,Version=`$Default" `
+        --vpc-zone-identifier $SubnetIds `
         --min-size 1 --max-size $MaxCapacity --desired-capacity 1 --region $Region 2>$null
 }
 $ErrorActionPreference = $ea
