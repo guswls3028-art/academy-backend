@@ -329,7 +329,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     def retry(self, request, pk=None):
         video = self.get_object()
 
-        if video.status not in (Video.Status.FAILED, Video.Status.UPLOADED):
+        # FAILED: 실패 후 재시도. UPLOADED: 수동 재인코딩. PROCESSING: 꼬인 상태(워커 미처리/Redis 없음) 해제 후 재시도
+        if video.status not in (Video.Status.FAILED, Video.Status.UPLOADED, Video.Status.PROCESSING):
             return Response(
                 {"detail": "Cannot retry"},
                 status=status.HTTP_400_BAD_REQUEST,
