@@ -288,7 +288,8 @@ class JobProgressView(APIView):
         job = ai_repo.get_job_model_for_status(job_id, str(tenant.id))
         if not job:
             return Response({"detail": "해당 작업을 찾을 수 없습니다."}, status=404)
-        progress = RedisProgressAdapter().get_progress(job_id)
+        # ✅ tenant_id 전달 필수 (tenant namespace 키 사용)
+        progress = RedisProgressAdapter().get_progress(job_id, tenant_id=str(tenant.id))
         if not progress:
             return Response({"step": None, "percent": None})
         return Response({
