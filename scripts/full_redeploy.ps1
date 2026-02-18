@@ -248,8 +248,10 @@ if ($deployApi) {
 }
 if ($StartStoppedInstances) { Start-StoppedAcademyInstances }
 $ips = Get-Ec2PublicIps
-if ($ips.Count -eq 0) {
-    Write-Host "No running academy instances found." -ForegroundColor Red
+# ASG workers often have no public IP; only require IPs when we actually deploy via SSH (API or workers without -WorkersViaASG)
+$needIps = $deployApi -or ($deployWorkers -and -not $WorkersViaASG)
+if ($ips.Count -eq 0 -and $needIps) {
+    Write-Host "No running academy instances found (need public IPs for API/worker SSH deploy)." -ForegroundColor Red
     exit 1
 }
 if ($deployApi) {
