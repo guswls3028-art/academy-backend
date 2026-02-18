@@ -96,6 +96,10 @@ class VideoSerializer(serializers.ModelSerializer):
             "hls_url",
             "encoding_progress",
             "encoding_remaining_seconds",
+            "encoding_step_index",
+            "encoding_step_total",
+            "encoding_step_name",
+            "encoding_step_percent",
         ]
         ref_name = "SealedVideo"
 
