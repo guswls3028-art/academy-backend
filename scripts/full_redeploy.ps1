@@ -181,6 +181,9 @@ echo 'Build instance ready'
     $buildScript = @"
 set -e
 export PATH=/usr/local/bin:/usr/bin:$PATH
+# ✅ Git safe.directory 설정 (SSM Run Command에서도 작동하도록)
+git config --global --add safe.directory /home/ec2-user/build/academy || true
+git config --global --add safe.directory '*' || true
 cd /home/ec2-user/build
 if [ -d academy ]; then cd academy && git fetch && git reset --hard origin/main && git pull; else git clone '$GitRepoUrl' academy && cd academy; fi
 cd /home/ec2-user/build/academy
