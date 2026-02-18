@@ -42,9 +42,8 @@ _current_job_start_time: Optional[float] = None  # 로그 가시성: 작업 시�
 
 # SQS Long Polling 설정
 SQS_WAIT_TIME_SECONDS = 20  # 최대 대기 시간 (Long Polling)
-# 작업 시작 시 ChangeMessageVisibility로 연장 (3시간 영상 등 장시간 대비)
-VIDEO_VISIBILITY_EXTEND_SECONDS = int(os.getenv("VIDEO_SQS_VISIBILITY_EXTEND", "10800"))  # 3시간
-SQS_VISIBILITY_TIMEOUT = 300  # 로그 비교용 (실제는 VIDEO_VISIBILITY_EXTEND_SECONDS 사용)
+# SQS visibility >= ffmpeg timeout (max 6h). Job start 시 ChangeMessageVisibility로 연장.
+VIDEO_VISIBILITY_EXTEND_SECONDS = int(os.getenv("VIDEO_SQS_VISIBILITY_EXTEND", "21600"))  # 6h
 
 # 3시간 영상 대비: 락/진행률 TTL (3h + margin = 4h). TTL 만료 시 중복 실행/진행률 소실 방지
 VIDEO_LOCK_TTL_SECONDS = int(os.getenv("VIDEO_LOCK_TTL_SECONDS", "14400"))   # 4h
