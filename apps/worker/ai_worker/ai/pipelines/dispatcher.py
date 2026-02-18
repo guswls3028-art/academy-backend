@@ -82,7 +82,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
             download_url=download_url,
             job_id=str(job.id),
         )
-        _record_progress(job.id, "downloading", 10, step_index=1, step_total=1, step_name_display="다운로드", step_percent=100)
+        _record_progress(job.id, "downloading", 10, step_index=1, step_total=1, step_name_display="다운로드", step_percent=100, tenant_id=tenant_id)
 
         # --------------------------------------------------
         # OCR
@@ -112,10 +112,10 @@ def handle_ai_job(job: AIJob) -> AIResult:
         # --------------------------------------------------
         if job.type == "question_segmentation":
             # 3단계: 다운로드(완료), 분할, 완료
-            _record_progress(job.id, "segmenting", 50, step_index=2, step_total=3, step_name_display="문항분할", step_percent=0)
+            _record_progress(job.id, "segmenting", 50, step_index=2, step_total=3, step_name_display="문항분할", step_percent=0, tenant_id=tenant_id)
             boxes = segment_questions(local_path)
-            _record_progress(job.id, "segmenting", 90, step_index=2, step_total=3, step_name_display="문항분할", step_percent=100)
-            _record_progress(job.id, "done", 100, step_index=3, step_total=3, step_name_display="완료", step_percent=100)
+            _record_progress(job.id, "segmenting", 90, step_index=2, step_total=3, step_name_display="문항분할", step_percent=100, tenant_id=tenant_id)
+            _record_progress(job.id, "done", 100, step_index=3, step_total=3, step_name_display="완료", step_percent=100, tenant_id=tenant_id)
             return AIResult.done(job.id, {"boxes": boxes})
 
         # --------------------------------------------------
