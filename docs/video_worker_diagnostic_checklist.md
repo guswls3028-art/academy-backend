@@ -191,3 +191,53 @@ aws autoscaling describe-policies \
 - `ApproximateNumberOfMessages`(visible) >= 1 이면 stopped 인스턴스 1대 Start.
 - `MAX_INSTANCES_PER_TYPE=1` 기본값 → 2대로 늘리려면 이 값 또는 Lambda 로직 수정 필요.
 - Lambda 로그에서 큐 depth, Start 호출 여부 확인.
+
+### 4. ASG 스케일 정책 없음 시 — SQS 기반 정책 추가
+
+`describe-policies` / `describe-alarms` 가 비어 있으면 ASG에 정책이 없어 스케일 업이 안 됨. 아래 순서로 추가.
+
+#### 4-1) SQS 큐 URL 조회
+
+```bash
+QUEUE_URL=$(aws sqs get-queue-url --region ap-northeast-2 --queue-name academy-video-jobs --query QueueUrl --output text)
+echo $QUEUE_URL
+```
+
+#### 4-2) CloudWatch Alarm 생성 (큐에 메시지 1개 이상이면 ScaleOut)
+
+```bash
+aws cloudwatch put-metric-alarm \
+  --region ap-northeast-2 \
+  --alarm-name academy-video-queue-depth-scaleout \
+  --alarm-description "Video queue has messages" \
+  --namespace AWS/SQS \
+  --metric-name ApproximateNumberOfMessagesVisible \
+  --dimensions Name=QueueName,Value=academy-video-jobs \
+  --statistic Sum \
+  --period 60 \
+  --threshold 1 \
+  --comparison-operator GreaterThanOrEqualToThreshold \
+  --evaluation-periods 1
+```
+
+#### 4-3) Scale-Out 정책 생성 (Alarm → +1 인스턴스)
+
+```bash
+aws application-autoscaling put-scaling-policy \
+  --region ap-northeast-2 \
+  --service-namespace ec2 \
+  --resource-id "auto-scaling-group/academy-video-worker-asg" \
+  --scalable-dimension ec2:autoScalingGroup:DesiredCapacity \
+  --policy-name video-queue-scaleout \
+  --policy-type StepScaling \
+  --step-scaling-policy-configuration '{
+    "AdjustmentType": "ChangeInCapacity",
+    "StepAdjustments": [{"MetricIntervalLowerBound": 0, "ScalingAdjustment": 1}],
+    "MetricAggregationType": "Average",
+    "Cooldown": 300
+  }'
+```
+
+이후 콘솔에서 생성한 Alarm의 Actions에 위 정책 연결.
+
+(또는 Target Tracking: CPU 60% 기준 등 더 간단한 정책으로 대체 가능.)
