@@ -2630,4 +2630,76 @@ class Migration(migrations.Migration):
 
 ---
 
+## PR 분리 전략 (추천)
+
+### PR1: Progress Endpoint + Redis Status Cache (Day 1)
+**목표**: DB 폴링 제거, 즉시 DB CPU 안정화
+
+**포함 내용**:
+- `apps/support/video/redis_status_cache.py` 추가
+- `apps/domains/ai/redis_status_cache.py` 추가
+- `VideoProgressView` / `JobProgressView` 추가 + URL 라우팅
+- `encoding_progress.py` tenant-aware 조회 반영 + View에서 tenant_id 전달
+- `src/infrastructure/cache/redis_progress_adapter.py`에 tenant_id 지원 추가 (AI 전용)
+- 프론트엔드 폴링 전환 (progress endpoint 사용)
+
+**검증**: DB CPU 즉시 안정화 확인
+
+---
+
+### PR2: AI Repository Redis Status Cache (Day 1-2)
+**목표**: AI Job 완료/실패 상태 Redis 캐싱
+
+**포함 내용**:
+- `repositories_ai.py` save()에 Redis status 저장 추가
+- logger/result 방어 처리 포함
+
+**검증**: AI Job 완료 시 Redis에 상태 저장 확인
+
+---
+
+### PR3: Video Worker Redis Status Cache (Day 2)
+**목표**: Video 완료/실패/진행 상태 Redis 캐싱
+
+**포함 내용**:
+- `complete_video`/`fail_video`/`mark_processing`에 Redis status 저장
+- Status 값 타입 통일 (getattr 패턴)
+- VideoProgressAdapter writer 쪽 적용 (선택)
+
+**검증**: Video 완료 시 Redis에 상태 저장 확인
+
+---
+
+### PR4: Excel Bulk 최적화 (Day 4+)
+**목표**: Excel 대량 처리 쿼리 최적화
+
+**포함 내용**:
+- Repository 배치 조회 메서드 추가
+- Bulk Create 함수 구현
+- Student/User 생성 순서 재정렬 (User 먼저 → Student FK 연결)
+- ps_number 충돌 처리 완성
+
+**주의**: FK/제약조건 확인 후 구현
+
+---
+
+### PR5: 인덱스 마이그레이션 (Day 5)
+**목표**: 쿼리 성능 향상
+
+**포함 내용**:
+- Students, AIJob, Video 인덱스 추가
+- `atomic=False` 필수
+
+**주의**: 운영 중 실행 가능 (`CREATE INDEX CONCURRENTLY`)
+
+---
+
+### PR6: Worker Concurrency 제한 (Day 6)
+**목표**: Worker 확장 제한
+
+**포함 내용**:
+- ASG Max Size 제한 설정
+
+---
+
 **패치 플랜 완료 (필수 수정 사항 반영 완료)**
