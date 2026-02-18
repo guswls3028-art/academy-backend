@@ -80,37 +80,30 @@ foreach ($config in $asgConfigs) {
     # 3. SQS 기반 Target Tracking 정책 생성/업데이트
     Write-Host "  Creating QueueDepthTargetTracking policy..." -ForegroundColor Gray
     
-    # deploy_worker_asg.ps1과 정확히 동일한 형식 사용
-    $policy = @"
-{
-  "TargetTrackingScalingPolicyConfiguration": {
-    "TargetValue": $TargetMessagesPerInstance,
-    "CustomizedMetricSpecification": {
-      "MetricName": "QueueDepth",
-      "Namespace": "Academy/Workers",
-      "Dimensions": [{"Name": "WorkerType", "Value": "$workerType"}],
-      "Statistic": "Average"
-    },
-    "ScaleInCooldown": 600,
-    "ScaleOutCooldown": 60
-  }
-}
-"@
-    
-    $policyFile = Join-Path $RepoRoot "asg_policy_${workerType}_temp.json"
-    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-    [System.IO.File]::WriteAllText($policyFile, $policy, $utf8NoBom)
-    
-    # 디버깅: 생성된 JSON 파일 내용 확인
-    Write-Host "    Generated JSON file:" -ForegroundColor Gray
-    Get-Content $policyFile | ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray }
-    
-    $policyPath = "file://$($policyFile -replace '\\','/' -replace ' ', '%20')"
+    # JSON을 직접 문자열로 구성 (파일 경로 문제 회피)
+    $policyJson = @{
+        TargetTrackingScalingPolicyConfiguration = @{
+            TargetValue = $TargetMessagesPerInstance
+            CustomizedMetricSpecification = @{
+                MetricName = "QueueDepth"
+                Namespace = "Academy/Workers"
+                Dimensions = @(
+                    @{
+                        Name = "WorkerType"
+                        Value = $workerType
+                    }
+                )
+                Statistic = "Average"
+            }
+            ScaleInCooldown = 600
+            ScaleOutCooldown = 60
+        }
+    } | ConvertTo-Json -Depth 10 -Compress
     
     $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     $result = aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $resourceId `
         --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" `
-        --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyPath --region $Region 2>&1
+        --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyJson --region $Region 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Host "    ✅ Policy created/updated successfully" -ForegroundColor Green
     } else {
