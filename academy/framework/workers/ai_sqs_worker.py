@@ -101,7 +101,6 @@ def run_ai_sqs_worker() -> int:
 
     consecutive_errors = 0
     max_consecutive_errors = 10
-    consecutive_empty = 0
 
     try:
         while not _shutdown:
@@ -117,17 +116,9 @@ def run_ai_sqs_worker() -> int:
                     raise
 
                 if not message:
-                    consecutive_empty += 1
                     consecutive_errors = 0
-                    if IDLE_STOP_THRESHOLD > 0 and consecutive_empty >= IDLE_STOP_THRESHOLD:
-                        logger.info("Queues empty %d polls, EC2 self-stop in 10s", consecutive_empty)
-                        time.sleep(10)  # 500 plan: Dead zone 완화를 위해 Stop 직전 대기
-                        logger.info("EC2 self-stop initiating (ai worker)")
-                        _stop_self_ec2()
-                        return 0
                     continue
 
-                consecutive_empty = 0
                 receipt_handle = message.get("receipt_handle")
                 job_id = message.get("job_id")
                 job_type = message.get("job_type") or message.get("type") or message.get("task") or ""

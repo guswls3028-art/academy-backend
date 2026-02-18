@@ -148,7 +148,6 @@ def main() -> int:
             time.sleep(remain)
 
         logger.info("AI Worker shutdown complete")
-        _stop_self_ec2()
 
 
 if __name__ == "__main__":
