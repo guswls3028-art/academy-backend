@@ -68,16 +68,25 @@ def handle_excel_parsing_job(job: AIJob) -> AIResult:
 
     bucket = _excel_bucket(payload)
     storage = R2ObjectStorageAdapter()
-    _record_progress(job.id, "downloading", 10)
+    _record_progress(job.id, "downloading", 10, step_index=1, step_percent=100)
 
     def _on_progress(step: str, percent: int) -> None:
-        _record_progress(job.id, step, percent)
+        # ExcelParsingService에서 오는 step: "parsing", "creating", "enrolling" 등
+        if step == "parsing":
+            _record_progress(job.id, "parsing", 40, step_index=2, step_percent=100)
+        elif step == "creating" or step == "enrolling":
+            # 등록 단계: percent가 40~95 사이로 오므로 step_percent 계산
+            step_pct = int(100 * (percent - 40) / 55) if percent > 40 else 0
+            step_pct = min(100, max(0, step_pct))
+            _record_progress(job.id, "enrolling", percent, step_index=3, step_percent=step_pct)
+        else:
+            _record_progress(job.id, step, percent)
 
     try:
         service = ExcelParsingService(storage)
-        _record_progress(job.id, "parsing", 40)
+        _record_progress(job.id, "parsing", 25, step_index=2, step_percent=0)
         result = service.run(job.id, payload, on_progress=_on_progress)
-        _record_progress(job.id, "done", 100)
+        _record_progress(job.id, "done", 100, step_index=4, step_percent=100)
         result["processed_by"] = "worker"
         logger.info(
             "EXCEL_PARSING processed_by=worker job_id=%s enrolled=%s",
