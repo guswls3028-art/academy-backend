@@ -1369,7 +1369,57 @@ video_progress.record_progress(
 
 **롤백 방법**: 기존 IProgress 인터페이스 사용으로 복원
 
-**주의사항**: `process_video()` 함수 시그니처 변경 필요 (progress 파라미터 타입 변경)
+**주의사항**: 
+- `process_video()` 함수는 IProgress 인터페이스를 유지하되, 내부에서 VideoProgressAdapter로 래핑
+- 또는 `process_video()` 함수 시그니처 변경 (progress 파라미터 타입 변경)
+- 호출부 확인 필요: `apps/worker/video_worker/video/processor.py` 등
+
+**대안 (더 안전한 방법)**:
+IProgress 인터페이스를 유지하고, VideoProgressAdapter가 IProgress를 구현하도록 설계:
+
+```python:apps/support/video/redis_progress_adapter.py
+class VideoProgressAdapter(IProgress):
+    """Video 전용 Progress Adapter (IProgress 인터페이스 구현)"""
+    
+    def __init__(self, video_id: int, tenant_id: int, ttl_seconds: int = VIDEO_PROGRESS_TTL_SECONDS) -> None:
+        self._video_id = video_id
+        self._tenant_id = tenant_id
+        self._ttl = ttl_seconds
+    
+    def record_progress(
+        self,
+        job_id: str,  # IProgress 인터페이스 호환
+        step: str,
+        extra: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """IProgress 인터페이스 구현"""
+        # job_id는 무시하고 video_id 사용
+        self._record_progress(step, extra)
+    
+    def _record_progress(
+        self,
+        step: str,
+        extra: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """실제 Redis 저장"""
+        client = get_redis_client()
+        if not client:
+            return
+        
+        key = f"tenant:{self._tenant_id}:video:{self._video_id}:progress"
+        payload = {"step": step, **(extra or {})}
+        try:
+            client.setex(
+                key,
+                self._ttl,
+                json.dumps(payload, default=str),
+            )
+            logger.debug("Video progress recorded: video_id=%s step=%s tenant_id=%s", self._video_id, step, self._tenant_id)
+        except Exception as e:
+            logger.warning("Redis video progress record failed: %s", e)
+```
+
+이렇게 하면 `process_video()` 함수 시그니처 변경 없이 사용 가능
 
 ---
 
