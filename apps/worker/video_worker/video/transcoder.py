@@ -238,6 +238,7 @@ def transcode_to_hls(
                 progress_callback(current_sec, total_sec)
 
         try:
+            logger.info("[TRANSCODER] Starting ffmpeg for video_id=%s cmd=%s", video_id, " ".join(cmd[:5]) + "...")
             p = subprocess.Popen(
                 cmd,
                 cwd=str(output_root.resolve()),
@@ -249,13 +250,20 @@ def transcode_to_hls(
             assert p.stderr is not None
 
             def read_stderr() -> None:
+                line_count = 0
+                time_count = 0
                 for line in p.stderr or []:
+                    line_count += 1
                     stderr_lines.append(line)
                     if len(stderr_lines) > 50:
                         stderr_lines.pop(0)
                     t = _parse_time_seconds(line)
                     if t is not None:
+                        time_count += 1
+                        if time_count % 10 == 1:  # 10번째마다 로그
+                            logger.debug("[TRANSCODER] Progress parsed video_id=%s time=%.1fs line=%d", video_id, t, line_count)
                         on_progress(t)
+                logger.info("[TRANSCODER] Stderr reading finished video_id=%s total_lines=%d time_parsed=%d", video_id, line_count, time_count)
 
             reader = threading.Thread(target=read_stderr, daemon=True)
             reader.start()
