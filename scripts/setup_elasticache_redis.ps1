@@ -49,12 +49,13 @@ Write-Host "      Client SG ($ClientSecurityGroupId) VPC: $ClientSgVpc" -Foregro
 
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 $ingressOut = aws ec2 authorize-security-group-ingress --group-id $RedisSgId --protocol tcp --port 6379 --source-group $ClientSecurityGroupId --region $Region 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "      authorize-security-group-ingress failed:" -ForegroundColor Red
-    Write-Host "      $ingressOut" -ForegroundColor Red
-    Write-Host "      (group-id=$RedisSgId, source-group=$ClientSecurityGroupId)" -ForegroundColor Gray
-}
 $ErrorActionPreference = $ea
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "      authorize-security-group-ingress failed (실제 AWS 에러):" -ForegroundColor Red
+    Write-Host "      $ingressOut" -ForegroundColor Red
+    Write-Host "      group-id=$RedisSgId, source-group=$ClientSecurityGroupId, VpcId=$VpcId, ClientSgVpc=$ClientSgVpc" -ForegroundColor Gray
+    exit 1
+}
 
 # 3) Cache subnet group
 $subnetGroupExists = aws elasticache describe-cache-subnet-groups --cache-subnet-group-name $SubnetGroupName --region $Region 2>&1
