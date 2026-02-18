@@ -86,6 +86,7 @@ def process_video(
             pct = min(85, max(50, pct))
             post_sec = 60  # validate + thumbnail + upload 대략
             remaining = int(max(0, total_sec - current_sec + post_sec))
+            logger.info("[PROCESSOR] Transcode progress video_id=%s current=%.1f/%d percent=%d%%", video_id, current_sec, int(total_sec), pct)
             progress.record_progress(
                 job_id,
                 "transcoding",
