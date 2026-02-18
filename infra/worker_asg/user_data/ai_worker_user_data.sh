@@ -31,6 +31,7 @@ fi
 for i in 1 2 3; do
   docker rm -f academy-ai-worker-cpu 2>/dev/null || true
   if docker run -d --name academy-ai-worker-cpu --restart unless-stopped \
+    --log-driver awslogs --log-opt awslogs-region=ap-northeast-2 --log-opt awslogs-group=/aws/ec2/academy-ai-worker \
     --env-file "$ENV_FILE" \
     -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker \
     -e EC2_IDLE_STOP_THRESHOLD=0 \

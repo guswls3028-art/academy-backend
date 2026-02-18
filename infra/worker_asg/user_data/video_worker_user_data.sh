@@ -32,6 +32,7 @@ docker rm academy-video-worker 2>/dev/null || true
 for i in 1 2 3; do
   docker rm -f academy-video-worker 2>/dev/null || true
   if docker run -d --name academy-video-worker --restart unless-stopped --memory 4g \
+    --log-driver awslogs --log-opt awslogs-region=ap-northeast-2 --log-opt awslogs-group=/aws/ec2/academy-video-worker \
     --env-file "$ENV_FILE" \
     -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker \
     -e EC2_IDLE_STOP_THRESHOLD=0 \
