@@ -165,6 +165,7 @@ def build_ffmpeg_command(
         var_map = " ".join(f"v:{i},name:{v['name']}" for i, v in enumerate(variants))
 
     cmd += [
+        "-progress", "pipe:1",
         "-f", "hls",
         "-hls_time", str(hls_time),
         "-hls_playlist_type", "vod",
