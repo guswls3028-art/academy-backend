@@ -98,4 +98,10 @@ urlpatterns += [
         VideoPolicyImpactAPIView.as_view(),
         name="video-video-policy-impact",
     ),
+    # ✅ Progress endpoint 추가 (Redis-only)
+    path(
+        "videos/<int:pk>/progress/",
+        VideoProgressView.as_view(),
+        name="video-progress",
+    ),
 ]
