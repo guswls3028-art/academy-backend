@@ -30,6 +30,10 @@ storage/
 *.mov
 *.mkv
 
+# 🔥 EXCEPTION: Django MEDIA_ROOT 디렉터리 존재 보장 (storage/media 폴더가 없으면 /media/ 서빙 실패)
+!storage/media/
+!storage/media/.gitkeep
+
 # 🔥 EXCEPTION: infrastructure storage는 코드
 !apps/infrastructure/storage/
 !apps/infrastructure/storage/**
