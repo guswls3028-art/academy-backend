@@ -286,11 +286,11 @@ def transcode_to_hls(
             reader = threading.Thread(target=read_stderr, daemon=True)
             reader.start()
             try:
-                p.wait(timeout=timeout)
+                p.wait(timeout=effective_timeout)
             except subprocess.TimeoutExpired:
                 p.kill()
                 p.wait()
-                raise TranscodeError(f"ffmpeg timeout video_id={video_id} seconds={timeout}")
+                raise TranscodeError(f"ffmpeg timeout video_id={video_id} seconds={effective_timeout}")
             reader.join(timeout=2.0)
 
             if p.returncode != 0:
@@ -310,11 +310,11 @@ def transcode_to_hls(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout,
+                timeout=effective_timeout,
                 check=False,
             )
         except subprocess.TimeoutExpired as e:
-            raise TranscodeError(f"ffmpeg timeout video_id={video_id} seconds={timeout}") from e
+            raise TranscodeError(f"ffmpeg timeout video_id={video_id} seconds={effective_timeout}") from e
 
         if p.returncode != 0:
             raise TranscodeError(
