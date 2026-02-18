@@ -1,6 +1,6 @@
 # DB 부하 최소화 설계 (최종 합일점)
 
-## ✅ 최종 설계 원칙
+## ✅ 최종 설계 원칙 (핵심)
 
 ### 0. 기본 원칙
 - **"DB는 영구 저장소"**, **"Redis는 상태 스트림/캐시"**
@@ -8,9 +8,61 @@
 - 최종 결과: DB (필수)
 - 조회: Redis 우선, Redis 미스 시 DB
 
-### 1. 진행 중 조회는 절대 DB를 때리지 않는다
-- 폴링은 progress/status 전용 endpoint로만 한다
-- Detail endpoint(모델 조회)는 완료 후 딱 1번만 호출
+### 1. ❌ DB 폴링은 "꼭" 할 필요 없다 → ✅ 완전히 제거 가능
+
+**핵심: 진행 상태는 Redis에 이미 있음. DB를 왜 때리냐?**
+
+#### 진행 중 작업
+필요한 데이터:
+- `status` → Redis에 있음
+- `progress` → Redis에 있음
+- `step` → Redis에 있음
+- `error` → Redis에 있음
+
+👉 **DB 필요 없음**
+
+#### 완료된 작업
+필요한 데이터:
+- `status` → 완료 시 Redis에 저장
+- `hls_path` → 완료 시 Redis에 저장
+- `duration` → 완료 시 Redis에 저장
+- `result` → 완료 시 Redis에 저장
+- `error_message` → 완료 시 Redis에 저장
+
+👉 **DB 필요 없음**
+
+#### DB는 언제 필요함?
+오직 이런 경우만:
+- 사용자가 작업 페이지를 새로고침했는데 Redis에 캐시가 없을 때
+- 과거 기록을 조회할 때
+
+👉 **이때만 DB fallback**
+
+### 2. 가장 이상적인 구조
+
+```
+진행 중:
+  Frontend
+    ↓
+  GET /progress/ (Redis only)
+    ↓
+  DB 0번 ✅
+
+완료 감지:
+  Redis status == READY
+    ↓
+  Frontend stops polling
+    ↓
+  (선택) GET /detail/ 1회 호출
+    ↓
+  DB 1회 ✅
+
+끝.
+```
+
+### 3. 진행 상황은 "보기 편하라고 주는 것"
+- 진행 상황 때문에 DB 터지는 게 문제
+- 시청 로그, 정채 판단 프로그래스바는 **무조건 DB 안 때리게**
 
 ### 2. 완료 상태는 TTL로 날리지 않는다 (폭탄 방지)
 - 완료는 자주 조회되고, 크기도 작고, DB 부하를 막는 핵심
