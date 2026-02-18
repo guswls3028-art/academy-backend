@@ -1410,6 +1410,184 @@ def bulk_create_students_from_excel_rows_optimized(
    - 대량 데이터 처리 시 메모리 고려
    - 배치 크기 조정 (batch_size)
 
+## 🚀 10K 대비 구조 정렬 (갈아엎지 않고 확장 가능)
+
+### 목표
+- 500 → 3K → 10K까지 구조 유지
+- DB 갈아엎기 없음
+- Redis 재설계 없음
+- 워커 구조 유지
+- 비용 폭발 방지
+
+### 1. DB 계층 10K 대비 정렬
+
+#### A. 인덱스 재정렬 (지금 당장 해야 함)
+
+**학생 테이블:**
+```sql
+CREATE INDEX idx_student_tenant_name_phone
+ON students (tenant_id, name, parent_phone)
+WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_student_tenant_name_phone_deleted
+ON students (tenant_id, name, parent_phone)
+WHERE deleted_at IS NOT NULL;
+```
+
+**AIJob:**
+```sql
+CREATE INDEX idx_aijob_tenant_status
+ON aijob (tenant_id, status);
+
+CREATE INDEX idx_aijob_tenant_job_id
+ON aijob (tenant_id, job_id);
+```
+
+**Video:**
+```sql
+CREATE INDEX idx_video_tenant_status
+ON video (tenant_id, status);
+
+CREATE INDEX idx_video_session_status
+ON video (session_id, status);
+```
+
+**효과:**
+- 10K에서 full scan 방지
+- 배치 조회 성능 향상
+
+#### B. Read / Write 분리 준비 (미리 구조만)
+
+**현재:**
+- 단일 RDS 사용
+
+**10K 대비:**
+- 코드에서 조회/쓰기 repository 논리적 분리
+- 10K 가면 Reader/Writer Endpoint 붙이기만 하면 됨
+
+**구현:**
+```python
+# academy/adapters/db/django/repositories_base.py
+class BaseRepository:
+    """기본 Repository (단일 DB)"""
+    def get_queryset(self):
+        return Model.objects.all()
+
+class ReadOnlyRepository(BaseRepository):
+    """조회 전용 Repository (10K에서 Reader Endpoint 사용)"""
+    pass
+
+class WriteRepository(BaseRepository):
+    """쓰기 전용 Repository (10K에서 Writer Endpoint 사용)"""
+    pass
+```
+
+### 2. Worker 구조 10K 대비 정렬
+
+#### A. Worker 동시성 제어 (중앙 제어)
+
+**현재:**
+- ASG가 무제한 확장 가능
+
+**10K 대비:**
+- SQS depth 기반 scaling
+- BUT Max concurrency hard limit 존재
+
+**구현:**
+```python
+# ASG 설정
+AI_WORKER_MAX_CONCURRENCY = 5
+VIDEO_WORKER_MAX_CONCURRENCY = 3
+MESSAGING_WORKER_MAX_CONCURRENCY = 5
+
+# ASG Max Size = Max Concurrency
+# Target Tracking = SQS depth / Max Concurrency
+```
+
+**효과:**
+- Worker 폭증 방지
+- DB connection saturation 방지
+
+### 3. Redis 10K 대비 설계
+
+#### A. Redis는 캐시/상태만
+- 절대 학생 데이터, 영구 데이터 넣지 말 것
+
+#### B. Key eviction policy 설정
+```redis
+maxmemory-policy volatile-lru
+```
+- TTL 없는 완료 캐시 많아질 경우 대비
+
+#### C. Redis 메모리 모니터링 알람
+- CloudWatch: `used_memory > 70%`
+- Eviction 발생 시 알람
+
+### 4. Excel 10K 대비 설계
+
+#### A. Chunked bulk 처리 (필수)
+- 500 rows 단위로 나눠 처리
+- 운영 안정성 확보
+
+#### B. Write-heavy 시간대 제한
+- 학원 시간대 몰리면:
+  - SQS visibility delay
+  - Queue depth 기반 throttle
+
+### 5. Video 10K 대비
+
+**Video는 DB보다 CPU/I/O 문제**
+- DB는 완료 시 1회 업데이트만
+- 이 구조 유지하면 DB는 안전
+
+### 6. RDS 단계별 전략
+
+| 사용자 수 | RDS 타입 | 비고 |
+|-----------|----------|------|
+| 500 | small | 현재 |
+| 3K | medium | 확장 시 |
+| 10K | large or r6g | 대규모 확장 |
+| 10K+ | Aurora | 고가용성 필요 시 |
+
+**Aurora는 10K 이후 고려. 지금 아님.**
+
+### 7. Connection Pooling (10K 직전)
+
+**10K 가면:**
+- PgBouncer or RDS Proxy 도입
+- 구조 변경 없이 추가 가능하도록 설계
+
+**현재:**
+- Django 표준 connection 사용
+- 코드에서 connection 직접 제어하지 말 것
+
+### 8. 10K 대비 핵심 원칙
+
+#### 원칙 1: 진행 상태는 절대 DB로 가지 않는다
+- ✅ Redis-only progress 구조
+
+#### 원칙 2: Excel은 절대 row-by-row 처리하지 않는다
+- ✅ Bulk batch 처리만
+
+#### 원칙 3: Worker는 무한 확장하지 않는다
+- ✅ Max concurrency hard limit
+
+#### 원칙 4: DB는 최소 small 이상
+- ✅ 체급 문제 해결
+
+### 9. 10K 대비 "갈아엎지 않는 구조" 최종 형태
+
+- ✅ Redis-only progress
+- ✅ Bulk write only
+- ✅ Indexed queries only
+- ✅ Limited worker concurrency
+- ✅ DB read/write 분리 준비
+- ✅ PgBouncer 추가 가능 상태
+
+**이 상태면:**
+- 500 → 3000 → 10000
+- 구조 변경 없이 인스턴스만 키우면 됨
+
 ## 🎯 구현 체크리스트
 
 ### 필수 (DB 폴링 제거)
