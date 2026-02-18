@@ -8,7 +8,7 @@
 # ==============================================================================
 
 param(
-    [string]$SubnetIds = "subnet-07a8427d3306ce910,subnet-09231ed7ecf59cfa4",
+    [string]$SubnetIds = "subnet-07a8427d3306ce910",   # same as build (SSM works there); was two subnets, use one so workers get SSM
     [string]$SecurityGroupId = "sg-02692600fbf8e26f7",
     [string]$IamInstanceProfileName = "academy-ec2-role",
     [string]$Region = "ap-northeast-2",
