@@ -205,26 +205,19 @@ echo BUILD_AND_PUSH_OK
 "@
     # SSM on Linux runs the script with bash; CRLF causes "set -e" to be parsed as "set -" (invalid option)
     $buildScript = ($buildScript.Trim() -replace "`r`n", "`n" -replace "`r", "`n")
-    # ✅ JSON을 파일로 저장 후 --cli-input-json 사용 (상대 경로 사용으로 Windows 경로 문제 해결)
-    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-    $inputJson = @{
-        InstanceIds = @($buildInstanceId)
-        DocumentName = "AWS-RunShellScript"
-        Parameters = @{
-            commands = @($buildScript)
-        }
-        TimeoutSeconds = 3600
-    } | ConvertTo-Json -Depth 10
-    $inputFile = Join-Path $RepoRoot "ssm_input.json"
-    [System.IO.File]::WriteAllText($inputFile, $inputJson, $utf8NoBom)
-    # ✅ 현재 디렉토리를 변경하여 상대 경로 사용 (Windows 절대 경로 문제 회피)
-    Push-Location $RepoRoot
-    try {
-        $cmdResult = aws ssm send-command --region $Region --cli-input-json "ssm_input.json" --output json 2>&1
-    } finally {
-        Pop-Location
-        Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
-    }
+    # ✅ --parameters 직접 사용 (Windows --cli-input-json 문제 회피)
+    # AWS CLI는 --parameters에 JSON 문자열을 직접 받을 수 있음
+    $paramsJson = @{
+        commands = @($buildScript)
+    } | ConvertTo-Json -Compress -Depth 10
+    # ✅ PowerShell에서 JSON 문자열을 안전하게 전달하기 위해 따옴표 처리
+    # JSON 문자열을 작은따옴표로 감싸서 PowerShell 변수 확장 방지
+    $cmdResult = aws ssm send-command --region $Region `
+        --instance-ids $buildInstanceId `
+        --document-name "AWS-RunShellScript" `
+        --parameters "'$paramsJson'" `
+        --timeout-seconds 3600 `
+        --output json 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Send-Command failed with exit code: $LASTEXITCODE" -ForegroundColor Red
         Write-Host "Error output: $cmdResult" -ForegroundColor Red
