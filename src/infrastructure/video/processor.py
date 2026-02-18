@@ -259,5 +259,19 @@ def process_video(
             backoff_cap=float(cfg.BACKOFF_CAP_SECONDS),
         )
 
-    progress.record_progress(job_id, "done", {"hls_path": hls_master_path, "duration": duration, "percent": 100, "remaining_seconds": 0})
+    progress.record_progress(
+        job_id,
+        "done",
+        {
+            "hls_path": hls_master_path,
+            "duration": duration,
+            "percent": 100,
+            "remaining_seconds": 0,
+            "step_index": VIDEO_ENCODING_STEP_TOTAL,
+            "step_total": VIDEO_ENCODING_STEP_TOTAL,
+            "step_name": "done",
+            "step_name_display": "완료",
+            "step_percent": 100,
+        },
+    )
     return hls_master_path, int(duration)
