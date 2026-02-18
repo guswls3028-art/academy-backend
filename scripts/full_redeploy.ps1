@@ -207,15 +207,12 @@ echo BUILD_AND_PUSH_OK
     $buildScript = ($buildScript.Trim() -replace "`r`n", "`n" -replace "`r", "`n")
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     $paramsJson = @{ commands = @($buildScript) } | ConvertTo-Json -Depth 10 -Compress
-    $paramsFile = Join-Path $RepoRoot "ssm_build_params.json"
-    [System.IO.File]::WriteAllText($paramsFile, $paramsJson, $utf8NoBom)
-    $paramsUri = "file://$($paramsFile -replace '\\','/' -replace ' ', '%20')"
+    # ✅ file:// URI 대신 JSON을 직접 전달 (Windows 경로 문제 해결)
     $cmdId = aws ssm send-command --region $Region --instance-ids $buildInstanceId `
         --document-name "AWS-RunShellScript" `
-        --parameters $paramsUri `
+        --parameters "commands=[`"$($buildScript -replace '"','\"' -replace "`n",'\n')`"]" `
         --timeout-seconds 3600 `
         --output text --query "Command.CommandId" 2>&1
-    Remove-Item $paramsFile -Force -ErrorAction SilentlyContinue
     if (-not $cmdId -or $cmdId -match "error|Error") {
         Write-Host "Send-Command failed: $cmdId" -ForegroundColor Red
         Write-Host "Build instance kept: $buildInstanceId" -ForegroundColor Yellow
