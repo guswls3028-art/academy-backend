@@ -52,6 +52,10 @@ SQS_VISIBILITY_TIMEOUT = 300  # 로그 비교용 (실제는 VIDEO_VISIBILITY_EXT
 # EC2 Self-Stop 설정 (비용 최적화)
 IDLE_STOP_THRESHOLD = int(os.getenv("EC2_IDLE_STOP_THRESHOLD", "5"))  # 연속 빈 폴링 5회 = 100초
 
+# 3시간 영상 대비: 락/진행률 TTL (3h + margin = 4h). TTL 만료 시 중복 실행/진행률 소실 방지
+VIDEO_LOCK_TTL_SECONDS = int(os.getenv("VIDEO_LOCK_TTL_SECONDS", "14400"))   # 4h
+VIDEO_PROGRESS_TTL_SECONDS = int(os.getenv("VIDEO_PROGRESS_TTL_SECONDS", "14400"))  # 4h
+
 
 def _handle_signal(sig, frame):
     """
