@@ -50,22 +50,21 @@ python manage.py shell -c "from academy.models import Video; from apps.support.v
 
 ## (3) Video 워커에서 실행
 
-Video 워커 인스턴스에 SSH 접속한 뒤, 로그로 동작을 확인합니다.
+**로컬 PowerShell — Video 워커 SSH**
+
+(1)에서 나온 PublicIpAddress 사용. 예: 43.202.4.141
+
+```powershell
+ssh -i C:\key\video-worker-key.pem ec2-user@43.202.4.141
+```
+
+**Video 워커 접속 후 — 로그로 동작 확인**
 
 ```bash
-# Video 워커 SSH (로컬 PowerShell에서)
-# ssh -i C:\key\video-worker-key.pem ec2-user@VIDEO_WORKER_IP
-
-# 접속 후: 워커 로그 스트리밍 (timeout 21600, ChangeMessageVisibility, 360p/720p 등 확인)
 docker logs -f academy-video-worker
 ```
 
-- `VIDEO_WORKER_IP` 는 (1)에서 확인한 IP로 바꿉니다.
-- 로그에서 다음을 보면 새 설정으로 동작하는 것입니다.
-  - `[TRANSCODER] Starting ffmpeg` 등 인코딩 시작
-  - 진행률 업데이트 (50%에서 멈추지 않음)
-  - SQS visibility 연장(21600) 관련 동작
-  - 360p/720p 관련 로그
+로그에서 `[TRANSCODER] Starting ffmpeg`, 진행률 업데이트, 360p/720p 등 나오면 새 설정으로 동작 중입니다.
 
 ---
 
