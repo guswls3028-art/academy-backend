@@ -471,6 +471,15 @@ class DjangoVideoRepository:
         with transaction.atomic():
             video = get_video_for_update(video_id)
             if not video:
+                import logging
+                _log = logging.getLogger(__name__)
+                exists = Video.objects.filter(pk=video_id).exists()
+                _log.warning(
+                    "complete_video: video_id=%s not found (row exists=%s). "
+                    "Possible: row/parent deleted during encode, or worker DB differs from API.",
+                    video_id,
+                    exists,
+                )
                 return False, "not_found"
             if video.status == Video.Status.READY and bool(video.hls_path):
                 return True, "idempotent"
