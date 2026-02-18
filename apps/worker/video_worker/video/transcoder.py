@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 # ffmpeg stderr 진행률 파싱 (time=00:01:23.45 형태)
 _RE_TIME = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
 
-# preset 유지 (순서 중요)
+# 360p + 720p만 사용 (240p 제거로 CPU 부담 감소, 학원 실사용에 충분)
+# preset 유지 (순서 중요): v1=360p, v2=720p
 HLS_VARIANTS = [
-    {"name": "1", "width": 426, "height": 240, "video_bitrate": "400k", "audio_bitrate": "64k"},
-    {"name": "2", "width": 640, "height": 360, "video_bitrate": "800k", "audio_bitrate": "96k"},
-    {"name": "3", "width": 1280, "height": 720, "video_bitrate": "2500k", "audio_bitrate": "128k"},
+    {"name": "1", "width": 640, "height": 360, "video_bitrate": "800k", "audio_bitrate": "96k"},
+    {"name": "2", "width": 1280, "height": 720, "video_bitrate": "2500k", "audio_bitrate": "128k"},
 ]
 
 
