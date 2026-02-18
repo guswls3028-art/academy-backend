@@ -22,11 +22,36 @@ def _excel_bucket(payload: dict) -> str:
     )
 
 
-def _record_progress(job_id: str, step: str, percent: int) -> None:
-    """Redis 진행률 기록 (우하단 실시간 프로그래스바용)."""
+# 엑셀 파싱 구간별 진행률 (n/4): 업로드 마법사처럼 단계별 0~100% 제공
+EXCEL_PARSING_STEP_TOTAL = 4
+EXCEL_PARSING_STEPS = [
+    (1, "downloading", "다운로드"),
+    (2, "parsing", "파싱"),
+    (3, "enrolling", "등록"),
+    (4, "done", "완료"),
+]
+
+
+def _record_progress(
+    job_id: str,
+    step: str,
+    percent: int,
+    step_index: int | None = None,
+    step_percent: int | None = None,
+) -> None:
+    """Redis 진행률 기록 (우하단 실시간 프로그래스바용). 구간별 진행률 지원."""
     try:
         from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
-        RedisProgressAdapter().record_progress(job_id, step, {"percent": percent})
+        extra = {"percent": percent}
+        if step_index is not None:
+            extra.update({
+                "step_index": step_index,
+                "step_total": EXCEL_PARSING_STEP_TOTAL,
+                "step_name": step,
+                "step_name_display": dict(EXCEL_PARSING_STEPS).get(step, step),
+                "step_percent": step_percent if step_percent is not None else 100,
+            })
+        RedisProgressAdapter().record_progress(job_id, step, extra)
     except Exception as e:
         logger.debug("Redis progress record skip: %s", e)
 
