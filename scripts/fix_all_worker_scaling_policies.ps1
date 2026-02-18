@@ -1,4 +1,6 @@
 # 모든 워커 ASG 스케일링 정책 재생성 (SQS 기반만, CPU 기반 제거)
+# 주의: Application Auto Scaling(ec2:autoScalingGroup:DesiredCapacity)은 일부 계정/리전에서 지원되지 않음
+# 대신 Lambda 함수(queue_depth_lambda)에서 직접 ASG desired capacity를 조정함
 # Usage: .\scripts\fix_all_worker_scaling_policies.ps1
 
 param(
