@@ -61,7 +61,7 @@ ssh -i C:\key\video-worker-key.pem ec2-user@43.202.4.141
 **Video 워커 접속 후 — 로그로 동작 확인**
 
 ```bash
-docker logs -f academy-video-worker
+sudo docker logs -f academy-video-worker
 ```
 
 로그에서 `[TRANSCODER] Starting ffmpeg`, 진행률 업데이트, 360p/720p 등 나오면 새 설정으로 동작 중입니다.
