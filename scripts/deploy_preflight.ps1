@@ -117,7 +117,7 @@ if ($TestSsh -and $ips["academy-api"]) {
     $apiKeyPath = Join-Path $KeyDir "backend-api-key.pem"
     if (Test-Path $apiKeyPath) {
         Write-Host "`n[SSH] Testing academy-api ($($ips['academy-api']))..." -ForegroundColor Cyan
-        $sshTest = ssh -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=accept-new -i "`"$apiKeyPath`"`" ec2-user@$($ips["academy-api"]) "exit" 2>&1
+        $sshTest = ssh -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=accept-new -i $apiKeyPath ec2-user@$($ips["academy-api"]) "exit" 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Host "[OK] SSH to academy-api works" -ForegroundColor Green
         } else {
