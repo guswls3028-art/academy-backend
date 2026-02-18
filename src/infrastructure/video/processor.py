@@ -129,23 +129,47 @@ def process_video(
         if not duration or duration <= 0:
             raise RuntimeError("duration_probe_failed")
 
-        # 트랜스코딩: Popen+stderr 파싱으로 진행률 갱신 (50% 정체 없음). SQS visibility는 작업 시작 시 6h 연장.
+        # 트랜스코딩: 구간 내 0~100% (인코딩 단계만 세부 진행률)
         def transcode_progress(current_sec: float, total_sec: float) -> None:
+            step_pct = int(100 * (current_sec / total_sec)) if total_sec > 0 else 0
+            step_pct = min(100, max(0, step_pct))
             pct = int(50 + 35 * (current_sec / total_sec)) if total_sec > 0 else 50
             pct = min(85, max(50, pct))
             post_sec = 60  # validate + thumbnail + upload 대략
             remaining = int(max(0, total_sec - current_sec + post_sec))
-            logger.info("[PROCESSOR] Transcode progress video_id=%s current=%.1f/%d percent=%d%%", video_id, current_sec, int(total_sec), pct)
+            logger.info(
+                "[PROCESSOR] Transcode progress video_id=%s current=%.1f/%d step_percent=%d%% overall=%d%%",
+                video_id, current_sec, int(total_sec), step_pct, pct,
+            )
             progress.record_progress(
                 job_id,
                 "transcoding",
-                {"duration": duration, "percent": pct, "remaining_seconds": remaining, "current_sec": int(current_sec)},
+                {
+                    "duration": duration,
+                    "percent": pct,
+                    "remaining_seconds": remaining,
+                    "current_sec": int(current_sec),
+                    "step_index": 4,
+                    "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                    "step_name": "transcoding",
+                    "step_name_display": "인코딩",
+                    "step_percent": step_pct,
+                },
             )
 
         progress.record_progress(
             job_id,
             "transcoding",
-            {"duration": duration, "percent": 50, "remaining_seconds": int(duration + 60)},
+            {
+                "duration": duration,
+                "percent": 50,
+                "remaining_seconds": int(duration + 60),
+                "step_index": 4,
+                "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                "step_name": "transcoding",
+                "step_name_display": "인코딩",
+                "step_percent": 0,
+            },
         )
         transcode_to_hls(
             video_id=video_id,
