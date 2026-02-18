@@ -1977,8 +1977,18 @@ def bulk_create_students_from_excel_rows_optimized(
                 for student_data in chunk:
                     students_to_create.append(student_data["student"])
                 
-                # ✅ Bulk Create로 일괄 생성 (ignore_conflicts로 ps_number 충돌 처리)
-                Student.objects.bulk_create(students_to_create, batch_size=500, ignore_conflicts=True)
+                # ⚠️ 위험: Student를 먼저 생성하면 user FK가 NULL이어서 제약조건 위반 가능
+                # ✅ 안전한 순서: User 먼저 → Student FK 연결 → Membership
+                # 현재 코드는 "이론상 가능"이지만 실전에서는 깨질 확률 높음
+                # Excel Bulk는 Day 4+ 별도 PR에서 FK 순서 재정렬 필요
+                
+                # ❌ 현재 순서 (위험):
+                # Student.objects.bulk_create(students_to_create, batch_size=500, ignore_conflicts=True)
+                
+                # ✅ 올바른 순서 (Day 4+ PR에서 구현):
+                # 1. User bulk_create (username=ps_number)
+                # 2. Student bulk_create (user FK 채워서)
+                # 3. Membership bulk_create
                 
                 # ✅ 충돌된 ps_number 재시도
                 # bulk_create 후 실제 생성된 학생만 필터링
@@ -1999,8 +2009,9 @@ def bulk_create_students_from_excel_rows_optimized(
                         new_ps_number = None
                         while retry_count < max_retries:
                             try:
+                                # ✅ _generate_unique_ps_number()는 tenant_id를 받지 않음 (전역 유일)
                                 new_ps_number = _generate_unique_ps_number()
-                                # DB에서 중복 확인
+                                # ✅ user_filter_username_exists()는 존재함 (repositories_students.py 확인 완료)
                                 if not student_repo.user_filter_username_exists(new_ps_number):
                                     conflict_student.ps_number = new_ps_number
                                     conflict_student.save()
