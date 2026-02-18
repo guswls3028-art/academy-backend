@@ -135,8 +135,9 @@ $videoUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($vi
 $LtVideoName = "academy-video-worker-asg"
 # Root volume >= 30GB (AMI snapshot requirement); second volume 100GB for transcode
 $blockDevices = '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":30,"VolumeType":"gp3"}},{"DeviceName":"/dev/sdb","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]'
+$ltVideoKey = if ($KeyNameVideo) { ",`"KeyName`":`"$KeyNameVideo`"" } else { "" }
 $ltVideoJson = @"
-{"ImageId":"$AmiId","InstanceType":"t4g.medium","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"],"UserData":"$videoUserDataB64","BlockDeviceMappings":$blockDevices,"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-video-worker"}]}]}
+{"ImageId":"$AmiId","InstanceType":"t4g.medium","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"]$ltVideoKey,"UserData":"$videoUserDataB64","BlockDeviceMappings":$blockDevices,"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-video-worker"}]}]}
 "@
 $ltVideoFile = Join-Path $RepoRoot "lt_video_data.json"
 [System.IO.File]::WriteAllText($ltVideoFile, $ltVideoJson.Trim(), $utf8NoBom)
