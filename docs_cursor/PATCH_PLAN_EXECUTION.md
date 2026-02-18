@@ -526,10 +526,12 @@ def mark_processing(self, video_id: int) -> bool:
                 tenant_id = video.session.lecture.tenant_id
         
         if tenant_id:
+            # ✅ 안전한 Status 값 추출 (TextChoices이면 .value, 아니면 그대로)
+            status_value = getattr(Video.Status.PROCESSING, "value", Video.Status.PROCESSING)
             cache_video_status(
                 tenant_id=tenant_id,
                 video_id=video_id,
-                status=Video.Status.PROCESSING.value,
+                status=status_value,
                 ttl=21600,  # 6시간
             )
     except Exception as e:
