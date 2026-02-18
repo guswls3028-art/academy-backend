@@ -11,9 +11,9 @@ param(
     [string]$SecurityGroupId,
     [Parameter(Mandatory = $true)]
     [string]$IamInstanceProfileName,
-    [string]$KeyNameAi = "ai-worker-key",       # Key pair for AI worker SSH (empty = no key)
-    [string]$KeyNameVideo = "video-worker-key", # Key pair for Video worker SSH
-    [string]$KeyNameMessaging = "message-key",  # Key pair for Messaging worker SSH
+    [string]$KeyNameAi = "",   # from _config_instance_keys (academy-ai-worker-cpu)
+    [string]$KeyNameVideo = "",   # from _config_instance_keys (academy-video-worker)
+    [string]$KeyNameMessaging = "",   # from _config_instance_keys (academy-messaging-worker)
     [string]$Region = "ap-northeast-2",
     [string]$AmiId = "",         # optional, default latest Amazon Linux 2023
     [int]$MaxCapacity = 20,
