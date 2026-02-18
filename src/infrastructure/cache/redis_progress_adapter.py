@@ -30,13 +30,24 @@ class RedisProgressAdapter(IProgress):
         job_id: str,
         step: str,
         extra: Optional[dict[str, Any]] = None,
+        tenant_id: Optional[str] = None,  # ✅ 추가 (AI Job 전용)
     ) -> None:
-        """진행 단계 기록 (Redis에만)"""
+        """진행 단계 기록 (Redis에만) - AI Job 전용"""
         client = get_redis_client()
         if not client:
             return
 
-        key = f"job:{job_id}:progress"
+        # ✅ 안전 장치: tenant_id 누락 시 경고 로그
+        if tenant_id is None:
+            logger.warning("tenant_id missing for job_id=%s, using legacy key format", job_id)
+
+        # ✅ AI Job 전용 키 형식: tenant:{tenant_id}:job:{job_id}:progress
+        if tenant_id:
+            key = f"tenant:{tenant_id}:job:{job_id}:progress"
+        else:
+            # 하위 호환성: tenant_id 없으면 기존 키 형식 사용
+            key = f"job:{job_id}:progress"
+        
         payload = {"step": step, **(extra or {})}
         try:
             client.setex(
@@ -44,22 +55,44 @@ class RedisProgressAdapter(IProgress):
                 self._ttl,
                 json.dumps(payload, default=str),
             )
-            logger.debug("Progress recorded: job_id=%s step=%s", job_id, step)
+            logger.debug("Progress recorded: job_id=%s step=%s tenant_id=%s", job_id, step, tenant_id)
         except Exception as e:
             logger.warning("Redis progress record failed: %s", e)
 
-    def get_progress(self, job_id: str) -> Optional[dict[str, Any]]:
-        """진행 상태 조회"""
+    def get_progress(self, job_id: str, tenant_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+        """진행 상태 조회 - AI Job 전용"""
         client = get_redis_client()
         if not client:
             return None
 
-        key = f"job:{job_id}:progress"
-        try:
-            raw = client.get(key)
-            if not raw:
-                return None
-            return json.loads(raw)
-        except Exception as e:
-            logger.warning("Redis progress get failed: %s", e)
+        # ✅ AI Job 전용 키 형식
+        if tenant_id:
+            key = f"tenant:{tenant_id}:job:{job_id}:progress"
+            try:
+                raw = client.get(key)
+                if raw:
+                    return json.loads(raw)
+            except Exception:
+                pass
+            
+            # 하위 호환성: tenant namespace 키가 없으면 기존 키 형식 확인
+            legacy_key = f"job:{job_id}:progress"
+            try:
+                raw = client.get(legacy_key)
+                if raw:
+                    return json.loads(raw)
+            except Exception:
+                pass
+            
             return None
+        else:
+            # tenant_id 없으면 기존 키 형식 사용
+            key = f"job:{job_id}:progress"
+            try:
+                raw = client.get(key)
+                if not raw:
+                    return None
+                return json.loads(raw)
+            except Exception as e:
+                logger.warning("Redis progress get failed: %s", e)
+                return None
