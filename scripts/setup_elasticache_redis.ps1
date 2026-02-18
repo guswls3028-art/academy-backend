@@ -33,25 +33,28 @@ if (-not $VpcId -or $VpcId -eq "None") {
 }
 Write-Host "[1/5] VPC: $VpcId" -ForegroundColor Green
 
-# 2) Security group for ElastiCache (inbound 6379 from API/Worker SG or VPC CIDR)
+# 2) Security group for ElastiCache (inbound 6379 to Redis SG, source: API/Worker SG)
 $RedisSgId = aws ec2 describe-security-groups --region $Region --filters "Name=group-name,Values=$RedisSgName" "Name=vpc-id,Values=$VpcId" --query "SecurityGroups[0].GroupId" --output text 2>$null
 if (-not $RedisSgId -or $RedisSgId -eq "None") {
     Write-Host "[2/5] Creating security group $RedisSgName ..." -ForegroundColor Cyan
     $RedisSgId = aws ec2 create-security-group --group-name $RedisSgName --description "ElastiCache Redis - allow 6379 from API/Worker" --vpc-id $VpcId --region $Region --output text 2>$null
-    # VPC CIDR 사용 (source-group는 같은 VPC 필요, CIDR이 더 안정적)
-    $VpcCidr = aws ec2 describe-vpcs --vpc-ids $VpcId --region $Region --query "Vpcs[0].CidrBlock" --output text 2>$null
-    if (-not $VpcCidr -or $VpcCidr -eq "None") { $VpcCidr = "10.0.0.0/8" }
-    $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    aws ec2 authorize-security-group-ingress --group-id $RedisSgId --protocol tcp --port 6379 --cidr $VpcCidr --region $Region 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        # source-group 재시도
-        aws ec2 authorize-security-group-ingress --group-id $RedisSgId --protocol tcp --port 6379 --source-group $ClientSecurityGroupId --region $Region 2>$null
-    }
-    $ErrorActionPreference = $ea
-    Write-Host "      SG: $RedisSgId" -ForegroundColor Green
-} else {
+    Write-Host "      Redis SG: $RedisSgId (VPC: $VpcId)" -ForegroundColor Gray
+}
+else {
     Write-Host "[2/5] Security group exists: $RedisSgId" -ForegroundColor Green
 }
+# Client SG VPC 확인 (source-group는 같은 VPC 필요)
+$ClientSgVpc = aws ec2 describe-security-groups --group-ids $ClientSecurityGroupId --region $Region --query "SecurityGroups[0].VpcId" --output text 2>$null
+Write-Host "      Client SG ($ClientSecurityGroupId) VPC: $ClientSgVpc" -ForegroundColor Gray
+
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+$ingressOut = aws ec2 authorize-security-group-ingress --group-id $RedisSgId --protocol tcp --port 6379 --source-group $ClientSecurityGroupId --region $Region 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "      authorize-security-group-ingress failed:" -ForegroundColor Red
+    Write-Host "      $ingressOut" -ForegroundColor Red
+    Write-Host "      (group-id=$RedisSgId, source-group=$ClientSecurityGroupId)" -ForegroundColor Gray
+}
+$ErrorActionPreference = $ea
 
 # 3) Cache subnet group
 $subnetGroupExists = aws elasticache describe-cache-subnet-groups --cache-subnet-group-name $SubnetGroupName --region $Region 2>&1
