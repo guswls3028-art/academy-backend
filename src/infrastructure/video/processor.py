@@ -109,6 +109,7 @@ def process_video(
                 "step_name_display": "다운로드",
                 "step_percent": 100,
             },
+            tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
         download_to_file(url=source_url, dst=src_path, cfg=cfg)
 
@@ -124,6 +125,7 @@ def process_video(
                 "step_name_display": "분석",
                 "step_percent": 100,
             },
+            tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
         duration = probe_duration_seconds(
             input_path=str(src_path),
@@ -159,6 +161,7 @@ def process_video(
                     "step_name_display": "인코딩",
                     "step_percent": step_pct,
                 },
+                tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
             )
 
         progress.record_progress(
