@@ -229,7 +229,9 @@ echo BUILD_AND_PUSH_OK
     [System.IO.File]::WriteAllText($inputFile, $inputJson, $utf8NoBom)
     # ✅ Windows 경로를 file:// URI로 변환: C:\path\to\file -> file:///C:/path/to/file
     $inputFileAbs = (Resolve-Path $inputFile).Path
-    $fileUri = "file:///$($inputFileAbs -replace '\\', '/' -replace '^([A-Z]):', '/$1')"
+    # C:\path\to\file -> C:/path/to/file -> file:///C:/path/to/file
+    $pathForward = $inputFileAbs -replace '\\', '/'
+    $fileUri = "file:///$pathForward"
     $cmdResult = aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
     Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) {
