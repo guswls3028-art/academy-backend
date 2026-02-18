@@ -56,12 +56,12 @@ def get_video_encoding_progress(video_id: int, tenant_id: Optional[int] = None) 
     return 50  # 알 수 없는 단계면 중간값
 
 
-def get_video_encoding_remaining_seconds(video_id: int) -> Optional[int]:
+def get_video_encoding_remaining_seconds(video_id: int, tenant_id: Optional[int] = None) -> Optional[int]:
     """
     Redis에서 영상 인코딩 예상 남은 시간(초) 조회.
     워커가 record_progress 시 extra에 remaining_seconds 를 넣으면 반환.
     """
-    payload = _get_progress_payload(video_id)
+    payload = _get_progress_payload(video_id, tenant_id)
     if not payload:
         return None
 
@@ -74,12 +74,12 @@ def get_video_encoding_remaining_seconds(video_id: int) -> Optional[int]:
         return None
 
 
-def get_video_encoding_step_detail(video_id: int) -> Optional[dict]:
+def get_video_encoding_step_detail(video_id: int, tenant_id: Optional[int] = None) -> Optional[dict]:
     """
     Redis에서 구간별 진행률 조회. (n/7) 단계 + 구간 내 0~100%.
     반환: { step_index, step_total, step_name, step_name_display, step_percent } 또는 None.
     """
-    payload = _get_progress_payload(video_id)
+    payload = _get_progress_payload(video_id, tenant_id)
     if not payload:
         return None
     idx = payload.get("step_index")
