@@ -57,8 +57,7 @@ if (-not $apiIp -or $apiIp -eq "None") {
         $apiRedisHost = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i $apiKey "ec2-user@$apiIp" "grep -E '^REDIS_HOST=' /home/ec2-user/.env 2>/dev/null | cut -d= -f2" 2>$null
         if ($apiRedisHost) {
             Write-Host "OK   API .env REDIS_HOST: $($apiRedisHost.Trim())" -ForegroundColor Green
-            $py = 'import os,redis;h=os.environ.get("REDIS_HOST");p=int(os.environ.get("REDIS_PORT",6379));r=redis.Redis(host=h,port=p,db=0);print("OK",r.ping())'
-$apiRedisTest = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i $apiKey "ec2-user@$apiIp" "sudo docker exec academy-api python -c `"$py`" 2>/dev/null" 2>$null
+            $apiRedisTest = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i $apiKey "ec2-user@$apiIp" 'sudo docker exec academy-api python -c "import os,redis;h=os.environ.get(\"REDIS_HOST\");p=int(os.environ.get(\"REDIS_PORT\",6379));r=redis.Redis(host=h,port=p,db=0);print(\"OK\",r.ping())" 2>/dev/null' 2>$null
             if ($apiRedisTest -match "OK True") {
                 Write-Host "OK   API Redis ping: 성공" -ForegroundColor Green
             } else {
