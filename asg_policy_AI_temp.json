@@ -1,0 +1,11 @@
+{
+  "TargetValue": 20,
+  "CustomizedMetricSpecification": {
+    "MetricName": "QueueDepth",
+    "Namespace": "Academy/Workers",
+    "Dimensions": [{"Name": "WorkerType", "Value": "AI"}],
+    "Statistic": "Average"
+  },
+  "ScaleInCooldown": 600,
+  "ScaleOutCooldown": 60
+}
