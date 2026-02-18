@@ -217,9 +217,11 @@ echo BUILD_AND_PUSH_OK
     } | ConvertTo-Json -Depth 10
     $inputFile = Join-Path $RepoRoot "ssm_input.json"
     [System.IO.File]::WriteAllText($inputFile, $inputJson, $utf8NoBom)
+    # ✅ 절대 경로를 file:// URI로 변환 (Windows 경로 처리)
     $inputFileAbs = (Resolve-Path $inputFile).Path
-    # ✅ 절대 경로를 file:// URI로 변환 (Windows 경로 처리: C:\ -> /C/)
+    # Windows 경로를 file:// URI로 변환: C:\path\to\file -> file:///C:/path/to/file
     $inputUri = "file:///$($inputFileAbs -replace '\\','/' -replace '^([A-Z]):','/$1' -replace ' ', '%20')"
+    Write-Host "Using input file: $inputUri" -ForegroundColor Gray
     $cmdResult = aws ssm send-command --region $Region --cli-input-json $inputUri --output json 2>&1
     Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) {
