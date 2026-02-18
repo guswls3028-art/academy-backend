@@ -49,7 +49,7 @@ $apiIp = aws ec2 describe-instances --region $Region `
     --filters "Name=tag:Name,Values=academy-api" "Name=instance-state-name,Values=running" `
     --query "Reservations[].Instances[].PublicIpAddress" --output text 2>$null
 if (-not $apiIp -or $apiIp -eq "None") {
-    Write-Host "[SKIP] academy-api Public IP 없음 - API Redis 체크 불가" -ForegroundColor Yellow
+    Write-Host "SKIP academy-api Public IP 없음 - API Redis 체크 불가" -ForegroundColor Yellow
 } else {
     . (Join-Path $ScriptRoot "_config_instance_keys.ps1")
     $apiKey = Join-Path $KeyDir $INSTANCE_KEY_FILES["academy-api"]
