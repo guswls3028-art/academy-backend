@@ -21,26 +21,15 @@ _STEP_PERCENT = {
 }
 
 
-def _get_progress_payload(video_id: int) -> Optional[dict]:
-    """Redis에서 job:video:{id}:progress payload 한 번에 조회."""
-    try:
-        from libs.redis.client import get_redis_client
-    except ImportError:
+def _get_progress_payload(video_id: int, tenant_id: Optional[int] = None) -> Optional[dict]:
+    """Redis에서 tenant:{tenant_id}:video:{video_id}:progress payload 조회."""
+    if not tenant_id:
         return None
-
-    client = get_redis_client()
-    if not client:
-        return None
-
-    job_id = f"{VIDEO_JOB_ID_PREFIX}{video_id}"
-    key = f"job:{job_id}:progress"
-    try:
-        raw = client.get(key)
-        if not raw:
-            return None
-        return json.loads(raw)
-    except Exception:
-        return None
+    
+    # ✅ VideoProgressAdapter 사용
+    from apps.support.video.redis_progress_adapter import VideoProgressAdapter
+    adapter = VideoProgressAdapter(video_id=video_id, tenant_id=tenant_id)
+    return adapter.get_progress_direct()
 
 
 def get_video_encoding_progress(video_id: int) -> Optional[int]:
