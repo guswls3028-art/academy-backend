@@ -28,17 +28,17 @@ $asgConfigs = @(
     }
 )
 
-Write-Host "⚠️  주의: Application Auto Scaling(ec2:autoScalingGroup:DesiredCapacity)은" -ForegroundColor Yellow
-Write-Host "   일부 계정/리전에서 지원되지 않습니다." -ForegroundColor Yellow
+Write-Host "Note: Application Auto Scaling (ec2:autoScalingGroup:DesiredCapacity) is not" -ForegroundColor Yellow
+Write-Host "  supported in some accounts/regions." -ForegroundColor Yellow
 Write-Host ""
-Write-Host "✅ 대신 Lambda 함수(queue_depth_lambda)에서 직접 ASG desired capacity를 조정합니다." -ForegroundColor Green
+Write-Host "Instead, Lambda (queue_depth_lambda) sets ASG desired capacity directly." -ForegroundColor Green
 Write-Host ""
-Write-Host "Lambda 함수가 다음을 수행합니다:" -ForegroundColor Cyan
-Write-Host "  - SQS 큐 깊이(visible + in_flight) 모니터링" -ForegroundColor Gray
-Write-Host "  - CloudWatch 메트릭 퍼블리시 (Academy/Workers QueueDepth)" -ForegroundColor Gray
-Write-Host "  - 모든 워커(AI, Video, Messaging) ASG desired capacity 직접 조정" -ForegroundColor Gray
+Write-Host "Lambda does:" -ForegroundColor Cyan
+Write-Host "  - SQS queue depth (visible + in_flight) monitoring" -ForegroundColor Gray
+Write-Host "  - CloudWatch metric publish (Academy/Workers QueueDepth)" -ForegroundColor Gray
+Write-Host "  - Direct ASG desired capacity for AI, Video, Messaging workers" -ForegroundColor Gray
 Write-Host ""
-Write-Host "기존 Application Auto Scaling 정책 확인 중..." -ForegroundColor Cyan
+Write-Host "Checking for existing Application Auto Scaling policies..." -ForegroundColor Cyan
 Write-Host ""
 
 foreach ($config in $asgConfigs) {
