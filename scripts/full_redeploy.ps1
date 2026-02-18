@@ -205,23 +205,18 @@ echo BUILD_AND_PUSH_OK
 "@
     # SSM on Linux runs the script with bash; CRLF causes "set -e" to be parsed as "set -" (invalid option)
     $buildScript = ($buildScript.Trim() -replace "`r`n", "`n" -replace "`r", "`n")
-    # ✅ --cli-input-json 사용 (PowerShell 따옴표 문제 해결)
-    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-    $inputJson = @{
-        InstanceIds = @($buildInstanceId)
-        DocumentName = "AWS-RunShellScript"
-        Parameters = @{
-            commands = @($buildScript)
-        }
-        TimeoutSeconds = 3600
-    } | ConvertTo-Json -Depth 10
-    # ✅ 임시 파일 사용 + 절대 경로 직접 사용 (Windows에서 file:// URI 문제 회피)
-    $inputFile = Join-Path $RepoRoot "ssm_input.json"
-    [System.IO.File]::WriteAllText($inputFile, $inputJson, $utf8NoBom)
-    $inputFileAbs = (Resolve-Path $inputFile).Path
-    # ✅ Windows에서는 절대 경로를 직접 사용 (AWS CLI가 지원함)
-    $cmdResult = aws ssm send-command --region $Region --cli-input-json $inputFileAbs --output json 2>&1
-    Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
+    # ✅ JSON을 직접 전달 (PowerShell 따옴표 문제 해결 - --parameters 사용)
+    # AWS CLI는 --parameters에 JSON 문자열을 직접 받을 수 있음
+    $paramsJsonObj = @{
+        commands = @($buildScript)
+    }
+    $paramsJsonStr = $paramsJsonObj | ConvertTo-Json -Compress -Depth 10
+    # ✅ PowerShell에서 JSON 문자열을 안전하게 전달하기 위해 here-string 사용
+    $cmdResult = aws ssm send-command --region $Region --instance-ids $buildInstanceId `
+        --document-name "AWS-RunShellScript" `
+        --parameters $paramsJsonStr `
+        --timeout-seconds 3600 `
+        --output json 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Send-Command failed with exit code: $LASTEXITCODE" -ForegroundColor Red
         Write-Host "Error output: $cmdResult" -ForegroundColor Red
