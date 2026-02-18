@@ -381,10 +381,50 @@ def playback_event_bulk_create(objs, batch_size=500):
 # ---- Video Worker용 Repository (IVideoRepository 호환, Gate 7: ORM을 adapters 내부로) ----
 
 
+def _tenant_id_from_video(video) -> Optional[int]:
+    """Video에서 tenant_id 추출 (session.lecture.tenant)."""
+    if not video:
+        return None
+    if getattr(video, "session", None) and getattr(video.session, "lecture", None):
+        return getattr(video.session.lecture, "tenant_id", None)
+    return None
+
+
+def _cache_video_status_safe(
+    video_id: int,
+    tenant_id: Optional[int],
+    status: str,
+    *,
+    hls_path: Optional[str] = None,
+    duration: Optional[int] = None,
+    error_reason: Optional[str] = None,
+    ttl: Optional[int] = None,
+) -> None:
+    """Redis에 비디오 상태 기록 (Worker 완료/실패 시 progress API가 동일 상태 반환하도록)."""
+    if not tenant_id:
+        return
+    try:
+        from apps.support.video.redis_status_cache import cache_video_status
+        cache_video_status(
+            tenant_id=tenant_id,
+            video_id=video_id,
+            status=status,
+            hls_path=hls_path,
+            duration=duration,
+            error_reason=error_reason,
+            ttl=ttl,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Failed to cache video status in Redis: %s", e)
+
+
 class DjangoVideoRepository:
     """
     Video 상태 업데이트 — mark_processing / complete_video / fail_video.
     Worker는 이 adapter만 사용 (src.infrastructure.db.video_repository 대체).
+    완료/실패 시 Redis에도 동기화하여 progress API(GET /media/videos/{id}/progress/)가
+    READY/FAILED를 반환하도록 함.
     """
 
     def mark_processing(self, video_id: int) -> bool:
@@ -393,7 +433,7 @@ class DjangoVideoRepository:
         from apps.support.video.models import Video
 
         with transaction.atomic():
-            video = Video.objects.select_for_update().filter(id=int(video_id)).first()
+            video = get_video_for_update(video_id)
             if not video:
                 return False
             if video.status == Video.Status.PROCESSING:
@@ -411,6 +451,12 @@ class DjangoVideoRepository:
             if hasattr(video, "processing_started_at"):
                 update_fields.append("processing_started_at")
             video.save(update_fields=update_fields)
+            tenant_id = _tenant_id_from_video(video)
+        _cache_video_status_safe(
+            video_id, tenant_id,
+            getattr(Video.Status.PROCESSING, "value", "PROCESSING"),
+            ttl=21600,
+        )
         return True
 
     def complete_video(
