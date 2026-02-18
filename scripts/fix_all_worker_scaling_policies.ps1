@@ -118,17 +118,32 @@ foreach ($config in $asgConfigs) {
     
     $policyFile = Join-Path $RepoRoot "asg_policy_${workerType}_temp.json"
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-    [System.IO.File]::WriteAllText($policyFile, $policy.Trim(), $utf8NoBom)
+    $policyContent = $policy.Trim()
+    [System.IO.File]::WriteAllText($policyFile, $policyContent, $utf8NoBom)
+    
+    # JSON 유효성 검사
+    try {
+        $jsonTest = Get-Content $policyFile -Raw | ConvertFrom-Json
+        if (-not $jsonTest.TargetTrackingScalingPolicyConfiguration) {
+            Write-Host "    ⚠️  JSON structure validation failed" -ForegroundColor Yellow
+            Write-Host "    File content:" -ForegroundColor Gray
+            Get-Content $policyFile | ForEach-Object { Write-Host "      $_" -ForegroundColor Gray }
+        }
+    } catch {
+        Write-Host "    ⚠️  Invalid JSON: $_" -ForegroundColor Yellow
+    }
+    
     $policyPath = "file://$($policyFile -replace '\\','/' -replace ' ', '%20')"
     
     $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $resourceId `
+    $result = aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $resourceId `
         --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" `
-        --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyPath --region $Region
+        --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyPath --region $Region 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Host "    ✅ Policy created/updated successfully" -ForegroundColor Green
     } else {
         Write-Host "    ❌ Policy creation failed" -ForegroundColor Red
+        Write-Host "    Error: $result" -ForegroundColor Red
     }
     $ErrorActionPreference = $ea
     Remove-Item $policyFile -Force -ErrorAction SilentlyContinue
