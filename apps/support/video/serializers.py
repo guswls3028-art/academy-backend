@@ -51,6 +51,11 @@ class VideoSerializer(serializers.ModelSerializer):
     # Redis 기반 인코딩 진행률 (status=PROCESSING 일 때만 유의미)
     encoding_progress = serializers.SerializerMethodField()
     encoding_remaining_seconds = serializers.SerializerMethodField()
+    # 구간별 진행률 (n/7) 단계명 + 구간 내 0~100%
+    encoding_step_index = serializers.SerializerMethodField()
+    encoding_step_total = serializers.SerializerMethodField()
+    encoding_step_name = serializers.SerializerMethodField()
+    encoding_step_percent = serializers.SerializerMethodField()
 
     class Meta:
         model = Video
@@ -65,6 +70,10 @@ class VideoSerializer(serializers.ModelSerializer):
             "status",
             "encoding_progress",
             "encoding_remaining_seconds",
+            "encoding_step_index",
+            "encoding_step_total",
+            "encoding_step_name",
+            "encoding_step_percent",
             "allow_skip",
             "max_speed",
             "show_watermark",
