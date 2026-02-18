@@ -82,6 +82,7 @@ class VideoSerializer(serializers.ModelSerializer):
             "thumbnail_url",
             "hls_url",
             "encoding_progress",
+            "encoding_remaining_seconds",
         ]
         ref_name = "SealedVideo"
 
@@ -95,6 +96,12 @@ class VideoSerializer(serializers.ModelSerializer):
             return None
         pct = get_video_encoding_progress(int(obj.id))
         return pct if pct is not None else None
+
+    def get_encoding_remaining_seconds(self, obj):
+        """PROCESSING 상태일 때만 Redis에서 예상 남은 시간(초) 조회."""
+        if obj.status != Video.Status.PROCESSING:
+            return None
+        return get_video_encoding_remaining_seconds(int(obj.id))
 
     def get_source_type(self, obj):
         return "s3" if obj.file_key else "unknown"
