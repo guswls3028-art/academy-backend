@@ -7,6 +7,8 @@
 
 ## [PATCH PLAN — REDIS PROGRESS]
 
+**⚠️ 중요 변경사항**: Video Progress는 AI와 완전히 분리하여 별도 Adapter 사용
+
 ### 단계 1: Redis 상태 캐싱 헬퍼 생성
 
 #### PATCH 1.1: Video 상태 캐싱 헬퍼 생성
