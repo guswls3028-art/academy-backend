@@ -177,6 +177,7 @@ def process_video(
                 "step_name_display": "인코딩",
                 "step_percent": 0,
             },
+            tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
         transcode_to_hls(
             video_id=video_id,
@@ -202,6 +203,7 @@ def process_video(
                 "step_name_display": "검증",
                 "step_percent": 100,
             },
+            tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
         validate_hls_output(out_dir, int(cfg.MIN_SEGMENTS_PER_VARIANT))
 
