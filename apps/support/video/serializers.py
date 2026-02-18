@@ -9,7 +9,7 @@ from .models import (
     VideoProgress,
     VideoPlaybackEvent,
 )
-from .encoding_progress import get_video_encoding_progress
+from .encoding_progress import get_video_encoding_progress, get_video_encoding_remaining_seconds
 from academy.adapters.db.django import repositories_video as video_repo
 
 # ========================================================
@@ -46,6 +46,7 @@ class VideoSerializer(serializers.ModelSerializer):
 
     # Redis 기반 인코딩 진행률 (status=PROCESSING 일 때만 유의미)
     encoding_progress = serializers.SerializerMethodField()
+    encoding_remaining_seconds = serializers.SerializerMethodField()
 
     class Meta:
         model = Video
@@ -59,6 +60,7 @@ class VideoSerializer(serializers.ModelSerializer):
             "order",
             "status",
             "encoding_progress",
+            "encoding_remaining_seconds",
             "allow_skip",
             "max_speed",
             "show_watermark",
