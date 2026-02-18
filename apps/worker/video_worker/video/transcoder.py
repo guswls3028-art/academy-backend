@@ -173,6 +173,15 @@ def build_ffmpeg_command(
     return cmd
 
 
+def _parse_time_seconds(line: str) -> Optional[float]:
+    """ffmpeg stderr에서 time=HH:MM:SS.ms 추출 후 초 단위로 반환."""
+    m = _RE_TIME.search(line)
+    if not m:
+        return None
+    h, m_, s, cs = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+    return h * 3600 + m_ * 60 + s + cs / 100.0
+
+
 def transcode_to_hls(
     *,
     video_id: int,
@@ -182,6 +191,8 @@ def transcode_to_hls(
     ffprobe_bin: str,
     hls_time: int,
     timeout: Optional[int],
+    duration_sec: Optional[float] = None,
+    progress_callback: Optional[Callable[[float, float], None]] = None,
 ) -> Path:
     # 입력 해상도 기반 variant 선택
     w, h = _probe_resolution(input_path, ffprobe_bin, min(60, int(timeout or 60)))
@@ -203,23 +214,71 @@ def transcode_to_hls(
         hls_time=hls_time,
     )
 
-    try:
-        p = subprocess.run(
-            cmd,
-            cwd=str(output_root.resolve()),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as e:
-        raise TranscodeError(f"ffmpeg timeout video_id={video_id} seconds={timeout}") from e
+    use_callback = (
+        progress_callback is not None
+        and duration_sec is not None
+        and duration_sec > 0
+    )
 
-    if p.returncode != 0:
-        raise TranscodeError(
-            f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(p.stderr)}"
-        )
+    if use_callback:
+        total_sec = float(duration_sec)
+        last_pct = -1
+
+        def on_progress(current_sec: float) -> None:
+            nonlocal last_pct
+            pct = int(50 + 35 * (current_sec / total_sec)) if total_sec > 0 else 50
+            pct = min(85, max(50, pct))
+            if pct != last_pct:
+                last_pct = pct
+                progress_callback(current_sec, total_sec)
+
+        try:
+            p = subprocess.Popen(
+                cmd,
+                cwd=str(output_root.resolve()),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+            assert p.stderr is not None
+            for line in p.stderr:
+                t = _parse_time_seconds(line)
+                if t is not None:
+                    on_progress(t)
+            p.wait(timeout=timeout)
+            if p.returncode != 0:
+                raise TranscodeError(
+                    f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(p.stderr.read() if p.stderr else '')}"
+                )
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+            raise TranscodeError(f"ffmpeg timeout video_id={video_id} seconds={timeout}")
+        except Exception as e:
+            if isinstance(e, TranscodeError):
+                raise
+            raise TranscodeError(f"ffmpeg error video_id={video_id}: {e}") from e
+        stderr_tail = ""
+    else:
+        try:
+            p = subprocess.run(
+                cmd,
+                cwd=str(output_root.resolve()),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise TranscodeError(f"ffmpeg timeout video_id={video_id} seconds={timeout}") from e
+
+        if p.returncode != 0:
+            raise TranscodeError(
+                f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(p.stderr)}"
+            )
+        stderr_tail = p.stderr
 
     master = output_root / "master.m3u8"
     if not master.exists():
