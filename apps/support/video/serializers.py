@@ -111,31 +111,61 @@ class VideoSerializer(serializers.ModelSerializer):
         """PROCESSING 상태일 때만 Redis에서 진행률 조회 (0..100 또는 null)."""
         if obj.status != Video.Status.PROCESSING:
             return None
-        pct = get_video_encoding_progress(int(obj.id))
+        # ✅ tenant_id 전달 필수 (tenant namespace 키 사용)
+        tenant_id = None
+        try:
+            tenant_id = obj.session.lecture.tenant_id if hasattr(obj, 'session') and obj.session and hasattr(obj.session, 'lecture') and obj.session.lecture else None
+        except Exception:
+            pass
+        pct = get_video_encoding_progress(int(obj.id), tenant_id=tenant_id)
         return pct if pct is not None else None
 
     def get_encoding_remaining_seconds(self, obj):
         """PROCESSING 상태일 때만 Redis에서 예상 남은 시간(초) 조회."""
         if obj.status != Video.Status.PROCESSING:
             return None
-        return get_video_encoding_remaining_seconds(int(obj.id))
+        # ✅ tenant_id 전달 필수 (tenant namespace 키 사용)
+        tenant_id = None
+        try:
+            tenant_id = obj.session.lecture.tenant_id if hasattr(obj, 'session') and obj.session and hasattr(obj.session, 'lecture') and obj.session.lecture else None
+        except Exception:
+            pass
+        return get_video_encoding_remaining_seconds(int(obj.id), tenant_id=tenant_id)
 
     def get_encoding_step_index(self, obj):
         if obj.status != Video.Status.PROCESSING:
             return None
-        d = get_video_encoding_step_detail(int(obj.id))
+        # ✅ tenant_id 전달 필수 (tenant namespace 키 사용)
+        tenant_id = None
+        try:
+            tenant_id = obj.session.lecture.tenant_id if hasattr(obj, 'session') and obj.session and hasattr(obj.session, 'lecture') and obj.session.lecture else None
+        except Exception:
+            pass
+        d = get_video_encoding_step_detail(int(obj.id), tenant_id=tenant_id)
         return d.get("step_index") if d else None
 
     def get_encoding_step_total(self, obj):
         if obj.status != Video.Status.PROCESSING:
             return None
-        d = get_video_encoding_step_detail(int(obj.id))
+        # ✅ tenant_id 전달 필수 (tenant namespace 키 사용)
+        tenant_id = None
+        try:
+            tenant_id = obj.session.lecture.tenant_id if hasattr(obj, 'session') and obj.session and hasattr(obj.session, 'lecture') and obj.session.lecture else None
+        except Exception:
+            pass
+        d = get_video_encoding_step_detail(int(obj.id), tenant_id=tenant_id)
         return d.get("step_total") if d else None
 
     def get_encoding_step_name(self, obj):
         if obj.status != Video.Status.PROCESSING:
             return None
-        d = get_video_encoding_step_detail(int(obj.id))
+        # ✅ tenant_id 전달 필수 (tenant namespace 키 사용)
+        tenant_id = None
+        try:
+            tenant_id = obj.session.lecture.tenant_id if hasattr(obj, 'session') and obj.session and hasattr(obj.session, 'lecture') and obj.session.lecture else None
+        except Exception:
+            pass
+        d = get_video_encoding_step_detail(int(obj.id), tenant_id=tenant_id)
         return d.get("step_name_display") if d else None
 
     def get_encoding_step_percent(self, obj):
