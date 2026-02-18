@@ -50,7 +50,6 @@ $apiIp = aws ec2 describe-instances --region $Region `
 if (-not $apiIp -or $apiIp -eq "None") {
     Write-Host "[SKIP] academy-api Public IP 없음 - API Redis 체크 불가" -ForegroundColor Yellow
 } else {
-    $apiKey = Join-Path $KeyDir "backend-api-key.pem"
     . (Join-Path $ScriptRoot "_config_instance_keys.ps1")
     $apiKey = Join-Path $KeyDir $INSTANCE_KEY_FILES["academy-api"]
     if (Test-Path $apiKey) {
