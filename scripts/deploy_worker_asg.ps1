@@ -171,9 +171,11 @@ $messagingUserDataRaw = $messagingUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRR
 $messagingUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($messagingUserDataRaw))
 
 $LtMessagingName = "academy-messaging-worker-asg"
+# 메시지 워커: 루트 볼륨 20GB (AI 워커와 동일)
+$messagingBlockDevices = '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":20,"VolumeType":"gp3"}}]'
 $ltMessagingKey = if ($KeyNameMessaging) { ",`"KeyName`":`"$KeyNameMessaging`"" } else { "" }
 $ltMessagingJson = @"
-{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"]$ltMessagingKey,"UserData":"$messagingUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-messaging-worker"}]}]}
+{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"]$ltMessagingKey,"UserData":"$messagingUserDataB64","BlockDeviceMappings":$messagingBlockDevices,"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-messaging-worker"}]}]}
 "@
 $ltMessagingFile = Join-Path $RepoRoot "lt_messaging_data.json"
 [System.IO.File]::WriteAllText($ltMessagingFile, $ltMessagingJson.Trim(), $utf8NoBom)
