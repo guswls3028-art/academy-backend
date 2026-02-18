@@ -864,6 +864,17 @@ for row in students_data:
 - 각 쿼리가 개별 트랜잭션
 - DB CPU 집약적
 
+### ⚠️ 운영 리스크 및 개선 사항
+
+#### 1. Q OR 조건 방식의 위험성
+**문제:**
+- `Q()` OR 조건을 500개 붙이면 비효율적인 execution plan 생성
+- Index를 잘 타지 않을 수 있음
+
+**개선:**
+- Tuple IN 방식 사용 (Postgres composite index 활용)
+- 또는 Raw SQL로 최적화
+
 ### ✅ 최적화 전략
 
 #### 1. 배치 조회 (기존 학생 일괄 조회)
