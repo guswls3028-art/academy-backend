@@ -1,12 +1,1 @@
-{
-    "TimeoutSeconds":  60,
-    "Parameters":  {
-                       "commands":  [
-                                        "echo test"
-                                    ]
-                   },
-    "DocumentName":  "AWS-RunShellScript",
-    "InstanceIds":  [
-                        "i-0133290c3502844ab"
-                    ]
-}
+{"TimeoutSeconds":60,"Parameters":{"commands":["echo test","echo hello"]},"DocumentName":"AWS-RunShellScript","InstanceIds":["i-0133290c3502844ab"]}
