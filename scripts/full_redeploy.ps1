@@ -215,15 +215,8 @@ echo BUILD_AND_PUSH_OK
         }
         TimeoutSeconds = 3600
     } | ConvertTo-Json -Depth 10
-    $inputFile = Join-Path $RepoRoot "ssm_input.json"
-    [System.IO.File]::WriteAllText($inputFile, $inputJson, $utf8NoBom)
-    # ✅ 절대 경로를 file:// URI로 변환 (Windows 경로 처리)
-    $inputFileAbs = (Resolve-Path $inputFile).Path
-    # Windows 경로를 file:// URI로 변환: C:\path\to\file -> file:///C:/path/to/file
-    $inputUri = "file:///$($inputFileAbs -replace '\\','/' -replace '^([A-Z]):','/$1' -replace ' ', '%20')"
-    Write-Host "Using input file: $inputUri" -ForegroundColor Gray
-    $cmdResult = aws ssm send-command --region $Region --cli-input-json $inputUri --output json 2>&1
-    Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
+    # ✅ JSON을 stdin으로 직접 전달 (Windows 경로 문제 완전 회피)
+    $cmdResult = $inputJson | aws ssm send-command --region $Region --cli-input-json file:///dev/stdin --output json 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Send-Command failed with exit code: $LASTEXITCODE" -ForegroundColor Red
         Write-Host "Error output: $cmdResult" -ForegroundColor Red
