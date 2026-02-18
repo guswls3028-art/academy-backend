@@ -1012,24 +1012,28 @@ class VideoProgressAdapter(IProgress):
 **수정 후 코드**: (AI Job 전용으로만 사용, tenant_id 파라미터 추가)
 
 ```python:src/infrastructure/cache/redis_progress_adapter.py
-def record_progress(
-    self,
-    job_id: str,
-    step: str,
-    extra: Optional[dict[str, Any]] = None,
-    tenant_id: Optional[str] = None,  # ✅ 추가 (AI Job 전용)
-) -> None:
-    """진행 단계 기록 (Redis에만) - AI Job 전용"""
-    client = get_redis_client()
-    if not client:
-        return
+    def record_progress(
+        self,
+        job_id: str,
+        step: str,
+        extra: Optional[dict[str, Any]] = None,
+        tenant_id: Optional[str] = None,  # ✅ 추가 (AI Job 전용)
+    ) -> None:
+        """진행 단계 기록 (Redis에만) - AI Job 전용"""
+        client = get_redis_client()
+        if not client:
+            return
 
-    # ✅ AI Job 전용 키 형식: tenant:{tenant_id}:job:{job_id}:progress
-    if tenant_id:
-        key = f"tenant:{tenant_id}:job:{job_id}:progress"
-    else:
-        # 하위 호환성: tenant_id 없으면 기존 키 형식 사용
-        key = f"job:{job_id}:progress"
+        # ✅ 안전 장치: tenant_id 누락 시 경고 로그
+        if tenant_id is None:
+            logger.warning("tenant_id missing for job_id=%s, using legacy key format", job_id)
+
+        # ✅ AI Job 전용 키 형식: tenant:{tenant_id}:job:{job_id}:progress
+        if tenant_id:
+            key = f"tenant:{tenant_id}:job:{job_id}:progress"
+        else:
+            # 하위 호환성: tenant_id 없으면 기존 키 형식 사용
+            key = f"job:{job_id}:progress"
     
     payload = {"step": step, **(extra or {})}
     try:
