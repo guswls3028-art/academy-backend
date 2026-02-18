@@ -11,7 +11,9 @@ param(
     [string]$SecurityGroupId,
     [Parameter(Mandatory = $true)]
     [string]$IamInstanceProfileName,
-    [string]$KeyName = "",       # optional, for SSH
+    [string]$KeyNameAi = "ai-worker-key",       # Key pair for AI worker SSH (empty = no key)
+    [string]$KeyNameVideo = "video-worker-key", # Key pair for Video worker SSH
+    [string]$KeyNameMessaging = "message-key",  # Key pair for Messaging worker SSH
     [string]$Region = "ap-northeast-2",
     [string]$AmiId = "",         # optional, default latest Amazon Linux 2023
     [int]$MaxCapacity = 20,
