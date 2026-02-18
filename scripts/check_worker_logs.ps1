@@ -77,9 +77,12 @@ function Show-WorkerLogs {
         return
     }
     
-    $containerName = $WorkerName.Replace("academy-", "").Replace("-worker", "-worker").Replace("-cpu", "")
-    if ($WorkerName -eq "academy-ai-worker-cpu") {
-        $containerName = "academy-ai-worker-cpu"
+    # ✅ 컨테이너 이름 매핑 (Docker 컨테이너 이름과 일치해야 함)
+    $containerName = switch ($WorkerName) {
+        "academy-video-worker" { "academy-video-worker" }
+        "academy-ai-worker-cpu" { "academy-ai-worker-cpu" }
+        "academy-messaging-worker" { "academy-messaging-worker" }
+        default { $WorkerName }
     }
     
     Write-Host "  Checking Docker container: $containerName" -ForegroundColor Gray
