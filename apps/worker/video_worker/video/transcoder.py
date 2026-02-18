@@ -244,22 +244,30 @@ def transcode_to_hls(
                 bufsize=1,
             )
             assert p.stderr is not None
-            for line in p.stderr:
-                stderr_lines.append(line)
-                if len(stderr_lines) > 50:
-                    stderr_lines.pop(0)
-                t = _parse_time_seconds(line)
-                if t is not None:
-                    on_progress(t)
-            p.wait(timeout=timeout)
+
+            def read_stderr() -> None:
+                for line in p.stderr or []:
+                    stderr_lines.append(line)
+                    if len(stderr_lines) > 50:
+                        stderr_lines.pop(0)
+                    t = _parse_time_seconds(line)
+                    if t is not None:
+                        on_progress(t)
+
+            reader = threading.Thread(target=read_stderr, daemon=True)
+            reader.start()
+            try:
+                p.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+                raise TranscodeError(f"ffmpeg timeout video_id={video_id} seconds={timeout}")
+            reader.join(timeout=2.0)
+
             if p.returncode != 0:
                 raise TranscodeError(
                     f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(''.join(stderr_lines))}"
                 )
-        except subprocess.TimeoutExpired:
-            p.kill()
-            p.wait()
-            raise TranscodeError(f"ffmpeg timeout video_id={video_id} seconds={timeout}")
         except Exception as e:
             if isinstance(e, TranscodeError):
                 raise
