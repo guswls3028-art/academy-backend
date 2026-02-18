@@ -80,21 +80,20 @@ foreach ($config in $asgConfigs) {
     # 3. SQS 기반 Target Tracking 정책 생성/업데이트
     Write-Host "  Creating QueueDepthTargetTracking policy..." -ForegroundColor Gray
     
-    # PowerShell 변수 치환을 명시적으로 처리
+    # AWS CLI 문서에 따르면 파일 내용은 TargetTrackingScalingPolicyConfiguration 객체의 내용이어야 함
+    # 최상위 레벨에 TargetTrackingScalingPolicyConfiguration 래퍼가 없어야 함
     $targetValue = $TargetMessagesPerInstance
     $policyContent = @"
 {
-  "TargetTrackingScalingPolicyConfiguration": {
-    "TargetValue": $targetValue,
-    "CustomizedMetricSpecification": {
-      "MetricName": "QueueDepth",
-      "Namespace": "Academy/Workers",
-      "Dimensions": [{"Name": "WorkerType", "Value": "$workerType"}],
-      "Statistic": "Average"
-    },
-    "ScaleInCooldown": 600,
-    "ScaleOutCooldown": 60
-  }
+  "TargetValue": $targetValue,
+  "CustomizedMetricSpecification": {
+    "MetricName": "QueueDepth",
+    "Namespace": "Academy/Workers",
+    "Dimensions": [{"Name": "WorkerType", "Value": "$workerType"}],
+    "Statistic": "Average"
+  },
+  "ScaleInCooldown": 600,
+  "ScaleOutCooldown": 60
 }
 "@
     
