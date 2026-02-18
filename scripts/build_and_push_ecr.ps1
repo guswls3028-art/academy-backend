@@ -1,16 +1,40 @@
 # ==============================================================================
 # Build Docker images + ECR push
-# Requires: .env loaded (ECR_REGISTRY, AWS_ACCOUNT_ID). In terminal: load .env then run this script
+# Requires: Docker running, AWS CLI configured. Optional: .env with ECR_REGISTRY or AWS_ACCOUNT_ID
 # ==============================================================================
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = Split-Path -Parent $ScriptRoot
 Set-Location $root
 
-$registry = $env:ECR_REGISTRY
-if (-not $registry) { $registry = "$($env:AWS_ACCOUNT_ID).dkr.ecr.ap-northeast-2.amazonaws.com" }
 $region = $env:AWS_DEFAULT_REGION
 if (-not $region) { $region = "ap-northeast-2" }
+
+# ECR registry: ECR_REGISTRY or AWS_ACCOUNT_ID from env, else from AWS CLI
+$registry = $env:ECR_REGISTRY
+if (-not $registry) {
+    $accountId = $env:AWS_ACCOUNT_ID
+    if (-not $accountId) {
+        $accountId = aws sts get-caller-identity --query Account --output text 2>$null
+        if (-not $accountId) {
+            Write-Host "ERROR: Set ECR_REGISTRY or AWS_ACCOUNT_ID in .env, or run: aws configure / aws sso login" -ForegroundColor Red
+            exit 1
+        }
+    }
+    $registry = "${accountId}.dkr.ecr.${region}.amazonaws.com"
+}
+if ($registry -match '^\.dkr\.' -or $registry -notmatch '\d{12}') {
+    Write-Host "ERROR: Invalid ECR registry (missing account ID): $registry" -ForegroundColor Red
+    Write-Host "  Set AWS_ACCOUNT_ID in .env or ensure AWS CLI returns account." -ForegroundColor Yellow
+    exit 1
+}
+
+# Docker must be running (Desktop or daemon)
+$dockerOk = docker info 2>$null; if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Docker is not running or not in PATH. Start Docker Desktop (Windows) or docker daemon." -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "ECR Registry: $registry"
 Write-Host "Region: $region"
