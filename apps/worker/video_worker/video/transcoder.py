@@ -250,7 +250,8 @@ def transcode_to_hls(
             pct = min(85, max(50, pct))
             if pct != last_pct:
                 last_pct = pct
-                progress_callback(current_sec, total_sec)
+                if progress_callback is not None:
+                    progress_callback(current_sec, total_sec)
 
         try:
             logger.info("[TRANSCODER] Starting ffmpeg for video_id=%s cmd=%s", video_id, " ".join(cmd[:5]) + "...")
