@@ -208,7 +208,9 @@ Lambda `academy-worker-queue-depth-metric` 이 없거나 EventBridge가 호출 �
 
 또는 ASG 정책 방식으로 전환하려면 아래 절차 (Lambda 비사용 시 대안).
 
-#### 4-1) Scale-Out 정책 생성 (먼저 PolicyARN 확보)
+#### 5-A. ASG 정책 방식 (Lambda 미사용 시 대안)
+
+**4-1) Scale-Out 정책 생성 (먼저 PolicyARN 확보)**
 
 ```bash
 POLICY_ARN=$(aws autoscaling put-scaling-policy \
@@ -223,7 +225,7 @@ POLICY_ARN=$(aws autoscaling put-scaling-policy \
 echo $POLICY_ARN
 ```
 
-#### 4-2) CloudWatch Alarm 생성 (큐 메시지 ≥ 1 → 정책 실행)
+**4-2) CloudWatch Alarm 생성 (큐 메시지 ≥ 1 → 정책 실행)**
 
 ```bash
 aws cloudwatch put-metric-alarm \
@@ -241,7 +243,7 @@ aws cloudwatch put-metric-alarm \
   --alarm-actions "$POLICY_ARN"
 ```
 
-#### 4-3) 확인
+**4-3) 확인**
 
 ```bash
 aws autoscaling describe-policies --region ap-northeast-2 --auto-scaling-group-name academy-video-worker-asg
