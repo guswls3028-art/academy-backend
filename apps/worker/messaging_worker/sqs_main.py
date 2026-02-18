@@ -445,7 +445,7 @@ def main() -> int:
                                     pass
 
                     if result.get("status") == "ok":
-                        _record_progress(job_id, "done", 100, step_index=4, step_percent=100)
+                        _record_progress(job_id, "done", 100, step_index=4, step_percent=100, tenant_id=tenant_id_str)
                         queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
