@@ -21,12 +21,8 @@ _STEP_PERCENT = {
 }
 
 
-def get_video_encoding_progress(video_id: int) -> Optional[int]:
-    """
-    Redis에서 영상 인코딩 진행률 조회.
-    워커가 record_progress(job_id="video:{video_id}", step=..., extra=...) 로 기록한 값을 읽음.
-    반환: 0..100 또는 None (Redis 미설정/미기록 시).
-    """
+def _get_progress_payload(video_id: int) -> Optional[dict]:
+    """Redis에서 job:video:{id}:progress payload 한 번에 조회."""
     try:
         from libs.redis.client import get_redis_client
     except ImportError:
@@ -42,11 +38,21 @@ def get_video_encoding_progress(video_id: int) -> Optional[int]:
         raw = client.get(key)
         if not raw:
             return None
-        payload = json.loads(raw)
+        return json.loads(raw)
     except Exception:
         return None
 
-    # payload에 percent 가 있으면 우선 사용 (record_progress 시 extra에 {"percent": n} 넣으면 병합됨)
+
+def get_video_encoding_progress(video_id: int) -> Optional[int]:
+    """
+    Redis에서 영상 인코딩 진행률 조회.
+    워커가 record_progress(job_id="video:{video_id}", step=..., extra=...) 로 기록한 값을 읽음.
+    반환: 0..100 또는 None (Redis 미설정/미기록 시).
+    """
+    payload = _get_progress_payload(video_id)
+    if not payload:
+        return None
+
     percent = payload.get("percent")
     if percent is not None:
         try:
@@ -66,23 +72,8 @@ def get_video_encoding_remaining_seconds(video_id: int) -> Optional[int]:
     Redis에서 영상 인코딩 예상 남은 시간(초) 조회.
     워커가 record_progress 시 extra에 remaining_seconds 를 넣으면 반환.
     """
-    try:
-        from libs.redis.client import get_redis_client
-    except ImportError:
-        return None
-
-    client = get_redis_client()
-    if not client:
-        return None
-
-    job_id = f"{VIDEO_JOB_ID_PREFIX}{video_id}"
-    key = f"job:{job_id}:progress"
-    try:
-        raw = client.get(key)
-        if not raw:
-            return None
-        payload = json.loads(raw)
-    except Exception:
+    payload = _get_progress_payload(video_id)
+    if not payload:
         return None
 
     sec = payload.get("remaining_seconds")
