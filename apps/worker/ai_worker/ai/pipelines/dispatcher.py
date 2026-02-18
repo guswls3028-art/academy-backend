@@ -150,15 +150,20 @@ def handle_ai_job(job: AIJob) -> AIResult:
             )
 
         # --------------------------------------------------
-        # Homework video analysis
+        # Homework video analysis (숙제 검사)
         # --------------------------------------------------
         if job.type == "homework_video_analysis":
+            # 4단계: 다운로드(완료), 프레임추출, 분석, 완료
             frame_stride = int(payload.get("frame_stride") or 10)
             min_frame_count = int(payload.get("min_frame_count") or 30)
             use_key_frames = payload.get("use_key_frames", True)  # 기본값: 키 프레임 사용
             max_pages = int(payload.get("max_pages") or 10)
             processing_timeout = int(payload.get("processing_timeout") or 60)
             
+            _record_progress(job.id, "extracting", 30, step_index=2, step_total=4, step_name_display="프레임추출", step_percent=0)
+            
+            # analyze_homework_video 내부에서 진행률 콜백을 받도록 수정 필요하지만,
+            # 일단 단계별로만 표시
             analysis = analyze_homework_video(
                 video_path=local_path,
                 frame_stride=frame_stride,
@@ -167,6 +172,9 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 max_pages=max_pages,
                 processing_timeout=processing_timeout,
             )
+            _record_progress(job.id, "extracting", 50, step_index=2, step_total=4, step_name_display="프레임추출", step_percent=100)
+            _record_progress(job.id, "analyzing", 70, step_index=3, step_total=4, step_name_display="분석", step_percent=100)
+            _record_progress(job.id, "done", 100, step_index=4, step_total=4, step_name_display="완료", step_percent=100)
             return AIResult.done(job.id, analysis)
 
         # --------------------------------------------------
