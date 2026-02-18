@@ -1374,10 +1374,12 @@ video_progress.record_progress(
 - 또는 `process_video()` 함수 시그니처 변경 (progress 파라미터 타입 변경)
 - 호출부 확인 필요: `apps/worker/video_worker/video/processor.py` 등
 
-**대안 (더 안전한 방법)**:
+**대안 (더 안전한 방법 - 권장)**:
 IProgress 인터페이스를 유지하고, VideoProgressAdapter가 IProgress를 구현하도록 설계:
 
 ```python:apps/support/video/redis_progress_adapter.py
+from src.application.ports.progress import IProgress
+
 class VideoProgressAdapter(IProgress):
     """Video 전용 Progress Adapter (IProgress 인터페이스 구현)"""
     
@@ -1388,24 +1390,17 @@ class VideoProgressAdapter(IProgress):
     
     def record_progress(
         self,
-        job_id: str,  # IProgress 인터페이스 호환
+        job_id: str,  # IProgress 인터페이스 호환 (무시됨)
         step: str,
         extra: Optional[dict[str, Any]] = None,
     ) -> None:
         """IProgress 인터페이스 구현"""
         # job_id는 무시하고 video_id 사용
-        self._record_progress(step, extra)
-    
-    def _record_progress(
-        self,
-        step: str,
-        extra: Optional[dict[str, Any]] = None,
-    ) -> None:
-        """실제 Redis 저장"""
         client = get_redis_client()
         if not client:
             return
         
+        # ✅ Video 전용 키 형식: tenant:{tenant_id}:video:{video_id}:progress
         key = f"tenant:{self._tenant_id}:video:{self._video_id}:progress"
         payload = {"step": step, **(extra or {})}
         try:
@@ -1417,6 +1412,24 @@ class VideoProgressAdapter(IProgress):
             logger.debug("Video progress recorded: video_id=%s step=%s tenant_id=%s", self._video_id, step, self._tenant_id)
         except Exception as e:
             logger.warning("Redis video progress record failed: %s", e)
+```
+
+**호출부 수정**:
+
+```python:src/infrastructure/video/processor.py
+# process_video() 함수 시작 부분에서
+from apps.support.video.redis_progress_adapter import VideoProgressAdapter
+
+# IProgress 인터페이스를 구현한 VideoProgressAdapter 생성
+video_progress = VideoProgressAdapter(
+    video_id=video_id,
+    tenant_id=tenant_id,
+    ttl_seconds=21600  # 6시간
+)
+
+# 기존 progress 대신 video_progress 사용
+# progress.record_progress(...) → video_progress.record_progress(...)
+# (시그니처는 동일하므로 코드 변경 최소화)
 ```
 
 이렇게 하면 `process_video()` 함수 시그니처 변경 없이 사용 가능
