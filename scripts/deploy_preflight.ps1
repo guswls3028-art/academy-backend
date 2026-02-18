@@ -111,7 +111,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # 8) (optional) SSH connectivity test - key/SG/network
 if ($TestSsh -and $ips["academy-api"]) {
-    $apiKeyPath = Join-Path $KeyDir "backend-api-key.pem"
+    $apiKeyPath = Join-Path $KeyDir $INSTANCE_KEY_FILES["academy-api"]
     if (Test-Path $apiKeyPath) {
         Write-Host "`n[SSH] Testing academy-api ($($ips['academy-api']))..." -ForegroundColor Cyan
         $sshTest = ssh -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=accept-new -i $apiKeyPath ec2-user@$($ips["academy-api"]) "exit" 2>&1
