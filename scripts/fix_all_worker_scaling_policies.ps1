@@ -80,30 +80,46 @@ foreach ($config in $asgConfigs) {
     # 3. SQS 기반 Target Tracking 정책 생성/업데이트
     Write-Host "  Creating QueueDepthTargetTracking policy..." -ForegroundColor Gray
     
-    # JSON을 직접 문자열로 구성 (파일 경로 문제 회피)
-    $policyJson = @{
-        TargetTrackingScalingPolicyConfiguration = @{
-            TargetValue = $TargetMessagesPerInstance
-            CustomizedMetricSpecification = @{
-                MetricName = "QueueDepth"
-                Namespace = "Academy/Workers"
-                Dimensions = @(
-                    @{
-                        Name = "WorkerType"
-                        Value = $workerType
-                    }
-                )
-                Statistic = "Average"
-            }
-            ScaleInCooldown = 600
-            ScaleOutCooldown = 60
+    # PowerShell 변수 치환을 명시적으로 처리
+    $targetValue = $TargetMessagesPerInstance
+    $policyContent = @"
+{
+  "TargetTrackingScalingPolicyConfiguration": {
+    "TargetValue": $targetValue,
+    "CustomizedMetricSpecification": {
+      "MetricName": "QueueDepth",
+      "Namespace": "Academy/Workers",
+      "Dimensions": [{"Name": "WorkerType", "Value": "$workerType"}],
+      "Statistic": "Average"
+    },
+    "ScaleInCooldown": 600,
+    "ScaleOutCooldown": 60
+  }
+}
+"@
+    
+    $policyFile = Join-Path $RepoRoot "asg_policy_${workerType}_temp.json"
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($policyFile, $policyContent, $utf8NoBom)
+    
+    # JSON 유효성 검사
+    try {
+        $jsonTest = Get-Content $policyFile -Raw | ConvertFrom-Json
+        if (-not $jsonTest.TargetTrackingScalingPolicyConfiguration) {
+            Write-Host "    ⚠️  JSON structure validation failed" -ForegroundColor Yellow
         }
-    } | ConvertTo-Json -Depth 10 -Compress
+    } catch {
+        Write-Host "    ⚠️  Invalid JSON: $_" -ForegroundColor Yellow
+        Write-Host "    File content:" -ForegroundColor Gray
+        Get-Content $policyFile | ForEach-Object { Write-Host "      $_" -ForegroundColor Gray }
+    }
+    
+    $policyPath = "file://$($policyFile -replace '\\','/' -replace ' ', '%20')"
     
     $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     $result = aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $resourceId `
         --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" `
-        --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyJson --region $Region 2>&1
+        --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyPath --region $Region 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Host "    ✅ Policy created/updated successfully" -ForegroundColor Green
     } else {
@@ -112,7 +128,9 @@ foreach ($config in $asgConfigs) {
         $result | ForEach-Object { Write-Host "      $_" -ForegroundColor Gray }
     }
     $ErrorActionPreference = $ea
-    Remove-Item $policyFile -Force -ErrorAction SilentlyContinue
+    if (Test-Path $policyFile) {
+        Remove-Item $policyFile -Force -ErrorAction SilentlyContinue
+    }
     
     Write-Host ""
 }
