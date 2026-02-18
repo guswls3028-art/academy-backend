@@ -41,8 +41,26 @@ class VideoProgressView(APIView):
         cached_status = get_video_status_from_redis(tenant.id, video_id)
         
         if not cached_status:
-            # ✅ Redis에 없으면 UNKNOWN 상태 반환 (404는 UX상 위험)
-            # TTL 만료되었지만 아직 READY 상태일 수 있음
+            # ✅ Redis에 없으면 DB fallback (배포 전 완료된 영상, TTL 만료 등)
+            from apps.support.video.models import Video
+            video = Video.objects.filter(
+                pk=video_id,
+                session__lecture__tenant_id=tenant.id,
+            ).values("status", "hls_path", "duration", "error_reason").first()
+            if video and video["status"] in ("READY", "FAILED"):
+                return Response({
+                    "id": video_id,
+                    "status": video["status"],
+                    "encoding_progress": 100 if video["status"] == "READY" else None,
+                    "encoding_remaining_seconds": None,
+                    "encoding_step_index": None,
+                    "encoding_step_total": None,
+                    "encoding_step_name": None,
+                    "encoding_step_percent": None,
+                    "hls_path": video.get("hls_path"),
+                    "duration": video.get("duration"),
+                    "error_reason": video.get("error_reason") if video["status"] == "FAILED" else None,
+                })
             return Response(
                 {"status": "UNKNOWN", "message": "진행 상태를 확인할 수 없습니다."},
                 status=status.HTTP_200_OK,
