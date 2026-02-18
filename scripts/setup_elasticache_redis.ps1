@@ -58,8 +58,11 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # 3) Cache subnet group
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 $subnetGroupExists = aws elasticache describe-cache-subnet-groups --cache-subnet-group-name $SubnetGroupName --region $Region 2>&1
-if ($LASTEXITCODE -ne 0) {
+$subnetGroupErr = $LASTEXITCODE
+$ErrorActionPreference = $ea
+if ($subnetGroupErr -ne 0) {
     Write-Host "[3/5] Creating cache subnet group $SubnetGroupName ..." -ForegroundColor Cyan
     aws elasticache create-cache-subnet-group `
         --cache-subnet-group-name $SubnetGroupName `
