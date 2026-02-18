@@ -32,13 +32,13 @@ def _get_progress_payload(video_id: int, tenant_id: Optional[int] = None) -> Opt
     return adapter.get_progress_direct()
 
 
-def get_video_encoding_progress(video_id: int) -> Optional[int]:
+def get_video_encoding_progress(video_id: int, tenant_id: Optional[int] = None) -> Optional[int]:
     """
     Redis에서 영상 인코딩 진행률 조회.
     워커가 record_progress(job_id="video:{video_id}", step=..., extra=...) 로 기록한 값을 읽음.
     반환: 0..100 또는 None (Redis 미설정/미기록 시).
     """
-    payload = _get_progress_payload(video_id)
+    payload = _get_progress_payload(video_id, tenant_id)
     if not payload:
         return None
 
