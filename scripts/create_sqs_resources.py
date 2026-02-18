@@ -82,8 +82,8 @@ def create_sqs_resources(region_name: str = "ap-northeast-2"):
             raise
     
     print("\n✅ Video SQS 리소스 생성 완료!")
-    print("   VisibilityTimeout=10800(3시간) — 장영상 인코딩 시 재노출 방지.")
-    print("   기존 큐가 이미 있으면: AWS SQS 콘솔에서 해당 큐 → Edit → Visibility timeout = 10800 으로 변경 필요.")
+    print("   VisibilityTimeout=21600(6h) — SQS visibility >= ffmpeg timeout (max 6h).")
+    print("   기존 큐가 이미 있으면: AWS SQS 콘솔에서 해당 큐 → Edit → Visibility timeout = 21600 으로 변경.")
     print(f"\n환경변수 설정:")
     print(f"  VIDEO_SQS_QUEUE_NAME={queue_name}")
     print(f"  VIDEO_SQS_DLQ_NAME={dlq_name}")
