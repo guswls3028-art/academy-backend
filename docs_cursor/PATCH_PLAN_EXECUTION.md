@@ -1315,15 +1315,16 @@ def get_encoding_progress(self, obj):
 
 ---
 
-#### PATCH 5.3: Video processor에서 tenant_id 전달
+#### PATCH 5.3: Video processor에서 VideoProgressAdapter 사용
 
 **파일**: `src/infrastructure/video/processor.py`
 
 **수정 전 코드**:
 
 ```python:src/infrastructure/video/processor.py
+# IProgress 인터페이스 사용
 progress.record_progress(
-    job_id,
+    job_id,  # "video:{video_id}"
     "presigning",
     {
         "percent": 5,
@@ -1340,8 +1341,15 @@ progress.record_progress(
 **수정 후 코드**:
 
 ```python:src/infrastructure/video/processor.py
-progress.record_progress(
-    job_id,
+# VideoProgressAdapter 사용 (IProgress 인터페이스 호환)
+from apps.support.video.redis_progress_adapter import VideoProgressAdapter
+
+# processor 함수 내부에서
+video_progress = VideoProgressAdapter(ttl_seconds=VIDEO_PROGRESS_TTL_SECONDS)
+
+video_progress.record_progress(
+    video_id,  # ✅ video_id 직접 전달
+    tenant_id,  # ✅ tenant_id 직접 전달
     "presigning",
     {
         "percent": 5,
@@ -1352,17 +1360,16 @@ progress.record_progress(
         "step_name_display": "준비",
         "step_percent": 100,
     },
-    tenant_id=str(tenant_id) if tenant_id is not None else None,  # ✅ tenant_id 전달
 )
 ```
 
-**모든 `progress.record_progress()` 호출부 수정 필요**
-
-**변경 이유**: Video worker에서 tenant_id를 progress에 전달하여 tenant namespace 키 사용
+**변경 이유**: Video 전용 Adapter 사용하여 키 구조 명확히 분리
 
 **영향 범위**: Video worker의 모든 progress 기록
 
-**롤백 방법**: tenant_id 파라미터 제거
+**롤백 방법**: 기존 IProgress 인터페이스 사용으로 복원
+
+**주의사항**: `process_video()` 함수 시그니처 변경 필요 (progress 파라미터 타입 변경)
 
 ---
 
