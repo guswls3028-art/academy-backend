@@ -102,10 +102,14 @@ def handle_ai_job(job: AIJob) -> AIResult:
             )
 
         # --------------------------------------------------
-        # Question segmentation
+        # Question segmentation (PDF 시험지 문항 분할)
         # --------------------------------------------------
         if job.type == "question_segmentation":
+            # 3단계: 다운로드(완료), 분할, 완료
+            _record_progress(job.id, "segmenting", 50, step_index=2, step_total=3, step_name_display="문항분할", step_percent=0)
             boxes = segment_questions(local_path)
+            _record_progress(job.id, "segmenting", 90, step_index=2, step_total=3, step_name_display="문항분할", step_percent=100)
+            _record_progress(job.id, "done", 100, step_index=3, step_total=3, step_name_display="완료", step_percent=100)
             return AIResult.done(job.id, {"boxes": boxes})
 
         # --------------------------------------------------
