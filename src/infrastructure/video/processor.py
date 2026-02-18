@@ -219,6 +219,7 @@ def process_video(
                 "step_name_display": "썸네일",
                 "step_percent": 100,
             },
+            tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
         try:
             at = float(cfg.THUMBNAIL_AT_SECONDS)
@@ -253,6 +254,7 @@ def process_video(
                 "step_name_display": "업로드",
                 "step_percent": 100,
             },
+            tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
         upload_directory(
             local_dir=out_dir,
