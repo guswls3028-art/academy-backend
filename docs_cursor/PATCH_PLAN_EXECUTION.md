@@ -1866,19 +1866,36 @@ def bulk_create_students_from_excel_rows_optimized(
                 # ✅ 충돌된 ps_number 재시도
                 # bulk_create 후 실제 생성된 학생만 필터링
                 created_ps_numbers = {s.ps_number for s in students_to_create}
-                actual_students = Student.objects.filter(
+                actual_students_list = list(Student.objects.filter(
                     tenant_id=tenant_id,
                     ps_number__in=created_ps_numbers
-                )
-                actual_ps_numbers = {s.ps_number for s in actual_students}
+                ))
+                actual_ps_numbers = {s.ps_number for s in actual_students_list}
                 conflict_students = [s for s in students_to_create if s.ps_number not in actual_ps_numbers]
                 
                 # 충돌된 학생들 재시도 (ps_number 재생성)
                 for conflict_student in conflict_students:
                     try:
-                        conflict_student.ps_number = _generate_unique_ps_number(tenant_id)
-                        conflict_student.save()
-                        actual_students = list(actual_students) + [conflict_student]
+                        # ps_number 재생성 (최대 3회 시도)
+                        retry_count = 0
+                        max_retries = 3
+                        new_ps_number = None
+                        while retry_count < max_retries:
+                            try:
+                                new_ps_number = _generate_unique_ps_number()
+                                # DB에서 중복 확인
+                                if not student_repo.user_filter_username_exists(new_ps_number):
+                                    conflict_student.ps_number = new_ps_number
+                                    conflict_student.save()
+                                    actual_students_list.append(conflict_student)
+                                    actual_ps_numbers.add(new_ps_number)
+                                    break
+                                retry_count += 1
+                            except Exception:
+                                retry_count += 1
+                        
+                        if new_ps_number is None or conflict_student.ps_number not in actual_ps_numbers:
+                            raise ValueError("ps_number 재생성 실패")
                     except Exception as e:
                         logger.warning("Failed to retry ps_number for student: %s", e)
                         failed.append({
@@ -1900,6 +1917,34 @@ def bulk_create_students_from_excel_rows_optimized(
                         users_to_create.append(user)
                 
                 User.objects.bulk_create(users_to_create, batch_size=500, ignore_conflicts=True)
+                
+                # ✅ User FK 연결 확인 및 재시도
+                created_usernames = {u.username for u in users_to_create}
+                actual_users = User.objects.filter(username__in=created_usernames)
+                actual_usernames = {u.username for u in actual_users}
+                missing_usernames = created_usernames - actual_usernames
+                
+                # User 생성 실패한 학생들 재시도 (개별 생성)
+                for missing_username in missing_usernames:
+                    student = next((s for s in actual_students_list if s.ps_number == missing_username), None)
+                    if student:
+                        student_data = next((d for d in chunk if d["student"].ps_number == missing_username), None)
+                        if student_data:
+                            try:
+                                user = User(
+                                    username=student.ps_number,
+                                    phone=student.phone or "",
+                                    name=student.name,
+                                )
+                                user.set_password(student_data["password"])
+                                user.save()
+                            except Exception as e:
+                                logger.warning("Failed to create user for student: %s", e)
+                                failed.append({
+                                    "row": student_data["row_index"],
+                                    "name": student.name,
+                                    "error": f"User 생성 실패: {str(e)[:500]}",
+                                })
                 
                 # ✅ Student FK 업데이트 (bulk_update)
                 student_user_map = {
