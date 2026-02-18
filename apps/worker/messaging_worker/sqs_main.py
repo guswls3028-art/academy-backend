@@ -26,6 +26,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger("messaging_worker")
 
+# 메시지 발송 구간별 진행률 (n/4): 업로드 마법사처럼 단계별 0~100% 제공
+MESSAGING_STEP_TOTAL = 4
+MESSAGING_STEPS = [
+    (1, "checking", "예약확인"),
+    (2, "validating", "잔액확인"),
+    (3, "sending", "발송"),
+    (4, "done", "완료"),
+]
+
+
+def _record_progress(
+    job_id: str,
+    step: str,
+    percent: int,
+    step_index: int | None = None,
+    step_percent: int | None = None,
+) -> None:
+    """Redis 진행률 기록 (우하단 실시간 프로그래스바용). 구간별 진행률 지원."""
+    try:
+        from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
+        extra = {"percent": percent}
+        if step_index is not None:
+            extra.update({
+                "step_index": step_index,
+                "step_total": MESSAGING_STEP_TOTAL,
+                "step_name": step,
+                "step_name_display": dict(MESSAGING_STEPS).get(step, step),
+                "step_percent": step_percent if step_percent is not None else 100,
+            })
+        RedisProgressAdapter().record_progress(job_id, step, extra)
+    except Exception as e:
+        logger.debug("Redis progress record skip: %s", e)
+
+
 _shutdown = False
 _current_receipt_handle: Optional[str] = None
 
