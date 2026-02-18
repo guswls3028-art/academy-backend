@@ -4,6 +4,7 @@
 # yum update 생략: 기동 시간 단축·상태검사 통과 안정화 (켜졌다 꺼짐 반복 방지)
 set -e
 yum install -y docker
+yum install -y ec2-instance-connect 2>/dev/null || true
 systemctl start docker && systemctl enable docker
 
 ENV_FILE="/opt/academy/.env"

@@ -5,6 +5,7 @@
 set -e
 yum update -y
 yum install -y docker
+yum install -y ec2-instance-connect 2>/dev/null || true
 systemctl start docker && systemctl enable docker
 
 ENV_FILE="/opt/academy/.env"

@@ -4,6 +4,7 @@
 set -e
 yum update -y
 yum install -y docker
+yum install -y ec2-instance-connect 2>/dev/null || true
 systemctl start docker && systemctl enable docker
 
 # 100GB 볼륨 마운트 (루트 nvme0n1 제외, nvme1n1 사용)
