@@ -380,7 +380,7 @@ def main() -> int:
                         continue
 
                     # message_mode: sms | alimtalk | both
-                    _record_progress(job_id, "sending", 70, step_index=3, step_percent=0)
+                    _record_progress(job_id, "sending", 70, step_index=3, step_percent=0, tenant_id=tenant_id_str)
                     result = None
                     if message_mode == "sms":
                         result = send_one_sms(cfg, to=to, text=text, sender=sender)
@@ -410,7 +410,7 @@ def main() -> int:
                         if message_mode in ("alimtalk", "both") and (not pf_id or not template_id):
                             logger.warning("alimtalk requested but pf_id/template_id missing, sending SMS")
                         result = send_one_sms(cfg, to=to, text=text, sender=sender)
-                    _record_progress(job_id, "sending", 90, step_index=3, step_percent=100)
+                    _record_progress(job_id, "sending", 90, step_index=3, step_percent=100, tenant_id=tenant_id_str)
 
                     # 성공 시 로그, 실패 시 롤백 + 로그
                     if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE") and info:
