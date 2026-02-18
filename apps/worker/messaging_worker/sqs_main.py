@@ -278,6 +278,7 @@ def main() -> int:
                     # 예약 취소 Double Check: 발송 직전 한 번 더 확인
                     reservation_id = data.get("reservation_id")
                     if reservation_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
+                        _record_progress(job_id, "checking", 10, step_index=1, step_percent=100)
                         try:
                             from apps.support.messaging.services import is_reservation_cancelled
                             if is_reservation_cancelled(int(reservation_id)):
@@ -290,6 +291,8 @@ def main() -> int:
                                 continue
                         except Exception as e:
                             logger.warning("reservation check failed: %s", e)
+                    else:
+                        _record_progress(job_id, "checking", 10, step_index=1, step_percent=100)
 
                     _current_receipt_handle = receipt_handle
 
