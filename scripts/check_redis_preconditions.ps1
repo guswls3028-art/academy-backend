@@ -18,15 +18,15 @@ Write-Host "`n=== Redis 전제 조건 체크 (encoding_progress % 표시) ===`n"
 $envPath = Join-Path $RepoRoot ".env"
 $envContent = ""
 if (-not (Test-Path $envPath)) {
-    Write-Host "[FAIL] .env 없음: $envPath" -ForegroundColor Red
+    Write-Host "FAIL .env 없음: $envPath" -ForegroundColor Red
 } else {
     $envContent = Get-Content $envPath -Raw
     $redisHost = $null
     if ($envContent -match 'REDIS_HOST=([^\s#]+)') { $redisHost = $Matches[1].Trim() }
     if ($redisHost) {
-        Write-Host "[OK] .env REDIS_HOST: $redisHost" -ForegroundColor Green
+        Write-Host "OK   .env REDIS_HOST: $redisHost" -ForegroundColor Green
     } else {
-        Write-Host "[FAIL] .env에 REDIS_HOST 없음" -ForegroundColor Red
+        Write-Host "FAIL .env에 REDIS_HOST 없음" -ForegroundColor Red
     }
 }
 
