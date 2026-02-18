@@ -441,10 +441,12 @@ def fail_video(
                 tenant_id = video.session.lecture.tenant_id
         
         if tenant_id:
+            # ✅ 안전한 Status 값 추출 (TextChoices이면 .value, 아니면 그대로)
+            status_value = getattr(Video.Status.FAILED, "value", Video.Status.FAILED)
             cache_video_status(
                 tenant_id=tenant_id,
                 video_id=video_id,
-                status=Video.Status.FAILED.value,
+                status=status_value,
                 error_reason=str(reason)[:2000],
                 ttl=None,  # TTL 없음
             )
