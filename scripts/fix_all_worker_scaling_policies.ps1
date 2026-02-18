@@ -79,7 +79,10 @@ foreach ($config in $asgConfigs) {
     
     # 3. SQS 기반 Target Tracking 정책 생성/업데이트
     Write-Host "  Creating QueueDepthTargetTracking policy..." -ForegroundColor Gray
-    $policy = @"
+    
+    # deploy_worker_asg.ps1과 동일한 형식 사용
+    if ($workerType -eq "AI") {
+        $policy = @"
 {
   "TargetTrackingScalingPolicyConfiguration": {
     "TargetValue": $TargetMessagesPerInstance,
@@ -95,10 +98,27 @@ foreach ($config in $asgConfigs) {
   }
 }
 "@
+    } else {
+        $policy = @"
+{
+  "TargetTrackingScalingPolicyConfiguration": {
+    "TargetValue": $TargetMessagesPerInstance,
+    "CustomizedMetricSpecification": {
+      "MetricName": "QueueDepth",
+      "Namespace": "Academy/Workers",
+      "Dimensions": [{"Name": "WorkerType", "Value": "$workerType"}],
+      "Statistic": "Average"
+    },
+    "ScaleInCooldown": 600,
+    "ScaleOutCooldown": 60
+  }
+}
+"@
+    }
     
     $policyFile = Join-Path $RepoRoot "asg_policy_${workerType}_temp.json"
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-    [System.IO.File]::WriteAllText($policyFile, $policy, $utf8NoBom)
+    [System.IO.File]::WriteAllText($policyFile, $policy.Trim(), $utf8NoBom)
     $policyPath = "file://$($policyFile -replace '\\','/' -replace ' ', '%20')"
     
     $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
