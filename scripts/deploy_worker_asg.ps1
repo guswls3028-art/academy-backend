@@ -164,8 +164,9 @@ $messagingUserDataRaw = $messagingUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRR
 $messagingUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($messagingUserDataRaw))
 
 $LtMessagingName = "academy-messaging-worker-asg"
+$ltMessagingKey = if ($KeyNameMessaging) { ",`"KeyName`":`"$KeyNameMessaging`"" } else { "" }
 $ltMessagingJson = @"
-{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"],"UserData":"$messagingUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-messaging-worker"}]}]}
+{"ImageId":"$AmiId","InstanceType":"t4g.small","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"]$ltMessagingKey,"UserData":"$messagingUserDataB64","TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-messaging-worker"}]}]}
 "@
 $ltMessagingFile = Join-Path $RepoRoot "lt_messaging_data.json"
 [System.IO.File]::WriteAllText($ltMessagingFile, $ltMessagingJson.Trim(), $utf8NoBom)
