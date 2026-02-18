@@ -59,3 +59,36 @@ def get_video_encoding_progress(video_id: int) -> Optional[int]:
     if step in _STEP_PERCENT:
         return _STEP_PERCENT[step]
     return 50  # 알 수 없는 단계면 중간값
+
+
+def get_video_encoding_remaining_seconds(video_id: int) -> Optional[int]:
+    """
+    Redis에서 영상 인코딩 예상 남은 시간(초) 조회.
+    워커가 record_progress 시 extra에 remaining_seconds 를 넣으면 반환.
+    """
+    try:
+        from libs.redis.client import get_redis_client
+    except ImportError:
+        return None
+
+    client = get_redis_client()
+    if not client:
+        return None
+
+    job_id = f"{VIDEO_JOB_ID_PREFIX}{video_id}"
+    key = f"job:{job_id}:progress"
+    try:
+        raw = client.get(key)
+        if not raw:
+            return None
+        payload = json.loads(raw)
+    except Exception:
+        return None
+
+    sec = payload.get("remaining_seconds")
+    if sec is None:
+        return None
+    try:
+        return max(0, int(sec))
+    except (TypeError, ValueError):
+        return None
