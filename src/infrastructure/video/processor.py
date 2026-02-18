@@ -284,5 +284,6 @@ def process_video(
             "step_name_display": "완료",
             "step_percent": 100,
         },
+        tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
     )
     return hls_master_path, int(duration)
