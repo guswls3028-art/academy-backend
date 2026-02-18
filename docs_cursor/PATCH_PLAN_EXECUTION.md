@@ -2325,7 +2325,7 @@ class Migration(migrations.Migration):
     atomic = False  # ✅ 필수: CREATE INDEX CONCURRENTLY는 트랜잭션 밖에서 실행되어야 함
 
     dependencies = [
-        ('students', 'XXXX_previous_migration'),  # 실제 migration 번호로 변경
+        ('students', '0001_initial'),  # ✅ 실제 앱 label 확인 필요: apps.domains.students → 'students'
     ]
 
     operations = [
@@ -2371,7 +2371,7 @@ class Migration(migrations.Migration):
     atomic = False  # ✅ 필수: CREATE INDEX CONCURRENTLY는 트랜잭션 밖에서 실행되어야 함
 
     dependencies = [
-        ('ai', 'XXXX_previous_migration'),  # 실제 migration 번호로 변경
+        ('ai', '0001_initial'),  # ✅ 실제 앱 label 확인 필요: apps.domains.ai → 'ai'
     ]
 
     operations = [
@@ -2407,7 +2407,7 @@ class Migration(migrations.Migration):
     atomic = False  # ✅ 필수: CREATE INDEX CONCURRENTLY는 트랜잭션 밖에서 실행되어야 함
 
     dependencies = [
-        ('video', 'XXXX_previous_migration'),  # 실제 migration 번호로 변경
+        ('video', '0001_initial'),  # ✅ 실제 앱 label 확인 필요: apps.support.video → 'video'
     ]
 
     operations = [
