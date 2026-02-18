@@ -2523,28 +2523,45 @@ class Migration(migrations.Migration):
 
 **⚠️ 중요**: 순서를 반드시 지켜야 함
 
-1. **1일차**: Redis 상태 캐싱 헬퍼 생성 + Progress endpoint 추가
-   - Video/AI 상태 캐싱 헬퍼 생성
-   - VideoProgressAdapter 분리 (AI와 완전 분리)
-   - Progress endpoint 추가
+### Day 1 (오늘 적용 가능한 범위) - 필수
 
-2. **2일차**: 워커 저장 로직 수정 (Redis 상태 저장)
-   - Video 워커: complete/fail/mark_processing에 Redis 저장
-   - AI 워커: save()에 Redis 저장
+1. **Redis 상태 캐싱 헬퍼 생성**
+   - `apps/support/video/redis_status_cache.py` 추가
+   - `apps/domains/ai/redis_status_cache.py` 추가
 
-3. **3일차**: 프론트엔드 폴링 전환 (우선순위 상향)
-   - 프론트엔드가 progress endpoint만 사용하도록 변경
-   - DB CPU 안정 확인
+2. **Progress endpoint 추가**
+   - `VideoProgressView` / `JobProgressView` 추가 + URL 라우팅
+   - `encoding_progress.py` tenant-aware 조회 반영 + View에서 tenant_id 전달
 
-4. **4일차**: Excel Bulk 최적화 구현
-   - Repository 배치 조회 메서드 추가
-   - Bulk Create 함수 구현 (ps_number 충돌 처리 포함)
+3. **RedisProgressAdapter 수정**
+   - `src/infrastructure/cache/redis_progress_adapter.py`에 tenant_id 지원 추가 (AI 전용)
 
-5. **5일차**: 인덱스 마이그레이션 실행
-   - Students, AIJob, Video 인덱스 추가
+4. **AI Repository 수정**
+   - `repositories_ai.py` save()에 Redis status 저장 추가 (logger/result 방어 포함)
 
-6. **6일차**: Worker Concurrency 제한 적용
-   - ASG Max Size 제한
+5. **프론트 폴링 전환** (DB CPU 즉시 안정화 포인트)
+   - 프론트엔드가 progress endpoint로 변경
+
+### Day 2
+
+6. **Video worker 저장 로직 수정**
+   - `complete_video`/`fail_video`/`mark_processing`에 Redis status 저장 반영
+   - Status 값 타입 통일 (getattr 패턴 사용)
+
+7. **VideoProgressAdapter writer 쪽 적용** (선택)
+   - Video worker에서 VideoProgressAdapter 사용 (IProgress 인터페이스 구현)
+
+### Day 4+ (별도 PR)
+
+8. **Excel Bulk 최적화** (FK/제약조건 확인 후)
+   - Student/User 생성 순서 재정렬 필요
+   - ps_number 충돌 처리 완성
+
+9. **인덱스 마이그레이션 실행**
+   - Students, AIJob, Video 인덱스 추가 (`atomic=False` 필수)
+
+10. **Worker Concurrency 제한 적용**
+    - ASG Max Size 제한
 
 **⚠️ 주의**: Excel부터 건드리면 리스크 커진다. 반드시 Redis progress endpoint 먼저 적용 후 프론트 polling 전환, DB CPU 안정 확인 후 Excel bulk 교체
 
