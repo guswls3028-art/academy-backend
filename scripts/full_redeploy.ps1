@@ -210,9 +210,10 @@ echo BUILD_AND_PUSH_OK
     $paramsJson = @{
         commands = @($buildScript)
     } | ConvertTo-Json -Compress -Depth 10
+    # ✅ JSON 문자열을 따옴표로 감싸서 전달 (PowerShell 변수 전달 문제 해결)
     $cmdId = aws ssm send-command --region $Region --instance-ids $buildInstanceId `
         --document-name "AWS-RunShellScript" `
-        --parameters $paramsJson `
+        --parameters "$paramsJson" `
         --timeout-seconds 3600 `
         --output text --query "Command.CommandId" 2>&1
     if (-not $cmdId -or $cmdId -match "error|Error") {
