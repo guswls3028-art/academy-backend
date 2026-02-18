@@ -218,11 +218,13 @@ def main() -> int:
                 }
 
                 try:
+                    logger.info("[SQS_MAIN] Calling handler.handle() video_id=%s", video_id)
                     result = handler.handle(job, cfg)
+                    logger.info("[SQS_MAIN] handler.handle() returned video_id=%s result=%s", video_id, result)
                 except Exception as e:
                     # handler.handle() 예외 시에도 반드시 즉시 재노출 (3시간 묶임 방지)
                     queue.change_message_visibility(receipt_handle, 0)
-                    logger.exception("Handler exception (visibility 0 applied): video_id=%s: %s", video_id, e)
+                    logger.exception("[SQS_MAIN] Handler exception (visibility 0 applied): video_id=%s: %s", video_id, e)
                     consecutive_errors += 1
                     _current_job_receipt_handle = None
                     _current_job_start_time = None
