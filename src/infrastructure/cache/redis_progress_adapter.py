@@ -30,9 +30,9 @@ class RedisProgressAdapter(IProgress):
         job_id: str,
         step: str,
         extra: Optional[dict[str, Any]] = None,
-        tenant_id: Optional[str] = None,  # ✅ 추가 (AI Job 전용)
+        tenant_id: Optional[str] = None,  # ✅ 추가 (AI Job 및 Video Worker 전용)
     ) -> None:
-        """진행 단계 기록 (Redis에만) - AI Job 전용"""
+        """진행 단계 기록 (Redis에만) - AI Job 및 Video Worker 지원"""
         client = get_redis_client()
         if not client:
             return
@@ -41,9 +41,17 @@ class RedisProgressAdapter(IProgress):
         if tenant_id is None:
             logger.warning("tenant_id missing for job_id=%s, using legacy key format", job_id)
 
-        # ✅ AI Job 전용 키 형식: tenant:{tenant_id}:job:{job_id}:progress
+        # ✅ 키 형식 결정:
+        # - Video Worker: job_id="video:{video_id}" → tenant:{tenant_id}:video:{video_id}:progress
+        # - AI Job: job_id="job_uuid" → tenant:{tenant_id}:job:{job_id}:progress
         if tenant_id:
-            key = f"tenant:{tenant_id}:job:{job_id}:progress"
+            if job_id.startswith("video:"):
+                # Video Worker 케이스: job_id에서 video_id 추출
+                video_id = job_id.replace("video:", "")
+                key = f"tenant:{tenant_id}:video:{video_id}:progress"
+            else:
+                # AI Job 케이스
+                key = f"tenant:{tenant_id}:job:{job_id}:progress"
         else:
             # 하위 호환성: tenant_id 없으면 기존 키 형식 사용
             key = f"job:{job_id}:progress"
