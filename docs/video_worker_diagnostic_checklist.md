@@ -137,3 +137,57 @@ docker exec -it academy-api python scripts/check_sqs_worker_connectivity.py
   - 인코딩이 끝날 때까지 해당 강의/세션/영상 삭제하지 않기.  
   - API·워커 환경변수에서 `DB_HOST`, `DB_NAME`, `DB_USER` 등이 같은지 점검.  
   - 다음 배포부터는 `complete_video` 실패 시 로그에 `row exists=True/False`가 찍히므로, True면 연결/락 이슈, False면 삭제 또는 다른 DB로 구분 가능.
+
+---
+
+## 부록 B: 성공 1회 달성용 체크리스트 v2
+
+**목표**: 오늘 당장 1개라도 끝까지 성공시키기.
+
+### 0. 긴 영상(video 17) 때문에 짧은 영상 대기 → 워커 재시작으로 우회
+
+- video 17 메시지는 **visibility 6시간**으로 잡혀 있어서 다른 소비자가 못 봄.
+- **1111 메시지는 visible** → 워커를 재시작하면 새 워커가 1111을 먼저 가져감.
+
+```bash
+# 워커 서버에서
+sudo docker restart academy-video-worker
+```
+
+- 재시작 후 워커 로그에서 `SQS_MESSAGE_RECEIVED | video_id=...` (1111의 id) 확인.
+- video 17은 visibility 만료 후 다시 visible 되고, 나중에 다시 처리될 수 있음.
+
+### 1. 오토스케일 수동 점검 (ASG 사용 시)
+
+```bash
+# MaxSize 확인 (1이면 절대 안 늘어남)
+aws autoscaling describe-auto-scaling-groups \
+  --region ap-northeast-2 \
+  --auto-scaling-group-names academy-video-worker-asg \
+  --query "AutoScalingGroups[0].{Min:MinSize,Desired:DesiredCapacity,Max:MaxSize,Instances:length(Instances)}" \
+  --output table
+
+# 수동 desired=2 테스트 (Max >= 2 일 때만)
+aws autoscaling set-desired-capacity \
+  --region ap-northeast-2 \
+  --auto-scaling-group-name academy-video-worker-asg \
+  --desired-capacity 2
+
+# 스케일 정책 존재 여부
+aws autoscaling describe-policies \
+  --region ap-northeast-2 \
+  --auto-scaling-group-name academy-video-worker-asg \
+  --output table
+```
+
+### 2. SQS visibility 확인 (코드상 이미 6h 설정됨)
+
+- 워커가 **작업 시작 시** `change_message_visibility(receipt_handle, 21600)` 호출 (6h).
+- 3시간 영상도 visibility로는 문제 없음.
+
+### 3. Lambda 기반 오토스케일 사용 시 (`infra/worker_autoscale_lambda/`)
+
+- EventBridge 1분 주기로 Lambda 호출.
+- `ApproximateNumberOfMessages`(visible) >= 1 이면 stopped 인스턴스 1대 Start.
+- `MAX_INSTANCES_PER_TYPE=1` 기본값 → 2대로 늘리려면 이 값 또는 Lambda 로직 수정 필요.
+- Lambda 로그에서 큐 depth, Start 호출 여부 확인.
