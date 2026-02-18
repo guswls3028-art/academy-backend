@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from apps.worker.video_worker.utils import ensure_dir, trim_tail
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ffmpeg stderr 진행률 파싱 (time=00:01:23.45 형태)
 _RE_TIME = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
