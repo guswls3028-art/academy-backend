@@ -278,7 +278,7 @@ def process_video(
                 "step_total": VIDEO_ENCODING_STEP_TOTAL,
                 "step_name": "thumbnail",
                 "step_name_display": "썸네일",
-                "step_percent": 100,
+                "step_percent": 0,  # ✅ 단계 시작: 0%
             },
             tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
@@ -299,8 +299,38 @@ def process_video(
                 at_seconds=float(at),
                 timeout=min(int(cfg.FFMPEG_TIMEOUT_SECONDS), 120),
             )
+            # ✅ 단계 완료: 100%
+            progress.record_progress(
+                job_id,
+                "thumbnail",
+                {
+                    "percent": 90,
+                    "remaining_seconds": 30,
+                    "step_index": 6,
+                    "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                    "step_name": "thumbnail",
+                    "step_name_display": "썸네일",
+                    "step_percent": 100,
+                },
+                tenant_id=tenant_id_str,
+            )
         except Exception as e:
             logger.warning("thumbnail failed video_id=%s err=%s", video_id, e)
+            # 실패해도 100%로 표시 (다음 단계로 진행)
+            progress.record_progress(
+                job_id,
+                "thumbnail",
+                {
+                    "percent": 90,
+                    "remaining_seconds": 30,
+                    "step_index": 6,
+                    "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                    "step_name": "thumbnail",
+                    "step_name_display": "썸네일",
+                    "step_percent": 100,
+                },
+                tenant_id=tenant_id_str,
+            )
 
         progress.record_progress(
             job_id,
