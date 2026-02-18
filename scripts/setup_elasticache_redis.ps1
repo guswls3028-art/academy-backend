@@ -142,7 +142,7 @@ if (Test-Path $envPath) {
 
 Write-Host "`n=== Done ===" -ForegroundColor Cyan
 Write-Host "Next:" -ForegroundColor White
-Write-Host "  1) API 서버에서 기존 Redis 컨테이너 중지: docker stop academy-redis 2>/dev/null || true" -ForegroundColor Gray
-Write-Host "  2) SSM 반영 + 재배포: .\scripts\redeploy_worker_asg.ps1" -ForegroundColor Gray
-Write-Host "  3) full_redeploy: .\scripts\full_redeploy.ps1 -GitRepoUrl \"...\" -WorkersViaASG -SkipBuild" -ForegroundColor Gray
+Write-Host "  1) On API server: docker stop academy-redis" -ForegroundColor Gray
+Write-Host "  2) SSM + redeploy: .\scripts\redeploy_worker_asg.ps1" -ForegroundColor Gray
+Write-Host '  3) full_redeploy: .\scripts\full_redeploy.ps1 -GitRepoUrl "..." -WorkersViaASG -SkipBuild' -ForegroundColor Gray
 Write-Host ""
