@@ -16,6 +16,7 @@ Write-Host "`n=== Redis 전제 조건 체크 (encoding_progress % 표시) ===`n"
 
 # 1) 로컬 .env
 $envPath = Join-Path $RepoRoot ".env"
+$envContent = ""
 if (-not (Test-Path $envPath)) {
     Write-Host "[FAIL] .env 없음: $envPath" -ForegroundColor Red
 } else {
