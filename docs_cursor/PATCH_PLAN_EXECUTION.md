@@ -603,12 +603,20 @@ def save(self, job: AIJob) -> None:
     # ✅ 완료/실패 시 Redis에 상태 저장 (TTL 없음, result 포함)
     if job.status.value in ["DONE", "FAILED"]:
         try:
+            import logging
+            logger = logging.getLogger(__name__)  # ✅ logger 정의
+            
             from apps.domains.ai.redis_status_cache import cache_job_status
             
-            # result 가져오기
+            # ✅ result 가져오기 (방어적 처리)
             result_payload = None
             if job.status.value == "DONE":
-                result_payload = self.get_result_payload_for_job(model)
+                getter = getattr(self, "get_result_payload_for_job", None)
+                if callable(getter):
+                    try:
+                        result_payload = getter(model)
+                    except Exception as e:
+                        logger.debug("Failed to get result payload: %s", e)
             
             cache_job_status(
                 tenant_id=str(job.tenant_id),
@@ -616,7 +624,7 @@ def save(self, job: AIJob) -> None:
                 status=job.status.value,
                 job_type=job.job_type,
                 error_message=job.error_message,
-                result=result_payload,  # 완료 시 result 포함
+                result=result_payload,  # 완료 시 result 포함 (있으면)
                 ttl=None,  # TTL 없음
             )
         except Exception as e:
@@ -625,6 +633,9 @@ def save(self, job: AIJob) -> None:
     # ✅ PROCESSING 상태도 Redis에 저장 (TTL 6시간)
     elif job.status.value == "PROCESSING":
         try:
+            import logging
+            logger = logging.getLogger(__name__)  # ✅ logger 정의
+            
             from apps.domains.ai.redis_status_cache import cache_job_status
             cache_job_status(
                 tenant_id=str(job.tenant_id),
