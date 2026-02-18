@@ -49,9 +49,6 @@ SQS_WAIT_TIME_SECONDS = 20  # 최대 대기 시간 (Long Polling)
 VIDEO_VISIBILITY_EXTEND_SECONDS = int(os.getenv("VIDEO_SQS_VISIBILITY_EXTEND", "10800"))  # 3시간
 SQS_VISIBILITY_TIMEOUT = 300  # 로그 비교용 (실제는 VIDEO_VISIBILITY_EXTEND_SECONDS 사용)
 
-# EC2 Self-Stop 설정 (비용 최적화)
-IDLE_STOP_THRESHOLD = int(os.getenv("EC2_IDLE_STOP_THRESHOLD", "5"))  # 연속 빈 폴링 5회 = 100초
-
 # 3시간 영상 대비: 락/진행률 TTL (3h + margin = 4h). TTL 만료 시 중복 실행/진행률 소실 방지
 VIDEO_LOCK_TTL_SECONDS = int(os.getenv("VIDEO_LOCK_TTL_SECONDS", "14400"))   # 4h
 VIDEO_PROGRESS_TTL_SECONDS = int(os.getenv("VIDEO_PROGRESS_TTL_SECONDS", "14400"))  # 4h
@@ -72,43 +69,6 @@ def _handle_signal(sig, frame):
     )
     _shutdown = True
     # 현재 작업이 있으면 완료될 때까지 대기 (메인 루프에서 처리)
-
-
-def _stop_self_ec2() -> None:
-    """
-    SQS 큐가 연속으로 비어있을 때 EC2 인스턴스 자동 종료
-    
-    비용 최적화: idle 상태 인스턴스 자동 종료로 월 $30-50 절감
-    IMDSv2를 사용하여 안전하게 인스턴스 메타데이터 조회
-    """
-    try:
-        # EC2 메타데이터에서 인스턴스 정보 가져오기 (IMDSv2)
-        token = requests.put(
-            "http://169.254.169.254/latest/api/token",
-            headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
-            timeout=2,
-        ).text
-        
-        headers = {"X-aws-ec2-metadata-token": token}
-        instance_id = requests.get(
-            "http://169.254.169.254/latest/meta-data/instance-id",
-            headers=headers,
-            timeout=2,
-        ).text
-        
-        region = requests.get(
-            "http://169.254.169.254/latest/meta-data/placement/region",
-            headers=headers,
-            timeout=2,
-        ).text
-        
-        ec2 = boto3.client("ec2", region_name=region)
-        ec2.stop_instances(InstanceIds=[instance_id])
-        
-        logger.info("EC2 instance stopped due to idle queues: instance_id=%s (video worker)", instance_id)
-        
-    except Exception as e:
-        logger.exception("EC2 self-stop failed (ignored): %s", e)
 
 
 def main() -> int:
