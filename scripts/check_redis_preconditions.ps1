@@ -33,14 +33,14 @@ if (-not (Test-Path $envPath)) {
 # 2) SSM /academy/workers/env (워커 user_data에서 사용)
 $ssmValue = aws ssm get-parameter --name /academy/workers/env --with-decryption --region $Region --query "Parameter.Value" --output text 2>$null
 if (-not $ssmValue) {
-    Write-Host "[FAIL] SSM /academy/workers/env 없음 또는 권한 부족" -ForegroundColor Red
+    Write-Host "FAIL SSM /academy/workers/env 없음 또는 권한 부족" -ForegroundColor Red
 } else {
     $ssmRedisHost = $null
     if ($ssmValue -match 'REDIS_HOST=([^\s\r\n#]+)') { $ssmRedisHost = $Matches[1].Trim() }
     if ($ssmRedisHost) {
-        Write-Host "[OK] SSM REDIS_HOST: $ssmRedisHost" -ForegroundColor Green
+        Write-Host "OK   SSM REDIS_HOST: $ssmRedisHost" -ForegroundColor Green
     } else {
-        Write-Host "[FAIL] SSM /academy/workers/env에 REDIS_HOST 없음" -ForegroundColor Red
+        Write-Host "FAIL SSM /academy/workers/env에 REDIS_HOST 없음" -ForegroundColor Red
     }
 }
 
