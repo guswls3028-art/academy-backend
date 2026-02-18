@@ -80,26 +80,8 @@ foreach ($config in $asgConfigs) {
     # 3. SQS 기반 Target Tracking 정책 생성/업데이트
     Write-Host "  Creating QueueDepthTargetTracking policy..." -ForegroundColor Gray
     
-    # deploy_worker_asg.ps1과 동일한 형식 사용
-    if ($workerType -eq "AI") {
-        $policy = @"
-{
-  "TargetTrackingScalingPolicyConfiguration": {
-    "TargetValue": $TargetMessagesPerInstance,
-    "PredefinedMetricSpecification": null,
-    "CustomizedMetricSpecification": {
-      "MetricName": "QueueDepth",
-      "Namespace": "Academy/Workers",
-      "Dimensions": [{"Name": "WorkerType", "Value": "$workerType"}],
-      "Statistic": "Average"
-    },
-    "ScaleInCooldown": 600,
-    "ScaleOutCooldown": 60
-  }
-}
-"@
-    } else {
-        $policy = @"
+    # deploy_worker_asg.ps1과 정확히 동일한 형식 사용
+    $policy = @"
 {
   "TargetTrackingScalingPolicyConfiguration": {
     "TargetValue": $TargetMessagesPerInstance,
@@ -114,25 +96,10 @@ foreach ($config in $asgConfigs) {
   }
 }
 "@
-    }
     
     $policyFile = Join-Path $RepoRoot "asg_policy_${workerType}_temp.json"
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-    $policyContent = $policy.Trim()
-    [System.IO.File]::WriteAllText($policyFile, $policyContent, $utf8NoBom)
-    
-    # JSON 유효성 검사
-    try {
-        $jsonTest = Get-Content $policyFile -Raw | ConvertFrom-Json
-        if (-not $jsonTest.TargetTrackingScalingPolicyConfiguration) {
-            Write-Host "    ⚠️  JSON structure validation failed" -ForegroundColor Yellow
-            Write-Host "    File content:" -ForegroundColor Gray
-            Get-Content $policyFile | ForEach-Object { Write-Host "      $_" -ForegroundColor Gray }
-        }
-    } catch {
-        Write-Host "    ⚠️  Invalid JSON: $_" -ForegroundColor Yellow
-    }
-    
+    [System.IO.File]::WriteAllText($policyFile, $policy, $utf8NoBom)
     $policyPath = "file://$($policyFile -replace '\\','/' -replace ' ', '%20')"
     
     $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
@@ -143,7 +110,8 @@ foreach ($config in $asgConfigs) {
         Write-Host "    ✅ Policy created/updated successfully" -ForegroundColor Green
     } else {
         Write-Host "    ❌ Policy creation failed" -ForegroundColor Red
-        Write-Host "    Error: $result" -ForegroundColor Red
+        Write-Host "    Error output:" -ForegroundColor Yellow
+        $result | ForEach-Object { Write-Host "      $_" -ForegroundColor Gray }
     }
     $ErrorActionPreference = $ea
     Remove-Item $policyFile -Force -ErrorAction SilentlyContinue
