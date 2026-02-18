@@ -817,7 +817,7 @@ const getPollInterval = (elapsedSeconds: number): number => {
 
 ### Before (현재)
 - 비디오 3개 + 엑셀 2개 진행 중
-- 초당: 5번 DB SELECT
+- 초당: 5번 DB SELECT (폴링)
 - 10분: 약 3,000번 DB SELECT
 - RDS CPU: 80-100%
 
@@ -826,6 +826,20 @@ const getPollInterval = (elapsedSeconds: number): number => {
 - 초당: **0번 DB SELECT** (진행 중 작업은 Redis만 조회)
 - 완료 후: **0번 DB SELECT** (Redis 캐싱, TTL 없음)
 - RDS CPU: **10-20%** (대폭 감소)
+
+### 🔥 핵심 정리
+
+**❌ DB 폴링은 구조적으로 불필요**
+
+**진행 상황은 "보기 편하라고 주는 것"**
+- 진행 상황 때문에 DB 터지는 게 문제
+- 시청 로그, 정채 판단 프로그래스바는 **무조건 DB 안 때리게**
+
+**Redis-only로 바꾸면:**
+- DB SELECT 폭격 **0으로 만들 수 있음** ✅
+- 진행 중: Redis만 조회
+- 완료 후: Redis 캐싱 (TTL 없음)
+- DB는 오직 fallback으로만 사용 (새로고침, 과거 기록)
 
 ## 🎯 구현 체크리스트
 
