@@ -1186,25 +1186,41 @@ def bulk_create_students_from_excel_rows_optimized(
         for s in deleted_students
     }
     
-    # ✅ 4. 트랜잭션으로 일괄 처리
-    with transaction.atomic():
-        # 4-1. 삭제된 학생 복원
-        restored_students = []
-        for (name, parent_phone), deleted_student in deleted_map.items():
-            # 복원 로직 (기존 코드와 동일)
-            deleted_student.deleted_at = None
-            # ... 업데이트 필드 설정
-            deleted_student.save(update_fields=["deleted_at", ...])
-            TenantMembership.ensure_active(
-                tenant=tenant,
-                user=deleted_student.user,
-                role="student",
-            )
-            restored_students.append((name, parent_phone))
-        
-        # 4-2. 신규 학생 수집
-        new_students = []
-        for idx, (row_index, item) in enumerate(valid_rows):
+    # ✅ 4. Chunked 트랜잭션으로 일괄 처리 (운영 안정성)
+    # 하나의 giant transaction 대신 chunk 단위로 처리
+    # → 중간 실패 시 전체 롤백 방지, lock 시간 단축
+    
+    CHUNK_SIZE = 200  # 운영 안정성을 위한 chunk 크기
+    
+    restored_students = []
+    created_count = 0
+    
+    # 4-1. 삭제된 학생 복원 (chunk 단위)
+    deleted_items = list(deleted_map.items())
+    for chunk in [deleted_items[i:i+CHUNK_SIZE] for i in range(0, len(deleted_items), CHUNK_SIZE)]:
+        with transaction.atomic():
+            for (name, parent_phone), deleted_student in chunk:
+                try:
+                    deleted_student.deleted_at = None
+                    # ... 업데이트 필드 설정
+                    deleted_student.save(update_fields=["deleted_at", ...])
+                    TenantMembership.ensure_active(
+                        tenant=tenant,
+                        user=deleted_student.user,
+                        role="student",
+                    )
+                    restored_students.append((name, parent_phone))
+                except Exception as e:
+                    logger.warning("Failed to restore deleted student: %s", e)
+                    failed.append({
+                        "row": next((r[0] for r in valid_rows if (r[1].get("name"), _normalize_phone(r[1].get("parent_phone"))) == (name, parent_phone)), 0),
+                        "name": name,
+                        "error": f"복원 실패: {str(e)[:500]}",
+                    })
+    
+    # 4-2. 신규 학생 수집
+    new_students_data = []
+    for idx, (row_index, item) in enumerate(valid_rows):
             if on_row_progress and total > 0:
                 on_row_progress(idx + 1, total)
             
