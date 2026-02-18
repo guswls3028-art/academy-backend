@@ -21,6 +21,35 @@ from apps.worker.ai_worker.ai.pipelines.excel_export_handler import (
 )
 from apps.worker.ai_worker.ai.utils.image_resizer import resize_if_large
 from apps.worker.ai_worker.storage.downloader import download_to_tmp
+import logging
+
+logger = logging.getLogger(__name__)
+
+# 구간별 진행률 기록 함수 (공통)
+def _record_progress(
+    job_id: str,
+    step: str,
+    percent: int,
+    step_index: int | None = None,
+    step_total: int | None = None,
+    step_name_display: str | None = None,
+    step_percent: int | None = None,
+) -> None:
+    """Redis 진행률 기록 (우하단 실시간 프로그래스바용). 구간별 진행률 지원."""
+    try:
+        from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
+        extra = {"percent": percent}
+        if step_index is not None and step_total is not None:
+            extra.update({
+                "step_index": step_index,
+                "step_total": step_total,
+                "step_name": step,
+                "step_name_display": step_name_display or step,
+                "step_percent": step_percent if step_percent is not None else 100,
+            })
+        RedisProgressAdapter().record_progress(job_id, step, extra)
+    except Exception as e:
+        logger.debug("Redis progress record skip: %s", e)
 
 
 def handle_ai_job(job: AIJob) -> AIResult:
