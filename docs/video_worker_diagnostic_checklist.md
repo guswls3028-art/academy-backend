@@ -116,3 +116,24 @@ docker exec -it academy-api python scripts/check_sqs_worker_connectivity.py
    - 업로드 완료 시 `Video job enqueued` 여부.
 
 위 순서대로 확인하면, “워커가 안 떠 있는지 / 큐가 안 맞는지 / 설정이 빠진지 / 처리 중에 터지는지”를 정확히 구분할 수 있습니다.
+
+---
+
+## 부록: 자주 나오는 로그별 원인
+
+### `[HANDLER] Cannot mark video N as PROCESSING, skipping`
+- **의미**: `mark_processing(video_id)` 가 False를 반환함.
+- **원인**: DB에서 해당 영상 상태가 **UPLOADED가 아님**. 이미 PROCESSING(이전 시도에서 변경됨), READY, FAILED 등.
+- **대응**: 재시도 메시지로 같은 영상이 다시 들어온 경우 정상 동작(스킵). 처음 업로드인데 계속 스킵되면 API에서 enqueue 시점의 `video.status`가 UPLOADED인지 확인.
+
+### `Video processing failed: video_id=N, error=Failed to complete video: not_found`
+- **의미**: 인코딩은 끝났지만 `complete_video` 호출 시 **해당 Video 행을 찾지 못함** (`get_video_for_update` → None).
+- **가능한 원인**  
+  1. **인코딩 중에 Video(또는 부모 Session/Lecture)가 삭제됨**  
+     - `Video`는 `Session`에 FK, `on_delete=CASCADE`. Session/강의 삭제 시 Video도 삭제됨.  
+  2. **API와 워커가 서로 다른 DB를 바라봄**  
+     - 워커의 `DB_HOST` / `DB_NAME` 이 API와 동일한지 확인.
+- **대응**  
+  - 인코딩이 끝날 때까지 해당 강의/세션/영상 삭제하지 않기.  
+  - API·워커 환경변수에서 `DB_HOST`, `DB_NAME`, `DB_USER` 등이 같은지 점검.  
+  - 다음 배포부터는 `complete_video` 실패 시 로그에 `row exists=True/False`가 찍히므로, True면 연결/락 이슈, False면 삭제 또는 다른 DB로 구분 가능.
