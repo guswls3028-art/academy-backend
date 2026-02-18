@@ -91,48 +91,6 @@ def submit_result(*, result: AIResult, job: AIJob) -> None:
     resp.raise_for_status()
 
 
-# ------------------------------------------------------------------------------
-# EC2 SELF-STOP (MINIMAL, SAFE)
-# ------------------------------------------------------------------------------
-def _stop_self_ec2() -> None:
-    """
-    Stop this EC2 instance itself.
-
-    - Uses IMDSv2
-    - Requires IAM role permission: ec2:StopInstances
-    """
-    try:
-        import boto3
-
-        token = requests.put(
-            "http://169.254.169.254/latest/api/token",
-            headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
-            timeout=2,
-        ).text
-
-        headers = {"X-aws-ec2-metadata-token": token}
-
-        instance_id = requests.get(
-            "http://169.254.169.254/latest/meta-data/instance-id",
-            headers=headers,
-            timeout=2,
-        ).text
-
-        region = requests.get(
-            "http://169.254.169.254/latest/meta-data/placement/region",
-            headers=headers,
-            timeout=2,
-        ).text
-
-        ec2 = boto3.client("ec2", region_name=region)
-        ec2.stop_instances(InstanceIds=[instance_id])
-
-        logger.info("EC2 self-stop requested (instance_id=%s)", instance_id)
-
-    except Exception as e:
-        logger.exception("EC2 self-stop failed (ignored): %s", e)
-
-
 def main() -> int:
     """
     Single-run worker entrypoint with bounded polling.

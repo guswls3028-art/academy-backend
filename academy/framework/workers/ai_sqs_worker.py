@@ -63,32 +63,6 @@ def _weighted_poll(queue: SQSAIQueueAdapter) -> tuple[Optional[dict], str]:
     return msg, tier
 
 
-def _stop_self_ec2() -> None:
-    try:
-        import requests
-        token = requests.put(
-            "http://169.254.169.254/latest/api/token",
-            headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
-            timeout=2,
-        ).text
-        headers = {"X-aws-ec2-metadata-token": token}
-        instance_id = requests.get(
-            "http://169.254.169.254/latest/meta-data/instance-id",
-            headers=headers,
-            timeout=2,
-        ).text
-        region = requests.get(
-            "http://169.254.169.254/latest/meta-data/placement/region",
-            headers=headers,
-            timeout=2,
-        ).text
-        import boto3
-        boto3.client("ec2", region_name=region).stop_instances(InstanceIds=[instance_id])
-        logger.info("EC2 self-stop: instance_id=%s (ai worker)", instance_id)
-    except Exception as e:
-        logger.exception("EC2 self-stop failed (ignored): %s", e)
-
-
 def _run_inference(prepared: PreparedJob):
     """기존 handle_ai_job 호출 (contract 변환)."""
     from apps.shared.contracts.ai_job import AIJob
