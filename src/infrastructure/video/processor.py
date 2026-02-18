@@ -183,10 +183,34 @@ def process_video(
             progress_callback=transcode_progress,
         )
 
-        progress.record_progress(job_id, "validating", {"percent": 85, "remaining_seconds": 45})
+        progress.record_progress(
+            job_id,
+            "validating",
+            {
+                "percent": 85,
+                "remaining_seconds": 45,
+                "step_index": 5,
+                "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                "step_name": "validating",
+                "step_name_display": "검증",
+                "step_percent": 100,
+            },
+        )
         validate_hls_output(out_dir, int(cfg.MIN_SEGMENTS_PER_VARIANT))
 
-        progress.record_progress(job_id, "thumbnail", {"percent": 90, "remaining_seconds": 30})
+        progress.record_progress(
+            job_id,
+            "thumbnail",
+            {
+                "percent": 90,
+                "remaining_seconds": 30,
+                "step_index": 6,
+                "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                "step_name": "thumbnail",
+                "step_name_display": "썸네일",
+                "step_percent": 100,
+            },
+        )
         try:
             at = float(cfg.THUMBNAIL_AT_SECONDS)
             if duration >= 10:
