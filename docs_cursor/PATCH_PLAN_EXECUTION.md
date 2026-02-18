@@ -2544,21 +2544,27 @@ class Migration(migrations.Migration):
 
 ### Day 1 (오늘 적용 가능한 범위) - 필수
 
-1. **Redis 상태 캐싱 헬퍼 생성**
+1. **get_video_for_update() select_related 추가** ⚠️ 필수
+   - `repositories_video.py`에 `select_related("session__lecture__tenant")` 추가
+   - tenant_id 추출 시 추가 DB hit 방지
+
+2. **Redis 상태 캐싱 헬퍼 생성**
    - `apps/support/video/redis_status_cache.py` 추가
    - `apps/domains/ai/redis_status_cache.py` 추가
 
-2. **Progress endpoint 추가**
+3. **Progress endpoint 추가**
    - `VideoProgressView` / `JobProgressView` 추가 + URL 라우팅
    - `encoding_progress.py` tenant-aware 조회 반영 + View에서 tenant_id 전달
+   - **404 → UNKNOWN 상태 반환으로 변경** (UX 안정성)
 
-3. **RedisProgressAdapter 수정**
+4. **RedisProgressAdapter 수정**
    - `src/infrastructure/cache/redis_progress_adapter.py`에 tenant_id 지원 추가 (AI 전용)
+   - **tenant_id 누락 시 경고 로그 추가** (안전 장치)
 
-4. **AI Repository 수정**
+5. **AI Repository 수정**
    - `repositories_ai.py` save()에 Redis status 저장 추가 (logger/result 방어 포함)
 
-5. **프론트 폴링 전환** (DB CPU 즉시 안정화 포인트)
+6. **프론트 폴링 전환** (DB CPU 즉시 안정화 포인트)
    - 프론트엔드가 progress endpoint로 변경
 
 ### Day 2
@@ -2642,6 +2648,7 @@ class Migration(migrations.Migration):
 ### ⚠️ 7. Excel Bulk (Day 4+ 별도 PR)
 - [ ] Student/User 생성 순서 재정렬 필요 (User 먼저 → Student FK 연결)
 - [ ] FK/제약조건 확인 후 구현
+- [ ] 현재 설계는 "이론상 가능"이지만 실전에서는 깨질 확률 높음
 
 ---
 
