@@ -56,28 +56,23 @@ if (-not $apiIp -or $apiIp -eq "None") {
     if (Test-Path $apiKey) {
         $apiRedisHost = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i $apiKey "ec2-user@$apiIp" "grep -E '^REDIS_HOST=' /home/ec2-user/.env 2>/dev/null | cut -d= -f2" 2>$null
         if ($apiRedisHost) {
-            Write-Host "[OK] API .env REDIS_HOST: $($apiRedisHost.Trim())" -ForegroundColor Green
-            $apiRedisTest = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i $apiKey "ec2-user@$apiIp" "sudo docker exec academy-api python -c \"
-import os
-import redis
-h=os.environ.get('REDIS_HOST'); p=int(os.environ.get('REDIS_PORT',6379))
-r=redis.Redis(host=h,port=p,db=0); print('Redis OK:', r.ping())
-\" 2>/dev/null" 2>$null
+            Write-Host "OK   API .env REDIS_HOST: $($apiRedisHost.Trim())" -ForegroundColor Green
+            $apiRedisTest = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i $apiKey "ec2-user@$apiIp" 'sudo docker exec academy-api python -c "import os; import redis; h=os.environ.get(\"REDIS_HOST\"); p=int(os.environ.get(\"REDIS_PORT\",6379)); r=redis.Redis(host=h,port=p,db=0); print(\"Redis OK:\", r.ping())" 2>/dev/null' 2>$null
             if ($apiRedisTest -match "Redis OK: True") {
-                Write-Host "[OK] API 컨테이너 Redis ping: 성공" -ForegroundColor Green
+                Write-Host "OK   API Redis ping: 성공" -ForegroundColor Green
             } else {
-                Write-Host "[WARN] API 컨테이너 Redis ping 실패 또는 미확인" -ForegroundColor Yellow
+                Write-Host "WARN API Redis ping 실패 또는 미확인" -ForegroundColor Yellow
             }
         } else {
-            Write-Host "[FAIL] API .env에 REDIS_HOST 없음" -ForegroundColor Red
+            Write-Host "FAIL API .env에 REDIS_HOST 없음" -ForegroundColor Red
         }
     } else {
-        Write-Host "[SKIP] API SSH 키 없음: $apiKey" -ForegroundColor Yellow
+        Write-Host "SKIP API SSH 키 없음: $apiKey" -ForegroundColor Yellow
     }
 }
 
 # 4) 워커 Redis (이미 Video worker에서 확인함 - 요약만)
-Write-Host "`n[INFO] 워커 Redis: Video worker에서 이미 확인됨 (REDIS_HOST=ElastiCache, ping OK)" -ForegroundColor Gray
+Write-Host "`nINFO  워커 Redis: Video worker에서 이미 확인됨 (REDIS_HOST=ElastiCache, ping OK)" -ForegroundColor Gray
 Write-Host "       새 워커 인스턴스는 SSM /academy/workers/env에서 .env 로드" -ForegroundColor Gray
 
 # 5) API vs SSM REDIS_HOST 일치 여부
