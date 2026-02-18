@@ -186,6 +186,23 @@ def _parse_time_seconds(line: str) -> Optional[float]:
     return h * 3600 + m_ * 60 + s + cs / 100.0
 
 
+# duration 기반 타임아웃: 최소 2시간, 영상 길이의 1.5배, 최대 6시간
+FFMPEG_TIMEOUT_MIN_SECONDS = 7200
+FFMPEG_TIMEOUT_MAX_SECONDS = 21600
+FFMPEG_TIMEOUT_DURATION_MULTIPLIER = 1.5
+
+
+def _effective_ffmpeg_timeout(duration_sec: Optional[float], config_timeout: Optional[int]) -> int:
+    """영상 길이에 비례한 타임아웃. duration 없으면 설정값 사용."""
+    if duration_sec is not None and duration_sec > 0:
+        from_duration = int(duration_sec * FFMPEG_TIMEOUT_DURATION_MULTIPLIER)
+        return min(
+            FFMPEG_TIMEOUT_MAX_SECONDS,
+            max(FFMPEG_TIMEOUT_MIN_SECONDS, from_duration),
+        )
+    return int(config_timeout or 3600)
+
+
 def transcode_to_hls(
     *,
     video_id: int,
@@ -198,8 +215,9 @@ def transcode_to_hls(
     duration_sec: Optional[float] = None,
     progress_callback: Optional[Callable[[float, float], None]] = None,
 ) -> Path:
+    effective_timeout = _effective_ffmpeg_timeout(duration_sec, timeout)
     # 입력 해상도 기반 variant 선택
-    w, h = _probe_resolution(input_path, ffprobe_bin, min(60, int(timeout or 60)))
+    w, h = _probe_resolution(input_path, ffprobe_bin, min(60, effective_timeout))
     variants = _select_variants(w, h)
 
     prepare_output_dirs(output_root, variants)
