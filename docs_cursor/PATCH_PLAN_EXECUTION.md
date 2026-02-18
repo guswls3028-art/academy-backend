@@ -2599,7 +2599,13 @@ class Migration(migrations.Migration):
 10. **Worker Concurrency 제한 적용**
     - ASG Max Size 제한
 
-**⚠️ 주의**: Excel부터 건드리면 리스크 커진다. 반드시 Redis progress endpoint 먼저 적용 후 프론트 polling 전환, DB CPU 안정 확인 후 Excel bulk 교체
+**⚠️ 절대 순서**:
+1. Day 1 = Redis Progress + 프론트 전환까지만
+2. DB CPU 안정화 확인
+3. 그 다음 Excel PR (FK 순서 재정렬)
+4. 인덱스는 Excel 이후
+
+**순서 절대 바꾸지 마라.**
 
 ---
 
