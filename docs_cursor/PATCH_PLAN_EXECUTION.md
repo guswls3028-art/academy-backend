@@ -2347,6 +2347,7 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
+    atomic = False  # ✅ 필수: CREATE INDEX CONCURRENTLY는 트랜잭션 밖에서 실행되어야 함
 
     dependencies = [
         ('ai', 'XXXX_previous_migration'),  # 실제 migration 번호로 변경
@@ -2382,6 +2383,7 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
+    atomic = False  # ✅ 필수: CREATE INDEX CONCURRENTLY는 트랜잭션 밖에서 실행되어야 함
 
     dependencies = [
         ('video', 'XXXX_previous_migration'),  # 실제 migration 번호로 변경
