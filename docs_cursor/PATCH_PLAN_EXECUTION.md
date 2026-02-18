@@ -2503,7 +2503,7 @@ class Migration(migrations.Migration):
 
 ## 최종 평가 (재계산 - 피드백 반영)
 
-### 구조 안정성 점수: **9/10**
+### 구조 안정성 점수: **9.2/10**
 
 **강점**:
 - Video와 AI 완전 분리로 키 구조 충돌 방지
@@ -2511,9 +2511,10 @@ class Migration(migrations.Migration):
 - 하위 호환성 유지
 - 점진적 마이그레이션 가능
 - 롤백 전략 명확
+- get_video_for_update() select_related 추가로 추가 DB hit 방지
 
 **개선 사항**:
-- ps_number race condition 완전 해결 필요 (DB lock 또는 UUID 기반)
+- Excel FK 순서 재정렬 필요 (Day 4+ PR)
 
 ---
 
@@ -2535,6 +2536,16 @@ class Migration(migrations.Migration):
 - DB 폴링 제거로 RDS 부하 대폭 감소
 - Excel Bulk 최적화로 쿼리 수 99% 감소
 - db.t4g.small로도 충분히 버틸 수 있음 (가성비 최고)
+
+### 운영 리스크 관리 점수: **8.8/10**
+
+**강점**:
+- tenant_id 누락 경고 로그 추가
+- VideoProgressView 404 → UNKNOWN 변경 (UX 안정성)
+- select_related로 추가 DB hit 방지
+
+**개선 사항**:
+- Excel FK 순서 재정렬 시 9.5까지 상승 가능
 
 ---
 
@@ -2613,6 +2624,8 @@ class Migration(migrations.Migration):
 **현재 설계 기준**:
 - RDS t4g.medium으로 10K 충분히 간다
 - Aurora는 30K+ 사용자부터 고려
+
+**최종 확정**: Aurora 지금 절대 필요 없음 ✅
 
 ---
 
