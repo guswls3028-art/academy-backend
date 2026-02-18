@@ -216,7 +216,7 @@ def transcode_to_hls(
     progress_callback: Optional[Callable[[float, float], None]] = None,
 ) -> Path:
     effective_timeout = _effective_ffmpeg_timeout(duration_sec, timeout)
-    # 입력 해상도 기반 variant 선택
+    # 입력 해상도 기반 variant 선택 (probe는 짧은 제한)
     w, h = _probe_resolution(input_path, ffprobe_bin, min(60, effective_timeout))
     variants = _select_variants(w, h)
 
@@ -225,7 +225,7 @@ def transcode_to_hls(
     with_audio = has_audio_stream(
         input_path=input_path,
         ffprobe_bin=ffprobe_bin,
-        timeout=min(60, int(timeout or 60)),
+        timeout=min(60, effective_timeout),
     )
 
     cmd = build_ffmpeg_command(
