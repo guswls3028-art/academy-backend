@@ -27,6 +27,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptRoot
+. (Join-Path $ScriptRoot "_config_instance_keys.ps1")
 $AsgInfra = Join-Path $RepoRoot "infra\worker_asg"
 $QueueDepthLambdaDir = Join-Path $AsgInfra "queue_depth_lambda"
 $UserDataDir = Join-Path $AsgInfra "user_data"
