@@ -299,7 +299,8 @@ def transcode_to_hls(
                 p.kill()
                 p.wait()
                 raise TranscodeError(f"ffmpeg timeout video_id={video_id} seconds={effective_timeout}")
-            reader.join(timeout=2.0)
+            progress_reader.join(timeout=2.0)
+            stderr_reader.join(timeout=2.0)
 
             if p.returncode != 0:
                 raise TranscodeError(
