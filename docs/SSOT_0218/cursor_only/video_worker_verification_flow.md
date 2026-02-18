@@ -30,26 +30,21 @@ PublicIpAddress가 있으면 그 IP로 SSH, 없으면 PrivateIpAddress는 Bastio
 
 ## (2) API 서버에서 실행
 
-API 서버에 SSH 접속한 뒤, 아래만 실행하면 됩니다.
+**로컬 PowerShell — API 서버 SSH**
 
-```bash
-# API 서버 SSH (로컬 PowerShell에서, KeyDir=C:\key 기준)
-# ssh -i C:\key\backend-api-key.pem ec2-user@15.165.147.157
-
-# 접속 후: 인코딩 트리거는 프론트/API에서 영상 업로드 후 자동이거나, Django shell로 큐에 넣을 수 있음
-# Django shell 예시 (프로젝트 루트에서)
-cd /home/ec2-user  # 또는 API 앱 경로
-source .venv/bin/activate  # 가상환경 있으면
-python manage.py shell -c "
-from academy.models import Video
-from apps.support.video.services.sqs_queue import send_video_encode_message
-v = Video.objects.filter(tenant_id=YOUR_TENANT_ID).order_by('-id').first()
-if v: send_video_encode_message(v.tenant_id, v.id, v.file_key); print('Queued video_id=', v.id)
-"
+```powershell
+ssh -i C:\key\backend-api-key.pem ec2-user@15.165.147.157
 ```
 
-- `YOUR_TENANT_ID` 는 실제 tenant_id 로 바꿉니다.
-- 이미 프론트에서 업로드/인코딩 요청했다면 이 단계는 생략해도 됩니다.
+**API 서버 접속 후 — (선택) 인코딩 큐에 넣기**
+
+프론트에서 이미 업로드했다면 생략. Django shell로 큐에 넣을 때만 아래 실행. `YOUR_TENANT_ID` 를 실제 숫자로 바꿉니다.
+
+```bash
+cd /home/ec2-user
+source .venv/bin/activate
+python manage.py shell -c "from academy.models import Video; from apps.support.video.services.sqs_queue import send_video_encode_message; v = Video.objects.filter(tenant_id=YOUR_TENANT_ID).order_by('-id').first(); send_video_encode_message(v.tenant_id, v.id, v.file_key) if v else None; print('Queued video_id=', v.id if v else 'none')"
+```
 
 ---
 
