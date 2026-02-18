@@ -223,8 +223,9 @@ deploy_worker_asg.ps1에서 생성하는 ASG 이름과 일치.
 
 | 항목 | 현재 | 권장 | 비고 |
 |------|------|------|------|
+| SG 22 IP 제한 (API) | 222.107.38.38/32만 | 0.0.0.0/0(키로 통제) 또는 현재 IP 주기 갱신 | "전부 안됨" 주 원인 |
 | Private IP 폴백 | 없음 | API가 Public IP 없을 때 Bastion/터널 또는 Private IP+터널 사용 옵션 | 설계 변경 필요 |
-| deploy_preflight SSH -i | `"`"$apiKeyPath`"`"` | `$apiKeyPath` | 단순화 |
+| deploy_preflight SSH -i | `"`"$apiKeyPath`"`"` | `$apiKeyPath` | 단순화(적용 완료) |
 | Launch Template KeyName | 미설정 | 디버깅용 SSH 필요 시 KeyName 파라미터로 추가 | 선택 |
 
 이 문서는 **코드 기준 분석**이며, 수정은 사용자 승인 후 진행할 것.
