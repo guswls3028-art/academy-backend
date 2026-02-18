@@ -211,13 +211,21 @@ echo BUILD_AND_PUSH_OK
         commands = @($buildScript)
     } | ConvertTo-Json -Compress -Depth 10
     # ✅ JSON 문자열을 따옴표로 감싸서 전달 (PowerShell 변수 전달 문제 해결)
-    $cmdId = aws ssm send-command --region $Region --instance-ids $buildInstanceId `
+    $cmdResult = aws ssm send-command --region $Region --instance-ids $buildInstanceId `
         --document-name "AWS-RunShellScript" `
         --parameters "$paramsJson" `
         --timeout-seconds 3600 `
-        --output text --query "Command.CommandId" 2>&1
-    if (-not $cmdId -or $cmdId -match "error|Error") {
-        Write-Host "Send-Command failed: $cmdId" -ForegroundColor Red
+        --output json 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Send-Command failed with exit code: $LASTEXITCODE" -ForegroundColor Red
+        Write-Host "Error output: $cmdResult" -ForegroundColor Red
+        Write-Host "Build instance kept: $buildInstanceId" -ForegroundColor Yellow
+        exit 1
+    }
+    $cmdId = ($cmdResult | ConvertFrom-Json).Command.CommandId
+    if (-not $cmdId) {
+        Write-Host "Send-Command failed: Could not extract CommandId" -ForegroundColor Red
+        Write-Host "Output: $cmdResult" -ForegroundColor Red
         Write-Host "Build instance kept: $buildInstanceId" -ForegroundColor Yellow
         exit 1
     }
