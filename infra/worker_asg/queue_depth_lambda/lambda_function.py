@@ -140,14 +140,14 @@ def lambda_handler(event: dict, context: Any) -> dict:
             {
                 "MetricName": METRIC_NAME,
                 "Dimensions": [{"Name": "WorkerType", "Value": "Video"}],
-                "Value": float(video_count),
+                "Value": float(video_visible),
                 "Timestamp": now,
                 "Unit": "Count",
             },
             {
                 "MetricName": METRIC_NAME,
                 "Dimensions": [{"Name": "WorkerType", "Value": "Messaging"}],
-                "Value": float(messaging_count),
+                "Value": float(messaging_visible),
                 "Timestamp": now,
                 "Unit": "Count",
             },
@@ -155,13 +155,15 @@ def lambda_handler(event: dict, context: Any) -> dict:
     )
 
     set_ai_worker_asg_desired(autoscaling, ai_visible, ai_in_flight)
+    set_video_worker_asg_desired(autoscaling, video_visible, video_in_flight)
+    set_messaging_worker_asg_desired(autoscaling, messaging_visible, messaging_in_flight)
 
     logger.info(
-        "queue_depth_metric | ai visible=%d in_flight=%d video=%d messaging=%d",
-        ai_visible, ai_in_flight, video_count, messaging_count,
+        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d messaging visible=%d in_flight=%d",
+        ai_visible, ai_in_flight, video_visible, video_in_flight, messaging_visible, messaging_in_flight,
     )
     return {
         "ai_queue_depth": ai_total,
-        "video_queue_depth": video_count,
-        "messaging_queue_depth": messaging_count,
+        "video_queue_depth": video_visible,
+        "messaging_queue_depth": messaging_visible,
     }
