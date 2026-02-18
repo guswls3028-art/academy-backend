@@ -77,13 +77,13 @@ foreach ($config in $asgConfigs) {
     Write-Host ""
 }
 
-Write-Host "Done. Application Auto Scaling 정책이 제거되었습니다." -ForegroundColor Green
+Write-Host "Done. Application Auto Scaling policies removed (or none existed)." -ForegroundColor Green
 Write-Host ""
-Write-Host "다음 단계:" -ForegroundColor Cyan
-Write-Host "  1. Lambda 함수 배포:" -ForegroundColor Gray
-Write-Host "     .\scripts\deploy_worker_asg.ps1" -ForegroundColor White
+Write-Host "Next steps:" -ForegroundColor Cyan
+Write-Host "  1. Deploy Lambda:" -ForegroundColor Gray
+Write-Host "     .\scripts\deploy_worker_asg.ps1 -SubnetIds ""subnet-xxx"" -SecurityGroupId ""sg-xxx"" -IamInstanceProfileName ""academy-ec2-role""" -ForegroundColor White
 Write-Host ""
-Write-Host "  2. Lambda 함수가 모든 워커의 ASG를 직접 조정합니다:" -ForegroundColor Gray
+Write-Host "  2. Lambda adjusts ASG desired capacity for all workers:" -ForegroundColor Gray
 Write-Host "     - AI: academy-ai-worker-asg" -ForegroundColor White
 Write-Host "     - Video: academy-video-worker-asg" -ForegroundColor White
 Write-Host "     - Messaging: academy-messaging-worker-asg" -ForegroundColor White
