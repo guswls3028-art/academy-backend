@@ -5,6 +5,43 @@
 
 ---
 
+## 0. 현재 진행 상태 (2026-02-18)
+
+| 항목 | 상태 | 비고 |
+|------|------|------|
+| **ElastiCache Redis** | ✅ 생성 완료 | endpoint: `academy-redis.prqwaq.ng.0001.apn2.cache.amazonaws.com` |
+| **Redis SG (academy-redis-sg)** | ✅ | sg-0f4069135b6215cad |
+| **API → Redis 연결** | ✅ | API SG(sg-0051cc8f79c04b058) 수동 추가 후 연결 확인 (ping=True) |
+| **Worker → Redis 연결** | ✅ | academy-worker-sg(sg-02692600fbf8e26f7) 스크립트 반영, redis-cli KEYS "*" 연결 OK |
+| **API Redis 컨테이너** | ✅ 중지 | `docker stop academy-redis` |
+| **.env REDIS_HOST** | ✅ 갱신 | ElastiCache 엔드포인트로 자동 수정 |
+| **SSM 반영** | ⏳ 대기 | `.\scripts\setup_worker_iam_and_ssm.ps1` 또는 `upload_env_to_ssm.ps1` |
+| **Worker 재배포** | ⏳ 대기 | `.\scripts\redeploy_worker_asg.ps1` → `full_redeploy.ps1 -WorkersViaASG -SkipBuild` |
+| **실제 job → Redis 키** | ⏳ 미확인 | 영상/AI 작업 1건 실행 후 `job:video:*:progress` 등 확인 권장 |
+
+### 보안 그룹 매핑 (실제 값)
+
+| 구성요소 | SG | SG ID | Redis SG 6379 허용 |
+|----------|-----|-------|--------------------|
+| **API EC2** | academy-api-sg | sg-0051cc8f79c04b058 | ✅ 수동 추가됨 |
+| **Worker EC2 (ASG)** | academy-worker-sg | sg-02692600fbf8e26f7 | ✅ setup_elasticache_redis.ps1 반영 |
+| **Redis** | academy-redis-sg | sg-0f4069135b6215cad | inbound: API SG + Worker SG |
+
+### ⚠️ setup_elasticache_redis.ps1 Gap
+
+- 스크립트 기본값 `ClientSecurityGroupId = sg-02692600fbf8e26f7` (Worker SG만)
+- API는 `academy-api-sg (sg-0051cc8f79c04b058)` 사용 → 스크립트로는 Redis 허용되지 않음
+- **수동 추가**: `aws ec2 authorize-security-group-ingress --group-id sg-0f4069135b6215cad --protocol tcp --port 6379 --source-group sg-0051cc8f79c04b058 --region ap-northeast-2`
+- 개선: API SG 파라미터 추가 또는 둘 다 허용하도록 스크립트 확장 권장
+
+### 다음 액션 체크리스트
+
+- [ ] SSM에 .env 업로드 (`upload_env_to_ssm.ps1`)
+- [ ] Worker ASG 재배포 (`redeploy_worker_asg.ps1`, `full_redeploy.ps1 -WorkersViaASG -SkipBuild`)
+- [ ] 영상/AI job 1건 실행 → Redis 키 존재 여부 확인
+
+---
+
 ## 1. 시스템 개요
 
 | 구성요소 | 역할 | 엔트리포인트 (실제 코드) |
