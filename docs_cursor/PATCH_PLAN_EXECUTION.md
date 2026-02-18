@@ -2616,6 +2616,36 @@ class Migration(migrations.Migration):
 
 ---
 
+## 추가 위험 요소 및 수정 사항
+
+### ✅ 1. get_video_for_update() select_related 추가 (치명적)
+**문제**: tenant_id 추출 시 추가 DB hit 발생 가능
+**해결**: `select_related("session__lecture__tenant")` 추가 완료
+
+### ✅ 2. VideoProgressView 404 전략 변경
+**문제**: Redis TTL 만료 시 404 발생 → UX 위험
+**해결**: `{"status": "UNKNOWN"}` 반환으로 변경 완료
+
+### ✅ 3. RedisProgressAdapter tenant_id 누락 경고
+**문제**: 호출부 누락 시 조용히 legacy 키로 기록됨
+**해결**: tenant_id None 시 경고 로그 추가 완료
+
+### ✅ 4. ps_number 함수 시그니처 확인
+**확인**: `_generate_unique_ps_number()`는 tenant_id를 받지 않음 (전역 유일)
+**확인**: `user_filter_username_exists()`는 존재함
+
+### ⚠️ 5. Migration dependencies 경로 확인 필요
+**주의**: 실제 앱 label 확인 필요
+- `apps.domains.students` → `'students'`
+- `apps.domains.ai` → `'ai'`
+- `apps.support.video` → `'video'`
+
+### ⚠️ 6. Excel Bulk FK 순서 (Day 4+ PR)
+**현재**: Student → User → FK 업데이트 (위험)
+**필요**: User → Student(FK) → Membership (안전)
+
+---
+
 ## 필수 수정 사항 체크리스트
 
 ### ✅ 0. Migration CREATE INDEX CONCURRENTLY
