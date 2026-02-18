@@ -23,10 +23,71 @@
 - Cloudflare SSL **Flexible**, API 서버 **80/8000** 열림, nginx → 8000 프록시 확인 (이전 502 점검 참고).
 - 브라우저 Network에서 `jobs/` 요청이 **502** 인지 확인.
 
-### 3. 워커가 job을 안 가져감 (job은 PENDING 그대로)
+### 3. 워커가 job을 안 가져감 (job은 PENDING 그대로) — **워커 서버가 꺼졌을 때**
+
+엑셀 일괄등록은 **AI 워커(academy-ai-worker-cpu)** 가 `academy-ai-jobs-basic` 큐를 폴링해서 처리합니다. 워커가 꺼져 있으면 메시지는 큐에만 쌓이고 처리되지 않습니다.
+
+#### 3-1. AI 워커 ASG/인스턴스 확인
+
+```powershell
+# AI 워커 ASG desired / 인스턴스 수
+aws autoscaling describe-auto-scaling-groups --region ap-northeast-2 `
+  --auto-scaling-group-names academy-ai-worker-asg `
+  --query "AutoScalingGroups[0].{DesiredCapacity:DesiredCapacity,MinSize:MinSize,MaxSize:MaxSize,Instances:length(Instances)}" --output table
+
+# 실행 중인 AI 워커 인스턴스 (이름 + 퍼블릭 IP)
+aws ec2 describe-instances --region ap-northeast-2 `
+  --filters "Name=tag:Name,Values=academy-ai-worker-cpu" "Name=instance-state-name,Values=running" `
+  --query "Reservations[].Instances[].[Tags[?Key=='Name'].Value|[0],PublicIpAddress]" --output text
+```
+
+- **DesiredCapacity=0 이거나 Instances가 0개** → 워커가 꺼져 있음. 수동으로 desired 1로 올리거나, 큐에 메시지가 있으면 Lambda(autoscale)가 올려줄 수 있음.
+- **인스턴스는 있는데 퍼블릭 IP가 None** → 프라이빗 서브넷이면 정상. SSH는 Bastion 등으로만 가능.
+
+#### 3-2. 수동으로 AI 워커 1대 기동 (당장 처리 필요할 때)
+
+```powershell
+aws autoscaling set-desired-capacity --region ap-northeast-2 `
+  --auto-scaling-group-name academy-ai-worker-asg --desired-capacity 1
+```
+
+인스턴스가 뜨고 user_data로 Docker + `academy-ai-worker-cpu` 컨테이너가 기동될 때까지 2~5분 걸릴 수 있음.
+
+#### 3-3. SQS / 워커 연결 진단 스크립트
+
+API 서버와 동일한 환경에서 SQS 접근·큐 존재 여부 확인:
+
+```powershell
+cd C:\academy
+$env:DJANGO_SETTINGS_MODULE = "apps.api.config.settings.base"
+python scripts/check_sqs_worker_connectivity.py
+```
+
+(또는 EC2 API 서버에서 `docker exec -it academy-api python scripts/check_sqs_worker_connectivity.py`)
+
+- **AI(Basic) 큐 FAIL** → 큐 미존재면 `python scripts/create_ai_sqs_resources.py` 실행 후 재확인. 자격 증명 오류면 API/워커의 AWS 설정 확인.
+
+#### 3-4. 워커 로그 확인 (인스턴스에 접속 가능할 때)
+
+AI 워커 인스턴스에 SSH 접속 후:
+
+```bash
+sudo docker logs -f academy-ai-worker-cpu
+```
+
+- `SQS_MESSAGE_RECEIVED | job_id=... | tier=basic` 후 `EXCEL_PARSING processed_by=worker` 가 나오면 정상 처리.
+- 로그가 전혀 안 나오고 큐에 메시지가 쌓여 있으면 → 워커가 해당 큐를 안 받고 있거나, 다른 인스턴스만 돌고 있을 수 있음 (Basic 큐는 `academy-ai-jobs-basic` 한 종류만 있음).
+
+#### 요약
+
+| 상황 | 확인 | 조치 |
+|------|------|------|
+| job PENDING 그대로 | ASG desired / 인스턴스 수 | desired ≥ 1 로 설정 또는 Lambda 스케일 대기 |
+| 큐 접근 실패 | check_sqs_worker_connectivity.py | create_ai_sqs_resources.py 또는 AWS 자격 증명 |
+| 워커는 켜져 있는데 안 먹음 | 워커 로그, 큐 URL/이름 | .env 의 AI_SQS_QUEUE_NAME_BASIC=academy-ai-jobs-basic 일치 여부 |
 
 - **AI 워커** 인스턴스가 1대 이상 떠 있는지 (ASG desired >= 1).
-- SQS `academy-ai-jobs-lite` / `academy-ai-jobs-basic` 에 메시지가 쌓이는지.
+- SQS `academy-ai-jobs-basic` 에 메시지가 쌓이는지 (AWS SQS 콘솔에서 확인 가능).
 - 워커 EC2/컨테이너 로그에 excel_parsing 처리 로그 또는 에러가 있는지.
 
 ### 4. 워커가 처리했는데 FAILED
