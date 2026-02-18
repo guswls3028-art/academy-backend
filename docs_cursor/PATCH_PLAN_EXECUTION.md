@@ -325,10 +325,12 @@ def complete_video(
                 tenant_id = video.session.lecture.tenant_id
         
         if tenant_id:
+            # ✅ 안전한 Status 값 추출 (TextChoices이면 .value, 아니면 그대로)
+            status_value = getattr(Video.Status.READY, "value", Video.Status.READY)
             cache_video_status(
                 tenant_id=tenant_id,
                 video_id=video_id,
-                status=Video.Status.READY.value,
+                status=status_value,
                 hls_path=hls_path,
                 duration=duration,
                 ttl=None,  # TTL 없음
@@ -718,9 +720,10 @@ class VideoProgressView(APIView):
         if video_status == "PROCESSING":
             # 기존 encoding_progress 함수는 tenant namespace 없이 조회하므로
             # 마이그레이션 기간 동안 양쪽 키 모두 확인 필요
-            progress = get_video_encoding_progress(video_id)
-            step_detail = get_video_encoding_step_detail(video_id)
-            remaining_seconds = get_video_encoding_remaining_seconds(video_id)
+            # ✅ tenant_id 전달 필수
+            progress = get_video_encoding_progress(video_id, tenant.id)
+            step_detail = get_video_encoding_step_detail(video_id, tenant.id)
+            remaining_seconds = get_video_encoding_remaining_seconds(video_id, tenant.id)
         
         # ✅ 응답 구성
         response_data = {
