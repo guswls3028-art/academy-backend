@@ -259,7 +259,8 @@ if ($ips.Count -eq 0) {
 if ($deployApi) {
     $apiIp = $ips["academy-api"]
     if (-not $apiIp) {
-        Write-Host "academy-api instance not found." -ForegroundColor Red
+        Write-Host "academy-api not found or has no public IP (Get-Ec2PublicIps excludes instances without PublicIpAddress)." -ForegroundColor Red
+        Write-Host "  Check: aws ec2 describe-instances --region $Region --filters Name=tag:Name,Values=academy-api Name=instance-state-name,Values=running --query Reservations[].Instances[].[InstanceId,PublicIpAddress]" -ForegroundColor Gray
         exit 1
     }
     # .env 복사 (API 서버 --env-file .env 사용)
