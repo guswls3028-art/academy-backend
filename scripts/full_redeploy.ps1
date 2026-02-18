@@ -205,7 +205,7 @@ echo BUILD_AND_PUSH_OK
 "@
     # SSM on Linux runs the script with bash; CRLF causes "set -e" to be parsed as "set -" (invalid option)
     $buildScript = ($buildScript.Trim() -replace "`r`n", "`n" -replace "`r", "`n")
-    # ✅ JSON을 파일로 저장 후 --cli-input-json 사용 (Windows 경로 문제 해결)
+    # ✅ JSON을 파일로 저장 후 --cli-input-json 사용 (상대 경로 사용으로 Windows 경로 문제 해결)
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     $inputJson = @{
         InstanceIds = @($buildInstanceId)
@@ -217,12 +217,14 @@ echo BUILD_AND_PUSH_OK
     } | ConvertTo-Json -Depth 10
     $inputFile = Join-Path $RepoRoot "ssm_input.json"
     [System.IO.File]::WriteAllText($inputFile, $inputJson, $utf8NoBom)
-    # ✅ Windows 경로를 file:// URI로 변환 (C:\path\to\file -> file:///C:/path/to/file)
-    $inputFileAbs = (Resolve-Path $inputFile).Path
-    $inputUri = "file:///$($inputFileAbs -replace '\\', '/' -replace ':', ':' -replace ' ', '%20')"
-    # ✅ file:// URI 사용 (AWS CLI가 Windows 경로를 제대로 처리하지 못할 수 있음)
-    $cmdResult = aws ssm send-command --region $Region --cli-input-json $inputUri --output json 2>&1
-    Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
+    # ✅ 현재 디렉토리를 변경하여 상대 경로 사용 (Windows 절대 경로 문제 회피)
+    Push-Location $RepoRoot
+    try {
+        $cmdResult = aws ssm send-command --region $Region --cli-input-json "ssm_input.json" --output json 2>&1
+    } finally {
+        Pop-Location
+        Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Send-Command failed with exit code: $LASTEXITCODE" -ForegroundColor Red
         Write-Host "Error output: $cmdResult" -ForegroundColor Red
