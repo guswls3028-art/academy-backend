@@ -77,7 +77,17 @@ foreach ($config in $asgConfigs) {
     Write-Host ""
 }
 
-Write-Host "Done. All workers now have SQS-based QueueDepthTargetTracking policies." -ForegroundColor Green
+Write-Host "Done. Application Auto Scaling 정책이 제거되었습니다." -ForegroundColor Green
 Write-Host ""
-Write-Host "Verification:" -ForegroundColor Cyan
-Write-Host "  Run: .\scripts\check_all_worker_scaling_policies.ps1" -ForegroundColor Gray
+Write-Host "다음 단계:" -ForegroundColor Cyan
+Write-Host "  1. Lambda 함수 배포:" -ForegroundColor Gray
+Write-Host "     .\scripts\deploy_worker_asg.ps1" -ForegroundColor White
+Write-Host ""
+Write-Host "  2. Lambda 함수가 모든 워커의 ASG를 직접 조정합니다:" -ForegroundColor Gray
+Write-Host "     - AI: academy-ai-worker-asg" -ForegroundColor White
+Write-Host "     - Video: academy-video-worker-asg" -ForegroundColor White
+Write-Host "     - Messaging: academy-messaging-worker-asg" -ForegroundColor White
+Write-Host ""
+Write-Host "  3. 스케일링 로직:" -ForegroundColor Gray
+Write-Host "     - 큐 깊이(visible + in_flight) / $TargetMessagesPerInstance = desired capacity" -ForegroundColor White
+Write-Host "     - 최소: ASG Min 값, 최대: ASG Max 값" -ForegroundColor White
