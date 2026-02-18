@@ -206,16 +206,24 @@ echo BUILD_AND_PUSH_OK
     # SSM on Linux runs the script with bash; CRLF causes "set -e" to be parsed as "set -" (invalid option)
     $buildScript = ($buildScript.Trim() -replace "`r`n", "`n" -replace "`r", "`n")
     # ✅ --parameters 직접 사용 (Windows --cli-input-json 문제 회피)
-    # AWS CLI는 --parameters에 JSON 문자열을 직접 받을 수 있음
-    $paramsJson = @{
-        commands = @($buildScript)
-    } | ConvertTo-Json -Compress -Depth 10
-    # ✅ PowerShell에서 JSON 문자열을 안전하게 전달하기 위해 따옴표 처리
-    # JSON 문자열을 작은따옴표로 감싸서 PowerShell 변수 확장 방지
+    # AWS CLI는 --parameters에 key=value 형식을 기대함: commands=["cmd1","cmd2"]
+    # 멀티라인 스크립트를 배열로 변환
+    $scriptLines = $buildScript -split "`n" | Where-Object { $_.Trim() -ne "" }
+    # 각 라인을 JSON 문자열로 이스케이프하고 배열로 구성
+    $commandsArray = $scriptLines | ForEach-Object { 
+        $line = $_.Trim()
+        if ($line) {
+            # JSON 문자열 이스케이프: 따옴표와 백슬래시 처리
+            $escaped = $line -replace '\\', '\\' -replace '"', '\"'
+            "`"$escaped`""
+        }
+    }
+    $commandsJson = "[$($commandsArray -join ',')]"
+    # ✅ PowerShell에서 JSON 문자열을 안전하게 전달
     $cmdResult = aws ssm send-command --region $Region `
         --instance-ids $buildInstanceId `
         --document-name "AWS-RunShellScript" `
-        --parameters "'$paramsJson'" `
+        --parameters "commands=$commandsJson" `
         --timeout-seconds 3600 `
         --output json 2>&1
     if ($LASTEXITCODE -ne 0) {
