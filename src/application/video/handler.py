@@ -53,15 +53,20 @@ class ProcessVideoJobHandler:
         video_id = int(job.get("video_id", 0))
         job_id = f"encode:{video_id}"  # action별 멱등 키 분리 (delete_r2는 delete_r2:{video_id})
 
+        logger.info("[HANDLER] Starting video processing video_id=%s job_id=%s", video_id, job_id)
         if not self._idempotency.acquire_lock(job_id):
+            logger.info("[HANDLER] Lock acquisition failed, skipping video_id=%s", video_id)
             return "skip"
 
+        logger.info("[HANDLER] Lock acquired, marking as PROCESSING video_id=%s", video_id)
         try:
             if not self._repo.mark_processing(video_id):
-                logger.warning("Cannot mark video %s as PROCESSING, skipping", video_id)
+                logger.warning("[HANDLER] Cannot mark video %s as PROCESSING, skipping", video_id)
                 return "skip"
 
+            logger.info("[HANDLER] Starting process_fn video_id=%s", video_id)
             hls_path, duration = self._process_fn(job=job, cfg=cfg, progress=self._progress)
+            logger.info("[HANDLER] process_fn completed video_id=%s hls_path=%s duration=%s", video_id, hls_path, duration)
 
             ok, reason = self._repo.complete_video(
                 video_id=video_id,
