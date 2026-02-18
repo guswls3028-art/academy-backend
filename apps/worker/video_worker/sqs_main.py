@@ -290,13 +290,13 @@ def main() -> int:
                         processing_duration,
                         queue_wait_time,
                     )
-                    if processing_duration > SQS_VISIBILITY_TIMEOUT:
+                    if processing_duration > VIDEO_VISIBILITY_EXTEND_SECONDS:
                         logger.warning(
                             "SQS_VISIBILITY_TIMEOUT_EXCEEDED | request_id=%s | video_id=%s | processing_duration=%.2f | visibility_timeout=%d",
                             request_id,
                             video_id,
                             processing_duration,
-                            SQS_VISIBILITY_TIMEOUT,
+                            VIDEO_VISIBILITY_EXTEND_SECONDS,
                         )
                     consecutive_errors += 1
 

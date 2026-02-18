@@ -55,13 +55,13 @@ def create_sqs_resources(region_name: str = "ap-northeast-2"):
     # 2. 메인 큐 생성 (DLQ 연결)
     queue_name = "academy-video-jobs"
     
-    # VisibilityTimeout: 3시간. 3시간 영상 + Spot/디스크 지연 시 재노출 방지 (최대 영상 길이 × 1.5 권장).
-    # 기존 큐가 이미 있으면 AWS 콘솔에서 수동으로 VisibilityTimeout = 10800 으로 변경 필요.
+    # VisibilityTimeout: 6h (21600). Must be >= ffmpeg timeout (max 6h = duration*1.5 cap).
+    # 기존 큐가 이미 있으면 AWS 콘솔에서 VisibilityTimeout = 21600 으로 변경 필요.
     try:
         queue_response = sqs.create_queue(
             QueueName=queue_name,
             Attributes={
-                "VisibilityTimeout": "10800",  # 3시간. 작업 시작 시 ChangeMessageVisibility(10800) 추가 권장.
+                "VisibilityTimeout": "21600",  # 6h. Worker extends to same at job start.
                 "MessageRetentionPeriod": "1209600",  # 14일
                 "ReceiveMessageWaitTimeSeconds": "20",  # Long Polling
                 "RedrivePolicy": json.dumps({
