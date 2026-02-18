@@ -163,7 +163,53 @@
 
 **모든 Day 1 작업 완료** ✅
 
-다음 단계:
-1. 프론트엔드 폴링 전환 (progress endpoint 사용)
-2. DB CPU 안정화 확인
-3. Day 2 작업 진행 (Worker progress 기록 수정)
+### 생성/수정된 파일 목록
+
+**신규 생성 파일**:
+1. `apps/support/video/redis_status_cache.py`
+2. `apps/domains/ai/redis_status_cache.py`
+3. `apps/support/video/redis_progress_adapter.py`
+4. `apps/domains/ai/views/job_progress_view.py`
+
+**수정된 파일**:
+1. `academy/adapters/db/django/repositories_video.py` (select_related 추가)
+2. `apps/support/video/services/sqs_queue.py` (Redis 상태 저장 추가)
+3. `academy/adapters/db/django/repositories_ai.py` (Redis 상태 저장 추가)
+4. `apps/support/video/views/progress_views.py` (VideoProgressView 추가)
+5. `apps/support/video/views/__init__.py` (import 추가)
+6. `apps/support/video/urls.py` (URL 라우팅 추가)
+7. `apps/domains/ai/urls.py` (URL 라우팅 추가)
+8. `apps/support/video/encoding_progress.py` (tenant-aware 수정)
+9. `src/infrastructure/cache/redis_progress_adapter.py` (tenant_id 지원 추가)
+
+### 최종 검증
+
+- ✅ 모든 파일 생성/수정 완료
+- ✅ Import 경로 정확
+- ✅ 함수 시그니처 정확
+- ✅ Status 값 타입 통일
+- ✅ tenant_id 전달 경로 확인
+- ✅ 예외 처리 포함
+- ✅ 하위 호환성 유지
+- ✅ URL 라우팅 완료
+
+---
+
+## 다음 단계
+
+1. **프론트엔드 폴링 전환** (즉시 진행 가능)
+   - `GET /media/videos/{id}/progress/` 사용
+   - `GET /api/v1/jobs/{job_id}/progress/` 사용
+   - DB CPU 즉시 안정화 예상
+
+2. **DB CPU 안정화 확인**
+   - CloudWatch에서 RDS CPUUtilization 모니터링
+   - DatabaseConnections 메트릭 확인
+
+3. **Day 2 작업 진행** (선택)
+   - Worker progress 기록에 tenant_id 전달
+   - VideoProgressAdapter writer 쪽 적용
+
+---
+
+**Day 1 작업 완료. 프론트엔드 폴링 전환 후 DB CPU 안정화를 확인하세요.** ✅
