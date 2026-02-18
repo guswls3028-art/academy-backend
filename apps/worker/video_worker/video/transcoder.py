@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from apps.worker.video_worker.utils import ensure_dir, trim_tail
+
+# ffmpeg stderr 진행률 파싱 (time=00:01:23.45 형태)
+_RE_TIME = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
 
 # preset 유지 (순서 중요)
 HLS_VARIANTS = [
