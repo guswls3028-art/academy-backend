@@ -59,7 +59,7 @@ if (-not $apiIp -or $apiIp -eq "None") {
             Write-Host "OK   API .env REDIS_HOST: $($apiRedisHost.Trim())" -ForegroundColor Green
             $py = 'import os,redis;h=os.environ.get("REDIS_HOST");p=int(os.environ.get("REDIS_PORT",6379));r=redis.Redis(host=h,port=p,db=0);print("OK",r.ping())'
 $apiRedisTest = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i $apiKey "ec2-user@$apiIp" "sudo docker exec academy-api python -c `"$py`" 2>/dev/null" 2>$null
-            if ($apiRedisTest -match "Redis OK: True") {
+            if ($apiRedisTest -match "OK True") {
                 Write-Host "OK   API Redis ping: 성공" -ForegroundColor Green
             } else {
                 Write-Host "WARN API Redis ping 실패 또는 미확인" -ForegroundColor Yellow
