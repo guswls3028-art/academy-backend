@@ -100,6 +100,11 @@ foreach ($config in $asgConfigs) {
     $policyFile = Join-Path $RepoRoot "asg_policy_${workerType}_temp.json"
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($policyFile, $policy, $utf8NoBom)
+    
+    # 디버깅: 생성된 JSON 파일 내용 확인
+    Write-Host "    Generated JSON file:" -ForegroundColor Gray
+    Get-Content $policyFile | ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray }
+    
     $policyPath = "file://$($policyFile -replace '\\','/' -replace ' ', '%20')"
     
     $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
