@@ -127,8 +127,8 @@ def main() -> int:
     cfg = load_config()
     queue = VideoSQSAdapter()
     repo = DjangoVideoRepository()
-    idempotency = RedisIdempotencyAdapter()
-    progress = RedisProgressAdapter()
+    idempotency = RedisIdempotencyAdapter(ttl_seconds=VIDEO_LOCK_TTL_SECONDS)
+    progress = RedisProgressAdapter(ttl_seconds=VIDEO_PROGRESS_TTL_SECONDS)
     handler = ProcessVideoJobHandler(
         repo=repo,
         idempotency=idempotency,
