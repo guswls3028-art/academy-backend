@@ -83,3 +83,30 @@ def get_video_encoding_remaining_seconds(video_id: int) -> Optional[int]:
         return max(0, int(sec))
     except (TypeError, ValueError):
         return None
+
+
+def get_video_encoding_step_detail(video_id: int) -> Optional[dict]:
+    """
+    Redis에서 구간별 진행률 조회. (n/7) 단계 + 구간 내 0~100%.
+    반환: { step_index, step_total, step_name, step_name_display, step_percent } 또는 None.
+    """
+    payload = _get_progress_payload(video_id)
+    if not payload:
+        return None
+    idx = payload.get("step_index")
+    total = payload.get("step_total")
+    name = payload.get("step_name")
+    display = payload.get("step_name_display")
+    pct = payload.get("step_percent")
+    if idx is None or total is None or name is None or pct is None:
+        return None
+    try:
+        return {
+            "step_index": int(idx),
+            "step_total": int(total),
+            "step_name": str(name),
+            "step_name_display": str(display) if display is not None else name,
+            "step_percent": max(0, min(100, int(pct))),
+        }
+    except (TypeError, ValueError):
+        return None
