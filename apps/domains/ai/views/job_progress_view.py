@@ -52,10 +52,11 @@ class JobProgressView(APIView):
         }
         
         # ✅ 완료 상태면 result/error 포함
-        if job_status in ["DONE", "FAILED"]:
+        # AI Job status는 "DONE", "FAILED", "REJECTED_BAD_INPUT", "FALLBACK_TO_GPU", "REVIEW_REQUIRED" 등이 있음
+        if job_status in ["DONE", "FAILED", "REJECTED_BAD_INPUT", "FALLBACK_TO_GPU", "REVIEW_REQUIRED"]:
             if "result" in cached_status:
                 response_data["result"] = cached_status["result"]
-            if job_status == "FAILED":
+            if job_status in ["FAILED", "REJECTED_BAD_INPUT", "FALLBACK_TO_GPU", "REVIEW_REQUIRED"]:
                 response_data["error_message"] = cached_status.get("error_message")
         
         return Response(response_data)
