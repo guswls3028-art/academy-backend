@@ -278,7 +278,6 @@ def main() -> int:
                     # 예약 취소 Double Check: 발송 직전 한 번 더 확인
                     reservation_id = data.get("reservation_id")
                     if reservation_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
-                        _record_progress(job_id, "checking", 10, step_index=1, step_percent=100)
                         try:
                             from apps.support.messaging.services import is_reservation_cancelled
                             if is_reservation_cancelled(int(reservation_id)):
@@ -291,8 +290,6 @@ def main() -> int:
                                 continue
                         except Exception as e:
                             logger.warning("reservation check failed: %s", e)
-                    else:
-                        _record_progress(job_id, "checking", 10, step_index=1, step_percent=100)
 
                     _current_receipt_handle = receipt_handle
 
@@ -340,11 +337,13 @@ def main() -> int:
                     deducted = False
                     try:
                         if info and float(base_price) > 0 and tenant_id is not None:
+                            _record_progress(job_id, "validating", 30, step_index=2, step_percent=0)
                             from decimal import Decimal
                             from apps.support.messaging.credit_services import deduct_credits
                             from academy.adapters.db.django.repositories_messaging import create_notification_log
                             bal = info.get("credit_balance", "0")
                             if float(bal) < float(base_price):
+                                _record_progress(job_id, "validating", 30, step_index=2, step_percent=100)
                                 logger.warning(
                                     "tenant_id=%s insufficient_balance balance=%s base_price=%s, skip send",
                                     tenant_id, bal, base_price,
@@ -364,6 +363,9 @@ def main() -> int:
                                 continue
                             deduct_credits(int(tenant_id), base_price)
                             deducted = True
+                            _record_progress(job_id, "validating", 50, step_index=2, step_percent=100)
+                        else:
+                            _record_progress(job_id, "validating", 50, step_index=2, step_percent=100)
                     except Exception as e:
                         logger.exception("deduct_credits failed: %s", e)
                         _current_receipt_handle = None
