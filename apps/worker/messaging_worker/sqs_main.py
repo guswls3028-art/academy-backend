@@ -344,13 +344,13 @@ def main() -> int:
                     deducted = False
                     try:
                         if info and float(base_price) > 0 and tenant_id is not None:
-                            _record_progress(job_id, "validating", 30, step_index=2, step_percent=0)
+                            _record_progress(job_id, "validating", 30, step_index=2, step_percent=0, tenant_id=tenant_id_str)
                             from decimal import Decimal
                             from apps.support.messaging.credit_services import deduct_credits
                             from academy.adapters.db.django.repositories_messaging import create_notification_log
                             bal = info.get("credit_balance", "0")
                             if float(bal) < float(base_price):
-                                _record_progress(job_id, "validating", 30, step_index=2, step_percent=100)
+                                _record_progress(job_id, "validating", 30, step_index=2, step_percent=100, tenant_id=tenant_id_str)
                                 logger.warning(
                                     "tenant_id=%s insufficient_balance balance=%s base_price=%s, skip send",
                                     tenant_id, bal, base_price,
@@ -370,9 +370,9 @@ def main() -> int:
                                 continue
                             deduct_credits(int(tenant_id), base_price)
                             deducted = True
-                            _record_progress(job_id, "validating", 50, step_index=2, step_percent=100)
+                            _record_progress(job_id, "validating", 50, step_index=2, step_percent=100, tenant_id=tenant_id_str)
                         else:
-                            _record_progress(job_id, "validating", 50, step_index=2, step_percent=100)
+                            _record_progress(job_id, "validating", 50, step_index=2, step_percent=100, tenant_id=tenant_id_str)
                     except Exception as e:
                         logger.exception("deduct_credits failed: %s", e)
                         _current_receipt_handle = None
