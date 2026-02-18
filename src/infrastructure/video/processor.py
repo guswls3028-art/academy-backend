@@ -64,7 +64,19 @@ def process_video(
         raise ValueError("video_id and tenant_id required")
 
     # 남은 시간 예상: presigning 시점에선 duration 모름 → 다운로드 후 갱신
-    progress.record_progress(job_id, "presigning", {"percent": 5, "remaining_seconds": 120})
+    progress.record_progress(
+        job_id,
+        "presigning",
+        {
+            "percent": 5,
+            "remaining_seconds": 120,
+            "step_index": 1,
+            "step_total": VIDEO_ENCODING_STEP_TOTAL,
+            "step_name": "presigning",
+            "step_name_display": "준비",
+            "step_percent": 100,
+        },
+    )
     try:
         source_url = create_presigned_get_url(key=file_key, expires_in=600)
     except Exception as e:
@@ -80,10 +92,35 @@ def process_video(
         src_path = wd / "source.mp4"
         out_dir = wd / "hls"
 
-        progress.record_progress(job_id, "downloading", {"file_key": file_key, "percent": 15, "remaining_seconds": 300})
+        progress.record_progress(
+            job_id,
+            "downloading",
+            {
+                "file_key": file_key,
+                "percent": 15,
+                "remaining_seconds": 300,
+                "step_index": 2,
+                "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                "step_name": "downloading",
+                "step_name_display": "다운로드",
+                "step_percent": 100,
+            },
+        )
         download_to_file(url=source_url, dst=src_path, cfg=cfg)
 
-        progress.record_progress(job_id, "probing", {"percent": 25, "remaining_seconds": 240})
+        progress.record_progress(
+            job_id,
+            "probing",
+            {
+                "percent": 25,
+                "remaining_seconds": 240,
+                "step_index": 3,
+                "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                "step_name": "probing",
+                "step_name_display": "분석",
+                "step_percent": 100,
+            },
+        )
         duration = probe_duration_seconds(
             input_path=str(src_path),
             ffprobe_bin=cfg.FFPROBE_BIN,
