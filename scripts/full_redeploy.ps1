@@ -206,11 +206,14 @@ echo BUILD_AND_PUSH_OK
     # SSM on Linux runs the script with bash; CRLF causes "set -e" to be parsed as "set -" (invalid option)
     $buildScript = ($buildScript.Trim() -replace "`r`n", "`n" -replace "`r", "`n")
     # ✅ JSON을 직접 전달 (file:// URI 대신, Windows 경로 문제 해결)
-    $buildScriptJsonEscaped = $buildScript -replace '\\', '\\' -replace '"', '\"' -replace "`n", '\n' -replace "`r", ''
-    $paramsJsonStr = "{`"commands`": [`"$buildScriptJsonEscaped`"]}"
+    # PowerShell에서 JSON 이스케이프 처리
+    $buildScriptEscaped = $buildScript -replace '\\', '\\' -replace '"', '\"' -replace "`n", '\n' -replace "`r", ''
+    $paramsJson = @{
+        commands = @($buildScriptEscaped)
+    } | ConvertTo-Json -Compress
     $cmdId = aws ssm send-command --region $Region --instance-ids $buildInstanceId `
         --document-name "AWS-RunShellScript" `
-        --parameters $paramsJsonStr `
+        --parameters $paramsJson `
         --timeout-seconds 3600 `
         --output text --query "Command.CommandId" 2>&1
     if (-not $cmdId -or $cmdId -match "error|Error") {
