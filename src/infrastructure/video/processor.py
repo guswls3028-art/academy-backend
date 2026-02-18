@@ -77,12 +77,27 @@ def process_video(
             "step_total": VIDEO_ENCODING_STEP_TOTAL,
             "step_name": "presigning",
             "step_name_display": "준비",
-            "step_percent": 100,
+            "step_percent": 0,  # ✅ 단계 시작: 0%
         },
         tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
     )
     try:
         source_url = create_presigned_get_url(key=file_key, expires_in=600)
+        # ✅ 단계 완료: 100%
+        progress.record_progress(
+            job_id,
+            "presigning",
+            {
+                "percent": 5,
+                "remaining_seconds": 120,
+                "step_index": 1,
+                "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                "step_name": "presigning",
+                "step_name_display": "준비",
+                "step_percent": 100,
+            },
+            tenant_id=tenant_id_str,
+        )
     except Exception as e:
         raise RuntimeError(f"presigned_get_failed:{trim_tail(str(e))}") from e
 
@@ -107,11 +122,27 @@ def process_video(
                 "step_total": VIDEO_ENCODING_STEP_TOTAL,
                 "step_name": "downloading",
                 "step_name_display": "다운로드",
-                "step_percent": 100,
+                "step_percent": 0,  # ✅ 단계 시작: 0%
             },
             tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
         download_to_file(url=source_url, dst=src_path, cfg=cfg)
+        # ✅ 단계 완료: 100%
+        progress.record_progress(
+            job_id,
+            "downloading",
+            {
+                "file_key": file_key,
+                "percent": 15,
+                "remaining_seconds": 300,
+                "step_index": 2,
+                "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                "step_name": "downloading",
+                "step_name_display": "다운로드",
+                "step_percent": 100,
+            },
+            tenant_id=tenant_id_str,
+        )
 
         progress.record_progress(
             job_id,
