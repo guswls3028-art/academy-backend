@@ -57,6 +57,10 @@ def _record_progress(
 
 def handle_ai_job(job: AIJob) -> AIResult:
     try:
+        # ✅ tenant_id 추출 (payload 우선, 없으면 job.tenant_id)
+        payload: Dict[str, Any] = job.payload or {}
+        tenant_id = str(payload.get("tenant_id") or job.tenant_id or "") if (payload.get("tenant_id") or job.tenant_id) else None
+        
         # 작업 분기: type / task / job_type 으로 EXCEL_PARSING vs AI 작업 분리
         job_type_lower = (job.type or "").strip().lower()
         if job_type_lower == "excel_parsing":
@@ -67,14 +71,13 @@ def handle_ai_job(job: AIJob) -> AIResult:
             return handle_staff_excel_export(job)
 
         cfg = AIConfig.load()
-        payload: Dict[str, Any] = job.payload or {}
 
         download_url = payload.get("download_url")
         if not download_url:
             return AIResult.failed(job.id, "download_url missing")
 
         # 다운로드 단계 (모든 작업 공통)
-        _record_progress(job.id, "downloading", 10, step_index=1, step_total=1, step_name_display="다운로드", step_percent=0)
+        _record_progress(job.id, "downloading", 10, step_index=1, step_total=1, step_name_display="다운로드", step_percent=0, tenant_id=tenant_id)
         local_path = download_to_tmp(
             download_url=download_url,
             job_id=str(job.id),
