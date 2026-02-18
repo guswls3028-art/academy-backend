@@ -14,9 +14,11 @@ def get_video_status(video_id: int) -> Optional[str]:
 
 
 def get_video_for_update(video_id: int):
-    """select_for_update로 Video 1건 조회."""
+    """select_for_update로 Video 1건 조회 (tenant_id 추출을 위한 select_related 포함)."""
     from apps.support.video.models import Video
-    return Video.objects.select_for_update().filter(id=int(video_id)).first()
+    return Video.objects.select_for_update().select_related(
+        "session", "session__lecture", "session__lecture__tenant"
+    ).filter(id=int(video_id)).first()
 
 
 def get_video_queryset_with_relations():
