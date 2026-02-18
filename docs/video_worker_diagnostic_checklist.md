@@ -190,16 +190,23 @@ aws events list-rules --region ap-northeast-2 --query "Rules[?Name=='academy-wor
 - 워커가 **작업 시작 시** `change_message_visibility(receipt_handle, 21600)` 호출 (6h).
 - 3시간 영상도 visibility로는 문제 없음.
 
-### 3. Lambda 기반 오토스케일 사용 시 (`infra/worker_autoscale_lambda/`)
+### 4. (참고) 별도 Lambda `infra/worker_autoscale_lambda/` 사용 시
 
 - EventBridge 1분 주기로 Lambda 호출.
 - `ApproximateNumberOfMessages`(visible) >= 1 이면 stopped 인스턴스 1대 Start.
 - `MAX_INSTANCES_PER_TYPE=1` 기본값 → 2대로 늘리려면 이 값 또는 Lambda 로직 수정 필요.
 - Lambda 로그에서 큐 depth, Start 호출 여부 확인.
 
-### 4. ASG 스케일 정책 없음 시 — SQS 기반 정책 추가
+### 5. Lambda가 없거나 동작 안 할 때 — 수동 배포
 
-`describe-policies` / `describe-alarms` 가 비어 있으면 ASG에 정책이 없어 스케일 업이 안 됨. 아래 순서로 추가.
+Lambda `academy-worker-queue-depth-metric` 이 없거나 EventBridge가 호출 안 하면 스케일이 안 됨.
+
+```powershell
+# deploy_worker_asg.ps1 실행 (Lambda + EventBridge 배포 포함)
+.\scripts\deploy_worker_asg.ps1
+```
+
+또는 ASG 정책 방식으로 전환하려면 아래 절차 (Lambda 비사용 시 대안).
 
 #### 4-1) Scale-Out 정책 생성 (먼저 PolicyARN 확보)
 
