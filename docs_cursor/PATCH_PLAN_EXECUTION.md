@@ -751,10 +751,11 @@ class VideoProgressView(APIView):
         cached_status = get_video_status_from_redis(tenant.id, video_id)
         
         if not cached_status:
-            # Redis에 없으면 404 (진행 중이 아니거나 완료 후 TTL 만료)
+            # ✅ Redis에 없으면 UNKNOWN 상태 반환 (404는 UX상 위험)
+            # TTL 만료되었지만 아직 READY 상태일 수 있음
             return Response(
-                {"detail": "진행 중인 작업이 아닙니다."},
-                status=status.HTTP_404_NOT_FOUND,
+                {"status": "UNKNOWN", "message": "진행 상태를 확인할 수 없습니다."},
+                status=status.HTTP_200_OK,
             )
         
         video_status = cached_status.get("status")
@@ -765,8 +766,6 @@ class VideoProgressView(APIView):
         remaining_seconds = None
         
         if video_status == "PROCESSING":
-            # 기존 encoding_progress 함수는 tenant namespace 없이 조회하므로
-            # 마이그레이션 기간 동안 양쪽 키 모두 확인 필요
             # ✅ tenant_id 전달 필수
             progress = get_video_encoding_progress(video_id, tenant.id)
             step_detail = get_video_encoding_step_detail(video_id, tenant.id)
