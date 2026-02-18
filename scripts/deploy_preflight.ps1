@@ -10,6 +10,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $ScriptRoot "_config_instance_keys.ps1")
 $failed = $false
 
 Write-Host "`n=== Deploy preflight (strict) ===`n" -ForegroundColor Cyan
@@ -27,13 +29,8 @@ $arn = $idJson.Arn
 Write-Host "[OK] Account: $account" -ForegroundColor Green
 Write-Host "     ARN: $arn" -ForegroundColor Gray
 
-# 2) SSH keys (API + 3 workers)
-$requiredKeys = @(
-    @{ Name = "academy-api"; Key = "backend-api-key.pem" },
-    @{ Name = "academy-messaging-worker"; Key = "message-key.pem" },
-    @{ Name = "academy-ai-worker-cpu"; Key = "ai-worker-key.pem" },
-    @{ Name = "academy-video-worker"; Key = "video-worker-key.pem" }
-)
+# 2) SSH keys (API + 3 workers) - SSOT: _config_instance_keys.ps1
+$requiredKeys = $INSTANCE_KEY_FILES.GetEnumerator() | ForEach-Object { @{ Name = $_.Key; Key = $_.Value } }
 foreach ($r in $requiredKeys) {
     $path = Join-Path $KeyDir $r.Key
     if (Test-Path $path) {

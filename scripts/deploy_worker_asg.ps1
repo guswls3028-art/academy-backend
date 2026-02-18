@@ -30,6 +30,10 @@ $RepoRoot = Split-Path -Parent $ScriptRoot
 . (Join-Path $ScriptRoot "_config_instance_keys.ps1")
 $AsgInfra = Join-Path $RepoRoot "infra\worker_asg"
 $QueueDepthLambdaDir = Join-Path $AsgInfra "queue_depth_lambda"
+# SSOT: Key pair names from _config_instance_keys (PemFile minus .pem)
+if (-not $KeyNameAi)       { $KeyNameAi = Get-KeyPairName $INSTANCE_KEY_FILES["academy-ai-worker-cpu"] }
+if (-not $KeyNameVideo)    { $KeyNameVideo = Get-KeyPairName $INSTANCE_KEY_FILES["academy-video-worker"] }
+if (-not $KeyNameMessaging) { $KeyNameMessaging = Get-KeyPairName $INSTANCE_KEY_FILES["academy-messaging-worker"] }
 $UserDataDir = Join-Path $AsgInfra "user_data"
 
 $AccountId = (aws sts get-caller-identity --query Account --output text)

@@ -31,6 +31,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptRoot
+. (Join-Path $ScriptRoot "_config_instance_keys.ps1")
 $AsgInfra = Join-Path $RepoRoot "infra\worker_asg"
 
 $AccountId = (aws sts get-caller-identity --query Account --output text 2>&1)
@@ -46,13 +47,8 @@ if (-not $SkipBuild) {
 $ECR = "${AccountId}.dkr.ecr.${Region}.amazonaws.com"
 $EC2_USER = "ec2-user"
 
-# same as deploy.ps1
-$INSTANCE_KEYS = @{
-    "academy-api"                = "backend-api-key.pem"
-    "academy-messaging-worker"   = "message-key.pem"
-    "academy-ai-worker-cpu"      = "ai-worker-key.pem"
-    "academy-video-worker"       = "video-worker-key.pem"
-}
+# SSOT: _config_instance_keys.ps1
+$INSTANCE_KEYS = $INSTANCE_KEY_FILES
 $INSTANCE_ORDER = @("academy-api", "academy-messaging-worker", "academy-ai-worker-cpu", "academy-video-worker")
 $REMOTE_CMDS = @{
     "academy-api" = "aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $ECR && docker pull ${ECR}/academy-api:latest && (docker rm -f academy-api 2>/dev/null || true) && docker run -d --name academy-api --restart unless-stopped --env-file .env -p 8000:8000 ${ECR}/academy-api:latest && docker update --restart unless-stopped academy-api"
