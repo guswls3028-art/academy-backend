@@ -69,32 +69,35 @@ def handle_excel_parsing_job(job: AIJob) -> AIResult:
     if not file_key:
         return AIResult.failed(job.id, "payload.file_key required")
 
+    # ✅ tenant_id 추출 (payload 우선, 없으면 job.tenant_id)
+    tenant_id = str(payload.get("tenant_id") or job.tenant_id or "") if (payload.get("tenant_id") or job.tenant_id) else None
+
     bucket = _excel_bucket(payload)
     storage = R2ObjectStorageAdapter()
-    _record_progress(job.id, "downloading", 10, step_index=1, step_percent=100)
+    _record_progress(job.id, "downloading", 10, step_index=1, step_percent=100, tenant_id=tenant_id)
 
     def _on_progress(step: str, percent: int) -> None:
         # ExcelParsingService에서 오는 step: "parsing", "creating", "enrolling" 등
         if step == "parsing":
-            _record_progress(job.id, "parsing", 40, step_index=2, step_percent=100)
+            _record_progress(job.id, "parsing", 40, step_index=2, step_percent=100, tenant_id=tenant_id)
         elif step == "creating":
             # 학생만 생성: percent가 40~95 사이로 오므로 step_percent 계산
             step_pct = int(100 * (percent - 40) / 55) if percent > 40 else 0
             step_pct = min(100, max(0, step_pct))
-            _record_progress(job.id, "enrolling", percent, step_index=3, step_percent=step_pct)
+            _record_progress(job.id, "enrolling", percent, step_index=3, step_percent=step_pct, tenant_id=tenant_id)
         elif step == "enrolling":
             # 수강 등록: percent가 50~95 사이로 오므로 step_percent 계산
             step_pct = int(100 * (percent - 50) / 45) if percent > 50 else 0
             step_pct = min(100, max(0, step_pct))
-            _record_progress(job.id, "enrolling", percent, step_index=3, step_percent=step_pct)
+            _record_progress(job.id, "enrolling", percent, step_index=3, step_percent=step_pct, tenant_id=tenant_id)
         else:
-            _record_progress(job.id, step, percent)
+            _record_progress(job.id, step, percent, tenant_id=tenant_id)
 
     try:
         service = ExcelParsingService(storage)
-        _record_progress(job.id, "parsing", 25, step_index=2, step_percent=0)
+        _record_progress(job.id, "parsing", 25, step_index=2, step_percent=0, tenant_id=tenant_id)
         result = service.run(job.id, payload, on_progress=_on_progress)
-        _record_progress(job.id, "done", 100, step_index=4, step_percent=100)
+        _record_progress(job.id, "done", 100, step_index=4, step_percent=100, tenant_id=tenant_id)
         result["processed_by"] = "worker"
         logger.info(
             "EXCEL_PARSING processed_by=worker job_id=%s enrolled=%s",
