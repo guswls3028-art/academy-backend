@@ -75,6 +75,13 @@ aws autoscaling delete-policy \
 
 ## 3. 올바른 정책 확인 (SQS 기반만 남아야 함)
 
+**PowerShell:**
+```powershell
+# 정상: QueueDepthTargetTracking 정책만 있어야 함
+aws application-autoscaling describe-scaling-policies --service-namespace ec2 --resource-id "auto-scaling-group/academy-video-worker-asg" --region ap-northeast-2 --query "ScalingPolicies[?PolicyName=='QueueDepthTargetTracking']" --output json
+```
+
+**Linux/Mac:**
 ```bash
 # 정상: QueueDepthTargetTracking 정책만 있어야 함
 aws application-autoscaling describe-scaling-policies \
