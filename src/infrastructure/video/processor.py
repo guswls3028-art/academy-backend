@@ -343,7 +343,7 @@ def process_video(
                 "step_total": VIDEO_ENCODING_STEP_TOTAL,
                 "step_name": "uploading",
                 "step_name_display": "업로드",
-                "step_percent": 100,
+                "step_percent": 0,  # ✅ 단계 시작: 0%
             },
             tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
@@ -359,6 +359,22 @@ def process_video(
             retry_max=int(cfg.RETRY_MAX_ATTEMPTS),
             backoff_base=float(cfg.BACKOFF_BASE_SECONDS),
             backoff_cap=float(cfg.BACKOFF_CAP_SECONDS),
+        )
+        # ✅ 단계 완료: 100%
+        progress.record_progress(
+            job_id,
+            "uploading",
+            {
+                "hls_prefix": hls_prefix,
+                "percent": 95,
+                "remaining_seconds": 15,
+                "step_index": 7,
+                "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                "step_name": "uploading",
+                "step_name_display": "업로드",
+                "step_percent": 100,
+            },
+            tenant_id=tenant_id_str,
         )
 
     progress.record_progress(
