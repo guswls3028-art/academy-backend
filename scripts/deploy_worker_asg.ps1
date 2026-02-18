@@ -198,12 +198,12 @@ Write-Host "[4/8] ASG (AI worker, Min=1 Max=$MaxCapacity)..." -ForegroundColor C
 $AsgAiName = "academy-ai-worker-asg"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgAiName `
-    --launch-template "LaunchTemplateName=$LtAiName,Version=`$Default" `
+    --launch-template "LaunchTemplateName=$LtAiName,Version=`$Latest" `
     --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
     --vpc-zone-identifier $SubnetIds --region $Region 2>$null
 if ($LASTEXITCODE -ne 0) {
     aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgAiName `
-        --launch-template "LaunchTemplateName=$LtAiName,Version=`$Default" `
+        --launch-template "LaunchTemplateName=$LtAiName,Version=`$Latest" `
         --vpc-zone-identifier $SubnetIds `
         --min-size 1 --max-size $MaxCapacity --desired-capacity 1 --region $Region 2>$null
 }
@@ -216,12 +216,12 @@ Write-Host "[5/8] ASG (Video worker, Min=1 Max=$MaxCapacity)..." -ForegroundColo
 $AsgVideoName = "academy-video-worker-asg"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
-    --launch-template "LaunchTemplateName=$LtVideoName,Version=`$Default" `
+    --launch-template "LaunchTemplateName=$LtVideoName,Version=`$Latest" `
     --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
     --vpc-zone-identifier $SubnetIds --region $Region 2>$null
 if ($LASTEXITCODE -ne 0) {
     aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
-        --launch-template "LaunchTemplateName=$LtVideoName,Version=`$Default" `
+        --launch-template "LaunchTemplateName=$LtVideoName,Version=`$Latest" `
         --vpc-zone-identifier $SubnetIds `
         --min-size 1 --max-size $MaxCapacity --desired-capacity 1 --region $Region 2>$null
 }
@@ -234,12 +234,12 @@ Write-Host "[6/8] ASG (Messaging worker, Min=1 Max=$MaxCapacity)..." -Foreground
 $AsgMessagingName = "academy-messaging-worker-asg"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgMessagingName `
-    --launch-template "LaunchTemplateName=$LtMessagingName,Version=`$Default" `
+    --launch-template "LaunchTemplateName=$LtMessagingName,Version=`$Latest" `
     --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
     --vpc-zone-identifier $SubnetIds --region $Region 2>$null
 if ($LASTEXITCODE -ne 0) {
     aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgMessagingName `
-        --launch-template "LaunchTemplateName=$LtMessagingName,Version=`$Default" `
+        --launch-template "LaunchTemplateName=$LtMessagingName,Version=`$Latest" `
         --vpc-zone-identifier $SubnetIds `
         --min-size 1 --max-size $MaxCapacity --desired-capacity 1 --region $Region 2>$null
 }
