@@ -2325,18 +2325,19 @@ class Migration(migrations.Migration):
 
 ---
 
-## 최종 평가 (재계산)
+## 최종 평가 (재계산 - 피드백 반영)
 
-### 구조 안정성 점수: **8.5/10**
-
-**감소 이유**:
-- Redis 키 마이그레이션 리스크 (-0.5)
-- Excel Bulk 최적화 데이터 불일치 리스크 (-1.0)
+### 구조 안정성 점수: **9/10**
 
 **강점**:
+- Video와 AI 완전 분리로 키 구조 충돌 방지
+- ps_number race condition 처리 (ignore_conflicts + 재시도)
 - 하위 호환성 유지
 - 점진적 마이그레이션 가능
 - 롤백 전략 명확
+
+**개선 사항**:
+- ps_number race condition 완전 해결 필요 (DB lock 또는 UUID 기반)
 
 ---
 
