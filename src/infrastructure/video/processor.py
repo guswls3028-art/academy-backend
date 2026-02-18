@@ -182,9 +182,32 @@ def process_video(
         )
 
         # 트랜스코딩: 구간 내 0~100% (인코딩 단계만 세부 진행률)
+        transcode_started = False
         def transcode_progress(current_sec: float, total_sec: float) -> None:
+            nonlocal transcode_started
             step_pct = int(100 * (current_sec / total_sec)) if total_sec > 0 else 0
             step_pct = min(100, max(0, step_pct))
+            
+            # ✅ 첫 호출 시 current_sec이 이미 진행된 상태면 0%를 먼저 업데이트
+            if not transcode_started and current_sec > 0.5:  # 0.5초 이상 진행된 상태면
+                progress.record_progress(
+                    job_id,
+                    "transcoding",
+                    {
+                        "duration": duration,
+                        "percent": 50,
+                        "remaining_seconds": int(total_sec + 60),
+                        "current_sec": 0,
+                        "step_index": 4,
+                        "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                        "step_name": "transcoding",
+                        "step_name_display": "인코딩",
+                        "step_percent": 0,
+                    },
+                    tenant_id=tenant_id_str,
+                )
+                transcode_started = True
+            
             pct = int(50 + 35 * (current_sec / total_sec)) if total_sec > 0 else 50
             pct = min(85, max(50, pct))
             post_sec = 60  # validate + thumbnail + upload 대략
@@ -209,6 +232,7 @@ def process_video(
                 },
                 tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
             )
+            transcode_started = True
 
         progress.record_progress(
             job_id,
