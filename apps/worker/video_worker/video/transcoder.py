@@ -261,31 +261,38 @@ def transcode_to_hls(
             p = subprocess.Popen(
                 cmd,
                 cwd=str(output_root.resolve()),
-                stdout=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
             )
+            assert p.stdout is not None
             assert p.stderr is not None
 
+            def read_stdout_progress() -> None:
+                """-progress pipe:1: out_time_ms= 마이크로초 파싱. stderr 버퍼링 없이 진행률 수신."""
+                progress_count = 0
+                for line in p.stdout or []:
+                    m = _RE_OUT_TIME_MS.search(line)
+                    if m:
+                        current_sec = int(m.group(1)) / 1_000_000.0
+                        progress_count += 1
+                        if progress_count % 30 == 1:
+                            logger.debug("[TRANSCODER] Progress (pipe:1) video_id=%s current=%.1fs", video_id, current_sec)
+                        on_progress(current_sec)
+                logger.info("[TRANSCODER] Progress pipe finished video_id=%s progress_updates=%d", video_id, progress_count)
+
             def read_stderr() -> None:
-                line_count = 0
-                time_count = 0
                 for line in p.stderr or []:
-                    line_count += 1
                     stderr_lines.append(line)
                     if len(stderr_lines) > 50:
                         stderr_lines.pop(0)
-                    t = _parse_time_seconds(line)
-                    if t is not None:
-                        time_count += 1
-                        if time_count % 10 == 1:  # 10번째마다 로그
-                            logger.debug("[TRANSCODER] Progress parsed video_id=%s time=%.1fs line=%d", video_id, t, line_count)
-                        on_progress(t)
-                logger.info("[TRANSCODER] Stderr reading finished video_id=%s total_lines=%d time_parsed=%d", video_id, line_count, time_count)
+                logger.info("[TRANSCODER] Stderr reading finished video_id=%s lines=%d", video_id, len(stderr_lines))
 
-            reader = threading.Thread(target=read_stderr, daemon=True)
-            reader.start()
+            progress_reader = threading.Thread(target=read_stdout_progress, daemon=True)
+            stderr_reader = threading.Thread(target=read_stderr, daemon=True)
+            progress_reader.start()
+            stderr_reader.start()
             try:
                 p.wait(timeout=effective_timeout)
             except subprocess.TimeoutExpired:
