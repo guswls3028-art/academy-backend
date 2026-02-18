@@ -1,0 +1,13 @@
+{
+  "TargetTrackingScalingPolicyConfiguration": {
+    "TargetValue": 20,
+    "CustomizedMetricSpecification": {
+      "MetricName": "QueueDepth",
+      "Namespace": "Academy/Workers",
+      "Dimensions": [{"Name": "WorkerType", "Value": "Video"}],
+      "Statistic": "Average"
+    },
+    "ScaleInCooldown": 600,
+    "ScaleOutCooldown": 60
+  }
+}
