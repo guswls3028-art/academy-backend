@@ -63,6 +63,9 @@ def process_video(
     if not video_id or tenant_id is None:
         raise ValueError("video_id and tenant_id required")
 
+    # ✅ tenant_id를 문자열로 변환하여 전달 (Redis 키 형식 일치)
+    tenant_id_str = str(tenant_id)
+
     # 남은 시간 예상: presigning 시점에선 duration 모름 → 다운로드 후 갱신
     progress.record_progress(
         job_id,
@@ -76,6 +79,7 @@ def process_video(
             "step_name_display": "준비",
             "step_percent": 100,
         },
+        tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
     )
     try:
         source_url = create_presigned_get_url(key=file_key, expires_in=600)
