@@ -2393,4 +2393,28 @@ class Migration(migrations.Migration):
 
 ---
 
-**패치 플랜 완료**
+## Aurora 필요성 판단 (피드백 반영)
+
+### 수치 기반 기준
+
+**Aurora로 전환해야 하는 시점**:
+
+| 사용자 수 | 필요 여부 | 이유 |
+|-----------|----------|------|
+| 500 | ❌ 절대 불필요 | RDS small로 충분 |
+| 3K | ❌ 불필요 | RDS small/medium으로 충분 |
+| 10K | ❌ 불필요 | RDS medium으로 충분 |
+| 30K | ⚠️ 고려 | 읽기 replica 분리 필요 시 |
+
+**Aurora가 필요한 조건**:
+- 읽기 replica 분리 필요할 때
+- Write IOPS 5K 이상 나올 때
+- Connection 200 이상일 때
+
+**현재 설계 기준**:
+- RDS t4g.medium으로 10K 충분히 간다
+- Aurora는 30K+ 사용자부터 고려
+
+---
+
+**패치 플랜 완료 (피드백 반영)**
