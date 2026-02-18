@@ -585,6 +585,8 @@ class ExcelParsingService:
             if lecture_id is not None:
                 from apps.domains.enrollment.services import lecture_enroll_from_excel_rows
 
+                if on_progress:
+                    on_progress("enrolling", 50)
                 result = lecture_enroll_from_excel_rows(
                     tenant_id=int(tenant_id),
                     lecture_id=int(lecture_id),
@@ -592,6 +594,8 @@ class ExcelParsingService:
                     initial_password=initial_password,
                     session_id=int(session_id) if session_id is not None else None,
                 )
+                if on_progress:
+                    on_progress("enrolling", 95)
                 if isinstance(result, dict) and lecture_title:
                     result["lecture_title"] = lecture_title
                 return result

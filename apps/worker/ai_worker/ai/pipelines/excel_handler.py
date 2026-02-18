@@ -74,9 +74,14 @@ def handle_excel_parsing_job(job: AIJob) -> AIResult:
         # ExcelParsingService에서 오는 step: "parsing", "creating", "enrolling" 등
         if step == "parsing":
             _record_progress(job.id, "parsing", 40, step_index=2, step_percent=100)
-        elif step == "creating" or step == "enrolling":
-            # 등록 단계: percent가 40~95 사이로 오므로 step_percent 계산
+        elif step == "creating":
+            # 학생만 생성: percent가 40~95 사이로 오므로 step_percent 계산
             step_pct = int(100 * (percent - 40) / 55) if percent > 40 else 0
+            step_pct = min(100, max(0, step_pct))
+            _record_progress(job.id, "enrolling", percent, step_index=3, step_percent=step_pct)
+        elif step == "enrolling":
+            # 수강 등록: percent가 50~95 사이로 오므로 step_percent 계산
+            step_pct = int(100 * (percent - 50) / 45) if percent > 50 else 0
             step_pct = min(100, max(0, step_pct))
             _record_progress(job.id, "enrolling", percent, step_index=3, step_percent=step_pct)
         else:
