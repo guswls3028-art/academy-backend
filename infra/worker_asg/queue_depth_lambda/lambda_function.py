@@ -68,34 +68,49 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
     return visible
 
 
-def set_ai_worker_asg_desired(autoscaling_client, ai_visible: int, ai_in_flight: int) -> None:
-    """AI 워커 상시 1대 대기. 큐 깊이에 따라 1~MAX 스케일, 0으로 스케일인 안 함."""
-    ai_total_for_scale = ai_visible + ai_in_flight
-    if ai_total_for_scale > 0:
-        new_desired = min(AI_WORKER_ASG_MAX, max(1, math.ceil(ai_total_for_scale / 20)))
+def set_asg_desired(autoscaling_client, asg_name: str, visible: int, in_flight: int, min_capacity: int, max_capacity: int) -> None:
+    """워커 ASG desired capacity 조정. 큐 깊이에 따라 스케일."""
+    total_for_scale = visible + in_flight
+    if total_for_scale > 0:
+        new_desired = min(max_capacity, max(min_capacity, math.ceil(total_for_scale / TARGET_MESSAGES_PER_INSTANCE)))
     else:
-        new_desired = 1  # 상시 1대 유지 (Min=1)
+        new_desired = min_capacity  # 최소 용량 유지
 
     try:
         asgs = autoscaling_client.describe_auto_scaling_groups(
-            AutoScalingGroupNames=[AI_WORKER_ASG_NAME],
+            AutoScalingGroupNames=[asg_name],
         )
         if not asgs.get("AutoScalingGroups"):
-            logger.warning("ASG not found: %s", AI_WORKER_ASG_NAME)
+            logger.warning("ASG not found: %s", asg_name)
             return
         current = asgs["AutoScalingGroups"][0]["DesiredCapacity"]
         if current == new_desired:
             return
         autoscaling_client.set_desired_capacity(
-            AutoScalingGroupName=AI_WORKER_ASG_NAME,
+            AutoScalingGroupName=asg_name,
             DesiredCapacity=new_desired,
         )
         logger.info(
-            "ai_worker_asg desired %s -> %s (visible=%d in_flight=%d)",
-            current, new_desired, ai_visible, ai_in_flight,
+            "%s desired %s -> %s (visible=%d in_flight=%d)",
+            asg_name, current, new_desired, visible, in_flight,
         )
     except Exception as e:
-        logger.warning("set_ai_worker_asg_desired failed: %s", e)
+        logger.warning("set_asg_desired failed for %s: %s", asg_name, e)
+
+
+def set_ai_worker_asg_desired(autoscaling_client, ai_visible: int, ai_in_flight: int) -> None:
+    """AI 워커 상시 1대 대기. 큐 깊이에 따라 1~MAX 스케일, 0으로 스케일인 안 함."""
+    set_asg_desired(autoscaling_client, AI_WORKER_ASG_NAME, ai_visible, ai_in_flight, 1, AI_WORKER_ASG_MAX)
+
+
+def set_video_worker_asg_desired(autoscaling_client, video_visible: int, video_in_flight: int) -> None:
+    """Video 워커 ASG desired capacity 조정."""
+    set_asg_desired(autoscaling_client, VIDEO_WORKER_ASG_NAME, video_visible, video_in_flight, VIDEO_WORKER_ASG_MIN, VIDEO_WORKER_ASG_MAX)
+
+
+def set_messaging_worker_asg_desired(autoscaling_client, messaging_visible: int, messaging_in_flight: int) -> None:
+    """Messaging 워커 ASG desired capacity 조정."""
+    set_asg_desired(autoscaling_client, MESSAGING_WORKER_ASG_NAME, messaging_visible, messaging_in_flight, MESSAGING_WORKER_ASG_MIN, MESSAGING_WORKER_ASG_MAX)
 
 
 def lambda_handler(event: dict, context: Any) -> dict:
@@ -107,8 +122,8 @@ def lambda_handler(event: dict, context: Any) -> dict:
     (ai_basic_v, ai_basic_f) = get_queue_counts(sqs, AI_QUEUE_BASIC)
     ai_visible = ai_lite_v + ai_basic_v
     ai_in_flight = ai_lite_f + ai_basic_f
-    video_count = get_visible_count(sqs, VIDEO_QUEUE)
-    messaging_count = get_visible_count(sqs, MESSAGING_QUEUE)
+    (video_visible, video_in_flight) = get_queue_counts(sqs, VIDEO_QUEUE)
+    (messaging_visible, messaging_in_flight) = get_queue_counts(sqs, MESSAGING_QUEUE)
     ai_total = ai_visible  # 메트릭은 visible만 (기존과 동일)
 
     now = __import__("datetime").datetime.utcnow()
