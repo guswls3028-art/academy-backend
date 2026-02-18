@@ -886,69 +886,119 @@ urlpatterns = [
 
 ### 단계 5: Redis Progress Adapter 수정 (Tenant namespace 추가)
 
-#### PATCH 5.1: RedisProgressAdapter에 Tenant ID 파라미터 추가
+#### PATCH 5.1: Video Progress Adapter 분리 (AI와 완전 분리)
 
-**파일**: `src/infrastructure/cache/redis_progress_adapter.py`
+**⚠️ 중요**: Video는 AI와 완전히 분리하여 별도 Adapter 사용
 
-**수정 전 코드**:
+**파일**: `apps/support/video/redis_progress_adapter.py` (신규)
 
-```python:src/infrastructure/cache/redis_progress_adapter.py
-def record_progress(
-    self,
-    job_id: str,
-    step: str,
-    extra: Optional[dict[str, Any]] = None,
-) -> None:
-    """진행 단계 기록 (Redis에만)"""
-    client = get_redis_client()
-    if not client:
-        return
-
-    key = f"job:{job_id}:progress"
-    payload = {"step": step, **(extra or {})}
-    try:
-        client.setex(
-            key,
-            self._ttl,
-            json.dumps(payload, default=str),
-        )
-        logger.debug("Progress recorded: job_id=%s step=%s", job_id, step)
-    except Exception as e:
-        logger.warning("Redis progress record failed: %s", e)
-
-def get_progress(self, job_id: str) -> Optional[dict[str, Any]]:
-    """진행 상태 조회"""
-    client = get_redis_client()
-    if not client:
-        return None
-
-    key = f"job:{job_id}:progress"
-    try:
-        raw = client.get(key)
-        if not raw:
-            return None
-        return json.loads(raw)
-    except Exception as e:
-        logger.warning("Redis progress get failed: %s", e)
-        return None
-```
+**수정 전 코드**: 파일 없음
 
 **수정 후 코드**:
 
+```python
+"""Video Progress Adapter - Video 전용 (AI와 분리)"""
+from typing import Any, Optional
+from libs.redis.client import get_redis_client
+import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Video 진행 상태 키 TTL (6시간)
+VIDEO_PROGRESS_TTL_SECONDS = 21600
+
+
+class VideoProgressAdapter:
+    """Video 전용 Progress Adapter (AI와 분리)"""
+
+    def __init__(self, ttl_seconds: int = VIDEO_PROGRESS_TTL_SECONDS) -> None:
+        self._ttl = ttl_seconds
+
+    def record_progress(
+        self,
+        video_id: int,
+        tenant_id: int,
+        step: str,
+        extra: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Video 진행 단계 기록 (Redis에만)"""
+        client = get_redis_client()
+        if not client:
+            return
+
+        # ✅ Video 전용 키 형식: tenant:{tenant_id}:video:{video_id}:progress
+        key = f"tenant:{tenant_id}:video:{video_id}:progress"
+        payload = {"step": step, **(extra or {})}
+        try:
+            client.setex(
+                key,
+                self._ttl,
+                json.dumps(payload, default=str),
+            )
+            logger.debug("Video progress recorded: video_id=%s step=%s tenant_id=%s", video_id, step, tenant_id)
+        except Exception as e:
+            logger.warning("Redis video progress record failed: %s", e)
+
+    def get_progress(self, video_id: int, tenant_id: int) -> Optional[dict[str, Any]]:
+        """Video 진행 상태 조회"""
+        client = get_redis_client()
+        if not client:
+            return None
+
+        # ✅ Video 전용 키 형식
+        key = f"tenant:{tenant_id}:video:{video_id}:progress"
+        
+        # 하위 호환성: tenant namespace 키가 없으면 기존 키 형식 확인
+        try:
+            raw = client.get(key)
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
+        
+        # Legacy 키 확인 (마이그레이션 기간 동안)
+        legacy_key = f"job:video:{video_id}:progress"
+        try:
+            raw = client.get(legacy_key)
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
+        
+        return None
+```
+
+**변경 이유**: Video와 AI를 완전히 분리하여 키 구조 충돌 방지
+
+**영향 범위**: Video worker의 progress 기록/조회
+
+**롤백 방법**: 파일 삭제, 기존 RedisProgressAdapter 사용
+
+---
+
+#### PATCH 5.2: RedisProgressAdapter는 AI 전용으로 유지
+
+**파일**: `src/infrastructure/cache/redis_progress_adapter.py`
+
+**수정 전 코드**: (기존 코드 유지, Video는 사용하지 않음)
+
+**수정 후 코드**: (AI Job 전용으로만 사용, tenant_id 파라미터 추가)
+
 ```python:src/infrastructure/cache/redis_progress_adapter.py
 def record_progress(
     self,
     job_id: str,
     step: str,
     extra: Optional[dict[str, Any]] = None,
-    tenant_id: Optional[str] = None,  # ✅ 추가
+    tenant_id: Optional[str] = None,  # ✅ 추가 (AI Job 전용)
 ) -> None:
-    """진행 단계 기록 (Redis에만)"""
+    """진행 단계 기록 (Redis에만) - AI Job 전용"""
     client = get_redis_client()
     if not client:
         return
 
-    # ✅ Tenant namespace 포함한 키 사용 (있으면)
+    # ✅ AI Job 전용 키 형식: tenant:{tenant_id}:job:{job_id}:progress
     if tenant_id:
         key = f"tenant:{tenant_id}:job:{job_id}:progress"
     else:
@@ -967,12 +1017,12 @@ def record_progress(
         logger.warning("Redis progress record failed: %s", e)
 
 def get_progress(self, job_id: str, tenant_id: Optional[str] = None) -> Optional[dict[str, Any]]:
-    """진행 상태 조회"""
+    """진행 상태 조회 - AI Job 전용"""
     client = get_redis_client()
     if not client:
         return None
 
-    # ✅ Tenant namespace 포함한 키 우선 조회 (있으면)
+    # ✅ AI Job 전용 키 형식
     if tenant_id:
         key = f"tenant:{tenant_id}:job:{job_id}:progress"
         try:
@@ -1005,9 +1055,9 @@ def get_progress(self, job_id: str, tenant_id: Optional[str] = None) -> Optional
             return None
 ```
 
-**변경 이유**: Tenant namespace 추가하여 멀티테넌트 안전성 확보, 하위 호환성 유지
+**변경 이유**: AI Job 전용으로 명확히 분리
 
-**영향 범위**: 모든 Worker의 progress 기록/조회
+**영향 범위**: AI/Messaging Worker의 progress 기록/조회
 
 **롤백 방법**: tenant_id 파라미터 제거, 기존 키 형식으로 복원
 
@@ -1089,7 +1139,7 @@ _record_progress(job.id, "downloading", 10, step_index=1, step_total=1, step_nam
 
 ---
 
-#### PATCH 5.2: Video encoding_progress.py 수정 (Tenant namespace 추가)
+#### PATCH 5.3: Video processor에서 VideoProgressAdapter 사용
 
 **파일**: `apps/support/video/encoding_progress.py`
 
