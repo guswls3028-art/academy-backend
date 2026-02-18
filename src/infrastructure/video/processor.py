@@ -80,7 +80,7 @@ def process_video(
         if not duration or duration <= 0:
             raise RuntimeError("duration_probe_failed")
 
-        # 트랜스코딩: 실시간 진행률 + 남은 시간 (ffmpeg stderr 파싱)
+        # 트랜스코딩: Popen+stderr 파싱으로 진행률 갱신 (50% 정체 없음). SQS visibility는 작업 시작 시 6h 연장.
         def transcode_progress(current_sec: float, total_sec: float) -> None:
             pct = int(50 + 35 * (current_sec / total_sec)) if total_sec > 0 else 50
             pct = min(85, max(50, pct))
