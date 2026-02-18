@@ -83,6 +83,7 @@ foreach ($config in $asgConfigs) {
 {
   "TargetTrackingScalingPolicyConfiguration": {
     "TargetValue": $TargetMessagesPerInstance,
+    "PredefinedMetricSpecification": null,
     "CustomizedMetricSpecification": {
       "MetricName": "QueueDepth",
       "Namespace": "Academy/Workers",
