@@ -2354,15 +2354,34 @@ class Migration(migrations.Migration):
 
 ---
 
-## 실행 순서
+## 실행 순서 (수정 - 피드백 반영)
+
+**⚠️ 중요**: 순서를 반드시 지켜야 함
 
 1. **1일차**: Redis 상태 캐싱 헬퍼 생성 + Progress endpoint 추가
+   - Video/AI 상태 캐싱 헬퍼 생성
+   - VideoProgressAdapter 분리 (AI와 완전 분리)
+   - Progress endpoint 추가
+
 2. **2일차**: 워커 저장 로직 수정 (Redis 상태 저장)
-3. **3일차**: Redis Progress Adapter 수정 (Tenant namespace)
+   - Video 워커: complete/fail/mark_processing에 Redis 저장
+   - AI 워커: save()에 Redis 저장
+
+3. **3일차**: 프론트엔드 폴링 전환 (우선순위 상향)
+   - 프론트엔드가 progress endpoint만 사용하도록 변경
+   - DB CPU 안정 확인
+
 4. **4일차**: Excel Bulk 최적화 구현
+   - Repository 배치 조회 메서드 추가
+   - Bulk Create 함수 구현 (ps_number 충돌 처리 포함)
+
 5. **5일차**: 인덱스 마이그레이션 실행
+   - Students, AIJob, Video 인덱스 추가
+
 6. **6일차**: Worker Concurrency 제한 적용
-7. **7일차**: 프론트엔드 폴링 전환 (별도 작업)
+   - ASG Max Size 제한
+
+**⚠️ 주의**: Excel부터 건드리면 리스크 커진다. 반드시 Redis progress endpoint 먼저 적용 후 프론트 polling 전환, DB CPU 안정 확인 후 Excel bulk 교체
 
 ---
 
