@@ -57,9 +57,29 @@ def _get_student_enrollment_id(request) -> Optional[int]:
     return None
 
 
-def _pick_urls(video) -> Tuple[Optional[str], Optional[str]]:
-    hls_url = getattr(video, "hls_url", None) or getattr(video, "hls_path", None)
-    mp4_url = getattr(video, "mp4_url", None) or getattr(video, "file_url", None)
+def _pick_urls(video, request=None) -> Tuple[Optional[str], Optional[str]]:
+    """
+    비디오 재생 URL 생성
+    - hls_url: CDN 기반 HLS URL (VideoSerializer의 get_hls_url 로직 사용)
+    - mp4_url: MP4 URL (현재는 미지원)
+    """
+    from django.conf import settings
+    
+    # HLS URL 생성 (VideoSerializer의 get_hls_url 로직과 동일)
+    hls_url = None
+    if getattr(video, "hls_path", None):
+        cdn_base = getattr(settings, "CDN_HLS_BASE_URL", None)
+        if cdn_base:
+            # 경로 정규화
+            path = str(video.hls_path).lstrip("/")
+            if path.startswith("storage/media/"):
+                path = path[len("storage/"):]
+            # CDN URL 생성
+            hls_url = f"{cdn_base.rstrip('/')}/{path}"
+    
+    # MP4 URL은 현재 미지원
+    mp4_url = None
+    
     return hls_url, mp4_url
 
 
