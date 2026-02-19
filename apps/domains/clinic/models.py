@@ -82,7 +82,14 @@ class SessionParticipant(TimestampModel):
         Session,
         on_delete=models.CASCADE,
         related_name="participants",
+        null=True,  # ✅ 학생 신청 시 세션이 없을 수 있음
+        blank=True,
     )
+    
+    # ✅ 학생 신청 시 요청한 날짜/시간 (세션이 없을 때 사용)
+    requested_date = models.DateField(null=True, blank=True)
+    requested_start_time = models.TimeField(null=True, blank=True)
+    
     student = models.ForeignKey(
         Student,
         on_delete=models.CASCADE,
