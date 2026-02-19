@@ -315,25 +315,17 @@ def _student_can_access_session(request, session) -> bool:
     lecture = getattr(session, "lecture", None)
     if not lecture:
         return False
-    # lecture.tenant 우선 (세션 소속 테넌트 SSOT)
     tenant = getattr(lecture, "tenant", None) or getattr(request, "tenant", None)
     if not tenant:
         return False
     tenant_id = getattr(tenant, "id", None)
 
-    # 전체공개영상: 테넌트 내 학생이면 수강 여부 무관하게 허용
+    # 전체공개영상: 테넌트 내 학생이면 끝 (조건 추가 없음)
     if getattr(lecture, "title", None) == "전체공개영상":
         students = _students_for_request(request)
-        # 1) 연결된 학생이 lecture 테넌트 소속이면 허용
-        if students and any(getattr(s, "tenant_id", None) == tenant_id for s in students):
-            return True
-        # 2) X-Tenant-Code로 해석된 request.tenant가 lecture 테넌트와 일치하면 허용 (api.hakwonplus.com SPA)
-        req_tenant = getattr(request, "tenant", None)
-        if req_tenant and getattr(req_tenant, "id", None) == tenant_id:
-            return True
-        return False
+        return bool(students and any(getattr(s, "tenant_id", None) == tenant_id for s in students))
 
-    # 일반 강의: 수강생만
+    # 세션영상: 해당 세션 강의 수강생만
     students = _students_for_request(request)
     if not students:
         return False
