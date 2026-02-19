@@ -682,10 +682,18 @@ class StudentViewSet(ModelViewSet):
         with transaction.atomic():
             for student in to_delete:
                 student.deleted_at = now
-                student.save(update_fields=["deleted_at"])
+                update_fields = ["deleted_at"]
+                if student.ps_number and not student.ps_number.startswith("_del_"):
+                    student.ps_number = f"_del_{student.id}_{student.ps_number}"
+                    update_fields.append("ps_number")
+                student.save(update_fields=update_fields)
                 if student.user:
                     student.user.is_active = False
-                    student.user.save(update_fields=["is_active"])
+                    user_update = ["is_active"]
+                    if student.user.phone:
+                        student.user.phone = None
+                        user_update.append("phone")
+                    student.user.save(update_fields=user_update)
         return Response({"deleted": len(to_delete)}, status=200)
 
     @action(
