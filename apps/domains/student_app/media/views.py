@@ -577,16 +577,18 @@ class StudentVideoProgressView(APIView):
             )
 
         try:
-            video = Video.objects.get(id=video_id)
+            video = Video.objects.select_related("session").get(id=video_id)
         except Video.DoesNotExist:
             raise Http404
 
-        try:
-            enrollment = Enrollment.objects.get(id=enrollment_id)
-        except Enrollment.DoesNotExist:
+        lecture_id = getattr(video.session, "lecture_id", None) if video.session else None
+        enrollment, err = _get_enrollment_for_student(request, enrollment_id, lecture_id=lecture_id)
+        if err:
+            return err
+        if not enrollment:
             return Response(
-                {"detail": "enrollment을 찾을 수 없습니다."},
-                status=status.HTTP_404_NOT_FOUND,
+                {"detail": "해당 수강 정보로는 진행률을 저장할 수 없습니다."},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         # 진행률 업데이트 또는 생성
