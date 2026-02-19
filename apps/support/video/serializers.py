@@ -445,3 +445,27 @@ class VideoRiskRowSerializer(serializers.Serializer):
     warn = serializers.IntegerField()
     info = serializers.IntegerField()
     last_occurred_at = serializers.DateTimeField(allow_null=True)
+
+
+# ========================================================
+# Video Folder
+# ========================================================
+
+class VideoFolderSerializer(serializers.ModelSerializer):
+    """전체공개영상 폴더 Serializer."""
+    
+    parent_id = serializers.IntegerField(source="parent.id", read_only=True, allow_null=True)
+    session_id = serializers.IntegerField(source="session.id", read_only=True)
+    
+    class Meta:
+        model = VideoFolder
+        fields = [
+            "id",
+            "name",
+            "session_id",
+            "parent_id",
+            "order",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
