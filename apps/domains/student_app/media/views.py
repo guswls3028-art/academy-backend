@@ -79,11 +79,9 @@ def _get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_i
             {"detail": "해당 수강 정보에 접근할 수 없습니다."},
             status=status.HTTP_403_FORBIDDEN,
         )
+    # lecture_id가 주어졌을 때 다른 강의 수강이면 None 반환 (403 아님: 세션 목록에서 무시하고 진행률 0으로 표시)
     if lecture_id is not None and enrollment.lecture_id != lecture_id:
-        return None, Response(
-            {"detail": "해당 강의의 수강 정보가 아닙니다."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
+        return None, None
     return enrollment, None
 
 
