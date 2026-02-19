@@ -95,17 +95,13 @@ class StudentClinicIdcardView(APIView):
 
         any_clinic = any(h["clinic_required"] for h in histories)
         
-        # 프로필 사진 URL (신원 확인용)
+        # 프로필 사진 URL (신원 확인용) - students serializer와 동일한 방식 사용
         profile_photo_url = None
         if student.profile_photo:
             try:
-                # 파일이 실제로 존재하는지 확인
-                if student.profile_photo.storage.exists(student.profile_photo.name):
-                    profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
-                else:
-                    # 파일이 저장소에 없으면 None
-                    profile_photo_url = None
-            except (ValueError, AttributeError, Exception) as e:
+                # students serializer와 동일한 방식으로 URL 생성
+                profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
+            except (ValueError, AttributeError, Exception):
                 # 파일이 없거나 URL 생성 실패 시 None
                 profile_photo_url = None
         
