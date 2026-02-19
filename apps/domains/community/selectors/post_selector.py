@@ -11,9 +11,10 @@ def get_empty_post_queryset() -> QuerySet:
 
 
 def get_post_by_id(tenant, post_id: int):
-    """단건 조회. mappings prefetch. 없으면 None."""
+    """단건 조회. mappings prefetch, replies_count 포함. 없으면 None."""
     return (
         PostEntity.objects.filter(tenant=tenant, id=post_id)
+        .annotate(replies_count=Count("replies"))
         .select_related("block_type", "created_by")
         .prefetch_related(
             Prefetch(
