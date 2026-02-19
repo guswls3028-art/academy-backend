@@ -162,7 +162,6 @@ class StudentViewSet(ModelViewSet):
             deleted_student = student_repo.student_filter_tenant_name_parent_phone_deleted(tenant, name, parent_phone)
 
         if deleted_student:
-            from .serializers import StudentDetailSerializer
             return Response(
                 {
                     "code": "deleted_student_exists",
