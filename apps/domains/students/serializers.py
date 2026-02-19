@@ -93,20 +93,6 @@ class StudentDetailSerializer(serializers.ModelSerializer):
         data["profile_photo_url"] = self.get_profile_photo_url(obj)
         return data
 
-    def update(self, instance, validated_data):
-        old_ps = instance.ps_number
-        result = super().update(instance, validated_data)
-        # 학생 로그인 ID(ps_number) 변경 시 연결된 User.username 동기화 — 로그인 시 새 아이디로 인증 가능
-        if "ps_number" in validated_data and result.ps_number != old_ps:
-            from apps.core.models.user import user_internal_username
-            tenant = result.tenant
-            new_username = user_internal_username(tenant, result.ps_number)
-            user = result.user
-            if user.username != new_username:
-                user.username = new_username
-                user.save(update_fields=["username"])
-        return result
-
 
 class AddTagSerializer(serializers.Serializer):
     tag_id = serializers.IntegerField()
