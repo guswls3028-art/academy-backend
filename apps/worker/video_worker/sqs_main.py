@@ -305,7 +305,7 @@ def main() -> int:
                     consecutive_errors = 0
 
                 else:
-                    # handler 실패 시 즉시 재노출 → 다른 워커가 곧바로 처리 (3시간 묶임 방지)
+                    # handler 실패 시 즉시 재노출 → 다른 워커가 곧바로 처리
                     queue.change_message_visibility(receipt_handle, 0)
                     logger.exception(
                         "SQS_JOB_FAILED | request_id=%s | video_id=%s | tenant_code=%s | processing_duration=%.2f | queue_wait_sec=%.2f",
@@ -315,14 +315,6 @@ def main() -> int:
                         processing_duration,
                         queue_wait_time,
                     )
-                    if processing_duration > VIDEO_VISIBILITY_EXTEND_SECONDS:
-                        logger.warning(
-                            "SQS_VISIBILITY_TIMEOUT_EXCEEDED | request_id=%s | video_id=%s | processing_duration=%.2f | visibility_timeout=%d",
-                            request_id,
-                            video_id,
-                            processing_duration,
-                            VIDEO_VISIBILITY_EXTEND_SECONDS,
-                        )
                     consecutive_errors += 1
 
                     if consecutive_errors >= max_consecutive_errors:
