@@ -152,7 +152,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         return [IsAuthenticated()]
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ["session", "status"]
+    filterset_fields = ["session", "status", "folder"]
     search_fields = ["title"]
 
     def perform_destroy(self, instance):
