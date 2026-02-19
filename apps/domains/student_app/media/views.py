@@ -565,18 +565,13 @@ class StudentVideoProgressView(APIView):
         from apps.domains.enrollment.models import Enrollment
 
         enrollment_id = _get_student_enrollment_id(request)
-        if not enrollment_id:
-            return Response(
-                {"detail": "enrollment_id가 필요합니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
         try:
             video = Video.objects.select_related("session__lecture").get(id=video_id)
         except Video.DoesNotExist:
             raise Http404
 
-        # 전체공개영상: 수강등록 없이 시청 가능하므로 VideoProgress( video, enrollment )에 저장 불가.
+        # 전체공개영상: 수강등록 없이 시청 가능. VideoProgress는 (video, enrollment) 필수라 DB 저장 불가.
         # 동일 응답 형태로 200 반환해 프론트 스펙 유지 (DB 미저장)
         is_public_lecture = (
             video.session
