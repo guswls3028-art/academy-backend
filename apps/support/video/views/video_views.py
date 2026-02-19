@@ -28,7 +28,7 @@ from libs.s3_client.client import head_object
 
 
 from apps.core.r2_paths import video_raw_key, video_hls_prefix
-from apps.core.permissions import IsAdminOrStaff, IsStudent
+from apps.core.permissions import IsAdminOrStaff, IsStudent, TenantResolvedAndStaff
 from apps.core.authentication import CsrfExemptSessionAuthentication
 
 from apps.domains.lectures.models import Lecture, Session
