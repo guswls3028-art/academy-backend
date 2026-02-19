@@ -149,6 +149,20 @@ class Student(TimestampModel):
             # OMR 코드는 unique 제거 (쌍둥이 등 중복 허용, 자동 채점 후 수동 매칭)
         ]
 
+    def save(self, *args, **kwargs):
+        if self.pk and self.user_id:
+            try:
+                old = Student.objects.only("ps_number").get(pk=self.pk)
+                if old.ps_number != self.ps_number:
+                    from apps.core.models.user import user_internal_username
+                    new_username = user_internal_username(self.tenant, self.ps_number)
+                    if self.user.username != new_username:
+                        self.user.username = new_username
+                        self.user.save(update_fields=["username"])
+            except Student.DoesNotExist:
+                pass
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.name
 
