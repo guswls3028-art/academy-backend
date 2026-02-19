@@ -141,6 +141,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "partial_update",
         "destroy",
         "public_session",
+        "list_folders",
+        "create_folder",
+        "delete_folder",
     }
 
     def get_permissions(self):
@@ -566,3 +569,111 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     )
     def student_list(self, request):
         return self._student_list_impl(request)
+
+    # ==================================================
+    # video folders — 전체공개영상 폴더 관리
+    # ==================================================
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="folders",
+    )
+    def list_folders(self, request):
+        """전체공개영상 세션의 폴더 목록 조회."""
+        session_id = request.query_params.get("session_id")
+        if not session_id:
+            return Response(
+                {"detail": "session_id required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
+        except Session.DoesNotExist:
+            return Response(
+                {"detail": "Session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        
+        folders = VideoFolder.objects.filter(session=session).order_by("order", "name")
+        return Response(VideoFolderSerializer(folders, many=True).data)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="folders",
+    )
+    def create_folder(self, request):
+        """전체공개영상 세션에 폴더 생성."""
+        session_id = request.data.get("session_id")
+        name = request.data.get("name")
+        parent_id = request.data.get("parent_id")  # null이면 루트 폴더
+        
+        if not session_id or not name:
+            return Response(
+                {"detail": "session_id and name required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        try:
+            session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
+        except Session.DoesNotExist:
+            return Response(
+                {"detail": "Session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        
+        parent = None
+        if parent_id:
+            try:
+                parent = VideoFolder.objects.get(id=parent_id, session=session)
+            except VideoFolder.DoesNotExist:
+                return Response(
+                    {"detail": "Parent folder not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        
+        # 같은 이름의 폴더가 이미 있는지 확인
+        if VideoFolder.objects.filter(session=session, parent=parent, name=name).exists():
+            return Response(
+                {"detail": "Folder with this name already exists"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        
+        folder = VideoFolder.objects.create(
+            session=session,
+            parent=parent,
+            name=name,
+            order=VideoFolder.objects.filter(session=session, parent=parent).count(),
+        )
+        
+        return Response(VideoFolderSerializer(folder).data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=False,
+        methods=["delete"],
+        url_path="folders/(?P<folder_id>[^/.]+)",
+    )
+    def delete_folder(self, request, folder_id=None):
+        """전체공개영상 폴더 삭제."""
+        try:
+            folder = VideoFolder.objects.get(id=folder_id)
+        except VideoFolder.DoesNotExist:
+            return Response(
+                {"detail": "Folder not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        
+        # 하위 폴더나 영상이 있는지 확인
+        if folder.children.exists():
+            return Response(
+                {"detail": "Cannot delete folder with subfolders"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if folder.videos.exists():
+            return Response(
+                {"detail": "Cannot delete folder with videos"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        folder.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
