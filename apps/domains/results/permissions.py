@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from rest_framework.permissions import BasePermission
 
+from apps.core.permissions import is_effective_staff
+
 
 def _role(u) -> str:
     """
