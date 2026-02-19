@@ -84,16 +84,35 @@ def _pick_urls(video, request=None) -> Tuple[Optional[str], Optional[str]]:
     user_id = getattr(request.user, "id", 0) if request and hasattr(request, "user") and request.user.is_authenticated else 0
     
     try:
+        # 비디오 정보 로깅
+        import logging
+        logger = logging.getLogger(__name__)
+        hls_path = getattr(video, "hls_path", None)
+        file_key = getattr(video, "file_key", None)
+        tenant_id = None
+        try:
+            if hasattr(video, "session") and video.session:
+                if hasattr(video.session, "lecture") and video.session.lecture:
+                    tenant_id = getattr(video.session.lecture, "tenant_id", None)
+        except Exception:
+            pass
+        
+        logger.info(
+            f"[_pick_urls] Generating URL for video {video.id}: "
+            f"hls_path={hls_path}, file_key={file_key}, tenant_id={tenant_id}, "
+            f"expires_at={expires_at}, user_id={user_id}"
+        )
+        
         hls_url = mixin._public_play_url(
             video=video,
             expires_at=expires_at,
             user_id=user_id,
         )
         
+        logger.info(f"[_pick_urls] Generated URL for video {video.id}: {hls_url[:200] if hls_url else None}...")
+        
         # URL이 생성되었는지 확인
         if not hls_url:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.warning(f"[_pick_urls] _public_play_url returned None for video {video.id}")
             return None, None
             
