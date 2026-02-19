@@ -31,7 +31,7 @@ class GenerateOMRSheetAssetView(APIView):
     - 생성 결과를 ExamAsset(omr_sheet)로 저장
     """
 
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request, exam_id: int):
         template_exam = get_object_or_404(Exam, id=int(exam_id), exam_type=Exam.ExamType.TEMPLATE)

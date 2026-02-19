@@ -17,9 +17,8 @@ from rest_framework.exceptions import NotFound, ValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-from apps.core.permissions import IsAdminOrStaff, IsStudent
+from apps.core.permissions import IsStudent, TenantResolvedAndStaff
 from apps.core.models import TenantMembership
-from apps.core.permissions import TenantResolvedAndStaff
 
 from apps.domains.parents.services import ensure_parent_for_student
 from apps.support.messaging.services import send_welcome_messages, get_site_url
