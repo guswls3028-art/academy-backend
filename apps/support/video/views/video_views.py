@@ -201,14 +201,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         try:
             session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
-        except Exception:
+        except Session.DoesNotExist:
             return Response(
                 {"detail": "해당 차시를 찾을 수 없습니다. 페이지를 새로고침한 뒤 다시 시도하세요."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not session:
-            return Response(
-                {"detail": "해당 차시를 찾을 수 없습니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
