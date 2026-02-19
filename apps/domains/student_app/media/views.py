@@ -331,6 +331,10 @@ def _student_can_access_session(request, session) -> bool:
         req_tenant = getattr(request, "tenant", None)
         if req_tenant and getattr(req_tenant, "id", None) == tenant_id:
             return True
+        # 3) X-Tenant-Code 누락 시: 인증된 학생의 tenant가 lecture와 일치하면 허용 (구버전 앱·헤더 누락 대응)
+        if not req_tenant and students:
+            if any(getattr(s, "tenant_id", None) == tenant_id for s in students):
+                return True
         return False
 
     # 일반 강의: 수강생만
