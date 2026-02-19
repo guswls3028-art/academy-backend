@@ -265,7 +265,9 @@ $deployApi = ($DeployTarget -eq "all" -or $DeployTarget -eq "api")
 if ($deployApi) {
     Write-Host "`n=== 2/3 API server deploy (EC2 SSH) ===`n" -ForegroundColor Cyan
 }
-if ($StartStoppedInstances) { Start-StoppedAcademyInstances }
+if ($StartStoppedInstances -and -not $WorkersViaASG) {
+    Start-StoppedAcademyInstances
+}
 $ips = Get-Ec2PublicIps
 # ASG workers often have no public IP; only require IPs when we actually deploy via SSH (API or workers without -WorkersViaASG)
 $needIps = $deployApi -or ($deployWorkers -and -not $WorkersViaASG)
