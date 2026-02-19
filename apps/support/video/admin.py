@@ -83,3 +83,12 @@ class VideoPlaybackEventAdmin(admin.ModelAdmin):
     list_filter = ("event_type", "violated", "video__session__lecture")
     search_fields = ("session_id", "enrollment__student__name", "user_id")
     ordering = ("-received_at",)
+
+
+@admin.register(VideoFolder)
+class VideoFolderAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "session", "parent", "order", "created_at")
+    list_display_links = ("id", "name")
+    list_filter = ("session__lecture", "session")
+    search_fields = ("name",)
+    ordering = ("session", "order", "name")
