@@ -46,18 +46,12 @@ def create_presigned_put_url(
     content_type: str,
     expires_in: int = PRESIGN_UPLOAD_EXPIRES,
 ) -> str:
-    """
-    R2 presigned PUT URL 생성 (비디오 업로드용)
-    CORS 헤더 포함하여 브라우저에서 직접 업로드 가능하도록 설정
-    """
     return _s3.generate_presigned_url(
         ClientMethod="put_object",
         Params={
             "Bucket": _get_bucket(),
             "Key": key,
             "ContentType": content_type,  # 🔥 핵심
-            # CORS를 위한 헤더 (R2 버킷 CORS 설정과 함께 사용)
-            "Metadata": {},
         },
         ExpiresIn=expires_in,
     )
