@@ -267,18 +267,20 @@ class StudentVideoMeView(APIView):
 
 
 def _student_can_access_session(request, session) -> bool:
-    """세션 목록/영상 접근 가능 여부. 전체공개 세션이면 같은 테넌트 학생, 아니면 해당 강의 수강생."""
+    """세션 목록/영상 접근 가능 여부. 전체공개 세션이면 같은 테넌트 학생, 아니면 해당 강의 수강생.
+    세션 소유 테넌트(session.lecture.tenant) 기준으로 수강 여부를 검사하여, X-Tenant-Code/호스트와
+    무관하게 올바른 테넌트로 권한 판단한다."""
     from apps.domains.enrollment.models import Enrollment
 
     student = get_request_student(request)
     if not student:
         return False
-    tenant = getattr(request, "tenant", None)
-    if not tenant:
-        return False
-
     lecture = getattr(session, "lecture", None)
     if not lecture:
+        return False
+    # 세션 소유 테넌트 우선 사용 (요청 테넌트가 잘못 전달되어도 정확한 권한 판단)
+    tenant = getattr(lecture, "tenant", None) or getattr(request, "tenant", None)
+    if not tenant:
         return False
     if getattr(lecture, "title", None) == "전체공개영상":
         return Enrollment.objects.filter(student=student, tenant=tenant, status="ACTIVE").exists()
