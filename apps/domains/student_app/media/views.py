@@ -283,7 +283,8 @@ def _student_can_access_session(request, session) -> bool:
     if not tenant:
         return False
     if getattr(lecture, "title", None) == "전체공개영상":
-        return Enrollment.objects.filter(student=student, tenant=tenant, status="ACTIVE").exists()
+        # 수강등록 없이, 해당 테넌트 소속 학생이면 시청 가능 (1테넌트=1프로그램 독립)
+        return getattr(student, "tenant_id", None) == getattr(tenant, "id", None)
     return Enrollment.objects.filter(
         student=student, lecture=lecture, tenant=tenant, status="ACTIVE"
     ).exists()
