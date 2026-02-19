@@ -9,6 +9,7 @@ from .views import (
     SubmissionViewSet,
 )
 from .idcard_views import StudentClinicIdcardView
+from .views import ClinicSettingsView
 
 router = DefaultRouter()
 router.register("sessions", SessionViewSet, basename="clinic-session")
@@ -18,4 +19,5 @@ router.register("submissions", SubmissionViewSet, basename="clinic-submission")
 
 urlpatterns = [
     path("idcard/", StudentClinicIdcardView.as_view(), name="clinic-idcard"),
+    path("settings/", ClinicSettingsView.as_view(), name="clinic-settings"),
 ] + router.urls

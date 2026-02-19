@@ -26,10 +26,16 @@ class StudentClinicIdcardView(APIView):
     def get(self, request):
         user = request.user
         student = getattr(user, "student_profile", None)
+        tenant = getattr(request, "tenant", None)
+        colors = getattr(tenant, "clinic_idcard_colors", None) if tenant else None
+        if not colors or not isinstance(colors, list) or len(colors) < 3:
+            colors = ["#ef4444", "#3b82f6", "#22c55e"]
+        
         if not student or not isinstance(student, Student):
             return Response({
                 "student_name": "",
                 "profile_photo_url": None,
+                "background_colors": colors[:3],
                 "server_date": timezone.now().date().isoformat(),
                 "server_datetime": timezone.now().isoformat(),
                 "histories": [],
@@ -84,9 +90,16 @@ class StudentClinicIdcardView(APIView):
         if student.profile_photo:
             profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
         
+        # 패스카드 배경 색상 (위조 방지용, 선생님이 날마다 변경 가능)
+        colors = getattr(tenant, "clinic_idcard_colors", None)
+        if not colors or not isinstance(colors, list) or len(colors) < 3:
+            # 기본값: 빨강, 파랑, 초록
+            colors = ["#ef4444", "#3b82f6", "#22c55e"]
+        
         return Response({
             "student_name": getattr(student, "name", "") or "",
             "profile_photo_url": profile_photo_url,
+            "background_colors": colors[:3],  # 최대 3개만
             "server_date": timezone.now().date().isoformat(),
             "server_datetime": timezone.now().isoformat(),
             "histories": histories,
