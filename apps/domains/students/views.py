@@ -417,7 +417,7 @@ class StudentViewSet(ModelViewSet):
                         ).values_list("id", flat=True).first()
                         if conflict_deleted:
                             raise ValueError("삭제된 학생과 전화번호 충돌. 복원 또는 삭제 후 재등록을 선택하세요.", conflict_deleted)
-                        if student_repo.user_filter_phone_active(phone).exists():
+                        if student_repo.user_filter_phone_active(phone, tenant=tenant).exists():
                             raise ValueError("이미 사용 중인 전화번호입니다.")
                     if student_repo.student_filter_tenant_ps_number(tenant, ps_number).exists():
                         raise ValueError("이미 사용 중인 PS 번호입니다.")

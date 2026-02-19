@@ -49,9 +49,13 @@ def student_filter_deleted(tenant):
     return Student.objects.filter(tenant=tenant, deleted_at__isnull=False)
 
 
-def user_filter_phone_active(phone):
+def user_filter_phone_active(phone, tenant=None):
+    """테넌트별 격리: 같은 tenant 내에서만 활성 User 전화번호 검사."""
     from django.contrib.auth import get_user_model
-    return get_user_model().objects.filter(phone=phone, is_active=True)
+    qs = get_user_model().objects.filter(phone=phone, is_active=True)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    return qs
 
 
 def student_filter_tenant_ps_number(tenant, ps_number):
