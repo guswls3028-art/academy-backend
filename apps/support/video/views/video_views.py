@@ -31,7 +31,7 @@ from apps.core.r2_paths import video_raw_key, video_hls_prefix
 from apps.core.permissions import IsAdminOrStaff, IsStudent
 from apps.core.authentication import CsrfExemptSessionAuthentication
 
-from apps.domains.lectures.models import Session
+from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.attendance.models import Attendance
 
