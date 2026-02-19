@@ -187,8 +187,13 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         if not value or not str(value).strip():
             return None
 
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        if tenant is None:
+            raise serializers.ValidationError("Tenant가 resolve되지 않았습니다.")
+
         from academy.adapters.db.django import repositories_students as student_repo
-        if student_repo.user_filter_phone_exists(value):
+        if student_repo.user_filter_phone_exists(value, tenant=tenant):
             raise serializers.ValidationError("이미 사용 중인 전화번호입니다.")
 
         return value
