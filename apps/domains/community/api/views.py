@@ -135,7 +135,7 @@ class AdminPostViewSet(viewsets.ModelViewSet):
 
 
 class BlockTypeViewSet(viewsets.ModelViewSet):
-    """블록 유형 CRUD. 커스텀 유형 생성/수정/삭제."""
+    """블록 유형 CRUD. 커스텀 유형 생성/수정/삭제. tenant에 하나도 없으면 기본 QnA 유형 자동 생성."""
     serializer_class = BlockTypeSerializer
 
     def get_queryset(self):
@@ -143,6 +143,17 @@ class BlockTypeViewSet(viewsets.ModelViewSet):
         if not tenant:
             return get_empty_block_type_queryset()
         return get_block_types_for_tenant(tenant)
+
+    def list(self, request, *args, **kwargs):
+        """목록 조회 시 tenant에 블록 유형이 없으면 기본 QnA 유형을 한 번만 생성 후 반환."""
+        tenant = getattr(request, "tenant", None)
+        if tenant and not get_block_types_for_tenant(tenant).exists():
+            BlockType.objects.get_or_create(
+                tenant=tenant,
+                code="qna",
+                defaults={"label": "QnA", "order": 1},
+            )
+        return super().list(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, "tenant", None)
