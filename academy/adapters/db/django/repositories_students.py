@@ -181,8 +181,9 @@ def user_filter_username_exists(username):
 
 
 def user_filter_phone_exists(phone):
+    """활성 User만 검사 — 삭제된 학생(is_active=False) 전화번호는 재사용 가능."""
     from django.contrib.auth import get_user_model
-    return get_user_model().objects.filter(phone=phone).exists()
+    return get_user_model().objects.filter(phone=phone, is_active=True).exists()
 
 
 def student_filter_tenant_ps_exclude_id(tenant, ps_number, exclude_id):
