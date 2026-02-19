@@ -27,6 +27,8 @@ class StudentClinicIdcardView(APIView):
         user = request.user
         student = getattr(user, "student_profile", None)
         tenant = getattr(request, "tenant", None)
+        
+        # 패스카드 배경 색상 (위조 방지용, 선생님이 날마다 변경 가능)
         colors = getattr(tenant, "clinic_idcard_colors", None) if tenant else None
         if not colors or not isinstance(colors, list) or len(colors) < 3:
             colors = ["#ef4444", "#3b82f6", "#22c55e"]
@@ -42,15 +44,10 @@ class StudentClinicIdcardView(APIView):
                 "current_result": "SUCCESS",
             })
 
-        tenant = getattr(request, "tenant", None)
         qs = Enrollment.objects.filter(student=student, status="ACTIVE")
         if tenant is not None:
             qs = qs.filter(tenant=tenant)
         enrollment = qs.select_related("lecture").order_by("id").first()
-        tenant = getattr(request, "tenant", None)
-        colors = getattr(tenant, "clinic_idcard_colors", None) if tenant else None
-        if not colors or not isinstance(colors, list) or len(colors) < 3:
-            colors = ["#ef4444", "#3b82f6", "#22c55e"]
         
         if not enrollment:
             profile_photo_url = None
@@ -95,12 +92,6 @@ class StudentClinicIdcardView(APIView):
         profile_photo_url = None
         if student.profile_photo:
             profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
-        
-        # 패스카드 배경 색상 (위조 방지용, 선생님이 날마다 변경 가능)
-        colors = getattr(tenant, "clinic_idcard_colors", None)
-        if not colors or not isinstance(colors, list) or len(colors) < 3:
-            # 기본값: 빨강, 파랑, 초록
-            colors = ["#ef4444", "#3b82f6", "#22c55e"]
         
         return Response({
             "student_name": getattr(student, "name", "") or "",
