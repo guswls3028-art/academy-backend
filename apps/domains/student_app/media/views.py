@@ -20,20 +20,12 @@ from .serializers import (
 
 def _import_media_models():
     try:
-        from apps.domains.media.models import Video  # type: ignore
+        from apps.support.video.models import Video, VideoAccess
     except Exception as e:
         raise RuntimeError(
-            "[CRITICAL] apps.domains.media.models.Video import 실패"
+            "[CRITICAL] apps.support.video.models.Video import 실패"
         ) from e
-
-    VideoPermission = None
-    try:
-        from apps.domains.media.models import VideoPermission  # type: ignore
-        VideoPermission = VideoPermission
-    except Exception:
-        VideoPermission = None
-
-    return Video, VideoPermission
+    return Video, VideoAccess
 
 
 def _get_student_enrollment_id(request) -> Optional[int]:
