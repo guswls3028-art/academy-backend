@@ -53,11 +53,7 @@ class StudentClinicIdcardView(APIView):
             profile_photo_url = None
             if student.profile_photo:
                 try:
-                    # 파일이 실제로 존재하는지 확인
-                    if student.profile_photo.storage.exists(student.profile_photo.name):
-                        profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
-                    else:
-                        profile_photo_url = None
+                    profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
                 except (ValueError, AttributeError, Exception):
                     profile_photo_url = None
             return Response({
