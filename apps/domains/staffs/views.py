@@ -78,9 +78,9 @@ def _owner_display_for_tenant(tenant, request=None):
             name = (getattr(request.user, "name", None) or "").strip() or request.user.username
             phone = (getattr(request.user, "phone", None) or "").strip() or None
             return {"id": None, "name": name, "phone": phone, "role": "OWNER", "is_owner": True}
-    # 4) DB에 원장 없을 때: 이 페이지 접근 가능한 사용자(슈퍼유저/스태프)를 대표로 표시
+    # 4) DB에 원장 없을 때: 이 페이지 접근 가능한 사용자(슈퍼유저/스태프/테넌트 오너)를 대표로 표시
     if request and request.user and request.user.is_authenticated:
-        if request.user.is_superuser or request.user.is_staff:
+        if is_effective_staff(request.user, tenant):
             name = (getattr(request.user, "name", None) or "").strip() or request.user.username or "원장"
             phone = (getattr(request.user, "phone", None) or "").strip() or None
             return {"id": None, "name": name, "phone": phone, "role": "OWNER", "is_owner": True}
