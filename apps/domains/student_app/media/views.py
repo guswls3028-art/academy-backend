@@ -353,13 +353,7 @@ class StudentSessionVideoListView(APIView):
         from academy.adapters.db.django import repositories_video as video_repo
 
         progress_map = {}
-        if enrollment_id and enrollment_obj is None:
-            enrollment_obj, err = _get_enrollment_for_student(
-                request, enrollment_id, lecture_id=getattr(session.lecture, "id", None)
-            )
-            if err:
-                return err
-            if enrollment_obj:
+        if enrollment_obj:
                 # 세션 내 모든 영상의 진행률을 일괄 조회 (최적화)
                 video_ids = list(videos.values_list("id", flat=True))
                 if video_ids:
