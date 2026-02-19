@@ -594,6 +594,12 @@ class StudentVideoProgressView(APIView):
                 "last_position": int(request.data.get("last_position") or 0),
             }, status=status.HTTP_200_OK)
 
+        if not enrollment_id:
+            return Response(
+                {"detail": "enrollment_id가 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         lecture_id = getattr(video.session, "lecture_id", None) if video.session else None
         enrollment, err = _get_enrollment_for_student(request, enrollment_id, lecture_id=lecture_id)
         if err:
