@@ -114,8 +114,16 @@ def set_ai_worker_asg_desired(autoscaling_client, ai_visible: int, ai_in_flight:
 
 
 def set_video_worker_asg_desired(autoscaling_client, video_visible: int, video_in_flight: int) -> None:
-    """Video 워커 ASG desired capacity 조정."""
-    set_asg_desired(autoscaling_client, VIDEO_WORKER_ASG_NAME, video_visible, video_in_flight, VIDEO_WORKER_ASG_MIN, VIDEO_WORKER_ASG_MAX)
+    """Video 워커: 1 instance = 1 video."""
+    set_asg_desired(
+        autoscaling_client,
+        VIDEO_WORKER_ASG_NAME,
+        video_visible,
+        video_in_flight,
+        VIDEO_WORKER_ASG_MIN,
+        VIDEO_WORKER_ASG_MAX,
+        messages_per_instance=1,
+    )
 
 
 def set_messaging_worker_asg_desired(autoscaling_client, messaging_visible: int, messaging_in_flight: int) -> None:
