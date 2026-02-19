@@ -240,6 +240,48 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         )
 
     # ==================================================
+    # public_session — 전체공개영상 업로드/목록용 세션 (테넌트당 1개)
+    # ==================================================
+    @transaction.atomic
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="public-session",
+        url_name="public-session",
+    )
+    def public_session(self, request):
+        """
+        테넌트당 "전체공개영상" 전용 Lecture + Session을 get_or_create 하고
+        session_id, lecture_id 를 반환합니다.
+        이 세션에 올린 영상은 프로그램(테넌트)에 등록된 모든 학생이 시청 가능합니다.
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "tenant required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        lecture, _ = Lecture.objects.get_or_create(
+            tenant=tenant,
+            title="전체공개영상",
+            defaults={
+                "name": "전체공개영상",
+                "subject": "공개",
+                "description": "프로그램에 등록된 모든 학생이 시청할 수 있는 영상입니다.",
+                "is_active": True,
+            },
+        )
+        session, _ = Session.objects.get_or_create(
+            lecture=lecture,
+            order=1,
+            defaults={"title": "전체공개영상", "date": None},
+        )
+        return Response(
+            {"session_id": session.id, "lecture_id": lecture.id},
+            status=status.HTTP_200_OK,
+        )
+
+    # ==================================================
     # upload/complete
     # ==================================================
     @transaction.atomic
