@@ -27,9 +27,10 @@ def get_post_by_id(tenant, post_id: int):
 
 
 def get_all_posts_for_tenant(tenant) -> QuerySet:
-    """tenant 전체 Post 목록 (node_id 없을 때 list용). N+1 방지."""
+    """tenant 전체 Post 목록 (node_id 없을 때 list용). replies_count, N+1 방지."""
     return (
         PostEntity.objects.filter(tenant=tenant)
+        .annotate(replies_count=Count("replies"))
         .select_related("block_type", "created_by")
         .prefetch_related(
             Prefetch(
@@ -81,6 +82,7 @@ def get_posts_for_node(
     )
     return (
         PostEntity.objects.filter(id__in=post_ids, tenant=tenant)
+        .annotate(replies_count=Count("replies"))
         .select_related("block_type", "created_by")
         .prefetch_related(
             Prefetch(
