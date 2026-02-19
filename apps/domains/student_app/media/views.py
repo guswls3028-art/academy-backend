@@ -309,32 +309,31 @@ def _students_for_request(request):
 
 
 def _student_can_access_session(request, session) -> bool:
-    """세션 목록/영상 접근 가능 여부. 전체공개 세션이면 같은 테넌트 학생, 아니면 해당 강의 수강생.
-    세션 소유 테넌트(session.lecture.tenant) 기준으로 수강 여부를 검사하여, X-Tenant-Code/호스트와
-    무관하게 올바른 테넌트로 권한 판단한다."""
+    """세션 접근: 전체공개영상 = 테넌트 내 학생이면 OK. 그 외 = 해당 강의 수강생만."""
     from apps.domains.enrollment.models import Enrollment
 
-    students = _students_for_request(request)
-    if not students:
-        return False
     lecture = getattr(session, "lecture", None)
     if not lecture:
         return False
-    # 세션 소유 테넌트 우선 사용 (요청 테넌트가 잘못 전달되어도 정확한 권한 판단)
     tenant = getattr(lecture, "tenant", None) or getattr(request, "tenant", None)
     if not tenant:
         return False
     tenant_id = getattr(tenant, "id", None)
+
+    # 전체공개영상: 테넌트 내 학생이면 수강 여부 무관하게 허용
     if getattr(lecture, "title", None) == "전체공개영상":
-        # 수강등록 없이, 해당 테넌트 소속 학생이 한 명이라도 있으면 시청 가능 (강의 없는 학생도 전체공개 시청 가능)
-        if any(getattr(s, "tenant_id", None) == tenant_id for s in students):
+        students = _students_for_request(request)
+        if students and any(getattr(s, "tenant_id", None) == tenant_id for s in students):
             return True
-        # 폴백: 요청 테넌트와 강의 테넌트가 같으면 허용 (같은 학원 소속)
-        req_tenant_id = getattr(getattr(request, "tenant", None), "id", None)
-        if req_tenant_id is not None and getattr(lecture, "tenant_id", None) == req_tenant_id:
+        req_tenant = getattr(request, "tenant", None)
+        if req_tenant and getattr(req_tenant, "id", None) == tenant_id:
             return True
         return False
-    # 일반 강의: 연결된 학생 중 해당 강의 수강생이 한 명이라도 있으면 허용
+
+    # 일반 강의: 수강생만
+    students = _students_for_request(request)
+    if not students:
+        return False
     for student in students:
         if Enrollment.objects.filter(
             student=student, lecture=lecture, tenant=tenant, status="ACTIVE"
