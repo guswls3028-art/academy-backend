@@ -376,7 +376,50 @@ class StudentVideoPlaybackView(APIView):
             if enrollment_obj:
                 access_mode_value = resolve_access_mode(video=video, enrollment=enrollment_obj).value
 
+        # 비디오 상태 확인 및 로깅
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        video_status = getattr(video, "status", None)
+        hls_path = getattr(video, "hls_path", None)
+        file_key = getattr(video, "file_key", None)
+        
+        logger.info(
+            f"[StudentVideoPlaybackView] Video {video_id} playback request: "
+            f"status={video_status}, hls_path={hls_path}, file_key={file_key}, enrollment_id={enrollment_id}"
+        )
+        
+        # 비디오가 READY 상태가 아니면 에러 반환
+        if video_status != video.Status.READY:
+            logger.warning(
+                f"[StudentVideoPlaybackView] Video {video_id} is not READY: status={video_status}"
+            )
+            return Response(
+                {
+                    "detail": f"비디오가 아직 준비되지 않았습니다. (상태: {video_status})",
+                    "video_status": str(video_status),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
         hls_url, mp4_url = _pick_urls(video, request)
+        
+        # 재생 URL이 없으면 에러 반환
+        if not hls_url and not mp4_url:
+            logger.error(
+                f"[StudentVideoPlaybackView] Failed to generate playback URL for video {video_id}: "
+                f"hls_path={hls_path}, file_key={file_key}"
+            )
+            return Response(
+                {
+                    "detail": "비디오 재생 URL을 생성할 수 없습니다. 비디오 파일이 처리 중이거나 업로드되지 않았을 수 있습니다.",
+                    "video_status": str(video_status),
+                    "hls_path": hls_path,
+                    "has_file_key": bool(file_key),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        
         thumb = getattr(video, "thumbnail_url", None) or getattr(video, "thumbnail", None)
         
         # thumbnail_url이 없으면 thumbnail 필드에서 URL 생성
@@ -385,6 +428,11 @@ class StudentVideoPlaybackView(APIView):
 
         # play_url 생성 (hls_url 우선, 없으면 mp4_url)
         play_url = hls_url or mp4_url
+        
+        logger.info(
+            f"[StudentVideoPlaybackView] Generated playback URL for video {video_id}: "
+            f"play_url={play_url[:100] if play_url else None}..."
+        )
 
         payload = {
             "video": {
