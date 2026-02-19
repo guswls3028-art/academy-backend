@@ -15,7 +15,7 @@ from apps.domains.exams.serializers.exam_asset import ExamAssetSerializer
 from apps.domains.exams.services.template_resolver import resolve_template_exam, assert_template_editable
 from apps.core.r2_paths import ai_exam_asset_key
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.core.permissions import TenantResolvedAndStaff
 
 
 class ExamAssetView(APIView):
@@ -30,7 +30,7 @@ class ExamAssetView(APIView):
     def get_permissions(self):
         if self.request.method == "GET":
             return [IsAuthenticated()]
-        return [IsAuthenticated(), IsTeacherOrAdmin()]
+        return [IsAuthenticated(), TenantResolvedAndStaff()]
 
     def get(self, request, exam_id: int):
         exam = get_object_or_404(Exam, id=int(exam_id))
