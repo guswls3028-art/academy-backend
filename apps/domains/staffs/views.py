@@ -45,6 +45,7 @@ from academy.adapters.db.django import repositories_staffs as staff_repo
 from .filters import StaffFilter, WorkRecordFilter, ExpenseRecordFilter
 from apps.domains.teachers.models import Teacher
 from apps.core.models import TenantMembership
+from apps.core.permissions import is_effective_staff
 
 User = get_user_model()
 
