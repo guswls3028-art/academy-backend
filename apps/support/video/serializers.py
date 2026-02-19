@@ -8,6 +8,7 @@ from .models import (
     VideoAccess,
     VideoProgress,
     VideoPlaybackEvent,
+    VideoFolder,
 )
 from .encoding_progress import (
     get_video_encoding_progress,
