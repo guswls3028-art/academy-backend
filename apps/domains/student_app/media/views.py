@@ -514,7 +514,6 @@ class StudentVideoProgressView(APIView):
         Video, VideoPermission = _import_media_models()
         from apps.support.video.models import VideoProgress
         from apps.domains.enrollment.models import Enrollment
-        from academy.adapters.db.django import repositories_video as video_repo
 
         enrollment_id = _get_student_enrollment_id(request)
         if not enrollment_id:
