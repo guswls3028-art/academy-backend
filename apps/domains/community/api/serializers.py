@@ -39,9 +39,9 @@ class PostReplySerializer(serializers.ModelSerializer):
         post = validated_data.pop("post")
         return PostReply.objects.create(
             post=post,
-            tenant=post.tenant_id,
-            created_by=validated_data.get("created_by"),
+            tenant_id=post.tenant_id,
             content=validated_data["content"],
+            created_by=validated_data.get("created_by"),
         )
 
 
