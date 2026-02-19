@@ -41,6 +41,7 @@ from ..models import (
     VideoAccess,
     VideoProgress,
     VideoPlaybackEvent,
+    VideoFolder,
 )
 from ..serializers import VideoSerializer, VideoDetailSerializer
 from ..services.sqs_queue import VideoSQSQueue

@@ -41,6 +41,15 @@ class Video(TimestampModel):
         on_delete=models.CASCADE,
         related_name="videos",
     )
+    
+    folder = models.ForeignKey(
+        "VideoFolder",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="videos",
+        help_text="전체공개영상 내 폴더 (일반 차시 영상은 null)",
+    )
 
     title = models.CharField(max_length=255)
 
@@ -359,3 +368,43 @@ class VideoPlaybackEvent(TimestampModel):
 
     def __str__(self):
         return f"{self.session_id} {self.event_type} v={self.violated}"
+
+
+# ========================================================
+# Video Folder (전체공개영상 내 폴더 구조)
+# ========================================================
+
+class VideoFolder(TimestampModel):
+    """전체공개영상 세션 내 폴더 구조 (재귀 구조)."""
+    
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="video_folders",
+        help_text="전체공개영상 세션",
+    )
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="children",
+        help_text="상위 폴더 (null이면 루트 폴더)",
+    )
+    name = models.CharField(max_length=255, help_text="폴더 이름")
+    order = models.PositiveIntegerField(default=0, help_text="정렬 순서")
+
+    class Meta:
+        ordering = ["order", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["session", "parent", "name"],
+                name="unique_video_folder_name",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["session", "parent"]),
+        ]
+
+    def __str__(self):
+        return f"{self.session.lecture.title if self.session else '?'} / {self.name}"
