@@ -46,11 +46,16 @@ class PostViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         tenant = getattr(request, "tenant", None)
-        if not tenant:
-            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
-        node_ids = request.data.get("node_ids") or []
-        # 학생이 작성한 경우 created_by 자동 설정 (내 질문 목록에 노출되도록)
         request_student = get_request_student(request)
+        # tenant 미설정 시 학생 소속 tenant로 폴백 (호스트 기반 테넌트 해석 실패 시 403 방지)
+        if not tenant and request_student and getattr(request_student, "tenant", None):
+            tenant = request_student.tenant
+        if not tenant:
+            return Response(
+                {"detail": "tenant required", "code": "tenant_required"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        node_ids = request.data.get("node_ids") or []
         created_by = serializer.validated_data.get("created_by")
         if request_student is not None:
             created_by = request_student
