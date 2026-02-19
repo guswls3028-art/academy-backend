@@ -140,13 +140,38 @@ class StudentViewSet(ModelViewSet):
         """
         학생 생성 시 처리 흐름
 
-        1. 입력값 검증 (StudentCreateSerializer)
-        2. 학부모 계정 생성/연결 (ensure_parent_for_student)
-        3. User 생성 (username = ps_number)
-        4. Student 생성 + tenant / user / parent 연결
-        5. TenantMembership(role=student) SSOT 강제 생성
-        6. (옵션) 가입 성공 메시지 일괄 발송
+        1. 삭제된 학생 체크 (전화번호 또는 이름+학부모전화)
+        2. 입력값 검증 (StudentCreateSerializer)
+        3. 학부모 계정 생성/연결 (ensure_parent_for_student)
+        4. User 생성 (username = ps_number)
+        5. Student 생성 + tenant / user / parent 연결
+        6. TenantMembership(role=student) SSOT 강제 생성
+        7. (옵션) 가입 성공 메시지 일괄 발송
         """
+        tenant = request.tenant
+        raw_data = request.data
+        name = str(raw_data.get("name", "")).strip()
+        parent_phone = str(raw_data.get("parent_phone", "")).strip()
+        phone = str(raw_data.get("phone", "")).strip() if raw_data.get("phone") else None
+
+        # 삭제된 학생 체크 (전화번호 또는 이름+학부모전화)
+        deleted_student = None
+        if phone:
+            deleted_student = student_repo.student_filter_tenant_phone_deleted(tenant, phone).first()
+        if not deleted_student and name and parent_phone:
+            deleted_student = student_repo.student_filter_tenant_name_parent_phone_deleted(tenant, name, parent_phone)
+
+        if deleted_student:
+            from .serializers import StudentDetailSerializer
+            return Response(
+                {
+                    "code": "deleted_student_exists",
+                    "detail": "삭제된 학생이 있습니다. 복원하시겠습니까?",
+                    "deleted_student": StudentDetailSerializer(deleted_student, context={"request": request}).data,
+                },
+                status=409,
+            )
+
         serializer = self.get_serializer(
             data=request.data,
             context={"request": request},
