@@ -21,7 +21,7 @@ from apps.domains.community.selectors import (
     get_empty_scope_node_queryset,
 )
 from apps.domains.community.services import CommunityService
-from apps.domains.community.models import PostTemplate, PostReply
+from apps.domains.community.models import PostTemplate, PostReply, BlockType
 
 
 class PostViewSet(viewsets.ModelViewSet):
