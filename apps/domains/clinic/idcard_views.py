@@ -90,8 +90,12 @@ class StudentClinicIdcardView(APIView):
         
         # 프로필 사진 URL (신원 확인용)
         profile_photo_url = None
-        if student.profile_photo:
-            profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
+        if student.profile_photo and hasattr(student.profile_photo, 'url'):
+            try:
+                profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
+            except (ValueError, AttributeError):
+                # 파일이 없거나 URL 생성 실패 시 None
+                profile_photo_url = None
         
         return Response({
             "student_name": getattr(student, "name", "") or "",
