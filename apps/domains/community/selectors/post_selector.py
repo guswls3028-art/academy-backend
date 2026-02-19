@@ -1,6 +1,6 @@
 from typing import Optional
 
-from django.db.models import Prefetch, QuerySet, Q
+from django.db.models import Prefetch, QuerySet, Q, Count
 
 from apps.domains.community.models import PostEntity, PostMapping, ScopeNode
 
