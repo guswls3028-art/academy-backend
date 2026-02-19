@@ -54,7 +54,10 @@ class StudentClinicIdcardView(APIView):
             profile_photo_url = None
             if student.profile_photo:
                 try:
-                    profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
+                    profile_photo_url = generate_presigned_get_url_storage(
+                        key=student.profile_photo.name,
+                        expires_in=3600,
+                    )
                 except (ValueError, AttributeError, Exception):
                     profile_photo_url = None
             return Response({
@@ -92,12 +95,16 @@ class StudentClinicIdcardView(APIView):
 
         any_clinic = any(h["clinic_required"] for h in histories)
         
-        # 프로필 사진 URL (신원 확인용) - students serializer와 동일한 방식 사용
+        # 프로필 사진 URL (신원 확인용) - R2 presigned URL 사용
         profile_photo_url = None
         if student.profile_photo:
             try:
-                # students serializer와 동일한 방식으로 URL 생성
-                profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
+                # R2 Storage에 저장된 경우 presigned URL 생성
+                # profile_photo.name이 R2 key가 됨
+                profile_photo_url = generate_presigned_get_url_storage(
+                    key=student.profile_photo.name,
+                    expires_in=3600,  # 1시간 유효
+                )
             except (ValueError, AttributeError, Exception):
                 # 파일이 없거나 URL 생성 실패 시 None
                 profile_photo_url = None
