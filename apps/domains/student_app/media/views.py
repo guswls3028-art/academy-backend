@@ -85,6 +85,118 @@ def _policy_from_video(video) -> Dict[str, Any]:
 # Views
 # ======================================================
 
+
+class StudentPublicSessionView(APIView):
+    """
+    GET /student/video/public-session/
+    테넌트별 전체공개영상 세션 ID 반환. 같은 테넌트 학생만 호출 가능.
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request):
+        from apps.domains.lectures.models import Lecture, Session
+        from apps.domains.enrollment.models import Enrollment
+
+        tenant = getattr(request, "tenant", None)
+        student = get_request_student(request)
+        if not tenant or not student:
+            return Response(
+                {"detail": "tenant or student required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not Enrollment.objects.filter(student=student, tenant=tenant, status="ACTIVE").exists():
+            return Response(
+                {"detail": "no active enrollment in this tenant"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        lecture, _ = Lecture.objects.get_or_create(
+            tenant=tenant,
+            title="전체공개영상",
+            defaults={
+                "name": "전체공개영상",
+                "subject": "공개",
+                "description": "프로그램에 등록된 모든 학생이 시청할 수 있는 영상입니다.",
+                "is_active": True,
+            },
+        )
+        session, _ = Session.objects.get_or_create(
+            lecture=lecture,
+            order=1,
+            defaults={"title": "전체공개영상", "date": None},
+        )
+        return Response(
+            {"session_id": session.id, "lecture_id": lecture.id},
+            status=status.HTTP_200_OK,
+        )
+
+
+class StudentVideoMeView(APIView):
+    """
+    GET /student/video/me/
+    영상 탭용: 전체공개 세션 정보 + 수강 중인 강의별 차시 목록.
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request):
+        from apps.domains.lectures.models import Lecture, Session
+        from apps.domains.enrollment.models import Enrollment
+
+        tenant = getattr(request, "tenant", None)
+        student = get_request_student(request)
+        if not tenant or not student:
+            return Response(
+                {"detail": "tenant or student required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        enrollments = (
+            Enrollment.objects.filter(student=student, tenant=tenant, status="ACTIVE")
+            .select_related("lecture")
+            .order_by("lecture__title")
+        )
+        lecture_ids = list(enrollments.values_list("lecture_id", flat=True).distinct())
+        lectures_qs = (
+            Lecture.objects.filter(id__in=lecture_ids, tenant=tenant)
+            .prefetch_related("sessions")
+            .order_by("title")
+        )
+        lectures_data = []
+        for lec in lectures_qs:
+            sessions_data = [
+                {
+                    "id": s.id,
+                    "title": s.title or f"{s.order}차시",
+                    "order": s.order,
+                    "date": s.date.isoformat() if s.date else None,
+                }
+                for s in sorted(lec.sessions.all(), key=lambda x: (x.order, x.id))
+            ]
+            lectures_data.append({
+                "id": lec.id,
+                "title": lec.title or lec.name or "강의",
+                "sessions": sessions_data,
+            })
+
+        public_lecture = Lecture.objects.filter(
+            tenant=tenant, title="전체공개영상"
+        ).first()
+        public_data = None
+        if public_lecture:
+            public_session = public_lecture.sessions.filter(order=1).first()
+            if public_session:
+                public_data = {
+                    "session_id": public_session.id,
+                    "lecture_id": public_lecture.id,
+                }
+
+        return Response({
+            "public": public_data,
+            "lectures": lectures_data,
+        }, status=status.HTTP_200_OK)
+
+
 def _student_can_access_session(request, session) -> bool:
     """세션 목록/영상 접근 가능 여부. 전체공개 세션이면 같은 테넌트 학생, 아니면 해당 강의 수강생."""
     from apps.domains.enrollment.models import Enrollment
