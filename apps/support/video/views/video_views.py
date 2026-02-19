@@ -199,8 +199,26 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
+        try:
+            session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
+        except Exception:
+            return Response(
+                {"detail": "해당 차시를 찾을 수 없습니다. 페이지를 새로고침한 뒤 다시 시도하세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not session:
+            return Response(
+                {"detail": "해당 차시를 찾을 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         tenant = session.lecture.tenant
+        request_tenant = getattr(request, "tenant", None)
+        if request_tenant and tenant.id != request_tenant.id:
+            return Response(
+                {"detail": "다른 프로그램의 차시에는 업로드할 수 없습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         tenant_code = tenant.code
         tenant_id = tenant.id
         order = (
