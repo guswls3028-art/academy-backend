@@ -13,7 +13,6 @@ from drf_yasg.utils import swagger_auto_schema
 
 from apps.core.models import Attendance, Expense, Program, Tenant, TenantDomain, TenantMembership
 from academy.adapters.db.django import repositories_core as core_repo
-from apps.core.permissions import IsAdminOrStaff, IsSuperuserOnly
 from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.core.permissions import (
     TenantResolved,
