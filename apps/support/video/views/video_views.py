@@ -43,7 +43,7 @@ from ..models import (
     VideoPlaybackEvent,
     VideoFolder,
 )
-from ..serializers import VideoSerializer, VideoDetailSerializer
+from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSerializer
 from ..services.sqs_queue import VideoSQSQueue
 from .playback_mixin import VideoPlaybackMixin
 
