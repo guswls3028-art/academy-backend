@@ -438,6 +438,14 @@ class StudentVideoPlaybackView(APIView):
         elif not enrollment_id:
             # 일반 영상: 수강 정보 필요
             raise PermissionDenied("이 영상을 시청하려면 수강 정보가 필요합니다.")
+        else:
+            # 일반 영상: enrollment가 요청 학생 소유이며 이 영상 강의의 수강인지 검증 (IDOR 방지)
+            lecture_id = getattr(video.session.lecture, "id", None) if video.session and video.session.lecture else None
+            enrollment_obj, err = _get_enrollment_for_student(request, enrollment_id, lecture_id=lecture_id)
+            if err:
+                return err
+            if not enrollment_obj:
+                raise PermissionDenied("해당 수강 정보로는 이 영상을 시청할 수 없습니다.")
 
         perm_obj = None
         if VideoPermission and enrollment_id:
