@@ -72,6 +72,27 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response(status=status.HTTP_404_NOT_FOUND)
         return Response(PostEntitySerializer(post).data)
 
+    @action(detail=True, methods=["get", "post"], url_path="replies")
+    def replies(self, request, pk=None):
+        """GET/POST /posts/:id/replies/ — 답변 목록 조회, 답변 등록(선생/관리자)."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        post = get_post_by_id(tenant, int(pk))
+        if not post:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.method == "GET":
+            qs = PostReply.objects.filter(post=post, tenant=tenant).select_related("created_by").order_by("created_at")
+            serializer = PostReplySerializer(qs, many=True)
+            return Response(serializer.data)
+
+        # POST: 답변 등록 (content만 필수)
+        serializer = PostReplySerializer(data=request.data, partial=False)
+        serializer.is_valid(raise_exception=True)
+        reply = serializer.save(post=post)
+        return Response(PostReplySerializer(reply).data, status=status.HTTP_201_CREATED)
+
 
 class AdminPostViewSet(viewsets.ModelViewSet):
     """Admin list with filters. block_type_id, lecture_id, page, page_size."""
