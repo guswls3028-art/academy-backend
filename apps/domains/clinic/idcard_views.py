@@ -29,6 +29,7 @@ class StudentClinicIdcardView(APIView):
         if not student or not isinstance(student, Student):
             return Response({
                 "student_name": "",
+                "profile_photo_url": None,
                 "server_date": timezone.now().date().isoformat(),
                 "server_datetime": timezone.now().isoformat(),
                 "histories": [],
@@ -73,8 +74,15 @@ class StudentClinicIdcardView(APIView):
             })
 
         any_clinic = any(h["clinic_required"] for h in histories)
+        
+        # 프로필 사진 URL (신원 확인용)
+        profile_photo_url = None
+        if student.profile_photo:
+            profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
+        
         return Response({
             "student_name": getattr(student, "name", "") or "",
+            "profile_photo_url": profile_photo_url,
             "server_date": timezone.now().date().isoformat(),
             "server_datetime": timezone.now().isoformat(),
             "histories": histories,
