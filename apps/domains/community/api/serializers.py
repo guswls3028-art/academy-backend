@@ -48,7 +48,10 @@ class PostReplySerializer(serializers.ModelSerializer):
 class PostEntitySerializer(serializers.ModelSerializer):
     mappings = PostMappingSerializer(many=True, read_only=True)
     block_type_label = serializers.CharField(source="block_type.label", read_only=True)
-    replies_count = serializers.IntegerField(read_only=True, default=0)
+    replies_count = serializers.SerializerMethodField(read_only=True)
+
+    def get_replies_count(self, obj):
+        return getattr(obj, "replies_count", 0) if hasattr(obj, "replies_count") else 0
 
     class Meta:
         model = PostEntity
