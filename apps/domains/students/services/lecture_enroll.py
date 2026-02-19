@@ -104,7 +104,7 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
 
     with transaction.atomic():
         if phone:
-            if student_repo.user_filter_phone_active(phone).exists():
+            if student_repo.user_filter_phone_active(phone, tenant=tenant).exists():
                 return None, False
         if student_repo.student_filter_tenant_ps_number(tenant, ps_number).exists():
             return None, False
