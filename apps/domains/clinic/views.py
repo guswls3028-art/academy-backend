@@ -314,6 +314,60 @@ class TestViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================
+# Clinic Settings (패스카드 색상 등)
+# ============================================================
+class ClinicSettingsView(APIView):
+    """
+    GET/PATCH /clinic/settings/
+    클리닉 설정 (패스카드 배경 색상 등)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant가 필요합니다."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        colors = getattr(tenant, "clinic_idcard_colors", None)
+        if not colors or not isinstance(colors, list) or len(colors) < 3:
+            # 기본값: 빨강, 파랑, 초록
+            colors = ["#ef4444", "#3b82f6", "#22c55e"]
+        
+        return Response({
+            "colors": colors[:3],  # 최대 3개만
+        })
+
+    def patch(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant가 필요합니다."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        colors = request.data.get("colors")
+        if not isinstance(colors, list) or len(colors) != 3:
+            return Response(
+                {"detail": "colors는 3개의 색상 코드 배열이어야 합니다. (예: [\"#ef4444\", \"#3b82f6\", \"#22c55e\"])"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # 색상 코드 검증 (간단한 hex 검증)
+        import re
+        hex_pattern = re.compile(r"^#[0-9A-Fa-f]{6}$")
+        for c in colors:
+            if not isinstance(c, str) or not hex_pattern.match(c):
+                return Response(
+                    {"detail": f"잘못된 색상 코드: {c}. #RRGGBB 형식이어야 합니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        
+        tenant.clinic_idcard_colors = colors[:3]
+        tenant.save(update_fields=["clinic_idcard_colors"])
+        
+        return Response({
+            "colors": tenant.clinic_idcard_colors,
+        })
+
+
+# ============================================================
 # Submission
 # ============================================================
 class SubmissionViewSet(viewsets.ModelViewSet):
