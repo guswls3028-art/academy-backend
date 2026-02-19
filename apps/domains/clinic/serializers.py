@@ -61,9 +61,9 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
 class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source="student.name", read_only=True)
-    session_date = serializers.DateField(source="session.date", read_only=True)
-    session_start_time = serializers.TimeField(source="session.start_time", read_only=True)
-    session_location = serializers.CharField(source="session.location", read_only=True)
+    session_date = serializers.SerializerMethodField()  # ✅ session이 없을 수 있으므로 SerializerMethodField 사용
+    session_start_time = serializers.SerializerMethodField()
+    session_location = serializers.SerializerMethodField()
 
     # ✅ 파생 노출
     session_duration_minutes = serializers.IntegerField(

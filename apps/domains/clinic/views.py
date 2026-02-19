@@ -202,15 +202,18 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """
         ✅ 예약 생성
-        - 선생: student, enrollment_id 직접 지정 가능
+        - 선생: student, enrollment_id 직접 지정 가능, session 필수
         - 학생: student 자동 설정, source="student_request", status="pending"
+        - 학생 신청 시: session 또는 (requested_date + requested_start_time) 사용 가능
         """
         tenant = getattr(request, "tenant", None)
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        session = serializer.validated_data["session"]
+        session = serializer.validated_data.get("session")
+        requested_date = serializer.validated_data.get("requested_date")
+        requested_start_time = serializer.validated_data.get("requested_start_time")
         student = serializer.validated_data.get("student")
         enrollment_id = serializer.validated_data.get("enrollment_id")
         source = serializer.validated_data.get("source")
@@ -238,16 +241,32 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        exists = SessionParticipant.objects.filter(
-            tenant=tenant,
-            session=session,
-            student=student,
-        ).exists()
-        if exists:
-            return Response(
-                {"detail": "이미 해당 세션에 예약된 학생입니다."},
-                status=status.HTTP_409_CONFLICT,
-            )
+        # 중복 체크: session이 있으면 session 기준, 없으면 requested_date/requested_start_time 기준
+        if session:
+            exists = SessionParticipant.objects.filter(
+                tenant=tenant,
+                session=session,
+                student=student,
+            ).exists()
+            if exists:
+                return Response(
+                    {"detail": "이미 해당 세션에 예약된 학생입니다."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+        elif requested_date and requested_start_time:
+            exists = SessionParticipant.objects.filter(
+                tenant=tenant,
+                session__isnull=True,
+                requested_date=requested_date,
+                requested_start_time=requested_start_time,
+                student=student,
+                status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
+            ).exists()
+            if exists:
+                return Response(
+                    {"detail": "이미 해당 시간에 예약 신청이 있습니다."},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
         # participant_role 결정
         if source == SessionParticipant.Source.MANUAL:
@@ -277,7 +296,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             participant_role=participant_role,
         )
 
-        if enrollment_id:
+        # enrollment_id가 있고 session이 있으면 ClinicLink 업데이트
+        if enrollment_id and session:
             ClinicLink.objects.filter(
                 session=session,
                 enrollment_id=enrollment_id,
