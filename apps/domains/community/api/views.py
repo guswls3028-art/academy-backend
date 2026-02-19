@@ -32,6 +32,10 @@ class PostViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
+            request_student = get_request_student(self.request)
+            if request_student and getattr(request_student, "tenant", None):
+                tenant = request_student.tenant
+        if not tenant:
             return get_empty_post_queryset()
         raw = self.request.query_params.get("node_id")
         try:
