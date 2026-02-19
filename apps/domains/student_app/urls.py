@@ -14,6 +14,8 @@ from .profile.views import StudentProfileView
 from .media.views import (
     StudentSessionVideoListView,
     StudentVideoPlaybackView,
+    StudentPublicSessionView,
+    StudentVideoMeView,
 )
 
 urlpatterns = [
