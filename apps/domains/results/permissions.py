@@ -38,19 +38,15 @@ class IsStudent(BasePermission):
 
 class IsTeacherOrAdmin(BasePermission):
     """
-    테넌트 스태프(owner/admin/staff/teacher) 또는 Django is_staff/is_superuser/role.
-    원장(owner)은 is_staff 없어도 프로그램 내 풀 권한.
+    테넌트 내 슈퍼유저급: is_effective_staff(오너 포함) 또는 레거시 role 판단.
+    원장(owner) = 프로그램 내 풀 권한, 충돌 방지용 core.is_effective_staff 사용.
     """
-
-    STAFF_ROLES = ("owner", "admin", "staff", "teacher")
 
     def has_permission(self, request, view):
         u = getattr(request, "user", None)
         if not u or not u.is_authenticated:
             return False
         tenant = getattr(request, "tenant", None)
-        if tenant:
-            from academy.adapters.db.django import repositories_core as core_repo
-            if core_repo.membership_exists_staff(tenant=tenant, user=u, staff_roles=self.STAFF_ROLES):
-                return True
+        if is_effective_staff(u, tenant):
+            return True
         return is_teacher_user(u)
