@@ -43,7 +43,7 @@ class Tenant(models.Model):
 
     # 클리닉 패스카드 배경 색상 (위조 방지용, 선생님이 날마다 변경 가능)
     # 예: ["#ef4444", "#3b82f6", "#22c55e"] (빨강, 파랑, 초록)
-    clinic_idcard_colors = JSONField(
+    clinic_idcard_colors = models.JSONField(
         default=list,
         blank=True,
         help_text="클리닉 패스카드 배경 그라데이션 색상 3개 (예: [\"#ef4444\", \"#3b82f6\", \"#22c55e\"])",
