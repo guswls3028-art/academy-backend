@@ -60,7 +60,19 @@ class Command(BaseCommand):
             )
             self.stdout.write(f"CORS 설정:\n{json.dumps(cors_config, indent=2)}")
         except Exception as e:
-            self.stdout.write(
-                self.style.ERROR(f"❌ CORS 설정 실패: {e}")
-            )
+            error_msg = str(e)
+            if "AccessDenied" in error_msg:
+                self.stdout.write(
+                    self.style.WARNING(
+                        "⚠️ 권한이 없습니다. Cloudflare 대시보드에서 직접 설정해주세요:\n"
+                        "1. Cloudflare Dashboard → R2 → academy-video 버킷 선택\n"
+                        "2. Settings → CORS Policy\n"
+                        "3. 다음 JSON 설정 추가:\n"
+                        + json.dumps(cors_config, indent=2, ensure_ascii=False)
+                    )
+                )
+            else:
+                self.stdout.write(
+                    self.style.ERROR(f"CORS 설정 실패: {error_msg}")
+                )
             raise
