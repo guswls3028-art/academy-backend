@@ -331,9 +331,6 @@ def _student_can_access_session(request, session) -> bool:
         req_tenant = getattr(request, "tenant", None)
         if req_tenant and getattr(req_tenant, "id", None) == tenant_id:
             return True
-        # 3) request.tenant 없을 때: lecture 테넌트 소속 학생이면 허용 (헤더 누락·구버전 앱 대응)
-        if not req_tenant and students and any(getattr(s, "tenant_id", None) == tenant_id for s in students):
-            return True
         return False
 
     # 일반 강의: 수강생만
