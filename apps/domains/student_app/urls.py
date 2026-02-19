@@ -43,4 +43,5 @@ urlpatterns = [
     path("video/public-session/", StudentPublicSessionView.as_view()),
     path("video/sessions/<int:session_id>/videos/", StudentSessionVideoListView.as_view()),
     path("video/videos/<int:video_id>/playback/", StudentVideoPlaybackView.as_view()),
+    path("video/videos/<int:video_id>/progress/", StudentVideoProgressView.as_view()),
 ]
