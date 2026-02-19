@@ -35,13 +35,11 @@ class StudentClinicIdcardView(APIView):
                 "current_result": "SUCCESS",
             })
 
-        enrollment = (
-            Enrollment.objects
-            .filter(student=student, status="ACTIVE")
-            .select_related("lecture")
-            .order_by("id")
-            .first()
-        )
+        tenant = getattr(request, "tenant", None)
+        qs = Enrollment.objects.filter(student=student, status="ACTIVE")
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
+        enrollment = qs.select_related("lecture").order_by("id").first()
         if not enrollment:
             return Response({
                 "student_name": getattr(student, "name", "") or "",
