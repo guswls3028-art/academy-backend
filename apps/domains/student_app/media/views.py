@@ -85,6 +85,28 @@ def _policy_from_video(video) -> Dict[str, Any]:
 # Views
 # ======================================================
 
+def _student_can_access_session(request, session) -> bool:
+    """세션 목록/영상 접근 가능 여부. 전체공개 세션이면 같은 테넌트 학생, 아니면 해당 강의 수강생."""
+    from apps.domains.lectures.models import Session as SessionModel
+    from apps.domains.enrollment.models import Enrollment
+
+    student = get_request_student(request)
+    if not student:
+        return False
+    tenant = getattr(request, "tenant", None)
+    if not tenant:
+        return False
+
+    lecture = getattr(session, "lecture", None)
+    if not lecture:
+        return False
+    if getattr(lecture, "title", None) == "전체공개영상":
+        return Enrollment.objects.filter(student=student, tenant=tenant, status="ACTIVE").exists()
+    return Enrollment.objects.filter(
+        student=student, lecture=lecture, tenant=tenant, status="ACTIVE"
+    ).exists()
+
+
 class StudentSessionVideoListView(APIView):
     """
     GET /student/video/sessions/{session_id}/videos/
@@ -93,8 +115,17 @@ class StudentSessionVideoListView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request, session_id: int):
+        from apps.domains.lectures.models import Session as SessionModel
+
         Video, VideoPermission = _import_media_models()
         enrollment_id = _get_student_enrollment_id(request)
+
+        try:
+            session = SessionModel.objects.select_related("lecture").get(id=session_id)
+        except SessionModel.DoesNotExist:
+            raise Http404
+        if not _student_can_access_session(request, session):
+            raise PermissionDenied("이 차시의 영상을 볼 수 있는 권한이 없습니다.")
 
         videos = Video.objects.filter(session_id=session_id).order_by("order", "id")
 
