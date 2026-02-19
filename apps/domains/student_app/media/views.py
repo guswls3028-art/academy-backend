@@ -317,11 +317,12 @@ class StudentSessionVideoListView(APIView):
             if enrollment_obj:
                 # 세션 내 모든 영상의 진행률을 일괄 조회 (최적화)
                 video_ids = list(videos.values_list("id", flat=True))
-                progresses = video_repo.video_progress_filter_video_enrollment_ids(
-                    video=None,  # video=None이면 video_id__in 사용
-                    enrollment_ids=[enrollment_id]
-                ).filter(video_id__in=video_ids)
-                progress_map = {p.video_id: p for p in progresses}
+                if video_ids:
+                    progresses = video_repo.video_progress_filter_video_enrollment_ids(
+                        video=None,  # video=None이면 video_id__in 사용
+                        enrollment_ids=[enrollment_id]
+                    ).filter(video_id__in=video_ids)
+                    progress_map = {p.video_id: p for p in progresses}
 
         items = []
         for v in videos:
