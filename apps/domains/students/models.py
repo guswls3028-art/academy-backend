@@ -109,11 +109,13 @@ class Student(TimestampModel):
     is_managed = models.BooleanField(default=True)
 
     # 학생이 학생앱에서만 설정 (관리자 편집 불가)
+    # R2 Storage 사용 (인벤토리와 동일한 버킷)
     profile_photo = models.ImageField(
         upload_to="student_profile/%Y/%m/",
         null=True,
         blank=True,
-        help_text="학생이 학생앱에서 업로드한 프로필 사진",
+        storage=None,  # settings에서 R2_STORAGE_BUCKET 사용 시 자동 적용
+        help_text="학생이 학생앱에서 업로드한 프로필 사진 (R2 Storage 저장)",
     )
 
     deleted_at = models.DateTimeField(
