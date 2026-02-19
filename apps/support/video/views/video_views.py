@@ -138,6 +138,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "update",
         "partial_update",
         "destroy",
+        "public_session",
     }
 
     def get_permissions(self):
