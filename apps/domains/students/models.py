@@ -6,6 +6,7 @@ from django.conf import settings
 from apps.api.common.models import TimestampModel
 from apps.core.models import Tenant
 from apps.core.db import TenantQuerySet  # ✅ 추가
+from apps.infrastructure.storage.r2_storage import R2Storage
 
 
 class Student(TimestampModel):
