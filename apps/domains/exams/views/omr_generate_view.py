@@ -18,7 +18,7 @@ from apps.domains.assets.omr.renderer.v245_final import render_to_bytes as rende
 from apps.domains.exams.services.template_resolver import assert_template_editable
 from apps.core.r2_paths import ai_exam_asset_key
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.core.permissions import TenantResolvedAndStaff
 
 
 class GenerateOMRSheetAssetView(APIView):

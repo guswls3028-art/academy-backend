@@ -43,7 +43,7 @@ from apps.domains.homework.serializers import (
 )
 from apps.domains.homework.filters import HomeworkScoreFilter
 
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.core.permissions import TenantResolvedAndStaff
 
 from apps.domains.submissions.models import Submission
 
@@ -274,7 +274,7 @@ class HomeworkScoreViewSet(ModelViewSet):
     ).all()
 
     serializer_class = HomeworkScoreSerializer
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     filter_backends = [
         DjangoFilterBackend,
