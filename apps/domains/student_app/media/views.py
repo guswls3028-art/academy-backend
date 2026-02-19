@@ -67,14 +67,21 @@ def _pick_urls(video, request=None) -> Tuple[Optional[str], Optional[str]]:
     from django.utils import timezone
     from apps.support.video.views.playback_mixin import VideoPlaybackMixin
     
+    # 비디오 상태 확인
+    if not hasattr(video, "status") or video.status != video.Status.READY:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"[_pick_urls] Video {video.id} is not READY (status: {getattr(video, 'status', 'UNKNOWN')})")
+        return None, None
+    
     # VideoPlaybackMixin의 _public_play_url 로직 사용
     mixin = VideoPlaybackMixin()
     
-    # expires_at은 1시간 후로 설정 (학생 앱은 세션 관리가 단순하므로)
-    expires_at = int(timezone.now().timestamp()) + 3600
+    # expires_at은 24시간 후로 설정 (학생 앱은 세션 관리가 단순하므로 충분히 긴 시간)
+    expires_at = int(timezone.now().timestamp()) + (24 * 3600)
     
     # user_id는 request에서 가져오거나 기본값 사용
-    user_id = getattr(request.user, "id", 0) if request and hasattr(request, "user") else 0
+    user_id = getattr(request.user, "id", 0) if request and hasattr(request, "user") and request.user.is_authenticated else 0
     
     try:
         hls_url = mixin._public_play_url(
@@ -82,11 +89,19 @@ def _pick_urls(video, request=None) -> Tuple[Optional[str], Optional[str]]:
             expires_at=expires_at,
             user_id=user_id,
         )
+        
+        # URL이 생성되었는지 확인
+        if not hls_url:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"[_pick_urls] _public_play_url returned None for video {video.id}")
+            return None, None
+            
     except Exception as e:
         # 에러 발생 시 로그만 남기고 None 반환
         import logging
         logger = logging.getLogger(__name__)
-        logger.warning(f"[_pick_urls] Failed to generate HLS URL for video {video.id}: {e}")
+        logger.error(f"[_pick_urls] Failed to generate HLS URL for video {video.id}: {e}", exc_info=True)
         hls_url = None
     
     # MP4 URL은 현재 미지원
