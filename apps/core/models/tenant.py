@@ -2,6 +2,7 @@
 from decimal import Decimal
 
 from django.db import models
+from django.contrib.postgres.fields import JSONField
 
 
 class Tenant(models.Model):
