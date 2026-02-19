@@ -76,9 +76,14 @@ def set_asg_desired(
     min_capacity: int,
     max_capacity: int,
     messages_per_instance: int = TARGET_MESSAGES_PER_INSTANCE,
+    conservative_scale_in: bool = False,
 ) -> None:
     """워커 ASG desired capacity 조정. total=0이면 MIN, else min(MAX, max(MIN, ceil(total/N))). N 기본 20, Video는 1."""
     total_for_scale = visible + in_flight
+    # SQS Approximate 타이밍 이슈: visible=0, in_flight=1일 때 실제로는 2개일 수 있음.
+    # Video(1:1)에서 조기 scale-down 방지: visible=0이고 in_flight>0이면 total을 in_flight+1 이상으로 유지
+    if conservative_scale_in and in_flight > 0 and visible == 0:
+        total_for_scale = max(total_for_scale, in_flight + 1)
     if total_for_scale == 0:
         new_desired = min_capacity
     else:
