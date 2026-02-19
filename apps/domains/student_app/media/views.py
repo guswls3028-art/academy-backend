@@ -349,8 +349,15 @@ class StudentVideoPlaybackView(APIView):
             if enrollment_obj:
                 access_mode_value = resolve_access_mode(video=video, enrollment=enrollment_obj).value
 
-        hls_url, mp4_url = _pick_urls(video)
+        hls_url, mp4_url = _pick_urls(video, request)
         thumb = getattr(video, "thumbnail_url", None) or getattr(video, "thumbnail", None)
+        
+        # thumbnail_url이 없으면 thumbnail 필드에서 URL 생성
+        if not thumb and hasattr(video, "thumbnail") and video.thumbnail:
+            thumb = request.build_absolute_uri(video.thumbnail.url) if request else None
+
+        # play_url 생성 (hls_url 우선, 없으면 mp4_url)
+        play_url = hls_url or mp4_url
 
         payload = {
             "video": {
@@ -359,12 +366,14 @@ class StudentVideoPlaybackView(APIView):
                 "title": str(video.title),
                 "status": str(getattr(video, "status", "READY")),
                 "thumbnail_url": thumb,
+                "duration": getattr(video, "duration", None),
                 **_policy_from_video(video),
                 "effective_rule": rule,  # Legacy field
                 "access_mode": access_mode_value,  # New field
             },
             "hls_url": hls_url,
             "mp4_url": mp4_url,
+            "play_url": play_url,  # ✅ 재생 URL 추가
             "policy": {
                 **_policy_from_video(video),
                 "effective_rule": rule,  # Legacy field

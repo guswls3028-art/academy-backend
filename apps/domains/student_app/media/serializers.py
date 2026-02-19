@@ -34,5 +34,6 @@ class StudentVideoPlaybackSerializer(serializers.Serializer):
     video = StudentVideoListItemSerializer()
     hls_url = serializers.CharField(allow_null=True, required=False)
     mp4_url = serializers.CharField(allow_null=True, required=False)
+    play_url = serializers.CharField(allow_null=True, required=False)  # ✅ 재생 URL 추가
 
     policy = serializers.DictField()
