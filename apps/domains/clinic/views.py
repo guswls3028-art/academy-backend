@@ -192,8 +192,6 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """
         ✅ 예약 생성
-        - 선생: student, enrollment_id 직접 지정 가능
-        - 학생: student 자동 설정, source="student_request", status="pending"
         """
         tenant = getattr(request, "tenant", None)
 
@@ -201,32 +199,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         session = serializer.validated_data["session"]
-        student = serializer.validated_data.get("student")
+        student = serializer.validated_data["student"]
         enrollment_id = serializer.validated_data.get("enrollment_id")
         source = serializer.validated_data.get("source")
-        requested_status = serializer.validated_data.get("status")
-
-        # 학생이 직접 신청하는 경우: student 자동 설정
-        from apps.domains.student_app.permissions import get_request_student
-        request_student = get_request_student(request)
-        if request_student:
-            # 학생이 신청하는 경우
-            if student and student != request_student:
-                return Response(
-                    {"detail": "다른 학생의 예약을 신청할 수 없습니다."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            student = request_student
-            source = SessionParticipant.Source.STUDENT_REQUEST
-            # 학생 신청은 기본적으로 pending 상태
-            if not requested_status or requested_status == SessionParticipant.Status.BOOKED:
-                requested_status = SessionParticipant.Status.PENDING
-
-        if not student:
-            return Response(
-                {"detail": "student가 필요합니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
         exists = SessionParticipant.objects.filter(
             tenant=tenant,
@@ -239,31 +214,14 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        # participant_role 결정
-        if source == SessionParticipant.Source.MANUAL:
-            participant_role = "manual"
-        elif source == SessionParticipant.Source.STUDENT_REQUEST:
-            participant_role = "manual"  # 학생 신청도 manual로 분류
-        else:
-            participant_role = "target"
-
-        # enrollment_id 자동 조회 (학생 신청 시)
-        if not enrollment_id and request_student:
-            from apps.domains.enrollment.models import Enrollment
-            enrollment = Enrollment.objects.filter(
-                student=request_student,
-                tenant=tenant,
-                status="ACTIVE"
-            ).first()
-            if enrollment:
-                enrollment_id = enrollment.id
+        participant_role = (
+            "manual"
+            if source == SessionParticipant.Source.MANUAL
+            else "target"
+        )
 
         obj = serializer.save(
             tenant=tenant,
-            student=student,
-            source=source,
-            status=requested_status or SessionParticipant.Status.PENDING,
-            enrollment_id=enrollment_id,
             participant_role=participant_role,
         )
 
@@ -285,6 +243,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         """
         PATCH /clinic/participants/{id}/set_status/
         - 상태 변경 + audit 기록
+        - 학생: 자신의 예약 신청(status="pending")만 취소 가능
+        - 선생: 모든 상태 변경 가능
         """
         obj = self.get_object()
 
@@ -297,6 +257,27 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 {"detail": f"Invalid status: {next_status}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # 학생 권한 체크: 자신의 예약 신청만 취소 가능
+        from apps.domains.student_app.permissions import get_request_student
+        request_student = get_request_student(request)
+        if request_student:
+            if obj.student != request_student:
+                return Response(
+                    {"detail": "다른 학생의 예약을 수정할 수 없습니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            # 학생은 pending 상태만 cancelled로 변경 가능
+            if obj.status != SessionParticipant.Status.PENDING:
+                return Response(
+                    {"detail": "승인 대기 중인 예약만 취소할 수 있습니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if next_status != SessionParticipant.Status.CANCELLED:
+                return Response(
+                    {"detail": "학생은 예약 취소만 가능합니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         obj.status = next_status
         obj.status_changed_at = timezone.now()
