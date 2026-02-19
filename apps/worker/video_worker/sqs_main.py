@@ -229,12 +229,21 @@ def main() -> int:
                     "tenant_code": str(tenant_code or ""),
                 }
 
+                stop_extender = threading.Event()
+                extender = threading.Thread(
+                    target=_visibility_extender_loop,
+                    args=(queue, receipt_handle, stop_extender),
+                    daemon=True,
+                )
+                extender.start()
                 try:
                     logger.info("[SQS_MAIN] Calling handler.handle() video_id=%s", video_id)
                     result = handler.handle(job, cfg)
                     logger.info("[SQS_MAIN] handler.handle() returned video_id=%s result=%s", video_id, result)
                 except Exception as e:
-                    # handler.handle() 예외 시에도 반드시 즉시 재노출 (3시간 묶임 방지)
+                    # handler.handle() 예외 시에도 반드시 즉시 재노출
+                    stop_extender.set()
+                    extender.join(timeout=1)
                     queue.change_message_visibility(receipt_handle, 0)
                     logger.exception("[SQS_MAIN] Handler exception (visibility 0 applied): video_id=%s: %s", video_id, e)
                     consecutive_errors += 1
@@ -245,6 +254,9 @@ def main() -> int:
                         return 1
                     time.sleep(5)
                     continue
+                finally:
+                    stop_extender.set()
+                    extender.join(timeout=1)
 
                 processing_duration = time.time() - _current_job_start_time
                 _current_job_receipt_handle = None
