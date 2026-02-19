@@ -4,7 +4,11 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
+from apps.core.models.user import user_display_username, user_internal_username
 from apps.domains.student_app.permissions import IsStudent, get_request_student
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 
 def _profile_response(request, student):
@@ -16,7 +20,7 @@ def _profile_response(request, student):
         "name": student.name,
         "profile_photo_url": url,
         "ps_number": getattr(student, "ps_number", "") or "",
-        "username": getattr(student.user, "username", "") or "",
+        "username": user_display_username(student.user) if student.user_id else "",
         "parent_phone": getattr(student, "parent_phone", "") or "",
     })
 
@@ -71,11 +75,10 @@ class StudentProfileView(APIView):
         if new_username is not None:
             new_username = str(new_username).strip()
             if new_username:
-                from django.contrib.auth import get_user_model
-                User = get_user_model()
-                if User.objects.filter(tenant=student.tenant, username=new_username).exclude(pk=student.user_id).exists():
+                internal = user_internal_username(student.tenant, new_username)
+                if User.objects.filter(username=internal).exclude(pk=student.user_id).exists():
                     return Response({"detail": "이미 사용 중인 아이디입니다."}, status=400)
-                student.user.username = new_username
+                student.user.username = internal
                 student.user.save(update_fields=["username"])
 
         current_password = data.get("current_password")
