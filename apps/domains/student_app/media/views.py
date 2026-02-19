@@ -335,18 +335,25 @@ class StudentSessionVideoListView(APIView):
             session = SessionModel.objects.select_related("lecture__tenant").get(id=session_id)
         except SessionModel.DoesNotExist:
             raise Http404
-        if not _student_can_access_session(request, session):
+
+        # 권한: enrollment_id가 있으면 해당 수강이 이 강의 소속인지로 허용 (부모가 특정 자녀 수강으로 진입 시 403 방지)
+        enrollment_obj = None
+        if enrollment_id:
+            enrollment_obj, err = _get_enrollment_for_student(
+                request, enrollment_id, lecture_id=getattr(session.lecture, "id", None)
+            )
+            if err:
+                return err
+        if enrollment_obj is None and not _student_can_access_session(request, session):
             raise PermissionDenied("이 차시의 영상을 볼 수 있는 권한이 없습니다.")
 
         videos = Video.objects.filter(session_id=session_id).order_by("order", "id")
 
         # 진행률 일괄 조회: 요청 학생 소유의 수강정보만 사용 (IDOR 방지)
         from academy.adapters.db.django import repositories_video as video_repo
-        from apps.domains.enrollment.models import Enrollment
 
-        enrollment_obj = None
         progress_map = {}
-        if enrollment_id:
+        if enrollment_id and enrollment_obj is None:
             enrollment_obj, err = _get_enrollment_for_student(
                 request, enrollment_id, lecture_id=getattr(session.lecture, "id", None)
             )
