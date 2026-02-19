@@ -47,6 +47,11 @@ class StudentClinicIdcardView(APIView):
         if tenant is not None:
             qs = qs.filter(tenant=tenant)
         enrollment = qs.select_related("lecture").order_by("id").first()
+        tenant = getattr(request, "tenant", None)
+        colors = getattr(tenant, "clinic_idcard_colors", None) if tenant else None
+        if not colors or not isinstance(colors, list) or len(colors) < 3:
+            colors = ["#ef4444", "#3b82f6", "#22c55e"]
+        
         if not enrollment:
             profile_photo_url = None
             if student.profile_photo:
@@ -54,6 +59,7 @@ class StudentClinicIdcardView(APIView):
             return Response({
                 "student_name": getattr(student, "name", "") or "",
                 "profile_photo_url": profile_photo_url,
+                "background_colors": colors[:3],
                 "server_date": timezone.now().date().isoformat(),
                 "server_datetime": timezone.now().isoformat(),
                 "histories": [],
