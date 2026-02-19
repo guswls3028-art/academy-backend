@@ -51,8 +51,11 @@ class StudentClinicIdcardView(APIView):
         
         if not enrollment:
             profile_photo_url = None
-            if student.profile_photo:
-                profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
+            if student.profile_photo and hasattr(student.profile_photo, 'url'):
+                try:
+                    profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
+                except (ValueError, AttributeError):
+                    profile_photo_url = None
             return Response({
                 "student_name": getattr(student, "name", "") or "",
                 "profile_photo_url": profile_photo_url,
