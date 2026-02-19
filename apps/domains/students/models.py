@@ -136,9 +136,39 @@ class Student(TimestampModel):
         upload_to=_profile_photo_upload_to,
         null=True,
         blank=True,
-        storage=R2Storage(),  # R2 Storage 사용 (인벤토리와 동일한 버킷)
         help_text="학생이 학생앱에서 업로드한 프로필 사진 (R2 Storage 저장)",
     )
+    
+    def save(self, *args, **kwargs):
+        """프로필 사진을 R2 Storage에 저장"""
+        # 프로필 사진이 있고, 아직 R2에 업로드되지 않은 경우
+        if self.profile_photo and hasattr(self.profile_photo, 'file'):
+            from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+            from apps.domains.inventory.r2_path import build_r2_key
+            
+            # R2 경로 생성 (인벤토리와 동일한 형식)
+            r2_key = build_r2_key(
+                tenant_id=self.tenant_id,
+                scope="student",
+                student_ps=self.ps_number,
+                folder_path="",
+                file_name=self.profile_photo.name.split("/")[-1],  # 파일명만 추출
+            )
+            
+            # R2에 업로드
+            try:
+                upload_fileobj_to_r2_storage(
+                    fileobj=self.profile_photo.file,
+                    key=r2_key,
+                    content_type=getattr(self.profile_photo, 'content_type', 'image/jpeg'),
+                )
+                # 업로드 후 파일명을 R2 key로 변경
+                self.profile_photo.name = r2_key
+            except Exception as e:
+                # R2 업로드 실패 시 기존 방식 사용
+                pass
+        
+        super().save(*args, **kwargs)
 
     deleted_at = models.DateTimeField(
         null=True,
