@@ -14,6 +14,7 @@ from apps.domains.students.models import Student
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Session as LectureSession
 from apps.domains.progress.models import ClinicLink
+from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
 
 class StudentClinicIdcardView(APIView):
