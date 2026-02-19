@@ -193,9 +193,6 @@ def main() -> int:
                     logger.info("VIDEO_ALREADY_READY_SKIP | video_id=%s (retry 등으로 이미 완료)", video_id)
                     continue
 
-                # 장시간 인코딩 시 재노출 방지 (작업 시작 직후 visibility 연장)
-                queue.change_message_visibility(receipt_handle, VIDEO_VISIBILITY_EXTEND_SECONDS)
-
                 request_id = str(uuid.uuid4())[:8]
                 message_received_at = time.time()
                 # created_at: Unix float 또는 ISO 8601 문자열 (timezone.now().isoformat())
