@@ -55,13 +55,12 @@ def create_sqs_resources(region_name: str = "ap-northeast-2"):
     # 2. 메인 큐 생성 (DLQ 연결)
     queue_name = "academy-video-jobs"
     
-    # VisibilityTimeout: 6h (21600). Must be >= ffmpeg timeout (max 6h = duration*1.5 cap).
-    # 기존 큐가 이미 있으면 AWS 콘솔에서 VisibilityTimeout = 21600 으로 변경 필요.
+    # VisibilityTimeout: 300초. Worker가 ffmpeg 인코딩 동안 240초마다 change_message_visibility로 동적 연장.
     try:
         queue_response = sqs.create_queue(
             QueueName=queue_name,
             Attributes={
-                "VisibilityTimeout": "21600",  # 6h. Worker extends to same at job start.
+                "VisibilityTimeout": "300",  # 5분. 동적 연장(240초마다 300초)으로 장시간 인코딩 대응.
                 "MessageRetentionPeriod": "1209600",  # 14일
                 "ReceiveMessageWaitTimeSeconds": "20",  # Long Polling
                 "RedrivePolicy": json.dumps({
@@ -82,8 +81,8 @@ def create_sqs_resources(region_name: str = "ap-northeast-2"):
             raise
     
     print("\n✅ Video SQS 리소스 생성 완료!")
-    print("   VisibilityTimeout=21600(6h) — SQS visibility >= ffmpeg timeout (max 6h).")
-    print("   기존 큐가 이미 있으면: AWS SQS 콘솔에서 해당 큐 → Edit → Visibility timeout = 21600 으로 변경.")
+    print("   VisibilityTimeout=300(5분) — Worker가 ffmpeg 인코딩 동안 240초마다 동적 연장.")
+    print("   기존 큐가 이미 있으면: AWS SQS 콘솔에서 해당 큐 → Edit → Visibility timeout = 300 으로 변경.")
     print(f"\n환경변수 설정:")
     print(f"  VIDEO_SQS_QUEUE_NAME={queue_name}")
     print(f"  VIDEO_SQS_DLQ_NAME={dlq_name}")
