@@ -49,11 +49,16 @@ class PostViewSet(viewsets.ModelViewSet):
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         node_ids = request.data.get("node_ids") or []
+        # 학생이 작성한 경우 created_by 자동 설정 (내 질문 목록에 노출되도록)
+        request_student = get_request_student(request)
+        created_by = serializer.validated_data.get("created_by")
+        if request_student is not None:
+            created_by = request_student
         data = {
             "block_type": serializer.validated_data["block_type"],
             "title": serializer.validated_data["title"],
             "content": serializer.validated_data["content"],
-            "created_by": serializer.validated_data.get("created_by"),
+            "created_by": created_by,
         }
         svc = CommunityService(tenant)
         post = svc.create_post(data, node_ids)
