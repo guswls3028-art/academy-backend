@@ -68,15 +68,23 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
     return visible
 
 
-def set_asg_desired(autoscaling_client, asg_name: str, visible: int, in_flight: int, min_capacity: int, max_capacity: int) -> None:
-    """워커 ASG desired capacity 조정. total=0이면 MIN, else min(MAX, max(MIN, ceil(total/20))). 항상 set_desired_capacity 호출."""
+def set_asg_desired(
+    autoscaling_client,
+    asg_name: str,
+    visible: int,
+    in_flight: int,
+    min_capacity: int,
+    max_capacity: int,
+    messages_per_instance: int = TARGET_MESSAGES_PER_INSTANCE,
+) -> None:
+    """워커 ASG desired capacity 조정. total=0이면 MIN, else min(MAX, max(MIN, ceil(total/N))). N 기본 20, Video는 1."""
     total_for_scale = visible + in_flight
     if total_for_scale == 0:
         new_desired = min_capacity
     else:
         new_desired = min(
             max_capacity,
-            max(min_capacity, math.ceil(total_for_scale / TARGET_MESSAGES_PER_INSTANCE)),
+            max(min_capacity, math.ceil(total_for_scale / messages_per_instance)),
         )
 
     try:
