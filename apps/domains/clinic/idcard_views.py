@@ -14,7 +14,6 @@ from apps.domains.students.models import Student
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Session as LectureSession
 from apps.domains.progress.models import ClinicLink
-from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
 
 class StudentClinicIdcardView(APIView):
@@ -95,16 +94,12 @@ class StudentClinicIdcardView(APIView):
 
         any_clinic = any(h["clinic_required"] for h in histories)
         
-        # 프로필 사진 URL (신원 확인용) - R2 presigned URL 사용
+        # 프로필 사진 URL (신원 확인용) - 기존 방식 사용
         profile_photo_url = None
         if student.profile_photo:
             try:
-                # R2 Storage에 저장된 경우 presigned URL 생성
-                # profile_photo.name이 R2 key가 됨
-                profile_photo_url = generate_presigned_get_url_storage(
-                    key=student.profile_photo.name,
-                    expires_in=3600,  # 1시간 유효
-                )
+                # 기존 방식으로 URL 생성 (Django 기본 storage 사용)
+                profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
             except (ValueError, AttributeError, Exception):
                 # 파일이 없거나 URL 생성 실패 시 None
                 profile_photo_url = None
