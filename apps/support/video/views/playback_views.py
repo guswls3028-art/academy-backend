@@ -146,11 +146,19 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         enrollment = video_repo.enrollment_get_by_id_active_with_student_lecture(enrollment_id)
         video = video_repo.video_get_by_id_with_relations(int(video_id))
 
-        if enrollment.lecture_id != video.session.lecture_id:
-            return _deny("enrollment_mismatch", code=403)
+        # 전체공개영상: 같은 테넌트(프로그램)에 등록된 학생이면 시청 가능
+        is_public_lecture = (
+            getattr(video.session.lecture, "title", None) == "전체공개영상"
+        )
+        if is_public_lecture:
+            if enrollment.lecture.tenant_id != video.session.lecture.tenant_id:
+                return _deny("tenant_mismatch", code=403)
+        else:
+            if enrollment.lecture_id != video.session.lecture_id:
+                return _deny("enrollment_mismatch", code=403)
 
-        if not video_repo.session_enrollment_exists(video.session, enrollment):
-            return _deny("no_session_access", code=403)
+            if not video_repo.session_enrollment_exists(video.session, enrollment):
+                return _deny("no_session_access", code=403)
 
         ok, reason = self._check_access(video=video, enrollment=enrollment)
         if not ok:
