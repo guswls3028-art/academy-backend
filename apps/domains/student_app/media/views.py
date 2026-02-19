@@ -270,6 +270,7 @@ class StudentSessionVideoListView(APIView):
                 "title": str(v.title),
                 "status": str(getattr(v, "status", "READY")),
                 "thumbnail_url": thumb,
+                "duration": getattr(v, "duration", None),
                 **_policy_from_video(v),
                 "effective_rule": _effective_rule(perm_obj),  # Legacy field
                 "access_mode": access_mode_value,  # New field
