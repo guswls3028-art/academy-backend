@@ -572,9 +572,32 @@ class StudentVideoProgressView(APIView):
             )
 
         try:
-            video = Video.objects.select_related("session").get(id=video_id)
+            video = Video.objects.select_related("session__lecture").get(id=video_id)
         except Video.DoesNotExist:
             raise Http404
+
+        # 전체공개영상: 수강등록 없이 시청 가능하므로 VideoProgress( video, enrollment )에 저장 불가.
+        # 동일 응답 형태로 200 반환해 프론트 스펙 유지 (DB 미저장)
+        is_public_lecture = (
+            video.session
+            and video.session.lecture
+            and getattr(video.session.lecture, "title", None) == "전체공개영상"
+        )
+        if is_public_lecture:
+            progress_value = request.data.get("progress", None)
+            completed = request.data.get("completed", False)
+            if progress_value is not None and progress_value > 1:
+                progress_value = progress_value / 100.0
+            p = max(0.0, min(1.0, float(progress_value))) if progress_value is not None else 0.0
+            return Response({
+                "id": 0,
+                "video_id": video.id,
+                "enrollment_id": 0,
+                "progress": p,
+                "progress_percent": round(p * 100, 1),
+                "completed": bool(completed),
+                "last_position": int(request.data.get("last_position") or 0),
+            }, status=status.HTTP_200_OK)
 
         lecture_id = getattr(video.session, "lecture_id", None) if video.session else None
         enrollment, err = _get_enrollment_for_student(request, enrollment_id, lecture_id=lecture_id)
