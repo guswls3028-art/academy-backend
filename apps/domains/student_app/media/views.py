@@ -355,16 +355,26 @@ class StudentSessionVideoListView(APIView):
         except SessionModel.DoesNotExist:
             raise Http404
 
+        lecture = getattr(session, "lecture", None)
+        is_public_session = lecture and getattr(lecture, "title", None) == "전체공개영상"
+
         # 권한: enrollment_id가 있으면 해당 수강이 이 강의 소속인지로 허용 (부모가 특정 자녀 수강으로 진입 시 403 방지)
         enrollment_obj = None
         if enrollment_id:
             enrollment_obj, err = _get_enrollment_for_student(
-                request, enrollment_id, lecture_id=getattr(session.lecture, "id", None)
+                request, enrollment_id, lecture_id=getattr(lecture, "id", None)
             )
-            if err:
+            # 전체공개영상: 수강 없는 학생도 같은 테넌트면 허용. enrollment 불일치여도 세션 접근만 허용하도록 403 반환하지 않음.
+            if err and not is_public_session:
                 return err
+            if err and is_public_session:
+                enrollment_obj = None
         if enrollment_obj is None and not _student_can_access_session(request, session):
-            raise PermissionDenied("이 차시의 영상을 볼 수 있는 권한이 없습니다.")
+            raise PermissionDenied(
+                "이 차시의 영상을 볼 수 있는 권한이 없습니다."
+                if not is_public_session
+                else "전체공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."
+            )
 
         videos = Video.objects.filter(session_id=session_id).order_by("order", "id")
 
