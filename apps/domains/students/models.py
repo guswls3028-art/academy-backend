@@ -136,7 +136,7 @@ class Student(TimestampModel):
         upload_to=_profile_photo_upload_to,
         null=True,
         blank=True,
-        storage=None,  # R2 Storage는 settings에서 전역 설정 또는 커스텀 storage 사용
+        storage="apps.infrastructure.storage.r2_storage.R2Storage",  # R2 Storage 사용
         help_text="학생이 학생앱에서 업로드한 프로필 사진 (R2 Storage 저장)",
     )
 
