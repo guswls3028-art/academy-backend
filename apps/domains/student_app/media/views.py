@@ -87,7 +87,6 @@ def _policy_from_video(video) -> Dict[str, Any]:
 
 def _student_can_access_session(request, session) -> bool:
     """세션 목록/영상 접근 가능 여부. 전체공개 세션이면 같은 테넌트 학생, 아니면 해당 강의 수강생."""
-    from apps.domains.lectures.models import Session as SessionModel
     from apps.domains.enrollment.models import Enrollment
 
     student = get_request_student(request)
