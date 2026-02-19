@@ -60,22 +60,34 @@ def _get_student_enrollment_id(request) -> Optional[int]:
 def _pick_urls(video, request=None) -> Tuple[Optional[str], Optional[str]]:
     """
     비디오 재생 URL 생성
-    - hls_url: CDN 기반 HLS URL (VideoSerializer의 get_hls_url 로직 사용)
+    - hls_url: CDN 기반 HLS URL (VideoPlaybackMixin._public_play_url 로직 사용)
     - mp4_url: MP4 URL (현재는 미지원)
     """
     from django.conf import settings
+    from django.utils import timezone
+    from apps.support.video.views.playback_mixin import VideoPlaybackMixin
     
-    # HLS URL 생성 (VideoSerializer의 get_hls_url 로직과 동일)
-    hls_url = None
-    if getattr(video, "hls_path", None):
-        cdn_base = getattr(settings, "CDN_HLS_BASE_URL", None)
-        if cdn_base:
-            # 경로 정규화
-            path = str(video.hls_path).lstrip("/")
-            if path.startswith("storage/media/"):
-                path = path[len("storage/"):]
-            # CDN URL 생성
-            hls_url = f"{cdn_base.rstrip('/')}/{path}"
+    # VideoPlaybackMixin의 _public_play_url 로직 사용
+    mixin = VideoPlaybackMixin()
+    
+    # expires_at은 1시간 후로 설정 (학생 앱은 세션 관리가 단순하므로)
+    expires_at = int(timezone.now().timestamp()) + 3600
+    
+    # user_id는 request에서 가져오거나 기본값 사용
+    user_id = getattr(request.user, "id", 0) if request and hasattr(request, "user") else 0
+    
+    try:
+        hls_url = mixin._public_play_url(
+            video=video,
+            expires_at=expires_at,
+            user_id=user_id,
+        )
+    except Exception as e:
+        # 에러 발생 시 로그만 남기고 None 반환
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"[_pick_urls] Failed to generate HLS URL for video {video.id}: {e}")
+        hls_url = None
     
     # MP4 URL은 현재 미지원
     mp4_url = None
