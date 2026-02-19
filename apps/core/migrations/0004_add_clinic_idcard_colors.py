@@ -15,7 +15,8 @@ class Migration(migrations.Migration):
             name="clinic_idcard_colors",
             field=models.JSONField(
                 blank=True,
-                default=list,
+                default=None,
+                null=True,
                 help_text='클리닉 패스카드 배경 그라데이션 색상 3개 (예: ["#ef4444", "#3b82f6", "#22c55e"])',
             ),
         ),
