@@ -227,9 +227,9 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         attrs["parent_phone"] = parent_phone
         attrs["name"] = name
 
-        # 사용자가 직접 입력한 경우에만 중복 체크 (자동 생성은 이미 User 중복 검사됨)
+        # 사용자가 직접 입력한 경우에만 중복 체크 (활성 학생만 — 삭제된 학생 PS는 재사용 가능)
         from academy.adapters.db.django import repositories_students as student_repo
-        if ps_number_raw and student_repo.student_filter_tenant_ps(tenant, ps_number).exists():
+        if ps_number_raw and student_repo.student_filter_tenant_ps_number(tenant, ps_number).exists():
             raise serializers.ValidationError({"ps_number": "이미 사용 중인 PS 번호입니다."})
 
         attrs["uses_identifier"] = attrs.pop("no_phone", False) or (phone_str is None)
