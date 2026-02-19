@@ -303,7 +303,7 @@ class StudentSessionVideoListView(APIView):
         enrollment_id = _get_student_enrollment_id(request)
 
         try:
-            session = SessionModel.objects.select_related("lecture").get(id=session_id)
+            session = SessionModel.objects.select_related("lecture__tenant").get(id=session_id)
         except SessionModel.DoesNotExist:
             raise Http404
         if not _student_can_access_session(request, session):
