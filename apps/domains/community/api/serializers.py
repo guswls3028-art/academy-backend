@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps.domains.community.models import PostEntity, PostMapping, ScopeNode, BlockType, PostTemplate
+from apps.domains.community.models import PostEntity, PostMapping, ScopeNode, BlockType, PostTemplate, PostReply
 
 
 class ScopeNodeMinimalSerializer(serializers.ModelSerializer):
