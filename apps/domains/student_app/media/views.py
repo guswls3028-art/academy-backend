@@ -418,6 +418,7 @@ class StudentVideoPlaybackView(APIView):
     def get(self, request, video_id: int):
         Video, VideoPermission = _import_media_models()
         enrollment_id = _get_student_enrollment_id(request)
+        enrollment_obj = None  # 일반 영상일 때 검증 후 설정, 전체공개는 None
 
         try:
             video = Video.objects.select_related("session__lecture__tenant").get(id=video_id)
@@ -459,16 +460,12 @@ class StudentVideoPlaybackView(APIView):
         if rule == "blocked":
             raise PermissionDenied("이 영상은 시청이 제한되었습니다.")
 
-        # Use SSOT access resolver
+        # Use SSOT access resolver (enrollment_obj는 위에서 검증된 객체만 사용)
         from apps.support.video.services.access_resolver import resolve_access_mode
-        from apps.domains.enrollment.models import Enrollment
-        
-        enrollment_obj = None
+
         access_mode_value = None
-        if enrollment_id:
-            enrollment_obj = Enrollment.objects.filter(id=enrollment_id).first()
-            if enrollment_obj:
-                access_mode_value = resolve_access_mode(video=video, enrollment=enrollment_obj).value
+        if enrollment_obj:
+            access_mode_value = resolve_access_mode(video=video, enrollment=enrollment_obj).value
 
         # 비디오 상태 확인 및 로깅
         import logging
