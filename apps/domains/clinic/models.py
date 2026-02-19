@@ -54,14 +54,17 @@ class Session(TimestampModel):
 
 class SessionParticipant(TimestampModel):
     class Status(models.TextChoices):
+        PENDING = "pending", "Pending"  # 학생 예약 신청 대기
         BOOKED = "booked", "Booked"
         ATTENDED = "attended", "Attended"
         NO_SHOW = "no_show", "NoShow"
         CANCELLED = "cancelled", "Cancelled"
+        REJECTED = "rejected", "Rejected"  # 선생이 거부
 
     class Source(models.TextChoices):
         AUTO = "auto", "Auto"
         MANUAL = "manual", "Manual"
+        STUDENT_REQUEST = "student_request", "Student Request"  # 학생 신청
 
     class Reason(models.TextChoices):
         EXAM = "exam", "Exam"

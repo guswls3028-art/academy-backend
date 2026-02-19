@@ -91,7 +91,14 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
 class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
     """
     ✅ 예약 등록(생성) 전용
+    - 선생: student, enrollment_id 직접 지정
+    - 학생: student 생략 가능 (자동 설정), source="student_request", status="pending"
     """
+
+    student = serializers.PrimaryKeyRelatedField(
+        queryset=None,  # 동적으로 설정
+        required=False,  # 학생 신청 시 생략 가능
+    )
 
     class Meta:
         model = SessionParticipant
@@ -105,6 +112,12 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
             "clinic_reason",
             "participant_role",
         ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # student queryset 동적 설정
+        from apps.domains.students.models import Student
+        self.fields["student"].queryset = Student.objects.all()
 
 
 class ClinicTestSerializer(serializers.ModelSerializer):
