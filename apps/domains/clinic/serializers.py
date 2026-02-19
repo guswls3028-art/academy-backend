@@ -91,14 +91,17 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
 class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
     """
     ✅ 예약 등록(생성) 전용
-    - 선생: student, enrollment_id 직접 지정
+    - 선생: student, enrollment_id 직접 지정, session 필수
     - 학생: student 생략 가능 (자동 설정), source="student_request", status="pending"
+    - 학생 신청 시: session 또는 (requested_date + requested_start_time) 필수
     """
 
     class Meta:
         model = SessionParticipant
         fields = [
             "session",
+            "requested_date",  # ✅ 학생 신청 시 날짜
+            "requested_start_time",  # ✅ 학생 신청 시 시간
             "student",
             "status",
             "memo",
@@ -109,7 +112,28 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {
             "student": {"required": False},  # 학생 신청 시 생략 가능
+            "session": {"required": False},  # 학생 신청 시 세션이 없을 수 있음
+            "requested_date": {"required": False},
+            "requested_start_time": {"required": False},
         }
+    
+    def validate(self, attrs):
+        """session 또는 (requested_date + requested_start_time) 중 하나는 필수"""
+        session = attrs.get("session")
+        requested_date = attrs.get("requested_date")
+        requested_start_time = attrs.get("requested_start_time")
+        
+        if not session and not (requested_date and requested_start_time):
+            raise serializers.ValidationError(
+                "session 또는 (requested_date + requested_start_time) 중 하나는 필수입니다."
+            )
+        
+        if session and (requested_date or requested_start_time):
+            raise serializers.ValidationError(
+                "session과 requested_date/requested_start_time을 동시에 사용할 수 없습니다."
+            )
+        
+        return attrs
 
 
 class ClinicTestSerializer(serializers.ModelSerializer):
