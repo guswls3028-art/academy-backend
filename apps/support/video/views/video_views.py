@@ -130,7 +130,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     ]
     permission_classes = [IsAuthenticated]
 
-    ADMIN_ONLY_ACTIONS = {
+    # 테넌트 스태프(owner/admin/staff/teacher)만 허용 — Django is_staff 없어도 오너·원장 업로드 가능
+    STAFF_ACTIONS = {
         "upload_init",
         "upload_complete",
         "retry",
@@ -142,8 +143,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     }
 
     def get_permissions(self):
-        if self.action in self.ADMIN_ONLY_ACTIONS:
-            return [IsAuthenticated(), IsAdminOrStaff()]
+        if self.action in self.STAFF_ACTIONS:
+            return [IsAuthenticated(), TenantResolvedAndStaff()]
         return [IsAuthenticated()]
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
