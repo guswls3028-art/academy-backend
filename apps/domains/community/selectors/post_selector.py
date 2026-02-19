@@ -105,6 +105,7 @@ def get_admin_post_list(
     """관리자용 목록. 필터: block_type, lecture(해당 강의 노드에 매핑된 것만). 페이지네이션."""
     qs = (
         PostEntity.objects.filter(tenant=tenant)
+        .annotate(replies_count=Count("replies"))
         .select_related("block_type", "created_by")
         .prefetch_related(
             Prefetch(
