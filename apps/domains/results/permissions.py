@@ -38,8 +38,7 @@ class IsStudent(BasePermission):
 
 class IsTeacherOrAdmin(BasePermission):
     """
-    테넌트 내 슈퍼유저급: is_effective_staff(오너 포함) 또는 레거시 role 판단.
-    원장(owner) = 프로그램 내 풀 권한, 충돌 방지용 core.is_effective_staff 사용.
+    테넌트 내 슈퍼유저급: is_effective_staff(오너 포함). 테넌트는 항상 있음.
     """
 
     def has_permission(self, request, view):
@@ -47,6 +46,4 @@ class IsTeacherOrAdmin(BasePermission):
         if not u or not u.is_authenticated:
             return False
         tenant = getattr(request, "tenant", None)
-        if is_effective_staff(u, tenant):
-            return True
-        return is_teacher_user(u)
+        return is_effective_staff(u, tenant)

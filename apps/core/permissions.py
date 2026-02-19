@@ -7,18 +7,18 @@ from apps.core.models import TenantMembership
 def is_effective_staff(user, tenant=None):
     """
     테넌트 내 슈퍼유저급 권한: Django is_superuser/is_staff 또는 해당 테넌트 스태프(owner/admin/staff/teacher).
-    오너는 is_staff 없어도 프로그램 내 풀 권한. 충돌 방지용 단일 판단 기준.
+    오너는 is_staff 없어도 프로그램 내 풀 권한. 운영상 테넌트는 항상 있음(미들웨어가 설정).
     """
     if not user or not user.is_authenticated:
         return False
     if user.is_superuser or user.is_staff:
         return True
-    if tenant:
-        from academy.adapters.db.django import repositories_core as core_repo
-        return core_repo.membership_exists_staff(
-            tenant=tenant, user=user, staff_roles=("owner", "admin", "staff", "teacher")
-        )
-    return False
+    if not tenant:
+        return False
+    from academy.adapters.db.django import repositories_core as core_repo
+    return core_repo.membership_exists_staff(
+        tenant=tenant, user=user, staff_roles=("owner", "admin", "staff", "teacher")
+    )
 
 
 class IsAdminOrStaff(BasePermission):
