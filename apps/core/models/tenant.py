@@ -2,7 +2,6 @@
 from decimal import Decimal
 
 from django.db import models
-from django.contrib.postgres.fields import JSONField
 
 
 class Tenant(models.Model):
@@ -40,6 +39,14 @@ class Tenant(models.Model):
     # 건당 발송 단가 (원, 학원마다 다르게 책정 가능)
     messaging_base_price = models.DecimalField(
         max_digits=10, decimal_places=2, default=Decimal("0")
+    )
+
+    # 클리닉 패스카드 배경 색상 (위조 방지용, 선생님이 날마다 변경 가능)
+    # 예: ["#ef4444", "#3b82f6", "#22c55e"] (빨강, 파랑, 초록)
+    clinic_idcard_colors = JSONField(
+        default=list,
+        blank=True,
+        help_text="클리닉 패스카드 배경 그라데이션 색상 3개 (예: [\"#ef4444\", \"#3b82f6\", \"#22c55e\"])",
     )
 
     class Meta:
