@@ -44,10 +44,19 @@ class StudentListSerializer(serializers.ModelSerializer):
     def get_profile_photo_url(self, obj):
         if not obj.profile_photo:
             return None
-        request = self.context.get("request")
-        if request:
-            return request.build_absolute_uri(obj.profile_photo.url)
-        return obj.profile_photo.url
+        try:
+            # R2 Storage에 저장된 경우 presigned URL 생성
+            from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+            return generate_presigned_get_url_storage(
+                key=obj.profile_photo.name,
+                expires_in=3600,  # 1시간 유효
+            )
+        except Exception:
+            # R2가 아닌 경우 기존 방식 사용
+            request = self.context.get("request")
+            if request:
+                return request.build_absolute_uri(obj.profile_photo.url)
+            return obj.profile_photo.url
 
     def to_representation(self, obj):
         data = super().to_representation(obj)
@@ -83,10 +92,19 @@ class StudentDetailSerializer(serializers.ModelSerializer):
     def get_profile_photo_url(self, obj):
         if not obj.profile_photo:
             return None
-        request = self.context.get("request")
-        if request:
-            return request.build_absolute_uri(obj.profile_photo.url)
-        return obj.profile_photo.url
+        try:
+            # R2 Storage에 저장된 경우 presigned URL 생성
+            from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+            return generate_presigned_get_url_storage(
+                key=obj.profile_photo.name,
+                expires_in=3600,  # 1시간 유효
+            )
+        except Exception:
+            # R2가 아닌 경우 기존 방식 사용
+            request = self.context.get("request")
+            if request:
+                return request.build_absolute_uri(obj.profile_photo.url)
+            return obj.profile_photo.url
 
     def to_representation(self, obj):
         data = super().to_representation(obj)
