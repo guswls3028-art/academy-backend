@@ -718,7 +718,13 @@ class StudentViewSet(ModelViewSet):
         with transaction.atomic():
             for student in to_restore:
                 student.deleted_at = None
-                student.save(update_fields=["deleted_at"])
+                update_fields = ["deleted_at"]
+                if student.ps_number and student.ps_number.startswith("_del_"):
+                    parts = student.ps_number.split("_", 3)
+                    if len(parts) >= 4:
+                        student.ps_number = parts[3]
+                        update_fields.append("ps_number")
+                student.save(update_fields=update_fields)
                 if student.user:
                     student.user.is_active = True
                     student.user.save(update_fields=["is_active"])
