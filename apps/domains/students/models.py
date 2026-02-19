@@ -110,11 +110,33 @@ class Student(TimestampModel):
 
     # 학생이 학생앱에서만 설정 (관리자 편집 불가)
     # R2 Storage 사용 (인벤토리와 동일한 버킷)
+    def _profile_photo_upload_to(instance, filename):
+        """프로필 사진 R2 경로 생성: tenants/{tenant_id}/students/{student_ps}/profile/{filename}"""
+        from datetime import datetime
+        import secrets
+        import re
+        
+        # 안전한 파일명 생성 (인벤토리와 동일한 방식)
+        base, ext = "", ""
+        if "." in filename:
+            idx = filename.rfind(".")
+            base, ext = filename[:idx], filename[idx:]
+        else:
+            base = filename
+        stamp = datetime.now().strftime("%y%m%d")
+        hash_s = secrets.token_hex(2)
+        safe_name = f"{base}_{stamp}_{hash_s}{ext}"
+        
+        # tenant와 student_ps는 저장 시점에 설정됨
+        # 실제 경로는 save() 메서드에서 설정하거나, 업로드 시점에 tenant/student 정보 필요
+        # 임시로 기본 경로 사용 (나중에 업로드 API에서 경로 재설정)
+        return f"student_profile/{datetime.now().strftime('%Y/%m')}/{safe_name}"
+    
     profile_photo = models.ImageField(
-        upload_to="student_profile/%Y/%m/",
+        upload_to=_profile_photo_upload_to,
         null=True,
         blank=True,
-        storage=None,  # settings에서 R2_STORAGE_BUCKET 사용 시 자동 적용
+        storage=None,  # R2 Storage는 settings에서 전역 설정 또는 커스텀 storage 사용
         help_text="학생이 학생앱에서 업로드한 프로필 사진 (R2 Storage 저장)",
     )
 
