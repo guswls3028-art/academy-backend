@@ -52,6 +52,20 @@ VIDEO_LOCK_TTL_SECONDS = int(os.getenv("VIDEO_LOCK_TTL_SECONDS", "14400"))   # 4
 VIDEO_PROGRESS_TTL_SECONDS = int(os.getenv("VIDEO_PROGRESS_TTL_SECONDS", "14400"))  # 4h
 
 
+def _visibility_extender_loop(
+    queue: "VideoSQSAdapter",
+    receipt_handle: str,
+    stop_event: threading.Event,
+) -> None:
+    """ffmpeg 인코딩 동안 240초마다 visibility를 300초로 연장."""
+    while not stop_event.wait(timeout=VISIBILITY_EXTEND_INTERVAL_SECONDS):
+        try:
+            queue.change_message_visibility(receipt_handle, VISIBILITY_EXTEND_SECONDS)
+            logger.debug("Visibility extended receipt_handle=...%s", receipt_handle[-12:] if receipt_handle else "")
+        except Exception as e:
+            logger.warning("Visibility extend failed: %s", e)
+
+
 def _handle_signal(sig, frame):
     """
     Graceful shutdown 핸들러
