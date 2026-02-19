@@ -42,8 +42,12 @@ class StudentClinicIdcardView(APIView):
             qs = qs.filter(tenant=tenant)
         enrollment = qs.select_related("lecture").order_by("id").first()
         if not enrollment:
+            profile_photo_url = None
+            if student.profile_photo:
+                profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
             return Response({
                 "student_name": getattr(student, "name", "") or "",
+                "profile_photo_url": profile_photo_url,
                 "server_date": timezone.now().date().isoformat(),
                 "server_datetime": timezone.now().isoformat(),
                 "histories": [],
