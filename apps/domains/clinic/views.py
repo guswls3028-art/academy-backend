@@ -132,7 +132,12 @@ class SessionViewSet(viewsets.ModelViewSet):
                 participant_count=Count("participants"),
                 booked_count=Count(
                     "participants",
-                    filter=Q(participants__status=SessionParticipant.Status.BOOKED),
+                    filter=Q(
+                        participants__status__in=[
+                            SessionParticipant.Status.BOOKED,
+                            SessionParticipant.Status.PENDING,
+                        ]
+                    ),
                 ),
                 no_show_count=Count(
                     "participants",
