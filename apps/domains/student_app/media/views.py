@@ -250,7 +250,8 @@ class StudentVideoMeView(APIView):
             .select_related("lecture")
             .order_by("lecture__title")
         )
-        lecture_ids = list(enrollments.values_list("lecture_id", flat=True).distinct())
+        enrollment_by_lecture = {e.lecture_id: e.id for e in enrollments}
+        lecture_ids = list(enrollment_by_lecture.keys())
         lectures_qs = (
             Lecture.objects.filter(id__in=lecture_ids, tenant=tenant)
             .prefetch_related("sessions")
@@ -271,6 +272,7 @@ class StudentVideoMeView(APIView):
                 "id": lec.id,
                 "title": lec.title or lec.name or "강의",
                 "sessions": sessions_data,
+                "enrollment_id": enrollment_by_lecture.get(lec.id),
             })
 
         # 전체공개영상: 내용물이 있던 없던 항상 제공 (학생이면 다 볼 수 있음)
