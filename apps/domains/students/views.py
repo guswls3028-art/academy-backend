@@ -172,9 +172,10 @@ class StudentViewSet(ModelViewSet):
                 parent_password=password,
             )
 
-        # 2️⃣ User 생성 (phone이 없으면 username만 사용)
+        # 2️⃣ User 생성 (tenant + 내부 username t{id}_{ps_number} 로 전역 유일)
         user = student_repo.user_create_user(
             username=ps_number,
+            tenant=request.tenant,
             phone=phone or "",
             name=data.get("name", ""),
         )
