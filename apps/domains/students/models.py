@@ -109,66 +109,12 @@ class Student(TimestampModel):
     is_managed = models.BooleanField(default=True)
 
     # 학생이 학생앱에서만 설정 (관리자 편집 불가)
-    # R2 Storage 사용 (인벤토리와 동일한 버킷)
-    def _profile_photo_upload_to(instance, filename):
-        """프로필 사진 R2 경로 생성: tenants/{tenant_id}/students/{student_ps}/profile/{filename}"""
-        from datetime import datetime
-        import secrets
-        import re
-        
-        # 안전한 파일명 생성 (인벤토리와 동일한 방식)
-        base, ext = "", ""
-        if "." in filename:
-            idx = filename.rfind(".")
-            base, ext = filename[:idx], filename[idx:]
-        else:
-            base = filename
-        stamp = datetime.now().strftime("%y%m%d")
-        hash_s = secrets.token_hex(2)
-        safe_name = f"{base}_{stamp}_{hash_s}{ext}"
-        
-        # tenant와 student_ps는 저장 시점에 설정됨
-        # 실제 경로는 save() 메서드에서 설정하거나, 업로드 시점에 tenant/student 정보 필요
-        # 임시로 기본 경로 사용 (나중에 업로드 API에서 경로 재설정)
-        return f"student_profile/{datetime.now().strftime('%Y/%m')}/{safe_name}"
-    
     profile_photo = models.ImageField(
-        upload_to=_profile_photo_upload_to,
+        upload_to="student_profile/%Y/%m/",
         null=True,
         blank=True,
-        help_text="학생이 학생앱에서 업로드한 프로필 사진 (R2 Storage 저장)",
+        help_text="학생이 학생앱에서 업로드한 프로필 사진",
     )
-    
-    def save(self, *args, **kwargs):
-        """프로필 사진을 R2 Storage에 저장"""
-        # 프로필 사진이 있고, 아직 R2에 업로드되지 않은 경우
-        if self.profile_photo and hasattr(self.profile_photo, 'file'):
-            from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
-            from apps.domains.inventory.r2_path import build_r2_key
-            
-            # R2 경로 생성 (인벤토리와 동일한 형식)
-            r2_key = build_r2_key(
-                tenant_id=self.tenant_id,
-                scope="student",
-                student_ps=self.ps_number,
-                folder_path="",
-                file_name=self.profile_photo.name.split("/")[-1],  # 파일명만 추출
-            )
-            
-            # R2에 업로드
-            try:
-                upload_fileobj_to_r2_storage(
-                    fileobj=self.profile_photo.file,
-                    key=r2_key,
-                    content_type=getattr(self.profile_photo, 'content_type', 'image/jpeg'),
-                )
-                # 업로드 후 파일명을 R2 key로 변경
-                self.profile_photo.name = r2_key
-            except Exception as e:
-                # R2 업로드 실패 시 기존 방식 사용
-                pass
-        
-        super().save(*args, **kwargs)
 
     deleted_at = models.DateTimeField(
         null=True,
