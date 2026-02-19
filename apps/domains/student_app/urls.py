@@ -14,6 +14,7 @@ from .profile.views import StudentProfileView
 from .media.views import (
     StudentSessionVideoListView,
     StudentVideoPlaybackView,
+    StudentVideoProgressView,
     StudentPublicSessionView,
     StudentVideoMeView,
 )

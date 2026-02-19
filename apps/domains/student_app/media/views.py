@@ -500,3 +500,79 @@ class StudentVideoPlaybackView(APIView):
             StudentVideoPlaybackSerializer(payload).data,
             status=status.HTTP_200_OK,
         )
+
+
+class StudentVideoProgressView(APIView):
+    """
+    POST /student/video/videos/{video_id}/progress/
+    비디오 진행률 업데이트 (수강 완료, 다시보기 등)
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def post(self, request, video_id: int):
+        Video, VideoPermission = _import_media_models()
+        from apps.support.video.models import VideoProgress
+        from apps.domains.enrollment.models import Enrollment
+        from academy.adapters.db.django import repositories_video as video_repo
+
+        enrollment_id = _get_student_enrollment_id(request)
+        if not enrollment_id:
+            return Response(
+                {"detail": "enrollment_id가 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            video = Video.objects.get(id=video_id)
+        except Video.DoesNotExist:
+            raise Http404
+
+        try:
+            enrollment = Enrollment.objects.get(id=enrollment_id)
+        except Enrollment.DoesNotExist:
+            return Response(
+                {"detail": "enrollment을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # 진행률 업데이트 또는 생성
+        progress_value = request.data.get("progress", None)  # 0-1 또는 0-100
+        completed = request.data.get("completed", None)  # boolean
+        last_position = request.data.get("last_position", None)  # seconds
+
+        # progress를 0-1로 정규화
+        if progress_value is not None:
+            if progress_value > 1:
+                progress_value = progress_value / 100.0
+            progress_value = max(0.0, min(1.0, float(progress_value)))
+
+        progress_obj, created = VideoProgress.objects.get_or_create(
+            video=video,
+            enrollment=enrollment,
+            defaults={
+                "progress": progress_value if progress_value is not None else 0.0,
+                "completed": completed if completed is not None else False,
+                "last_position": last_position if last_position is not None else 0,
+            },
+        )
+
+        if not created:
+            # 기존 레코드 업데이트
+            if progress_value is not None:
+                progress_obj.progress = progress_value
+            if completed is not None:
+                progress_obj.completed = completed
+            if last_position is not None:
+                progress_obj.last_position = last_position
+            progress_obj.save()
+
+        return Response({
+            "id": progress_obj.id,
+            "video_id": video.id,
+            "enrollment_id": enrollment.id,
+            "progress": progress_obj.progress,
+            "progress_percent": round(float(progress_obj.progress) * 100, 1),
+            "completed": progress_obj.completed,
+            "last_position": progress_obj.last_position,
+        }, status=status.HTTP_200_OK)
