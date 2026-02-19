@@ -35,7 +35,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
@@ -80,7 +80,7 @@ def _safe_student_name(enrollment: Optional[Enrollment]) -> str:
 
 
 class SessionScoresView(APIView):
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request, session_id: int):
         session = get_object_or_404(Session, id=int(session_id))

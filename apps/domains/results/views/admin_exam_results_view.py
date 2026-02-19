@@ -5,7 +5,7 @@ from rest_framework.generics import ListAPIView
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.results.serializers.admin_exam_result_row import (
     AdminExamResultRowSerializer,
@@ -42,7 +42,7 @@ class AdminExamResultsView(ListAPIView):
     ?page=1 로 페이지 접근 가능.
     """
 
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     pagination_class = PageNumberPagination
     serializer_class = AdminExamResultRowSerializer
 
