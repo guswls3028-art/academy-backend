@@ -581,9 +581,13 @@ class StudentVideoProgressView(APIView):
         if is_public_lecture:
             progress_value = request.data.get("progress", None)
             completed = request.data.get("completed", False)
-            if progress_value is not None and progress_value > 1:
-                progress_value = progress_value / 100.0
-            p = max(0.0, min(1.0, float(progress_value))) if progress_value is not None else 0.0
+            try:
+                p = float(progress_value) if progress_value is not None else 0.0
+                if p > 1:
+                    p = p / 100.0
+                p = max(0.0, min(1.0, p))
+            except (TypeError, ValueError):
+                p = 0.0
             return Response({
                 "id": 0,
                 "video_id": video.id,
