@@ -426,6 +426,7 @@ class StudentViewSet(ModelViewSet):
 
                     user = student_repo.user_create_user(
                         username=ps_number,
+                        tenant=tenant,
                         phone=phone or "",
                         name=item.get("name", ""),
                     )
