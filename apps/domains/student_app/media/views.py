@@ -245,6 +245,7 @@ class StudentVideoMeView(APIView):
                 "sessions": sessions_data,
             })
 
+        # 전체공개영상: 내용물이 있던 없던 항상 제공 (학생이면 다 볼 수 있음)
         public_lecture = Lecture.objects.filter(
             tenant=tenant, title="전체공개영상"
         ).first()
@@ -256,9 +257,11 @@ class StudentVideoMeView(APIView):
                     "session_id": public_session.id,
                     "lecture_id": public_lecture.id,
                 }
+        # 전체공개영상이 없어도 항상 public 필드 제공 (null로)
+        # 프론트엔드에서 전체공개영상 선택지를 항상 표시할 수 있도록
 
         return Response({
-            "public": public_data,
+            "public": public_data,  # null이어도 항상 필드 제공
             "lectures": lectures_data,
         }, status=status.HTTP_200_OK)
 
