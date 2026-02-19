@@ -386,7 +386,7 @@ class StudentVideoPlaybackView(APIView):
         enrollment_id = _get_student_enrollment_id(request)
 
         try:
-            video = Video.objects.select_related("session__lecture").get(id=video_id)
+            video = Video.objects.select_related("session__lecture__tenant").get(id=video_id)
         except Video.DoesNotExist:
             raise Http404
 
@@ -395,8 +395,14 @@ class StudentVideoPlaybackView(APIView):
         if video.session and video.session.lecture:
             is_public_session = getattr(video.session.lecture, "title", None) == "전체공개영상"
 
-        # 전체공개영상이 아니고 enrollment_id가 없으면 권한 체크
-        if not is_public_session and not enrollment_id:
+        if is_public_session:
+            # 전체공개영상: 수강등록 없이, 해당 테넌트 소속 학생만 시청 가능 (1테넌트=1프로그램)
+            student = get_request_student(request)
+            lecture_tenant_id = getattr(video.session.lecture, "tenant_id", None)
+            if not student or getattr(student, "tenant_id", None) != lecture_tenant_id:
+                raise PermissionDenied("전체공개 영상은 해당 학원 소속 학생만 시청할 수 있습니다.")
+        elif not enrollment_id:
+            # 일반 영상: 수강 정보 필요
             raise PermissionDenied("이 영상을 시청하려면 수강 정보가 필요합니다.")
 
         perm_obj = None
