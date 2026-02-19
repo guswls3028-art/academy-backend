@@ -53,10 +53,7 @@ class StudentClinicIdcardView(APIView):
             profile_photo_url = None
             if student.profile_photo:
                 try:
-                    profile_photo_url = generate_presigned_get_url_storage(
-                        key=student.profile_photo.name,
-                        expires_in=3600,
-                    )
+                    profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
                 except (ValueError, AttributeError, Exception):
                     profile_photo_url = None
             return Response({
