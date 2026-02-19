@@ -91,18 +91,14 @@ def _owner_display_for_tenant(tenant, request=None):
 # ===========================
 
 class IsPayrollManager(BasePermission):
-    """급여/근무 관리 권한. owner(원장)=마스터키 통과, 그 외 superuser/staff/직원 is_manager."""
+    """급여/근무 관리 권한. 오너=슈퍼유저급 통과, 그 외 superuser/staff/직원 is_manager."""
     def has_permission(self, request, view):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if user.is_superuser or user.is_staff:
-            return True
         tenant = getattr(request, "tenant", None)
-        if tenant:
-            from academy.adapters.db.django import repositories_core as core_repo
-            if core_repo.membership_exists_staff(tenant=tenant, user=user, staff_roles=("owner",)):
-                return True
+        if is_effective_staff(user, tenant):
+            return True
         return getattr(getattr(user, "staff_profile", None), "is_manager", False)
 
 # ===========================
@@ -116,12 +112,8 @@ def is_month_locked(staff, date):
 def can_manage_payroll(user, tenant=None) -> bool:
     if not user or not user.is_authenticated:
         return False
-    if user.is_superuser or user.is_staff:
+    if is_effective_staff(user, tenant):
         return True
-    if tenant:
-        from academy.adapters.db.django import repositories_core as core_repo
-        if core_repo.membership_exists_staff(tenant=tenant, user=user, staff_roles=("owner",)):
-            return True
     return getattr(getattr(user, "staff_profile", None), "is_manager", False)
 
 
