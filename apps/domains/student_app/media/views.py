@@ -309,23 +309,24 @@ def _students_for_request(request):
 
 
 def _student_can_access_session(request, session) -> bool:
-    """세션 접근: 전체공개영상 = 테넌트 내 학생이면 OK. 그 외 = 해당 강의 수강생만."""
+    """세션 접근: 전체공개영상 = 콘텐츠 테넌트 내 학생이면 OK. 그 외 = 해당 강의 수강생만. 테넌트별 완전 격리 유지."""
     from apps.domains.enrollment.models import Enrollment
 
     lecture = getattr(session, "lecture", None)
     if not lecture:
         return False
-    tenant = getattr(lecture, "tenant", None) or getattr(request, "tenant", None)
+    # 콘텐츠 소속 테넌트만 사용 (request.tenant 사용 금지 → 테넌트 격리)
+    tenant = getattr(lecture, "tenant", None)
     if not tenant:
         return False
     tenant_id = getattr(tenant, "id", None)
 
-    # 전체공개영상: 테넌트 내 학생이면 끝 (조건 추가 없음)
+    # 전체공개영상: 해당 테넌트 내 학생이면 허용 (다른 테넌트 학생 차단)
     if getattr(lecture, "title", None) == "전체공개영상":
         students = _students_for_request(request)
         return bool(students and any(getattr(s, "tenant_id", None) == tenant_id for s in students))
 
-    # 세션영상: 해당 세션 강의 수강생만
+    # 세션영상: 해당 세션 강의 수강생만 (동일 테넌트 Enrollment)
     students = _students_for_request(request)
     if not students:
         return False
