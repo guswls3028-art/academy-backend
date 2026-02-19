@@ -5,6 +5,7 @@ from .models import (
     VideoProgress,
     VideoPlaybackSession,
     VideoPlaybackEvent,
+    VideoFolder,
 )
 
 
