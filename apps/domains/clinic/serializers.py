@@ -61,9 +61,9 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
 class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source="student.name", read_only=True)
-    session_date = serializers.SerializerMethodField()  # ✅ session이 없을 수 있으므로 SerializerMethodField 사용
-    session_start_time = serializers.SerializerMethodField()
-    session_location = serializers.SerializerMethodField()
+    session_date = serializers.DateField(source="session.date", read_only=True)
+    session_start_time = serializers.TimeField(source="session.start_time", read_only=True)
+    session_location = serializers.CharField(source="session.location", read_only=True)
 
     # ✅ 파생 노출
     session_duration_minutes = serializers.IntegerField(
@@ -81,8 +81,20 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         model = SessionParticipant
         fields = "__all__"
 
+    def get_session_date(self, obj):
+        """session이 있으면 session.date, 없으면 requested_date"""
+        return obj.session.date if obj.session else obj.requested_date
+    
+    def get_session_start_time(self, obj):
+        """session이 있으면 session.start_time, 없으면 requested_start_time"""
+        return obj.session.start_time if obj.session else obj.requested_start_time
+    
+    def get_session_location(self, obj):
+        """session이 있으면 session.location, 없으면 None"""
+        return obj.session.location if obj.session else None
+    
     def get_session_end_time(self, obj):
-        if not obj.session.start_time or not obj.session.duration_minutes:
+        if not obj.session or not obj.session.start_time or not obj.session.duration_minutes:
             return None
         dt = datetime.combine(obj.session.date, obj.session.start_time)
         return (dt + timedelta(minutes=obj.session.duration_minutes)).time()
