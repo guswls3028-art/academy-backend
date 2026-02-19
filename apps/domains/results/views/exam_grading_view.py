@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsAdminOrStaff
+from apps.core.permissions import TenantResolvedAndStaff
 
 from apps.domains.results.models.exam_result import ExamResult
 from apps.domains.results.serializers.exam_result import (
@@ -54,7 +54,7 @@ class AutoGradeSubmissionView(APIView):
     ✅ 서비스 메서드명/계약과 일치:
     - ExamGradingService.auto_grade_objective(submission_id=...)
     """
-    permission_classes = [IsAdminOrStaff]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     @transaction.atomic
     def post(self, request, submission_id: int):
@@ -72,7 +72,7 @@ class ManualGradeSubmissionView(APIView):
     ✅ 서비스 메서드명/계약과 일치:
     - ExamGradingService.apply_manual_overrides(submission_id=..., overrides=...)
     """
-    permission_classes = [IsAdminOrStaff]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     @transaction.atomic
     def put(self, request, submission_id: int):
@@ -101,7 +101,7 @@ class ManualGradeSubmissionView(APIView):
 
 
 class FinalizeResultView(APIView):
-    permission_classes = [IsAdminOrStaff]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     @transaction.atomic
     def post(self, request, submission_id: int):
@@ -111,7 +111,7 @@ class FinalizeResultView(APIView):
 
 
 class ExamResultAdminListView(ReadOnlyModelViewSet):
-    permission_classes = [IsAdminOrStaff]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     serializer_class = ExamResultSerializer
 
     def get_queryset(self) -> QuerySet[ExamResult]:
