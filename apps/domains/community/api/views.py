@@ -22,6 +22,7 @@ from apps.domains.community.selectors import (
 )
 from apps.domains.community.services import CommunityService
 from apps.domains.community.models import PostTemplate, PostReply, BlockType
+from apps.domains.student_app.permissions import get_request_student
 
 
 class PostViewSet(viewsets.ModelViewSet):
