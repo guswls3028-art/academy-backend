@@ -597,6 +597,7 @@ class StudentViewSet(ModelViewSet):
                         raise ValueError("학생 전화번호 또는 부모 전화번호가 필요합니다.")
                     user = student_repo.user_create_user(
                         username=ps_number,
+                        tenant=tenant,
                         phone=phone or "",
                         name=student_data.get("name", ""),
                     )
