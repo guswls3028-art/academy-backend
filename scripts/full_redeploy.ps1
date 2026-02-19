@@ -262,6 +262,7 @@ echo BUILD_AND_PUSH_OK
 
 # ---------- 2) API deploy (when DeployTarget is all or api) ----------
 $deployApi = ($DeployTarget -eq "all" -or $DeployTarget -eq "api")
+$deployWorkers = ($DeployTarget -eq "all" -or $DeployTarget -eq "workers" -or $DeployTarget -eq "video" -or $DeployTarget -eq "ai" -or $DeployTarget -eq "messaging")
 if ($deployApi) {
     Write-Host "`n=== 2/3 API server deploy (EC2 SSH) ===`n" -ForegroundColor Cyan
 }
@@ -295,7 +296,6 @@ if ($deployApi) {
 }
 
 # ---------- 3) Worker deploy (when DeployTarget is all|workers|video|ai|messaging) ----------
-$deployWorkers = ($DeployTarget -eq "all" -or $DeployTarget -eq "workers" -or $DeployTarget -eq "video" -or $DeployTarget -eq "ai" -or $DeployTarget -eq "messaging")
 if ($deployWorkers) {
     Write-Host "`n=== 3/3 Worker deploy ===`n" -ForegroundColor Cyan
     $workerList = @("academy-messaging-worker", "academy-ai-worker-cpu", "academy-video-worker")
