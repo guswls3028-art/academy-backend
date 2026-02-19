@@ -4,6 +4,7 @@ from rest_framework.response import Response
 
 from apps.domains.community.api.serializers import (
     PostEntitySerializer,
+    PostReplySerializer,
     BlockTypeSerializer,
     ScopeNodeMinimalSerializer,
     PostTemplateSerializer,
@@ -20,7 +21,7 @@ from apps.domains.community.selectors import (
     get_empty_scope_node_queryset,
 )
 from apps.domains.community.services import CommunityService
-from apps.domains.community.models import PostTemplate
+from apps.domains.community.models import PostTemplate, PostReply
 
 
 class PostViewSet(viewsets.ModelViewSet):
