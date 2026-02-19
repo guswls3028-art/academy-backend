@@ -162,7 +162,6 @@ class StudentPublicSessionView(APIView):
 
     def get(self, request):
         from apps.domains.lectures.models import Lecture, Session
-        from apps.domains.enrollment.models import Enrollment
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
@@ -171,9 +170,10 @@ class StudentPublicSessionView(APIView):
                 {"detail": "tenant or student required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not Enrollment.objects.filter(student=student, tenant=tenant, status="ACTIVE").exists():
+        # 전체공개: 수강등록 없이 해당 테넌트 소속 학생이면 허용 (1테넌트=1프로그램)
+        if getattr(student, "tenant_id", None) != getattr(tenant, "id", None):
             return Response(
-                {"detail": "no active enrollment in this tenant"},
+                {"detail": "전체공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."},
                 status=status.HTTP_403_FORBIDDEN,
             )
         lecture, _ = Lecture.objects.get_or_create(
