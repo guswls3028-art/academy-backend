@@ -378,11 +378,18 @@ class StudentSessionVideoListView(APIView):
                 if err:
                     return err
             if enrollment_obj is None and not _student_can_access_session(request, session):
-                raise PermissionDenied(
-                    "전체공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."
-                    if is_public
-                    else "이 차시의 영상을 볼 수 있는 권한이 없습니다."
+                req_tenant = getattr(request, "tenant", None)
+                detail = (
+                    "전체공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다. "
+                    "같은 도메인(예: tchul.com)으로 접속했는지 확인하세요."
+                    if is_public and not req_tenant
+                    else (
+                        "전체공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."
+                        if is_public
+                        else "이 차시의 영상을 볼 수 있는 권한이 없습니다."
+                    )
                 )
+                raise PermissionDenied(detail)
 
         videos = Video.objects.filter(session_id=session_id).order_by("order", "id")
 
