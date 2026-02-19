@@ -57,6 +57,36 @@ def _get_student_enrollment_id(request) -> Optional[int]:
     return None
 
 
+def _get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_id: Optional[int] = None):
+    """
+    요청한 학생 소유의 수강정보만 허용 (IDOR 방지).
+    lecture_id가 주어지면 해당 강의의 수강인지 검증.
+    Returns: (enrollment_obj or None, error Response or None)
+    """
+    from apps.domains.enrollment.models import Enrollment
+
+    if not enrollment_id:
+        return None, None
+    student = get_request_student(request)
+    if not student:
+        return None, Response(
+            {"detail": "학생 정보를 확인할 수 없습니다."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    enrollment = Enrollment.objects.filter(id=enrollment_id, student=student, status="ACTIVE").first()
+    if not enrollment:
+        return None, Response(
+            {"detail": "해당 수강 정보에 접근할 수 없습니다."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    if lecture_id is not None and enrollment.lecture_id != lecture_id:
+        return None, Response(
+            {"detail": "해당 강의의 수강 정보가 아닙니다."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return enrollment, None
+
+
 def _pick_urls(video, request=None) -> Tuple[Optional[str], Optional[str]]:
     """
     비디오 재생 URL 생성
