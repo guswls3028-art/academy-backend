@@ -114,13 +114,11 @@ class TenantResolvedAndMember(BasePermission):
 
 class TenantResolvedAndStaff(BasePermission):
     """
-    ✅ 운영레벨 Staff 전용 Permission
+    ✅ 운영레벨 Staff 전용 Permission (오너 = 테넌트 내 슈퍼유저급)
 
-    허용 role:
-    - owner (원장, 테넌트당 1명. 마스터키 = 프로그램 내 전체 권한)
-    - admin
-    - staff
-    - teacher
+    허용:
+    - Django is_superuser / is_staff (테넌트 멤버십 없이도 통과, 충돌 방지)
+    - request.tenant 기준 owner / admin / staff / teacher
 
     학생 / 학부모 접근 차단용
     """
@@ -130,15 +128,14 @@ class TenantResolvedAndStaff(BasePermission):
     STAFF_ROLES = ("owner", "admin", "staff", "teacher")
 
     def has_permission(self, request, view):
-        tenant = getattr(request, "tenant", None)
         user = request.user
-
-        if not tenant:
-            return False
-
         if not user or not user.is_authenticated:
             return False
-
+        if user.is_superuser or user.is_staff:
+            return True
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return False
         from academy.adapters.db.django import repositories_core as core_repo
         return core_repo.membership_exists_staff(tenant=tenant, user=user, staff_roles=self.STAFF_ROLES)
 
