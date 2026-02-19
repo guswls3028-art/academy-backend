@@ -140,7 +140,13 @@ class SessionParticipant(TimestampModel):
             models.UniqueConstraint(
                 fields=["tenant", "session", "student"],
                 name="uniq_clinic_participant_per_tenant",
-            )
+                condition=models.Q(session__isnull=False),  # session이 있을 때만 유니크 제약
+            ),
+            models.UniqueConstraint(
+                fields=["tenant", "requested_date", "requested_start_time", "student"],
+                name="uniq_clinic_participant_request_per_tenant",
+                condition=models.Q(session__isnull=True),  # session이 없을 때만 유니크 제약
+            ),
         ]
         ordering = ["-created_at"]
 
