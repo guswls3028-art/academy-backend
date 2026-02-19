@@ -326,8 +326,14 @@ def _student_can_access_session(request, session) -> bool:
         return False
     tenant_id = getattr(tenant, "id", None)
     if getattr(lecture, "title", None) == "전체공개영상":
-        # 수강등록 없이, 해당 테넌트 소속 학생이 한 명이라도 있으면 시청 가능 (학부모가 여러 자녀일 때 403 방지)
-        return any(getattr(s, "tenant_id", None) == tenant_id for s in students)
+        # 수강등록 없이, 해당 테넌트 소속 학생이 한 명이라도 있으면 시청 가능 (강의 없는 학생도 전체공개 시청 가능)
+        if any(getattr(s, "tenant_id", None) == tenant_id for s in students):
+            return True
+        # 폴백: 요청 테넌트와 강의 테넌트가 같으면 허용 (같은 학원 소속)
+        req_tenant_id = getattr(getattr(request, "tenant", None), "id", None)
+        if req_tenant_id is not None and getattr(lecture, "tenant_id", None) == req_tenant_id:
+            return True
+        return False
     # 일반 강의: 연결된 학생 중 해당 강의 수강생이 한 명이라도 있으면 허용
     for student in students:
         if Enrollment.objects.filter(
