@@ -342,31 +342,35 @@ class StudentSessionVideoListView(APIView):
 
         videos = Video.objects.filter(session_id=session_id).order_by("order", "id")
 
-        # 진행률 일괄 조회 (enrollment_id가 있을 때만)
+        # 진행률 일괄 조회: 요청 학생 소유의 수강정보만 사용 (IDOR 방지)
         from academy.adapters.db.django import repositories_video as video_repo
         from apps.domains.enrollment.models import Enrollment
-        
+
         enrollment_obj = None
         progress_map = {}
         if enrollment_id:
-            enrollment_obj = Enrollment.objects.filter(id=enrollment_id).first()
+            enrollment_obj, err = _get_enrollment_for_student(
+                request, enrollment_id, lecture_id=getattr(session.lecture, "id", None)
+            )
+            if err:
+                return err
             if enrollment_obj:
                 # 세션 내 모든 영상의 진행률을 일괄 조회 (최적화)
                 video_ids = list(videos.values_list("id", flat=True))
                 if video_ids:
                     progresses = video_repo.video_progress_filter_video_enrollment_ids(
-                        video=None,  # video=None이면 video_id__in 사용
-                        enrollment_ids=[enrollment_id]
+                        video=None,
+                        enrollment_ids=[enrollment_obj.id],
                     ).filter(video_id__in=video_ids)
                     progress_map = {p.video_id: p for p in progresses}
 
         items = []
         for v in videos:
             perm_obj = None
-            if VideoPermission and enrollment_id:
+            if VideoPermission and enrollment_obj:
                 perm_obj = (
                     VideoPermission.objects
-                    .filter(video_id=v.id, enrollment_id=enrollment_id)
+                    .filter(video_id=v.id, enrollment_id=enrollment_obj.id)
                     .first()
                 )
 
