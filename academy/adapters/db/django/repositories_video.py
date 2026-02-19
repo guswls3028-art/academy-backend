@@ -172,10 +172,10 @@ def video_progress_filter(video):
 
 def video_progress_filter_video_enrollment_ids(video, enrollment_ids):
     from apps.support.video.models import VideoProgress
-    return VideoProgress.objects.filter(
-        video=video,
-        enrollment_id__in=enrollment_ids,
-    )
+    qs = VideoProgress.objects.filter(enrollment_id__in=enrollment_ids)
+    if video:
+        qs = qs.filter(video=video)
+    return qs
 
 
 def video_get_by_id(video_id):

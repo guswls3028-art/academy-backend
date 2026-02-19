@@ -306,6 +306,23 @@ class StudentSessionVideoListView(APIView):
 
         videos = Video.objects.filter(session_id=session_id).order_by("order", "id")
 
+        # 진행률 일괄 조회 (enrollment_id가 있을 때만)
+        from academy.adapters.db.django import repositories_video as video_repo
+        from apps.domains.enrollment.models import Enrollment
+        
+        enrollment_obj = None
+        progress_map = {}
+        if enrollment_id:
+            enrollment_obj = Enrollment.objects.filter(id=enrollment_id).first()
+            if enrollment_obj:
+                # 세션 내 모든 영상의 진행률을 일괄 조회 (최적화)
+                video_ids = list(videos.values_list("id", flat=True))
+                progresses = video_repo.video_progress_filter_video_enrollment_ids(
+                    video=None,  # video=None이면 video_id__in 사용
+                    enrollment_ids=[enrollment_id]
+                ).filter(video_id__in=video_ids)
+                progress_map = {p.video_id: p for p in progresses}
+
         items = []
         for v in videos:
             perm_obj = None
@@ -320,15 +337,16 @@ class StudentSessionVideoListView(APIView):
 
             # Use SSOT access resolver
             from apps.support.video.services.access_resolver import resolve_access_mode
-            from apps.domains.enrollment.models import Enrollment
-            
-            enrollment_obj = None
-            if enrollment_id:
-                enrollment_obj = Enrollment.objects.filter(id=enrollment_id).first()
             
             access_mode_value = None
             if enrollment_obj:
                 access_mode_value = resolve_access_mode(video=v, enrollment=enrollment_obj).value
+            
+            # 진행률 계산 (0-100)
+            progress_obj = progress_map.get(v.id)
+            progress_percent = 0
+            if progress_obj:
+                progress_percent = round(float(progress_obj.progress or 0) * 100, 1)
             
             items.append({
                 "id": int(v.id),
@@ -337,6 +355,8 @@ class StudentSessionVideoListView(APIView):
                 "status": str(getattr(v, "status", "READY")),
                 "thumbnail_url": thumb,
                 "duration": getattr(v, "duration", None),
+                "progress": progress_percent,  # 0-100
+                "completed": bool(progress_obj and progress_obj.completed) if progress_obj else False,
                 **_policy_from_video(v),
                 "effective_rule": _effective_rule(perm_obj),  # Legacy field
                 "access_mode": access_mode_value,  # New field

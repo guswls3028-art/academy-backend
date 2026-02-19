@@ -8,6 +8,11 @@ class StudentVideoListItemSerializer(serializers.Serializer):
 
     status = serializers.CharField()
     thumbnail_url = serializers.CharField(allow_null=True, required=False)
+    duration = serializers.IntegerField(allow_null=True, required=False)
+
+    # 진행률 (0-100)
+    progress = serializers.FloatField(required=False, default=0)
+    completed = serializers.BooleanField(required=False, default=False)
 
     # 정책(단일 진실)
     allow_skip = serializers.BooleanField()
