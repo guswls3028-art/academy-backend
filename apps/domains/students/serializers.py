@@ -162,6 +162,14 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         help_text="미입력 시 임의 6자리 자동 부여 (학생이 추후 변경 가능)",
     )
 
+    def validate_parent_phone(self, value):
+        v = str(value or "").strip().replace(" ", "").replace("-", "").replace(".", "")
+        if not v or len(v) != 11 or not v.startswith("010"):
+            raise serializers.ValidationError(
+                "학부모 전화번호는 010XXXXXXXX 11자리여야 합니다."
+            )
+        return v
+
     class Meta:
         model = Student
         exclude = ("tenant", "user")
@@ -197,7 +205,7 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         ps_number = str(ps_number_raw).strip() if ps_number_raw else ""
         if not ps_number:
             try:
-                ps_number = _generate_unique_ps_number()
+                ps_number = _generate_unique_ps_number(tenant=tenant)
             except ValueError as e:
                 raise serializers.ValidationError({"ps_number": str(e)})
         parent_phone = str(self._require(attrs, "parent_phone")).strip()
