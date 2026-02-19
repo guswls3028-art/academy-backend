@@ -28,6 +28,7 @@ class StudentProfileView(APIView):
             "id": student.id,
             "name": student.name,
             "profile_photo_url": url,
+            "ps_number": getattr(student, "ps_number", "") or "",
         })
 
     def patch(self, request):
@@ -47,4 +48,5 @@ class StudentProfileView(APIView):
             "id": student.id,
             "name": student.name,
             "profile_photo_url": url,
+            "ps_number": getattr(student, "ps_number", "") or "",
         })
