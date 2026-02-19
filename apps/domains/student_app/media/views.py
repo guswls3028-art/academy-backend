@@ -296,14 +296,26 @@ class StudentVideoMeView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+def _students_for_request(request):
+    """요청자에 연결된 학생들 (1명 또는 학부모의 모든 자녀). 권한 검사용."""
+    student = get_request_student(request)
+    if student:
+        return [student]
+    from apps.domains.parents.models import Parent
+    parent = getattr(request.user, "parent_profile", None)
+    if parent:
+        return list(parent.students.filter(deleted_at__isnull=True))
+    return []
+
+
 def _student_can_access_session(request, session) -> bool:
     """세션 목록/영상 접근 가능 여부. 전체공개 세션이면 같은 테넌트 학생, 아니면 해당 강의 수강생.
     세션 소유 테넌트(session.lecture.tenant) 기준으로 수강 여부를 검사하여, X-Tenant-Code/호스트와
     무관하게 올바른 테넌트로 권한 판단한다."""
     from apps.domains.enrollment.models import Enrollment
 
-    student = get_request_student(request)
-    if not student:
+    students = _students_for_request(request)
+    if not students:
         return False
     lecture = getattr(session, "lecture", None)
     if not lecture:
@@ -312,12 +324,17 @@ def _student_can_access_session(request, session) -> bool:
     tenant = getattr(lecture, "tenant", None) or getattr(request, "tenant", None)
     if not tenant:
         return False
+    tenant_id = getattr(tenant, "id", None)
     if getattr(lecture, "title", None) == "전체공개영상":
-        # 수강등록 없이, 해당 테넌트 소속 학생이면 시청 가능 (1테넌트=1프로그램 독립)
-        return getattr(student, "tenant_id", None) == getattr(tenant, "id", None)
-    return Enrollment.objects.filter(
-        student=student, lecture=lecture, tenant=tenant, status="ACTIVE"
-    ).exists()
+        # 수강등록 없이, 해당 테넌트 소속 학생이 한 명이라도 있으면 시청 가능 (학부모가 여러 자녀일 때 403 방지)
+        return any(getattr(s, "tenant_id", None) == tenant_id for s in students)
+    # 일반 강의: 연결된 학생 중 해당 강의 수강생이 한 명이라도 있으면 허용
+    for student in students:
+        if Enrollment.objects.filter(
+            student=student, lecture=lecture, tenant=tenant, status="ACTIVE"
+        ).exists():
+            return True
+    return False
 
 
 class StudentSessionVideoListView(APIView):
