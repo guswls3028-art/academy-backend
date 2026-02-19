@@ -61,14 +61,12 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
 class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source="student.name", read_only=True)
-    session_date = serializers.DateField(source="session.date", read_only=True)
-    session_start_time = serializers.TimeField(source="session.start_time", read_only=True)
-    session_location = serializers.CharField(source="session.location", read_only=True)
+    session_date = serializers.SerializerMethodField()  # ✅ session이 없을 수 있으므로 SerializerMethodField 사용
+    session_start_time = serializers.SerializerMethodField()
+    session_location = serializers.SerializerMethodField()
 
     # ✅ 파생 노출
-    session_duration_minutes = serializers.IntegerField(
-        source="session.duration_minutes", read_only=True
-    )
+    session_duration_minutes = serializers.SerializerMethodField()
     session_end_time = serializers.SerializerMethodField()
 
     # ✅ [ADD] 변경자 이름 노출
@@ -92,6 +90,10 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     def get_session_location(self, obj):
         """session이 있으면 session.location, 없으면 None"""
         return obj.session.location if obj.session else None
+    
+    def get_session_duration_minutes(self, obj):
+        """session이 있으면 duration_minutes, 없으면 None"""
+        return obj.session.duration_minutes if obj.session else None
     
     def get_session_end_time(self, obj):
         if not obj.session or not obj.session.start_time or not obj.session.duration_minutes:
