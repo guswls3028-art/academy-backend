@@ -26,6 +26,25 @@ class PostMappingSerializer(serializers.ModelSerializer):
         fields = ["id", "post", "node", "node_detail", "created_at"]
 
 
+class PostReplySerializer(serializers.ModelSerializer):
+    """QnA 답변 조회/생성. question 필드는 프론트 Answer 타입 호환용(post_id)."""
+    question = serializers.IntegerField(source="post_id", read_only=True)
+
+    class Meta:
+        model = PostReply
+        fields = ["id", "post", "question", "content", "created_by", "created_at"]
+        read_only_fields = ["post", "created_by", "created_at"]
+
+    def create(self, validated_data):
+        post = validated_data.pop("post")
+        return PostReply.objects.create(
+            post=post,
+            tenant=post.tenant_id,
+            created_by=validated_data.get("created_by"),
+            content=validated_data["content"],
+        )
+
+
 class PostEntitySerializer(serializers.ModelSerializer):
     mappings = PostMappingSerializer(many=True, read_only=True)
     block_type_label = serializers.CharField(source="block_type.label", read_only=True)
