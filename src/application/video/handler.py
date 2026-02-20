@@ -2,11 +2,12 @@
 ProcessVideoJobHandler - Video 작업 처리 유스케이스
 
 흐름:
-1. Idempotency 락 획득 (Redis SETNX) - 반드시 먼저
-2. Repository.mark_processing (DB)
-3. Processor 실행 (progress는 Redis에만 기록, Write-Behind)
-4. Repository.complete_video (DB) 또는 fail_video (실패 시)
-5. Idempotency 락 해제
+1. (재시도 시) 취소 요청 확인 → 있으면 스킵
+2. Idempotency 락 획득 (Redis SETNX) - 반드시 먼저
+3. Repository.mark_processing (DB)
+4. Processor 실행 (progress는 Redis에만 기록, Write-Behind)
+5. Repository.complete_video (DB) 또는 fail_video (실패 시)
+6. Idempotency 락 해제
 """
 from __future__ import annotations
 
@@ -18,6 +19,11 @@ from src.application.ports.progress import IProgress
 from src.application.ports.video_repository import IVideoRepository
 
 logger = logging.getLogger(__name__)
+
+
+class CancelledError(RuntimeError):
+    """재시도로 인한 취소 요청 시 processor에서 발생 (DB fail_video 호출 없이 스킵)."""
+    pass
 
 
 # Processor 시그니처: (job, cfg, progress) -> (hls_path, duration)
