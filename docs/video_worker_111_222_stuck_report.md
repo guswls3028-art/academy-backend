@@ -85,7 +85,7 @@ redis-cli DEL job:encode:111:lock job:encode:222:lock
 
 ---
 
-## 6. 결론
+## 5. 결론
 
 - **원인**: lock_fail을 skip(ACK)으로 처리한 **SQS ACK 설계 버그**. Redis/ASG 이슈 아님.
 - **수정**: lock_fail 시 delete 대신 visibility 60초로 NACK.
