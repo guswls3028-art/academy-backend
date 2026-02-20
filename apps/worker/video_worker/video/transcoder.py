@@ -363,11 +363,11 @@ def transcode_to_hls(
                     deadline = cap
 
         if p.returncode != 0:
-            stderr_tail = (p.stderr or "")
+            stderr_tail = (p.stderr.read() if p.stderr else "")
             raise TranscodeError(
                 f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(stderr_tail)}"
             )
-        stderr_tail = p.stderr or ""
+        stderr_tail = (p.stderr.read() if p.stderr else "")
 
     master = output_root / "master.m3u8"
     if not master.exists():
