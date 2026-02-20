@@ -45,6 +45,7 @@ from ..models import (
 )
 from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSerializer
 from ..services.sqs_queue import VideoSQSQueue
+from ..redis_status_cache import set_cancel_requested
 from .playback_mixin import VideoPlaybackMixin
 
 # 로거 설정
