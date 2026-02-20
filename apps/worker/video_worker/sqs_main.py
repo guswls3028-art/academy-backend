@@ -344,6 +344,16 @@ def main() -> int:
                     queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
                     consecutive_errors = 0
 
+                elif result == "skip":
+                    # 레거시/미지정 skip → NACK (stuck orphan 방지)
+                    logger.warning(
+                        "legacy skip — nack for safety | request_id=%s | video_id=%s",
+                        request_id,
+                        video_id,
+                    )
+                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
+                    consecutive_errors = 0
+
                 else:
                     # handler 실패 시 즉시 재노출 → 다른 워커가 곧바로 처리
                     queue.change_message_visibility(receipt_handle, 0)
