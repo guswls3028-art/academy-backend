@@ -398,6 +398,13 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # 재시도 전에 기존 진행 중인 워커에게 취소 요청 (Redis 플래그 → 워커가 확인 후 스킵)
+        try:
+            tenant_id = video.session.lecture.tenant_id
+            set_cancel_requested(tenant_id, video.id, ttl_seconds=300)
+        except Exception as e:
+            logger.debug("set_cancel_requested skip (no tenant): %s", e)
+
         video.status = Video.Status.UPLOADED
         video.save(update_fields=["status"])
 
