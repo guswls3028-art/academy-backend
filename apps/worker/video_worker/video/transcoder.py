@@ -189,14 +189,15 @@ def _parse_time_seconds(line: str) -> Optional[float]:
     return h * 3600 + m_ * 60 + s + cs / 100.0
 
 
-# Duration-based timeout: max(7200, int(duration*1.5)), cap 6h. SQS visibility must be >= this.
-FFMPEG_TIMEOUT_MIN_SECONDS = 7200
-FFMPEG_TIMEOUT_MAX_SECONDS = 21600
-FFMPEG_TIMEOUT_DURATION_MULTIPLIER = 1.5
+# Duration-based timeout: max(MIN, int(duration*multiplier)), cap 6h. SQS visibility must be >= this.
+# 3h minimum: 긴 영상·재처리 시 2h로는 부족해 실패하는 경우 완화 (기존 7200 → 10800)
+FFMPEG_TIMEOUT_MIN_SECONDS = 10800  # 3시간
+FFMPEG_TIMEOUT_MAX_SECONDS = 21600  # 6시간
+FFMPEG_TIMEOUT_DURATION_MULTIPLIER = 2.0  # 영상 길이의 2배까지 허용 (기존 1.5 → 2.0)
 
 
 def _effective_ffmpeg_timeout(duration_sec: Optional[float], config_timeout: Optional[int]) -> int:
-    """timeout = max(7200, int(duration * 1.5)), capped at 6h. SQS visibility_timeout must be >= this."""
+    """timeout = max(MIN, int(duration * multiplier)), capped at 6h. SQS visibility_timeout must be >= this."""
     if duration_sec is not None and duration_sec > 0:
         from_duration = int(duration_sec * FFMPEG_TIMEOUT_DURATION_MULTIPLIER)
         return min(
