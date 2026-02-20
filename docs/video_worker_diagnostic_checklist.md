@@ -121,6 +121,34 @@ docker exec -it academy-api python scripts/check_sqs_worker_connectivity.py
 
 ## 부록: 자주 나오는 로그별 원인
 
+---
+
+## 9. 워커 3대인데 일부(111, 222)만 처리 안 되고 333만 되는 경우
+
+**증상**: 동시에 111, 222, 333 업로드했는데 333만 인코딩되고 111·222는 대기.
+
+**가능한 원인** (Handler가 skip 반환 시 메시지는 삭제됨 → 영상은 큐에 안 남음):
+
+| 원인 | Handler 로그 | 대응 |
+|------|--------------|------|
+| Redis idempotency 락 잔류 | `[HANDLER] Lock acquisition failed, skipping` | 이전 워커 크래시 후 lock 미해제. TTL(4h) 대기 또는 `redis-cli DEL job:encode:111:lock` 후 retry |
+| DB status ≠ UPLOADED | `[HANDLER] Cannot mark video N as PROCESSING, skipping` | 해당 영상이 이미 PROCESSING/READY/FAILED. retry API로 UPLOADED 후 재 enqueue |
+| 취소 요청 | `[HANDLER] Cancel requested for video_id=N, skipping` | API retry 시 cancel 플래그 설정됨. TTL 만료 후 재시도 |
+
+**진단 스크립트**:
+
+```bash
+python scripts/check_video_stuck_diagnosis.py 111 222 333
+# Docker: docker exec -it academy-api python scripts/check_video_stuck_diagnosis.py 111 222 333
+```
+
+- DB status: UPLOADED / PROCESSING / READY / FAILED
+- Redis `job:encode:{id}:lock`: 있으면 TTL 내에 다른 워커가 처리 불가 → skip → 메시지 삭제 → 영상 대기 상태 유지
+
+---
+
+## 부록: 자주 나오는 로그별 원인
+
 ### `[HANDLER] Cannot mark video N as PROCESSING, skipping`
 - **의미**: `mark_processing(video_id)` 가 False를 반환함.
 - **원인**: DB에서 해당 영상 상태가 **UPLOADED가 아님**. 이미 PROCESSING(이전 시도에서 변경됨), READY, FAILED 등.
