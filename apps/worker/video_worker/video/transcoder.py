@@ -298,30 +298,29 @@ def transcode_to_hls(
             stderr_reader = threading.Thread(target=read_stderr, daemon=True)
             progress_reader.start()
             stderr_reader.start()
-            try:
-                # 작업 중 연장: 300초마다 대기, 타임아웃 시 300초 추가 (최대 24h)
-                deadline = time.monotonic() + effective_timeout
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        p.kill()
-                        p.wait()
-                        raise TranscodeError(
-                            f"ffmpeg timeout video_id={video_id} (extending, cap 24h) exceeded"
-                        )
-                    chunk = min(FFMPEG_CHUNK_SECONDS, int(remaining))
-                    try:
-                        p.wait(timeout=chunk)
-                        break
-                    except subprocess.TimeoutExpired:
-                        deadline += FFMPEG_EXTEND_SECONDS
-                        cap = time.monotonic() + FFMPEG_MAX_TOTAL_SECONDS
-                        if deadline > cap:
-                            deadline = cap
-                        logger.debug(
-                            "[TRANSCODER] Extended ffmpeg timeout video_id=%s remaining=%ds",
-                            video_id, int(deadline - time.monotonic()),
-                        )
+            # 작업 중 연장: 300초마다 대기, 타임아웃 시 300초 추가 (최대 24h)
+            deadline = time.monotonic() + effective_timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    p.kill()
+                    p.wait()
+                    raise TranscodeError(
+                        f"ffmpeg timeout video_id={video_id} (extending, cap 24h) exceeded"
+                    )
+                chunk = min(FFMPEG_CHUNK_SECONDS, int(remaining))
+                try:
+                    p.wait(timeout=chunk)
+                    break
+                except subprocess.TimeoutExpired:
+                    deadline += FFMPEG_EXTEND_SECONDS
+                    cap = time.monotonic() + FFMPEG_MAX_TOTAL_SECONDS
+                    if deadline > cap:
+                        deadline = cap
+                    logger.debug(
+                        "[TRANSCODER] Extended ffmpeg timeout video_id=%s remaining=%ds",
+                        video_id, int(deadline - time.monotonic()),
+                    )
             progress_reader.join(timeout=2.0)
             stderr_reader.join(timeout=2.0)
 
