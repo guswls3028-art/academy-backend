@@ -87,8 +87,8 @@ class ProcessVideoJobHandler:
 
         logger.info("[HANDLER] Starting video processing video_id=%s job_id=%s", video_id, job_id)
         if not self._idempotency.acquire_lock(job_id):
-            logger.info("[HANDLER] Lock acquisition failed, skipping video_id=%s", video_id)
-            return "skip"
+            logger.info("[HANDLER] Lock acquisition failed (경합 또는 이전 워커 크래시) video_id=%s → NACK", video_id)
+            return "lock_fail"
 
         logger.info("[HANDLER] Lock acquired, marking as PROCESSING video_id=%s", video_id)
         try:
