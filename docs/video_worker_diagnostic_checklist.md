@@ -149,6 +149,11 @@ python scripts/check_video_stuck_diagnosis.py 111 222 333
 
 ## 부록: 자주 나오는 로그별 원인
 
+### `[HANDLER] Lock acquisition failed, skipping video_id=N`
+- **의미**: Redis idempotency 락 `job:encode:N:lock` 획득 실패 (이미 다른 프로세스가 보유).
+- **원인**: 이전 워커가 처리 중 크래시/킬되어 락 해제 전 종료. TTL(기본 4h)까지 락 유지.
+- **대응**: `redis-cli DEL job:encode:N:lock` 후 retry. 또는 TTL 만료 대기.
+
 ### `[HANDLER] Cannot mark video N as PROCESSING, skipping`
 - **의미**: `mark_processing(video_id)` 가 False를 반환함.
 - **원인**: DB에서 해당 영상 상태가 **UPLOADED가 아님**. 이미 PROCESSING(이전 시도에서 변경됨), READY, FAILED 등.
