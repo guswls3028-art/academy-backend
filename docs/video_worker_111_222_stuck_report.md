@@ -96,21 +96,19 @@ redis-cli DEL job:encode:111:lock job:encode:222:lock
 
 ---
 
-## 4. 관련 파일 요약
+## 5. 관련 파일 요약
 
 | 파일 | 역할 |
 |------|------|
-| `src/application/video/handler.py` | lock 획득 실패 시 skip 반환 |
-| `apps/worker/video_worker/sqs_main.py` | skip 시 메시지 삭제, lock TTL 설정 |
-| `src/infrastructure/cache/redis_idempotency_adapter.py` | Redis idempotency 락 구현 |
-| `academy/adapters/db/django/repositories_video.py` | `mark_processing` 구현 |
-| `scripts/check_video_stuck_diagnosis.py` | 멈춘 영상 진단 스크립트 |
-| `docs/video_worker_diagnostic_checklist.md` | 워커 진단 체크리스트 |
+| `src/application/video/handler.py` | lock_fail 시 `"lock_fail"` 반환 (NACK) |
+| `apps/worker/video_worker/sqs_main.py` | lock_fail → visibility 60초 |
+| `src/infrastructure/cache/redis_idempotency_adapter.py` | Redis idempotency 락 |
+| `scripts/check_video_stuck_diagnosis.py` | 멈춘 영상 진단 |
 
 ---
 
-## 5. 결론
+## 6. 결론
 
-- **원인**: 워커 크래시로 Redis idempotency 락이 해제되지 않았을 때, 같은 영상의 메시지를 받은 다른 워커가 lock fail → skip → 메시지 삭제를 하면서, 해당 영상이 영구적으로 대기 상태로 남음.
-- **즉시 조치**: Redis 락 삭제 + Retry API로 재 enqueue.
-- **구조적 개선**: lock fail 시 메시지를 큐에 다시 visible 하게 돌려서, 락 TTL 만료 후 자동 재처리가 되도록 변경하는 것을 권장합니다.
+- **원인**: lock_fail을 skip(ACK)으로 처리한 **SQS ACK 설계 버그**. Redis/ASG 이슈 아님.
+- **수정**: lock_fail 시 delete 대신 visibility 60초로 NACK.
+- **효과**: 락 TTL 만료 후 자동 재처리 경로 유지. 워커 scale-in/OOM 시에도 영상 영구 유실 방지.
