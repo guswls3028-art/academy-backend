@@ -193,6 +193,7 @@ def process_video(
             tenant_id=tenant_id_str,
         )
 
+        _check_abort(job)
         # 트랜스코딩: 구간 내 0~100% (인코딩 단계만 세부 진행률)
         transcode_started = False
         def transcode_progress(current_sec: float, total_sec: float) -> None:
@@ -261,6 +262,7 @@ def process_video(
             },
             tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
+        _check_abort(job)
         transcode_to_hls(
             video_id=video_id,
             input_path=str(src_path),
@@ -304,6 +306,7 @@ def process_video(
             tenant_id=tenant_id_str,
         )
 
+        _check_abort(job)
         progress.record_progress(
             job_id,
             "thumbnail",
@@ -368,6 +371,7 @@ def process_video(
                 tenant_id=tenant_id_str,
             )
 
+        _check_abort(job)
         progress.record_progress(
             job_id,
             "uploading",
