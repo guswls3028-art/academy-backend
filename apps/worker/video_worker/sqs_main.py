@@ -54,6 +54,9 @@ VIDEO_PROGRESS_TTL_SECONDS = int(os.getenv("VIDEO_PROGRESS_TTL_SECONDS", "14400"
 # NACK 시 메시지 재노출 대기 (락 TTL 만료 후 재처리 허용)
 NACK_VISIBILITY_SECONDS = 60
 
+# failed 시 retry backoff (일시적 실패 시 즉시 재시도 방지)
+FAILED_BACKOFF_SECONDS = 180
+
 
 def _visibility_extender_loop(
     queue: "VideoSQSAdapter",
