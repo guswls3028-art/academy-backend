@@ -114,7 +114,7 @@ class ProcessVideoJobHandler:
 
         except CancelledError:
             logger.info("[HANDLER] Processing cancelled (retry requested) video_id=%s", video_id)
-            return "skip"
+            return "skip:cancel"
         except Exception as e:
             logger.exception("Video processing failed: video_id=%s, error=%s", video_id, e)
             self._repo.fail_video(video_id=video_id, reason=str(e)[:2000])
