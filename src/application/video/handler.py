@@ -72,7 +72,7 @@ class ProcessVideoJobHandler:
                 from apps.support.video.redis_status_cache import is_cancel_requested
                 if is_cancel_requested(tenant_id, video_id):
                     logger.info("[HANDLER] Cancel requested for video_id=%s, skipping", video_id)
-                    return "skip"
+                    return "skip:cancel"
             except Exception as e:
                 logger.debug("[HANDLER] is_cancel_requested check failed: %s", e)
 
@@ -95,7 +95,7 @@ class ProcessVideoJobHandler:
         try:
             if not self._repo.mark_processing(video_id):
                 logger.warning("[HANDLER] Cannot mark video %s as PROCESSING, skipping", video_id)
-                return "skip"
+                return "skip:mark_processing"
 
             logger.info("[HANDLER] Starting process_fn video_id=%s", video_id)
             hls_path, duration = self._process_fn(job=job, cfg=cfg, progress=self._progress)
