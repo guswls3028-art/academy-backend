@@ -2,9 +2,8 @@
 
 학원 관리 시스템 백엔드 API 서버
 
-**프론트 구분 (SSOT)**: 학생 앱 = `academyfront/src/student/**` 전용. 그 외는 모두 관리자 앱 (`academyfront` 나머지 전체).
-
-**Cursor 작업 시**: [docs_cursor/README.md](docs_cursor/README.md) — 문서만으로 필요한 정보를 얻을 수 있도록 정리된 SSOT.
+**문서**: 이 README가 **최상위 유일 진입 문서**입니다.  
+**개발·Cursor 참조**: [docs/REFERENCE.md](docs/REFERENCE.md) 한 파일만 보면 됩니다. 문서 인덱스: [docs/README.md](docs/README.md).
 
 ---
 
@@ -12,8 +11,7 @@
 
 ### 배포·문서
 
-- **배포 절차**: [docs/배포.md](docs/배포.md)
-- **문서 인덱스**: [docs/README.md](docs/README.md) — 전체 목록
+- **배포**: [docs/배포.md](docs/배포.md) · **문서 목록**: [docs/README.md](docs/README.md)
 
 ---
 
@@ -114,16 +112,10 @@ curl http://localhost:8000/health
 
 ---
 
-## 📚 문서 (SSOT)
+## 📚 문서
 
-**문서 인덱스**: [docs/README.md](docs/README.md)
-
-- [배포.md](docs/배포.md) — 500 배포 순서, Docker 빌드, EC2/ECR
-- [운영.md](docs/운영.md) — 운영
-- [설계.md](docs/설계.md) — 인프라·워커 설계
-- [10K_기준.md](docs/10K_기준.md), [30K_기준.md](docs/30K_기준.md) — 기준점
-- [apps/core/CORE_SEAL.md](apps/core/CORE_SEAL.md) — Core 봉인(테넌트·권한 규칙)
-- [docs/adr/](docs/adr/) — ADR
+- **진입**: 이 README · **개발 참조(단일 SSOT)**: [docs/REFERENCE.md](docs/REFERENCE.md)
+- **목록**: [docs/README.md](docs/README.md) — 배포, 운영, 설계, 10K/30K 기준, adr, CORE_SEAL
 
 ---
 

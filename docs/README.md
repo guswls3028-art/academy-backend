@@ -1,15 +1,16 @@
-# docs
+# docs — 문서 인덱스
 
-| 할 일 | 문서 |
-|-------|------|
-| **500 배포** | [배포.md](배포.md) |
-| **운영** | [운영.md](운영.md) |
-| **설계(인프라·워커)** | [설계.md](설계.md) |
-| **10K 기준** | [10K_기준.md](10K_기준.md) |
-| **30K 기준** | [30K_기준.md](30K_기준.md) |
-| **ADR** | [adr/](adr/) |
-| **Cursor SSOT (날짜 스냅샷)** | [SSOT_0217/](SSOT_0217/) |
+**최상위**: 저장소 루트 [README.md](../README.md) 하나만 진입 문서로 사용.
 
-배포·운영·설계 + 10K/30K 기준점 + adr.  
-**SSOT_0217**: 2025-02-17 현시점 문서 스냅샷.  
-**SSOT_0218 이후**: `docs/SSOT_MMDD/` 안에 **cursor_only**(AI 전용, 사람 미확인) / **admin97**(사람이 보는 문서만) 두 폴더 필수. 사람용 문서는 반드시 admin97에만 작성. 규칙: `.cursor/rules/ssot-folder-structure.mdc`
+| 문서 | 용도 |
+|------|------|
+| [배포.md](배포.md) | 500 배포 순서, Docker, EC2, ECR, 워커 |
+| [운영.md](운영.md) | 운영 |
+| [설계.md](설계.md) | 인프라·워커 설계 |
+| [10K_기준.md](10K_기준.md), [30K_기준.md](30K_기준.md) | 기준점·비용 |
+| [adr/](adr/) | ADR |
+| [REFERENCE.md](REFERENCE.md) | **개발·Cursor 참조** — Core, API, 설정, 배포 요약, 규칙, 프론트 계약 (단일 SSOT) |
+
+Core 봉인(헌법): [apps/core/CORE_SEAL.md](../apps/core/CORE_SEAL.md)
+
+**과거 스냅샷·레거시**: [archive/](archive/) — SSOT_0217, SSOT_0218, 0216, cursor_legacy(구 docs_cursor). 현재 작업 시에는 보지 않아도 됨.

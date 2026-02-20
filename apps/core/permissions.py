@@ -39,7 +39,7 @@ class IsAdminOrStaff(BasePermission):
 class IsSuperuserOnly(BasePermission):
     """
     슈퍼유저 전용 (개발자 전용).
-    admin_app 등 본인만 쓰는 관리 기능용.
+    dev_app 등 본인만 쓰는 관리 기능용.
     """
 
     message = "Superuser only."
@@ -144,7 +144,7 @@ class TenantResolvedAndOwner(BasePermission):
     """
     ✅ Owner 전용 Permission
 
-    admin_app 등 owner만 접근 가능한 기능용.
+    dev_app 등 owner만 접근 가능한 기능용.
     """
 
     message = "Owner membership required."

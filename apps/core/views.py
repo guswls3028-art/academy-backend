@@ -299,7 +299,7 @@ class JobProgressView(APIView):
 
 
 # --------------------------------------------------
-# Tenant Branding (admin_app) — 테넌트별 로고·로그인 타이틀, R2 academy-admin
+# Tenant Branding (dev_app) — 테넌트별 로고·로그인 타이틀, R2 academy-admin
 # --------------------------------------------------
 
 
@@ -319,7 +319,7 @@ def _tenant_branding_dto(program):
 class TenantBrandingView(APIView):
     """
     GET/PATCH /api/v1/core/tenant-branding/<tenant_id>/
-    admin_app 전용 — owner role만. Program.ui_config 기반.
+    dev_app 전용 — owner role만. Program.ui_config 기반.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
@@ -360,7 +360,7 @@ class TenantBrandingUploadLogoView(APIView):
     """
     POST /api/v1/core/tenant-branding/<tenant_id>/upload-logo/
     multipart/form-data file → R2 academy-admin, Program.ui_config.logo_url 저장.
-    admin_app 전용 — owner role만.
+    dev_app 전용 — owner role만.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
@@ -409,7 +409,7 @@ class TenantBrandingUploadLogoView(APIView):
 class TenantListView(APIView):
     """
     GET /api/v1/core/tenants/
-    admin_app 전용 — owner role만. 모든 테넌트 목록.
+    dev_app 전용 — owner role만. 모든 테넌트 목록.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
@@ -433,7 +433,7 @@ class TenantListView(APIView):
 class TenantDetailView(APIView):
     """
     GET/PATCH /api/v1/core/tenants/<tenant_id>/
-    admin_app 전용 — owner role만. 테넌트 상세 정보.
+    dev_app 전용 — owner role만. 테넌트 상세 정보.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
@@ -474,7 +474,7 @@ class TenantDetailView(APIView):
 class TenantCreateView(APIView):
     """
     POST /api/v1/core/tenants/
-    admin_app 전용 — owner role만. 새 테넌트 생성.
+    dev_app 전용 — owner role만. 새 테넌트 생성.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
@@ -533,7 +533,7 @@ class TenantCreateView(APIView):
 class TenantOwnerView(APIView):
     """
     POST /api/v1/core/tenants/<tenant_id>/owner/
-    admin_app 전용 — owner role만. 테넌트에 owner 등록.
+    dev_app 전용 — owner role만. 테넌트에 owner 등록.
     User가 없으면 생성 가능 (username, password 필수; name, phone 선택).
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
@@ -622,7 +622,7 @@ class TenantOwnerView(APIView):
 class TenantOwnerListView(APIView):
     """
     GET /api/v1/core/tenants/<tenant_id>/owners/
-    admin_app 전용 — owner role만. 해당 테넌트의 Owner 목록 조회.
+    dev_app 전용 — owner role만. 해당 테넌트의 Owner 목록 조회.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 

@@ -315,7 +315,7 @@ R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
 R2_STORAGE_BUCKET = os.getenv("R2_STORAGE_BUCKET", "academy-storage")
 # 엑셀 수강등록 업로드용 (워커와 동일 버킷 사용)
 R2_EXCEL_BUCKET = os.getenv("R2_EXCEL_BUCKET", os.getenv("EXCEL_BUCKET_NAME", "academy-excel"))
-# admin_app: 테넌트 로고 등 (academy-admin 버킷)
+# dev_app: 테넌트 로고 등 (academy-admin 버킷)
 R2_ADMIN_BUCKET = os.getenv("R2_ADMIN_BUCKET", "academy-admin")
 R2_ADMIN_PUBLIC_BASE_URL = os.getenv("R2_ADMIN_PUBLIC_BASE_URL", R2_PUBLIC_BASE_URL or "")
 

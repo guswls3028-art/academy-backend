@@ -29,7 +29,7 @@ Core는 **아래 항목만** 책임진다.
    - TenantResolved
    - TenantResolvedAndMember
    - TenantResolvedAndStaff
-   - TenantResolvedAndOwner (admin_app 전용)
+   - TenantResolvedAndOwner (dev_app 전용)
    - IsAdminOrStaff, IsSuperuserOnly (Django admin/개발자용)
 
 ❌ Core는 다음을 **절대 포함하지 않는다**:

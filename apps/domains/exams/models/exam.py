@@ -27,7 +27,7 @@ class Exam(BaseModel):
 
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
-    subject = models.CharField(max_length=100)
+    subject = models.CharField(max_length=100, blank=True, default="")
 
     exam_type = models.CharField(
         max_length=50,

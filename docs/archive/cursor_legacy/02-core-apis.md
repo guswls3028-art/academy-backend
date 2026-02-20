@@ -1,4 +1,4 @@
-# Core API (URL · View · 권한 · DTO) — SSOT_0217
+# Core API (URL · View · 권한 · DTO)
 
 **기준**: `apps/core/urls.py`, `apps/core/views.py`, `apps/core/permissions.py`.  
 Base path: `/api/v1/core/` (ROOT_URLCONF에서 prefix).
@@ -17,7 +17,7 @@ Base path: `/api/v1/core/` (ROOT_URLCONF에서 prefix).
 
 ---
 
-## 2. Tenant Branding (admin_app 전용)
+## 2. Tenant Branding (dev_app 전용)
 
 **권한**: `IsAuthenticated`, `TenantResolvedAndOwner` (owner만).
 
@@ -34,7 +34,7 @@ Base path: `/api/v1/core/` (ROOT_URLCONF에서 prefix).
 
 ---
 
-## 3. Tenant 목록·상세·생성 (admin_app 전용)
+## 3. Tenant 목록·상세·생성 (dev_app 전용)
 
 **권한**: `IsAuthenticated`, `TenantResolvedAndOwner`.
 
@@ -47,7 +47,7 @@ Base path: `/api/v1/core/` (ROOT_URLCONF에서 prefix).
 
 ---
 
-## 4. Tenant Owner 등록·목록·상세 (admin_app 전용)
+## 4. Tenant Owner 등록·목록 (dev_app 전용)
 
 **권한**: `IsAuthenticated`, `TenantResolvedAndOwner`.
 
@@ -55,9 +55,9 @@ Base path: `/api/v1/core/` (ROOT_URLCONF에서 prefix).
 |--------|------|------|------|
 | POST | `tenants/<int:tenant_id>/owner/` | TenantOwnerView | username 필수. User 없으면 생성 시 password 필수. name, phone 선택. Owner 멤버십 생성/갱신. |
 | GET | `tenants/<int:tenant_id>/owners/` | TenantOwnerListView | 해당 테넌트 owner 목록. |
-| GET/PATCH/DELETE | `tenants/<int:tenant_id>/owners/<int:user_id>/` | TenantOwnerDetailView | owner 상세·수정·삭제. |
+| GET | `tenants/<int:tenant_id>/owners/<int:user_id>/` | TenantOwnerDetailView | owner 상세. |
 
-**응답 (POST owner)**: `tenantId`, `tenantCode`, `userId`, `username`, `name`, `role`(owner).
+**POST owner/ 응답**: `tenantId`, `tenantCode`, `userId`, `username`, `name`, `role`(owner).
 
 ---
 
@@ -67,3 +67,10 @@ Base path: `/api/v1/core/` (ROOT_URLCONF에서 prefix).
 - `job_progress/<str:job_id>/` (JobProgressView)
 
 URL 전체 목록은 `apps/core/urls.py` + router 등록 참고.
+
+---
+
+## 6. Messaging API (support)
+
+Messaging API는 `apps/support/messaging/` 에 있으며, `/api/v1/messaging/` prefix로 include됨.  
+**전체 스펙**: [15-messaging-worker-and-message-flow.md](15-messaging-worker-and-message-flow.md) 참조.

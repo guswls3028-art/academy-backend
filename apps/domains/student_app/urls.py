@@ -3,7 +3,12 @@ from django.urls import path
 
 from .dashboard.views import StudentDashboardView
 from .sessions.views import StudentSessionListView, StudentSessionDetailView
-from .exams.views import StudentExamListView, StudentExamDetailView
+from .exams.views import (
+    StudentExamListView,
+    StudentExamDetailView,
+    StudentExamQuestionsView,
+    StudentExamSubmitView,
+)
 from .results.views import (
     MyExamResultView,
     MyExamResultItemsView,
@@ -33,6 +38,8 @@ urlpatterns = [
     # Exams
     path("exams/", StudentExamListView.as_view()),
     path("exams/<int:pk>/", StudentExamDetailView.as_view()),
+    path("exams/<int:pk>/questions/", StudentExamQuestionsView.as_view()),
+    path("exams/<int:pk>/submit/", StudentExamSubmitView.as_view()),
 
     # Results
     path("results/me/exams/<int:exam_id>/", MyExamResultView.as_view()),

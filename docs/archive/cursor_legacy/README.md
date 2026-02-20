@@ -9,7 +9,7 @@
 | 문서 | 내용 | 작업 시 참고 |
 |------|------|--------------|
 | [01-core-tenant-program.md](01-core-tenant-program.md) | 테넌트 resolve, Program, 권한, bypass | core/테넌트/멀티테넌트 관련 수정 시 |
-| [02-core-apis.md](02-core-apis.md) | core URL·View·권한·요청/응답 DTO | API 추가·수정, admin_app 연동 |
+| [02-core-apis.md](02-core-apis.md) | core URL·View·권한·요청/응답 DTO | API 추가·수정, dev_app 연동 |
 | [03-settings-env.md](03-settings-env.md) | CORS, CSRF, ALLOWED_HOSTS, DB, TENANT_BYPASS, 주요 ENV | 배포·환경·CORS/도메인 이슈 |
 | [04-deployment.md](04-deployment.md) | 배포 순서, Docker 이미지, EC2, 스크립트 경로 | 배포·인프라 작업 |
 | [05-conventions.md](05-conventions.md) | 문서/코드 규칙, core 봉인, 추측 금지 | 모든 작업 전 참고 |

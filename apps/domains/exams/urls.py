@@ -20,6 +20,7 @@ from apps.domains.exams.views.exam_questions_by_exam_view import ExamQuestionsBy
 from apps.domains.exams.views.question_auto_view import SheetAutoQuestionsView
 from apps.domains.exams.views.exam_enrollment_view import ExamEnrollmentManageView
 from apps.domains.exams.views.student_exam_view import StudentAvailableExamListView
+from apps.domains.exams.views.bulk_template_create_view import BulkTemplateCreateView
 
 router = DefaultRouter()
 router.register(r"", ExamViewSet, basename="exams")
@@ -28,6 +29,11 @@ router.register(r"questions", QuestionViewSet, basename="exam-questions")
 router.register(r"answer-keys", AnswerKeyViewSet, basename="answer-keys")
 
 urlpatterns = [
+    # =========================
+    # Bulk template (원테이크) — /exams/bulk-template/ 먼저 매칭
+    # =========================
+    path("bulk-template/", BulkTemplateCreateView.as_view()),
+
     # =========================
     # Core
     # =========================

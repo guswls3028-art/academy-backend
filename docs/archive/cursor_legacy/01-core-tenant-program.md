@@ -1,8 +1,4 @@
-# Core · 테넌트 · Program (실제 코드 기준) — SSOT_0217
-
-**기준**: `apps/core/CORE_SEAL.md`, `apps/core/tenant/resolver.py`, `apps/api/config/settings/base.py`.
-
----
+# Core · 테넌트 · Program (실제 코드 기준)
 
 ## 1. Core 책임 범위 (CORE_SEAL)
 
@@ -13,12 +9,13 @@
 
 ## 2. 테넌트 결정 (Tenant Resolution)
 
-**경로**: `apps/core/tenant/resolver.py`
+**경로**: `apps/core/tenant/resolver.py` — `resolve_tenant_from_request()`
 
-- **단일 경로**: `request.get_host()` → `_normalize_host(포트 제거, 소문자)` → `TenantDomain.host` 조회(`core_repo.tenant_domain_filter_by_host`) → `TenantDomain.tenant`.
-- Header / Query / Cookie / Env 기반 fallback **금지**.
+- **우선순위 1 — 중앙 API + X-Tenant-Code**: `request.get_host()`가 `TENANT_HEADER_CODE_ALLOWED_HOSTS`(예: api.hakwonplus.com)에 포함되고, `X-Tenant-Code` 헤더가 있으면 → `core_repo.tenant_get_by_code(raw)` 로 테넌트 결정. (SPA가 tchul.com에서 열리지만 API는 api.hakwonplus.com으로 보낼 때 사용.)
+- **우선순위 2 — Host**: `_normalize_host(request.get_host())` (포트 제거, 소문자) → `TenantDomain.host` 조회(`core_repo.tenant_domain_filter_by_host`) → `TenantDomain.tenant`.
+- Query / Cookie / Env 기반 fallback **금지**.
 - **에러**:
-  - domain 없음 → `None` (미들웨어에서 400/404 처리)
+  - domain 없음 → bypass 경로가 아니면 `TenantResolutionError`, code=`tenant_invalid`, HTTP 404.
   - domain/tenant inactive → `TenantResolutionError`, code=`tenant_inactive`, HTTP 403.
   - 동일 host 복수 row → `TenantResolutionError`, code=`tenant_ambiguous`, HTTP 500.
 
@@ -32,6 +29,7 @@
 /admin/
 /api/v1/token/
 /api/v1/token/refresh/
+/api-auth/
 /internal/
 /api/v1/internal/
 /swagger
@@ -65,7 +63,7 @@
 | `TenantResolved` | tenant만 필요, 인증/멤버십 불필요. 로그인 전 bootstrap 등. |
 | `TenantResolvedAndMember` | tenant + 인증 + 활성 TenantMembership. role 미해석. |
 | `TenantResolvedAndStaff` | tenant + 인증 + role in (owner, admin, staff, teacher). |
-| `TenantResolvedAndOwner` | tenant + 인증 + role == owner. admin_app 전용(tenant-branding, tenants API 등). |
+| `TenantResolvedAndOwner` | tenant + 인증 + role == owner. dev_app 전용(tenant-branding, tenants API 등). |
 | `IsAdminOrStaff` | Django admin/staff (테넌트 무관). |
 | `IsSuperuserOnly` | 슈퍼유저만. 개발자 전용. |
 
@@ -78,3 +76,12 @@
 **위치**: `apps/api/config/settings/base.py` — `MIDDLEWARE`
 
 - `CorsMiddleware` → … → `apps.core.middleware.tenant.TenantMiddleware` → `CsrfViewMiddleware` → `AuthenticationMiddleware` → …
+
+---
+
+## 8. User username (테넌트 격리 · 레거시 없음)
+
+- **테넌트 소속 User**: DB에 `username = t{tenant_id}_{로그인아이디}` 형식만 허용. **레거시(접두어 없는) 형식은 존재하면 안 됨.**
+- **조회**: `core_repo.user_get_by_tenant_username(tenant, display_username)` → 내부적으로 `t{tenant_id}_{display}` 로만 조회. fallback 없음.
+- **신규 생성**: `user_internal_username(tenant, display_username)` 사용 (core, staffs, ensure_tenant_owner 등).
+- **기존 DB 정규화 (격리 마이그레이션 이후 1회)**: `python manage.py normalize_user_tenant_usernames --apply` — tenant가 있는데 username이 `t{id}_` 로 시작하지 않는 유저를 정규 형식으로 변경. **환경(로컬·운영)별로 레거시가 있었으면 1회씩 실행.**

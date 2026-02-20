@@ -29,7 +29,7 @@ class StudentAvailableExamListView(APIView):
         qs = (
             Exam.objects.filter(
                 exam_type=Exam.ExamType.REGULAR,
-                exam_enrollments__enrollment__user=user,
+                exam_enrollments__enrollment__student__user=user,
                 is_active=True,
             )
             .filter(

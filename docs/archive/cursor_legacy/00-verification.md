@@ -29,7 +29,7 @@
 
 | 문서 | 검증 내용 | 결과 |
 |------|-----------|------|
-| 01-apps-routing | AppRouter.tsx RootRedirect, /dev/* 라우트 | 일치. **admin_app 내부 라우트 수정함** — AdminAppRouter가 branding → TenantListPage, branding/:tenantId, branding-legacy 등으로 변경됨. 문서 반영. |
+| 01-apps-routing | AppRouter.tsx RootRedirect, /dev/* 라우트 | 일치. **dev_app 내부 라우트** — DevAppRouter가 branding → TenantListPage, branding/:tenantId, branding-legacy 등. 문서 반영. |
 | 02-shared-program-tenant | program/index.tsx Program 타입, tenant/config.ts, axios baseURL | 일치 |
 
 ---
