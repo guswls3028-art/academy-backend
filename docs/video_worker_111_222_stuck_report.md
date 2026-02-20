@@ -67,24 +67,10 @@ redis-cli DEL job:encode:111:lock job:encode:222:lock
    - UI에서 해당 영상의 “재처리” 버튼  
    - 또는 `POST /media/videos/111/retry/`, `POST /media/videos/222/retry/`
 
-### 3.2 구조적 개선 (장기)
+### 3.2 구조적 개선 (적용 완료)
 
-#### A. Lock fail 시 메시지 삭제 대신 visibility 0 으로 재노출 (권장)
-
-- **현재**: lock fail → skip → 메시지 삭제
-- **개선**: lock fail → 메시지 삭제 대신 `change_message_visibility(receipt_handle, 0)` 으로 큐에 반환
-- **효과**: 락 TTL 만료 후 다른 워커가 다시 가져가서 처리 가능
-- **주의**: 단기간에 여러 번 retry될 수 있으므로, 필요 시 visibility 0 대신 60초 등으로 완화
-
-#### B. Lock TTL 축소
-
-- **현재**: 4시간
-- **검토**: 일반 인코딩 시간을 고려해 1~2시간으로 단축하여, 크래시 시 회복 시간 단축
-
-#### C. 워커 종료 시 락 강제 해제
-
-- Graceful shutdown (SIGTERM) 시 `release_lock` 확실히 호출
-- SIGKILL에는 대응 불가이므로, 위 A/B와 함께 사용
+- **Handler**: lock_fail 시 `return "lock_fail"` (skip과 분리)
+- **sqs_main**: `result == "lock_fail"` → `change_message_visibility(receipt_handle, 60)` (NACK)
 
 ---
 
