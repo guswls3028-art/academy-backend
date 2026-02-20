@@ -303,20 +303,45 @@ def main() -> int:
                         logger.info("Graceful shutdown: current job completed, exiting")
                         break
 
-                elif result == "skip":
-                    # 취소/멱등(idempotent) → ACK
+                elif result == "skip:cancel":
+                    # 취소 요청 또는 처리 중 취소 → ACK(delete)
+                    logger.info(
+                        "cancel requested — ack/delete | request_id=%s | video_id=%s",
+                        request_id,
+                        video_id,
+                    )
                     queue.delete_message(receipt_handle)
+                    consecutive_errors = 0
+
+                elif result == "skip:lock":
+                    # 락 실패(경합/잔류락) → NACK. delete 금지.
+                    logger.info(
+                        "lock contention or stale lock — returning message to queue | request_id=%s | video_id=%s",
+                        request_id,
+                        video_id,
+                    )
+                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
+                    consecutive_errors = 0
+
+                elif result == "skip:mark_processing":
+                    # mark_processing 실패(이미 처리됨 등) → NACK. delete 금지.
+                    logger.info(
+                        "mark_processing failed — returning message to queue | request_id=%s | video_id=%s",
+                        request_id,
+                        video_id,
+                    )
+                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
                     consecutive_errors = 0
 
                 elif result == "lock_fail":
                     # Redis 락 경합/이전 워커 크래시 → NACK. visibility 60초 후 재노출
                     # SQS가 재시도 책임, Redis lock TTL 만료 후 다른 워커가 처리 가능
-                    queue.change_message_visibility(receipt_handle, 60)
                     logger.info(
-                        "SQS_JOB_LOCK_FAIL_NACK | request_id=%s | video_id=%s | visibility=60s (락 TTL 만료 후 재처리)",
+                        "lock contention or stale lock — returning message to queue | request_id=%s | video_id=%s",
                         request_id,
                         video_id,
                     )
+                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
                     consecutive_errors = 0
 
                 else:
