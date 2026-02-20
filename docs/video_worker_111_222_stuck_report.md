@@ -74,7 +74,7 @@ redis-cli DEL job:encode:111:lock job:encode:222:lock
 
 ---
 
-## 5. 관련 파일 요약
+## 4. 관련 파일 요약
 
 | 파일 | 역할 |
 |------|------|
