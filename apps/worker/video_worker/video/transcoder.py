@@ -335,24 +335,39 @@ def transcode_to_hls(
             raise TranscodeError(f"ffmpeg error video_id={video_id}: {e}") from e
         stderr_tail = ""
     else:
-        try:
-            p = subprocess.run(
-                cmd,
-                cwd=str(output_root.resolve()),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=effective_timeout,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as e:
-            raise TranscodeError(f"ffmpeg timeout video_id={video_id} seconds={effective_timeout}") from e
+        # duration 미확인 시 Popen + 동일 연장 대기
+        p = subprocess.Popen(
+            cmd,
+            cwd=str(output_root.resolve()),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + effective_timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                p.kill()
+                p.wait()
+                raise TranscodeError(
+                    f"ffmpeg timeout video_id={video_id} (extending, cap 24h) exceeded"
+                )
+            chunk = min(FFMPEG_CHUNK_SECONDS, int(remaining))
+            try:
+                p.wait(timeout=chunk)
+                break
+            except subprocess.TimeoutExpired:
+                deadline += FFMPEG_EXTEND_SECONDS
+                cap = time.monotonic() + FFMPEG_MAX_TOTAL_SECONDS
+                if deadline > cap:
+                    deadline = cap
 
         if p.returncode != 0:
+            stderr_tail = (p.stderr or "")
             raise TranscodeError(
-                f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(p.stderr)}"
+                f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(stderr_tail)}"
             )
-        stderr_tail = p.stderr
+        stderr_tail = p.stderr or ""
 
     master = output_root / "master.m3u8"
     if not master.exists():
