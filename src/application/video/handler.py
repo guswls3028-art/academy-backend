@@ -57,7 +57,28 @@ class ProcessVideoJobHandler:
             "ok" | "skip" | "failed"
         """
         video_id = int(job.get("video_id", 0))
-        job_id = f"encode:{video_id}"  # action별 멱등 키 분리 (delete_r2는 delete_r2:{video_id})
+        tenant_id = int(job.get("tenant_id", 0)) if job.get("tenant_id") is not None else None
+        job_id = f"encode:{video_id}"  # action별 멱등 키 분리 (delete_r2는 delete_r2:{video_id}")
+
+        # 재시도 시 API가 설정한 취소 요청이 있으면 이 메시지는 스킵 (새 메시지가 처리됨)
+        if tenant_id is not None:
+            try:
+                from apps.support.video.redis_status_cache import is_cancel_requested
+                if is_cancel_requested(tenant_id, video_id):
+                    logger.info("[HANDLER] Cancel requested for video_id=%s, skipping", video_id)
+                    return "skip"
+            except Exception as e:
+                logger.debug("[HANDLER] is_cancel_requested check failed: %s", e)
+
+        # processor 단계별 취소 확인용 (job에 주입)
+        def _cancel_check() -> bool:
+            try:
+                from apps.support.video.redis_status_cache import is_cancel_requested
+                return bool(tenant_id is not None and is_cancel_requested(tenant_id, video_id))
+            except Exception:
+                return False
+
+        job["_cancel_check"] = _cancel_check
 
         logger.info("[HANDLER] Starting video processing video_id=%s job_id=%s", video_id, job_id)
         if not self._idempotency.acquire_lock(job_id):
