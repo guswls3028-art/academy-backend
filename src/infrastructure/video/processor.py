@@ -71,6 +71,8 @@ def process_video(
     if not video_id or tenant_id is None:
         raise ValueError("video_id and tenant_id required")
 
+    _check_abort(job)
+
     # ✅ tenant_id를 문자열로 변환하여 전달 (Redis 키 형식 일치)
     tenant_id_str = str(tenant_id)
 
@@ -119,6 +121,7 @@ def process_video(
         src_path = wd / "source.mp4"
         out_dir = wd / "hls"
 
+        _check_abort(job)
         progress.record_progress(
             job_id,
             "downloading",
@@ -152,6 +155,7 @@ def process_video(
             tenant_id=tenant_id_str,
         )
 
+        _check_abort(job)
         progress.record_progress(
             job_id,
             "probing",
