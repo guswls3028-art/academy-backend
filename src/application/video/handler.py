@@ -54,7 +54,12 @@ class ProcessVideoJobHandler:
         작업 처리
 
         Returns:
-            "ok" | "skip" | "failed"
+            "ok" | "skip" | "lock_fail" | "failed"
+
+            - "ok": 처리 성공
+            - "skip": 취소 요청 또는 mark_processing 실패(이미 처리됨) → ACK(delete)
+            - "lock_fail": Redis 락 획득 실패(경합/이전 워커 크래시) → NACK(visibility)
+            - "failed": 처리 실패 → NACK(visibility)
         """
         video_id = int(job.get("video_id", 0))
         tenant_id = int(job.get("tenant_id", 0)) if job.get("tenant_id") is not None else None
