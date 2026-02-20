@@ -54,10 +54,11 @@ class ProcessVideoJobHandler:
         작업 처리
 
         Returns:
-            "ok" | "skip" | "lock_fail" | "failed"
+            "ok" | "skip:cancel" | "skip:mark_processing" | "lock_fail" | "failed"
 
             - "ok": 처리 성공
-            - "skip": 취소 요청 또는 mark_processing 실패(이미 처리됨) → ACK(delete)
+            - "skip:cancel": 취소 요청 또는 처리 중 취소 → ACK(delete)
+            - "skip:mark_processing": mark_processing 실패(이미 처리됨) → NACK(visibility)
             - "lock_fail": Redis 락 획득 실패(경합/이전 워커 크래시) → NACK(visibility)
             - "failed": 처리 실패 → NACK(visibility)
         """
