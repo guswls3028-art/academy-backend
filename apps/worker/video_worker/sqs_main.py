@@ -51,6 +51,9 @@ VISIBILITY_EXTEND_INTERVAL_SECONDS = 240  # 인코딩 중 연장 주기
 VIDEO_LOCK_TTL_SECONDS = int(os.getenv("VIDEO_LOCK_TTL_SECONDS", "14400"))   # 4h
 VIDEO_PROGRESS_TTL_SECONDS = int(os.getenv("VIDEO_PROGRESS_TTL_SECONDS", "14400"))  # 4h
 
+# NACK 시 메시지 재노출 대기 (락 TTL 만료 후 재처리 허용)
+NACK_VISIBILITY_SECONDS = 60
+
 
 def _visibility_extender_loop(
     queue: "VideoSQSAdapter",
