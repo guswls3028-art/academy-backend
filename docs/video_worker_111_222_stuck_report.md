@@ -10,18 +10,10 @@
 
 ## 2. 원인 (코드 기반 분석)
 
-### 2.1 핵심 원인: Skip 시 메시지 삭제 + Redis 락 미해제
+### 2.1 핵심 원인: SQS ACK 설계 버그 (이건 Redis/TTL 문제가 아님)
 
-Handler가 `"skip"`을 반환하면 SQS 메시지는 **즉시 삭제**됩니다.  
-이때 Redis idempotency 락이 다른 프로세스(이전 크래시 워커)에 의해 **남아 있는 상태**면, 새로 받은 메시지도 처리하지 못하고 그대로 메시지만 삭제됩니다.
-
-#### 관련 코드 경로
-
-| 구분 | 파일:라인 | 내용 |
-|------|-----------|------|
-| Handler skip 조건 | `src/application/video/handler.py:84-91` | `acquire_lock` 실패 → `return "skip"` |
-| 메시지 삭제 | `apps/worker/video_worker/sqs_main.py:303-304` | `result == "skip"` → `queue.delete_message(receipt_handle)` |
-| Redis 락 | `src/infrastructure/cache/redis_idempotency_adapter.py:43-50` | `job:{job_id}:lock` (job_id=`encode:{video_id}`) |
+- Redis 락 미해제는 **증상**일 뿐.
+- **진짜 문제**: `lock_fail`을 "중복"으로 착각하고 **ACK(delete)** 하고 있음.
 
 ### 2.2 발생 시나리오
 
