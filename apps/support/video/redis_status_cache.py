@@ -17,6 +17,38 @@ def _get_video_progress_key(tenant_id: int, video_id: int) -> str:
     return f"tenant:{tenant_id}:video:{video_id}:progress"
 
 
+def _get_video_cancel_key(tenant_id: int, video_id: int) -> str:
+    """재시도 시 기존 인코딩 취소 요청 Redis 키"""
+    return f"tenant:{tenant_id}:video:{video_id}:cancel_requested"
+
+
+def set_cancel_requested(tenant_id: int, video_id: int, ttl_seconds: int = 300) -> bool:
+    """재시도 클릭 시 기존 진행 중 작업에 취소 요청 표시 (워커가 확인 후 스킵)."""
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return False
+        key = _get_video_cancel_key(tenant_id, video_id)
+        redis_client.setex(key, ttl_seconds, "1")
+        return True
+    except Exception as e:
+        logger.warning("Failed to set cancel_requested in Redis: %s", e)
+        return False
+
+
+def is_cancel_requested(tenant_id: int, video_id: int) -> bool:
+    """해당 비디오에 대해 취소 요청이 있는지 확인."""
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return False
+        key = _get_video_cancel_key(tenant_id, video_id)
+        return bool(redis_client.get(key))
+    except Exception as e:
+        logger.debug("Failed to check cancel_requested in Redis: %s", e)
+        return False
+
+
 def get_video_status_from_redis(tenant_id: int, video_id: int) -> Optional[Dict[str, Any]]:
     """Redis에서 비디오 상태 조회 (Tenant 검증)"""
     try:
