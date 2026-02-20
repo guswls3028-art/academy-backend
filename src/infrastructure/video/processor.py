@@ -92,7 +92,7 @@ def process_video(
         tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
     )
     try:
-        source_url = create_presigned_get_url(key=file_key, expires_in=600)
+        source_url = create_presigned_get_url(key=file_key, expires_in=int(cfg.PRESIGN_GET_EXPIRES_SECONDS))
         # ✅ 단계 완료: 100%
         progress.record_progress(
             job_id,
