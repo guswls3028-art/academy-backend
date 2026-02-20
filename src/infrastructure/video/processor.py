@@ -16,8 +16,16 @@ from pathlib import Path
 from typing import Any
 
 from src.application.ports.progress import IProgress
+from src.application.video.handler import CancelledError
 
 logger = logging.getLogger(__name__)
+
+
+def _check_abort(job: dict) -> None:
+    """재시도로 취소 요청이 들어오면 중단 (handler가 skip 처리)."""
+    check = job.get("_cancel_check")
+    if check and callable(check) and check():
+        raise CancelledError("Retry requested; aborting current job")
 
 # 구간별 진행률 (n/7): 업로드 마법사처럼 단계별 0~100% 제공
 VIDEO_ENCODING_STEP_TOTAL = 7
