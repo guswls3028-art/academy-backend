@@ -76,8 +76,9 @@ class Config:
     R2_REGION: str
     UPLOAD_MAX_CONCURRENCY: int
 
-    # download
+    # download (장시간 영상: 2h+ 대비 타임아웃·presign 연장)
     DOWNLOAD_TIMEOUT_SECONDS: float
+    PRESIGN_GET_EXPIRES_SECONDS: int
     DOWNLOAD_CHUNK_BYTES: int
 
 
@@ -116,7 +117,8 @@ def load_config() -> Config:
             R2_REGION=os.environ.get("R2_REGION", "auto"),
             UPLOAD_MAX_CONCURRENCY=_int("UPLOAD_MAX_CONCURRENCY", "8"),
 
-            DOWNLOAD_TIMEOUT_SECONDS=_float("DOWNLOAD_TIMEOUT_SECONDS", "30.0"),
+            DOWNLOAD_TIMEOUT_SECONDS=_float("DOWNLOAD_TIMEOUT_SECONDS", "600"),  # 10분 (2h+ 영상 다운로드 대비)
+            PRESIGN_GET_EXPIRES_SECONDS=_int("VIDEO_WORKER_PRESIGN_GET_EXPIRES", "3600"),  # 1h
             DOWNLOAD_CHUNK_BYTES=_int("DOWNLOAD_CHUNK_BYTES", str(1024 * 1024)),
         )
     except Exception as e:
