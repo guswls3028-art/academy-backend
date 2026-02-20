@@ -358,8 +358,13 @@ def main() -> int:
                     consecutive_errors = 0
 
                 else:
-                    # handler 실패 시 즉시 재노출 → 다른 워커가 곧바로 처리
-                    queue.change_message_visibility(receipt_handle, 0)
+                    # handler 실패(failed 등) → retry backoff 적용
+                    queue.change_message_visibility(receipt_handle, FAILED_BACKOFF_SECONDS)
+                    logger.warning(
+                        "processing failed — applying retry backoff (%ss) | video_id=%s",
+                        FAILED_BACKOFF_SECONDS,
+                        video_id,
+                    )
                     logger.exception(
                         "SQS_JOB_FAILED | request_id=%s | video_id=%s | tenant_code=%s | processing_duration=%.2f | queue_wait_sec=%.2f",
                         request_id,
