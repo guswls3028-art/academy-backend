@@ -17,9 +17,10 @@ $optionalButRecommended = @("LAMBDA_INTERNAL_API_KEY", "DJANGO_SETTINGS_MODULE")
 Write-Host "[1/2] Get SSM $SsmName..." -ForegroundColor Cyan
 # Use JSON output so large/Advanced-tier values are captured reliably (--output text can mangle newlines)
 $raw = $null
+$json = $null
 try {
     $json = aws ssm get-parameter --name $SsmName --with-decryption --region $Region --output json 2>&1
-    if ($LASTEXITCODE -eq 0 -and $json) {
+    if ($LASTEXITCODE -eq 0 -and $json -and ($json.Trim().StartsWith("{"))) {
         $obj = $json | ConvertFrom-Json
         $raw = $obj.Parameter.Value
     }
