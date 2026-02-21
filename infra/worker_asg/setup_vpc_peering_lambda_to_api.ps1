@@ -24,7 +24,7 @@ Write-Host "`n=== VPC Peering: Lambda -> API (private 172.30.3.142:8000) ===`n" 
 # 1) Create VPC Peering (Requester = New/Lambda, Accepter = Old/API)
 # ------------------------------------------------------------------------------
 Write-Host "[1/5] Create VPC Peering Connection..." -ForegroundColor Cyan
-$peerOut = aws ec2 create-vpc-peering-connection --vpc-id $NewVpcId --peer-vpc-id $OldVpcId --peer-region $Region --region $Region --output json | ConvertFrom-Json
+$peerOut = aws ec2 create-vpc-peering-connection --vpc-id $NewVpcId --peer-vpc-id $OldVpcId --region $Region --output json | ConvertFrom-Json
 $PeeringConnectionId = $peerOut.VpcPeeringConnection.VpcPeeringConnectionId
 Write-Host "      PeeringConnectionId: $PeeringConnectionId" -ForegroundColor Gray
 
