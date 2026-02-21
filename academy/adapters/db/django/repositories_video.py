@@ -795,24 +795,19 @@ def job_compute_backlog_score() -> float:
     BacklogScore = SUM(CASE WHEN state='QUEUED' THEN 1 WHEN state='RETRY_WAIT' THEN 2 END).
     CloudWatch Metric 교체용 (TargetTracking).
     """
-    from django.db.models import Case, F, IntegerField, Q, Value, When
+    from django.db.models import Case, IntegerField, Sum, Value, When
     from apps.support.video.models import VideoTranscodeJob
 
-    return float(
-        VideoTranscodeJob.objects.filter(
-            state__in=[
-                VideoTranscodeJob.State.QUEUED,
-                VideoTranscodeJob.State.RETRY_WAIT,
-            ]
-        )
-        .annotate(
-            score=Case(
-                When(state=VideoTranscodeJob.State.QUEUED, then=Value(1)),
-                When(state=VideoTranscodeJob.State.RETRY_WAIT, then=Value(2)),
-                default=Value(0),
-                output_field=IntegerField(),
-            )
-        )
-        .aggregate(total=__import__("django.db.models", fromlist=["Sum"]).Sum("score"))["total"]
-        or 0
+    score_expr = Case(
+        When(state=VideoTranscodeJob.State.QUEUED, then=Value(1)),
+        When(state=VideoTranscodeJob.State.RETRY_WAIT, then=Value(2)),
+        default=Value(0),
+        output_field=IntegerField(),
     )
+    result = VideoTranscodeJob.objects.filter(
+        state__in=[
+            VideoTranscodeJob.State.QUEUED,
+            VideoTranscodeJob.State.RETRY_WAIT,
+        ]
+    ).aggregate(total=Sum(score_expr))
+    return float(result["total"] or 0)
