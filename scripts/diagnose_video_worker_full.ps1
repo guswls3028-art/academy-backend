@@ -19,9 +19,10 @@ $ErrorActionPreference = "Continue"
 # ------------------------------------------------------------------------------
 Write-Host ""
 Write-Host "========== 1. Lambda Runtime Behavior =========="
-$invokeOut = Join-Path $PSScriptRoot ".." "response_full.json"
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$invokeOut = Join-Path $repoRoot "response_full.json"
 Write-Host "[Invoke]"
-& aws lambda invoke --function-name $LambdaName --region $Region $invokeOut
+& aws lambda invoke --function-name $LambdaName --region $Region --cli-binary-format raw-in-base64-out $invokeOut
 Write-Host "[Payload]"
 if (Test-Path $invokeOut) {
     Get-Content $invokeOut -Raw -Encoding UTF8
