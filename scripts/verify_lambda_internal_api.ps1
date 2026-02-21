@@ -76,7 +76,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-$output = ssh -o StrictHostKeyChecking=accept-new -i $apiKeyPath "${EC2_USER}@${apiIp}" "export LIK_B64='$keyB64'; bash /tmp/_verify_internal_api_remote.sh" 2>&1
+$output = ssh -o StrictHostKeyChecking=accept-new -i $apiKeyPath "${EC2_USER}@${apiIp}" "sed -i 's/\r$//' /tmp/_verify_internal_api_remote.sh; export LIK_B64='$keyB64'; bash /tmp/_verify_internal_api_remote.sh" 2>&1
 
 $inLocal = $false
 $inPublic = $false
