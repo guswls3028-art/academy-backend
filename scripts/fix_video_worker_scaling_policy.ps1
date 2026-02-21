@@ -15,8 +15,10 @@ $result = aws autoscaling describe-policies `
     --auto-scaling-group-name $AsgName `
     --region $Region | ConvertFrom-Json
 
-$policies = $result.ScalingPolicies
-if ($null -eq $policies) { $policies = @() }
+$policies = @()
+if ($null -ne $result.ScalingPolicies) {
+    $policies = @($result.ScalingPolicies)
+}
 $count = $policies.Count
 
 Write-Host "  Found $count policy(ies)." -ForegroundColor Gray
@@ -39,8 +41,9 @@ $verify = aws autoscaling describe-policies `
     --auto-scaling-group-name $AsgName `
     --region $Region | ConvertFrom-Json
 
-if ($verify.ScalingPolicies.Count -gt 0) {
-    throw "Verification failed: ScalingPolicies still has $($verify.ScalingPolicies.Count) item(s)."
+$remaining = if ($null -eq $verify.ScalingPolicies) { 0 } else { @($verify.ScalingPolicies).Count }
+if ($remaining -gt 0) {
+    throw "Verification failed: ScalingPolicies still has $remaining item(s)."
 }
 
 aws autoscaling describe-policies `
