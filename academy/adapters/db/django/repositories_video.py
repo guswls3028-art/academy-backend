@@ -730,21 +730,29 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
 
 
 def job_fail_retry(job_id: str, reason: str) -> tuple[bool, str]:
-    """Job FAILED + attempt_count++ + state=RETRY_WAIT. Video는 변경 없음 (재시도 유도)."""
+    """Job FAILED + attempt_count++ + state=RETRY_WAIT. Video는 변경 없음. Redis backlog INCR (재진입)."""
     from django.db import transaction
     from django.db.models import F
     from apps.support.video.models import VideoTranscodeJob
 
+    tenant_id = None
     with transaction.atomic():
         job = VideoTranscodeJob.objects.select_for_update().filter(pk=job_id).first()
         if not job:
             return False, "job_not_found"
+        tenant_id = job.tenant_id
         job.state = VideoTranscodeJob.State.RETRY_WAIT
         job.attempt_count = F("attempt_count") + 1
         job.error_message = str(reason)[:2000]
         job.locked_by = ""
         job.locked_until = None
         job.save(update_fields=["state", "attempt_count", "error_message", "locked_by", "locked_until", "updated_at"])
+    if tenant_id is not None:
+        try:
+            from apps.support.video.redis_status_cache import redis_incr_video_backlog
+            redis_incr_video_backlog(tenant_id)
+        except Exception:
+            pass
     return True, "ok"
 
 
