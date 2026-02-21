@@ -57,40 +57,25 @@ if (-not (Test-Path $apiKeyPath)) {
 }
 
 $EC2_USER = "ec2-user"
-$url = "https://api.hakwonplus.com/api/v1/internal/video/backlog-count/"
-$localUrl = "http://localhost:8000/api/v1/internal/video/backlog-count/"
 
-# 키에 작은따옴표가 있으면 bash 이스케이프
+# 원격 검증 스크립트 SCP 후 실행 (인라인 bash/python 따옴표 이슈 회피)
+$remoteShPath = Join-Path $ScriptRoot "_verify_internal_api_remote.sh"
+if (-not (Test-Path $remoteShPath)) {
+    Write-Host "Remote script not found: $remoteShPath" -ForegroundColor Red
+    exit 1
+}
+
 $keyEscaped = $InternalKey -replace "'", "'\''"
-
-$remoteScript = @"
-KEY='$keyEscaped'
-echo '---LOCAL---'
-LOCAL_OUT=`$(docker exec -e LIK="`$KEY" academy-api python -c "
-import os, requests
-try:
-    r = requests.get('$localUrl', headers={'X-Internal-Key': os.environ.get('LIK','')}, timeout=10)
-    print(r.text)
-    print(r.status_code)
-except Exception as e:
-    print(str(e))
-    print('000')
-" 2>/dev/null || echo -e "ERR\n000")
-LOCAL_BODY=`$(echo "`$LOCAL_OUT" | sed '\$d')
-LOCAL_CODE=`$(echo "`$LOCAL_OUT" | tail -1)
-echo "STATUS:`$LOCAL_CODE"
-echo "BODY:`$LOCAL_BODY"
-echo '---PUBLIC---'
-PUBLIC_RESP=`$(curl -s -w '\n%{http_code}' -H "X-Internal-Key: `$KEY" "$url" 2>/dev/null || echo -e '\n000')
-PUBLIC_CODE=`$(echo "`$PUBLIC_RESP" | tail -1)
-PUBLIC_BODY=`$(echo "`$PUBLIC_RESP" | sed '\$d')
-echo "STATUS:`$PUBLIC_CODE"
-echo "BODY:`$PUBLIC_BODY"
-"@
 
 Write-Host "Verifying Lambda internal API (academy-api @ $apiIp) ...`n" -ForegroundColor Cyan
 
-$output = ssh -o StrictHostKeyChecking=accept-new -i $apiKeyPath "${EC2_USER}@${apiIp}" $remoteScript 2>&1
+scp -o StrictHostKeyChecking=accept-new -i $apiKeyPath $remoteShPath "${EC2_USER}@${apiIp}:/tmp/_verify_internal_api_remote.sh" 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Failed to copy verify script to EC2" -ForegroundColor Red
+    exit 1
+}
+
+$output = ssh -o StrictHostKeyChecking=accept-new -i $apiKeyPath "${EC2_USER}@${apiIp}" "export LIK='$keyEscaped'; bash /tmp/_verify_internal_api_remote.sh" 2>&1
 
 $inLocal = $false
 $inPublic = $false
