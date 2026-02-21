@@ -17,6 +17,7 @@ django.setup()
 import json
 import logging
 import signal
+import subprocess
 import threading
 import time
 import uuid
