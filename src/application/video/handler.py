@@ -94,7 +94,17 @@ class ProcessVideoJobHandler:
         # Fast ACK 모드: DB try_claim으로 중복 방지 (SQS 메시지는 이미 delete됨)
         if use_fast_ack:
             if not self._repo.try_claim_video(video_id, worker_id):
-                logger.info("[HANDLER] try_claim failed (다른 워커 또는 이미 완료) video_id=%s → skip:claim", video_id)
+                logger.info("CLAIM_FAILED_REQUEUE | video_id=%s", video_id)
+                # 이미 FAST_ACK로 delete된 상태 → 즉시 reclaim으로 Reconciler 대상화 후 re-enqueue
+                if self._repo.try_reclaim_video(video_id, force=True):
+                    try:
+                        from apps.support.video.models import Video
+                        from apps.support.video.services.sqs_queue import VideoSQSQueue
+                        video = Video.objects.select_related("session__lecture").get(pk=video_id)
+                        if VideoSQSQueue().enqueue(video):
+                            logger.info("CLAIM_FAILED_REQUEUE | video_id=%s re-enqueued", video_id)
+                    except Exception as e:
+                        logger.warning("CLAIM_FAILED_REQUEUE | video_id=%s enqueue failed: %s", video_id, e)
                 return "skip:claim"
             logger.info("[HANDLER] JOB_CLAIMED video_id=%s worker_id=%s", video_id, worker_id)
         else:
