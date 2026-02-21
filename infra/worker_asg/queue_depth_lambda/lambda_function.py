@@ -36,7 +36,11 @@ AI_WORKER_ASG_NAME = os.environ.get("AI_WORKER_ASG_NAME", "academy-ai-worker-asg
 AI_WORKER_ASG_MAX = int(os.environ.get("AI_WORKER_ASG_MAX", "20"))
 VIDEO_WORKER_ASG_NAME = os.environ.get("VIDEO_WORKER_ASG_NAME", "academy-video-worker-asg")
 VIDEO_WORKER_ASG_MAX = int(os.environ.get("VIDEO_WORKER_ASG_MAX", "20"))
+# VIDEO_BACKLOG_API_INTERNAL: VPC 내부용 base URL (예: http://172.30.x.x:8000). 설정 시 PUBLIC보다 우선.
+VIDEO_BACKLOG_API_INTERNAL = os.environ.get("VIDEO_BACKLOG_API_INTERNAL", "").rstrip("/")
 VIDEO_BACKLOG_API_URL = os.environ.get("VIDEO_BACKLOG_API_URL", "").rstrip("/")
+# 실제 API 호출에 쓸 base: INTERNAL 우선, 없으면 PUBLIC
+VIDEO_BACKLOG_API_BASE = VIDEO_BACKLOG_API_INTERNAL or VIDEO_BACKLOG_API_URL
 LAMBDA_INTERNAL_API_KEY = os.environ.get("LAMBDA_INTERNAL_API_KEY", "")
 MESSAGING_WORKER_ASG_NAME = os.environ.get("MESSAGING_WORKER_ASG_NAME", "academy-messaging-worker-asg")
 MESSAGING_WORKER_ASG_MAX = int(os.environ.get("MESSAGING_WORKER_ASG_MAX", "20"))
