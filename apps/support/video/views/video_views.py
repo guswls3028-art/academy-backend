@@ -412,28 +412,23 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     @transaction.atomic
     @action(detail=True, methods=["post"], url_path="retry")
     def retry(self, request, pk=None):
+        from academy.adapters.db.django.repositories_video import job_set_cancel_requested
         from apps.support.video.models import VideoTranscodeJob
-        from apps.support.video.redis_status_cache import set_cancel_requested
 
         video = Video.objects.select_for_update().select_related("session__lecture__tenant").get(pk=self.get_object().pk)
 
-        # 이미 Job이 QUEUED/RUNNING/RETRY_WAIT 인 경우
+        # QUEUED/RETRY_WAIT: 재시도 불가 (backlog 대기 중)
         if video.current_job_id:
             cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
-            if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RUNNING, VideoTranscodeJob.State.RETRY_WAIT):
-                raise ValidationError("Already in backlog (job queued or running)")
+            if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
+                raise ValidationError("Already in backlog (job queued or retry wait)")
+            # RUNNING: cancel_requested 설정 후 새 Job 생성
+            if cur and cur.state == VideoTranscodeJob.State.RUNNING:
+                job_set_cancel_requested(cur.id)
 
         if video.status not in (Video.Status.READY, Video.Status.FAILED):
             if video.status not in (Video.Status.UPLOADED, Video.Status.PROCESSING):
                 raise ValidationError("Cannot retry: status must be READY or FAILED")
-
-        # 기존 RUNNING Job에 취소 요청 (협력적 취소)
-        if video.current_job_id:
-            cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
-            if cur and cur.state == VideoTranscodeJob.State.RUNNING:
-                tenant_id = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
-                if tenant_id is not None:
-                    set_cancel_requested(tenant_id, video.id)
 
         video.status = Video.Status.UPLOADED
         video.save(update_fields=["status", "updated_at"])
