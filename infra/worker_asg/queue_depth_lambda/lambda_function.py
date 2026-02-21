@@ -144,6 +144,7 @@ def lambda_handler(event: dict, context: Any) -> dict:
             }
         ],
     )
+    logger.info("BacklogCount metric published | backlog=%d", video_backlog)
 
     logger.info(
         "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d backlog=%d messaging visible=%d in_flight=%d",
