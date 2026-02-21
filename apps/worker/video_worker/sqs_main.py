@@ -26,7 +26,6 @@ from apps.worker.video_worker.config import load_config
 from libs.queue import QueueUnavailableError
 from src.infrastructure.video import VideoSQSAdapter
 from src.infrastructure.video.processor import process_video
-from academy.adapters.db.django.repositories_video import DjangoVideoRepository
 from src.infrastructure.cache.redis_idempotency_adapter import RedisIdempotencyAdapter
 from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
 from apps.support.video.redis_status_cache import set_video_heartbeat, delete_video_heartbeat
@@ -252,8 +251,6 @@ def main() -> int:
                 )
                 from src.infrastructure.video.processor import process_video
                 from src.application.video.handler import CancelledError
-                from apps.support.video.models import VideoTranscodeJob
-
                 job_obj = job_get_by_id(job_id)
                 if not job_obj:
                     logger.error("JOB_NOT_FOUND | job_id=%s | video_id=%s | NACK", job_id, video_id)
