@@ -284,10 +284,6 @@ function Restore-Backup {
 # ------------------------------------------------------------------------------
 # Main
 # ------------------------------------------------------------------------------
-$allArgs = @("--region", $Region)
-if ($Profile) { $allArgs += @("--profile", $Profile) }
-$AwsArgs = $allArgs
-
 Log-Step "Video Worker One-Click Setup | Region=$Region DryRun=$DryRun Rollback=$Rollback"
 
 if (-not (Test-Prechecks)) {
