@@ -161,10 +161,14 @@ def _is_asg_interrupt_from_api() -> bool:
 def lambda_handler(event: dict, context: Any) -> dict:
     if os.environ.get("DEBUG_TEST") == "1":
         try:
-            r = urllib.request.urlopen(
-                os.environ["VIDEO_BACKLOG_API_INTERNAL"],
-                timeout=5,
+            url = os.environ["VIDEO_BACKLOG_API_INTERNAL"]
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "X-Internal-Key": os.environ.get("LAMBDA_INTERNAL_API_KEY", ""),
+                },
             )
+            r = urllib.request.urlopen(req, timeout=5)
             body = r.read().decode()
             print("STATUS:", r.status)
             print("BODY:", body)
