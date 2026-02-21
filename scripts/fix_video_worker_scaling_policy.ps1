@@ -60,4 +60,4 @@ Write-Host "[3/3] Verifying policy..." -ForegroundColor Cyan
 aws application-autoscaling describe-scaling-policies --service-namespace ec2 --resource-id $ResourceIdVideo `
     --region $Region --query "ScalingPolicies[?PolicyName=='QueueDepthTargetTracking']" --output json
 
-Write-Host "Done. Video Worker ASG scaling policy: QueueDepthTargetTracking (SQS-based only)" -ForegroundColor Green
+Write-Host "Done. Video Worker ASG scaling policy: BacklogPerInstance (TargetValue=1.0, ScaleInCooldown=600s)" -ForegroundColor Green
