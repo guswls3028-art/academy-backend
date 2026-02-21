@@ -39,7 +39,7 @@ if (-not (Test-Path $keyPath)) {
 
 Write-Host "[3/3] Merge SSM into EC2 .env (preserve R2 etc.) and recreate academy-api..." -ForegroundColor Cyan
 # merge_ssm_into_env.sh: SSM으로 덮어쓰지 않고 병합 → 기존 .env에만 있던 변수(R2, VIDEO_BUCKET 등) 유지
-$remoteCmd = "cd /home/ec2-user/academy 2>/dev/null || true; bash /home/ec2-user/academy/scripts/merge_ssm_into_env.sh /home/ec2-user/.env $Region && bash /home/ec2-user/academy/scripts/refresh_api_container_env.sh"
+$remoteCmd = "cd /home/ec2-user/academy 2>/dev/null || true; bash /home/ec2-user/academy/scripts/merge_ssm_into_env.sh /home/ec2-user/.env $Region /academy/api/env && bash /home/ec2-user/academy/scripts/refresh_api_container_env.sh"
 ssh -o StrictHostKeyChecking=accept-new -i "$keyPath" "ec2-user@${apiIp}" $remoteCmd
 if ($LASTEXITCODE -eq 0) {
     Write-Host "  Done. academy-api recreated with merged .env." -ForegroundColor Green

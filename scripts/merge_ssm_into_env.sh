@@ -7,7 +7,7 @@
 set -e
 ENV_FILE="${1:-/home/ec2-user/.env}"
 REGION="${2:-ap-northeast-2}"
-SSM_NAME="/academy/workers/env"
+SSM_NAME="${3:-/academy/workers/env}"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "ERROR: .env not found: $ENV_FILE"

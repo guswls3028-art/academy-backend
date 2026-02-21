@@ -4,5 +4,6 @@
 set -e
 ENV_FILE="${1:-/home/ec2-user/.env}"
 REGION="${2:-ap-northeast-2}"
-aws ssm get-parameter --name /academy/workers/env --with-decryption --query Parameter.Value --output text --region "$REGION" | sed 's/\t/\n/g' | grep -v '^$' > "$ENV_FILE"
+SSM_NAME="${3:-/academy/workers/env}"
+aws ssm get-parameter --name "$SSM_NAME" --with-decryption --query Parameter.Value --output text --region "$REGION" | sed 's/\t/\n/g' | grep -v '^$' > "$ENV_FILE"
 echo "OK. SSM -> $ENV_FILE (tab->newline applied). Next: bash scripts/refresh_api_container_env.sh"
