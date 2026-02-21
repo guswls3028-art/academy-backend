@@ -17,23 +17,29 @@ $optionalButRecommended = @("LAMBDA_INTERNAL_API_KEY", "DJANGO_SETTINGS_MODULE")
 Write-Host "[1/2] Get SSM $SsmName..." -ForegroundColor Cyan
 # Use JSON output so large/Advanced-tier values are captured reliably (--output text can mangle newlines)
 $raw = $null
-$json = $null
+$awsOut = $null
 $exitCode = $null
 try {
-    $json = & aws ssm get-parameter --name $SsmName --with-decryption --region $Region --output json 2>&1
+    $awsOut = & aws ssm get-parameter --name $SsmName --with-decryption --region $Region --output json 2>&1
     $exitCode = $LASTEXITCODE
-    if ($exitCode -eq 0 -and $json -and ($json.Trim().StartsWith("{"))) {
-        $obj = $json | ConvertFrom-Json
+    $jsonStr = ($awsOut | Out-String).Trim()
+    if ($exitCode -eq 0 -and $jsonStr.StartsWith("{")) {
+        $obj = $jsonStr | ConvertFrom-Json
         $raw = $obj.Parameter.Value
     }
 } catch {
     $raw = $null
     if ($null -eq $exitCode) { $exitCode = -1 }
+    $jsonStr = if ($awsOut) { ($awsOut | Out-String).Trim() } else { "" }
 }
 if ($null -eq $raw -or [string]::IsNullOrWhiteSpace($raw)) {
     Write-Host "  FAIL: SSM get failed or parameter empty. (ExitCode: $exitCode)" -ForegroundColor Red
-    if ($json -and $json.Trim().Length -gt 0) {
-        $preview = if ($json.Length -gt 600) { $json.Substring(0, 600) + "..." } else { $json }
+    if ([string]::IsNullOrWhiteSpace($jsonStr)) {
+        if ($exitCode -eq -1) {
+            Write-Host "  No output from AWS. Check: 'aws' in PATH? Run:  aws sts get-caller-identity" -ForegroundColor Gray
+        }
+    } else {
+        $preview = if ($jsonStr.Length -gt 600) { $jsonStr.Substring(0, 600) + "..." } else { $jsonStr }
         Write-Host "  AWS output:" -ForegroundColor Gray
         Write-Host "  $($preview -replace "`r`n", "`n" -replace "`n", "`n  ")" -ForegroundColor Gray
     }
