@@ -421,6 +421,17 @@ Remove-Item $policyAiFile, $policyVideoFile, $policyMessagingFile -Force -ErrorA
 Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging/Video=TargetTracking (Video=BacklogCount)" -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
+# Cleanup: remove legacy Launch Templates (ASG-named; we now use -lt names)
+# ------------------------------------------------------------------------------
+$legacyLtNames = @("academy-video-worker-asg", "academy-ai-worker-asg", "academy-messaging-worker-asg")
+$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+foreach ($name in $legacyLtNames) {
+    aws ec2 delete-launch-template --launch-template-name $name --region $Region 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { Write-Host "      Deleted legacy LT: $name" -ForegroundColor Gray }
+}
+$ErrorActionPreference = $ea
+
+# ------------------------------------------------------------------------------
 # Optional: grant SSM PutParameter to current caller (IAM user)
 # ------------------------------------------------------------------------------
 if ($GrantSsmPutToCaller) {
