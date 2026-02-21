@@ -158,7 +158,7 @@ $ltVideoExists = $false
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 try { aws ec2 describe-launch-templates --launch-template-names $LtVideoName --region $Region 2>$null | Out-Null; $ltVideoExists = $true } catch {}
 if (-not $ltVideoExists) {
-    aws ec2 create-launch-template --launch-template-name $LtVideoName --version-description "ASG Video worker (MixedInstancesPolicy)" --launch-template-data $ltVideoPath --region $Region 2>$null | Out-Null
+    aws ec2 create-launch-template --launch-template-name $LtVideoName --version-description "ASG Video worker (MixedInstancesPolicy)" --launch-template-data $ltVideoPath --region $Region
 } else {
     $newVer = aws ec2 create-launch-template-version --launch-template-name $LtVideoName --launch-template-data $ltVideoPath --region $Region --query "LaunchTemplateVersion.VersionNumber" --output text 2>$null
     if ($newVer) { aws ec2 modify-launch-template --launch-template-name $LtVideoName --default-version $newVer --region $Region 2>$null | Out-Null }
