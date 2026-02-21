@@ -311,7 +311,26 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         parser_classes=[MultiPartParser, FormParser, JSONParser],
     )
     def upload_complete(self, request, pk=None):
-        video = self.get_object()
+        try:
+            video = self.get_object()
+        except Exception as e:
+            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | get_object | %s", e)
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not getattr(video, "session", None) or not getattr(video.session, "lecture", None):
+            return Response(
+                {"detail": "영상이 차시/강의에 연결되어 있지 않아 업로드 완료할 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not getattr(video.session.lecture, "tenant", None):
+            return Response(
+                {"detail": "강의의 프로그램(테넌트) 정보가 없어 업로드 완료할 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # [TRACE] upload_complete entry
         _tenant_id = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
         logger.info(
@@ -328,7 +347,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        exists, size = head_object(video.file_key)
+        try:
+            exists, size = head_object(video.file_key)
+        except Exception as e:
+            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | head_object | video_id=%s | %s", video.id, e)
+            return Response(
+                {"detail": "저장소 확인 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         if not exists or size == 0:
             video.error_reason = "source_not_found_or_empty"
             video.save(update_fields=["error_reason"])
