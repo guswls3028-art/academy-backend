@@ -127,7 +127,7 @@ def set_video_worker_desired(
         디버깅용 dict: visible, inflight, backlog_add, desired_candidate, new_desired, decision, stable_zero_since_epoch
     """
     backlog_add = min(visible, MAX_BACKLOG_ADD)
-    desired_candidate = inflight + backlog_add
+    desired_candidate = backlog_add if VIDEO_SCALE_VISIBLE_ONLY else (inflight + backlog_add)
     new_desired_raw = max(VIDEO_WORKER_ASG_MIN, min(VIDEO_WORKER_ASG_MAX, desired_candidate))
     now_ts = int(time.time())
     stable_zero_since_epoch = _get_stable_zero_since(ssm_client)
