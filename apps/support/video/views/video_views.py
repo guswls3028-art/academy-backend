@@ -312,6 +312,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     )
     def upload_complete(self, request, pk=None):
         video = self.get_object()
+        # [TRACE] upload_complete entry
+        logger.info(
+            "VIDEO_UPLOAD_TRACE | upload_complete entry | video_id=%s tenant_id=%s source_path=%s status=%s execution=1_ENTRY",
+            video.id,
+            video.session.lecture.tenant_id if (video.session and video.session.lecture) else None,
+            video.file_key or "",
+            video.status,
+        )
 
         if video.status != Video.Status.PENDING:
             return Response(
@@ -344,7 +352,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.status = Video.Status.UPLOADED
             video.error_reason = ""
             video.save(update_fields=["status", "error_reason"])
-
+            logger.info(
+                "VIDEO_UPLOAD_TRACE | before enqueue (ffmpeg_module_missing branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
+                video.id,
+                video.session.lecture.tenant_id if (video.session and video.session.lecture) else None,
+                video.file_key or "",
+            )
             # SQS에 작업 추가 (동기 호출 — 실패 시 클라이언트에 503 반환)
             if not VideoSQSQueue().enqueue(video):
                 return Response(
