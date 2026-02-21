@@ -308,7 +308,7 @@ def main() -> int:
                     "_cancel_check": _cancel_check,
                 }
 
-                if tenant_id is not None and _cancel_check():
+                if _cancel_check():
                     job_cancel(job_id)
                     queue.delete_message(receipt_handle)
                     logger.info("JOB_CANCELLED_SKIP | job_id=%s | video_id=%s", job_id, video_id)
