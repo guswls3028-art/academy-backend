@@ -72,7 +72,7 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
 
 
 def _fetch_video_backlog_from_api() -> int | None:
-    """Django API에서 BacklogCount (UPLOADED+PROCESSING) 조회. 실패 시 None."""
+    """Django API에서 BacklogCount (QUEUED+RETRY_WAIT) 조회. 실패 시 None."""
     if not VIDEO_BACKLOG_API_URL:
         return None
     url = f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/backlog-count/"
@@ -89,6 +89,24 @@ def _fetch_video_backlog_from_api() -> int | None:
         return None
 
 
+def _fetch_video_backlog_score_from_api() -> float | None:
+    """Django API에서 BacklogScore (QUEUED*1 + RETRY_WAIT*2) 조회. 실패 시 None."""
+    if not VIDEO_BACKLOG_API_URL:
+        return None
+    url = f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/backlog-score/"
+    headers = {}
+    if LAMBDA_INTERNAL_API_KEY:
+        headers["X-Internal-Key"] = LAMBDA_INTERNAL_API_KEY
+    try:
+        req = urllib.request.Request(url, method="GET", headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            return float(data.get("backlog_score", 0))
+    except Exception as e:
+        logger.warning("VIDEO_BACKLOG_SCORE_API fetch failed %s: %s", url, e)
+        return None
+
+
 def lambda_handler(event: dict, context: Any) -> dict:
     sqs = boto3.client("sqs", region_name=REGION, config=BOTO_CONFIG)
     cw = boto3.client("cloudwatch", region_name=REGION, config=BOTO_CONFIG)
@@ -101,12 +119,12 @@ def lambda_handler(event: dict, context: Any) -> dict:
     (messaging_visible, messaging_in_flight) = get_queue_counts(sqs, MESSAGING_QUEUE)
     ai_total = ai_visible  # 메트릭은 visible만 (기존과 동일)
 
-    # B1: BacklogCount = UPLOADED + PROCESSING (DB SSOT). API 없으면 SQS fallback.
-    video_backlog = _fetch_video_backlog_from_api()
-    if video_backlog is None:
-        video_backlog = video_visible + video_in_flight  # fallback
+    # B1: BacklogScore = SUM(QUEUED=>1, RETRY_WAIT=>2). API 없으면 SQS fallback.
+    video_backlog_score = _fetch_video_backlog_score_from_api()
+    if video_backlog_score is None:
+        video_backlog_score = float(video_visible + video_in_flight)  # fallback
         if not VIDEO_BACKLOG_API_URL:
-            logger.info("VIDEO_BACKLOG_API_URL not set; using SQS fallback (visible+inflight)=%d", video_backlog)
+            logger.info("VIDEO_BACKLOG_API_URL not set; using SQS fallback (visible+inflight)=%.0f", video_backlog_score)
 
     now = __import__("datetime").datetime.utcnow()
     metric_data = [
