@@ -49,7 +49,7 @@ $end   = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $cw = aws cloudwatch get-metric-statistics --region $Region --namespace "Academy/VideoProcessing" --metric-name BacklogCount `
     --dimensions Name=WorkerType,Value=Video Name=AutoScalingGroupName,Value=$AsgName `
     --start-time $start --end-time $end --period 60 --statistics Average Maximum --output json 2>$null | ConvertFrom-Json
-if ($cw.Datapoints) {
+if ($cw -and $cw.Datapoints -and $cw.Datapoints.Count -gt 0) {
     $max = ($cw.Datapoints | Measure-Object -Property Maximum -Maximum).Maximum
     $avg = ($cw.Datapoints | ForEach-Object { $_.Average } | Measure-Object -Average).Average
     Write-Line "  Datapoints: $($cw.Datapoints.Count) | Max: $max | Avg: $([math]::Round($avg,2))"
@@ -109,7 +109,7 @@ if ($acts.Activities) {
     foreach ($a in $acts.Activities) {
         $status = $a.StatusCode
         $time = $a.StartTime
-        $desc = $a.Description
+        $desc = if ($a.Description) { $a.Description } else { "" }
         if ($desc.Length -gt 80) { $desc = $desc.Substring(0, 77) + "..." }
         $mark = if ($status -eq "Failed") { " [FAIL]" } else { "" }
         Write-Line "  $time | $status$mark | $desc"
