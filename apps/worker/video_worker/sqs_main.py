@@ -330,9 +330,9 @@ def main() -> int:
                     consecutive_errors = 0
 
                 elif result == "skip:lock":
-                    # 락 실패(경합/잔류락) → NACK. delete 금지.
+                    # 락 실패(경합/잔류락) → NACK 60~120
                     logger.info(
-                        "lock contention or stale lock — returning message to queue | request_id=%s | video_id=%s",
+                        "skip:lock — nack | request_id=%s | video_id=%s",
                         request_id,
                         video_id,
                     )
@@ -340,9 +340,9 @@ def main() -> int:
                     consecutive_errors = 0
 
                 elif result == "skip:mark_processing":
-                    # mark_processing 실패(이미 처리됨 등) → NACK. delete 금지.
+                    # mark_processing 실패(이미 처리됨 등) → NACK 60~120
                     logger.info(
-                        "mark_processing failed — returning message to queue | request_id=%s | video_id=%s",
+                        "skip:mark_processing — nack | request_id=%s | video_id=%s",
                         request_id,
                         video_id,
                     )
@@ -350,10 +350,9 @@ def main() -> int:
                     consecutive_errors = 0
 
                 elif result == "lock_fail":
-                    # Redis 락 경합/이전 워커 크래시 → NACK. visibility 60초 후 재노출
-                    # SQS가 재시도 책임, Redis lock TTL 만료 후 다른 워커가 처리 가능
+                    # Redis 락 경합/이전 워커 크래시 → NACK 60~120
                     logger.info(
-                        "lock contention or stale lock — returning message to queue | request_id=%s | video_id=%s",
+                        "lock_fail — nack | request_id=%s | video_id=%s",
                         request_id,
                         video_id,
                     )
@@ -361,9 +360,9 @@ def main() -> int:
                     consecutive_errors = 0
 
                 elif result == "skip":
-                    # 레거시/미지정 skip → NACK (stuck orphan 방지)
+                    # 레거시/미지정 skip → NACK 60~120 (stuck orphan 방지)
                     logger.warning(
-                        "legacy skip — nack for safety | request_id=%s | video_id=%s",
+                        "legacy skip — nack | request_id=%s | video_id=%s",
                         request_id,
                         video_id,
                     )
@@ -371,11 +370,11 @@ def main() -> int:
                     consecutive_errors = 0
 
                 else:
-                    # handler 실패(failed 등) → retry backoff 적용
-                    queue.change_message_visibility(receipt_handle, FAILED_BACKOFF_SECONDS)
+                    # failed (transient) → NACK 180~600
+                    queue.change_message_visibility(receipt_handle, FAILED_TRANSIENT_BACKOFF_SECONDS)
                     logger.warning(
-                        "processing failed — applying retry backoff (%ss) | video_id=%s",
-                        FAILED_BACKOFF_SECONDS,
+                        "processing failed (transient) — nack backoff (%ss) | video_id=%s",
+                        FAILED_TRANSIENT_BACKOFF_SECONDS,
                         video_id,
                     )
                     logger.exception(
