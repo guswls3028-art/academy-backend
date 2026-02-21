@@ -27,6 +27,35 @@ def _get_video_heartbeat_key(tenant_id: int, video_id: int) -> str:
     return f"tenant:{tenant_id}:video:{video_id}:heartbeat"
 
 
+VIDEO_ASG_INTERRUPT_KEY = "video:asg:interrupt"
+VIDEO_ASG_INTERRUPT_TTL_SECONDS = 180
+
+
+def set_asg_interrupt(ttl_seconds: int = VIDEO_ASG_INTERRUPT_TTL_SECONDS) -> bool:
+    """Spot/Scale-in drain 시 설정. Lambda가 BacklogCount 퍼블리시 스킵하여 scale-out runaway 방지."""
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return False
+        redis_client.setex(VIDEO_ASG_INTERRUPT_KEY, ttl_seconds, "1")
+        return True
+    except Exception as e:
+        logger.warning("Failed to set asg interrupt in Redis: %s", e)
+        return False
+
+
+def is_asg_interrupt() -> bool:
+    """Lambda: interrupt 플래그 존재 시 True (metric publish skip)."""
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return False
+        return bool(redis_client.get(VIDEO_ASG_INTERRUPT_KEY))
+    except Exception as e:
+        logger.debug("Failed to check asg interrupt in Redis: %s", e)
+        return False
+
+
 VIDEO_HEARTBEAT_TTL_SECONDS = 300
 
 
