@@ -129,17 +129,6 @@ def lambda_handler(event: dict, context: Any) -> dict:
             "Timestamp": now,
             "Unit": "Count",
         },
-        # B1: Academy/VideoProcessing BacklogCount (TargetTracking용)
-        {
-            "MetricName": "BacklogCount",
-            "Dimensions": [
-                {"Name": "WorkerType", "Value": "Video"},
-                {"Name": "AutoScalingGroupName", "Value": "academy-video-worker-asg"},
-            ],
-            "Value": float(video_backlog),
-            "Timestamp": now,
-            "Unit": "Count",
-        },
     ]
     cw.put_metric_data(Namespace=NAMESPACE, MetricData=metric_data)
     cw.put_metric_data(
