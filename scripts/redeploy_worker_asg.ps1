@@ -2,6 +2,9 @@
 # Worker ASG redeploy (root/admin one-shot)
 # Requires: root or IAM admin access key (env or aws configure)
 #
+# Video ASG: MixedInstancesPolicy (c6g.large Spot primary, t4g.medium fallback).
+# See deploy_worker_asg.ps1 [5/8] for policy; instance refresh runs after update.
+#
 # Default VPC/subnet/SG: cd C:\academy; .\scripts\redeploy_worker_asg.ps1
 # Infra only (skip SSM/IAM): .\scripts\redeploy_worker_asg.ps1 -SkipSetup
 # Custom: .\scripts\redeploy_worker_asg.ps1 -SubnetIds "subnet-a,subnet-b" -SecurityGroupId "sg-xxx"
