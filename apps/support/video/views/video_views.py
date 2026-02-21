@@ -331,6 +331,17 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        try:
+            return self._upload_complete_impl(video)
+        except Exception as e:
+            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | video_id=%s | %s", getattr(video, "id", None), e)
+            return Response(
+                {"detail": "업로드 완료 처리 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+    def _upload_complete_impl(self, video):
+        """upload_complete 실제 처리 (예외 시 호출부에서 503 반환)."""
         # [TRACE] upload_complete entry
         _tenant_id = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
         logger.info(
