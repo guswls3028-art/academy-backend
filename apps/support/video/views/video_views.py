@@ -427,37 +427,45 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         if not getattr(video.session.lecture, "tenant", None):
             raise ValidationError("강의의 프로그램(테넌트) 정보가 없어 재처리할 수 없습니다.")
 
-        # QUEUED/RETRY_WAIT: 재시도 불가 (backlog 대기 중)
-        if video.current_job_id:
-            cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
-            if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
-                raise ValidationError("Already in backlog (job queued or retry wait)")
-            # RUNNING: cancel_requested 설정 후 새 Job 생성
-            if cur and cur.state == VideoTranscodeJob.State.RUNNING:
-                job_set_cancel_requested(cur.id)
+        try:
+            # QUEUED/RETRY_WAIT: 재시도 불가 (backlog 대기 중)
+            if video.current_job_id:
+                cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
+                if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
+                    raise ValidationError("Already in backlog (job queued or retry wait)")
+                # RUNNING: cancel_requested 설정 후 새 Job 생성
+                if cur and cur.state == VideoTranscodeJob.State.RUNNING:
+                    job_set_cancel_requested(cur.id)
 
-        if video.status not in (Video.Status.READY, Video.Status.FAILED):
-            if video.status not in (Video.Status.UPLOADED, Video.Status.PROCESSING):
-                raise ValidationError("Cannot retry: status must be READY or FAILED")
+            if video.status not in (Video.Status.READY, Video.Status.FAILED):
+                if video.status not in (Video.Status.UPLOADED, Video.Status.PROCESSING):
+                    raise ValidationError("Cannot retry: status must be READY or FAILED")
 
-        video.status = Video.Status.UPLOADED
-        video.save(update_fields=["status", "updated_at"])
+            video.status = Video.Status.UPLOADED
+            video.save(update_fields=["status", "updated_at"])
 
-        job = VideoSQSQueue().create_job_and_enqueue(video)
-        if not job:
-            raise ValidationError(
-                "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."
+            job = VideoSQSQueue().create_job_and_enqueue(video)
+            if not job:
+                raise ValidationError(
+                    "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."
+                )
+
+            logger.info(
+                "VIDEO_RETRY_ENQUEUED | job_id=%s | video_id=%s | tenant_id=%s",
+                job.id, video.id,
+                getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None),
             )
-
-        logger.info(
-            "VIDEO_RETRY_ENQUEUED | job_id=%s | video_id=%s | tenant_id=%s",
-            job.id, video.id,
-            getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None),
-        )
-        return Response(
-            {"detail": "Video reprocessing queued (SQS)", "job_id": str(job.id)},
-            status=status.HTTP_202_ACCEPTED,
-        )
+            return Response(
+                {"detail": "Video reprocessing queued (SQS)", "job_id": str(job.id)},
+                status=status.HTTP_202_ACCEPTED,
+            )
+        except ValidationError:
+            raise
+        except Exception as e:
+            logger.exception("VIDEO_RETRY_ERROR | video_id=%s | %s", getattr(video, "id", None), e)
+            raise ValidationError(
+                "재처리 요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요."
+            )
 
     # ==================================================
     # stats
