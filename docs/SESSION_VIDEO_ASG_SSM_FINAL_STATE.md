@@ -124,10 +124,10 @@ Lambda가 backlog API 호출 시 **403 Forbidden** 이 나면 BacklogCount 퍼�
 aws lambda update-function-configuration `
   --function-name academy-worker-queue-depth-metric `
   --region ap-northeast-2 `
-  --environment "Variables={VIDEO_BACKLOG_API_INTERNAL=http://172.30.3.142:8000/api/v1/internal/video/backlog-count/,LAMBDA_INTERNAL_API_KEY=hakwonplus-internal-key}"
+  --environment "Variables={VIDEO_BACKLOG_API_INTERNAL=http://172.30.3.142:8000/api/v1/internal/video/backlog-count/,LAMBDA_INTERNAL_API_KEY=<API와 동일한 값>}"
 ```
 
-(위 예시에는 VIDEO_BACKLOG_API_HOST를 넣지 않음.)
+(위 예시에는 VIDEO_BACKLOG_API_HOST를 넣지 않음. LAMBDA_INTERNAL_API_KEY는 API 컨테이너 env와 동일해야 403이 해소됨.)
 
 ---
 
