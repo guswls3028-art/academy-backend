@@ -255,22 +255,28 @@ class VideoSQSQueue:
                     "message_id": message.get("MessageId"),
                 }
 
-            # 인코딩 작업: video_id 필수
+            # 인코딩 작업: job_id (필수), video_id 필수
             if "video_id" not in job_data:
                 logger.error("Invalid message format (video_id required): %s", job_data)
                 return None
-            
+
+            job_id_raw = job_data.get("job_id")
+            job_id = str(job_id_raw) if job_id_raw is not None else None
+
             # ReceiptHandle 필수 (SQS)
             if not receipt_handle:
                 logger.error("Missing ReceiptHandle in SQS message")
                 return None
-            
-            # 작업 데이터 반환 (tenant_id: 경로 통일용)
+
+            tenant_code = str(job_data.get("tenant_code", ""))
+
+            # 작업 데이터 반환 (job_id: Job 기반 처리용, DLQ 추적)
             return {
+                "job_id": job_id,
                 "video_id": int(job_data.get("video_id")),
                 "file_key": str(job_data.get("file_key", "")),
                 "tenant_id": int(job_data["tenant_id"]) if job_data.get("tenant_id") is not None else None,
-                "tenant_code": str(job_data.get("tenant_code", "")),
+                "tenant_code": tenant_code,
                 "receipt_handle": receipt_handle,
                 "message_id": message.get("MessageId"),
                 "created_at": job_data.get("created_at"),
