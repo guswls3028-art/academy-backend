@@ -104,31 +104,48 @@ def set_video_worker_desired(
 ) -> None:
     """
     Video ASG desired capacity를 Lambda 단독으로 설정.
-    desired_raw = visible + inflight (1 worker = 1 encoding)
-    scale-in: visible==0 AND inflight==0 가 STABLE_WINDOW_SECONDS 이상 지속 시에만 min으로.
+
+    수식:
+      backlog_add = min(visible, MAX_BACKLOG_ADD)
+      desired_candidate = inflight + backlog_add
+      new_desired = clamp(MIN, MAX, desired_candidate)
+
+    scale-in: visible==0 AND inflight==0 가 STABLE_ZERO_SECONDS 이상 지속 시에만 min으로.
     """
-    desired_raw = visible + inflight
+    backlog_add = min(visible, MAX_BACKLOG_ADD)
+    desired_candidate = inflight + backlog_add
+    new_desired_raw = max(VIDEO_WORKER_ASG_MIN, min(VIDEO_WORKER_ASG_MAX, desired_candidate))
     now_ts = int(time.time())
 
     if visible > 0 or inflight > 0:
-        _set_stable_zero_since(ssm_client, 0)  # reset
-        new_desired = max(VIDEO_WORKER_ASG_MIN, min(VIDEO_WORKER_ASG_MAX, desired_raw))
+        _delete_stable_zero_param(ssm_client)
+        new_desired = new_desired_raw
+        decision = "scale_out" if new_desired > 0 else "hold"
     else:
         stable_since = _get_stable_zero_since(ssm_client)
         if stable_since == 0:
             _set_stable_zero_since(ssm_client, now_ts)
             new_desired = None  # do not change (keep current)
-        elif (now_ts - stable_since) >= STABLE_WINDOW_SECONDS:
+            decision = "hold"
+        elif (now_ts - stable_since) >= STABLE_ZERO_SECONDS:
             new_desired = VIDEO_WORKER_ASG_MIN
-            _set_stable_zero_since(ssm_client, 0)
+            _delete_stable_zero_param(ssm_client)
+            decision = "scale_in"
         else:
             new_desired = None
+            decision = "hold"
+
+    logger.info(
+        "video_asg | visible=%d inflight=%d backlog_add=%d desired_candidate=%d new_desired=%s decision=%s",
+        visible,
+        inflight,
+        backlog_add,
+        desired_candidate,
+        new_desired if new_desired is not None else "unchanged",
+        decision,
+    )
 
     if new_desired is None:
-        logger.info(
-            "video_asg | visible=%d inflight=%d desired_raw=%d new_desired=unchanged (stable window)",
-            visible, inflight, desired_raw,
-        )
         return
 
     try:
@@ -146,8 +163,14 @@ def set_video_worker_desired(
             DesiredCapacity=new_desired,
         )
         logger.info(
-            "video_asg | visible=%d inflight=%d desired_raw=%d new_desired=%d (was %d)",
-            visible, inflight, desired_raw, new_desired, current,
+            "video_asg set_desired | visible=%d inflight=%d backlog_add=%d desired_candidate=%d new_desired=%d (was %d) decision=%s",
+            visible,
+            inflight,
+            backlog_add,
+            desired_candidate,
+            new_desired,
+            current,
+            decision,
         )
     except Exception as e:
         logger.warning("set_video_worker_desired failed: %s", e)
