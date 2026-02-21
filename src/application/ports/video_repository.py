@@ -27,7 +27,7 @@ class IVideoRepository(ABC):
         """
         return self.mark_processing(video_id)
 
-    def try_reclaim_video(self, video_id: int) -> bool:
+    def try_reclaim_video(self, video_id: int, *, force: bool = False) -> bool:
         """
         PROCESSING 이지만 leased_until < now 인 경우 UPLOADED로 되돌림.
         기본 구현: False (구현체에서 override).

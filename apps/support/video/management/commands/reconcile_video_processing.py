@@ -17,7 +17,6 @@ from academy.adapters.db.django.repositories_video import (
     get_video_queryset_with_relations,
     DjangoVideoRepository,
 )
-from academy.adapters.db.django import repositories_video as video_repo
 from apps.support.video.models import Video
 from apps.support.video.redis_status_cache import has_video_heartbeat
 from apps.support.video.services.sqs_queue import VideoSQSQueue
