@@ -141,19 +141,21 @@ message = {
 
 ---
 
-## 5. 변경 파일 목록 (예정)
+## 5. 변경 파일 목록 (구현 완료)
 
 | 파일 | 변경 유형 |
 |------|-----------|
 | `apps/support/video/models.py` | VideoTranscodeJob 추가, Video.current_job 추가 |
 | `apps/support/video/migrations/0003_*.py` | 신규 마이그레이션 |
-| `apps/support/video/services/sqs_queue.py` | enqueue(job_id 포함), enqueue_by_job() |
-| `academy/adapters/db/django/repositories_video.py` | Job 기반 claim/complete/fail, mark_processing 제거 |
-| `src/application/video/handler.py` | Job 기반 처리로 전면 교체 |
-| `apps/worker/video_worker/sqs_main.py` | job_id 기반, VIDEO_FAST_ACK 제거 |
-| `apps/support/video/views/video_views.py` | retry: Job 생성 + enqueue |
-| `apps/support/video/views/internal_views.py` | BacklogCount: Job.state 기준 |
-| `apps/support/video/management/commands/` | reconcile → stuck scanner (Job 기반) |
-| `apps/support/video/serializers.py` | processing 유도: current_job.state |
-| `apps/support/video/views/playback_mixin.py` | READY 검증 유지 |
-| `apps/support/video/views/progress_views.py` | Redis/Job 조합 유지 |
+| `apps/support/video/services/sqs_queue.py` | create_job_and_enqueue(), enqueue_by_job(), receive에 job_id 반환 |
+| `academy/adapters/db/django/repositories_video.py` | job_claim_for_running, job_heartbeat, job_complete, job_fail_retry, job_cancel, job_mark_dead, job_count_backlog |
+| `apps/worker/video_worker/sqs_main.py` | job_id 기반 처리, VIDEO_FAST_ACK 제거, ProcessVideoJobHandler 미사용 |
+| `apps/support/video/views/video_views.py` | upload_complete: create_job_and_enqueue, retry: Job 생성 + cancel_requested |
+| `apps/support/video/views/internal_views.py` | BacklogCount: job_count_backlog() |
+| `apps/support/video/management/commands/scan_stuck_video_jobs.py` | 신규 Stuck Scanner (Job 기반) |
+
+## 6. 운영 검증 절차
+
+a) **Worker kill 테스트**: Worker 실행 중 SIGTERM → 메시지 visibility 복귀 → 다른 워커가 재처리
+b) **Retry 버튼 테스트**: READY/FAILED 영상에서 retry 클릭 → 새 Job 생성 → SQS 메시지(job_id 포함) 확인
+c) **DLQ 유도 테스트**: 고의 실패(코드 임시 수정) → maxReceiveCount 초과 후 DLQ 확인
