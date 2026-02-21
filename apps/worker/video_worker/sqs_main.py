@@ -230,7 +230,8 @@ def main() -> int:
                     queue.delete_message(receipt_handle)
                     continue
 
-                # ----- 인코딩 작업 -----
+                # ----- 인코딩 작업 (Job 기반) -----
+                job_id = message.get("job_id")
                 video_id = message.get("video_id")
                 file_key = message.get("file_key")
                 tenant_id = message.get("tenant_id")
@@ -242,16 +243,40 @@ def main() -> int:
                     queue.delete_message(receipt_handle)
                     continue
 
-                # Retry로 이미 완료된 영상이면 visibility 연장 없이 메시지만 삭제 (중복·3시간 묶임 방지)
-                from academy.adapters.db.django.repositories_video import get_video_status
+                # job_id 필수 (Job 기반 메시지)
+                if not job_id:
+                    logger.warning("MESSAGE_LEGACY_SKIP | job_id missing | video_id=%s | NACK", video_id)
+                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
+                    continue
+
+                from academy.adapters.db.django.repositories_video import (
+                    job_get_by_id,
+                    job_claim_for_running,
+                    job_complete,
+                    job_fail_retry,
+                    job_cancel,
+                    job_mark_dead,
+                    get_video_status,
+                )
+                from src.infrastructure.video.processor import process_video
+                from src.application.video.handler import CancelledError
+                from apps.support.video.models import VideoTranscodeJob
+
+                job_obj = job_get_by_id(job_id)
+                if not job_obj:
+                    logger.error("JOB_NOT_FOUND | job_id=%s | video_id=%s | NACK", job_id, video_id)
+                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
+                    continue
+
+                # 이미 완료된 영상이면 idempotent skip
                 if get_video_status(video_id) == "READY":
                     queue.delete_message(receipt_handle)
-                    logger.info("VIDEO_ALREADY_READY_SKIP | video_id=%s (retry 등으로 이미 완료)", video_id)
+                    logger.info("VIDEO_ALREADY_READY_SKIP | job_id=%s | video_id=%s", job_id, video_id)
                     continue
 
                 request_id = str(uuid.uuid4())[:8]
+                worker_id = f"{cfg.WORKER_ID}-{request_id}"
                 message_received_at = time.time()
-                # created_at: Unix float 또는 ISO 8601 문자열 (timezone.now().isoformat())
                 try:
                     if message_created_at is None:
                         created_ts = message_received_at
@@ -266,122 +291,56 @@ def main() -> int:
                     queue_wait_time = 0.0
 
                 logger.info(
-                    "SQS_MESSAGE_RECEIVED | request_id=%s | video_id=%s | tenant_id=%s | queue_wait_sec=%.2f | created_at=%s | fast_ack=%s",
-                    request_id,
-                    video_id,
-                    tenant_id,
-                    queue_wait_time,
-                    message_created_at or "unknown",
-                    VIDEO_FAST_ACK,
+                    "SQS_MESSAGE_RECEIVED | job_id=%s | video_id=%s | tenant_id=%s | queue_wait_sec=%.2f",
+                    job_id, video_id, tenant_id, queue_wait_time,
                 )
 
-                if VIDEO_FAST_ACK:
+                if not job_claim_for_running(job_id, worker_id, lease_seconds=3600):
+                    logger.info("JOB_CLAIM_FAILED | job_id=%s | video_id=%s | NACK", job_id, video_id)
+                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
+                    continue
+
+                def _cancel_check():
+                    from apps.support.video.redis_status_cache import is_cancel_requested
+                    return bool(tenant_id is not None and is_cancel_requested(tenant_id, video_id))
+
+                job_dict = {
+                    "video_id": int(video_id),
+                    "file_key": str(file_key or ""),
+                    "tenant_id": int(tenant_id),
+                    "tenant_code": str(tenant_code or ""),
+                    "_cancel_check": _cancel_check,
+                }
+
+                if tenant_id is not None and _cancel_check():
+                    job_cancel(job_id)
                     queue.delete_message(receipt_handle)
-                    receipt_suffix = receipt_handle[-12:] if receipt_handle and len(receipt_handle) >= 12 else (receipt_handle or "")[:12]
-                    logger.info(
-                        "VIDEO_FAST_ACK_APPLIED | request_id=%s | video_id=%s | receipt_handle_suffix=%s",
-                        request_id,
-                        video_id,
-                        receipt_suffix,
-                    )
-                else:
-                    logger.info(
-                        "VIDEO_FAST_ACK_SKIPPED | request_id=%s | video_id=%s | reason=VIDEO_FAST_ACK=0",
-                        request_id,
-                        video_id,
-                    )
+                    logger.info("JOB_CANCELLED_SKIP | job_id=%s | video_id=%s", job_id, video_id)
+                    continue
 
                 global _current_job_receipt_handle, _current_job_start_time
                 _current_job_receipt_handle = receipt_handle
                 _current_job_start_time = time.time()
 
-                job = {
-                    "video_id": int(video_id),
-                    "file_key": str(file_key or ""),
-                    "tenant_id": int(tenant_id),
-                    "tenant_code": str(tenant_code or ""),
-                }
-                if VIDEO_FAST_ACK:
-                    job["_worker_id"] = f"{cfg.WORKER_ID}-{request_id}"
+                stop_heartbeat = threading.Event()
+                heartbeat_thread = threading.Thread(
+                    target=_job_visibility_and_heartbeat_loop,
+                    args=(queue, receipt_handle, job_id, stop_heartbeat),
+                    daemon=True,
+                )
+                heartbeat_thread.start()
 
-                if VIDEO_FAST_ACK:
-                    heartbeat_stop = threading.Event()
-                    heartbeat_thread = threading.Thread(
-                        target=_heartbeat_loop,
-                        args=(tenant_id, video_id, heartbeat_stop),
-                        daemon=True,
-                    )
-                    heartbeat_thread.start()
-                    try:
-                        logger.info("[SQS_MAIN] Calling handler.handle() video_id=%s (fast_ack)", video_id)
-                        result = handler.handle(job, cfg)
-                        logger.info("[SQS_MAIN] handler.handle() returned video_id=%s result=%s", video_id, result)
-                    except Exception as e:
-                        logger.exception("[SQS_MAIN] Handler exception (fast_ack, message already deleted): video_id=%s: %s", video_id, e)
-                        consecutive_errors += 1
-                        _current_job_receipt_handle = None
-                        _current_job_start_time = None
-                        if consecutive_errors >= max_consecutive_errors:
-                            logger.error("Too many consecutive errors (%s), shutting down", consecutive_errors)
-                            return 1
-                        time.sleep(5)
-                        continue
-                    finally:
-                        heartbeat_stop.set()
-                        heartbeat_thread.join(timeout=2)
-                        try:
-                            delete_video_heartbeat(tenant_id, video_id)
-                        except Exception:
-                            pass
-                else:
-                    stop_extender = threading.Event()
-                    extender = threading.Thread(
-                        target=_visibility_extender_loop,
-                        args=(queue, receipt_handle, stop_extender),
-                        daemon=True,
-                    )
-                    extender.start()
-                    heartbeat_stop = threading.Event()
-                    heartbeat_thread = threading.Thread(
-                        target=_heartbeat_loop,
-                        args=(tenant_id, video_id, heartbeat_stop),
-                        daemon=True,
-                    )
-                    heartbeat_thread.start()
-                    try:
-                        logger.info("[SQS_MAIN] Calling handler.handle() video_id=%s", video_id)
-                        result = handler.handle(job, cfg)
-                        logger.info("[SQS_MAIN] handler.handle() returned video_id=%s result=%s", video_id, result)
-                    except Exception as e:
-                        stop_extender.set()
-                        extender.join(timeout=1)
-                        queue.change_message_visibility(receipt_handle, 0)
-                        logger.exception("[SQS_MAIN] Handler exception (visibility 0 applied): video_id=%s: %s", video_id, e)
-                        consecutive_errors += 1
-                        _current_job_receipt_handle = None
-                        _current_job_start_time = None
-                        if consecutive_errors >= max_consecutive_errors:
-                            logger.error("Too many consecutive errors (%s), shutting down", consecutive_errors)
-                            return 1
-                        time.sleep(5)
-                        continue
-                    finally:
-                        heartbeat_stop.set()
-                        heartbeat_thread.join(timeout=2)
-                        try:
-                            delete_video_heartbeat(tenant_id, video_id)
-                        except Exception:
-                            pass
-                        stop_extender.set()
-                        extender.join(timeout=1)
+                try:
+                    logger.info("[SQS_MAIN] process_video job_id=%s video_id=%s", job_id, video_id)
+                    hls_path, duration = process_video(job=job_dict, cfg=cfg, progress=progress)
+                    ok, reason = job_complete(job_id, hls_path, duration)
+                    if not ok:
+                        raise RuntimeError(f"job_complete failed: {reason}")
 
-                processing_duration = time.time() - _current_job_start_time
-                _current_job_receipt_handle = None
-                _current_job_start_time = None
+                    processing_duration = time.time() - _current_job_start_time
 
-                if result == "ok":
-                    # 인코딩 성공 → HLS 업로드·DB 완료 후 raw 삭제 (실패해도 DB 롤백 안 함, 재시도만)
-                    file_key_for_raw = job.get("file_key") or ""
+                    # R2 raw 삭제
+                    file_key_for_raw = job_dict.get("file_key") or ""
                     if file_key_for_raw.strip():
                         from apps.infrastructure.storage.r2 import delete_object_r2_video
                         for attempt in range(3):
@@ -390,117 +349,52 @@ def main() -> int:
                                 logger.info("R2 raw deleted after encode video_id=%s key=%s", video_id, file_key_for_raw[:80])
                                 break
                             except Exception as e:
-                                logger.warning(
-                                    "R2 raw delete after encode failed video_id=%s attempt=%s: %s",
-                                    video_id, attempt + 1, e,
-                                )
+                                logger.warning("R2 raw delete failed video_id=%s attempt=%s: %s", video_id, attempt + 1, e)
                                 if attempt < 2:
-                                    time.sleep(2**attempt)  # 1s → 2s → 4s exponential backoff
-                    if not VIDEO_FAST_ACK:
-                        queue.delete_message(receipt_handle)
+                                    time.sleep(2**attempt)
+
+                    queue.delete_message(receipt_handle)
                     logger.info(
-                        "SQS_JOB_COMPLETED | request_id=%s | video_id=%s | tenant_code=%s | processing_duration=%.2f | queue_wait_sec=%.2f",
-                        request_id,
-                        video_id,
-                        tenant_code,
-                        processing_duration,
-                        queue_wait_time,
+                        "SQS_JOB_COMPLETED | job_id=%s | video_id=%s | tenant_id=%s | processing_duration=%.2f | queue_wait_sec=%.2f",
+                        job_id, video_id, tenant_id, processing_duration, queue_wait_time,
                     )
-                    # 평균 인코딩 시간 모니터링용 (로그 파싱·메트릭 수집)
-                    logger.info(
-                        "VIDEO_ENCODING_DURATION | video_id=%s | duration_sec=%.2f",
-                        video_id,
-                        processing_duration,
-                    )
+                    logger.info("VIDEO_ENCODING_DURATION | job_id=%s | video_id=%s | duration_sec=%.2f", job_id, video_id, processing_duration)
                     consecutive_errors = 0
 
                     if _shutdown:
                         logger.info("drain complete — current job finished, exiting")
                         break
 
-                elif result == "skip:cancel":
-                    logger.info(
-                        "cancel requested — ack/delete | request_id=%s | video_id=%s",
-                        request_id,
-                        video_id,
-                    )
-                    if not VIDEO_FAST_ACK:
-                        queue.delete_message(receipt_handle)
+                except CancelledError:
+                    job_cancel(job_id)
+                    queue.delete_message(receipt_handle)
+                    logger.info("JOB_CANCELLED | job_id=%s | video_id=%s", job_id, video_id)
                     consecutive_errors = 0
 
-                elif result == "skip:claim":
-                    logger.info(
-                        "skip:claim — already acked | request_id=%s | video_id=%s",
-                        request_id,
-                        video_id,
-                    )
-                    consecutive_errors = 0
-
-                elif result == "skip:lock":
-                    logger.info(
-                        "skip:lock — nack | request_id=%s | video_id=%s",
-                        request_id,
-                        video_id,
-                    )
-                    if not VIDEO_FAST_ACK:
-                        queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
-                    consecutive_errors = 0
-
-                elif result == "skip:mark_processing":
-                    logger.info(
-                        "skip:mark_processing — nack | request_id=%s | video_id=%s",
-                        request_id,
-                        video_id,
-                    )
-                    if not VIDEO_FAST_ACK:
-                        queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
-                    consecutive_errors = 0
-
-                elif result == "lock_fail":
-                    logger.info(
-                        "lock_fail — nack | request_id=%s | video_id=%s",
-                        request_id,
-                        video_id,
-                    )
-                    if not VIDEO_FAST_ACK:
-                        queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
-                    consecutive_errors = 0
-
-                elif result == "skip":
-                    logger.warning(
-                        "legacy skip — nack | request_id=%s | video_id=%s",
-                        request_id,
-                        video_id,
-                    )
-                    if not VIDEO_FAST_ACK:
-                        queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
-                    consecutive_errors = 0
-
-                else:
-                    # failed — legacy: NACK. fast_ack: 메시지 이미 삭제됨, DB FAILED 상태. 재시도는 별도 enqueue.
-                    if not VIDEO_FAST_ACK:
-                        queue.change_message_visibility(receipt_handle, FAILED_TRANSIENT_BACKOFF_SECONDS)
-                    logger.warning(
-                        "processing failed (transient) — nack backoff (%ss) | video_id=%s",
-                        FAILED_TRANSIENT_BACKOFF_SECONDS,
-                        video_id,
-                    )
-                    logger.exception(
-                        "SQS_JOB_FAILED | request_id=%s | video_id=%s | tenant_code=%s | processing_duration=%.2f | queue_wait_sec=%.2f",
-                        request_id,
-                        video_id,
-                        tenant_code,
-                        processing_duration,
-                        queue_wait_time,
-                    )
+                except Exception as e:
+                    logger.exception("JOB_PROCESSING_FAILED | job_id=%s | video_id=%s | error=%s", job_id, video_id, e)
+                    job_fail_retry(job_id, str(e)[:2000])
+                    job_obj.refresh_from_db()
+                    if job_obj.attempt_count >= VIDEO_JOB_MAX_ATTEMPTS:
+                        job_mark_dead(job_id, error_code="MAX_ATTEMPTS", error_message=str(e)[:2000])
+                        logger.warning("JOB_DEAD | job_id=%s | video_id=%s | attempt_count=%s", job_id, video_id, job_obj.attempt_count)
+                    queue.change_message_visibility(receipt_handle, FAILED_TRANSIENT_BACKOFF_SECONDS)
                     consecutive_errors += 1
 
                     if consecutive_errors >= max_consecutive_errors:
-                        logger.error(
-                            "Too many consecutive errors (%s), shutting down",
-                            consecutive_errors,
-                        )
+                        logger.error("Too many consecutive errors (%s), shutting down", consecutive_errors)
                         return 1
+
+                finally:
+                    stop_heartbeat.set()
+                    heartbeat_thread.join(timeout=3)
+                    try:
+                        delete_video_heartbeat(tenant_id, video_id)
+                    except Exception:
+                        pass
+
+                _current_job_receipt_handle = None
+                _current_job_start_time = None
                 
             except KeyboardInterrupt:
                 logger.info("Keyboard interrupt received")
