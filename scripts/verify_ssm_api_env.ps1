@@ -43,10 +43,15 @@ try {
     [void]($psi.RedirectStandardOutput = $true)
     [void]($psi.RedirectStandardError = $true)
     [void]($psi.CreateNoWindow = $true)
-    # Force UTF-8 stdout so SSM value with Unicode (e.g. U+2014) does not trigger cp949 encode error on Korean Windows
-    $psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"
-    $psi.EnvironmentVariables["PYTHONUTF8"] = "1"
-    [void](try { $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8 } catch { })
+    # Force UTF-8 stdout so SSM value with Unicode (e.g. U+2014) does not trigger cp949 encode error on Korean Windows.
+    # Set in current process so child inherits full env (setting psi.EnvironmentVariables would replace entire env and break PATH).
+    $savedPyIo = $env:PYTHONIOENCODING; $savedPyUtf8 = $env:PYTHONUTF8
+    $env:PYTHONIOENCODING = "utf-8"; $env:PYTHONUTF8 = "1"
+    try {
+        $enc = [System.Text.Encoding]::UTF8
+        $psi.StandardOutputEncoding = $enc
+        $psi.StandardErrorEncoding = $enc
+    } catch { }
     $p = [System.Diagnostics.Process]::Start($psi)
     [void]$p.WaitForExit(60000)
     $stdout = $p.StandardOutput.ReadToEnd()
