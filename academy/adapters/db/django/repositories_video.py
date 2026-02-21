@@ -773,13 +773,40 @@ def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") ->
 
 
 def job_count_backlog() -> int:
-    """BacklogCount: QUEUED + RETRY_WAIT + RUNNING."""
+    """BacklogCount: QUEUED + RETRY_WAIT (RUNNING은 backlog 아님)."""
     from apps.support.video.models import VideoTranscodeJob
 
     return VideoTranscodeJob.objects.filter(
         state__in=[
             VideoTranscodeJob.State.QUEUED,
             VideoTranscodeJob.State.RETRY_WAIT,
-            VideoTranscodeJob.State.RUNNING,
         ]
     ).count()
+
+
+def job_compute_backlog_score() -> float:
+    """
+    BacklogScore = SUM(CASE WHEN state='QUEUED' THEN 1 WHEN state='RETRY_WAIT' THEN 2 END).
+    CloudWatch Metric 교체용 (TargetTracking).
+    """
+    from django.db.models import Case, F, IntegerField, Q, Value, When
+    from apps.support.video.models import VideoTranscodeJob
+
+    return float(
+        VideoTranscodeJob.objects.filter(
+            state__in=[
+                VideoTranscodeJob.State.QUEUED,
+                VideoTranscodeJob.State.RETRY_WAIT,
+            ]
+        )
+        .annotate(
+            score=Case(
+                When(state=VideoTranscodeJob.State.QUEUED, then=Value(1)),
+                When(state=VideoTranscodeJob.State.RETRY_WAIT, then=Value(2)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        )
+        .aggregate(total=__import__("django.db.models", fromlist=["Sum"]).Sum("score"))["total"]
+        or 0
+    )
