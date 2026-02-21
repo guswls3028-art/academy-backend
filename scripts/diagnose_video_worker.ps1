@@ -152,9 +152,9 @@ if ($firstSubnet) {
     $rtAssoc = aws ec2 describe-route-tables --region $Region --filters "Name=association.subnet-id,Values=$firstSubnet" --query "RouteTables[0].RouteTableId" --output text 2>$null
     if ($rtAssoc -and $rtAssoc -ne "None") {
         $routes = aws ec2 describe-route-tables --route-table-ids $rtAssoc --region $Region --query "RouteTables[0].Routes[?DestinationCidrBlock=='0.0.0.0/0']" --output json 2>$null | ConvertFrom-Json
-        $nat = $routes | Where-Object { $_.GatewayId -or $_.NatGatewayId } | Select-Object -First 1
-        if ($nat.NatGatewayId) { Write-Line "  Route 0.0.0.0/0 -> NatGatewayId: $($nat.NatGatewayId)  [OK]" }
-        elseif ($nat.GatewayId -and $nat.GatewayId -like "igw-*") { Write-Line "  Route 0.0.0.0/0 -> Internet Gateway (public subnet)" }
+        $nat = $null; if ($routes) { $nat = $routes | Where-Object { $_.GatewayId -or $_.NatGatewayId } | Select-Object -First 1 }
+        if ($nat -and $nat.NatGatewayId) { Write-Line "  Route 0.0.0.0/0 -> NatGatewayId: $($nat.NatGatewayId)  [OK]" }
+        elseif ($nat -and $nat.GatewayId -and $nat.GatewayId -like "igw-*") { Write-Line "  Route 0.0.0.0/0 -> Internet Gateway (public subnet)" }
         else { Write-Line "  No 0.0.0.0/0 route  [FAIL] -> SQS connect timeout likely (no NAT/IGW)" }
     }
     $endpoints = aws ec2 describe-vpc-endpoints --region $Region --filters "Name=vpc-id,Values=$vpcId" "Name=service-name,Values=com.amazonaws.$Region.sqs" --query "VpcEndpoints[*].VpcEndpointId" --output text 2>$null
