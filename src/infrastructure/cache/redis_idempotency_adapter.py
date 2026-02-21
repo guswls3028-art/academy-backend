@@ -7,6 +7,7 @@ Worker는 Repository 호출 전 반드시 이 어댑터를 통해 락을 획득�
 from __future__ import annotations
 
 import logging
+import threading
 
 from src.application.ports.idempotency import IIdempotency
 from libs.redis.client import get_redis_client
