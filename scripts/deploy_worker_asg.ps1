@@ -166,9 +166,12 @@ if (-not $ltVideoExists) {
 $ErrorActionPreference = $ea
 Remove-Item $ltVideoFile -Force -ErrorAction SilentlyContinue
 # Video ASG MixedInstancesPolicy requires this LT; abort if missing
-$vidLtCheck = aws ec2 describe-launch-templates --launch-template-names $LtVideoName --region $Region --query "LaunchTemplates[0].LaunchTemplateName" --output text 2>$null
+$vidLtCheck = $null
+$eaVerify = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+try { $vidLtCheck = aws ec2 describe-launch-templates --launch-template-names $LtVideoName --region $Region --query "LaunchTemplates[0].LaunchTemplateName" --output text 2>$null } catch {}
+$ErrorActionPreference = $eaVerify
 if (-not $vidLtCheck -or $vidLtCheck -eq "None") {
-    Write-Error "Launch template $LtVideoName not found after create. MixedInstancesPolicy will fail. Aborting."
+    Write-Error "Launch template $LtVideoName not found after create. MixedInstancesPolicy will fail. Aborting. (If you have academy-video-worker-asg LT, create may have failed; check aws ec2 create-launch-template output.)"
     exit 1
 }
 Write-Host "      Verified: $LtVideoName exists." -ForegroundColor Gray
