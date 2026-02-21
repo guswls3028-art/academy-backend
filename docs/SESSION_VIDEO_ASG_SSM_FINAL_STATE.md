@@ -43,7 +43,7 @@
 | **verify_ssm_api_env.ps1** | SSM get을 Process + JSON 파싱으로 변경. 한국어 Windows cp949 회피를 위해 현재 프로세스에 `PYTHONIOENCODING=utf-8`, `PYTHONUTF8=1` 설정 후 자식(aws) 상속. True/False 출력 제거(`[void]` 등). AWS CLI 경로 자동 탐색(Get-Command + 고정 경로 후보). |
 | **add_lambda_internal_key_api.ps1** | SSM get 실패/비어 있으면 **한 줄로 덮어쓰지 않고** 종료. "Refusing to overwrite SSM with a single key (would wipe DB_*, R2_*, etc.)" 메시지 출력. |
 | **API env 복구 플로우** | SSM `/academy/api/env`에 전체 .env(DB_*, R2_*, REDIS_* 등) 유지. 로컬: `upload_env_to_ssm.ps1` → EC2: `deploy_api_on_server.sh` → `verify_api_after_deploy.sh`. DB null / 500 원인은 SSM 한 줄 덮어쓰기였음. |
-| **Lambda (queue_depth_metric)** | 동일 VPC(vpc-0831...), API와 같은 subnet(subnet-049e711f41fdff71b). Lambda 전용 SG(sg-0944a30cabd0c022e) 사용. API SG(sg-0051cc8f79c04b058)에 Lambda SG → 8000 허용. Monitoring/SQS VPC Endpoint는 이미 존재. Endpoint SG(sg-0ff11f1b511861447)에 Lambda SG → 443 허용. |
+| **Lambda (queue_depth_metric)** | 동일 VPC·Subnet·SG 적용 완료. (VPC/Subnet/SG ID는 §0 표 참고.) API SG에 Lambda SG → 8000 허용. VPC Endpoint SG에 Lambda SG → 443 허용. |
 | **Lambda ENV** | `VIDEO_BACKLOG_API_INTERNAL=http://172.30.3.142:8000/api/v1/internal/video/backlog-count/`, `LAMBDA_INTERNAL_API_KEY=hakwonplus-internal-key` 설정됨. |
 
 ---
