@@ -67,29 +67,33 @@ $startMs = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToUnixTimeMilliseconds()
 & aws logs tail $logGroup --since 5m --region $Region --format short
 
 # ------------------------------------------------------------------------------
-# 2) Lambda CloudWatch Logs (last 30 min) — BacklogCount, video_backlog, 403, timeout
+# 2) Lambda CloudWatch Logs (last 30 min) — VideoQueueDepthTotal, 403, timeout
 # ------------------------------------------------------------------------------
 Write-Host ""
 Write-Host "========== 2. Lambda CloudWatch Logs (last 30 min) =========="
 $start30 = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $end30 = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $start30Ms = [DateTimeOffset]::Parse($start30).ToUnixTimeMilliseconds()
-Write-Host "[Filter: BacklogCount]"
-& aws logs filter-log-events --log-group-name $logGroup --region $Region --start-time $start30Ms --filter-pattern "BacklogCount" --output json
-Write-Host "[Filter: video_backlog]"
-& aws logs filter-log-events --log-group-name $logGroup --region $Region --start-time $start30Ms --filter-pattern "video_backlog" --output json
+Write-Host "[Filter: VideoQueueDepthTotal]"
+& aws logs filter-log-events --log-group-name $logGroup --region $Region --start-time $start30Ms --filter-pattern "VideoQueueDepthTotal" --output json
 Write-Host "[Filter: 403]"
 & aws logs filter-log-events --log-group-name $logGroup --region $Region --start-time $start30Ms --filter-pattern "403" --output json
 Write-Host "[Filter: timeout]"
 & aws logs filter-log-events --log-group-name $logGroup --region $Region --start-time $start30Ms --filter-pattern "timeout" --output json
 
 # ------------------------------------------------------------------------------
-# 3) CloudWatch Metric Used By ASG (BacklogCount)
+# 3) CloudWatch Metric Used By ASG (VideoQueueDepthTotal / BacklogCount)
 # ------------------------------------------------------------------------------
 Write-Host ""
-Write-Host "========== 3. CloudWatch Metric (Academy/VideoProcessing BacklogCount) =========="
+Write-Host "========== 3. CloudWatch Metric (Academy/VideoProcessing) =========="
 $mStart = (Get-Date).AddMinutes(-60).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $mEnd = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+Write-Host "[VideoQueueDepthTotal - SQS 기반 스케일링 메트릭]"
+$cwVideoTotal = aws cloudwatch get-metric-statistics --region $Region --namespace "Academy/VideoProcessing" --metric-name VideoQueueDepthTotal `
+    --dimensions Name=WorkerType,Value=Video Name=AutoScalingGroupName,Value=$AsgName `
+    --start-time $mStart --end-time $mEnd --period 60 --statistics Average Maximum Minimum SampleCount --output json
+Write-Host $cwVideoTotal
+Write-Host "[BacklogCount - 레거시, 제거 권장]"
 & aws cloudwatch get-metric-statistics --region $Region --namespace "Academy/VideoProcessing" --metric-name BacklogCount `
     --dimensions Name=WorkerType,Value=Video Name=AutoScalingGroupName,Value=$AsgName `
     --start-time $mStart --end-time $mEnd --period 60 --statistics Average Maximum Minimum SampleCount --output json
@@ -101,7 +105,14 @@ Write-Host ""
 Write-Host "========== 4. SQS Runtime State =========="
 $qurl = aws sqs get-queue-url --queue-name $QueueName --region $Region --query "QueueUrl" --output text
 Write-Host "QueueUrl: $qurl"
-& aws sqs get-queue-attributes --queue-url $qurl --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible ApproximateNumberOfMessagesDelayed --region $Region --output json
+$sqsAttrsRaw = aws sqs get-queue-attributes --queue-url $qurl --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible ApproximateNumberOfMessagesDelayed --region $Region --output json
+Write-Host $sqsAttrsRaw
+if ($sqsAttrsRaw) {
+    $sqsA = ($sqsAttrsRaw | ConvertFrom-Json).Attributes
+    $v = [int]($sqsA.ApproximateNumberOfMessages)
+    $nv = [int]($sqsA.ApproximateNumberOfMessagesNotVisible)
+    $diagnoseResult.sqs = @{ visible = $v; notVisible = $nv; total = $v + $nv }
+}
 
 # ------------------------------------------------------------------------------
 # 5) ASG Scaling Activities (last 30) — full StatusReason, Details, Cause
