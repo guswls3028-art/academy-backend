@@ -115,13 +115,25 @@ class Video(TimestampModel):
 
     # --------------------------------------------------
     # Worker Lease (다중 노드 중복 처리 방지용)
-    # - 기존 reclaim(updated_at 기반) 구조를 유지하면서,
-    #   중앙 통제용 lease 정보를 "추가"로 기록한다.
-    # - 서버/워커가 서로 내부 구현 몰라도 동작(헤더만 사용).
+    # - Job 기반 마이그레이션 후에도 일부 경로에서 사용 가능.
     # --------------------------------------------------
     processing_started_at = models.DateTimeField(null=True, blank=True)
     leased_until = models.DateTimeField(null=True, blank=True)
     leased_by = models.CharField(max_length=64, blank=True, default="")
+
+    # --------------------------------------------------
+    # Job 기반 실행 (Enterprise)
+    # - current_job: 최신/진행 중 transcoding Job. 결과 반영 시 SUCCEEDED/FAILED.
+    # - "processing" 의미: current_job 존재 + state in (QUEUED, RUNNING, RETRY_WAIT)
+    # --------------------------------------------------
+    current_job = models.ForeignKey(
+        "VideoTranscodeJob",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text="현재 transcoding Job (진행 중 또는 최종)",
+    )
 
     class Meta:
         ordering = ["order", "id"]
