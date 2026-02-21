@@ -198,6 +198,8 @@ def set_video_worker_desired(
     except Exception as e:
         logger.warning("set_video_worker_desired failed: %s", e)
 
+    return result
+
 
 def lambda_handler(event: dict, context: Any) -> dict:
     sqs = boto3.client("sqs", region_name=REGION, config=BOTO_CONFIG)
@@ -213,7 +215,7 @@ def lambda_handler(event: dict, context: Any) -> dict:
     ai_total = ai_visible  # 메트릭은 visible만 (기존과 동일)
 
     ssm = boto3.client("ssm", region_name=REGION, config=BOTO_CONFIG)
-    set_video_worker_desired(autoscaling, ssm, video_visible, video_in_flight)
+    video_scale_result = set_video_worker_desired(autoscaling, ssm, video_visible, video_in_flight)
 
     now = __import__("datetime").datetime.utcnow()
     metric_data = [
@@ -249,4 +251,5 @@ def lambda_handler(event: dict, context: Any) -> dict:
         "ai_queue_depth": ai_total,
         "video_queue_depth": video_visible,
         "messaging_queue_depth": messaging_visible,
+        **video_scale_result,
     }
