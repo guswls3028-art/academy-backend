@@ -92,3 +92,71 @@
 - GPT가 준 **조사·복구 순서와 원인 설명은 이 레포 구조와 일치**함.
 - **차이점**: 환경변수는 **DB_*** 사용, **RDS_*** 는 사용하지 않음** — SSM/호스트 .env 확인 시 DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, REDIS_*, R2_* 위주로 보면 됨.
 - **절차 그대로 진행해도 됨.** (1) SSM 내용 확인 → (2) 필요 시 로컬 전체 .env 로 `upload_env_to_ssm.ps1` → (3) EC2에서 `deploy_api_on_server.sh` → (4) 컨테이너 DATABASES·backlog-count 200 확인 → (5) 그 다음 Lambda/CloudWatch 확인.
+
+---
+
+## 10. 실행 체크리스트 (복붙용)
+
+### 1) 로컬 — SSM 내용 확인
+
+```powershell
+aws ssm get-parameter --name "/academy/api/env" --with-decryption --region ap-northeast-2 --query "Parameter.Value" --output text
+```
+
+- 출력에 `DB_HOST=`, `DB_NAME=`, `REDIS_HOST=`, `R2_` 등이 없으면 SSM 손상. → 3) 으로.
+
+### 2) EC2 — 호스트 .env 확인
+
+```bash
+cat /home/ec2-user/.env
+```
+
+- `DB_HOST`, `DB_NAME`, `REDIS_HOST`, `R2_` 등 있는지 확인.
+
+### 3) SSM 복구 (로컬, 전체 .env 있을 때)
+
+```powershell
+.\scripts\upload_env_to_ssm.ps1
+```
+
+### 4) EC2 — API 재배포 (SSM → .env → 빌드·재시작)
+
+```bash
+cd /home/ec2-user/academy
+bash scripts/deploy_api_on_server.sh
+```
+
+### 5) EC2 — 컨테이너 DB 설정 확인
+
+```bash
+docker exec academy-api python -c "from django.conf import settings; print(settings.DATABASES['default'])"
+```
+
+- `HOST`, `NAME`, `USER` 가 null 이 아니어야 함.
+
+### 6) EC2 — backlog-count 200 확인
+
+```bash
+# requests 있을 때
+docker exec academy-api python -c "
+import os, requests
+r = requests.get('http://127.0.0.1:8000/api/v1/internal/video/backlog-count/', headers={'X-Internal-Key': os.environ.get('LAMBDA_INTERNAL_API_KEY','')})
+print(r.status_code, r.text)
+"
+# 또는 (EC2 호스트에서, .env 로드 후)
+source /home/ec2-user/.env 2>/dev/null || true
+curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8000/api/v1/internal/video/backlog-count/" -H "X-Internal-Key: ${LAMBDA_INTERNAL_API_KEY}"
+```
+
+- 기대: 200.
+
+### 7) 로컬 — Lambda invoke 후 CloudWatch
+
+```powershell
+aws lambda invoke --function-name academy-worker-queue-depth-metric --region ap-northeast-2 response.json
+$start = (Get-Date).AddMinutes(-2).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$end = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+aws cloudwatch get-metric-statistics --namespace "Academy/VideoProcessing" --metric-name "BacklogCount" --dimensions Name=WorkerType,Value=Video Name=AutoScalingGroupName,Value=academy-video-worker-asg --start-time $start --end-time $end --period 60 --statistics Average --region ap-northeast-2
+```
+
+- `Datapoints` 에 값이 있어야 함.
