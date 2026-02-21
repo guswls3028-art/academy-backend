@@ -425,15 +425,10 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         video.status = Video.Status.UPLOADED
         video.save(update_fields=["status", "updated_at"])
 
-        try:
-            if not VideoSQSQueue().enqueue(video):
-                raise ValidationError(
-                    "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."
-                )
-        except ValidationError:
-            raise
-        except Exception:
-            raise
+        if not VideoSQSQueue().enqueue(video):
+            raise ValidationError(
+                "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."
+            )
 
         logger.info(
             "VIDEO_UPLOAD_TRACE | retry enqueued | video_id=%s tenant_id=%s",
