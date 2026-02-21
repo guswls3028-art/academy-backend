@@ -382,7 +382,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        if not ok and reason == "ffmpeg_module_missing":
+        try:
+            if not ok and reason == "ffmpeg_module_missing":
             video.status = Video.Status.UPLOADED
             video.error_reason = ""
             video.save(update_fields=["status", "error_reason"])
