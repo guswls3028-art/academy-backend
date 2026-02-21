@@ -118,7 +118,7 @@ def _job_visibility_and_heartbeat_loop(
                         process.terminate()
                         try:
                             process.wait(timeout=15)
-                        except Exception:
+                        except subprocess.TimeoutExpired:
                             process.kill()
                             process.wait()
                         cancel_event.set()
