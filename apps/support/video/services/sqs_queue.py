@@ -124,6 +124,52 @@ class VideoSQSQueue:
             )
             return False
 
+    def enqueue_by_job(self, job) -> bool:
+        """
+        Job 기반 SQS enqueue. 메시지에 job_id 포함 (DLQ 추적용).
+
+        Args:
+            job: VideoTranscodeJob 객체 (video, tenant_id, id 필요)
+
+        Returns:
+            bool: 성공 여부
+        """
+        from apps.support.video.models import VideoTranscodeJob
+
+        if not isinstance(job, VideoTranscodeJob):
+            logger.error("enqueue_by_job: job must be VideoTranscodeJob, got %s", type(job))
+            return False
+        video = job.video
+        video_id = int(video.id)
+        tenant_id = int(job.tenant_id)
+        file_key = str(video.file_key or "")
+
+        message = {
+            "job_id": str(job.id),
+            "video_id": video_id,
+            "tenant_id": tenant_id,
+            "file_key": file_key,
+        }
+        try:
+            success = self.queue_client.send_message(
+                queue_name=self._get_queue_name(),
+                message=message,
+            )
+            if success:
+                logger.info(
+                    "Video job enqueued | job_id=%s | video_id=%s | tenant_id=%s",
+                    job.id, video_id, tenant_id,
+                )
+            else:
+                logger.error("Failed to enqueue video job | job_id=%s | video_id=%s", job.id, video_id)
+            return bool(success)
+        except Exception as e:
+            logger.exception(
+                "enqueue_by_job exception | job_id=%s video_id=%s error=%s",
+                job.id, video_id, e,
+            )
+            return False
+
     def enqueue_delete_r2(
         self,
         *,
