@@ -35,7 +35,6 @@ $diagnoseResult = @{
 # ------------------------------------------------------------------------------
 Write-Host ""
 Write-Host "========== 1. Lambda Runtime Behavior =========="
-$repoRoot = Split-Path -Parent $PSScriptRoot
 $invokeOut = Join-Path $repoRoot "response_full.json"
 Write-Host "[Invoke]"
 & aws lambda invoke --function-name $LambdaName --region $Region --cli-binary-format raw-in-base64-out $invokeOut
@@ -48,7 +47,14 @@ if (Test-Path $invokeOut) {
 Write-Host "[Payload parsed - metrics]"
 try {
     $payload = Get-Content $invokeOut -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json
-    Write-Host "video_backlog_count: $($payload.video_backlog_count)"
+    $diagnoseResult.lambda = @{
+        video_queue_depth = $payload.video_queue_depth
+        video_queue_depth_total = $payload.video_queue_depth_total
+        video_backlog_count = $payload.video_backlog_count
+        ai_queue_depth = $payload.ai_queue_depth
+        messaging_queue_depth = $payload.messaging_queue_depth
+    }
+    Write-Host "video_queue_depth_total: $($payload.video_queue_depth_total)"
     Write-Host "video_queue_depth: $($payload.video_queue_depth)"
     Write-Host "ai_queue_depth: $($payload.ai_queue_depth)"
     Write-Host "messaging_queue_depth: $($payload.messaging_queue_depth)"
