@@ -4,8 +4,10 @@ SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시.
 - EventBridge rate(1 minute)로 호출.
 - AI/Messaging: Target Tracking (QueueDepth)
 - Video: Lambda 단독 컨트롤. set_desired_capacity 직접 호출.
-  desired = clamp(min, max, visible + inflight)
-  scale-in: visible==0 AND inflight==0 가 STABLE_WINDOW_SECONDS 이상 지속 시에만 min으로 감소.
+  backlog_add = min(visible, MAX_BACKLOG_ADD)
+  desired_raw = inflight + backlog_add
+  desired = clamp(min, max, desired_raw)
+  scale-in: visible==0 AND inflight==0 가 STABLE_ZERO_SECONDS 이상 지속 시에만 min으로.
 
 설계: docs/SSOT_0215/IMPORTANT/ARCH_CHANGE_PROPOSAL_LAMBDA_TO_ASG.md
 """
