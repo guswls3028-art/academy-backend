@@ -15,13 +15,20 @@ $requiredKeys = @("DB_HOST", "DB_NAME", "DB_USER", "REDIS_HOST", "R2_ENDPOINT", 
 $optionalButRecommended = @("LAMBDA_INTERNAL_API_KEY", "DJANGO_SETTINGS_MODULE")
 
 Write-Host "[1/2] Get SSM $SsmName..." -ForegroundColor Cyan
+# Use JSON output so large/Advanced-tier values are captured reliably (--output text can mangle newlines)
+$raw = $null
 try {
-    $raw = aws ssm get-parameter --name $SsmName --with-decryption --region $Region --query "Parameter.Value" --output text 2>&1
+    $json = aws ssm get-parameter --name $SsmName --with-decryption --region $Region --output json 2>&1
+    if ($LASTEXITCODE -eq 0 -and $json) {
+        $obj = $json | ConvertFrom-Json
+        $raw = $obj.Parameter.Value
+    }
 } catch {
     $raw = $null
 }
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($raw)) {
-    Write-Host "  FAIL: SSM get failed or parameter empty." -ForegroundColor Red
+if ($null -eq $raw -or [string]::IsNullOrWhiteSpace($raw)) {
+    Write-Host "  FAIL: SSM get failed or parameter empty. (ExitCode: $LASTEXITCODE)" -ForegroundColor Red
+    if ($json) { Write-Host "  Response length: $($json.Length) chars" -ForegroundColor Gray }
     Write-Host "  Run: .\scripts\upload_env_to_ssm.ps1  (with full .env containing DB_*, REDIS_*, R2_*)" -ForegroundColor Yellow
     exit 1
 }
