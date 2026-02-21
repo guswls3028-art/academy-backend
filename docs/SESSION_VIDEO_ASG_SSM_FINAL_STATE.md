@@ -102,7 +102,7 @@ Lambda가 backlog API 호출 시 **403 Forbidden** 이 나면 BacklogCount 퍼�
 | **add_lambda_internal_key_api.ps1** | SSM get 실패/비어 있으면 **한 줄로 덮어쓰지 않고** 종료. "Refusing to overwrite SSM with a single key (would wipe DB_*, R2_*, etc.)" 메시지 출력. |
 | **API env 복구 플로우** | SSM `/academy/api/env`에 전체 .env(DB_*, R2_*, REDIS_* 등) 유지. 로컬: `upload_env_to_ssm.ps1` → EC2: `deploy_api_on_server.sh` → `verify_api_after_deploy.sh`. DB null / 500 원인은 SSM 한 줄 덮어쓰기였음. |
 | **Lambda (queue_depth_metric)** | 동일 VPC·Subnet·SG 적용 완료. (VPC/Subnet/SG ID는 §0 표 참고.) API SG에 Lambda SG → 8000 허용. VPC Endpoint SG에 Lambda SG → 443 허용. |
-| **Lambda ENV** | `VIDEO_BACKLOG_API_INTERNAL=http://172.30.3.142:8000/api/v1/internal/video/backlog-count/`, `LAMBDA_INTERNAL_API_KEY=hakwonplus-internal-key` 설정됨. |
+| **Lambda ENV** | `VIDEO_BACKLOG_API_INTERNAL=...backlog-count/`, `LAMBDA_INTERNAL_API_KEY`= API와 동일한 값 설정됨. |
 
 ---
 
