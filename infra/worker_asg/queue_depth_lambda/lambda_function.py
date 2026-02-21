@@ -126,8 +126,14 @@ def _is_asg_interrupt_from_api() -> bool:
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode())
             return bool(data.get("interrupt", False))
+    except urllib.error.HTTPError as e:
+        logger.debug("asg-interrupt-status HTTPError | url=%s | status=%s", url, e.code)
+        return False
+    except urllib.error.URLError as e:
+        logger.debug("asg-interrupt-status URLError | url=%s | reason=%s", url, e.reason)
+        return False
     except Exception as e:
-        logger.debug("asg-interrupt-status fetch failed: %s", e)
+        logger.debug("asg-interrupt-status fetch failed | url=%s | error=%s", url, e)
         return False
 
 
@@ -195,7 +201,7 @@ def lambda_handler(event: dict, context: Any) -> dict:
         logger.info("BacklogCount metric published | backlog=%d", video_backlog)
     else:
         logger.warning(
-            "BacklogCount metric skipped (VIDEO_BACKLOG_API fetch failed); not publishing fallback to prevent ASG oscillation"
+            "BacklogCount metric skipped (API fetch failed, see VIDEO_BACKLOG_API* log above); not publishing to prevent ASG oscillation."
         )
 
     logger.info(
