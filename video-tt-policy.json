@@ -1,4 +1,4 @@
-﻿{
+{
   "TargetValue": 20.0,
   "CustomizedMetricSpecification": {
     "MetricName": "BacklogCount",
