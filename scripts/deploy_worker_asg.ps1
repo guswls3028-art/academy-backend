@@ -219,8 +219,9 @@ if ($LASTEXITCODE -ne 0) {
 $ErrorActionPreference = $ea
 
 # ------------------------------------------------------------------------------
-# 5) ASG Video (MixedInstancesPolicy: c6g.large Spot primary, t4g.medium fallback)
-#     Drain-safe: ENTERPRISE DRAIN logic handles Spot interruption.
+# 5) ASG Video (MixedInstancesPolicy only; LaunchTemplate 필드 사용 금지)
+#     c6g.large Spot primary, t4g.medium fallback. Drain-safe: ENTERPRISE DRAIN.
+#     기존 ASG가 LaunchTemplate 기반이면 Update로 전환 불가 → 삭제 후 재생성.
 # ------------------------------------------------------------------------------
 Write-Host "[5/8] ASG (Video worker, MixedInstancesPolicy Spot, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
 $AsgVideoName = "academy-video-worker-asg"
@@ -230,17 +231,42 @@ $mixedPolicyVideo = @"
 $mixedPolicyVideoFile = Join-Path $RepoRoot "asg_video_mixed_policy.json"
 [System.IO.File]::WriteAllText($mixedPolicyVideoFile, $mixedPolicyVideo.Trim(), $utf8NoBom)
 $mixedPolicyVideoPath = "file://$($mixedPolicyVideoFile -replace '\\','/' -replace ' ', '%20')"
+
+$videoAsgJson = aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgVideoName --region $Region --query "AutoScalingGroups[0]" --output json 2>$null
+$needRecreate = $false
+if ($videoAsgJson) {
+    $asgObj = $videoAsgJson | ConvertFrom-Json
+    if (-not $asgObj.MixedInstancesPolicy -or $null -eq $asgObj.MixedInstancesPolicy) {
+        $needRecreate = $true
+        Write-Host "      Video ASG is LaunchTemplate-based (MixedInstancesPolicy null). Deleting for recreate..." -ForegroundColor Yellow
+    }
+}
+
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+if ($needRecreate) {
+    aws autoscaling delete-auto-scaling-group --auto-scaling-group-name $AsgVideoName --force-delete --region $Region 2>$null
+    Write-Host "      Waiting 15s for ASG deletion..." -ForegroundColor Gray
+    Start-Sleep -Seconds 15
+}
+
 aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
     --mixed-instances-policy $mixedPolicyVideoPath `
     --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
     --vpc-zone-identifier $SubnetIds --region $Region 2>$null
 if ($LASTEXITCODE -ne 0) {
-    aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
-        --mixed-instances-policy $mixedPolicyVideoPath `
-        --vpc-zone-identifier $SubnetIds `
-        --min-size 1 --max-size $MaxCapacity --region $Region 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    if (-not $needRecreate) {
+        Write-Host "      ASG exists; update does not switch LaunchTemplate→MixedInstancesPolicy. Forcing delete and recreate..." -ForegroundColor Yellow
+        aws autoscaling delete-auto-scaling-group --auto-scaling-group-name $AsgVideoName --force-delete --region $Region 2>$null
+        Start-Sleep -Seconds 15
+        aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
+            --mixed-instances-policy $mixedPolicyVideoPath `
+            --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
+            --vpc-zone-identifier $SubnetIds --region $Region 2>$null
+    }
+}
+if ($LASTEXITCODE -eq 0 -and -not $needRecreate) {
+    $currentMix = aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgVideoName --region $Region --query "AutoScalingGroups[0].MixedInstancesPolicy" --output json 2>$null
+    if ($currentMix -and $currentMix -ne "null") {
         Write-Host "      Triggering instance refresh..." -ForegroundColor Gray
         aws autoscaling start-instance-refresh --auto-scaling-group-name $AsgVideoName --region $Region 2>$null
     }
