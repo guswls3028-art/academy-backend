@@ -68,47 +68,14 @@ if (-not $AmiId) {
 }
 
 # ------------------------------------------------------------------------------
-# 1) Queue depth Lambda + EventBridge
+# 1) Queue depth Lambda + EventBridge — DISABLED (managed separately)
 # ------------------------------------------------------------------------------
-Write-Host "[1/8] Queue depth Lambda + EventBridge (1 min)..." -ForegroundColor Cyan
-$ZipPath = Join-Path $RepoRoot "worker_queue_depth_lambda.zip"
-if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
-Compress-Archive -Path (Join-Path $QueueDepthLambdaDir "lambda_function.py") -DestinationPath $ZipPath -Force
-
-$RoleArn = "arn:aws:iam::${AccountId}:role/${LambdaRoleName}"
-$lambdaExists = $false
-try { aws lambda get-function --function-name $QueueDepthLambdaName --region $Region 2>$null | Out-Null; $lambdaExists = $true } catch {}
-
-if ($lambdaExists) {
-    aws lambda update-function-code --function-name $QueueDepthLambdaName --zip-file "fileb://$ZipPath" --region $Region | Out-Null
-    # B1: VIDEO_BACKLOG_API_URL 설정 시 DB 기반 BacklogCount 사용 (예: https://api.example.com)
-    # 미설정 시 SQS visible+inflight fallback
-    # $envJson = '{"Variables":{"VIDEO_BACKLOG_API_URL":"https://api.example.com"}}'
-    # aws lambda update-function-configuration --function-name $QueueDepthLambdaName --region $Region --environment $envJson
-} else {
-    aws lambda create-function --function-name $QueueDepthLambdaName --runtime python3.11 --role $RoleArn `
-        --handler lambda_function.lambda_handler --zip-file "fileb://$ZipPath" --timeout 30 --memory-size 128 `
-        --region $Region | Out-Null
-}
-Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
-
-aws events put-rule --name $EventBridgeRuleName --schedule-expression "rate(1 minute)" --state ENABLED --region $Region | Out-Null
-$LambdaArn = (aws lambda get-function --function-name $QueueDepthLambdaName --region $Region --query "Configuration.FunctionArn" --output text)
-aws events put-targets --rule $EventBridgeRuleName --targets "Id=1,Arn=$LambdaArn" --region $Region | Out-Null
-$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-aws lambda add-permission --function-name $QueueDepthLambdaName --statement-id "EventBridgeInvoke" `
-    --action "lambda:InvokeFunction" --principal "events.amazonaws.com" `
-    --source-arn "arn:aws:events:${Region}:${AccountId}:rule/${EventBridgeRuleName}" --region $Region 2>$null
-$ErrorActionPreference = $ea
-if ($LambdaVpcSubnetId -and $LambdaVpcSecurityGroupId) {
-    Write-Host "      Configuring Lambda VPC: Subnet=$LambdaVpcSubnetId, SG=$LambdaVpcSecurityGroupId" -ForegroundColor Gray
-    aws lambda update-function-configuration --function-name $QueueDepthLambdaName --region $Region `
-        --vpc-config "SubnetIds=$LambdaVpcSubnetId,SecurityGroupIds=$LambdaVpcSecurityGroupId" | Out-Null
-    if ($LASTEXITCODE -ne 0) { Write-Host "      WARNING: Lambda VPC config update failed." -ForegroundColor Yellow }
-}
-
-# Lambda role needs SQS/CloudWatch (add iam_policy_queue_depth_lambda.json inline or separate policy)
-Write-Host "      Ensure role $LambdaRoleName has SQS GetQueueAttributes + CloudWatch PutMetricData (Academy/Workers)." -ForegroundColor Yellow
+# Video worker autoscaling depends on Lambda in VPC with VIDEO_BACKLOG_API_INTERNAL.
+# Re-applying Lambda/EventBridge here would overwrite config and cause fallback backlog=0.
+# Manage Lambda via infra/worker_asg/queue_depth_lambda and AWS console/CLI only.
+# Write-Host "[1/8] Queue depth Lambda + EventBridge (1 min)..." -ForegroundColor Cyan
+# $ZipPath = Join-Path $RepoRoot "worker_queue_depth_lambda.zip"
+# ... (Lambda create/update, EventBridge rule, VPC config — omitted)
 
 # ------------------------------------------------------------------------------
 # 2) Launch Template AI
