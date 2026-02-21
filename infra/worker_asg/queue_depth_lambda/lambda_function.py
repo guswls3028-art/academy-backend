@@ -3,21 +3,16 @@ SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시.
 
 - EventBridge rate(1 minute)로 호출.
 - AI/Messaging: Target Tracking (QueueDepth, Academy/Workers)
-- Video: B1 TargetTracking (BacklogCount, Academy/VideoProcessing)
-  - set_desired_capacity 호출 금지. ASG TargetTrackingPolicy가 스케일 제어.
-  - BacklogCount = UPLOADED + PROCESSING (Django DB SSOT)
-  - VIDEO_BACKLOG_API_INTERNAL(우선) 또는 VIDEO_BACKLOG_API_URL 설정 시 해당 API 호출하여 DB 기반 backlog 사용
-  - 미설정 시 SQS visible+inflight를 fallback으로 사용 (DB가 SSOT이나 비상용)
+- Video: 스케일링은 **오직 SQS** 기준. DB/backlog API 미사용.
+  - Academy/VideoProcessing VideoQueueDepthTotal = SQS(visible + notVisible) 합산.
+  - ASG TargetTracking이 이 메트릭만 사용 (Scale Trigger Source = Worker Pull Source = SQS).
 
-설계: docs/B1_METRIC_SCHEMA_EXTRACTION_REPORT.md
+설계: docs/VIDEO_WORKER_SCALING_SSOT.md
 """
 from __future__ import annotations
 
-import json
 import os
 import logging
-import urllib.request
-import urllib.error
 from typing import Any
 
 import boto3
@@ -37,39 +32,14 @@ AI_WORKER_ASG_NAME = os.environ.get("AI_WORKER_ASG_NAME", "academy-ai-worker-asg
 AI_WORKER_ASG_MAX = int(os.environ.get("AI_WORKER_ASG_MAX", "20"))
 VIDEO_WORKER_ASG_NAME = os.environ.get("VIDEO_WORKER_ASG_NAME", "academy-video-worker-asg")
 VIDEO_WORKER_ASG_MAX = int(os.environ.get("VIDEO_WORKER_ASG_MAX", "20"))
-# VIDEO_BACKLOG_API_INTERNAL: VPC 내부용 backlog 엔드포인트 전체 URL. 실패 시 publish 스킵(0 fallback 없음).
-VIDEO_BACKLOG_API_INTERNAL = os.environ.get(
-    "VIDEO_BACKLOG_API_INTERNAL",
-    "http://172.30.3.142:8000/api/v1/internal/video/backlog/",
-).rstrip("/")
-VIDEO_BACKLOG_API_URL = os.environ.get("VIDEO_BACKLOG_API_URL", "").rstrip("/")
-# Backlog 조회 URL: INTERNAL 우선(전체 URL), 없으면 PUBLIC base + /api/v1/internal/video/backlog-count/
-VIDEO_BACKLOG_FETCH_URL = (
-    VIDEO_BACKLOG_API_INTERNAL
-    if VIDEO_BACKLOG_API_INTERNAL
-    else (f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/backlog-count/" if VIDEO_BACKLOG_API_URL else None)
-)
-# asg-interrupt용 base (INTERNAL일 때 호스트만 추출)
-VIDEO_BACKLOG_API_BASE = (
-    VIDEO_BACKLOG_API_INTERNAL.split("/internal/")[0]
-    if (VIDEO_BACKLOG_API_INTERNAL and "/internal/" in VIDEO_BACKLOG_API_INTERNAL)
-    else VIDEO_BACKLOG_API_URL
-)
-LAMBDA_INTERNAL_API_KEY = os.environ.get("LAMBDA_INTERNAL_API_KEY", "")
-# Host header when calling internal API by IP (avoids Django DisallowedHost). Use allowed host e.g. api.hakwonplus.com.
-VIDEO_BACKLOG_API_HOST = os.environ.get("VIDEO_BACKLOG_API_HOST", "api.hakwonplus.com").strip() or None
 MESSAGING_WORKER_ASG_NAME = os.environ.get("MESSAGING_WORKER_ASG_NAME", "academy-messaging-worker-asg")
 MESSAGING_WORKER_ASG_MAX = int(os.environ.get("MESSAGING_WORKER_ASG_MAX", "20"))
 MESSAGING_WORKER_ASG_MIN = int(os.environ.get("MESSAGING_WORKER_ASG_MIN", "1"))
 TARGET_MESSAGES_PER_INSTANCE = int(os.environ.get("TARGET_MESSAGES_PER_INSTANCE", "20"))
+# Video 스케일링용 커스텀 메트릭 이름 (SQS total only)
+VIDEO_QUEUE_DEPTH_METRIC = os.environ.get("VIDEO_QUEUE_DEPTH_METRIC", "VideoQueueDepthTotal")
 
 BOTO_CONFIG = Config(retries={"max_attempts": 3, "mode": "standard"})
-
-# WAF 등에서 Lambda 기본 User-Agent 차단 방지
-HTTP_USER_AGENT = os.environ.get(
-    "HTTP_USER_AGENT",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-)
 
 
 def get_queue_counts(sqs_client, queue_name: str) -> tuple[int, int]:
