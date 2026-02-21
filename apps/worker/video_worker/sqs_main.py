@@ -227,12 +227,17 @@ def main() -> int:
     consecutive_errors = 0
     max_consecutive_errors = 10
 
+    stop_spot_poller = threading.Event()
+    spot_poller_thread = threading.Thread(target=_spot_interruption_poller, args=(stop_spot_poller,), daemon=True)
+    spot_poller_thread.start()
+
     try:
-        while not _shutdown:
+        while not _shutdown and not spot_termination_event.is_set():
             try:
-                # SQS Long Polling으로 메시지 수신
+                # Shutdown/Spot 시 long poll 중단 (visibility 반환 지연 최소화)
+                wait_sec = 0 if (_shutdown or spot_termination_event.is_set()) else SQS_WAIT_TIME_SECONDS
                 try:
-                    message = queue.receive_message(wait_time_seconds=SQS_WAIT_TIME_SECONDS)
+                    message = queue.receive_message(wait_time_seconds=wait_sec)
                 except QueueUnavailableError as e:
                     # 로컬 등 AWS 자격 증명 없을 때: 로그 한 번, 60초 대기 후 재시도
                     logger.warning(
