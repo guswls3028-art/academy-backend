@@ -300,12 +300,15 @@ def main() -> int:
                     from academy.adapters.db.django.repositories_video import job_is_cancel_requested
                     return job_is_cancel_requested(job_id)
 
+                cancel_event = threading.Event()
                 job_dict = {
                     "video_id": int(video_id),
                     "file_key": str(file_key or ""),
                     "tenant_id": int(tenant_id),
                     "tenant_code": str(tenant_code or ""),
                     "_cancel_check": _cancel_check,
+                    "_job_id": job_id,
+                    "_cancel_event": cancel_event,
                 }
 
                 if _cancel_check():
@@ -321,7 +324,7 @@ def main() -> int:
                 stop_heartbeat = threading.Event()
                 heartbeat_thread = threading.Thread(
                     target=_job_visibility_and_heartbeat_loop,
-                    args=(queue, receipt_handle, job_id, stop_heartbeat),
+                    args=(queue, receipt_handle, job_id, stop_heartbeat, cancel_event),
                     daemon=True,
                 )
                 heartbeat_thread.start()
