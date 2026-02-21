@@ -124,6 +124,38 @@ class VideoSQSQueue:
             )
             return False
 
+    def create_job_and_enqueue(self, video: Video) -> Optional["VideoTranscodeJob"]:
+        """
+        Job 생성 + enqueue. upload_complete, retry에서 사용.
+        video.status must be UPLOADED.
+        """
+        from apps.support.video.models import VideoTranscodeJob
+
+        if video.status != Video.Status.UPLOADED:
+            logger.warning("create_job_and_enqueue: video %s status=%s (expected UPLOADED)", video.id, video.status)
+            return None
+        try:
+            tenant = video.session.lecture.tenant
+            tenant_id = int(tenant.id)
+        except Exception:
+            logger.error("Cannot get tenant for video %s", video.id)
+            return None
+
+        job = VideoTranscodeJob.objects.create(
+            video=video,
+            tenant_id=tenant_id,
+            state=VideoTranscodeJob.State.QUEUED,
+        )
+        video.current_job_id = job.id
+        video.save(update_fields=["current_job_id", "updated_at"])
+
+        if not self.enqueue_by_job(job):
+            job.delete()
+            video.current_job_id = None
+            video.save(update_fields=["current_job_id", "updated_at"])
+            return None
+        return job
+
     def enqueue_by_job(self, job) -> bool:
         """
         Job 기반 SQS enqueue. 메시지에 job_id 포함 (DLQ 추적용).
