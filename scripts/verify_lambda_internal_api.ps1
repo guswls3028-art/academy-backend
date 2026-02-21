@@ -65,7 +65,8 @@ if (-not (Test-Path $remoteShPath)) {
     exit 1
 }
 
-$keyEscaped = $InternalKey -replace "'", "'\''"
+# base64로 전달 (특수문자·따옴표 이스케이프 이슈 회피)
+$keyB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($InternalKey))
 
 Write-Host "Verifying Lambda internal API (academy-api @ $apiIp) ...`n" -ForegroundColor Cyan
 
@@ -75,7 +76,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-$output = ssh -o StrictHostKeyChecking=accept-new -i $apiKeyPath "${EC2_USER}@${apiIp}" "export LIK='$keyEscaped'; bash /tmp/_verify_internal_api_remote.sh" 2>&1
+$output = ssh -o StrictHostKeyChecking=accept-new -i $apiKeyPath "${EC2_USER}@${apiIp}" "export LIK_B64='$keyB64'; bash /tmp/_verify_internal_api_remote.sh" 2>&1
 
 $inLocal = $false
 $inPublic = $false
