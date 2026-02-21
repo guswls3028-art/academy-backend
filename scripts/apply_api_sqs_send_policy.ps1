@@ -21,10 +21,8 @@ $minPath = "C:\academy\infra\worker_asg\iam_policy_api_sqs_send.min.json"
 [System.IO.File]::WriteAllText($minPath, $minJson, [System.Text.UTF8Encoding]::new($false))
 
 Write-Host "[2/3] Applying IAM policy to $RoleName..." -ForegroundColor Cyan
-aws iam put-role-policy `
-  --role-name $RoleName `
-  --policy-name $PolicyName `
-  --policy-document "file:///$($minPath -replace '\\','/')"
+$fileUri = "file://" + ($minPath -replace '\\','/')
+aws iam put-role-policy --role-name $RoleName --policy-name $PolicyName --policy-document $fileUri
 
 Write-Host "[3/3] Verifying policy..." -ForegroundColor Cyan
 $out = aws iam get-role-policy --role-name $RoleName --policy-name $PolicyName 2>&1
