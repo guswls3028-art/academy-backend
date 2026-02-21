@@ -65,19 +65,85 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
     return visible
 
 
-def get_in_service_count(autoscaling_client, asg_name: str) -> int:
-    """ASG InService 인스턴스 수."""
+def _get_stable_zero_since(ssm_client) -> int:
+    """0,0 상태가 시작된 Unix timestamp. 없으면 0."""
+    try:
+        r = ssm_client.get_parameter(Name=SSM_STABLE_ZERO_PARAM, WithDecryption=False)
+        return int(r["Parameter"]["Value"] or 0)
+    except ssm_client.exceptions.ParameterNotFound:
+        return 0
+    except Exception as e:
+        logger.warning("get_parameter %s failed: %s", SSM_STABLE_ZERO_PARAM, e)
+        return 0
+
+
+def _set_stable_zero_since(ssm_client, value: int) -> None:
+    try:
+        ssm_client.put_parameter(
+            Name=SSM_STABLE_ZERO_PARAM,
+            Value=str(value),
+            Type="String",
+            Overwrite=True,
+        )
+    except Exception as e:
+        logger.warning("put_parameter %s failed: %s", SSM_STABLE_ZERO_PARAM, e)
+
+
+def set_video_worker_desired(
+    autoscaling_client,
+    ssm_client,
+    visible: int,
+    inflight: int,
+) -> None:
+    """
+    Video ASG desired capacity를 Lambda 단독으로 설정.
+    desired_raw = visible + inflight (1 worker = 1 encoding)
+    scale-in: visible==0 AND inflight==0 가 STABLE_WINDOW_SECONDS 이상 지속 시에만 min으로.
+    """
+    desired_raw = visible + inflight
+    now_ts = int(__import__("time").time())
+
+    if visible > 0 or inflight > 0:
+        _set_stable_zero_since(ssm_client, 0)  # reset
+        new_desired = max(VIDEO_WORKER_ASG_MIN, min(VIDEO_WORKER_ASG_MAX, desired_raw))
+    else:
+        stable_since = _get_stable_zero_since(ssm_client)
+        if stable_since == 0:
+            _set_stable_zero_since(ssm_client, now_ts)
+            new_desired = None  # do not change (keep current)
+        elif (now_ts - stable_since) >= STABLE_WINDOW_SECONDS:
+            new_desired = VIDEO_WORKER_ASG_MIN
+            _set_stable_zero_since(ssm_client, 0)
+        else:
+            new_desired = None
+
+    if new_desired is None:
+        logger.info(
+            "video_asg | visible=%d inflight=%d desired_raw=%d new_desired=unchanged (stable window)",
+            visible, inflight, desired_raw,
+        )
+        return
+
     try:
         asgs = autoscaling_client.describe_auto_scaling_groups(
-            AutoScalingGroupNames=[asg_name],
+            AutoScalingGroupNames=[VIDEO_WORKER_ASG_NAME],
         )
         if not asgs.get("AutoScalingGroups"):
-            return 0
-        instances = asgs["AutoScalingGroups"][0].get("Instances", [])
-        return sum(1 for i in instances if i.get("LifecycleState") == "InService")
+            logger.warning("ASG not found: %s", VIDEO_WORKER_ASG_NAME)
+            return
+        current = asgs["AutoScalingGroups"][0]["DesiredCapacity"]
+        if current == new_desired:
+            return
+        autoscaling_client.set_desired_capacity(
+            AutoScalingGroupName=VIDEO_WORKER_ASG_NAME,
+            DesiredCapacity=new_desired,
+        )
+        logger.info(
+            "video_asg | visible=%d inflight=%d desired_raw=%d new_desired=%d (was %d)",
+            visible, inflight, desired_raw, new_desired, current,
+        )
     except Exception as e:
-        logger.warning("get_in_service_count failed for %s: %s", asg_name, e)
-        return 1  # fallback: 1로 나눠서 metric 푸시
+        logger.warning("set_video_worker_desired failed: %s", e)
 
 
 def lambda_handler(event: dict, context: Any) -> dict:
