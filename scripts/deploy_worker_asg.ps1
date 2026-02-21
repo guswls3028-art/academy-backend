@@ -21,7 +21,9 @@ param(
     [switch]$UploadEnvToSsm = $true,   # if .env exists, upload to SSM /academy/workers/env
     [switch]$AttachEc2Policy = $true,   # attach SSM+ECR inline policy to EC2 role
     [switch]$GrantSsmPutToCaller = $true,   # grant SSM PutParameter to caller
-    [string]$SsmPutGrantUser = ""           # empty = grant to current caller; set to IAM user (e.g. admin97) to grant to that user
+    [string]$SsmPutGrantUser = "",         # empty = grant to current caller; set to IAM user (e.g. admin97) to grant to that user
+    [string]$LambdaVpcSubnetId = "",       # optional: put queue-depth Lambda in VPC (e.g. subnet-049e711f41fdff71b)
+    [string]$LambdaVpcSecurityGroupId = "" # optional: SG for Lambda in VPC (e.g. academy-api-sg); requires LambdaVpcSubnetId
 )
 
 $ErrorActionPreference = "Stop"
