@@ -177,10 +177,10 @@ def set_video_worker_desired(
         )
         if not asgs.get("AutoScalingGroups"):
             logger.warning("ASG not found: %s", VIDEO_WORKER_ASG_NAME)
-            return
+            return result
         current = asgs["AutoScalingGroups"][0]["DesiredCapacity"]
         if current == new_desired:
-            return
+            return result
         autoscaling_client.set_desired_capacity(
             AutoScalingGroupName=VIDEO_WORKER_ASG_NAME,
             DesiredCapacity=new_desired,
