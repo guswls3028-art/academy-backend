@@ -1,4 +1,5 @@
 # PATH: apps/core/permissions.py
+import ipaddress
 from rest_framework.permissions import BasePermission
 
 from django.conf import settings
@@ -6,10 +7,40 @@ from django.conf import settings
 from apps.core.models import TenantMembership
 
 
+def _get_client_ip(request):
+    """X-Forwarded-For (첫 번째) 또는 REMOTE_ADDR."""
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR", "")
+
+
+def _ip_in_allowed_cidrs(ip_str: str, allow_ips_setting: str) -> bool:
+    """INTERNAL_API_ALLOW_IPS(CIDR 목록)에 ip_str이 포함되는지. 비어 있으면 True(검사 생략)."""
+    if not allow_ips_setting:
+        return True
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    for part in allow_ips_setting.split(","):
+        cidr = part.strip()
+        if not cidr:
+            continue
+        try:
+            net = ipaddress.ip_network(cidr)
+            if ip in net:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 class IsLambdaInternal(BasePermission):
     """
     Lambda 전용 internal API 인증.
-    X-Internal-Key 헤더가 LAMBDA_INTERNAL_API_KEY와 일치할 때만 허용.
+    - X-Internal-Key 헤더가 LAMBDA_INTERNAL_API_KEY와 일치.
+    - INTERNAL_API_ALLOW_IPS 설정 시, 클라이언트 IP가 해당 CIDR 중 하나에 포함되어야 함 (Lambda VPC 10.1.0.0/16, API VPC 172.30.0.0/16).
     LAMBDA_INTERNAL_API_KEY 미설정 시 모든 요청 차단.
     """
 
@@ -19,7 +50,10 @@ class IsLambdaInternal(BasePermission):
         key = getattr(settings, "LAMBDA_INTERNAL_API_KEY", None)
         if not key:
             return False
-        return request.headers.get("X-Internal-Key") == key
+        if request.headers.get("X-Internal-Key") != key:
+            return False
+        allow_ips = getattr(settings, "INTERNAL_API_ALLOW_IPS", "") or ""
+        return _ip_in_allowed_cidrs(_get_client_ip(request), allow_ips)
 
 
 def is_effective_staff(user, tenant=None):
