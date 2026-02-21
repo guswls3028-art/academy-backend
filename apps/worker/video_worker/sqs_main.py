@@ -93,6 +93,23 @@ def _heartbeat_loop(tenant_id: int, video_id: int, stop_event: threading.Event) 
         stop_event.wait(20)
 
 
+def _job_visibility_and_heartbeat_loop(
+    queue: "VideoSQSAdapter",
+    receipt_handle: str,
+    job_id: str,
+    stop_event: threading.Event,
+) -> None:
+    """Job 기반: 60초마다 ChangeMessageVisibility + job_heartbeat."""
+    from academy.adapters.db.django.repositories_video import job_heartbeat
+
+    while not stop_event.wait(timeout=JOB_HEARTBEAT_INTERVAL_SECONDS):
+        try:
+            queue.change_message_visibility(receipt_handle, VISIBILITY_EXTEND_SECONDS)
+            job_heartbeat(job_id)
+        except Exception as e:
+            logger.warning("Job heartbeat/visibility failed job_id=%s: %s", job_id, e)
+
+
 def _handle_signal(sig, frame):
     """
     Graceful shutdown (drain) 핸들러.
