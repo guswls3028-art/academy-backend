@@ -105,13 +105,17 @@ Write-Host ""
 Write-Host "========== 4. SQS Runtime State =========="
 $qurl = aws sqs get-queue-url --queue-name $QueueName --region $Region --query "QueueUrl" --output text
 Write-Host "QueueUrl: $qurl"
-$sqsAttrsRaw = aws sqs get-queue-attributes --queue-url $qurl --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible ApproximateNumberOfMessagesDelayed --region $Region --output json
-Write-Host $sqsAttrsRaw
-if ($sqsAttrsRaw) {
-    $sqsA = ($sqsAttrsRaw | ConvertFrom-Json).Attributes
-    $v = [int]($sqsA.ApproximateNumberOfMessages)
-    $nv = [int]($sqsA.ApproximateNumberOfMessagesNotVisible)
-    $diagnoseResult.sqs = @{ visible = $v; notVisible = $nv; total = $v + $nv }
+if ($qurl) {
+    $sqsAttrsRaw = aws sqs get-queue-attributes --queue-url $qurl --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible ApproximateNumberOfMessagesDelayed --region $Region --output json
+    Write-Host $sqsAttrsRaw
+    if ($sqsAttrsRaw) {
+        try {
+            $sqsA = ($sqsAttrsRaw | ConvertFrom-Json).Attributes
+            $v = [int]($sqsA.ApproximateNumberOfMessages)
+            $nv = [int]($sqsA.ApproximateNumberOfMessagesNotVisible)
+            $diagnoseResult.sqs = @{ visible = $v; notVisible = $nv; total = $v + $nv }
+        } catch { Write-Host "Parse SQS attrs: $($_.Exception.Message)" }
+    }
 }
 
 # ------------------------------------------------------------------------------
