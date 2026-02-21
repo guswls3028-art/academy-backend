@@ -407,35 +407,50 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     # ==================================================
     # retry (Job 기반 re-encode)
     # ==================================================
-    # DB status→UPLOADED + SQS enqueue as single atomic operation.
-    # Reject UPLOADED/PROCESSING (already in backlog). Accept READY/FAILED only.
+    # 새 VideoTranscodeJob 생성 + Video.current_job 교체 + enqueue(job_id).
+    # 기존 RUNNING Job은 cancel_requested 플래그로 협력적 취소.
     @transaction.atomic
     @action(detail=True, methods=["post"], url_path="retry")
     def retry(self, request, pk=None):
-        video = Video.objects.select_for_update().get(pk=self.get_object().pk)
+        from apps.support.video.models import VideoTranscodeJob
+        from apps.support.video.redis_status_cache import set_cancel_requested
 
-        if video.status in (Video.Status.UPLOADED, Video.Status.PROCESSING):
-            raise ValidationError("Already in backlog (UPLOADED or PROCESSING)")
+        video = Video.objects.select_for_update().select_related("session__lecture__tenant").get(pk=self.get_object().pk)
+
+        # 이미 Job이 QUEUED/RUNNING/RETRY_WAIT 인 경우
+        if video.current_job_id:
+            cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
+            if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RUNNING, VideoTranscodeJob.State.RETRY_WAIT):
+                raise ValidationError("Already in backlog (job queued or running)")
 
         if video.status not in (Video.Status.READY, Video.Status.FAILED):
-            raise ValidationError("Cannot retry: status must be READY or FAILED")
+            if video.status not in (Video.Status.UPLOADED, Video.Status.PROCESSING):
+                raise ValidationError("Cannot retry: status must be READY or FAILED")
 
-        # B1: status → UPLOADED (backlog-visible), then enqueue. Enqueue failure = rollback.
+        # 기존 RUNNING Job에 취소 요청 (협력적 취소)
+        if video.current_job_id:
+            cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
+            if cur and cur.state == VideoTranscodeJob.State.RUNNING:
+                tenant_id = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
+                if tenant_id is not None:
+                    set_cancel_requested(tenant_id, video.id)
+
         video.status = Video.Status.UPLOADED
         video.save(update_fields=["status", "updated_at"])
 
-        if not VideoSQSQueue().enqueue(video):
+        job = VideoSQSQueue().create_job_and_enqueue(video)
+        if not job:
             raise ValidationError(
                 "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."
             )
 
         logger.info(
-            "VIDEO_UPLOAD_TRACE | retry enqueued | video_id=%s tenant_id=%s",
-            video.id,
+            "VIDEO_RETRY_ENQUEUED | job_id=%s | video_id=%s | tenant_id=%s",
+            job.id, video.id,
             getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None),
         )
         return Response(
-            {"detail": "Video reprocessing queued (SQS)"},
+            {"detail": "Video reprocessing queued (SQS)", "job_id": str(job.id)},
             status=status.HTTP_202_ACCEPTED,
         )
 
