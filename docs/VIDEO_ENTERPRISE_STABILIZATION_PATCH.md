@@ -1,19 +1,20 @@
-# ENTERPRISE STABILIZATION PATCH — VIDEO JOB SYSTEM
+# ENTERPRISE STABILIZATION PATCH — VIDEO JOB SYSTEM (REVISED)
 
 Job System 마이그레이션 이후 운영 안정성을 위한 보강 패치.
 
 ---
 
-## 1. BacklogCount 수정
+## 1. BacklogCount 정의
 
-**변경**: `Job.state IN (QUEUED, RETRY_WAIT, RUNNING)` → `Job.state IN (QUEUED, RETRY_WAIT)`
+**정의**: `Job.state IN (QUEUED, RETRY_WAIT)` (RUNNING 제외)
 
-RUNNING은 이미 워커가 처리 중이므로 backlog로 집계하지 않음.
+- RUNNING은 backlog가 아님.
+- TargetTracking의 Positive Feedback Loop 방지 위해 RUNNING 포함 금지.
+- Scale-in 보호: ScaleInCooldown=300s (인프라 설정).
 
 | 파일 | 변경 |
 |------|------|
 | `repositories_video.py` | `job_count_backlog()`에서 RUNNING 제외 |
-| `internal_views.py` | docstring 수정 |
 
 ---
 
@@ -28,35 +29,35 @@ RUNNING은 이미 워커가 처리 중이므로 backlog로 집계하지 않음.
 
 ---
 
-## 3. cancel_requested 도입
+## 3. cancel_requested 처리 (REVISED)
 
-**변경**: Redis 기반 `set_cancel_requested` → VideoTranscodeJob.cancel_requested BOOLEAN.
+**동작**: Worker Heartbeat Thread에서 60초마다 ChangeMessageVisibility + job_heartbeat 수행 **후** DB에서 cancel_requested 확인. True이면:
+1. 현재 실행 중인 ffmpeg subprocess에 SIGTERM 전달
+2. CancelledError 발생
+3. Job.state=CANCELLED 처리
 
 | 파일 | 변경 |
 |------|------|
-| `models.py` | VideoTranscodeJob에 `cancel_requested` 필드 추가 |
-| `migrations/0004_*.py` | 마이그레이션 |
-| `repositories_video.py` | `job_set_cancel_requested(job_id)`, `job_is_cancel_requested(job_id)` 추가 |
-| `video_views.py` | retry API: RUNNING Job에 `job_set_cancel_requested(cur.id)` 설정 후 새 Job 생성 |
-| `sqs_main.py` | `_cancel_check()` → `job_is_cancel_requested(job_id)` 사용 |
-
-**retry API 동작**:
-- QUEUED/RETRY_WAIT: "Already in backlog" → 재시도 불가
-- RUNNING: cancel_requested=True 설정, 새 Job 생성 및 enqueue (협력적 취소)
+| `models.py` | VideoTranscodeJob에 `cancel_requested` 필드 |
+| `repositories_video.py` | `job_set_cancel_requested`, `job_is_cancel_requested` |
+| `video_views.py` | retry API: RUNNING Job에 `job_set_cancel_requested(cur.id)` |
+| `sqs_main.py` | Heartbeat loop: job_heartbeat 후 `job_is_cancel_requested` → ffmpeg SIGTERM → `cancel_event.set()` |
+| `current_transcode.py` | ffmpeg process 등록/해제 (`set_current`, `clear_current`, `get_current`) |
+| `transcoder.py` | `job_id`, `cancel_event` 전달, `set_current`/`clear_current`, cancel 시 CancelledError |
+| `processor.py` | `transcode_to_hls`에 `job_id`, `cancel_event` 전달 |
 
 ---
 
-## 4. DLQ Poller
+## 4. DLQ State Sync Lambda (REVISED)
 
-**신규**: academy-video-jobs-dlq를 EventBridge rate(2 min) Lambda로 poll.
+**목적**: DLQ는 retry가 아닌 **state reconciliation**.
 
-| 파일 | 설명 |
+**조건**: `Job.state NOT IN (SUCCEEDED, DEAD)` 일 때만 `job_mark_dead(job_id)` 호출.
+
+| 파일 | 변경 |
 |------|------|
-| `infra/worker_asg/video_dlq_poller_lambda/lambda_function.py` | DLQ 메시지 수신 → job_id 추출 → POST `/api/v1/internal/video/dlq-mark-dead/` → DeleteMessage |
-| `internal_views.py` | VideoDlqMarkDeadView (POST, body: `{"job_id": "uuid"}`) |
-| `urls.py` | `/internal/video/dlq-mark-dead/` |
-
-**환경 변수**: VIDEO_BACKLOG_API_URL, LAMBDA_INTERNAL_API_KEY, VIDEO_DLQ(기본: academy-video-jobs-dlq)
+| `internal_views.py` | VideoDlqMarkDeadView: job 조회 후 state 검사, SUCCEEDED/DEAD이면 skip |
+| `video_dlq_poller_lambda` | DLQ poll → job_id 추출 → API 호출 |
 
 ---
 
