@@ -54,19 +54,22 @@ class ProcessVideoJobHandler:
         작업 처리
 
         Returns:
-            "ok" | "skip:cancel" | "skip:mark_processing" | "lock_fail" | "failed"
+            "ok" | "skip:cancel" | "skip:mark_processing" | "skip:claim" | "lock_fail" | "failed"
 
             - "ok": 처리 성공
             - "skip:cancel": 취소 요청 또는 처리 중 취소 → ACK(delete)
-            - "skip:mark_processing": mark_processing 실패(이미 처리됨) → NACK(visibility)
-            - "lock_fail": Redis 락 획득 실패(경합/이전 워커 크래시) → NACK(visibility)
-            - "failed": 처리 실패 → NACK(visibility)
+            - "skip:mark_processing": mark_processing 실패 (legacy 모드)
+            - "skip:claim": try_claim 실패 (fast ACK 모드, 메시지 이미 delete됨)
+            - "lock_fail": Redis 락 획득 실패 (legacy 모드)
+            - "failed": 처리 실패
         """
         video_id = int(job.get("video_id", 0))
         tenant_id = int(job.get("tenant_id", 0)) if job.get("tenant_id") is not None else None
-        job_id = f"encode:{video_id}"  # action별 멱등 키 분리 (delete_r2는 delete_r2:{video_id}")
+        job_id = f"encode:{video_id}"
+        worker_id = job.get("_worker_id")
+        use_fast_ack = bool(worker_id)
 
-        # 재시도 시 API가 설정한 취소 요청이 있으면 이 메시지는 스킵 (새 메시지가 처리됨)
+        # 재시도 시 API가 설정한 취소 요청이 있으면 이 메시지는 스킵
         if tenant_id is not None:
             try:
                 from apps.support.video.redis_status_cache import is_cancel_requested
@@ -76,7 +79,7 @@ class ProcessVideoJobHandler:
             except Exception as e:
                 logger.debug("[HANDLER] is_cancel_requested check failed: %s", e)
 
-        # processor 단계별 취소 확인용 (job에 주입)
+        # processor 단계별 취소 확인용
         def _cancel_check() -> bool:
             try:
                 from apps.support.video.redis_status_cache import is_cancel_requested
@@ -86,17 +89,28 @@ class ProcessVideoJobHandler:
 
         job["_cancel_check"] = _cancel_check
 
-        logger.info("[HANDLER] Starting video processing video_id=%s job_id=%s", video_id, job_id)
-        if not self._idempotency.acquire_lock(job_id):
-            logger.info("[HANDLER] Lock acquisition failed (경합 또는 이전 워커 크래시) video_id=%s → NACK", video_id)
-            return "lock_fail"
+        logger.info("[HANDLER] Starting video processing video_id=%s job_id=%s fast_ack=%s", video_id, job_id, use_fast_ack)
 
-        logger.info("[HANDLER] Lock acquired, marking as PROCESSING video_id=%s", video_id)
-        try:
+        # Fast ACK 모드: DB try_claim으로 중복 방지 (SQS 메시지는 이미 delete됨)
+        if use_fast_ack:
+            if not self._repo.try_claim_video(video_id, worker_id):
+                logger.info("[HANDLER] try_claim failed (다른 워커 또는 이미 완료) video_id=%s → skip:claim", video_id)
+                return "skip:claim"
+            logger.info("[HANDLER] JOB_CLAIMED video_id=%s worker_id=%s", video_id, worker_id)
+        else:
+            # Legacy: Redis idempotency + mark_processing
+            if not self._idempotency.acquire_lock(job_id):
+                logger.info("[HANDLER] Lock acquisition failed video_id=%s → NACK", video_id)
+                return "lock_fail"
             if not self._repo.mark_processing(video_id):
                 logger.warning("[HANDLER] Cannot mark video %s as PROCESSING, skipping", video_id)
+                if use_fast_ack:
+                    pass
+                else:
+                    self._idempotency.release_lock(job_id)
                 return "skip:mark_processing"
 
+        try:
             logger.info("[HANDLER] Starting process_fn video_id=%s", video_id)
             hls_path, duration = self._process_fn(job=job, cfg=cfg, progress=self._progress)
             logger.info("[HANDLER] process_fn completed video_id=%s hls_path=%s duration=%s", video_id, hls_path, duration)
