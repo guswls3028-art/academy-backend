@@ -188,6 +188,8 @@ class VideoSQSQueue:
                 message=message,
             )
             if success:
+                from apps.support.video.redis_status_cache import redis_incr_video_backlog
+                redis_incr_video_backlog(tenant_id)
                 logger.info(
                     "Video job enqueued | job_id=%s | video_id=%s | tenant_id=%s",
                     job.id, video_id, tenant_id,
