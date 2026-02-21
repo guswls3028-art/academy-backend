@@ -505,10 +505,10 @@ class DjangoVideoRepository:
         )
         return True
 
-    def try_reclaim_video(self, video_id: int) -> bool:
+    def try_reclaim_video(self, video_id: int, *, force: bool = False) -> bool:
         """
-        PROCESSING 이지만 leased_until < now 인 경우 UPLOADED로 되돌림.
-        Re-enqueue 후 다른 워커가 try_claim 가능.
+        PROCESSING 이지만 leased_until < now (또는 force=True) 인 경우 UPLOADED로 되돌림.
+        force=True: heartbeat 없음 등으로 worker 사망 판단 시 lease 무시하고 reclaim.
         """
         from django.db import transaction
         from django.utils import timezone
@@ -520,7 +520,7 @@ class DjangoVideoRepository:
                 return False
             if video.status != Video.Status.PROCESSING:
                 return False
-            if video.leased_until is None or video.leased_until >= timezone.now():
+            if not force and (video.leased_until is None or video.leased_until >= timezone.now()):
                 return False
             video.status = Video.Status.UPLOADED
             video.leased_by = ""
