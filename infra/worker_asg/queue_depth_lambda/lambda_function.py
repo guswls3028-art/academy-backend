@@ -76,8 +76,11 @@ def _fetch_video_backlog_from_api() -> int | None:
     if not VIDEO_BACKLOG_API_URL:
         return None
     url = f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/backlog-count/"
+    headers = {}
+    if LAMBDA_INTERNAL_API_KEY:
+        headers["X-Internal-Key"] = LAMBDA_INTERNAL_API_KEY
     try:
-        req = urllib.request.Request(url, method="GET")
+        req = urllib.request.Request(url, method="GET", headers=headers)
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
             return int(data.get("backlog", 0))
