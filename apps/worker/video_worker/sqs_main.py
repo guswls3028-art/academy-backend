@@ -297,8 +297,8 @@ def main() -> int:
                     logger.debug("cache PROCESSING failed: %s", ex)
 
                 def _cancel_check():
-                    from apps.support.video.redis_status_cache import is_cancel_requested
-                    return bool(tenant_id is not None and is_cancel_requested(tenant_id, video_id))
+                    from academy.adapters.db.django.repositories_video import job_is_cancel_requested
+                    return job_is_cancel_requested(job_id)
 
                 job_dict = {
                     "video_id": int(video_id),
