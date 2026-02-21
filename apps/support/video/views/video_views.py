@@ -374,7 +374,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.status = Video.Status.UPLOADED
             video.error_reason = ""
             video.save(update_fields=["status", "duration", "error_reason"])
-
+            logger.info(
+                "VIDEO_UPLOAD_TRACE | before enqueue (duration<min branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
+                video.id,
+                video.session.lecture.tenant_id if (video.session and video.session.lecture) else None,
+                video.file_key or "",
+            )
             # SQS에 작업 추가 (동기 호출 — 실패 시 클라이언트에 503 반환)
             if not VideoSQSQueue().enqueue(video):
                 return Response(
@@ -387,7 +392,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         video.status = Video.Status.UPLOADED
         video.error_reason = ""
         video.save(update_fields=["status", "duration", "error_reason"])
-
+        logger.info(
+            "VIDEO_UPLOAD_TRACE | before enqueue (normal branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
+            video.id,
+            video.session.lecture.tenant_id if (video.session and video.session.lecture) else None,
+            video.file_key or "",
+        )
         # SQS에 작업 추가 (동기 호출 — 실패 시 클라이언트에 503 반환)
         if not VideoSQSQueue().enqueue(video):
             return Response(
