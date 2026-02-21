@@ -89,24 +89,6 @@ def _fetch_video_backlog_from_api() -> int | None:
         return None
 
 
-def _fetch_video_backlog_score_from_api() -> float | None:
-    """Django API에서 BacklogScore (QUEUED*1 + RETRY_WAIT*2) 조회. 실패 시 None."""
-    if not VIDEO_BACKLOG_API_URL:
-        return None
-    url = f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/backlog-score/"
-    headers = {}
-    if LAMBDA_INTERNAL_API_KEY:
-        headers["X-Internal-Key"] = LAMBDA_INTERNAL_API_KEY
-    try:
-        req = urllib.request.Request(url, method="GET", headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            return float(data.get("backlog_score", 0))
-    except Exception as e:
-        logger.warning("VIDEO_BACKLOG_SCORE_API fetch failed %s: %s", url, e)
-        return None
-
-
 def lambda_handler(event: dict, context: Any) -> dict:
     sqs = boto3.client("sqs", region_name=REGION, config=BOTO_CONFIG)
     cw = boto3.client("cloudwatch", region_name=REGION, config=BOTO_CONFIG)
