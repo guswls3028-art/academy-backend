@@ -96,6 +96,15 @@ def _set_stable_zero_since(ssm_client, value: int) -> None:
         logger.warning("put_parameter %s failed: %s", SSM_STABLE_ZERO_PARAM, e)
 
 
+def _delete_stable_zero_param(ssm_client) -> None:
+    """visible>0 or inflight>0 시 key 삭제"""
+    try:
+        ssm_client.delete_parameter(Name=SSM_STABLE_ZERO_PARAM)
+    except Exception as e:
+        if "ParameterNotFound" not in str(e):
+            logger.warning("delete_parameter %s failed: %s", SSM_STABLE_ZERO_PARAM, e)
+
+
 def set_video_worker_desired(
     autoscaling_client,
     ssm_client,
