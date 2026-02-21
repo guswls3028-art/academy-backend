@@ -36,14 +36,13 @@ $jsonStr = ""
 $exitCode = -1
 $stderrStr = ""
 try {
-    $psi = [System.Diagnostics.ProcessStartInfo]@{
-        FileName               = $awsExe
-        ArgumentList           = @("ssm", "get-parameter", "--name", $SsmName, "--with-decryption", "--region", $Region, "--output", "json")
-        UseShellExecute        = $false
-        RedirectStandardOutput = $true
-        RedirectStandardError  = $true
-        CreateNoWindow         = $true
-    }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $awsExe
+    $psi.Arguments = "ssm get-parameter --name `"$SsmName`" --with-decryption --region $Region --output json"
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
     $p = [System.Diagnostics.Process]::Start($psi)
     $stdout = $p.StandardOutput.ReadToEnd()
     $stderr = $p.StandardError.ReadToEnd()
