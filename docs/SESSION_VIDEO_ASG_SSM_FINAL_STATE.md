@@ -29,6 +29,20 @@ aws lambda invoke --function-name academy-worker-queue-depth-metric --region ap-
 
 - `video_backlog_count`에 **숫자**(예: 5)가 나오면 성공. 1~2분 안에 CloudWatch에 BacklogCount 찍히고, ASG TargetTracking으로 워커 수 자동 증가함.
 
+**VIDEO_BACKLOG_API_HOST 제거했는데도 여전히 null이면** → Django `IsLambdaInternal`에서 **403** 난 상태일 가능성이 큼. Lambda가 같은 VPC(172.30.x.x)인데 API 쪽에 `INTERNAL_API_ALLOW_IPS`에 172.30 대역이 없으면 403.
+
+1. **증거 확인** (Lambda 로그에 403 찍히는지):
+   ```powershell
+   aws logs tail /aws/lambda/academy-worker-queue-depth-metric --since 5m --region ap-northeast-2
+   ```
+   `[VIDEO_BACKLOG_API ERROR] HTTPError | ... status=403` 이 보이면 아래 2번으로.
+
+2. **조치** (SSM에 INTERNAL_API_ALLOW_IPS 넣고 API 재배포):
+   ```powershell
+   .\scripts\add_internal_api_allow_ips.ps1
+   ```
+   출력 안내대로 **API EC2**에서 `deploy_api_on_server.sh` 실행(또는 merge_ssm + refresh_api_container_env). 재배포 후 다시 Lambda invoke → `video_backlog_count` 숫자 나오면 완료.
+
 ---
 
 ## 0. 리소스 식별자 (추측 방지용)
