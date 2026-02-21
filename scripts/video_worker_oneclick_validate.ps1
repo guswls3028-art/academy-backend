@@ -108,7 +108,7 @@ if ($fn -and $metricName -eq "VideoQueueDepthTotal") {
 }
 
 # 요약
-$failCount = ($results.GetEnumerator() | Where-Object { $_.Value.ok -eq $false }).Count
+$failCount = ($results.Values | Where-Object { -not $_.ok }).Count
 Write-Host "`n========== 요약 ==========" -ForegroundColor Cyan
 if ($failCount -eq 0) {
     Write-Host "  결과: OK (요구사항 만족)" -ForegroundColor Green
