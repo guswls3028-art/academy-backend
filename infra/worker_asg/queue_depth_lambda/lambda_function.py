@@ -69,134 +69,22 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
     return visible
 
 
-def _get_stable_zero_since(ssm_client) -> int:
-    """0,0 상태가 시작된 Unix timestamp. 없으면 0."""
+def _fetch_video_backlog_from_api() -> int | None:
+    """Django API에서 BacklogCount (UPLOADED+PROCESSING) 조회. 실패 시 None."""
+    if not VIDEO_BACKLOG_API_URL:
+        return None
+    url = f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/backlog-count/"
     try:
-        r = ssm_client.get_parameter(Name=SSM_STABLE_ZERO_PARAM, WithDecryption=False)
-        return int(r["Parameter"]["Value"] or 0)
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status != 200:
+                return None
+            import json
+            data = json.loads(resp.read().decode())
+            return int(data.get("backlog", 0))
     except Exception as e:
-        if "ParameterNotFound" in str(e):
-            return 0
-        logger.warning("get_parameter %s failed: %s", SSM_STABLE_ZERO_PARAM, e)
-        return 0
-
-
-def _set_stable_zero_since(ssm_client, value: int) -> None:
-    try:
-        ssm_client.put_parameter(
-            Name=SSM_STABLE_ZERO_PARAM,
-            Value=str(value),
-            Type="String",
-            Overwrite=True,
-        )
-    except Exception as e:
-        logger.warning("put_parameter %s failed: %s", SSM_STABLE_ZERO_PARAM, e)
-
-
-def _delete_stable_zero_param(ssm_client) -> None:
-    """visible>0 or inflight>0 시 key 삭제"""
-    try:
-        ssm_client.delete_parameter(Name=SSM_STABLE_ZERO_PARAM)
-    except Exception as e:
-        if "ParameterNotFound" not in str(e):
-            logger.warning("delete_parameter %s failed: %s", SSM_STABLE_ZERO_PARAM, e)
-
-
-def set_video_worker_desired(
-    autoscaling_client,
-    ssm_client,
-    visible: int,
-    inflight: int,
-) -> dict:
-    """
-    Video ASG desired capacity를 Lambda 단독으로 설정.
-
-    수식:
-      backlog_add = min(visible, MAX_BACKLOG_ADD)
-      desired_candidate = inflight + backlog_add
-      new_desired = clamp(MIN, MAX, desired_candidate)
-
-    scale-in: visible==0 AND inflight==0 가 STABLE_ZERO_SECONDS 이상 지속 시에만 min으로.
-
-    Returns:
-        디버깅용 dict: visible, inflight, backlog_add, desired_candidate, new_desired, decision, stable_zero_since_epoch
-    """
-    backlog_add = min(visible, MAX_BACKLOG_ADD)
-    desired_candidate = backlog_add if VIDEO_SCALE_VISIBLE_ONLY else (inflight + backlog_add)
-    new_desired_raw = max(VIDEO_WORKER_ASG_MIN, min(VIDEO_WORKER_ASG_MAX, desired_candidate))
-    now_ts = int(time.time())
-    stable_zero_since_epoch = _get_stable_zero_since(ssm_client)
-
-    if visible > 0 or inflight > 0:
-        _delete_stable_zero_param(ssm_client)
-        new_desired = new_desired_raw
-        decision = "scale_out" if new_desired > 0 else "hold"
-    else:
-        stable_since = stable_zero_since_epoch
-        if stable_since == 0:
-            _set_stable_zero_since(ssm_client, now_ts)
-            new_desired = None  # do not change (keep current)
-            decision = "hold"
-        elif (now_ts - stable_since) >= STABLE_ZERO_SECONDS:
-            new_desired = VIDEO_WORKER_ASG_MIN
-            _delete_stable_zero_param(ssm_client)
-            decision = "scale_in"
-        else:
-            new_desired = None
-            decision = "hold"
-
-    logger.info(
-        "video_asg | visible=%d inflight=%d backlog_add=%d desired_candidate=%d new_desired=%s decision=%s",
-        visible,
-        inflight,
-        backlog_add,
-        desired_candidate,
-        new_desired if new_desired is not None else "unchanged",
-        decision,
-    )
-
-    result = {
-        "video_visible": visible,
-        "video_inflight": inflight,
-        "video_scale_visible_only": VIDEO_SCALE_VISIBLE_ONLY,
-        "video_backlog_add": backlog_add,
-        "video_desired_raw": desired_candidate,
-        "video_new_desired": new_desired,
-        "video_decision": decision,
-        "stable_zero_since_epoch": stable_zero_since_epoch,
-    }
-
-    if new_desired is None:
-        return result
-
-    try:
-        asgs = autoscaling_client.describe_auto_scaling_groups(
-            AutoScalingGroupNames=[VIDEO_WORKER_ASG_NAME],
-        )
-        if not asgs.get("AutoScalingGroups"):
-            logger.warning("ASG not found: %s", VIDEO_WORKER_ASG_NAME)
-            return result
-        current = asgs["AutoScalingGroups"][0]["DesiredCapacity"]
-        if current == new_desired:
-            return result
-        autoscaling_client.set_desired_capacity(
-            AutoScalingGroupName=VIDEO_WORKER_ASG_NAME,
-            DesiredCapacity=new_desired,
-        )
-        logger.info(
-            "video_asg set_desired | visible=%d inflight=%d backlog_add=%d desired_candidate=%d new_desired=%d (was %d) decision=%s",
-            visible,
-            inflight,
-            backlog_add,
-            desired_candidate,
-            new_desired,
-            current,
-            decision,
-        )
-    except Exception as e:
-        logger.warning("set_video_worker_desired failed: %s", e)
-
-    return result
+        logger.warning("VIDEO_BACKLOG_API fetch failed %s: %s", url, e)
+        return None
 
 
 def lambda_handler(event: dict, context: Any) -> dict:
