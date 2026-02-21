@@ -109,16 +109,22 @@ def _job_visibility_and_heartbeat_loop(
         try:
             queue.change_message_visibility(receipt_handle, VISIBILITY_EXTEND_SECONDS)
             job_heartbeat(job_id, lease_seconds=VISIBILITY_EXTEND_SECONDS)
-            # cancel_requested 확인: True이면 ffmpeg에 SIGTERM 후 CancelledError 유도
+            # cancel_requested: get_current() (process, job_id)가 현재 job_id와 일치할 때만 terminate
             if job_is_cancel_requested(job_id):
-                process, proc_job_id, _ = get_current()
+                process, proc_job_id, ev = get_current()
                 if proc_job_id == job_id and process is not None and process.poll() is None:
                     try:
                         process.terminate()
+                        try:
+                            process.wait(timeout=15)
+                        except Exception:
+                            process.kill()
+                            process.wait()
                         cancel_event.set()
-                        logger.info("CANCEL_REQUESTED | job_id=%s | ffmpeg SIGTERM sent", job_id)
+                        logger.info("CANCEL_REQUESTED | job_id=%s | ffmpeg SIGTERM sent and waited", job_id)
                     except Exception as ex:
-                        logger.warning("ffmpeg terminate failed job_id=%s: %s", job_id, ex)
+                        logger.warning("ffmpeg terminate/wait failed job_id=%s: %s", job_id, ex)
+                        cancel_event.set()
         except Exception as e:
             logger.warning("Job heartbeat/visibility failed job_id=%s: %s", job_id, e)
 

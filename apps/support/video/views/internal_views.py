@@ -112,8 +112,10 @@ class VideoBacklogScoreView(APIView):
 
 class VideoDlqMarkDeadView(APIView):
     """
-    DLQ State Sync Lambda: job_id로 job_mark_dead 호출.
-    Job.state NOT IN (SUCCEEDED, DEAD) 일 때만 수행 (state reconciliation).
+    DLQ State Sync Lambda: state별 분리 (scan_stuck와 race/경합 방지).
+    - QUEUED, RETRY_WAIT: job_mark_dead(job_id)
+    - RUNNING: DEAD로 바꾸지 않음, alert/log only
+    - SUCCEEDED, DEAD: ignore
     POST /api/v1/internal/video/dlq-mark-dead/
     body: {"job_id": "uuid"}
     """
@@ -122,9 +124,11 @@ class VideoDlqMarkDeadView(APIView):
     authentication_classes = []
 
     def post(self, request):
+        import logging
         from apps.support.video.models import VideoTranscodeJob
         from academy.adapters.db.django.repositories_video import job_get_by_id, job_mark_dead
 
+        logger = logging.getLogger(__name__)
         data = getattr(request, "data", None) or {}
         job_id = data.get("job_id")
         if not job_id:
@@ -132,8 +136,24 @@ class VideoDlqMarkDeadView(APIView):
         job = job_get_by_id(str(job_id))
         if not job:
             return Response({"detail": "job not found"}, status=status.HTTP_404_NOT_FOUND)
+
         if job.state in (VideoTranscodeJob.State.SUCCEEDED, VideoTranscodeJob.State.DEAD):
             return Response({"ok": True, "skipped": "already_terminal", "state": job.state})
+
+        if job.state == VideoTranscodeJob.State.RUNNING:
+            logger.warning(
+                "DLQ_RUNNING_ALERT | job_id=%s video_id=%s state=RUNNING — not marking DEAD (scan_stuck may recover)",
+                job_id, job.video_id,
+            )
+            return Response({"ok": True, "skipped": "running_alert_only", "state": job.state})
+
+        if job.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
+            ok = job_mark_dead(str(job_id), error_code="DLQ", error_message="DLQ state sync marked dead")
+            if ok:
+                return Response({"ok": True})
+            return Response({"detail": "job_mark_dead failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # CANCELLED, FAILED 등: DEAD로 정리
         ok = job_mark_dead(str(job_id), error_code="DLQ", error_message="DLQ state sync marked dead")
         if ok:
             return Response({"ok": True})
