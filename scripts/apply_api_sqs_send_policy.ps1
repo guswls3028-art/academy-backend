@@ -14,11 +14,8 @@ if (!(Test-Path $PolicyPath)) {
 }
 
 Write-Host "[1/3] Creating minified JSON (PowerShell-safe)..." -ForegroundColor Cyan
-$raw = Get-Content $PolicyPath -Raw
-$obj = $raw | ConvertFrom-Json
-$minJson = $obj | ConvertTo-Json -Depth 10 -Compress
 $minPath = "C:\academy\infra\worker_asg\iam_policy_api_sqs_send.min.json"
-[System.IO.File]::WriteAllText($minPath, $minJson, [System.Text.UTF8Encoding]::new($false))
+(Get-Content $PolicyPath -Raw | ConvertFrom-Json | ConvertTo-Json -Depth 10 -Compress) | Out-File $minPath -Encoding ascii
 
 Write-Host "[2/3] Applying IAM policy to $RoleName..." -ForegroundColor Cyan
 $fileUri = "file://" + ($minPath -replace '\\','/')
