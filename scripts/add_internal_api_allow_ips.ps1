@@ -13,15 +13,50 @@ param(
 $ErrorActionPreference = "Stop"
 $NewLine = "INTERNAL_API_ALLOW_IPS=$AllowIps"
 
-Write-Host "[1/3] Get current SSM $SsmName..." -ForegroundColor Cyan
-$ea = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-try {
-    $current = & aws ssm get-parameter --name $SsmName --with-decryption --region $Region --query "Parameter.Value" --output text 2>$null
-} finally {
-    $ErrorActionPreference = $ea
+# Resolve AWS CLI (same as verify_ssm_api_env.ps1)
+$awsCmd = Get-Command aws -ErrorAction SilentlyContinue
+$awsExe = if ($awsCmd) { $awsCmd.Source } else { $null }
+if (-not $awsExe) {
+    $candidates = @(
+        "C:\Program Files\AmazonAWSCLIV2\aws.exe",
+        "${env:ProgramFiles(x86)}\AmazonAWSCLIV2\aws.exe",
+        "$env:LOCALAPPDATA\Programs\AmazonAWSCLIV2\aws.exe"
+    )
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path -LiteralPath $c -ErrorAction SilentlyContinue)) { $awsExe = $c; break }
+    }
 }
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($current)) {
+if (-not $awsExe) { $awsExe = "aws" }
+
+Write-Host "[1/3] Get current SSM $SsmName..." -ForegroundColor Cyan
+# Run aws with UTF-8 so SSM value containing Unicode (e.g. U+2014) does not trigger cp949 error on Korean Windows
+$current = $null
+$jsonStr = ""
+$exitCode = -1
+$savedPyIo = $env:PYTHONIOENCODING; $savedPyUtf8 = $env:PYTHONUTF8
+$env:PYTHONIOENCODING = "utf-8"; $env:PYTHONUTF8 = "1"
+try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $awsExe
+    $psi.Arguments = "ssm get-parameter --name `"$SsmName`" --with-decryption --region $Region --output json"
+    [void]($psi.UseShellExecute = $false)
+    [void]($psi.RedirectStandardOutput = $true)
+    [void]($psi.RedirectStandardError = $true)
+    [void]($psi.CreateNoWindow = $true)
+    try { $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8 } catch { }
+    $p = [System.Diagnostics.Process]::Start($psi)
+    [void]$p.WaitForExit(60000)
+    $jsonStr = ($p.StandardOutput.ReadToEnd() | Out-String).Trim()
+    $exitCode = $p.ExitCode
+    if ($exitCode -eq 0 -and $jsonStr.StartsWith("{")) {
+        $obj = $jsonStr | ConvertFrom-Json
+        $current = $obj.Parameter.Value
+    }
+} finally {
+    if ($null -ne $savedPyIo) { $env:PYTHONIOENCODING = $savedPyIo } else { Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue }
+    if ($null -ne $savedPyUtf8) { $env:PYTHONUTF8 = $savedPyUtf8 } else { Remove-Item Env:PYTHONUTF8 -ErrorAction SilentlyContinue }
+}
+if ($null -eq $current -or [string]::IsNullOrWhiteSpace($current)) {
     Write-Host "  SSM get failed or parameter empty. Refusing to overwrite." -ForegroundColor Red
     Write-Host "  Run: .\scripts\upload_env_to_ssm.ps1  first." -ForegroundColor Yellow
     exit 1
