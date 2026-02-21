@@ -17,6 +17,7 @@ import json
 import os
 import logging
 import urllib.request
+import urllib.error
 from typing import Any
 
 import boto3
