@@ -79,7 +79,7 @@ class VideoProcessingCompleteView(APIView):
 
 class VideoBacklogCountView(APIView):
     """
-    B1: BacklogCount (UPLOADED + PROCESSING) for Video ASG TargetTracking.
+    B1: BacklogCount (Job 기반: QUEUED + RETRY_WAIT + RUNNING) for Video ASG TargetTracking.
     GET /api/v1/internal/video/backlog-count/
     Returns: {"backlog": int}
     queue_depth_lambda가 1분마다 X-Internal-Key 헤더로 호출.
@@ -89,7 +89,6 @@ class VideoBacklogCountView(APIView):
     authentication_classes = []
 
     def get(self, request):
-        backlog = Video.objects.filter(
-            status__in=[Video.Status.UPLOADED, Video.Status.PROCESSING]
-        ).count()
+        from academy.adapters.db.django.repositories_video import job_count_backlog
+        backlog = job_count_backlog()
         return Response({"backlog": backlog})
