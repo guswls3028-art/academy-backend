@@ -229,9 +229,37 @@ Write-Host "[Quota L-34B43A08]"
 Write-Host "[Usage AWS/Usage ResourceCount Class=Standard/Spot last 2h]"
 $uStart = (Get-Date).AddHours(-2).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $uEnd = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-& aws cloudwatch get-metric-statistics --region $Region --namespace "AWS/Usage" --metric-name "ResourceCount" `
+$spotUsageRaw = aws cloudwatch get-metric-statistics --region $Region --namespace "AWS/Usage" --metric-name "ResourceCount" `
     --dimensions Name=Service,Value=EC2 Name=Type,Value=Resource Name=Resource,Value=vCPU Name=Class,Value=Standard/Spot `
     --start-time $uStart --end-time $uEnd --period 300 --statistics Maximum Average --output json
+Write-Host $spotUsageRaw
+
+# ------------------------------------------------------------------------------
+# 11) Save result JSON + Summary
+# ------------------------------------------------------------------------------
+$diagnoseResult.summary = @{
+    sqs_visible    = $diagnoseResult.sqs.visible
+    sqs_notVisible = $diagnoseResult.sqs.notVisible
+    sqs_total      = $diagnoseResult.sqs.total
+    asg_desired    = $diagnoseResult.asg.desiredCapacity
+    asg_min_max    = "$($diagnoseResult.asg.minSize)/$($diagnoseResult.asg.maxSize)"
+    scaling_metric = $diagnoseResult.policy.metricName
+    lambda_total   = $diagnoseResult.lambda.video_queue_depth_total
+}
+
+$resultPath = Join-Path $repoRoot ("diagnose_result_{0}.json" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
+$diagnoseResultJson = $diagnoseResult | ConvertTo-Json -Depth 5
+[System.IO.File]::WriteAllText($resultPath, $diagnoseResultJson, [System.Text.UTF8Encoding]::new($false))
+
+Write-Host ""
+Write-Host "========== SUMMARY (saved to $resultPath) ==========" -ForegroundColor Green
+Write-Host "SQS: visible=$($diagnoseResult.summary.sqs_visible) notVisible=$($diagnoseResult.summary.sqs_notVisible) total=$($diagnoseResult.summary.sqs_total)"
+Write-Host "ASG: desired=$($diagnoseResult.summary.asg_desired) min/max=$($diagnoseResult.summary.asg_min_max)"
+Write-Host "Scaling metric: $($diagnoseResult.summary.scaling_metric) (expected: VideoQueueDepthTotal for SQS-based scaling)"
+Write-Host "Lambda video_queue_depth_total: $($diagnoseResult.summary.lambda_total)"
+if ($diagnoseResult.activities -and $diagnoseResult.activities.count -gt 0) {
+    Write-Host "Recent activities: $($diagnoseResult.activities.count)"
+}
 
 Write-Host ""
 Write-Host "========== END DIAGNOSTIC =========="
