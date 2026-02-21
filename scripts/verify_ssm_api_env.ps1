@@ -30,34 +30,50 @@ $requiredKeys = @("DB_HOST", "DB_NAME", "DB_USER", "REDIS_HOST", "R2_ENDPOINT", 
 $optionalButRecommended = @("LAMBDA_INTERNAL_API_KEY", "DJANGO_SETTINGS_MODULE")
 
 Write-Host "[1/2] Get SSM $SsmName..." -ForegroundColor Cyan
-# Use JSON output so large/Advanced-tier values are captured reliably (--output text can mangle newlines)
+# Run via Start-Process so we get a real exit code and reliable stdout/stderr (avoid 2>&1 / $LASTEXITCODE issues)
 $raw = $null
-$awsOut = $null
-$exitCode = $null
+$jsonStr = ""
+$exitCode = -1
+$stderrStr = ""
 try {
-    $awsOut = & $awsExe ssm get-parameter --name $SsmName --with-decryption --region $Region --output json 2>&1
-    $exitCode = $LASTEXITCODE
-    $jsonStr = ($awsOut | Out-String).Trim()
+    $outFile = [System.IO.Path]::GetTempFileName()
+    $errFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $psi = [System.Diagnostics.ProcessStartInfo]@{
+            FileName               = $awsExe
+            ArgumentList           = @("ssm", "get-parameter", "--name", $SsmName, "--with-decryption", "--region", $Region, "--output", "json")
+            UseShellExecute        = $false
+            RedirectStandardOutput = $true
+            RedirectStandardError  = $true
+            CreateNoWindow         = $true
+        }
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $stdout = $p.StandardOutput.ReadToEnd()
+        $stderr = $p.StandardError.ReadToEnd()
+        $p.WaitForExit(60000)
+        $exitCode = $p.ExitCode
+        $jsonStr = ($stdout | Out-String).Trim()
+        $stderrStr = ($stderr | Out-String).Trim()
+    } finally {
+        Remove-Item $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    }
     if ($exitCode -eq 0 -and $jsonStr.StartsWith("{")) {
         $obj = $jsonStr | ConvertFrom-Json
         $raw = $obj.Parameter.Value
     }
 } catch {
     $raw = $null
-    if ($null -eq $exitCode) { $exitCode = -1 }
-    $jsonStr = if ($awsOut) { ($awsOut | Out-String).Trim() } else { "" }
 }
 if ($null -eq $raw -or [string]::IsNullOrWhiteSpace($raw)) {
     Write-Host "  FAIL: SSM get failed or parameter empty. (ExitCode: $exitCode)" -ForegroundColor Red
-    if ([string]::IsNullOrWhiteSpace($jsonStr)) {
-        if ($exitCode -eq -1) {
-            Write-Host "  No output from AWS. Tried: $awsExe" -ForegroundColor Gray
-            Write-Host "  If 'aws': add AWS CLI to PATH. Else run:  & '$awsExe' sts get-caller-identity" -ForegroundColor Gray
-        }
-    } else {
-        $preview = if ($jsonStr.Length -gt 600) { $jsonStr.Substring(0, 600) + "..." } else { $jsonStr }
+    $show = $stderrStr
+    if ([string]::IsNullOrWhiteSpace($show)) { $show = $jsonStr }
+    if (-not [string]::IsNullOrWhiteSpace($show)) {
+        $preview = if ($show.Length -gt 600) { $show.Substring(0, 600) + "..." } else { $show }
         Write-Host "  AWS output:" -ForegroundColor Gray
         Write-Host "  $($preview -replace "`r`n", "`n" -replace "`n", "`n  ")" -ForegroundColor Gray
+    } elseif ($exitCode -ne 0) {
+        Write-Host "  Run:  & '$awsExe' sts get-caller-identity  (check credentials)" -ForegroundColor Gray
     }
     Write-Host "  Run: .\scripts\upload_env_to_ssm.ps1  (with full .env containing DB_*, REDIS_*, R2_*)" -ForegroundColor Yellow
     exit 1
