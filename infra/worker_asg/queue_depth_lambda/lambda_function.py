@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import logging
+import time
 from typing import Any
 
 import boto3
@@ -101,7 +102,7 @@ def set_video_worker_desired(
     scale-in: visible==0 AND inflight==0 가 STABLE_WINDOW_SECONDS 이상 지속 시에만 min으로.
     """
     desired_raw = visible + inflight
-    now_ts = int(__import__("time").time())
+    now_ts = int(time.time())
 
     if visible > 0 or inflight > 0:
         _set_stable_zero_since(ssm_client, 0)  # reset
