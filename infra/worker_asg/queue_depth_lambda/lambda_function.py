@@ -2,20 +2,20 @@
 SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시.
 
 - EventBridge rate(1 minute)로 호출.
-- AI/Messaging: Target Tracking (QueueDepth)
-- Video: Lambda 단독 컨트롤. set_desired_capacity 직접 호출.
-  backlog_add = min(visible, MAX_BACKLOG_ADD)
-  desired_raw = inflight + backlog_add
-  desired = clamp(min, max, desired_raw)
-  scale-in: visible==0 AND inflight==0 가 STABLE_ZERO_SECONDS 이상 지속 시에만 min으로.
+- AI/Messaging: Target Tracking (QueueDepth, Academy/Workers)
+- Video: B1 TargetTracking (BacklogCount, Academy/VideoProcessing)
+  - set_desired_capacity 호출 금지. ASG TargetTrackingPolicy가 스케일 제어.
+  - BacklogCount = UPLOADED + PROCESSING (Django DB SSOT)
+  - VIDEO_BACKLOG_API_URL 설정 시 해당 API 호출하여 DB 기반 backlog 사용
+  - 미설정 시 SQS visible+inflight를 fallback으로 사용 (DB가 SSOT이나 비상용)
 
-설계: docs/SSOT_0215/IMPORTANT/ARCH_CHANGE_PROPOSAL_LAMBDA_TO_ASG.md
+설계: docs/B1_METRIC_SCHEMA_EXTRACTION_REPORT.md
 """
 from __future__ import annotations
 
 import os
 import logging
-import time
+import urllib.request
 from typing import Any
 
 import boto3
