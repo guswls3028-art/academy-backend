@@ -74,19 +74,20 @@ def _visibility_extender_loop(
 
 def _handle_signal(sig, frame):
     """
-    Graceful shutdown 핸들러
-    
-    50명 원장 확장 대비: 현재 처리 중인 작업 완료 후 종료
+    Graceful shutdown (drain) 핸들러.
+    SIGTERM 수신 시 SQS poll 중단 요청, 진행 중 job 있으면 완료 후 종료.
     """
     global _shutdown, _current_job_receipt_handle
-    signal_name = signal.Signals(sig).name
+    try:
+        signal_name = signal.Signals(sig).name
+    except ValueError:
+        signal_name = str(sig)
     logger.info(
-        "Received %s, initiating graceful shutdown... | current_job=%s",
+        "Received %s, drain started — will finish current job and exit | current_job=%s",
         signal_name,
         "processing" if _current_job_receipt_handle else "idle",
     )
     _shutdown = True
-    # 현재 작업이 있으면 완료될 때까지 대기 (메인 루프에서 처리)
 
 
 def main() -> int:
