@@ -54,11 +54,18 @@ class MeView(APIView):
 
     @swagger_auto_schema(auto_schema=None)
     def get(self, request):
-        serializer = UserSerializer(
-            request.user,
-            context={"request": request},  # ✅ 핵심
-        )
-        return Response(serializer.data)
+        try:
+            serializer = UserSerializer(
+                request.user,
+                context={"request": request},  # ✅ 핵심
+            )
+            return Response(serializer.data)
+        except Exception as e:
+            logger.exception("MeView get failed: %s", e)
+            return Response(
+                {"detail": "서버 오류가 발생했습니다."},
+                status=500,
+            )
 
 
 # --------------------------------------------------
