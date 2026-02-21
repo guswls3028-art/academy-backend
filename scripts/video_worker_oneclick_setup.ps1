@@ -200,7 +200,7 @@ function Set-DlqRedrive {
 
     $dlqUrl = Aws sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text 2>$null
     if (-not $dlqUrl) {
-        Aws sqs create-queue --queue-name $DlqName --attributes '{"MessageRetentionPeriod":"1209600"}' 2>$null
+        Aws sqs create-queue --queue-name $DlqName --attributes "MessageRetentionPeriod=1209600" 2>$null
         if ($LASTEXITCODE -ne 0) { Log-Warn "DLQ 생성 실패"; return $true }
         $dlqUrl = Aws sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text
     }
