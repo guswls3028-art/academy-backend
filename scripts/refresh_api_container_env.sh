@@ -9,7 +9,7 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 IMG=$(docker inspect academy-api --format '{{.Config.Image}}' 2>/dev/null || true)
 if [ -z "$IMG" ]; then
-  IMG=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E 'academy-api|academy-api' | head -1)
+  IMG=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep academy-api | head -1)
 fi
 if [ -z "$IMG" ]; then
   echo "ERROR: academy-api image not found. Pull first or set IMG."
