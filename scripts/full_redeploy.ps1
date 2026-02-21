@@ -257,6 +257,10 @@ echo BUILD_AND_PUSH_OK
     }
     Write-Host "Build and ECR push done. Build instance left running (stop manually if needed): $buildInstanceId" -ForegroundColor Green
     $buildInstanceId = $null
+    if ($BuildOnly) {
+        Write-Host "(-BuildOnly) Deploy skipped. Exit." -ForegroundColor Cyan
+        exit 0
+    }
 } else {
     Write-Host "`n=== 1/3 Build step skipped (-SkipBuild) ===`n" -ForegroundColor Cyan
 }
