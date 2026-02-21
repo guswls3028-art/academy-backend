@@ -20,7 +20,8 @@ else
 fi
 
 # 2) Guard: required env for upload_complete / API (apps/api/config/settings/base.py)
-REQUIRED_KEYS="DB_HOST R2_ACCESS_KEY R2_SECRET_KEY R2_ENDPOINT REDIS_HOST"
+# DB_NAME/DB_USER required for Django DATABASES; without them settings.DATABASES has null -> 500
+REQUIRED_KEYS="DB_HOST DB_NAME DB_USER R2_ACCESS_KEY R2_SECRET_KEY R2_ENDPOINT REDIS_HOST"
 MISSING=""
 for k in $REQUIRED_KEYS; do
   line=$(grep -E "^${k}=" "$ENV_FILE" 2>/dev/null | head -1)
