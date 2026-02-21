@@ -38,6 +38,8 @@ VIDEO_WORKER_ASG_MAX = int(os.environ.get("VIDEO_WORKER_ASG_MAX", "20"))
 VIDEO_WORKER_ASG_MIN = int(os.environ.get("VIDEO_WORKER_ASG_MIN", "1"))
 MAX_BACKLOG_ADD = int(os.environ.get("MAX_BACKLOG_ADD", "5"))
 STABLE_ZERO_SECONDS = int(os.environ.get("STABLE_ZERO_SECONDS", "1200"))  # 20분. scale-in 허용 전 0,0 유지
+# 1이면 desired = visible 기반만 (inflight 제외). Worker fast ACK 사용 시 권장.
+VIDEO_SCALE_VISIBLE_ONLY = os.environ.get("VIDEO_SCALE_VISIBLE_ONLY", "0") == "1"
 SSM_STABLE_ZERO_PARAM = os.environ.get("SSM_STABLE_ZERO_PARAM", "/academy/workers/video/zero_since_epoch")
 MESSAGING_WORKER_ASG_NAME = os.environ.get("MESSAGING_WORKER_ASG_NAME", "academy-messaging-worker-asg")
 MESSAGING_WORKER_ASG_MAX = int(os.environ.get("MESSAGING_WORKER_ASG_MAX", "20"))
