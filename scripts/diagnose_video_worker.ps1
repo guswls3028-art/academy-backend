@@ -29,8 +29,9 @@ $lambdaResp = $null
 try {
     $invokeOut = Join-Path $PSScriptRoot ".." "response.json"
     aws lambda invoke --function-name $LambdaName --region $Region $invokeOut 2>$null | Out-Null
-    $lambdaResp = Get-Content $invokeOut -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
-} catch {}
+    $raw = Get-Content $invokeOut -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+    if ($raw) { $lambdaResp = $raw.Trim() | ConvertFrom-Json } else { $lambdaResp = $null }
+} catch { $lambdaResp = $null }
 if ($lambdaResp) {
     $vc = $lambdaResp.video_backlog_count
     if ($null -eq $vc) { Write-Line "  video_backlog_count: null  [WARN] API 403 or skip -> BacklogCount not published" }
