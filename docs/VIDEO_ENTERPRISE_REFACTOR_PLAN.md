@@ -79,11 +79,11 @@ receive → parse/validate → 즉시 delete (ACK) → try_claim (DB) → 성공
   - 해결: `fail_video` 시 `FAILED_TRANSIENT` 등으로 표시 후, 별도 스케줄러/재 enqueue가 SQS에 kick 메시지 전송
 - **visibility extender**: delete 직후이므로 extender 스레드 불필요 (인코딩 작업에서 제거)
 
-### 단계 3: Lambda 스케일 수식을 visible 중심으로 단순화
+### 단계 3: Lambda 스케일 수식을 visible 중심으로 단순화 (선택)
 
 - **파일**: `infra/worker_asg/queue_depth_lambda/lambda_function.py`
-- **변경**: `desired_candidate = inflight + backlog_add` → `desired_candidate = backlog_add + warm_pool(0~1)`
-- **scale-in**: visible=0일 때 DB `state=PROCESSING` count 확인해 처리 중이면 scale-in 지연 (선택)
+- **환경변수**: `VIDEO_SCALE_VISIBLE_ONLY=1` 시 `desired_candidate = backlog_add + warm_pool` (inflight 제외)
+- **scale-in**: 기존과 동일 (visible==0 AND inflight==0 유지 시)
 
 ---
 
