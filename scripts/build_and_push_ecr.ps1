@@ -1,5 +1,7 @@
 # ==============================================================================
-# Build Docker images + ECR push
+# Build Docker images + ECR push (로컬 Windows용, Docker Desktop 필요)
+# 빌드 서버에서 할 때: SSH/SSM 접속 후 repo 클론하고 ./scripts/build_and_push_ecr_on_ec2.sh 실행.
+# 그 다음 Worker만 갱신: .\scripts\full_redeploy.ps1 -WorkersViaASG -SkipBuild
 # Requires: Docker running, AWS CLI configured. Optional: .env with ECR_REGISTRY or AWS_ACCOUNT_ID
 # ==============================================================================
 
