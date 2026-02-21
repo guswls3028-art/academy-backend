@@ -29,7 +29,25 @@ aws lambda invoke --function-name academy-worker-queue-depth-metric --region ap-
 
 - `video_backlog_count`에 **숫자**(예: 5)가 나오면 성공. 1~2분 안에 CloudWatch에 BacklogCount 찍히고, ASG TargetTracking으로 워커 수 자동 증가함.
 
-**VIDEO_BACKLOG_API_HOST 제거했는데도 여전히 null이면** → Django `IsLambdaInternal`에서 **403** 난 상태일 가능성이 큼. Lambda가 같은 VPC(172.30.x.x)인데 API 쪽에 `INTERNAL_API_ALLOW_IPS`에 172.30 대역이 없으면 403.
+**VIDEO_BACKLOG_API_HOST 제거했는데도 여전히 null이면** → Django `IsLambdaInternal`에서 **403** 난 상태. 아래 두 가지를 모두 만족해야 200이 됨.
+
+---
+
+## video_backlog_count null → 403 원인 정리 (실제 해결한 것)
+
+Lambda가 backlog API 호출 시 **403 Forbidden** 이 나면 BacklogCount 퍼블리시가 스킵되어 `video_backlog_count: null` 이 되고, ASG 오토스케일이 동작하지 않음. 403 원인은 **둘 다** 맞아야 함.
+
+| 원인 | 설명 | 조치 |
+|------|------|------|
+| **1. INTERNAL_API_ALLOW_IPS** | `IsLambdaInternal`이 클라이언트 IP를 검사함. Lambda가 같은 VPC(172.30.x.x)에 있어도, API 쪽 env에 `INTERNAL_API_ALLOW_IPS`에 **172.30.0.0/16** 이 없으면 403. | `.\scripts\add_internal_api_allow_ips.ps1` → API EC2에서 `deploy_api_on_server.sh` (SSM→.env 반영 후 컨테이너 재시작). |
+| **2. LAMBDA_INTERNAL_API_KEY 불일치** | Lambda가 보내는 `X-Internal-Key` 헤더 값과 API(SSM/.env)의 `LAMBDA_INTERNAL_API_KEY` 가 **한 글자라도 다르면** 403. 문서/예시에 흔히 쓰는 `hakwonplus-internal-key` 가 아니라, **실제 API에 들어 있는 값**과 동일해야 함. | API 쪽 값 확인: `docker exec academy-api env \| grep LAMBDA_INTERNAL`. Lambda ENV를 그 값으로 설정: `aws lambda update-function-configuration ... --environment "Variables={...,LAMBDA_INTERNAL_API_KEY=<API와 동일한 값>}"`. |
+
+- 이 프로젝트에서 API에 설정된 실제 키는 `hakwonplus-lambda-b1-internal-key-change-prod` 였음. Lambda에도 동일하게 넣은 뒤 `video_backlog_count` 에 숫자가 나옴.
+- **정리**: 403 나면 (1) SSM/API에 INTERNAL_API_ALLOW_IPS=172.30.0.0/16 있는지, (2) Lambda의 LAMBDA_INTERNAL_API_KEY가 API의 그것과 완전 일치하는지 확인.
+
+---
+
+**403 증거 확인** (Lambda 로그):
 
 1. **증거 확인** (Lambda 로그에 403 찍히는지):
    ```powershell
