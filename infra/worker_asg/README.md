@@ -31,6 +31,16 @@ cd C:\academy
 
 선택: `-MaxCapacity 10`, `-TargetMessagesPerInstance 20`, `-KeyName "my-key"`, `-AmiId "ami-xxx"`.
 
+## Lambda 사양 (academy-worker-queue-depth-metric)
+
+| 항목 | 값 |
+|------|-----|
+| PackageType | Zip |
+| RepositoryType | S3 |
+| Runtime | python3.11 |
+| Handler | lambda_function.lambda_handler |
+| LastModified | 2026-02-19 |
+
 ## 생성 리소스
 
 | 리소스 | 이름 |
