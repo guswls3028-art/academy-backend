@@ -50,3 +50,5 @@ if (-not $SkipSetup) {
 }
 
 Write-Host "`n=== Redeploy Done ===`n" -ForegroundColor Green
+Write-Host "API 서버도 SQS/Redis 등 같은 .env를 씁니다. SSM만 올렸다면 API .env는 자동 갱신되지 않습니다." -ForegroundColor Yellow
+Write-Host "업로드 완료 503 방지: .\scripts\sync_api_env_lambda_internal.ps1  (SSM -> API EC2 .env + docker restart academy-api)" -ForegroundColor Gray
