@@ -140,5 +140,6 @@ def lambda_handler(event: dict, context: Any) -> dict:
     return {
         "ai_queue_depth": ai_total,
         "video_queue_depth": video_visible,
+        "video_backlog_per_instance": video_backlog_per_instance,
         "messaging_queue_depth": messaging_visible,
     }
