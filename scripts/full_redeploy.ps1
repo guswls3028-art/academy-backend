@@ -4,8 +4,7 @@
 #
 # --- Default workflow (ASG workers) ---
 # Full:  .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -WorkersViaASG
-# Build only (ECR push, no deploy): add -BuildOnly (uses build server; no local Docker)
-# Workers only: add -SkipBuild
+# Workers only (ECR 이미지는 빌드서버에서 이미 푸시한 뒤): -SkipBuild -WorkersViaASG
 # No-cache build: add -NoCache
 #
 # --- DeployTarget: all | api | video | ai | messaging | workers ---
@@ -25,7 +24,6 @@ param(
     [switch]$WorkersViaASG = $false,             # if true, workers via ASG instance refresh only (no SSH to fixed EC2)
     [switch]$StartStoppedInstances = $true,
     [switch]$NoCache = $false,                   # if true, docker build with --no-cache (e.g. after config change)
-    [switch]$BuildOnly = $false,                 # if true, only build+push on build server then exit (no deploy)
     [ValidateSet("all", "api", "video", "ai", "messaging", "workers")]
     [string]$DeployTarget = "all"               # all=API+3 workers; api|video|ai|messaging=that one only; workers=all 3 workers
 )
