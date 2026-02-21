@@ -12,7 +12,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Resolve AWS CLI (script may run in context where "aws" is not in PATH, e.g. 32-bit PowerShell)
-$awsExe = (Get-Command aws -ErrorAction SilentlyContinue)?.Source
+$awsCmd = Get-Command aws -ErrorAction SilentlyContinue
+$awsExe = if ($awsCmd) { $awsCmd.Source } else { $null }
 if (-not $awsExe) {
     $candidates = @(
         "C:\Program Files\AmazonAWSCLIV2\aws.exe",
