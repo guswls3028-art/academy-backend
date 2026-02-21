@@ -4,16 +4,17 @@ transcode_to_hls 시작 시 process 등록, 종료 시 해제.
 """
 from __future__ import annotations
 
+import subprocess
 import threading
 from typing import Optional, Tuple
 
-_process: Optional["subprocess.Popen"] = None
+_process: Optional[subprocess.Popen] = None
 _job_id: Optional[str] = None
 _cancel_event: Optional[threading.Event] = None
 _lock = threading.Lock()
 
 
-def set_current(process: "subprocess.Popen", job_id: str, cancel_event: threading.Event) -> None:
+def set_current(process: subprocess.Popen, job_id: str, cancel_event: threading.Event) -> None:
     with _lock:
         global _process, _job_id, _cancel_event
         _process = process
@@ -29,6 +30,6 @@ def clear_current() -> None:
         _cancel_event = None
 
 
-def get_current() -> Tuple[Optional["subprocess.Popen"], Optional[str], Optional[threading.Event]]:
+def get_current() -> Tuple[Optional[subprocess.Popen], Optional[str], Optional[threading.Event]]:
     with _lock:
         return _process, _job_id, _cancel_event
