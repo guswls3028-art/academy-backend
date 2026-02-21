@@ -373,7 +373,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        ok, meta, reason = _validate_source_media_via_ffprobe(src_url)
+        try:
+            ok, meta, reason = _validate_source_media_via_ffprobe(src_url)
+        except Exception as e:
+            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | ffprobe | video_id=%s | %s", video.id, e)
+            return Response(
+                {"detail": "영상 검증 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         if not ok and reason == "ffmpeg_module_missing":
             video.status = Video.Status.UPLOADED
