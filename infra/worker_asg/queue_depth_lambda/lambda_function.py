@@ -40,7 +40,7 @@ VIDEO_WORKER_ASG_MAX = int(os.environ.get("VIDEO_WORKER_ASG_MAX", "20"))
 # VIDEO_BACKLOG_API_INTERNAL: VPC 내부용 backlog 엔드포인트 전체 URL. 실패 시 publish 스킵(0 fallback 없음).
 VIDEO_BACKLOG_API_INTERNAL = os.environ.get(
     "VIDEO_BACKLOG_API_INTERNAL",
-    "http://172.30.3.142:8000/internal/video/backlog/",
+    "http://172.30.3.142:8000/api/v1/internal/video/backlog/",
 ).rstrip("/")
 VIDEO_BACKLOG_API_URL = os.environ.get("VIDEO_BACKLOG_API_URL", "").rstrip("/")
 # Backlog 조회 URL: INTERNAL 우선(전체 URL), 없으면 PUBLIC base + /api/v1/internal/video/backlog-count/
