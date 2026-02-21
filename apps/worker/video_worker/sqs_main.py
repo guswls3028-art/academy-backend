@@ -110,7 +110,7 @@ def _job_visibility_and_heartbeat_loop(
     from academy.adapters.db.django.repositories_video import job_heartbeat, job_is_cancel_requested
     from apps.worker.video_worker.current_transcode import get_current
 
-    from apps.worker.video_worker.sqs_main import spot_termination_event, DRAIN_TERMINATE_WAIT_SECONDS
+    from apps.worker.video_worker import sqs_main as _sqs_main
 
     while not stop_event.wait(timeout=JOB_HEARTBEAT_INTERVAL_SECONDS):
         try:
