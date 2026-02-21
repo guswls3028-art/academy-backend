@@ -102,6 +102,7 @@ class ProcessVideoJobHandler:
             if not self._idempotency.acquire_lock(job_id):
                 logger.info("[HANDLER] Lock acquisition failed video_id=%s → NACK", video_id)
                 return "lock_fail"
+            logger.info("[HANDLER] Lock acquired, marking as PROCESSING video_id=%s", video_id)
             if not self._repo.mark_processing(video_id):
                 logger.warning("[HANDLER] Cannot mark video %s as PROCESSING, skipping", video_id)
                 self._idempotency.release_lock(job_id)
