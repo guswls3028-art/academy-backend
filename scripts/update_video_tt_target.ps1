@@ -18,7 +18,8 @@ $RepoRoot = Split-Path -Parent $ScriptRoot
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 # TargetValue 1 = 영상 1개당 워커 1대
-$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"BacklogCount","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"},"ScaleOutCooldown":60,"ScaleInCooldown":300}'
+# EC2 autoscaling TargetTracking: ScaleOutCooldown/ScaleInCooldown 미지원
+$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"BacklogCount","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"}}'
 $videoTtFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
 [System.IO.File]::WriteAllText($videoTtFile, $videoTtJson, $utf8NoBom)
 $videoTtPath = "file://$($videoTtFile -replace '\\','/' -replace ' ', '%20')"
