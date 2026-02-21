@@ -668,7 +668,10 @@ def job_heartbeat(job_id) -> bool:
 
 
 def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> tuple[bool, str]:
-    """Job SUCCEEDED + Video READY commit."""
+    """
+    Job SUCCEEDED + Video READY commit. Transactional.
+    Idempotent: 이미 SUCCEEDED+READY이면 True 반환 (중복 실행 시 안전).
+    """
     from django.db import transaction
     from apps.support.video.models import Video, VideoTranscodeJob
 
@@ -676,6 +679,11 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
         job = VideoTranscodeJob.objects.select_for_update().select_related("video").filter(pk=job_id).first()
         if not job:
             return False, "job_not_found"
+        if job.state == VideoTranscodeJob.State.SUCCEEDED:
+            video = get_video_for_update(job.video_id)
+            if video and video.status == Video.Status.READY and video.hls_path:
+                return True, "idempotent"
+            return False, "job_not_running"
         if job.state != VideoTranscodeJob.State.RUNNING:
             return False, "job_not_running"
         video = get_video_for_update(job.video_id)
