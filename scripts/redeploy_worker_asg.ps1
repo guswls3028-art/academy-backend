@@ -8,6 +8,7 @@
 # Default VPC/subnet/SG: cd C:\academy; .\scripts\redeploy_worker_asg.ps1
 # Infra only (skip SSM/IAM): .\scripts\redeploy_worker_asg.ps1 -SkipSetup
 # Custom: .\scripts\redeploy_worker_asg.ps1 -SubnetIds "subnet-a,subnet-b" -SecurityGroupId "sg-xxx"
+# Lambda in VPC (API fetch 실패 시): .\scripts\redeploy_worker_asg.ps1 -LambdaVpcSubnetId "subnet-049e711f41fdff71b" -LambdaVpcSecurityGroupId "academy-api-sg"
 # ==============================================================================
 
 param(
@@ -15,7 +16,9 @@ param(
     [string]$SecurityGroupId = "sg-02692600fbf8e26f7",
     [string]$IamInstanceProfileName = "academy-ec2-role",
     [string]$Region = "ap-northeast-2",
-    [switch]$SkipSetup = $false   # if true, deploy only; skip SSM/EC2 policy refresh
+    [switch]$SkipSetup = $false,   # if true, deploy only; skip SSM/EC2 policy refresh
+    [string]$LambdaVpcSubnetId = "",       # optional: put queue-depth Lambda in VPC (WAF/API fetch 실패 시)
+    [string]$LambdaVpcSecurityGroupId = "" # optional: e.g. academy-api-sg; requires LambdaVpcSubnetId
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,14 +28,18 @@ $RepoRoot = Split-Path -Parent $ScriptRoot
 Write-Host "`n=== Worker ASG Redeploy (root/admin) ===`n" -ForegroundColor Cyan
 
 # 1) Infra deploy (Lambda, Launch Template, ASG, Target Tracking)
-& (Join-Path $ScriptRoot "deploy_worker_asg.ps1") `
-    -SubnetIds $SubnetIds `
-    -SecurityGroupId $SecurityGroupId `
-    -IamInstanceProfileName $IamInstanceProfileName `
-    -Region $Region `
-    -UploadEnvToSsm:$false `
-    -AttachEc2Policy:$false `
-    -GrantSsmPutToCaller:$false
+$deployArgs = @(
+    "-SubnetIds", $SubnetIds,
+    "-SecurityGroupId", $SecurityGroupId,
+    "-IamInstanceProfileName", $IamInstanceProfileName,
+    "-Region", $Region,
+    "-UploadEnvToSsm:`$false",
+    "-AttachEc2Policy:`$false",
+    "-GrantSsmPutToCaller:`$false"
+)
+if ($LambdaVpcSubnetId) { $deployArgs += "-LambdaVpcSubnetId"; $deployArgs += $LambdaVpcSubnetId }
+if ($LambdaVpcSecurityGroupId) { $deployArgs += "-LambdaVpcSecurityGroupId"; $deployArgs += $LambdaVpcSecurityGroupId }
+& (Join-Path $ScriptRoot "deploy_worker_asg.ps1") @deployArgs
 
 if (-not $SkipSetup) {
     Write-Host "`n--- SSM + EC2 role refresh ---`n" -ForegroundColor Cyan
