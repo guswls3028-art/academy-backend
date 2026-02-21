@@ -21,19 +21,11 @@ fi
 
 # 2) Guard: required env for upload_complete / API (apps/api/config/settings/base.py)
 REQUIRED_KEYS="DB_HOST R2_ACCESS_KEY R2_SECRET_KEY R2_ENDPOINT REDIS_HOST"
-for k in $REQUIRED_KEYS; do
-  if ! grep -qE "^${k}=" "$ENV_FILE" || ! grep -E "^${k}=" "$ENV_FILE" | grep -qvE "^${k}=\s*$"; then
-    if ! grep -E "^${k}=" "$ENV_FILE" | head -1 | grep -qvE '^[^=]+=\s*$'; then
-      true
-    else
-      : # allow empty for optional
-    fi
-  fi
-done
 MISSING=""
 for k in $REQUIRED_KEYS; do
-  v=$(grep -E "^${k}=" "$ENV_FILE" 2>/dev/null | head -1 | sed 's/^[^=]*=//')
-  if [ -z "$v" ]; then
+  line=$(grep -E "^${k}=" "$ENV_FILE" 2>/dev/null | head -1)
+  val="${line#*=}"
+  if [ -z "$val" ]; then
     MISSING="${MISSING}${k} "
   fi
 done
