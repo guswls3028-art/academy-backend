@@ -47,14 +47,14 @@ if (Test-Path $invokeOut) {
 Write-Host "[Payload parsed - metrics]"
 try {
     $payload = Get-Content $invokeOut -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json
+    $vt = if ($null -ne $payload.PSObject.Properties["video_queue_depth_total"]) { $payload.video_queue_depth_total } else { $payload.video_backlog_count }
     $diagnoseResult.lambda = @{
         video_queue_depth = $payload.video_queue_depth
-        video_queue_depth_total = $payload.video_queue_depth_total
+        video_queue_depth_total = $vt
         video_backlog_count = $payload.video_backlog_count
         ai_queue_depth = $payload.ai_queue_depth
         messaging_queue_depth = $payload.messaging_queue_depth
     }
-    $vt = if ($null -ne $payload.PSObject.Properties["video_queue_depth_total"]) { $payload.video_queue_depth_total } else { $payload.video_backlog_count }
     Write-Host "video_queue_depth_total: $vt"
     Write-Host "video_queue_depth: $($payload.video_queue_depth)"
     Write-Host "ai_queue_depth: $($payload.ai_queue_depth)"
