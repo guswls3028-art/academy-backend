@@ -280,11 +280,10 @@ def transcode_to_hls(
                 from apps.worker.video_worker.current_transcode import set_current
                 set_current(p, job_id, cancel_event)
             try:
-
                 def read_stdout_progress() -> None:
-                """-progress pipe:1: out_time_ms= 마이크로초 파싱. stderr 버퍼링 없이 진행률 수신."""
-                progress_count = 0
-                for line in p.stdout or []:
+                    """-progress pipe:1: out_time_ms= 마이크로초 파싱. stderr 버퍼링 없이 진행률 수신."""
+                    progress_count = 0
+                    for line in p.stdout or []:
                     m = _RE_OUT_TIME_MS.search(line)
                     if m:
                         current_sec = int(m.group(1)) / 1_000_000.0
