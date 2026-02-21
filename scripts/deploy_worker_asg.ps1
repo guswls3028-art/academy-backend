@@ -400,7 +400,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Video ASG put-scaling-policy failed (video-backlogcount-tt)."
 }
 Remove-Item $videoTtFile -Force -ErrorAction SilentlyContinue
-$videoPolicyCheck = aws autoscaling describe-policies --auto-scaling-group-name $AsgVideoName --policy-names "video-backlogcount-tt" --region $Region --query "ScalingPolicies[?PolicyName=='video-backlogcount-tt']" --output json 2>$null
+$videoPolicyCheck = aws autoscaling describe-policies --auto-scaling-group-name $AsgVideoName --region $Region --query "ScalingPolicies[?PolicyName=='video-backlogcount-tt']" --output json 2>$null
 $videoPolicyArr = $videoPolicyCheck | ConvertFrom-Json
 if (-not $videoPolicyArr -or $videoPolicyArr.Count -eq 0) {
     throw "Video ASG policy verification failed: ScalingPolicies[?PolicyName=='video-backlogcount-tt'] is empty after put-scaling-policy."
