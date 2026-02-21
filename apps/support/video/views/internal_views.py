@@ -160,15 +160,16 @@ class VideoScanStuckView(APIView):
         recovered = 0
         dead = 0
 
+        from academy.adapters.db.django.repositories_video import job_mark_dead
+
         for job in qs:
             attempt_after = job.attempt_count + 1
             if attempt_after >= max_attempts:
-                job.state = VideoTranscodeJob.State.DEAD
-                job.error_code = "STUCK_MAX_ATTEMPTS"
-                job.error_message = f"Stuck (no heartbeat for {threshold_minutes}min)"
-                job.locked_by = ""
-                job.locked_until = None
-                job.save(update_fields=["state", "error_code", "error_message", "locked_by", "locked_until", "updated_at"])
+                job_mark_dead(
+                    str(job.id),
+                    error_code="STUCK_MAX_ATTEMPTS",
+                    error_message=f"Stuck (no heartbeat for {threshold_minutes}min)",
+                )
                 dead += 1
             else:
                 job.state = VideoTranscodeJob.State.RETRY_WAIT
