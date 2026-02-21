@@ -238,13 +238,13 @@ Write-Host $spotUsageRaw
 # 11) Save result JSON + Summary
 # ------------------------------------------------------------------------------
 $diagnoseResult.summary = @{
-    sqs_visible    = $diagnoseResult.sqs.visible
-    sqs_notVisible = $diagnoseResult.sqs.notVisible
-    sqs_total      = $diagnoseResult.sqs.total
-    asg_desired    = $diagnoseResult.asg.desiredCapacity
-    asg_min_max    = "$($diagnoseResult.asg.minSize)/$($diagnoseResult.asg.maxSize)"
-    scaling_metric = $diagnoseResult.policy.metricName
-    lambda_total   = $diagnoseResult.lambda.video_queue_depth_total
+    sqs_visible    = if ($diagnoseResult.sqs) { $diagnoseResult.sqs.visible } else { $null }
+    sqs_notVisible = if ($diagnoseResult.sqs) { $diagnoseResult.sqs.notVisible } else { $null }
+    sqs_total      = if ($diagnoseResult.sqs) { $diagnoseResult.sqs.total } else { $null }
+    asg_desired    = if ($diagnoseResult.asg) { $diagnoseResult.asg.desiredCapacity } else { $null }
+    asg_min_max    = if ($diagnoseResult.asg) { "$($diagnoseResult.asg.minSize)/$($diagnoseResult.asg.maxSize)" } else { $null }
+    scaling_metric = if ($diagnoseResult.policy) { $diagnoseResult.policy.metricName } else { $null }
+    lambda_total   = if ($diagnoseResult.lambda -and $null -ne $diagnoseResult.lambda.video_queue_depth_total) { $diagnoseResult.lambda.video_queue_depth_total } else { $null }
 }
 
 $resultPath = Join-Path $repoRoot ("diagnose_result_{0}.json" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
