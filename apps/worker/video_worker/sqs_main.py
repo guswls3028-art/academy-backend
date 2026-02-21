@@ -327,6 +327,8 @@ def main() -> int:
                 heartbeat_thread.start()
 
                 try:
+                    # Idempotent 순서: 1) 스토리지(HLS) 2) DB 커밋 3) raw 삭제 4) DeleteMessage
+                    # 중복 실행 시 process_video는 동일 경로 덮어쓰기, job_complete는 idempotent 반환
                     logger.info("[SQS_MAIN] process_video job_id=%s video_id=%s", job_id, video_id)
                     hls_path, duration = process_video(job=job_dict, cfg=cfg, progress=progress)
                     ok, reason = job_complete(job_id, hls_path, duration)
@@ -335,7 +337,7 @@ def main() -> int:
 
                     processing_duration = time.time() - _current_job_start_time
 
-                    # R2 raw 삭제
+                    # R2 raw 삭제 (DB 커밋 이후 — 실패해도 DB 상태는 이미 READY)
                     file_key_for_raw = job_dict.get("file_key") or ""
                     if file_key_for_raw.strip():
                         from apps.infrastructure.storage.r2 import delete_object_r2_video
