@@ -373,28 +373,41 @@ $policyMessaging = @"
 }
 "@
 $policyAiFile = Join-Path $RepoRoot "asg_policy_ai.json"
-$policyVideoFile = Join-Path $RepoRoot "asg_policy_video.json"
 $policyMessagingFile = Join-Path $RepoRoot "asg_policy_messaging.json"
 [System.IO.File]::WriteAllText($policyAiFile, $policyAi, $utf8NoBom)
-[System.IO.File]::WriteAllText($policyVideoFile, $policyVideo, $utf8NoBom)
 [System.IO.File]::WriteAllText($policyMessagingFile, $policyMessaging, $utf8NoBom)
 $policyAiPath = "file://$($policyAiFile -replace '\\','/' -replace ' ', '%20')"
-$policyVideoPath = "file://$($policyVideoFile -replace '\\','/' -replace ' ', '%20')"
 $policyMessagingPath = "file://$($policyMessagingFile -replace '\\','/' -replace ' ', '%20')"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $ResourceIdAi `
     --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" `
     --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyAiPath --region $Region 2>$null
-aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $ResourceIdVideo `
-    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "BacklogCountTargetTracking" `
-    --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyVideoPath --region $Region 2>$null
 aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $ResourceIdMessaging `
     --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" `
     --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyMessagingPath --region $Region 2>$null
 $ErrorActionPreference = $ea
-Remove-Item $policyAiFile, $policyVideoFile, $policyMessagingFile -Force -ErrorAction SilentlyContinue
+Remove-Item $policyAiFile, $policyMessagingFile -Force -ErrorAction SilentlyContinue
 
-Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging/Video=TargetTracking (Video=BacklogCount)" -ForegroundColor Green
+# Video ASG: TargetTrackingScaling via EC2 autoscaling put-scaling-policy only (no Application Auto Scaling)
+$videoTtJson = '{"TargetValue":20.0,"CustomizedMetricSpecification":{"MetricName":"BacklogCount","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"},"ScaleOutCooldown":60,"ScaleInCooldown":300}'
+$videoTtFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
+[System.IO.File]::WriteAllText($videoTtFile, $videoTtJson, $utf8NoBom)
+$videoTtPath = "file://$($videoTtFile -replace '\\','/' -replace ' ', '%20')"
+Write-Host "      Video ASG: applying video-backlogcount-tt (aws autoscaling put-scaling-policy)..." -ForegroundColor Gray
+aws autoscaling put-scaling-policy --auto-scaling-group-name $AsgVideoName --policy-name "video-backlogcount-tt" --policy-type TargetTrackingScaling --target-tracking-configuration $videoTtPath --region $Region
+if ($LASTEXITCODE -ne 0) {
+    Remove-Item $videoTtFile -Force -ErrorAction SilentlyContinue
+    throw "Video ASG put-scaling-policy failed (video-backlogcount-tt)."
+}
+Remove-Item $videoTtFile -Force -ErrorAction SilentlyContinue
+$videoPolicyCheck = aws autoscaling describe-policies --auto-scaling-group-name $AsgVideoName --policy-names "video-backlogcount-tt" --region $Region --query "ScalingPolicies[?PolicyName=='video-backlogcount-tt']" --output json 2>$null
+$videoPolicyArr = $videoPolicyCheck | ConvertFrom-Json
+if (-not $videoPolicyArr -or $videoPolicyArr.Count -eq 0) {
+    throw "Video ASG policy verification failed: ScalingPolicies[?PolicyName=='video-backlogcount-tt'] is empty after put-scaling-policy."
+}
+Write-Host "      Verified: video-backlogcount-tt on $AsgVideoName." -ForegroundColor Gray
+
+Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging=TargetTracking (Application Auto Scaling); Video=video-backlogcount-tt (EC2 autoscaling)" -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
 # Cleanup: remove legacy Launch Templates (ASG-named; we now use -lt names)
