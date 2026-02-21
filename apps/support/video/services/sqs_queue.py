@@ -55,13 +55,22 @@ class VideoSQSQueue:
     def enqueue(self, video: Video) -> bool:
         """
         비디오 작업을 SQS에 추가
-        
+
         Args:
             video: Video 객체 (status가 UPLOADED여야 함)
-            
+
         Returns:
             bool: 성공 여부
         """
+        # [TRACE] enqueue entry (enqueue_video_job equivalent)
+        _tid = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
+        logger.info(
+            "VIDEO_UPLOAD_TRACE | enqueue entry | video_id=%s tenant_id=%s source_path=%s status=%s execution=3_ENQUEUE_ENTRY",
+            video.id,
+            _tid,
+            video.file_key or "",
+            video.status,
+        )
         if video.status != Video.Status.UPLOADED:
             logger.warning(
                 "Cannot enqueue video %s: status=%s (expected UPLOADED)",
@@ -89,20 +98,30 @@ class VideoSQSQueue:
         }
         
         try:
+            logger.info(
+                "VIDEO_UPLOAD_TRACE | calling send_message | video_id=%s tenant_id=%s source_path=%s execution=4_SEND_MESSAGE_CALL",
+                video.id, tenant_id, video.file_key or "",
+            )
             success = self.queue_client.send_message(
                 queue_name=self._get_queue_name(),
                 message=message,
             )
-            
+            logger.info(
+                "VIDEO_UPLOAD_TRACE | send_message returned | video_id=%s success=%s execution=5_SEND_MESSAGE_DONE",
+                video.id, success,
+            )
             if success:
                 logger.info("Video job enqueued: video_id=%s", video.id)
             else:
                 logger.error("Failed to enqueue video job: video_id=%s", video.id)
-            
+
             return success
-            
+
         except Exception as e:
-            logger.exception("Error enqueuing video job: video_id=%s, error=%s", video.id, e)
+            logger.exception(
+                "VIDEO_UPLOAD_TRACE | enqueue exception (exposed) | video_id=%s tenant_id=%s error=%s execution=ERR_ENQUEUE",
+                video.id, tenant_id, e,
+            )
             return False
 
     def enqueue_delete_r2(
