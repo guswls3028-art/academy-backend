@@ -725,6 +725,20 @@ def job_fail_retry(job_id: str, reason: str) -> tuple[bool, str]:
     return True, "ok"
 
 
+def job_cancel(job_id: str) -> bool:
+    """Job CANCELLED (재시도 버튼으로 사용자가 취소 요청 시)."""
+    from django.utils import timezone
+    from apps.support.video.models import VideoTranscodeJob
+
+    n = VideoTranscodeJob.objects.filter(pk=job_id).update(
+        state=VideoTranscodeJob.State.CANCELLED,
+        locked_by="",
+        locked_until=None,
+        updated_at=timezone.now(),
+    )
+    return n == 1
+
+
 def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") -> bool:
     """Job DEAD (DLQ 격리)."""
     from django.utils import timezone
