@@ -354,31 +354,41 @@ def transcode_to_hls(
             stderr=subprocess.PIPE,
             text=True,
         )
-        deadline = time.monotonic() + effective_timeout
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                p.kill()
-                p.wait()
-                raise TranscodeError(
-                    f"ffmpeg timeout video_id={video_id} (extending, cap 24h) exceeded"
-                )
-            chunk = min(FFMPEG_CHUNK_SECONDS, int(remaining))
-            try:
-                p.wait(timeout=chunk)
-                break
-            except subprocess.TimeoutExpired:
-                deadline += FFMPEG_EXTEND_SECONDS
-                cap = time.monotonic() + FFMPEG_MAX_TOTAL_SECONDS
-                if deadline > cap:
-                    deadline = cap
+        if job_id and cancel_event:
+            from apps.worker.video_worker.current_transcode import set_current
+            set_current(p, job_id, cancel_event)
+        try:
+            deadline = time.monotonic() + effective_timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    p.kill()
+                    p.wait()
+                    raise TranscodeError(
+                        f"ffmpeg timeout video_id={video_id} (extending, cap 24h) exceeded"
+                    )
+                chunk = min(FFMPEG_CHUNK_SECONDS, int(remaining))
+                try:
+                    p.wait(timeout=chunk)
+                    break
+                except subprocess.TimeoutExpired:
+                    deadline += FFMPEG_EXTEND_SECONDS
+                    cap = time.monotonic() + FFMPEG_MAX_TOTAL_SECONDS
+                    if deadline > cap:
+                        deadline = cap
 
-        if p.returncode != 0:
+            if cancel_event and cancel_event.is_set():
+                raise CancelledError("Retry requested; ffmpeg SIGTERM sent")
+            if p.returncode != 0:
+                stderr_tail = (p.stderr.read() if p.stderr else "")
+                raise TranscodeError(
+                    f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(stderr_tail)}"
+                )
             stderr_tail = (p.stderr.read() if p.stderr else "")
-            raise TranscodeError(
-                f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(stderr_tail)}"
-            )
-        stderr_tail = (p.stderr.read() if p.stderr else "")
+        finally:
+            if job_id and cancel_event:
+                from apps.worker.video_worker.current_transcode import clear_current
+                clear_current()
 
     master = output_root / "master.m3u8"
     if not master.exists():
