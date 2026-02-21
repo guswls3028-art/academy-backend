@@ -40,6 +40,13 @@
 - ✅ SSM /academy/workers/env 업로드 스크립트 (upload_env_to_ssm.ps1)
 - ✅ API 서버 .env 동기화 스크립트 (sync_api_env_lambda_internal.ps1)
 
+### 1.6 nginx X-Internal-Key passthrough
+- ✅ **infra/nginx/academy-api.conf**: EC2 호스트 nginx용, `proxy_set_header X-Internal-Key $http_x_internal_key` 추가
+- ✅ **docker/nginx/default.conf**: Docker nginx 프록시용 동일 설정
+- ✅ **full_redeploy.ps1**: academy-api 배포 시 nginx 설정 복사 → `/etc/nginx/conf.d/academy-api.conf` 적용 후 reload
+- ✅ **verify_lambda_internal_api.ps1**: LOCAL(localhost:8000) vs PUBLIC(api.hakwonplus.com) 호출 비교 검증 스크립트
+- ✅ **scripts/_verify_internal_api_remote.sh**: EC2에서 실행하는 검증 셸 스크립트 (SCP 후 실행)
+
 ---
 
 ## 2. 현재 동작 상태
@@ -49,19 +56,13 @@
 | CloudWatch PutMetricData | ✅ 정상 | BacklogCount 발행 성공 |
 | ASG TargetTracking | ✅ 동작 | BacklogCount 기반 스케일링 |
 | Lambda set_desired_capacity | ✅ 제거됨 | B1 아키텍처 준수 |
-| VIDEO_BACKLOG_API (DB SSOT) | ⚠️ 403 | 아래 참조 |
-| Fallback (SQS) | ✅ 동작 | API 실패 시 visible+inflight 사용 |
+| VIDEO_BACKLOG_API (DB SSOT) | ✅ 정상 | nginx passthrough 적용 후 200 OK |
+| Fallback (SQS) | ✅ 대기 | API 성공 시 미사용 |
 
-### 2.1 DB Backlog API 403 이슈 (미해결)
-- **증상**: `VIDEO_BACKLOG_API fetch failed ... HTTP Error 403: Forbidden`
-- **확인 결과**:
-  - Lambda LAMBDA_INTERNAL_API_KEY: `hakwonplus-lambda-b1-internal-key-change-prod` ✅
-  - EC2 academy-api 컨테이너: 동일 값 ✅
-  - .env 파일: 동일 값 ✅
-- **추정 원인**: api.hakwonplus.com → EC2 경로 사이에서
-  - ALB/Cloudflare 등이 X-Internal-Key 헤더 제거/변형
-  - 또는 api.hakwonplus.com이 해당 EC2가 아닌 다른 백엔드로 라우팅
-- **권장 조치**: EC2에서 `curl -H "X-Internal-Key: ..." http://localhost:8000/api/v1/internal/video/backlog-count/` 호출하여 로컬 200 여부 확인
+### 2.1 DB Backlog API 403 → 해결
+- **원인**: api.hakwonplus.com 경로(Cloudflare → EC2 nginx)에서 X-Internal-Key가 upstream(gunicorn)으로 전달되지 않음.
+- **조치**: EC2 nginx에 `proxy_set_header X-Internal-Key $http_x_internal_key` 적용, full_redeploy 시 설정 자동 반영.
+- **검증**: `.\scripts\verify_lambda_internal_api.ps1` 실행 시 [LOCAL] 200 OK, [PUBLIC] 200 OK, backlog JSON 정상 출력 확인.
 
 ---
 
