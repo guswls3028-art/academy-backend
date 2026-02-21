@@ -81,3 +81,43 @@ POST /api/.../videos/{pk}/upload/complete/
 
 - `enqueue()` 내 try/except는 **예외를 삼키지 않음**. `logger.exception()`으로 전체 traceback 로그.
 - `VIDEO_UPLOAD_TRACE | enqueue exception (exposed)` 로그로 오류 위치 확인 가능.
+
+---
+
+## 8. SQS QueueUrl runtime 검증 (SQS_QUEUE_URL_TRACE)
+
+### 로그 마커
+
+`libs/queue/client.py` `SQSQueueClient.send_message()` 실행 시:
+
+```
+SQS_QUEUE_URL_TRACE | send_message | queue_name=%s queue_url=%s region=%s tenant_id=%s
+```
+
+### 예상 QueueUrl
+
+```
+https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-video-jobs
+```
+
+### queue_name 출처 (video enqueue)
+
+| 우선순위 | 출처 | 값 |
+|----------|------|-----|
+| 1 | 환경변수 `VIDEO_SQS_QUEUE_NAME` | .env 또는 실행 시 export |
+| 2 | 기본값 | `academy-video-jobs` |
+
+**코드 경로**:
+```
+apps/support/video/services/sqs_queue.py
+  → _get_queue_name() = getattr(settings, "VIDEO_SQS_QUEUE_NAME", self.QUEUE_NAME)
+  → self.QUEUE_NAME = "academy-video-jobs"
+
+apps/api/config/settings/base.py
+  → VIDEO_SQS_QUEUE_NAME = os.getenv("VIDEO_SQS_QUEUE_NAME", "academy-video-jobs")
+```
+
+### tenant/Program/ui_config 기반 오버라이드 여부
+
+- **없음**. Video SQS 큐 이름은 `settings.VIDEO_SQS_QUEUE_NAME`(env 기반)만 사용.
+- tenant config, Program.ui_config, 테넌트별 큐 분리는 **사용하지 않음**.
