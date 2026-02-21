@@ -39,10 +39,10 @@ try {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $awsExe
     $psi.Arguments = "ssm get-parameter --name `"$SsmName`" --with-decryption --region $Region --output json"
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.CreateNoWindow = $true
+    [void]($psi.UseShellExecute = $false)
+    [void]($psi.RedirectStandardOutput = $true)
+    [void]($psi.RedirectStandardError = $true)
+    [void]($psi.CreateNoWindow = $true)
     # Force UTF-8 stdout so SSM value with Unicode (e.g. U+2014) does not trigger cp949 encode error on Korean Windows
     $psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"
     $psi.EnvironmentVariables["PYTHONUTF8"] = "1"
