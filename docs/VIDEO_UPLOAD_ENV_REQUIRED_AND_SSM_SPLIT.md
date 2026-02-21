@@ -238,7 +238,26 @@ PY'
 
 **모두 SET이어야** upload complete → head_object → presign → create_job_and_enqueue → SQS send + Redis incr 이 정상 동작함.
 
-(요청하신 `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_ACCESS_KEY_ID`, `CLOUDFLARE_R2_SECRET_ACCESS_KEY`, `VIDEO_BUCKET_NAME`, `REDIS_URL`는 이 코드베이스에 없으므로, 다른 시스템과 맞추려면 API 서버에서 해당 이름을 R2_* / REDIS_HOST 등으로 매핑하는 래퍼나 설정이 필요.)
+**요청하신 이름(CLOUDFLARE_R2_*, VIDEO_BUCKET_NAME, REDIS_URL)으로 검사하려면:**  
+코드에는 해당 이름이 없으므로, 아래 스크립트는 “그 이름들이 설정되어 있는지”만 확인합니다. 실제 동작은 위 `R2_*`, `REDIS_HOST` 등으로 합니다. 동일 값으로 alias를 두거나, SSM/.env에 두 이름을 모두 넣어 두면 됨.
+
+```bash
+docker exec -it academy-api bash -lc '
+python - << "PY"
+import os
+for k in [
+"CLOUDFLARE_R2_ENDPOINT",
+"CLOUDFLARE_R2_ACCESS_KEY_ID",
+"CLOUDFLARE_R2_SECRET_ACCESS_KEY",
+"VIDEO_BUCKET_NAME",
+"VIDEO_SQS_QUEUE_NAME",
+"REDIS_URL"
+]:
+ print(k, "=", "SET" if os.getenv(k) else "MISSING")
+PY'
+```
+
+→ **코드 기준으로 upload complete를 고치려면** `R2_ENDPOINT`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_VIDEO_BUCKET`, `REDIS_HOST`가 SET인지 확인하는 §8 첫 번째 스크립트를 사용하세요.
 
 ---
 
