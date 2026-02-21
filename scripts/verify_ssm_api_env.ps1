@@ -63,10 +63,14 @@ try {
         $obj = $jsonStr | ConvertFrom-Json
         $raw = $obj.Parameter.Value
     }
-    $null  # avoid leaking True/False from assignments to host
+    if ($null -ne $savedPyIo) { $env:PYTHONIOENCODING = $savedPyIo } else { Remove-Item env:PYTHONIOENCODING -ErrorAction SilentlyContinue }
+    if ($null -ne $savedPyUtf8) { $env:PYTHONUTF8 = $savedPyUtf8 } else { Remove-Item env:PYTHONUTF8 -ErrorAction SilentlyContinue }
+    $null
 } catch {
     $raw = $null
     if ($exitCode -eq -1) { $stderrStr = $_.Exception.Message }
+    if ($null -ne $savedPyIo) { $env:PYTHONIOENCODING = $savedPyIo } else { Remove-Item env:PYTHONIOENCODING -ErrorAction SilentlyContinue }
+    if ($null -ne $savedPyUtf8) { $env:PYTHONUTF8 = $savedPyUtf8 } else { Remove-Item env:PYTHONUTF8 -ErrorAction SilentlyContinue }
 }
 if ($null -eq $raw -or [string]::IsNullOrWhiteSpace($raw)) {
     Write-Host "  FAIL: SSM get failed or parameter empty. (ExitCode: $exitCode)" -ForegroundColor Red
