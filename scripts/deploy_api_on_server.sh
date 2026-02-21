@@ -1,5 +1,5 @@
 #!/bin/bash
-# API 서버 안에서: git pull → build → 재시작
+# API 서버 안에서: SSM /academy/api/env → .env, git pull → build → 재시작
 # 사용: cd /home/ec2-user/academy && bash scripts/deploy_api_on_server.sh
 #
 # 매 배포 시 academy-api:latest 로 다시 빌드하면, 이전 이미지는 태그가 빠져
@@ -8,6 +8,39 @@
 set -e
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="${ENV_FILE:-/home/ec2-user/.env}"
+REGION="${AWS_REGION:-ap-northeast-2}"
+SSM_API_ENV="/academy/api/env"
+
+# 1) Fetch API env from SSM (SSOT for API server)
+if aws ssm get-parameter --name "$SSM_API_ENV" --with-decryption --query Parameter.Value --output text --region "$REGION" 2>/dev/null | sed 's/\t/\n/g' | grep -v '^$' > "$ENV_FILE"; then
+  echo "OK. SSM $SSM_API_ENV -> $ENV_FILE"
+else
+  echo "ERROR: Failed to get SSM $SSM_API_ENV. Create parameter or check IAM." >&2
+  exit 1
+fi
+
+# 2) Guard: required env for upload_complete / API (apps/api/config/settings/base.py)
+REQUIRED_KEYS="DB_HOST R2_ACCESS_KEY R2_SECRET_KEY R2_ENDPOINT REDIS_HOST"
+for k in $REQUIRED_KEYS; do
+  if ! grep -qE "^${k}=" "$ENV_FILE" || ! grep -E "^${k}=" "$ENV_FILE" | grep -qvE "^${k}=\s*$"; then
+    if ! grep -E "^${k}=" "$ENV_FILE" | head -1 | grep -qvE '^[^=]+=\s*$'; then
+      true
+    else
+      : # allow empty for optional
+    fi
+  fi
+done
+MISSING=""
+for k in $REQUIRED_KEYS; do
+  v=$(grep -E "^${k}=" "$ENV_FILE" 2>/dev/null | head -1 | sed 's/^[^=]*=//')
+  if [ -z "$v" ]; then
+    MISSING="${MISSING}${k} "
+  fi
+done
+if [ -n "$MISSING" ]; then
+  echo "ERROR: Required env missing in $ENV_FILE: $MISSING" >&2
+  exit 1
+fi
 
 cd "$REPO_DIR"
 git fetch origin
