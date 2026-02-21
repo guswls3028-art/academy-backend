@@ -223,6 +223,8 @@ def transcode_to_hls(
     timeout: Optional[int],
     duration_sec: Optional[float] = None,
     progress_callback: Optional[Callable[[float, float], None]] = None,
+    job_id: Optional[str] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> Path:
     effective_timeout = _effective_ffmpeg_timeout(duration_sec, timeout)
     # 입력 해상도 기반 variant 선택 (probe는 짧은 제한)
@@ -274,8 +276,12 @@ def transcode_to_hls(
             )
             assert p.stdout is not None
             assert p.stderr is not None
+            if job_id and cancel_event:
+                from apps.worker.video_worker.current_transcode import set_current
+                set_current(p, job_id, cancel_event)
+            try:
 
-            def read_stdout_progress() -> None:
+                def read_stdout_progress() -> None:
                 """-progress pipe:1: out_time_ms= 마이크로초 파싱. stderr 버퍼링 없이 진행률 수신."""
                 progress_count = 0
                 for line in p.stdout or []:
