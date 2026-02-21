@@ -102,6 +102,11 @@ urlpatterns = [
         name="video-backlog-count",
     ),
     path(
+        "internal/video/backlog/",
+        VideoBacklogCountView.as_view(),
+        name="video-backlog",
+    ),
+    path(
         "internal/video/backlog-score/",
         VideoBacklogScoreView.as_view(),
         name="video-backlog-score",
