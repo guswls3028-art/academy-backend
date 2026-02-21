@@ -273,6 +273,8 @@ def process_video(
             timeout=int(cfg.FFMPEG_TIMEOUT_SECONDS),
             duration_sec=duration,
             progress_callback=transcode_progress,
+            job_id=job.get("_job_id"),
+            cancel_event=job.get("_cancel_event"),
         )
 
         progress.record_progress(
