@@ -32,6 +32,8 @@ from apps.core.serializers import (
 from apps.core.services.attendance_policy import calculate_duration_hours, calculate_amount
 from apps.core.services.expense_policy import normalize_expense_amount
 
+logger = logging.getLogger(__name__)
+
 
 # --------------------------------------------------
 # Auth: /core/me/
