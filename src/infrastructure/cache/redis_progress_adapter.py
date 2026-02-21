@@ -64,6 +64,14 @@ class RedisProgressAdapter(IProgress):
                 json.dumps(payload, default=str),
             )
             logger.debug("Progress recorded: job_id=%s step=%s tenant_id=%s", job_id, step, tenant_id)
+            if tenant_id and job_id.startswith("video:"):
+                try:
+                    vid = job_id.replace("video:", "").strip()
+                    if vid.isdigit():
+                        from apps.support.video.redis_status_cache import set_video_heartbeat
+                        set_video_heartbeat(int(tenant_id), int(vid))
+                except Exception as hb_e:
+                    logger.debug("Video heartbeat set failed: %s", hb_e)
         except Exception as e:
             logger.warning("Redis progress record failed: %s", e)
 
