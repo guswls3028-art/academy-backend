@@ -110,26 +110,43 @@ def _job_visibility_and_heartbeat_loop(
     from academy.adapters.db.django.repositories_video import job_heartbeat, job_is_cancel_requested
     from apps.worker.video_worker.current_transcode import get_current
 
+    from apps.worker.video_worker.sqs_main import spot_termination_event, DRAIN_TERMINATE_WAIT_SECONDS
+
     while not stop_event.wait(timeout=JOB_HEARTBEAT_INTERVAL_SECONDS):
         try:
             queue.change_message_visibility(receipt_handle, VISIBILITY_EXTEND_SECONDS)
             job_heartbeat(job_id, lease_seconds=VISIBILITY_EXTEND_SECONDS)
-            # cancel_requested: get_current() (process, job_id)가 현재 job_id와 일치할 때만 terminate
-            if job_is_cancel_requested(job_id):
-                process, proc_job_id, ev = get_current()
-                if proc_job_id == job_id and process is not None and process.poll() is None:
+            process, proc_job_id, ev = get_current()
+            if proc_job_id != job_id or process is None or process.poll() is not None:
+                pass
+            elif spot_termination_event.is_set():
+                # Spot/scale-in drain: terminate, wait 90s, then kill (Drain timeout 보호)
+                try:
+                    process.terminate()
                     try:
-                        process.terminate()
-                        try:
-                            process.wait(timeout=15)
-                        except subprocess.TimeoutExpired:
-                            process.kill()
-                            process.wait()
-                        cancel_event.set()
-                        logger.info("CANCEL_REQUESTED | job_id=%s | ffmpeg SIGTERM sent and waited", job_id)
-                    except Exception as ex:
-                        logger.warning("ffmpeg terminate/wait failed job_id=%s: %s", job_id, ex)
-                        cancel_event.set()
+                        process.wait(timeout=DRAIN_TERMINATE_WAIT_SECONDS)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                    cancel_event.set()
+                    logger.info("DRAIN_INTERRUPT | job_id=%s | ffmpeg SIGTERM sent (wait=%ds)", job_id, DRAIN_TERMINATE_WAIT_SECONDS)
+                except Exception as ex:
+                    logger.warning("ffmpeg drain terminate/wait failed job_id=%s: %s", job_id, ex)
+                    cancel_event.set()
+            elif job_is_cancel_requested(job_id):
+                # User retry cancel: 15s wait then kill
+                try:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                    cancel_event.set()
+                    logger.info("CANCEL_REQUESTED | job_id=%s | ffmpeg SIGTERM sent and waited", job_id)
+                except Exception as ex:
+                    logger.warning("ffmpeg terminate/wait failed job_id=%s: %s", job_id, ex)
+                    cancel_event.set()
         except Exception as e:
             logger.warning("Job heartbeat/visibility failed job_id=%s: %s", job_id, e)
 
