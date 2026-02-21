@@ -118,7 +118,7 @@ if (-not $firstSubnetId) {
     Write-Host "[Subnet] $firstSubnetId"
     $subnetInfo = aws ec2 describe-subnets --subnet-ids $firstSubnetId --region $Region --output json
     Write-Host $subnetInfo
-    $vpcId = (aws ec2 describe-subnets --subnet-ids $firstSubnetId --region $Region --query "Subnets[0].VpcId" --output text)
+    $vpcId = aws ec2 describe-subnets --subnet-ids $firstSubnetId --region $Region --query "Subnets[0].VpcId" --output text
     Write-Host "[Route table for subnet]"
     $rtId = aws ec2 describe-route-tables --region $Region --filters "Name=association.subnet-id,Values=$firstSubnetId" --query "RouteTables[0].RouteTableId" --output text
     if ($rtId -and $rtId -ne "None") {
