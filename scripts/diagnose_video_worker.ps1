@@ -191,11 +191,11 @@ if ($events -and $events.events) {
 # 출력
 # ------------------------------------------------------------------------------
 $out += ""
-$out += "========== 요약 (원인 후보) =========="
-$out += "  - video_backlog_count null -> Lambda 403: INTERNAL_API_ALLOW_IPS, LAMBDA_INTERNAL_API_KEY 확인"
-$out += "  - SQS visible>0, in_flight=0 -> 워커가 메시지 안 받음: 8번 네트워크(NAT/라우트), 워커 docker 로그 Connect timeout"
-$out += "  - Scaling Failed MaxSpotInstanceCountExceeded -> Spot 쿼터(5번) 또는 계정 한도"
-$out += "  - Desired 비정상(예: 20) -> TargetValue 확인(3번), 과거 0.25 등"
+$out += "========== Summary (cause candidates) =========="
+$out += "  - video_backlog_count null -> Lambda 403: check INTERNAL_API_ALLOW_IPS, LAMBDA_INTERNAL_API_KEY"
+$out += "  - SQS visible>0 and in_flight=0 -> workers not receiving: check section 8 (NAT/route), worker docker logs Connect timeout"
+$out += "  - Scaling Failed MaxSpotInstanceCountExceeded -> Spot quota (section 5) or account limit"
+$out += "  - Desired too high (e.g. 20) -> check TargetValue (section 3), e.g. was 0.25"
 $out += ""
 
 $out | ForEach-Object { Write-Host $_ }
