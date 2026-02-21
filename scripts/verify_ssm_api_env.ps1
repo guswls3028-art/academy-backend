@@ -11,6 +11,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Resolve AWS CLI (script may run in context where "aws" is not in PATH, e.g. 32-bit PowerShell)
+$awsExe = (Get-Command aws -ErrorAction SilentlyContinue)?.Source
+if (-not $awsExe) {
+    $candidates = @(
+        "C:\Program Files\AmazonAWSCLIV2\aws.exe",
+        "${env:ProgramFiles(x86)}\AmazonAWSCLIV2\aws.exe",
+        "$env:LOCALAPPDATA\Programs\AmazonAWSCLIV2\aws.exe"
+    )
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path -LiteralPath $c -ErrorAction SilentlyContinue)) { $awsExe = $c; break }
+    }
+}
+if (-not $awsExe) { $awsExe = "aws" }
+
 $requiredKeys = @("DB_HOST", "DB_NAME", "DB_USER", "REDIS_HOST", "R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY")
 $optionalButRecommended = @("LAMBDA_INTERNAL_API_KEY", "DJANGO_SETTINGS_MODULE")
 
@@ -20,7 +34,7 @@ $raw = $null
 $awsOut = $null
 $exitCode = $null
 try {
-    $awsOut = & aws ssm get-parameter --name $SsmName --with-decryption --region $Region --output json 2>&1
+    $awsOut = & $awsExe ssm get-parameter --name $SsmName --with-decryption --region $Region --output json 2>&1
     $exitCode = $LASTEXITCODE
     $jsonStr = ($awsOut | Out-String).Trim()
     if ($exitCode -eq 0 -and $jsonStr.StartsWith("{")) {
