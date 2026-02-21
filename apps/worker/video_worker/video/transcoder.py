@@ -284,23 +284,23 @@ def transcode_to_hls(
                     """-progress pipe:1: out_time_ms= 마이크로초 파싱. stderr 버퍼링 없이 진행률 수신."""
                     progress_count = 0
                     for line in p.stdout or []:
-                    m = _RE_OUT_TIME_MS.search(line)
-                    if m:
-                        current_sec = int(m.group(1)) / 1_000_000.0
-                        progress_count += 1
-                        if progress_count % 30 == 1:
-                            logger.debug("[TRANSCODER] Progress (pipe:1) video_id=%s current=%.1fs", video_id, current_sec)
-                        on_progress(current_sec)
-                logger.info("[TRANSCODER] Progress pipe finished video_id=%s progress_updates=%d", video_id, progress_count)
+                        m = _RE_OUT_TIME_MS.search(line)
+                        if m:
+                            current_sec = int(m.group(1)) / 1_000_000.0
+                            progress_count += 1
+                            if progress_count % 30 == 1:
+                                logger.debug("[TRANSCODER] Progress (pipe:1) video_id=%s current=%.1fs", video_id, current_sec)
+                            on_progress(current_sec)
+                    logger.info("[TRANSCODER] Progress pipe finished video_id=%s progress_updates=%d", video_id, progress_count)
 
-            def read_stderr() -> None:
-                for line in p.stderr or []:
-                    stderr_lines.append(line)
-                    if len(stderr_lines) > 50:
-                        stderr_lines.pop(0)
-                logger.info("[TRANSCODER] Stderr reading finished video_id=%s lines=%d", video_id, len(stderr_lines))
+                def read_stderr() -> None:
+                    for line in p.stderr or []:
+                        stderr_lines.append(line)
+                        if len(stderr_lines) > 50:
+                            stderr_lines.pop(0)
+                    logger.info("[TRANSCODER] Stderr reading finished video_id=%s lines=%d", video_id, len(stderr_lines))
 
-            progress_reader = threading.Thread(target=read_stdout_progress, daemon=True)
+                progress_reader = threading.Thread(target=read_stdout_progress, daemon=True)
             stderr_reader = threading.Thread(target=read_stderr, daemon=True)
             progress_reader.start()
             stderr_reader.start()
