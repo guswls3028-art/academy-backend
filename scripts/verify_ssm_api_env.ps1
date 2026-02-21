@@ -51,7 +51,8 @@ if ($null -eq $raw -or [string]::IsNullOrWhiteSpace($raw)) {
     Write-Host "  FAIL: SSM get failed or parameter empty. (ExitCode: $exitCode)" -ForegroundColor Red
     if ([string]::IsNullOrWhiteSpace($jsonStr)) {
         if ($exitCode -eq -1) {
-            Write-Host "  No output from AWS. Check: 'aws' in PATH? Run:  aws sts get-caller-identity" -ForegroundColor Gray
+            Write-Host "  No output from AWS. Tried: $awsExe" -ForegroundColor Gray
+            Write-Host "  If 'aws': add AWS CLI to PATH. Else run:  & '$awsExe' sts get-caller-identity" -ForegroundColor Gray
         }
     } else {
         $preview = if ($jsonStr.Length -gt 600) { $jsonStr.Substring(0, 600) + "..." } else { $jsonStr }
