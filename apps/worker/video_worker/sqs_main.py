@@ -96,14 +96,29 @@ def _job_visibility_and_heartbeat_loop(
     receipt_handle: str,
     job_id: str,
     stop_event: threading.Event,
+    cancel_event: threading.Event,
 ) -> None:
-    """Job 기반: 60초마다 ChangeMessageVisibility + job_heartbeat."""
-    from academy.adapters.db.django.repositories_video import job_heartbeat
+    """
+    Job 기반: 60초마다 ChangeMessageVisibility + job_heartbeat 수행 후,
+    DB에서 cancel_requested 확인. True이면 ffmpeg subprocess에 SIGTERM 전달.
+    """
+    from academy.adapters.db.django.repositories_video import job_heartbeat, job_is_cancel_requested
+    from apps.worker.video_worker.current_transcode import get_current
 
     while not stop_event.wait(timeout=JOB_HEARTBEAT_INTERVAL_SECONDS):
         try:
             queue.change_message_visibility(receipt_handle, VISIBILITY_EXTEND_SECONDS)
             job_heartbeat(job_id, lease_seconds=VISIBILITY_EXTEND_SECONDS)
+            # cancel_requested 확인: True이면 ffmpeg에 SIGTERM 후 CancelledError 유도
+            if job_is_cancel_requested(job_id):
+                process, proc_job_id, _ = get_current()
+                if proc_job_id == job_id and process is not None and process.poll() is None:
+                    try:
+                        process.terminate()
+                        cancel_event.set()
+                        logger.info("CANCEL_REQUESTED | job_id=%s | ffmpeg SIGTERM sent", job_id)
+                    except Exception as ex:
+                        logger.warning("ffmpeg terminate failed job_id=%s: %s", job_id, ex)
         except Exception as e:
             logger.warning("Job heartbeat/visibility failed job_id=%s: %s", job_id, e)
 
