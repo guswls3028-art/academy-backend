@@ -38,7 +38,7 @@ AI_WORKER_INSTANCE_ID = os.getenv("AI_WORKER_INSTANCE_ID")
 VIDEO_WORKER_INSTANCE_ID = os.getenv("VIDEO_WORKER_INSTANCE_ID")
 
 # Lambda internal API (B1 backlog-count 등) 인증용
-LAMBDA_INTERNAL_API_KEY = os.getenv("LAMBDA_INTERNAL_API_KEY")
+LAMBDA_INTERNAL_API_KEY = os.environ.get("LAMBDA_INTERNAL_API_KEY")
 
 # ==================================================
 # MULTI TENANT (SSOT – Host Based Only)
