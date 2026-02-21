@@ -93,4 +93,8 @@ Write-Host "`n=== Done ===`n" -ForegroundColor Green
 Write-Host "PeeringConnectionId:  $PeeringConnectionId"
 Write-Host "RouteTableIds updated: $newVpcRt (New VPC), $oldVpcRt (Old VPC)"
 if ($apiSgId -and $apiSgId -ne "None") { Write-Host "SG rule added: $apiSgId inbound tcp 8000 from $NewVpcCidr" }
-Write-Host "`nLambda can now call http://172.30.3.142:8000/api/v1/internal/video/backlog-count/ via peering.`n" -ForegroundColor Gray
+Write-Host "Lambda can now call http://172.30.3.142:8000/api/v1/internal/video/backlog-count/ via peering.`n" -ForegroundColor Gray
+Write-Host "REQUIRED on API EC2 (or scaling will never work):" -ForegroundColor Yellow
+Write-Host "  1. Add to /home/ec2-user/.env:  INTERNAL_API_ALLOW_IPS=172.30.0.0/16,10.1.0.0/16" -ForegroundColor White
+Write-Host "  2. Run:  cd /home/ec2-user/academy && bash scripts/refresh_api_container_env.sh" -ForegroundColor White
+Write-Host "  (Django loads settings at container start only.)`n" -ForegroundColor Gray
