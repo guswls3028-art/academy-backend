@@ -1,8 +1,12 @@
 #!/bin/bash
 # B1 Lambda internal API 검증 - EC2에서 실행 (verify_lambda_internal_api.ps1에서 호출)
-# Usage: LIK=key ./_verify_internal_api_remote.sh  OR  ./_verify_internal_api_remote.sh "key"
+# Usage: LIK=key ./_verify_internal_api_remote.sh  OR  LIK_B64=base64key ./_verify_internal_api_remote.sh
 
-KEY="${1:-$LIK}"
+if [ -n "$LIK_B64" ]; then
+  KEY=$(echo "$LIK_B64" | base64 -d 2>/dev/null || echo "")
+else
+  KEY="${LIK:-}"
+fi
 URL="https://api.hakwonplus.com/api/v1/internal/video/backlog-count/"
 LOCAL_URL="http://localhost:8000/api/v1/internal/video/backlog-count/"
 
