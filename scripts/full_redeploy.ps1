@@ -293,6 +293,19 @@ if ($deployApi) {
     }
     $apiOk = Deploy-One -Name "academy-api" -Ip $apiIp -KeyFile $INSTANCE_KEYS["academy-api"] -RemoteCmd $REMOTE_CMDS["academy-api"]
     if (-not $apiOk) { exit 1 }
+
+    # B1: nginx X-Internal-Key 전달 (Lambda backlog-count 인증용)
+    $nginxConfPath = Join-Path $RepoRoot "infra\nginx\academy-api.conf"
+    if (Test-Path $nginxConfPath) {
+        Write-Host "[academy-api] Copying nginx config (X-Internal-Key passthrough) ..." -ForegroundColor Gray
+        scp -o StrictHostKeyChecking=accept-new -i "$apiKeyPath" "$nginxConfPath" "${EC2_USER}@${apiIp}:/tmp/academy-api.conf"
+        if ($LASTEXITCODE -eq 0) {
+            $nginxCmd = "sudo cp /tmp/academy-api.conf /etc/nginx/conf.d/academy-api.conf && sudo nginx -t && sudo systemctl reload nginx 2>/dev/null || sudo service nginx reload 2>/dev/null || true"
+            ssh -o StrictHostKeyChecking=accept-new -i "$apiKeyPath" "${EC2_USER}@${apiIp}" $nginxCmd
+            if ($LASTEXITCODE -eq 0) { Write-Host "[academy-api] nginx config applied and reloaded" -ForegroundColor Green }
+            else { Write-Host "[academy-api] WARN: nginx reload may have failed (host nginx path may differ)" -ForegroundColor Yellow }
+        } else { Write-Host "[academy-api] WARN: nginx config copy failed" -ForegroundColor Yellow }
+    }
 }
 
 # ---------- 3) Worker deploy (when DeployTarget is all|workers|video|ai|messaging) ----------
