@@ -331,10 +331,16 @@ def transcode_to_hls(
             progress_reader.join(timeout=2.0)
             stderr_reader.join(timeout=2.0)
 
+            if cancel_event and cancel_event.is_set():
+                raise CancelledError("Retry requested; ffmpeg SIGTERM sent")
             if p.returncode != 0:
                 raise TranscodeError(
                     f"ffmpeg failed video_id={video_id} with_audio={with_audio} stderr={trim_tail(''.join(stderr_lines))}"
                 )
+            finally:
+                if job_id and cancel_event:
+                    from apps.worker.video_worker.current_transcode import clear_current
+                    clear_current()
         except Exception as e:
             if isinstance(e, TranscodeError):
                 raise
