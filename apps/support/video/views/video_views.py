@@ -379,8 +379,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 "VIDEO_UPLOAD_TRACE | before enqueue (duration<min branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
                 video.id, _tid, video.file_key or "",
             )
-            # SQS에 작업 추가 (동기 호출 — 실패 시 클라이언트에 503 반환)
-            if not VideoSQSQueue().enqueue(video):
+            # Job 생성 + SQS enqueue (job_id 포함)
+            if not VideoSQSQueue().create_job_and_enqueue(video):
                 return Response(
                     {"detail": "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."},
                     status=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -396,8 +396,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             "VIDEO_UPLOAD_TRACE | before enqueue (normal branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
             video.id, _tid, video.file_key or "",
         )
-        # SQS에 작업 추가 (동기 호출 — 실패 시 클라이언트에 503 반환)
-        if not VideoSQSQueue().enqueue(video):
+        # Job 생성 + SQS enqueue (job_id 포함)
+        if not VideoSQSQueue().create_job_and_enqueue(video):
             return Response(
                 {"detail": "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -405,7 +405,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         return Response(VideoSerializer(video).data)
 
     # ==================================================
-    # retry (B1-compatible re-encode)
+    # retry (Job 기반 re-encode)
     # ==================================================
     # DB status→UPLOADED + SQS enqueue as single atomic operation.
     # Reject UPLOADED/PROCESSING (already in backlog). Accept READY/FAILED only.
