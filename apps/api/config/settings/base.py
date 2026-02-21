@@ -39,6 +39,8 @@ VIDEO_WORKER_INSTANCE_ID = os.getenv("VIDEO_WORKER_INSTANCE_ID")
 
 # Lambda internal API (B1 backlog-count 등) 인증용
 LAMBDA_INTERNAL_API_KEY = os.environ.get("LAMBDA_INTERNAL_API_KEY")
+# Internal API 허용 소스 CIDR (쉼표 구분). Lambda VPC(10.1.0.0/16) + API VPC(172.30.0.0/16). 비어 있으면 IP 검사 생략.
+INTERNAL_API_ALLOW_IPS = os.environ.get("INTERNAL_API_ALLOW_IPS", "").strip()
 
 # ==================================================
 # MULTI TENANT (SSOT – Host Based Only)
