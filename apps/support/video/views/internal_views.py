@@ -7,6 +7,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
+from apps.core.permissions import IsLambdaInternal
 from apps.support.video.models import Video
 
 
@@ -81,10 +82,10 @@ class VideoBacklogCountView(APIView):
     B1: BacklogCount (UPLOADED + PROCESSING) for Video ASG TargetTracking.
     GET /api/v1/internal/video/backlog-count/
     Returns: {"backlog": int}
-    queue_depth_lambda가 1분마다 호출하여 CloudWatch Academy/VideoProcessing에 발행.
+    queue_depth_lambda가 1분마다 X-Internal-Key 헤더로 호출.
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsLambdaInternal]
     authentication_classes = []
 
     def get(self, request):
