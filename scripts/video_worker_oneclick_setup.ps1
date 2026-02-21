@@ -207,8 +207,8 @@ function Set-DlqRedrive {
     $dlqArn = Aws sqs get-queue-attributes --queue-url $dlqUrl --attribute-names QueueArn --query "Attributes.QueueArn" --output text 2>$null
     if (-not $dlqArn) { Log-Warn "DLQ ARN 조회 실패"; return $true }
 
-    $redrive = @{ deadLetterTargetArn = $dlqArn; maxReceiveCount = $MaxReceiveCount } | ConvertTo-Json -Compress
-    Aws sqs set-queue-attributes --queue-url $qurl --attributes "{\"RedrivePolicy\":\"$($redrive.Replace('"','\"'))\"}"
+    $redriveVal = "{`"deadLetterTargetArn`":`"$dlqArn`",`"maxReceiveCount`":$MaxReceiveCount}"
+    Aws sqs set-queue-attributes --queue-url $qurl --attributes "RedrivePolicy=$redriveVal"
     if ($LASTEXITCODE -ne 0) { Log-Warn "RedrivePolicy 설정 실패" } else { Log-Step "  DLQ 연결 및 RedrivePolicy 설정 완료 (maxReceiveCount=$MaxReceiveCount)" }
     return $true
 }
