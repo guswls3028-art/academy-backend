@@ -45,6 +45,12 @@ TARGET_MESSAGES_PER_INSTANCE = int(os.environ.get("TARGET_MESSAGES_PER_INSTANCE"
 
 BOTO_CONFIG = Config(retries={"max_attempts": 3, "mode": "standard"})
 
+# WAF 등에서 Lambda 기본 User-Agent 차단 방지
+HTTP_USER_AGENT = os.environ.get(
+    "HTTP_USER_AGENT",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+)
+
 
 def get_queue_counts(sqs_client, queue_name: str) -> tuple[int, int]:
     """(visible, inflight) = ApproximateNumberOfMessagesVisible, ApproximateNumberOfMessagesNotVisible."""
@@ -76,7 +82,7 @@ def _fetch_video_backlog_from_api() -> int | None:
     if not VIDEO_BACKLOG_API_URL:
         return None
     url = f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/backlog-count/"
-    headers = {}
+    headers = {"User-Agent": HTTP_USER_AGENT}
     if LAMBDA_INTERNAL_API_KEY:
         headers["X-Internal-Key"] = LAMBDA_INTERNAL_API_KEY
     try:
@@ -94,7 +100,7 @@ def _is_asg_interrupt_from_api() -> bool:
     if not VIDEO_BACKLOG_API_URL:
         return False
     url = f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/asg-interrupt-status/"
-    headers = {}
+    headers = {"User-Agent": HTTP_USER_AGENT}
     if LAMBDA_INTERNAL_API_KEY:
         headers["X-Internal-Key"] = LAMBDA_INTERNAL_API_KEY
     try:
