@@ -428,7 +428,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         video.status = Video.Status.UPLOADED
         video.save(update_fields=["status"])
-
+        _tid = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
+        logger.info(
+            "VIDEO_UPLOAD_TRACE | before enqueue (retry) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE_RETRY",
+            video.id, _tid, video.file_key or "",
+        )
         # SQS에 작업 추가 (동기 호출 — 실패 시 503)
         if not VideoSQSQueue().enqueue(video):
             return Response(
