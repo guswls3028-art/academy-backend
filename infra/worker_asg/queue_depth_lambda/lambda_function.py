@@ -56,6 +56,8 @@ VIDEO_BACKLOG_API_BASE = (
     else VIDEO_BACKLOG_API_URL
 )
 LAMBDA_INTERNAL_API_KEY = os.environ.get("LAMBDA_INTERNAL_API_KEY", "")
+# Host header when calling internal API by IP (avoids Django DisallowedHost). Use allowed host e.g. api.hakwonplus.com.
+VIDEO_BACKLOG_API_HOST = os.environ.get("VIDEO_BACKLOG_API_HOST", "api.hakwonplus.com").strip() or None
 MESSAGING_WORKER_ASG_NAME = os.environ.get("MESSAGING_WORKER_ASG_NAME", "academy-messaging-worker-asg")
 MESSAGING_WORKER_ASG_MAX = int(os.environ.get("MESSAGING_WORKER_ASG_MAX", "20"))
 MESSAGING_WORKER_ASG_MIN = int(os.environ.get("MESSAGING_WORKER_ASG_MIN", "1"))
