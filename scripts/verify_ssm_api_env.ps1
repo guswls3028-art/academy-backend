@@ -48,7 +48,7 @@ try {
     $psi.EnvironmentVariables["PYTHONUTF8"] = "1"
     [void](try { $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8 } catch { })
     $p = [System.Diagnostics.Process]::Start($psi)
-    $p.WaitForExit(60000)
+    [void]$p.WaitForExit(60000)
     $stdout = $p.StandardOutput.ReadToEnd()
     $stderr = $p.StandardError.ReadToEnd()
     $exitCode = $p.ExitCode
