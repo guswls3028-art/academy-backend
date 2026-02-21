@@ -31,9 +31,10 @@ ALLOWED_HOSTS = [
     "limglish.kr",
     "www.limglish.kr",
     "academy-frontend.pages.dev",
-    # 로컬/EC2 내부 health check·ALB 타깃
+    # 로컬/EC2 내부 health check·ALB 타깃·Lambda backlog (Host: private IP)
     "localhost",
     "127.0.0.1",
+    "172.30.3.142",
     ".ap-northeast-2.compute.internal",
 ]
 
