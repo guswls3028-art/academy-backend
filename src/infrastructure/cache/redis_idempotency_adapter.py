@@ -80,7 +80,12 @@ class RedisIdempotencyAdapter(IIdempotency):
             return True
 
     def release_lock(self, job_id: str) -> None:
-        """작업 완료/실패 시 락 해제"""
+        """작업 완료/실패 시 락 해제 및 renew 중단"""
+        with self._renew_lock:
+            stop_event = self._renew_stops.pop(job_id, None)
+        if stop_event:
+            stop_event.set()
+
         client = get_redis_client()
         if not client:
             return
