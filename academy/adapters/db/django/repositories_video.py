@@ -505,6 +505,29 @@ class DjangoVideoRepository:
         )
         return True
 
+    def try_reclaim_video(self, video_id: int) -> bool:
+        """
+        PROCESSING 이지만 leased_until < now 인 경우 UPLOADED로 되돌림.
+        Re-enqueue 후 다른 워커가 try_claim 가능.
+        """
+        from django.db import transaction
+        from django.utils import timezone
+        from apps.support.video.models import Video
+
+        with transaction.atomic():
+            video = get_video_for_update(video_id)
+            if not video:
+                return False
+            if video.status != Video.Status.PROCESSING:
+                return False
+            if video.leased_until is None or video.leased_until >= timezone.now():
+                return False
+            video.status = Video.Status.UPLOADED
+            video.leased_by = ""
+            video.leased_until = None
+            video.save(update_fields=["status", "leased_by", "leased_until"])
+        return True
+
     def complete_video(
         self,
         video_id: int,
