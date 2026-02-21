@@ -1,0 +1,2 @@
+# Shell scripts: LF (EC2/Linux 호환)
+*.sh text eol=lf
