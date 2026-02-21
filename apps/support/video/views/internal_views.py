@@ -112,7 +112,8 @@ class VideoBacklogScoreView(APIView):
 
 class VideoDlqMarkDeadView(APIView):
     """
-    DLQ Poller Lambda: job_id로 job_mark_dead 호출.
+    DLQ State Sync Lambda: job_id로 job_mark_dead 호출.
+    Job.state NOT IN (SUCCEEDED, DEAD) 일 때만 수행 (state reconciliation).
     POST /api/v1/internal/video/dlq-mark-dead/
     body: {"job_id": "uuid"}
     """
@@ -121,15 +122,22 @@ class VideoDlqMarkDeadView(APIView):
     authentication_classes = []
 
     def post(self, request):
+        from apps.support.video.models import VideoTranscodeJob
+        from academy.adapters.db.django.repositories_video import job_get_by_id, job_mark_dead
+
         data = getattr(request, "data", None) or {}
         job_id = data.get("job_id")
         if not job_id:
             return Response({"detail": "job_id required"}, status=status.HTTP_400_BAD_REQUEST)
-        from academy.adapters.db.django.repositories_video import job_mark_dead
-        ok = job_mark_dead(str(job_id), error_code="DLQ", error_message="DLQ poller marked dead")
+        job = job_get_by_id(str(job_id))
+        if not job:
+            return Response({"detail": "job not found"}, status=status.HTTP_404_NOT_FOUND)
+        if job.state in (VideoTranscodeJob.State.SUCCEEDED, VideoTranscodeJob.State.DEAD):
+            return Response({"ok": True, "skipped": "already_terminal", "state": job.state})
+        ok = job_mark_dead(str(job_id), error_code="DLQ", error_message="DLQ state sync marked dead")
         if ok:
             return Response({"ok": True})
-        return Response({"detail": "job not found or already dead"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"detail": "job_mark_dead failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class VideoScanStuckView(APIView):
