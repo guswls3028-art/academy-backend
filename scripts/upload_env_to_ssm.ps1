@@ -1,12 +1,13 @@
 # ==============================================================================
-# .env -> SSM /academy/workers/env (Windows: use fileb:// to avoid CLI decode errors)
+# .env -> SSM /academy/workers/env and /academy/api/env (SSOT: workers vs API)
 # Usage: .\scripts\upload_env_to_ssm.ps1
 # ==============================================================================
 
 param(
     [string]$RepoRoot = (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) ".."),
     [string]$Region = "ap-northeast-2",
-    [string]$ParameterName = "/academy/workers/env"
+    [string]$ParameterName = "/academy/workers/env",
+    [string]$ApiParameterName = "/academy/api/env"
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,11 +70,18 @@ if ($tier -eq "Advanced") {
 $ea = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 aws ssm put-parameter --name $ParameterName --type SecureString --value "$content" --overwrite --tier $tier --region $Region
-$ok = ($LASTEXITCODE -eq 0)
+$ok1 = ($LASTEXITCODE -eq 0)
+if ($ok1) {
+    aws ssm put-parameter --name $ApiParameterName --type SecureString --value "$content" --overwrite --tier $tier --region $Region
+    $ok2 = ($LASTEXITCODE -eq 0)
+}
 $ErrorActionPreference = $ea
 
-if ($ok) {
-    Write-Host "SSM $ParameterName updated." -ForegroundColor Green
+if ($ok1 -and $ok2) {
+    Write-Host "SSM $ParameterName and $ApiParameterName updated." -ForegroundColor Green
+    exit 0
+} elseif ($ok1) {
+    Write-Host "SSM $ParameterName updated; $ApiParameterName failed (check IAM ssm:PutParameter on academy/api/env)." -ForegroundColor Yellow
     exit 0
 } else {
     Write-Host "upload_env_to_ssm: put-parameter failed." -ForegroundColor Red
