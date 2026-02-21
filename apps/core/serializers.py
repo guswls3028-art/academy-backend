@@ -26,31 +26,33 @@ class UserSerializer(serializers.ModelSerializer):
         ]
 
     def get_tenantRole(self, user):
-        request = self.context.get("request")
-        tenant = getattr(request, "tenant", None)
-
-        if not tenant:
+        try:
+            request = self.context.get("request")
+            tenant = getattr(request, "tenant", None)
+            if not tenant:
+                return None
+            membership = core_repo.membership_get(tenant=tenant, user=user, is_active=True)
+            return membership.role if membership else None
+        except Exception:
             return None
-
-        membership = core_repo.membership_get(tenant=tenant, user=user, is_active=True)
-        return membership.role if membership else None
 
     def get_linkedStudentId(self, user):
         """학부모(role=parent)일 때 연결된 학생 ID (첫 번째)"""
-        request = self.context.get("request")
-        tenant = getattr(request, "tenant", None)
-        if not tenant:
+        try:
+            request = self.context.get("request")
+            tenant = getattr(request, "tenant", None)
+            if not tenant:
+                return None
+            membership = core_repo.membership_get(tenant=tenant, user=user, is_active=True)
+            if not membership or membership.role != "parent":
+                return None
+            parent = core_repo.parent_get_by_user(user)
+            if not parent:
+                return None
+            first_student = parent.students.filter(deleted_at__isnull=True).first()
+            return first_student.id if first_student else None
+        except Exception:
             return None
-
-        membership = core_repo.membership_get(tenant=tenant, user=user, is_active=True)
-        if not membership or membership.role != "parent":
-            return None
-
-        parent = core_repo.parent_get_by_user(user)
-        if not parent:
-            return None
-        first_student = parent.students.filter(deleted_at__isnull=True).first()
-        return first_student.id if first_student else None
 
 
 class ProgramPublicSerializer(serializers.ModelSerializer):
@@ -70,7 +72,8 @@ class ProgramPublicSerializer(serializers.ModelSerializer):
         ]
 
     def get_tenantCode(self, obj: Program) -> str:
-        return obj.tenant.code
+        tenant = getattr(obj, "tenant", None)
+        return getattr(tenant, "code", "") or ""
 
 
 class ProgramUpdateSerializer(serializers.ModelSerializer):
