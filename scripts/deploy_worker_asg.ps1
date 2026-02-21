@@ -285,7 +285,7 @@ if ($LASTEXITCODE -eq 0) {
         if ($LASTEXITCODE -eq 0) { $createDone = $true }
     }
 }
-if ($LASTEXITCODE -eq 0 -and -not $needRecreate) {
+if ($createDone -and -not $needRecreate) {
     $currentMix = aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgVideoName --region $Region --query "AutoScalingGroups[0].MixedInstancesPolicy" --output json 2>$null
     if ($currentMix -and $currentMix -ne "null") {
         Write-Host "      Triggering instance refresh..." -ForegroundColor Gray
