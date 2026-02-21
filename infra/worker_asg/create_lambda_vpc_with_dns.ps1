@@ -47,22 +47,16 @@ $subnetOut = aws ec2 create-subnet --vpc-id $VpcId --cidr-block $SubnetCidr --av
 $SubnetId = $subnetOut.Subnet.SubnetId
 Write-Host "      SubnetId: $SubnetId" -ForegroundColor Gray
 
-# Enable DNS hostnames on subnet (for PrivateDnsEnabled endpoint)
-aws ec2 modify-subnet-attribute --subnet-id $SubnetId --map-public-ip-on-launch --no-map-public-ip-on-launch --region $Region 2>$null
-Write-Host "      Subnet ready (private, no auto public IP)." -ForegroundColor Gray
+Write-Host "      Subnet ready (private)." -ForegroundColor Gray
 
 # ------------------------------------------------------------------------------
-# 3) Create security group for Lambda + endpoint (egress 443; endpoint will accept from same SG)
+# 3) Create security group for Lambda + endpoint (default egress allows all; endpoint accepts 443 from same SG)
 # ------------------------------------------------------------------------------
 Write-Host "[3/6] Create Lambda security group..." -ForegroundColor Cyan
 $sgOut = aws ec2 create-security-group --group-name "academy-lambda-metric-sg" --description "Lambda queue-depth + CloudWatch endpoint" `
     --vpc-id $VpcId --region $Region --output json | ConvertFrom-Json
 $LambdaSgId = $sgOut.GroupId
-# Egress: 443 for CloudWatch endpoint; 80/443 if Lambda needs to call API via public URL later
-aws ec2 authorize-security-group-egress --group-id $LambdaSgId --protocol tcp --port 443 --cidr 0.0.0.0/0 --region $Region 2>$null
-aws ec2 authorize-security-group-egress --group-id $LambdaSgId --protocol tcp --port 80 --cidr 0.0.0.0/0 --region $Region 2>$null
-# Endpoint ENI will accept 443 from same SG (default); no extra ingress needed if Lambda uses this SG
-Write-Host "      SecurityGroupId: $LambdaSgId" -ForegroundColor Gray
+Write-Host "      SecurityGroupId: $LambdaSgId (default egress: all)" -ForegroundColor Gray
 
 # ------------------------------------------------------------------------------
 # 4) Create VPC interface endpoint for CloudWatch monitoring (PrivateDnsEnabled)
