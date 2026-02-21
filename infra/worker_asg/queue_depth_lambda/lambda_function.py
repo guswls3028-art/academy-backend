@@ -67,73 +67,19 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
     return visible
 
 
-def set_asg_desired(
-    autoscaling_client,
-    asg_name: str,
-    visible: int,
-    in_flight: int,
-    min_capacity: int,
-    max_capacity: int,
-    messages_per_instance: int = TARGET_MESSAGES_PER_INSTANCE,
-    conservative_scale_in: bool = False,
-) -> None:
-    """워커 ASG desired capacity 조정. total=0이면 MIN, else min(MAX, max(MIN, ceil(total/N))). N 기본 20, Video는 1."""
-    total_for_scale = visible + in_flight
-    # SQS Approximate 타이밍 이슈: visible=0, in_flight=1일 때 실제로는 2개일 수 있음.
-    # Video(1:1)에서 조기 scale-down 방지: visible=0이고 in_flight>0이면 total을 in_flight+1 이상으로 유지
-    if conservative_scale_in and in_flight > 0 and visible == 0:
-        total_for_scale = max(total_for_scale, in_flight + 1)
-    if total_for_scale == 0:
-        new_desired = min_capacity
-    else:
-        new_desired = min(
-            max_capacity,
-            max(min_capacity, math.ceil(total_for_scale / messages_per_instance)),
-        )
-
+def get_in_service_count(autoscaling_client, asg_name: str) -> int:
+    """ASG InService 인스턴스 수."""
     try:
         asgs = autoscaling_client.describe_auto_scaling_groups(
             AutoScalingGroupNames=[asg_name],
         )
         if not asgs.get("AutoScalingGroups"):
-            logger.warning("ASG not found: %s", asg_name)
-            return
-        current = asgs["AutoScalingGroups"][0]["DesiredCapacity"]
-        autoscaling_client.set_desired_capacity(
-            AutoScalingGroupName=asg_name,
-            DesiredCapacity=new_desired,
-        )
-        if current != new_desired:
-            logger.info(
-                "%s desired %s -> %s (visible=%d in_flight=%d)",
-                asg_name, current, new_desired, visible, in_flight,
-            )
+            return 0
+        instances = asgs["AutoScalingGroups"][0].get("Instances", [])
+        return sum(1 for i in instances if i.get("LifecycleState") == "InService")
     except Exception as e:
-        logger.warning("set_asg_desired failed for %s: %s", asg_name, e)
-
-
-def set_ai_worker_asg_desired(autoscaling_client, ai_visible: int, ai_in_flight: int) -> None:
-    """AI 워커 상시 1대 대기. 큐 깊이에 따라 1~MAX 스케일, 0으로 스케일인 안 함."""
-    set_asg_desired(autoscaling_client, AI_WORKER_ASG_NAME, ai_visible, ai_in_flight, 1, AI_WORKER_ASG_MAX)
-
-
-def set_video_worker_asg_desired(autoscaling_client, video_visible: int, video_in_flight: int) -> None:
-    """Video 워커: 1 instance = 1 video. desired = visible + in_flight (메시지 1개당 워커 1대)."""
-    set_asg_desired(
-        autoscaling_client,
-        VIDEO_WORKER_ASG_NAME,
-        video_visible,
-        video_in_flight,
-        VIDEO_WORKER_ASG_MIN,
-        VIDEO_WORKER_ASG_MAX,
-        messages_per_instance=1,
-        conservative_scale_in=False,
-    )
-
-
-def set_messaging_worker_asg_desired(autoscaling_client, messaging_visible: int, messaging_in_flight: int) -> None:
-    """Messaging 워커 ASG desired capacity 조정."""
-    set_asg_desired(autoscaling_client, MESSAGING_WORKER_ASG_NAME, messaging_visible, messaging_in_flight, MESSAGING_WORKER_ASG_MIN, MESSAGING_WORKER_ASG_MAX)
+        logger.warning("get_in_service_count failed for %s: %s", asg_name, e)
+        return 1  # fallback: 1로 나눠서 metric 푸시
 
 
 def lambda_handler(event: dict, context: Any) -> dict:
