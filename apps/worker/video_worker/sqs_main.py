@@ -137,6 +137,7 @@ def _job_visibility_and_heartbeat_loop(
 def _spot_interruption_poller(stop_event: threading.Event) -> None:
     """EC2 Spot terminate notice 감지. 5초마다 metadata poll, 200 시 spot_termination_event + Redis interrupt."""
     import urllib.request
+    import urllib.error
     SPOT_METADATA_URL = "http://169.254.169.254/latest/meta-data/spot/instance-action"
     while not stop_event.wait(timeout=5):
         try:
