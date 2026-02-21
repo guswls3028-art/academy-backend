@@ -304,7 +304,7 @@ def main() -> int:
                     consecutive_errors = 0
 
                     if _shutdown:
-                        logger.info("Graceful shutdown: current job completed, exiting")
+                        logger.info("drain complete — current job finished, exiting")
                         break
 
                 elif result == "skip:cancel":
@@ -402,14 +402,13 @@ def main() -> int:
                     return 1
                 time.sleep(5)
         
-        # Graceful shutdown: 현재 작업이 있으면 완료 대기
+        # Drain: break 시점에 current job은 이미 완료됨 (완료 후에만 break)
         if _current_job_receipt_handle:
             logger.info(
-                "Graceful shutdown: waiting for current job to complete | receipt_handle=%s",
+                "drain: waiting for current job to complete | receipt_handle=%s",
                 _current_job_receipt_handle[:20] + "...",
             )
-        
-        logger.info("Video Worker shutdown complete")
+        logger.info("Video Worker shutdown complete | drain complete — safe to terminate")
         return 0
         
     except Exception:
