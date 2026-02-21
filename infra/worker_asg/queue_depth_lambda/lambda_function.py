@@ -85,6 +85,7 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
 def _fetch_video_backlog_from_api() -> int | None:
     """Django API에서 BacklogCount (QUEUED+RETRY_WAIT) 조회. 실패 시 None. VIDEO_BACKLOG_API_INTERNAL 우선."""
     if not VIDEO_BACKLOG_API_BASE:
+        logger.warning("VIDEO_BACKLOG_API_BASE empty (set VIDEO_BACKLOG_API_INTERNAL or VIDEO_BACKLOG_API_URL); skipping BacklogCount fetch.")
         return None
     url = f"{VIDEO_BACKLOG_API_BASE}/api/v1/internal/video/backlog-count/"
     headers = {"User-Agent": HTTP_USER_AGENT}
@@ -95,8 +96,20 @@ def _fetch_video_backlog_from_api() -> int | None:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
             return int(data.get("backlog", 0))
+    except urllib.error.HTTPError as e:
+        logger.warning(
+            "VIDEO_BACKLOG_API HTTPError | url=%s | status=%s | reason=%s | body=%s",
+            url, e.code, e.reason, (e.fp.read() if e.fp else b"").decode(errors="replace")[:500],
+        )
+        return None
+    except urllib.error.URLError as e:
+        logger.warning("VIDEO_BACKLOG_API URLError | url=%s | reason=%s", url, e.reason)
+        return None
     except Exception as e:
-        logger.warning("VIDEO_BACKLOG_API fetch failed %s: %s", url, e)
+        logger.warning(
+            "VIDEO_BACKLOG_API fetch failed | url=%s | error_type=%s | error=%s",
+            url, type(e).__name__, e,
+        )
         return None
 
 
