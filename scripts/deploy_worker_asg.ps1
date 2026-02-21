@@ -338,7 +338,7 @@ aws application-autoscaling register-scalable-target --service-namespace ec2 --r
 $ErrorActionPreference = $ea
 
 # ------------------------------------------------------------------------------
-# 7) Target Tracking policies (custom metric Academy/Workers QueueDepth)
+# 7) Target Tracking policies (AI, Messaging: Application Auto Scaling; Video: EC2 autoscaling put-scaling-policy)
 # ------------------------------------------------------------------------------
 Write-Host "[8/8] Target Tracking (target $TargetMessagesPerInstance msgs/instance)..." -ForegroundColor Cyan
 $policyAi = @"
@@ -354,26 +354,6 @@ $policyAi = @"
     },
     "ScaleInCooldown": 300,
     "ScaleOutCooldown": 60
-  }
-}
-"@
-# Video: B1 TargetTracking (BacklogCount, Academy/VideoProcessing)
-$policyVideo = @"
-{
-  "TargetTrackingScalingPolicyConfiguration": {
-    "TargetValue": 3,
-    "CustomizedMetricSpecification": {
-      "MetricName": "BacklogCount",
-      "Namespace": "Academy/VideoProcessing",
-      "Dimensions": [
-        {"Name": "WorkerType", "Value": "Video"},
-        {"Name": "AutoScalingGroupName", "Value": "academy-video-worker-asg"}
-      ],
-      "Statistic": "Average",
-      "Unit": "Count"
-    },
-    "ScaleOutCooldown": 60,
-    "ScaleInCooldown": 300
   }
 }
 "@
