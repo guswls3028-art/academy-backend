@@ -28,18 +28,18 @@ $RepoRoot = Split-Path -Parent $ScriptRoot
 Write-Host "`n=== Worker ASG Redeploy (root/admin) ===`n" -ForegroundColor Cyan
 
 # 1) Infra deploy (Lambda, Launch Template, ASG, Target Tracking)
-$deployArgs = @(
-    "-SubnetIds", $SubnetIds,
-    "-SecurityGroupId", $SecurityGroupId,
-    "-IamInstanceProfileName", $IamInstanceProfileName,
-    "-Region", $Region,
-    "-UploadEnvToSsm:`$false",
-    "-AttachEc2Policy:`$false",
-    "-GrantSsmPutToCaller:`$false"
-)
-if ($LambdaVpcSubnetId) { $deployArgs += "-LambdaVpcSubnetId"; $deployArgs += $LambdaVpcSubnetId }
-if ($LambdaVpcSecurityGroupId) { $deployArgs += "-LambdaVpcSecurityGroupId"; $deployArgs += $LambdaVpcSecurityGroupId }
-& (Join-Path $ScriptRoot "deploy_worker_asg.ps1") @deployArgs
+$deployParams = @{
+    SubnetIds               = $SubnetIds
+    SecurityGroupId         = $SecurityGroupId
+    IamInstanceProfileName  = $IamInstanceProfileName
+    Region                  = $Region
+    UploadEnvToSsm          = $false
+    AttachEc2Policy         = $false
+    GrantSsmPutToCaller     = $false
+}
+if ($LambdaVpcSubnetId) { $deployParams["LambdaVpcSubnetId"] = $LambdaVpcSubnetId }
+if ($LambdaVpcSecurityGroupId) { $deployParams["LambdaVpcSecurityGroupId"] = $LambdaVpcSecurityGroupId }
+& (Join-Path $ScriptRoot "deploy_worker_asg.ps1") @deployParams
 
 if (-not $SkipSetup) {
     Write-Host "`n--- SSM + EC2 role refresh ---`n" -ForegroundColor Cyan
