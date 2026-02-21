@@ -219,22 +219,34 @@ if ($LASTEXITCODE -ne 0) {
 $ErrorActionPreference = $ea
 
 # ------------------------------------------------------------------------------
-# 5) ASG Video
+# 5) ASG Video (MixedInstancesPolicy: c6g.large Spot primary, t4g.medium fallback)
+#     Drain-safe: ENTERPRISE DRAIN logic handles Spot interruption.
 # ------------------------------------------------------------------------------
-Write-Host "[5/8] ASG (Video worker, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
+Write-Host "[5/8] ASG (Video worker, MixedInstancesPolicy Spot, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
 $AsgVideoName = "academy-video-worker-asg"
+$mixedPolicyVideo = @"
+{"LaunchTemplate":{"LaunchTemplateSpecification":{"LaunchTemplateName":"$LtVideoName","Version":"`$Latest"},"Overrides":[{"InstanceType":"c6g.large"},{"InstanceType":"t4g.medium"}]},"InstancesDistribution":{"OnDemandBaseCapacity":0,"OnDemandPercentageAboveBaseCapacity":0,"SpotAllocationStrategy":"capacity-optimized"}}
+"@
+$mixedPolicyVideoFile = Join-Path $RepoRoot "asg_video_mixed_policy.json"
+[System.IO.File]::WriteAllText($mixedPolicyVideoFile, $mixedPolicyVideo.Trim(), $utf8NoBom)
+$mixedPolicyVideoPath = "file://$($mixedPolicyVideoFile -replace '\\','/' -replace ' ', '%20')"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
-    --launch-template "LaunchTemplateName=$LtVideoName,Version=`$Latest" `
+    --mixed-instances-policy $mixedPolicyVideoPath `
     --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
     --vpc-zone-identifier $SubnetIds --region $Region 2>$null
 if ($LASTEXITCODE -ne 0) {
     aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
-        --launch-template "LaunchTemplateName=$LtVideoName,Version=`$Latest" `
+        --mixed-instances-policy $mixedPolicyVideoPath `
         --vpc-zone-identifier $SubnetIds `
-        --min-size 1 --max-size $MaxCapacity --desired-capacity 1 --region $Region 2>$null
+        --min-size 1 --max-size $MaxCapacity --region $Region 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "      Triggering instance refresh..." -ForegroundColor Gray
+        aws autoscaling start-instance-refresh --auto-scaling-group-name $AsgVideoName --region $Region 2>$null
+    }
 }
 $ErrorActionPreference = $ea
+Remove-Item $mixedPolicyVideoFile -Force -ErrorAction SilentlyContinue
 
 # ------------------------------------------------------------------------------
 # 5.5) ASG Messaging (Min=1 always on, Max=$MaxCapacity)
