@@ -138,14 +138,16 @@ function Verify-State {
 # ------------------------------------------------------------------------------
 Write-Host "Video Worker Scaling Fix | Region=$Region Rollback=$Rollback" -ForegroundColor Cyan
 
-$backupDir = Backup-CurrentState
-
 if ($Rollback) {
-    Restore-Backup -BackupDir $backupDir
+    if (-not (Test-Path $BackupRoot)) { throw "No backup found at $BackupRoot. Run apply without -Rollback first." }
+    $latestBackup = Get-ChildItem -Path $BackupRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+    if (-not $latestBackup) { throw "No backup directory found in $BackupRoot" }
+    Restore-Backup -BackupDir $latestBackup.FullName
     Write-Host "`nRollback done. Remember to revert Lambda code and run deploy_queue_depth_lambda.ps1 if you need BacklogCount behavior." -ForegroundColor Yellow
     exit 0
 }
 
+$backupDir = Backup-CurrentState
 Apply-Fix
 Verify-State
 
