@@ -24,6 +24,7 @@ param(
     [switch]$WorkersViaASG = $false,             # if true, workers via ASG instance refresh only (no SSH to fixed EC2)
     [switch]$StartStoppedInstances = $true,
     [switch]$NoCache = $false,                   # if true, docker build with --no-cache (e.g. after config change)
+    [switch]$BuildOnly = $false,                 # if true, only build+push on build server then exit (no deploy)
     [ValidateSet("all", "api", "video", "ai", "messaging", "workers")]
     [string]$DeployTarget = "all"               # all=API+3 workers; api|video|ai|messaging=that one only; workers=all 3 workers
 )
