@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
@@ -75,3 +74,21 @@ class VideoProcessingCompleteView(APIView):
         video.save(update_fields=update_fields)
 
         return Response({"ok": True}, status=status.HTTP_200_OK)
+
+
+class VideoBacklogCountView(APIView):
+    """
+    B1: BacklogCount (UPLOADED + PROCESSING) for Video ASG TargetTracking.
+    GET /api/v1/internal/video/backlog-count/
+    Returns: {"backlog": int}
+    queue_depth_lambda가 1분마다 호출하여 CloudWatch Academy/VideoProcessing에 발행.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        backlog = Video.objects.filter(
+            status__in=[Video.Status.UPLOADED, Video.Status.PROCESSING]
+        ).count()
+        return Response({"backlog": backlog})
