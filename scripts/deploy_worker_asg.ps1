@@ -232,6 +232,24 @@ $mixedPolicyVideoFile = Join-Path $RepoRoot "asg_video_mixed_policy.json"
 [System.IO.File]::WriteAllText($mixedPolicyVideoFile, $mixedPolicyVideo.Trim(), $utf8NoBom)
 $mixedPolicyVideoPath = "file://$($mixedPolicyVideoFile -replace '\\','/' -replace ' ', '%20')"
 
+# delete 후 create 전에 삭제 완료될 때까지 polling (Eventually Consistent, 최대 90초+ 소요 가능)
+function Wait-VideoAsgDeleted {
+    param([string]$AsgName, [string]$Reg, [int]$MaxWaitSec = 120, [int]$IntervalSec = 5)
+    $elapsed = 0
+    while ($elapsed -lt $MaxWaitSec) {
+        $count = aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --region $Reg --query "length(AutoScalingGroups)" --output text 2>$null
+        if ($count -eq "0" -or $count -eq "" -or $count -eq "None") {
+            Write-Host "      ASG deleted (confirmed after ${elapsed}s)." -ForegroundColor Gray
+            return $true
+        }
+        Start-Sleep -Seconds $IntervalSec
+        $elapsed += $IntervalSec
+        Write-Host "      Waiting for ASG deletion... ${elapsed}s" -ForegroundColor Gray
+    }
+    Write-Host "      WARNING: ASG still present after ${MaxWaitSec}s." -ForegroundColor Yellow
+    return $false
+}
+
 $videoAsgJson = aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgVideoName --region $Region --query "AutoScalingGroups[0]" --output json 2>$null
 $needRecreate = $false
 if ($videoAsgJson) {
@@ -245,23 +263,26 @@ if ($videoAsgJson) {
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 if ($needRecreate) {
     aws autoscaling delete-auto-scaling-group --auto-scaling-group-name $AsgVideoName --force-delete --region $Region 2>$null
-    Write-Host "      Waiting 15s for ASG deletion..." -ForegroundColor Gray
-    Start-Sleep -Seconds 15
+    Wait-VideoAsgDeleted -AsgName $AsgVideoName -Reg $Region -MaxWaitSec 120 -IntervalSec 5 | Out-Null
 }
 
+$createDone = $false
 aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
     --mixed-instances-policy $mixedPolicyVideoPath `
     --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
     --vpc-zone-identifier $SubnetIds --region $Region 2>$null
-if ($LASTEXITCODE -ne 0) {
+if ($LASTEXITCODE -eq 0) {
+    $createDone = $true
+} else {
     if (-not $needRecreate) {
         Write-Host "      ASG exists; update does not switch LaunchTemplate→MixedInstancesPolicy. Forcing delete and recreate..." -ForegroundColor Yellow
         aws autoscaling delete-auto-scaling-group --auto-scaling-group-name $AsgVideoName --force-delete --region $Region 2>$null
-        Start-Sleep -Seconds 15
+        Wait-VideoAsgDeleted -AsgName $AsgVideoName -Reg $Region -MaxWaitSec 120 -IntervalSec 5 | Out-Null
         aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
             --mixed-instances-policy $mixedPolicyVideoPath `
             --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
             --vpc-zone-identifier $SubnetIds --region $Region 2>$null
+        if ($LASTEXITCODE -eq 0) { $createDone = $true }
     }
 }
 if ($LASTEXITCODE -eq 0 -and -not $needRecreate) {
