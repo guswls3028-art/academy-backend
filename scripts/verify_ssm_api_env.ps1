@@ -44,9 +44,9 @@ try {
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
     $p = [System.Diagnostics.Process]::Start($psi)
+    $p.WaitForExit(60000)
     $stdout = $p.StandardOutput.ReadToEnd()
     $stderr = $p.StandardError.ReadToEnd()
-    $p.WaitForExit(60000)
     $exitCode = $p.ExitCode
     $jsonStr = ($stdout | Out-String).Trim()
     $stderrStr = ($stderr | Out-String).Trim()
