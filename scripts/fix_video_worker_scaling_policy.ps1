@@ -1,21 +1,50 @@
-# Video Worker ASG: TargetTracking 정책 제거 (Lambda 단독 컨트롤)
+# Video Worker ASG: EC2 Auto Scaling 정책 제거 (Lambda 단독 DesiredCapacity 제어)
+# EC2 ASG는 Application Auto Scaling 대상이 아님. aws autoscaling delete-policy 사용.
 # Usage: .\scripts\fix_video_worker_scaling_policy.ps1
 
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
 param(
-    [string]$Region = "ap-northeast-2"
+    [string]$Region = "ap-northeast-2",
+    [string]$AsgName = "academy-video-worker-asg"
 )
 
-$ErrorActionPreference = "Stop"
-$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ResourceIdVideo = "auto-scaling-group/academy-video-worker-asg"
+Write-Host "[1/3] Querying current ScalingPolicies on $AsgName..." -ForegroundColor Cyan
+$result = aws autoscaling describe-policies `
+    --auto-scaling-group-name $AsgName `
+    --region $Region | ConvertFrom-Json
 
-Write-Host "[1/2] Removing TargetTracking policy from Video ASG..." -ForegroundColor Cyan
-$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-aws application-autoscaling delete-scaling-policy --service-namespace ec2 --resource-id $ResourceIdVideo `
-    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" --region $Region 2>&1
-$ErrorActionPreference = $ea
+$policies = $result.ScalingPolicies
+if ($null -eq $policies) { $policies = @() }
+$count = $policies.Count
 
-Write-Host "[2/2] Verifying no scaling policy on Video ASG..." -ForegroundColor Cyan
-aws application-autoscaling describe-scaling-policies --service-namespace ec2 --resource-id $ResourceIdVideo --region $Region --output json
+Write-Host "  Found $count policy(ies)." -ForegroundColor Gray
 
-Write-Host "Done. Video ASG uses Lambda-only control (no TargetTracking)." -ForegroundColor Green
+if ($count -gt 0) {
+    Write-Host "[2/3] Deleting all ScalingPolicies..." -ForegroundColor Cyan
+    foreach ($p in $policies) {
+        Write-Host "  Deleting policy: $($p.PolicyName)" -ForegroundColor Gray
+        aws autoscaling delete-policy `
+            --auto-scaling-group-name $AsgName `
+            --policy-name $p.PolicyName `
+            --region $Region
+    }
+} else {
+    Write-Host "[2/3] No policies to delete." -ForegroundColor Gray
+}
+
+Write-Host "[3/3] Verifying ScalingPolicies is empty..." -ForegroundColor Cyan
+$verify = aws autoscaling describe-policies `
+    --auto-scaling-group-name $AsgName `
+    --region $Region | ConvertFrom-Json
+
+if ($verify.ScalingPolicies.Count -gt 0) {
+    throw "Verification failed: ScalingPolicies still has $($verify.ScalingPolicies.Count) item(s)."
+}
+
+aws autoscaling describe-policies `
+    --auto-scaling-group-name $AsgName `
+    --region $Region --output json
+
+Write-Host "Done. Video ASG ($AsgName) uses Lambda-only control (no EC2 scaling policy)." -ForegroundColor Green
