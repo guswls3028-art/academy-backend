@@ -205,13 +205,13 @@ $ErrorActionPreference = $ea
 
 # ------------------------------------------------------------------------------
 # 5) ASG Video (MixedInstancesPolicy only; LaunchTemplate 필드 사용 금지)
-#     c6g.large Spot primary, t4g.medium fallback. Drain-safe: ENTERPRISE DRAIN.
+#     c6g.large only (Spot primary, no t4g fallback). Drain-safe: ENTERPRISE DRAIN.
 #     기존 ASG가 LaunchTemplate 기반이면 Update로 전환 불가 → 삭제 후 재생성.
 # ------------------------------------------------------------------------------
 Write-Host "[5/8] ASG (Video worker, MixedInstancesPolicy Spot, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
 $AsgVideoName = "academy-video-worker-asg"
 $mixedPolicyVideo = @"
-{"LaunchTemplate":{"LaunchTemplateSpecification":{"LaunchTemplateName":"$LtVideoName","Version":"`$Latest"},"Overrides":[{"InstanceType":"c6g.large"},{"InstanceType":"t4g.medium"}]},"InstancesDistribution":{"OnDemandBaseCapacity":0,"OnDemandPercentageAboveBaseCapacity":0,"SpotAllocationStrategy":"capacity-optimized"}}
+{"LaunchTemplate":{"LaunchTemplateSpecification":{"LaunchTemplateName":"$LtVideoName","Version":"`$Latest"},"Overrides":[{"InstanceType":"c6g.large"}]},"InstancesDistribution":{"OnDemandBaseCapacity":0,"OnDemandPercentageAboveBaseCapacity":0,"SpotAllocationStrategy":"capacity-optimized"}}
 "@
 $mixedPolicyVideoFile = Join-Path $RepoRoot "asg_video_mixed_policy.json"
 [System.IO.File]::WriteAllText($mixedPolicyVideoFile, $mixedPolicyVideo.Trim(), $utf8NoBom)
