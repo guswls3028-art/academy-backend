@@ -163,6 +163,7 @@ def set_video_worker_desired(
     result = {
         "video_visible": visible,
         "video_inflight": inflight,
+        "video_scale_visible_only": VIDEO_SCALE_VISIBLE_ONLY,
         "video_backlog_add": backlog_add,
         "video_desired_raw": desired_candidate,
         "video_new_desired": new_desired,
