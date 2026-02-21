@@ -51,11 +51,12 @@ VISIBILITY_EXTEND_INTERVAL_SECONDS = 90  # 인코딩 중 연장 주기
 VIDEO_LOCK_TTL_SECONDS = int(os.getenv("VIDEO_LOCK_TTL_SECONDS", "14400"))   # 4h
 VIDEO_PROGRESS_TTL_SECONDS = int(os.getenv("VIDEO_PROGRESS_TTL_SECONDS", "14400"))  # 4h
 
-# NACK 시 메시지 재노출 대기 (락 TTL 만료 후 재처리 허용)
-NACK_VISIBILITY_SECONDS = 60
+# NACK 시 메시지 재노출 대기 (락 TTL 만료 후 재처리 허용) — lock_fail, skip:lock
+NACK_VISIBILITY_SECONDS = 60  # 60~120 범위
+NACK_VISIBILITY_MAX = 120
 
-# failed 시 retry backoff (일시적 실패 시 즉시 재시도 방지)
-FAILED_BACKOFF_SECONDS = 180
+# failed transient 시 retry backoff (일시적 실패 시 즉시 재시도 방지)
+FAILED_TRANSIENT_BACKOFF_SECONDS = 180  # 180~600 범위
 
 
 def _visibility_extender_loop(
@@ -63,7 +64,7 @@ def _visibility_extender_loop(
     receipt_handle: str,
     stop_event: threading.Event,
 ) -> None:
-    """ffmpeg 인코딩 동안 240초마다 visibility를 300초로 연장."""
+    """Long Job: ffmpeg 인코딩 동안 90초마다 visibility를 900초로 연장."""
     while not stop_event.wait(timeout=VISIBILITY_EXTEND_INTERVAL_SECONDS):
         try:
             queue.change_message_visibility(receipt_handle, VISIBILITY_EXTEND_SECONDS)
@@ -142,7 +143,18 @@ def main() -> int:
                 if not message:
                     consecutive_errors = 0
                     continue
-                
+
+                # SIGTERM 수신 시 새 메시지는 즉시 visibility=0 반환 후 종료
+                if _shutdown:
+                    receipt_handle = message.get("receipt_handle")
+                    if receipt_handle:
+                        try:
+                            queue.change_message_visibility(receipt_handle, 0)
+                        except Exception:
+                            pass
+                        logger.info("shutdown: returning message visibility=0")
+                    break
+
                 receipt_handle = message.get("receipt_handle")
                 if not receipt_handle:
                     logger.error("Message missing receipt_handle: %s", message)
