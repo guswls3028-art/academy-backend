@@ -165,6 +165,13 @@ if (-not $ltVideoExists) {
 }
 $ErrorActionPreference = $ea
 Remove-Item $ltVideoFile -Force -ErrorAction SilentlyContinue
+# Video ASG MixedInstancesPolicy requires this LT; abort if missing
+$vidLtCheck = aws ec2 describe-launch-templates --launch-template-names $LtVideoName --region $Region --query "LaunchTemplates[0].LaunchTemplateName" --output text 2>$null
+if (-not $vidLtCheck -or $vidLtCheck -eq "None") {
+    Write-Error "Launch template $LtVideoName not found after create. MixedInstancesPolicy will fail. Aborting."
+    exit 1
+}
+Write-Host "      Verified: $LtVideoName exists." -ForegroundColor Gray
 
 # ------------------------------------------------------------------------------
 # 3.5) Launch Template Messaging (Min=1 always on)
