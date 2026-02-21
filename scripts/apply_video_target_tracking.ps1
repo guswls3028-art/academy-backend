@@ -1,9 +1,7 @@
 # ==============================================================================
-# academy-video-worker-asg에 BacklogCount TargetTrackingScaling 정책 적용
+# academy-video-worker-asg에 VideoQueueDepthTotal(SQS 기반) TargetTrackingScaling 정책 적용
 # aws autoscaling put-scaling-policy 사용 (EC2 Auto Scaling API)
-# ==============================================================================
-# 참고: EC2 API TargetTrackingConfiguration은 ScaleOutCooldown/ScaleInCooldown 미지원
-#       (Application Auto Scaling API에서는 지원)
+# 스케일링 소스 = SQS(visible+notVisible) only. DB backlog 미사용.
 # ==============================================================================
 # 사용: .\scripts\apply_video_target_tracking.ps1
 #      .\scripts\apply_video_target_tracking.ps1 -Region ap-northeast-2
@@ -12,21 +10,23 @@
 param(
     [string]$Region = "ap-northeast-2",
     [string]$AsgName = "academy-video-worker-asg",
-    [string]$PolicyName = "BacklogCountTargetTracking"
+    [string]$PolicyName = "video-backlogcount-tt"
 )
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptRoot
 
-# EC2 autoscaling TargetTrackingConfiguration: ScaleIn/OutCooldown 미지원
-# TargetValue 1 = 영상 1개당 워커 1대
+# TargetValue 1 = SQS 메시지 1개당 워커 1대. Cooldown으로 폭주 방지.
 $config = @{
-    TargetValue = 1
+    TargetValue       = 1
+    ScaleOutCooldown  = 60
+    ScaleInCooldown   = 300
     CustomizedMetricSpecification = @{
         Namespace   = "Academy/VideoProcessing"
-        MetricName  = "BacklogCount"
+        MetricName  = "VideoQueueDepthTotal"
         Statistic   = "Average"
+        Unit        = "Count"
         Dimensions  = @(
             @{ Name = "WorkerType"; Value = "Video" }
             @{ Name = "AutoScalingGroupName"; Value = $AsgName }
@@ -40,7 +40,7 @@ $configFile = Join-Path $RepoRoot "video_target_tracking_config.json"
 
 $configPath = "file://$($configFile -replace '\\','/')"
 
-Write-Host "[1/2] Creating BacklogCountTargetTracking policy on $AsgName ..." -ForegroundColor Cyan
+Write-Host "[1/2] Creating VideoQueueDepthTotal TargetTracking policy on $AsgName ..." -ForegroundColor Cyan
 aws autoscaling put-scaling-policy `
     --auto-scaling-group-name $AsgName `
     --policy-name $PolicyName `
@@ -72,4 +72,4 @@ if ($policies.Count -eq 0) {
     }
 }
 
-Write-Host "`nDone. BacklogCountTargetTracking applied." -ForegroundColor Green
+Write-Host "`nDone. VideoQueueDepthTotal TargetTracking (video-backlogcount-tt) applied." -ForegroundColor Green
