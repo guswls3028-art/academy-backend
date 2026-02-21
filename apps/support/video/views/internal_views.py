@@ -79,18 +79,17 @@ class VideoProcessingCompleteView(APIView):
 
 class VideoBacklogCountView(APIView):
     """
-    B1: BacklogCount (Job 기반: QUEUED + RETRY_WAIT, RUNNING 제외) for Video ASG TargetTracking.
-    GET /api/v1/internal/video/backlog-count/
-    Returns: {"backlog": int}
-    queue_depth_lambda가 1분마다 X-Internal-Key 헤더로 호출.
+    B1: BacklogCount for Video ASG TargetTracking. Redis only, no RDS.
+    GET /api/v1/internal/video/backlog-count/ (or /internal/video/backlog/ if routed)
+    Returns: {"backlog": int} — sum of tenant:{id}:video:backlog_count. Target <50ms for Lambda.
     """
 
     permission_classes = [IsLambdaInternal]
     authentication_classes = []
 
     def get(self, request):
-        from academy.adapters.db.django.repositories_video import job_count_backlog
-        backlog = job_count_backlog()
+        from apps.support.video.redis_status_cache import redis_get_video_backlog_total
+        backlog = redis_get_video_backlog_total()
         return Response({"backlog": backlog})
 
 
