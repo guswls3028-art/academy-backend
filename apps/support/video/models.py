@@ -187,6 +187,7 @@ class VideoTranscodeJob(models.Model):
         db_index=True,
     )
     attempt_count = models.PositiveIntegerField(default=1)
+    cancel_requested = models.BooleanField(default=False)
     locked_by = models.CharField(max_length=64, blank=True)
     locked_until = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)

@@ -103,7 +103,7 @@ def _job_visibility_and_heartbeat_loop(
     while not stop_event.wait(timeout=JOB_HEARTBEAT_INTERVAL_SECONDS):
         try:
             queue.change_message_visibility(receipt_handle, VISIBILITY_EXTEND_SECONDS)
-            job_heartbeat(job_id)
+            job_heartbeat(job_id, lease_seconds=VISIBILITY_EXTEND_SECONDS)
         except Exception as e:
             logger.warning("Job heartbeat/visibility failed job_id=%s: %s", job_id, e)
 
