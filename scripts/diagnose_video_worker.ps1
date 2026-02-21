@@ -142,8 +142,7 @@ if ($instances -and $instances.Count -gt 0) {
 # ------------------------------------------------------------------------------
 Write-Section "8. Network (worker subnet: route to SQS, SG outbound)"
 if ($firstSubnet) {
-    $subnetInfo = aws ec2 describe-subnets --subnet-ids $firstSubnet --region $Region --query "Subnets[0].VpcId" --output text 2>$null
-    $vpcId = $subnetInfo
+    $vpcId = aws ec2 describe-subnets --subnet-ids $firstSubnet --region $Region --query "Subnets[0].VpcId" --output text 2>$null
     $rtAssoc = aws ec2 describe-route-tables --region $Region --filters "Name=association.subnet-id,Values=$firstSubnet" --query "RouteTables[0].RouteTableId" --output text 2>$null
     if ($rtAssoc -and $rtAssoc -ne "None") {
         $routes = aws ec2 describe-route-tables --route-table-ids $rtAssoc --region $Region --query "RouteTables[0].Routes[?DestinationCidrBlock=='0.0.0.0/0']" --output json 2>$null | ConvertFrom-Json
