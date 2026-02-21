@@ -377,7 +377,7 @@ def main() -> int:
                     job_after = job_get_by_id(job_id)
                     if job_after and job_after.attempt_count >= VIDEO_JOB_MAX_ATTEMPTS:
                         job_mark_dead(job_id, error_code="MAX_ATTEMPTS", error_message=str(e)[:2000])
-                        logger.warning("JOB_DEAD | job_id=%s | video_id=%s | attempt_count=%s", job_id, video_id, job_obj.attempt_count)
+                        logger.warning("JOB_DEAD | job_id=%s | video_id=%s | attempt_count=%s", job_id, video_id, job_after.attempt_count)
                     queue.change_message_visibility(receipt_handle, FAILED_TRANSIENT_BACKOFF_SECONDS)
                     consecutive_errors += 1
 
