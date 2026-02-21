@@ -1,8 +1,10 @@
 # ==============================================================================
 # STRICT MODE — VIDEO WORKER ROOT CAUSE DIAGNOSTIC
 # Gathers factual AWS runtime state only. No interpretation. stderr not hidden.
+# 결과 요약을 JSON 파일로 저장 후 핵심 요약 출력.
 # ==============================================================================
 # Usage: .\scripts\diagnose_video_worker_full.ps1
+#        .\scripts\diagnose_video_worker_full.ps1 -Region ap-northeast-2
 # ==============================================================================
 
 param(
@@ -13,6 +15,20 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$diagnoseResult = @{
+    timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    region    = $Region
+    asgName   = $AsgName
+    queueName = $QueueName
+    lambdaName = $LambdaName
+    summary   = @{}
+    lambda    = $null
+    sqs       = $null
+    asg       = $null
+    policy    = $null
+    activities = $null
+}
 
 # ------------------------------------------------------------------------------
 # 1) Lambda Runtime Behavior
