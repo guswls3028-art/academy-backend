@@ -18,9 +18,15 @@ $SsmName = "/academy/api/env"
 $NewLine = "LAMBDA_INTERNAL_API_KEY=$LambdaInternalApiKey"
 
 Write-Host "[1/4] Get current SSM $SsmName..." -ForegroundColor Cyan
-$current = aws ssm get-parameter --name $SsmName --with-decryption --region $Region --query "Parameter.Value" --output text 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  SSM get failed. Creating new content with LAMBDA_INTERNAL_API_KEY only." -ForegroundColor Yellow
+$ea = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $current = & aws ssm get-parameter --name $SsmName --with-decryption --region $Region --query "Parameter.Value" --output text 2>$null
+} finally {
+    $ErrorActionPreference = $ea
+}
+if ($LASTEXITCODE -ne 0 -or -not $current) {
+    Write-Host "  SSM get failed or parameter empty. Creating new content with LAMBDA_INTERNAL_API_KEY only." -ForegroundColor Yellow
     $current = ""
 }
 
