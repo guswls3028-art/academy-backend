@@ -632,7 +632,7 @@ def job_get_by_id(job_id) -> Optional["VideoTranscodeJob"]:
 def job_claim_for_running(job_id, worker_id: str, lease_seconds: int = 3600) -> bool:
     """
     Job을 RUNNING으로 원자 전환. QUEUED 또는 RETRY_WAIT만 claim 가능.
-    rowcount=1 반환 시만 성공.
+    성공 시 Redis backlog DECR (Lambda BacklogCount용).
     """
     from django.db import transaction
     from django.utils import timezone
@@ -641,18 +641,27 @@ def job_claim_for_running(job_id, worker_id: str, lease_seconds: int = 3600) -> 
 
     now = timezone.now()
     locked_until = now + timedelta(seconds=lease_seconds)
+    tenant_id = None
     with transaction.atomic():
-        n = VideoTranscodeJob.objects.filter(
+        job = VideoTranscodeJob.objects.select_for_update().filter(
             pk=job_id,
             state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT],
-        ).update(
-            state=VideoTranscodeJob.State.RUNNING,
-            locked_by=str(worker_id)[:64],
-            locked_until=locked_until,
-            last_heartbeat_at=now,
-            updated_at=now,
-        )
-    return n == 1
+        ).first()
+        if not job:
+            return False
+        tenant_id = job.tenant_id
+        job.state = VideoTranscodeJob.State.RUNNING
+        job.locked_by = str(worker_id)[:64]
+        job.locked_until = locked_until
+        job.last_heartbeat_at = now
+        job.save(update_fields=["state", "locked_by", "locked_until", "last_heartbeat_at", "updated_at"])
+    if tenant_id is not None:
+        try:
+            from apps.support.video.redis_status_cache import redis_decr_video_backlog
+            redis_decr_video_backlog(tenant_id)
+        except Exception:
+            pass
+    return True
 
 
 def job_heartbeat(job_id, lease_seconds: int = 3600) -> bool:
@@ -774,17 +783,25 @@ def job_cancel(job_id: str) -> bool:
 
 
 def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") -> bool:
-    """Job DEAD (DLQ 격리). Transactional: Job + Video 원자적 업데이트."""
+    """Job DEAD (DLQ 격리). Transactional: Job + Video 원자적 업데이트. QUEUED/RETRY_WAIT였으면 Redis backlog DECR."""
     from django.db import transaction
     from django.utils import timezone
     from apps.support.video.models import Video, VideoTranscodeJob
 
     err_msg = str(error_message)[:2000]
     err_code = str(error_code)[:64]
+    was_backlog = False
+    tenant_id = None
     with transaction.atomic():
         job = VideoTranscodeJob.objects.select_for_update().filter(pk=job_id).first()
         if not job:
             return False
+        was_backlog = job.state in (
+            VideoTranscodeJob.State.QUEUED,
+            VideoTranscodeJob.State.RETRY_WAIT,
+        )
+        if was_backlog:
+            tenant_id = job.tenant_id
         job.state = VideoTranscodeJob.State.DEAD
         job.error_code = err_code
         job.error_message = err_msg
@@ -795,6 +812,12 @@ def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") ->
             status=Video.Status.FAILED,
             error_reason=err_msg or job.error_message,
         )
+    if was_backlog and tenant_id is not None:
+        try:
+            from apps.support.video.redis_status_cache import redis_decr_video_backlog
+            redis_decr_video_backlog(tenant_id)
+        except Exception:
+            pass
     return True
 
 
