@@ -37,6 +37,9 @@ AWS_DEFAULT_REGION = os.getenv("AWS_DEFAULT_REGION", AWS_REGION)
 AI_WORKER_INSTANCE_ID = os.getenv("AI_WORKER_INSTANCE_ID")
 VIDEO_WORKER_INSTANCE_ID = os.getenv("VIDEO_WORKER_INSTANCE_ID")
 
+# Lambda internal API (B1 backlog-count 등) 인증용
+LAMBDA_INTERNAL_API_KEY = os.getenv("LAMBDA_INTERNAL_API_KEY")
+
 # ==================================================
 # MULTI TENANT (SSOT – Host Based Only)
 # ==================================================
