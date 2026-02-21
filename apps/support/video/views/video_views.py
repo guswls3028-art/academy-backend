@@ -313,10 +313,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     def upload_complete(self, request, pk=None):
         video = self.get_object()
         # [TRACE] upload_complete entry
+        _tenant_id = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
         logger.info(
             "VIDEO_UPLOAD_TRACE | upload_complete entry | video_id=%s tenant_id=%s source_path=%s status=%s execution=1_ENTRY",
             video.id,
-            video.session.lecture.tenant_id if (video.session and video.session.lecture) else None,
+            _tenant_id,
             video.file_key or "",
             video.status,
         )
