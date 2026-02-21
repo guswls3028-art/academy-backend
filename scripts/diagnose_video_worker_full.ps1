@@ -54,7 +54,8 @@ try {
         ai_queue_depth = $payload.ai_queue_depth
         messaging_queue_depth = $payload.messaging_queue_depth
     }
-    Write-Host "video_queue_depth_total: $($payload.video_queue_depth_total)"
+    $vt = if ($null -ne $payload.PSObject.Properties["video_queue_depth_total"]) { $payload.video_queue_depth_total } else { $payload.video_backlog_count }
+    Write-Host "video_queue_depth_total: $vt"
     Write-Host "video_queue_depth: $($payload.video_queue_depth)"
     Write-Host "ai_queue_depth: $($payload.ai_queue_depth)"
     Write-Host "messaging_queue_depth: $($payload.messaging_queue_depth)"
