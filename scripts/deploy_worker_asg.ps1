@@ -154,9 +154,9 @@ $ltVideoJson = @"
 $ltVideoFile = Join-Path $RepoRoot "lt_video_data.json"
 [System.IO.File]::WriteAllText($ltVideoFile, $ltVideoJson.Trim(), $utf8NoBom)
 $ltVideoPath = "file://$($ltVideoFile -replace '\\','/' -replace ' ', '%20')"
-$ltVideoExists = $false
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-try { aws ec2 describe-launch-templates --launch-template-names $LtVideoName --region $Region 2>$null | Out-Null; $ltVideoExists = $true } catch {}
+aws ec2 describe-launch-templates --launch-template-names $LtVideoName --region $Region 2>$null | Out-Null
+$ltVideoExists = ($LASTEXITCODE -eq 0)
 if (-not $ltVideoExists) {
     aws ec2 create-launch-template --launch-template-name $LtVideoName --version-description "ASG Video worker (MixedInstancesPolicy)" --launch-template-data $ltVideoPath --region $Region
 } else {
