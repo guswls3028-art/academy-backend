@@ -325,17 +325,13 @@ if ($LASTEXITCODE -ne 0) {
 $ErrorActionPreference = $ea
 
 # ------------------------------------------------------------------------------
-# 6) Application Auto Scaling - Register targets
+# 6) Application Auto Scaling - Register targets (AI, Messaging only; Video uses EC2 autoscaling put-scaling-policy)
 # ------------------------------------------------------------------------------
-Write-Host "[7/8] Application Auto Scaling (register targets)..." -ForegroundColor Cyan
+Write-Host "[7/8] Application Auto Scaling (register targets, AI + Messaging)..." -ForegroundColor Cyan
 $ResourceIdAi = "auto-scaling-group/$AsgAiName"
-$ResourceIdVideo = "auto-scaling-group/$AsgVideoName"
 $ResourceIdMessaging = "auto-scaling-group/$AsgMessagingName"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-# AI/Video/Messaging all min 1 instance (min-capacity 1)
 aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $ResourceIdAi `
-    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 1 --max-capacity $MaxCapacity --region $Region 2>$null
-aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $ResourceIdVideo `
     --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 1 --max-capacity $MaxCapacity --region $Region 2>$null
 aws application-autoscaling register-scalable-target --service-namespace ec2 --resource-id $ResourceIdMessaging `
     --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 1 --max-capacity $MaxCapacity --region $Region 2>$null
