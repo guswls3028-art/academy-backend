@@ -140,6 +140,8 @@ def _is_asg_interrupt_from_api() -> bool:
     headers = {"User-Agent": HTTP_USER_AGENT}
     if LAMBDA_INTERNAL_API_KEY:
         headers["X-Internal-Key"] = LAMBDA_INTERNAL_API_KEY
+    if VIDEO_BACKLOG_API_HOST:
+        headers["Host"] = VIDEO_BACKLOG_API_HOST
     try:
         req = urllib.request.Request(url, method="GET", headers=headers)
         with urllib.request.urlopen(req, timeout=3) as resp:
