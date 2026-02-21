@@ -110,7 +110,7 @@ def set_video_worker_desired(
     ssm_client,
     visible: int,
     inflight: int,
-) -> None:
+) -> dict:
     """
     Video ASG desired capacity를 Lambda 단독으로 설정.
 
@@ -120,18 +120,22 @@ def set_video_worker_desired(
       new_desired = clamp(MIN, MAX, desired_candidate)
 
     scale-in: visible==0 AND inflight==0 가 STABLE_ZERO_SECONDS 이상 지속 시에만 min으로.
+
+    Returns:
+        디버깅용 dict: visible, inflight, backlog_add, desired_candidate, new_desired, decision, stable_zero_since_epoch
     """
     backlog_add = min(visible, MAX_BACKLOG_ADD)
     desired_candidate = inflight + backlog_add
     new_desired_raw = max(VIDEO_WORKER_ASG_MIN, min(VIDEO_WORKER_ASG_MAX, desired_candidate))
     now_ts = int(time.time())
+    stable_zero_since_epoch = _get_stable_zero_since(ssm_client)
 
     if visible > 0 or inflight > 0:
         _delete_stable_zero_param(ssm_client)
         new_desired = new_desired_raw
         decision = "scale_out" if new_desired > 0 else "hold"
     else:
-        stable_since = _get_stable_zero_since(ssm_client)
+        stable_since = stable_zero_since_epoch
         if stable_since == 0:
             _set_stable_zero_since(ssm_client, now_ts)
             new_desired = None  # do not change (keep current)
@@ -154,8 +158,18 @@ def set_video_worker_desired(
         decision,
     )
 
+    result = {
+        "video_visible": visible,
+        "video_inflight": inflight,
+        "video_backlog_add": backlog_add,
+        "video_desired_raw": desired_candidate,
+        "video_new_desired": new_desired,
+        "video_decision": decision,
+        "stable_zero_since_epoch": stable_zero_since_epoch,
+    }
+
     if new_desired is None:
-        return
+        return result
 
     try:
         asgs = autoscaling_client.describe_auto_scaling_groups(
