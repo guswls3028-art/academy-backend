@@ -106,7 +106,12 @@ foreach ($line in ($output -split "`n")) {
 }
 
 function Format-Status { param([string]$code)
-    switch ($code) { "200" { "200 OK"; "403" { "403 Forbidden"; "000" { "ERR (connection failed)" } default { "$code" } }
+    switch ($code) {
+        "200" { "200 OK" }
+        "403" { "403 Forbidden" }
+        "000" { "ERR (connection failed)" }
+        default { $code }
+    }
 }
 
 # 출력
