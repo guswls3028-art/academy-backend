@@ -58,6 +58,7 @@ try {
         $obj = $jsonStr | ConvertFrom-Json
         $raw = $obj.Parameter.Value
     }
+    $null  # avoid leaking True/False from assignments to host
 } catch {
     $raw = $null
     if ($exitCode -eq -1) { $stderrStr = $_.Exception.Message }
