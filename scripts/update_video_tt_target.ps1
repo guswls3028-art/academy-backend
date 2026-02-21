@@ -17,9 +17,8 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptRoot
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
-# TargetValue 1 = 영상 1개당 워커 1대
-# EC2 autoscaling TargetTracking: ScaleOutCooldown/ScaleInCooldown 미지원
-$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"BacklogCount","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"}}'
+# TargetValue 1 = SQS 메시지 1개당 워커 1대 (스케일링 소스 = SQS only)
+$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"},"ScaleOutCooldown":60,"ScaleInCooldown":300}'
 $videoTtFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
 [System.IO.File]::WriteAllText($videoTtFile, $videoTtJson, $utf8NoBom)
 $videoTtPath = "file://$($videoTtFile -replace '\\','/' -replace ' ', '%20')"
@@ -31,4 +30,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "put-scaling-policy failed."
 }
 Remove-Item $videoTtFile -Force -ErrorAction SilentlyContinue
-Write-Host "Done. Video ASG will scale ~1 worker per 1 backlog (TargetValue=1)." -ForegroundColor Green
+Write-Host "Done. Video ASG will scale ~1 worker per 1 SQS message (TargetValue=1, VideoQueueDepthTotal)." -ForegroundColor Green
