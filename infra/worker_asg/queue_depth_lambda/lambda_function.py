@@ -37,11 +37,24 @@ AI_WORKER_ASG_NAME = os.environ.get("AI_WORKER_ASG_NAME", "academy-ai-worker-asg
 AI_WORKER_ASG_MAX = int(os.environ.get("AI_WORKER_ASG_MAX", "20"))
 VIDEO_WORKER_ASG_NAME = os.environ.get("VIDEO_WORKER_ASG_NAME", "academy-video-worker-asg")
 VIDEO_WORKER_ASG_MAX = int(os.environ.get("VIDEO_WORKER_ASG_MAX", "20"))
-# VIDEO_BACKLOG_API_INTERNAL: VPC 내부용 base URL (예: http://172.30.x.x:8000). 설정 시 PUBLIC보다 우선.
-VIDEO_BACKLOG_API_INTERNAL = os.environ.get("VIDEO_BACKLOG_API_INTERNAL", "").rstrip("/")
+# VIDEO_BACKLOG_API_INTERNAL: VPC 내부용 backlog 엔드포인트 전체 URL. 설정 시 사용 (실패 시 publish 스킵, 0 fallback 없음).
+VIDEO_BACKLOG_API_INTERNAL = os.environ.get(
+    "VIDEO_BACKLOG_API_INTERNAL",
+    "http://172.30.3.142:8000/internal/video/backlog/",
+).rstrip("/")
 VIDEO_BACKLOG_API_URL = os.environ.get("VIDEO_BACKLOG_API_URL", "").rstrip("/")
-# 실제 API 호출에 쓸 base: INTERNAL 우선, 없으면 PUBLIC
-VIDEO_BACKLOG_API_BASE = VIDEO_BACKLOG_API_INTERNAL or VIDEO_BACKLOG_API_URL
+# Backlog 조회 URL: INTERNAL 설정 시 전체 URL로 사용, 아니면 PUBLIC base + /api/v1/internal/video/backlog-count/
+if VIDEO_BACKLOG_API_INTERNAL:
+    VIDEO_BACKLOG_FETCH_URL = VIDEO_BACKLOG_API_INTERNAL if VIDEO_BACKLOG_API_INTERNAL != "http://172.30.3.142:8000/internal/video/backlog" else VIDEO_BACKLOG_API_INTERNAL
+else:
+    VIDEO_BACKLOG_FETCH_URL = None
+if not VIDEO_BACKLOG_FETCH_URL and VIDEO_BACKLOG_API_URL:
+    VIDEO_BACKLOG_FETCH_URL = f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/backlog-count/"
+# asg-interrupt용 base (INTERNAL일 때 호스트만 추출)
+if VIDEO_BACKLOG_API_INTERNAL and "/internal/" in VIDEO_BACKLOG_API_INTERNAL:
+    VIDEO_BACKLOG_API_BASE = VIDEO_BACKLOG_API_INTERNAL.split("/internal/")[0]
+else:
+    VIDEO_BACKLOG_API_BASE = VIDEO_BACKLOG_API_URL
 LAMBDA_INTERNAL_API_KEY = os.environ.get("LAMBDA_INTERNAL_API_KEY", "")
 MESSAGING_WORKER_ASG_NAME = os.environ.get("MESSAGING_WORKER_ASG_NAME", "academy-messaging-worker-asg")
 MESSAGING_WORKER_ASG_MAX = int(os.environ.get("MESSAGING_WORKER_ASG_MAX", "20"))
