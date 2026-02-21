@@ -15,11 +15,11 @@
 aws lambda update-function-configuration `
   --function-name academy-worker-queue-depth-metric `
   --region ap-northeast-2 `
-  --environment "Variables={VIDEO_BACKLOG_API_INTERNAL=http://172.30.3.142:8000/api/v1/internal/video/backlog-count/,LAMBDA_INTERNAL_API_KEY=hakwonplus-internal-key}"
+  --environment "Variables={VIDEO_BACKLOG_API_INTERNAL=http://172.30.3.142:8000/api/v1/internal/video/backlog-count/,LAMBDA_INTERNAL_API_KEY=<API와 동일한 값>}"
 ```
 
+- `LAMBDA_INTERNAL_API_KEY` 는 **API(SSM/컨테이너 env)에 들어 있는 값과 완전 동일**해야 함. 예: `docker exec academy-api env | grep LAMBDA_INTERNAL` 로 확인 후 그대로 넣기.
 - 위처럼 하면 Lambda는 Host 헤더를 덮어쓰지 않아서, 요청 Host가 `172.30.3.142`가 되고 Django가 허용함.
-- **서버(EC2) 쪽 설정/SSM 추가할 필요 없음.** Lambda ENV만 위 한 번 바꾸면 됨.
 
 검증:
 
@@ -87,7 +87,7 @@ Lambda가 backlog API 호출 시 **403 Forbidden** 이 나면 BacklogCount 퍼�
 | **Video SQS 큐** | `academy-video-jobs` | |
 | **Video Worker ASG** | `academy-video-worker-asg` | TargetTracking 정책: BacklogCount 기반 |
 | **CloudWatch 메트릭** | Namespace `Academy/VideoProcessing`, MetricName `BacklogCount`, Dimensions `WorkerType=Video`, `AutoScalingGroupName=academy-video-worker-asg` | |
-| **내부 API 키 (예시)** | `LAMBDA_INTERNAL_API_KEY=hakwonplus-internal-key` | 실제 값은 운영 비밀. API·Lambda 양쪽 동일해야 함 |
+| **내부 API 키** | API(SSM)의 `LAMBDA_INTERNAL_API_KEY` 와 Lambda ENV가 **완전 동일**해야 함. 불일치 시 403 → video_backlog_count null | 확인: `docker exec academy-api env \| grep LAMBDA_INTERNAL` |
 
 - **API Private IP**가 바뀌면: EC2 `describe-instances --filters Name=tag:Name,Values=academy-api` 로 새 PrivateIpAddress 확인 후 Lambda ENV `VIDEO_BACKLOG_API_INTERNAL` URL 수정.
 - **SG/Subnet**은 가능하면 이 문서 값 사용하고, 인프라 변경 시에만 여기 적힌 ID를 갱신.
