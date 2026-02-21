@@ -101,12 +101,8 @@ def lambda_handler(event: dict, context: Any) -> dict:
     (messaging_visible, messaging_in_flight) = get_queue_counts(sqs, MESSAGING_QUEUE)
     ai_total = ai_visible  # 메트릭은 visible만 (기존과 동일)
 
-    # B1: TargetTracking metric = BacklogCount (QUEUED+RETRY_WAIT). 안정화 검증 후 Score/가중치 도입 검토.
+    # B1: TargetTracking metric = BacklogCount (QUEUED+RETRY_WAIT). API 실패 시 fallback 퍼블리시 안 함 (ASG oscillation 방지).
     video_backlog = _fetch_video_backlog_from_api()
-    if video_backlog is None:
-        video_backlog = video_visible + video_in_flight  # fallback
-        if not VIDEO_BACKLOG_API_URL:
-            logger.info("VIDEO_BACKLOG_API_URL not set; using SQS fallback (visible+inflight)=%d", video_backlog)
 
     now = __import__("datetime").datetime.utcnow()
     metric_data = [
@@ -133,26 +129,33 @@ def lambda_handler(event: dict, context: Any) -> dict:
         },
     ]
     cw.put_metric_data(Namespace=NAMESPACE, MetricData=metric_data)
-    cw.put_metric_data(
-        Namespace="Academy/VideoProcessing",
-        MetricData=[
-            {
-                "MetricName": "BacklogCount",
-                "Dimensions": [
-                    {"Name": "WorkerType", "Value": "Video"},
-                    {"Name": "AutoScalingGroupName", "Value": "academy-video-worker-asg"},
-                ],
-                "Value": float(video_backlog),
-                "Timestamp": now,
-                "Unit": "Count",
-            }
-        ],
-    )
-    logger.info("BacklogCount metric published | backlog=%d", video_backlog)
+
+    if video_backlog is not None:
+        cw.put_metric_data(
+            Namespace="Academy/VideoProcessing",
+            MetricData=[
+                {
+                    "MetricName": "BacklogCount",
+                    "Dimensions": [
+                        {"Name": "WorkerType", "Value": "Video"},
+                        {"Name": "AutoScalingGroupName", "Value": "academy-video-worker-asg"},
+                    ],
+                    "Value": float(video_backlog),
+                    "Timestamp": now,
+                    "Unit": "Count",
+                }
+            ],
+        )
+        logger.info("BacklogCount metric published | backlog=%d", video_backlog)
+    else:
+        logger.warning(
+            "BacklogCount metric skipped (VIDEO_BACKLOG_API fetch failed); not publishing fallback to prevent ASG oscillation"
+        )
 
     logger.info(
-        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d backlog=%d messaging visible=%d in_flight=%d",
-        ai_visible, ai_in_flight, video_visible, video_in_flight, video_backlog,
+        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d backlog=%s messaging visible=%d in_flight=%d",
+        ai_visible, ai_in_flight, video_visible, video_in_flight,
+        video_backlog if video_backlog is not None else "skipped",
         messaging_visible, messaging_in_flight,
     )
     return {
