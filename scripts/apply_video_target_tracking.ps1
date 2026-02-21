@@ -2,6 +2,9 @@
 # academy-video-worker-asg에 BacklogCount TargetTrackingScaling 정책 적용
 # aws autoscaling put-scaling-policy 사용 (EC2 Auto Scaling API)
 # ==============================================================================
+# 참고: EC2 API TargetTrackingConfiguration은 ScaleOutCooldown/ScaleInCooldown 미지원
+#       (Application Auto Scaling API에서는 지원)
+# ==============================================================================
 # 사용: .\scripts\apply_video_target_tracking.ps1
 #      .\scripts\apply_video_target_tracking.ps1 -Region ap-northeast-2
 # ==============================================================================
