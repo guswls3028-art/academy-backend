@@ -3,7 +3,6 @@
 
 param(
     [string]$Region = "ap-northeast-2",
-    [int]$TargetMessagesPerInstance = 20,
     [int]$MaxCapacity = 20
 )
 

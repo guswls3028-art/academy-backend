@@ -13,7 +13,6 @@ Lambda는 set_desired_capacity를 호출하지 않음. Target Tracking이 단일
 """
 from __future__ import annotations
 
-import math
 import os
 import logging
 from typing import Any

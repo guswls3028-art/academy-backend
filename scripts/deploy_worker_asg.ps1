@@ -286,17 +286,18 @@ $policyAi = @"
   }
 }
 "@
+# Video: BacklogPerInstance = VisibleMessages / max(1, InServiceInstances). TargetValue 1.0 = 1 메시지/인스턴스. ScaleIn 10분 보수적.
 $policyVideo = @"
 {
   "TargetTrackingScalingPolicyConfiguration": {
-    "TargetValue": $TargetMessagesPerInstance,
+    "TargetValue": 1.0,
     "CustomizedMetricSpecification": {
-      "MetricName": "QueueDepth",
+      "MetricName": "BacklogPerInstance",
       "Namespace": "Academy/Workers",
       "Dimensions": [{"Name": "WorkerType", "Value": "Video"}],
       "Statistic": "Average"
     },
-    "ScaleInCooldown": 300,
+    "ScaleInCooldown": 600,
     "ScaleOutCooldown": 60
   }
 }
