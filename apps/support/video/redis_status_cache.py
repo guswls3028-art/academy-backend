@@ -27,7 +27,7 @@ def _get_video_heartbeat_key(tenant_id: int, video_id: int) -> str:
     return f"tenant:{tenant_id}:video:{video_id}:heartbeat"
 
 
-VIDEO_HEARTBEAT_TTL_SECONDS = 60
+VIDEO_HEARTBEAT_TTL_SECONDS = 300
 
 
 def set_video_heartbeat(tenant_id: int, video_id: int, ttl_seconds: int = VIDEO_HEARTBEAT_TTL_SECONDS) -> bool:
