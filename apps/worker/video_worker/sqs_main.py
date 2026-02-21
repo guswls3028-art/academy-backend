@@ -323,7 +323,8 @@ def main() -> int:
                                 )
                                 if attempt < 2:
                                     time.sleep(2**attempt)  # 1s → 2s → 4s exponential backoff
-                    queue.delete_message(receipt_handle)
+                    if not VIDEO_FAST_ACK:
+                        queue.delete_message(receipt_handle)
                     logger.info(
                         "SQS_JOB_COMPLETED | request_id=%s | video_id=%s | tenant_code=%s | processing_duration=%.2f | queue_wait_sec=%.2f",
                         request_id,
