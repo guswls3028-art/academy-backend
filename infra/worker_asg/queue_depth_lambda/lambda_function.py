@@ -103,9 +103,13 @@ def _fetch_video_backlog_from_api() -> int | None:
         logger.warning("VIDEO_BACKLOG_FETCH_URL empty; skipping BacklogCount fetch.")
         return None
     url = VIDEO_BACKLOG_FETCH_URL
-    headers = {"User-Agent": HTTP_USER_AGENT}
-    if LAMBDA_INTERNAL_API_KEY:
-        headers["X-Internal-Key"] = LAMBDA_INTERNAL_API_KEY
+    internal_key = os.environ.get("LAMBDA_INTERNAL_API_KEY", "")
+    if not internal_key:
+        logger.warning("LAMBDA_INTERNAL_API_KEY not set; request may receive 403 from Django internal API.")
+    headers = {
+        "User-Agent": HTTP_USER_AGENT,
+        "X-Internal-Key": internal_key,
+    }
     if VIDEO_BACKLOG_API_HOST:
         headers["Host"] = VIDEO_BACKLOG_API_HOST
     try:
