@@ -122,9 +122,9 @@ $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $ltAiFile = Join-Path $RepoRoot "lt_ai_data.json"
 [System.IO.File]::WriteAllText($ltAiFile, $ltAiJson.Trim(), $utf8NoBom)
 $ltAiPath = "file://$($ltAiFile -replace '\\','/' -replace ' ', '%20')"
-$ltAiExists = $false
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-try { aws ec2 describe-launch-templates --launch-template-names $LtAiName --region $Region 2>$null | Out-Null; $ltAiExists = $true } catch {}
+aws ec2 describe-launch-templates --launch-template-names $LtAiName --region $Region 2>$null | Out-Null
+$ltAiExists = ($LASTEXITCODE -eq 0)
 if (-not $ltAiExists) {
     aws ec2 create-launch-template --launch-template-name $LtAiName --version-description "ASG AI worker" --launch-template-data $ltAiPath --region $Region 2>$null | Out-Null
 } else {
@@ -195,9 +195,9 @@ $ltMessagingJson = @"
 $ltMessagingFile = Join-Path $RepoRoot "lt_messaging_data.json"
 [System.IO.File]::WriteAllText($ltMessagingFile, $ltMessagingJson.Trim(), $utf8NoBom)
 $ltMessagingPath = "file://$($ltMessagingFile -replace '\\','/' -replace ' ', '%20')"
-$ltMessagingExists = $false
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-try { aws ec2 describe-launch-templates --launch-template-names $LtMessagingName --region $Region 2>$null | Out-Null; $ltMessagingExists = $true } catch {}
+aws ec2 describe-launch-templates --launch-template-names $LtMessagingName --region $Region 2>$null | Out-Null
+$ltMessagingExists = ($LASTEXITCODE -eq 0)
 if (-not $ltMessagingExists) {
     aws ec2 create-launch-template --launch-template-name $LtMessagingName --version-description "ASG Messaging worker" --launch-template-data $ltMessagingPath --region $Region 2>$null | Out-Null
 } else {
