@@ -20,6 +20,8 @@ LOG_LOCK_RELEASED = "IDEMPOTENT_LOCK job_id=%s released"
 
 # SQS Visibility Timeout (300초)보다 충분히 길게
 DEFAULT_LOCK_TTL_SECONDS = 1800  # 30분
+# Long Job: 락 획득 후 5분 주기 TTL renew (3시간 인코딩 대비)
+RENEW_INTERVAL_SECONDS = 300
 
 
 class RedisIdempotencyAdapter(IIdempotency):
@@ -27,6 +29,21 @@ class RedisIdempotencyAdapter(IIdempotency):
 
     def __init__(self, ttl_seconds: int = DEFAULT_LOCK_TTL_SECONDS) -> None:
         self._ttl = ttl_seconds
+        self._renew_stops: dict[str, threading.Event] = {}
+        self._renew_lock = threading.Lock()
+
+    def _renew_loop(self, job_id: str, stop_event: threading.Event) -> None:
+        """5분 주기로 TTL renew. 워커 종료 시 stop_event로 중단."""
+        key = f"job:{job_id}:lock"
+        while not stop_event.wait(timeout=RENEW_INTERVAL_SECONDS):
+            client = get_redis_client()
+            if not client:
+                continue
+            try:
+                if client.expire(key, self._ttl):
+                    logger.debug("IDEMPOTENT_LOCK job_id=%s TTL renewed", job_id)
+            except Exception as e:
+                logger.warning("Redis lock renew failed job_id=%s: %s", job_id, e)
 
     def acquire_lock(self, job_id: str) -> bool:
         """
@@ -46,6 +63,15 @@ class RedisIdempotencyAdapter(IIdempotency):
             ok = client.set(key, "1", nx=True, ex=self._ttl)
             if ok:
                 logger.debug(LOG_LOCK_ACQUIRED, job_id)
+                stop_event = threading.Event()
+                with self._renew_lock:
+                    self._renew_stops[job_id] = stop_event
+                t = threading.Thread(
+                    target=self._renew_loop,
+                    args=(job_id, stop_event),
+                    daemon=True,
+                )
+                t.start()
                 return True
             logger.info(LOG_IDEMPOTENT_SKIP, job_id)
             return False
