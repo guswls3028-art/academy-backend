@@ -363,9 +363,8 @@ aws application-autoscaling put-scaling-policy --service-namespace ec2 --resourc
 $ErrorActionPreference = $ea
 Remove-Item $policyAiFile, $policyMessagingFile -Force -ErrorAction SilentlyContinue
 
-# Video ASG: TargetTrackingScaling via EC2 autoscaling put-scaling-policy only (no Application Auto Scaling)
-# EC2 autoscaling TargetTracking: ScaleOutCooldown/ScaleInCooldown 미지원
-$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"BacklogCount","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"}}'
+# Video ASG: TargetTrackingScaling via EC2 autoscaling. 메트릭 = SQS total only (VideoQueueDepthTotal).
+$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"},"ScaleOutCooldown":60,"ScaleInCooldown":300}'
 $videoTtFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
 [System.IO.File]::WriteAllText($videoTtFile, $videoTtJson, $utf8NoBom)
 $videoTtPath = "file://$($videoTtFile -replace '\\','/' -replace ' ', '%20')"
