@@ -142,3 +142,31 @@ aws ec2 authorize-security-group-ingress \
 4. **4️⃣** `aws lambda update-function-configuration --vpc-config SubnetIds=...,SecurityGroupIds=...` 로 **SubnetIds**·**SecurityGroupIds** 적용.
 
 이 환경에서는 AWS 자격 증명이 없어 CLI를 대신 실행하지 못함. 위 명령은 로컬/CI에서 실행 후 나온 실제 값으로 [FACT]와 [ACTION]을 채우면 됨.
+
+---
+
+## 출력 형식 (CLI 실행 후 채움)
+
+### [FACT]
+
+```
+VpcId              = <1️⃣ describe-instances 결과 Reservations[0].Instances[0].VpcId>
+SubnetId           = <1️⃣ Reservations[0].Instances[0].SubnetId>
+ApiSecurityGroupId = <1️⃣ Reservations[0].Instances[0].SecurityGroups[0].GroupId>
+```
+
+### [ACTION]
+
+**Lambda update-function-configuration 시:**
+
+- **SubnetIds:** `SubnetId` 1개, 또는 동일 VPC의 Private 서브넷 2개(쉼표 구분).
+- **SecurityGroupIds:** `ApiSecurityGroupId` 1개(API와 동일 SG 사용 시), 또는 Lambda 전용 SG의 GroupId 1개.
+
+**실행 예:**
+
+```bash
+aws lambda update-function-configuration \
+  --function-name academy-worker-queue-depth-metric \
+  --vpc-config "SubnetIds=<SubnetId>,SecurityGroupIds=<ApiSecurityGroupId 또는 Lambda SG ID>" \
+  --region ap-northeast-2
+```
