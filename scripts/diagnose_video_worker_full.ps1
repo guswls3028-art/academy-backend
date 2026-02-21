@@ -95,20 +95,16 @@ Write-Host "========== 6. Running Worker Instances =========="
 & aws ec2 describe-instances --region $Region --filters "Name=tag:aws:autoscaling:groupName,Values=$AsgName" "Name=instance-state-name,Values=running" `
     --query "Reservations[*].Instances[*].{InstanceId:InstanceId,InstanceType:InstanceType,AvailabilityZone:Placement.AvailabilityZone,SubnetId:SubnetId,SecurityGroupId:SecurityGroups[0].GroupId,PrivateIpAddress:PrivateIpAddress}" --output json
 
-# Get first instance for sections 7–9
-$instancesJson = aws ec2 describe-instances --region $Region --filters "Name=tag:aws:autoscaling:groupName,Values=$AsgName" "Name=instance-state-name,Values=running" `
-    --query "Reservations[*].Instances[*]" --output json | ConvertFrom-Json
-$firstInstance = $null
+# First instance for sections 7–9
 $firstSubnetId = $null
 $firstSgId = $null
-foreach ($res in $instancesJson) {
-    foreach ($inst in $res) {
-        $firstInstance = $inst
-        $firstSubnetId = $inst.SubnetId
-        $firstSgId = $inst.SecurityGroups[0].GroupId
-        break
-    }
-    if ($firstInstance) { break }
+$vpcId = $null
+$instancesRaw = aws ec2 describe-instances --region $Region --filters "Name=tag:aws:autoscaling:groupName,Values=$AsgName" "Name=instance-state-name,Values=running" --output json
+$instancesObj = $instancesRaw | ConvertFrom-Json
+if ($instancesObj.Reservations -and $instancesObj.Reservations.Count -gt 0 -and $instancesObj.Reservations[0].Instances -and $instancesObj.Reservations[0].Instances.Count -gt 0) {
+    $firstInstance = $instancesObj.Reservations[0].Instances[0]
+    $firstSubnetId = $firstInstance.SubnetId
+    $firstSgId = $firstInstance.SecurityGroups[0].GroupId
 }
 
 # ------------------------------------------------------------------------------
