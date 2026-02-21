@@ -2,13 +2,13 @@
 # EC2 ASG는 Application Auto Scaling 대상이 아님. aws autoscaling delete-policy 사용.
 # Usage: .\scripts\fix_video_worker_scaling_policy.ps1
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
-
 param(
     [string]$Region = "ap-northeast-2",
     [string]$AsgName = "academy-video-worker-asg"
 )
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
 
 Write-Host "[1/3] Querying current ScalingPolicies on $AsgName..." -ForegroundColor Cyan
 $result = aws autoscaling describe-policies `
