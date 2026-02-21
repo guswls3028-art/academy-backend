@@ -28,7 +28,6 @@ VIDEO_QUEUE = os.environ.get("VIDEO_QUEUE", "academy-video-jobs")
 MESSAGING_QUEUE = os.environ.get("MESSAGING_QUEUE", "academy-messaging-jobs")
 NAMESPACE = os.environ.get("METRIC_NAMESPACE", "Academy/Workers")
 METRIC_NAME = os.environ.get("METRIC_NAME", "QueueDepth")
-METRIC_BACKLOG_PER_INSTANCE = "BacklogPerInstance"
 AI_WORKER_ASG_NAME = os.environ.get("AI_WORKER_ASG_NAME", "academy-ai-worker-asg")
 AI_WORKER_ASG_MAX = int(os.environ.get("AI_WORKER_ASG_MAX", "20"))
 VIDEO_WORKER_ASG_NAME = os.environ.get("VIDEO_WORKER_ASG_NAME", "academy-video-worker-asg")
