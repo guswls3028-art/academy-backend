@@ -93,7 +93,14 @@ class ProgramView(APIView):
         if tenant is None:
             return Response({"detail": "tenant must be resolved"}, status=400)
 
-        program = core_repo.program_get_by_tenant(tenant)
+        try:
+            program = core_repo.program_get_by_tenant(tenant)
+        except Exception as e:
+            logger.exception("ProgramView get program_get_by_tenant failed: %s", e)
+            return Response(
+                {"detail": "서버 오류가 발생했습니다."},
+                status=500,
+            )
         if program is None:
             # 운영에서는 Tenant 생성 시 signal으로 Program 생성. 없으면 404 (프론트에서 처리)
             return Response(
@@ -105,8 +112,15 @@ class ProgramView(APIView):
                 status=404,
             )
 
-        data = ProgramPublicSerializer(program).data
-        return Response(data)
+        try:
+            data = ProgramPublicSerializer(program).data
+            return Response(data)
+        except Exception as e:
+            logger.exception("ProgramView get serialize failed: %s", e)
+            return Response(
+                {"detail": "서버 오류가 발생했습니다."},
+                status=500,
+            )
 
     @swagger_auto_schema(auto_schema=None)
     def patch(self, request):
