@@ -43,9 +43,9 @@ _current_job_start_time: Optional[float] = None  # 로그 가시성: 작업 시�
 
 # SQS Long Polling 설정
 SQS_WAIT_TIME_SECONDS = 20  # 최대 대기 시간 (Long Polling)
-# 동적 visibility: 큐 기본 300초, ffmpeg 인코딩 동안 240초마다 300초 연장
-VISIBILITY_EXTEND_SECONDS = 300  # change_message_visibility 호출 시 연장값 (큐 기본과 동일)
-VISIBILITY_EXTEND_INTERVAL_SECONDS = 240  # 인코딩 중 연장 주기
+# Long Job 표준: 3시간 영상 대비 90초마다 900초 visibility 연장
+VISIBILITY_EXTEND_SECONDS = 900  # change_message_visibility 호출 시 연장값
+VISIBILITY_EXTEND_INTERVAL_SECONDS = 90  # 인코딩 중 연장 주기
 
 # 3시간 영상 대비: 락/진행률 TTL (3h + margin = 4h). TTL 만료 시 중복 실행/진행률 소실 방지
 VIDEO_LOCK_TTL_SECONDS = int(os.getenv("VIDEO_LOCK_TTL_SECONDS", "14400"))   # 4h
