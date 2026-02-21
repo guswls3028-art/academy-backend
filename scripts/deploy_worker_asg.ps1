@@ -80,10 +80,12 @@ try { aws lambda get-function --function-name $QueueDepthLambdaName --region $Re
 if ($lambdaExists) {
     aws lambda update-function-code --function-name $QueueDepthLambdaName --zip-file "fileb://$ZipPath" --region $Region | Out-Null
     # VIDEO_FAST_ACK=1 사용 시 VIDEO_SCALE_VISIBLE_ONLY=1 필수 (영상 1=1 워커. inflight 제외 → desired=backlog_add만)
+    $envJson = '{"Variables":{"VIDEO_SCALE_VISIBLE_ONLY":"1"}}'
     try {
-        aws lambda update-function-configuration --function-name $QueueDepthLambdaName --region $Region --environment 'Variables={VIDEO_SCALE_VISIBLE_ONLY=1}' 2>&1 | Out-Null
+        aws lambda update-function-configuration --function-name $QueueDepthLambdaName --region $Region --environment $envJson 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Host "      Lambda env update failed (run manually if needed)" -ForegroundColor Yellow }
     } catch {
-        Write-Host "      Lambda env update skipped (VIDEO_SCALE_VISIBLE_ONLY): $_" -ForegroundColor Yellow
+        Write-Host "      Lambda env update skipped: $_" -ForegroundColor Yellow
     }
 } else {
     aws lambda create-function --function-name $QueueDepthLambdaName --runtime python3.11 --role $RoleArn `
