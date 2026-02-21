@@ -100,6 +100,12 @@ aws lambda add-permission --function-name $QueueDepthLambdaName --statement-id "
     --action "lambda:InvokeFunction" --principal "events.amazonaws.com" `
     --source-arn "arn:aws:events:${Region}:${AccountId}:rule/${EventBridgeRuleName}" --region $Region 2>$null
 $ErrorActionPreference = $ea
+if ($LambdaVpcSubnetId -and $LambdaVpcSecurityGroupId) {
+    Write-Host "      Configuring Lambda VPC: Subnet=$LambdaVpcSubnetId, SG=$LambdaVpcSecurityGroupId" -ForegroundColor Gray
+    aws lambda update-function-configuration --function-name $QueueDepthLambdaName --region $Region `
+        --vpc-config "SubnetIds=$LambdaVpcSubnetId,SecurityGroupIds=$LambdaVpcSecurityGroupId" | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Host "      WARNING: Lambda VPC config update failed." -ForegroundColor Yellow }
+}
 
 # Lambda role needs SQS/CloudWatch (add iam_policy_queue_depth_lambda.json inline or separate policy)
 Write-Host "      Ensure role $LambdaRoleName has SQS GetQueueAttributes + CloudWatch PutMetricData (Academy/Workers)." -ForegroundColor Yellow
