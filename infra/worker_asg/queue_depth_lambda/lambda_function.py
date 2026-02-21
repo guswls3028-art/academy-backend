@@ -67,100 +67,7 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
     return visible
 
 
-def _fetch_video_backlog_from_api() -> int | None:
-    """BacklogCount 조회. VIDEO_BACKLOG_API_INTERNAL(전체 URL) 우선. 실패 시 None 반환 → BacklogCount publish 스킵(0 fallback 없음)."""
-    if not VIDEO_BACKLOG_FETCH_URL:
-        logger.warning("VIDEO_BACKLOG_FETCH_URL empty; skipping BacklogCount fetch.")
-        return None
-    url = VIDEO_BACKLOG_FETCH_URL
-    internal_key = os.environ.get("LAMBDA_INTERNAL_API_KEY", "")
-    if not internal_key:
-        logger.warning("LAMBDA_INTERNAL_API_KEY not set; request may receive 403 from Django internal API.")
-    headers = {
-        "User-Agent": HTTP_USER_AGENT,
-        "X-Internal-Key": internal_key,
-    }
-    if VIDEO_BACKLOG_API_HOST:
-        headers["Host"] = VIDEO_BACKLOG_API_HOST
-    try:
-        req = urllib.request.Request(url, method="GET", headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            raw = resp.read().decode()
-            logger.info("Backlog API raw response: %s", raw)
-            data = json.loads(raw)
-            backlog = int(data.get("backlog", 0))
-            logger.info("Fetched backlog from API: %d", backlog)
-            return backlog
-    except urllib.error.HTTPError as e:
-        logger.error(
-            "[VIDEO_BACKLOG_API ERROR] HTTPError | url=%s | status=%s | reason=%s",
-            url, e.code, e.reason,
-        )
-        return None
-    except urllib.error.URLError as e:
-        logger.error("[VIDEO_BACKLOG_API ERROR] URLError | url=%s | reason=%s", url, e.reason)
-        return None
-    except Exception as e:
-        logger.error(
-            "[VIDEO_BACKLOG_API ERROR] Failed to fetch backlog | url=%s | error_type=%s | error=%s",
-            url, type(e).__name__, e,
-        )
-        return None
-
-
-def _is_asg_interrupt_from_api() -> bool:
-    """Worker가 Spot/scale-in drain 중 Redis에 설정한 interrupt 플래그. True 시 BacklogCount 퍼블리시 스킵. VIDEO_BACKLOG_API_INTERNAL 우선."""
-    if not VIDEO_BACKLOG_API_BASE:
-        return False
-    url = f"{VIDEO_BACKLOG_API_BASE}/api/v1/internal/video/asg-interrupt-status/"
-    internal_key = os.environ.get("LAMBDA_INTERNAL_API_KEY", "")
-    if not internal_key:
-        logger.warning("LAMBDA_INTERNAL_API_KEY not set; asg-interrupt-status request may receive 403.")
-    headers = {
-        "User-Agent": HTTP_USER_AGENT,
-        "X-Internal-Key": internal_key,
-    }
-    if VIDEO_BACKLOG_API_HOST:
-        headers["Host"] = VIDEO_BACKLOG_API_HOST
-    try:
-        req = urllib.request.Request(url, method="GET", headers=headers)
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            data = json.loads(resp.read().decode())
-            return bool(data.get("interrupt", False))
-    except urllib.error.HTTPError as e:
-        logger.debug("asg-interrupt-status HTTPError | url=%s | status=%s", url, e.code)
-        return False
-    except urllib.error.URLError as e:
-        logger.debug("asg-interrupt-status URLError | url=%s | reason=%s", url, e.reason)
-        return False
-    except Exception as e:
-        logger.debug("asg-interrupt-status fetch failed | url=%s | error=%s", url, e)
-        return False
-
-
 def lambda_handler(event: dict, context: Any) -> dict:
-    if os.environ.get("DEBUG_TEST") == "1":
-        try:
-            url = os.environ["VIDEO_BACKLOG_API_INTERNAL"]
-            req = urllib.request.Request(
-                url,
-                headers={
-                    "X-Internal-Key": os.environ.get("LAMBDA_INTERNAL_API_KEY", ""),
-                },
-            )
-            r = urllib.request.urlopen(req, timeout=5)
-            body = r.read().decode()
-            print("STATUS:", r.status)
-            print("BODY:", body)
-            return {"debug_test": True, "status": r.status, "body": body}
-        except Exception as e:
-            print("ERROR:", str(e))
-            return {"debug_test": True, "error": str(e)}
-
-    if _is_asg_interrupt_from_api():
-        logger.info("METRIC_PUBLISH_SKIPPED_DURING_INTERRUPT | BacklogCount skip (scale-out runaway 방지)")
-        return {"skipped": "asg_interrupt"}
-
     sqs = boto3.client("sqs", region_name=REGION, config=BOTO_CONFIG)
     cw = boto3.client("cloudwatch", region_name=REGION, config=BOTO_CONFIG)
 
@@ -172,8 +79,8 @@ def lambda_handler(event: dict, context: Any) -> dict:
     (messaging_visible, messaging_in_flight) = get_queue_counts(sqs, MESSAGING_QUEUE)
     ai_total = ai_visible  # 메트릭은 visible만 (기존과 동일)
 
-    # B1: TargetTracking metric = BacklogCount (QUEUED+RETRY_WAIT). API 실패 시 fallback 퍼블리시 안 함 (ASG oscillation 방지).
-    video_backlog = _fetch_video_backlog_from_api()
+    # Video 스케일링: 오직 SQS total(visible + notVisible)만 사용. DB/backlog API 미사용.
+    video_queue_depth_total = video_visible + video_in_flight
 
     now = __import__("datetime").datetime.utcnow()
     metric_data = [
@@ -201,40 +108,35 @@ def lambda_handler(event: dict, context: Any) -> dict:
     ]
     cw.put_metric_data(Namespace=NAMESPACE, MetricData=metric_data)
 
-    if video_backlog is not None:
-        try:
-            cw.put_metric_data(
-                Namespace="Academy/VideoProcessing",
-                MetricData=[
-                    {
-                        "MetricName": "BacklogCount",
-                        "Dimensions": [
-                            {"Name": "WorkerType", "Value": "Video"},
-                            {"Name": "AutoScalingGroupName", "Value": "academy-video-worker-asg"},
-                        ],
-                        "Value": float(video_backlog),
-                        "Timestamp": now,
-                        "Unit": "Count",
-                    }
+    # Academy/VideoProcessing: ASG TargetTracking용. SQS total만 발행.
+    cw.put_metric_data(
+        Namespace="Academy/VideoProcessing",
+        MetricData=[
+            {
+                "MetricName": VIDEO_QUEUE_DEPTH_METRIC,
+                "Dimensions": [
+                    {"Name": "WorkerType", "Value": "Video"},
+                    {"Name": "AutoScalingGroupName", "Value": VIDEO_WORKER_ASG_NAME},
                 ],
-            )
-            logger.info("BacklogCount metric published | backlog=%d", video_backlog)
-        except Exception as e:
-            logger.exception("CloudWatch metric publish failed")
-    else:
-        logger.warning(
-            "BacklogCount metric skipped (API fetch failed, see VIDEO_BACKLOG_API* log above); not publishing to prevent ASG oscillation."
-        )
+                "Value": float(video_queue_depth_total),
+                "Timestamp": now,
+                "Unit": "Count",
+            }
+        ],
+    )
+    logger.info(
+        "VideoQueueDepthTotal published | visible=%d notVisible=%d total=%d",
+        video_visible, video_in_flight, video_queue_depth_total,
+    )
 
     logger.info(
-        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d backlog=%s messaging visible=%d in_flight=%d",
-        ai_visible, ai_in_flight, video_visible, video_in_flight,
-        video_backlog if video_backlog is not None else "skipped",
+        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d total=%d messaging visible=%d in_flight=%d",
+        ai_visible, ai_in_flight, video_visible, video_in_flight, video_queue_depth_total,
         messaging_visible, messaging_in_flight,
     )
     return {
         "ai_queue_depth": ai_total,
         "video_queue_depth": video_visible,
-        "video_backlog_count": video_backlog,
+        "video_queue_depth_total": video_queue_depth_total,
         "messaging_queue_depth": messaging_visible,
     }
