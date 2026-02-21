@@ -616,3 +616,145 @@ class DjangoVideoRepository:
             ttl=None,
         )
         return True, "ok"
+
+
+# ---- VideoTranscodeJob 기반 Repository (Enterprise Job System) ----
+
+
+def job_get_by_id(job_id) -> Optional["VideoTranscodeJob"]:
+    """Job 조회 (video, session, lecture 포함)."""
+    from apps.support.video.models import VideoTranscodeJob
+    return VideoTranscodeJob.objects.select_related(
+        "video", "video__session", "video__session__lecture", "video__session__lecture__tenant"
+    ).filter(pk=job_id).first()
+
+
+def job_claim_for_running(job_id, worker_id: str, lease_seconds: int = 3600) -> bool:
+    """
+    Job을 RUNNING으로 원자 전환. QUEUED 또는 RETRY_WAIT만 claim 가능.
+    rowcount=1 반환 시만 성공.
+    """
+    from django.db import transaction
+    from django.utils import timezone
+    from datetime import timedelta
+    from apps.support.video.models import VideoTranscodeJob
+
+    now = timezone.now()
+    locked_until = now + timedelta(seconds=lease_seconds)
+    with transaction.atomic():
+        n = VideoTranscodeJob.objects.filter(
+            pk=job_id,
+            state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT],
+        ).update(
+            state=VideoTranscodeJob.State.RUNNING,
+            locked_by=str(worker_id)[:64],
+            locked_until=locked_until,
+            last_heartbeat_at=now,
+            updated_at=now,
+        )
+    return n == 1
+
+
+def job_heartbeat(job_id) -> bool:
+    """RUNNING Job의 last_heartbeat_at 갱신."""
+    from django.utils import timezone
+    from apps.support.video.models import VideoTranscodeJob
+
+    n = VideoTranscodeJob.objects.filter(
+        pk=job_id,
+        state=VideoTranscodeJob.State.RUNNING,
+    ).update(last_heartbeat_at=timezone.now())
+    return n == 1
+
+
+def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> tuple[bool, str]:
+    """Job SUCCEEDED + Video READY commit."""
+    from django.db import transaction
+    from apps.support.video.models import Video, VideoTranscodeJob
+
+    with transaction.atomic():
+        job = VideoTranscodeJob.objects.select_for_update().select_related("video").filter(pk=job_id).first()
+        if not job:
+            return False, "job_not_found"
+        if job.state != VideoTranscodeJob.State.RUNNING:
+            return False, "job_not_running"
+        video = get_video_for_update(job.video_id)
+        if not video:
+            return False, "video_not_found"
+        video.hls_path = str(hls_path)
+        if duration is not None and duration >= 0:
+            video.duration = int(duration)
+        video.status = Video.Status.READY
+        video.error_reason = ""
+        if hasattr(video, "leased_until"):
+            video.leased_until = None
+        if hasattr(video, "leased_by"):
+            video.leased_by = ""
+        video.save(update_fields=["hls_path", "duration", "status", "error_reason", "leased_until", "leased_by"])
+        job.state = VideoTranscodeJob.State.SUCCEEDED
+        job.locked_by = ""
+        job.locked_until = None
+        job.save(update_fields=["state", "locked_by", "locked_until", "updated_at"])
+        tenant_id = _tenant_id_from_video(video)
+    _cache_video_status_safe(
+        video.id, tenant_id,
+        getattr(Video.Status.READY, "value", "READY"),
+        hls_path=str(hls_path),
+        duration=int(duration) if duration is not None and duration >= 0 else None,
+        ttl=None,
+    )
+    return True, "ok"
+
+
+def job_fail_retry(job_id: str, reason: str) -> tuple[bool, str]:
+    """Job FAILED + attempt_count++ + state=RETRY_WAIT. Video는 변경 없음 (재시도 유도)."""
+    from django.db import transaction
+    from django.db.models import F
+    from apps.support.video.models import VideoTranscodeJob
+
+    with transaction.atomic():
+        job = VideoTranscodeJob.objects.select_for_update().filter(pk=job_id).first()
+        if not job:
+            return False, "job_not_found"
+        job.state = VideoTranscodeJob.State.RETRY_WAIT
+        job.attempt_count = F("attempt_count") + 1
+        job.error_message = str(reason)[:2000]
+        job.locked_by = ""
+        job.locked_until = None
+        job.save(update_fields=["state", "attempt_count", "error_message", "locked_by", "locked_until", "updated_at"])
+    return True, "ok"
+
+
+def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") -> bool:
+    """Job DEAD (DLQ 격리)."""
+    from django.utils import timezone
+    from apps.support.video.models import Video, VideoTranscodeJob
+
+    job = VideoTranscodeJob.objects.filter(pk=job_id).first()
+    if not job:
+        return False
+    job.state = VideoTranscodeJob.State.DEAD
+    job.error_code = str(error_code)[:64]
+    job.error_message = str(error_message)[:2000]
+    job.locked_by = ""
+    job.locked_until = None
+    job.save(update_fields=["state", "error_code", "error_message", "locked_by", "locked_until", "updated_at"])
+    # Video를 FAILED로 표시 (현재 Job이 current_job인 경우)
+    Video.objects.filter(current_job_id=job_id).update(
+        status=Video.Status.FAILED,
+        error_reason=str(error_message)[:2000] or job.error_message,
+    )
+    return True
+
+
+def job_count_backlog() -> int:
+    """BacklogCount: QUEUED + RETRY_WAIT + RUNNING."""
+    from apps.support.video.models import VideoTranscodeJob
+
+    return VideoTranscodeJob.objects.filter(
+        state__in=[
+            VideoTranscodeJob.State.QUEUED,
+            VideoTranscodeJob.State.RETRY_WAIT,
+            VideoTranscodeJob.State.RUNNING,
+        ]
+    ).count()
