@@ -37,11 +37,12 @@ if (-not (Test-Path $keyPath)) {
     exit 1
 }
 
-Write-Host "[3/3] Sync .env from SSM to EC2 and restart academy-api..." -ForegroundColor Cyan
-$remoteCmd = "aws ssm get-parameter --name /academy/workers/env --with-decryption --query Parameter.Value --output text --region $Region 2>/dev/null > /home/ec2-user/.env && docker restart academy-api 2>/dev/null || true"
+Write-Host "[3/3] Merge SSM into EC2 .env (preserve R2 etc.) and recreate academy-api..." -ForegroundColor Cyan
+# merge_ssm_into_env.sh: SSM으로 덮어쓰지 않고 병합 → 기존 .env에만 있던 변수(R2, VIDEO_BUCKET 등) 유지
+$remoteCmd = "cd /home/ec2-user/academy 2>/dev/null || true; bash /home/ec2-user/academy/scripts/merge_ssm_into_env.sh /home/ec2-user/.env $Region && bash /home/ec2-user/academy/scripts/refresh_api_container_env.sh"
 ssh -o StrictHostKeyChecking=accept-new -i "$keyPath" "ec2-user@${apiIp}" $remoteCmd
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "  Done. academy-api restarted with updated .env (LAMBDA_INTERNAL_API_KEY)." -ForegroundColor Green
+    Write-Host "  Done. academy-api recreated with merged .env." -ForegroundColor Green
 } else {
-    Write-Host "  SSH/restart may have failed. Check EC2 manually." -ForegroundColor Yellow
+    Write-Host "  SSH/script may have failed. On EC2 run: bash scripts/merge_ssm_into_env.sh && bash scripts/refresh_api_container_env.sh" -ForegroundColor Yellow
 }
