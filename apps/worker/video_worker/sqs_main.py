@@ -29,7 +29,6 @@ from src.infrastructure.video.processor import process_video
 from academy.adapters.db.django.repositories_video import DjangoVideoRepository
 from src.infrastructure.cache.redis_idempotency_adapter import RedisIdempotencyAdapter
 from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
-from src.application.video.handler import ProcessVideoJobHandler
 from apps.support.video.redis_status_cache import set_video_heartbeat, delete_video_heartbeat
 
 logging.basicConfig(
@@ -143,15 +142,8 @@ def main() -> int:
     
     cfg = load_config()
     queue = VideoSQSAdapter()
-    repo = DjangoVideoRepository()
     idempotency = RedisIdempotencyAdapter(ttl_seconds=VIDEO_LOCK_TTL_SECONDS)
     progress = RedisProgressAdapter(ttl_seconds=VIDEO_PROGRESS_TTL_SECONDS)
-    handler = ProcessVideoJobHandler(
-        repo=repo,
-        idempotency=idempotency,
-        progress=progress,
-        process_fn=process_video,
-    )
 
     logger.info(
         "Video Worker (SQS) started | queue=%s | wait_time=%ss",
