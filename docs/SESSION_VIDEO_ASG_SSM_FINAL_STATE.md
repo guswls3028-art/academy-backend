@@ -5,6 +5,32 @@
 
 ---
 
+## ▶ 지금 할 일 한 가지 (자동 스케일 되게 하기)
+
+**원인**: Lambda가 `VIDEO_BACKLOG_API_HOST=api.hakwonplus.com`을 쓰면서 `Host: api.hakwonplus.com`으로 172.30.3.142에 요청함. IP로 부를 때는 Host를 안 보내야 Django가 수락함. (prod `ALLOWED_HOSTS`에 이미 `172.30.3.142` 있음.)
+
+**해결**: Lambda 환경 변수에서 **VIDEO_BACKLOG_API_HOST를 제거**하고, INTERNAL URL + Internal Key만 넣어서 다시 설정.
+
+```powershell
+aws lambda update-function-configuration `
+  --function-name academy-worker-queue-depth-metric `
+  --region ap-northeast-2 `
+  --environment "Variables={VIDEO_BACKLOG_API_INTERNAL=http://172.30.3.142:8000/api/v1/internal/video/backlog-count/,LAMBDA_INTERNAL_API_KEY=hakwonplus-internal-key}"
+```
+
+- 위처럼 하면 Lambda는 Host 헤더를 덮어쓰지 않아서, 요청 Host가 `172.30.3.142`가 되고 Django가 허용함.
+- **서버(EC2) 쪽 설정/SSM 추가할 필요 없음.** Lambda ENV만 위 한 번 바꾸면 됨.
+
+검증:
+
+```powershell
+aws lambda invoke --function-name academy-worker-queue-depth-metric --region ap-northeast-2 response.json; Get-Content response.json
+```
+
+- `video_backlog_count`에 **숫자**(예: 5)가 나오면 성공. 1~2분 안에 CloudWatch에 BacklogCount 찍히고, ASG TargetTracking으로 워커 수 자동 증가함.
+
+---
+
 ## 0. 리소스 식별자 (추측 방지용)
 
 아래는 이 프로젝트에서 쓰는 **실제 이름/ID**. 나중에 스크립트·문서 수정 시 여기 기준으로 사용. (인스턴스 재생성 등으로 바뀌면 `aws ec2 describe-instances` 등으로 재확인.)
