@@ -127,12 +127,25 @@ if ($activitiesRaw) {
 }
 
 # ------------------------------------------------------------------------------
-# 6) Running Worker Instances
+# 6) Running Worker Instances + ASG capacity + Scaling policy
 # ------------------------------------------------------------------------------
 Write-Host ""
 Write-Host "========== 6. Running Worker Instances =========="
-& aws ec2 describe-instances --region $Region --filters "Name=tag:aws:autoscaling:groupName,Values=$AsgName" "Name=instance-state-name,Values=running" `
+$instancesOut = aws ec2 describe-instances --region $Region --filters "Name=tag:aws:autoscaling:groupName,Values=$AsgName" "Name=instance-state-name,Values=running" `
     --query "Reservations[*].Instances[*].{InstanceId:InstanceId,InstanceType:InstanceType,AvailabilityZone:Placement.AvailabilityZone,SubnetId:SubnetId,SecurityGroupId:SecurityGroups[0].GroupId,PrivateIpAddress:PrivateIpAddress}" --output json
+Write-Host $instancesOut
+
+$asgDesc = aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --region $Region --output json | ConvertFrom-Json
+if ($asgDesc.AutoScalingGroups -and $asgDesc.AutoScalingGroups.Count -gt 0) {
+    $g = $asgDesc.AutoScalingGroups[0]
+    $diagnoseResult.asg = @{ desiredCapacity = $g.DesiredCapacity; minSize = $g.MinSize; maxSize = $g.MaxSize; runningCount = $g.Instances.Count }
+}
+$policyDesc = aws autoscaling describe-policies --auto-scaling-group-name $AsgName --region $Region --output json | ConvertFrom-Json
+$videoPolicy = $policyDesc.ScalingPolicies | Where-Object { $_.PolicyName -like "*video*" -or $_.PolicyName -like "*backlog*" } | Select-Object -First 1
+if ($videoPolicy) {
+    $metricName = $videoPolicy.TargetTrackingConfiguration.CustomizedMetricSpecification.MetricName
+    $diagnoseResult.policy = @{ policyName = $videoPolicy.PolicyName; metricName = $metricName; targetValue = $videoPolicy.TargetTrackingConfiguration.TargetValue }
+}
 
 # First instance for sections 7–9
 $firstSubnetId = $null
