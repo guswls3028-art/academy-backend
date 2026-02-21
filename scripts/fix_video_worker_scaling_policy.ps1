@@ -20,14 +20,14 @@ aws application-autoscaling register-scalable-target --service-namespace ec2 --r
     --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --min-capacity 1 --max-capacity $MaxCapacity --region $Region 2>$null
 $ErrorActionPreference = $ea
 
-# 2. SQS 기반 Target Tracking 정책 생성
-Write-Host "[2/3] Creating QueueDepthTargetTracking policy..." -ForegroundColor Cyan
+# 2. BacklogPerInstance 기반 Target Tracking 정책 생성
+Write-Host "[2/3] Creating BacklogPerInstanceTargetTracking policy..." -ForegroundColor Cyan
 $policyVideo = @"
 {
   "TargetTrackingScalingPolicyConfiguration": {
-    "TargetValue": $TargetMessagesPerInstance,
+    "TargetValue": 1.0,
     "CustomizedMetricSpecification": {
-      "MetricName": "QueueDepth",
+      "MetricName": "BacklogPerInstance",
       "Namespace": "Academy/Workers",
       "Dimensions": [{"Name": "WorkerType", "Value": "Video"}],
       "Statistic": "Average"
