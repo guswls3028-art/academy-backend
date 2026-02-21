@@ -159,10 +159,8 @@ def lambda_handler(event: dict, context: Any) -> dict:
     (messaging_visible, messaging_in_flight) = get_queue_counts(sqs, MESSAGING_QUEUE)
     ai_total = ai_visible  # 메트릭은 visible만 (기존과 동일)
 
-    # Video: BacklogPerInstance = VisibleMessages / max(1, InServiceInstances)
-    # 락 대기/재시도 메시지 과도 scale-out 방지. Target Tracking이 이 메트릭만 사용.
-    video_in_service = get_in_service_count(autoscaling, VIDEO_WORKER_ASG_NAME)
-    video_backlog_per_instance = float(video_visible) / max(1, video_in_service)
+    ssm = boto3.client("ssm", region_name=REGION, config=BOTO_CONFIG)
+    set_video_worker_desired(autoscaling, ssm, video_visible, video_in_flight)
 
     now = __import__("datetime").datetime.utcnow()
     metric_data = [
@@ -187,23 +185,15 @@ def lambda_handler(event: dict, context: Any) -> dict:
             "Timestamp": now,
             "Unit": "Count",
         },
-        {
-            "MetricName": METRIC_BACKLOG_PER_INSTANCE,
-            "Dimensions": [{"Name": "WorkerType", "Value": "Video"}],
-            "Value": video_backlog_per_instance,
-            "Timestamp": now,
-            "Unit": "None",
-        },
     ]
     cw.put_metric_data(Namespace=NAMESPACE, MetricData=metric_data)
 
     logger.info(
-        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d in_service=%d backlog_per_instance=%.2f messaging visible=%d in_flight=%d",
-        ai_visible, ai_in_flight, video_visible, video_in_flight, video_in_service, video_backlog_per_instance, messaging_visible, messaging_in_flight,
+        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d messaging visible=%d in_flight=%d",
+        ai_visible, ai_in_flight, video_visible, video_in_flight, messaging_visible, messaging_in_flight,
     )
     return {
         "ai_queue_depth": ai_total,
         "video_queue_depth": video_visible,
-        "video_backlog_per_instance": video_backlog_per_instance,
         "messaging_queue_depth": messaging_visible,
     }
