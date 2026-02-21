@@ -119,7 +119,12 @@ if ($sqsAttrsRaw) {
 # ------------------------------------------------------------------------------
 Write-Host ""
 Write-Host "========== 5. ASG Scaling Activities (last 30) =========="
-& aws autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --region $Region --max-items 30 --output json
+$activitiesRaw = aws autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --region $Region --max-items 30 --output json
+Write-Host $activitiesRaw
+if ($activitiesRaw) {
+    $actObj = $activitiesRaw | ConvertFrom-Json
+    $diagnoseResult.activities = @{ count = $actObj.Activities.Count; recentStatus = ($actObj.Activities | Select-Object -First 3 | ForEach-Object { $_.StatusReason }) }
+}
 
 # ------------------------------------------------------------------------------
 # 6) Running Worker Instances
