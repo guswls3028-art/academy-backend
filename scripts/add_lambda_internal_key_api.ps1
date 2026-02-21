@@ -25,9 +25,11 @@ try {
 } finally {
     $ErrorActionPreference = $ea
 }
-if ($LASTEXITCODE -ne 0 -or -not $current) {
-    Write-Host "  SSM get failed or parameter empty. Creating new content with LAMBDA_INTERNAL_API_KEY only." -ForegroundColor Yellow
-    $current = ""
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($current)) {
+    Write-Host "  SSM get failed or parameter empty. Refusing to overwrite SSM with a single key (would wipe DB_*, R2_*, etc.)." -ForegroundColor Red
+    Write-Host "  First run: .\scripts\upload_env_to_ssm.ps1  (upload full .env to SSM)" -ForegroundColor Yellow
+    Write-Host "  Then run this script again to add/update LAMBDA_INTERNAL_API_KEY in existing SSM." -ForegroundColor Yellow
+    exit 1
 }
 
 # Normalize line endings and ensure LAMBDA_INTERNAL_API_KEY is set (add or replace)
