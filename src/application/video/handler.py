@@ -104,10 +104,7 @@ class ProcessVideoJobHandler:
                 return "lock_fail"
             if not self._repo.mark_processing(video_id):
                 logger.warning("[HANDLER] Cannot mark video %s as PROCESSING, skipping", video_id)
-                if use_fast_ack:
-                    pass
-                else:
-                    self._idempotency.release_lock(job_id)
+                self._idempotency.release_lock(job_id)
                 return "skip:mark_processing"
 
         try:
@@ -135,7 +132,8 @@ class ProcessVideoJobHandler:
             return "failed"
 
         finally:
-            self._idempotency.release_lock(job_id)
+            if not use_fast_ack:
+                self._idempotency.release_lock(job_id)
 
 
 # Typo fix: idempotency -> self._idempotency
