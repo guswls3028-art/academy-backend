@@ -56,6 +56,7 @@ try {
     }
 } catch {
     $raw = $null
+    if ($exitCode -eq -1) { $stderrStr = $_.Exception.Message }
 }
 if ($null -eq $raw -or [string]::IsNullOrWhiteSpace($raw)) {
     Write-Host "  FAIL: SSM get failed or parameter empty. (ExitCode: $exitCode)" -ForegroundColor Red
