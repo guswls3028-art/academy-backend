@@ -20,8 +20,9 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptRoot
 
 # EC2 autoscaling TargetTrackingConfiguration: ScaleIn/OutCooldown 미지원
+# TargetValue 1 = 영상 1개당 워커 1대
 $config = @{
-    TargetValue = 3
+    TargetValue = 1
     CustomizedMetricSpecification = @{
         Namespace   = "Academy/VideoProcessing"
         MetricName  = "BacklogCount"
