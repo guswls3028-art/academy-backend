@@ -289,6 +289,13 @@ def main() -> int:
                     queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
                     continue
 
+                # Progress API가 PROCESSING 반환하도록 Redis에 캐시
+                try:
+                    from apps.support.video.redis_status_cache import cache_video_status
+                    cache_video_status(tenant_id, video_id, "PROCESSING", ttl=21600)
+                except Exception as ex:
+                    logger.debug("cache PROCESSING failed: %s", ex)
+
                 def _cancel_check():
                     from apps.support.video.redis_status_cache import is_cancel_requested
                     return bool(tenant_id is not None and is_cancel_requested(tenant_id, video_id))
