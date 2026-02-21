@@ -35,6 +35,8 @@ $raw = $null
 $jsonStr = ""
 $exitCode = -1
 $stderrStr = ""
+$savedPyIo = $null
+$savedPyUtf8 = $null
 try {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $awsExe
