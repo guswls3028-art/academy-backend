@@ -112,7 +112,13 @@
 
 ---
 
-## 6. 참조 문서
+## 6. 운영 검증
+
+- **Internal API (X-Internal-Key)**: `.\scripts\verify_lambda_internal_api.ps1`
+  - EC2에서 LOCAL(localhost:8000) / PUBLIC(api.hakwonplus.com) 호출 후 상태 코드·backlog JSON 출력
+  - 두 경로 모두 200 OK면 nginx passthrough 정상
+
+## 7. 참조 문서
 
 - `docs/B1_METRIC_SCHEMA_EXTRACTION_REPORT.md`
 - `docs/B1_SCALING_DATA_EXTRACTION_REPORT.md`
