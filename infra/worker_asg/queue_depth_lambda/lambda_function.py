@@ -1,13 +1,11 @@
 """
-SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시. ASG는 Target Tracking으로만 scale.
+SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시.
 
 - EventBridge rate(1 minute)로 호출.
-- AI: academy-ai-jobs-lite + academy-ai-jobs-basic 합산 → Academy/Workers, QueueDepth, WorkerType=AI
-- Video: academy-video-jobs → Academy/Workers, BacklogPerInstance, WorkerType=Video
-  BacklogPerInstance = VisibleMessages / max(1, InServiceInstances) (락 대기 시 과도 scale-out 방지)
-- Messaging: academy-messaging-jobs → Academy/Workers, QueueDepth, WorkerType=Messaging
-
-Lambda는 set_desired_capacity를 호출하지 않음. Target Tracking이 단일 컨트롤러.
+- AI/Messaging: Target Tracking (QueueDepth)
+- Video: Lambda 단독 컨트롤. set_desired_capacity 직접 호출.
+  desired = clamp(min, max, visible + inflight)
+  scale-in: visible==0 AND inflight==0 가 STABLE_WINDOW_SECONDS 이상 지속 시에만 min으로 감소.
 
 설계: docs/SSOT_0215/IMPORTANT/ARCH_CHANGE_PROPOSAL_LAMBDA_TO_ASG.md
 """
