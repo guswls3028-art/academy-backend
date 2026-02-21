@@ -19,7 +19,8 @@ TMP_MERGED=$(mktemp)
 trap "rm -f $TMP_SSM $TMP_MERGED" EXIT
 
 echo "Fetching SSM $SSM_NAME..."
-aws ssm get-parameter --name "$SSM_NAME" --with-decryption --query Parameter.Value --output text --region "$REGION" 2>/dev/null | tr '\t' '\n' > "$TMP_SSM" || { echo "FAIL: SSM get-parameter"; exit 1; }
+# AWS CLI --output text may replace newlines with tabs; restore line per KEY=value
+aws ssm get-parameter --name "$SSM_NAME" --with-decryption --query Parameter.Value --output text --region "$REGION" 2>/dev/null | sed 's/\t/\n/g' | grep -v '^$' > "$TMP_SSM" || { echo "FAIL: SSM get-parameter"; exit 1; }
 
 # SSM에 있는 키 집합 (키= 제거한 키만)
 declare -A SSM_KEYS
