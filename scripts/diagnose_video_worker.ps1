@@ -124,13 +124,19 @@ if ($acts.Activities) {
 Write-Section "7. Running Video Worker Instances"
 $instances = aws ec2 describe-instances --region $Region --filters "Name=tag:aws:autoscaling:groupName,Values=$AsgName" "Name=instance-state-name,Values=running" `
     --query "Reservations[*].Instances[*].{Id:InstanceId,Type:InstanceType,Az:Placement.AvailabilityZone,Subnet:SubnetId,Sg:SecurityGroups[0].GroupId}" --output json 2>$null | ConvertFrom-Json
+$firstSubnet = $null
+$firstSg = $null
 if ($instances -and $instances.Count -gt 0) {
     $flat = @(); foreach ($r in $instances) { foreach ($i in $r) { $flat += $i } }
-    foreach ($i in $flat) {
-        Write-Line "  $($i.Id) | $($i.Type) | $($i.Az) | subnet $($i.Subnet) | sg $($i.Sg)"
+    if ($flat.Count -gt 0) {
+        foreach ($i in $flat) {
+            Write-Line "  $($i.Id) | $($i.Type) | $($i.Az) | subnet $($i.Subnet) | sg $($i.Sg)"
+        }
+        $firstSubnet = $flat[0].Subnet
+        $firstSg = $flat[0].Sg
+    } else {
+        Write-Line "  No running instances"
     }
-    $firstSubnet = $flat[0].Subnet
-    $firstSg = $flat[0].Sg
 } else {
     Write-Line "  No running instances"
     $firstSubnet = $null
