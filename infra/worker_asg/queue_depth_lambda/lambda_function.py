@@ -159,6 +159,20 @@ def _is_asg_interrupt_from_api() -> bool:
 
 
 def lambda_handler(event: dict, context: Any) -> dict:
+    if os.environ.get("DEBUG_TEST") == "1":
+        try:
+            r = urllib.request.urlopen(
+                os.environ["VIDEO_BACKLOG_API_INTERNAL"],
+                timeout=5,
+            )
+            body = r.read().decode()
+            print("STATUS:", r.status)
+            print("BODY:", body)
+            return {"debug_test": True, "status": r.status, "body": body}
+        except Exception as e:
+            print("ERROR:", str(e))
+            return {"debug_test": True, "error": str(e)}
+
     if _is_asg_interrupt_from_api():
         logger.info("METRIC_PUBLISH_SKIPPED_DURING_INTERRUPT | BacklogCount skip (scale-out runaway 방지)")
         return {"skipped": "asg_interrupt"}
