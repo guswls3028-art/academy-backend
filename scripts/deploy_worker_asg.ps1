@@ -79,14 +79,10 @@ try { aws lambda get-function --function-name $QueueDepthLambdaName --region $Re
 
 if ($lambdaExists) {
     aws lambda update-function-code --function-name $QueueDepthLambdaName --zip-file "fileb://$ZipPath" --region $Region | Out-Null
-    # VIDEO_FAST_ACK=1 사용 시 VIDEO_SCALE_VISIBLE_ONLY=1 필수 (영상 1=1 워커. inflight 제외 → desired=backlog_add만)
-    $envJson = '{"Variables":{"VIDEO_SCALE_VISIBLE_ONLY":"1"}}'
-    try {
-        aws lambda update-function-configuration --function-name $QueueDepthLambdaName --region $Region --environment $envJson 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { Write-Host "      Lambda env update failed (run manually if needed)" -ForegroundColor Yellow }
-    } catch {
-        Write-Host "      Lambda env update skipped: $_" -ForegroundColor Yellow
-    }
+    # B1: VIDEO_BACKLOG_API_URL 설정 시 DB 기반 BacklogCount 사용 (예: https://api.example.com)
+    # 미설정 시 SQS visible+inflight fallback
+    # $envJson = '{"Variables":{"VIDEO_BACKLOG_API_URL":"https://api.example.com"}}'
+    # aws lambda update-function-configuration --function-name $QueueDepthLambdaName --region $Region --environment $envJson
 } else {
     aws lambda create-function --function-name $QueueDepthLambdaName --runtime python3.11 --role $RoleArn `
         --handler lambda_function.lambda_handler --zip-file "fileb://$ZipPath" --timeout 30 --memory-size 128 `
