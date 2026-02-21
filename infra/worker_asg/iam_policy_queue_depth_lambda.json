@@ -1,8 +1,1 @@
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {"Sid": "SQSGetQueueAttributes", "Effect": "Allow", "Action": ["sqs:GetQueueUrl", "sqs:GetQueueAttributes"], "Resource": "*"},
-    {"Sid": "CloudWatchPutMetric", "Effect": "Allow", "Action": ["cloudwatch:PutMetricData"], "Resource": "*", "Condition": {"StringEquals": {"cloudwatch:namespace": "Academy/Workers"}}},
-    {"Sid": "AutoScalingSetDesired", "Effect": "Allow", "Action": ["autoscaling:DescribeAutoScalingGroups", "autoscaling:SetDesiredCapacity"], "Resource": "*"}
-  ]
-}
+{"Version":"2012-10-17","Statement":[{"Sid":"SQSGetQueueAttributes","Effect":"Allow","Action":["sqs:GetQueueUrl","sqs:GetQueueAttributes"],"Resource":"*"},{"Sid":"CloudWatchPutMetric","Effect":"Allow","Action":["cloudwatch:PutMetricData"],"Resource":"*","Condition":{"StringEquals":{"cloudwatch:namespace":"Academy/Workers"}}},{"Sid":"AutoScalingSetDesired","Effect":"Allow","Action":["autoscaling:DescribeAutoScalingGroups","autoscaling:SetDesiredCapacity"],"Resource":"*"},{"Sid":"SSMVideoStableZero","Effect":"Allow","Action":["ssm:GetParameter","ssm:PutParameter"],"Resource":"arn:aws:ssm:*:*:parameter/academy/video-worker-asg/*"}]}
