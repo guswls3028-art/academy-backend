@@ -415,7 +415,17 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         from academy.adapters.db.django.repositories_video import job_set_cancel_requested
         from apps.support.video.models import VideoTranscodeJob
 
-        video = Video.objects.select_for_update().select_related("session__lecture__tenant").get(pk=self.get_object().pk)
+        try:
+            video = Video.objects.select_for_update().select_related("session__lecture__tenant").get(
+                pk=self.get_object().pk
+            )
+        except Video.DoesNotExist:
+            raise ValidationError("해당 영상을 찾을 수 없습니다.")
+
+        if not getattr(video, "session", None) or not getattr(video.session, "lecture", None):
+            raise ValidationError("영상이 차시/강의에 연결되어 있지 않아 재처리할 수 없습니다.")
+        if not getattr(video.session.lecture, "tenant", None):
+            raise ValidationError("강의의 프로그램(테넌트) 정보가 없어 재처리할 수 없습니다.")
 
         # QUEUED/RETRY_WAIT: 재시도 불가 (backlog 대기 중)
         if video.current_job_id:
