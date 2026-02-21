@@ -243,7 +243,19 @@ def main() -> int:
 
                 if VIDEO_FAST_ACK:
                     queue.delete_message(receipt_handle)
-                    logger.info("SQS_ACKED | request_id=%s | video_id=%s (fast ACK)", request_id, video_id)
+                    receipt_suffix = receipt_handle[-12:] if receipt_handle and len(receipt_handle) >= 12 else (receipt_handle or "")[:12]
+                    logger.info(
+                        "VIDEO_FAST_ACK_APPLIED | request_id=%s | video_id=%s | receipt_handle_suffix=%s",
+                        request_id,
+                        video_id,
+                        receipt_suffix,
+                    )
+                else:
+                    logger.info(
+                        "VIDEO_FAST_ACK_SKIPPED | request_id=%s | video_id=%s | reason=VIDEO_FAST_ACK=0",
+                        request_id,
+                        video_id,
+                    )
 
                 global _current_job_receipt_handle, _current_job_start_time
                 _current_job_receipt_handle = receipt_handle
