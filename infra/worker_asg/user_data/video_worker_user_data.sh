@@ -35,6 +35,7 @@ for i in 1 2 3; do
     --env-file "$ENV_FILE" \
     -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker \
     -e EC2_IDLE_STOP_THRESHOLD=0 \
+    -e VIDEO_FAST_ACK=1 \
     -v /mnt/transcode:/tmp \
     "$ECR/academy-video-worker:latest"; then
     break

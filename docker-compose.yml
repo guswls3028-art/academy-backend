@@ -165,6 +165,7 @@ services:
       # Worker 설정
       WORKER_ID: ${VIDEO_WORKER_ID:-video-worker-1}
       EC2_IDLE_STOP_THRESHOLD: ${EC2_IDLE_STOP_THRESHOLD:-5}
+      VIDEO_FAST_ACK: ${VIDEO_FAST_ACK:-1}
       SQS_WAIT_TIME_SECONDS: ${SQS_WAIT_TIME_SECONDS:-20}
       
       # AWS SQS
