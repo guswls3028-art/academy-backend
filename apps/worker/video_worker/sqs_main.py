@@ -232,13 +232,18 @@ def main() -> int:
                     queue_wait_time = 0.0
 
                 logger.info(
-                    "SQS_MESSAGE_RECEIVED | request_id=%s | video_id=%s | tenant_id=%s | queue_wait_sec=%.2f | created_at=%s",
+                    "SQS_MESSAGE_RECEIVED | request_id=%s | video_id=%s | tenant_id=%s | queue_wait_sec=%.2f | created_at=%s | fast_ack=%s",
                     request_id,
                     video_id,
                     tenant_id,
                     queue_wait_time,
                     message_created_at or "unknown",
+                    VIDEO_FAST_ACK,
                 )
+
+                if VIDEO_FAST_ACK:
+                    queue.delete_message(receipt_handle)
+                    logger.info("SQS_ACKED | request_id=%s | video_id=%s (fast ACK)", request_id, video_id)
 
                 global _current_job_receipt_handle, _current_job_start_time
                 _current_job_receipt_handle = receipt_handle
@@ -250,35 +255,52 @@ def main() -> int:
                     "tenant_id": int(tenant_id),
                     "tenant_code": str(tenant_code or ""),
                 }
+                if VIDEO_FAST_ACK:
+                    job["_worker_id"] = f"{cfg.WORKER_ID}-{request_id}"
 
-                stop_extender = threading.Event()
-                extender = threading.Thread(
-                    target=_visibility_extender_loop,
-                    args=(queue, receipt_handle, stop_extender),
-                    daemon=True,
-                )
-                extender.start()
-                try:
-                    logger.info("[SQS_MAIN] Calling handler.handle() video_id=%s", video_id)
-                    result = handler.handle(job, cfg)
-                    logger.info("[SQS_MAIN] handler.handle() returned video_id=%s result=%s", video_id, result)
-                except Exception as e:
-                    # handler.handle() 예외 시에도 반드시 즉시 재노출
-                    stop_extender.set()
-                    extender.join(timeout=1)
-                    queue.change_message_visibility(receipt_handle, 0)
-                    logger.exception("[SQS_MAIN] Handler exception (visibility 0 applied): video_id=%s: %s", video_id, e)
-                    consecutive_errors += 1
-                    _current_job_receipt_handle = None
-                    _current_job_start_time = None
-                    if consecutive_errors >= max_consecutive_errors:
-                        logger.error("Too many consecutive errors (%s), shutting down", consecutive_errors)
-                        return 1
-                    time.sleep(5)
-                    continue
-                finally:
-                    stop_extender.set()
-                    extender.join(timeout=1)
+                if VIDEO_FAST_ACK:
+                    try:
+                        logger.info("[SQS_MAIN] Calling handler.handle() video_id=%s (fast_ack)", video_id)
+                        result = handler.handle(job, cfg)
+                        logger.info("[SQS_MAIN] handler.handle() returned video_id=%s result=%s", video_id, result)
+                    except Exception as e:
+                        logger.exception("[SQS_MAIN] Handler exception (fast_ack, message already deleted): video_id=%s: %s", video_id, e)
+                        consecutive_errors += 1
+                        _current_job_receipt_handle = None
+                        _current_job_start_time = None
+                        if consecutive_errors >= max_consecutive_errors:
+                            logger.error("Too many consecutive errors (%s), shutting down", consecutive_errors)
+                            return 1
+                        time.sleep(5)
+                        continue
+                else:
+                    stop_extender = threading.Event()
+                    extender = threading.Thread(
+                        target=_visibility_extender_loop,
+                        args=(queue, receipt_handle, stop_extender),
+                        daemon=True,
+                    )
+                    extender.start()
+                    try:
+                        logger.info("[SQS_MAIN] Calling handler.handle() video_id=%s", video_id)
+                        result = handler.handle(job, cfg)
+                        logger.info("[SQS_MAIN] handler.handle() returned video_id=%s result=%s", video_id, result)
+                    except Exception as e:
+                        stop_extender.set()
+                        extender.join(timeout=1)
+                        queue.change_message_visibility(receipt_handle, 0)
+                        logger.exception("[SQS_MAIN] Handler exception (visibility 0 applied): video_id=%s: %s", video_id, e)
+                        consecutive_errors += 1
+                        _current_job_receipt_handle = None
+                        _current_job_start_time = None
+                        if consecutive_errors >= max_consecutive_errors:
+                            logger.error("Too many consecutive errors (%s), shutting down", consecutive_errors)
+                            return 1
+                        time.sleep(5)
+                        continue
+                    finally:
+                        stop_extender.set()
+                        extender.join(timeout=1)
 
                 processing_duration = time.time() - _current_job_start_time
                 _current_job_receipt_handle = None
