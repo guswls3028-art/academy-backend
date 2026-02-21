@@ -472,13 +472,26 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             raise ValidationError("강의의 프로그램(테넌트) 정보가 없어 재처리할 수 없습니다.")
 
         try:
-            # QUEUED/RETRY_WAIT: 재시도 불가 (backlog 대기 중)
+            # QUEUED/RETRY_WAIT: 최근이면 재시도 불가(이미 백로그). 오래됐으면 메시지 유실로 간주하고 재등록 허용.
+            STALE_QUEUED_THRESHOLD = getattr(
+                settings, "VIDEO_RETRY_STALE_QUEUED_HOURS", 1
+            )  # 1시간 이상 QUEUED/RETRY_WAIT면 재처리 허용
+            now = timezone.now()
+            stale_cutoff = now - timedelta(hours=STALE_QUEUED_THRESHOLD)
+
             if video.current_job_id:
                 cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
                 if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
-                    raise ValidationError("Already in backlog (job queued or retry wait)")
-                # RUNNING: cancel_requested 설정 후 새 Job 생성
-                if cur and cur.state == VideoTranscodeJob.State.RUNNING:
+                    if cur.updated_at >= stale_cutoff:
+                        raise ValidationError("Already in backlog (job queued or retry wait)")
+                    # 오래된 QUEUED/RETRY_WAIT → 메시지 유실 가능성. 기존 Job DEAD 처리 후 새 Job으로 재등록.
+                    cur.state = VideoTranscodeJob.State.DEAD
+                    cur.error_message = "Stale; re-enqueued via retry (was QUEUED/RETRY_WAIT too long)"
+                    cur.save(update_fields=["state", "error_message", "updated_at"])
+                    video.current_job_id = None
+                    video.save(update_fields=["current_job_id", "updated_at"])
+                elif cur and cur.state == VideoTranscodeJob.State.RUNNING:
+                    # RUNNING: cancel_requested 설정 후 새 Job 생성
                     job_set_cancel_requested(cur.id)
 
             if video.status not in (Video.Status.READY, Video.Status.FAILED):
