@@ -739,6 +739,26 @@ def job_fail_retry(job_id: str, reason: str) -> tuple[bool, str]:
     return True, "ok"
 
 
+def job_set_cancel_requested(job_id) -> bool:
+    """RUNNING Job에 cancel_requested=True 설정 (retry API에서 협력적 취소용)."""
+    from django.utils import timezone
+    from apps.support.video.models import VideoTranscodeJob
+
+    n = VideoTranscodeJob.objects.filter(
+        pk=job_id,
+        state=VideoTranscodeJob.State.RUNNING,
+    ).update(cancel_requested=True, updated_at=timezone.now())
+    return n == 1
+
+
+def job_is_cancel_requested(job_id) -> bool:
+    """Job.cancel_requested 여부."""
+    from apps.support.video.models import VideoTranscodeJob
+
+    job = VideoTranscodeJob.objects.filter(pk=job_id).values("cancel_requested").first()
+    return bool(job and job.get("cancel_requested"))
+
+
 def job_cancel(job_id: str) -> bool:
     """Job CANCELLED (재시도 버튼으로 사용자가 취소 요청 시)."""
     from django.utils import timezone
