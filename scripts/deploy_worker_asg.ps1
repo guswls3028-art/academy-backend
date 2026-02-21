@@ -111,7 +111,7 @@ $aiUserDataRaw = Get-Content $aiUserDataPath -Raw
 $aiUserDataRaw = $aiUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRRegistry
 $aiUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($aiUserDataRaw))
 
-$LtAiName = "academy-ai-worker-asg"
+$LtAiName = "academy-ai-worker-lt"
 # AI 워커: 루트 볼륨 20GB (Docker 이미지 + 컨테이너용, Video보다 작지만 충분)
 $aiBlockDevices = '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":20,"VolumeType":"gp3"}}]'
 $ltAiKey = if ($KeyNameAi) { ",`"KeyName`":`"$KeyNameAi`"" } else { "" }
@@ -175,7 +175,7 @@ $messagingUserDataRaw = Get-Content $messagingUserDataPath -Raw
 $messagingUserDataRaw = $messagingUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRRegistry
 $messagingUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($messagingUserDataRaw))
 
-$LtMessagingName = "academy-messaging-worker-asg"
+$LtMessagingName = "academy-messaging-worker-lt"
 # 메시지 워커: 루트 볼륨 20GB (AI 워커와 동일)
 $messagingBlockDevices = '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":20,"VolumeType":"gp3"}}]'
 $ltMessagingKey = if ($KeyNameMessaging) { ",`"KeyName`":`"$KeyNameMessaging`"" } else { "" }
