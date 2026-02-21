@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Callable, List, Optional
 
+from src.application.video.handler import CancelledError
 from apps.worker.video_worker.utils import ensure_dir, trim_tail
 import logging
 
