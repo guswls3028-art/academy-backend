@@ -285,6 +285,13 @@ def main() -> int:
                     job["_worker_id"] = f"{cfg.WORKER_ID}-{request_id}"
 
                 if VIDEO_FAST_ACK:
+                    heartbeat_stop = threading.Event()
+                    heartbeat_thread = threading.Thread(
+                        target=_heartbeat_loop,
+                        args=(tenant_id, video_id, heartbeat_stop),
+                        daemon=True,
+                    )
+                    heartbeat_thread.start()
                     try:
                         logger.info("[SQS_MAIN] Calling handler.handle() video_id=%s (fast_ack)", video_id)
                         result = handler.handle(job, cfg)
@@ -299,6 +306,13 @@ def main() -> int:
                             return 1
                         time.sleep(5)
                         continue
+                    finally:
+                        heartbeat_stop.set()
+                        heartbeat_thread.join(timeout=2)
+                        try:
+                            delete_video_heartbeat(tenant_id, video_id)
+                        except Exception:
+                            pass
                 else:
                     stop_extender = threading.Event()
                     extender = threading.Thread(

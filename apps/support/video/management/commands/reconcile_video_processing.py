@@ -66,7 +66,7 @@ class Command(BaseCommand):
             prev_leased_by = getattr(video, "leased_by", "") or ""
             prev_leased_until = getattr(video, "leased_until", None)
 
-            force = no_heartbeat
+            force = lease_expired or no_heartbeat
             if dry_run:
                 self.stdout.write(
                     f"DRY-RUN reclaim | video_id={video.id} tenant_id={tenant_id} "
