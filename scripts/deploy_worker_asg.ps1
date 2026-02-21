@@ -79,9 +79,12 @@ try { aws lambda get-function --function-name $QueueDepthLambdaName --region $Re
 
 if ($lambdaExists) {
     aws lambda update-function-code --function-name $QueueDepthLambdaName --zip-file "fileb://$ZipPath" --region $Region | Out-Null
-    # VIDEO_FAST_ACK=1 사용 시 VIDEO_SCALE_VISIBLE_ONLY=1 필수 (영상 1=1 워커 설계, inflight 제외)
-    aws lambda update-function-configuration --function-name $QueueDepthLambdaName --region $Region `
-        --environment "Variables={VIDEO_QUEUE=$VIDEO_QUEUE,AI_QUEUE_LITE=$AI_QUEUE_LITE,AI_QUEUE_BASIC=$AI_QUEUE_BASIC,MESSAGING_QUEUE=$MESSAGING_QUEUE,METRIC_NAMESPACE=$NAMESPACE,METRIC_NAME=$METRIC_NAME,VIDEO_WORKER_ASG_NAME=$VIDEO_WORKER_ASG_NAME,VIDEO_WORKER_ASG_MAX=$VIDEO_WORKER_ASG_MAX,VIDEO_WORKER_ASG_MIN=$VIDEO_WORKER_ASG_MIN,VIDEO_SCALE_VISIBLE_ONLY=1,MAX_BACKLOG_ADD=5,STABLE_ZERO_SECONDS=1200}" | Out-Null
+    # VIDEO_FAST_ACK=1 사용 시 VIDEO_SCALE_VISIBLE_ONLY=1 필수 (영상 1=1 워커 설계. inflight 제외 → desired=backlog_add만)
+    $curEnv = aws lambda get-function-configuration --function-name $QueueDepthLambdaName --region $Region --query "Environment.Variables" --output json 2>$null
+    $envJson = if ($curEnv -and $curEnv -ne "null") { $curEnv | ConvertFrom-Json } else { @{} }
+    $envJson | Add-Member -NotePropertyName "VIDEO_SCALE_VISIBLE_ONLY" -NotePropertyValue "1" -Force
+    $envStr = ($envJson.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ","
+    if ($envStr) { aws lambda update-function-configuration --function-name $QueueDepthLambdaName --region $Region --environment "Variables={$envStr}" | Out-Null }
 } else {
     aws lambda create-function --function-name $QueueDepthLambdaName --runtime python3.11 --role $RoleArn `
         --handler lambda_function.lambda_handler --zip-file "fileb://$ZipPath" --timeout 30 --memory-size 128 `
