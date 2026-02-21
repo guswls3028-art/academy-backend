@@ -6,6 +6,7 @@ from apps.support.video.views.internal_views import (
     VideoProcessingCompleteView,
     VideoBacklogCountView,
     VideoBacklogScoreView,
+    VideoAsgInterruptStatusView,
     VideoDlqMarkDeadView,
     VideoScanStuckView,
 )
@@ -104,6 +105,11 @@ urlpatterns = [
         "internal/video/backlog-score/",
         VideoBacklogScoreView.as_view(),
         name="video-backlog-score",
+    ),
+    path(
+        "internal/video/asg-interrupt-status/",
+        VideoAsgInterruptStatusView.as_view(),
+        name="video-asg-interrupt-status",
     ),
     path(
         "internal/video/dlq-mark-dead/",

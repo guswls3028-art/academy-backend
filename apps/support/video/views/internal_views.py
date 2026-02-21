@@ -110,6 +110,21 @@ class VideoBacklogScoreView(APIView):
         return Response({"backlog_score": score})
 
 
+class VideoAsgInterruptStatusView(APIView):
+    """
+    queue_depth_lambda: interrupt 시 BacklogCount 퍼블리시 스킵 (scale-out runaway 방지).
+    GET /api/v1/internal/video/asg-interrupt-status/
+    Returns: {"interrupt": bool}
+    """
+
+    permission_classes = [IsLambdaInternal]
+    authentication_classes = []
+
+    def get(self, request):
+        from apps.support.video.redis_status_cache import is_asg_interrupt
+        return Response({"interrupt": is_asg_interrupt()})
+
+
 class VideoDlqMarkDeadView(APIView):
     """
     DLQ State Sync Lambda: state별 분리 (scan_stuck와 race/경합 방지).
