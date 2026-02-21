@@ -153,6 +153,60 @@ class Video(TimestampModel):
 
 
 # ========================================================
+# VideoTranscodeJob (Job 기반 실행)
+# ========================================================
+
+
+class VideoTranscodeJob(models.Model):
+    """
+    Transcoding 실행 단위. Video는 Resource, Job은 Execution.
+    SQS 메시지에 job_id 포함 → Worker는 job_id 기반으로 claim/처리.
+    """
+
+    class State(models.TextChoices):
+        QUEUED = "QUEUED", "대기"
+        RUNNING = "RUNNING", "실행중"
+        SUCCEEDED = "SUCCEEDED", "완료"
+        FAILED = "FAILED", "실패"
+        RETRY_WAIT = "RETRY_WAIT", "재시도대기"
+        DEAD = "DEAD", "격리"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.CASCADE,
+        related_name="transcode_jobs",
+    )
+    tenant_id = models.PositiveIntegerField(db_index=True)
+
+    state = models.CharField(
+        max_length=20,
+        choices=State.choices,
+        default=State.QUEUED,
+        db_index=True,
+    )
+    attempt_count = models.PositiveIntegerField(default=1)
+    locked_by = models.CharField(max_length=64, blank=True)
+    locked_until = models.DateTimeField(null=True, blank=True)
+    last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+
+    error_code = models.CharField(max_length=64, blank=True)
+    error_message = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["state", "updated_at"]),
+            models.Index(fields=["tenant_id", "state"]),
+        ]
+
+    def __str__(self):
+        return f"Job {self.id} [{self.state}] video={self.video_id}"
+
+
+# ========================================================
 # Video Access (수강생별 override + 접근 규칙)
 # - Replaces VideoPermission semantics (SSOT)
 # - DB table kept as video_videopermission for migration safety
