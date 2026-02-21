@@ -137,27 +137,27 @@ def lambda_handler(event: dict, context: Any) -> dict:
         Namespace="Academy/VideoProcessing",
         MetricData=[
             {
-                "MetricName": "BacklogScore",
+                "MetricName": "BacklogCount",
                 "Dimensions": [
                     {"Name": "WorkerType", "Value": "Video"},
                     {"Name": "AutoScalingGroupName", "Value": "academy-video-worker-asg"},
                 ],
-                "Value": float(video_backlog_score),
+                "Value": float(video_backlog),
                 "Timestamp": now,
                 "Unit": "Count",
             }
         ],
     )
-    logger.info("BacklogScore metric published | score=%.0f", video_backlog_score)
+    logger.info("BacklogCount metric published | backlog=%d", video_backlog)
 
     logger.info(
-        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d backlog_score=%.0f messaging visible=%d in_flight=%d",
-        ai_visible, ai_in_flight, video_visible, video_in_flight, video_backlog_score,
+        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d backlog=%d messaging visible=%d in_flight=%d",
+        ai_visible, ai_in_flight, video_visible, video_in_flight, video_backlog,
         messaging_visible, messaging_in_flight,
     )
     return {
         "ai_queue_depth": ai_total,
         "video_queue_depth": video_visible,
-        "video_backlog_score": video_backlog_score,
+        "video_backlog_count": video_backlog,
         "messaging_queue_depth": messaging_visible,
     }
