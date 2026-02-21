@@ -115,7 +115,9 @@ def _fetch_video_backlog_from_api() -> int | None:
     try:
         req = urllib.request.Request(url, method="GET", headers=headers)
         with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
+            raw = resp.read().decode()
+            logger.info("Backlog API raw response: %s", raw)
+            data = json.loads(raw)
             backlog = int(data.get("backlog", 0))
             logger.info("Fetched backlog from API: %d", backlog)
             return backlog
