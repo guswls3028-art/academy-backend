@@ -170,6 +170,7 @@ class VideoTranscodeJob(models.Model):
         FAILED = "FAILED", "실패"
         RETRY_WAIT = "RETRY_WAIT", "재시도대기"
         DEAD = "DEAD", "격리"
+        CANCELLED = "CANCELLED", "취소됨"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     video = models.ForeignKey(
