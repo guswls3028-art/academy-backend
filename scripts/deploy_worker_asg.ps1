@@ -320,7 +320,7 @@ aws application-autoscaling put-scaling-policy --service-namespace ec2 --resourc
 $ErrorActionPreference = $ea
 Remove-Item $policyAiFile, $policyMessagingFile -Force -ErrorAction SilentlyContinue
 
-Write-Host "Done. Lambda: $QueueDepthLambdaName | ASG: $AsgAiName, $AsgVideoName, $AsgMessagingName | AI/Video/Messaging Min=1 Max=$MaxCapacity Target=$TargetMessagesPerInstance" -ForegroundColor Green
+Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging=TargetTracking | Video=Lambda-only (no TargetTracking)" -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
 # Optional: grant SSM PutParameter to current caller (IAM user)
