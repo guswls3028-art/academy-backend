@@ -4,6 +4,7 @@
 #
 # --- Default workflow (ASG workers) ---
 # Full:  .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -WorkersViaASG
+# Build only (ECR push, no deploy): add -BuildOnly (uses build server; no local Docker)
 # Workers only: add -SkipBuild
 # No-cache build: add -NoCache
 #
