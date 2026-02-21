@@ -30,6 +30,7 @@ from academy.adapters.db.django.repositories_video import DjangoVideoRepository
 from src.infrastructure.cache.redis_idempotency_adapter import RedisIdempotencyAdapter
 from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
 from src.application.video.handler import ProcessVideoJobHandler
+from apps.support.video.redis_status_cache import set_video_heartbeat, delete_video_heartbeat
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,6 +75,19 @@ def _visibility_extender_loop(
             logger.debug("Visibility extended receipt_handle=...%s", receipt_handle[-12:] if receipt_handle else "")
         except Exception as e:
             logger.warning("Visibility extend failed: %s", e)
+
+
+def _heartbeat_loop(tenant_id: int, video_id: int, stop_event: threading.Event) -> None:
+    """
+    PROCESSING 동안 worker liveness 보장용 Redis heartbeat loop.
+    progress 호출과 무관하게 20초 주기로 갱신.
+    """
+    while not stop_event.is_set():
+        try:
+            set_video_heartbeat(tenant_id, video_id, ttl_seconds=60)
+        except Exception as e:
+            logger.warning("Heartbeat set failed video_id=%s: %s", video_id, e)
+        stop_event.wait(20)
 
 
 def _handle_signal(sig, frame):
