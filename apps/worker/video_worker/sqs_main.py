@@ -134,10 +134,36 @@ def _job_visibility_and_heartbeat_loop(
             logger.warning("Job heartbeat/visibility failed job_id=%s: %s", job_id, e)
 
 
+def _spot_interruption_poller(stop_event: threading.Event) -> None:
+    """EC2 Spot terminate notice 감지. 5초마다 metadata poll, 200 시 spot_termination_event + Redis interrupt."""
+    import urllib.request
+    SPOT_METADATA_URL = "http://169.254.169.254/latest/meta-data/spot/instance-action"
+    while not stop_event.wait(timeout=5):
+        try:
+            req = urllib.request.Request(SPOT_METADATA_URL, method="GET")
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                if resp.status == 200:
+                    logger.warning("SPOT_INTERRUPTION_DETECTED | metadata returned 200")
+                    spot_termination_event.set()
+                    try:
+                        from apps.support.video.redis_status_cache import set_asg_interrupt
+                        set_asg_interrupt()
+                    except Exception as e:
+                        logger.warning("set_asg_interrupt failed: %s", e)
+                    break
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                pass  # no action scheduled
+            else:
+                logger.debug("Spot metadata poll HTTP error: %s", e.code)
+        except Exception as e:
+            logger.debug("Spot metadata poll failed: %s", e)
+    logger.debug("Spot interruption poller stopped")
+
+
 def _handle_signal(sig, frame):
     """
-    Graceful shutdown (drain) 핸들러.
-    SIGTERM 수신 시 SQS poll 중단 요청, 진행 중 job 있으면 완료 후 종료.
+    Graceful shutdown (drain) 핸들러. SIGTERM 시 Spot/scale-in과 동일 drain (job_fail_retry + visibility=0).
     """
     global _shutdown, _current_job_receipt_handle
     try:
@@ -150,6 +176,12 @@ def _handle_signal(sig, frame):
         "processing" if _current_job_receipt_handle else "idle",
     )
     _shutdown = True
+    spot_termination_event.set()
+    try:
+        from apps.support.video.redis_status_cache import set_asg_interrupt
+        set_asg_interrupt()
+    except Exception as e:
+        logger.warning("set_asg_interrupt failed: %s", e)
 
 
 def main() -> int:
