@@ -89,7 +89,29 @@ def _fetch_video_backlog_from_api() -> int | None:
         return None
 
 
+def _is_asg_interrupt_from_api() -> bool:
+    """Worker가 Spot/scale-in drain 중 Redis에 설정한 interrupt 플래그. True 시 BacklogCount 퍼블리시 스킵."""
+    if not VIDEO_BACKLOG_API_URL:
+        return False
+    url = f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/asg-interrupt-status/"
+    headers = {}
+    if LAMBDA_INTERNAL_API_KEY:
+        headers["X-Internal-Key"] = LAMBDA_INTERNAL_API_KEY
+    try:
+        req = urllib.request.Request(url, method="GET", headers=headers)
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+            return bool(data.get("interrupt", False))
+    except Exception as e:
+        logger.debug("asg-interrupt-status fetch failed: %s", e)
+        return False
+
+
 def lambda_handler(event: dict, context: Any) -> dict:
+    if _is_asg_interrupt_from_api():
+        logger.info("METRIC_PUBLISH_SKIPPED_DURING_INTERRUPT | BacklogCount skip (scale-out runaway 방지)")
+        return {"skipped": "asg_interrupt"}
+
     sqs = boto3.client("sqs", region_name=REGION, config=BOTO_CONFIG)
     cw = boto3.client("cloudwatch", region_name=REGION, config=BOTO_CONFIG)
 
