@@ -230,22 +230,25 @@ def lambda_handler(event: dict, context: Any) -> dict:
     cw.put_metric_data(Namespace=NAMESPACE, MetricData=metric_data)
 
     if video_backlog is not None:
-        cw.put_metric_data(
-            Namespace="Academy/VideoProcessing",
-            MetricData=[
-                {
-                    "MetricName": "BacklogCount",
-                    "Dimensions": [
-                        {"Name": "WorkerType", "Value": "Video"},
-                        {"Name": "AutoScalingGroupName", "Value": "academy-video-worker-asg"},
-                    ],
-                    "Value": float(video_backlog),
-                    "Timestamp": now,
-                    "Unit": "Count",
-                }
-            ],
-        )
-        logger.info("BacklogCount metric published | backlog=%d", video_backlog)
+        try:
+            cw.put_metric_data(
+                Namespace="Academy/VideoProcessing",
+                MetricData=[
+                    {
+                        "MetricName": "BacklogCount",
+                        "Dimensions": [
+                            {"Name": "WorkerType", "Value": "Video"},
+                            {"Name": "AutoScalingGroupName", "Value": "academy-video-worker-asg"},
+                        ],
+                        "Value": float(video_backlog),
+                        "Timestamp": now,
+                        "Unit": "Count",
+                    }
+                ],
+            )
+            logger.info("BacklogCount metric published | backlog=%d", video_backlog)
+        except Exception as e:
+            logger.exception("CloudWatch metric publish failed")
     else:
         logger.warning(
             "BacklogCount metric skipped (API fetch failed, see VIDEO_BACKLOG_API* log above); not publishing to prevent ASG oscillation."
