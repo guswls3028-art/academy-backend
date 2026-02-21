@@ -740,24 +740,27 @@ def job_cancel(job_id: str) -> bool:
 
 
 def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") -> bool:
-    """Job DEAD (DLQ 격리)."""
+    """Job DEAD (DLQ 격리). Transactional: Job + Video 원자적 업데이트."""
+    from django.db import transaction
     from django.utils import timezone
     from apps.support.video.models import Video, VideoTranscodeJob
 
-    job = VideoTranscodeJob.objects.filter(pk=job_id).first()
-    if not job:
-        return False
-    job.state = VideoTranscodeJob.State.DEAD
-    job.error_code = str(error_code)[:64]
-    job.error_message = str(error_message)[:2000]
-    job.locked_by = ""
-    job.locked_until = None
-    job.save(update_fields=["state", "error_code", "error_message", "locked_by", "locked_until", "updated_at"])
-    # Video를 FAILED로 표시 (현재 Job이 current_job인 경우)
-    Video.objects.filter(current_job_id=job_id).update(
-        status=Video.Status.FAILED,
-        error_reason=str(error_message)[:2000] or job.error_message,
-    )
+    err_msg = str(error_message)[:2000]
+    err_code = str(error_code)[:64]
+    with transaction.atomic():
+        job = VideoTranscodeJob.objects.select_for_update().filter(pk=job_id).first()
+        if not job:
+            return False
+        job.state = VideoTranscodeJob.State.DEAD
+        job.error_code = err_code
+        job.error_message = err_msg
+        job.locked_by = ""
+        job.locked_until = None
+        job.save(update_fields=["state", "error_code", "error_message", "locked_by", "locked_until", "updated_at"])
+        Video.objects.filter(current_job_id=job_id).update(
+            status=Video.Status.FAILED,
+            error_reason=err_msg or job.error_message,
+        )
     return True
 
 
