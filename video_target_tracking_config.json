@@ -1,0 +1,1 @@
+{"TargetValue":3,"CustomizedMetricSpecification":{"Dimensions":[{"Value":"Video","Name":"WorkerType"},{"Value":"academy-video-worker-asg","Name":"AutoScalingGroupName"}],"MetricName":"BacklogCount","Namespace":"Academy/VideoProcessing","Statistic":"Average"}}

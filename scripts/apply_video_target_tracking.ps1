@@ -16,6 +16,7 @@ $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptRoot
 
+# EC2 autoscaling TargetTrackingConfiguration: ScaleIn/OutCooldown 미지원
 $config = @{
     TargetValue = 3
     CustomizedMetricSpecification = @{
@@ -27,8 +28,6 @@ $config = @{
             @{ Name = "AutoScalingGroupName"; Value = $AsgName }
         )
     }
-    ScaleOutCooldown = 60
-    ScaleInCooldown  = 300
 }
 
 $configJson = $config | ConvertTo-Json -Depth 5 -Compress
