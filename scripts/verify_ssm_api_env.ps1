@@ -46,7 +46,6 @@ try {
     # Force UTF-8 stdout so SSM value with Unicode (e.g. U+2014) does not trigger cp949 encode error on Korean Windows
     $psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"
     $psi.EnvironmentVariables["PYTHONUTF8"] = "1"
-    $null = $psi.CreateNoWindow  # avoid assignment output
     $p = [System.Diagnostics.Process]::Start($psi)
     $p.WaitForExit(60000)
     $stdout = $p.StandardOutput.ReadToEnd()
