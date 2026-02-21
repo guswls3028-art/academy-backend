@@ -394,13 +394,13 @@ def main() -> int:
                     consecutive_errors = 0
 
                 elif result == "skip":
-                    # 레거시/미지정 skip → NACK 60~120 (stuck orphan 방지)
                     logger.warning(
                         "legacy skip — nack | request_id=%s | video_id=%s",
                         request_id,
                         video_id,
                     )
-                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
+                    if not VIDEO_FAST_ACK:
+                        queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
                     consecutive_errors = 0
 
                 else:
