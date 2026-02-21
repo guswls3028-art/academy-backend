@@ -79,7 +79,7 @@ class VideoProcessingCompleteView(APIView):
 
 class VideoBacklogCountView(APIView):
     """
-    B1: BacklogCount (Job 기반: QUEUED + RETRY_WAIT + RUNNING) for Video ASG TargetTracking.
+    B1: BacklogCount (Job 기반: QUEUED + RETRY_WAIT, RUNNING 제외) for Video ASG TargetTracking.
     GET /api/v1/internal/video/backlog-count/
     Returns: {"backlog": int}
     queue_depth_lambda가 1분마다 X-Internal-Key 헤더로 호출.
@@ -92,3 +92,90 @@ class VideoBacklogCountView(APIView):
         from academy.adapters.db.django.repositories_video import job_count_backlog
         backlog = job_count_backlog()
         return Response({"backlog": backlog})
+
+
+class VideoBacklogScoreView(APIView):
+    """
+    B1: BacklogScore = SUM(QUEUED=>1, RETRY_WAIT=>2). CloudWatch Metric 교체용.
+    GET /api/v1/internal/video/backlog-score/
+    Returns: {"backlog_score": float}
+    """
+
+    permission_classes = [IsLambdaInternal]
+    authentication_classes = []
+
+    def get(self, request):
+        from academy.adapters.db.django.repositories_video import job_compute_backlog_score
+        score = job_compute_backlog_score()
+        return Response({"backlog_score": score})
+
+
+class VideoDlqMarkDeadView(APIView):
+    """
+    DLQ Poller Lambda: job_id로 job_mark_dead 호출.
+    POST /api/v1/internal/video/dlq-mark-dead/
+    body: {"job_id": "uuid"}
+    """
+
+    permission_classes = [IsLambdaInternal]
+    authentication_classes = []
+
+    def post(self, request):
+        data = getattr(request, "data", None) or {}
+        job_id = data.get("job_id")
+        if not job_id:
+            return Response({"detail": "job_id required"}, status=status.HTTP_400_BAD_REQUEST)
+        from academy.adapters.db.django.repositories_video import job_mark_dead
+        ok = job_mark_dead(str(job_id), error_code="DLQ", error_message="DLQ poller marked dead")
+        if ok:
+            return Response({"ok": True})
+        return Response({"detail": "job not found or already dead"}, status=status.HTTP_404_NOT_FOUND)
+
+
+class VideoScanStuckView(APIView):
+    """
+    EventBridge Scheduled Lambda: scan_stuck_video_jobs 로직 실행.
+    POST /api/v1/internal/video/scan-stuck/
+    body: {"threshold": 3} (optional, minutes)
+    """
+
+    permission_classes = [IsLambdaInternal]
+    authentication_classes = []
+
+    def post(self, request):
+        from django.utils import timezone
+        from datetime import timedelta
+        from apps.support.video.models import VideoTranscodeJob
+
+        data = getattr(request, "data", None) or {}
+        threshold_minutes = int(data.get("threshold", 3))
+        cutoff = timezone.now() - timedelta(minutes=threshold_minutes)
+        max_attempts = 5
+
+        qs = VideoTranscodeJob.objects.filter(
+            state=VideoTranscodeJob.State.RUNNING,
+            last_heartbeat_at__lt=cutoff,
+        ).order_by("id")
+
+        recovered = 0
+        dead = 0
+
+        for job in qs:
+            attempt_after = job.attempt_count + 1
+            if attempt_after >= max_attempts:
+                job.state = VideoTranscodeJob.State.DEAD
+                job.error_code = "STUCK_MAX_ATTEMPTS"
+                job.error_message = f"Stuck (no heartbeat for {threshold_minutes}min)"
+                job.locked_by = ""
+                job.locked_until = None
+                job.save(update_fields=["state", "error_code", "error_message", "locked_by", "locked_until", "updated_at"])
+                dead += 1
+            else:
+                job.state = VideoTranscodeJob.State.RETRY_WAIT
+                job.attempt_count = attempt_after
+                job.locked_by = ""
+                job.locked_until = None
+                job.save(update_fields=["state", "attempt_count", "locked_by", "locked_until", "updated_at"])
+                recovered += 1
+
+        return Response({"recovered": recovered, "dead": dead})
