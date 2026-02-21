@@ -22,6 +22,53 @@ def _get_video_cancel_key(tenant_id: int, video_id: int) -> str:
     return f"tenant:{tenant_id}:video:{video_id}:cancel_requested"
 
 
+def _get_video_heartbeat_key(tenant_id: int, video_id: int) -> str:
+    """비디오 워커 하트비트 Redis 키 (Telemetry only, ownership=DB)"""
+    return f"tenant:{tenant_id}:video:{video_id}:heartbeat"
+
+
+VIDEO_HEARTBEAT_TTL_SECONDS = 60
+
+
+def set_video_heartbeat(tenant_id: int, video_id: int, ttl_seconds: int = VIDEO_HEARTBEAT_TTL_SECONDS) -> bool:
+    """워커가 인코딩 중 주기적으로 호출. TTL 만료 시 reclaim 조건 충족."""
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return False
+        key = _get_video_heartbeat_key(tenant_id, video_id)
+        redis_client.setex(key, ttl_seconds, "1")
+        return True
+    except Exception as e:
+        logger.debug("Failed to set video heartbeat in Redis: %s", e)
+        return False
+
+
+def has_video_heartbeat(tenant_id: int, video_id: int) -> bool:
+    """하트비트 존재 여부 (Reconciler에서 reclaim 조건 판단용)"""
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return False
+        key = _get_video_heartbeat_key(tenant_id, video_id)
+        return bool(redis_client.exists(key))
+    except Exception:
+        return False
+
+
+def delete_video_heartbeat(tenant_id: int, video_id: int) -> bool:
+    """완료/실패 시 하트비트 삭제 (선택, TTL에 맡겨도 됨)"""
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return False
+        key = _get_video_heartbeat_key(tenant_id, video_id)
+        redis_client.delete(key)
+        return True
+    except Exception:
+        return False
+
+
 def set_cancel_requested(tenant_id: int, video_id: int, ttl_seconds: int = 300) -> bool:
     """재시도 클릭 시 기존 진행 중 작업에 취소 요청 표시 (워커가 확인 후 스킵)."""
     try:
