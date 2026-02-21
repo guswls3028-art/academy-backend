@@ -1,15 +1,13 @@
 """
-SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시 + AI 워커 ASG 원하는 용량 조정.
+SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시. ASG는 Target Tracking으로만 scale.
 
 - EventBridge rate(1 minute)로 호출.
-- AI: academy-ai-jobs-lite + academy-ai-jobs-basic 합산 → Academy/Workers, WorkerType=AI
-- Video: academy-video-jobs → Academy/Workers, WorkerType=Video
-- Messaging: academy-messaging-jobs → Academy/Workers, WorkerType=Messaging
+- AI: academy-ai-jobs-lite + academy-ai-jobs-basic 합산 → Academy/Workers, QueueDepth, WorkerType=AI
+- Video: academy-video-jobs → Academy/Workers, BacklogPerInstance, WorkerType=Video
+  BacklogPerInstance = VisibleMessages / max(1, InServiceInstances) (락 대기 시 과도 scale-out 방지)
+- Messaging: academy-messaging-jobs → Academy/Workers, QueueDepth, WorkerType=Messaging
 
-Application Auto Scaling(ec2:autoScalingGroup:DesiredCapacity)이 일부 계정/리전에서
-허용되지 않으므로, EC2 Auto Scaling API(set_desired_capacity)로 직접 조정함.
-- (visible + in_flight) > 0 → desired >= 1 (처리 중인 메시지 있을 때는 scale to 0 안 함)
-- (visible + in_flight) == 0 → desired = 0
+Lambda는 set_desired_capacity를 호출하지 않음. Target Tracking이 단일 컨트롤러.
 
 설계: docs/SSOT_0215/IMPORTANT/ARCH_CHANGE_PROPOSAL_LAMBDA_TO_ASG.md
 """
