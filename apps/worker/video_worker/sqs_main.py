@@ -38,8 +38,12 @@ logging.basicConfig(
 logger = logging.getLogger("video_worker_sqs")
 
 _shutdown = False
+spot_termination_event = threading.Event()  # EC2 Spot / ASG scale-in drain (metadata or SIGTERM)
 _current_job_receipt_handle: Optional[str] = None  # Graceful shutdown: 현재 처리 중인 작업 추적
 _current_job_start_time: Optional[float] = None  # 로그 가시성: 작업 시작 시간
+
+# Drain timeout: ffmpeg가 SIGTERM 무시 시 kill (Spot/scale-in 시)
+DRAIN_TERMINATE_WAIT_SECONDS = 90
 
 # SQS Long Polling 설정
 SQS_WAIT_TIME_SECONDS = 20  # 최대 대기 시간 (Long Polling)
