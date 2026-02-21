@@ -6,7 +6,7 @@ SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시.
 - Video: B1 TargetTracking (BacklogCount, Academy/VideoProcessing)
   - set_desired_capacity 호출 금지. ASG TargetTrackingPolicy가 스케일 제어.
   - BacklogCount = UPLOADED + PROCESSING (Django DB SSOT)
-  - VIDEO_BACKLOG_API_URL 설정 시 해당 API 호출하여 DB 기반 backlog 사용
+  - VIDEO_BACKLOG_API_INTERNAL(우선) 또는 VIDEO_BACKLOG_API_URL 설정 시 해당 API 호출하여 DB 기반 backlog 사용
   - 미설정 시 SQS visible+inflight를 fallback으로 사용 (DB가 SSOT이나 비상용)
 
 설계: docs/B1_METRIC_SCHEMA_EXTRACTION_REPORT.md
