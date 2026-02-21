@@ -176,9 +176,9 @@ Write-Section "9. Lambda recent errors (VIDEO_BACKLOG)"
 $logGroup = "/aws/lambda/$LambdaName"
 $since = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $events = aws logs filter-log-events --log-group-name $logGroup --region $Region --start-time ([DateTimeOffset]::Parse($since).ToUnixTimeMilliseconds()) --filter-pattern "ERROR" --max-items 5 --output json 2>$null | ConvertFrom-Json
-if ($events.events) {
+if ($events -and $events.events) {
     foreach ($e in $events.events) {
-        $msg = $e.message
+        $msg = if ($e.message) { $e.message } else { "" }
         if ($msg.Length -gt 120) { $msg = $msg.Substring(0, 117) + "..." }
         Write-Line "  $msg"
     }
