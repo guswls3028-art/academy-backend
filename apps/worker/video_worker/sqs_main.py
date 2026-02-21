@@ -59,8 +59,11 @@ NACK_VISIBILITY_MAX = 120
 # failed transient 시 retry backoff (일시적 실패 시 즉시 재시도 방지)
 FAILED_TRANSIENT_BACKOFF_SECONDS = 180  # 180~600 범위
 
-# 빠른 ACK 모드: receive 직후 delete → inflight 스케일 왜곡 제거. DB try_claim으로 중복 방지.
-VIDEO_FAST_ACK = os.environ.get("VIDEO_FAST_ACK", "0") == "1"
+# Job 기반: heartbeat + visibility 연장 주기 (엔터프라이즈 표준)
+JOB_HEARTBEAT_INTERVAL_SECONDS = 60
+
+# Job 최대 재시도 횟수 (초과 시 DEAD)
+VIDEO_JOB_MAX_ATTEMPTS = int(os.environ.get("VIDEO_JOB_MAX_ATTEMPTS", "5"))
 
 
 def _visibility_extender_loop(
