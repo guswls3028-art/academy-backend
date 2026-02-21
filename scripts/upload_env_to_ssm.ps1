@@ -71,6 +71,7 @@ $ea = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 aws ssm put-parameter --name $ParameterName --type SecureString --value "$content" --overwrite --tier $tier --region $Region
 $ok1 = ($LASTEXITCODE -eq 0)
+$ok2 = $false
 if ($ok1) {
     aws ssm put-parameter --name $ApiParameterName --type SecureString --value "$content" --overwrite --tier $tier --region $Region
     $ok2 = ($LASTEXITCODE -eq 0)
