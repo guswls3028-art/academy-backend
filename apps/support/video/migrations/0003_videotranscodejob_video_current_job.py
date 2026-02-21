@@ -63,11 +63,11 @@ class Migration(migrations.Migration):
                 "indexes": [
                     models.Index(
                         fields=["state", "updated_at"],
-                        name="video_videot_state_6a2ac7_idx",
+                        name="video_transcodejob_state_updated_idx",
                     ),
                     models.Index(
                         fields=["tenant_id", "state"],
-                        name="video_videot_tenant__ba7c3e_idx",
+                        name="video_transcodejob_tenant_state_idx",
                     ),
                 ],
             },
