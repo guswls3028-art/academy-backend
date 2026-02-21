@@ -330,24 +330,28 @@ $policyMessaging = @"
 }
 "@
 $policyAiFile = Join-Path $RepoRoot "asg_policy_ai.json"
+$policyVideoFile = Join-Path $RepoRoot "asg_policy_video.json"
 $policyMessagingFile = Join-Path $RepoRoot "asg_policy_messaging.json"
 [System.IO.File]::WriteAllText($policyAiFile, $policyAi, $utf8NoBom)
+[System.IO.File]::WriteAllText($policyVideoFile, $policyVideo, $utf8NoBom)
 [System.IO.File]::WriteAllText($policyMessagingFile, $policyMessaging, $utf8NoBom)
 $policyAiPath = "file://$($policyAiFile -replace '\\','/' -replace ' ', '%20')"
+$policyVideoPath = "file://$($policyVideoFile -replace '\\','/' -replace ' ', '%20')"
 $policyMessagingPath = "file://$($policyMessagingFile -replace '\\','/' -replace ' ', '%20')"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $ResourceIdAi `
     --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" `
     --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyAiPath --region $Region 2>$null
-aws application-autoscaling delete-scaling-policy --service-namespace ec2 --resource-id $ResourceIdVideo `
-    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" --region $Region 2>$null
+aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $ResourceIdVideo `
+    --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "BacklogCountTargetTracking" `
+    --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyVideoPath --region $Region 2>$null
 aws application-autoscaling put-scaling-policy --service-namespace ec2 --resource-id $ResourceIdMessaging `
     --scalable-dimension "ec2:autoScalingGroup:DesiredCapacity" --policy-name "QueueDepthTargetTracking" `
     --policy-type "TargetTrackingScaling" --target-tracking-scaling-policy-configuration $policyMessagingPath --region $Region 2>$null
 $ErrorActionPreference = $ea
-Remove-Item $policyAiFile, $policyMessagingFile -Force -ErrorAction SilentlyContinue
+Remove-Item $policyAiFile, $policyVideoFile, $policyMessagingFile -Force -ErrorAction SilentlyContinue
 
-Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging=TargetTracking | Video=Lambda-only (no TargetTracking)" -ForegroundColor Green
+Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging/Video=TargetTracking (Video=BacklogCount)" -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
 # Optional: grant SSM PutParameter to current caller (IAM user)
