@@ -82,10 +82,10 @@ def get_visible_count(sqs_client, queue_name: str) -> int:
 
 
 def _fetch_video_backlog_from_api() -> int | None:
-    """Django API에서 BacklogCount (QUEUED+RETRY_WAIT) 조회. 실패 시 None."""
-    if not VIDEO_BACKLOG_API_URL:
+    """Django API에서 BacklogCount (QUEUED+RETRY_WAIT) 조회. 실패 시 None. VIDEO_BACKLOG_API_INTERNAL 우선."""
+    if not VIDEO_BACKLOG_API_BASE:
         return None
-    url = f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/backlog-count/"
+    url = f"{VIDEO_BACKLOG_API_BASE}/api/v1/internal/video/backlog-count/"
     headers = {"User-Agent": HTTP_USER_AGENT}
     if LAMBDA_INTERNAL_API_KEY:
         headers["X-Internal-Key"] = LAMBDA_INTERNAL_API_KEY
@@ -100,10 +100,10 @@ def _fetch_video_backlog_from_api() -> int | None:
 
 
 def _is_asg_interrupt_from_api() -> bool:
-    """Worker가 Spot/scale-in drain 중 Redis에 설정한 interrupt 플래그. True 시 BacklogCount 퍼블리시 스킵."""
-    if not VIDEO_BACKLOG_API_URL:
+    """Worker가 Spot/scale-in drain 중 Redis에 설정한 interrupt 플래그. True 시 BacklogCount 퍼블리시 스킵. VIDEO_BACKLOG_API_INTERNAL 우선."""
+    if not VIDEO_BACKLOG_API_BASE:
         return False
-    url = f"{VIDEO_BACKLOG_API_URL}/api/v1/internal/video/asg-interrupt-status/"
+    url = f"{VIDEO_BACKLOG_API_BASE}/api/v1/internal/video/asg-interrupt-status/"
     headers = {"User-Agent": HTTP_USER_AGENT}
     if LAMBDA_INTERNAL_API_KEY:
         headers["X-Internal-Key"] = LAMBDA_INTERNAL_API_KEY
