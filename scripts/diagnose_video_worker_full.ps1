@@ -135,14 +135,17 @@ if (-not $firstSubnetId) {
 # ------------------------------------------------------------------------------
 Write-Host ""
 Write-Host "========== 8. Endpoint SG Rules =========="
-if (-not $vpcId) {
-    $vpcId = (aws ec2 describe-subnets --subnet-ids $firstSubnetId --region $Region --query "Subnets[0].VpcId" --output text 2>$null)
-}
-$endpoints = aws ec2 describe-vpc-endpoints --region $Region --filters "Name=vpc-id,Values=$vpcId" "Name=service-name,Values=com.amazonaws.$Region.sqs" --query "VpcEndpoints[*].Groups[*].GroupId" --output json 2>$null | ConvertFrom-Json
 $epSgIds = @()
-if ($endpoints) {
-    foreach ($e in $endpoints) {
-        if ($e -is [array]) { foreach ($g in $e) { $epSgIds += $g } } else { $epSgIds += $e }
+if ($vpcId) {
+    $vpceJson = aws ec2 describe-vpc-endpoints --region $Region --filters "Name=vpc-id,Values=$vpcId" "Name=service-name,Values=com.amazonaws.$Region.sqs" --output json
+    Write-Host "[VPC Endpoints SQS - full]"
+    Write-Host $vpceJson
+    $vpceObj = $vpceJson | ConvertFrom-Json
+    if ($vpceObj.VpcEndpoints) {
+        foreach ($ep in $vpceObj.VpcEndpoints) {
+            Write-Host "[Endpoint $($ep.VpcEndpointId) EndpointType=$($ep.VpcEndpointType) PrivateDnsEnabled=$($ep.PrivateDnsEnabled)]"
+            if ($ep.Groups) { foreach ($g in $ep.Groups) { $epSgIds += $g.GroupId } }
+        }
     }
 }
 foreach ($sgId in $epSgIds) {
