@@ -78,9 +78,6 @@ def _fetch_video_backlog_from_api() -> int | None:
     try:
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=5) as resp:
-            if resp.status != 200:
-                return None
-            import json
             data = json.loads(resp.read().decode())
             return int(data.get("backlog", 0))
     except Exception as e:
