@@ -406,40 +406,40 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         return Response(VideoSerializer(video).data)
 
     # ==================================================
-    # retry
+    # retry (B1-compatible re-encode)
     # ==================================================
+    # DB status→UPLOADED + SQS enqueue as single atomic operation.
+    # Reject UPLOADED/PROCESSING (already in backlog). Accept READY/FAILED only.
     @transaction.atomic
     @action(detail=True, methods=["post"], url_path="retry")
     def retry(self, request, pk=None):
-        video = self.get_object()
+        video = Video.objects.select_for_update().get(pk=self.get_object().pk)
 
-        # FAILED: 실패 후 재시도. UPLOADED: 수동 재인코딩. PROCESSING: 꼬인 상태(워커 미처리/Redis 없음) 해제 후 재시도
-        if video.status not in (Video.Status.FAILED, Video.Status.UPLOADED, Video.Status.PROCESSING):
-            return Response(
-                {"detail": "Cannot retry"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if video.status in (Video.Status.UPLOADED, Video.Status.PROCESSING):
+            raise ValidationError("Already in backlog (UPLOADED or PROCESSING)")
 
-        # 재시도 전에 기존 진행 중인 워커에게 취소 요청 (Redis 플래그 → 워커가 확인 후 스킵)
-        try:
-            tenant_id = video.session.lecture.tenant_id
-            set_cancel_requested(tenant_id, video.id, ttl_seconds=300)
-        except Exception as e:
-            logger.debug("set_cancel_requested skip (no tenant): %s", e)
+        if video.status not in (Video.Status.READY, Video.Status.FAILED):
+            raise ValidationError("Cannot retry: status must be READY or FAILED")
 
+        # B1: status → UPLOADED (backlog-visible), then enqueue. Enqueue failure = rollback.
         video.status = Video.Status.UPLOADED
-        video.save(update_fields=["status"])
-        _tid = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
+        video.save(update_fields=["status", "updated_at"])
+
+        try:
+            if not VideoSQSQueue().enqueue(video):
+                raise ValidationError(
+                    "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."
+                )
+        except ValidationError:
+            raise
+        except Exception:
+            raise
+
         logger.info(
-            "VIDEO_UPLOAD_TRACE | before enqueue (retry) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE_RETRY",
-            video.id, _tid, video.file_key or "",
+            "VIDEO_UPLOAD_TRACE | retry enqueued | video_id=%s tenant_id=%s",
+            video.id,
+            getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None),
         )
-        # SQS에 작업 추가 (동기 호출 — 실패 시 503)
-        if not VideoSQSQueue().enqueue(video):
-            return Response(
-                {"detail": "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
         return Response(
             {"detail": "Video reprocessing queued (SQS)"},
             status=status.HTTP_202_ACCEPTED,
