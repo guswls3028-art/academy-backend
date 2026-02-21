@@ -141,9 +141,13 @@ def _is_asg_interrupt_from_api() -> bool:
     if not VIDEO_BACKLOG_API_BASE:
         return False
     url = f"{VIDEO_BACKLOG_API_BASE}/api/v1/internal/video/asg-interrupt-status/"
-    headers = {"User-Agent": HTTP_USER_AGENT}
-    if LAMBDA_INTERNAL_API_KEY:
-        headers["X-Internal-Key"] = LAMBDA_INTERNAL_API_KEY
+    internal_key = os.environ.get("LAMBDA_INTERNAL_API_KEY", "")
+    if not internal_key:
+        logger.warning("LAMBDA_INTERNAL_API_KEY not set; asg-interrupt-status request may receive 403.")
+    headers = {
+        "User-Agent": HTTP_USER_AGENT,
+        "X-Internal-Key": internal_key,
+    }
     if VIDEO_BACKLOG_API_HOST:
         headers["Host"] = VIDEO_BACKLOG_API_HOST
     try:
