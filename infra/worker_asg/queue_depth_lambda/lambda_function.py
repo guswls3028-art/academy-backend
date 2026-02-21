@@ -90,7 +90,6 @@ def _fetch_video_backlog_from_api() -> int | None:
 def lambda_handler(event: dict, context: Any) -> dict:
     sqs = boto3.client("sqs", region_name=REGION, config=BOTO_CONFIG)
     cw = boto3.client("cloudwatch", region_name=REGION, config=BOTO_CONFIG)
-    autoscaling = boto3.client("autoscaling", region_name=REGION, config=BOTO_CONFIG)
 
     (ai_lite_v, ai_lite_f) = get_queue_counts(sqs, AI_QUEUE_LITE)
     (ai_basic_v, ai_basic_f) = get_queue_counts(sqs, AI_QUEUE_BASIC)
@@ -100,8 +99,12 @@ def lambda_handler(event: dict, context: Any) -> dict:
     (messaging_visible, messaging_in_flight) = get_queue_counts(sqs, MESSAGING_QUEUE)
     ai_total = ai_visible  # 메트릭은 visible만 (기존과 동일)
 
-    ssm = boto3.client("ssm", region_name=REGION, config=BOTO_CONFIG)
-    video_scale_result = set_video_worker_desired(autoscaling, ssm, video_visible, video_in_flight)
+    # B1: BacklogCount = UPLOADED + PROCESSING (DB SSOT). API 없으면 SQS fallback.
+    video_backlog = _fetch_video_backlog_from_api()
+    if video_backlog is None:
+        video_backlog = video_visible + video_in_flight  # fallback
+        if not VIDEO_BACKLOG_API_URL:
+            logger.info("VIDEO_BACKLOG_API_URL not set; using SQS fallback (visible+inflight)=%d", video_backlog)
 
     now = __import__("datetime").datetime.utcnow()
     metric_data = [
@@ -126,16 +129,43 @@ def lambda_handler(event: dict, context: Any) -> dict:
             "Timestamp": now,
             "Unit": "Count",
         },
+        # B1: Academy/VideoProcessing BacklogCount (TargetTracking용)
+        {
+            "MetricName": "BacklogCount",
+            "Dimensions": [
+                {"Name": "WorkerType", "Value": "Video"},
+                {"Name": "AutoScalingGroupName", "Value": "academy-video-worker-asg"},
+            ],
+            "Value": float(video_backlog),
+            "Timestamp": now,
+            "Unit": "Count",
+        },
     ]
     cw.put_metric_data(Namespace=NAMESPACE, MetricData=metric_data)
+    cw.put_metric_data(
+        Namespace="Academy/VideoProcessing",
+        MetricData=[
+            {
+                "MetricName": "BacklogCount",
+                "Dimensions": [
+                    {"Name": "WorkerType", "Value": "Video"},
+                    {"Name": "AutoScalingGroupName", "Value": "academy-video-worker-asg"},
+                ],
+                "Value": float(video_backlog),
+                "Timestamp": now,
+                "Unit": "Count",
+            }
+        ],
+    )
 
     logger.info(
-        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d messaging visible=%d in_flight=%d",
-        ai_visible, ai_in_flight, video_visible, video_in_flight, messaging_visible, messaging_in_flight,
+        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d backlog=%d messaging visible=%d in_flight=%d",
+        ai_visible, ai_in_flight, video_visible, video_in_flight, video_backlog,
+        messaging_visible, messaging_in_flight,
     )
     return {
         "ai_queue_depth": ai_total,
         "video_queue_depth": video_visible,
+        "video_backlog_count": video_backlog,
         "messaging_queue_depth": messaging_visible,
-        **video_scale_result,
     }
