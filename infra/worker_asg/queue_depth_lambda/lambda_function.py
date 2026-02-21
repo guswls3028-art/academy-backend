@@ -13,6 +13,7 @@ SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시.
 """
 from __future__ import annotations
 
+import json
 import os
 import logging
 import urllib.request
