@@ -17,6 +17,16 @@ class IVideoRepository(ABC):
         """비디오를 PROCESSING 상태로 변경 (멱등성 보장)"""
         pass
 
+    def try_claim_video(
+        self, video_id: int, worker_id: str, lease_seconds: int = 14400
+    ) -> bool:
+        """
+        UPLOADED → PROCESSING 원자 변경 + leased_by, leased_until 설정.
+        이미 PROCESSING/READY면 False. 빠른 ACK + DB lease 패턴용.
+        기본 구현: mark_processing 호출 (호환용).
+        """
+        return self.mark_processing(video_id)
+
     @abstractmethod
     def complete_video(
         self,
