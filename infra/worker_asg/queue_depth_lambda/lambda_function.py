@@ -98,8 +98,8 @@ def _fetch_video_backlog_from_api() -> int | None:
             return int(data.get("backlog", 0))
     except urllib.error.HTTPError as e:
         logger.warning(
-            "VIDEO_BACKLOG_API HTTPError | url=%s | status=%s | reason=%s | body=%s",
-            url, e.code, e.reason, (e.fp.read() if e.fp else b"").decode(errors="replace")[:500],
+            "VIDEO_BACKLOG_API HTTPError | url=%s | status=%s | reason=%s",
+            url, e.code, e.reason,
         )
         return None
     except urllib.error.URLError as e:
