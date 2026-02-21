@@ -70,9 +70,9 @@ def _get_stable_zero_since(ssm_client) -> int:
     try:
         r = ssm_client.get_parameter(Name=SSM_STABLE_ZERO_PARAM, WithDecryption=False)
         return int(r["Parameter"]["Value"] or 0)
-    except ssm_client.exceptions.ParameterNotFound:
-        return 0
     except Exception as e:
+        if "ParameterNotFound" in str(e):
+            return 0
         logger.warning("get_parameter %s failed: %s", SSM_STABLE_ZERO_PARAM, e)
         return 0
 
