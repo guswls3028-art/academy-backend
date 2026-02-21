@@ -66,9 +66,18 @@ $keyEscaped = $InternalKey -replace "'", "'\''"
 $remoteScript = @"
 KEY='$keyEscaped'
 echo '---LOCAL---'
-LOCAL_RESP=`$(docker exec academy-api curl -s -w '\n%{http_code}' -H "X-Internal-Key: `$KEY" "$localUrl" 2>/dev/null || echo -e '\n000')
-LOCAL_CODE=`$(echo "`$LOCAL_RESP" | tail -1)
-LOCAL_BODY=`$(echo "`$LOCAL_RESP" | sed '\$d')
+LOCAL_OUT=`$(docker exec -e LIK="`$KEY" academy-api python -c "
+import os, requests
+try:
+    r = requests.get('$localUrl', headers={'X-Internal-Key': os.environ.get('LIK','')}, timeout=10)
+    print(r.text)
+    print(r.status_code)
+except Exception as e:
+    print(str(e))
+    print('000')
+" 2>/dev/null || echo -e "ERR\n000")
+LOCAL_BODY=`$(echo "`$LOCAL_OUT" | sed '\$d')
+LOCAL_CODE=`$(echo "`$LOCAL_OUT" | tail -1)
 echo "STATUS:`$LOCAL_CODE"
 echo "BODY:`$LOCAL_BODY"
 echo '---PUBLIC---'
