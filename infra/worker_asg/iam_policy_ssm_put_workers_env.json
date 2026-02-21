@@ -8,7 +8,7 @@
         "ssm:PutParameter",
         "ssm:GetParameter"
       ],
-      "Resource": "arn:aws:ssm:{{Region}}:{{AccountId}}:parameter/academy/workers/env"
+      "Resource": ["arn:aws:ssm:{{Region}}:{{AccountId}}:parameter/academy/workers/env", "arn:aws:ssm:{{Region}}:{{AccountId}}:parameter/academy/api/env"]
     }
   ]
 }
