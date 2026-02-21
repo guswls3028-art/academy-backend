@@ -294,7 +294,26 @@ $policyAi = @"
   }
 }
 "@
-# Video: Lambda 단독 컨트롤. TargetTracking 정책 제거 (delete).
+# Video: B1 TargetTracking (BacklogCount, Academy/VideoProcessing)
+$policyVideo = @"
+{
+  "TargetTrackingScalingPolicyConfiguration": {
+    "TargetValue": 3,
+    "CustomizedMetricSpecification": {
+      "MetricName": "BacklogCount",
+      "Namespace": "Academy/VideoProcessing",
+      "Dimensions": [
+        {"Name": "WorkerType", "Value": "Video"},
+        {"Name": "AutoScalingGroupName", "Value": "academy-video-worker-asg"}
+      ],
+      "Statistic": "Average",
+      "Unit": "Count"
+    },
+    "ScaleOutCooldown": 60,
+    "ScaleInCooldown": 300
+  }
+}
+"@
 $policyMessaging = @"
 {
   "TargetTrackingScalingPolicyConfiguration": {
