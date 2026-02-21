@@ -5,6 +5,9 @@ from django.urls import path, include
 from apps.support.video.views.internal_views import (
     VideoProcessingCompleteView,
     VideoBacklogCountView,
+    VideoBacklogScoreView,
+    VideoDlqMarkDeadView,
+    VideoScanStuckView,
 )
 
 urlpatterns = [
@@ -96,6 +99,21 @@ urlpatterns = [
         "internal/video/backlog-count/",
         VideoBacklogCountView.as_view(),
         name="video-backlog-count",
+    ),
+    path(
+        "internal/video/backlog-score/",
+        VideoBacklogScoreView.as_view(),
+        name="video-backlog-score",
+    ),
+    path(
+        "internal/video/dlq-mark-dead/",
+        VideoDlqMarkDeadView.as_view(),
+        name="video-dlq-mark-dead",
+    ),
+    path(
+        "internal/video/scan-stuck/",
+        VideoScanStuckView.as_view(),
+        name="video-scan-stuck",
     ),
 
     # =========================
