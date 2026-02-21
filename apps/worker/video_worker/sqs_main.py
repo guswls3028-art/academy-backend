@@ -321,6 +321,13 @@ def main() -> int:
                         daemon=True,
                     )
                     extender.start()
+                    heartbeat_stop = threading.Event()
+                    heartbeat_thread = threading.Thread(
+                        target=_heartbeat_loop,
+                        args=(tenant_id, video_id, heartbeat_stop),
+                        daemon=True,
+                    )
+                    heartbeat_thread.start()
                     try:
                         logger.info("[SQS_MAIN] Calling handler.handle() video_id=%s", video_id)
                         result = handler.handle(job, cfg)
@@ -339,6 +346,12 @@ def main() -> int:
                         time.sleep(5)
                         continue
                     finally:
+                        heartbeat_stop.set()
+                        heartbeat_thread.join(timeout=2)
+                        try:
+                            delete_video_heartbeat(tenant_id, video_id)
+                        except Exception:
+                            pass
                         stop_extender.set()
                         extender.join(timeout=1)
 
