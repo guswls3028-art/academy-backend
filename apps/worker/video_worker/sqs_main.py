@@ -404,8 +404,9 @@ def main() -> int:
                     consecutive_errors = 0
 
                 else:
-                    # failed (transient) → NACK 180~600
-                    queue.change_message_visibility(receipt_handle, FAILED_TRANSIENT_BACKOFF_SECONDS)
+                    # failed — legacy: NACK. fast_ack: 메시지 이미 삭제됨, DB FAILED 상태. 재시도는 별도 enqueue.
+                    if not VIDEO_FAST_ACK:
+                        queue.change_message_visibility(receipt_handle, FAILED_TRANSIENT_BACKOFF_SECONDS)
                     logger.warning(
                         "processing failed (transient) — nack backoff (%ss) | video_id=%s",
                         FAILED_TRANSIENT_BACKOFF_SECONDS,
