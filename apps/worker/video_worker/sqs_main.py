@@ -251,8 +251,8 @@ def main() -> int:
                     consecutive_errors = 0
                     continue
 
-                # SIGTERM 수신 시 새 메시지는 즉시 visibility=0 반환 후 종료
-                if _shutdown:
+                # SIGTERM/Spot 수신 시 새 메시지는 즉시 visibility=0 반환 후 종료 (delete_message 금지)
+                if _shutdown or spot_termination_event.is_set():
                     receipt_handle = message.get("receipt_handle")
                     if receipt_handle:
                         try:
@@ -446,9 +446,14 @@ def main() -> int:
                         break
 
                 except CancelledError:
-                    job_cancel(job_id)
-                    queue.delete_message(receipt_handle)
-                    logger.info("JOB_CANCELLED | job_id=%s | video_id=%s", job_id, video_id)
+                    if spot_termination_event.is_set():
+                        job_fail_retry(job_id, "DRAIN_INTERRUPT")
+                        queue.change_message_visibility(receipt_handle, 0)
+                        logger.info("SPOT_DRAIN_COMPLETED | job_id=%s | video_id=%s | visibility=0 (no delete)", job_id, video_id)
+                    else:
+                        job_cancel(job_id)
+                        queue.delete_message(receipt_handle)
+                        logger.info("JOB_CANCELLED | job_id=%s | video_id=%s", job_id, video_id)
                     consecutive_errors = 0
 
                 except Exception as e:
