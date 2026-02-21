@@ -164,7 +164,7 @@ if ($firstSubnet) {
     if ($firstSg) {
         $sgOut = aws ec2 describe-security-groups --group-ids $firstSg --region $Region --query "SecurityGroups[0].IpPermissionsEgress[?ToPort==\`"443\`" || ToPort==null]" --output json 2>$null | ConvertFrom-Json
         if ($sgOut) { Write-Line "  SG $firstSg outbound: has rule (443 or all)" }
-        else { Write-Line "  SG $firstSg: no 443 outbound  [WARN]" }
+        else { Write-Line "  SG ${firstSg}: no 443 outbound  [WARN]" }
     }
 } else {
     Write-Line "  No instance -> skip network check"
