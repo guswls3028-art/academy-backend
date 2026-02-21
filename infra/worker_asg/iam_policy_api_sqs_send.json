@@ -2,6 +2,12 @@
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "SQSGetQueueUrl",
+      "Effect": "Allow",
+      "Action": "sqs:GetQueueUrl",
+      "Resource": "*"
+    },
+    {
       "Sid": "SQSSendVideoJobs",
       "Effect": "Allow",
       "Action": "sqs:SendMessage",
