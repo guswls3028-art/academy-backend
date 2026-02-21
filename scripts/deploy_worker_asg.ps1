@@ -111,7 +111,7 @@ Remove-Item $ltAiFile -Force -ErrorAction SilentlyContinue
 
 # ------------------------------------------------------------------------------
 # 3) Launch Template Video (academy-video-worker-lt for MixedInstancesPolicy)
-#     LT default InstanceType t4g.medium (fallback); Overrides add c6g.large (Spot primary)
+#     LT default InstanceType c6g.large; Overrides c6g.large only (Spot/OnDemand 모두 c6g)
 # ------------------------------------------------------------------------------
 Write-Host "[3/8] Launch Template (Video worker, academy-video-worker-lt)..." -ForegroundColor Cyan
 $videoUserDataPath = Join-Path $UserDataDir "video_worker_user_data.sh"
@@ -124,7 +124,7 @@ $LtVideoName = "academy-video-worker-lt"
 $blockDevices = '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":30,"VolumeType":"gp3"}},{"DeviceName":"/dev/sdb","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]'
 $ltVideoKey = if ($KeyNameVideo) { ",`"KeyName`":`"$KeyNameVideo`"" } else { "" }
 $ltVideoJson = @"
-{"ImageId":"$AmiId","InstanceType":"t4g.medium","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"]$ltVideoKey,"UserData":"$videoUserDataB64","BlockDeviceMappings":$blockDevices,"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-video-worker"}]}]}
+{"ImageId":"$AmiId","InstanceType":"c6g.large","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"]$ltVideoKey,"UserData":"$videoUserDataB64","BlockDeviceMappings":$blockDevices,"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-video-worker"}]}]}
 "@
 $ltVideoFile = Join-Path $RepoRoot "lt_video_data.json"
 [System.IO.File]::WriteAllText($ltVideoFile, $ltVideoJson.Trim(), $utf8NoBom)
