@@ -188,7 +188,7 @@ def refresh_video_progress_ttl(tenant_id: int, video_id: int, ttl: int = 21600) 
         redis_client = get_redis_client()
         if not redis_client:
             return False
-        
+
         key = _get_video_progress_key(tenant_id, video_id)
         if redis_client.exists(key):
             redis_client.expire(key, ttl)
@@ -197,3 +197,66 @@ def refresh_video_progress_ttl(tenant_id: int, video_id: int, ttl: int = 21600) 
     except Exception as e:
         logger.debug("Failed to refresh video progress TTL: %s", e)
         return False
+
+
+# ---- Video backlog counter (Lambda BacklogCount metric, no DB) ----
+# Key: tenant:{tenant_id}:video:backlog_count. INCR on enqueue, DECR on claim/dead. Sum for endpoint.
+
+
+def _video_backlog_key(tenant_id: int) -> str:
+    return f"tenant:{tenant_id}:video:backlog_count"
+
+
+VIDEO_BACKLOG_KEY_PATTERN = "tenant:*:video:backlog_count"
+
+
+def redis_incr_video_backlog(tenant_id: int) -> bool:
+    """Job enqueue 시 호출. tenant:{tenant_id}:video:backlog_count INCR."""
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return False
+        redis_client.incr(_video_backlog_key(tenant_id))
+        return True
+    except Exception as e:
+        logger.warning("Redis INCR video backlog failed (tenant_id=%s): %s", tenant_id, e)
+        return False
+
+
+def redis_decr_video_backlog(tenant_id: int) -> bool:
+    """Job claim(RUNNING) 또는 job_mark_dead(DEAD) 시 호출. 0 이하면 DECR 하지 않음."""
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return False
+        key = _video_backlog_key(tenant_id)
+        val = redis_client.get(key)
+        if val is not None and int(val) > 0:
+            redis_client.decr(key)
+        return True
+    except Exception as e:
+        logger.warning("Redis DECR video backlog failed (tenant_id=%s): %s", tenant_id, e)
+        return False
+
+
+def redis_get_video_backlog_total() -> int:
+    """
+    모든 tenant backlog_count 합계. RDS 접근 없음, O(keys) Redis만.
+    Lambda /internal/video/backlog/ 응답용.
+    """
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return 0
+        total = 0
+        for key in redis_client.scan_iter(match=VIDEO_BACKLOG_KEY_PATTERN, count=100):
+            try:
+                val = redis_client.get(key)
+                if val is not None:
+                    total += int(val)
+            except (ValueError, TypeError):
+                continue
+        return max(0, total)
+    except Exception as e:
+        logger.warning("Redis get video backlog total failed: %s", e)
+        return 0
