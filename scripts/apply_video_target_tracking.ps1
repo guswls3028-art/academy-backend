@@ -35,7 +35,7 @@ $configJson = $config | ConvertTo-Json -Depth 5 -Compress
 $configFile = Join-Path $RepoRoot "video_target_tracking_config.json"
 [System.IO.File]::WriteAllText($configFile, $configJson, [System.Text.UTF8Encoding]::new($false))
 
-$configPath = "file:///$($configFile -replace '\\','/' -replace ' ', '%20')"
+$configPath = "file://$($configFile -replace '\\','/')"
 
 Write-Host "[1/2] Creating BacklogCountTargetTracking policy on $AsgName ..." -ForegroundColor Cyan
 aws autoscaling put-scaling-policy `
