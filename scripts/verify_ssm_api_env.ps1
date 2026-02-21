@@ -36,27 +36,21 @@ $jsonStr = ""
 $exitCode = -1
 $stderrStr = ""
 try {
-    $outFile = [System.IO.Path]::GetTempFileName()
-    $errFile = [System.IO.Path]::GetTempFileName()
-    try {
-        $psi = [System.Diagnostics.ProcessStartInfo]@{
-            FileName               = $awsExe
-            ArgumentList           = @("ssm", "get-parameter", "--name", $SsmName, "--with-decryption", "--region", $Region, "--output", "json")
-            UseShellExecute        = $false
-            RedirectStandardOutput = $true
-            RedirectStandardError  = $true
-            CreateNoWindow         = $true
-        }
-        $p = [System.Diagnostics.Process]::Start($psi)
-        $stdout = $p.StandardOutput.ReadToEnd()
-        $stderr = $p.StandardError.ReadToEnd()
-        $p.WaitForExit(60000)
-        $exitCode = $p.ExitCode
-        $jsonStr = ($stdout | Out-String).Trim()
-        $stderrStr = ($stderr | Out-String).Trim()
-    } finally {
-        Remove-Item $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    $psi = [System.Diagnostics.ProcessStartInfo]@{
+        FileName               = $awsExe
+        ArgumentList           = @("ssm", "get-parameter", "--name", $SsmName, "--with-decryption", "--region", $Region, "--output", "json")
+        UseShellExecute        = $false
+        RedirectStandardOutput = $true
+        RedirectStandardError  = $true
+        CreateNoWindow         = $true
     }
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $stdout = $p.StandardOutput.ReadToEnd()
+    $stderr = $p.StandardError.ReadToEnd()
+    $p.WaitForExit(60000)
+    $exitCode = $p.ExitCode
+    $jsonStr = ($stdout | Out-String).Trim()
+    $stderrStr = ($stderr | Out-String).Trim()
     if ($exitCode -eq 0 -and $jsonStr.StartsWith("{")) {
         $obj = $jsonStr | ConvertFrom-Json
         $raw = $obj.Parameter.Value
