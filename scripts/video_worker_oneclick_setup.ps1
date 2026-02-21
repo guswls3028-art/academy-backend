@@ -32,8 +32,9 @@ $PolicyName = "video-backlogcount-tt"
 $LtName = "academy-video-worker-lt"
 
 $AwsCli = "aws"
-if ($Profile) { $AwsArgs = @("--region", $Region, "--profile", $Profile) } else { $AwsArgs = @("--region", $Region) }
-function Aws { param([string[]]$Cmd) & $AwsCli $Cmd $AwsArgs @Args }
+$AwsBase = @("--region", $Region)
+if ($Profile) { $AwsBase = @("--profile", $Profile) + $AwsBase }
+function Aws { param([parameter(ValueFromRemainingArguments)]$Rest) $a = @($Rest) + $AwsBase; & $AwsCli @a }
 
 $BackupRoot = Join-Path $RepoRoot "backups\video_worker"
 $Log = @()
