@@ -2,7 +2,10 @@
 # ⚠️ 기존 코드 유지 + support.video 전환 + internal video-worker include
 
 from django.urls import path, include
-from apps.support.video.views.internal_views import VideoProcessingCompleteView
+from apps.support.video.views.internal_views import (
+    VideoProcessingCompleteView,
+    VideoBacklogCountView,
+)
 
 urlpatterns = [
     # =========================
@@ -85,6 +88,15 @@ urlpatterns = [
     # /api/v1/internal/video-worker/*
     # =========================
     path("internal/", include("apps.support.video.urls_internal")),
+
+    # =========================
+    # B1: Video BacklogCount (queue_depth_lambda → CloudWatch)
+    # =========================
+    path(
+        "internal/video/backlog-count/",
+        VideoBacklogCountView.as_view(),
+        name="video-backlog-count",
+    ),
 
     # =========================
     # Internal (Legacy ACK - kept)
