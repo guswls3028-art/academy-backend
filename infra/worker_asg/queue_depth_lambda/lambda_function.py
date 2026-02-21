@@ -36,8 +36,9 @@ AI_WORKER_ASG_MAX = int(os.environ.get("AI_WORKER_ASG_MAX", "20"))
 VIDEO_WORKER_ASG_NAME = os.environ.get("VIDEO_WORKER_ASG_NAME", "academy-video-worker-asg")
 VIDEO_WORKER_ASG_MAX = int(os.environ.get("VIDEO_WORKER_ASG_MAX", "20"))
 VIDEO_WORKER_ASG_MIN = int(os.environ.get("VIDEO_WORKER_ASG_MIN", "1"))
-STABLE_WINDOW_SECONDS = int(os.environ.get("STABLE_WINDOW_SECONDS", "900"))  # 15분. scale-in 허용 전 0,0 유지 필요
-SSM_STABLE_ZERO_PARAM = os.environ.get("SSM_STABLE_ZERO_PARAM", "/academy/video-worker-asg/stable-zero-since")
+MAX_BACKLOG_ADD = int(os.environ.get("MAX_BACKLOG_ADD", "5"))
+STABLE_ZERO_SECONDS = int(os.environ.get("STABLE_ZERO_SECONDS", "1200"))  # 20분. scale-in 허용 전 0,0 유지
+SSM_STABLE_ZERO_PARAM = os.environ.get("SSM_STABLE_ZERO_PARAM", "/academy/workers/video/zero_since_epoch")
 MESSAGING_WORKER_ASG_NAME = os.environ.get("MESSAGING_WORKER_ASG_NAME", "academy-messaging-worker-asg")
 MESSAGING_WORKER_ASG_MAX = int(os.environ.get("MESSAGING_WORKER_ASG_MAX", "20"))
 MESSAGING_WORKER_ASG_MIN = int(os.environ.get("MESSAGING_WORKER_ASG_MIN", "1"))
@@ -47,12 +48,15 @@ BOTO_CONFIG = Config(retries={"max_attempts": 3, "mode": "standard"})
 
 
 def get_queue_counts(sqs_client, queue_name: str) -> tuple[int, int]:
-    """(visible, in_flight) = ApproximateNumberOfMessages, ApproximateNumberOfMessagesNotVisible."""
+    """(visible, inflight) = ApproximateNumberOfMessagesVisible, ApproximateNumberOfMessagesNotVisible."""
     try:
         url = sqs_client.get_queue_url(QueueName=queue_name)["QueueUrl"]
         attrs = sqs_client.get_queue_attributes(
             QueueUrl=url,
-            AttributeNames=["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
+            AttributeNames=[
+                "ApproximateNumberOfMessages",  # visible
+                "ApproximateNumberOfMessagesNotVisible",  # inflight
+            ],
         )
         a = attrs.get("Attributes", {})
         visible = int(a.get("ApproximateNumberOfMessages", 0))
