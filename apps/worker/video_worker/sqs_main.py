@@ -346,23 +346,31 @@ def main() -> int:
                         break
 
                 elif result == "skip:cancel":
-                    # 취소 요청 또는 처리 중 취소 → ACK(delete)
                     logger.info(
                         "cancel requested — ack/delete | request_id=%s | video_id=%s",
                         request_id,
                         video_id,
                     )
-                    queue.delete_message(receipt_handle)
+                    if not VIDEO_FAST_ACK:
+                        queue.delete_message(receipt_handle)
+                    consecutive_errors = 0
+
+                elif result == "skip:claim":
+                    logger.info(
+                        "skip:claim — already acked | request_id=%s | video_id=%s",
+                        request_id,
+                        video_id,
+                    )
                     consecutive_errors = 0
 
                 elif result == "skip:lock":
-                    # 락 실패(경합/잔류락) → NACK 60~120
                     logger.info(
                         "skip:lock — nack | request_id=%s | video_id=%s",
                         request_id,
                         video_id,
                     )
-                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
+                    if not VIDEO_FAST_ACK:
+                        queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
                     consecutive_errors = 0
 
                 elif result == "skip:mark_processing":
