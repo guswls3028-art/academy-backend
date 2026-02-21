@@ -106,6 +106,14 @@ class SQSQueueClient(QueueClient):
         """SQS에 메시지 전송"""
         try:
             queue_url = self._get_queue_url(queue_name)
+            tenant_id = message.get("tenant_id") if isinstance(message, dict) else None
+            logger.info(
+                "SQS_QUEUE_URL_TRACE | send_message | queue_name=%s queue_url=%s region=%s tenant_id=%s",
+                queue_name,
+                queue_url,
+                self.region_name,
+                tenant_id,
+            )
             response = self.sqs.send_message(
                 QueueUrl=queue_url,
                 MessageBody=json.dumps(message),
