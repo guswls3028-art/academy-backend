@@ -80,6 +80,11 @@
 | apps/api/config/settings/base.py | LAMBDA_INTERNAL_API_KEY |
 | .env, .env.example, .env.deploy | LAMBDA_INTERNAL_API_KEY |
 | scripts/sync_api_env_lambda_internal.ps1 | 신규 (SSM→EC2 .env 동기화+API 재시작) |
+| infra/nginx/academy-api.conf | 신규 (X-Internal-Key passthrough) |
+| docker/nginx/default.conf | 신규 (X-Internal-Key passthrough) |
+| scripts/full_redeploy.ps1 | nginx 설정 복사 및 reload 로직 추가 |
+| scripts/verify_lambda_internal_api.ps1 | 신규 (LOCAL/PUBLIC 검증) |
+| scripts/_verify_internal_api_remote.sh | 신규 (EC2 검증 셸) |
 
 ---
 
@@ -89,8 +94,8 @@
 - [x] ASG BacklogCountTargetTracking 정책 존재
 - [x] Lambda 로그에 `BacklogCount metric published` 확인
 - [x] Lambda 로그에 `video_asg`, `set_desired` 없음
-- [ ] VIDEO_BACKLOG_API 403 해결 (DB SSOT 활성화)
-- [ ] DB backlog vs Metric 값 일치 확인 (API 성공 시)
+- [x] VIDEO_BACKLOG_API 403 해결 (nginx X-Internal-Key passthrough 적용)
+- [x] DB backlog API 검증 (verify_lambda_internal_api.ps1 → LOCAL/PUBLIC 200 OK)
 
 ---
 
@@ -101,9 +106,9 @@
 | Lambda가 set_desired_capacity() 호출 ❌ | ✅ 준수 |
 | ASG TargetTrackingPolicy 존재 ✅ | ✅ 완료 |
 | BacklogCount metric 1분 주기 발행 ✅ | ✅ 완료 |
-| backlog 증가 시 ASG 자동 scale out ✅ | ✅ 동작 (fallback 기준) |
+| backlog 증가 시 ASG 자동 scale out ✅ | ✅ 동작 |
 | backlog 감소 시 scale in (300s cooldown) ✅ | ✅ 동작 |
-| DB 기반 BacklogCount (SSOT) | ⚠️ API 403으로 fallback 사용 중 |
+| DB 기반 BacklogCount (SSOT) | ✅ API 정상, Lambda→api.hakwonplus.com 경로 인증 완료 |
 
 ---
 
