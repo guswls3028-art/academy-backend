@@ -101,12 +101,12 @@ def lambda_handler(event: dict, context: Any) -> dict:
     (messaging_visible, messaging_in_flight) = get_queue_counts(sqs, MESSAGING_QUEUE)
     ai_total = ai_visible  # 메트릭은 visible만 (기존과 동일)
 
-    # B1: BacklogScore = SUM(QUEUED=>1, RETRY_WAIT=>2). API 없으면 SQS fallback.
-    video_backlog_score = _fetch_video_backlog_score_from_api()
-    if video_backlog_score is None:
-        video_backlog_score = float(video_visible + video_in_flight)  # fallback
+    # B1: TargetTracking metric = BacklogCount (QUEUED+RETRY_WAIT). 안정화 검증 후 Score/가중치 도입 검토.
+    video_backlog = _fetch_video_backlog_from_api()
+    if video_backlog is None:
+        video_backlog = video_visible + video_in_flight  # fallback
         if not VIDEO_BACKLOG_API_URL:
-            logger.info("VIDEO_BACKLOG_API_URL not set; using SQS fallback (visible+inflight)=%.0f", video_backlog_score)
+            logger.info("VIDEO_BACKLOG_API_URL not set; using SQS fallback (visible+inflight)=%d", video_backlog)
 
     now = __import__("datetime").datetime.utcnow()
     metric_data = [
