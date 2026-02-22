@@ -413,17 +413,18 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
             ok, meta, reason = False, {"duration": 0}, "ffprobe_exception_fallback"
 
-        # ffprobe 실패 시(ffmpeg_module_missing, ffprobe_exception 등) 반드시 enqueue
-        # duration=None fallback, Worker에서 재검증
+        # ffprobe 실패 시(ffmpeg_module_missing, ffprobe_failed, ffprobe_exception 등) 반드시 enqueue
+        # duration=None fallback → Encoding worker에서 재검증
+        # 절대 enqueue를 스킵하지 않음 (video.status PENDING 유지 방지)
         if not ok:
-            duration = _safe_int(meta.get("duration"), None)
+            duration = _safe_int(meta.get("duration"), None) if meta else None
             video.duration = duration
             video.status = Video.Status.UPLOADED
             video.error_reason = ""
             video.save(update_fields=["status", "duration", "error_reason"])
             logger.info(
                 "VIDEO_UPLOAD_TRACE | before enqueue (ffprobe_fail reason=%s duration=%s) | video_id=%s execution=2_BEFORE_ENQUEUE",
-                reason, duration, video.id,
+                reason, duration, video_id,
             )
             if not VideoSQSQueue().create_job_and_enqueue(video):
                 logger.error("VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | reason=%s", video.id, reason)
