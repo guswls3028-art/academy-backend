@@ -629,39 +629,30 @@ def job_get_by_id(job_id) -> Optional["VideoTranscodeJob"]:
     ).filter(pk=job_id).first()
 
 
-def job_claim_for_running(job_id, worker_id: str, lease_seconds: int = 3600) -> bool:
+def job_set_running(job_id: str) -> bool:
     """
-    Job을 RUNNING으로 원자 전환. QUEUED 또는 RETRY_WAIT만 claim 가능.
-    성공 시 Redis backlog DECR (Lambda BacklogCount용).
+    Job QUEUED/RETRY_WAIT → RUNNING. Batch 전용 (no lease, no heartbeat, no backlog).
     """
-    from django.db import transaction
     from django.utils import timezone
-    from datetime import timedelta
     from apps.support.video.models import VideoTranscodeJob
 
     now = timezone.now()
-    locked_until = now + timedelta(seconds=lease_seconds)
-    tenant_id = None
-    with transaction.atomic():
-        job = VideoTranscodeJob.objects.select_for_update().filter(
-            pk=job_id,
-            state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT],
-        ).first()
-        if not job:
-            return False
-        tenant_id = job.tenant_id
-        job.state = VideoTranscodeJob.State.RUNNING
-        job.locked_by = str(worker_id)[:64]
-        job.locked_until = locked_until
-        job.last_heartbeat_at = now
-        job.save(update_fields=["state", "locked_by", "locked_until", "last_heartbeat_at", "updated_at"])
-    if tenant_id is not None:
-        try:
-            from apps.support.video.redis_status_cache import redis_decr_video_backlog
-            redis_decr_video_backlog(tenant_id)
-        except Exception:
-            pass
-    return True
+    n = VideoTranscodeJob.objects.filter(
+        pk=job_id,
+        state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT],
+    ).update(
+        state=VideoTranscodeJob.State.RUNNING,
+        locked_by="batch",
+        locked_until=now,
+        last_heartbeat_at=now,
+        updated_at=now,
+    )
+    return n == 1
+
+
+def job_claim_for_running(job_id, worker_id: str, lease_seconds: int = 3600) -> bool:
+    """DEPRECATED: SQS 경로용. Batch는 job_set_running 사용."""
+    return job_set_running(job_id)
 
 
 def job_heartbeat(job_id, lease_seconds: int = 3600) -> bool:
