@@ -301,7 +301,7 @@ $backupDir = Backup-State
 Show-DiffList
 
 if ($DryRun) {
-    Log-Step "DryRun 종료 (적용 없음)"
+    Log-Step "DryRun done (no apply)"
     $Log | Out-File (Join-Path $RepoRoot "video_worker_setup_log.txt") -Encoding UTF8
     exit 0
 }
@@ -311,5 +311,5 @@ Set-DlqRedrive | Out-Null
 Set-CostGuards | Out-Null
 Invoke-PostValidate | Out-Null
 
-Log-Step "원큐 셋업 완료. 검증: .\scripts\video_worker_oneclick_validate.ps1"
+Log-Step "Setup done. Validate: .\scripts\video_worker_oneclick_validate.ps1"
 $Log | Out-File (Join-Path $RepoRoot "video_worker_setup_log.txt") -Encoding UTF8
