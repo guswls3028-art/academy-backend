@@ -23,6 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+# /tmp transcode dirs (ECS_AL2023 default user may not be root)
+RUN mkdir -p /tmp/video-worker /tmp/video-worker-locks && chown -R appuser:appuser /tmp/video-worker /tmp/video-worker-locks
+
 USER appuser
 # Video Worker 전용 Python 의존성 (-r ./common.txt만, api.txt 미사용)
 COPY requirements/common.txt requirements/worker-video.txt ./requirements/
