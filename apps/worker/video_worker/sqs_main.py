@@ -322,43 +322,42 @@ def main() -> None:
 
         request_id = str(uuid.uuid4())[:8]
         worker_id = f"{cfg.WORKER_ID}-{request_id}"
-                message_received_at = time.time()
-                try:
-                    if message_created_at is None:
-                        created_ts = message_received_at
-                    elif isinstance(message_created_at, (int, float)):
-                        created_ts = float(message_created_at)
-                    else:
-                        from datetime import datetime
-                        dt = datetime.fromisoformat(str(message_created_at).replace("Z", "+00:00"))
-                        created_ts = dt.timestamp()
-                    queue_wait_time = message_received_at - created_ts
-                except (ValueError, TypeError, AttributeError):
-                    queue_wait_time = 0.0
+        message_received_at = time.time()
+        try:
+            if message_created_at is None:
+                created_ts = message_received_at
+            elif isinstance(message_created_at, (int, float)):
+                created_ts = float(message_created_at)
+            else:
+                from datetime import datetime
+                dt = datetime.fromisoformat(str(message_created_at).replace("Z", "+00:00"))
+                created_ts = dt.timestamp()
+            queue_wait_time = message_received_at - created_ts
+        except (ValueError, TypeError, AttributeError):
+            queue_wait_time = 0.0
 
-                logger.info(
-                    "SQS_MESSAGE_RECEIVED | job_id=%s | video_id=%s | tenant_id=%s | queue_wait_sec=%.2f",
-                    job_id, video_id, tenant_id, queue_wait_time,
-                )
+        logger.info(
+            "SQS_MESSAGE_RECEIVED | job_id=%s | video_id=%s | tenant_id=%s | queue_wait_sec=%.2f",
+            job_id, video_id, tenant_id, queue_wait_time,
+        )
 
-                if not job_claim_for_running(job_id, worker_id, lease_seconds=3600):
-                    logger.info("JOB_CLAIM_FAILED | job_id=%s | video_id=%s | NACK", job_id, video_id)
-                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
-                    return 0
+        if not job_claim_for_running(job_id, worker_id, lease_seconds=3600):
+            logger.info("JOB_CLAIM_FAILED | job_id=%s | video_id=%s | NACK", job_id, video_id)
+            queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
+            sys.exit(0)
 
-                # Progress API가 PROCESSING 반환하도록 Redis에 캐시
-                try:
-                    from apps.support.video.redis_status_cache import cache_video_status
-                    cache_video_status(tenant_id, video_id, "PROCESSING", ttl=21600)
-                except Exception as ex:
-                    logger.debug("cache PROCESSING failed: %s", ex)
+        try:
+            from apps.support.video.redis_status_cache import cache_video_status
+            cache_video_status(tenant_id, video_id, "PROCESSING", ttl=21600)
+        except Exception as ex:
+            logger.debug("cache PROCESSING failed: %s", ex)
 
-                def _cancel_check():
-                    from academy.adapters.db.django.repositories_video import job_is_cancel_requested
-                    return job_is_cancel_requested(job_id)
+        def _cancel_check():
+            from academy.adapters.db.django.repositories_video import job_is_cancel_requested
+            return job_is_cancel_requested(job_id)
 
-                cancel_event = threading.Event()
-                job_dict = {
+        cancel_event = threading.Event()
+        job_dict = {
                     "video_id": int(video_id),
                     "file_key": str(file_key or ""),
                     "tenant_id": int(tenant_id),
