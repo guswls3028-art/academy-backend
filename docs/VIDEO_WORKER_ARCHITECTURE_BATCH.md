@@ -11,7 +11,7 @@ Video 인코딩은 **DB(VideoTranscodeJob) SSOT** 기반 **AWS Batch**로 전환
 2. VideoTranscodeJob 생성 (state=QUEUED)
 3. submit_batch_job(job_id) 호출
 4. AWS Batch Job 제출
-5. Batch 컨테이너: JOB_ID 인자로 실행 → job_claim_for_running → process_video → job_complete
+5. Batch 컨테이너: JOB_ID 인자로 실행 → (SUCCEEDED면 exit) → process_video → job_complete → exit
 6. 컨테이너 종료 (exit 0/1)
 ```
 
