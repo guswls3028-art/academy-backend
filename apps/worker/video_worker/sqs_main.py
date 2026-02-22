@@ -298,13 +298,12 @@ def main() -> int:
                 if not video_id or tenant_id is None:
                     logger.error("Invalid message format (video_id, tenant_id required): %s", message)
                     queue.delete_message(receipt_handle)
-                    continue
+                    return 0
 
-                # job_id 필수 (Job 기반 메시지)
                 if not job_id:
                     logger.warning("MESSAGE_LEGACY_SKIP | job_id missing | video_id=%s | NACK", video_id)
                     queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
-                    continue
+                    return 0
 
                 from academy.adapters.db.django.repositories_video import (
                     job_get_by_id,
@@ -319,16 +318,14 @@ def main() -> int:
                 from src.application.video.handler import CancelledError
                 job_obj = job_get_by_id(job_id)
                 if not job_obj:
-                    # Video/Job deleted (e.g. user deleted video) -> consume message, do not retry
                     queue.delete_message(receipt_handle)
                     logger.info("JOB_NOT_FOUND_DELETE | job_id=%s | video_id=%s | message consumed (video/job deleted)", job_id, video_id)
-                    continue
+                    return 0
 
-                # 이미 완료된 영상이면 idempotent skip
                 if get_video_status(video_id) == "READY":
                     queue.delete_message(receipt_handle)
                     logger.info("VIDEO_ALREADY_READY_SKIP | job_id=%s | video_id=%s", job_id, video_id)
-                    continue
+                    return 0
 
                 request_id = str(uuid.uuid4())[:8]
                 worker_id = f"{cfg.WORKER_ID}-{request_id}"
