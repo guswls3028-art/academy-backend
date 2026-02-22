@@ -358,7 +358,10 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         _tenant_id = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
         logger.info(
             "VIDEO_UPLOAD_TRACE | upload_complete entry | video_id=%s tenant_id=%s source_path=%s status=%s execution=1_ENTRY",
-            video_id, _tenant_id, video.file_key or "", video.status,
+            video.id,
+            _tenant_id,
+            video.file_key or "",
+            video.status,
         )
 
         if video.status != Video.Status.PENDING:
