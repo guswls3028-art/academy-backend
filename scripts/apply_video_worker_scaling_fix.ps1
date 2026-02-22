@@ -81,15 +81,10 @@ function Apply-Fix {
         if ($waited -ge 30) { Write-Host "WARN: Lambda still updating." -ForegroundColor Yellow; break }
     } while ($true)
 
-    Write-Step "2b. ASG TargetTracking → VideoQueueDepthTotal + Cooldown"
-    $videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"' + $AsgName + '"}],"Statistic":"Average","Unit":"Count"}}'
-    $videoTtFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
-    [System.IO.File]::WriteAllText($videoTtFile, $videoTtJson, $utf8NoBom)
-    $videoTtPath = "file://$($videoTtFile -replace '\\','/' -replace ' ', '%20')"
-    aws autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $videoTtPath --region $Region
-    if ($LASTEXITCODE -ne 0) { Remove-Item $videoTtFile -Force -ErrorAction SilentlyContinue; throw "put-scaling-policy failed" }
-    Remove-Item $videoTtFile -Force -ErrorAction SilentlyContinue
-    Write-Host "Policy $PolicyName updated to VideoQueueDepthTotal." -ForegroundColor Green
+    Write-Step "2b. ASG TargetTracking → SSOT (Visible-only, scripts/infra/apply_video_asg_scaling_policy.ps1)"
+    & (Join-Path $ScriptRoot "infra\apply_video_asg_scaling_policy.ps1") -Region $Region -AsgName $AsgName
+    if ($LASTEXITCODE -ne 0) { throw "apply_video_asg_scaling_policy failed" }
+    Write-Host "Policy updated via SSOT (video-visible-only-tt, Expression=m1)." -ForegroundColor Green
 }
 
 function Restore-Backup {
@@ -100,14 +95,9 @@ function Restore-Backup {
         Write-Host "No video_tt_config.json in backup; cannot restore policy. Re-apply fix or set policy manually." -ForegroundColor Yellow
         return
     }
-    Write-Step "Rollback: Restore ASG scaling policy from backup"
-    $ttContent = Get-Content $ttPath -Raw
-    $ttFile = Join-Path $RepoRoot "asg_video_tt_rollback.json"
-    [System.IO.File]::WriteAllText($ttFile, $ttContent, $utf8NoBom)
-    $pathUri = "file://$($ttFile -replace '\\','/' -replace ' ', '%20')"
-    aws autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $pathUri --region $Region
-    Remove-Item $ttFile -Force -ErrorAction SilentlyContinue
-    Write-Host "Policy restored from backup. Lambda still publishes VideoQueueDepthTotal; for full rollback revert infra/worker_asg/queue_depth_lambda/lambda_function.py and run: .\scripts\deploy_queue_depth_lambda.ps1 -Region $Region" -ForegroundColor Yellow
+    Write-Step "Rollback: Restore ASG scaling policy via SSOT (Visible-only). Backup was old policy; SSOT = video-visible-only-tt."
+    & (Join-Path $ScriptRoot "infra\apply_video_asg_scaling_policy.ps1") -Region $Region -AsgName $AsgName
+    Write-Host "Policy set to SSOT (Visible-only). Lambda still publishes VideoQueueDepthTotal; for full rollback revert infra/worker_asg/queue_depth_lambda/lambda_function.py and run: .\scripts\deploy_queue_depth_lambda.ps1 -Region $Region" -ForegroundColor Yellow
 }
 
 function Verify-State {
