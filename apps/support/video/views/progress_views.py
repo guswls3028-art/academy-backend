@@ -101,10 +101,12 @@ class VideoProgressView(APIView):
             except Exception:
                 progress = 0
 
+        encoding_pct = progress if progress is not None else 0
         response_data = {
             "id": video_id,
             "status": video_status,
-            "encoding_progress": progress if progress is not None else 0,
+            "progress": encoding_pct,
+            "encoding_progress": encoding_pct,
             "encoding_remaining_seconds": remaining_seconds,
             "encoding_step_index": step_detail.get("step_index") if step_detail else None,
             "encoding_step_total": step_detail.get("step_total") if step_detail else None,
