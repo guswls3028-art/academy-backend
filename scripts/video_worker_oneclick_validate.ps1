@@ -32,7 +32,8 @@ function Warn { param([string]$K, [string]$V) $results[$K] = @{ ok = $true; warn
 Write-Host "`n========== Video Worker One-Click Validate ==========" -ForegroundColor Cyan
 
 # 1) Scaling metric SQS-based?
-$pol = Invoke-AwsCli autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
+$pol = $null
+try { $pol = Invoke-AwsCli autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json } catch {}
 $metricName = "none"
 $policyRef = $null
 if ($pol -and $pol.ScalingPolicies) {
@@ -55,7 +56,8 @@ if ($metricName -eq "VideoQueueDepthTotal") {
 }
 
 # 2) SQS visible / notVisible
-$qurl = Invoke-AwsCli sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null
+$qurl = $null
+try { $qurl = Invoke-AwsCli sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null } catch {}
 if (-not $qurl) {
     Fail "SQS" "큐 URL 조회 실패 ($QueueName)"
 } else {
