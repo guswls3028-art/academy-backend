@@ -31,9 +31,9 @@ $LambdaName = "academy-worker-queue-depth-metric"
 $PolicyName = "video-backlogcount-tt"
 $LtName = "academy-video-worker-lt"
 
-$AwsBase = @("--region", $Region)
+$AwsBase = @("--region", $Region, "--cli-read-timeout", "15", "--cli-connect-timeout", "10")
 if ($Profile) { $AwsBase = @("--profile", $Profile) + $AwsBase }
-function Invoke-AwsCli { param([parameter(ValueFromRemainingArguments)]$Rest) $a = @($Rest) + $AwsBase; $exe = (Get-Command aws.exe -CommandType Application -ErrorAction SilentlyContinue).Source; if (-not $exe) { $exe = "aws" }; & $exe @a }
+function Invoke-AwsCli { param([parameter(ValueFromRemainingArguments)]$Rest) $a = @($Rest) + $AwsBase; $exe = (Get-Command aws.exe -CommandType Application -ErrorAction SilentlyContinue).Source; if (-not $exe) { $exe = "aws" }; & $exe @a 2>$null }
 
 $BackupRoot = Join-Path $RepoRoot "backups\video_worker"
 $Log = @()

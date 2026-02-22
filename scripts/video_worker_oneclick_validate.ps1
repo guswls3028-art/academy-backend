@@ -20,9 +20,9 @@ $DlqName = "academy-video-jobs-dlq"
 $LambdaName = "academy-worker-queue-depth-metric"
 $PolicyName = "video-backlogcount-tt"
 
-$AwsBase = @("--region", $Region)
+$AwsBase = @("--region", $Region, "--cli-read-timeout", "10", "--cli-connect-timeout", "10")
 if ($Profile) { $AwsBase = @("--profile", $Profile) + $AwsBase }
-function Invoke-AwsCli { param([parameter(ValueFromRemainingArguments)]$Rest) $a = @($Rest) + $AwsBase; $exe = (Get-Command aws.exe -CommandType Application -ErrorAction SilentlyContinue).Source; if (-not $exe) { $exe = "aws" }; & $exe @a }
+function Invoke-AwsCli { param([parameter(ValueFromRemainingArguments)]$Rest) $a = @($Rest) + $AwsBase; $exe = (Get-Command aws.exe -CommandType Application -ErrorAction SilentlyContinue).Source; if (-not $exe) { $exe = "aws" }; & $exe @a 2>$null }
 
 $results = @{}
 function Ok { param([string]$K, [string]$V) $results[$K] = @{ ok = $true; msg = $V }; Write-Host "  [OK] $K : $V" -ForegroundColor Green }
@@ -50,7 +50,7 @@ if ($pol -and $pol.ScalingPolicies) {
 if ($metricName -eq "VideoQueueDepthTotal") {
     Ok "ScalingMetric" "SQS-based (VideoQueueDepthTotal = visible+notVisible)"
 } elseif ($metricName -eq "BacklogCount" -or $metricName -eq "backlog") {
-    Fail "ScalingMetric" "DB/API 기반 메트릭 사용 중: $metricName. SQS 기반으로 교체 필요."
+    Fail "ScalingMetric" "DB/API metric in use: $metricName. Switch to SQS-based."
 } else {
     Fail "ScalingMetric" "Current metric: $metricName. Expected: VideoQueueDepthTotal"
 }
