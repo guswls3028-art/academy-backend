@@ -1,0 +1,16 @@
+{
+  "computeEnvironmentName": "academy-video-batch-ce",
+  "type": "MANAGED",
+  "state": "ENABLED",
+  "serviceRole": "arn:aws:iam::809466760795:role/academy-batch-service-role",
+  "computeResources": {
+    "type": "EC2",
+    "minvCpus": 0,
+    "maxvCpus": 32,
+    "desiredvCpus": 0,
+    "instanceTypes": ["c6g.large"],
+    "subnets": ["subnet-01c026861ea3cdecb","subnet-0e887178ed8cd65fa","subnet-0f576f190bcfbdfff","subnet-013323294fee4889e"],
+    "securityGroupIds": ["sg-061700a84decdc148"],
+    "instanceRole": "arn:aws:iam::809466760795:instance-profile/academy-batch-ecs-instance-profile"
+  }
+}
