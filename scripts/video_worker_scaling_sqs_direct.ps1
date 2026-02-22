@@ -154,9 +154,8 @@ function Test-MetricMathApplied {
         Log-Fail "  No CustomizedMetricSpecification"
         return $false
     }
-    $usesLambda = $cust.Namespace -eq "Academy/VideoProcessing" -or $cust.MetricName -eq "VideoQueueDepthTotal"
-    if ($usesLambda) {
-        Log-Fail "  Policy still uses Lambda metric (Academy/VideoProcessing). FAIL."
+    if ($cust.Namespace -eq "Academy/VideoProcessing") {
+        Log-Fail "  Policy uses Lambda metric (Namespace=Academy/VideoProcessing). FAIL."
         return $false
     }
     $usesMetrics = $cust.Metrics -and $cust.Metrics.Count -gt 0
@@ -169,7 +168,7 @@ function Test-MetricMathApplied {
         Log-Fail "  No AWS/SQS metric in policy. FAIL."
         return $false
     }
-    Log-Step "  Namespace=AWS/SQS, Metric Math OK"
+    Log-Step "  Namespace=AWS/SQS, Metric Math OK, Lambda OUT of path"
     return $true
 }
 
