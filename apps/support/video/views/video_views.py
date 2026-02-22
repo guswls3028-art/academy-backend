@@ -354,14 +354,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
     def _upload_complete_impl(self, video):
         """upload_complete 실제 처리 (예외 시 호출부에서 503 반환)."""
-        video_id = getattr(video, "id", None)
+        # [TRACE] upload_complete entry
         _tenant_id = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
         logger.info(
             "VIDEO_UPLOAD_TRACE | upload_complete entry | video_id=%s tenant_id=%s source_path=%s status=%s execution=1_ENTRY",
-            video.id,
-            _tenant_id,
-            video.file_key or "",
-            video.status,
+            video_id, _tenant_id, video.file_key or "", video.status,
         )
 
         if video.status != Video.Status.PENDING:
