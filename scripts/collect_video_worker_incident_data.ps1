@@ -250,7 +250,7 @@ $report += @"
 "@
 
 $ltRaw = Read-SafeText (Join-Path $OutDir "2_lt_spec.json")
-$report += "`n**LT Spec (ASG 참조):**`n$f" + "json`n$ltRaw`n$f`n"
+$report += "`n**LT Spec (ASG refer):**`n$f" + "json`n$ltRaw`n$f`n"
 if ($ltDataObj -and $ltDataObj -isnot [string]) {
     $report += "**LT Data (UserData/IamInstanceProfile/SecurityGroup/Subnet):** AMI=$($ltDataObj.ImageId) IamProfile=$($ltDataObj.IamInstanceProfile.Name)"
 }
