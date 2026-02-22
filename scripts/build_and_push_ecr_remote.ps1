@@ -92,13 +92,17 @@ $parametersArg = 'commands=' + $commandsParam
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-$cmdResult = & aws ssm send-command `
-    --instance-ids $buildInstanceId `
-    --document-name "AWS-RunShellScript" `
-    --parameters "$parametersArg" `
-    --timeout-seconds 3600 `
-    --region $Region `
-    --output json 2>&1
+# 배열로 넘겨서 parameters 값 안의 " 가 PowerShell에서 잘리지 않도록 함
+$awsArgs = @(
+    "ssm", "send-command",
+    "--instance-ids", $buildInstanceId,
+    "--document-name", "AWS-RunShellScript",
+    "--parameters", $parametersArg,
+    "--timeout-seconds", "3600",
+    "--region", $Region,
+    "--output", "json"
+)
+$cmdResult = & aws @awsArgs 2>&1
 $ErrorActionPreference = $prevErr
 $exitCode = $LASTEXITCODE
 
