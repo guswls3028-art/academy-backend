@@ -195,6 +195,12 @@ git config --global --add safe.directory '*' || true
 cd /home/ec2-user/build
 if [ -d academy ]; then cd academy && git fetch && git reset --hard origin/main && git pull; else git clone '$GitRepoUrl' academy && cd academy; fi
 cd /home/ec2-user/build/academy
+echo "===== BUILD COMMIT SHA ====="
+git rev-parse HEAD
+git log -1 --oneline
+echo "===== PY_COMPILE CHECK ====="
+python -m py_compile apps/support/video/views/video_views.py
+echo "===== BUILD START ====="
 aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $ECR
 docker build $noCacheFlag -f docker/Dockerfile.base -t academy-base:latest .
 docker build $noCacheFlag -f docker/api/Dockerfile -t academy-api:latest .
