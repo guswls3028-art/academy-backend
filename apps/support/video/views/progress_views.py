@@ -42,7 +42,7 @@ class VideoProgressView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
-        """GET /media/videos/{id}/progress/"""
+        """GET /media/videos/{id}/progress/. Never raises; missing Redis (Batch mode) returns default PENDING/progress 0."""
         try:
             video_id = int(pk)
         except (TypeError, ValueError):
@@ -63,7 +63,7 @@ class VideoProgressView(APIView):
         except Exception:
             return _default_progress_response(video_id)
 
-        if not cached_status:
+        if cached_status is None:
             from apps.support.video.models import Video
             try:
                 video = Video.objects.filter(
