@@ -81,7 +81,7 @@ function Get-Ec2PublicIps {
 }
 
 function Start-StoppedAcademyInstances {
-    $nameFilter = "academy-api,academy-ai-worker-cpu,academy-messaging-worker,academy-video-worker"
+    $nameFilter = "academy-api,academy-ai-worker-cpu,academy-messaging-worker"
     $raw = aws ec2 describe-instances --region $Region `
         --filters "Name=tag:Name,Values=$nameFilter" "Name=instance-state-name,Values=stopped" `
         --query "Reservations[].Instances[].InstanceId" --output text 2>&1
