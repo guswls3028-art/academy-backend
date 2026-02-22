@@ -161,92 +161,9 @@ if ($LASTEXITCODE -ne 0) {
 $ErrorActionPreference = $ea
 
 # ------------------------------------------------------------------------------
-# 5) ASG Video (MixedInstancesPolicy only; LaunchTemplate 필드 사용 금지)
-#     c6g.large only (Spot primary, no t4g fallback). Drain-safe: ENTERPRISE DRAIN.
-#     기존 ASG가 LaunchTemplate 기반이면 Update로 전환 불가 → 삭제 후 재생성.
-#     Skip if -ExcludeVideo (Video = Batch only)
+# 4) ASG Messaging (Min=1 always on, Max=$MaxCapacity)
 # ------------------------------------------------------------------------------
-if (-not $ExcludeVideo) {
-Write-Host "[5/8] ASG (Video worker, MixedInstancesPolicy Spot, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
-$AsgVideoName = "academy-video-worker-asg"
-$mixedPolicyVideo = @"
-{"LaunchTemplate":{"LaunchTemplateSpecification":{"LaunchTemplateName":"$LtVideoName","Version":"`$Latest"},"Overrides":[{"InstanceType":"c6g.large"},{"InstanceType":"t4g.medium"}]},"InstancesDistribution":{"OnDemandBaseCapacity":0,"OnDemandPercentageAboveBaseCapacity":0,"SpotAllocationStrategy":"capacity-optimized"}}
-"@
-$mixedPolicyVideoFile = Join-Path $RepoRoot "asg_video_mixed_policy.json"
-[System.IO.File]::WriteAllText($mixedPolicyVideoFile, $mixedPolicyVideo.Trim(), $utf8NoBom)
-$mixedPolicyVideoPath = "file://$($mixedPolicyVideoFile -replace '\\','/' -replace ' ', '%20')"
-
-# delete 후 create 전에 삭제 완료될 때까지 polling (Eventually Consistent, 최대 90초+ 소요 가능)
-function Wait-VideoAsgDeleted {
-    param([string]$AsgName, [string]$Reg, [int]$MaxWaitSec = 120, [int]$IntervalSec = 5)
-    $elapsed = 0
-    while ($elapsed -lt $MaxWaitSec) {
-        $count = aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --region $Reg --query "length(AutoScalingGroups)" --output text 2>$null
-        if ($count -eq "0" -or $count -eq "" -or $count -eq "None") {
-            Write-Host "      ASG deleted (confirmed after ${elapsed}s)." -ForegroundColor Gray
-            return $true
-        }
-        Start-Sleep -Seconds $IntervalSec
-        $elapsed += $IntervalSec
-        Write-Host "      Waiting for ASG deletion... ${elapsed}s" -ForegroundColor Gray
-    }
-    Write-Host "      WARNING: ASG still present after ${MaxWaitSec}s." -ForegroundColor Yellow
-    return $false
-}
-
-$videoAsgJson = aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgVideoName --region $Region --query "AutoScalingGroups[0]" --output json 2>$null
-$needRecreate = $false
-if ($videoAsgJson) {
-    $asgObj = $videoAsgJson | ConvertFrom-Json
-    if (-not $asgObj.MixedInstancesPolicy -or $null -eq $asgObj.MixedInstancesPolicy) {
-        $needRecreate = $true
-        Write-Host "      Video ASG is LaunchTemplate-based (MixedInstancesPolicy null). Deleting for recreate..." -ForegroundColor Yellow
-    }
-}
-
-$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-if ($needRecreate) {
-    aws autoscaling delete-auto-scaling-group --auto-scaling-group-name $AsgVideoName --force-delete --region $Region 2>$null
-    Wait-VideoAsgDeleted -AsgName $AsgVideoName -Reg $Region -MaxWaitSec 120 -IntervalSec 5 | Out-Null
-}
-
-$createDone = $false
-aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
-    --mixed-instances-policy $mixedPolicyVideoPath `
-    --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
-    --vpc-zone-identifier $SubnetIds --region $Region 2>$null
-if ($LASTEXITCODE -eq 0) {
-    $createDone = $true
-} else {
-    if (-not $needRecreate) {
-        Write-Host "      ASG exists; update does not switch LaunchTemplate→MixedInstancesPolicy. Forcing delete and recreate..." -ForegroundColor Yellow
-        aws autoscaling delete-auto-scaling-group --auto-scaling-group-name $AsgVideoName --force-delete --region $Region 2>$null
-        Wait-VideoAsgDeleted -AsgName $AsgVideoName -Reg $Region -MaxWaitSec 120 -IntervalSec 5 | Out-Null
-        aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgVideoName `
-            --mixed-instances-policy $mixedPolicyVideoPath `
-            --min-size 1 --max-size $MaxCapacity --desired-capacity 1 `
-            --vpc-zone-identifier $SubnetIds --region $Region 2>$null
-        if ($LASTEXITCODE -eq 0) { $createDone = $true }
-    }
-}
-if ($createDone -and -not $needRecreate) {
-    $currentMix = aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgVideoName --region $Region --query "AutoScalingGroups[0].MixedInstancesPolicy" --output json 2>$null
-    if ($currentMix -and $currentMix -ne "null") {
-        Write-Host "      Triggering instance refresh..." -ForegroundColor Gray
-        aws autoscaling start-instance-refresh --auto-scaling-group-name $AsgVideoName --region $Region 2>$null
-    }
-}
-$ErrorActionPreference = $ea
-Remove-Item $mixedPolicyVideoFile -Force -ErrorAction SilentlyContinue
-# 검증: aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names academy-video-worker-asg --region ap-northeast-2 --query "AutoScalingGroups[0].MixedInstancesPolicy"
-} else {
-    Write-Host "[5/8] ASG Video SKIP (ExcludeVideo, Video = Batch only)" -ForegroundColor Gray
-}
-
-# ------------------------------------------------------------------------------
-# 5.5) ASG Messaging (Min=1 always on, Max=$MaxCapacity)
-# ------------------------------------------------------------------------------
-Write-Host "[6/8] ASG (Messaging worker, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
+Write-Host "[4/8] ASG (Messaging worker, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
 $AsgMessagingName = "academy-messaging-worker-asg"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgMessagingName `
