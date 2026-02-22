@@ -290,6 +290,9 @@ if ($createDone -and -not $needRecreate) {
 $ErrorActionPreference = $ea
 Remove-Item $mixedPolicyVideoFile -Force -ErrorAction SilentlyContinue
 # 검증: aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names academy-video-worker-asg --region ap-northeast-2 --query "AutoScalingGroups[0].MixedInstancesPolicy"
+} else {
+    Write-Host "[5/8] ASG Video SKIP (ExcludeVideo, Video = Batch only)" -ForegroundColor Gray
+}
 
 # ------------------------------------------------------------------------------
 # 5.5) ASG Messaging (Min=1 always on, Max=$MaxCapacity)
