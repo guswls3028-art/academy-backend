@@ -534,7 +534,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.status = Video.Status.UPLOADED
             video.save(update_fields=["status", "updated_at"])
 
-            job = VideoSQSQueue().create_job_and_submit_batch(video)
+            job = create_job_and_submit_batch(video)
             if not job:
                 raise ValidationError(
                     "비디오 작업 등록 실패. API 서버 AWS Batch 설정을 확인하세요."

@@ -42,7 +42,6 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         dry_run = options.get("dry_run", False)
         repo = DjangoVideoRepository()
-        queue = VideoSQSQueue()
 
         now = timezone.now()
         # PROCESSING 상태인 비디오
@@ -90,7 +89,7 @@ class Command(BaseCommand):
                 self.stderr.write(f"WARNING: video {video.id} status={video.status} after reclaim")
                 continue
 
-            if queue.create_job_and_submit_batch(video):
+            if create_job_and_submit_batch(video):
                 enqueued += 1
                 self.stdout.write(self.style.SUCCESS(f"RE_ENQUEUED | video_id={video.id}"))
 
