@@ -48,8 +48,8 @@ if (-not (Test-Path $uploadScript)) {
     if ($LASTEXITCODE -eq 0) { Write-Host "      OK." -ForegroundColor Green } else { Write-Host "      FAILED (or .env missing)." -ForegroundColor Red }
 }
 
-# 3) Attach SSM+ECR policy to EC2 role
-Write-Host "[3/3] Attaching SSM+ECR policy to EC2 role (instance profile: $IamInstanceProfileName)..." -ForegroundColor Cyan
+# 3) Attach SSM+ECR policy + AmazonSSMManagedInstanceCore to EC2 role
+Write-Host "[3/4] Attaching SSM+ECR policy to EC2 role (instance profile: $IamInstanceProfileName)..." -ForegroundColor Cyan
 $roleName = (aws iam get-instance-profile --instance-profile-name $IamInstanceProfileName --query "InstanceProfile.Roles[0].RoleName" --output text 2>$null)
 if (-not $roleName) {
     Write-Host "      Instance profile not found; skip." -ForegroundColor Yellow
@@ -59,6 +59,9 @@ if (-not $roleName) {
     $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     aws iam put-role-policy --role-name $roleName --policy-name academy-workers-ssm-ecr --policy-document $ec2PolicyUri 2>$null
     if ($LASTEXITCODE -eq 0) { Write-Host "      OK (role: $roleName)." -ForegroundColor Green } else { Write-Host "      FAILED." -ForegroundColor Red }
+    # SSM Run Command용 (investigate_video_worker_runtime.ps1)
+    aws iam attach-role-policy --role-name $roleName --policy-arn "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" 2>$null
+    if ($LASTEXITCODE -eq 0) { Write-Host "      AmazonSSMManagedInstanceCore attached." -ForegroundColor Green } else { Write-Host "      (AmazonSSMManagedInstanceCore may already be attached)" -ForegroundColor Gray }
     $ErrorActionPreference = $ea
 }
 
