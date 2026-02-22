@@ -61,6 +61,7 @@ if [ -n "$VIDEO_WORKER_ONLY" ]; then
   aws ecr create-repository --repository-name academy-video-worker --region "$REGION" 2>/dev/null || true
   echo "ECR push academy-video-worker..."
   docker push "${ECR}/academy-video-worker:latest"
+  _prune_images
   echo "Done (VideoWorker only). 로컬에서: .\\scripts\\full_redeploy.ps1 -WorkersViaASG -SkipBuild -DeployTarget video"
   exit 0
 fi
