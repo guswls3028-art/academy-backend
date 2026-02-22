@@ -161,9 +161,9 @@ if ($LASTEXITCODE -ne 0) {
 $ErrorActionPreference = $ea
 
 # ------------------------------------------------------------------------------
-# 4) ASG Messaging (Min=1 always on, Max=$MaxCapacity)
+# 5) ASG Messaging (Min=1 always on, Max=$MaxCapacity)
 # ------------------------------------------------------------------------------
-Write-Host "[4/8] ASG (Messaging worker, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
+Write-Host "[5/8] ASG (Messaging worker, Min=1 Max=$MaxCapacity)..." -ForegroundColor Cyan
 $AsgMessagingName = "academy-messaging-worker-asg"
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 aws autoscaling create-auto-scaling-group --auto-scaling-group-name $AsgMessagingName `
@@ -179,7 +179,7 @@ if ($LASTEXITCODE -ne 0) {
 $ErrorActionPreference = $ea
 
 # ------------------------------------------------------------------------------
-# 6) Application Auto Scaling - Register targets (AI, Messaging only; Video uses EC2 autoscaling put-scaling-policy)
+# 6) Application Auto Scaling - Register targets (AI, Messaging only)
 # ------------------------------------------------------------------------------
 Write-Host "[7/8] Application Auto Scaling (register targets, AI + Messaging)..." -ForegroundColor Cyan
 $ResourceIdAi = "auto-scaling-group/$AsgAiName"
