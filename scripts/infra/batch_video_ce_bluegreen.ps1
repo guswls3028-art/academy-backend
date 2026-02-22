@@ -167,6 +167,7 @@ Write-Host "  삭제 요청 완료" -ForegroundColor Gray
 
 Write-Host ""
 Write-Host "DONE. Blue-Green 완료." -ForegroundColor Green
-Write-Host "  새 CE: $NewCeName (BEST_FIT_PROGRESSIVE, c6g.large/xlarge/2xlarge)" -ForegroundColor Gray
-Write-Host "  다음: .\scripts\infra\batch_video_verify_and_register.ps1 -Region $Region -EcrRepoUri $EcrRepoUri" -ForegroundColor Cyan
+Write-Host "  새 CE: $NewCeName (BEST_FIT_PROGRESSIVE, c6g.large, c6g.xlarge, c6g.2xlarge)" -ForegroundColor Gray
+$nextCmd = ".\scripts\infra\batch_video_verify_and_register.ps1 -Region $Region -EcrRepoUri $EcrRepoUri"
+Write-Host "  다음: $nextCmd" -ForegroundColor Cyan
 exit 0
