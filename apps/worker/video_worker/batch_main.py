@@ -59,10 +59,9 @@ def main() -> int:
 
     video = job_obj.video
     if video and video.status == "READY" and video.hls_path:
-        ok, _ = job_complete(job_id, hls_path=video.hls_path, duration=video.duration)
-        if ok:
-            _log_json("IDEMPOTENT_READY", job_id=job_id, video_id=job_obj.video_id, reason="video_already_ready")
-            return 0
+        job_complete(job_id, video.hls_path, video.duration)
+        _log_json("IDEMPOTENT_READY", job_id=job_id, video_id=job_obj.video_id, reason="video_already_ready")
+        return 0
 
     cfg = load_config()
     progress = RedisProgressAdapter(ttl_seconds=VIDEO_PROGRESS_TTL_SECONDS)
