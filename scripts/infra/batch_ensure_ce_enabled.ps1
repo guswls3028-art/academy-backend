@@ -38,7 +38,6 @@ if (-not $jq.jobQueues -or $jq.jobQueues.Count -eq 0) {
     exit 1
 }
 $order = $jq.jobQueues[0].computeEnvironmentOrder
-$ceArn = "arn:aws:batch:${Region}:$(aws sts get-caller-identity --query Account --output text):compute-environment/$ComputeEnv"
 $hasV2 = $order | Where-Object { $_.computeEnvironment -like "*$ComputeEnv*" }
 if ($hasV2) {
     Write-Host "  OK: Job queue references $ComputeEnv" -ForegroundColor Green
