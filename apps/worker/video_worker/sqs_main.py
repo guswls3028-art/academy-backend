@@ -241,21 +241,18 @@ def main() -> int:
                     logger.info("No message — exiting (scale-in target)")
                     return 0
 
-                # SIGTERM/Spot 수신 시 새 메시지는 즉시 visibility=0 반환 후 종료 (delete_message 금지)
-                if _shutdown or spot_termination_event.is_set():
-                    receipt_handle = message.get("receipt_handle")
-                    if receipt_handle:
-                        try:
-                            queue.change_message_visibility(receipt_handle, 0)
-                        except Exception:
-                            pass
-                        logger.info("shutdown: returning message visibility=0")
-                    break
-
                 receipt_handle = message.get("receipt_handle")
                 if not receipt_handle:
                     logger.error("Message missing receipt_handle: %s", message)
-                    continue
+                    return 0
+
+                if _shutdown or spot_termination_event.is_set():
+                    try:
+                        queue.change_message_visibility(receipt_handle, 0)
+                    except Exception:
+                        pass
+                    logger.info("shutdown: returning message visibility=0")
+                    return 0
 
                 # ----- R2 삭제 작업 (비동기 삭제) -----
                 if message.get("action") == "delete_r2":
@@ -269,7 +266,7 @@ def main() -> int:
                     if not idempotency.acquire_lock(f"delete_r2:{video_id}"):
                         logger.info("R2 delete skip (lock) video_id=%s", video_id)
                         queue.delete_message(receipt_handle)
-                        continue
+                        return 0
                     try:
                         from apps.infrastructure.storage.r2 import delete_object_r2_video, delete_prefix_r2_video
                         if file_key:
@@ -288,7 +285,7 @@ def main() -> int:
                     finally:
                         idempotency.release_lock(f"delete_r2:{video_id}")
                     queue.delete_message(receipt_handle)
-                    continue
+                    return 0
 
                 # ----- 인코딩 작업 (Job 기반) -----
                 job_id = message.get("job_id")
