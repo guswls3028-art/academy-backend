@@ -36,6 +36,11 @@
 1. **batch_video_setup_full.ps1** — 인프라 없을 때 한 번에 설정
 2. **batch_video_verify_and_register.ps1** — retryStrategy.attempts==1 검증/등록
 
+## full_redeploy / redeploy_worker_asg
+
+- **full_redeploy.ps1**: -VideoViaBatch (기본 true) — video worker EC2/ASG 배포 스킵. academy-video-worker 이미지는 ECR 푸시만 (Batch용).
+- **redeploy_worker_asg.ps1**: -ExcludeVideo (기본 true) — academy-video-worker-asg 생성/업데이트 스킵.
+
 ## Job Definition 계약
 
 ```json
