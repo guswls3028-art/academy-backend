@@ -78,10 +78,10 @@ function Test-Prechecks {
     if ($alarms -and $alarms.MetricAlarms) {
         $videoAlarms = $alarms.MetricAlarms | Where-Object { $_.Namespace -eq "Academy/VideoProcessing" -or $_.MetricName -like "*Backlog*" -or $_.MetricName -like "*VideoQueue*" }
     }
-    Log-Step "  CloudWatch Alarms (video 관련): $($videoAlarms.Count)개"
+    Log-Step "  CloudWatch Alarms (video): $($videoAlarms.Count)"
 
     if ($missing.Count -gt 0) {
-        Log-Fail "없는 리소스: $($missing -join ', '). 생성 후 다시 실행."
+        Log-Fail "Missing resources: $($missing -join ', '). Create them and retry."
         return $false
     }
     return $true
@@ -94,7 +94,7 @@ function Backup-State {
     $ts = Get-Date -Format "yyyyMMdd_HHmmss"
     $dir = Join-Path $BackupRoot $ts
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    Log-Step "1) 백업 → $dir"
+    Log-Step "1) Backup -> $dir"
 
     $asgJson = Aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --output json 2>$null
     if ($asgJson) { [System.IO.File]::WriteAllText((Join-Path $dir "asg.json"), $asgJson, $utf8NoBom) }
@@ -125,7 +125,7 @@ function Backup-State {
         if ($sqsJson) { [System.IO.File]::WriteAllText((Join-Path $dir "sqs_attributes.json"), $sqsJson, $utf8NoBom) }
     }
 
-    Log-Step "  백업 완료: $dir"
+    Log-Step "  Backup done: $dir"
     return $dir
 }
 
@@ -133,7 +133,7 @@ function Backup-State {
 # Diff 리스트 출력 (적용 전 변경 예정 항목)
 # ------------------------------------------------------------------------------
 function Show-DiffList {
-    Log-Step "Diff 리스트 (변경 예정)"
+    Log-Step "Diff list (changes to apply)"
     $pol = Aws autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
     $curMetric = "unknown"
     if ($pol -and $pol.ScalingPolicies) {
