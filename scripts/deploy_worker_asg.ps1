@@ -363,26 +363,11 @@ aws application-autoscaling put-scaling-policy --service-namespace ec2 --resourc
 $ErrorActionPreference = $ea
 Remove-Item $policyAiFile, $policyMessagingFile -Force -ErrorAction SilentlyContinue
 
-# Video ASG: TargetTrackingScaling via EC2 autoscaling. 메트릭 = SQS total only (VideoQueueDepthTotal).
-$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"}}'
-$videoTtFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
-[System.IO.File]::WriteAllText($videoTtFile, $videoTtJson, $utf8NoBom)
-$videoTtPath = "file://$($videoTtFile -replace '\\','/' -replace ' ', '%20')"
-Write-Host "      Video ASG: applying video-backlogcount-tt (aws autoscaling put-scaling-policy)..." -ForegroundColor Gray
-aws autoscaling put-scaling-policy --auto-scaling-group-name $AsgVideoName --policy-name "video-backlogcount-tt" --policy-type TargetTrackingScaling --target-tracking-configuration $videoTtPath --region $Region
-if ($LASTEXITCODE -ne 0) {
-    Remove-Item $videoTtFile -Force -ErrorAction SilentlyContinue
-    throw "Video ASG put-scaling-policy failed (video-backlogcount-tt)."
-}
-Remove-Item $videoTtFile -Force -ErrorAction SilentlyContinue
-$videoPolicyCheck = aws autoscaling describe-policies --auto-scaling-group-name $AsgVideoName --region $Region --query "ScalingPolicies[?PolicyName=='video-backlogcount-tt']" --output json 2>$null
-$videoPolicyArr = $videoPolicyCheck | ConvertFrom-Json
-if (-not $videoPolicyArr -or $videoPolicyArr.Count -eq 0) {
-    throw "Video ASG policy verification failed: ScalingPolicies[?PolicyName=='video-backlogcount-tt'] is empty after put-scaling-policy."
-}
-Write-Host "      Verified: video-backlogcount-tt on $AsgVideoName." -ForegroundColor Gray
+# Video ASG: Scaling Policy는 SSOT 스크립트로만 적용. redeploy/deploy에서는 절대 수정 금지.
+# 필요 시: .\scripts\infra\apply_video_asg_scaling_policy.ps1
+Write-Host "      Video ASG: scaling policy NOT modified (use scripts/infra/apply_video_asg_scaling_policy.ps1 if needed)" -ForegroundColor Gray
 
-Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging=TargetTracking (Application Auto Scaling); Video=video-backlogcount-tt (EC2 autoscaling)" -ForegroundColor Green
+Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging=TargetTracking (Application Auto Scaling); Video=SSOT only (scripts/infra/apply_video_asg_scaling_policy.ps1)" -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
 # Cleanup: remove legacy Launch Templates (ASG-named; we now use -lt names)
