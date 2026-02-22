@@ -43,9 +43,7 @@ Video = Batch 전용으로 전환하면서 아래 스크립트는 **삭제**됨.
 
 ## 3. 체크리스트 (배포 전 확인)
 
-- [ ] `full_redeploy.ps1` 실행 시 `-VideoViaBatch` 생략 또는 `$true` 로 사용.
 - [ ] API 배포 후 `check_api_batch_runtime.ps1` 자동 실행되어 PASS 확인.
-- [ ] Video 인코딩용으로 `redeploy_video_worker.ps1`, `apply_video_asg_scaling_policy.ps1` 등 DEPRECATED 스크립트 실행하지 않음.
-- [ ] 신규 인프라 적용 시 `deploy_worker_asg.ps1` / `redeploy_worker_asg.ps1` 사용 시 `-ExcludeVideo` 유지 (기본값 사용 권장).
+- [ ] 신규 인프라 적용 시 `deploy_worker_asg.ps1` / `redeploy_worker_asg.ps1` 사용 (Video ASG 없음, AI/Messaging만).
 
 이 문서는 배포 스크립트 점검 및 Video ASG 잔해 정리 결과를 정리한 것입니다.
