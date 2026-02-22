@@ -36,15 +36,11 @@ foreach ($instanceId in $instances) {
   )
   $commandsJson = $commands | ConvertTo-Json -Compress
   $paramsJson = "{`"commands`":$commandsJson}"
-
-  $sendOut = aws ssm send-command `
-    --document-name "AWS-RunShellScript" `
-    --instance-ids $instanceId `
-    --parameters $paramsJson `
-    --timeout-seconds $TimeoutSec `
-    --region $Region `
-    --output json 2>&1
-  if ($LASTEXITCODE -ne 0) {
+  $ea = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  $sendOut = aws ssm send-command --document-name "AWS-RunShellScript" --instance-ids $instanceId --parameters $paramsJson --timeout-seconds $TimeoutSec --region $Region --output json 2>$null
+  $ErrorActionPreference = $ea
+  if ($LASTEXITCODE -ne 0 -or -not $sendOut) {
     Write-Host "ContainerRunning: NO (SSM send failed)" -ForegroundColor Red
     Write-Host "WorkerLog: $sendOut" -ForegroundColor Gray
     Write-Host "ffmpegProcessCount: N/A`n" -ForegroundColor Gray
@@ -64,7 +60,10 @@ foreach ($instanceId in $instances) {
   $inv = $null
   for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Seconds 3
-    $invRaw = aws ssm get-command-invocation --command-id $cmdId --instance-id $instanceId --region $Region --output json 2>&1
+    $ErrorActionPreference = "Continue"
+    $invRaw = aws ssm get-command-invocation --command-id $cmdId --instance-id $instanceId --region $Region --output json 2>$null
+    $ErrorActionPreference = $ea
+    if (-not $invRaw) { continue }
     $inv = $invRaw | ConvertFrom-Json
     $status = $inv.Status
     if ($status -eq "Success" -or $status -eq "Failed" -or $status -eq "Cancelled") { break }
