@@ -468,8 +468,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             "VIDEO_UPLOAD_TRACE | before enqueue (normal branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
             video.id, _tid, video.file_key or "",
         )
-        # Job 생성 + SQS enqueue (job_id 포함)
-        if not VideoSQSQueue().create_job_and_enqueue(video):
+        # Job 생성 + Batch 제출
+        if not VideoSQSQueue().create_job_and_submit_batch(video):
             logger.error(
                 "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_enqueue returned None (normal branch)",
                 video.id,
@@ -545,7 +545,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None),
             )
             return Response(
-                {"detail": "Video reprocessing queued (SQS)", "job_id": str(job.id)},
+                {"detail": "Video reprocessing queued (Batch)", "job_id": str(job.id)},
                 status=status.HTTP_202_ACCEPTED,
             )
         except ValidationError:
