@@ -91,13 +91,14 @@ $commandsList += "echo REMOTE_BUILD_OK"
 $paramsJson = @{
     InstanceIds = @($buildInstanceId)
     DocumentName = "AWS-RunShellScript"
-    Parameters = @{ commands = $commandsArray }
+    Parameters = @{ commands = $commandsList }
     TimeoutSeconds = 3600
 } | ConvertTo-Json -Depth 4 -Compress
 
 $paramsFile = [System.IO.Path]::GetTempFileName()
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 try {
-    [System.IO.File]::WriteAllText($paramsFile, $paramsJson, [System.Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($paramsFile, $paramsJson, $utf8NoBom)
     Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
     $cmdResult = aws ssm send-command --region $Region --cli-input-json "file://$($paramsFile -replace '\\','/')" --output json 2>&1
 } finally {
