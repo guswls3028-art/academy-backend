@@ -1,5 +1,5 @@
 # Batch CE instance profile 역할에 ECS/ECR/CloudWatch 관리형 정책 부여
-# academy-batch-ecs-instance-profile -> 역할(academy-batch-ecs-instance-role)에만 부착. 다른 역할 변경 없음.
+# academy-batch-ecs-instance-profile -> 해당 역할에만 부착. academy-ec2-role(API) 은 수정하지 않음.
 # Usage: .\scripts\infra\batch_attach_ecs_instance_role_policies.ps1
 
 Set-StrictMode -Version Latest
