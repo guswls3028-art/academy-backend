@@ -8,7 +8,7 @@
 param(
     [string]$ApiIp = "",
     [string]$KeyPath = "",
-    [switch]$Verbose
+    [switch]$ShowSecrets
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 Write-Host ""
 Write-Host "== API Env Settings Verify ==" -ForegroundColor Cyan
 
-$extraArgs = if ($Verbose) { " --verbose" } else { "" }
+$extraArgs = if ($ShowSecrets) { " --verbose" } else { "" }
 
 if ($ApiIp) {
     if (-not $KeyPath -or -not (Test-Path $KeyPath)) {
