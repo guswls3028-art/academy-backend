@@ -21,32 +21,57 @@ from apps.support.video.redis_status_cache import (
 )
 
 
+def _default_progress_response(video_id: int):
+    """Redis/DB에 진행 정보 없을 때 반환 (Batch mode: key 없음). Never raise."""
+    return Response({
+        "id": video_id,
+        "status": "PENDING",
+        "progress": 0,
+        "encoding_progress": 0,
+        "encoding_remaining_seconds": None,
+        "encoding_step_index": None,
+        "encoding_step_total": None,
+        "encoding_step_name": None,
+        "encoding_step_percent": None,
+    }, status=status.HTTP_200_OK)
+
+
 class VideoProgressView(APIView):
-    """비디오 진행률/상태 조회 (Redis-only, DB 부하 0)"""
-    
+    """비디오 진행률/상태 조회 (Redis-only, DB 부하 0). Batch mode에서 progress 키 없어도 예외 없이 기본값 반환."""
+
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request, pk):
         """GET /media/videos/{id}/progress/"""
-        video_id = int(pk)
+        try:
+            video_id = int(pk)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Invalid video id."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         tenant = getattr(request, "tenant", None)
-        
         if not tenant:
             return Response(
                 {"detail": "tenant가 필요합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        
-        # ✅ Redis에서 상태 조회 (Tenant 네임스페이스)
-        cached_status = get_video_status_from_redis(tenant.id, video_id)
-        
+
+        try:
+            cached_status = get_video_status_from_redis(tenant.id, video_id)
+        except Exception:
+            return _default_progress_response(video_id)
+
         if not cached_status:
-            # ✅ Redis에 없으면 DB fallback (배포 전 완료된 영상, TTL 만료 등)
             from apps.support.video.models import Video
-            video = Video.objects.filter(
-                pk=video_id,
-                session__lecture__tenant_id=tenant.id,
-            ).values("status", "hls_path", "duration", "error_reason").first()
+            try:
+                video = Video.objects.filter(
+                    pk=video_id,
+                    session__lecture__tenant_id=tenant.id,
+                ).values("status", "hls_path", "duration", "error_reason").first()
+            except Exception:
+                return _default_progress_response(video_id)
             if video and video["status"] in ("READY", "FAILED"):
                 return Response({
                     "id": video_id,
@@ -61,43 +86,37 @@ class VideoProgressView(APIView):
                     "duration": video.get("duration"),
                     "error_reason": video.get("error_reason") if video["status"] == "FAILED" else None,
                 })
-            return Response(
-                {"status": "UNKNOWN", "message": "진행 상태를 확인할 수 없습니다."},
-                status=status.HTTP_200_OK,
-            )
-        
-        video_status = cached_status.get("status")
-        
-        # ✅ 진행률은 Redis에서 조회 (tenant_id 전달 필수)
+            return _default_progress_response(video_id)
+
+        video_status = cached_status.get("status") or "PENDING"
         progress = None
         step_detail = None
         remaining_seconds = None
-        
+
         if video_status == "PROCESSING":
-            # ✅ tenant_id 전달 필수
-            progress = get_video_encoding_progress(video_id, tenant.id)
-            step_detail = get_video_encoding_step_detail(video_id, tenant.id)
-            remaining_seconds = get_video_encoding_remaining_seconds(video_id, tenant.id)
-        
-        # ✅ 응답 구성
+            try:
+                progress = get_video_encoding_progress(video_id, tenant.id)
+                step_detail = get_video_encoding_step_detail(video_id, tenant.id)
+                remaining_seconds = get_video_encoding_remaining_seconds(video_id, tenant.id)
+            except Exception:
+                progress = 0
+
         response_data = {
             "id": video_id,
             "status": video_status,
-            "encoding_progress": progress,
+            "encoding_progress": progress if progress is not None else 0,
             "encoding_remaining_seconds": remaining_seconds,
             "encoding_step_index": step_detail.get("step_index") if step_detail else None,
             "encoding_step_total": step_detail.get("step_total") if step_detail else None,
             "encoding_step_name": step_detail.get("step_name_display") if step_detail else None,
             "encoding_step_percent": step_detail.get("step_percent") if step_detail else None,
         }
-        
-        # ✅ 완료 상태면 추가 정보 포함
         if video_status in ["READY", "FAILED"]:
             response_data["hls_path"] = cached_status.get("hls_path")
             response_data["duration"] = cached_status.get("duration")
             if video_status == "FAILED":
                 response_data["error_reason"] = cached_status.get("error_reason")
-        
+
         return Response(response_data)
 
 
