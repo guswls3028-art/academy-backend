@@ -92,22 +92,32 @@ $cmdEscaped = $oneLine -replace '\\', '\\\\' -replace '"', '\"'
 $commandsJson = "[\"$cmdEscaped\"]"
 $paramsJsonStr = "{`"InstanceIds`":[`"$buildInstanceId`"],`"DocumentName`":`"AWS-RunShellScript`",`"Parameters`":{`"commands`":$commandsJson},`"TimeoutSeconds`":3600}"
 
-# repo 루트에 파일로 쓰고 file:// 경로로 전달 (공백 없는 경로)
+Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
+$prevErr = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+
+# 1) repo 루트 파일로 시도 (Windows file:// 인식 시)
 $payloadPath = Join-Path $RepoRoot "scripts\ssm-payload.json"
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText($payloadPath, $paramsJsonStr, $utf8NoBom)
 try {
-    [System.IO.File]::WriteAllText($payloadPath, $paramsJsonStr, $utf8NoBom)
-    Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
-    $prevErr = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    # file:// + 드라이브 경로 (슬래시 2개: file://C:/academy/scripts/ssm-payload.json)
-    $fileUri = "file://" + ($payloadPath -replace '\\', '/')
+    $fileUri = "file:///" + ($payloadPath -replace '\\', '/')
     $cmdResult = & aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
-    $ErrorActionPreference = $prevErr
     $exitCode = $LASTEXITCODE
+    if ($exitCode -eq 0) {
+        Remove-Item $payloadPath -Force -ErrorAction SilentlyContinue
+        $ErrorActionPreference = $prevErr
+        # 성공 시 아래 오류 처리 건너뜀
+    } else {
+        # 2) file 실패 시 인라인 JSON으로 재시도 (한 인자로 전달)
+        $awsArgs = @("ssm", "send-command", "--region", $Region, "--cli-input-json", $paramsJsonStr, "--output", "json")
+        $cmdResult = & aws @awsArgs 2>&1
+        $exitCode = $LASTEXITCODE
+    }
 } finally {
     Remove-Item $payloadPath -Force -ErrorAction SilentlyContinue
 }
+$ErrorActionPreference = $prevErr
 
 if ($exitCode -ne 0) {
     Write-Host "ERROR: SSM send-command failed (exit $exitCode)" -ForegroundColor Red
