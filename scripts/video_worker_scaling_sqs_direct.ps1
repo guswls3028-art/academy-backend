@@ -191,10 +191,7 @@ if ($Rollback) {
 $null = Backup-Policy
 
 if ($DryRun) {
-    $config = New-MetricMathConfig
-    $configJson = $config | ConvertTo-Json -Depth 10
-    Log-Step "DryRun: Metric Math config (to apply)"
-    Write-Host $configJson -ForegroundColor Gray
+    Log-Step "DryRun: Will apply SSOT (scripts/infra/apply_video_asg_scaling_policy.ps1, Visible-only m1)"
     Log-Step "DryRun done (no apply)"
     exit 0
 }
@@ -203,12 +200,11 @@ if (-not (Apply-MetricMathPolicy)) { exit 1 }
 if (-not (Test-MetricMathApplied)) { exit 1 }
 Show-TestStats
 
-Log-Step "Changed ScalingPolicy (TargetTrackingConfiguration)"
+Log-Step "Changed ScalingPolicy (SSOT Visible-only)"
 $pol = Invoke-AwsCli autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
-$vp = $pol.ScalingPolicies | Where-Object { $_.PolicyName -eq $PolicyName } | Select-Object -First 1
+$vp = $pol.ScalingPolicies | Where-Object { $_.PolicyName -eq "video-visible-only-tt" } | Select-Object -First 1
 if ($vp) { Write-Host ($vp.TargetTrackingConfiguration | ConvertTo-Json -Depth 10) -ForegroundColor Gray }
 
-Write-Host "`nSetup done. Lambda is OUT of scaling path. Validate:" -ForegroundColor Green
-Write-Host "  aws autoscaling describe-policies --auto-scaling-group-name $AsgName --region $Region"
-Write-Host "  (CustomizedMetricSpecification.Metrics must reference AWS/SQS, NOT Academy/VideoProcessing)"
+Write-Host "`nSetup done. SSOT = Expression=m1 (Visible only). Validate:" -ForegroundColor Green
+Write-Host "  aws autoscaling describe-policies --auto-scaling-group-name $AsgName --region $Region --query ""ScalingPolicies[?PolicyType=='TargetTrackingScaling'].TargetTrackingConfiguration.CustomizedMetricSpecification.Metrics"""
 Write-Host "`nRollback: .\scripts\video_worker_scaling_sqs_direct.ps1 -Rollback"
