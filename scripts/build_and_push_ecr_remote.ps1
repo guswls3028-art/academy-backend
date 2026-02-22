@@ -126,7 +126,7 @@ if (-not $cmdId) {
 }
 
 # 5) 완료 대기
-Write-Host "     CommandId: $cmdId (polling every 30s)" -ForegroundColor Gray
+Write-Host "     CommandId: $cmdId (polling every 30 sec)" -ForegroundColor Gray
 $done = $false
 for ($i = 0; $i -lt 120; $i++) {
     Start-Sleep -Seconds 30
