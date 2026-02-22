@@ -137,7 +137,7 @@ $ceFileUri = "file:///" + ($ceFile -replace '\\', '/')
 $ce = ExecJson "aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output json 2>&1"
 if (-not ($ce.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName })) {
     Write-Host "  Creating compute environment" -ForegroundColor Yellow
-    aws batch create-compute-environment --cli-input-json "file://$($ceFile -replace '\\','/')" --region $Region
+    aws batch create-compute-environment --cli-input-json $ceFileUri --region $Region
 } else {
     Write-Host "  Compute environment exists (update not applied; delete and recreate if needed)" -ForegroundColor Gray
 }
