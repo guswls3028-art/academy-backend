@@ -348,7 +348,7 @@ $report += @"
 foreach ($instId in $asgNotSsm) {
     $safeId = $instId -replace '[^a-zA-Z0-9_-]', '_'
     $consolePath = Join-Path $OutDir "6_console_$safeId.txt"
-    $report += "`n**$instId:**`n$f`n"
+    $report += "`n**${instId}:**`n$f`n"
     $report += Read-SafeText $consolePath
     $report += "`n$f`n"
 }
