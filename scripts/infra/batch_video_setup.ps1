@@ -142,19 +142,27 @@ if (-not $ceObj) {
 } else {
     Write-Host "  Compute environment exists; updating instanceTypes to c6g.large,c6g.xlarge,c6g.2xlarge" -ForegroundColor Yellow
     $cr = $ceObj.computeResources
-    $updateCr = @{
-        minvCpus         = [int]$cr.minvCpus
-        maxvCpus         = [int]$cr.maxvCpus
-        subnets          = @($cr.subnets)
-        securityGroupIds = @($cr.securityGroupIds)
-        instanceTypes    = @("c6g.large", "c6g.xlarge", "c6g.2xlarge")
-        instanceRole     = $cr.instanceRole
+    $updateInput = @{
+        computeEnvironment = $ComputeEnvName
+        computeResources   = @{
+            minvCpus         = [int]$cr.minvCpus
+            maxvCpus         = [int]$cr.maxvCpus
+            subnets          = @($cr.subnets)
+            securityGroupIds = @($cr.securityGroupIds)
+            instanceTypes    = @("c6g.large", "c6g.xlarge", "c6g.2xlarge")
+            instanceRole     = $cr.instanceRole
+        }
     }
     $updateFile = Join-Path $RepoRoot "batch_ce_update_temp.json"
-    $updateJson = $updateCr | ConvertTo-Json -Depth 5 -Compress
+    $updateJson = $updateInput | ConvertTo-Json -Depth 6 -Compress
     [System.IO.File]::WriteAllText($updateFile, $updateJson, (New-Object System.Text.UTF8Encoding $false))
-    $updateUri = "file://" + ($updateFile -replace '\\', '/')
-    aws batch update-compute-environment --compute-environment $ComputeEnvName --compute-resources $updateUri --region $Region
+    $updateUri = "file:///" + ($updateFile -replace '\\', '/').Replace(':', '')
+    if ($updateUri -match "^file:///([A-Za-z])") {
+        $updateUri = "file:///" + $Matches[1] + ":" + ($updateFile -replace '\\', '/').Substring(2)
+    } else {
+        $updateUri = "file://" + ($updateFile -replace '\\', '/')
+    }
+    aws batch update-compute-environment --cli-input-json $updateUri --region $Region
     Remove-Item $updateFile -Force -ErrorAction SilentlyContinue
 }
 Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
