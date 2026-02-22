@@ -47,7 +47,7 @@ foreach ($instanceId in $instances) {
   $ea = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   $inputPath = "file:///$($inputFile -replace '\\','/')"
-  $sendOut = aws ssm send-command --cli-input-json $inputPath --region $Region --output json 2>&1
+  $sendOut = aws ssm send-command --cli-input-json $inputPath --region $Region --output json 2>&1 | Out-String
   Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
   $ErrorActionPreference = $ea
   if ($LASTEXITCODE -ne 0) {
