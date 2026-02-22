@@ -9,6 +9,7 @@
 #   NO_CACHE=1          docker build --no-cache
 #   API_ONLY=1          base + academy-api 만 빌드/푸시
 #   VIDEO_WORKER_ONLY=1 base + academy-video-worker 만 빌드/푸시 (로컬 Docker 불필요)
+#   DOCKER_SKIP_PRUNE=1 푸시 후 낡은 이미지/캐시 정리 스킵 (기본: 정리함)
 # ==============================================================================
 set -e
 cd "$(dirname "$0")/.."
@@ -19,6 +20,14 @@ NO_CACHE="${NO_CACHE:-}"
 DOCKER_EXTRA="${NO_CACHE:+--no-cache}"
 API_ONLY="${API_ONLY:-}"
 VIDEO_WORKER_ONLY="${VIDEO_WORKER_ONLY:-}"
+DOCKER_SKIP_PRUNE="${DOCKER_SKIP_PRUNE:-}"
+
+_prune_images() {
+  if [ -n "$DOCKER_SKIP_PRUNE" ]; then return; fi
+  echo "Pruning old/dangling images and build cache..."
+  docker image prune -f
+  docker builder prune -f 2>/dev/null || true
+}
 
 echo "ECR Registry: $ECR"
 echo "Region: $REGION"
@@ -38,6 +47,7 @@ if [ -n "$API_ONLY" ]; then
   aws ecr create-repository --repository-name academy-api --region "$REGION" 2>/dev/null || true
   echo "ECR push academy-api..."
   docker push "${ECR}/academy-api:latest"
+  _prune_images
   echo "Done (API only). 로컬에서: .\\scripts\\full_redeploy.ps1 -SkipBuild -DeployTarget api"
   exit 0
 fi

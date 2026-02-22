@@ -215,6 +215,9 @@ docker push $ECR/academy-api:latest
 docker push $ECR/academy-messaging-worker:latest
 docker push $ECR/academy-video-worker:latest
 docker push $ECR/academy-ai-worker-cpu:latest
+echo Pruning old images and build cache...
+docker image prune -f
+docker builder prune -f 2>/dev/null || true
 echo BUILD_AND_PUSH_OK
 "@
     # SSM on Linux runs the script with bash; CRLF causes "set -e" to be parsed as "set -" (invalid option)
