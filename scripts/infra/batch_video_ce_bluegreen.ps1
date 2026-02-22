@@ -112,6 +112,7 @@ $ceNewJson = @"
 "@
 $ceFile = Join-Path $RepoRoot "batch_ce_new_temp.json"
 [System.IO.File]::WriteAllText($ceFile, $ceNewJson, (New-Object System.Text.UTF8Encoding $false))
+# Windows: file://C:/path (두 개 슬래시) — file:///C:/path 는 Errno 22
 $ceUri = "file://" + (Resolve-Path -LiteralPath $ceFile).Path.Replace('\', '/')
 aws batch create-compute-environment --cli-input-json $ceUri --region $Region
 Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
