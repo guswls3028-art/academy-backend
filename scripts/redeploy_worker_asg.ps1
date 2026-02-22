@@ -2,8 +2,8 @@
 # Worker ASG redeploy (root/admin one-shot)
 # Requires: root or IAM admin access key (env or aws configure)
 #
-# Video ASG: MixedInstancesPolicy (c6g.large Spot primary, t4g.medium fallback).
-# See deploy_worker_asg.ps1 [5/8] for policy; instance refresh runs after update.
+# Video = AWS Batch 전용 (기본). -ExcludeVideo (기본 true)로 video ASG 생성/업데이트 스킵.
+# Video ASG 사용 시: -ExcludeVideo:$false (레거시)
 #
 # Default VPC/subnet/SG: cd C:\academy; .\scripts\redeploy_worker_asg.ps1
 # Infra only (skip SSM/IAM): .\scripts\redeploy_worker_asg.ps1 -SkipSetup
@@ -16,6 +16,7 @@ param(
     [string]$SecurityGroupId = "sg-02692600fbf8e26f7",
     [string]$IamInstanceProfileName = "academy-ec2-role",
     [string]$Region = "ap-northeast-2",
+    [switch]$ExcludeVideo = $true,  # if true, skip video ASG (Video = Batch only)
     [switch]$SkipSetup = $false,   # if true, deploy only; skip SSM/EC2 policy refresh
     [string]$LambdaVpcSubnetId = "",       # optional: put queue-depth Lambda in VPC (WAF/API fetch 실패 시)
     [string]$LambdaVpcSecurityGroupId = "" # optional: e.g. academy-api-sg; requires LambdaVpcSubnetId
