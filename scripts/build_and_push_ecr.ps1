@@ -57,12 +57,26 @@ if ($LASTEXITCODE -ne 0 -or $dockerErr) {
 
 Write-Host "ECR Registry: $registry"
 Write-Host "Region: $region"
+if ($ApiOnly) { Write-Host "ApiOnly: base + api" -ForegroundColor Cyan }
 if ($VideoWorker) { Write-Host "VideoWorker only: base + video-worker" -ForegroundColor Cyan }
 Write-Host ""
 
-# 1. Base (always needed for workers)
+# 1. Base (always needed)
 Write-Host "[1/5] academy-base..."
 docker buildx build --platform linux/arm64 -f docker/Dockerfile.base -t academy-base:latest --load .
+
+if ($ApiOnly) {
+    Write-Host "[2/5] academy-api only..."
+    docker buildx build --platform linux/arm64 -f docker/api/Dockerfile -t academy-api:latest --load .
+    docker tag academy-api:latest "${registry}/academy-api:latest"
+    Write-Host "ECR login..."
+    aws ecr get-login-password --region $region | docker login --username AWS --password-stdin $registry
+    aws ecr create-repository --repository-name academy-api --region $region 2>$null
+    Write-Host "ECR push academy-api..."
+    docker push "${registry}/academy-api:latest"
+    Write-Host "Done (ApiOnly)."
+    exit 0
+}
 
 if ($VideoWorker) {
     Write-Host "[2/5] academy-video-worker (skip api/messaging/ai)..."
