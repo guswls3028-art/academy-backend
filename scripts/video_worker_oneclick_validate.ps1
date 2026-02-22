@@ -77,7 +77,8 @@ if (-not $asg) {
 }
 
 # 4) Recent scaling events
-$act = Invoke-AwsCli autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --max-items 5 --output json 2>$null | ConvertFrom-Json
+$act = $null
+try { $act = Invoke-AwsCli autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --max-items 5 --output json 2>$null | ConvertFrom-Json } catch {}
 if ($act -and $act.Activities -and $act.Activities.Count -gt 0) {
     $last = $act.Activities[0]
     Ok "ScalingEvents" "Recent: $($last.StatusCode) $($last.Description)"
@@ -89,8 +90,9 @@ if ($act -and $act.Activities -and $act.Activities.Count -gt 0) {
 $hasDlq = $false
 $hasRedrive = $false
 if ($qurl) {
-    $allAttrs = Invoke-AwsCli sqs get-queue-attributes --queue-url $qurl --attribute-names All --output json 2>$null | ConvertFrom-Json
-    if ($allAttrs.Attributes.RedrivePolicy) { $hasRedrive = $true }
+    $allAttrs = $null
+    try { $allAttrs = Invoke-AwsCli sqs get-queue-attributes --queue-url $qurl --attribute-names All --output json 2>$null | ConvertFrom-Json } catch {}
+    if ($allAttrs -and $allAttrs.Attributes -and $allAttrs.Attributes.RedrivePolicy) { $hasRedrive = $true }
 }
 $dlqUrl = Invoke-AwsCli sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text 2>$null
 if ($dlqUrl) { $hasDlq = $true }
