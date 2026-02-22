@@ -148,19 +148,19 @@ Write-Host ""
 Write-Host "[5] Update Job Queue: $JobQueueName -> $NewCeName" -ForegroundColor Cyan
 $orderJson = "[{`"order`":1,`"computeEnvironment`":`"$NewCeName`"}]"
 aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order $orderJson --region $Region
-Write-Host "  OK: Queue 연결 변경" -ForegroundColor Green
+Write-Host "  OK: Queue link updated" -ForegroundColor Green
 
 # 6) 구 CE 비활성화
 Write-Host ""
-Write-Host "[6] 구 CE 비활성화: $OldCeName" -ForegroundColor Cyan
+Write-Host "[6] Disable old CE: $OldCeName" -ForegroundColor Cyan
 aws batch update-compute-environment --compute-environment $OldCeName --state DISABLED --region $Region
-Write-Host "  DISABLED 요청 완료" -ForegroundColor Gray
+Write-Host "  DISABLED request sent" -ForegroundColor Gray
 
 # 7) 구 CE 삭제 대기 (DISABLED 후 인스턴스 드레이닝)
-Write-Host "  삭제 전 대기 (인스턴스 드레이닝, 2분)..." -ForegroundColor Gray
+Write-Host "  Waiting 2 min before delete (instance drain)..." -ForegroundColor Gray
 Start-Sleep -Seconds 120
 aws batch delete-compute-environment --compute-environment $OldCeName --region $Region
-Write-Host "  삭제 요청 완료" -ForegroundColor Gray
+Write-Host "  Delete request sent" -ForegroundColor Gray
 
 # 8) (선택) 새 CE 이름을 academy-video-batch-ce로 유지하려면 CE를 삭제 후 재생성 필요.
 #    현재는 academy-video-batch-ce-v2 유지. 스크립트 기본값에 영향 없음.
