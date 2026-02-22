@@ -100,9 +100,10 @@ $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-# file:// 은 슬래시만 사용 (Windows에서도)
-$fileUri = "file:///" + ($payloadPath -replace '\\', '/')
-$cmdResult = & aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
+# Windows: file:///C:/... 는 [Errno 22] 유발 → file://C:/... (슬래시 2개) + 절대경로 사용
+$absPath = (Resolve-Path -LiteralPath $payloadPath).Path -replace '\\', '/'
+$fileUri = "file://$absPath"
+$cmdResult = & aws ssm send-command --region $Region --cli-input-json "$fileUri" --output json 2>&1
 $exitCode = $LASTEXITCODE
 Remove-Item $payloadPath -Force -ErrorAction SilentlyContinue
 $ErrorActionPreference = $prevErr
