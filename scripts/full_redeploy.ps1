@@ -58,7 +58,7 @@ $REMOTE_CMDS = @{
 }
 
 function Get-Ec2PublicIps {
-    $names = "academy-api,academy-ai-worker-cpu,academy-messaging-worker,academy-video-worker"
+    $names = "academy-api,academy-ai-worker-cpu,academy-messaging-worker"
     # PublicIpAddress + Association.PublicIp (Elastic IP fallback), for each instance
     $json = aws ec2 describe-instances --region $Region `
         --filters "Name=instance-state-name,Values=running" "Name=tag:Name,Values=$names" `
