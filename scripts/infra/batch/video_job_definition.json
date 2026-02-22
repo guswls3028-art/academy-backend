@@ -1,0 +1,36 @@
+{
+  "jobDefinitionName": "academy-video-batch-jobdef",
+  "type": "container",
+  "containerProperties": {
+    "image": "PLACEHOLDER_ECR_URI",
+    "vcpus": 2,
+    "memory": 4096,
+    "command": ["python", "-m", "apps.worker.video_worker.batch_main"],
+    "jobRoleArn": "PLACEHOLDER_JOB_ROLE_ARN",
+    "executionRoleArn": "PLACEHOLDER_EXECUTION_ROLE_ARN",
+    "resourceRequirements": [],
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "options": {
+        "awslogs-group": "/aws/batch/academy-video-worker",
+        "awslogs-region": "PLACEHOLDER_REGION",
+        "awslogs-stream-prefix": "batch"
+      }
+    },
+    "environment": [],
+    "secrets": [],
+    "mountPoints": [],
+    "volumes": [],
+    "linuxParameters": {}
+  },
+  "platformCapabilities": ["EC2"],
+  "parameters": {
+    "job_id": ""
+  },
+  "retryStrategy": {
+    "attempts": 1
+  },
+  "timeout": {
+    "attemptDurationSeconds": 14400
+  }
+}
