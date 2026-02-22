@@ -462,6 +462,10 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         )
         # Job 생성 + SQS enqueue (job_id 포함)
         if not VideoSQSQueue().create_job_and_enqueue(video):
+            logger.error(
+                "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_enqueue returned None (normal branch)",
+                video.id,
+            )
             return Response(
                 {"detail": "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
