@@ -103,9 +103,8 @@ function New-MetricMathConfig {
                 }
             )
         }
-        TargetValue             = 1.0
-        DisableScaleIn          = $false
-        EstimatedInstanceWarmup = 180
+        TargetValue    = 1.0
+        DisableScaleIn = $false
     }
     return $metricMath
 }
