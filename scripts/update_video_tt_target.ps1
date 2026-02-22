@@ -18,7 +18,7 @@ $RepoRoot = Split-Path -Parent $ScriptRoot
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 # TargetValue 1 = SQS 메시지 1개당 워커 1대 (스케일링 소스 = SQS only)
-$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"},"ScaleOutCooldown":60,"ScaleInCooldown":300}'
+$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"}}'
 $videoTtFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
 [System.IO.File]::WriteAllText($videoTtFile, $videoTtJson, $utf8NoBom)
 $videoTtPath = "file://$($videoTtFile -replace '\\','/' -replace ' ', '%20')"

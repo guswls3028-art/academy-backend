@@ -95,7 +95,7 @@ Write-Host "ASG created." -ForegroundColor Green
 
 # 7) TargetTracking 정책 재적용 (video-backlogcount-tt: VideoQueueDepthTotal, TargetValue=1)
 Write-Host "Re-applying scaling policy video-backlogcount-tt (VideoQueueDepthTotal, TargetValue=1)..." -ForegroundColor Cyan
-$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"},"ScaleOutCooldown":60,"ScaleInCooldown":300}'
+$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"}}'
 $videoTtFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
 [System.IO.File]::WriteAllText($videoTtFile, $videoTtJson, $utf8NoBom)
 $videoTtPath = "file://$($videoTtFile -replace '\\','/' -replace ' ', '%20')"

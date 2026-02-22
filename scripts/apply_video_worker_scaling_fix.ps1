@@ -82,7 +82,7 @@ function Apply-Fix {
     } while ($true)
 
     Write-Step "2b. ASG TargetTracking → VideoQueueDepthTotal + Cooldown"
-    $videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"' + $AsgName + '"}],"Statistic":"Average","Unit":"Count"},"ScaleOutCooldown":60,"ScaleInCooldown":300}'
+    $videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"' + $AsgName + '"}],"Statistic":"Average","Unit":"Count"}}'
     $videoTtFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
     [System.IO.File]::WriteAllText($videoTtFile, $videoTtJson, $utf8NoBom)
     $videoTtPath = "file://$($videoTtFile -replace '\\','/' -replace ' ', '%20')"

@@ -21,7 +21,7 @@
 - **메트릭**: SQS `ApproximateNumberOfMessages` + `ApproximateNumberOfMessagesNotVisible` 합산만 사용.
 - **DB backlog / internal API / 프론트 삭제 여부**는 스케일링에 사용하지 않음.
 - **TargetValue**: 인스턴스 1대당 메시지 수 목표 (기본 1 → 영상 1개당 워커 1대).
-- **Cooldown**: ScaleOutCooldown=60, ScaleInCooldown=300 (폭주 방지).
+- **Cooldown**: EC2 Auto Scaling put-scaling-policy TargetTracking does NOT support ScaleOutCooldown/ScaleInCooldown (Application Auto Scaling only). Use ASG default cooldowns.
 
 ---
 
