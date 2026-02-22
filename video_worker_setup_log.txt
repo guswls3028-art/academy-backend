@@ -1,3 +1,12 @@
-﻿[09:30:04] Video Worker One-Click Setup | Region=ap-northeast-2 DryRun=False Rollback=False
+﻿[09:30:04] Video Worker One-Click Setup | Region=ap-northeast-2 DryRun=True Rollback=False
 [09:30:04] 0) Pre-check
-[FAIL] AWS login/perms failed. Run aws sts get-caller-identity
+[09:30:06]   sts get-caller-identity OK
+[09:30:07]   ASG academy-video-worker-asg exists
+[09:30:08]   SQS academy-video-jobs exists
+[09:30:09]   LT academy-video-worker-lt exists
+[09:30:11]   Lambda academy-worker-queue-depth-metric exists
+[09:30:12]   CloudWatch Alarms (video): 2
+[09:30:12] 1) Backup -> C:\academy\backups\video_worker\20260222_093012
+[09:30:20]   Backup done: C:\academy\backups\video_worker\20260222_093012
+[09:30:20] Diff list (changes to apply)
+[09:30:22] DryRun done (no apply)
