@@ -358,34 +358,34 @@ def main() -> None:
 
         cancel_event = threading.Event()
         job_dict = {
-                    "video_id": int(video_id),
-                    "file_key": str(file_key or ""),
-                    "tenant_id": int(tenant_id),
-                    "tenant_code": str(tenant_code or ""),
-                    "_cancel_check": _cancel_check,
-                    "_job_id": job_id,
-                    "_cancel_event": cancel_event,
-                }
+            "video_id": int(video_id),
+            "file_key": str(file_key or ""),
+            "tenant_id": int(tenant_id),
+            "tenant_code": str(tenant_code or ""),
+            "_cancel_check": _cancel_check,
+            "_job_id": job_id,
+            "_cancel_event": cancel_event,
+        }
 
-                if _cancel_check():
-                    job_cancel(job_id)
-                    queue.delete_message(receipt_handle)
-                    logger.info("JOB_CANCELLED_SKIP | job_id=%s | video_id=%s", job_id, video_id)
-                    return 0
+        if _cancel_check():
+            job_cancel(job_id)
+            queue.delete_message(receipt_handle)
+            logger.info("JOB_CANCELLED_SKIP | job_id=%s | video_id=%s", job_id, video_id)
+            sys.exit(0)
 
-                global _current_job_receipt_handle, _current_job_start_time
-                _current_job_receipt_handle = receipt_handle
-                _current_job_start_time = time.time()
+        global _current_job_receipt_handle, _current_job_start_time
+        _current_job_receipt_handle = receipt_handle
+        _current_job_start_time = time.time()
 
-                stop_heartbeat = threading.Event()
-                heartbeat_thread = threading.Thread(
-                    target=_job_visibility_and_heartbeat_loop,
-                    args=(queue, receipt_handle, job_id, stop_heartbeat, cancel_event),
-                    daemon=True,
-                )
-                heartbeat_thread.start()
+        stop_heartbeat = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=_job_visibility_and_heartbeat_loop,
+            args=(queue, receipt_handle, job_id, stop_heartbeat, cancel_event),
+            daemon=True,
+        )
+        heartbeat_thread.start()
 
-                try:
+        try:
                     # Idempotent 순서: 1) 스토리지(HLS) 2) DB 커밋 3) raw 삭제 4) DeleteMessage
                     # 중복 실행 시 process_video는 동일 경로 덮어쓰기, job_complete는 idempotent 반환
                     logger.info("[SQS_MAIN] process_video job_id=%s video_id=%s", job_id, video_id)
