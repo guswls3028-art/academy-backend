@@ -19,7 +19,7 @@ from academy.adapters.db.django.repositories_video import (
 )
 from apps.support.video.models import Video
 from apps.support.video.redis_status_cache import has_video_heartbeat
-from apps.support.video.services.sqs_queue import VideoSQSQueue
+from apps.support.video.services.video_encoding import create_job_and_submit_batch
 
 
 def _tenant_id_from_video(video: Video) -> int | None:

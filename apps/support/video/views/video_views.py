@@ -184,7 +184,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         super().perform_destroy(instance)
         if tenant_id is not None and hls_prefix:
             try:
-                VideoSQSQueue().enqueue_delete_r2(
+                enqueue_delete_r2(
                     tenant_id=tenant_id,
                     video_id=video_id,
                     file_key=file_key,
@@ -427,7 +427,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 "VIDEO_UPLOAD_TRACE | before enqueue (ffprobe_fail reason=%s duration=%s) | video_id=%s execution=2_BEFORE_ENQUEUE",
                 reason, duration, video_id,
             )
-            if not VideoSQSQueue().create_job_and_submit_batch(video):
+            if not create_job_and_submit_batch(video):
                 logger.error("VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | reason=%s", video.id, reason)
                 return Response(
                     {"detail": "비디오 작업 등록 실패. API 서버 AWS Batch 설정을 확인하세요."},
@@ -449,7 +449,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 video.id, _tid, video.file_key or "",
             )
             # Job 생성 + SQS enqueue (job_id 포함)
-            if not VideoSQSQueue().create_job_and_submit_batch(video):
+            if not create_job_and_submit_batch(video):
                 logger.error(
                     "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_enqueue returned None (duration<min branch)",
                     video.id,
@@ -470,7 +470,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.id, _tid, video.file_key or "",
         )
         # Job 생성 + Batch 제출
-        if not VideoSQSQueue().create_job_and_submit_batch(video):
+        if not create_job_and_submit_batch(video):
             logger.error(
                 "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_enqueue returned None (normal branch)",
                 video.id,
