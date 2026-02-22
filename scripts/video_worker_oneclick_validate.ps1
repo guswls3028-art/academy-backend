@@ -31,7 +31,7 @@ function Warn { param([string]$K, [string]$V) $results[$K] = @{ ok = $true; warn
 
 Write-Host "`n========== Video Worker One-Click Validate ==========" -ForegroundColor Cyan
 
-# 1) 스케일링 메트릭이 SQS 기반인가?
+# 1) Scaling metric SQS-based?
 $pol = Aws autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
 $metricName = "none"
 $policyRef = $null
@@ -47,11 +47,11 @@ if ($pol -and $pol.ScalingPolicies) {
     }
 }
 if ($metricName -eq "VideoQueueDepthTotal") {
-    Ok "ScalingMetric" "SQS 기반 (VideoQueueDepthTotal = visible+notVisible)"
+    Ok "ScalingMetric" "SQS-based (VideoQueueDepthTotal = visible+notVisible)"
 } elseif ($metricName -eq "BacklogCount" -or $metricName -eq "backlog") {
     Fail "ScalingMetric" "DB/API 기반 메트릭 사용 중: $metricName. SQS 기반으로 교체 필요."
 } else {
-    Fail "ScalingMetric" "현재 참조 메트릭: $metricName. 기대값: VideoQueueDepthTotal"
+    Fail "ScalingMetric" "Current metric: $metricName. Expected: VideoQueueDepthTotal"
 }
 
 # 2) SQS visible / notVisible

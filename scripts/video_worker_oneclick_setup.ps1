@@ -63,7 +63,7 @@ function Test-Prechecks {
     } else { Log-Step "  ASG $AsgName exists" }
 
     $qurl = Aws sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null
-    if (-not $qurl) { $missing += "SQS($QueueName)" } else { Log-Step "  SQS $QueueName 존재" }
+    if (-not $qurl) { $missing += "SQS($QueueName)" } else { Log-Step "  SQS $QueueName exists" }
 
     $lt = Aws ec2 describe-launch-templates --launch-template-names $LtName --output json 2>$null | ConvertFrom-Json
     if (-not $lt -or -not $lt.LaunchTemplates -or $lt.LaunchTemplates.Count -eq 0) {
@@ -71,7 +71,7 @@ function Test-Prechecks {
     } else { Log-Step "  LT $LtName exists" }
 
     $fn = Aws lambda get-function --function-name $LambdaName --output json 2>$null
-    if (-not $fn) { $missing += "Lambda($LambdaName)" } else { Log-Step "  Lambda $LambdaName 존재" }
+    if (-not $fn) { $missing += "Lambda($LambdaName)" } else { Log-Step "  Lambda $LambdaName exists" }
 
     $alarms = Aws cloudwatch describe-alarms --output json 2>$null | ConvertFrom-Json
     $videoAlarms = @()
