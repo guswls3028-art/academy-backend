@@ -1,0 +1,16 @@
+{
+  "computeEnvironmentName": "academy-video-batch-ce",
+  "type": "MANAGED",
+  "state": "ENABLED",
+  "serviceRole": "PLACEHOLDER_SERVICE_ROLE_ARN",
+  "computeResources": {
+    "type": "EC2",
+    "minvCpus": 0,
+    "maxvCpus": 32,
+    "desiredvCpus": 0,
+    "instanceTypes": ["c6g.large"],
+    "subnets": ["PLACEHOLDER_SUBNET_1"],
+    "securityGroupIds": ["PLACEHOLDER_SECURITY_GROUP_ID"],
+    "instanceRole": "PLACEHOLDER_INSTANCE_PROFILE_ARN"
+  }
+}
