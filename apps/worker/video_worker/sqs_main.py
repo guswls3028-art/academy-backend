@@ -351,7 +351,7 @@ def main() -> int:
                 if not job_claim_for_running(job_id, worker_id, lease_seconds=3600):
                     logger.info("JOB_CLAIM_FAILED | job_id=%s | video_id=%s | NACK", job_id, video_id)
                     queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
-                    continue
+                    return 0
 
                 # Progress API가 PROCESSING 반환하도록 Redis에 캐시
                 try:
@@ -379,7 +379,7 @@ def main() -> int:
                     job_cancel(job_id)
                     queue.delete_message(receipt_handle)
                     logger.info("JOB_CANCELLED_SKIP | job_id=%s | video_id=%s", job_id, video_id)
-                    continue
+                    return 0
 
                 global _current_job_receipt_handle, _current_job_start_time
                 _current_job_receipt_handle = receipt_handle
