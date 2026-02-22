@@ -172,14 +172,10 @@ function Set-SqsBasedScaling {
     } while ($true)
     Log-Step "  Lambda deploy done (VideoQueueDepthTotal)"
 
-    $videoTtJson = '{"TargetValue":' + [string]$TargetMessagesPerInstance + ',"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"' + $AsgName + '"}],"Statistic":"Average","Unit":"Count"}}'
-    $tmpFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
-    [System.IO.File]::WriteAllText($tmpFile, $videoTtJson, $utf8NoBom)
-    $pathUri = "file://$($tmpFile -replace '\\','/' -replace ' ', '%20')"
-    Invoke-AwsCli autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $pathUri
-    Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
-    if ($LASTEXITCODE -ne 0) { Log-Fail "put-scaling-policy failed"; return $false }
-    Log-Step "  ASG TargetTracking -> VideoQueueDepthTotal applied"
+    # SSOT: scripts/infra/apply_video_asg_scaling_policy.ps1 (Visible-only, Expression=m1)
+    & (Join-Path $ScriptRoot "infra\apply_video_asg_scaling_policy.ps1") -Region $Region -AsgName $AsgName
+    if ($LASTEXITCODE -ne 0) { Log-Fail "apply_video_asg_scaling_policy failed"; return $false }
+    Log-Step "  ASG TargetTracking -> SSOT (video-visible-only-tt, Visible only)"
     return $true
 }
 
@@ -263,17 +259,13 @@ function Restore-Backup {
     $dir = $latest.FullName
     Log-Step "  Restore from: $dir"
 
-    $ttPath = Join-Path $dir "video_tt_config.json"
-    if (Test-Path $ttPath) {
-        $ttContent = Get-Content $ttPath -Raw
-        $tmpFile = Join-Path $RepoRoot "asg_video_tt_rollback.json"
-        [System.IO.File]::WriteAllText($tmpFile, $ttContent, $utf8NoBom)
-        $pathUri = "file://$($tmpFile -replace '\\','/' -replace ' ', '%20')"
-        Invoke-AwsCli autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $pathUri
-        Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
-        Log-Step "  Scaling policy restored"
+    # Rollback: restore to SSOT (Visible-only). Backup had old policy; SSOT = video-visible-only-tt.
+    $ssotScript = Join-Path $ScriptRoot "infra\apply_video_asg_scaling_policy.ps1"
+    if (Test-Path $ssotScript) {
+        & $ssotScript -Region $Region -AsgName $AsgName
+        Log-Step "  Scaling policy set to SSOT (video-visible-only-tt)"
     } else {
-        Log-Warn "  video_tt_config.json missing, cannot restore policy"
+        Log-Warn "  SSOT script not found: $ssotScript"
     }
 
     Write-Host "  Rollback scope: ASG Scaling Policy only. Lambda/SQS/Alarm: manual." -ForegroundColor Yellow
