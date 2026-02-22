@@ -92,7 +92,7 @@ Write-Host "  OK retryStrategy.attempts=$deployedAttempts" -ForegroundColor Gree
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "PASS" -ForegroundColor Green
-Write-Host "JobDefinition: $JobDefName:$newRevision" -ForegroundColor Gray
+Write-Host ("JobDefinition: " + $JobDefName + ":" + $newRevision) -ForegroundColor Gray
 Write-Host "retryStrategy.attempts: 1" -ForegroundColor Gray
 Write-Host "========================================" -ForegroundColor Cyan
 exit 0
