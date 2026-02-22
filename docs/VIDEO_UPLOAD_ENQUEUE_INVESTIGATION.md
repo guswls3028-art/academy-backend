@@ -1,5 +1,23 @@
 # Video Upload → SQS Enqueue 조사 보고서
 
+## 502 Root Cause & Patch (upload_complete)
+
+**증상:** POST `/media/videos/{id}/upload/complete/` → 502, SQS 메시지 0건
+
+**가능 원인:** ffprobe가 presigned URL을 fetch할 때 timeout/크래시 → Gunicorn worker kill → ALB 502
+
+**패치 요약:**
+- ffprobe 예외 시 **fallback**: validation skip, UPLOADED 저장, enqueue 진행 (Worker에서 검증)
+- 단계별 로깅: head_object, presigned_get, ffprobe 각 단계 후 `VIDEO_UPLOAD_TRACE` 로그
+- CloudWatch에서 `VIDEO_UPLOAD_COMPLETE_ERROR | ffprobe raised` 로그로 502 원인 확인 가능
+
+**로컬 재현:**
+```powershell
+.\scripts\test_upload_complete_curl.ps1 -VideoId <id> -BaseUrl "http://localhost:8000" -Token "Bearer <JWT>"
+```
+
+---
+
 ## 1) Upload → enqueue 흐름 실제 코드 위치
 
 | 단계 | 파일 | 함수/라인 | 설명 |
