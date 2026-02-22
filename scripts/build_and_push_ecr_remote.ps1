@@ -87,7 +87,7 @@ if ($envLine) { $commandsList += $envLine }
 $commandsList += "./scripts/build_and_push_ecr_on_ec2.sh"
 $commandsList += "echo REMOTE_BUILD_OK"
 
-# 4) SSM Send Command (ConvertTo-Json으로 유효 JSON 생성, 임시 파일로 전달)
+# 4) SSM Send Command (ConvertTo-Json으로 유효 JSON 생성 후 인라인 전달)
 $paramsObj = @{
     InstanceIds    = @($buildInstanceId)
     DocumentName   = "AWS-RunShellScript"
@@ -96,21 +96,13 @@ $paramsObj = @{
 }
 $paramsJsonStr = $paramsObj | ConvertTo-Json -Depth 4 -Compress
 
-$paramsFile = [System.IO.Path]::GetTempFileName() + ".json"
-$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-try {
-    [System.IO.File]::WriteAllText($paramsFile, $paramsJsonStr, $utf8NoBom)
-    Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
-    $prevErr = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    # Windows: file:// + 백슬래시 경로 (file:///C:/ 형식은 Python에서 /C:/ 로 열려 실패함)
-    $fileUri = "file:///" + ($paramsFile -replace '\\', '/')
-    $cmdResult = & aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
-    $ErrorActionPreference = $prevErr
-    $exitCode = $LASTEXITCODE
-} finally {
-    Remove-Item $paramsFile -Force -ErrorAction SilentlyContinue
-}
+Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
+$prevErr = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+# 인자 하나로 전달해 PowerShell이 JSON을 쪼개지 않도록 함
+$cmdResult = & aws ssm send-command --region $Region --cli-input-json $paramsJsonStr --output json 2>&1
+$ErrorActionPreference = $prevErr
+$exitCode = $LASTEXITCODE
 
 if ($exitCode -ne 0) {
     Write-Host "ERROR: SSM send-command failed (exit $exitCode)" -ForegroundColor Red
