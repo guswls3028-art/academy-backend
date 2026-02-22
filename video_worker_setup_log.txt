@@ -1,11 +1,11 @@
-﻿[09:30:39] Video Worker One-Click Setup | Region=ap-northeast-2 DryRun=False Rollback=True
-[09:30:39] 0) Pre-check
-[09:30:40]   sts get-caller-identity OK
-[09:30:41]   ASG academy-video-worker-asg exists
-[09:30:42]   SQS academy-video-jobs exists
-[09:30:43]   LT academy-video-worker-lt exists
-[09:30:44]   Lambda academy-worker-queue-depth-metric exists
-[09:30:46]   CloudWatch Alarms (video): 2
-[09:30:46] 6) Rollback
-[09:30:46]   Restore from: C:\academy\backups\video_worker\20260222_093029
-[09:30:47]   Scaling policy restored
+﻿[09:30:47] Video Worker One-Click Setup | Region=ap-northeast-2 DryRun=False Rollback=True
+[09:30:47] 0) Pre-check
+[09:30:48]   sts get-caller-identity OK
+[09:30:50]   ASG academy-video-worker-asg exists
+[09:30:51]   SQS academy-video-jobs exists
+[09:30:52]   LT academy-video-worker-lt exists
+[09:30:53]   Lambda academy-worker-queue-depth-metric exists
+[09:30:55]   CloudWatch Alarms (video): 2
+[09:30:55] 6) Rollback
+[09:30:55]   Restore from: C:\academy\backups\video_worker\20260222_093029
+[09:30:56]   Scaling policy restored
