@@ -99,12 +99,12 @@ class ProcessVideoJobHandler:
                 if self._repo.try_reclaim_video(video_id, force=True):
                     try:
                         from apps.support.video.models import Video
-                        from apps.support.video.services.sqs_queue import VideoSQSQueue
+                        from apps.support.video.services.video_encoding import create_job_and_submit_batch
                         video = Video.objects.select_related("session__lecture").get(pk=video_id)
-                        if VideoSQSQueue().enqueue(video):
-                            logger.info("CLAIM_FAILED_REQUEUE | video_id=%s re-enqueued", video_id)
+                        if create_job_and_submit_batch(video):
+                            logger.info("CLAIM_FAILED_REQUEUE | video_id=%s re-submitted to Batch", video_id)
                     except Exception as e:
-                        logger.warning("CLAIM_FAILED_REQUEUE | video_id=%s enqueue failed: %s", video_id, e)
+                        logger.warning("CLAIM_FAILED_REQUEUE | video_id=%s batch submit failed: %s", video_id, e)
                 return "skip:claim"
             logger.info("[HANDLER] JOB_CLAIMED video_id=%s worker_id=%s", video_id, worker_id)
         else:

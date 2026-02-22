@@ -43,13 +43,13 @@ def fail(name: str, err: str):
 
 
 def check_video_pipeline():
-    """Video Worker 파이프라인 검증"""
-    print("\n[1] Video Worker Pipeline")
+    """Video Worker 파이프라인 검증 (Batch only)"""
+    print("\n[1] Video Worker Pipeline (Batch)")
     try:
-        from src.infrastructure.video import VideoSQSAdapter
-        ok("VideoSQSAdapter")
+        from apps.support.video.services.video_encoding import create_job_and_submit_batch
+        ok("create_job_and_submit_batch")
     except Exception as e:
-        fail("VideoSQSAdapter", str(e))
+        fail("create_job_and_submit_batch", str(e))
         return
 
     try:
