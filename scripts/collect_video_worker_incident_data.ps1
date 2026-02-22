@@ -243,6 +243,7 @@ if ($asgObj -and $asgObj -isnot [string]) {
 } else {
     $report += "`n$f`njson`n$asgObj`n$f"
 }
+# Note: $f = '```' for markdown code fence
 
 $report += @"
 
