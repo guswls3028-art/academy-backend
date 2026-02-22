@@ -256,13 +256,13 @@ function Invoke-PostValidate {
 function Restore-Backup {
     Log-Step "6) Rollback"
     if (-not (Test-Path $BackupRoot)) {
-        Log-Fail "백업 폴더 없음: $BackupRoot"
+        Log-Fail "Backup folder not found: $BackupRoot"
         return $false
     }
     $latest = Get-ChildItem -Path $BackupRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
-    if (-not $latest) { Log-Fail "백업 디렉터리 없음"; return $false }
+    if (-not $latest) { Log-Fail "No backup dir"; return $false }
     $dir = $latest.FullName
-    Log-Step "  복원 소스: $dir"
+    Log-Step "  Restore from: $dir"
 
     $ttPath = Join-Path $dir "video_tt_config.json"
     if (Test-Path $ttPath) {
@@ -272,12 +272,12 @@ function Restore-Backup {
         $pathUri = "file://$($tmpFile -replace '\\','/' -replace ' ', '%20')"
         Aws autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $pathUri
         Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
-        Log-Step "  Scaling policy 복원 완료"
+        Log-Step "  Scaling policy restored"
     } else {
-        Log-Warn "  video_tt_config.json 없음 → 정책 복원 불가"
+        Log-Warn "  video_tt_config.json missing, cannot restore policy"
     }
 
-    Write-Host "  원복 가능 범위: ASG Scaling Policy(백업 JSON 기준). Lambda 코드·SQS 속성·Alarm은 수동 복원." -ForegroundColor Yellow
+    Write-Host "  Rollback scope: ASG Scaling Policy only. Lambda/SQS/Alarm: manual." -ForegroundColor Yellow
     return $true
 }
 
