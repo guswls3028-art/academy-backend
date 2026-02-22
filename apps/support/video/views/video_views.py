@@ -426,7 +426,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 "VIDEO_UPLOAD_TRACE | before enqueue (ffprobe_fail reason=%s duration=%s) | video_id=%s execution=2_BEFORE_ENQUEUE",
                 reason, duration, video_id,
             )
-            if not VideoSQSQueue().create_job_and_enqueue(video):
+            if not VideoSQSQueue().create_job_and_submit_batch(video):
                 logger.error("VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | reason=%s", video.id, reason)
                 return Response(
                     {"detail": "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."},
@@ -448,7 +448,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 video.id, _tid, video.file_key or "",
             )
             # Job 생성 + SQS enqueue (job_id 포함)
-            if not VideoSQSQueue().create_job_and_enqueue(video):
+            if not VideoSQSQueue().create_job_and_submit_batch(video):
                 logger.error(
                     "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_enqueue returned None (duration<min branch)",
                     video.id,
@@ -533,7 +533,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.status = Video.Status.UPLOADED
             video.save(update_fields=["status", "updated_at"])
 
-            job = VideoSQSQueue().create_job_and_enqueue(video)
+            job = VideoSQSQueue().create_job_and_submit_batch(video)
             if not job:
                 raise ValidationError(
                     "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."

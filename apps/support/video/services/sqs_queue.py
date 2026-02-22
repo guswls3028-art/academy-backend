@@ -124,16 +124,18 @@ class VideoSQSQueue:
             )
             return False
 
-    def create_job_and_enqueue(self, video: Video) -> Optional["VideoTranscodeJob"]:
+    def create_job_and_submit_batch(self, video: Video) -> Optional["VideoTranscodeJob"]:
         """
-        Job 생성 + enqueue. upload_complete, retry에서 사용.
+        Job 생성 + AWS Batch 제출. upload_complete, retry에서 사용.
         video.status must be UPLOADED.
+        DB SSOT: SQS 미사용, Batch만 사용.
         """
         from apps.support.video.models import VideoTranscodeJob
+        from ..services.batch_submit import submit_batch_job
 
         if video.status != Video.Status.UPLOADED:
             logger.error(
-                "create_job_and_enqueue: video %s status=%s (expected UPLOADED), enqueue skipped",
+                "create_job_and_submit_batch: video %s status=%s (expected UPLOADED), skipped",
                 video.id, video.status,
             )
             return None
@@ -141,7 +143,7 @@ class VideoSQSQueue:
             tenant = video.session.lecture.tenant
             tenant_id = int(tenant.id)
         except Exception as e:
-            logger.error("create_job_and_enqueue: Cannot get tenant for video %s, error=%s", video.id, e)
+            logger.error("create_job_and_submit_batch: Cannot get tenant for video %s, error=%s", video.id, e)
             return None
 
         job = VideoTranscodeJob.objects.create(
@@ -152,12 +154,18 @@ class VideoSQSQueue:
         video.current_job_id = job.id
         video.save(update_fields=["current_job_id", "updated_at"])
 
-        if not self.enqueue_by_job(job):
+        if not submit_batch_job(str(job.id)):
             job.delete()
             video.current_job_id = None
             video.save(update_fields=["current_job_id", "updated_at"])
             return None
         return job
+
+    def create_job_and_enqueue(self, video: Video) -> Optional["VideoTranscodeJob"]:
+        """
+        DEPRECATED: SQS 기반. create_job_and_submit_batch 사용.
+        """
+        return self.create_job_and_submit_batch(video)
 
     def enqueue_by_job(self, job) -> bool:
         """
