@@ -89,26 +89,23 @@ $commandsArray = @(
 if ($envLine) { $commandsArray += $envLine }
 $commandsArray += "./scripts/build_and_push_ecr_on_ec2.sh"
 $commandsArray += "echo REMOTE_BUILD_OK"
-# JSON 이스케이프: \ → \\, " → \"; AWS CLI가 받기 좋은 ["cmd1","cmd2"] 형태로 직접 조립
+# JSON 이스케이프: \ → \\, " → \"; ["cmd1","cmd2"] 형태로 직접 조립
 $joinedCommands = ($commandsArray | ForEach-Object { $esc = $_ -replace '\\', '\\\\' -replace '"', '\"'; '"{0}"' -f $esc }) -join ","
-# 따옴표로 감싸면 PowerShell이 $joinedCommands 안의 " 를 문자열 끝으로 인식하므로 연결로만 조립
-$parametersArg = 'commands=[' + $joinedCommands + ']'
+# PowerShell→exe 인자 전달 시 " 가 깨지므로, 전체 요청을 파일로 쓰고 --cli-input-json file:// 만 사용
+$payloadJson = '{"InstanceIds":["' + $buildInstanceId + '"],"DocumentName":"AWS-RunShellScript","Parameters":{"commands":[' + $joinedCommands + ']},"TimeoutSeconds":3600}'
+$payloadPath = Join-Path $RepoRoot "scripts\ssm-payload.json"
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText($payloadPath, $payloadJson, $utf8NoBom)
 
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-$awsArgs = @(
-    "ssm", "send-command",
-    "--region", $Region,
-    "--instance-ids", $buildInstanceId,
-    "--document-name", "AWS-RunShellScript",
-    "--parameters", $parametersArg,
-    "--timeout-seconds", "3600",
-    "--output", "json"
-)
-$cmdResult = & aws @awsArgs 2>&1
-$ErrorActionPreference = $prevErr
+# file:// 은 슬래시만 사용 (Windows에서도)
+$fileUri = "file:///" + ($payloadPath -replace '\\', '/')
+$cmdResult = & aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
 $exitCode = $LASTEXITCODE
+Remove-Item $payloadPath -Force -ErrorAction SilentlyContinue
+$ErrorActionPreference = $prevErr
 
 if ($exitCode -ne 0) {
     Write-Host "ERROR: SSM send-command failed (exit $exitCode)" -ForegroundColor Red
