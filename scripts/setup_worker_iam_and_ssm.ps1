@@ -49,7 +49,7 @@ if (-not (Test-Path $uploadScript)) {
 }
 
 # 3) Attach SSM+ECR policy + AmazonSSMManagedInstanceCore to EC2 role
-Write-Host "[3/4] Attaching SSM+ECR policy to EC2 role (instance profile: $IamInstanceProfileName)..." -ForegroundColor Cyan
+Write-Host "[3/3] Attaching SSM+ECR + AmazonSSMManagedInstanceCore to EC2 role (instance profile: $IamInstanceProfileName)..." -ForegroundColor Cyan
 $roleName = (aws iam get-instance-profile --instance-profile-name $IamInstanceProfileName --query "InstanceProfile.Roles[0].RoleName" --output text 2>$null)
 if (-not $roleName) {
     Write-Host "      Instance profile not found; skip." -ForegroundColor Yellow
