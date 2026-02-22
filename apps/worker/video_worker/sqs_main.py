@@ -252,39 +252,37 @@ def main() -> None:
 
         # ----- R2 삭제 작업 (비동기 삭제) -----
         if message.get("action") == "delete_r2":
-                    video_id = message.get("video_id")
-                    file_key = (message.get("file_key") or "").strip()
-                    hls_prefix = (message.get("hls_prefix") or "").strip()
-                    # delete_r2 전용 visibility 900초. 장시간 삭제 시 배치마다 재연장.
-                    DELETE_R2_VISIBILITY = 900
-                    queue.change_message_visibility(receipt_handle, DELETE_R2_VISIBILITY)
-                    # action별 멱등: 삭제 중복 처리 방지
-                    if not idempotency.acquire_lock(f"delete_r2:{video_id}"):
-                        logger.info("R2 delete skip (lock) video_id=%s", video_id)
-                        queue.delete_message(receipt_handle)
-                        return 0
-                    try:
-                        from apps.infrastructure.storage.r2 import delete_object_r2_video, delete_prefix_r2_video
-                        if file_key:
-                            delete_object_r2_video(key=file_key)
-                            logger.info("R2 raw deleted video_id=%s key=%s", video_id, file_key)
-                        if hls_prefix:
-                            def _extend_visibility(_):
-                                queue.change_message_visibility(receipt_handle, DELETE_R2_VISIBILITY)
-                            n = delete_prefix_r2_video(
-                                prefix=hls_prefix,
-                                on_batch_deleted=_extend_visibility,
-                            )
-                            logger.info("R2 HLS prefix deleted video_id=%s prefix=%s count=%d", video_id, hls_prefix, n)
-                    except Exception as e:
-                        logger.exception("R2 delete job failed video_id=%s: %s", video_id, e)
-                    finally:
-                        idempotency.release_lock(f"delete_r2:{video_id}")
-                    queue.delete_message(receipt_handle)
-                    return 0
+            video_id = message.get("video_id")
+            file_key = (message.get("file_key") or "").strip()
+            hls_prefix = (message.get("hls_prefix") or "").strip()
+            DELETE_R2_VISIBILITY = 900
+            queue.change_message_visibility(receipt_handle, DELETE_R2_VISIBILITY)
+            if not idempotency.acquire_lock(f"delete_r2:{video_id}"):
+                logger.info("R2 delete skip (lock) video_id=%s", video_id)
+                queue.delete_message(receipt_handle)
+                sys.exit(0)
+            try:
+                from apps.infrastructure.storage.r2 import delete_object_r2_video, delete_prefix_r2_video
+                if file_key:
+                    delete_object_r2_video(key=file_key)
+                    logger.info("R2 raw deleted video_id=%s key=%s", video_id, file_key)
+                if hls_prefix:
+                    def _extend_visibility(_):
+                        queue.change_message_visibility(receipt_handle, DELETE_R2_VISIBILITY)
+                    n = delete_prefix_r2_video(
+                        prefix=hls_prefix,
+                        on_batch_deleted=_extend_visibility,
+                    )
+                    logger.info("R2 HLS prefix deleted video_id=%s prefix=%s count=%d", video_id, hls_prefix, n)
+            except Exception as e:
+                logger.exception("R2 delete job failed video_id=%s: %s", video_id, e)
+            finally:
+                idempotency.release_lock(f"delete_r2:{video_id}")
+            queue.delete_message(receipt_handle)
+            sys.exit(0)
 
-                # ----- 인코딩 작업 (Job 기반) -----
-                job_id = message.get("job_id")
+        # ----- 인코딩 작업 (Job 기반) -----
+        job_id = message.get("job_id")
                 video_id = message.get("video_id")
                 file_key = message.get("file_key")
                 tenant_id = message.get("tenant_id")
