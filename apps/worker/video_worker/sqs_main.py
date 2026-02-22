@@ -226,31 +226,29 @@ def main() -> None:
 
     receipt_handle = None
     try:
-            receipt_handle = None
+        wait_sec = 0 if (_shutdown or spot_termination_event.is_set()) else SQS_WAIT_TIME_SECONDS
+        try:
+            message = queue.receive_message(wait_time_seconds=wait_sec)
+        except QueueUnavailableError as e:
+            logger.warning("SQS unavailable. %s", e)
+            sys.exit(1)
+
+        if not message:
+            logger.info("No message — exiting (scale-in target)")
+            sys.exit(0)
+
+        receipt_handle = message.get("receipt_handle")
+        if not receipt_handle:
+            logger.error("Message missing receipt_handle: %s", message)
+            sys.exit(0)
+
+        if _shutdown or spot_termination_event.is_set():
             try:
-                wait_sec = 0 if (_shutdown or spot_termination_event.is_set()) else SQS_WAIT_TIME_SECONDS
-                try:
-                    message = queue.receive_message(wait_time_seconds=wait_sec)
-                except QueueUnavailableError as e:
-                    logger.warning("SQS unavailable. %s", e)
-                    return 1
-
-                if not message:
-                    logger.info("No message — exiting (scale-in target)")
-                    return 0
-
-                receipt_handle = message.get("receipt_handle")
-                if not receipt_handle:
-                    logger.error("Message missing receipt_handle: %s", message)
-                    return 0
-
-                if _shutdown or spot_termination_event.is_set():
-                    try:
-                        queue.change_message_visibility(receipt_handle, 0)
-                    except Exception:
-                        pass
-                    logger.info("shutdown: returning message visibility=0")
-                    return 0
+                queue.change_message_visibility(receipt_handle, 0)
+            except Exception:
+                pass
+            logger.info("shutdown: returning message visibility=0")
+            sys.exit(0)
 
                 # ----- R2 삭제 작업 (비동기 삭제) -----
                 if message.get("action") == "delete_r2":
