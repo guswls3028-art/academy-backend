@@ -14,7 +14,7 @@ param(
     [switch]$VideoWorkerOnly = $false,
     [switch]$NoCache = $false,
     [switch]$SkipPrune = $false,   # true면 푸시 후 낡은 이미지/캐시 정리 스킵 (기본: 정리함)
-    [string]$GitRepoUrl = "",   # 있으면 clone/pull 후 빌드. 없으면 기존 /home/ec2-user/build/academy 기준으로만 빌드.
+    [string]$GitRepoUrl = "https://github.com/guswls3028-art/academy-backend.git",   # 빌드 서버에서 clone/pull 할 레포. 기본값 사용 시 생략.
     [string]$Region = "ap-northeast-2"
 )
 
