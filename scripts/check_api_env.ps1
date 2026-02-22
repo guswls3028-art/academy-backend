@@ -18,13 +18,15 @@ $ErrorActionPreference = "Stop"
 Write-Host ""
 Write-Host "== API Env Settings Verify ==" -ForegroundColor Cyan
 
-$extraArgs = if ($ShowSecrets) { @("--verbose") } else { @() }
-
 function Run-LocalCheck {
     $root = Split-Path -Parent $PSScriptRoot
     Push-Location $root
     try {
-        & python manage.py check_api_env_settings @extraArgs
+        if ($ShowSecrets) {
+            python manage.py check_api_env_settings --verbose
+        } else {
+            python manage.py check_api_env_settings
+        }
         return $LASTEXITCODE
     } finally {
         Pop-Location
