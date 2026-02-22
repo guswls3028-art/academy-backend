@@ -59,12 +59,15 @@ if ($metricName -eq "VideoQueueDepthTotal") {
 $qurl = $null
 try { $qurl = Invoke-AwsCli sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null } catch {}
 if (-not $qurl) {
-    Fail "SQS" "큐 URL 조회 실패 ($QueueName)"
+    Fail "SQS" "Queue URL fetch failed ($QueueName)"
 } else {
-    $attrs = Invoke-AwsCli sqs get-queue-attributes --queue-url $qurl --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible --output json 2>$null | ConvertFrom-Json
+    $attrs = $null
+    try { $attrs = Invoke-AwsCli sqs get-queue-attributes --queue-url $qurl --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible --output json 2>$null | ConvertFrom-Json } catch {}
+    if (-not $attrs -or -not $attrs.Attributes) { Fail "SQS" "Queue attributes fetch failed" } else {
     $v = [int]($attrs.Attributes.ApproximateNumberOfMessages)
     $nv = [int]($attrs.Attributes.ApproximateNumberOfMessagesNotVisible)
     Ok "SQS" "visible=$v notVisible=$nv total=$($v+$nv)"
+    }
 }
 
 # 3) ASG desired / min / max
