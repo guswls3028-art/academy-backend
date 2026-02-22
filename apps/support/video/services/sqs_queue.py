@@ -132,7 +132,10 @@ class VideoSQSQueue:
         from apps.support.video.models import VideoTranscodeJob
 
         if video.status != Video.Status.UPLOADED:
-            logger.warning("create_job_and_enqueue: video %s status=%s (expected UPLOADED)", video.id, video.status)
+            logger.error(
+                "create_job_and_enqueue: video %s status=%s (expected UPLOADED), enqueue skipped",
+                video.id, video.status,
+            )
             return None
         try:
             tenant = video.session.lecture.tenant
