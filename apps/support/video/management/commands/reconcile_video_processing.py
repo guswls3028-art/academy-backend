@@ -90,7 +90,7 @@ class Command(BaseCommand):
                 self.stderr.write(f"WARNING: video {video.id} status={video.status} after reclaim")
                 continue
 
-            if queue.enqueue(video):
+            if queue.create_job_and_submit_batch(video):
                 enqueued += 1
                 self.stdout.write(self.style.SUCCESS(f"RE_ENQUEUED | video_id={video.id}"))
 

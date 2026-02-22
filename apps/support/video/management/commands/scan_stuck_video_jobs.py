@@ -76,9 +76,12 @@ class Command(BaseCommand):
                     job.locked_by = ""
                     job.locked_until = None
                     job.save(update_fields=["state", "attempt_count", "locked_by", "locked_until", "updated_at"])
-                    self.stdout.write(
-                        self.style.SUCCESS(f"RETRY_WAIT | job_id={job.id} video_id={job.video_id} attempt={attempt_after}")
-                    )
+                    if submit_batch_job(str(job.id)):
+                        self.stdout.write(
+                            self.style.SUCCESS(f"RETRY_WAIT + BATCH_SUBMIT | job_id={job.id} video_id={job.video_id} attempt={attempt_after}")
+                        )
+                    else:
+                        self.stderr.write(f"RETRY_WAIT (batch submit failed) | job_id={job.id} video_id={job.video_id}")
                 recovered += 1
 
         self.stdout.write(
