@@ -407,25 +407,28 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             ok, meta, reason = _validate_source_media_via_ffprobe(src_url)
         except Exception as e:
             logger.exception(
-                "VIDEO_UPLOAD_COMPLETE_ERROR | ffprobe raised | video_id=%s | %s | FALLBACK: skip validation, enqueue",
+                "VIDEO_UPLOAD_COMPLETE_ERROR | ffprobe raised | video_id=%s | %s | FALLBACK: enqueue with duration=None",
                 video_id, e,
             )
-            ok, meta, reason = False, {"duration": 0}, "ffprobe_exception_fallback"
+            ok, meta, reason = False, {}, "ffprobe_exception_fallback"
 
-        if not ok and reason == "ffmpeg_module_missing":
+        # ffprobe 실패 시(ffmpeg_module_missing, ffprobe_exception_fallback 등) 반드시 enqueue
+        # duration=None fallback, Worker에서 재검증
+        if not ok:
+            duration = _safe_int(meta.get("duration"), None)
+            video.duration = duration
             video.status = Video.Status.UPLOADED
             video.error_reason = ""
-            video.save(update_fields=["status", "error_reason"])
+            video.save(update_fields=["status", "duration", "error_reason"])
             _tid = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
             logger.info(
-                "VIDEO_UPLOAD_TRACE | before enqueue (ffmpeg_module_missing branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
-                video.id, _tid, video.file_key or "",
+                "VIDEO_UPLOAD_TRACE | before enqueue (ffprobe_fail reason=%s duration=%s) | video_id=%s execution=2_BEFORE_ENQUEUE",
+                reason, duration, video_id,
             )
-            # Job 생성 + SQS enqueue (job_id 포함)
             if not VideoSQSQueue().create_job_and_enqueue(video):
                 logger.error(
-                    "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_enqueue returned None (ffmpeg_missing branch)",
-                    video.id,
+                    "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | reason=%s",
+                    video_id, reason,
                 )
                 return Response(
                     {"detail": "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."},
