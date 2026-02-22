@@ -94,7 +94,8 @@ if ($qurl) {
     try { $allAttrs = Invoke-AwsCli sqs get-queue-attributes --queue-url $qurl --attribute-names All --output json 2>$null | ConvertFrom-Json } catch {}
     if ($allAttrs -and $allAttrs.Attributes -and $allAttrs.Attributes.RedrivePolicy) { $hasRedrive = $true }
 }
-$dlqUrl = Invoke-AwsCli sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text 2>$null
+$dlqUrl = $null
+try { $dlqUrl = Invoke-AwsCli sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text 2>$null } catch {}
 if ($dlqUrl) { $hasDlq = $true }
 if ($hasDlq -and $hasRedrive) {
     Ok "DLQ" "DLQ exists, RedrivePolicy set"
@@ -105,7 +106,8 @@ if ($hasDlq -and $hasRedrive) {
 }
 
 # 6) Lambda in scaling path
-$fn = Invoke-AwsCli lambda get-function --function-name $LambdaName --output json 2>$null
+$fn = $null
+try { $fn = Invoke-AwsCli lambda get-function --function-name $LambdaName --output json 2>$null } catch {}
 if ($fn -and $metricName -eq "VideoQueueDepthTotal") {
     Warn "LambdaInPath" "Scaling metric (VideoQueueDepthTotal) published by Lambda. OK but Lambda failure stops scaling."
 } elseif ($metricName -eq "BacklogCount") {
