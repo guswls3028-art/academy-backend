@@ -42,7 +42,11 @@ foreach ($name in $expected) {
 }
 
 Write-Host ""
-Write-Host "Done. ECS instances launched by Batch can now: 1) Join ECS cluster, 2) Pull from ECR, 3) Write CloudWatch Logs." -ForegroundColor Green
-Write-Host "Verify: Submit a video job, then after ~120s run:" -ForegroundColor Gray
-Write-Host "  aws batch list-jobs --job-queue academy-video-batch-queue --job-status RUNNING --region ap-northeast-2" -ForegroundColor Gray
-Write-Host "  (RUNNABLE -> STARTING -> RUNNING within 120s = OK)" -ForegroundColor Gray
+Write-Host "Done. ECS instances (Batch CE only) can now: 1) Join ECS cluster, 2) Pull from ECR, 3) Write CloudWatch Logs. (academy-ec2-role unchanged)" -ForegroundColor Green
+Write-Host ""
+Write-Host "After attaching - verify:" -ForegroundColor Cyan
+Write-Host "  1. Upload a new test video (upload_complete) so a job is submitted to the queue." -ForegroundColor Gray
+Write-Host "  2. Within 60-120s, RUNNABLE should move to STARTING then RUNNING. Check:" -ForegroundColor Gray
+Write-Host "     aws batch list-jobs --job-queue academy-video-batch-queue --job-status STARTING --region ap-northeast-2" -ForegroundColor Gray
+Write-Host "     aws batch list-jobs --job-queue academy-video-batch-queue --job-status RUNNING --region ap-northeast-2" -ForegroundColor Gray
+Write-Host "  Expected: RUNNABLE -> STARTING -> RUNNING" -ForegroundColor Gray
