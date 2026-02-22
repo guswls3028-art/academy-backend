@@ -43,8 +43,8 @@ if ($ApiIp) {
         exit 1
     }
     $EC2_USER = "ec2-user"
-    $argsStr = ($extraArgs | ForEach-Object { $_ }) -join " "
-    $remoteCmd = "docker exec academy-api python manage.py check_api_env_settings $argsStr".Trim()
+    $verboseArg = if ($ShowSecrets) { " --verbose" } else { "" }
+    $remoteCmd = "docker exec academy-api python manage.py check_api_env_settings$verboseArg"
     $sshCmd = "ssh -o StrictHostKeyChecking=accept-new -i `"$KeyPath`" ${EC2_USER}@${ApiIp} `"$remoteCmd`""
     Invoke-Expression $sshCmd
 } else {
@@ -61,7 +61,11 @@ if ($ApiIp) {
     $ErrorActionPreference = $eap
 
     if ($cid) {
-        docker exec $cid python manage.py check_api_env_settings @extraArgs
+        if ($ShowSecrets) {
+            docker exec $cid python manage.py check_api_env_settings --verbose
+        } else {
+            docker exec $cid python manage.py check_api_env_settings
+        }
     } else {
         Write-Host "Docker unavailable or academy-api not running. Checking .env locally..." -ForegroundColor Yellow
         Run-LocalCheck
