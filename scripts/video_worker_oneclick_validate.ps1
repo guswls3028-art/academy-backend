@@ -22,7 +22,7 @@ $PolicyName = "video-backlogcount-tt"
 
 $AwsBase = @("--region", $Region)
 if ($Profile) { $AwsBase = @("--profile", $Profile) + $AwsBase }
-function Aws { param([parameter(ValueFromRemainingArguments)]$Rest) $a = @($Rest) + $AwsBase; & aws @a }
+function Invoke-AwsCli { param([parameter(ValueFromRemainingArguments)]$Rest) $a = @($Rest) + $AwsBase; $exe = (Get-Command aws.exe -CommandType Application -ErrorAction SilentlyContinue).Source; if (-not $exe) { $exe = "aws" }; & $exe @a }
 
 $results = @{}
 function Ok { param([string]$K, [string]$V) $results[$K] = @{ ok = $true; msg = $V }; Write-Host "  [OK] $K : $V" -ForegroundColor Green }
@@ -32,7 +32,7 @@ function Warn { param([string]$K, [string]$V) $results[$K] = @{ ok = $true; warn
 Write-Host "`n========== Video Worker One-Click Validate ==========" -ForegroundColor Cyan
 
 # 1) Scaling metric SQS-based?
-$pol = Aws autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
+$pol = Invoke-AwsCli autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
 $metricName = "none"
 $policyRef = $null
 if ($pol -and $pol.ScalingPolicies) {
