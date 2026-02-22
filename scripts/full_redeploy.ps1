@@ -2,14 +2,17 @@
 # API + worker redeploy: build(optional) -> ECR push -> API/worker deploy
 # Requires: root or deploy access key, C:\key\*.pem (EC2 SSH), -GitRepoUrl when building
 #
+# --- Video = AWS Batch (기본) ---
+# Video 인코딩: Batch 전용. EC2/ASG video worker 미사용.
+# -VideoViaBatch (기본 true): video worker SSH/ASG 배포 스킵. academy-video-worker 이미지는 ECR 푸시만 (Batch Job Definition용).
+#
 # --- Default workflow (ASG workers) ---
 # Full:  .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -WorkersViaASG
 # Workers only (ECR 이미지는 빌드서버에서 이미 푸시한 뒤): -SkipBuild -WorkersViaASG
 # No-cache build: add -NoCache
 #
 # --- DeployTarget: all | api | video | ai | messaging | workers ---
-#
-# Worker self-stop loop: .\scripts\remove_ec2_stop_from_worker_role.ps1 (docs_cursor/11-worker-self-stop-root-cause.md)
+# video = Batch Job Definition용 이미지 빌드/푸시만 (EC2/ASG 배포 없음)
 # ==============================================================================
 
 param(
@@ -22,6 +25,7 @@ param(
     [string]$RoleName = "academy-ec2-role",
     [switch]$SkipBuild = $false,
     [switch]$WorkersViaASG = $false,             # if true, workers via ASG instance refresh only (no SSH to fixed EC2)
+    [switch]$VideoViaBatch = $true,              # if true, video worker EC2/ASG 배포 스킵 (Batch 전용)
     [switch]$StartStoppedInstances = $true,
     [switch]$NoCache = $false,                   # if true, docker build with --no-cache (e.g. after config change)
     [ValidateSet("all", "api", "video", "ai", "messaging", "workers")]
