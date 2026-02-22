@@ -232,7 +232,7 @@ function Invoke-PostValidate {
     $mStart = (Get-Date).AddMinutes(-10).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     $cw = Aws cloudwatch get-metric-statistics --namespace "Academy/VideoProcessing" --metric-name "VideoQueueDepthTotal" --dimensions "Name=WorkerType,Value=Video" "Name=AutoScalingGroupName,Value=$AsgName" --start-time $mStart --end-time $mEnd --period 60 --statistics Average --output json 2>$null | ConvertFrom-Json
     $hasMetric = $cw.Datapoints -and $cw.Datapoints.Count -gt 0
-    if ($hasMetric) { Log-Step "  CloudWatch VideoQueueDepthTotal 최근 10분 데이터 있음" } else { Log-Warn "  VideoQueueDepthTotal 최근 10분 없음 (Lambda 1분 주기 대기)" }
+    if ($hasMetric) { Log-Step "  CloudWatch VideoQueueDepthTotal data in last 10min" } else { Log-Warn "  VideoQueueDepthTotal no data yet (Lambda 1min period)" }
 
     $pol = Aws autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
     $usesSqs = $false
@@ -244,7 +244,7 @@ function Invoke-PostValidate {
 
     $act = Aws autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --max-items 5 --output json 2>$null | ConvertFrom-Json
     if ($act -and $act.Activities) {
-        Log-Step "  ASG 최근 활동: $($act.Activities.Count)건"
+        Log-Step "  ASG recent activities: $($act.Activities.Count)"
         $act.Activities | Select-Object -First 3 | ForEach-Object { Write-Host "    $($_.StatusCode) $($_.Description)" -ForegroundColor Gray }
     }
     return $true
