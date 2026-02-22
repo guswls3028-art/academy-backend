@@ -2,8 +2,8 @@
 """
 Stuck Scanner: RUNNING인데 last_heartbeat_at < now - 3분 → RETRY_WAIT, attempt_count++.
 
-attempt_count >= MAX 이면 DEAD 처리 (enqueue 하지 않음).
-메시지는 SQS visibility timeout 후 자동 재전달 → 다른 워커가 claim.
+attempt_count >= MAX 이면 DEAD 처리.
+RETRY_WAIT 전환 시 submit_batch_job 호출 (Batch 재제출).
 
 Run via cron (e.g. every 2 min):
   python manage.py scan_stuck_video_jobs
@@ -13,7 +13,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from apps.support.video.models import VideoTranscodeJob
-from apps.support.video.services.sqs_queue import VideoSQSQueue
+from apps.support.video.services.batch_submit import submit_batch_job
 
 
 STUCK_THRESHOLD_MINUTES = 3
