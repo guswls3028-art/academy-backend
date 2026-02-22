@@ -1,17 +1,16 @@
 # 모든 워커 ASG 스케일링 정책 확인
 # Usage: .\scripts\check_all_worker_scaling_policies.ps1
+# -ExcludeVideo (기본 true): Video = Batch 전용. academy-video-worker-asg 스킵.
 
 param(
-    [string]$Region = "ap-northeast-2"
+    [string]$Region = "ap-northeast-2",
+    [switch]$ExcludeVideo = $true
 )
 
 $ErrorActionPreference = "Stop"
 
-$asgNames = @(
-    "academy-ai-worker-asg",
-    "academy-video-worker-asg",
-    "academy-messaging-worker-asg"
-)
+$asgNames = @("academy-ai-worker-asg", "academy-messaging-worker-asg")
+if (-not $ExcludeVideo) { $asgNames = @("academy-ai-worker-asg", "academy-video-worker-asg", "academy-messaging-worker-asg") }
 
 Write-Host "Checking scaling policies for all workers..." -ForegroundColor Cyan
 Write-Host ""

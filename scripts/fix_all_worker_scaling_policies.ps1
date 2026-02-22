@@ -81,9 +81,9 @@ Write-Host "Next steps:" -ForegroundColor Cyan
 Write-Host "  1. Deploy Lambda:" -ForegroundColor Gray
 Write-Host "     .\scripts\deploy_worker_asg.ps1 -SubnetIds ""subnet-xxx"" -SecurityGroupId ""sg-xxx"" -IamInstanceProfileName ""academy-ec2-role""" -ForegroundColor White
 Write-Host ""
-Write-Host "  2. Lambda adjusts ASG desired capacity for all workers:" -ForegroundColor Gray
+Write-Host "  2. Lambda adjusts ASG desired capacity for workers:" -ForegroundColor Gray
 Write-Host "     - AI: academy-ai-worker-asg" -ForegroundColor White
-Write-Host "     - Video: academy-video-worker-asg" -ForegroundColor White
+if (-not $ExcludeVideo) { Write-Host "     - Video: academy-video-worker-asg" -ForegroundColor White }
 Write-Host "     - Messaging: academy-messaging-worker-asg" -ForegroundColor White
 Write-Host ""
 Write-Host "  3. Scaling logic:" -ForegroundColor Gray
