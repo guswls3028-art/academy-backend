@@ -813,4 +813,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
         
         folder.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)        
+        folder.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
