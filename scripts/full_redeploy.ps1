@@ -29,7 +29,18 @@ param(
     [string]$DeployTarget = "all"               # all=API+2 workers (ai,messaging); api|video|ai|messaging=that one; video=build/push only
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+function Run($cmd) {
+    Write-Host "RUN: $cmd" -ForegroundColor Gray
+    $out = Invoke-Expression $cmd 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "FAILED($LASTEXITCODE): $cmd`n$out"
+    }
+    return $out
+}
+
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptRoot
 . (Join-Path $ScriptRoot "_config_instance_keys.ps1")
