@@ -283,23 +283,23 @@ def main() -> None:
 
         # ----- 인코딩 작업 (Job 기반) -----
         job_id = message.get("job_id")
-                video_id = message.get("video_id")
-                file_key = message.get("file_key")
-                tenant_id = message.get("tenant_id")
-                tenant_code = message.get("tenant_code")
-                message_created_at = message.get("created_at")
+        video_id = message.get("video_id")
+        file_key = message.get("file_key")
+        tenant_id = message.get("tenant_id")
+        tenant_code = message.get("tenant_code")
+        message_created_at = message.get("created_at")
 
-                if not video_id or tenant_id is None:
-                    logger.error("Invalid message format (video_id, tenant_id required): %s", message)
-                    queue.delete_message(receipt_handle)
-                    return 0
+        if not video_id or tenant_id is None:
+            logger.error("Invalid message format (video_id, tenant_id required): %s", message)
+            queue.delete_message(receipt_handle)
+            sys.exit(0)
 
-                if not job_id:
-                    logger.warning("MESSAGE_LEGACY_SKIP | job_id missing | video_id=%s | NACK", video_id)
-                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
-                    return 0
+        if not job_id:
+            logger.warning("MESSAGE_LEGACY_SKIP | job_id missing | video_id=%s | NACK", video_id)
+            queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
+            sys.exit(0)
 
-                from academy.adapters.db.django.repositories_video import (
+        from academy.adapters.db.django.repositories_video import (
                     job_get_by_id,
                     job_claim_for_running,
                     job_complete,
