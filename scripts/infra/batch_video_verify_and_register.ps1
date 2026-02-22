@@ -64,7 +64,7 @@ $jdContent = $jdContent -replace "PLACEHOLDER_EXECUTION_ROLE_ARN", $executionRol
 $jdContent = $jdContent -replace "PLACEHOLDER_REGION", $Region
 $jdFile = Join-Path $RepoRoot "batch_jd_temp.json"
 [System.IO.File]::WriteAllText($jdFile, $jdContent)
-$regOut = ExecJson "aws batch register-job-definition --cli-input-json `"file://$($jdFile -replace '\\','/')`" --region $Region --output json"
+$regOut = aws batch register-job-definition --cli-input-json "file://$($jdFile -replace '\\','/')" --region $Region --output json | ConvertFrom-Json
 Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
 $newRevision = $regOut.revision
 Write-Host "  Registered revision $newRevision" -ForegroundColor Green
