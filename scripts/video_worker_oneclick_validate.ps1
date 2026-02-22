@@ -55,18 +55,18 @@ if ($metricName -eq "VideoQueueDepthTotal") {
 }
 
 # 2) SQS visible / notVisible
-$qurl = Aws sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null
+$qurl = Invoke-AwsCli sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null
 if (-not $qurl) {
     Fail "SQS" "큐 URL 조회 실패 ($QueueName)"
 } else {
-    $attrs = Aws sqs get-queue-attributes --queue-url $qurl --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible --output json 2>$null | ConvertFrom-Json
+    $attrs = Invoke-AwsCli sqs get-queue-attributes --queue-url $qurl --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible --output json 2>$null | ConvertFrom-Json
     $v = [int]($attrs.Attributes.ApproximateNumberOfMessages)
     $nv = [int]($attrs.Attributes.ApproximateNumberOfMessagesNotVisible)
     Ok "SQS" "visible=$v notVisible=$nv total=$($v+$nv)"
 }
 
 # 3) ASG desired / min / max
-$asg = Aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --query "AutoScalingGroups[0]" --output json 2>$null | ConvertFrom-Json
+$asg = Invoke-AwsCli autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --query "AutoScalingGroups[0]" --output json 2>$null | ConvertFrom-Json
 if (-not $asg) {
     Fail "ASG" "ASG fetch failed ($AsgName)"
 } else {
@@ -86,10 +86,10 @@ if ($act -and $act.Activities -and $act.Activities.Count -gt 0) {
 $hasDlq = $false
 $hasRedrive = $false
 if ($qurl) {
-    $allAttrs = Aws sqs get-queue-attributes --queue-url $qurl --attribute-names All --output json 2>$null | ConvertFrom-Json
+    $allAttrs = Invoke-AwsCli sqs get-queue-attributes --queue-url $qurl --attribute-names All --output json 2>$null | ConvertFrom-Json
     if ($allAttrs.Attributes.RedrivePolicy) { $hasRedrive = $true }
 }
-$dlqUrl = Aws sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text 2>$null
+$dlqUrl = Invoke-AwsCli sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text 2>$null
 if ($dlqUrl) { $hasDlq = $true }
 if ($hasDlq -and $hasRedrive) {
     Ok "DLQ" "DLQ exists, RedrivePolicy set"
@@ -100,7 +100,7 @@ if ($hasDlq -and $hasRedrive) {
 }
 
 # 6) Lambda in scaling path
-$fn = Aws lambda get-function --function-name $LambdaName --output json 2>$null
+$fn = Invoke-AwsCli lambda get-function --function-name $LambdaName --output json 2>$null
 if ($fn -and $metricName -eq "VideoQueueDepthTotal") {
     Warn "LambdaInPath" "Scaling metric (VideoQueueDepthTotal) published by Lambda. OK but Lambda failure stops scaling."
 } elseif ($metricName -eq "BacklogCount") {
