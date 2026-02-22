@@ -174,6 +174,38 @@ class VideoDlqMarkDeadView(APIView):
         return Response({"detail": "job_mark_dead failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class VideoDeleteR2InternalView(APIView):
+    """
+    Lambda(SQS trigger): delete_r2 메시지 처리.
+    POST /api/v1/internal/video/delete-r2/
+    body: {"video_id": int, "file_key": str, "hls_prefix": str}
+    """
+    permission_classes = [IsLambdaInternal]
+    authentication_classes = []
+
+    def post(self, request):
+        from apps.infrastructure.storage.r2 import delete_object_r2_video, delete_prefix_r2_video
+
+        data = getattr(request, "data", None) or {}
+        video_id = data.get("video_id")
+        file_key = (data.get("file_key") or "").strip()
+        hls_prefix = (data.get("hls_prefix") or "").strip()
+
+        if not video_id:
+            return Response({"detail": "video_id required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            if file_key:
+                delete_object_r2_video(key=file_key)
+            if hls_prefix:
+                delete_prefix_r2_video(prefix=hls_prefix)
+            return Response({"ok": True, "video_id": video_id})
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception("delete_r2 failed video_id=%s", video_id)
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class VideoScanStuckView(APIView):
     """
     EventBridge Scheduled Lambda: scan_stuck_video_jobs 로직 실행.
