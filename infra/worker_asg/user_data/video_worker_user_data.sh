@@ -36,7 +36,7 @@ docker rm academy-video-worker 2>/dev/null || true
 # docker run 재시도 (실패 시 10초 후 최대 3회)
 for i in 1 2 3; do
   docker rm -f academy-video-worker 2>/dev/null || true
-  if docker run -d --name academy-video-worker --restart unless-stopped --memory 4g \
+  if docker run -d --name academy-video-worker --restart no --memory 4g \
     --env-file "$ENV_FILE" \
     -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker \
     -e EC2_IDLE_STOP_THRESHOLD=0 \
