@@ -2,6 +2,8 @@
 # ASG Target Tracking worker deploy (Min=0, SQS queue depth based)
 # Requires: AWS CLI configured, SSM /academy/workers/env has .env content
 # Usage: .\scripts\deploy_worker_asg.ps1 -SubnetIds "subnet-xxx,subnet-yyy" -SecurityGroupId "sg-xxx" -IamInstanceProfileName "academy-ec2-role"
+#
+# -ExcludeVideo (기본 true): Video = AWS Batch 전용. academy-video-worker-asg 생성/업데이트 스킵.
 # ==============================================================================
 
 param(
@@ -11,6 +13,7 @@ param(
     [string]$SecurityGroupId,
     [Parameter(Mandatory = $true)]
     [string]$IamInstanceProfileName,
+    [switch]$ExcludeVideo = $true,  # if true, skip video ASG (Video = Batch only)
     [string]$KeyNameAi = "",   # from _config_instance_keys (academy-ai-worker-cpu)
     [string]$KeyNameVideo = "",   # from _config_instance_keys (academy-video-worker)
     [string]$KeyNameMessaging = "",   # from _config_instance_keys (academy-messaging-worker)
@@ -112,7 +115,9 @@ Remove-Item $ltAiFile -Force -ErrorAction SilentlyContinue
 # ------------------------------------------------------------------------------
 # 3) Launch Template Video (academy-video-worker-lt for MixedInstancesPolicy)
 #     LT default InstanceType t4g.medium (fallback); Overrides add c6g.large (Spot primary)
+#     Skip if -ExcludeVideo (Video = Batch only)
 # ------------------------------------------------------------------------------
+if (-not $ExcludeVideo) {
 Write-Host "[3/8] Launch Template (Video worker, academy-video-worker-lt)..." -ForegroundColor Cyan
 $videoUserDataPath = Join-Path $UserDataDir "video_worker_user_data.sh"
 $videoUserDataRaw = Get-Content $videoUserDataPath -Raw
