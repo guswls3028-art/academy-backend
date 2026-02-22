@@ -336,28 +336,24 @@ if ($deployApi) {
 # ---------- 3) Worker deploy (when DeployTarget is all|workers|video|ai|messaging) ----------
 if ($deployWorkers) {
     Write-Host "`n=== 3/3 Worker deploy ===`n" -ForegroundColor Cyan
-    $workerList = @("academy-messaging-worker", "academy-ai-worker-cpu", "academy-video-worker")
-    if ($DeployTarget -eq "video") { $workerList = @("academy-video-worker") }
+    $workerList = @("academy-messaging-worker", "academy-ai-worker-cpu")
+    if ($DeployTarget -eq "video") {
+        Write-Host "Video: Batch 전용. EC2/ASG 배포 없음 (이미지는 Build 단계에서 ECR 푸시됨)." -ForegroundColor Gray
+        $workerList = @()
+    }
     if ($DeployTarget -eq "ai")    { $workerList = @("academy-ai-worker-cpu") }
     if ($DeployTarget -eq "messaging") { $workerList = @("academy-messaging-worker") }
-    if ($VideoViaBatch) {
-        $workerList = $workerList | Where-Object { $_ -ne "academy-video-worker" }
-        if ($DeployTarget -eq "video") {
-            Write-Host "Video: Batch 전용. EC2/ASG 배포 없음 (이미지는 Build 단계에서 ECR 푸시됨)." -ForegroundColor Gray
-            $workerList = @()
-        }
-    }
 
-    if ($workerList.Count -eq 0) {
-        Write-Host "Worker deploy 대상 없음 (VideoViaBatch이거나 DeployTarget=video인 경우)." -ForegroundColor Gray
+    if ($workerList.Count -eq 0 -and $DeployTarget -ne "video") {
+        Write-Host "Worker deploy 대상 없음." -ForegroundColor Gray
+    } elseif ($workerList.Count -eq 0 -and $DeployTarget -eq "video") {
+        # video = build/push only, already handled in Build step
     } elseif ($WorkersViaASG) {
         Write-Host "Worker ASG instance refresh only (skipping fixed EC2 SSH)..." -ForegroundColor Gray
         $asgMap = @{
-            "academy-video-worker"     = "academy-video-worker-asg"
             "academy-ai-worker-cpu"    = "academy-ai-worker-asg"
             "academy-messaging-worker" = "academy-messaging-worker-asg"
         }
-        if ($VideoViaBatch) { $asgMap.Remove("academy-video-worker") | Out-Null }
         $asgNames = $workerList | ForEach-Object { $asgMap[$_] } | Where-Object { $_ }
         foreach ($asgName in $asgNames) {
             $asgCheck = aws autoscaling describe-auto-scaling-groups --region $Region --auto-scaling-group-names $asgName --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>&1
