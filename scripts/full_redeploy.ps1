@@ -333,14 +333,24 @@ if ($deployWorkers) {
     if ($DeployTarget -eq "video") { $workerList = @("academy-video-worker") }
     if ($DeployTarget -eq "ai")    { $workerList = @("academy-ai-worker-cpu") }
     if ($DeployTarget -eq "messaging") { $workerList = @("academy-messaging-worker") }
+    if ($VideoViaBatch) {
+        $workerList = $workerList | Where-Object { $_ -ne "academy-video-worker" }
+        if ($DeployTarget -eq "video") {
+            Write-Host "Video: Batch 전용. EC2/ASG 배포 없음 (이미지는 Build 단계에서 ECR 푸시됨)." -ForegroundColor Gray
+            $workerList = @()
+        }
+    }
 
-    if ($WorkersViaASG) {
+    if ($workerList.Count -eq 0) {
+        Write-Host "Worker deploy 대상 없음 (VideoViaBatch이거나 DeployTarget=video인 경우)." -ForegroundColor Gray
+    } elseif ($WorkersViaASG) {
         Write-Host "Worker ASG instance refresh only (skipping fixed EC2 SSH)..." -ForegroundColor Gray
         $asgMap = @{
             "academy-video-worker"     = "academy-video-worker-asg"
             "academy-ai-worker-cpu"    = "academy-ai-worker-asg"
             "academy-messaging-worker" = "academy-messaging-worker-asg"
         }
+        if ($VideoViaBatch) { $asgMap.Remove("academy-video-worker") | Out-Null }
         $asgNames = $workerList | ForEach-Object { $asgMap[$_] } | Where-Object { $_ }
         foreach ($asgName in $asgNames) {
             $asgCheck = aws autoscaling describe-auto-scaling-groups --region $Region --auto-scaling-group-names $asgName --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>&1
