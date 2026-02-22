@@ -13,7 +13,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
-$ConfigPath = Join-Path $RepoRoot "infra\worker_asg\video_visible_only_tt.json"
+$ConfigPath = Join-Path $RepoRoot "infra\worker_asg\video-visible-tt.json"
 
 if (-not (Test-Path $ConfigPath)) {
     Write-Host "ERROR: SSOT config not found: $ConfigPath" -ForegroundColor Red
@@ -30,7 +30,7 @@ aws autoscaling delete-policy `
     --region $Region 2>$null
 if ($LASTEXITCODE -ne 0) { Write-Host "  (policy may not exist)" -ForegroundColor Gray }
 
-Write-Host "[2/3] Putting policy: $PolicyName (e1=m1 Visible only, SSOT: video_visible_only_tt.json) ..." -ForegroundColor Cyan
+Write-Host "[2/3] Putting policy: $PolicyName (e1=m1 Visible only, SSOT: video-visible-tt.json) ..." -ForegroundColor Cyan
 aws autoscaling put-scaling-policy `
     --auto-scaling-group-name $AsgName `
     --policy-name $PolicyName `
