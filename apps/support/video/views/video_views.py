@@ -373,11 +373,15 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         try:
             exists, size = head_object(video.file_key)
         except Exception as e:
-            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | head_object | video_id=%s | %s", video.id, e)
+            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | head_object | video_id=%s | %s", video_id, e)
             return Response(
                 {"detail": "저장소 확인 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        logger.info(
+            "VIDEO_UPLOAD_TRACE | head_object ok | video_id=%s exists=%s size=%s execution=1b_HEAD_OK",
+            video_id, exists, size,
+        )
         if not exists or size == 0:
             video.error_reason = "source_not_found_or_empty"
             video.save(update_fields=["error_reason"])
