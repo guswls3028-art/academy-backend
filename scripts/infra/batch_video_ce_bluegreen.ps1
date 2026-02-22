@@ -145,14 +145,8 @@ if ($st -ne "VALID") {
 # 5) Job Queue computeEnvironmentOrder 업데이트
 Write-Host ""
 Write-Host "[5] Job Queue 업데이트: $JobQueueName -> $NewCeName" -ForegroundColor Cyan
-$jqUpdate = @"
-{"computeEnvironmentOrder":[{"order":1,"computeEnvironment":"$NewCeName"}]}
-"@
-$jqFile = Join-Path $RepoRoot "batch_jq_update_temp.json"
-[System.IO.File]::WriteAllText($jqFile, $jqUpdate, (New-Object System.Text.UTF8Encoding $false))
-$jqUri = "file://" + (Resolve-Path -LiteralPath $jqFile).Path.Replace('\', '/')
-aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order $jqUri --region $Region
-Remove-Item $jqFile -Force -ErrorAction SilentlyContinue
+$orderJson = "[{`"order`":1,`"computeEnvironment`":`"$NewCeName`"}]"
+aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order $orderJson --region $Region
 Write-Host "  OK: Queue 연결 변경" -ForegroundColor Green
 
 # 6) 구 CE 비활성화
