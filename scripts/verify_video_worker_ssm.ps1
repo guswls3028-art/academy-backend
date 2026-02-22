@@ -30,10 +30,10 @@ if ($instanceIds) {
   Write-Host "`n[2] SSM: No running instances to check" -ForegroundColor Gray
 }
 
-# 3) Scaling policy (SQS direct 확인)
-Write-Host "`n[3] Scaling policy namespace:" -ForegroundColor Yellow
-$ns = aws autoscaling describe-policies --auto-scaling-group-names academy-video-worker-asg --region $Region --query "ScalingPolicies[?PolicyName=='video-backlogcount-tt'].TargetTrackingConfiguration.CustomizedMetricSpecification.Metrics[0].MetricStat.Metric.Namespace" --output text 2>$null
-Write-Host "    $ns (should be AWS/SQS for SQS direct)"
+# 3) Scaling policy (SSOT: video-visible-only-tt, Expression=m1)
+Write-Host "`n[3] Scaling policy:" -ForegroundColor Yellow
+$metrics = aws autoscaling describe-policies --auto-scaling-group-name academy-video-worker-asg --region $Region --query "ScalingPolicies[?PolicyType=='TargetTrackingScaling'].TargetTrackingConfiguration.CustomizedMetricSpecification.Metrics" --output json 2>$null
+Write-Host "    $metrics (Expression=m1 Visible only, m2 미포함)"
 
 # 4) SSM Run Command 테스트 (첫 인스턴스 1개만)
 if ($instanceIds -and $instanceIds[0]) {
