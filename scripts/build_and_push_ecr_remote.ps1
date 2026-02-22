@@ -87,8 +87,7 @@ $oneLine += "./scripts/build_and_push_ecr_on_ec2.sh; echo REMOTE_BUILD_OK"
 
 # 4) SSM Send Command (parameters 값에 " 포함 → 배열 인자로 한 덩어리 전달해야 함, 백틱/따옴표는 exe 전달 시 깨짐)
 $cmdEscaped = $oneLine -replace '\\', '\\\\' -replace '"', '\"'
-$dq = [char]34
-$parametersArg = "commands=[${dq}$cmdEscaped${dq}]"
+$parametersArg = "commands=[${q}$cmdEscaped${q}]"
 
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
