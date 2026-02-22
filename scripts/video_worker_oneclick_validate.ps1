@@ -74,7 +74,7 @@ if (-not $asg) {
 }
 
 # 4) Recent scaling events
-$act = Aws autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --max-items 5 --output json 2>$null | ConvertFrom-Json
+$act = Invoke-AwsCli autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --max-items 5 --output json 2>$null | ConvertFrom-Json
 if ($act -and $act.Activities -and $act.Activities.Count -gt 0) {
     $last = $act.Activities[0]
     Ok "ScalingEvents" "Recent: $($last.StatusCode) $($last.Description)"
