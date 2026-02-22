@@ -95,4 +95,6 @@ docker push "${ECR}/academy-messaging-worker:latest"
 docker push "${ECR}/academy-video-worker:latest"
 docker push "${ECR}/academy-ai-worker-cpu:latest"
 
+_prune_images
+
 echo "Done. 이제 로컬에서: .\\scripts\\full_redeploy.ps1 -WorkersViaASG -SkipBuild"
