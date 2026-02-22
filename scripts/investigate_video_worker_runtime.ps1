@@ -70,8 +70,12 @@ foreach ($instanceId in $instances) {
     if ($status -eq "Success" -or $status -eq "Failed" -or $status -eq "Cancelled") { break }
   }
 
-  $stdout = if ($inv.StandardOutputContent) { $inv.StandardOutputContent -replace "`r`n", "`n" -replace "`r", "`n" } else { "" }
-  $stderr = if ($inv.StandardErrorContent) { $inv.StandardErrorContent -replace "`r`n", "`n" -replace "`r", "`n" } else { "" }
+  $stdout = ""
+  $stderr = ""
+  if ($inv) {
+    $stdout = if ($inv.StandardOutputContent) { $inv.StandardOutputContent -replace "`r`n", "`n" -replace "`r", "`n" } else { "" }
+    $stderr = if ($inv.StandardErrorContent) { $inv.StandardErrorContent -replace "`r`n", "`n" -replace "`r", "`n" } else { "" }
+  }
 
   $containerRunning = "NO"
   if ($stdout -match "academy-video-worker") { $containerRunning = "YES" }
