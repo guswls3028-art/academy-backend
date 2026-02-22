@@ -91,7 +91,8 @@ $commandsArray += "./scripts/build_and_push_ecr_on_ec2.sh"
 $commandsArray += "echo REMOTE_BUILD_OK"
 # JSON 이스케이프: \ → \\, " → \"; AWS CLI가 받기 좋은 ["cmd1","cmd2"] 형태로 직접 조립
 $joinedCommands = ($commandsArray | ForEach-Object { $esc = $_ -replace '\\', '\\\\' -replace '"', '\"'; '"{0}"' -f $esc }) -join ","
-$parametersArg = "commands=[$joinedCommands]"
+# 따옴표로 감싸면 PowerShell이 $joinedCommands 안의 " 를 문자열 끝으로 인식하므로 연결로만 조립
+$parametersArg = 'commands=[' + $joinedCommands + ']'
 
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
