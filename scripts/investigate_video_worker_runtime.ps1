@@ -50,8 +50,14 @@ foreach ($instanceId in $instances) {
   $sendOut = aws ssm send-command --cli-input-json $inputPath --region $Region --output json 2>&1
   Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
   $ErrorActionPreference = $ea
-  if ($LASTEXITCODE -ne 0 -or -not $sendOut) {
-    Write-Host "ContainerRunning: NO (SSM send failed)" -ForegroundColor Red
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "ContainerRunning: NO (SSM send failed, exit $LASTEXITCODE)" -ForegroundColor Red
+    Write-Host "WorkerLog: $sendOut" -ForegroundColor Gray
+    Write-Host "ffmpegProcessCount: N/A`n" -ForegroundColor Gray
+    continue
+  }
+  if (-not $sendOut -or $sendOut -notmatch '^\s*\{') {
+    Write-Host "ContainerRunning: NO (SSM send returned no/invalid JSON)" -ForegroundColor Red
     Write-Host "WorkerLog: $sendOut" -ForegroundColor Gray
     Write-Host "ffmpegProcessCount: N/A`n" -ForegroundColor Gray
     continue
