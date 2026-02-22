@@ -393,21 +393,24 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         try:
             src_url = create_presigned_get_url(key=video.file_key, expires_in=600)
         except Exception as e:
+            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | create_presigned_get_url | video_id=%s | %s", video_id, e)
             video.error_reason = f"presigned_get_failed:{str(e)[:200]}"
             video.save(update_fields=["error_reason"])
             return Response(
                 {"detail": "presigned_get_failed"},
                 status=status.HTTP_409_CONFLICT,
             )
+        logger.info("VIDEO_UPLOAD_TRACE | presigned_get ok | video_id=%s execution=1c_PRESIGN_OK", video_id)
 
+        ok, meta, reason = None, {}, ""
         try:
             ok, meta, reason = _validate_source_media_via_ffprobe(src_url)
         except Exception as e:
-            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | ffprobe | video_id=%s | %s", video.id, e)
-            return Response(
-                {"detail": "영상 검증 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            logger.exception(
+                "VIDEO_UPLOAD_COMPLETE_ERROR | ffprobe raised | video_id=%s | %s | FALLBACK: skip validation, enqueue",
+                video_id, e,
             )
+            ok, meta, reason = False, {"duration": 0}, "ffprobe_exception_fallback"
 
         if not ok and reason == "ffmpeg_module_missing":
             video.status = Video.Status.UPLOADED
