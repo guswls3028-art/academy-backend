@@ -84,19 +84,23 @@ $oneLine = "set -e; " + $repoLine + "; cd /home/ec2-user/build/academy; "
 if ($envLine) { $oneLine += $envLine + "; " }
 $oneLine += "./scripts/build_and_push_ecr_on_ec2.sh; echo REMOTE_BUILD_OK"
 
-# 4) SSM Send Command (full_redeploy/check_worker_docker 스타일: 백틱 연속, parameters는 JSON 이스케이프)
+# 4) SSM Send Command (parameters 값에 " 포함 → 배열 인자로 한 덩어리 전달해야 함, 백틱/따옴표는 exe 전달 시 깨짐)
 $cmdEscaped = $oneLine -replace '\\', '\\\\' -replace '"', '\"'
+$parametersArg = 'commands=[' + "`"" + $cmdEscaped + "`" + ']'
 
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-# PowerShell 더블쿼트 안에서 " 를 백틱 이스케이프해 한 인자로 전달 (프로젝트 SSM 호출 스타일 유지)
-$cmdResult = aws ssm send-command --region $Region `
-    --instance-ids $buildInstanceId `
-    --document-name "AWS-RunShellScript" `
-    --parameters "commands=[`"$cmdEscaped`"]" `
-    --timeout-seconds 3600 `
-    --output json 2>&1
+$awsArgs = @(
+    "ssm", "send-command",
+    "--region", $Region,
+    "--instance-ids", $buildInstanceId,
+    "--document-name", "AWS-RunShellScript",
+    "--parameters", $parametersArg,
+    "--timeout-seconds", "3600",
+    "--output", "json"
+)
+$cmdResult = & aws @awsArgs 2>&1
 $ErrorActionPreference = $prevErr
 $exitCode = $LASTEXITCODE
 
