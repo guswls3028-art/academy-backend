@@ -125,7 +125,11 @@ if (-not $SkipBuild) {
     $existingId = $null
     $existingState = $null
     if ($existing -match "i-\S+\s+(running|stopped)") {
-        $parts = $existing.Trim() -split "\s+", 2
+        $lines = $existing.Trim() -split "`n" | Where-Object { $_ -match "i-\S+\s+(running|stopped)" }
+        if ($lines.Count -gt 1) {
+            Write-Host "WARN: Multiple academy-build-arm64 instances found; using first." -ForegroundColor Yellow
+        }
+        $parts = $lines[0].Trim() -split "\s+", 2
         $existingId = $parts[0]
         $existingState = $parts[1]
     }
