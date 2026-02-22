@@ -39,8 +39,8 @@ Video 인코딩은 **DB(VideoTranscodeJob) SSOT** 기반 **AWS Batch**로 전환
 ## delete_r2 (R2 비동기 삭제)
 
 - `enqueue_delete_r2` → SQS academy-video-jobs (action=delete_r2)
-- **소비자**: Lambda (SQS 트리거) 또는 별도 delete_r2 Lambda
-- 인코딩 Batch 전환 후, delete_r2 메시지는 Lambda가 처리
+- **소비자**: `scripts/infra/delete_r2_lambda_setup.ps1`로 배포한 Lambda (SQS 트리거)
+- 인코딩 Batch 전환 후, delete_r2 메시지는 Lambda가 처리 (또는 sqs_main을 delete_r2 전용으로 별도 실행)
 
 ## 인프라
 
