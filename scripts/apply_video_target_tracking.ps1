@@ -7,7 +7,7 @@
 
 param(
     [string]$Region = "ap-northeast-2",
-    [string]$AsgName = "academy-video-worker-asg"
+    [string]$AsgName = "academy-video-worker-asg"  # [DEPRECATED] Video = Batch only
 )
 
 $ErrorActionPreference = "Stop"

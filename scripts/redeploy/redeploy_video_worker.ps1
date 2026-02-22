@@ -1,4 +1,5 @@
 # ==============================================================================
+# [DEPRECATED] Video = AWS Batch 전용. academy-video-worker-asg 미사용.
 # Video Worker ASG 재배포 (Instance Refresh 전용)
 # 규칙: put-scaling-policy 금지, ASG Desired 변경 금지, TargetTracking 수정 금지
 # LT version update, Instance Refresh만 수행.

@@ -1,4 +1,5 @@
 # ==============================================================================
+# [DEPRECATED] Video = AWS Batch 전용. academy-video-worker-asg 미사용.
 # SSOT: Video ASG Scaling Policy 적용 (유일하게 put-scaling-policy 허용)
 # redeploy_worker_asg.ps1 / full_redeploy.ps1 에서 절대 호출 금지.
 # 사용: .\scripts\infra\apply_video_asg_scaling_policy.ps1

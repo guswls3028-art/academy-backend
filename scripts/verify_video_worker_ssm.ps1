@@ -1,5 +1,6 @@
 # ==============================================================================
-# Video Worker SSM 검증 — redeploy 후 확인
+# [DEPRECATED] Video = AWS Batch 전용. academy-video-worker-asg 미사용.
+# Video Worker SSM 검증 — redeploy 후 확인 (ASG 기반)
 # Usage: .\scripts\verify_video_worker_ssm.ps1
 # ==============================================================================
 

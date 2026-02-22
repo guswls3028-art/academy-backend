@@ -3,6 +3,7 @@
 # 백업 → Lambda/ASG 정책 적용 → 검증. -Rollback 시 이전 정책 복원.
 # ==============================================================================
 # 사용:
+# [DEPRECATED] Video = AWS Batch 전용. academy-video-worker-asg 미사용.
 #   적용: .\scripts\apply_video_worker_scaling_fix.ps1 -Region ap-northeast-2
 #   롤백: .\scripts\apply_video_worker_scaling_fix.ps1 -Region ap-northeast-2 -Rollback
 # ==============================================================================
