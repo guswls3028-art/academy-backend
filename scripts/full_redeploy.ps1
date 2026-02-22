@@ -312,7 +312,18 @@ if ($deployApi) {
     $apiOk = Deploy-One -Name "academy-api" -Ip $apiIp -KeyFile $INSTANCE_KEYS["academy-api"] -RemoteCmd $REMOTE_CMDS["academy-api"]
     if (-not $apiOk) { exit 1 }
 
-    # B1: nginx X-Internal-Key 전달 (Lambda backlog-count 인증용)
+    # B2: Batch settings runtime verify
+    $batchCheckScript = Join-Path $ScriptRoot "check_api_batch_runtime.ps1"
+    if (Test-Path $batchCheckScript) {
+        Write-Host "[academy-api] Verifying Batch settings in container..." -ForegroundColor Gray
+        & $batchCheckScript -ApiIp $apiIp -KeyPath (Join-Path $KeyDir $INSTANCE_KEYS["academy-api"])
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "FAIL: Batch settings missing in API runtime. Deployment aborted." -ForegroundColor Red
+            exit 1
+        }
+    }
+
+    # B3: nginx X-Internal-Key 전달 (Lambda backlog-count 인증용)
     $nginxConfPath = Join-Path $RepoRoot "infra\nginx\academy-api.conf"
     if (Test-Path $nginxConfPath) {
         Write-Host "[academy-api] Copying nginx config (X-Internal-Key passthrough) ..." -ForegroundColor Gray
