@@ -87,27 +87,18 @@ if ($envLine) { $commandsList += $envLine }
 $commandsList += "./scripts/build_and_push_ecr_on_ec2.sh"
 $commandsList += "echo REMOTE_BUILD_OK"
 
-# 4) SSM Send Command (JSON 수동 구성으로 PowerShell/CLI 호환성 확보)
+# 4) SSM Send Command (Windows file:// 경로 이슈 회피: JSON을 직접 전달)
 $commandsJsonArray = ($commandsList | ForEach-Object { $_ -replace '\\', '\\\\' -replace '"', '\"' -replace "`r", '' -replace "`n", ' ' }) | ForEach-Object { "`"$_`"" }
 $commandsJsonStr = "[" + ($commandsJsonArray -join ",") + "]"
-$paramsJsonStr = @"
-{"InstanceIds":["$buildInstanceId"],"DocumentName":"AWS-RunShellScript","Parameters":{"commands":$commandsJsonStr},"TimeoutSeconds":3600}
-"@.Trim()
+$paramsJsonStr = '{"InstanceIds":["' + $buildInstanceId + '"],"DocumentName":"AWS-RunShellScript","Parameters":{"commands":' + $commandsJsonStr + '},"TimeoutSeconds":3600}'
 
-$paramsFile = [System.IO.Path]::GetTempFileName()
-$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-try {
-    [System.IO.File]::WriteAllText($paramsFile, $paramsJsonStr, $utf8NoBom)
-    Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
-    $fileUri = "file:///" + ($paramsFile -replace '\\', '/')
-    $prevErr = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $cmdResult = & aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
-    $ErrorActionPreference = $prevErr
-    $exitCode = $LASTEXITCODE
-} finally {
-    Remove-Item $paramsFile -Force -ErrorAction SilentlyContinue
-}
+Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
+$prevErr = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+# Windows에서 file:// 경로 오류 방지: --cli-input-json 에 JSON 문자열 직접 전달
+$cmdResult = & aws ssm send-command --region $Region --cli-input-json $paramsJsonStr --output json 2>&1
+$ErrorActionPreference = $prevErr
+$exitCode = $LASTEXITCODE
 
 if ($exitCode -ne 0) {
     Write-Host "ERROR: SSM send-command failed (exit $exitCode)" -ForegroundColor Red
