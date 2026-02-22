@@ -104,15 +104,15 @@ $fn = Aws lambda get-function --function-name $LambdaName --output json 2>$null
 if ($fn -and $metricName -eq "VideoQueueDepthTotal") {
     Warn "LambdaInPath" "Scaling metric (VideoQueueDepthTotal) published by Lambda. OK but Lambda failure stops scaling."
 } elseif ($metricName -eq "BacklogCount") {
-    Warn "LambdaInPath" "BacklogCount 사용 시 Lambda/API 의존. SQS 기반으로 전환 권장."
+    Warn "LambdaInPath" "BacklogCount uses Lambda/API. Switch to SQS-based."
 }
 
 # 요약
 $failCount = ($results.Values | Where-Object { -not $_.ok }).Count
-Write-Host "`n========== 요약 ==========" -ForegroundColor Cyan
+Write-Host "`n========== Summary ==========" -ForegroundColor Cyan
 if ($failCount -eq 0) {
-    Write-Host "  결과: OK (요구사항 만족)" -ForegroundColor Green
+    Write-Host "  Result: OK (requirements met)" -ForegroundColor Green
 } else {
-    Write-Host "  결과: FAIL (실패 $failCount 건)" -ForegroundColor Red
+    Write-Host "  Result: FAIL ($failCount failed)" -ForegroundColor Red
 }
 Write-Host ""
