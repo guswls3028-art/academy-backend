@@ -24,10 +24,13 @@ $pathUri = "file://$($ConfigPath -replace '\\','/')"
 $OldPolicyName = "video-backlogcount-tt"
 
 Write-Host "[1/3] Deleting old policy: $OldPolicyName ..." -ForegroundColor Cyan
+$ea = $ErrorActionPreference
+$ErrorActionPreference = "SilentlyContinue"
 aws autoscaling delete-policy `
     --auto-scaling-group-name $AsgName `
     --policy-name $OldPolicyName `
-    --region $Region 2>$null
+    --region $Region 2>&1 | Out-Null
+$ErrorActionPreference = $ea
 if ($LASTEXITCODE -ne 0) { Write-Host "  (policy may not exist)" -ForegroundColor Gray }
 
 Write-Host "[2/3] Putting policy: $PolicyName (e1=m1 Visible only, SSOT: video-visible-tt.json) ..." -ForegroundColor Cyan
