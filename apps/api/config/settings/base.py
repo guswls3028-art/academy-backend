@@ -341,8 +341,8 @@ SOLAPI_SENDER = os.getenv("SOLAPI_SENDER", "")  # 발신 번호 (예: 0101234567
 SOLAPI_KAKAO_PF_ID = os.getenv("SOLAPI_KAKAO_PF_ID", "")
 SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
 
-# SQS 큐 (API가 enqueue, 워커가 소비 — 큐 이름 일치 필수)
-VIDEO_SQS_QUEUE_NAME = os.getenv("VIDEO_SQS_QUEUE_NAME", "academy-video-jobs")
+# delete_r2 전용 SQS (Encoding = Batch ONLY)
+VIDEO_SQS_QUEUE_DELETE_R2 = os.getenv("VIDEO_SQS_QUEUE_DELETE_R2", "academy-video-delete-r2")
 
 # AWS Batch Video Encoding (SSOT: DB VideoTranscodeJob)
 VIDEO_BATCH_JOB_QUEUE = os.getenv("VIDEO_BATCH_JOB_QUEUE", "academy-video-batch-queue")
