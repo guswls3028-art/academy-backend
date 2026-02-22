@@ -35,11 +35,12 @@ foreach ($instanceId in $instances) {
     "ps aux | grep ffmpeg 2>/dev/null | grep -v grep || echo 'NO_FFMPEG'"
   )
   $commandsJson = $commands | ConvertTo-Json -Compress
+  $paramsJson = "{`"commands`":$commandsJson}"
 
   $sendOut = aws ssm send-command `
     --document-name "AWS-RunShellScript" `
     --instance-ids $instanceId `
-    --parameters "commands=$commandsJson" `
+    --parameters $paramsJson `
     --timeout-seconds $TimeoutSec `
     --region $Region `
     --output json 2>&1
