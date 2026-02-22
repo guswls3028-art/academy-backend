@@ -95,7 +95,7 @@ $ErrorActionPreference = "Continue"
 $cmdResult = & aws ssm send-command `
     --instance-ids $buildInstanceId `
     --document-name "AWS-RunShellScript" `
-    --parameters $parametersArg `
+    --parameters "$parametersArg" `
     --timeout-seconds 3600 `
     --region $Region `
     --output json 2>&1
