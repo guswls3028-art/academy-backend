@@ -190,17 +190,22 @@ class VideoSQSQueue:
             if success:
                 from apps.support.video.redis_status_cache import redis_incr_video_backlog
                 redis_incr_video_backlog(tenant_id)
+                queue_name = self._get_queue_name()
                 logger.info(
-                    "Video job enqueued | job_id=%s | video_id=%s | tenant_id=%s",
-                    job.id, video_id, tenant_id,
+                    "Video %s enqueue to SQS %s | job_id=%s | video_id=%s | tenant_id=%s",
+                    video_id, queue_name, job.id, video_id, tenant_id,
                 )
             else:
-                logger.error("Failed to enqueue video job | job_id=%s | video_id=%s", job.id, video_id)
+                logger.error(
+                    "Failed to enqueue video job to SQS %s | job_id=%s | video_id=%s | send_message returned False",
+                    self._get_queue_name(), job.id, video_id,
+                )
             return bool(success)
         except Exception as e:
-            logger.exception(
-                "enqueue_by_job exception | job_id=%s video_id=%s error=%s",
-                job.id, video_id, e,
+            logger.error(
+                "enqueue_by_job exception | queue=%s job_id=%s video_id=%s error=%s",
+                self._get_queue_name(), job.id, video_id, e,
+                exc_info=True,
             )
             return False
 
