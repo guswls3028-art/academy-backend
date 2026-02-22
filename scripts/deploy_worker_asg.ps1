@@ -192,7 +192,7 @@ aws application-autoscaling register-scalable-target --service-namespace ec2 --r
 $ErrorActionPreference = $ea
 
 # ------------------------------------------------------------------------------
-# 7) Target Tracking policies (AI, Messaging: Application Auto Scaling; Video: EC2 autoscaling put-scaling-policy)
+# 7) Target Tracking policies (AI, Messaging: Application Auto Scaling)
 # ------------------------------------------------------------------------------
 Write-Host "[8/8] Target Tracking (target $TargetMessagesPerInstance msgs/instance)..." -ForegroundColor Cyan
 $policyAi = @"
@@ -242,17 +242,12 @@ aws application-autoscaling put-scaling-policy --service-namespace ec2 --resourc
 $ErrorActionPreference = $ea
 Remove-Item $policyAiFile, $policyMessagingFile -Force -ErrorAction SilentlyContinue
 
-# Video ASG: ExcludeVideo이면 스킵. 그렇지 않으면 scaling policy는 SSOT 스크립트로만 적용.
-if (-not $ExcludeVideo) {
-    Write-Host "      Video ASG: scaling policy NOT modified (use scripts/infra/apply_video_asg_scaling_policy.ps1 if needed)" -ForegroundColor Gray
-}
-
-Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging=TargetTracking (Application Auto Scaling)$(if (-not $ExcludeVideo) { '; Video=SSOT only (scripts/infra/apply_video_asg_scaling_policy.ps1)' } else { '; Video=Batch only (ASG skipped)' })" -ForegroundColor Green
+Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging=TargetTracking (Application Auto Scaling)" -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
 # Cleanup: remove legacy Launch Templates (ASG-named; we now use -lt names)
 # ------------------------------------------------------------------------------
-$legacyLtNames = @("academy-video-worker-asg", "academy-ai-worker-asg", "academy-messaging-worker-asg")
+$legacyLtNames = @("academy-ai-worker-asg", "academy-messaging-worker-asg")
 $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 foreach ($name in $legacyLtNames) {
     aws ec2 delete-launch-template --launch-template-name $name --region $Region 2>$null | Out-Null
