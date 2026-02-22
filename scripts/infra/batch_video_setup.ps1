@@ -156,12 +156,7 @@ if (-not $ceObj) {
     $updateFile = Join-Path $RepoRoot "batch_ce_update_temp.json"
     $updateJson = $updateInput | ConvertTo-Json -Depth 6 -Compress
     [System.IO.File]::WriteAllText($updateFile, $updateJson, (New-Object System.Text.UTF8Encoding $false))
-    $updateUri = "file:///" + ($updateFile -replace '\\', '/').Replace(':', '')
-    if ($updateUri -match "^file:///([A-Za-z])") {
-        $updateUri = "file:///" + $Matches[1] + ":" + ($updateFile -replace '\\', '/').Substring(2)
-    } else {
-        $updateUri = "file://" + ($updateFile -replace '\\', '/')
-    }
+    $updateUri = "file:///" + (Resolve-Path -LiteralPath $updateFile).Path.Replace('\', '/')
     aws batch update-compute-environment --cli-input-json $updateUri --region $Region
     Remove-Item $updateFile -Force -ErrorAction SilentlyContinue
 }
