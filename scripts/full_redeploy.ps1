@@ -240,9 +240,12 @@ echo BUILD_AND_PUSH_OK
             $commandsArray += $trimmed
         }
     }
-    # PowerShell 배열을 JSON 배열 문자열로 변환
-    $commandsJson = $commandsArray | ConvertTo-Json -Compress
-    # ✅ --parameters에 JSON 배열 직접 전달
+    # Build JSON array by hand to avoid ConvertTo-Json Unicode escapes (\u0026 etc.) that can break SSM
+    $escaped = $commandsArray | ForEach-Object {
+        $s = $_ -replace '\\', '\\\\' -replace '"', '\"'
+        "`"$s`""
+    }
+    $commandsJson = "[" + ($escaped -join ",") + "]"
     $cmdResult = aws ssm send-command --region $Region `
         --instance-ids $buildInstanceId `
         --document-name "AWS-RunShellScript" `
