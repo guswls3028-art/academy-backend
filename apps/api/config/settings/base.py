@@ -343,6 +343,10 @@ SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
 
 # SQS 큐 (API가 enqueue, 워커가 소비 — 큐 이름 일치 필수)
 VIDEO_SQS_QUEUE_NAME = os.getenv("VIDEO_SQS_QUEUE_NAME", "academy-video-jobs")
+
+# AWS Batch Video Encoding (SSOT: DB VideoTranscodeJob)
+VIDEO_BATCH_JOB_QUEUE = os.getenv("VIDEO_BATCH_JOB_QUEUE", "academy-video-batch-queue")
+VIDEO_BATCH_JOB_DEFINITION = os.getenv("VIDEO_BATCH_JOB_DEFINITION", "academy-video-batch-jobdef")
 AI_SQS_QUEUE_NAME_LITE = os.getenv("AI_SQS_QUEUE_NAME_LITE", "academy-ai-jobs-lite")
 AI_SQS_QUEUE_NAME_BASIC = os.getenv("AI_SQS_QUEUE_NAME_BASIC", "academy-ai-jobs-basic")
 AI_SQS_QUEUE_NAME_PREMIUM = os.getenv("AI_SQS_QUEUE_NAME_PREMIUM", "academy-ai-jobs-premium")
