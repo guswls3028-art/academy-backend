@@ -22,7 +22,7 @@ Write-Host "Account: $AccountId | User/Role: $((aws sts get-caller-identity --qu
 Write-Host ""
 
 # 1) Grant SSM PutParameter to admin97
-Write-Host "[1/3] Attaching SSM PutParameter policy to user '$SsmUserName'..." -ForegroundColor Cyan
+Write-Host "[1/4] Attaching SSM PutParameter policy to user '$SsmUserName'..." -ForegroundColor Cyan
 $ssmPolicyPath = Join-Path $AsgInfra "iam_policy_ssm_put_workers_env.json"
 $ssmPolicyJson = (Get-Content $ssmPolicyPath -Raw) -replace '\{\{Region\}\}', $Region -replace '\{\{AccountId\}\}', $AccountId
 $ssmPolicyFile = Join-Path $RepoRoot "iam_ssm_put_temp.json"
@@ -39,7 +39,7 @@ Write-Host "      OK." -ForegroundColor Green
 $ErrorActionPreference = $ea
 
 # 2) .env -> SSM (Windows-safe via upload_env_to_ssm.ps1)
-Write-Host "[2/3] Uploading .env to /academy/workers/env..." -ForegroundColor Cyan
+Write-Host "[2/4] Uploading .env to /academy/workers/env..." -ForegroundColor Cyan
 $uploadScript = Join-Path $ScriptRoot "upload_env_to_ssm.ps1"
 if (-not (Test-Path $uploadScript)) {
     Write-Host "      upload_env_to_ssm.ps1 not found; skip." -ForegroundColor Yellow
