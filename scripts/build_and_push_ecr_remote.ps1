@@ -95,8 +95,9 @@ $paramsJsonStr = '{"InstanceIds":["' + $buildInstanceId + '"],"DocumentName":"AW
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-# Windows에서 file:// 경로 오류 방지: --cli-input-json 에 JSON 문자열 직접 전달
-$cmdResult = & aws ssm send-command --region $Region --cli-input-json $paramsJsonStr --output json 2>&1
+# Windows: file:// 경로 오류 회피. JSON을 한 인자로 전달하기 위해 배열 스플래팅 사용
+$awsArgs = @("ssm", "send-command", "--region", $Region, "--cli-input-json", $paramsJsonStr, "--output", "json")
+$cmdResult = & aws @awsArgs 2>&1
 $ErrorActionPreference = $prevErr
 $exitCode = $LASTEXITCODE
 
