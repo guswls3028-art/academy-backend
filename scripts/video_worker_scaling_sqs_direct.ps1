@@ -1,4 +1,5 @@
 # ==============================================================================
+# [DEPRECATED] Video = AWS Batch 전용. academy-video-worker-asg 미사용.
 # Video Worker ASG: Lambda 제거, SQS Metric Math 직접 참조
 # Scaling Path: SQS Visible + NotVisible -> CloudWatch Metric Math -> ASG
 # Lambda(academy-worker-queue-depth-metric)는 Scaling Path에서 완전 제외.
