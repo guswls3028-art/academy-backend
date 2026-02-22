@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BatchSubmitVideoJob",
+      "Effect": "Allow",
+      "Action": "batch:SubmitJob",
+      "Resource": [
+        "arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-video-batch-jobdef",
+        "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-video-batch-queue"
+      ]
+    }
+  ]
+}
