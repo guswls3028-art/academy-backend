@@ -26,7 +26,7 @@ if (-not $awsExe) {
 }
 if (-not $awsExe) { $awsExe = "aws" }
 
-$requiredKeys = @("DB_HOST", "DB_NAME", "DB_USER", "REDIS_HOST", "R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY")
+$requiredKeys = @("DB_HOST", "DB_NAME", "DB_USER", "REDIS_HOST", "R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY", "VIDEO_BATCH_JOB_QUEUE", "VIDEO_BATCH_JOB_DEFINITION")
 $optionalButRecommended = @("LAMBDA_INTERNAL_API_KEY", "DJANGO_SETTINGS_MODULE")
 
 Write-Host "[1/2] Get SSM $SsmName..." -ForegroundColor Cyan
