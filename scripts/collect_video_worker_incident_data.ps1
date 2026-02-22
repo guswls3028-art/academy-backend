@@ -241,9 +241,8 @@ if ($asgObj -and $asgObj -isnot [string]) {
         }
     }
 } else {
-    $report += "`n$f`njson`n$asgObj`n$f"
+    $report += "`n$f" + "json`n$asgObj`n$f"
 }
-# Note: $f = '```' for markdown code fence
 
 $report += @"
 
@@ -251,7 +250,7 @@ $report += @"
 "@
 
 $ltRaw = Read-SafeText (Join-Path $OutDir "2_lt_spec.json")
-$report += "`n**LT Spec (ASG 참조):**`n$f`njson`n$ltRaw`n$f`n"
+$report += "`n**LT Spec (ASG 참조):**`n$f" + "json`n$ltRaw`n$f`n"
 if ($ltDataObj -and $ltDataObj -isnot [string]) {
     $report += "**LT Data (UserData/IamInstanceProfile/SecurityGroup/Subnet):** AMI=$($ltDataObj.ImageId) IamProfile=$($ltDataObj.IamInstanceProfile.Name)"
 }
@@ -410,7 +409,7 @@ $report += @"
 
 ### 7.1 자동 검증 스크립트
 
-$f`npowershell
+$f" + "powershell
 # 데이터 수집 + 보고서 생성 (AWS 자격증명 필요)
 .\scripts\collect_video_worker_incident_data.ps1
 
@@ -422,7 +421,7 @@ $f`npowershell
 
 # Runtime (인스턴스별 docker/ffmpeg/worker 로그)
 .\scripts\investigate_video_worker_runtime.ps1
-$f
+"@ + "`n$f"
 
 ### 7.2 수동 체크
 
