@@ -42,11 +42,26 @@ def _log_json(event: str, **kwargs) -> None:
     logger.info(json.dumps({"event": event, **kwargs}))
 
 
+def _is_valid_uuid(s: str) -> bool:
+    if not s or len(s) != 36:
+        return False
+    try:
+        import uuid
+        uuid.UUID(s)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 def main() -> int:
     job_id = os.environ.get("VIDEO_JOB_ID") or (sys.argv[1] if len(sys.argv) > 1 else None)
     if not job_id:
         _log_json("BATCH_MAIN_ERROR", error="VIDEO_JOB_ID or argv[1] required")
         return 1
+
+    if not _is_valid_uuid(job_id):
+        _log_json("JOB_NOT_FOUND", job_id=job_id, reason="not_a_uuid")
+        return 0
 
     job_obj = job_get_by_id(job_id)
     if not job_obj:
