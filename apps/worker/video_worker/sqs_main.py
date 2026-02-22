@@ -1,7 +1,8 @@
 """
 Video Worker - SQS 기반 메인 엔트리포인트
 
-기존 HTTP polling 방식에서 SQS Long Polling으로 전환
+DEPRECATED (인코딩): AWS Batch로 전환. batch_main.py 사용.
+delete_r2 전용: Lambda(delete_r2_lambda)가 SQS 소비. 필요 시 이 스크립트로 delete_r2만 처리 가능.
 """
 
 from __future__ import annotations

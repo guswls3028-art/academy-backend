@@ -58,4 +58,5 @@ Video 인코딩은 **DB(VideoTranscodeJob) SSOT** 기반 **AWS Batch**로 전환
 ## 환경 변수 (Batch 컨테이너)
 
 - `VIDEO_JOB_ID`: Batch parameters의 job_id (command 인자로 전달)
-- R2, DB, Redis: SSM Parameter Store 또는 Job Definition env/secrets
+- R2, DB, Redis: Job Definition에서 SSM Parameter Store secrets 또는 env로 전달
+  - 기존 worker env (R2_*, DATABASE_*, REDIS_* 등)를 Job Definition secrets에 매핑
