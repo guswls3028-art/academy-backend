@@ -7,6 +7,7 @@
 # 사용: repo 루트에서 ./scripts/build_and_push_ecr_on_ec2.sh
 # 옵션:
 #   NO_CACHE=1          docker build --no-cache
+#   API_ONLY=1          base + academy-api 만 빌드/푸시
 #   VIDEO_WORKER_ONLY=1 base + academy-video-worker 만 빌드/푸시 (로컬 Docker 불필요)
 # ==============================================================================
 set -e
@@ -16,15 +17,30 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ECR="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 NO_CACHE="${NO_CACHE:-}"
 DOCKER_EXTRA="${NO_CACHE:+--no-cache}"
+API_ONLY="${API_ONLY:-}"
 VIDEO_WORKER_ONLY="${VIDEO_WORKER_ONLY:-}"
 
 echo "ECR Registry: $ECR"
 echo "Region: $REGION"
+[ -n "$API_ONLY" ] && echo "API_ONLY=1 (base + api only)"
 [ -n "$VIDEO_WORKER_ONLY" ] && echo "VIDEO_WORKER_ONLY=1 (base + video-worker only)"
 echo ""
 
 echo "[1/5] academy-base..."
 docker build $DOCKER_EXTRA -f docker/Dockerfile.base -t academy-base:latest .
+
+if [ -n "$API_ONLY" ]; then
+  echo "[2/5] academy-api only..."
+  docker build $DOCKER_EXTRA -f docker/api/Dockerfile -t academy-api:latest .
+  docker tag academy-api:latest "${ECR}/academy-api:latest"
+  echo "ECR login..."
+  aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ECR"
+  aws ecr create-repository --repository-name academy-api --region "$REGION" 2>/dev/null || true
+  echo "ECR push academy-api..."
+  docker push "${ECR}/academy-api:latest"
+  echo "Done (API only). 로컬에서: .\\scripts\\full_redeploy.ps1 -SkipBuild -DeployTarget api"
+  exit 0
+fi
 
 if [ -n "$VIDEO_WORKER_ONLY" ]; then
   echo "[2/5] academy-video-worker (skip api/messaging/ai)..."
