@@ -99,13 +99,13 @@ Write-Host "[2] Get IAM ARNs" -ForegroundColor Cyan
 $serviceRoleArn = (ExecJson "aws iam get-role --role-name academy-batch-service-role --output json 2>&1").Role.Arn
 $instanceProfileArn = (ExecJson "aws iam get-instance-profile --instance-profile-name academy-batch-ecs-instance-profile --output json 2>&1").InstanceProfile.Arn
 if (-not $serviceRoleArn -or -not $instanceProfileArn) {
-    Write-Host "FAIL: IAM Role/InstanceProfile 없음. batch_video_setup.ps1 먼저 실행." -ForegroundColor Red
+    Write-Host "FAIL: IAM Role/InstanceProfile not found. Run batch_video_setup.ps1 first." -ForegroundColor Red
     exit 1
 }
 
 # 3) 새 CE 생성 (BEST_FIT_PROGRESSIVE)
 Write-Host ""
-Write-Host "[3] 새 CE 생성: $NewCeName" -ForegroundColor Cyan
+Write-Host "[3] Create new CE: $NewCeName" -ForegroundColor Cyan
 $subnetArr = ($SubnetIds | ForEach-Object { "`"$_`"" }) -join ","
 $ceNewJson = @"
 {"computeEnvironmentName":"$NewCeName","type":"MANAGED","state":"ENABLED","serviceRole":"$serviceRoleArn","computeResources":{"type":"EC2","allocationStrategy":"BEST_FIT_PROGRESSIVE","minvCpus":0,"maxvCpus":32,"desiredvCpus":0,"instanceTypes":["c6g.large","c6g.xlarge","c6g.2xlarge"],"subnets":[$subnetArr],"securityGroupIds":["$SecurityGroupId"],"instanceRole":"$instanceProfileArn"}}
