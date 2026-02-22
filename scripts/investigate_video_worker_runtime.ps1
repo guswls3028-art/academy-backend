@@ -46,7 +46,7 @@ foreach ($instanceId in $instances) {
 
   $ea = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
-  $sendOut = Get-Content $inputFile -Raw | aws ssm send-command --cli-input-json file:///dev/stdin --region $Region --output json 2>&1 | Out-String
+  $sendOut = Get-Content $inputFile -Raw -Encoding UTF8 | aws ssm send-command --cli-input-json "file:///dev/stdin" --region $Region --output json 2>&1 | Out-String
   Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
   $ErrorActionPreference = $ea
   if ($LASTEXITCODE -ne 0) {
