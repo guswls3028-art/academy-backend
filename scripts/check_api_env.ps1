@@ -18,7 +18,7 @@ $ErrorActionPreference = "Stop"
 Write-Host ""
 Write-Host "== API Env Settings Verify ==" -ForegroundColor Cyan
 
-$extraArgs = if ($ShowSecrets) { " --verbose" } else { "" }
+$extraArgs = if ($ShowSecrets) { @("--verbose") } else { @() }
 
 function Run-LocalCheck {
     $root = Split-Path -Parent $PSScriptRoot
@@ -41,7 +41,8 @@ if ($ApiIp) {
         exit 1
     }
     $EC2_USER = "ec2-user"
-    $remoteCmd = "docker exec academy-api python manage.py check_api_env_settings$extraArgs"
+    $argsStr = ($extraArgs | ForEach-Object { $_ }) -join " "
+    $remoteCmd = "docker exec academy-api python manage.py check_api_env_settings $argsStr".Trim()
     $sshCmd = "ssh -o StrictHostKeyChecking=accept-new -i `"$KeyPath`" ${EC2_USER}@${ApiIp} `"$remoteCmd`""
     Invoke-Expression $sshCmd
 } else {
