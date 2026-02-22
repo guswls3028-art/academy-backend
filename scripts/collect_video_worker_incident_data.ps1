@@ -408,8 +408,9 @@ $report += @"
 ## 7. 재발 방지 체크리스트
 
 ### 7.1 자동 검증 스크립트
-
-$f" + "powershell
+"@
+$report += "`n$f" + "powershell`n"
+$report += @"
 # 데이터 수집 + 보고서 생성 (AWS 자격증명 필요)
 .\scripts\collect_video_worker_incident_data.ps1
 
@@ -421,7 +422,9 @@ $f" + "powershell
 
 # Runtime (인스턴스별 docker/ffmpeg/worker 로그)
 .\scripts\investigate_video_worker_runtime.ps1
-"@ + "`n$f"
+"@
+$report += "`n$f`n"
+$report += @"
 
 ### 7.2 수동 체크
 
