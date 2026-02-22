@@ -76,10 +76,8 @@ if ($NoCache) { $envParts += "NO_CACHE=1" }
 if ($SkipPrune) { $envParts += "DOCKER_SKIP_PRUNE=1" }
 $envLine = if ($envParts.Count -gt 0) { "export " + ($envParts -join " ") } else { "" }
 
-# 깃 레포: safe.directory 등록(이전 SSM 실행 시 root 등으로 생긴 디렉터리 허용) 후, 있으면 pull 없으면 clone
+# 깃 레포: safe.directory로 ownership 경고 제거. academy/.git 있으면 pull, 없거나 깨지면 rm 후 clone
 $q = [char]34
-$repoCmd = "cd /home/ec2-user/build && (test -d academy && (cd academy && git fetch && git reset --hard origin/main && git pull)) || (git clone ${q}$GitRepoUrl${q} academy && cd academy)"
-# academy가 있지만 깨진 경우(빈 디렉터리 등): 제거 후 clone
 $repoCmd = "cd /home/ec2-user/build && (test -d academy/.git && (cd academy && git fetch && git reset --hard origin/main && git pull)) || (rm -rf academy && git clone ${q}$GitRepoUrl${q} academy && cd academy)"
 
 # 명령을 배열로 쪼개서 전달. ConvertTo-Json은 & → \u0026 등 유니코드 이스케이프를 써서 AWS CLI 파서와 충돌하므로 수동 조립.
