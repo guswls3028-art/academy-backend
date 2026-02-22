@@ -43,7 +43,7 @@ function Invoke-AwsText {
 }
 
 function Discover-VpcAndNetwork {
-    Write-Host "[Discover] VPC/Subnet/SG 자동 탐색..." -ForegroundColor Cyan
+    Write-Host "[Discover] VPC/Subnet/SG auto discovery..." -ForegroundColor Cyan
     $vpcId = Invoke-AwsText @("ec2", "describe-vpcs", "--filters", "Name=isDefault,Values=true", "--query", "Vpcs[0].VpcId", "--output", "text", "--region", $Region)
     if (-not $vpcId -or $vpcId -eq "None") {
         $vpcId = Invoke-AwsText @("ec2", "describe-vpcs", "--query", "Vpcs[0].VpcId", "--output", "text", "--region", $Region)
