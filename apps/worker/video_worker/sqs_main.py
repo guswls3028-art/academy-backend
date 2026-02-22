@@ -386,92 +386,78 @@ def main() -> None:
         heartbeat_thread.start()
 
         try:
-                    # Idempotent 순서: 1) 스토리지(HLS) 2) DB 커밋 3) raw 삭제 4) DeleteMessage
-                    # 중복 실행 시 process_video는 동일 경로 덮어쓰기, job_complete는 idempotent 반환
-                    logger.info("[SQS_MAIN] process_video job_id=%s video_id=%s", job_id, video_id)
-                    hls_path, duration = process_video(job=job_dict, cfg=cfg, progress=progress)
-                    ok, reason = job_complete(job_id, hls_path, duration)
-                    if not ok:
-                        raise RuntimeError(f"job_complete failed: {reason}")
+            logger.info("[SQS_MAIN] process_video job_id=%s video_id=%s", job_id, video_id)
+            hls_path, duration = process_video(job=job_dict, cfg=cfg, progress=progress)
+            ok, reason = job_complete(job_id, hls_path, duration)
+            if not ok:
+                raise RuntimeError(f"job_complete failed: {reason}")
 
-                    processing_duration = time.time() - _current_job_start_time
+            processing_duration = time.time() - _current_job_start_time
 
-                    # R2 raw 삭제 (DB 커밋 이후 — 실패해도 DB 상태는 이미 READY)
-                    file_key_for_raw = job_dict.get("file_key") or ""
-                    if file_key_for_raw.strip():
-                        from apps.infrastructure.storage.r2 import delete_object_r2_video
-                        for attempt in range(3):
-                            try:
-                                delete_object_r2_video(key=file_key_for_raw.strip())
-                                logger.info("R2 raw deleted after encode video_id=%s key=%s", video_id, file_key_for_raw[:80])
-                                break
-                            except Exception as e:
-                                logger.warning("R2 raw delete failed video_id=%s attempt=%s: %s", video_id, attempt + 1, e)
-                                if attempt < 2:
-                                    time.sleep(2**attempt)
-
-                    queue.delete_message(receipt_handle)
-                    logger.info(
-                        "SQS_JOB_COMPLETED | job_id=%s | video_id=%s | tenant_id=%s | processing_duration=%.2f | queue_wait_sec=%.2f",
-                        job_id, video_id, tenant_id, processing_duration, queue_wait_time,
-                    )
-                    logger.info("VIDEO_ENCODING_DURATION | job_id=%s | video_id=%s | duration_sec=%.2f", job_id, video_id, processing_duration)
-                    consecutive_errors = 0
-                    logger.info("Single-job complete — exiting (scale-in target)")
-                    return 0
-
-                except CancelledError:
-                    if spot_termination_event.is_set():
-                        job_fail_retry(job_id, "DRAIN_INTERRUPT")
-                        queue.change_message_visibility(receipt_handle, 0)
-                        logger.info("SPOT_DRAIN_COMPLETED | job_id=%s | video_id=%s | visibility=0 (no delete)", job_id, video_id)
-                    else:
-                        job_cancel(job_id)
-                        queue.delete_message(receipt_handle)
-                        logger.info("JOB_CANCELLED | job_id=%s | video_id=%s", job_id, video_id)
-                    consecutive_errors = 0
-
-                except Exception as e:
-                    logger.exception("JOB_PROCESSING_FAILED | job_id=%s | video_id=%s | error=%s", job_id, video_id, e)
-                    job_fail_retry(job_id, str(e)[:2000])
-                    job_after = job_get_by_id(job_id)
-                    if job_after and job_after.attempt_count >= VIDEO_JOB_MAX_ATTEMPTS:
-                        job_mark_dead(job_id, error_code="MAX_ATTEMPTS", error_message=str(e)[:2000])
-                        logger.warning("JOB_DEAD | job_id=%s | video_id=%s | attempt_count=%s", job_id, video_id, job_after.attempt_count)
-                    queue.change_message_visibility(receipt_handle, FAILED_TRANSIENT_BACKOFF_SECONDS)
-                    consecutive_errors += 1
-                    return 1
-
-                finally:
-                    stop_heartbeat.set()
-                    heartbeat_thread.join(timeout=3)
+            file_key_for_raw = job_dict.get("file_key") or ""
+            if file_key_for_raw.strip():
+                from apps.infrastructure.storage.r2 import delete_object_r2_video
+                for attempt in range(3):
                     try:
-                        delete_video_heartbeat(tenant_id, video_id)
-                    except Exception:
-                        pass
+                        delete_object_r2_video(key=file_key_for_raw.strip())
+                        logger.info("R2 raw deleted after encode video_id=%s key=%s", video_id, file_key_for_raw[:80])
+                        break
+                    except Exception as e:
+                        logger.warning("R2 raw delete failed video_id=%s attempt=%s: %s", video_id, attempt + 1, e)
+                        if attempt < 2:
+                            time.sleep(2**attempt)
 
-                _current_job_receipt_handle = None
-                _current_job_start_time = None
-                return 0
+            queue.delete_message(receipt_handle)
+            logger.info(
+                "SQS_JOB_COMPLETED | job_id=%s | video_id=%s | tenant_id=%s | processing_duration=%.2f | queue_wait_sec=%.2f",
+                job_id, video_id, tenant_id, processing_duration, queue_wait_time,
+            )
+            logger.info("Single-job complete — exiting (scale-in target)")
+            sys.exit(0)
 
-            except KeyboardInterrupt:
-                logger.info("Keyboard interrupt received")
-                return 0
-            except Exception as e:
-                try:
-                    if receipt_handle:
-                        queue.change_message_visibility(receipt_handle, 0)
-                except Exception:
-                    pass
-                logger.exception("Unexpected error in main loop: %s", e)
-                return 1
+        except CancelledError:
+            if spot_termination_event.is_set():
+                job_fail_retry(job_id, "DRAIN_INTERRUPT")
+                queue.change_message_visibility(receipt_handle, 0)
+                logger.info("SPOT_DRAIN_COMPLETED | job_id=%s | video_id=%s | visibility=0 (no delete)", job_id, video_id)
+            else:
+                job_cancel(job_id)
+                queue.delete_message(receipt_handle)
+                logger.info("JOB_CANCELLED | job_id=%s | video_id=%s", job_id, video_id)
+            sys.exit(0)
 
-        return 0
-        
-    except Exception:
-        logger.exception("Fatal error in Video Worker")
-        return 1
+        except Exception as e:
+            logger.exception("JOB_PROCESSING_FAILED | job_id=%s | video_id=%s | error=%s", job_id, video_id, e)
+            job_fail_retry(job_id, str(e)[:2000])
+            job_after = job_get_by_id(job_id)
+            if job_after and job_after.attempt_count >= VIDEO_JOB_MAX_ATTEMPTS:
+                job_mark_dead(job_id, error_code="MAX_ATTEMPTS", error_message=str(e)[:2000])
+                logger.warning("JOB_DEAD | job_id=%s | video_id=%s | attempt_count=%s", job_id, video_id, job_after.attempt_count)
+            queue.change_message_visibility(receipt_handle, FAILED_TRANSIENT_BACKOFF_SECONDS)
+            sys.exit(1)
+
+        finally:
+            stop_heartbeat.set()
+            heartbeat_thread.join(timeout=3)
+            try:
+                delete_video_heartbeat(tenant_id, video_id)
+            except Exception:
+                pass
+            _current_job_receipt_handle = None
+            _current_job_start_time = None
+
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received")
+        sys.exit(0)
+    except Exception as e:
+        try:
+            if receipt_handle:
+                queue.change_message_visibility(receipt_handle, 0)
+        except Exception:
+            pass
+        logger.exception("Unexpected error in main: %s", e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
