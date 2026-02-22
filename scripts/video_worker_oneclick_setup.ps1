@@ -31,10 +31,9 @@ $LambdaName = "academy-worker-queue-depth-metric"
 $PolicyName = "video-backlogcount-tt"
 $LtName = "academy-video-worker-lt"
 
-$AwsCli = "aws"
 $AwsBase = @("--region", $Region)
 if ($Profile) { $AwsBase = @("--profile", $Profile) + $AwsBase }
-function Aws { param([parameter(ValueFromRemainingArguments)]$Rest) $a = @($Rest) + $AwsBase; & $AwsCli @a }
+function Invoke-AwsCli { param([parameter(ValueFromRemainingArguments)]$Rest) $a = @($Rest) + $AwsBase; $exe = (Get-Command aws.exe -CommandType Application -ErrorAction SilentlyContinue).Source; if (-not $exe) { $exe = "aws" }; & $exe @a }
 
 $BackupRoot = Join-Path $RepoRoot "backups\video_worker"
 $Log = @()
@@ -50,30 +49,30 @@ function Test-Prechecks {
     Log-Step "0) Pre-check"
     $missing = @()
 
-    $id = Aws sts get-caller-identity --output json 2>$null
+    $id = Invoke-AwsCli sts get-caller-identity --output json 2>$null
     if (-not $id) {
         Log-Fail "AWS login/perms failed. Run aws sts get-caller-identity"
         return $false
     }
     Log-Step "  sts get-caller-identity OK"
 
-    $asg = Aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --output json 2>$null | ConvertFrom-Json
+    $asg = Invoke-AwsCli autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --output json 2>$null | ConvertFrom-Json
     if (-not $asg -or -not $asg.AutoScalingGroups -or $asg.AutoScalingGroups.Count -eq 0) {
         $missing += "ASG($AsgName)"
     } else { Log-Step "  ASG $AsgName exists" }
 
-    $qurl = Aws sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null
+    $qurl = Invoke-AwsCli sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null
     if (-not $qurl) { $missing += "SQS($QueueName)" } else { Log-Step "  SQS $QueueName exists" }
 
-    $lt = Aws ec2 describe-launch-templates --launch-template-names $LtName --output json 2>$null | ConvertFrom-Json
+    $lt = Invoke-AwsCli ec2 describe-launch-templates --launch-template-names $LtName --output json 2>$null | ConvertFrom-Json
     if (-not $lt -or -not $lt.LaunchTemplates -or $lt.LaunchTemplates.Count -eq 0) {
         $missing += "LaunchTemplate($LtName)"
     } else { Log-Step "  LT $LtName exists" }
 
-    $fn = Aws lambda get-function --function-name $LambdaName --output json 2>$null
+    $fn = Invoke-AwsCli lambda get-function --function-name $LambdaName --output json 2>$null
     if (-not $fn) { $missing += "Lambda($LambdaName)" } else { Log-Step "  Lambda $LambdaName exists" }
 
-    $alarms = Aws cloudwatch describe-alarms --output json 2>$null | ConvertFrom-Json
+    $alarms = Invoke-AwsCli cloudwatch describe-alarms --output json 2>$null | ConvertFrom-Json
     $videoAlarms = @()
     if ($alarms -and $alarms.MetricAlarms) {
         $videoAlarms = $alarms.MetricAlarms | Where-Object { $_.Namespace -eq "Academy/VideoProcessing" -or $_.MetricName -like "*Backlog*" -or $_.MetricName -like "*VideoQueue*" }
@@ -96,10 +95,10 @@ function Backup-State {
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
     Log-Step "1) Backup -> $dir"
 
-    $asgJson = Aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --output json 2>$null
+    $asgJson = Invoke-AwsCli autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --output json 2>$null
     if ($asgJson) { [System.IO.File]::WriteAllText((Join-Path $dir "asg.json"), $asgJson, $utf8NoBom) }
 
-    $polJson = Aws autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null
+    $polJson = Invoke-AwsCli autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null
     if ($polJson) {
         [System.IO.File]::WriteAllText((Join-Path $dir "scaling_policies.json"), $polJson, $utf8NoBom)
         $polObj = $polJson | ConvertFrom-Json
@@ -110,18 +109,18 @@ function Backup-State {
         }
     }
 
-    $alarmsJson = Aws cloudwatch describe-alarms --output json 2>$null
+    $alarmsJson = Invoke-AwsCli cloudwatch describe-alarms --output json 2>$null
     if ($alarmsJson) { [System.IO.File]::WriteAllText((Join-Path $dir "alarms.json"), $alarmsJson, $utf8NoBom) }
 
-    $ltJson = Aws ec2 describe-launch-templates --launch-template-names $LtName --output json 2>$null
+    $ltJson = Invoke-AwsCli ec2 describe-launch-templates --launch-template-names $LtName --output json 2>$null
     if ($ltJson) { [System.IO.File]::WriteAllText((Join-Path $dir "launch_template.json"), $ltJson, $utf8NoBom) }
 
-    $lambdaJson = Aws lambda get-function-configuration --function-name $LambdaName --output json 2>$null
+    $lambdaJson = Invoke-AwsCli lambda get-function-configuration --function-name $LambdaName --output json 2>$null
     if ($lambdaJson) { [System.IO.File]::WriteAllText((Join-Path $dir "lambda_config.json"), $lambdaJson, $utf8NoBom) }
 
-    $qurl = Aws sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null
+    $qurl = Invoke-AwsCli sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null
     if ($qurl) {
-        $sqsJson = Aws sqs get-queue-attributes --queue-url $qurl --attribute-names All --output json 2>$null
+        $sqsJson = Invoke-AwsCli sqs get-queue-attributes --queue-url $qurl --attribute-names All --output json 2>$null
         if ($sqsJson) { [System.IO.File]::WriteAllText((Join-Path $dir "sqs_attributes.json"), $sqsJson, $utf8NoBom) }
     }
 
@@ -134,7 +133,7 @@ function Backup-State {
 # ------------------------------------------------------------------------------
 function Show-DiffList {
     Log-Step "Diff list (changes to apply)"
-    $pol = Aws autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
+    $pol = Invoke-AwsCli autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
     $curMetric = "unknown"
     if ($pol -and $pol.ScalingPolicies) {
         $vp = $pol.ScalingPolicies | Where-Object { $_.PolicyName -eq $PolicyName } | Select-Object -First 1
@@ -160,14 +159,14 @@ function Set-SqsBasedScaling {
     Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
     Compress-Archive -Path $lambdaPath -DestinationPath $zipPath -Force
     $zipUri = "fileb://$($zipPath -replace '\\','/')"
-    Aws lambda update-function-code --function-name $LambdaName --zip-file $zipUri 2>$null
+    Invoke-AwsCli lambda update-function-code --function-name $LambdaName --zip-file $zipUri 2>$null
     if ($LASTEXITCODE -ne 0) { Log-Fail "Lambda update-function-code failed"; Remove-Item $zipPath -Force -ErrorAction SilentlyContinue; return $false }
     Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
     $waited = 0
     do {
         Start-Sleep -Seconds 2
         $waited += 2
-        $status = Aws lambda get-function-configuration --function-name $LambdaName --query "LastUpdateStatus" --output text
+        $status = Invoke-AwsCli lambda get-function-configuration --function-name $LambdaName --query "LastUpdateStatus" --output text
         if ($status -eq "Successful") { break }
         if ($waited -ge 30) { Log-Warn "Lambda update wait timeout"; break }
     } while ($true)
@@ -177,7 +176,7 @@ function Set-SqsBasedScaling {
     $tmpFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
     [System.IO.File]::WriteAllText($tmpFile, $videoTtJson, $utf8NoBom)
     $pathUri = "file://$($tmpFile -replace '\\','/' -replace ' ', '%20')"
-    Aws autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $pathUri
+    Invoke-AwsCli autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $pathUri
     Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) { Log-Fail "put-scaling-policy failed"; return $false }
     Log-Step "  ASG TargetTracking -> VideoQueueDepthTotal applied"
@@ -189,26 +188,26 @@ function Set-SqsBasedScaling {
 # ------------------------------------------------------------------------------
 function Set-DlqRedrive {
     Log-Step "3) DLQ / redrive"
-    $qurl = Aws sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null
+    $qurl = Invoke-AwsCli sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null
     if (-not $qurl) { Log-Warn "Main queue not found, skip DLQ"; return $true }
 
-    $attrs = Aws sqs get-queue-attributes --queue-url $qurl --attribute-names RedrivePolicy --output json 2>$null | ConvertFrom-Json
+    $attrs = Invoke-AwsCli sqs get-queue-attributes --queue-url $qurl --attribute-names RedrivePolicy --output json 2>$null | ConvertFrom-Json
     if ($attrs.Attributes.RedrivePolicy) {
         Log-Step "  RedrivePolicy already set"
         return $true
     }
 
-    $dlqUrl = Aws sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text 2>$null
+    $dlqUrl = Invoke-AwsCli sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text 2>$null
     if (-not $dlqUrl) {
-        Aws sqs create-queue --queue-name $DlqName --attributes "MessageRetentionPeriod=1209600" 2>$null
+        Invoke-AwsCli sqs create-queue --queue-name $DlqName --attributes "MessageRetentionPeriod=1209600" 2>$null
         if ($LASTEXITCODE -ne 0) { Log-Warn "DLQ create failed"; return $true }
-        $dlqUrl = Aws sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text
+        $dlqUrl = Invoke-AwsCli sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text
     }
-    $dlqArn = Aws sqs get-queue-attributes --queue-url $dlqUrl --attribute-names QueueArn --query "Attributes.QueueArn" --output text 2>$null
+    $dlqArn = Invoke-AwsCli sqs get-queue-attributes --queue-url $dlqUrl --attribute-names QueueArn --query "Attributes.QueueArn" --output text 2>$null
     if (-not $dlqArn) { Log-Warn "DLQ ARN fetch failed"; return $true }
 
     $redriveVal = "{`"deadLetterTargetArn`":`"$dlqArn`",`"maxReceiveCount`":$MaxReceiveCount}"
-    Aws sqs set-queue-attributes --queue-url $qurl --attributes "RedrivePolicy=$redriveVal"
+    Invoke-AwsCli sqs set-queue-attributes --queue-url $qurl --attributes "RedrivePolicy=$redriveVal"
     if ($LASTEXITCODE -ne 0) { Log-Warn "RedrivePolicy set failed" } else { Log-Step "  DLQ and RedrivePolicy set (maxReceiveCount=$MaxReceiveCount)" }
     return $true
 }
@@ -218,7 +217,7 @@ function Set-DlqRedrive {
 # ------------------------------------------------------------------------------
 function Set-CostGuards {
     Log-Step "4) Cost guards"
-    Aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgName --max-size $MaxSize
+    Invoke-AwsCli autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgName --max-size $MaxSize
     if ($LASTEXITCODE -ne 0) { Log-Warn "ASG max-size update failed" } else { Log-Step "  ASG MaxSize=$MaxSize applied" }
     return $true
 }
@@ -230,11 +229,11 @@ function Invoke-PostValidate {
     Log-Step "5) Post-validate"
     $mEnd = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     $mStart = (Get-Date).AddMinutes(-10).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-    $cw = Aws cloudwatch get-metric-statistics --namespace "Academy/VideoProcessing" --metric-name "VideoQueueDepthTotal" --dimensions "Name=WorkerType,Value=Video" "Name=AutoScalingGroupName,Value=$AsgName" --start-time $mStart --end-time $mEnd --period 60 --statistics Average --output json 2>$null | ConvertFrom-Json
+    $cw = Invoke-AwsCli cloudwatch get-metric-statistics --namespace "Academy/VideoProcessing" --metric-name "VideoQueueDepthTotal" --dimensions "Name=WorkerType,Value=Video" "Name=AutoScalingGroupName,Value=$AsgName" --start-time $mStart --end-time $mEnd --period 60 --statistics Average --output json 2>$null | ConvertFrom-Json
     $hasMetric = $cw.Datapoints -and $cw.Datapoints.Count -gt 0
     if ($hasMetric) { Log-Step "  CloudWatch VideoQueueDepthTotal data in last 10min" } else { Log-Warn "  VideoQueueDepthTotal no data yet (Lambda 1min period)" }
 
-    $pol = Aws autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
+    $pol = Invoke-AwsCli autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
     $usesSqs = $false
     if ($pol -and $pol.ScalingPolicies) {
         $vp = $pol.ScalingPolicies | Where-Object { $_.PolicyName -eq $PolicyName } | Select-Object -First 1
@@ -242,7 +241,7 @@ function Invoke-PostValidate {
     }
     if ($usesSqs) { Log-Step "  Scaling policy가 VideoQueueDepthTotal 참조 확인" } else { Log-Fail "  Policy가 VideoQueueDepthTotal 미참조" }
 
-    $act = Aws autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --max-items 5 --output json 2>$null | ConvertFrom-Json
+    $act = Invoke-AwsCli autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --max-items 5 --output json 2>$null | ConvertFrom-Json
     if ($act -and $act.Activities) {
         Log-Step "  ASG recent activities: $($act.Activities.Count)"
         $act.Activities | Select-Object -First 3 | ForEach-Object { Write-Host "    $($_.StatusCode) $($_.Description)" -ForegroundColor Gray }
@@ -270,7 +269,7 @@ function Restore-Backup {
         $tmpFile = Join-Path $RepoRoot "asg_video_tt_rollback.json"
         [System.IO.File]::WriteAllText($tmpFile, $ttContent, $utf8NoBom)
         $pathUri = "file://$($tmpFile -replace '\\','/' -replace ' ', '%20')"
-        Aws autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $pathUri
+        Invoke-AwsCli autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $pathUri
         Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
         Log-Step "  Scaling policy restored"
     } else {
