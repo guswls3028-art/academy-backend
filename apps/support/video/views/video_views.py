@@ -412,14 +412,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
             ok, meta, reason = False, {"duration": 0}, "ffprobe_exception_fallback"
 
-        if not ok and reason in ("ffmpeg_module_missing", "ffprobe_exception_fallback"):
+        if not ok and reason == "ffmpeg_module_missing":
             video.status = Video.Status.UPLOADED
             video.error_reason = ""
             video.save(update_fields=["status", "error_reason"])
             _tid = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
             logger.info(
-                "VIDEO_UPLOAD_TRACE | before enqueue (ffmpeg_module_missing branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
-                video.id, _tid, video.file_key or "",
+                "VIDEO_UPLOAD_TRACE | before enqueue (ffprobe_skip reason=%s) | video_id=%s tenant_id=%s execution=2_BEFORE_ENQUEUE",
+                reason, video_id, _tid,
             )
             # Job 생성 + SQS enqueue (job_id 포함)
             if not VideoSQSQueue().create_job_and_enqueue(video):
