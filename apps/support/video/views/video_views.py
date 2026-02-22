@@ -451,7 +451,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             # Job 생성 + SQS enqueue (job_id 포함)
             if not create_job_and_submit_batch(video):
                 logger.error(
-                    "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_enqueue returned None (duration<min branch)",
+                    "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_submit_batch returned None (duration<min branch)",
                     video.id,
                 )
                 return Response(
@@ -472,7 +472,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         # Job 생성 + Batch 제출
         if not create_job_and_submit_batch(video):
             logger.error(
-                "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_enqueue returned None (normal branch)",
+                "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_submit_batch returned None (normal branch)",
                 video.id,
             )
             return Response(
