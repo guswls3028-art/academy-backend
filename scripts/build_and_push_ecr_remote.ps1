@@ -83,6 +83,7 @@ $repoCmd = "cd /home/ec2-user/build && (test -d academy/.git && (cd academy && g
 # 명령을 배열로 쪼개서 전달. ConvertTo-Json은 & → \u0026 등 유니코드 이스케이프를 써서 AWS CLI 파서와 충돌하므로 수동 조립.
 $commandsArray = @(
     "set -e",
+    "export HOME=/root",
     "git config --global --add safe.directory /home/ec2-user/build/academy",
     $repoCmd,
     "cd /home/ec2-user/build/academy"
