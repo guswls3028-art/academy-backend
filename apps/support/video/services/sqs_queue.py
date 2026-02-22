@@ -140,8 +140,8 @@ class VideoSQSQueue:
         try:
             tenant = video.session.lecture.tenant
             tenant_id = int(tenant.id)
-        except Exception:
-            logger.error("Cannot get tenant for video %s", video.id)
+        except Exception as e:
+            logger.error("create_job_and_enqueue: Cannot get tenant for video %s, error=%s", video.id, e)
             return None
 
         job = VideoTranscodeJob.objects.create(
