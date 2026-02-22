@@ -1,0 +1,1 @@
+{"LaunchTemplate":{"LaunchTemplateSpecification":{"LaunchTemplateName":"academy-video-worker-lt","Version":"$Latest"},"Overrides":[{"InstanceType":"c6g.large"},{"InstanceType":"t4g.medium"}]},"InstancesDistribution":{"OnDemandBaseCapacity":0,"OnDemandPercentageAboveBaseCapacity":0,"SpotAllocationStrategy":"capacity-optimized"}}
