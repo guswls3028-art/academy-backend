@@ -332,8 +332,9 @@ def main() -> int:
                 from src.application.video.handler import CancelledError
                 job_obj = job_get_by_id(job_id)
                 if not job_obj:
-                    logger.error("JOB_NOT_FOUND | job_id=%s | video_id=%s | NACK", job_id, video_id)
-                    queue.change_message_visibility(receipt_handle, NACK_VISIBILITY_SECONDS)
+                    # Video/Job deleted (e.g. user deleted video) -> consume message, do not retry
+                    queue.delete_message(receipt_handle)
+                    logger.info("JOB_NOT_FOUND_DELETE | job_id=%s | video_id=%s | message consumed (video/job deleted)", job_id, video_id)
                     continue
 
                 # 이미 완료된 영상이면 idempotent skip
