@@ -76,8 +76,8 @@ if ($NoCache) { $envParts += "NO_CACHE=1" }
 if ($SkipPrune) { $envParts += "DOCKER_SKIP_PRUNE=1" }
 $envLine = if ($envParts.Count -gt 0) { "export " + ($envParts -join " ") } else { "" }
 
-# 깃 레포: 있으면 pull, 없으면 clone (기본값으로 레포 사용)
-$repoLine = "cd /home/ec2-user/build && (test -d academy && (cd academy && git fetch && git reset --hard origin/main && git pull)) || (git clone '" + $GitRepoUrl + "' academy && cd academy)"
+# 깃 레포: 있으면 pull, 없으면 clone (URL은 큰따옴표로 감싸서 SSM/CLI 파서의 작은따옴표 오류 방지)
+$repoLine = "cd /home/ec2-user/build && (test -d academy && (cd academy && git fetch && git reset --hard origin/main && git pull)) || (git clone `"" + $GitRepoUrl + "`" academy && cd academy)"
 
 # 한 줄로 합쳐서 SSM commands 배열을 1개 요소만 쓰기 (JSON 이스케이프 단순화)
 $oneLine = "set -e; " + $repoLine + "; cd /home/ec2-user/build/academy; "
