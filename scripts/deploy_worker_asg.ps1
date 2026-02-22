@@ -376,11 +376,12 @@ aws application-autoscaling put-scaling-policy --service-namespace ec2 --resourc
 $ErrorActionPreference = $ea
 Remove-Item $policyAiFile, $policyMessagingFile -Force -ErrorAction SilentlyContinue
 
-# Video ASG: Scaling Policy는 SSOT 스크립트로만 적용. redeploy/deploy에서는 절대 수정 금지.
-# 필요 시: .\scripts\infra\apply_video_asg_scaling_policy.ps1
-Write-Host "      Video ASG: scaling policy NOT modified (use scripts/infra/apply_video_asg_scaling_policy.ps1 if needed)" -ForegroundColor Gray
+# Video ASG: ExcludeVideo이면 스킵. 그렇지 않으면 scaling policy는 SSOT 스크립트로만 적용.
+if (-not $ExcludeVideo) {
+    Write-Host "      Video ASG: scaling policy NOT modified (use scripts/infra/apply_video_asg_scaling_policy.ps1 if needed)" -ForegroundColor Gray
+}
 
-Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging=TargetTracking (Application Auto Scaling); Video=SSOT only (scripts/infra/apply_video_asg_scaling_policy.ps1)" -ForegroundColor Green
+Write-Host "Done. Lambda: $QueueDepthLambdaName | AI/Messaging=TargetTracking (Application Auto Scaling)$(if (-not $ExcludeVideo) { '; Video=SSOT only (scripts/infra/apply_video_asg_scaling_policy.ps1)' } else { '; Video=Batch only (ASG skipped)' })" -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
 # Cleanup: remove legacy Launch Templates (ASG-named; we now use -lt names)
