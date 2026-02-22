@@ -111,7 +111,7 @@ Remove-Item $ltAiFile -Force -ErrorAction SilentlyContinue
 # ------------------------------------------------------------------------------
 # 3) Launch Template Messaging (Min=1 always on)
 # ------------------------------------------------------------------------------
-Write-Host "[3.5/8] Launch Template (Messaging worker)..." -ForegroundColor Cyan
+Write-Host "[3/8] Launch Template (Messaging worker)..." -ForegroundColor Cyan
 $messagingUserDataPath = Join-Path $UserDataDir "messaging_worker_user_data.sh"
 $messagingUserDataRaw = Get-Content $messagingUserDataPath -Raw
 $messagingUserDataRaw = $messagingUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRRegistry
