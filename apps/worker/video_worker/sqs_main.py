@@ -250,8 +250,8 @@ def main() -> None:
             logger.info("shutdown: returning message visibility=0")
             sys.exit(0)
 
-                # ----- R2 삭제 작업 (비동기 삭제) -----
-                if message.get("action") == "delete_r2":
+        # ----- R2 삭제 작업 (비동기 삭제) -----
+        if message.get("action") == "delete_r2":
                     video_id = message.get("video_id")
                     file_key = (message.get("file_key") or "").strip()
                     hls_prefix = (message.get("hls_prefix") or "").strip()
