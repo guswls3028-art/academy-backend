@@ -112,7 +112,7 @@ $ceNewJson = @"
 "@
 $ceFile = Join-Path $RepoRoot "batch_ce_new_temp.json"
 [System.IO.File]::WriteAllText($ceFile, $ceNewJson, (New-Object System.Text.UTF8Encoding $false))
-# Windows: file://C:/path (두 개 슬래시) — file:///C:/path 는 Errno 22
+# Windows: use file://C:/path (2 slashes), file:///C:/path causes Errno 22
 $ceUri = "file://" + (Resolve-Path -LiteralPath $ceFile).Path.Replace('\', '/')
 aws batch create-compute-environment --cli-input-json $ceUri --region $Region
 Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
@@ -134,7 +134,7 @@ while ($wait -lt 300) {
         break
     }
     if ($st -eq "INVALID") {
-        Write-Host "FAIL: 새 CE INVALID. $($obj.statusReason)" -ForegroundColor Red
+        Write-Host "FAIL: New CE INVALID. $($obj.statusReason)" -ForegroundColor Red
         exit 1
     }
 }
