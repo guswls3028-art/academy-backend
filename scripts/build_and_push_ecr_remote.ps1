@@ -22,7 +22,7 @@ $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptRoot
 
-Write-Host "`n=== ECR Build/Push (원격 빌드 서버) ===" -ForegroundColor Cyan
+Write-Host "`n=== ECR Build/Push (remote build server) ===" -ForegroundColor Cyan
 if ($ApiOnly) { Write-Host "  ApiOnly" -ForegroundColor Gray }
 if ($VideoWorkerOnly) { Write-Host "  VideoWorkerOnly" -ForegroundColor Gray }
 if ($NoCache) { Write-Host "  NoCache" -ForegroundColor Gray }
