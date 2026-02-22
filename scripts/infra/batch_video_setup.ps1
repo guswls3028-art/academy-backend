@@ -156,17 +156,10 @@ if (-not $ceObj) {
     $updateFile = Join-Path $RepoRoot "batch_ce_update_temp.json"
     $updateJson = $updateInput | ConvertTo-Json -Depth 6 -Compress
     [System.IO.File]::WriteAllText($updateFile, $updateJson, (New-Object System.Text.UTF8Encoding $false))
-    # Windows: file:///C:/path causes [Errno 22]. Use file://C:/path (two slashes) or pass path directly.
+    # Windows: file:///C:/path causes [Errno 22]. Use file://C:/path (two slashes only).
     $absPath = (Resolve-Path -LiteralPath $updateFile).Path.Replace('\', '/')
     $updateUri = "file://" + $absPath
-    try {
-        aws batch update-compute-environment --cli-input-json $updateUri --region $Region
-    } catch {
-        # Fallback: pass JSON via stdin (PowerShell-safe on Windows)
-        Get-Content -LiteralPath $updateFile -Raw | Set-Variable -Name _json
-        $env:AWS_CLI_INPUT_JSON = $null
-        aws batch update-compute-environment --cli-input-json $_json --region $Region
-    }
+    aws batch update-compute-environment --cli-input-json $updateUri --region $Region
     Remove-Item $updateFile -Force -ErrorAction SilentlyContinue
 }
 Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
