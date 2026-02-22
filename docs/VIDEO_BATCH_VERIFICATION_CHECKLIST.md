@@ -42,12 +42,22 @@ cd C:\academy
 - [ ] API에 VIDEO_BATCH_JOB_QUEUE, VIDEO_BATCH_JOB_DEFINITION 설정
 - [ ] Batch Job Role에 SSM (academy/*), ECR, CloudWatch Logs 권한
 
-## 삭제된 레거시 파일
+## full_redeploy / redeploy_worker_asg (충돌 방지)
+
+| 스크립트 | 옵션 | 기본값 | 설명 |
+|----------|------|--------|------|
+| full_redeploy.ps1 | -VideoViaBatch | true | video worker EC2/ASG 배포 스킵. 이미지는 ECR 푸시만 (Batch용) |
+| redeploy_worker_asg.ps1 | -ExcludeVideo | true | academy-video-worker-asg 생성/업데이트 스킵 |
+| deploy_worker_asg.ps1 | -ExcludeVideo | true | video LT/ASG 스킵 |
+
+## DEPRECATED 스크립트 (Video ASG 레거시)
 
 | 파일 | 비고 |
 |------|------|
 | scripts/infra/apply_video_asg_scaling_policy.ps1 | DEPRECATED |
 | scripts/video_worker_scaling_sqs_direct.ps1 | DEPRECATED |
+| scripts/redeploy/redeploy_video_worker.ps1 | DEPRECATED |
+| scripts/verify_video_worker_ssm.ps1 | DEPRECATED |
 | apps/worker/video_worker/sqs_main.py | 인코딩 경로 삭제 (delete_r2는 Lambda) |
 
 ## 인코딩 경로
