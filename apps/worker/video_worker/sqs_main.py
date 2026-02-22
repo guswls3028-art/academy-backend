@@ -300,29 +300,28 @@ def main() -> None:
             sys.exit(0)
 
         from academy.adapters.db.django.repositories_video import (
-                    job_get_by_id,
-                    job_claim_for_running,
-                    job_complete,
-                    job_fail_retry,
-                    job_cancel,
-                    job_mark_dead,
-                    get_video_status,
-                )
-                from src.infrastructure.video.processor import process_video
-                from src.application.video.handler import CancelledError
-                job_obj = job_get_by_id(job_id)
-                if not job_obj:
-                    queue.delete_message(receipt_handle)
-                    logger.info("JOB_NOT_FOUND_DELETE | job_id=%s | video_id=%s | message consumed (video/job deleted)", job_id, video_id)
-                    return 0
+            job_get_by_id,
+            job_claim_for_running,
+            job_complete,
+            job_fail_retry,
+            job_cancel,
+            job_mark_dead,
+            get_video_status,
+        )
+        from src.application.video.handler import CancelledError
+        job_obj = job_get_by_id(job_id)
+        if not job_obj:
+            queue.delete_message(receipt_handle)
+            logger.info("JOB_NOT_FOUND_DELETE | job_id=%s | video_id=%s | message consumed (video/job deleted)", job_id, video_id)
+            sys.exit(0)
 
-                if get_video_status(video_id) == "READY":
-                    queue.delete_message(receipt_handle)
-                    logger.info("VIDEO_ALREADY_READY_SKIP | job_id=%s | video_id=%s", job_id, video_id)
-                    return 0
+        if get_video_status(video_id) == "READY":
+            queue.delete_message(receipt_handle)
+            logger.info("VIDEO_ALREADY_READY_SKIP | job_id=%s | video_id=%s", job_id, video_id)
+            sys.exit(0)
 
-                request_id = str(uuid.uuid4())[:8]
-                worker_id = f"{cfg.WORKER_ID}-{request_id}"
+        request_id = str(uuid.uuid4())[:8]
+        worker_id = f"{cfg.WORKER_ID}-{request_id}"
                 message_received_at = time.time()
                 try:
                     if message_created_at is None:
