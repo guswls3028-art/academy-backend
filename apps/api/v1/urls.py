@@ -127,6 +127,11 @@ urlpatterns = [
         VideoScanStuckView.as_view(),
         name="video-scan-stuck",
     ),
+    path(
+        "internal/video/delete-r2/",
+        VideoDeleteR2InternalView.as_view(),
+        name="video-delete-r2",
+    ),
 
     # =========================
     # Internal (Legacy ACK - kept)
