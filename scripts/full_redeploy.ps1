@@ -59,15 +59,23 @@ $REMOTE_CMDS = @{
 
 function Get-Ec2PublicIps {
     $names = "academy-api,academy-ai-worker-cpu,academy-messaging-worker,academy-video-worker"
-    $raw = aws ec2 describe-instances --region $Region `
+    # PublicIpAddress + Association.PublicIp (Elastic IP fallback), for each instance
+    $json = aws ec2 describe-instances --region $Region `
         --filters "Name=instance-state-name,Values=running" "Name=tag:Name,Values=$names" `
-        --query "Reservations[].Instances[].[Tags[?Key=='Name'].Value | [0], PublicIpAddress]" `
-        --output text 2>&1
-    if ($LASTEXITCODE -ne 0 -or -not $raw) { return @{} }
+        --query "Reservations[].Instances[].[Tags[?Key=='Name'].Value | [0], PublicIpAddress, NetworkInterfaces[0].Association.PublicIp]" `
+        --output json 2>&1
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return @{} }
+    $rows = $json | ConvertFrom-Json
     $result = @{}
-    foreach ($line in ($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
-        $p = $line -split "\s+", 2
-        if ($p.Length -ge 2 -and $p[1] -and $p[1] -ne "None") { $result[$p[0].Trim()] = $p[1].Trim() }
+    foreach ($row in $rows) {
+        $name = ($row[0] -replace "^\s+|\s+$", "")
+        $pub = $row[1]
+        $assoc = $row[2]
+        $ip = if ($pub -and $pub -ne "None") { $pub } elseif ($assoc -and $assoc -ne "None") { $assoc } else { $null }
+        if ($name -and $ip) {
+            # 동일 이름 여러 인스턴스 시 IP 있는 것을 우선 (ASG 등)
+            if (-not $result[$name] -or $result[$name] -eq "None") { $result[$name] = $ip }
+        }
     }
     return $result
 }
