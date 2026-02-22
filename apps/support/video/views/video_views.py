@@ -354,7 +354,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
     def _upload_complete_impl(self, video):
         """upload_complete 실제 처리 (예외 시 호출부에서 503 반환)."""
-        # [TRACE] upload_complete entry
+        video_id = getattr(video, "id", None)
         _tenant_id = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
         logger.info(
             "VIDEO_UPLOAD_TRACE | upload_complete entry | video_id=%s tenant_id=%s source_path=%s status=%s execution=1_ENTRY",
@@ -418,8 +418,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.save(update_fields=["status", "error_reason"])
             _tid = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
             logger.info(
-                "VIDEO_UPLOAD_TRACE | before enqueue (ffprobe_skip reason=%s) | video_id=%s tenant_id=%s execution=2_BEFORE_ENQUEUE",
-                reason, video_id, _tid,
+                "VIDEO_UPLOAD_TRACE | before enqueue (ffmpeg_module_missing branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
+                video.id, _tid, video.file_key or "",
             )
             # Job 생성 + SQS enqueue (job_id 포함)
             if not VideoSQSQueue().create_job_and_enqueue(video):
