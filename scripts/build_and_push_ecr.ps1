@@ -43,8 +43,15 @@ if ($registry -match '^\.dkr\.' -or $registry -notmatch '\d{12}') {
 }
 
 # Docker must be running (Desktop or daemon)
-$dockerOk = docker info 2>$null; if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Docker is not running or not in PATH. Start Docker Desktop (Windows) or docker daemon." -ForegroundColor Red
+$dockerErr = $null
+try { $null = docker info 2>&1 } catch { $dockerErr = $_ }
+if ($LASTEXITCODE -ne 0 -or $dockerErr) {
+    Write-Host "ERROR: Docker is not running or not in PATH." -ForegroundColor Red
+    Write-Host "  Windows: Start Docker Desktop, then run this script again." -ForegroundColor Yellow
+    Write-Host "  Or use remote build (no local Docker):" -ForegroundColor Yellow
+    if ($ApiOnly) { Write-Host "    .\scripts\build_and_push_ecr_remote.ps1 -ApiOnly" -ForegroundColor White }
+    elseif ($VideoWorker) { Write-Host "    .\scripts\build_and_push_ecr_remote.ps1 -VideoWorkerOnly" -ForegroundColor White }
+    else { Write-Host "    .\scripts\build_and_push_ecr_remote.ps1 -ApiOnly" -ForegroundColor White }
     exit 1
 }
 

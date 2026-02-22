@@ -87,33 +87,45 @@ if ($envLine) { $commandsList += $envLine }
 $commandsList += "./scripts/build_and_push_ecr_on_ec2.sh"
 $commandsList += "echo REMOTE_BUILD_OK"
 
-# 4) SSM Send Command (--cli-input-json 사용: 파라미터 크기/이스케이프 문제 회피)
-$paramsJson = @{
-    InstanceIds = @($buildInstanceId)
-    DocumentName = "AWS-RunShellScript"
-    Parameters = @{ commands = $commandsList }
-    TimeoutSeconds = 3600
-} | ConvertTo-Json -Depth 4 -Compress
+# 4) SSM Send Command (JSON 수동 구성으로 PowerShell/CLI 호환성 확보)
+$commandsJsonArray = ($commandsList | ForEach-Object { $_ -replace '\\', '\\\\' -replace '"', '\"' -replace "`r", '' -replace "`n", ' ' }) | ForEach-Object { "`"$_`"" }
+$commandsJsonStr = "[" + ($commandsJsonArray -join ",") + "]"
+$paramsJsonStr = @"
+{"InstanceIds":["$buildInstanceId"],"DocumentName":"AWS-RunShellScript","Parameters":{"commands":$commandsJsonStr},"TimeoutSeconds":3600}
+"@.Trim()
 
 $paramsFile = [System.IO.Path]::GetTempFileName()
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 try {
-    [System.IO.File]::WriteAllText($paramsFile, $paramsJson, $utf8NoBom)
+    [System.IO.File]::WriteAllText($paramsFile, $paramsJsonStr, $utf8NoBom)
     Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
     $fileUri = "file:///" + ($paramsFile -replace '\\', '/')
-    $cmdResult = aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
+    $prevErr = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $cmdResult = & aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
+    $ErrorActionPreference = $prevErr
+    $exitCode = $LASTEXITCODE
 } finally {
     Remove-Item $paramsFile -Force -ErrorAction SilentlyContinue
 }
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: SSM send-command failed: $cmdResult" -ForegroundColor Red
+if ($exitCode -ne 0) {
+    Write-Host "ERROR: SSM send-command failed (exit $exitCode)" -ForegroundColor Red
+    Write-Host $cmdResult -ForegroundColor Red
     exit 1
 }
 
-$cmdId = ($cmdResult | ConvertFrom-Json).Command.CommandId
+try {
+    $cmdObj = $cmdResult | ConvertFrom-Json
+    $cmdId = $cmdObj.Command.CommandId
+} catch {
+    Write-Host "ERROR: Could not parse AWS response. Raw output:" -ForegroundColor Red
+    Write-Host $cmdResult -ForegroundColor Red
+    exit 1
+}
 if (-not $cmdId) {
-    Write-Host "ERROR: Could not get CommandId" -ForegroundColor Red
+    Write-Host "ERROR: CommandId not found in response" -ForegroundColor Red
+    Write-Host $cmdResult -ForegroundColor Red
     exit 1
 }
 
