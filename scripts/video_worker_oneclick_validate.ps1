@@ -68,18 +68,18 @@ if (-not $qurl) {
 # 3) ASG desired / min / max
 $asg = Aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --query "AutoScalingGroups[0]" --output json 2>$null | ConvertFrom-Json
 if (-not $asg) {
-    Fail "ASG" "ASG 조회 실패 ($AsgName)"
+    Fail "ASG" "ASG fetch failed ($AsgName)"
 } else {
     Ok "ASG" "desired=$($asg.DesiredCapacity) min=$($asg.MinSize) max=$($asg.MaxSize)"
 }
 
-# 4) 최근 스케일링 이벤트
+# 4) Recent scaling events
 $act = Aws autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --max-items 5 --output json 2>$null | ConvertFrom-Json
 if ($act -and $act.Activities -and $act.Activities.Count -gt 0) {
     $last = $act.Activities[0]
-    Ok "ScalingEvents" "최근: $($last.StatusCode) $($last.Description)"
+    Ok "ScalingEvents" "Recent: $($last.StatusCode) $($last.Description)"
 } else {
-    Ok "ScalingEvents" "최근 활동 없음"
+    Ok "ScalingEvents" "No recent activity"
 }
 
 # 5) DLQ / redrive 설정 유무
