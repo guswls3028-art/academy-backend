@@ -6,7 +6,8 @@
 param(
     [string]$Region = "ap-northeast-2",
     [int]$TargetMessagesPerInstance = 20,
-    [int]$MaxCapacity = 20
+    [int]$MaxCapacity = 20,
+    [switch]$ExcludeVideo = $true  # Video = Batch only
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,15 +15,16 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptRoot
 
 $asgConfigs = @(
-    @{
-        Name = "academy-ai-worker-asg"
-        WorkerType = "AI"
-    },
-    @{
-        Name = "academy-messaging-worker-asg"
-        WorkerType = "Messaging"
-    }
+    @{ Name = "academy-ai-worker-asg"; WorkerType = "AI" },
+    @{ Name = "academy-messaging-worker-asg"; WorkerType = "Messaging" }
 )
+if (-not $ExcludeVideo) {
+    $asgConfigs = @(
+        @{ Name = "academy-ai-worker-asg"; WorkerType = "AI" },
+        @{ Name = "academy-video-worker-asg"; WorkerType = "Video" },
+        @{ Name = "academy-messaging-worker-asg"; WorkerType = "Messaging" }
+    )
+}
 
 Write-Host "Note: Application Auto Scaling (ec2:autoScalingGroup:DesiredCapacity) is not" -ForegroundColor Yellow
 Write-Host "  supported in some accounts/regions." -ForegroundColor Yellow
