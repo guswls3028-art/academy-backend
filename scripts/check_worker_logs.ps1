@@ -78,6 +78,7 @@ function Show-WorkerLogs {
     
     # ✅ 컨테이너 이름 매핑 (Docker 컨테이너 이름과 일치해야 함)
     $containerName = switch ($WorkerName) {
+        "academy-video-worker" { "academy-video-worker" }
         "academy-ai-worker-cpu" { "academy-ai-worker-cpu" }
         "academy-messaging-worker" { "academy-messaging-worker" }
         default { $WorkerName }
@@ -102,7 +103,7 @@ Write-Host "`n=== 워커 로그 확인 ===" -ForegroundColor Cyan
 Write-Host "WorkerType: $WorkerType, Tail: $Tail lines`n" -ForegroundColor Gray
 
 if ($WorkerType -eq "all") {
-    $workers = @("video", "ai", "messaging")
+    $workers = @("ai", "messaging")
 } else {
     $workers = @($WorkerType)
 }
@@ -110,9 +111,9 @@ if ($WorkerType -eq "all") {
 foreach ($wt in $workers) {
     $workerName = $workerMap[$wt]
     $asgName = switch ($wt) {
-        "video" { "academy-video-worker-asg" }
         "ai" { "academy-ai-worker-asg" }
         "messaging" { "academy-messaging-worker-asg" }
+        default { $null }
     }
     
     Write-Host "`n[$wt] Finding instances in ASG: $asgName" -ForegroundColor Yellow
