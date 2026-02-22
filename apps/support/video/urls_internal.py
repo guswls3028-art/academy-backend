@@ -16,7 +16,7 @@ from django.urls import path
 # 새로운 아키텍처:
 # - SQS 기반 큐 사용
 # - Worker는 SQS Long Polling으로 작업 수신
-# - 완료/실패는 VideoSQSQueue.complete_video() / fail_video() 사용
+# - 완료/실패는 repositories_video.job_complete() (Batch worker)
 #
 # Legacy 호환성:
 # - /api/v1/videos/internal/videos/<video_id>/processing-complete/ 유지
