@@ -142,10 +142,10 @@ function Show-DiffList {
             $curMetric = $vp.TargetTrackingConfiguration.CustomizedMetricSpecification.MetricName
         }
     }
-    Write-Host "  - ASG Scaling Policy: 메트릭 $curMetric → VideoQueueDepthTotal (SQS 기반), ScaleOutCooldown=60, ScaleInCooldown=300" -ForegroundColor Gray
-    Write-Host "  - Lambda: 코드 배포 (VideoQueueDepthTotal 발행, Backlog API 제거)" -ForegroundColor Gray
+    Write-Host "  - ASG Scaling Policy: metric $curMetric -> VideoQueueDepthTotal (SQS), ScaleOutCooldown=60, ScaleInCooldown=300" -ForegroundColor Gray
+    Write-Host "  - Lambda: deploy code (VideoQueueDepthTotal, remove Backlog API)" -ForegroundColor Gray
     Write-Host "  - ASG: MaxSize=$MaxSize, TargetMessagesPerInstance=$TargetMessagesPerInstance" -ForegroundColor Gray
-    Write-Host "  - SQS: DLQ/RedrivePolicy 없으면 생성·설정 (maxReceiveCount=$MaxReceiveCount)" -ForegroundColor Gray
+    Write-Host "  - SQS: create/set DLQ RedrivePolicy if missing (maxReceiveCount=$MaxReceiveCount)" -ForegroundColor Gray
 }
 
 # ------------------------------------------------------------------------------
