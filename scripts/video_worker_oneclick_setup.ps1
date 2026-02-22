@@ -141,7 +141,7 @@ function Show-DiffList {
             $curMetric = $vp.TargetTrackingConfiguration.CustomizedMetricSpecification.MetricName
         }
     }
-    Write-Host "  - ASG Scaling Policy: metric $curMetric -> VideoQueueDepthTotal (SQS)" -ForegroundColor Gray
+    Write-Host "  - ASG Scaling Policy: metric $curMetric -> SSOT video-visible-only-tt (Visible only)" -ForegroundColor Gray
     Write-Host "  - Lambda: deploy code (VideoQueueDepthTotal, remove Backlog API)" -ForegroundColor Gray
     Write-Host "  - ASG: MaxSize=$MaxSize, TargetMessagesPerInstance=$TargetMessagesPerInstance" -ForegroundColor Gray
     Write-Host "  - SQS: create/set DLQ RedrivePolicy if missing (maxReceiveCount=$MaxReceiveCount)" -ForegroundColor Gray
@@ -232,10 +232,17 @@ function Invoke-PostValidate {
     $pol = Invoke-AwsCli autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
     $usesSqs = $false
     if ($pol -and $pol.ScalingPolicies) {
-        $vp = $pol.ScalingPolicies | Where-Object { $_.PolicyName -eq $PolicyName } | Select-Object -First 1
-        if ($vp -and $vp.TargetTrackingConfiguration.CustomizedMetricSpecification.MetricName -eq "VideoQueueDepthTotal") { $usesSqs = $true }
+        $vp = $pol.ScalingPolicies | Where-Object { $_.PolicyName -eq "video-visible-only-tt" -or $_.PolicyName -eq $PolicyName } | Select-Object -First 1
+        if ($vp) {
+            $cust = $vp.TargetTrackingConfiguration.CustomizedMetricSpecification
+            if ($cust.MetricName -eq "VideoQueueDepthTotal") { $usesSqs = $true }
+            elseif ($cust.Metrics) {
+                $e1 = $cust.Metrics | Where-Object { $_.Id -eq "e1" } | Select-Object -First 1
+                if ($e1 -and $e1.Expression -eq "m1") { $usesSqs = $true }
+            }
+        }
     }
-    if ($usesSqs) { Log-Step "  Scaling policy uses VideoQueueDepthTotal" } else { Log-Fail "  Policy does not use VideoQueueDepthTotal" }
+    if ($usesSqs) { Log-Step "  Scaling policy OK (SSOT Visible-only or VideoQueueDepthTotal)" } else { Log-Fail "  Policy not as expected" }
 
     $act = Invoke-AwsCli autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --max-items 5 --output json 2>$null | ConvertFrom-Json
     if ($act -and $act.Activities) {

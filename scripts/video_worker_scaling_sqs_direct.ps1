@@ -63,77 +63,21 @@ function Backup-Policy {
 }
 
 # ------------------------------------------------------------------------------
-# 2) Metric Math 기반 TargetTracking JSON 생성
+# 2) DEPRECATED: m1+m2 적용 제거. SSOT = Visible-only (m1만)
 # ------------------------------------------------------------------------------
 function New-MetricMathConfig {
-    $metricMath = @{
-        CustomizedMetricSpecification = @{
-            Metrics = @(
-                @{
-                    Id = "m1"
-                    MetricStat = @{
-                        Metric = @{
-                            MetricName = "ApproximateNumberOfMessagesVisible"
-                            Namespace  = "AWS/SQS"
-                            Dimensions = @(@{ Name = "QueueName"; Value = $QueueName })
-                        }
-                        Stat   = "Sum"
-                        Period = 60
-                    }
-                    ReturnData = $false
-                }
-                @{
-                    Id = "m2"
-                    MetricStat = @{
-                        Metric = @{
-                            MetricName = "ApproximateNumberOfMessagesNotVisible"
-                            Namespace  = "AWS/SQS"
-                            Dimensions = @(@{ Name = "QueueName"; Value = $QueueName })
-                        }
-                        Stat   = "Sum"
-                        Period = 60
-                    }
-                    ReturnData = $false
-                }
-                @{
-                    Id         = "e1"
-                    Expression = "m1 + m2"
-                    Label      = "VideoQueueDepthTotal"
-                    ReturnData = $true
-                }
-            )
-        }
-        TargetValue    = 1.0
-        DisableScaleIn = $false
-    }
-    return $metricMath
+    Write-Host "  (DEPRECATED: m1+m2 no longer applied. SSOT = Visible-only m1)" -ForegroundColor Yellow
+    return $null
 }
 
 # ------------------------------------------------------------------------------
-# 3) 기존 정책 삭제 후 Metric Math 정책 적용
+# 3) SSOT 스크립트 호출 (Visible-only, Expression=m1)
 # ------------------------------------------------------------------------------
 function Apply-MetricMathPolicy {
-    Log-Step "2) Delete existing policy (if any)"
-    $pol = Invoke-AwsCli autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
-    $existing = $pol.ScalingPolicies | Where-Object { $_.PolicyName -eq $PolicyName } | Select-Object -First 1
-    if ($existing) {
-        Invoke-AwsCli autoscaling delete-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName 2>$null
-        Log-Step "  Deleted: $PolicyName"
-        Start-Sleep -Seconds 2
-    } else {
-        Log-Step "  No existing policy to delete"
-    }
-
-    Log-Step "3) Put Metric Math TargetTracking policy"
-    $config = New-MetricMathConfig
-    $configJson = $config | ConvertTo-Json -Depth 10 -Compress
-    $tmpFile = Join-Path $RepoRoot "metricmath_tt.json"
-    [System.IO.File]::WriteAllText($tmpFile, $configJson, $utf8NoBom)
-    $pathUri = "file://$($tmpFile -replace '\\','/' -replace ' ', '%20')"
-    Invoke-AwsCli autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $pathUri
-    Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
-    if ($LASTEXITCODE -ne 0) { Log-Fail "put-scaling-policy failed"; return $false }
-    Log-Step "  Metric Math policy applied (AWS/SQS m1+m2)"
+    Log-Step "2) Applying SSOT: scripts/infra/apply_video_asg_scaling_policy.ps1 (Visible-only, m1)"
+    & (Join-Path $ScriptRoot "infra\apply_video_asg_scaling_policy.ps1") -Region $Region -AsgName $AsgName
+    if ($LASTEXITCODE -ne 0) { Log-Fail "SSOT apply failed"; return $false }
+    Log-Step "  SSOT applied (Expression=m1, m2 미포함)"
     return $true
 }
 
@@ -201,35 +145,13 @@ function Show-TestStats {
 }
 
 # ------------------------------------------------------------------------------
-# 6) 롤백: 백업된 정책 복원
+# 6) 롤백: SSOT (Visible-only)로 복원
 # ------------------------------------------------------------------------------
 function Restore-Backup {
-    Log-Step "6) Rollback"
-    $allDirs = Get-ChildItem -Path $BackupRoot -Directory -ErrorAction SilentlyContinue
-    $withTt = $allDirs | Where-Object { Test-Path (Join-Path $_.FullName "video_tt_config.json") } | Sort-Object Name -Descending
-    if (-not $withTt -or $withTt.Count -eq 0) {
-        Log-Fail "No backup with video_tt_config.json in $BackupRoot"
-        return $false
-    }
-    $dir = $withTt[0].FullName
-    Log-Step "  Restore from: $dir"
-
-    $ttPath = Join-Path $dir "video_tt_config.json"
-    if (-not (Test-Path $ttPath)) {
-        Log-Fail "video_tt_config.json not found"
-        return $false
-    }
-    $ttContent = Get-Content $ttPath -Raw
-    $tmpFile = Join-Path $RepoRoot "asg_video_tt_rollback.json"
-    [System.IO.File]::WriteAllText($tmpFile, $ttContent, $utf8NoBom)
-    $pathUri = "file://$($tmpFile -replace '\\','/' -replace ' ', '%20')"
-
-    Invoke-AwsCli autoscaling delete-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName 2>$null
-    Start-Sleep -Seconds 2
-    Invoke-AwsCli autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $pathUri
-    Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
-    if ($LASTEXITCODE -ne 0) { Log-Fail "put-scaling-policy rollback failed"; return $false }
-    Log-Step "  Restored (Lambda metric if that was backed up)"
+    Log-Step "6) Rollback -> SSOT (Visible-only)"
+    & (Join-Path $ScriptRoot "infra\apply_video_asg_scaling_policy.ps1") -Region $Region -AsgName $AsgName
+    if ($LASTEXITCODE -ne 0) { Log-Fail "SSOT apply failed"; return $false }
+    Log-Step "  Restored to SSOT (video-visible-only-tt)"
     return $true
 }
 
