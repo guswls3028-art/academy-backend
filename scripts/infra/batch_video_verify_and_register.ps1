@@ -68,7 +68,7 @@ $jdContent = $jdContent -replace "PLACEHOLDER_REGION", $Region
 $jdFile = Join-Path $RepoRoot "batch_jd_temp.json"
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($jdFile, $jdContent, $utf8NoBom)
-$fileUri = [System.Uri]::new($jdFile).AbsoluteUri
+$fileUri = "file:///" + ($jdFile -replace '\\', '/')
 $regOut = aws batch register-job-definition --cli-input-json $fileUri --region $Region --output json | ConvertFrom-Json
 Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
 $newRevision = $regOut.revision
