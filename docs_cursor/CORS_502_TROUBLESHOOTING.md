@@ -65,11 +65,12 @@
 2. **CORS 설정 변경 불필요**  
    - 502 구간 해소하면 CORS 에러는 사라짐.
 
-## 502 해결 후
+## 4. 502 해결 후
 
-- API가 정상 응답하면 Django/CorsMiddleware가 `Access-Control-Allow-Origin: https://hakwonplus.com` 등을 붙입니다.
-- 500 등 Django가 반환하는 에러는 `UnhandledExceptionMiddleware`에서 CORS 헤더를 추가하므로, 브라우저에서 동일한 CORS 에러로 가리지 않습니다.
+- API가 정상 응답하면 Django가 CORS 헤더를 붙이므로 CORS 에러 사라짐.
+- 새 프론트 도메인 추가 시: `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` 모두 반영 (docs/REFERENCE.md).
 
 ## 참고
 
-- 새 프론트 도메인 추가 시: `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` 모두 반영 (docs/REFERENCE.md).
+- **09-api-502-jobs-checklist.md** (archive): 502 시 ALB/SG 점검 요약.
+- **ACADEMY_API_SQS_ACCESS_FIX.md**: API가 private subnet일 때 SQS 등 아웃바운드 접근 (NAT/VPC Endpoint).
