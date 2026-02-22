@@ -2,8 +2,7 @@
 # ASG Target Tracking worker deploy (Min=0, SQS queue depth based)
 # Requires: AWS CLI configured, SSM /academy/workers/env has .env content
 # Usage: .\scripts\deploy_worker_asg.ps1 -SubnetIds "subnet-xxx,subnet-yyy" -SecurityGroupId "sg-xxx" -IamInstanceProfileName "academy-ec2-role"
-#
-# -ExcludeVideo (기본 true): Video = AWS Batch 전용. academy-video-worker-asg 생성/업데이트 스킵.
+# Video = AWS Batch 전용. ASG는 AI, Messaging만 생성/업데이트.
 # ==============================================================================
 
 param(
@@ -13,9 +12,7 @@ param(
     [string]$SecurityGroupId,
     [Parameter(Mandatory = $true)]
     [string]$IamInstanceProfileName,
-    [switch]$ExcludeVideo = $true,  # if true, skip video ASG (Video = Batch only)
     [string]$KeyNameAi = "",   # from _config_instance_keys (academy-ai-worker-cpu)
-    [string]$KeyNameVideo = "",   # from _config_instance_keys (academy-video-worker)
     [string]$KeyNameMessaging = "",   # from _config_instance_keys (academy-messaging-worker)
     [string]$Region = "ap-northeast-2",
     [string]$AmiId = "",         # optional, default latest Amazon Linux 2023
@@ -37,7 +34,6 @@ $AsgInfra = Join-Path $RepoRoot "infra\worker_asg"
 $QueueDepthLambdaDir = Join-Path $AsgInfra "queue_depth_lambda"
 # SSOT: Key pair names from _config_instance_keys (PemFile minus .pem)
 if (-not $KeyNameAi)       { $KeyNameAi = Get-KeyPairName $INSTANCE_KEY_FILES["academy-ai-worker-cpu"] }
-if (-not $KeyNameVideo)    { $KeyNameVideo = Get-KeyPairName $INSTANCE_KEY_FILES["academy-video-worker"] }
 if (-not $KeyNameMessaging) { $KeyNameMessaging = Get-KeyPairName $INSTANCE_KEY_FILES["academy-messaging-worker"] }
 $UserDataDir = Join-Path $AsgInfra "user_data"
 
