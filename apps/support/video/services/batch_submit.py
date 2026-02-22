@@ -24,7 +24,17 @@ def submit_batch_job(video_job_id: str) -> Optional[str]:
 
     Returns:
         AWS Batch job ID 문자열 또는 실패 시 None
+
+    Raises:
+        ImproperlyConfigured: VIDEO_BATCH_JOB_QUEUE 또는 VIDEO_BATCH_JOB_DEFINITION 미설정 시
     """
+    from django.core.exceptions import ImproperlyConfigured
+
+    if not getattr(settings, "VIDEO_BATCH_JOB_QUEUE", None):
+        raise ImproperlyConfigured("VIDEO_BATCH_JOB_QUEUE is missing")
+    if not getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", None):
+        raise ImproperlyConfigured("VIDEO_BATCH_JOB_DEFINITION is missing")
+
     import boto3
     from botocore.exceptions import ClientError
 
