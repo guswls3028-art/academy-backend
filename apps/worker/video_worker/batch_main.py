@@ -24,6 +24,7 @@ from academy.adapters.db.django.repositories_video import (
     job_complete,
     job_fail_retry,
     job_mark_dead,
+    job_is_cancel_requested,
     get_video_status,
 )
 from apps.worker.video_worker.config import load_config
