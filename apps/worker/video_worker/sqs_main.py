@@ -460,33 +460,20 @@ def main() -> int:
 
                 _current_job_receipt_handle = None
                 _current_job_start_time = None
-                
+                return 0
+
             except KeyboardInterrupt:
                 logger.info("Keyboard interrupt received")
-                break
+                return 0
             except Exception as e:
-                # 예외 발생 시에도 visibility 0 시도 (이미 delete된 메시지면 API 오류는 무시)
                 try:
-                    queue.change_message_visibility(receipt_handle, 0)
+                    if receipt_handle:
+                        queue.change_message_visibility(receipt_handle, 0)
                 except Exception:
                     pass
                 logger.exception("Unexpected error in main loop: %s", e)
-                consecutive_errors += 1
-                if consecutive_errors >= max_consecutive_errors:
-                    logger.error(
-                        "Too many consecutive errors (%s), shutting down",
-                        consecutive_errors,
-                    )
-                    return 1
-                time.sleep(5)
-        
-        # Drain: break 시점에 current job은 이미 완료됨 (완료 후에만 break)
-        if _current_job_receipt_handle:
-            logger.info(
-                "drain: waiting for current job to complete | receipt_handle=%s",
-                _current_job_receipt_handle[:20] + "...",
-            )
-        logger.info("Video Worker shutdown complete | drain complete — safe to terminate")
+                return 1
+
         return 0
         
     except Exception:
