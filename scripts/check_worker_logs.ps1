@@ -1,10 +1,10 @@
 # ==============================================================================
-# 워커 로그 확인 스크립트
-# Usage: .\scripts\check_worker_logs.ps1 [video|ai|messaging] [-Tail 100]
+# 워커 로그 확인 스크립트 (AI, Messaging ASG만. Video = Batch 전용)
+# Usage: .\scripts\check_worker_logs.ps1 [ai|messaging|all] [-Tail 100]
 # ==============================================================================
 
 param(
-    [ValidateSet("video", "ai", "messaging", "all")]
+    [ValidateSet("ai", "messaging", "all")]
     [string]$WorkerType = "all",
     [int]$Tail = 50,
     [string]$KeyDir = "C:\key",
@@ -17,7 +17,6 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # 워커 타입별 이름 매핑
 $workerMap = @{
-    "video" = "academy-video-worker"
     "ai" = "academy-ai-worker-cpu"
     "messaging" = "academy-messaging-worker"
 }
@@ -79,7 +78,6 @@ function Show-WorkerLogs {
     
     # ✅ 컨테이너 이름 매핑 (Docker 컨테이너 이름과 일치해야 함)
     $containerName = switch ($WorkerName) {
-        "academy-video-worker" { "academy-video-worker" }
         "academy-ai-worker-cpu" { "academy-ai-worker-cpu" }
         "academy-messaging-worker" { "academy-messaging-worker" }
         default { $WorkerName }
