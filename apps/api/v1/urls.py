@@ -8,6 +8,7 @@ from apps.support.video.views.internal_views import (
     VideoBacklogScoreView,
     VideoAsgInterruptStatusView,
     VideoDlqMarkDeadView,
+    VideoDeleteR2InternalView,
     VideoScanStuckView,
 )
 
