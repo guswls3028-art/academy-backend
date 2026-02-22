@@ -425,10 +425,8 @@ def main() -> int:
                     )
                     logger.info("VIDEO_ENCODING_DURATION | job_id=%s | video_id=%s | duration_sec=%.2f", job_id, video_id, processing_duration)
                     consecutive_errors = 0
-
-                    if _shutdown:
-                        logger.info("drain complete — current job finished, exiting")
-                        break
+                    logger.info("Single-job complete — exiting (scale-in target)")
+                    return 0
 
                 except CancelledError:
                     if spot_termination_event.is_set():
@@ -450,10 +448,7 @@ def main() -> int:
                         logger.warning("JOB_DEAD | job_id=%s | video_id=%s | attempt_count=%s", job_id, video_id, job_after.attempt_count)
                     queue.change_message_visibility(receipt_handle, FAILED_TRANSIENT_BACKOFF_SECONDS)
                     consecutive_errors += 1
-
-                    if consecutive_errors >= max_consecutive_errors:
-                        logger.error("Too many consecutive errors (%s), shutting down", consecutive_errors)
-                        return 1
+                    return 1
 
                 finally:
                     stop_heartbeat.set()
