@@ -141,7 +141,7 @@ for ($i = 0; $i -lt 120; $i++) {
 }
 
 if (-not $done) {
-    Write-Host "ERROR: Timeout. Check AWS Console > SSM > Run Command > $cmdId" -ForegroundColor Red
+    Write-Host "ERROR: Timeout. Check AWS Console - SSM - Run Command - $cmdId" -ForegroundColor Red
     exit 1
 }
 
