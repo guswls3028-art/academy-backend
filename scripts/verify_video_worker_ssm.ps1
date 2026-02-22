@@ -43,7 +43,7 @@ if ($instanceIds -and $instanceIds[0]) {
   $utf8 = [System.Text.UTF8Encoding]::new($false)
   $tmp = Join-Path $env:TEMP "ssm_verify_$(Get-Random).json"
   [System.IO.File]::WriteAllText($tmp, ($inputObj | ConvertTo-Json -Depth 5 -Compress), $utf8)
-  $path = "file://$($tmp -replace '\\','/')"
+  $path = "file://$($tmp -replace '\\','/' -replace ' ', '%20')"
   $out = aws ssm send-command --cli-input-json $path --region $Region --output json 2>$null
   Remove-Item $tmp -Force -ErrorAction SilentlyContinue
   if ($out -match '"CommandId"') {
