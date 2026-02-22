@@ -239,7 +239,7 @@ function Invoke-PostValidate {
         $vp = $pol.ScalingPolicies | Where-Object { $_.PolicyName -eq $PolicyName } | Select-Object -First 1
         if ($vp -and $vp.TargetTrackingConfiguration.CustomizedMetricSpecification.MetricName -eq "VideoQueueDepthTotal") { $usesSqs = $true }
     }
-    if ($usesSqs) { Log-Step "  Scaling policy가 VideoQueueDepthTotal 참조 확인" } else { Log-Fail "  Policy가 VideoQueueDepthTotal 미참조" }
+    if ($usesSqs) { Log-Step "  Scaling policy uses VideoQueueDepthTotal" } else { Log-Fail "  Policy does not use VideoQueueDepthTotal" }
 
     $act = Invoke-AwsCli autoscaling describe-scaling-activities --auto-scaling-group-name $AsgName --max-items 5 --output json 2>$null | ConvertFrom-Json
     if ($act -and $act.Activities) {
