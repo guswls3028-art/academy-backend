@@ -35,6 +35,7 @@ def main() -> int:
         print(f"batch_entrypoint: SSM fetch failed: {e}", file=sys.stderr)
         # Continue - maybe env is injected another way
 
+    # CMD from Batch is passed as args: python -m batch_main <job_id>
     argv = sys.argv[1:] if len(sys.argv) > 1 else ["python", "-m", "apps.worker.video_worker.batch_main"]
     if argv[0] == "python" or argv[0].endswith("python"):
         os.execvp(argv[0], argv)
