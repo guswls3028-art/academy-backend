@@ -19,10 +19,20 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $InfraPath = Join-Path $RepoRoot "scripts\infra"
 $JdPath = Join-Path $InfraPath "batch\video_job_definition.json"
 
-function ExecJson($cmd) {
-    $out = Invoke-Expression $cmd 2>&1
-    if (-not $out) { return $null }
-    try { return ($out | ConvertFrom-Json) } catch { return $null }
+function Invoke-AwsJson {
+    param([string[]]$Arguments)
+    $prevErr = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = & aws @Arguments 2>&1
+        $text = ($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($text)) { return $null }
+        return $text | ConvertFrom-Json
+    } catch {
+        return $null
+    } finally {
+        $ErrorActionPreference = $prevErr
+    }
 }
 
 function Fail($msg) {
