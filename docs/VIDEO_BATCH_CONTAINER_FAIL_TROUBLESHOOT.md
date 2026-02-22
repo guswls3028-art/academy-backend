@@ -36,14 +36,12 @@ Batch container gets **no env vars**. Worker needs:
 2. **R2 endpoint / network** – CE SG blocks outbound HTTPS, or DNS fail
 3. **/tmp permissions** – ECS_AL2023 default user may not be root; ffmpeg write fails
 
-## 4) Fix: Inject Env via SSM Secrets
+## 4) Fix (Applied)
 
-Job role `academy-video-batch-job-role` already has `ssm:GetParameter` for `academy/*`.
+- **batch_entrypoint.py**: 컨테이너 시작 시 SSM `/academy/workers/env` fetch → os.environ에 설정 → batch_main 실행
+- **Dockerfile**: ENTRYPOINT로 batch_entrypoint 사용, `/tmp/video-worker` 권한 확보
 
-Options:
-
-- **A) Individual SSM params** – Create `/academy/batch/DB_HOST`, `/academy/batch/R2_ACCESS_KEY`, etc. Add to JobDefinition `secrets` with `valueFrom`.
-- **B) Entrypoint script** – Container starts, fetches `/academy/workers/env` from SSM, parses key=value, exports, then runs `batch_main`. No JobDefinition change for env, but requires Dockerfile/entrypoint change.
+필수: SSM `/academy/workers/env`에 DB_*, R2_*, REDIS_*, INTERNAL_WORKER_TOKEN, API_BASE_URL 등 전체 .env 내용 존재.
 
 ## 5) Verify
 
