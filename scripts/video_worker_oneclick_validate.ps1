@@ -82,7 +82,7 @@ if ($act -and $act.Activities -and $act.Activities.Count -gt 0) {
     Ok "ScalingEvents" "No recent activity"
 }
 
-# 5) DLQ / redrive 설정 유무
+# 5) DLQ / redrive
 $hasDlq = $false
 $hasRedrive = $false
 if ($qurl) {
@@ -92,17 +92,17 @@ if ($qurl) {
 $dlqUrl = Aws sqs get-queue-url --queue-name $DlqName --query "QueueUrl" --output text 2>$null
 if ($dlqUrl) { $hasDlq = $true }
 if ($hasDlq -and $hasRedrive) {
-    Ok "DLQ" "DLQ 존재, RedrivePolicy 설정됨"
+    Ok "DLQ" "DLQ exists, RedrivePolicy set"
 } elseif ($hasDlq) {
     Warn "DLQ" "DLQ 존재하나 RedrivePolicy 없음"
 } else {
-    Fail "DLQ" "DLQ 없음 또는 RedrivePolicy 미설정"
+    Fail "DLQ" "DLQ missing or RedrivePolicy not set"
 }
 
-# 6) Lambda가 스케일링 경로에 있는지 (VideoQueueDepthTotal은 Lambda가 발행 → 있으면 경고로 안내)
+# 6) Lambda in scaling path
 $fn = Aws lambda get-function --function-name $LambdaName --output json 2>$null
 if ($fn -and $metricName -eq "VideoQueueDepthTotal") {
-    Warn "LambdaInPath" "스케일링 메트릭(VideoQueueDepthTotal)을 Lambda가 발행 중. 정상 동작이지만 Lambda 장애 시 스케일 정지."
+    Warn "LambdaInPath" "Scaling metric (VideoQueueDepthTotal) published by Lambda. OK but Lambda failure stops scaling."
 } elseif ($metricName -eq "BacklogCount") {
     Warn "LambdaInPath" "BacklogCount 사용 시 Lambda/API 의존. SQS 기반으로 전환 권장."
 }
