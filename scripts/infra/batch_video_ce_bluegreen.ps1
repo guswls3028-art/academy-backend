@@ -63,13 +63,13 @@ function Discover-VpcAndNetwork {
 
 Write-Host ""
 Write-Host "== Video Batch CE Blue-Green Migration ==" -ForegroundColor Cyan
-Write-Host "Old CE: $OldCeName -> New CE: $NewCeName (BEST_FIT_PROGRESSIVE + c6g.large/xlarge/2xlarge)" -ForegroundColor Gray
+Write-Host "Old CE: $OldCeName -> New CE: $NewCeName" -ForegroundColor Gray
 
 # VPC/Subnet/SG
 if (-not $VpcId -or -not $SecurityGroupId -or $SubnetIds.Count -eq 0) {
     $discovered = Discover-VpcAndNetwork
     if (-not $discovered) {
-        Write-Host "FAIL: VPC/Subnet/SG 탐색 실패" -ForegroundColor Red
+        Write-Host "FAIL: VPC/Subnet/SG discovery failed" -ForegroundColor Red
         exit 1
     }
     $VpcId = $discovered.VpcId
@@ -166,7 +166,7 @@ Write-Host "  삭제 요청 완료" -ForegroundColor Gray
 #    현재는 academy-video-batch-ce-v2 유지. 스크립트 기본값에 영향 없음.
 
 Write-Host ""
-Write-Host "DONE. Blue-Green 완료." -ForegroundColor Green
+Write-Host "DONE. Blue-Green complete." -ForegroundColor Green
 $msg1 = '  New CE: ' + $NewCeName + ' (BEST_FIT_PROGRESSIVE c6g.large c6g.xlarge c6g.2xlarge)'
 Write-Host $msg1 -ForegroundColor Gray
 $msg2 = '  Next: .\scripts\infra\batch_video_verify_and_register.ps1 -Region ' + $Region + ' -EcrRepoUri ' + $EcrRepoUri
