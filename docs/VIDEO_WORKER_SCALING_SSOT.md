@@ -1,5 +1,7 @@
 # 영상 워커 스케일링 운영 SSOT (Single Source of Truth)
 
+**참고: Video = AWS Batch 전용으로 전환됨. 아래 문서의 Video ASG/SQS 스케일링 스크립트는 삭제됨. 참고용으로만 유지.**
+
 **스케일링 트리거 = 워커 Pull 소스 = SQS만 사용. DB/backlog API는 스케일링에 사용하지 않음.**
 
 ---

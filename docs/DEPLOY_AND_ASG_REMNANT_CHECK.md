@@ -37,7 +37,7 @@ Video = Batch 전용으로 전환하면서 아래 스크립트는 **삭제**됨.
 - **redeploy_worker_asg.ps1**: `-ExcludeVideo` 기본 `$true` → video ASG 생성/업데이트 스킵.
 - **deploy_worker_asg.ps1**: `-ExcludeVideo` 기본 `$true` → video LT/ASG 스킵.
 - **check_all_worker_scaling_policies.ps1**: `-ExcludeVideo` 기본 `$true` → academy-video-worker-asg 스킵.
-- **fix_all_worker_scaling_policies.ps1**: Video ASG 항목 있으나, ExcludeVideo 로 제외 가능.
+- **fix_all_worker_scaling_policies.ps1**: AI, Messaging ASG만 (Video 항목 제거됨).
 
 ---
 
