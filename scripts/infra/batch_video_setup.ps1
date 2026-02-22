@@ -130,7 +130,9 @@ $subnetArr = ($SubnetIds | ForEach-Object { "`"$_`"" }) -join ","
 $ceContent = $ceContent -replace '"PLACEHOLDER_SUBNET_1"', $subnetArr
 $ceContent = $ceContent -replace "32", $MaxVcpus
 $ceFile = Join-Path $RepoRoot "batch_ce_temp.json"
-[System.IO.File]::WriteAllText($ceFile, $ceContent)
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($ceFile, $ceContent, $utf8NoBom)
+$ceFileUri = "file:///" + ($ceFile -replace '\\', '/')
 
 $ce = ExecJson "aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output json 2>&1"
 if (-not ($ce.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName })) {
@@ -171,8 +173,10 @@ $jdContent = $jdContent -replace "PLACEHOLDER_JOB_ROLE_ARN", $jobRoleArn
 $jdContent = $jdContent -replace "PLACEHOLDER_EXECUTION_ROLE_ARN", $executionRoleArn
 $jdContent = $jdContent -replace "PLACEHOLDER_REGION", $Region
 $jdFile = Join-Path $RepoRoot "batch_jd_temp.json"
-[System.IO.File]::WriteAllText($jdFile, $jdContent)
-aws batch register-job-definition --cli-input-json "file://$($jdFile -replace '\\','/')" --region $Region
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($jdFile, $jdContent, $utf8NoBom)
+$fileUri = "file:///" + ($jdFile -replace '\\', '/')
+aws batch register-job-definition --cli-input-json $fileUri --region $Region
 Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
 
 # 6) Validation
