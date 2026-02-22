@@ -99,8 +99,9 @@ $paramsJsonStr = $paramsObj | ConvertTo-Json -Depth 4 -Compress
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-# 인자 하나로 전달해 PowerShell이 JSON을 쪼개지 않도록 함
-$cmdResult = & aws ssm send-command --region $Region --cli-input-json $paramsJsonStr --output json 2>&1
+# JSON을 한 인자로 넘기기 위해 배열 스플래팅 사용 (공백/중괄호로 쪼개짐 방지)
+$awsArgs = @("ssm", "send-command", "--region", $Region, "--cli-input-json", $paramsJsonStr, "--output", "json")
+$cmdResult = & aws @awsArgs 2>&1
 $ErrorActionPreference = $prevErr
 $exitCode = $LASTEXITCODE
 
