@@ -44,7 +44,8 @@ if ($attempts -ne 1) { Fail "retryStrategy.attempts must be 1 (got $attempts)" }
 Write-Host "  OK retryStrategy.attempts=$attempts" -ForegroundColor Green
 
 # 2) Get IAM role ARNs
-Write-Host "`n[2] Get IAM role ARNs" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "[2] Get IAM role ARNs" -ForegroundColor Cyan
 $JobRoleName = "academy-video-batch-job-role"
 $ExecutionRoleName = "academy-batch-ecs-task-execution-role"
 $jobRole = ExecJson "aws iam get-role --role-name $JobRoleName --output json 2>&1"
