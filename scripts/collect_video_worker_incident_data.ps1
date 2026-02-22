@@ -71,7 +71,7 @@ $ltSpec = aws autoscaling describe-auto-scaling-groups `
 
 $ltData = aws ec2 describe-launch-template-versions `
     --launch-template-name $LtName `
-    --versions "`$Default" `
+    --versions '`$Default' `
     --region $Region `
     --query "LaunchTemplateVersions[0].LaunchTemplateData" `
     --output json 2>&1
