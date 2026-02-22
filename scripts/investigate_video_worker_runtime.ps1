@@ -34,11 +34,21 @@ foreach ($instanceId in $instances) {
     "docker logs $ContainerName --tail 50 2>/dev/null || echo 'NO_LOGS'",
     "ps aux | grep ffmpeg 2>/dev/null | grep -v grep || echo 'NO_FFMPEG'"
   )
-  $commandsJson = $commands | ConvertTo-Json -Compress
-  $paramsJson = "{`"commands`":$commandsJson}"
+  $inputObj = @{
+    DocumentName   = "AWS-RunShellScript"
+    InstanceIds    = @($instanceId)
+    Parameters     = @{ commands = $commands }
+    TimeoutSeconds = $TimeoutSec
+  }
+  $utf8 = [System.Text.UTF8Encoding]::new($false)
+  $inputFile = Join-Path $env:TEMP "ssm_send_$(Get-Random).json"
+  [System.IO.File]::WriteAllText($inputFile, ($inputObj | ConvertTo-Json -Depth 5 -Compress), $utf8)
+
   $ea = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
-  $sendOut = aws ssm send-command --document-name "AWS-RunShellScript" --instance-ids $instanceId --parameters $paramsJson --timeout-seconds $TimeoutSec --region $Region --output json 2>$null
+  $inputPath = "file://$($inputFile -replace '\\','/')"
+  $sendOut = aws ssm send-command --cli-input-json $inputPath --region $Region --output json 2>$null
+  Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
   $ErrorActionPreference = $ea
   if ($LASTEXITCODE -ne 0 -or -not $sendOut) {
     Write-Host "ContainerRunning: NO (SSM send failed)" -ForegroundColor Red
