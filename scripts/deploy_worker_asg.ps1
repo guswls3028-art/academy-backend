@@ -155,6 +155,9 @@ if (-not $vidLtCheck -or $vidLtCheck -eq "None") {
     exit 1
 }
 Write-Host "      Verified: $LtVideoName exists." -ForegroundColor Gray
+} else {
+    Write-Host "[3/8] Video Launch Template SKIP (ExcludeVideo, Video = Batch only)" -ForegroundColor Gray
+}
 
 # ------------------------------------------------------------------------------
 # 3.5) Launch Template Messaging (Min=1 always on)
