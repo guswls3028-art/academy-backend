@@ -158,7 +158,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
     def perform_destroy(self, instance):
         """
-        영상 삭제: DB 삭제 후 R2 정리는 SQS로 워커에 위임 (동기 prefix 삭제 시 API 지연 방지).
+        영상 삭제: 현재 Job DEAD 처리 -> DB 삭제 -> R2 정리는 SQS로 워커 위임.
+        Worker는 job 없으면(삭제된 영상) 메시지 consume 후 스킵.
         """
         video = video_repo.get_video_by_pk_with_relations(instance.pk)
         tenant_id = None
@@ -168,6 +169,17 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         if video and video.session and video.session.lecture:
             tenant_id = video.session.lecture.tenant_id
             hls_prefix = video_hls_prefix(tenant_id=tenant_id, video_id=video_id)
+        # 삭제 전 현재 Job DEAD 처리 (SQS 메시지는 Worker가 job 없을 때 consume)
+        if video and video.current_job_id:
+            try:
+                from apps.support.video.models import VideoTranscodeJob
+                cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
+                if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
+                    cur.state = VideoTranscodeJob.State.DEAD
+                    cur.save(update_fields=["state", "updated_at"])
+                    logger.info("Video delete: job DEAD video_id=%s job_id=%s", video_id, cur.id)
+            except Exception as e:
+                logger.warning("Video delete: job DEAD mark failed video_id=%s: %s", video_id, e)
         super().perform_destroy(instance)
         if tenant_id is not None and hls_prefix:
             try:
