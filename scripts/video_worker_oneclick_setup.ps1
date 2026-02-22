@@ -217,9 +217,9 @@ function Set-DlqRedrive {
 # 4) 비용 폭주 방지 (ASG Max/Desired, cooldown은 이미 2에서 적용)
 # ------------------------------------------------------------------------------
 function Set-CostGuards {
-    Log-Step "4) 비용 폭주 방지"
+    Log-Step "4) Cost guards"
     Aws autoscaling update-auto-scaling-group --auto-scaling-group-name $AsgName --max-size $MaxSize
-    if ($LASTEXITCODE -ne 0) { Log-Warn "ASG max-size 업데이트 실패" } else { Log-Step "  ASG MaxSize=$MaxSize 적용" }
+    if ($LASTEXITCODE -ne 0) { Log-Warn "ASG max-size update failed" } else { Log-Step "  ASG MaxSize=$MaxSize applied" }
     return $true
 }
 
@@ -227,7 +227,7 @@ function Set-CostGuards {
 # 5) 적용 후 자동 검증
 # ------------------------------------------------------------------------------
 function Invoke-PostValidate {
-    Log-Step "5) 적용 후 검증"
+    Log-Step "5) Post-validate"
     $mEnd = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     $mStart = (Get-Date).AddMinutes(-10).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     $cw = Aws cloudwatch get-metric-statistics --namespace "Academy/VideoProcessing" --metric-name "VideoQueueDepthTotal" --dimensions "Name=WorkerType,Value=Video" "Name=AutoScalingGroupName,Value=$AsgName" --start-time $mStart --end-time $mEnd --period 60 --statistics Average --output json 2>$null | ConvertFrom-Json
