@@ -10,7 +10,31 @@
 
 ## 사전 조건
 
-- [ ] `scripts/infra/batch_video_setup.ps1` 실행 완료
+### 인프라 없을 때 (한 번에 설정)
+
+```powershell
+cd C:\academy
+.\scripts\infra\batch_video_setup_full.ps1
+```
+
+- VPC/Subnet/SecurityGroup 자동 탐색 후 setup + retryStrategy 검증까지 실행
+- 파라미터 없이 실행 가능 (기본 Region=ap-northeast-2, ECR URI=809466760795...)
+
+### 값 직접 지정
+
+```powershell
+.\scripts\infra\batch_video_setup_full.ps1 -VpcId "vpc-xxx" -SubnetIds @("subnet-a","subnet-b") -SecurityGroupId "sg-xxx"
+```
+
+### 탐색만 (실제 생성 안 함)
+
+```powershell
+.\scripts\infra\batch_video_setup_full.ps1 -DiscoverOnly
+```
+
+### 개별 스크립트
+
+- [ ] `scripts/infra/batch_video_setup.ps1` 실행 (또는 batch_video_setup_full.ps1 사용)
 - [ ] ECR에 academy-video-worker:latest 푸시
 - [ ] API에 VIDEO_BATCH_JOB_QUEUE, VIDEO_BATCH_JOB_DEFINITION 설정 (또는 기본값 사용)
 - [ ] Batch Job Role에 SSM (academy/*), ECR, CloudWatch Logs 권한
