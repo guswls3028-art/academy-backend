@@ -19,10 +19,6 @@ $asgConfigs = @(
         WorkerType = "AI"
     },
     @{
-        Name = "academy-video-worker-asg"
-        WorkerType = "Video"
-    },
-    @{
         Name = "academy-messaging-worker-asg"
         WorkerType = "Messaging"
     }
