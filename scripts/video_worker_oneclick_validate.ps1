@@ -68,7 +68,8 @@ if (-not $qurl) {
 }
 
 # 3) ASG desired / min / max
-$asg = Invoke-AwsCli autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --query "AutoScalingGroups[0]" --output json 2>$null | ConvertFrom-Json
+$asg = $null
+try { $asg = Invoke-AwsCli autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --query "AutoScalingGroups[0]" --output json 2>$null | ConvertFrom-Json } catch {}
 if (-not $asg) {
     Fail "ASG" "ASG fetch failed ($AsgName)"
 } else {
