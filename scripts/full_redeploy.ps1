@@ -2,9 +2,7 @@
 # API + worker redeploy: build(optional) -> ECR push -> API/worker deploy
 # Requires: root or deploy access key, C:\key\*.pem (EC2 SSH), -GitRepoUrl when building
 #
-# --- Video = AWS Batch (기본) ---
-# Video 인코딩: Batch 전용. EC2/ASG video worker 미사용.
-# -VideoViaBatch (기본 true): video worker SSH/ASG 배포 스킵. academy-video-worker 이미지는 ECR 푸시만 (Batch Job Definition용).
+# Video 인코딩: AWS Batch 전용. EC2/ASG video worker 없음. academy-video-worker 이미지는 빌드 시 ECR 푸시만 (Batch Job Definition용).
 #
 # --- Default workflow (ASG workers) ---
 # Full:  .\scripts\full_redeploy.ps1 -GitRepoUrl "https://github.com/guswls3028-art/academy-backend.git" -WorkersViaASG
@@ -12,7 +10,7 @@
 # No-cache build: add -NoCache
 #
 # --- DeployTarget: all | api | video | ai | messaging | workers ---
-# video = Batch Job Definition용 이미지 빌드/푸시만 (EC2/ASG 배포 없음)
+# video = Batch용 이미지 빌드/푸시만 (EC2/ASG 배포 없음)
 # ==============================================================================
 
 param(
@@ -25,11 +23,10 @@ param(
     [string]$RoleName = "academy-ec2-role",
     [switch]$SkipBuild = $false,
     [switch]$WorkersViaASG = $false,             # if true, workers via ASG instance refresh only (no SSH to fixed EC2)
-    [switch]$VideoViaBatch = $true,              # if true, video worker EC2/ASG 배포 스킵 (Batch 전용)
     [switch]$StartStoppedInstances = $true,
     [switch]$NoCache = $false,                   # if true, docker build with --no-cache (e.g. after config change)
     [ValidateSet("all", "api", "video", "ai", "messaging", "workers")]
-    [string]$DeployTarget = "all"               # all=API+3 workers; api|video|ai|messaging=that one only; workers=all 3 workers
+    [string]$DeployTarget = "all"               # all=API+2 workers (ai,messaging); api|video|ai|messaging=that one; video=build/push only
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,14 +48,13 @@ if (-not $SkipBuild) {
 $ECR = "${AccountId}.dkr.ecr.${Region}.amazonaws.com"
 $EC2_USER = "ec2-user"
 
-# SSOT: _config_instance_keys.ps1
+# SSOT: _config_instance_keys.ps1. Video = Batch 전용 (EC2 배포 없음).
 $INSTANCE_KEYS = $INSTANCE_KEY_FILES
-$INSTANCE_ORDER = @("academy-api", "academy-messaging-worker", "academy-ai-worker-cpu", "academy-video-worker")
+$INSTANCE_ORDER = @("academy-api", "academy-messaging-worker", "academy-ai-worker-cpu")
 $REMOTE_CMDS = @{
     "academy-api" = "aws ecr get-login-password --region $Region | sudo docker login --username AWS --password-stdin $ECR && sudo docker pull ${ECR}/academy-api:latest && (sudo docker stop academy-api 2>/dev/null; sudo docker rm academy-api 2>/dev/null; true) && sudo docker run --pull always -d --name academy-api --restart unless-stopped --env-file .env -p 8000:8000 ${ECR}/academy-api:latest && sudo docker update --restart unless-stopped academy-api"
     "academy-messaging-worker" = "aws ecr get-login-password --region $Region | sudo docker login --username AWS --password-stdin $ECR && sudo docker pull ${ECR}/academy-messaging-worker:latest && (sudo docker stop academy-messaging-worker 2>/dev/null; sudo docker rm academy-messaging-worker 2>/dev/null; true) && sudo docker run -d --name academy-messaging-worker --restart unless-stopped --env-file .env -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker ${ECR}/academy-messaging-worker:latest && sudo docker update --restart unless-stopped academy-messaging-worker"
     "academy-ai-worker-cpu" = "aws ecr get-login-password --region $Region | sudo docker login --username AWS --password-stdin $ECR && sudo docker pull ${ECR}/academy-ai-worker-cpu:latest && (sudo docker stop academy-ai-worker-cpu 2>/dev/null; sudo docker rm academy-ai-worker-cpu 2>/dev/null; true) && sudo docker run -d --name academy-ai-worker-cpu --restart unless-stopped --env-file .env -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker ${ECR}/academy-ai-worker-cpu:latest && sudo docker update --restart unless-stopped academy-ai-worker-cpu"
-    "academy-video-worker" = "aws ecr get-login-password --region $Region | sudo docker login --username AWS --password-stdin $ECR && sudo docker pull ${ECR}/academy-video-worker:latest && (sudo docker stop academy-video-worker 2>/dev/null; sudo docker rm academy-video-worker 2>/dev/null; true) && sudo docker run -d --name academy-video-worker --restart unless-stopped --memory 4g --env-file .env -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker -e VIDEO_FAST_ACK=1 -v /mnt/transcode:/tmp ${ECR}/academy-video-worker:latest && sudo docker update --restart unless-stopped academy-video-worker"
 }
 
 function Get-Ec2PublicIps {
