@@ -115,16 +115,19 @@ if (-not $awsOk) {
     Write-Host "`n=== STEP 4 LOG GROUP ==="
     $logGroup = $jobDefLogGroup
     if ($jobDefOk -and $latest.containerProperties.logConfiguration.options.'awslogs-group') { $logGroup = $latest.containerProperties.logConfiguration.options.'awslogs-group' }
-    $lgOut = aws logs describe-log-groups --log-group-name-prefix $logGroup --region $region --output json 2>&1
-    $logGroupOk = $false
-    if ($LASTEXITCODE -eq 0 -and $lgOut) {
-        $lgList = ($lgOut | ConvertFrom-Json).logGroups
-        $logGroupOk = ($lgList | Where-Object { $_.logGroupName -eq $logGroup }).Count -gt 0
+    $logGroups = aws logs describe-log-groups --region $region --log-group-name-prefix "/aws/batch/academy-video-worker" --query "logGroups[].logGroupName" --output text 2>&1
+    $LogGroupExists = $false
+    if ($logGroups -match "/aws/batch/academy-video-worker") {
+        Write-Host "LOG_GROUP_CHECK: OK"
+        $LogGroupExists = $true
+        $logGroupOk = $true
+    } else {
+        Write-Host "LOG_GROUP_CHECK: FAIL"
+        $logGroupOk = $false
     }
-    Write-Host "LOG_GROUP_CHECK: $(if($logGroupOk){'OK'}else{'FAIL'})"
 
     $logContentOk = "SKIP"
-    if ($logGroupOk) {
+    if ($LogGroupExists) {
         $streams = aws logs describe-log-streams --log-group-name $logGroup --order-by LastEventTime --descending --max-items 5 --region $region --output json 2>&1
         if ($LASTEXITCODE -eq 0 -and $streams) {
             $streamList = ($streams | ConvertFrom-Json).logStreams

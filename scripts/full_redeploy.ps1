@@ -387,19 +387,17 @@ if ($deployWorkers) {
                 continue
             }
             
-            # ✅ 진행 중인 Instance Refresh 확인
-            $inProgress = aws autoscaling describe-instance-refreshes --region $Region --auto-scaling-group-name $asgName --query "InstanceRefreshes[?Status=='InProgress'].[InstanceRefreshId,Status]" --output json 2>&1
-            if ($LASTEXITCODE -eq 0 -and $inProgress -and $inProgress -ne "[]" -and $inProgress -ne "null") {
+            # Explicit InProgress check: skip if refresh already running
+            $refreshInProgress = aws autoscaling describe-instance-refreshes --region $Region --auto-scaling-group-name $asgName --query "InstanceRefreshes[?Status=='InProgress'].[InstanceRefreshId,Status]" --output text 2>&1
+            if ($refreshInProgress -match "InProgress") {
                 Write-Host "  $asgName instance refresh already in progress (skipping)" -ForegroundColor Yellow
                 continue
             }
-            
-            # cmd /c prevents PowerShell from treating aws stderr as terminating error
-            $refreshOut = cmd /c "aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName 2>&1"
-            if ($LASTEXITCODE -eq 0) {
+            try {
+                Run "aws autoscaling start-instance-refresh --region $Region --auto-scaling-group-name $asgName"
                 Write-Host "  $asgName instance refresh started" -ForegroundColor Green
-            } else {
-                Write-Host "  $asgName instance refresh FAILED: $refreshOut" -ForegroundColor Red
+            } catch {
+                Write-Host "  $asgName instance refresh FAILED: $_" -ForegroundColor Red
             }
         }
     } else {
