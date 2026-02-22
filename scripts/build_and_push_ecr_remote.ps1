@@ -76,18 +76,21 @@ if ($NoCache) { $envParts += "NO_CACHE=1" }
 if ($SkipPrune) { $envParts += "DOCKER_SKIP_PRUNE=1" }
 $envLine = if ($envParts.Count -gt 0) { "export " + ($envParts -join " ") } else { "" }
 
-# 깃 레포: 있으면 pull, 없으면 clone (URL은 큰따옴표로 감싸서 SSM/CLI 파서의 작은따옴표 오류 방지)
+# 깃 레포: 있으면 pull, 없으면 clone (URL은 큰따옴표)
 $q = [char]34
-$repoLine = "cd /home/ec2-user/build && (test -d academy && (cd academy && git fetch && git reset --hard origin/main && git pull)) || (git clone ${q}$GitRepoUrl${q} academy && cd academy)"
+$repoCmd = "cd /home/ec2-user/build && (test -d academy && (cd academy && git fetch && git reset --hard origin/main && git pull)) || (git clone ${q}$GitRepoUrl${q} academy && cd academy)"
 
-# 한 줄로 합쳐서 SSM commands 배열을 1개 요소만 쓰기 (JSON 이스케이프 단순화)
-$oneLine = "set -e; " + $repoLine + "; cd /home/ec2-user/build/academy; "
-if ($envLine) { $oneLine += $envLine + "; " }
-$oneLine += "./scripts/build_and_push_ecr_on_ec2.sh; echo REMOTE_BUILD_OK"
-
-# 4) SSM Send Command (parameters 값에 " 포함 → 배열 인자로 한 덩어리 전달해야 함, 백틱/따옴표는 exe 전달 시 깨짐)
-$cmdEscaped = $oneLine -replace '\\', '\\\\' -replace '"', '\"'
-$parametersArg = "commands=[${q}$cmdEscaped${q}]"
+# full_redeploy 방식: 명령을 배열로 쪼개서 ConvertTo-Json으로 전달 (한 줄에 " 있으면 AWS CLI 파서 깨짐)
+$commandsArray = @(
+    "set -e",
+    $repoCmd,
+    "cd /home/ec2-user/build/academy"
+)
+if ($envLine) { $commandsArray += $envLine }
+$commandsArray += "./scripts/build_and_push_ecr_on_ec2.sh"
+$commandsArray += "echo REMOTE_BUILD_OK"
+$commandsJson = $commandsArray | ConvertTo-Json -Compress
+$parametersArg = "commands=$commandsJson"
 
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
