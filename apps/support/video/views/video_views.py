@@ -45,7 +45,8 @@ from ..models import (
     VideoFolder,
 )
 from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSerializer
-from ..services.sqs_queue import VideoSQSQueue
+from ..services.video_encoding import create_job_and_submit_batch
+from ..services.delete_r2_queue import enqueue_delete_r2
 from .playback_mixin import VideoPlaybackMixin
 
 # 로거 설정
