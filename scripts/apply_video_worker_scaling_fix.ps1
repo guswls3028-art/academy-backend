@@ -89,7 +89,7 @@ function Apply-Fix {
     aws autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $videoTtPath --region $Region
     if ($LASTEXITCODE -ne 0) { Remove-Item $videoTtFile -Force -ErrorAction SilentlyContinue; throw "put-scaling-policy failed" }
     Remove-Item $videoTtFile -Force -ErrorAction SilentlyContinue
-    Write-Host "Policy $PolicyName updated to VideoQueueDepthTotal (ScaleOutCooldown=60, ScaleInCooldown=300)." -ForegroundColor Green
+    Write-Host "Policy $PolicyName updated to VideoQueueDepthTotal." -ForegroundColor Green
 }
 
 function Restore-Backup {
