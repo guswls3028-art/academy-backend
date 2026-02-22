@@ -90,7 +90,7 @@ def main() -> int:
         "tenant_id": int(job_obj.tenant_id),
         "tenant_code": "",
         "_job_id": job_id,
-        "_cancel_check": lambda: False,
+        "_cancel_check": lambda: job_is_cancel_requested(job_id),
         "_cancel_event": None,
     }
     try:

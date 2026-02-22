@@ -31,7 +31,6 @@ RUN pip install --user --no-cache-dir -r requirements/worker-video.txt
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import sys; sys.exit(0)" || exit 1
 
-# Video Worker 실행
-# 환경 변수:
-# - EC2_IDLE_STOP_THRESHOLD: 자동 종료 임계값 (기본값: 5)
-CMD ["python", "-m", "apps.worker.video_worker.sqs_main"]
+# Video Worker 실행 (AWS Batch)
+# Batch parameters: job_id → Ref::job_id → command 인자
+CMD ["python", "-m", "apps.worker.video_worker.batch_main"]
