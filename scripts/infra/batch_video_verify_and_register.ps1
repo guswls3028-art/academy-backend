@@ -100,11 +100,50 @@ $deployedAttempts = [int]$retry.attempts
 if ($deployedAttempts -ne 1) { Fail "retryStrategy.attempts must be 1 (got $deployedAttempts)" }
 Write-Host "  OK retryStrategy.attempts=$deployedAttempts" -ForegroundColor Green
 
-# 5) Output result
+# 5) Submit test job and verify RUNNING within 180s (detect MISCONFIGURATION)
+Write-Host ""
+Write-Host "[5] Submit test job and verify RUNNING within 180s" -ForegroundColor Cyan
+$JobQueueName = "academy-video-batch-queue"
+$verifyJobName = "academy-video-verify-" + (Get-Date -Format "yyyyMMddHHmmss")
+$submitOut = Invoke-AwsJson @("batch", "submit-job", "--job-name", $verifyJobName, "--job-queue", $JobQueueName, "--job-definition", "$JobDefName`:$newRevision", "--parameters", "job_id=VERIFY_DRYRUN", "--region", $Region, "--output", "json")
+if (-not $submitOut) { Fail "submit-job failed (check queue $JobQueueName exists)" }
+$awsJobId = $submitOut.jobId
+Write-Host "  Submitted job $awsJobId" -ForegroundColor Gray
+
+$maxWait = 180
+$interval = 15
+$elapsed = 0
+while ($elapsed -lt $maxWait) {
+    Start-Sleep -Seconds $interval
+    $elapsed += $interval
+    $jobDesc = Invoke-AwsJson @("batch", "describe-jobs", "--jobs", $awsJobId, "--region", $Region, "--output", "json")
+    if (-not $jobDesc -or -not $jobDesc.jobs) { continue }
+    $job = $jobDesc.jobs[0]
+    $status = $job.status
+    $reason = $job.statusReason
+    Write-Host "  [$elapsed s] status=$status" -ForegroundColor Gray
+    if ($status -eq "RUNNING") {
+        Write-Host "  OK: Job reached RUNNING" -ForegroundColor Green
+        break
+    }
+    if ($status -eq "SUCCEEDED" -or $status -eq "FAILED") {
+        Write-Host "  OK: Job completed (status=$status)" -ForegroundColor Green
+        break
+    }
+    if ($status -eq "RUNNABLE" -and $reason -match "MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT") {
+        Fail "Job stuck RUNNABLE with MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT. Update CE instanceTypes (add c6g.xlarge,c6g.2xlarge)."
+    }
+}
+if ($status -ne "RUNNING" -and $status -ne "SUCCEEDED" -and $status -ne "FAILED") {
+    Fail "Job did not reach RUNNING within $maxWait s (status=$status). Check CE instanceTypes and capacity."
+}
+
+# 6) Output result
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "PASS" -ForegroundColor Green
 Write-Host ("JobDefinition: " + $JobDefName + ":" + $newRevision) -ForegroundColor Gray
 Write-Host "retryStrategy.attempts: 1" -ForegroundColor Gray
+Write-Host "Test job $awsJobId reached RUNNING" -ForegroundColor Gray
 Write-Host "========================================" -ForegroundColor Cyan
 exit 0
