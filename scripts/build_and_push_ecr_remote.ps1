@@ -87,10 +87,10 @@ $oneLine = "set -e; " + $repoLine + "; cd /home/ec2-user/build/academy; "
 if ($envLine) { $oneLine += $envLine + "; " }
 $oneLine += "./scripts/build_and_push_ecr_on_ec2.sh; echo REMOTE_BUILD_OK"
 
-# 4) SSM Send Command (수동 JSON: PowerShell ConvertTo-Json이 AWS CLI에서 Invalid JSON 나는 경우 대비)
+# 4) SSM Send Command (수동 JSON: 이스케이프는 연결로 처리해 파서 오류 방지)
 $cmdEscaped = $oneLine -replace '\\', '\\\\' -replace '"', '\"'
-$commandsJson = "[\"$cmdEscaped\"]"
-$paramsJsonStr = "{`"InstanceIds`":[`"$buildInstanceId`"],`"DocumentName`":`"AWS-RunShellScript`",`"Parameters`":{`"commands`":$commandsJson},`"TimeoutSeconds`":3600}"
+$commandsJson = '["' + $cmdEscaped + '"]'
+$paramsJsonStr = '{"InstanceIds":["' + $buildInstanceId + '"],"DocumentName":"AWS-RunShellScript","Parameters":{"commands":' + $commandsJson + '},"TimeoutSeconds":3600}'
 
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
