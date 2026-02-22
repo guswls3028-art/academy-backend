@@ -105,7 +105,8 @@ Write-Host ""
 Write-Host "[5] Submit test job and verify RUNNING within 180s" -ForegroundColor Cyan
 $JobQueueName = "academy-video-batch-queue"
 $verifyJobName = "academy-video-verify-" + (Get-Date -Format "yyyyMMddHHmmss")
-$submitOut = Invoke-AwsJson @("batch", "submit-job", "--job-name", $verifyJobName, "--job-queue", $JobQueueName, "--job-definition", "$JobDefName`:$newRevision", "--parameters", "job_id=VERIFY_DRYRUN", "--region", $Region, "--output", "json")
+$verifyJobId = [guid]::NewGuid().ToString()
+$submitOut = Invoke-AwsJson @("batch", "submit-job", "--job-name", $verifyJobName, "--job-queue", $JobQueueName, "--job-definition", "$JobDefName`:$newRevision", "--parameters", "job_id=$verifyJobId", "--region", $Region, "--output", "json")
 if (-not $submitOut) { Fail "submit-job failed (check queue $JobQueueName exists)" }
 $awsJobId = $submitOut.jobId
 Write-Host "  Submitted job $awsJobId" -ForegroundColor Gray
