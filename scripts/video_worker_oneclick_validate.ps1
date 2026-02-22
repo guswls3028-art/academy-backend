@@ -103,7 +103,7 @@ if ($dlqUrl) { $hasDlq = $true }
 if ($hasDlq -and $hasRedrive) {
     Ok "DLQ" "DLQ exists, RedrivePolicy set"
 } elseif ($hasDlq) {
-    Warn "DLQ" "DLQ 존재하나 RedrivePolicy 없음"
+    Warn "DLQ" "DLQ exists but no RedrivePolicy"
 } else {
     Fail "DLQ" "DLQ missing or RedrivePolicy not set"
 }
