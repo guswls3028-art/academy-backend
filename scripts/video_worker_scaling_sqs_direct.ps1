@@ -82,14 +82,14 @@ function Apply-MetricMathPolicy {
 }
 
 # ------------------------------------------------------------------------------
-# 4) 검증: Namespace=AWS/SQS, Academy/VideoProcessing 미사용 확인
+# 4) 검증: video-visible-only-tt (Expression=m1, m2 미포함)
 # ------------------------------------------------------------------------------
 function Test-MetricMathApplied {
     Log-Step "4) Validate"
     $pol = Invoke-AwsCli autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
-    $vp = $pol.ScalingPolicies | Where-Object { $_.PolicyName -eq $PolicyName } | Select-Object -First 1
+    $vp = $pol.ScalingPolicies | Where-Object { $_.PolicyName -eq "video-visible-only-tt" } | Select-Object -First 1
     if (-not $vp) {
-        Log-Fail "  Policy $PolicyName not found"
+        Log-Fail "  Policy video-visible-only-tt not found"
         return $false
     }
     $cust = $vp.TargetTrackingConfiguration.CustomizedMetricSpecification
@@ -97,21 +97,17 @@ function Test-MetricMathApplied {
         Log-Fail "  No CustomizedMetricSpecification"
         return $false
     }
-    if ($cust.Namespace -eq "Academy/VideoProcessing") {
-        Log-Fail "  Policy uses Lambda metric (Namespace=Academy/VideoProcessing). FAIL."
+    $e1 = $cust.Metrics | Where-Object { $_.Id -eq "e1" } | Select-Object -First 1
+    if (-not $e1 -or $e1.Expression -ne "m1") {
+        Log-Fail "  Expected Expression=m1 (Visible only), got: $($e1.Expression)"
         return $false
     }
-    $usesMetrics = $cust.Metrics -and $cust.Metrics.Count -gt 0
-    if (-not $usesMetrics) {
-        Log-Fail "  No Metrics array (Metric Math). FAIL."
+    $hasM2 = $cust.Metrics | Where-Object { $_.Id -eq "m2" } | Select-Object -First 1
+    if ($hasM2) {
+        Log-Fail "  m2(NotVisible) should NOT exist (Visible-only policy)"
         return $false
     }
-    $hasSqs = $cust.Metrics | Where-Object { $_.MetricStat.Metric.Namespace -eq "AWS/SQS" } | Select-Object -First 1
-    if (-not $hasSqs) {
-        Log-Fail "  No AWS/SQS metric in policy. FAIL."
-        return $false
-    }
-    Log-Step "  Namespace=AWS/SQS, Metric Math OK, Lambda OUT of path"
+    Log-Step "  OK: Expression=m1 (Visible only), Lambda OUT of path"
     return $true
 }
 
