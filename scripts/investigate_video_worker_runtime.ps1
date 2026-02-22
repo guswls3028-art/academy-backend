@@ -61,15 +61,17 @@ foreach ($instanceId in $instances) {
   }
 
   $status = "Pending"
+  $inv = $null
   for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Seconds 3
-    $inv = aws ssm get-command-invocation --command-id $cmdId --instance-id $instanceId --region $Region --output json 2>&1 | ConvertFrom-Json
+    $invRaw = aws ssm get-command-invocation --command-id $cmdId --instance-id $instanceId --region $Region --output json 2>&1
+    $inv = $invRaw | ConvertFrom-Json
     $status = $inv.Status
     if ($status -eq "Success" -or $status -eq "Failed" -or $status -eq "Cancelled") { break }
   }
 
-  $stdout = $inv.StandardOutputContent -replace "`r`n", "`n" -replace "`r", "`n"
-  $stderr = $inv.StandardErrorContent -replace "`r`n", "`n" -replace "`r", "`n"
+  $stdout = if ($inv.StandardOutputContent) { $inv.StandardOutputContent -replace "`r`n", "`n" -replace "`r", "`n" } else { "" }
+  $stderr = if ($inv.StandardErrorContent) { $inv.StandardErrorContent -replace "`r`n", "`n" -replace "`r", "`n" } else { "" }
 
   $containerRunning = "NO"
   if ($stdout -match "academy-video-worker") { $containerRunning = "YES" }
