@@ -93,12 +93,7 @@ if ($LASTEXITCODE -ne 0) {
 Remove-Item $mixedPolicyFile -Force -ErrorAction SilentlyContinue
 Write-Host "ASG created." -ForegroundColor Green
 
-# 7) TargetTracking 정책 재적용 (video-backlogcount-tt: VideoQueueDepthTotal, TargetValue=1)
-Write-Host "Re-applying scaling policy video-backlogcount-tt (VideoQueueDepthTotal, TargetValue=1)..." -ForegroundColor Cyan
-$videoTtJson = '{"TargetValue":1.0,"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"academy-video-worker-asg"}],"Statistic":"Average","Unit":"Count"}}'
-$videoTtFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
-[System.IO.File]::WriteAllText($videoTtFile, $videoTtJson, $utf8NoBom)
-$videoTtPath = "file://$($videoTtFile -replace '\\','/' -replace ' ', '%20')"
-aws autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name "video-backlogcount-tt" --policy-type TargetTrackingScaling --target-tracking-configuration $videoTtPath --region $Region 2>$null
-Remove-Item $videoTtFile -Force -ErrorAction SilentlyContinue
+# 7) TargetTracking 정책 재적용 (SSOT: scripts/infra/apply_video_asg_scaling_policy.ps1)
+Write-Host "Re-applying scaling policy via SSOT (video-visible-only-tt)..." -ForegroundColor Cyan
+& (Join-Path $ScriptRoot "infra\apply_video_asg_scaling_policy.ps1") -Region $Region -AsgName $AsgName
 Write-Host "Done. Video ASG now uses MixedInstancesPolicy (c6g.large Spot primary, t4g.medium fallback)." -ForegroundColor Green
