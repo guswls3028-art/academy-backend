@@ -9,9 +9,11 @@ FROM ${BASE_IMAGE} AS base
 
 # 앱 코드 (Base에 두지 않음 → 코드 변경 시 base 재빌드 불필요)
 USER root
-# upload_complete ffprobe 검증용 (Debian/Ubuntu)
+# upload_complete ffprobe 검증용 (ffmpeg 패키지에 ffprobe 포함)
+# 참고: Amazon Linux 등 yum 기반 이미지 사용 시: RUN yum install -y ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && (ffprobe -version > /dev/null 2>&1 || (echo "ffprobe not in PATH" && exit 1))
 COPY src ./src
 COPY academy ./academy
 COPY apps ./apps
