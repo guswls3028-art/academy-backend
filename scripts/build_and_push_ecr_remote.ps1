@@ -77,24 +77,17 @@ if ($SkipPrune) { $envParts += "DOCKER_SKIP_PRUNE=1" }
 $envLine = if ($envParts.Count -gt 0) { "export " + ($envParts -join " ") } else { "" }
 
 if ($GitRepoUrl) {
-    $repoLine = "cd /home/ec2-user/build && (test -d academy && cd academy && git fetch && git reset --hard origin/main && git pull) || (git clone $GitRepoUrl academy && cd academy)"
+    $repoLine = "cd /home/ec2-user/build && (test -d academy && cd academy && git fetch && git reset --hard origin/main && git pull) || (git clone '" + $GitRepoUrl + "' academy && cd academy)"
 } else {
     $repoLine = "cd /home/ec2-user/build && test -d academy || (echo ERROR: no academy dir. Use -GitRepoUrl; exit 1) && cd academy && git fetch && git reset --hard origin/main && git pull"
 }
 
-$commandsArray = @(
-    "set -e",
-    $repoLine,
-    "cd /home/ec2-user/build/academy",
-    $envLine,
-    "./scripts/build_and_push_ecr_on_ec2.sh",
-    "echo REMOTE_BUILD_OK"
-) | Where-Object { $_ -ne "" }
+$commandsList = @("set -e", $repoLine, "cd /home/ec2-user/build/academy")
+if ($envLine) { $commandsList += $envLine }
+$commandsList += "./scripts/build_and_push_ecr_on_ec2.sh"
+$commandsList += "echo REMOTE_BUILD_OK"
 
-# JSON 이스케이프: SSM에 안전하게 전달 (큰따옴표 이스케이프)
-$commandsJson = ($commandsArray | ConvertTo-Json -Compress) -replace '\\', '\\\\' -replace '"', '\"'
-
-# 4) SSM Send Command (--cli-input-json 사용으로 파라미터 깨짐 방지)
+# 4) SSM Send Command (--cli-input-json 사용: 파라미터 크기/이스케이프 문제 회피)
 $paramsJson = @{
     InstanceIds = @($buildInstanceId)
     DocumentName = "AWS-RunShellScript"
