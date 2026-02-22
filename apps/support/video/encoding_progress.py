@@ -32,26 +32,26 @@ def _get_progress_payload(video_id: int, tenant_id: Optional[int] = None) -> Opt
     if not client:
         return None
 
-    # ✅ Tenant namespace 키 우선 조회
+    # ✅ Tenant namespace 키 우선 조회 (Batch mode: key often missing — never json.loads(None))
     if tenant_id:
         key = f"tenant:{tenant_id}:video:{video_id}:progress"
         try:
             raw = client.get(key)
-            if raw:
+            if raw is not None and raw:
                 return json.loads(raw)
         except Exception:
             pass
-        
+
         # 하위 호환성: tenant namespace 키가 없으면 기존 키 형식 확인
         job_id = f"{VIDEO_JOB_ID_PREFIX}{video_id}"
         legacy_key = f"job:{job_id}:progress"
         try:
             raw = client.get(legacy_key)
-            if raw:
+            if raw is not None and raw:
                 return json.loads(raw)
         except Exception:
             pass
-    
+
     return None
 
 

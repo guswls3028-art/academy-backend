@@ -134,9 +134,8 @@ def get_video_status_from_redis(tenant_id: int, video_id: int) -> Optional[Dict[
         
         key = _get_video_status_key(tenant_id, video_id)
         cached_data = redis_client.get(key)
-        if not cached_data:
+        if cached_data is None or not cached_data:
             return None
-        
         return json.loads(cached_data)
     except Exception as e:
         logger.debug("Redis video status lookup failed: %s", e)
