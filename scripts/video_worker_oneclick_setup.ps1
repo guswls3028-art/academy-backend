@@ -152,16 +152,16 @@ function Show-DiffList {
 # 2) 스케일링 소스 정석 교체 (SQS 기반)
 # ------------------------------------------------------------------------------
 function Set-SqsBasedScaling {
-    Log-Step "2) 스케일링 소스 → SQS 기반"
+    Log-Step "2) Scaling source -> SQS only"
 
     $lambdaPath = Join-Path $RepoRoot "infra\worker_asg\queue_depth_lambda\lambda_function.py"
-    if (-not (Test-Path $lambdaPath)) { Log-Fail "Lambda 소스 없음: $lambdaPath"; return $false }
+    if (-not (Test-Path $lambdaPath)) { Log-Fail "Lambda source not found: $lambdaPath"; return $false }
     $zipPath = Join-Path $RepoRoot "worker_queue_depth_lambda.zip"
     Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
     Compress-Archive -Path $lambdaPath -DestinationPath $zipPath -Force
     $zipUri = "fileb://$($zipPath -replace '\\','/')"
     Aws lambda update-function-code --function-name $LambdaName --zip-file $zipUri 2>$null
-    if ($LASTEXITCODE -ne 0) { Log-Fail "Lambda update-function-code 실패"; Remove-Item $zipPath -Force -ErrorAction SilentlyContinue; return $false }
+    if ($LASTEXITCODE -ne 0) { Log-Fail "Lambda update-function-code failed"; Remove-Item $zipPath -Force -ErrorAction SilentlyContinue; return $false }
     Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
     $waited = 0
     do {
@@ -169,9 +169,9 @@ function Set-SqsBasedScaling {
         $waited += 2
         $status = Aws lambda get-function-configuration --function-name $LambdaName --query "LastUpdateStatus" --output text
         if ($status -eq "Successful") { break }
-        if ($waited -ge 30) { Log-Warn "Lambda 업데이트 대기 타임아웃"; break }
+        if ($waited -ge 30) { Log-Warn "Lambda update wait timeout"; break }
     } while ($true)
-    Log-Step "  Lambda 배포 완료 (VideoQueueDepthTotal)"
+    Log-Step "  Lambda deploy done (VideoQueueDepthTotal)"
 
     $videoTtJson = '{"TargetValue":' + [string]$TargetMessagesPerInstance + ',"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"' + $AsgName + '"}],"Statistic":"Average","Unit":"Count"},"ScaleOutCooldown":60,"ScaleInCooldown":300}'
     $tmpFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
@@ -179,8 +179,8 @@ function Set-SqsBasedScaling {
     $pathUri = "file://$($tmpFile -replace '\\','/' -replace ' ', '%20')"
     Aws autoscaling put-scaling-policy --auto-scaling-group-name $AsgName --policy-name $PolicyName --policy-type TargetTrackingScaling --target-tracking-configuration $pathUri
     Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
-    if ($LASTEXITCODE -ne 0) { Log-Fail "put-scaling-policy 실패"; return $false }
-    Log-Step "  ASG TargetTracking → VideoQueueDepthTotal 적용"
+    if ($LASTEXITCODE -ne 0) { Log-Fail "put-scaling-policy failed"; return $false }
+    Log-Step "  ASG TargetTracking -> VideoQueueDepthTotal applied"
     return $true
 }
 
