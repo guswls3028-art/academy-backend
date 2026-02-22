@@ -349,9 +349,9 @@ $report += @"
 foreach ($instId in $asgNotSsm) {
     $safeId = $instId -replace '[^a-zA-Z0-9_-]', '_'
     $consolePath = Join-Path $OutDir "6_console_$safeId.txt"
-    $report += "`n**$instId:**`n``````"
+    $report += "`n**$instId:**`n$f`n"
     $report += Read-SafeText $consolePath
-    $report += "```````n"
+    $report += "`n$f`n"
 }
 if ($asgNotSsm.Count -eq 0) {
     $report += "`n(ASG_NOT_SSM 없음 - 모든 ASG 인스턴스가 SSM 등록됨)"
@@ -409,7 +409,7 @@ $report += @"
 
 ### 7.1 자동 검증 스크립트
 
-``````powershell
+$f`npowershell
 # 데이터 수집 + 보고서 생성 (AWS 자격증명 필요)
 .\scripts\collect_video_worker_incident_data.ps1
 
@@ -421,7 +421,7 @@ $report += @"
 
 # Runtime (인스턴스별 docker/ffmpeg/worker 로그)
 .\scripts\investigate_video_worker_runtime.ps1
-``````
+$f
 
 ### 7.2 수동 체크
 
