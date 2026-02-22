@@ -34,6 +34,7 @@ $deployParams = @{
     SecurityGroupId         = $SecurityGroupId
     IamInstanceProfileName  = $IamInstanceProfileName
     Region                  = $Region
+    ExcludeVideo            = $ExcludeVideo
     UploadEnvToSsm          = $false
     AttachEc2Policy         = $false
     GrantSsmPutToCaller     = $false
