@@ -285,6 +285,11 @@ if (-not (Apply-MetricMathPolicy)) { exit 1 }
 if (-not (Test-MetricMathApplied)) { exit 1 }
 Show-TestStats
 
+Log-Step "Changed ScalingPolicy (TargetTrackingConfiguration)"
+$pol = Invoke-AwsCli autoscaling describe-policies --auto-scaling-group-name $AsgName --output json 2>$null | ConvertFrom-Json
+$vp = $pol.ScalingPolicies | Where-Object { $_.PolicyName -eq $PolicyName } | Select-Object -First 1
+if ($vp) { Write-Host ($vp.TargetTrackingConfiguration | ConvertTo-Json -Depth 10) -ForegroundColor Gray }
+
 Write-Host "`nSetup done. Lambda is OUT of scaling path. Validate:" -ForegroundColor Green
 Write-Host "  aws autoscaling describe-policies --auto-scaling-group-name $AsgName --region $Region"
 Write-Host "  (CustomizedMetricSpecification.Metrics must reference AWS/SQS, NOT Academy/VideoProcessing)"
