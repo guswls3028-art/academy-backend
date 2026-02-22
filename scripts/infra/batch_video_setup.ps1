@@ -126,7 +126,8 @@ $ceContent = Get-Content $ceJsonPath -Raw
 $ceContent = $ceContent -replace "PLACEHOLDER_SERVICE_ROLE_ARN", $serviceRoleArn
 $ceContent = $ceContent -replace "PLACEHOLDER_INSTANCE_PROFILE_ARN", $instanceProfileArn
 $ceContent = $ceContent -replace "PLACEHOLDER_SECURITY_GROUP_ID", $SecurityGroupId
-$ceContent = $ceContent -replace '"PLACEHOLDER_SUBNET_1"', "`"$($SubnetIds[0])`""
+$subnetArr = ($SubnetIds | ForEach-Object { "`"$_`"" }) -join ","
+$ceContent = $ceContent -replace '"PLACEHOLDER_SUBNET_1"', $subnetArr
 $ceContent = $ceContent -replace "32", $MaxVcpus
 $ceFile = Join-Path $RepoRoot "batch_ce_temp.json"
 [System.IO.File]::WriteAllText($ceFile, $ceContent)
