@@ -24,7 +24,7 @@ function Run-LocalCheck {
     $root = Split-Path -Parent $PSScriptRoot
     Push-Location $root
     try {
-        python manage.py check_api_env_settings $extraArgs
+        & python manage.py check_api_env_settings @extraArgs
         return $LASTEXITCODE
     } finally {
         Pop-Location
@@ -59,7 +59,7 @@ if ($ApiIp) {
     $ErrorActionPreference = $eap
 
     if ($cid) {
-        docker exec $cid python manage.py check_api_env_settings $extraArgs
+        docker exec $cid python manage.py check_api_env_settings @extraArgs
     } else {
         Write-Host "Docker unavailable or academy-api not running. Checking .env locally..." -ForegroundColor Yellow
         Run-LocalCheck
