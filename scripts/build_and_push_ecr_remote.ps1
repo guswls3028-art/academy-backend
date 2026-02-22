@@ -87,19 +87,29 @@ if ($envLine) { $commandsList += $envLine }
 $commandsList += "./scripts/build_and_push_ecr_on_ec2.sh"
 $commandsList += "echo REMOTE_BUILD_OK"
 
-# 4) SSM Send Command (Windows file:// 경로 이슈 회피: JSON을 직접 전달)
-$commandsJsonArray = ($commandsList | ForEach-Object { $_ -replace '\\', '\\\\' -replace '"', '\"' -replace "`r", '' -replace "`n", ' ' }) | ForEach-Object { "`"$_`"" }
-$commandsJsonStr = "[" + ($commandsJsonArray -join ",") + "]"
-$paramsJsonStr = '{"InstanceIds":["' + $buildInstanceId + '"],"DocumentName":"AWS-RunShellScript","Parameters":{"commands":' + $commandsJsonStr + '},"TimeoutSeconds":3600}'
+# 4) SSM Send Command (ConvertTo-Json으로 유효 JSON 생성, 임시 파일로 전달)
+$paramsObj = @{
+    InstanceIds    = @($buildInstanceId)
+    DocumentName   = "AWS-RunShellScript"
+    Parameters     = @{ commands = $commandsList }
+    TimeoutSeconds = 3600
+}
+$paramsJsonStr = $paramsObj | ConvertTo-Json -Depth 4 -Compress
 
-Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
-$prevErr = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-# Windows: file:// 경로 오류 회피. JSON을 한 인자로 전달하기 위해 배열 스플래팅 사용
-$awsArgs = @("ssm", "send-command", "--region", $Region, "--cli-input-json", $paramsJsonStr, "--output", "json")
-$cmdResult = & aws @awsArgs 2>&1
-$ErrorActionPreference = $prevErr
-$exitCode = $LASTEXITCODE
+$paramsFile = [System.IO.Path]::GetTempFileName() + ".json"
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+try {
+    [System.IO.File]::WriteAllText($paramsFile, $paramsJsonStr, $utf8NoBom)
+    Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
+    $prevErr = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    # Windows: 경로만 전달 (AWS CLI가 file:// 없이 절대경로 인식하는 경우 시도)
+    $cmdResult = & aws ssm send-command --region $Region --cli-input-json "file://$paramsFile" --output json 2>&1
+    $ErrorActionPreference = $prevErr
+    $exitCode = $LASTEXITCODE
+} finally {
+    Remove-Item $paramsFile -Force -ErrorAction SilentlyContinue
+}
 
 if ($exitCode -ne 0) {
     Write-Host "ERROR: SSM send-command failed (exit $exitCode)" -ForegroundColor Red
