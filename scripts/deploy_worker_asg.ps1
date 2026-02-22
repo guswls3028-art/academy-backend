@@ -109,54 +109,7 @@ $ErrorActionPreference = $ea
 Remove-Item $ltAiFile -Force -ErrorAction SilentlyContinue
 
 # ------------------------------------------------------------------------------
-# 3) Launch Template Video (academy-video-worker-lt for MixedInstancesPolicy)
-#     LT default InstanceType t4g.medium (fallback); Overrides add c6g.large (Spot primary)
-#     Skip if -ExcludeVideo (Video = Batch only)
-# ------------------------------------------------------------------------------
-if (-not $ExcludeVideo) {
-Write-Host "[3/8] Launch Template (Video worker, academy-video-worker-lt)..." -ForegroundColor Cyan
-$videoUserDataPath = Join-Path $UserDataDir "video_worker_user_data.sh"
-$videoUserDataRaw = Get-Content $videoUserDataPath -Raw
-$videoUserDataRaw = $videoUserDataRaw -replace "{{ECR_REGISTRY}}", $ECRRegistry
-$videoUserDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($videoUserDataRaw))
-
-$LtVideoName = "academy-video-worker-lt"
-# Root volume >= 30GB (AMI snapshot requirement); second volume 100GB for transcode
-$blockDevices = '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":30,"VolumeType":"gp3"}},{"DeviceName":"/dev/sdb","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]'
-$ltVideoKey = if ($KeyNameVideo) { ",`"KeyName`":`"$KeyNameVideo`"" } else { "" }
-$ltVideoJson = @"
-{"ImageId":"$AmiId","InstanceType":"t4g.medium","IamInstanceProfile":{"Name":"$IamInstanceProfileName"},"SecurityGroupIds":["$SecurityGroupId"]$ltVideoKey,"UserData":"$videoUserDataB64","BlockDeviceMappings":$blockDevices,"TagSpecifications":[{"ResourceType":"instance","Tags":[{"Key":"Name","Value":"academy-video-worker"}]}]}
-"@
-$ltVideoFile = Join-Path $RepoRoot "lt_video_data.json"
-[System.IO.File]::WriteAllText($ltVideoFile, $ltVideoJson.Trim(), $utf8NoBom)
-$ltVideoPath = "file://$($ltVideoFile -replace '\\','/' -replace ' ', '%20')"
-$ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-aws ec2 describe-launch-templates --launch-template-names $LtVideoName --region $Region 2>$null | Out-Null
-$ltVideoExists = ($LASTEXITCODE -eq 0)
-if (-not $ltVideoExists) {
-    aws ec2 create-launch-template --launch-template-name $LtVideoName --version-description "ASG Video worker (MixedInstancesPolicy)" --launch-template-data $ltVideoPath --region $Region
-} else {
-    $newVer = aws ec2 create-launch-template-version --launch-template-name $LtVideoName --launch-template-data $ltVideoPath --region $Region --query "LaunchTemplateVersion.VersionNumber" --output text 2>$null
-    if ($newVer) { aws ec2 modify-launch-template --launch-template-name $LtVideoName --default-version $newVer --region $Region 2>$null | Out-Null }
-}
-$ErrorActionPreference = $ea
-Remove-Item $ltVideoFile -Force -ErrorAction SilentlyContinue
-# Video ASG MixedInstancesPolicy requires this LT; abort if missing
-$vidLtCheck = $null
-$eaVerify = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-try { $vidLtCheck = aws ec2 describe-launch-templates --launch-template-names $LtVideoName --region $Region --query "LaunchTemplates[0].LaunchTemplateName" --output text 2>$null } catch {}
-$ErrorActionPreference = $eaVerify
-if (-not $vidLtCheck -or $vidLtCheck -eq "None") {
-    Write-Error "Launch template $LtVideoName not found after create. MixedInstancesPolicy will fail. Aborting. (If you have academy-video-worker-asg LT, create may have failed; check aws ec2 create-launch-template output.)"
-    exit 1
-}
-Write-Host "      Verified: $LtVideoName exists." -ForegroundColor Gray
-} else {
-    Write-Host "[3/8] Video Launch Template SKIP (ExcludeVideo, Video = Batch only)" -ForegroundColor Gray
-}
-
-# ------------------------------------------------------------------------------
-# 3.5) Launch Template Messaging (Min=1 always on)
+# 3) Launch Template Messaging (Min=1 always on)
 # ------------------------------------------------------------------------------
 Write-Host "[3.5/8] Launch Template (Messaging worker)..." -ForegroundColor Cyan
 $messagingUserDataPath = Join-Path $UserDataDir "messaging_worker_user_data.sh"
