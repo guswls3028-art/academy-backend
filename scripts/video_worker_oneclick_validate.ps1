@@ -22,7 +22,7 @@ $PolicyName = "video-backlogcount-tt"
 
 $AwsBase = @("--region", $Region, "--cli-read-timeout", "10", "--cli-connect-timeout", "10")
 if ($Profile) { $AwsBase = @("--profile", $Profile) + $AwsBase }
-function Invoke-AwsCli { param([parameter(ValueFromRemainingArguments)]$Rest) $a = @($Rest) + $AwsBase; $exe = (Get-Command aws.exe -CommandType Application -ErrorAction SilentlyContinue).Source; if (-not $exe) { $exe = "aws" }; & $exe @a 2>$null }
+function Invoke-AwsCli { param([parameter(ValueFromRemainingArguments)]$Rest) $a = @($Rest) + $AwsBase; $exe = (Get-Command aws.exe -CommandType Application -ErrorAction SilentlyContinue).Source; if (-not $exe) { $exe = "aws" }; $ea = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'; try { & $exe @a } finally { $ErrorActionPreference = $ea } }
 
 $results = @{}
 function Ok { param([string]$K, [string]$V) $results[$K] = @{ ok = $true; msg = $V }; Write-Host "  [OK] $K : $V" -ForegroundColor Green }
