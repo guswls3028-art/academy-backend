@@ -2,6 +2,11 @@
 # ASG Video Worker: 100GB 마운트 + Docker + ECR pull + run academy-video-worker
 # EC2_IDLE_STOP_THRESHOLD=0 → self-stop 비활성화 (ASG가 scale-in으로 종료)
 set -e
+# SSM Agent (Run Command / investigate_video_worker_runtime.ps1용)
+dnf install -y amazon-ssm-agent 2>/dev/null || yum install -y amazon-ssm-agent 2>/dev/null || true
+systemctl enable amazon-ssm-agent 2>/dev/null || true
+systemctl start amazon-ssm-agent 2>/dev/null || true
+
 yum update -y
 yum install -y docker
 yum install -y ec2-instance-connect 2>/dev/null || true
