@@ -102,7 +102,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AWS_REGION = os.getenv("AWS_REGION")
 AWS_DEFAULT_REGION = os.getenv("AWS_DEFAULT_REGION", AWS_REGION)
 
-VIDEO_SQS_QUEUE_NAME = os.getenv("VIDEO_SQS_QUEUE_NAME", "academy-video-jobs")
+# VIDEO_SQS_QUEUE_NAME removed - Encoding = Batch only. delete_r2 uses VIDEO_SQS_QUEUE_DELETE_R2.
 AI_SQS_QUEUE_NAME_LITE = os.getenv("AI_SQS_QUEUE_NAME_LITE", "academy-ai-jobs-lite")
 AI_SQS_QUEUE_NAME_BASIC = os.getenv("AI_SQS_QUEUE_NAME_BASIC", "academy-ai-jobs-basic")
 AI_SQS_QUEUE_NAME_PREMIUM = os.getenv("AI_SQS_QUEUE_NAME_PREMIUM", "academy-ai-jobs-premium")
