@@ -35,7 +35,7 @@ Write-Host "Region=$Region JobDef=$JobDefName" -ForegroundColor Gray
 
 # 1) Verify source JSON has retryStrategy.attempts == 1
 Write-Host "`n[1] Verify source video_job_definition.json" -ForegroundColor Cyan
-$jdSource = ExecJson "Get-Content -Raw '$JdPath' | ConvertFrom-Json"
+$jdSource = Get-Content $JdPath -Raw | ConvertFrom-Json
 if (-not $jdSource) { Fail "Cannot parse $JdPath" }
 if (-not $jdSource.retryStrategy) { Fail "retryStrategy is missing in $JdPath" }
 $attempts = [int]$jdSource.retryStrategy.attempts
