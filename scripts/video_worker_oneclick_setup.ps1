@@ -47,12 +47,12 @@ function Log-Fail { param([string]$Msg) $script:Log += "[FAIL] $Msg"; Write-Host
 # 0) 사전 점검
 # ------------------------------------------------------------------------------
 function Test-Prechecks {
-    Log-Step "0) 사전 점검"
+    Log-Step "0) Pre-check"
     $missing = @()
 
     $id = Aws sts get-caller-identity --output json 2>$null
     if (-not $id) {
-        Log-Fail "AWS 로그인/권한 실패. aws sts get-caller-identity 확인."
+        Log-Fail "AWS login/perms failed. Run aws sts get-caller-identity"
         return $false
     }
     Log-Step "  sts get-caller-identity OK"
@@ -60,7 +60,7 @@ function Test-Prechecks {
     $asg = Aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $AsgName --output json 2>$null | ConvertFrom-Json
     if (-not $asg -or -not $asg.AutoScalingGroups -or $asg.AutoScalingGroups.Count -eq 0) {
         $missing += "ASG($AsgName)"
-    } else { Log-Step "  ASG $AsgName 존재" }
+    } else { Log-Step "  ASG $AsgName exists" }
 
     $qurl = Aws sqs get-queue-url --queue-name $QueueName --query "QueueUrl" --output text 2>$null
     if (-not $qurl) { $missing += "SQS($QueueName)" } else { Log-Step "  SQS $QueueName 존재" }
@@ -68,7 +68,7 @@ function Test-Prechecks {
     $lt = Aws ec2 describe-launch-templates --launch-template-names $LtName --output json 2>$null | ConvertFrom-Json
     if (-not $lt -or -not $lt.LaunchTemplates -or $lt.LaunchTemplates.Count -eq 0) {
         $missing += "LaunchTemplate($LtName)"
-    } else { Log-Step "  LT $LtName 존재" }
+    } else { Log-Step "  LT $LtName exists" }
 
     $fn = Aws lambda get-function --function-name $LambdaName --output json 2>$null
     if (-not $fn) { $missing += "Lambda($LambdaName)" } else { Log-Step "  Lambda $LambdaName 존재" }
