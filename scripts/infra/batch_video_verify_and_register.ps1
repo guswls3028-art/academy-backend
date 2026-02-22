@@ -58,21 +58,25 @@ Write-Host "  JobRole=$jobRoleArn" -ForegroundColor Gray
 Write-Host "  ExecutionRole=$executionRoleArn" -ForegroundColor Gray
 
 # 3) Substitute placeholders and register
-Write-Host "`n[3] Register Job Definition revision" -ForegroundColor Cyan
-$jdContent = Get-Content $JdPath -Raw
+Write-Host ""
+Write-Host "[3] Register Job Definition revision" -ForegroundColor Cyan
+$jdContent = Get-Content -LiteralPath $JdPath -Raw -Encoding UTF8
 $jdContent = $jdContent -replace "PLACEHOLDER_ECR_URI", $EcrRepoUri
 $jdContent = $jdContent -replace "PLACEHOLDER_JOB_ROLE_ARN", $jobRoleArn
 $jdContent = $jdContent -replace "PLACEHOLDER_EXECUTION_ROLE_ARN", $executionRoleArn
 $jdContent = $jdContent -replace "PLACEHOLDER_REGION", $Region
 $jdFile = Join-Path $RepoRoot "batch_jd_temp.json"
-[System.IO.File]::WriteAllText($jdFile, $jdContent)
-$regOut = aws batch register-job-definition --cli-input-json "file://$($jdFile -replace '\\','/')" --region $Region --output json | ConvertFrom-Json
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($jdFile, $jdContent, $utf8NoBom)
+$fileUri = [System.Uri]::new($jdFile).AbsoluteUri
+$regOut = aws batch register-job-definition --cli-input-json $fileUri --region $Region --output json | ConvertFrom-Json
 Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
 $newRevision = $regOut.revision
 Write-Host "  Registered revision $newRevision" -ForegroundColor Green
 
 # 4) Verify deployed Job Definition has retryStrategy.attempts == 1
-Write-Host "`n[4] Verify deployed retryStrategy" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "[4] Verify deployed retryStrategy" -ForegroundColor Cyan
 $defs = ExecJson "aws batch describe-job-definitions --job-definition-name $JobDefName --status ACTIVE --region $Region --output json"
 $latest = $defs.jobDefinitions | Sort-Object -Property revision -Descending | Select-Object -First 1
 if (-not $latest -or $latest.revision -ne $newRevision) {
@@ -85,7 +89,8 @@ if ($deployedAttempts -ne 1) { Fail "retryStrategy.attempts must be 1 (got $depl
 Write-Host "  OK retryStrategy.attempts=$deployedAttempts" -ForegroundColor Green
 
 # 5) Output result
-Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "PASS" -ForegroundColor Green
 Write-Host "JobDefinition: $JobDefName:$newRevision" -ForegroundColor Gray
 Write-Host "retryStrategy.attempts: 1" -ForegroundColor Gray
