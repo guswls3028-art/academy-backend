@@ -84,37 +84,23 @@ $oneLine = "set -e; " + $repoLine + "; cd /home/ec2-user/build/academy; "
 if ($envLine) { $oneLine += $envLine + "; " }
 $oneLine += "./scripts/build_and_push_ecr_on_ec2.sh; echo REMOTE_BUILD_OK"
 
-# 4) SSM Send Command (수동 JSON: 이스케이프는 연결로 처리해 파서 오류 방지)
+# 4) SSM Send Command (--cli-input-json 제거: 개별 인자로 전달해 Invalid JSON 회피)
 $cmdEscaped = $oneLine -replace '\\', '\\\\' -replace '"', '\"'
-$commandsJson = '["' + $cmdEscaped + '"]'
-$paramsJsonStr = '{"InstanceIds":["' + $buildInstanceId + '"],"DocumentName":"AWS-RunShellScript","Parameters":{"commands":' + $commandsJson + '},"TimeoutSeconds":3600}'
+$commandsParam = '["' + $cmdEscaped + '"]'
+$parametersArg = 'commands=' + $commandsParam
 
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-
-# 1) repo 루트 파일로 시도 (Windows file:// 인식 시)
-$payloadPath = Join-Path $RepoRoot "scripts\ssm-payload.json"
-$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-[System.IO.File]::WriteAllText($payloadPath, $paramsJsonStr, $utf8NoBom)
-try {
-    $fileUri = "file:///" + ($payloadPath -replace '\\', '/')
-    $cmdResult = & aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -eq 0) {
-        Remove-Item $payloadPath -Force -ErrorAction SilentlyContinue
-        $ErrorActionPreference = $prevErr
-        # 성공 시 아래 오류 처리 건너뜀
-    } else {
-        # 2) file 실패 시 인라인 JSON으로 재시도 (한 인자로 전달)
-        $awsArgs = @("ssm", "send-command", "--region", $Region, "--cli-input-json", $paramsJsonStr, "--output", "json")
-        $cmdResult = & aws @awsArgs 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-} finally {
-    Remove-Item $payloadPath -Force -ErrorAction SilentlyContinue
-}
+$cmdResult = & aws ssm send-command `
+    --instance-ids $buildInstanceId `
+    --document-name "AWS-RunShellScript" `
+    --parameters $parametersArg `
+    --timeout-seconds 3600 `
+    --region $Region `
+    --output json 2>&1
 $ErrorActionPreference = $prevErr
+$exitCode = $LASTEXITCODE
 
 if ($exitCode -ne 0) {
     Write-Host "ERROR: SSM send-command failed (exit $exitCode)" -ForegroundColor Red
