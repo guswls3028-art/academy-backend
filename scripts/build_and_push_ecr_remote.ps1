@@ -89,6 +89,7 @@ $commandsArray = @(
     "cd /home/ec2-user/build/academy"
 )
 if ($envLine) { $commandsArray += $envLine }
+$commandsArray += "chmod +x ./scripts/build_and_push_ecr_on_ec2.sh"
 $commandsArray += "./scripts/build_and_push_ecr_on_ec2.sh"
 $commandsArray += "echo REMOTE_BUILD_OK"
 # JSON 이스케이프: \ → \\, " → \"; ["cmd1","cmd2"] 형태로 직접 조립
