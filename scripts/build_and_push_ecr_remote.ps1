@@ -147,10 +147,10 @@ if (-not $done) {
 
 Write-Host "`nDone. 원격 빌드/푸시 완료." -ForegroundColor Green
 if ($ApiOnly) {
-    Write-Host "  이제 배포: .\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget api" -ForegroundColor Gray
+    Write-Host '  이제 배포: .\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget api' -ForegroundColor Gray
 } elseif ($VideoWorkerOnly) {
-    Write-Host "  Video = Batch 전용. 이미지만 ECR에 푸시됨. API/워커 배포: .\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget api" -ForegroundColor Gray
+    Write-Host '  Video = Batch 전용. 이미지만 ECR에 푸시됨. API/워커 배포: .\scripts\full_redeploy.ps1 -SkipBuild -DeployTarget api' -ForegroundColor Gray
 } else {
-    Write-Host "  이제 배포: .\scripts\full_redeploy.ps1 -SkipBuild" -ForegroundColor Gray
+    Write-Host '  이제 배포: .\scripts\full_redeploy.ps1 -SkipBuild' -ForegroundColor Gray
 }
 Write-Host ""
