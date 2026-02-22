@@ -16,6 +16,9 @@ drf-yasg
 uritemplate
 inflection
 
+# upload_complete ffprobe 검증 (R2 presigned URL)
+ffmpeg-python
+
 # Server
 gunicorn
 gevent>=23.0.0

@@ -9,6 +9,9 @@ FROM ${BASE_IMAGE} AS base
 
 # 앱 코드 (Base에 두지 않음 → 코드 변경 시 base 재빌드 불필요)
 USER root
+# upload_complete ffprobe 검증용 (Debian/Ubuntu)
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 COPY src ./src
 COPY academy ./academy
 COPY apps ./apps
