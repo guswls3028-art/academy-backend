@@ -132,8 +132,5 @@ foreach ($wt in $workers) {
 }
 
 Write-Host "`n=== 완료 ===" -ForegroundColor Green
-Write-Host "`n실시간 로그 보기:" -ForegroundColor Gray
-Write-Host "  .\scripts\check_worker_logs.ps1 video -Tail 100" -ForegroundColor Gray
-Write-Host "`n또는 SSH로 직접 접속:" -ForegroundColor Gray
-Write-Host "  ssh -i C:\key\<key-file> ec2-user@<IP>" -ForegroundColor Gray
-Write-Host "  sudo docker logs -f academy-video-worker" -ForegroundColor Gray
+Write-Host "`nVideo 워커: Batch 전용. 로그는 CloudWatch에서 확인:" -ForegroundColor Gray
+Write-Host "  /aws/batch/academy-video-worker" -ForegroundColor Gray

@@ -1,12 +1,28 @@
 # 영상 워커 스케일링 운영 SSOT (Single Source of Truth)
 
-**참고: Video = AWS Batch 전용으로 전환됨. 아래 문서의 Video ASG/SQS 스케일링 스크립트는 삭제됨. 참고용으로만 유지.**
-
-**스케일링 트리거 = 워커 Pull 소스 = SQS만 사용. DB/backlog API는 스케일링에 사용하지 않음.**
+**현행: Video = AWS Batch 전용.** 스케일링은 Batch CE/Job Queue가 담당. ASG/SQS 기반 Video 스케일링은 사용하지 않음.
 
 ---
 
-## 1. 리소스 및 역할
+## 1. 현행: Batch 전용
+
+| 리소스 | 이름/값 | 설명 |
+|--------|--------|------|
+| Job Queue | academy-video-batch-queue | 제출된 Job 대기 |
+| Compute Environment | academy-video-batch-ce-v3 | ARM64, SLR. 스케일은 Batch가 vCPU 기준으로 관리 |
+| Job Definition | academy-video-batch-jobdef | retryStrategy.attempts=1, timeout 14400초 |
+| 로그 | /aws/batch/academy-video-worker | CloudWatch Logs |
+
+- **검증**: Batch job 제출 후 콘솔/CLI로 RUNNABLE → STARTING → RUNNING. 로그는 위 Log group에서 확인.
+- **문서**: docs/VIDEO_BATCH_REFACTOR_PLAN_OF_RECORD.md, docs/VIDEO_BATCH_VERIFICATION_CHECKLIST.md
+
+---
+
+## 2. LEGACY: Video ASG/SQS 스케일링 (참고용, 미사용)
+
+아래는 과거 Video ASG 방식 설명. **현재는 사용하지 않음.** (queue_depth_lambda ENABLE_VIDEO_METRICS=false, worker_autoscale ENABLE_VIDEO_WAKE=false 권장.)
+
+### 2.1 리소스 및 역할 (레거시)
 
 | 리소스 | 이름 | 설명 |
 |--------|------|------|
@@ -16,9 +32,7 @@
 | ASG | `academy-video-worker-asg` | TargetTracking 정책 `video-backlogcount-tt`: 메트릭 `VideoQueueDepthTotal`, TargetValue=1. |
 | CloudWatch 메트릭 | Namespace `Academy/VideoProcessing`, MetricName `VideoQueueDepthTotal` | Dimensions: `WorkerType=Video`, `AutoScalingGroupName=academy-video-worker-asg`. |
 
----
-
-## 2. 스케일링 규칙 (정석)
+### 2.2 스케일링 규칙 (레거시)
 
 - **메트릭**: SQS `ApproximateNumberOfMessages` + `ApproximateNumberOfMessagesNotVisible` 합산만 사용.
 - **DB backlog / internal API / 프론트 삭제 여부**는 스케일링에 사용하지 않음.
@@ -27,7 +41,7 @@
 
 ---
 
-## 3. 스크립트 (레포 기준)
+### 2.3 스크립트 (레거시, 대부분 삭제됨)
 
 | 용도 | 스크립트 | 사용 예 |
 |------|----------|---------|
@@ -39,14 +53,14 @@
 
 ---
 
-## 4. Lambda 코드 위치 및 동작
+### 2.4 Lambda 코드 위치 및 동작 (레거시)
 
 - **경로**: `infra/worker_asg/queue_depth_lambda/lambda_function.py`
 - **동작**: EventBridge 1분 rate로 호출 → `academy-video-jobs` SQS get_queue_attributes(Visible, NotVisible) → 합산값을 `Academy/VideoProcessing` 네임스페이스에 `VideoQueueDepthTotal`로 PutMetricData. (Backlog API 호출 없음.)
 
 ---
 
-## 5. 검증 커맨드 (aws cli)
+### 2.5 검증 커맨드 (aws cli, 레거시)
 
 ```powershell
 # 리전
@@ -72,7 +86,7 @@ aws autoscaling describe-scaling-activities --auto-scaling-group-name academy-vi
 
 ---
 
-## 6. 롤백
+### 2.6 롤백 (레거시)
 
 1. **정책만 롤백**: `.\scripts\apply_video_worker_scaling_fix.ps1 -Region ap-northeast-2 -Rollback`  
    → 백업된 TargetTracking 설정(이전 메트릭명)으로 복원. Lambda는 그대로 VideoQueueDepthTotal 발행.
@@ -83,7 +97,7 @@ aws autoscaling describe-scaling-activities --auto-scaling-group-name academy-vi
 
 ---
 
-## 7. 참고 문서
+### 2.7 참고 문서
 
 - `docs/VIDEO_WORKER_ASG_STRICT_INVESTIGATION.md` — 이전 BacklogCount 기반 구조 조사.
 - `docs/SESSION_VIDEO_ASG_SSM_FINAL_STATE.md` — ASG/SSM 최종 상태 요약 (일부는 SQS 기반으로 변경됨).

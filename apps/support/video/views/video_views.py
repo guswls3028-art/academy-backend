@@ -291,7 +291,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         if not tenant:
             return Response(
                 {"detail": "테넌트를 확인할 수 없습니다. X-Tenant-Code 헤더가 필요합니다. 같은 도메인(예: tchul.com)으로 접속했는지 확인하세요."},
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_403_FORBIDDEN,
             )
         lecture, _ = Lecture.objects.get_or_create(
             tenant=tenant,

@@ -195,6 +195,9 @@ class VideoTranscodeJob(models.Model):
     error_code = models.CharField(max_length=64, blank=True)
     error_message = models.TextField(blank=True)
 
+    # AWS Batch 제출 추적 (디버깅/관측용)
+    aws_batch_job_id = models.CharField(max_length=256, blank=True, db_index=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

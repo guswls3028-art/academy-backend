@@ -44,9 +44,16 @@ def create_job_and_submit_batch(video: Video) -> Optional["VideoTranscodeJob"]:
     video.current_job_id = job.id
     video.save(update_fields=["current_job_id", "updated_at"])
 
-    if not submit_batch_job(str(job.id)):
-        job.delete()
-        video.current_job_id = None
-        video.save(update_fields=["current_job_id", "updated_at"])
-        return None
-    return job
+    aws_job_id, submit_error = submit_batch_job(str(job.id))
+    if aws_job_id:
+        job.aws_batch_job_id = aws_job_id
+        job.save(update_fields=["aws_batch_job_id", "updated_at"])
+        return job
+    # submit 실패: job 삭제하지 않고 state/error 저장 (디버깅용)
+    job.state = VideoTranscodeJob.State.FAILED
+    job.error_code = "BATCH_SUBMIT_FAILED"
+    job.error_message = submit_error or "submit_batch_job returned None"
+    job.save(update_fields=["state", "error_code", "error_message", "updated_at"])
+    video.current_job_id = None
+    video.save(update_fields=["current_job_id", "updated_at"])
+    return None

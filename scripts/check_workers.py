@@ -22,8 +22,9 @@ os.chdir(ROOT)
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Video = AWS Batch 전용. 로컬 import는 batch_main만 검증 (EC2/SQS 워커 아님).
 WORKERS = [
-    ("video_worker", "apps.worker.video_worker.sqs_main", "Video Worker (SQS)"),
+    ("video_worker", "apps.worker.video_worker.batch_main", "Video Worker (Batch)"),
     ("ai_worker_cpu", "apps.worker.ai_worker.sqs_main_cpu", "AI Worker CPU (SQS)"),
     ("messaging_worker", "apps.worker.messaging_worker.sqs_main", "Messaging Worker (SQS)"),
 ]
@@ -100,9 +101,10 @@ def run_docker_import_tests() -> bool:
         return False
 
     print("\n[2/2] Docker 기반 Worker import 검증 ...")
+    # Video = Batch 전용. batch_main import만 검증 (실제 실행은 AWS Batch).
     for image, module, desc in [
-        ("academy-video-worker:latest", "apps.worker.video_worker.sqs_main", "Video Worker"),
-        ("academy-ai-worker:latest", "apps.worker.ai_worker.sqs_main_cpu", "AI Worker CPU"),
+        ("academy-video-worker:latest", "apps.worker.video_worker.batch_main", "Video Worker (Batch)"),
+        ("academy-ai-worker-cpu:latest", "apps.worker.ai_worker.sqs_main_cpu", "AI Worker CPU"),
         ("academy-messaging-worker:latest", "apps.worker.messaging_worker.sqs_main", "Messaging Worker"),
     ]:
         cmd = [
@@ -129,6 +131,7 @@ def run_docker_import_tests() -> bool:
         else:
             print(f"  FAIL {desc}: {r.stderr[:200] if r.stderr else r.stdout[:200]}")
             return False
+    print("  Video 로그: CloudWatch /aws/batch/academy-video-worker")
     return True
 
 

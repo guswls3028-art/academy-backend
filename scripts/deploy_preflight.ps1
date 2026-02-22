@@ -74,7 +74,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # 6) Running academy instances (for API/worker SSH)
-$names = "academy-api,academy-ai-worker-cpu,academy-messaging-worker,academy-video-worker"
+$names = "academy-api,academy-ai-worker-cpu,academy-messaging-worker"
 $raw = aws ec2 describe-instances --region $Region `
     --filters "Name=instance-state-name,Values=running" "Name=tag:Name,Values=$names" `
     --query "Reservations[].Instances[].[Tags[?Key=='Name'].Value | [0], InstanceId, PublicIpAddress]" `

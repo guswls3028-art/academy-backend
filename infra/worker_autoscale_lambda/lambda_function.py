@@ -32,6 +32,8 @@ MIN_MESSAGES = int(os.environ.get("MIN_MESSAGES_TO_START", "1"))
 MAX_INSTANCES_PER_TYPE = int(os.environ.get("MAX_INSTANCES_PER_TYPE", "1"))
 COOLDOWN_SECONDS = int(os.environ.get("COOLDOWN_SECONDS", "120"))
 SSM_PREFIX = os.environ.get("SSM_PARAMETER_PREFIX", "/academy/worker-autoscale")
+# Video = Batch 전용이면 False 로 비활성화 (EC2 wake 불필요)
+ENABLE_VIDEO_WAKE = os.environ.get("ENABLE_VIDEO_WAKE", "false").lower() == "true"
 
 BOTO_CONFIG = Config(retries={"max_attempts": 5, "mode": "standard"})
 NON_STOPPED_STATES = {"pending", "running", "stopping"}
@@ -172,25 +174,28 @@ def lambda_handler(event: dict, context: Any) -> dict:
 
     # Fail-closed: SQS 조회 실패 시 raise
     ai_visible = get_queue_depth_visible(sqs, AI_QUEUE_LITE) + get_queue_depth_visible(sqs, AI_QUEUE_BASIC)
-    video_visible = get_queue_depth_visible(sqs, VIDEO_QUEUE)
+    video_visible = get_queue_depth_visible(sqs, VIDEO_QUEUE) if ENABLE_VIDEO_WAKE else 0
 
     capacity_ai = get_capacity("ai")
-    capacity_video = get_capacity("video")
+    capacity_video = get_capacity("video") if ENABLE_VIDEO_WAKE else 0.0
 
     state_ai = ScalingState(desired=calculate_desired(ai_visible, capacity_ai))
-    state_video = ScalingState(desired=calculate_desired(video_visible, capacity_video))
+    state_video = ScalingState(desired=calculate_desired(video_visible, capacity_video)) if ENABLE_VIDEO_WAKE else ScalingState(desired=0)
 
     started_ai, skip_ai, running_ai = maybe_start_worker(
         ec2, ssm, AI_WORKER_NAME_TAG, f"{SSM_PREFIX}/last_start_ai", state_ai.desired
     )
-    started_video, skip_video, running_video = maybe_start_worker(
-        ec2, ssm, VIDEO_WORKER_NAME_TAG, f"{SSM_PREFIX}/last_start_video", state_video.desired
-    )
+    if ENABLE_VIDEO_WAKE:
+        started_video, skip_video, running_video = maybe_start_worker(
+            ec2, ssm, VIDEO_WORKER_NAME_TAG, f"{SSM_PREFIX}/last_start_video", state_video.desired
+        )
+    else:
+        started_video, skip_video, running_video = [], "video_batch_only", 0
 
     # 구조화 로그 (8요소: queue_depth, running_count, started_instances, skip_reason)
     log_payload = {
         "ai": {"queue_depth": ai_visible, "running_count": running_ai, "started_instances": started_ai, "skip_reason": skip_ai or "started"},
-        "video": {"queue_depth": video_visible, "running_count": running_video, "started_instances": started_video, "skip_reason": skip_video or "started"},
+        "video": {"queue_depth": video_visible, "running_count": running_video, "started_instances": started_video, "skip_reason": skip_video or "started", "video_wake_enabled": ENABLE_VIDEO_WAKE},
     }
     logger.info("worker_autoscale | %s", log_payload)
 
@@ -203,4 +208,5 @@ def lambda_handler(event: dict, context: Any) -> dict:
         "running_count_video": running_video,
         "skip_reason_ai": skip_ai or "started",
         "skip_reason_video": skip_video or "started",
+        "enable_video_wake": ENABLE_VIDEO_WAKE,
     }

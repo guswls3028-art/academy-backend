@@ -35,7 +35,7 @@
 
 | 리소스 | 이름/값 |
 |--------|---------|
-| Compute Environment | academy-video-batch-ce |
+| Compute Environment | academy-video-batch-ce-v3 (SLR + ARM64 ECS AMI) |
 | Job Queue | academy-video-batch-queue |
 | Job Definition | academy-video-batch-jobdef |
 | Log Group | /aws/batch/academy-video-worker |
@@ -48,7 +48,10 @@
 |----------|------|
 | `scripts/infra/batch_video_setup_full.ps1` | VPC/Subnet/SG 자동 탐색 → setup → retryStrategy 검증 (권장) |
 | `scripts/infra/batch_video_setup.ps1` | Batch 인프라 설정 (VpcId, SubnetIds, SecurityGroupId 필요) |
+| `scripts/infra/batch_update_ce_ami.ps1` | ARM64 ECS AMI + SLR CE Blue-Green (기본: v3, 신규 시 v4 생성) |
 | `scripts/infra/batch_video_verify_and_register.ps1` | Job Definition 등록 + retryStrategy.attempts==1 검증 |
+| `scripts/infra/batch_ensure_ce_maxvcpus.ps1` | CE maxvCpus 보정 (기본: v3) |
+| `scripts/infra/batch_ensure_ce_enabled.ps1` | CE ENABLED 확인/복구 (기본: v3) |
 | `scripts/infra/batch_video_cleanup_legacy.ps1` | Video ASG/스케일링 레거시 정리 |
 
 ### C) delete_r2
@@ -85,3 +88,17 @@
 - **ECR**: `809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest`
 - **VPC/Subnet/SG**: batch_video_setup_full.ps1 자동 탐색 또는 직접 지정
 - **환경 변수 (API)**: VIDEO_BATCH_JOB_QUEUE, VIDEO_BATCH_JOB_DEFINITION (또는 기본값)
+
+### IAM 역할 (Batch Video)
+
+| 역할 | 이름 | 용도 | 설정 스크립트/정책 |
+|------|------|------|---------------------|
+| **Job Role** | academy-video-batch-job-role | 태스크 내 앱(SSM, ECR, CloudWatch 등) | batch_video_setup.ps1 → iam/policy_video_job_role.json |
+| **Execution Role** | academy-batch-ecs-task-execution-role | 이미지 pull, 로그 쓰기 | batch_video_setup.ps1 → AmazonECSTaskExecutionRolePolicy |
+| **Instance Role** (CE) | academy-batch-ecs-instance-role | Batch CE EC2 → ECS 조인, ECR pull, 로그 | batch_attach_ecs_instance_role_policies.ps1 (instance profile) |
+| **Batch Service Role** | academy-batch-service-role | Batch 서비스가 CE/Queue 관리 | batch_video_setup.ps1 → AWSBatchServiceRole |
+
+### 운영 검증
+
+- **Video 검증**: AWS Batch job 상태 + CloudWatch 로그 그룹 `/aws/batch/academy-video-worker`
+- **배포 전 검증**: `python scripts/deployment_readiness_check.py --docker` — Video는 Docker 검증 제외(Batch 전용). Messaging/AI 워커 이미지만 검사.

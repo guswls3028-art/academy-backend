@@ -76,11 +76,17 @@ class Command(BaseCommand):
                     job.locked_by = ""
                     job.locked_until = None
                     job.save(update_fields=["state", "attempt_count", "locked_by", "locked_until", "updated_at"])
-                    if submit_batch_job(str(job.id)):
+                    aws_job_id, submit_err = submit_batch_job(str(job.id))
+                    if aws_job_id:
+                        job.aws_batch_job_id = aws_job_id
+                        job.save(update_fields=["aws_batch_job_id", "updated_at"])
                         self.stdout.write(
                             self.style.SUCCESS(f"RETRY_WAIT + BATCH_SUBMIT | job_id={job.id} video_id={job.video_id} attempt={attempt_after}")
                         )
                     else:
+                        job.error_code = "BATCH_SUBMIT_FAILED"
+                        job.error_message = (submit_err or "submit failed")[:2000]
+                        job.save(update_fields=["error_code", "error_message", "updated_at"])
                         self.stderr.write(f"RETRY_WAIT (batch submit failed) | job_id={job.id} video_id={job.video_id}")
                 recovered += 1
 

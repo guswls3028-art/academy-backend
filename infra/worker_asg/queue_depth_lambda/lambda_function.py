@@ -38,6 +38,8 @@ MESSAGING_WORKER_ASG_MIN = int(os.environ.get("MESSAGING_WORKER_ASG_MIN", "1"))
 TARGET_MESSAGES_PER_INSTANCE = int(os.environ.get("TARGET_MESSAGES_PER_INSTANCE", "20"))
 # Video 스케일링용 커스텀 메트릭 이름 (SQS total only)
 VIDEO_QUEUE_DEPTH_METRIC = os.environ.get("VIDEO_QUEUE_DEPTH_METRIC", "VideoQueueDepthTotal")
+# Video = Batch 전용이면 False 로 비활성화 (고아 메트릭 방지)
+ENABLE_VIDEO_METRICS = os.environ.get("ENABLE_VIDEO_METRICS", "false").lower() == "true"
 
 BOTO_CONFIG = Config(retries={"max_attempts": 3, "mode": "standard"})
 
@@ -93,50 +95,54 @@ def lambda_handler(event: dict, context: Any) -> dict:
         },
         {
             "MetricName": METRIC_NAME,
-            "Dimensions": [{"Name": "WorkerType", "Value": "Video"}],
-            "Value": float(video_visible),
-            "Timestamp": now,
-            "Unit": "Count",
-        },
-        {
-            "MetricName": METRIC_NAME,
             "Dimensions": [{"Name": "WorkerType", "Value": "Messaging"}],
             "Value": float(messaging_visible),
             "Timestamp": now,
             "Unit": "Count",
         },
     ]
+    if ENABLE_VIDEO_METRICS:
+        metric_data.append({
+            "MetricName": METRIC_NAME,
+            "Dimensions": [{"Name": "WorkerType", "Value": "Video"}],
+            "Value": float(video_visible),
+            "Timestamp": now,
+            "Unit": "Count",
+        })
     cw.put_metric_data(Namespace=NAMESPACE, MetricData=metric_data)
 
-    # Academy/VideoProcessing: ASG TargetTracking용. SQS total만 발행.
-    cw.put_metric_data(
-        Namespace="Academy/VideoProcessing",
-        MetricData=[
-            {
-                "MetricName": VIDEO_QUEUE_DEPTH_METRIC,
-                "Dimensions": [
-                    {"Name": "WorkerType", "Value": "Video"},
-                    {"Name": "AutoScalingGroupName", "Value": VIDEO_WORKER_ASG_NAME},
-                ],
-                "Value": float(video_queue_depth_total),
-                "Timestamp": now,
-                "Unit": "Count",
-            }
-        ],
-    )
-    logger.info(
-        "VideoQueueDepthTotal published | visible=%d notVisible=%d total=%d",
-        video_visible, video_in_flight, video_queue_depth_total,
-    )
+    # Academy/VideoProcessing: Video ASG TargetTracking용. Video=Batch 전용이면 비활성화(ENABLE_VIDEO_METRICS=false).
+    if ENABLE_VIDEO_METRICS:
+        cw.put_metric_data(
+            Namespace="Academy/VideoProcessing",
+            MetricData=[
+                {
+                    "MetricName": VIDEO_QUEUE_DEPTH_METRIC,
+                    "Dimensions": [
+                        {"Name": "WorkerType", "Value": "Video"},
+                        {"Name": "AutoScalingGroupName", "Value": VIDEO_WORKER_ASG_NAME},
+                    ],
+                    "Value": float(video_queue_depth_total),
+                    "Timestamp": now,
+                    "Unit": "Count",
+                }
+            ],
+        )
+        logger.info(
+            "VideoQueueDepthTotal published | visible=%d notVisible=%d total=%d",
+            video_visible, video_in_flight, video_queue_depth_total,
+        )
 
     logger.info(
-        "queue_depth_metric | ai visible=%d in_flight=%d video visible=%d in_flight=%d total=%d messaging visible=%d in_flight=%d",
-        ai_visible, ai_in_flight, video_visible, video_in_flight, video_queue_depth_total,
+        "queue_depth_metric | ai visible=%d in_flight=%d video_enabled=%s video visible=%d in_flight=%d total=%d messaging visible=%d in_flight=%d",
+        ai_visible, ai_in_flight, ENABLE_VIDEO_METRICS, video_visible, video_in_flight, video_queue_depth_total,
         messaging_visible, messaging_in_flight,
     )
-    return {
+    out = {
         "ai_queue_depth": ai_total,
-        "video_queue_depth": video_visible,
-        "video_queue_depth_total": video_queue_depth_total,
         "messaging_queue_depth": messaging_visible,
     }
+    if ENABLE_VIDEO_METRICS:
+        out["video_queue_depth"] = video_visible
+        out["video_queue_depth_total"] = video_queue_depth_total
+    return out

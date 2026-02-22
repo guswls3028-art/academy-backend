@@ -3,7 +3,7 @@
 param([string]$Region = "ap-northeast-2")
 
 $ErrorActionPreference = "Continue"
-$nameFilter = "academy-api,academy-ai-worker-cpu,academy-messaging-worker,academy-video-worker"
+$nameFilter = "academy-api,academy-ai-worker-cpu,academy-messaging-worker"
 $raw = aws ec2 describe-instances --region $Region `
     --filters "Name=instance-state-name,Values=running" "Name=tag:Name,Values=$nameFilter" `
     --query "Reservations[].Instances[].[Tags[?Key=='Name'].Value | [0], InstanceId]" --output text 2>&1

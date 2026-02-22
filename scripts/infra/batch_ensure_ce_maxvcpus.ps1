@@ -4,7 +4,7 @@
 
 param(
     [string]$Region = "ap-northeast-2",
-    [string]$ComputeEnv = "academy-video-batch-ce-v2",
+    [string]$ComputeEnv = "academy-video-batch-ce-v3",
     [string]$JobQueue = "academy-video-batch-queue",
     [int]$NewMaxvCpus = 16,
     [switch]$WaitAndCheck

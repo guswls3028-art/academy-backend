@@ -1,7 +1,7 @@
 # ==============================================================================
-# EC2 4대 원큐 배포: 로컬 빌드 → ECR 푸시 → 4대 배포
-# 실행: 더블클릭 또는 .\deploy.ps1  (빌드+푸시+배포)
-#       .\deploy.ps1 -SkipBuild  (이미 빌드됐을 때 푸시+배포만)
+# EC2 원큐 배포: 로컬 빌드 → ECR 푸시 → API + Messaging + AI 배포
+# Video = AWS Batch 전용. 이 스크립트로 video 워커 EC2 배포하지 않음.
+# 실행: .\deploy.ps1  (빌드+푸시+배포)  .\deploy.ps1 -SkipBuild  (푸시+배포만)
 # ==============================================================================
 
 param([switch]$SkipBuild, [switch]$StartInstances = $true)
@@ -14,37 +14,34 @@ $AWS_REGION = "ap-northeast-2"
 $EC2_USER = "ec2-user"
 $KEY_DIR = "C:\key"
 
-# 인스턴스 이름 → SSH 키 파일 (실제 사용 중인 키 매핑)
+# 인스턴스 이름 → SSH 키 파일 (Video = Batch 전용, EC2 배포 대상 아님)
 $INSTANCE_KEYS = @{
     "academy-api"                = "backend-api-key.pem"
     "academy-messaging-worker"   = "message-key.pem"
     "academy-ai-worker-cpu"       = "ai-worker-key.pem"
-    "academy-video-worker"       = "video-worker-key.pem"
 }
 
-# 배포 순서
+# 배포 순서 (Video = Batch 전용이므로 EC2 배포 대상에서 제외)
 $INSTANCE_ORDER = @(
     "academy-api",
     "academy-messaging-worker",
-    "academy-ai-worker-cpu",
-    "academy-video-worker"
+    "academy-ai-worker-cpu"
 )
 
 $ECR = "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com"
 
-# 서버별 원격 명령 (문서 DEPLOY_COPYPASTE_WHILE_VIDEO_BUILDS.md 방식: ECR 로그인 → pull → 기존 컨테이너 제거 → run)
+# 서버별 원격 명령 (ECR 로그인 → pull → 기존 컨테이너 제거 → run). Video = Batch 전용, EC2 원격 명령 없음.
 $REMOTE_CMDS = @{
     "academy-api" = "aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin $ECR && docker pull $ECR/academy-api:latest && (docker stop academy-api 2>/dev/null; docker rm academy-api 2>/dev/null; true) && docker run -d --name academy-api --restart unless-stopped --env-file .env -p 8000:8000 $ECR/academy-api:latest && docker update --restart unless-stopped academy-api"
     "academy-messaging-worker" = "aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin $ECR && docker pull $ECR/academy-messaging-worker:latest && (docker stop academy-messaging-worker 2>/dev/null; docker rm academy-messaging-worker 2>/dev/null; true) && docker run -d --name academy-messaging-worker --restart unless-stopped --env-file .env -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker $ECR/academy-messaging-worker:latest && docker update --restart unless-stopped academy-messaging-worker"
     "academy-ai-worker-cpu" = "aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin $ECR && docker pull $ECR/academy-ai-worker-cpu:latest && (docker stop academy-ai-worker-cpu 2>/dev/null; docker rm academy-ai-worker-cpu 2>/dev/null; true) && docker run -d --name academy-ai-worker-cpu --restart unless-stopped --env-file .env -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker $ECR/academy-ai-worker-cpu:latest && docker update --restart unless-stopped academy-ai-worker-cpu"
-    "academy-video-worker" = "aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin $ECR && docker pull $ECR/academy-video-worker:latest && (docker stop academy-video-worker 2>/dev/null; docker rm academy-video-worker 2>/dev/null; true) && docker run -d --name academy-video-worker --restart unless-stopped --memory 4g --env-file .env -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker -v /mnt/transcode:/tmp $ECR/academy-video-worker:latest && docker update --restart unless-stopped academy-video-worker"
 }
 
 # ------------------------------------------------------------------------------
 # 중지된 academy 인스턴스 일괄 기동 (워커는 유휴 시 자동 종료됨)
 # ------------------------------------------------------------------------------
 function Start-StoppedAcademyInstances {
-    $nameFilter = "academy-api,academy-ai-worker-cpu,academy-messaging-worker,academy-video-worker"
+    $nameFilter = "academy-api,academy-ai-worker-cpu,academy-messaging-worker"
     $raw = aws ec2 describe-instances --region $AWS_REGION `
         --filters "Name=tag:Name,Values=$nameFilter" "Name=instance-state-name,Values=stopped" `
         --query "Reservations[].Instances[].InstanceId" --output text 2>&1
@@ -66,7 +63,7 @@ function Start-StoppedAcademyInstances {
 function Get-Ec2PublicIps {
     $names = $INSTANCE_ORDER -join ","
     $raw = aws ec2 describe-instances --region $AWS_REGION `
-        --filters "Name=instance-state-name,Values=running" "Name=tag:Name,Values=academy-api,academy-ai-worker-cpu,academy-messaging-worker,academy-video-worker" `
+        --filters "Name=instance-state-name,Values=running" "Name=tag:Name,Values=academy-api,academy-ai-worker-cpu,academy-messaging-worker" `
         --query "Reservations[].Instances[].[Tags[?Key=='Name'].Value | [0], PublicIpAddress]" `
         --output text 2>&1
     if ($LASTEXITCODE -ne 0) {
@@ -138,9 +135,9 @@ if (-not $SkipBuild) {
 }
 
 # ------------------------------------------------------------------------------
-# 2단계: EC2 4대 배포 (옵션: 중지된 인스턴스 일괄 기동 후 배포)
+# 2단계: EC2 3대 배포 (api, messaging, ai) — 옵션: 중지된 인스턴스 일괄 기동 후 배포
 # ------------------------------------------------------------------------------
-Write-Host "`n=== 2/2 EC2 4대 배포 (ECR pull → 컨테이너 재기동) ===" -ForegroundColor Cyan
+Write-Host "`n=== 2/2 EC2 3대 배포 (ECR pull → 컨테이너 재기동) ===" -ForegroundColor Cyan
 Write-Host "Region: $AWS_REGION | Key dir: $KEY_DIR`n" -ForegroundColor Gray
 
 if ($StartInstances) { Start-StoppedAcademyInstances }

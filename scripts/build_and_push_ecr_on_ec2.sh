@@ -62,7 +62,7 @@ if [ -n "$VIDEO_WORKER_ONLY" ]; then
   echo "ECR push academy-video-worker..."
   docker push "${ECR}/academy-video-worker:latest"
   _prune_images
-  echo "Done (VideoWorker only). 로컬에서: .\\scripts\\full_redeploy.ps1 -WorkersViaASG -SkipBuild -DeployTarget video"
+  echo "Done (VideoWorker only). Video = Batch 전용. 로컬에서: .\\scripts\\full_redeploy.ps1 -SkipBuild -DeployTarget video (빌드/ECR 푸시만, EC2 배포 없음)"
   exit 0
 fi
 

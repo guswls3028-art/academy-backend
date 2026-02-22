@@ -1,10 +1,10 @@
-# AWS Batch: academy-video-batch-ce-v2 가 ENABLED 인지 확인하고, DISABLED 면 ENABLED 로 변경.
+# AWS Batch: 활성 CE가 ENABLED 인지 확인하고, DISABLED 면 ENABLED 로 변경.
 # Job Queue 가 해당 CE 를 참조하는지 확인.
 # Usage: .\scripts\infra\batch_ensure_ce_enabled.ps1 -Region ap-northeast-2
 
 param(
     [string]$Region = "ap-northeast-2",
-    [string]$ComputeEnv = "academy-video-batch-ce-v2",
+    [string]$ComputeEnv = "academy-video-batch-ce-v3",
     [string]$JobQueue = "academy-video-batch-queue"
 )
 
