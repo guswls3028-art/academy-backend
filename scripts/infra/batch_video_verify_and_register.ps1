@@ -146,6 +146,6 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "PASS" -ForegroundColor Green
 Write-Host ("JobDefinition: " + $JobDefName + ":" + $newRevision) -ForegroundColor Gray
 Write-Host "retryStrategy.attempts: 1" -ForegroundColor Gray
-Write-Host "Test job $awsJobId reached RUNNING" -ForegroundColor Gray
+if ($status -eq "RUNNING") { Write-Host "Test job $awsJobId reached RUNNING" -ForegroundColor Gray } else { Write-Host "Test job $awsJobId completed with status=$status" -ForegroundColor Gray }
 Write-Host "========================================" -ForegroundColor Cyan
 exit 0
