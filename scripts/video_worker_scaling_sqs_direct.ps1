@@ -205,12 +205,13 @@ function Show-TestStats {
 # ------------------------------------------------------------------------------
 function Restore-Backup {
     Log-Step "6) Rollback"
-    $metricmathDirs = Get-ChildItem -Path $BackupRoot -Directory -Filter "metricmath_*" -ErrorAction SilentlyContinue | Sort-Object Name -Descending
-    if (-not $metricmathDirs -or $metricmathDirs.Count -eq 0) {
-        Log-Fail "No metricmath_* backup found in $BackupRoot"
+    $allDirs = Get-ChildItem -Path $BackupRoot -Directory -ErrorAction SilentlyContinue
+    $withTt = $allDirs | Where-Object { Test-Path (Join-Path $_.FullName "video_tt_config.json") } | Sort-Object Name -Descending
+    if (-not $withTt -or $withTt.Count -eq 0) {
+        Log-Fail "No backup with video_tt_config.json in $BackupRoot"
         return $false
     }
-    $dir = $metricmathDirs[0].FullName
+    $dir = $withTt[0].FullName
     Log-Step "  Restore from: $dir"
 
     $ttPath = Join-Path $dir "video_tt_config.json"
