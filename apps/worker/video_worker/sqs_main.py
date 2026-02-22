@@ -200,14 +200,15 @@ def _handle_signal(sig, frame):
         logger.warning("set_asg_interrupt failed: %s", e)
 
 
-def main() -> int:
+def main() -> None:
     """
-    SQS 기반 Video Worker — single-job: 1건 처리 후 종료 (Ephemeral Worker).
-    desired = Visible/1 이면 인스턴스 1대당 1 job 처리 후 scale-in 대상.
+    SQS 기반 Video Worker — strict single-job: 1건 처리 후 반드시 종료 (Ephemeral Worker).
+    receive → process → delete → sys.exit(0). Daemon loop 없음.
+    desired = Visible/1 → 인스턴스 1대당 1 job 처리 후 scale-in 대상.
     """
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
-    
+
     cfg = load_config()
     queue = VideoSQSAdapter()
     idempotency = RedisIdempotencyAdapter(ttl_seconds=VIDEO_LOCK_TTL_SECONDS)
@@ -218,16 +219,13 @@ def main() -> int:
         queue._get_queue_name(),
         SQS_WAIT_TIME_SECONDS,
     )
-    
-    consecutive_errors = 0
-    max_consecutive_errors = 10
 
     stop_spot_poller = threading.Event()
     spot_poller_thread = threading.Thread(target=_spot_interruption_poller, args=(stop_spot_poller,), daemon=True)
     spot_poller_thread.start()
 
+    receipt_handle = None
     try:
-        for _ in range(1):
             receipt_handle = None
             try:
                 wait_sec = 0 if (_shutdown or spot_termination_event.is_set()) else SQS_WAIT_TIME_SECONDS
