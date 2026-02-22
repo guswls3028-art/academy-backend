@@ -79,23 +79,23 @@ if (-not $VpcId -or -not $SecurityGroupId -or $SubnetIds.Count -eq 0) {
 
 # 1) 현재 CE allocationStrategy 확인
 Write-Host ""
-Write-Host "[1] 현재 CE 확인" -ForegroundColor Cyan
+Write-Host "[1] Check current CE" -ForegroundColor Cyan
 $ce = ExecJson "aws batch describe-compute-environments --compute-environments $OldCeName --region $Region --output json 2>&1"
 $ceObj = $ce.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $OldCeName }
 if (-not $ceObj) {
-    Write-Host "  CE $OldCeName 없음. batch_video_setup.ps1 먼저 실행." -ForegroundColor Yellow
+    Write-Host "  CE $OldCeName not found. Run batch_video_setup.ps1 first." -ForegroundColor Yellow
     exit 1
 }
 $alloc = $ceObj.computeResources.allocationStrategy
 if ($alloc -eq "BEST_FIT_PROGRESSIVE" -or $alloc -eq "SPOT_CAPACITY_OPTIMIZED") {
-    Write-Host "  CE가 이미 $alloc. update-compute-environment 사용 가능. batch_video_setup.ps1 실행." -ForegroundColor Green
+    Write-Host "  CE already has $alloc. Run batch_video_setup.ps1 for update." -ForegroundColor Green
     exit 0
 }
-Write-Host "  allocationStrategy=$alloc (또는 null). Blue-Green 필요." -ForegroundColor Yellow
+Write-Host "  allocationStrategy=$alloc. Blue-Green required." -ForegroundColor Yellow
 
 # 2) IAM ARN
 Write-Host ""
-Write-Host "[2] IAM ARN 조회" -ForegroundColor Cyan
+Write-Host "[2] Get IAM ARNs" -ForegroundColor Cyan
 $serviceRoleArn = (ExecJson "aws iam get-role --role-name academy-batch-service-role --output json 2>&1").Role.Arn
 $instanceProfileArn = (ExecJson "aws iam get-instance-profile --instance-profile-name academy-batch-ecs-instance-profile --output json 2>&1").InstanceProfile.Arn
 if (-not $serviceRoleArn -or -not $instanceProfileArn) {
