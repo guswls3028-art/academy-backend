@@ -13,6 +13,7 @@ param(
     [switch]$ApiOnly = $false,
     [switch]$VideoWorkerOnly = $false,
     [switch]$NoCache = $false,
+    [switch]$SkipPrune = $false,   # true면 푸시 후 낡은 이미지/캐시 정리 스킵 (기본: 정리함)
     [string]$GitRepoUrl = "",   # 있으면 clone/pull 후 빌드. 없으면 기존 /home/ec2-user/build/academy 기준으로만 빌드.
     [string]$Region = "ap-northeast-2"
 )
@@ -72,6 +73,7 @@ $envExports = @()
 if ($ApiOnly) { $envExports += "export API_ONLY=1" }
 if ($VideoWorkerOnly) { $envExports += "export VIDEO_WORKER_ONLY=1" }
 if ($NoCache) { $envExports += "export NO_CACHE=1" }
+if ($SkipPrune) { $envExports += "export DOCKER_SKIP_PRUNE=1" }
 $envBlock = $envExports -join "`n"
 
 $repoBlock = @"
