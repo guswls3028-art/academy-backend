@@ -774,25 +774,17 @@ def job_cancel(job_id: str) -> bool:
 
 
 def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") -> bool:
-    """Job DEAD (DLQ 격리). Transactional: Job + Video 원자적 업데이트. QUEUED/RETRY_WAIT였으면 Redis backlog DECR."""
+    """Job DEAD. Transactional: Job + Video 원자적 업데이트."""
     from django.db import transaction
     from django.utils import timezone
     from apps.support.video.models import Video, VideoTranscodeJob
 
     err_msg = str(error_message)[:2000]
     err_code = str(error_code)[:64]
-    was_backlog = False
-    tenant_id = None
     with transaction.atomic():
         job = VideoTranscodeJob.objects.select_for_update().filter(pk=job_id).first()
         if not job:
             return False
-        was_backlog = job.state in (
-            VideoTranscodeJob.State.QUEUED,
-            VideoTranscodeJob.State.RETRY_WAIT,
-        )
-        if was_backlog:
-            tenant_id = job.tenant_id
         job.state = VideoTranscodeJob.State.DEAD
         job.error_code = err_code
         job.error_message = err_msg
@@ -803,12 +795,6 @@ def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") ->
             status=Video.Status.FAILED,
             error_reason=err_msg or job.error_message,
         )
-    if was_backlog and tenant_id is not None:
-        try:
-            from apps.support.video.redis_status_cache import redis_decr_video_backlog
-            redis_decr_video_backlog(tenant_id)
-        except Exception:
-            pass
     return True
 
 
