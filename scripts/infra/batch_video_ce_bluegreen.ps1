@@ -146,7 +146,7 @@ if ($st -ne "VALID") {
 # 5) Job Queue computeEnvironmentOrder 업데이트
 Write-Host ""
 Write-Host "[5] Update Job Queue: $JobQueueName -> $NewCeName" -ForegroundColor Cyan
-$orderJson = "[{`"order`":1,`"computeEnvironment`":`"$NewCeName`"}]"
+$orderJson = '[{"order":1,"computeEnvironment":"' + $NewCeName + '"}]'
 aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order $orderJson --region $Region
 Write-Host "  OK: Queue link updated" -ForegroundColor Green
 
