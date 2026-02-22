@@ -1,11 +1,23 @@
-﻿[09:30:47] Video Worker One-Click Setup | Region=ap-northeast-2 DryRun=False Rollback=True
-[09:30:47] 0) Pre-check
-[09:30:48]   sts get-caller-identity OK
-[09:30:50]   ASG academy-video-worker-asg exists
-[09:30:51]   SQS academy-video-jobs exists
-[09:30:52]   LT academy-video-worker-lt exists
-[09:30:53]   Lambda academy-worker-queue-depth-metric exists
-[09:30:55]   CloudWatch Alarms (video): 2
-[09:30:55] 6) Rollback
-[09:30:55]   Restore from: C:\academy\backups\video_worker\20260222_093029
-[09:30:56]   Scaling policy restored
+﻿[09:30:56] Video Worker One-Click Setup | Region=ap-northeast-2 DryRun=False Rollback=False
+[09:30:56] 0) Pre-check
+[09:30:57]   sts get-caller-identity OK
+[09:30:58]   ASG academy-video-worker-asg exists
+[09:30:59]   SQS academy-video-jobs exists
+[09:31:01]   LT academy-video-worker-lt exists
+[09:31:02]   Lambda academy-worker-queue-depth-metric exists
+[09:31:03]   CloudWatch Alarms (video): 2
+[09:31:03] 1) Backup -> C:\academy\backups\video_worker\20260222_093103
+[09:31:12]   Backup done: C:\academy\backups\video_worker\20260222_093103
+[09:31:12] Diff list (changes to apply)
+[09:31:13] 2) Scaling source -> SQS only
+[09:31:18]   Lambda deploy done (VideoQueueDepthTotal)
+[09:31:19]   ASG TargetTracking -> VideoQueueDepthTotal applied
+[09:31:19] 3) DLQ / redrive
+[09:31:22]   RedrivePolicy already set
+[09:31:22] 4) Cost guards
+[09:31:23]   ASG MaxSize=10 applied
+[09:31:23] 5) Post-validate
+[09:31:24]   CloudWatch VideoQueueDepthTotal data in last 10min
+[09:31:25]   Scaling policy uses VideoQueueDepthTotal
+[09:31:27]   ASG recent activities: 5
+[09:31:27] Setup done. Validate: .\scripts\video_worker_oneclick_validate.ps1
