@@ -80,7 +80,7 @@ $envLine = if ($envParts.Count -gt 0) { "export " + ($envParts -join " ") } else
 $q = [char]34
 $repoCmd = "cd /home/ec2-user/build && (test -d academy && (cd academy && git fetch && git reset --hard origin/main && git pull)) || (git clone ${q}$GitRepoUrl${q} academy && cd academy)"
 
-# full_redeploy 방식: 명령을 배열로 쪼개서 ConvertTo-Json으로 전달 (한 줄에 " 있으면 AWS CLI 파서 깨짐)
+# 명령을 배열로 쪼개서 전달. ConvertTo-Json은 & → \u0026 등 유니코드 이스케이프를 써서 AWS CLI 파서와 충돌하므로 수동 조립.
 $commandsArray = @(
     "set -e",
     $repoCmd,
@@ -89,8 +89,9 @@ $commandsArray = @(
 if ($envLine) { $commandsArray += $envLine }
 $commandsArray += "./scripts/build_and_push_ecr_on_ec2.sh"
 $commandsArray += "echo REMOTE_BUILD_OK"
-$commandsJson = $commandsArray | ConvertTo-Json -Compress
-$parametersArg = "commands=$commandsJson"
+# JSON 이스케이프: \ → \\, " → \"; AWS CLI가 받기 좋은 ["cmd1","cmd2"] 형태로 직접 조립
+$joinedCommands = ($commandsArray | ForEach-Object { $esc = $_ -replace '\\', '\\\\' -replace '"', '\"'; '"{0}"' -f $esc }) -join ","
+$parametersArg = "commands=[$joinedCommands]"
 
 Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
