@@ -58,10 +58,10 @@ Write-Host ""
 Write-Host "[2] Get IAM role ARNs" -ForegroundColor Cyan
 $JobRoleName = "academy-video-batch-job-role"
 $ExecutionRoleName = "academy-batch-ecs-task-execution-role"
-$jobRole = ExecJson "aws iam get-role --role-name $JobRoleName --output json 2>&1"
-$execRole = ExecJson "aws iam get-role --role-name $ExecutionRoleName --output json 2>&1"
-if (-not $jobRole) { Fail "IAM role $JobRoleName not found" }
-if (-not $execRole) { Fail "IAM role $ExecutionRoleName not found" }
+$jobRole = Invoke-AwsJson @("iam", "get-role", "--role-name", $JobRoleName, "--output", "json")
+if (-not $jobRole) { Fail "IAM role $JobRoleName not found or AWS error (check credentials)" }
+$execRole = Invoke-AwsJson @("iam", "get-role", "--role-name", $ExecutionRoleName, "--output", "json")
+if (-not $execRole) { Fail "IAM role $ExecutionRoleName not found or AWS error (check credentials)" }
 $jobRoleArn = $jobRole.Role.Arn
 $executionRoleArn = $execRole.Role.Arn
 Write-Host "  JobRole=$jobRoleArn" -ForegroundColor Gray
@@ -79,7 +79,8 @@ $jdFile = Join-Path $RepoRoot "batch_jd_temp.json"
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($jdFile, $jdContent, $utf8NoBom)
 $fileUri = "file:///" + ($jdFile -replace '\\', '/')
-$regOut = aws batch register-job-definition --cli-input-json $fileUri --region $Region --output json | ConvertFrom-Json
+$regOut = Invoke-AwsJson @("batch", "register-job-definition", "--cli-input-json", $fileUri, "--region", $Region, "--output", "json")
+if (-not $regOut) { Fail "register-job-definition failed (check AWS credentials and region)" }
 Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
 $newRevision = $regOut.revision
 Write-Host "  Registered revision $newRevision" -ForegroundColor Green
