@@ -429,7 +429,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             if not VideoSQSQueue().create_job_and_submit_batch(video):
                 logger.error("VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | reason=%s", video.id, reason)
                 return Response(
-                    {"detail": "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."},
+                    {"detail": "비디오 작업 등록 실패. API 서버 AWS Batch 설정을 확인하세요."},
                     status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
             return Response(VideoSerializer(video).data)
@@ -454,7 +454,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     video.id,
                 )
                 return Response(
-                    {"detail": "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."},
+                    {"detail": "비디오 작업 등록 실패. API 서버 AWS Batch 설정을 확인하세요."},
                     status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
             return Response(VideoSerializer(video).data)
@@ -475,7 +475,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 video.id,
             )
             return Response(
-                {"detail": "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."},
+                {"detail": "비디오 작업 등록 실패. API 서버 AWS Batch 설정을 확인하세요."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         return Response(VideoSerializer(video).data)
@@ -536,7 +536,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             job = VideoSQSQueue().create_job_and_submit_batch(video)
             if not job:
                 raise ValidationError(
-                    "비디오 작업 큐 등록 실패(SQS). API 서버 AWS 설정 및 academy-video-jobs 큐를 확인하세요."
+                    "비디오 작업 등록 실패. API 서버 AWS Batch 설정을 확인하세요."
                 )
 
             logger.info(
