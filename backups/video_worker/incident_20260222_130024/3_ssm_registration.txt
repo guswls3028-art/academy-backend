@@ -1,0 +1,3 @@
+ASG=i-0dd28a627debf579e
+SSM=i-0c8ae616abf345fd1,i-0dd28a627debf579e
+ASG_NOT_SSM=
