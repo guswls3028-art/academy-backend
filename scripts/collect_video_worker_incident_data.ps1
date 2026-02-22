@@ -192,6 +192,7 @@ function Read-SafeText {
 
 $kstNow = (Get-Date).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss KST")
 $utcNow = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss UTC")
+$f = '```'
 
 $asgObj = Read-SafeJson (Join-Path $OutDir "1_asg.json")
 $asgActObj = Read-SafeJson (Join-Path $OutDir "1_asg_activities.json")
