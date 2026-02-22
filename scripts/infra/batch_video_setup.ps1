@@ -142,15 +142,17 @@ if (-not $ceObj) {
 } else {
     Write-Host "  Compute environment exists; updating instanceTypes to c6g.large,c6g.xlarge,c6g.2xlarge" -ForegroundColor Yellow
     $cr = $ceObj.computeResources
+    # instanceTypes update requires allocationStrategy BEST_FIT_PROGRESSIVE or SPOT_CAPACITY_OPTIMIZED
     $updateInput = @{
         computeEnvironment = $ComputeEnvName
         computeResources   = @{
-            minvCpus         = [int]$cr.minvCpus
-            maxvCpus         = [int]$cr.maxvCpus
-            subnets          = @($cr.subnets)
-            securityGroupIds = @($cr.securityGroupIds)
-            instanceTypes    = @("c6g.large", "c6g.xlarge", "c6g.2xlarge")
-            instanceRole     = $cr.instanceRole
+            allocationStrategy = "BEST_FIT_PROGRESSIVE"
+            minvCpus           = [int]$cr.minvCpus
+            maxvCpus           = [int]$cr.maxvCpus
+            subnets            = @($cr.subnets)
+            securityGroupIds   = @($cr.securityGroupIds)
+            instanceTypes      = @("c6g.large", "c6g.xlarge", "c6g.2xlarge")
+            instanceRole       = $cr.instanceRole
         }
     }
     $updateFile = Join-Path $RepoRoot "batch_ce_update_temp.json"
