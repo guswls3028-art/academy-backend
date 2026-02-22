@@ -269,14 +269,13 @@ $report += @"
 
 if ($sqsObj -and $sqsObj -isnot [string] -and $sqsObj.Attributes) {
     $a = $sqsObj.Attributes
-    $report += @"
-
-| Attribute | 값 |
-|-----------|-----|
-| ApproximateNumberOfMessages (Visible) | $($a.ApproximateNumberOfMessages) |
-| ApproximateNumberOfMessagesNotVisible | $($a.ApproximateNumberOfMessagesNotVisible) |
-| ApproximateAgeOfOldestMessage (초) | $($a.ApproximateAgeOfOldestMessage) |
-"@
+    $v1 = $a.ApproximateNumberOfMessages
+    $v2 = $a.ApproximateNumberOfMessagesNotVisible
+    $v3 = $a.ApproximateAgeOfOldestMessage
+    $report += "`n`n| Attribute | Value |`n|-----------|---|`n"
+    $report += "| ApproximateNumberOfMessages (Visible) | $v1 |`n"
+    $report += "| ApproximateNumberOfMessagesNotVisible | $v2 |`n"
+    $report += "| ApproximateAgeOfOldestMessage (sec) | $v3 |`n"
 } else {
     $report += "`n$f`n$sqsObj`n$f"
 }
