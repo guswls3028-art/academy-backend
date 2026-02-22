@@ -100,7 +100,8 @@ $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 try {
     [System.IO.File]::WriteAllText($paramsFile, $paramsJson, $utf8NoBom)
     Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
-    $cmdResult = aws ssm send-command --region $Region --cli-input-json "file://$($paramsFile -replace '\\','/')" --output json 2>&1
+    $fileUri = "file:///" + ($paramsFile -replace '\\', '/')
+    $cmdResult = aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
 } finally {
     Remove-Item $paramsFile -Force -ErrorAction SilentlyContinue
 }
