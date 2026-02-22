@@ -386,9 +386,17 @@ if ($deployWorkers) {
             }
         }
     } else {
+        $envPath = Join-Path $RepoRoot ".env"
         $ok = 0
         foreach ($name in $workerList) {
             $ip = $ips[$name]
+            if (-not $ip) { Write-Host "[$name] SKIP - No public IP" -ForegroundColor Yellow; continue }
+            $keyPath = Join-Path $KeyDir $INSTANCE_KEYS[$name]
+            if ((Test-Path $envPath) -and (Test-Path $keyPath)) {
+                Write-Host "[$name] Copying .env ..." -ForegroundColor Gray
+                scp -o StrictHostKeyChecking=accept-new -i "$keyPath" "$envPath" "${EC2_USER}@${ip}:/home/ec2-user/.env"
+                if ($LASTEXITCODE -ne 0) { Write-Host "[$name] WARN: .env copy failed" -ForegroundColor Yellow }
+            }
             if (Deploy-One -Name $name -Ip $ip -KeyFile $INSTANCE_KEYS[$name] -RemoteCmd $REMOTE_CMDS[$name]) { $ok++ }
         }
         Write-Host "Worker deploy: $ok/$($workerList.Count) succeeded" -ForegroundColor $(if ($ok -eq $workerList.Count) { "Green" } else { "Yellow" })
