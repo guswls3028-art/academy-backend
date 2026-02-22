@@ -42,23 +42,15 @@ cd C:\academy
 - [ ] API에 VIDEO_BATCH_JOB_QUEUE, VIDEO_BATCH_JOB_DEFINITION 설정
 - [ ] Batch Job Role에 SSM (academy/*), ECR, CloudWatch Logs 권한
 
-## full_redeploy / redeploy_worker_asg (충돌 방지)
+## full_redeploy / redeploy_worker_asg
 
-| 스크립트 | 옵션 | 기본값 | 설명 |
-|----------|------|--------|------|
-| full_redeploy.ps1 | -VideoViaBatch | true | video worker EC2/ASG 배포 스킵. 이미지는 ECR 푸시만 (Batch용) |
-| redeploy_worker_asg.ps1 | -ExcludeVideo | true | academy-video-worker-asg 생성/업데이트 스킵 |
-| deploy_worker_asg.ps1 | -ExcludeVideo | true | video LT/ASG 스킵 |
+- **full_redeploy.ps1**: Video = Batch 전용. EC2/ASG에 video worker 없음. 이미지는 빌드 시 ECR 푸시만 (Batch Job Definition용). DeployTarget=video 이면 빌드/푸시만 수행.
+- **redeploy_worker_asg.ps1** / **deploy_worker_asg.ps1**: AI, Messaging ASG만. Video ASG 관련 옵션/코드 제거됨.
 
-## DEPRECATED 스크립트 (Video ASG 레거시)
+## Video ASG 레거시 스크립트 (삭제됨)
 
-| 파일 | 비고 |
-|------|------|
-| scripts/infra/apply_video_asg_scaling_policy.ps1 | DEPRECATED |
-| scripts/video_worker_scaling_sqs_direct.ps1 | DEPRECATED |
-| scripts/redeploy/redeploy_video_worker.ps1 | DEPRECATED |
-| scripts/verify_video_worker_ssm.ps1 | DEPRECATED |
-| apps/worker/video_worker/sqs_main.py | 인코딩 경로 삭제 (delete_r2는 Lambda) |
+Video ASG 전용 스크립트(apply_video_asg_scaling_policy.ps1, redeploy_video_worker.ps1, verify_video_worker_ssm.ps1 등)는 삭제됨.  
+인코딩 경로: create_job_and_submit_batch (Batch만). sqs_main.py 인코딩 경로는 제거됨.
 
 ## 인코딩 경로
 

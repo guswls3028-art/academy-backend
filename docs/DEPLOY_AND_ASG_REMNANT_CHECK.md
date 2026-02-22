@@ -29,16 +29,9 @@
 - **사용처**: `internal_views.py` 의 `/internal/video/backlog/` 등에서 `is_asg_interrupt()` 호출. Lambda `queue_depth` 가 BacklogCount 퍼블리시 시 이 플래그를 참조해 스킵할 수 있음.
 - **판단**: Video ASG 미사용이어도 Lambda/내부 API가 남아 있을 수 있으므로 **삭제하지 않고 유지**. 향후 Lambda·내부 API 정리 시 함께 제거 가능.
 
-### 2.4 DEPRECATED 스크립트 (실행 금지, 참고용 보관)
-| 스크립트 | 비고 |
-|----------|------|
-| `scripts/infra/apply_video_asg_scaling_policy.ps1` | [DEPRECATED] Video = Batch 전용. ASG 스케일링 정책 적용 금지. |
-| `scripts/video_worker_scaling_sqs_direct.ps1` | [DEPRECATED] Video ASG SQS 메트릭 직접 참조. |
-| `scripts/redeploy/redeploy_video_worker.ps1` | [DEPRECATED] Video Worker ASG Instance Refresh 전용. |
-| `scripts/verify_video_worker_ssm.ps1` | [DEPRECATED] Video Worker SSM 검증 (ASG 기반). |
-| `scripts/video_worker_oneclick_setup.ps1` | [DEPRECATED] Video Worker 원큐 셋업 (ASG). |
-
-위 스크립트는 모두 상단에 `[DEPRECATED] Video = AWS Batch 전용` 표기 있음. **full_redeploy.ps1 / redeploy_worker_asg.ps1 에서 호출하지 않음.**
+### 2.4 Video ASG 전용 스크립트 (삭제됨)
+Video = Batch 전용으로 전환하면서 아래 스크립트는 **삭제**됨.  
+(apply_video_asg_scaling_policy.ps1, video_worker_scaling_sqs_direct.ps1, redeploy_video_worker.ps1, verify_video_worker_ssm.ps1, video_worker_oneclick_setup.ps1, video_worker_oneclick_validate.ps1, apply_video_worker_scaling_fix.ps1, fix_video_worker_scaling_policy.ps1, remove_video_worker_target_tracking.ps1, verify_video_worker_scaling.ps1, investigate_video_asg_scalein.ps1, apply_video_mixed_instances.ps1, apply_video_target_tracking.ps1, update_video_tt_target.ps1, apply_video_visible_only_tt.ps1, collect_video_worker_incident_data.ps1, investigate_video_worker_runtime.ps1, diagnose_video_worker_full.ps1, diagnose_video_worker.ps1, check_backlog_metric.ps1)
 
 ### 2.5 ASG 관련 스크립트 (Video 제외 기본값)
 - **redeploy_worker_asg.ps1**: `-ExcludeVideo` 기본 `$true` → video ASG 생성/업데이트 스킵.

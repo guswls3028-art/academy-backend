@@ -24,7 +24,7 @@
 ### 레거시 (제거됨)
 
 - `apps/worker/video_worker/sqs_main.py` — 인코딩 경로 삭제 (delete_r2는 Lambda)
-- `scripts/infra/apply_video_asg_scaling_policy.ps1`, `video_worker_scaling_sqs_direct.ps1` 등
+- (해당 Video ASG 전용 스크립트는 삭제됨)
 - academy-video-jobs SQS 인코딩 경로 미사용
 
 ---
