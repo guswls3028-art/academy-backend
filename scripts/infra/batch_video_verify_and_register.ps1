@@ -88,7 +88,8 @@ Write-Host "  Registered revision $newRevision" -ForegroundColor Green
 # 4) Verify deployed Job Definition has retryStrategy.attempts == 1
 Write-Host ""
 Write-Host "[4] Verify deployed retryStrategy" -ForegroundColor Cyan
-$defs = ExecJson "aws batch describe-job-definitions --job-definition-name $JobDefName --status ACTIVE --region $Region --output json"
+$defs = Invoke-AwsJson @("batch", "describe-job-definitions", "--job-definition-name", $JobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+if (-not $defs) { Fail "describe-job-definitions failed" }
 $latest = $defs.jobDefinitions | Sort-Object -Property revision -Descending | Select-Object -First 1
 if (-not $latest -or $latest.revision -ne $newRevision) {
     Fail "Could not retrieve newly registered revision $newRevision"
