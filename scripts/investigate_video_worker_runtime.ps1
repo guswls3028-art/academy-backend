@@ -79,9 +79,9 @@ foreach ($instanceId in $instances) {
 
   Write-Host "ContainerRunning: $containerRunning"
   Write-Host "WorkerLog:"
-  $logLines = ($stdout + "`n" + $stderr) -split "`n" | Where-Object { $_ -match "docker logs|NO_LOGS|error|ERROR|WARN|process|worker" -or $_.Length -gt 0 }
-  foreach ($ln in ($logLines | Select-Object -First 60)) {
-    if ($ln.Trim()) { Write-Host "  $ln" -ForegroundColor Gray }
+  $all = ($stdout + "`n" + $stderr).Trim()
+  foreach ($ln in ($all -split "`n")) {
+    Write-Host "  $ln" -ForegroundColor Gray
   }
   Write-Host "ffmpegProcessCount: $ffmpegCount`n"
 }
