@@ -21,7 +21,7 @@ Write-Host "== API Env Settings Verify ==" -ForegroundColor Cyan
 $extraArgs = if ($ShowSecrets) { " --verbose" } else { "" }
 
 function Run-LocalCheck {
-    $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $root = Split-Path -Parent $PSScriptRoot
     Push-Location $root
     try {
         python manage.py check_api_env_settings $extraArgs
