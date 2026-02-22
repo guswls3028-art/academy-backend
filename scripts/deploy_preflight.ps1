@@ -94,7 +94,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # 7) ASG (when using -WorkersViaASG)
-$asgNames = @("academy-video-worker-asg", "academy-ai-worker-asg", "academy-messaging-worker-asg")
+$asgNames = @("academy-ai-worker-asg", "academy-messaging-worker-asg")
 $asgOut = aws autoscaling describe-auto-scaling-groups --region $Region --output json 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[WARN] ASG describe failed (skip if not using -WorkersViaASG)" -ForegroundColor Yellow
