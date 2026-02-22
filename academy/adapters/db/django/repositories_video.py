@@ -689,9 +689,14 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
             video = get_video_for_update(job.video_id)
             if video and video.status == Video.Status.READY and video.hls_path:
                 return True, "idempotent"
-            return False, "job_not_running"
-        if job.state != VideoTranscodeJob.State.RUNNING:
-            return False, "job_not_running"
+            return False, "job_already_succeeded"
+        # QUEUED, RETRY_WAIT, RUNNING 모두 허용 (Batch는 intermediate RUNNING 없이 바로 complete)
+        if job.state not in (
+            VideoTranscodeJob.State.QUEUED,
+            VideoTranscodeJob.State.RETRY_WAIT,
+            VideoTranscodeJob.State.RUNNING,
+        ):
+            return False, "job_not_runnable"
         video = get_video_for_update(job.video_id)
         if not video:
             return False, "video_not_found"
