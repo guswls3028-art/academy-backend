@@ -88,38 +88,42 @@ class VideoProgressView(APIView):
                 })
             return _default_progress_response(video_id)
 
-        video_status = cached_status.get("status") or "PENDING"
-        progress = None
-        step_detail = None
-        remaining_seconds = None
+        try:
+            video_status = cached_status.get("status") if isinstance(cached_status, dict) else "PENDING"
+            video_status = video_status or "PENDING"
+            progress = None
+            step_detail = None
+            remaining_seconds = None
 
-        if video_status == "PROCESSING":
-            try:
-                progress = get_video_encoding_progress(video_id, tenant.id)
-                step_detail = get_video_encoding_step_detail(video_id, tenant.id)
-                remaining_seconds = get_video_encoding_remaining_seconds(video_id, tenant.id)
-            except Exception:
-                progress = 0
+            if video_status == "PROCESSING":
+                try:
+                    progress = get_video_encoding_progress(video_id, tenant.id)
+                    step_detail = get_video_encoding_step_detail(video_id, tenant.id)
+                    remaining_seconds = get_video_encoding_remaining_seconds(video_id, tenant.id)
+                except Exception:
+                    progress = 0
 
-        encoding_pct = progress if progress is not None else 0
-        response_data = {
-            "id": video_id,
-            "status": video_status,
-            "progress": encoding_pct,
-            "encoding_progress": encoding_pct,
-            "encoding_remaining_seconds": remaining_seconds,
-            "encoding_step_index": step_detail.get("step_index") if step_detail else None,
-            "encoding_step_total": step_detail.get("step_total") if step_detail else None,
-            "encoding_step_name": step_detail.get("step_name_display") if step_detail else None,
-            "encoding_step_percent": step_detail.get("step_percent") if step_detail else None,
-        }
-        if video_status in ["READY", "FAILED"]:
-            response_data["hls_path"] = cached_status.get("hls_path")
-            response_data["duration"] = cached_status.get("duration")
-            if video_status == "FAILED":
-                response_data["error_reason"] = cached_status.get("error_reason")
+            encoding_pct = progress if progress is not None else 0
+            response_data = {
+                "id": video_id,
+                "status": video_status,
+                "progress": encoding_pct,
+                "encoding_progress": encoding_pct,
+                "encoding_remaining_seconds": remaining_seconds,
+                "encoding_step_index": step_detail.get("step_index") if step_detail else None,
+                "encoding_step_total": step_detail.get("step_total") if step_detail else None,
+                "encoding_step_name": step_detail.get("step_name_display") if step_detail else None,
+                "encoding_step_percent": step_detail.get("step_percent") if step_detail else None,
+            }
+            if video_status in ["READY", "FAILED"] and isinstance(cached_status, dict):
+                response_data["hls_path"] = cached_status.get("hls_path")
+                response_data["duration"] = cached_status.get("duration")
+                if video_status == "FAILED":
+                    response_data["error_reason"] = cached_status.get("error_reason")
 
-        return Response(response_data)
+            return Response(response_data)
+        except Exception:
+            return _default_progress_response(video_id)
 
 
 class VideoProgressViewSet(ModelViewSet):
