@@ -241,7 +241,7 @@ if ($asgObj -and $asgObj -isnot [string]) {
         }
     }
 } else {
-    $report += "`n``````json`n$asgObj`n``````"
+    $report += "`n$f`njson`n$asgObj`n$f"
 }
 
 $report += @"
@@ -250,7 +250,7 @@ $report += @"
 "@
 
 $ltRaw = Read-SafeText (Join-Path $OutDir "2_lt_spec.json")
-$report += "`n**LT Spec (ASG 참조):**``````json`n$ltRaw`n```````n"
+$report += "`n**LT Spec (ASG 참조):**`n$f`njson`n$ltRaw`n$f`n"
 if ($ltDataObj -and $ltDataObj -isnot [string]) {
     $report += "**LT Data (UserData/IamInstanceProfile/SecurityGroup/Subnet):** AMI=$($ltDataObj.ImageId) IamProfile=$($ltDataObj.IamInstanceProfile.Name)"
 }
@@ -260,7 +260,7 @@ $report += @"
 ### 2.3 SSM 등록
 "@
 
-$report += "`n``````$ssmReport``````"
+$report += "`n$f`n$ssmReport`n$f"
 
 $report += @"
 
@@ -278,7 +278,7 @@ if ($sqsObj -and $sqsObj -isnot [string] -and $sqsObj.Attributes) {
 | ApproximateAgeOfOldestMessage (초) | $($a.ApproximateAgeOfOldestMessage) |
 "@
 } else {
-    $report += "`n``````$sqsObj``````"
+    $report += "`n$f`n$sqsObj`n$f"
 }
 
 $report += @"
@@ -311,7 +311,7 @@ if ($asgActObj -and $asgActObj -isnot [string] -and $asgActObj.Activities) {
         $report += "| $($act.StartTime) | $($act.Activity) | $($act.Description) | $($act.StatusCode) | $($act.StatusReason) |`n"
     }
 } else {
-    $report += "`n``````$asgActivities``````"
+    $report += "`n$f`n$asgActivities`n$f"
 }
 
 $report += @"
@@ -337,9 +337,9 @@ $report += @"
 ### 4.3 Runtime Investigation (인스턴스별)
 "@
 
-$report += "`n``````"
+$report += "`n$f`n"
 $report += Read-SafeText (Join-Path $OutDir "4_runtime_investigation.txt")
-$report += "``````"
+$report += "`n$f"
 
 $report += @"
 
