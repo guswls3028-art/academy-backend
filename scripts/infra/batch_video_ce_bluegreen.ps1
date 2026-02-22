@@ -116,10 +116,10 @@ $ceFile = Join-Path $RepoRoot "batch_ce_new_temp.json"
 $ceUri = "file://" + (Resolve-Path -LiteralPath $ceFile).Path.Replace('\', '/')
 aws batch create-compute-environment --cli-input-json $ceUri --region $Region
 Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
-Write-Host "  생성 요청 완료" -ForegroundColor Gray
+Write-Host "  Create request sent" -ForegroundColor Gray
 
 # 4) 새 CE VALID 대기
-Write-Host "  새 CE VALID 대기 (최대 5분)..." -ForegroundColor Gray
+Write-Host "  Waiting for new CE VALID (max 5 min)..." -ForegroundColor Gray
 $wait = 0
 while ($wait -lt 300) {
     Start-Sleep -Seconds 15
@@ -130,7 +130,7 @@ while ($wait -lt 300) {
     $st = $obj.status
     Write-Host "    status=$st ($wait s)" -ForegroundColor Gray
     if ($st -eq "VALID") {
-        Write-Host "  OK: 새 CE VALID" -ForegroundColor Green
+        Write-Host "  OK: New CE VALID" -ForegroundColor Green
         break
     }
     if ($st -eq "INVALID") {
@@ -139,13 +139,13 @@ while ($wait -lt 300) {
     }
 }
 if ($st -ne "VALID") {
-    Write-Host "FAIL: 새 CE VALID 대기 시간 초과" -ForegroundColor Red
+    Write-Host "FAIL: New CE VALID wait timeout" -ForegroundColor Red
     exit 1
 }
 
 # 5) Job Queue computeEnvironmentOrder 업데이트
 Write-Host ""
-Write-Host "[5] Job Queue 업데이트: $JobQueueName -> $NewCeName" -ForegroundColor Cyan
+Write-Host "[5] Update Job Queue: $JobQueueName -> $NewCeName" -ForegroundColor Cyan
 $orderJson = "[{`"order`":1,`"computeEnvironment`":`"$NewCeName`"}]"
 aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order $orderJson --region $Region
 Write-Host "  OK: Queue 연결 변경" -ForegroundColor Green
