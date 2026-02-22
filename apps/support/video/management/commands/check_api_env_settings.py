@@ -80,8 +80,7 @@ class Command(BaseCommand):
 
         self.stdout.write("Required env (OK):")
         for key, val in ok:
-            masked = _mask(val, show_full=verbose or key in ("DB_HOST", "DB_NAME", "REDIS_HOST", "VIDEO_BATCH_JOB_QUEUE", "VIDEO_BATCH_JOB_DEFINITION"))
-            self.stdout.write(f"  {key}={masked}")
+            self.stdout.write(f"  {key}={_mask(val, key, verbose)}")
 
         warned = []
         for key in OPTIONAL:
@@ -89,8 +88,7 @@ class Command(BaseCommand):
             if val is None or (isinstance(val, str) and val.strip() == ""):
                 warned.append(key)
             else:
-                masked = _mask(val, show_full=verbose or "BUCKET" in key or "URL" in key)
-                self.stdout.write(f"  {key}={masked} (OK)")
+                self.stdout.write(f"  {key}={_mask(val, key, verbose)} (OK)")
 
         if warned:
             self.stdout.write(self.style.WARNING(f"WARN: Optional missing: {', '.join(warned)}"))
