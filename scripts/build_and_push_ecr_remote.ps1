@@ -82,28 +82,32 @@ if ($GitRepoUrl) {
     $repoLine = "cd /home/ec2-user/build && test -d academy || (echo ERROR: no academy dir. Use -GitRepoUrl; exit 1) && cd academy && git fetch && git reset --hard origin/main && git pull"
 }
 
-$commandsList = @("set -e", $repoLine, "cd /home/ec2-user/build/academy")
-if ($envLine) { $commandsList += $envLine }
-$commandsList += "./scripts/build_and_push_ecr_on_ec2.sh"
-$commandsList += "echo REMOTE_BUILD_OK"
+# 한 줄로 합쳐서 SSM commands 배열을 1개 요소만 쓰기 (JSON 이스케이프 단순화)
+$oneLine = "set -e; " + $repoLine + "; cd /home/ec2-user/build/academy; "
+if ($envLine) { $oneLine += $envLine + "; " }
+$oneLine += "./scripts/build_and_push_ecr_on_ec2.sh; echo REMOTE_BUILD_OK"
 
-# 4) SSM Send Command (ConvertTo-Json으로 유효 JSON 생성 후 인라인 전달)
-$paramsObj = @{
-    InstanceIds    = @($buildInstanceId)
-    DocumentName   = "AWS-RunShellScript"
-    Parameters     = @{ commands = $commandsList }
-    TimeoutSeconds = 3600
+# 4) SSM Send Command (수동 JSON: PowerShell ConvertTo-Json이 AWS CLI에서 Invalid JSON 나는 경우 대비)
+$cmdEscaped = $oneLine -replace '\\', '\\\\' -replace '"', '\"'
+$commandsJson = "[\"$cmdEscaped\"]"
+$paramsJsonStr = "{`"InstanceIds`":[`"$buildInstanceId`"],`"DocumentName`":`"AWS-RunShellScript`",`"Parameters`":{`"commands`":$commandsJson},`"TimeoutSeconds`":3600}"
+
+# repo 루트에 파일로 쓰고 file:// 경로로 전달 (공백 없는 경로)
+$payloadPath = Join-Path $RepoRoot "scripts\ssm-payload.json"
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+try {
+    [System.IO.File]::WriteAllText($payloadPath, $paramsJsonStr, $utf8NoBom)
+    Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
+    $prevErr = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    # file:// + 드라이브 경로 (슬래시 2개: file://C:/academy/scripts/ssm-payload.json)
+    $fileUri = "file://" + ($payloadPath -replace '\\', '/')
+    $cmdResult = & aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
+    $ErrorActionPreference = $prevErr
+    $exitCode = $LASTEXITCODE
+} finally {
+    Remove-Item $payloadPath -Force -ErrorAction SilentlyContinue
 }
-$paramsJsonStr = $paramsObj | ConvertTo-Json -Depth 4 -Compress
-
-Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
-$prevErr = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-# JSON을 한 인자로 넘기기 위해 배열 스플래팅 사용 (공백/중괄호로 쪼개짐 방지)
-$awsArgs = @("ssm", "send-command", "--region", $Region, "--cli-input-json", $paramsJsonStr, "--output", "json")
-$cmdResult = & aws @awsArgs 2>&1
-$ErrorActionPreference = $prevErr
-$exitCode = $LASTEXITCODE
 
 if ($exitCode -ne 0) {
     Write-Host "ERROR: SSM send-command failed (exit $exitCode)" -ForegroundColor Red
