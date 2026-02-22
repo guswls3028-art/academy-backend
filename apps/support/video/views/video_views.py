@@ -412,7 +412,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
             ok, meta, reason = False, {"duration": 0}, "ffprobe_exception_fallback"
 
-        if not ok and reason in ("ffmpeg_module_missing", "ffprobe_exception_fallback"):
+        if not ok and reason == "ffmpeg_module_missing":
             video.status = Video.Status.UPLOADED
             video.error_reason = ""
             video.save(update_fields=["status", "error_reason"])
