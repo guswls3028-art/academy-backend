@@ -132,7 +132,7 @@ $ceContent = $ceContent -replace "32", $MaxVcpus
 $ceFile = Join-Path $RepoRoot "batch_ce_temp.json"
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($ceFile, $ceContent, $utf8NoBom)
-$ceFileUri = "file:///" + ($ceFile -replace '\\', '/')
+$ceFileUri = "file://" + ($ceFile -replace '\\', '/')
 
 $ce = ExecJson "aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output json 2>&1"
 if (-not ($ce.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName })) {
@@ -175,7 +175,7 @@ $jdContent = $jdContent -replace "PLACEHOLDER_REGION", $Region
 $jdFile = Join-Path $RepoRoot "batch_jd_temp.json"
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($jdFile, $jdContent, $utf8NoBom)
-$fileUri = "file:///" + ($jdFile -replace '\\', '/')
+$fileUri = "file://" + ($jdFile -replace '\\', '/')
 aws batch register-job-definition --cli-input-json $fileUri --region $Region
 Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
 

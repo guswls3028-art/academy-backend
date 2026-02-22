@@ -78,7 +78,7 @@ $jdContent = $jdContent -replace "PLACEHOLDER_REGION", $Region
 $jdFile = Join-Path $RepoRoot "batch_jd_temp.json"
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($jdFile, $jdContent, $utf8NoBom)
-$fileUri = "file:///" + ($jdFile -replace '\\', '/')
+$fileUri = "file://" + ($jdFile -replace '\\', '/')
 $regOut = Invoke-AwsJson @("batch", "register-job-definition", "--cli-input-json", $fileUri, "--region", $Region, "--output", "json")
 if (-not $regOut) { Fail "register-job-definition failed (check AWS credentials and region)" }
 Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
