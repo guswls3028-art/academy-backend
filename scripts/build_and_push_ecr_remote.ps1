@@ -68,64 +68,48 @@ if (-not $ssmReady) {
 }
 Start-Sleep -Seconds 5
 
-# 3) 원격에서 실행할 명령 구성
-$envExports = @()
-if ($ApiOnly) { $envExports += "export API_ONLY=1" }
-if ($VideoWorkerOnly) { $envExports += "export VIDEO_WORKER_ONLY=1" }
-if ($NoCache) { $envExports += "export NO_CACHE=1" }
-if ($SkipPrune) { $envExports += "export DOCKER_SKIP_PRUNE=1" }
-$envBlock = $envExports -join "`n"
+# 3) 원격에서 실행할 명령 구성 (SSM 파라미터 4KB 제한 회피: 짧은 명령만 전달)
+$envParts = @()
+if ($ApiOnly) { $envParts += "API_ONLY=1" }
+if ($VideoWorkerOnly) { $envParts += "VIDEO_WORKER_ONLY=1" }
+if ($NoCache) { $envParts += "NO_CACHE=1" }
+if ($SkipPrune) { $envParts += "DOCKER_SKIP_PRUNE=1" }
+$envLine = if ($envParts.Count -gt 0) { "export " + ($envParts -join " ") } else { "" }
 
-$repoBlock = @"
-cd /home/ec2-user/build
-if [ ! -d academy ]; then
-  if [ -z '$GitRepoUrl' ]; then
-    echo 'ERROR: /home/ec2-user/build/academy not found and -GitRepoUrl not set'
-    exit 1
-  fi
-  git clone '$GitRepoUrl' academy && cd academy
-else
-  cd academy && git fetch && git reset --hard origin/main && git pull
-fi
-"@
-
-# GitRepoUrl이 없으면 pull만 (기존 repo 가정)
-if (-not $GitRepoUrl) {
-    $repoBlock = @"
-cd /home/ec2-user/build
-if [ ! -d academy ]; then
-  echo 'ERROR: /home/ec2-user/build/academy not found. Use -GitRepoUrl or run full_redeploy once.'
-  exit 1
-fi
-cd academy && git fetch && git reset --hard origin/main && git pull
-"@
+if ($GitRepoUrl) {
+    $repoLine = "cd /home/ec2-user/build && (test -d academy && cd academy && git fetch && git reset --hard origin/main && git pull) || (git clone $GitRepoUrl academy && cd academy)"
+} else {
+    $repoLine = "cd /home/ec2-user/build && test -d academy || (echo ERROR: no academy dir. Use -GitRepoUrl; exit 1) && cd academy && git fetch && git reset --hard origin/main && git pull"
 }
 
-$remoteScript = @"
-set -e
-$repoBlock
-$envBlock
-./scripts/build_and_push_ecr_on_ec2.sh
-echo REMOTE_BUILD_OK
-"@
+$commandsArray = @(
+    "set -e",
+    $repoLine,
+    "cd /home/ec2-user/build/academy",
+    $envLine,
+    "./scripts/build_and_push_ecr_on_ec2.sh",
+    "echo REMOTE_BUILD_OK"
+) | Where-Object { $_ -ne "" }
 
-$remoteScript = $remoteScript.Trim() -replace "`r`n", "`n" -replace "`r", "`n"
-$scriptLines = $remoteScript -split "`n" | Where-Object { $_.Trim() -ne "" }
-$commandsArray = @()
-foreach ($line in $scriptLines) {
-    $t = $line.Trim()
-    if ($t) { $commandsArray += $t }
+# JSON 이스케이프: SSM에 안전하게 전달 (큰따옴표 이스케이프)
+$commandsJson = ($commandsArray | ConvertTo-Json -Compress) -replace '\\', '\\\\' -replace '"', '\"'
+
+# 4) SSM Send Command (--cli-input-json 사용으로 파라미터 깨짐 방지)
+$paramsJson = @{
+    InstanceIds = @($buildInstanceId)
+    DocumentName = "AWS-RunShellScript"
+    Parameters = @{ commands = $commandsArray }
+    TimeoutSeconds = 3600
+} | ConvertTo-Json -Depth 4 -Compress
+
+$paramsFile = [System.IO.Path]::GetTempFileName()
+try {
+    [System.IO.File]::WriteAllText($paramsFile, $paramsJson, [System.Text.Encoding]::UTF8)
+    Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
+    $cmdResult = aws ssm send-command --region $Region --cli-input-json "file://$($paramsFile -replace '\\','/')" --output json 2>&1
+} finally {
+    Remove-Item $paramsFile -Force -ErrorAction SilentlyContinue
 }
-$commandsJson = $commandsArray | ConvertTo-Json -Compress
-
-# 4) SSM Send Command
-Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
-$cmdResult = aws ssm send-command --region $Region `
-    --instance-ids $buildInstanceId `
-    --document-name "AWS-RunShellScript" `
-    --parameters "commands=$commandsJson" `
-    --timeout-seconds 3600 `
-    --output json 2>&1
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: SSM send-command failed: $cmdResult" -ForegroundColor Red
