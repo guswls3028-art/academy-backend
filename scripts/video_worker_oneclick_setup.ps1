@@ -141,7 +141,7 @@ function Show-DiffList {
             $curMetric = $vp.TargetTrackingConfiguration.CustomizedMetricSpecification.MetricName
         }
     }
-    Write-Host "  - ASG Scaling Policy: metric $curMetric -> VideoQueueDepthTotal (SQS), ScaleOutCooldown=60, ScaleInCooldown=300" -ForegroundColor Gray
+    Write-Host "  - ASG Scaling Policy: metric $curMetric -> VideoQueueDepthTotal (SQS)" -ForegroundColor Gray
     Write-Host "  - Lambda: deploy code (VideoQueueDepthTotal, remove Backlog API)" -ForegroundColor Gray
     Write-Host "  - ASG: MaxSize=$MaxSize, TargetMessagesPerInstance=$TargetMessagesPerInstance" -ForegroundColor Gray
     Write-Host "  - SQS: create/set DLQ RedrivePolicy if missing (maxReceiveCount=$MaxReceiveCount)" -ForegroundColor Gray
@@ -172,7 +172,7 @@ function Set-SqsBasedScaling {
     } while ($true)
     Log-Step "  Lambda deploy done (VideoQueueDepthTotal)"
 
-    $videoTtJson = '{"TargetValue":' + [string]$TargetMessagesPerInstance + ',"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"' + $AsgName + '"}],"Statistic":"Average","Unit":"Count"},"ScaleOutCooldown":60,"ScaleInCooldown":300}'
+    $videoTtJson = '{"TargetValue":' + [string]$TargetMessagesPerInstance + ',"CustomizedMetricSpecification":{"MetricName":"VideoQueueDepthTotal","Namespace":"Academy/VideoProcessing","Dimensions":[{"Name":"WorkerType","Value":"Video"},{"Name":"AutoScalingGroupName","Value":"' + $AsgName + '"}],"Statistic":"Average","Unit":"Count"}}'
     $tmpFile = Join-Path $RepoRoot "asg_video_tt_ec2.json"
     [System.IO.File]::WriteAllText($tmpFile, $videoTtJson, $utf8NoBom)
     $pathUri = "file://$($tmpFile -replace '\\','/' -replace ' ', '%20')"
