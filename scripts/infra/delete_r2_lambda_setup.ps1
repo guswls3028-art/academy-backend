@@ -8,7 +8,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Region,
     [Parameter(Mandatory=$true)][string]$ApiBaseUrl,
     [string]$LambdaName = "academy-video-delete-r2",
-    [string]$QueueName = "academy-video-jobs",
+    [string]$QueueName = "academy-video-delete-r2",
     [string]$VpcSubnetId = "",
     [string]$VpcSecurityGroupId = ""
 )

@@ -2,7 +2,7 @@
 Video Worker - AWS Batch 엔트리포인트
 
 1 job = 1 container = exit.
-JOB_ID (VideoTranscodeJob.id)는 Batch parameters에서 전달: command 마지막 인자 또는 VIDEO_JOB_ID env.
+DB → Batch only. NO job_claim. NO heartbeat. NO visibility.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ django.setup()
 
 from academy.adapters.db.django.repositories_video import (
     job_get_by_id,
-    job_claim_for_running,
+    job_set_running,
     job_complete,
     job_fail_retry,
     job_mark_dead,
@@ -30,13 +30,10 @@ from academy.adapters.db.django.repositories_video import (
 from apps.worker.video_worker.config import load_config
 from src.infrastructure.video.processor import process_video
 from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
-from apps.support.video.redis_status_cache import cache_video_status, set_video_heartbeat, delete_video_heartbeat
+from apps.support.video.redis_status_cache import cache_video_status
 from src.application.video.handler import CancelledError
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("video_worker_batch")
 
 VIDEO_PROGRESS_TTL_SECONDS = int(os.getenv("VIDEO_PROGRESS_TTL_SECONDS", "14400"))
@@ -44,8 +41,7 @@ VIDEO_JOB_MAX_ATTEMPTS = int(os.environ.get("VIDEO_JOB_MAX_ATTEMPTS", "5"))
 
 
 def _log_json(event: str, **kwargs) -> None:
-    log = {"event": event, **kwargs}
-    logger.info(json.dumps(log))
+    logger.info(json.dumps({"event": event, **kwargs}))
 
 
 def main() -> int:
@@ -56,14 +52,12 @@ def main() -> int:
 
     cfg = load_config()
     progress = RedisProgressAdapter(ttl_seconds=VIDEO_PROGRESS_TTL_SECONDS)
-    worker_id = f"batch-{os.environ.get('AWS_BATCH_JOB_ID', 'local')}"
-
     start_time = time.time()
 
     job_obj = job_get_by_id(job_id)
     if not job_obj:
         _log_json("JOB_NOT_FOUND", job_id=job_id)
-        return 0  # idempotent: job deleted
+        return 0
 
     if job_obj.state == "SUCCEEDED":
         video = job_obj.video
@@ -75,9 +69,9 @@ def main() -> int:
         _log_json("VIDEO_ALREADY_READY", job_id=job_id, video_id=job_obj.video_id)
         return 0
 
-    if not job_claim_for_running(job_id, worker_id, lease_seconds=3600):
-        _log_json("JOB_CLAIM_FAILED", job_id=job_id, video_id=job_obj.video_id)
-        return 1  # retry
+    if not job_set_running(job_id):
+        _log_json("JOB_SET_RUNNING_FAILED", job_id=job_id, video_id=job_obj.video_id)
+        return 1
 
     try:
         cache_video_status(job_obj.tenant_id, job_obj.video_id, "PROCESSING", ttl=21600)
@@ -96,11 +90,6 @@ def main() -> int:
     try:
         tenant = job_obj.video.session.lecture.tenant
         job_dict["tenant_code"] = str(tenant.code)
-    except Exception:
-        pass
-
-    try:
-        set_video_heartbeat(job_obj.tenant_id, job_obj.video_id, ttl_seconds=60)
     except Exception:
         pass
 
@@ -150,12 +139,6 @@ def main() -> int:
             job_mark_dead(job_id, error_code="MAX_ATTEMPTS", error_message=str(e)[:2000])
             _log_json("BATCH_JOB_DEAD", job_id=job_id, video_id=job_obj.video_id, attempt_count=job_after.attempt_count)
         return 1
-
-    finally:
-        try:
-            delete_video_heartbeat(job_obj.tenant_id, job_obj.video_id)
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":
