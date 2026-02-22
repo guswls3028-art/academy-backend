@@ -1,8 +1,8 @@
 """
 Video Worker - AWS Batch 엔트리포인트
 
-1 job = 1 container = exit.
-DB → Batch only. NO job_claim. NO heartbeat. NO visibility.
+Single-execution contract. NO job_set_running. NO RUNNING state block.
+State transitions ONLY via job_complete().
 """
 
 from __future__ import annotations
@@ -20,12 +20,10 @@ django.setup()
 
 from academy.adapters.db.django.repositories_video import (
     job_get_by_id,
-    job_set_running,
     job_complete,
     job_fail_retry,
     job_mark_dead,
     job_is_cancel_requested,
-    get_video_status,
 )
 from apps.worker.video_worker.config import load_config
 from src.infrastructure.video.processor import process_video
@@ -50,28 +48,18 @@ def main() -> int:
         _log_json("BATCH_MAIN_ERROR", error="VIDEO_JOB_ID or argv[1] required")
         return 1
 
-    cfg = load_config()
-    progress = RedisProgressAdapter(ttl_seconds=VIDEO_PROGRESS_TTL_SECONDS)
-    start_time = time.time()
-
     job_obj = job_get_by_id(job_id)
     if not job_obj:
         _log_json("JOB_NOT_FOUND", job_id=job_id)
         return 0
 
     if job_obj.state == "SUCCEEDED":
-        video = job_obj.video
-        if video and get_video_status(video.id) == "READY":
-            _log_json("IDEMPOTENT_DONE", job_id=job_id, video_id=job_obj.video_id)
-            return 0
-
-    if get_video_status(job_obj.video_id) == "READY":
-        _log_json("VIDEO_ALREADY_READY", job_id=job_id, video_id=job_obj.video_id)
+        _log_json("IDEMPOTENT_DONE", job_id=job_id, video_id=job_obj.video_id)
         return 0
 
-    if not job_set_running(job_id):
-        _log_json("JOB_SET_RUNNING_FAILED", job_id=job_id, video_id=job_obj.video_id)
-        return 1
+    cfg = load_config()
+    progress = RedisProgressAdapter(ttl_seconds=VIDEO_PROGRESS_TTL_SECONDS)
+    start_time = time.time()
 
     try:
         cache_video_status(job_obj.tenant_id, job_obj.video_id, "PROCESSING", ttl=21600)
