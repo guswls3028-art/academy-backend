@@ -202,13 +202,8 @@ def _handle_signal(sig, frame):
 
 def main() -> int:
     """
-    SQS 기반 Video Worker 메인 루프
-    
-    Flow:
-    1. SQS에서 메시지 Long Polling
-    2. 메시지 수신 시 비디오 처리
-    3. 성공 시 메시지 삭제
-    4. 실패 시 메시지는 SQS가 자동으로 재시도 (DLQ로 전송 전까지)
+    SQS 기반 Video Worker — single-job: 1건 처리 후 종료 (Ephemeral Worker).
+    desired = Visible/1 이면 인스턴스 1대당 1 job 처리 후 scale-in 대상.
     """
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -219,7 +214,7 @@ def main() -> int:
     progress = RedisProgressAdapter(ttl_seconds=VIDEO_PROGRESS_TTL_SECONDS)
 
     logger.info(
-        "Video Worker (SQS) started | queue=%s | wait_time=%ss",
+        "Video Worker (SQS) single-job | queue=%s | wait_time=%ss",
         queue._get_queue_name(),
         SQS_WAIT_TIME_SECONDS,
     )
@@ -232,24 +227,19 @@ def main() -> int:
     spot_poller_thread.start()
 
     try:
-        while not _shutdown and not spot_termination_event.is_set():
+        for _ in range(1):
+            receipt_handle = None
             try:
-                # Shutdown/Spot 시 long poll 중단 (visibility 반환 지연 최소화)
                 wait_sec = 0 if (_shutdown or spot_termination_event.is_set()) else SQS_WAIT_TIME_SECONDS
                 try:
                     message = queue.receive_message(wait_time_seconds=wait_sec)
                 except QueueUnavailableError as e:
-                    # 로컬 등 AWS 자격 증명 없을 때: 로그 한 번, 60초 대기 후 재시도
-                    logger.warning(
-                        "SQS unavailable (AWS credentials invalid or missing?). Waiting 60s before retry. %s",
-                        e,
-                    )
-                    time.sleep(60)
-                    continue
+                    logger.warning("SQS unavailable. %s", e)
+                    return 1
 
                 if not message:
-                    consecutive_errors = 0
-                    continue
+                    logger.info("No message — exiting (scale-in target)")
+                    return 0
 
                 # SIGTERM/Spot 수신 시 새 메시지는 즉시 visibility=0 반환 후 종료 (delete_message 금지)
                 if _shutdown or spot_termination_event.is_set():
