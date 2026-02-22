@@ -144,6 +144,10 @@ if (-not $SkipBuild) {
         $AmiId = (aws ec2 describe-images --region $Region --owners amazon `
             --filters "Name=name,Values=al2023-ami-*-kernel-6.1-arm64" "Name=state,Values=available" `
             --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
+        if ([string]::IsNullOrWhiteSpace($AmiId) -or $AmiId -eq "None") {
+            Write-Host "ERROR: No suitable AMI found (al2023-ami arm64). Check region $Region and filters." -ForegroundColor Red
+            exit 1
+        }
         $userData = @"
 #!/bin/bash
 yum update -y
