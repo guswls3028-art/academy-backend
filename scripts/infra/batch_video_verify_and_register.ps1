@@ -113,6 +113,7 @@ Write-Host "  Submitted job $awsJobId" -ForegroundColor Gray
 $maxWait = 180
 $interval = 15
 $elapsed = 0
+$status = "UNKNOWN"
 while ($elapsed -lt $maxWait) {
     Start-Sleep -Seconds $interval
     $elapsed += $interval
