@@ -103,8 +103,9 @@ try {
     Write-Host "[3] Running build on remote (timeout 60 min)..." -ForegroundColor Cyan
     $prevErr = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    # Windows: 경로만 전달 (AWS CLI가 file:// 없이 절대경로 인식하는 경우 시도)
-    $cmdResult = & aws ssm send-command --region $Region --cli-input-json "file://$paramsFile" --output json 2>&1
+    # Windows: file:// + 백슬래시 경로 (file:///C:/ 형식은 Python에서 /C:/ 로 열려 실패함)
+    $fileUri = "file:///" + ($paramsFile -replace '\\', '/')
+    $cmdResult = & aws ssm send-command --region $Region --cli-input-json $fileUri --output json 2>&1
     $ErrorActionPreference = $prevErr
     $exitCode = $LASTEXITCODE
 } finally {
