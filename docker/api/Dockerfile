@@ -23,9 +23,9 @@ COPY scripts ./scripts
 RUN chown -R appuser:appuser /app
 USER appuser
 
-# API 전용 의존성 설치 (-r common.txt 참조)
-COPY requirements/common.txt requirements/api.txt ./requirements/
-RUN pip install --user --no-cache-dir -r requirements/api.txt
+# Shared requirements (API + Worker same file)
+COPY requirements/requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
 
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
