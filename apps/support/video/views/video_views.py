@@ -515,14 +515,23 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             if video.current_job_id:
                 cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
                 if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
-                    if cur.updated_at >= stale_cutoff:
+                    # aws_batch_job_id 없음 = submit 실패/미전달 → 실제 Batch 백로그 아님. 정리 후 재처리 허용.
+                    has_batch_id = bool((getattr(cur, "aws_batch_job_id", None) or "").strip())
+                    if not has_batch_id:
+                        cur.state = VideoTranscodeJob.State.DEAD
+                        cur.error_message = "Stale; no aws_batch_job_id (submit failed or lost), re-enqueued via retry"
+                        cur.save(update_fields=["state", "error_message", "updated_at"])
+                        video.current_job_id = None
+                        video.save(update_fields=["current_job_id", "updated_at"])
+                    elif cur.updated_at >= stale_cutoff:
                         raise ValidationError("Already in backlog (job queued or retry wait)")
-                    # 오래된 QUEUED/RETRY_WAIT → 메시지 유실 가능성. 기존 Job DEAD 처리 후 새 Job으로 재등록.
-                    cur.state = VideoTranscodeJob.State.DEAD
-                    cur.error_message = "Stale; re-enqueued via retry (was QUEUED/RETRY_WAIT too long)"
-                    cur.save(update_fields=["state", "error_message", "updated_at"])
-                    video.current_job_id = None
-                    video.save(update_fields=["current_job_id", "updated_at"])
+                    else:
+                        # 오래된 QUEUED/RETRY_WAIT → 메시지 유실 가능성. 기존 Job DEAD 처리 후 새 Job으로 재등록.
+                        cur.state = VideoTranscodeJob.State.DEAD
+                        cur.error_message = "Stale; re-enqueued via retry (was QUEUED/RETRY_WAIT too long)"
+                        cur.save(update_fields=["state", "error_message", "updated_at"])
+                        video.current_job_id = None
+                        video.save(update_fields=["current_job_id", "updated_at"])
                 elif cur and cur.state == VideoTranscodeJob.State.RUNNING:
                     # RUNNING: cancel_requested 설정 후 새 Job 생성
                     job_set_cancel_requested(cur.id)
