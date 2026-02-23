@@ -56,15 +56,33 @@ $reason = $job.statusReason
 - **What it does:** Polls Batch job status during verification; uses `statusReason` only for MISCONFIGURATION check (line 134).
 - **Spot handling?** **No.** No parsing of Spot-related failure reasons; no retry or DB update based on `statusReason`.
 
-**4) scripts/diagnose_batch_video_infra.ps1 (line 155)**
+**4) scripts/diagnose_batch_video_infra.ps1 (lines 154–155)**
 
-- **What it does:** `describe-jobs` to show status and reason for a smoke job.
-- **Spot handling?** **No.** Diagnostic only.
+```powershell
+$jid = ($sub | ConvertFrom-Json).jobId
+$desc = aws batch describe-jobs --jobs $jid --region $region --query "jobs[0].{status:status, reason:statusReason}" --output json 2>&1
+```
 
-**5) apps/support/video/management/commands/validate_batch_video_system.py (lines 30–32)**
+- **What it does:** After submitting a smoke job, calls describe-jobs to show status and statusReason.
+- **Spot handling?** **No.** Diagnostic only; no parsing of reason for retry or DB update.
 
-- **What it does:** Subprocess `aws batch describe-jobs` to validate job state/exitCode/reason.
-- **Spot handling?** **No.** Validation only; no retry or failure-reason logic.
+**5) apps/support/video/management/commands/validate_batch_video_system.py (lines 27–33)**
+
+```python
+def run_aws_batch_describe(job_id: str):
+    r = subprocess.run(
+        [
+            "aws", "batch", "describe-jobs", "--jobs", job_id,
+            "--region", REGION,
+            "--query", "jobs[0].{status:status, exitCode:container.exitCode, reason:statusReason}",
+            "--output", "json",
+        ],
+        ...
+    )
+```
+
+- **What it does:** Runs `aws batch describe-jobs` and returns status, exitCode, reason for validation.
+- **Spot handling?** **No.** Validation only; no failure-reason-driven retry logic.
 
 ### Phase 1 Conclusion
 
