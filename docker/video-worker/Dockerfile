@@ -27,9 +27,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p /tmp/video-worker /tmp/video-worker-locks && chown -R appuser:appuser /tmp/video-worker /tmp/video-worker-locks
 
 USER appuser
-# Same Django stack as API (api.txt) + video libs — avoids missing deps e.g. corsheaders
-COPY requirements/common.txt requirements/api.txt requirements/worker-video.txt ./requirements/
-RUN pip install --user --no-cache-dir -r requirements/worker-video.txt
+# Shared requirements (API + Worker same file)
+COPY requirements/requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
 # 헬스체크
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import sys; sys.exit(0)" || exit 1
