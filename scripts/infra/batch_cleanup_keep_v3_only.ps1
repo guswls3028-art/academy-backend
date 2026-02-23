@@ -19,18 +19,30 @@ aws batch update-job-queue --job-queue $QueueName --region $Region --compute-env
 if ($LASTEXITCODE -ne 0) { Write-Host "update-job-queue failed" -ForegroundColor Red; exit 1 }
 Write-Host "Queue updated." -ForegroundColor Green
 
-# 3) Disable then delete old CEs
+# 3) Disable then delete old CEs (must wait for DISABLED before delete)
 foreach ($ce in $ToRemove) {
     $exists = aws batch describe-compute-environments --compute-environments $ce --region $Region --query "computeEnvironments[0].status" --output text 2>&1
     if ($exists -eq "None" -or -not $exists) { Write-Host "  $ce not found (skip)" -ForegroundColor Gray; continue }
     Write-Host "Disabling $ce..." -ForegroundColor Yellow
     aws batch update-compute-environment --compute-environment $ce --state DISABLED --region $Region 2>&1 | Out-Null
-    Start-Sleep -Seconds 10
-    $state = aws batch describe-compute-environments --compute-environments $ce --region $Region --query "computeEnvironments[0].state" --output text 2>&1
+    $maxWait = 24
+    $state = ""
+    for ($i = 0; $i -lt $maxWait; $i++) {
+        Start-Sleep -Seconds 10
+        $state = aws batch describe-compute-environments --compute-environments $ce --region $Region --query "computeEnvironments[0].state" --output text 2>&1
+        if ($state -eq "DISABLED") { break }
+        Write-Host "  Waiting for $ce to reach DISABLED... ($state)" -ForegroundColor Gray
+    }
     if ($state -eq "DISABLED") {
         Write-Host "Deleting $ce..." -ForegroundColor Yellow
-        aws batch delete-compute-environment --compute-environment $ce --region $Region 2>&1
-        Write-Host "  $ce delete requested." -ForegroundColor Green
+        $delOut = cmd /c "aws batch delete-compute-environment --compute-environment $ce --region $Region 2>&1"
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  $ce delete requested." -ForegroundColor Green
+        } else {
+            Write-Host "  $ce delete failed (may still be draining): $delOut" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  $ce did not reach DISABLED in time (state=$state). Re-run script later to delete." -ForegroundColor Yellow
     }
 }
 
