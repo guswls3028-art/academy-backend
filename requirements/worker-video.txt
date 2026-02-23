@@ -1,5 +1,5 @@
-# worker-video.txt — Video Worker 전용
--r ./common.txt
+# worker-video.txt — Video Worker (same Django stack as API + video libs)
+-r ./api.txt
 
 # Video processing
 ffmpeg-python

@@ -60,7 +60,10 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5174",
 ]
 
-from corsheaders.defaults import default_headers
+try:
+    from corsheaders.defaults import default_headers
+except ImportError:
+    default_headers = []
 CORS_ALLOW_HEADERS = list(default_headers) + [
     "X-Client-Version",
     "X-Client",

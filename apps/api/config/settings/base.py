@@ -5,7 +5,10 @@ from pathlib import Path
 from datetime import timedelta
 import os
 
-from corsheaders.defaults import default_headers
+try:
+    from corsheaders.defaults import default_headers
+except ImportError:
+    default_headers = []
 
 """
 ============================================================================
