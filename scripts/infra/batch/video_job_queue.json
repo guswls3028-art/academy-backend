@@ -1,11 +1,1 @@
-{
-  "jobQueueName": "academy-video-batch-queue",
-  "state": "ENABLED",
-  "priority": 1,
-  "computeEnvironmentOrder": [
-    {
-      "order": 1,
-      "computeEnvironment": "academy-video-batch-ce"
-    }
-  ]
-}
+{"jobQueueName":"academy-video-batch-queue","state":"ENABLED","priority":1,"computeEnvironmentOrder":[{"order":1,"computeEnvironment":"academy-video-batch-ce-v3"}]}
