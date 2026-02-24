@@ -1,5 +1,10 @@
 # Video Batch Production Runbook
 
+## Source of truth (no silent fallback)
+
+- **Config:** `.env` at repo root is canonical. **SSM** `/academy/workers/env` is **derived only** from `.env` via `ssm_bootstrap_video_worker.ps1`. SSM value is **single-line JSON** (see `docs/deploy/SSM_JSON_SCHEMA.md`). Do not edit SSM in the console.
+- **Runtime:** All Batch jobs (worker, netprobe, reconcile, scan_stuck) boot via **batch_entrypoint**: it reads SSM JSON, sets env, validates required keys, then runs the job command. `DJANGO_SETTINGS_MODULE` must be `apps.api.config.settings.worker`; dev/prod defaults are not used.
+
 ## Option A: Batch in SAME VPC as API/RDS
 
 This runbook assumes Batch compute environment, queue, and job definitions are in the **same VPC** as the API and RDS. Use `recreate_batch_in_api_vpc.ps1` to create or recreate Batch in the API VPC.
@@ -17,20 +22,12 @@ $env:PYTHONIOENCODING = "utf-8"
 
 **.env is the source of truth; SSM is derived. No silent fallback.**
 
-Canonical config: `.env` at repository root (see `.env.example`). All required variables for API server, Batch worker, and Video ops jobs (reconcile, scan_stuck, netprobe) are defined there.
+Canonical config: `.env` at repository root (see `.env.example`). All required variables for API server, Batch worker, and Video ops jobs are defined there.
 
-**SSM as derived artifact:** Parameter `/academy/workers/env` is **derived only** from `.env` via:
+**SSM:** Parameter `/academy/workers/env` is **derived only** from `.env` via `ssm_bootstrap_video_worker.ps1`. The value is stored as **single-line JSON** (SecureString). Schema: `docs/deploy/SSM_JSON_SCHEMA.md`. Batch entrypoint parses this JSON only; no KEY=VALUE fallback.
 
-```powershell
-.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env [-Overwrite]
-```
-
-- **No manual SSM creation allowed.** Do not create or edit `/academy/workers/env` in the AWS console.
-- **No manual parameter creation allowed.** Use the bootstrap script only.
-- **No silent fallback allowed.** The script exits non-zero if any required variable is missing.
-- **Fail hard on missing config.** Fix `.env` (or use `-Interactive` to prompt), then re-run the script.
-
-Copy `.env.example` to `.env`, fill in values, then run the script. Use `-Overwrite` to update an existing parameter.
+- **No manual SSM creation or editing.** Use the bootstrap script only.
+- **Fail hard on missing config.** Scripts exit non-zero if required variables are missing.
 
 ---
 
