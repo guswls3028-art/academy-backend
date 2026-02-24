@@ -8,25 +8,20 @@ param(
     [string]$JobQueueName = "academy-video-batch-queue",
     [string]$JobDefName = "academy-video-ops-netprobe"
 )
-if ($OutputEncoding) { $OutputEncoding = [System.Text.Encoding]::UTF8 }
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 
 $ErrorActionPreference = "Stop"
-function ExecJson($argsArray) {
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $out = & aws @argsArray 2>&1
-    $exit = $LASTEXITCODE
-    $ErrorActionPreference = $prev
-    if ($exit -ne 0) { return $null }
-    if (-not $out) { return $null }
-    try { return ($out | ConvertFrom-Json) } catch { return $null }
-}
 
 $jobName = "netprobe-" + (Get-Date -Format "yyyyMMddHHmmss")
-$submit = ExecJson @("batch", "submit-job", "--job-name", $jobName, "--job-queue", $JobQueueName, "--job-definition", $JobDefName, "--region", $Region, "--output", "json")
+$submitOut = aws batch submit-job --job-name $jobName --job-queue $JobQueueName --job-definition $JobDefName --region $Region --output json 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "FAIL: submit-job failed." -ForegroundColor Red
+    if ($submitOut) { Write-Host $submitOut -ForegroundColor Gray }
+    exit 1
+}
+$submit = $submitOut | ConvertFrom-Json
 if (-not $submit -or -not $submit.jobId) {
-    Write-Host "FAIL: submit-job failed (job definition or queue missing?)." -ForegroundColor Red
+    Write-Host "FAIL: submit-job returned no jobId." -ForegroundColor Red
     exit 1
 }
 $jobId = $submit.jobId
@@ -35,7 +30,9 @@ Write-Host "Submitted jobId=$jobId" -ForegroundColor Cyan
 $maxWait = 300
 $elapsed = 0
 while ($elapsed -lt $maxWait) {
-    $desc = ExecJson @("batch", "describe-jobs", "--jobs", $jobId, "--region", $Region, "--output", "json")
+    $descOut = aws batch describe-jobs --jobs $jobId --region $Region --output json 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Host "  describe-jobs failed" -ForegroundColor Red; Start-Sleep -Seconds 10; $elapsed += 10; continue }
+    $desc = $descOut | ConvertFrom-Json
     $job = $desc.jobs[0]
     $status = $job.status
     Write-Host "  status=$status" -ForegroundColor Gray
