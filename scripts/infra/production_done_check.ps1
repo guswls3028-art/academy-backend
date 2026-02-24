@@ -9,14 +9,20 @@ param(
     [string]$JobQueueName = "academy-video-batch-queue",
     [string]$ApiVpcId = ""
 )
+try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $fail = 0
 
-function ExecJson($cmd) {
-    $out = Invoke-Expression $cmd 2>&1
+function ExecJson($argsArray) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = & aws @argsArray 2>&1
+    $exit = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($exit -ne 0) { return $null }
     if (-not $out) { return $null }
     try { return ($out | ConvertFrom-Json) } catch { return $null }
 }
