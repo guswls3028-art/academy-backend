@@ -189,15 +189,30 @@ Write-Host "[5] Call batch_video_setup.ps1" -ForegroundColor Cyan
 & (Join-Path $InfraPath "batch_video_setup.ps1") -Region $Region -VpcId $apiVpcId -SubnetIds $SubnetIds -SecurityGroupId $SecurityGroupId -EcrRepoUri $EcrRepoUri -ComputeEnvName $ComputeEnvName -JobQueueName $JobQueueName -JobDefName $WorkerJobDefName
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
-# --- 9) Verify and save state ---
-Write-Host "[6] Verify and save after_recreate_*.json" -ForegroundColor Cyan
-$ceOut = aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output json | ConvertFrom-Json
-$jqOut = aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output json | ConvertFrom-Json
+# --- 9) Read final state and deploy EventBridge with final queue name ---
+$finalStatePath = Join-Path $OutDir "batch_final_state.json"
+if (-not (Test-Path -LiteralPath $finalStatePath)) {
+    Write-Host "FAIL: batch_final_state.json not found after batch_video_setup." -ForegroundColor Red
+    exit 1
+}
+$finalState = Get-Content $finalStatePath -Raw | ConvertFrom-Json
+$FinalJobQueueName = $finalState.FinalJobQueueName
+$FinalJobQueueArn = $finalState.FinalJobQueueArn
+Write-Host "[6] EventBridge with JobQueueName=$FinalJobQueueName" -ForegroundColor Cyan
+& (Join-Path $InfraPath "eventbridge_deploy_video_scheduler.ps1") -Region $Region -JobQueueName $FinalJobQueueName
+if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: eventbridge_deploy_video_scheduler failed." -ForegroundColor Red; exit 1 }
+
+# --- 10) Verify and save state ---
+Write-Host "[7] Verify and save after_recreate_*.json" -ForegroundColor Cyan
+$ceOut = aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output json 2>&1 | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: describe-compute-environments failed." -ForegroundColor Red; exit 1 }
+$jqOut = aws batch describe-job-queues --job-queues $FinalJobQueueName --region $Region --output json 2>&1 | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: describe-job-queues failed." -ForegroundColor Red; exit 1 }
 $utf8 = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText((Join-Path $OutDir "after_recreate_ce.json"), ($ceOut | ConvertTo-Json -Depth 5), $utf8)
 [System.IO.File]::WriteAllText((Join-Path $OutDir "after_recreate_queue.json"), ($jqOut | ConvertTo-Json -Depth 5), $utf8)
 $ceObj = $ceOut.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Select-Object -First 1
-$qObj = $jqOut.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName } | Select-Object -First 1
+$qObj = $jqOut.jobQueues | Where-Object { $_.jobQueueName -eq $FinalJobQueueName } | Select-Object -First 1
 Write-Host "  CE: $($ceObj.computeEnvironmentName) status=$($ceObj.status) state=$($ceObj.state)" -ForegroundColor Green
-Write-Host "  Queue: $($qObj.jobQueueName) state=$($qObj.state)" -ForegroundColor Green
-Write-Host "DONE. Batch recreated in API VPC." -ForegroundColor Green
+Write-Host "  Queue: $($qObj.jobQueueName) state=$($qObj.state) (use this for run_netprobe and production_done_check)" -ForegroundColor Green
+Write-Host "DONE. Batch recreated in API VPC. JobQueueName=$FinalJobQueueName" -ForegroundColor Green
