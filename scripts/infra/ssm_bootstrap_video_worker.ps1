@@ -34,7 +34,9 @@ function Parse-EnvFile {
     param([string]$Path)
     $hash = @{}
     if (-not (Test-Path -LiteralPath $Path)) { return $hash }
-    foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+    $content = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+    if ($content.Length -ge 1 -and $content[0] -eq [char]0xFEFF) { $content = $content.Substring(1) }
+    foreach ($line in ($content -split "`r?`n")) {
         $line = $line.Trim()
         if ($line -match '^\s*#' -or $line -eq '') { continue }
         if ($line -match '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
