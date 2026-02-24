@@ -1,8 +1,23 @@
 # Video Batch Production Runbook
 
+## Option A: Batch in SAME VPC as API/RDS
+
+This runbook assumes Batch compute environment, queue, and job definitions are in the **same VPC** as the API and RDS. Use `recreate_batch_in_api_vpc.ps1` to create or recreate Batch in the API VPC.
+
+**Windows cp949:** For scripts that touch SSM or JSON with non-ASCII values, set UTF-8 before running:
+```powershell
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+# For Python commands that print to console:
+$env:PYTHONIOENCODING = "utf-8"
+```
+
+---
+
 ## 0. Environment Source of Truth
 
-**Canonical config:** `.env` at repository root (see `.env.example`). All required variables for API server, Batch worker, and Video ops jobs (reconcile, scan_stuck) are defined there.
+**.env is the source of truth; SSM is derived. No silent fallback.**
+
+Canonical config: `.env` at repository root (see `.env.example`). All required variables for API server, Batch worker, and Video ops jobs (reconcile, scan_stuck, netprobe) are defined there.
 
 **SSM as derived artifact:** Parameter `/academy/workers/env` is **derived only** from `.env` via:
 
