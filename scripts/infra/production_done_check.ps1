@@ -96,7 +96,7 @@ if (-not ($lgOps.logGroups | Where-Object { $_.logGroupName -eq "/aws/batch/acad
 
 # CloudWatch alarms (warn if missing)
 $alarmNames = @("academy-video-DeadJobs", "academy-video-UploadFailures", "academy-video-FailedJobs", "academy-video-BatchJobFailures", "academy-video-QueueRunnable")
-$cw = ExecJson @("cloudwatch", "describe-alarms", "--alarm-names", ($alarmNames -join " "), "--region", $Region, "--output", "json")
+$cw = ExecJson @("cloudwatch", "describe-alarms", "--alarm-names") + $alarmNames + @("--region", $Region, "--output", "json")
 $found = @(if ($cw.MetricAlarms) { $cw.MetricAlarms | ForEach-Object { $_.AlarmName } } else { @() })
 $missingAlarms = $alarmNames | Where-Object { $_ -notin $found }
 if ($missingAlarms.Count -gt 0) {
