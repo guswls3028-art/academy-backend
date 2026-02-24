@@ -1,7 +1,8 @@
 # ==============================================================================
 # Discover Batch state: compute environments, job queues, job definitions (worker + ops).
 # Saves docs/deploy/actual_state/batch_state.json. Shows current CE VpcId vs desired target VpcId.
-# Usage: .\scripts\infra\discover_batch_state.ps1 -Region ap-northeast-2 [-TargetVpcId vpc-xxx]
+# Usage: .\scripts\infra\discover_batch_state.ps1 -Region ap-northeast-2 [-TargetVpcId vpc-0831a2484f9b114c2]
+#   -TargetVpcId: actual VPC ID (e.g. from discover_api_network.ps1), not a literal like <api_vpc_id> (PowerShell treats < as redirection).
 # ==============================================================================
 
 param(
