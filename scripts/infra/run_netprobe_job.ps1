@@ -35,7 +35,7 @@ Write-Host "Submitted jobId=$jobId" -ForegroundColor Cyan
 $maxWait = 300
 $elapsed = 0
 while ($elapsed -lt $maxWait) {
-    $desc = ExecJson "aws batch describe-jobs --jobs $jobId --region $Region --output json"
+    $desc = ExecJson @("batch", "describe-jobs", "--jobs", $jobId, "--region", $Region, "--output", "json")
     $job = $desc.jobs[0]
     $status = $job.status
     Write-Host "  status=$status" -ForegroundColor Gray
