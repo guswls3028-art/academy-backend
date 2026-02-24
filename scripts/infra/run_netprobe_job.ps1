@@ -49,6 +49,12 @@ while ($elapsed -lt $maxWait) {
     if (-not $descJson) { $descJson = ($descOut | Out-String).Trim() }
     $desc = $null
     try { $desc = $descJson | ConvertFrom-Json } catch {}
+    if (-not $desc -or -not $desc.jobs -or $desc.jobs.Count -eq 0) {
+        Write-Host "  describe-jobs: no jobs in response" -ForegroundColor Red
+        Start-Sleep -Seconds 10
+        $elapsed += 10
+        continue
+    }
     $job = $desc.jobs[0]
     $status = $job.status
     Write-Host "  status=$status" -ForegroundColor Gray
