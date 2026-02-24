@@ -18,6 +18,7 @@ param(
     [string]$JobDefName = "academy-video-batch-jobdef",
     [string]$LogsGroup = "/aws/batch/academy-video-worker"
 )
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -236,9 +237,15 @@ if (-not ($jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName })) {
                 if ($s -eq "DISABLED") { break }
             }
         }
-        $ceOrderJson = '[{"order":1,"computeEnvironment":"' + $ComputeEnvName + '"}]'
+        $computeEnvOrder = @(
+            @{
+                order = 1
+                computeEnvironment = $ComputeEnvName
+            }
+        )
+        $computeEnvOrderJson = $computeEnvOrder | ConvertTo-Json -Compress
         $ErrorActionPreference = "Continue"
-        aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order $ceOrderJson --region $Region 2>&1 | Out-Null
+        aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order "$computeEnvOrderJson" --region $Region 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not update job queue computeEnvironmentOrder." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
         $ErrorActionPreference = $prevErr
         aws batch update-job-queue --job-queue $JobQueueName --state ENABLED --region $Region 2>&1 | Out-Null
@@ -265,27 +272,50 @@ $fileUri = "file://" + ($jdFile -replace '\\', '/')
 aws batch register-job-definition --cli-input-json $fileUri --region $Region
 Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
 
-# 5b) Ops Job Definitions (reconcile, scan_stuck) — same image as worker, log group /aws/batch/academy-video-ops
-Write-Host "`n[5b] Register Ops Job Definitions: academy-video-ops-reconcile, academy-video-ops-scanstuck" -ForegroundColor Cyan
-$opsTemplates = @(
-    @{ Path = "batch\video_ops_job_definition_reconcile.json"; Name = "academy-video-ops-reconcile" },
-    @{ Path = "batch\video_ops_job_definition_scanstuck.json"; Name = "academy-video-ops-scanstuck" },
-    @{ Path = "batch\video_ops_job_definition_netprobe.json"; Name = "academy-video-ops-netprobe" }
+# 5b) Ops Job Definitions (reconcile, scan_stuck, netprobe) — same image as worker, log group /aws/batch/academy-video-ops
+Write-Host "`n[5b] Register Ops Job Definitions: academy-video-ops-reconcile, academy-video-ops-scanstuck, academy-video-ops-netprobe" -ForegroundColor Cyan
+$opsJobDefs = @(
+    @{ jobDefinitionName = "academy-video-ops-reconcile"; command = @("python", "manage.py", "reconcile_batch_video_jobs"); memory = 2048; timeoutSec = 900; streamPrefix = "ops" },
+    @{ jobDefinitionName = "academy-video-ops-scanstuck"; command = @("python", "manage.py", "scan_stuck_video_jobs"); memory = 2048; timeoutSec = 900; streamPrefix = "ops" },
+    @{ jobDefinitionName = "academy-video-ops-netprobe"; command = @("python", "manage.py", "netprobe"); memory = 512; timeoutSec = 120; streamPrefix = "netprobe" }
 )
-foreach ($ops in $opsTemplates) {
-    $opsJdPath = Join-Path $InfraPath $ops.Path
-    if (-not (Test-Path -LiteralPath $opsJdPath)) { Write-Host "  SKIP: $($ops.Path) not found" -ForegroundColor Yellow; continue }
-    $opsContent = Get-Content $opsJdPath -Raw
-    $opsContent = $opsContent -replace "PLACEHOLDER_ECR_URI", $EcrRepoUri
-    $opsContent = $opsContent -replace "PLACEHOLDER_JOB_ROLE_ARN", $jobRoleArn
-    $opsContent = $opsContent -replace "PLACEHOLDER_EXECUTION_ROLE_ARN", $executionRoleArn
-    $opsContent = $opsContent -replace "PLACEHOLDER_REGION", $Region
-    $opsFile = Join-Path $RepoRoot "batch_ops_jd_$($ops.Name)_temp.json"
-    [System.IO.File]::WriteAllText($opsFile, $opsContent, $utf8NoBom)
-    $opsUri = "file://" + ($opsFile -replace '\\', '/')
-    aws batch register-job-definition --cli-input-json $opsUri --region $Region | Out-Null
-    Remove-Item $opsFile -Force -ErrorAction SilentlyContinue
-    Write-Host "  Registered $($ops.Name)" -ForegroundColor Gray
+foreach ($ops in $opsJobDefs) {
+    $containerProps = @{
+        image = $EcrRepoUri
+        vcpus = 1
+        memory = $ops.memory
+        command = $ops.command
+        jobRoleArn = $jobRoleArn
+        executionRoleArn = $executionRoleArn
+        resourceRequirements = @()
+        logConfiguration = @{
+            logDriver = "awslogs"
+            options = @{
+                "awslogs-group" = "/aws/batch/academy-video-ops"
+                "awslogs-region" = $Region
+                "awslogs-stream-prefix" = $ops.streamPrefix
+            }
+        }
+        environment = @()
+        secrets = @()
+        mountPoints = @()
+        volumes = @()
+    }
+    $jobDef = @{
+        jobDefinitionName = $ops.jobDefinitionName
+        type = "container"
+        containerProperties = $containerProps
+        platformCapabilities = @("EC2")
+        retryStrategy = @{ attempts = 1 }
+        timeout = @{ attemptDurationSeconds = $ops.timeoutSec }
+    }
+    $tmpFile = Join-Path $RepoRoot "batch_ops_jd_$($ops.jobDefinitionName)_temp.json"
+    $jobDef | ConvertTo-Json -Depth 10 | Set-Content -Path $tmpFile -Encoding UTF8
+    $tmpUri = "file://" + ($tmpFile -replace '\\', '/')
+    aws batch register-job-definition --cli-input-json $tmpUri --region $Region | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: register-job-definition $($ops.jobDefinitionName)" -ForegroundColor Red; Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue; exit 1 }
+    Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
+    Write-Host "  Registered $($ops.jobDefinitionName)" -ForegroundColor Gray
 }
 
 # 6) Validation
