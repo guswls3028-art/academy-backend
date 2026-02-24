@@ -5,7 +5,7 @@
 
 param(
     [string]$Region = "ap-northeast-2",
-    [string]$ComputeEnvName = "academy-video-batch-ce-v3",
+    [string]$ComputeEnvName = "academy-video-batch-ce",
     [string]$JobQueueName = "academy-video-batch-queue",
     [string]$ApiVpcId = ""
 )
