@@ -60,7 +60,7 @@ if ($jdContent.containerProperties.logConfiguration.options."awslogs-group" -ne 
 Write-Host "OK: worker jobdef name and log group" -ForegroundColor Green
 
 # Ops jobdef files
-foreach ($name in @($OpsReconcileName, $OpsScanstuckName)) {
+foreach ($name in @($OpsReconcileName, $OpsScanstuckName, "academy-video-ops-netprobe")) {
     $base = $name -replace "academy-video-ops-", ""
     $path = Join-Path $InfraPath "batch\video_ops_job_definition_$base.json"
     if (-not (Test-Path -LiteralPath $path)) {
