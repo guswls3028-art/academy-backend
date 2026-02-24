@@ -310,7 +310,8 @@ foreach ($ops in $opsJobDefs) {
         timeout = @{ attemptDurationSeconds = $ops.timeoutSec }
     }
     $tmpFile = Join-Path $RepoRoot "batch_ops_jd_$($ops.jobDefinitionName)_temp.json"
-    $jobDef | ConvertTo-Json -Depth 10 | Set-Content -Path $tmpFile -Encoding UTF8
+    $jobDefJson = $jobDef | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($tmpFile, $jobDefJson, $utf8NoBom)
     $tmpUri = "file://" + ($tmpFile -replace '\\', '/')
     aws batch register-job-definition --cli-input-json $tmpUri --region $Region | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: register-job-definition $($ops.jobDefinitionName)" -ForegroundColor Red; Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue; exit 1 }
