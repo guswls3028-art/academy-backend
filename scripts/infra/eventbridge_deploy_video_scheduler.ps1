@@ -51,9 +51,14 @@ $reconcileTargetJson = $reconcileTargetJson -replace "PLACEHOLDER_EVENTBRIDGE_BA
 $reconcileTargetFile = Join-Path $RepoRoot "eventbridge_reconcile_target_temp.json"
 $utf8 = New-Object System.Text.UTF8Encoding $false
 $reconcileTargetObj = $reconcileTargetJson | ConvertFrom-Json
-$reconcileInput = @{ Rule = $ReconcileRuleName; Targets = $reconcileTargetObj } | ConvertTo-Json -Depth 10 -Compress
+$reconcileTargetsArray = @($reconcileTargetObj)
+$reconcileInput = @{ Rule = $ReconcileRuleName; Targets = $reconcileTargetsArray } | ConvertTo-Json -Depth 10 -Compress
 [System.IO.File]::WriteAllText($reconcileTargetFile, $reconcileInput, $utf8)
-aws events put-targets --cli-input-json "file://$($reconcileTargetFile -replace '\\','/')" --region $Region
+$prevEv = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+aws events put-targets --cli-input-json "file://$($reconcileTargetFile -replace '\\','/')" --region $Region 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: put-targets for $ReconcileRuleName failed." -ForegroundColor Red; Remove-Item $reconcileTargetFile -Force -ErrorAction SilentlyContinue; $ErrorActionPreference = $prevEv; exit 1 }
+$ErrorActionPreference = $prevEv
 Remove-Item $reconcileTargetFile -Force -ErrorAction SilentlyContinue
 
 # Scan-stuck rule + Batch target
@@ -66,9 +71,13 @@ $scanstuckTargetJson = $scanstuckTargetJson -replace "PLACEHOLDER_JOB_QUEUE_ARN"
 $scanstuckTargetJson = $scanstuckTargetJson -replace "PLACEHOLDER_EVENTBRIDGE_BATCH_ROLE_ARN", $EventsRoleArn
 $scanstuckTargetFile = Join-Path $RepoRoot "eventbridge_scanstuck_target_temp.json"
 $scanstuckTargetObj = $scanstuckTargetJson | ConvertFrom-Json
-$scanstuckInput = @{ Rule = $ScanStuckRuleName; Targets = $scanstuckTargetObj } | ConvertTo-Json -Depth 10 -Compress
+$scanstuckTargetsArray = @($scanstuckTargetObj)
+$scanstuckInput = @{ Rule = $ScanStuckRuleName; Targets = $scanstuckTargetsArray } | ConvertTo-Json -Depth 10 -Compress
 [System.IO.File]::WriteAllText($scanstuckTargetFile, $scanstuckInput, $utf8)
-aws events put-targets --cli-input-json "file://$($scanstuckTargetFile -replace '\\','/')" --region $Region
+$ErrorActionPreference = "Continue"
+aws events put-targets --cli-input-json "file://$($scanstuckTargetFile -replace '\\','/')" --region $Region 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: put-targets for $ScanStuckRuleName failed." -ForegroundColor Red; Remove-Item $scanstuckTargetFile -Force -ErrorAction SilentlyContinue; $ErrorActionPreference = $prevEv; exit 1 }
+$ErrorActionPreference = $prevEv
 Remove-Item $scanstuckTargetFile -Force -ErrorAction SilentlyContinue
 
 Write-Host "Done. EventBridge video scheduler (Batch only) deployed." -ForegroundColor Green
