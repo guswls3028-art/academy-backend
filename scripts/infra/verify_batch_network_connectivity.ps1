@@ -98,13 +98,13 @@ foreach ($sgId in $sgIds) {
     Write-Host "  Outbound:" ; $g.IpPermissionsEgress | ForEach-Object { Write-Host "    $($_.FromPort)-$($_.ToPort) $($_.IpProtocol) $($_.UserIdGroupPairs.GroupId -join ',') $($_.IpRanges.CidrIp -join ',')" }
 }
 
-# SSM to get DB_HOST, REDIS_HOST, API_BASE_URL
+# SSM to get DB_HOST, REDIS_HOST, API_BASE_URL (fetch as JSON to avoid --output text truncation/encoding)
 $ssmRaw = $null
 $ssmExit = 0
 try {
     $prevErrAction = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $ssmRaw = aws ssm get-parameter --name "/academy/workers/env" --region $Region --with-decryption --query "Parameter.Value" --output text 2>&1
+    $ssmRaw = aws ssm get-parameter --name "/academy/workers/env" --region $Region --with-decryption --output json 2>&1
     $ssmExit = $LASTEXITCODE
     $ErrorActionPreference = $prevErrAction
 } catch {
@@ -113,16 +113,22 @@ try {
 }
 if ($ssmExit -ne 0) { $ssmRaw = $null }
 if ($ssmRaw -is [System.Management.Automation.ErrorRecord]) { $ssmRaw = $null }
-if ($ssmRaw -is [object[]]) { $ssmRaw = ($ssmRaw | Where-Object { $_ -is [string] } | Select-Object -First 1) }
-if ($ssmRaw -isnot [string]) { $ssmRaw = $null }
 
 $dbHost = $null; $redisHost = $null; $apiBaseUrl = $null; $r2Endpoint = $null
 if ($ssmRaw) {
-    $ssmJson = $ssmRaw | ConvertFrom-Json
-    $dbHost = $ssmJson.DB_HOST
-    $redisHost = $ssmJson.REDIS_HOST
-    $apiBaseUrl = $ssmJson.API_BASE_URL
-    $r2Endpoint = $ssmJson.R2_ENDPOINT
+    try {
+        $ssmOuter = $ssmRaw | ConvertFrom-Json
+        $valueStr = $ssmOuter.Parameter.Value
+        if ($valueStr -and ($valueStr -is [string])) {
+            $ssmJson = $valueStr | ConvertFrom-Json
+            $dbHost = $ssmJson.DB_HOST
+            $redisHost = $ssmJson.REDIS_HOST
+            $apiBaseUrl = $ssmJson.API_BASE_URL
+            $r2Endpoint = $ssmJson.R2_ENDPOINT
+        }
+    } catch {
+        Write-Host "  WARN: SSM parameter /academy/workers/env could not be parsed as JSON (hostnames will be empty)." -ForegroundColor Yellow
+    }
 }
 
 Write-Section "SECTION 3 — SSM PARAMETER CONTENT (hostnames only)"
