@@ -15,9 +15,12 @@ $ErrorActionPreference = "Stop"
 $jobName = "netprobe-" + (Get-Date -Format "yyyyMMddHHmmss")
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-$submitOut = aws batch submit-job --job-name $jobName --job-queue $JobQueueName --job-definition $JobDefName --region $Region --output json 2>&1
+try {
+    $submitOut = cmd /c "aws batch submit-job --job-name $jobName --job-queue $JobQueueName --job-definition $JobDefName --region $Region --output json 2>&1"
+} finally {
+    $ErrorActionPreference = $prevErr
+}
 $exitCode = $LASTEXITCODE
-$ErrorActionPreference = $prevErr
 if ($exitCode -ne 0) {
     Write-Host "FAIL: submit-job failed (exit $exitCode)." -ForegroundColor Red
     if ($submitOut) { Write-Host ($submitOut | Out-String) -ForegroundColor Gray }
