@@ -14,7 +14,7 @@ $AlarmNames = @(
     "academy-video-QueueRunnable"
 )
 $r = aws cloudwatch describe-alarms --alarm-names $AlarmNames --region $Region --output json 2>&1 | ConvertFrom-Json
-$found = @($r.MetricAlarms | ForEach-Object { $_.AlarmName })
+$found = @(if ($r.MetricAlarms) { $r.MetricAlarms | ForEach-Object { $_.AlarmName } } else { @() })
 foreach ($name in $AlarmNames) {
     $exists = $found -contains $name
     Write-Host "  $name : $(if ($exists) { 'EXISTS' } else { 'MISSING' })"
