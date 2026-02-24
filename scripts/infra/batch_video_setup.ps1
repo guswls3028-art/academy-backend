@@ -215,15 +215,10 @@ if (-not ($jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName })) {
                 if ($s -eq "DISABLED") { break }
             }
         }
-        $computeEnvOrder = @(
-            @{
-                order = 1
-                computeEnvironment = $ComputeEnvName
-            }
-        )
-        $computeEnvOrderJson = $computeEnvOrder | ConvertTo-Json -Compress
+        # AWS CLI expects lowercase keys order/computeEnvironment (PowerShell ConvertTo-Json uses PascalCase)
+        $computeEnvOrderJson = '[{"order":1,"computeEnvironment":"' + $ComputeEnvName + '"}]'
         $ErrorActionPreference = "Continue"
-        aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order "$computeEnvOrderJson" --region $Region 2>&1 | Out-Null
+        aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order $computeEnvOrderJson --region $Region 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not update job queue computeEnvironmentOrder." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
         $ErrorActionPreference = $prevErr
         aws batch update-job-queue --job-queue $JobQueueName --state ENABLED --region $Region 2>&1 | Out-Null
