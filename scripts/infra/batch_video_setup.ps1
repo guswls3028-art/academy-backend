@@ -256,8 +256,13 @@ if (-not $queueExists) {
             }
         }
         $orderObj = @(@{ order = 1; computeEnvironment = $ceArn })
-        $computeEnvOrderJson = $orderObj | ConvertTo-Json -Compress
-        aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order $computeEnvOrderJson --region $Region 2>&1 | Out-Null
+        $updatePayload = @{ jobQueue = $JobQueueName; computeEnvironmentOrder = $orderObj }
+        $updateFile = Join-Path $RepoRoot "batch_update_queue_temp.json"
+        $updateJson = $updatePayload | ConvertTo-Json -Depth 5
+        [System.IO.File]::WriteAllText($updateFile, $updateJson, (New-Object System.Text.UTF8Encoding $false))
+        $updateUri = "file://" + ($updateFile -replace '\\', '/')
+        aws batch update-job-queue --cli-input-json $updateUri --region $Region 2>&1 | Out-Null
+        Remove-Item $updateFile -Force -ErrorAction SilentlyContinue
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  update-job-queue failed; creating new queue academy-video-batch-queue-ce." -ForegroundColor Yellow
             $newQueueName = "academy-video-batch-queue-ce"
