@@ -115,7 +115,8 @@ if ($ssmRaw -is [System.Management.Automation.ErrorRecord]) { $ssmRaw = $null }
 $dbHost = $null; $redisHost = $null; $apiBaseUrl = $null; $r2Endpoint = $null
 if ($ssmRaw) {
     try {
-        $ssmOuter = $ssmRaw | ConvertFrom-Json
+        $ssmStr = ($ssmRaw | Out-String).Trim()
+        $ssmOuter = $ssmStr | ConvertFrom-Json
         $valueStr = $ssmOuter.Parameter.Value
         if ($valueStr -and ($valueStr -is [string])) {
             $ssmJson = $valueStr | ConvertFrom-Json
@@ -206,12 +207,15 @@ $runJobId = $null
 if ($jobs.jobSummaryList.Count -gt 0) { $runJobId = $jobs.jobSummaryList[0].jobId }
 if (-not $runJobId) {
     Write-Host "  NO LIVE INSTANCE; submitting netprobe job for connectivity proof..." -ForegroundColor Yellow
-    $npSubmit = aws batch submit-job --job-name "netprobe-verify-$((Get-Date).ToString('yyyyMMddHHmmss'))" --job-queue academy-video-batch-queue --job-definition academy-video-ops-netprobe --region $Region --output json 2>&1 | ConvertFrom-Json
+    $npRaw = aws batch submit-job --job-name "netprobe-verify-$((Get-Date).ToString('yyyyMMddHHmmss'))" --job-queue academy-video-batch-queue --job-definition academy-video-ops-netprobe --region $Region --output json 2>&1
+    $npStr = ($npRaw | Out-String).Trim()
+    $npSubmit = $npStr | ConvertFrom-Json
     $npJobId = $npSubmit.jobId
     if ($npJobId) {
         $npWait = 0
         while ($npWait -lt 180) {
-            $npDesc = aws batch describe-jobs --jobs $npJobId --region $Region --output json | ConvertFrom-Json
+            $npDescRaw = aws batch describe-jobs --jobs $npJobId --region $Region --output json 2>&1
+            $npDesc = ($npDescRaw | Out-String).Trim() | ConvertFrom-Json
             $npStatus = $npDesc.jobs[0].status
             if ($npStatus -eq "SUCCEEDED") {
                 $npCont = $npDesc.jobs[0].container
@@ -271,7 +275,7 @@ if ($epServices -notcontains "ecr.api") { Write-Host "  - VPC endpoint ecr.api m
 if ($epServices -notcontains "logs") { Write-Host "  - VPC endpoint logs missing (CloudWatch Logs may fail in private subnet)" }
 
 Write-Host "`nDRIFT LIST (repo vs deployed):" -ForegroundColor Yellow
-if ($ComputeEnvName -ne "academy-video-batch-ce-v3") { Write-Host "  - CE name: $ComputeEnvName (repo default: academy-video-batch-ce-v3)" }
+if ($ComputeEnvName -ne "academy-video-batch-ce") { Write-Host "  - CE name: $ComputeEnvName (production default: academy-video-batch-ce)" }
 
 Write-Host "`nFINAL VERDICT:" -ForegroundColor Cyan
 $breakCount = 0
