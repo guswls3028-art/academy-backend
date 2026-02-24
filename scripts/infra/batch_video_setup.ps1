@@ -135,6 +135,7 @@ Write-Host "`n[3] Ensure Compute Environment: $ComputeEnvName" -ForegroundColor 
 $subnetList = ($SubnetIds -join '","')
 $ceJsonPath = Join-Path $InfraPath "batch\video_compute_env.json"
 $ceContent = Get-Content $ceJsonPath -Raw
+$ceContent = $ceContent -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $ComputeEnvName
 $ceContent = $ceContent -replace "PLACEHOLDER_SERVICE_ROLE_ARN", $serviceRoleArn
 $ceContent = $ceContent -replace "PLACEHOLDER_INSTANCE_PROFILE_ARN", $instanceProfileArn
 $ceContent = $ceContent -replace "PLACEHOLDER_SECURITY_GROUP_ID", $SecurityGroupId
