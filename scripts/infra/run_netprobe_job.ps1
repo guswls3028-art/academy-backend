@@ -29,6 +29,9 @@ if ($exitCode -ne 0) {
 # stderr may be merged; take the line that looks like JSON
 $jsonLine = $submitOut
 if ($submitOut -is [array]) { $jsonLine = ($submitOut | Where-Object { $_ -match '^\s*\{' } | Select-Object -First 1) }
+if (-not $jsonLine -and $submitOut -is [string] -and $submitOut -match '\{') {
+    $jsonLine = ($submitOut -split "`r?`n" | Where-Object { $_ -match '^\s*\{' } | Select-Object -First 1)
+}
 if (-not $jsonLine) { $jsonLine = ($submitOut | Out-String).Trim() }
 $submit = $null
 try { $submit = $jsonLine | ConvertFrom-Json } catch {}
