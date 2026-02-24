@@ -4,13 +4,14 @@
 # Usage: .\scripts\infra\ssm_dump_video_worker_env.ps1 -Region ap-northeast-2 [-OutFile .env.ssm.verify]
 # ==============================================================================
 
-try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
-
 param(
     [Parameter(Mandatory=$true)][string]$Region,
     [string]$OutFile = "",
     [string]$ParamName = "/academy/workers/env"
 )
+
+# Windows cp949: prefer UTF-8
+try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
