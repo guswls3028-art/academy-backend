@@ -201,7 +201,33 @@ $jobs = aws batch list-jobs --job-queue academy-video-batch-queue --job-status R
 $runJobId = $null
 if ($jobs.jobSummaryList.Count -gt 0) { $runJobId = $jobs.jobSummaryList[0].jobId }
 if (-not $runJobId) {
-    Write-Host "  NO LIVE INSTANCE TO VERIFY RUNTIME CONNECTIVITY" -ForegroundColor Yellow
+    Write-Host "  NO LIVE INSTANCE; submitting netprobe job for connectivity proof..." -ForegroundColor Yellow
+    $npSubmit = aws batch submit-job --job-name "netprobe-verify-$((Get-Date).ToString('yyyyMMddHHmmss'))" --job-queue academy-video-batch-queue --job-definition academy-video-ops-netprobe --region $Region --output json 2>&1 | ConvertFrom-Json
+    $npJobId = $npSubmit.jobId
+    if ($npJobId) {
+        $npWait = 0
+        while ($npWait -lt 180) {
+            $npDesc = aws batch describe-jobs --jobs $npJobId --region $Region --output json | ConvertFrom-Json
+            $npStatus = $npDesc.jobs[0].status
+            if ($npStatus -eq "SUCCEEDED") {
+                $npCont = $npDesc.jobs[0].container
+                $npLogStream = $npCont.logStreamName
+                $npGroup = $npCont.logConfiguration.options."awslogs-group"
+                Write-Fact "ACTIVE CONNECTIVITY PROOF (netprobe)" "SUCCEEDED jobId=$npJobId"
+                if ($npLogStream -and $npGroup) {
+                    $npEvents = aws logs get-log-events --log-group-name $npGroup --log-stream-name $npLogStream --limit 50 --region $Region --output json 2>&1 | ConvertFrom-Json
+                    $npEvents.events | ForEach-Object { Write-Host "    $($_.message)" }
+                }
+                break
+            }
+            if ($npStatus -eq "FAILED") {
+                Write-Host "  Netprobe job FAILED: $npJobId" -ForegroundColor Red
+                break
+            }
+            Start-Sleep -Seconds 8
+            $npWait += 8
+        }
+    } else { Write-Host "  Netprobe submit failed." -ForegroundColor Red }
 } else {
     $jobDetail = aws batch describe-jobs --jobs $runJobId --region $Region --output json | ConvertFrom-Json
     $cont = $jobDetail.jobs[0].container
