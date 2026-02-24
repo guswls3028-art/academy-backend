@@ -207,7 +207,9 @@ if ($redisSgId) {
 Write-Fact "Batch SG allowed to Redis (6379)" $(if ($batchAllowedRedis) { "ALLOWED" } elseif (-not $redisSgId) { "UNKNOWN" } else { "NOT ALLOWED" })
 
 Write-Section "SECTION 4 — ACTIVE CONNECTIVITY PROOF"
-$jobs = aws batch list-jobs --job-queue academy-video-batch-queue --job-status RUNNING --region $Region --output json 2>&1 | ConvertFrom-Json
+$jobsRaw = aws batch list-jobs --job-queue academy-video-batch-queue --job-status RUNNING --region $Region --output json 2>&1
+$jobsStr = ($jobsRaw | Out-String).Trim()
+$jobs = $jobsStr | ConvertFrom-Json
 $runJobId = $null
 if ($jobs.jobSummaryList.Count -gt 0) { $runJobId = $jobs.jobSummaryList[0].jobId }
 if (-not $runJobId) {
