@@ -28,8 +28,7 @@ $RequiredKeys = @(
     "API_BASE_URL", "INTERNAL_WORKER_TOKEN",
     "REDIS_HOST", "REDIS_PORT"
 )
-# Optional keys (merge from env file)
-$OptionalKeys = @("REDIS_PASSWORD", "R2_PUBLIC_BASE_URL", "R2_PREFIX", "VIDEO_BATCH_JOB_QUEUE", "VIDEO_BATCH_JOB_DEFINITION", "DJANGO_SETTINGS_MODULE")
+$OptionalKeys = @("REDIS_PASSWORD", "R2_PUBLIC_BASE_URL", "R2_PREFIX", "VIDEO_BATCH_JOB_QUEUE", "VIDEO_BATCH_JOB_DEFINITION")
 
 function Parse-EnvFile {
     param([string]$Path)
