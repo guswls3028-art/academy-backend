@@ -74,6 +74,37 @@ Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-o
 | EventBridge rule (scan-stuck) | `scripts/infra/eventbridge_deploy_video_scheduler.ps1` | Batch target academy-video-ops-scanstuck |
 | CloudWatch alarms | `scripts/infra/cloudwatch_deploy_video_alarms.ps1` | Pass `-Region`, `-JobQueueName`; optional `-SnsTopicArn` |
 
+### One-shot execution (copy-paste PowerShell)
+
+Run from repository root. Replace `<acct>` with your AWS account ID (e.g. `809466760795`). Ensure `.env` exists and is filled.
+
+```powershell
+# Windows cp949 / SSM JSON
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+
+# a) .env prepared (copy from .env.example and fill required keys)
+
+# b) SSM bootstrap (source of truth -> SSM JSON)
+.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite
+
+# c) Batch in API VPC
+$ecrUri = "<acct>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest"
+.\scripts\infra\recreate_batch_in_api_vpc.ps1 -Region ap-northeast-2 -EcrRepoUri $ecrUri
+
+# d) EventBridge
+$q = (Get-Content docs\deploy\actual_state\batch_final_state.json -Raw | ConvertFrom-Json).FinalJobQueueName
+.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName $q
+
+# e) CloudWatch alarms
+.\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName $q
+
+# f) Netprobe + production done check
+.\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName $q
+.\scripts\infra\production_done_check.ps1 -Region ap-northeast-2
+```
+
+All steps must exit 0. Final line must show `PRODUCTION DONE CHECK: PASS`.
+
 ### Deploy order (exact sequence — Option A, copy/paste runnable)
 
 Run in a **fresh PowerShell session** from the repository root. Ensure `.env` exists (copy from `.env.example` and fill required keys including `AWS_DEFAULT_REGION=ap-northeast-2`).
