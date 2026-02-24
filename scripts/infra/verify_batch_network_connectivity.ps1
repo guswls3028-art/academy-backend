@@ -209,9 +209,10 @@ Write-Fact "Batch SG allowed to Redis (6379)" $(if ($batchAllowedRedis) { "ALLOW
 Write-Section "SECTION 4 — ACTIVE CONNECTIVITY PROOF"
 $jobsRaw = aws batch list-jobs --job-queue academy-video-batch-queue --job-status RUNNING --region $Region --output json 2>&1
 $jobsStr = ($jobsRaw | Out-String).Trim()
-$jobs = $jobsStr | ConvertFrom-Json
+$jobs = $null
+try { $jobs = $jobsStr | ConvertFrom-Json } catch {}
 $runJobId = $null
-if ($jobs.jobSummaryList.Count -gt 0) { $runJobId = $jobs.jobSummaryList[0].jobId }
+if ($jobs -and $jobs.jobSummaryList -and $jobs.jobSummaryList.Count -gt 0) { $runJobId = $jobs.jobSummaryList[0].jobId }
 if (-not $runJobId) {
     Write-Host "  NO LIVE INSTANCE; submitting netprobe job for connectivity proof..." -ForegroundColor Yellow
     $npRaw = aws batch submit-job --job-name "netprobe-verify-$((Get-Date).ToString('yyyyMMddHHmmss'))" --job-queue academy-video-batch-queue --job-definition academy-video-ops-netprobe --region $Region --output json 2>&1
