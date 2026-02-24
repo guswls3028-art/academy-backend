@@ -219,6 +219,7 @@ if (-not ($jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName })) {
     $queueCeName = $queueCe -replace '^.*/', ''
     if ($queueCeName -ne $ComputeEnvName) {
         Write-Host "  Job queue points to CE=$queueCeName; updating to $ComputeEnvName (auto-fix)." -ForegroundColor Yellow
+        $prevErr = $ErrorActionPreference
         $qState = $jq.jobQueues[0].state
         if ($qState -eq "ENABLED") {
             $prevErr = $ErrorActionPreference
