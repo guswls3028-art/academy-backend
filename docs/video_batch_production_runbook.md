@@ -77,9 +77,46 @@ Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-o
 | EventBridge rule (scan-stuck) | `scripts/infra/eventbridge_deploy_video_scheduler.ps1` | Batch target academy-video-ops-scanstuck |
 | CloudWatch alarms | `scripts/infra/cloudwatch_deploy_video_alarms.ps1` | Pass `-Region`, `-JobQueueName`; optional `-SnsTopicArn` |
 
-### Deploy order
+### Deploy order (exact sequence — Option A, copy/paste runnable)
 
-1. **ECR (no manual repo creation):**  
+**a) Fill .env from .env.example**  
+Copy `.env.example` to `.env` and set all required keys (see section 0). No silent fallback.
+
+**b) SSM bootstrap**  
+```powershell
+.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite
+```
+Expected: `OK: /academy/workers/env written successfully` and `ParameterVersion: <N>`.
+
+**c) Recreate Batch in API VPC (Option A)**  
+```powershell
+$ecrUri = "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest"
+.\scripts\infra\recreate_batch_in_api_vpc.ps1 -Region ap-northeast-2 -EcrRepoUri $ecrUri
+```
+If replacing existing Batch in another VPC: add `-CleanupOld` (only when no RUNNING/RUNNABLE jobs).  
+Expected: `DONE. Batch recreated in API VPC.`
+
+**d) EventBridge**  
+```powershell
+.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+```
+
+**e) CloudWatch alarms**  
+```powershell
+.\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+```
+Optional: `-SnsTopicArn "arn:aws:sns:ap-northeast-2:809466760795:topic"`
+
+**f) Netprobe and production done check**  
+```powershell
+.\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+.\scripts\infra\production_done_check.ps1 -Region ap-northeast-2
+```
+Expected: `PRODUCTION DONE CHECK: PASS`.
+
+---
+
+### Deploy order (alternative: manual)  
    `.\scripts\infra\ecr_bootstrap.ps1 -Region ap-northeast-2`  
    Use output ECR URI for step 2.
 
