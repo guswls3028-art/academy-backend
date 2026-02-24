@@ -198,7 +198,13 @@ Expected: `PRODUCTION DONE CHECK: PASS`.
   `.\scripts\infra\validate_repo_infra_names.ps1`
 
 - **Network connectivity (and netprobe if no live instance):**  
-  `.\scripts\infra\verify_batch_network_connectivity.ps1 -Region ap-northeast-2`
+  `.\scripts\infra\verify_batch_network_connectivity.ps1 -Region ap-northeast-2`  
+  Validates CE `academy-video-batch-ce` (API VPC) by default.
+
+- **Discover Batch state (CE vs target VPC):**  
+  `.\scripts\infra\discover_api_network.ps1 -Region ap-northeast-2` to get API VpcId, then:  
+  `.\scripts\infra\discover_batch_state.ps1 -Region ap-northeast-2 -TargetVpcId vpc-0831a2484f9b114c2`  
+  Use the **actual** VPC ID (e.g. from the first command's output). Do not use a literal placeholder like `<api_vpc_id>` — PowerShell treats `<` as redirection.
 
 - **Production done (all checks + netprobe):**  
   `.\scripts\infra\production_done_check.ps1 -Region ap-northeast-2`
