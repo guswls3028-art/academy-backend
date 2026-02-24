@@ -261,14 +261,11 @@ if (-not $queueExists) {
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  update-job-queue failed; creating new queue academy-video-batch-queue-ce." -ForegroundColor Yellow
             $newQueueName = "academy-video-batch-queue-ce"
-            $newJq = @{
-                jobQueueName = $newQueueName
-                state = "ENABLED"
-                priority = 1
-                computeEnvironmentOrder = @(@{ order = 1; computeEnvironment = $ceArn })
-            }
+            $newJqContent = Get-Content (Join-Path $InfraPath "batch\video_job_queue.json") -Raw
+            $newJqContent = $newJqContent -replace "academy-video-batch-queue", $newQueueName
+            $newJqContent = $newJqContent -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $ceArn
             $newJqFile = Join-Path $RepoRoot "batch_jq_new_temp.json"
-            $newJq | ConvertTo-Json -Depth 5 | Set-Content -Path $newJqFile -Encoding UTF8
+            [System.IO.File]::WriteAllText($newJqFile, $newJqContent, (New-Object System.Text.UTF8Encoding $false))
             $newJqUri = "file://" + ($newJqFile -replace '\\', '/')
             aws batch create-job-queue --cli-input-json $newJqUri --region $Region 2>&1 | Out-Null
             Remove-Item $newJqFile -Force -ErrorAction SilentlyContinue
