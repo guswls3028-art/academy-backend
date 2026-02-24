@@ -116,26 +116,14 @@ Expected: `PRODUCTION DONE CHECK: PASS`.
 
 ---
 
-### Deploy order (alternative: manual)  
-   `.\scripts\infra\ecr_bootstrap.ps1 -Region ap-northeast-2`  
-   Use output ECR URI for step 2.
+### Deploy order (alternative: manual)
 
-2. **Optional network (if not using existing VPC):**  
-   `.\scripts\infra\network_minimal_bootstrap.ps1 -Region ap-northeast-2`  
-   Or provide existing VpcId, SubnetIds, SecurityGroupId.
-
-3. **SSM worker env:**  
-   `.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite`
-
-4. **Batch infra (manual):**  
-   `.\scripts\infra\batch_video_setup.ps1 -Region ap-northeast-2 -VpcId vpc-xxx -SubnetIds @("subnet-a","subnet-b") -SecurityGroupId sg-xxx -EcrRepoUri <from step 1>`
-
-2. **EventBridge (reconcile + scan-stuck):**  
-   `.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue`
-
-3. **CloudWatch alarms:**  
-   `.\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue`  
-   Optional: `-SnsTopicArn "arn:aws:sns:region:account:topic"`
+1. **ECR:** `.\scripts\infra\ecr_bootstrap.ps1 -Region ap-northeast-2` — use output ECR URI.
+2. **Optional network:** `.\scripts\infra\network_minimal_bootstrap.ps1 -Region ap-northeast-2` or provide VpcId, SubnetIds, SecurityGroupId.
+3. **SSM:** `.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite`
+4. **Batch:** `.\scripts\infra\batch_video_setup.ps1 -Region ap-northeast-2 -VpcId vpc-xxx -SubnetIds @("subnet-a","subnet-b") -SecurityGroupId sg-xxx -EcrRepoUri <uri>`
+5. **EventBridge:** `.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue`
+6. **CloudWatch alarms:** `.\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue` — optional `-SnsTopicArn`
 
 ---
 
