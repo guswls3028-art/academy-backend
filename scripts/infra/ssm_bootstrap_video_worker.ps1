@@ -89,7 +89,9 @@ foreach ($k in $RequiredKeys) {
 
 if ($missing.Count -gt 0) {
     Write-Host "FAIL: Required variables missing (no silent fallback): $($missing -join ', ')" -ForegroundColor Red
-    Write-Host "  Set in $EnvFile or run with -Interactive to prompt." -ForegroundColor Red
+    Write-Host "  File: $EnvPath" -ForegroundColor Red
+    Write-Host "  Missing keys: $($missing -join ', ')" -ForegroundColor Red
+    Write-Host "  Set values in .env or run with -Interactive to prompt." -ForegroundColor Red
     exit 1
 }
 
