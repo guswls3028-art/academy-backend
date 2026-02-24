@@ -59,7 +59,7 @@ Set in job definition container overrides or as job environment:
 
 ### Ops jobs (Batch: reconcile, scan_stuck, netprobe)
 
-Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-ops-reconcile`, `academy-video-ops-scanstuck`, `academy-video-ops-netprobe`. Same image as video worker; commands: `python manage.py reconcile_batch_video_jobs`, `python manage.py scan_stuck_video_jobs`, `python manage.py netprobe`.
+Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-ops-reconcile`, `academy-video-ops-scanstuck`, `academy-video-ops-netprobe`. Same image as video worker. **All run via batch_entrypoint:** container ENTRYPOINT is the entrypoint script; it loads SSM JSON into env, then runs the job command (`python manage.py reconcile_batch_video_jobs`, `python manage.py scan_stuck_video_jobs`, `python manage.py netprobe`). Do not invoke `python manage.py` directly from job definition without going through the entrypoint.
 
 ---
 
