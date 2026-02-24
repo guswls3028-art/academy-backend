@@ -91,23 +91,26 @@ Expected: Script exits 0; no "Required variables missing"; `OK: /academy/workers
 ```powershell
 .\scripts\infra\recreate_batch_in_api_vpc.ps1 -Region ap-northeast-2 -EcrRepoUri "<acct>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest" -CleanupOld:$false
 ```
-Replace `<acct>` with your AWS account ID. Expected: Exit 0; queue uses CE `academy-video-batch-ce`; `DONE. Batch recreated in API VPC.` or equivalent.
+Replace `<acct>` with your AWS account ID. Expected: Exit 0; `DONE. Batch recreated in API VPC. JobQueueName=<final>`.
 
-**Step 3 — EventBridge**
+**Important:** The **final job queue name** is either `academy-video-batch-queue` (if the existing queue was updated to CE `academy-video-batch-ce`) or `academy-video-batch-queue-ce` (if update failed and a new queue was created). Use the name printed at the end of Step 2 for Steps 3–5, or read `docs/deploy/actual_state/batch_final_state.json` → `FinalJobQueueName`.
+
+**Step 3 — EventBridge** (use final queue name from Step 2)
 ```powershell
-.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+$q = (Get-Content docs\deploy\actual_state\batch_final_state.json | ConvertFrom-Json).FinalJobQueueName; .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName $q
 ```
-Expected: Exit 0; `Done. EventBridge video scheduler (Batch only) deployed.`
+Or if you know the name: `-JobQueueName academy-video-batch-queue` or `-JobQueueName academy-video-batch-queue-ce`.
+Expected: Exit 0; `Done. EventBridge video scheduler (Batch only) deployed; targets verified.`
 
-**Step 4 — CloudWatch alarms**
+**Step 4 — CloudWatch alarms** (use same final queue name)
 ```powershell
-.\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+$q = (Get-Content docs\deploy\actual_state\batch_final_state.json | ConvertFrom-Json).FinalJobQueueName; .\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName $q
 ```
 Expected: Exit 0; `Done. Video Batch CloudWatch alarms deployed.`
 
-**Step 5 — Netprobe job**
+**Step 5 — Netprobe job** (use same final queue name)
 ```powershell
-.\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+$q = (Get-Content docs\deploy\actual_state\batch_final_state.json | ConvertFrom-Json).FinalJobQueueName; .\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName $q
 ```
 Expected: Exit 0; `SUCCEEDED` and job log lines.
 
@@ -115,7 +118,22 @@ Expected: Exit 0; `SUCCEEDED` and job log lines.
 ```powershell
 .\scripts\infra\production_done_check.ps1 -Region ap-northeast-2
 ```
-Expected: Exit 0; `PRODUCTION DONE CHECK: PASS`.
+Uses `batch_final_state.json` to resolve the queue name automatically. Expected: Exit 0; `PRODUCTION DONE CHECK: PASS`.
+
+### Final resource names and v2 queue
+
+| Resource | Expected name(s) |
+|----------|-------------------|
+| Compute environment | `academy-video-batch-ce` |
+| Job queue (primary) | `academy-video-batch-queue` |
+| Job queue (fallback) | `academy-video-batch-queue-ce` (created only when update of existing queue to CE fails) |
+| Worker job definition | `academy-video-batch-jobdef` |
+| Ops job definitions | `academy-video-ops-reconcile`, `academy-video-ops-scanstuck`, `academy-video-ops-netprobe` |
+
+**How the scripts decide queue name:**  
+`batch_video_setup.ps1` first tries to point the existing queue `academy-video-batch-queue` to CE `academy-video-batch-ce` (by ARN). If that update fails (e.g. AWS rejects the change), it creates a **new** queue `academy-video-batch-queue-ce` linked to the CE and writes `FinalJobQueueName` and `FinalJobQueueArn` to `docs/deploy/actual_state/batch_final_state.json`.  
+`recreate_batch_in_api_vpc.ps1` then calls EventBridge with this final queue name.  
+`production_done_check.ps1` and `run_netprobe_job.ps1` should be called with the same queue name (or rely on `batch_final_state.json` for the done check).
 
 ---
 
