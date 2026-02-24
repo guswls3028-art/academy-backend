@@ -245,20 +245,44 @@ if (-not $runJobId) {
         }
     } else { Write-Host "  Netprobe submit failed." -ForegroundColor Red }
 } else {
-    $jobDetail = aws batch describe-jobs --jobs $runJobId --region $Region --output json | ConvertFrom-Json
-    $cont = $jobDetail.jobs[0].container
-    $ec2Id = $cont.containerInstanceArn
-    Write-Fact "Running job" $runJobId
-    Write-Fact "containerInstanceArn" $ec2Id
-    # ECS container instance -> EC2 instance ID
-    $clusterArn = $jobDetail.jobs[0].container.containerInstanceArn -replace "/container/.*", ""
-    $ciId = $jobDetail.jobs[0].container.containerInstanceArn -replace ".*/container/", ""
-    $ci = aws ecs describe-container-instances --cluster $clusterArn --container-instances $ciId --region $Region --output json | ConvertFrom-Json
-    $ec2InstanceId = $ci.containerInstances[0].ec2InstanceId
-    Write-Fact "EC2 InstanceId" $ec2InstanceId
-    $eni = aws ec2 describe-instances --instance-ids $ec2InstanceId --region $Region --query "Reservations[0].Instances[0].NetworkInterfaces[0].{SubnetId:SubnetId,GroupIds:Groups[*].GroupId}" --output json | ConvertFrom-Json
-    Write-Fact "SubnetId" $eni.SubnetId
-    Write-Fact "SecurityGroups" ($eni.GroupIds -join ", ")
+    $jobDetailRaw = aws batch describe-jobs --jobs $runJobId --region $Region --output json 2>&1
+    $jobDetailStr = ($jobDetailRaw | Out-String).Trim()
+    $jobDetail = $null
+    try { $jobDetail = $jobDetailStr | ConvertFrom-Json } catch {}
+    if (-not $jobDetail -or -not $jobDetail.jobs -or $jobDetail.jobs.Count -eq 0) {
+        Write-Host "  Could not describe running job." -ForegroundColor Yellow
+    } else {
+        $cont = $jobDetail.jobs[0].container
+        $ec2Id = $cont.containerInstanceArn
+        Write-Fact "Running job" $runJobId
+        Write-Fact "containerInstanceArn" $ec2Id
+        # Batch ECS ARN: arn:aws:ecs:region:account:container-instance/clusterName/containerInstanceId
+        $clusterArn = $null
+        $ciId = $null
+        if ($cont.containerInstanceArn -match '^arn:aws:ecs:([^:]+):(\d+):container-instance/([^/]+)/([^/]+)$') {
+            $clusterArn = "arn:aws:ecs:$($Matches[1]):$($Matches[2]):cluster/$($Matches[3])"
+            $ciId = $Matches[4]
+        }
+        if ($clusterArn -and $ciId) {
+            $ciRaw = aws ecs describe-container-instances --cluster $clusterArn --container-instances $ciId --region $Region --output json 2>&1
+            $ciStr = ($ciRaw | Out-String).Trim()
+            $ci = $null
+            try { $ci = $ciStr | ConvertFrom-Json } catch {}
+            if ($ci -and $ci.containerInstances -and $ci.containerInstances.Count -gt 0) {
+                $ec2InstanceId = $ci.containerInstances[0].ec2InstanceId
+                Write-Fact "EC2 InstanceId" $ec2InstanceId
+                $eni = aws ec2 describe-instances --instance-ids $ec2InstanceId --region $Region --query "Reservations[0].Instances[0].NetworkInterfaces[0].{SubnetId:SubnetId,GroupIds:Groups[*].GroupId}" --output json 2>&1 | ConvertFrom-Json
+                if ($eni -and $eni.SubnetId) {
+                    Write-Fact "SubnetId" $eni.SubnetId
+                    Write-Fact "SecurityGroups" ($eni.GroupIds -join ", ")
+                }
+            } else {
+                Write-Host "  describe-container-instances failed or returned no instances (cluster may be Batch-managed)." -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "  Could not parse containerInstanceArn for ECS cluster." -ForegroundColor Yellow
+        }
+    }
 }
 
 Write-Section "SECTION 5 — OUTPUT FORMAT"
