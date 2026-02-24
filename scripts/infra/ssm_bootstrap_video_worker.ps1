@@ -92,10 +92,11 @@ foreach ($k in $RequiredKeys) {
         continue
     }
     $v = Get-ValueOrPrompt -Hash $envHash -Key $k -Prompt $prompt -Interactive ($Interactive -or -not (Test-Path -LiteralPath $EnvPath))
-    if ($null -eq $v -or ($v = $v.Trim()) -eq '') {
+    $vStr = if ($null -ne $v -and $v -is [string]) { $v.Trim() } elseif ($null -ne $v) { [string]$v } else { "" }
+    if ($null -eq $v -or $vStr -eq '') {
         $missing += $k
     } else {
-        $collected[$k] = $v
+        $collected[$k] = $vStr
     }
 }
 
@@ -125,14 +126,16 @@ if (-not $collected["AWS_DEFAULT_REGION"]) { $collected["AWS_DEFAULT_REGION"] = 
 
 # Optional keys (merge from env file)
 foreach ($k in $OptionalKeys) {
-    if ($envHash[$k] -and ($envHash[$k].Trim() -ne '')) {
-        $collected[$k] = $envHash[$k].Trim()
+    $optVal = $envHash[$k]
+    if ($null -ne $optVal -and ($optVal -is [string]) -and $optVal.Trim() -ne '') {
+        $collected[$k] = $optVal.Trim()
     }
 }
-if ($envHash["R2_VIDEO_BUCKET"] -and $envHash["R2_VIDEO_BUCKET"].Trim() -ne '') {
+if ($envHash["R2_VIDEO_BUCKET"] -and ($envHash["R2_VIDEO_BUCKET"] -is [string]) -and $envHash["R2_VIDEO_BUCKET"].Trim() -ne '') {
     $collected["R2_VIDEO_BUCKET"] = $envHash["R2_VIDEO_BUCKET"].Trim()
 }
-$collected["API_BASE_URL"] = ($collected["API_BASE_URL"] -or "").ToString().TrimEnd('/')
+$apiVal = $collected["API_BASE_URL"]
+$collected["API_BASE_URL"] = (if ($null -ne $apiVal -and ($apiVal -is [string])) { $apiVal.TrimEnd('/') } else { [string]$apiVal })
 
 # Parameter exists and no -Overwrite
 $exists = $false
