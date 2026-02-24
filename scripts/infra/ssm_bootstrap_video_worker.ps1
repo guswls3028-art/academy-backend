@@ -142,10 +142,8 @@ foreach ($k in $OptionalKeys) {
 if ($envHash["R2_VIDEO_BUCKET"] -and ($envHash["R2_VIDEO_BUCKET"] -is [string]) -and $envHash["R2_VIDEO_BUCKET"].Trim() -ne '') {
     $collected["R2_VIDEO_BUCKET"] = $envHash["R2_VIDEO_BUCKET"].Trim()
 }
-# Batch/ops jobs must use worker settings (no debug_toolbar). Override so container never loads dev.
-if (-not $collected["DJANGO_SETTINGS_MODULE"] -or $collected["DJANGO_SETTINGS_MODULE"] -eq "apps.api.config.settings.dev") {
-    $collected["DJANGO_SETTINGS_MODULE"] = "apps.api.config.settings.worker"
-}
+# Batch/ops jobs always use worker settings (no debug_toolbar, minimal INSTALLED_APPS).
+$collected["DJANGO_SETTINGS_MODULE"] = "apps.api.config.settings.worker"
 $apiVal = $collected["API_BASE_URL"]
 if ($null -ne $apiVal -and ($apiVal -is [string])) { $collected["API_BASE_URL"] = $apiVal.TrimEnd('/') } else { $collected["API_BASE_URL"] = [string]$apiVal }
 
