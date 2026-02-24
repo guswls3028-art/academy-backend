@@ -27,6 +27,7 @@ if ($exitMeta -ne 0) {
     exit 1
 }
 # Get Value for validation (do not print)
+$ErrorActionPreference = "Continue"
 $raw = aws ssm get-parameter --name $ParamName --region $Region --with-decryption --query "Parameter.Value" --output text 2>&1
 $exitVal = $LASTEXITCODE
 $ErrorActionPreference = $prev
