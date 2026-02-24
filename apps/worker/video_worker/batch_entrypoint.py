@@ -44,10 +44,10 @@ def _parse_key_val_lines(content: str) -> dict[str, str]:
     return out
 
 
-def _load_env_from_ssm_value(content: str) -> int:
+def _load_env_from_ssm_value(content: str) -> tuple[int, bool]:
     """
     Load environment from SSM value. Prefer JSON; fallback to KEY=VALUE lines.
-    Returns number of keys set.
+    Returns (number of keys set, True if JSON was used).
     """
     content = (content or "").strip()
     if not content:
@@ -62,7 +62,7 @@ def _load_env_from_ssm_value(content: str) -> int:
             if not isinstance(k, str):
                 continue
             os.environ[k] = str(v) if v is not None else ""
-        return len(data)
+        return len(data), True
     except json.JSONDecodeError:
         pass
 
@@ -74,7 +74,7 @@ def _load_env_from_ssm_value(content: str) -> int:
         )
     for k, v in parsed.items():
         os.environ[k] = v
-    return len(parsed)
+    return len(parsed), False
 
 
 def main() -> int:
@@ -93,8 +93,11 @@ def main() -> int:
         return 1
 
     try:
-        n = _load_env_from_ssm_value(content)
-        print(f"Loaded SSM env with {n} keys", file=sys.stderr)
+        n, from_json = _load_env_from_ssm_value(content)
+        if from_json:
+            print(f"Loaded SSM JSON with {n} keys", file=sys.stderr)
+        else:
+            print(f"Loaded SSM env with {n} keys (legacy)", file=sys.stderr)
     except (RuntimeError, ValueError) as e:
         print(f"batch_entrypoint: {e}", file=sys.stderr)
         return 1
