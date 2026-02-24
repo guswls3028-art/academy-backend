@@ -14,13 +14,6 @@ import sys
 REGION = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "ap-northeast-2"
 SSM_NAME = os.environ.get("BATCH_SSM_ENV", "/academy/workers/env")
 
-# Keys whose values must not be logged (for any future env dump)
-SECRET_KEYS = frozenset({
-    "DB_PASSWORD", "R2_SECRET_KEY", "SECRET_KEY", "INTERNAL_WORKER_TOKEN",
-    "LAMBDA_INTERNAL_API_KEY", "SOLAPI_API_KEY", "SOLAPI_API_SECRET",
-    "REDIS_PASSWORD",
-})
-
 
 def _parse_key_val_lines(content: str) -> dict[str, str]:
     """Legacy: parse KEY=VALUE lines. Returns dict of key -> value."""
