@@ -13,15 +13,25 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 $ErrorActionPreference = "Stop"
 
 $jobName = "netprobe-" + (Get-Date -Format "yyyyMMddHHmmss")
+$prevErr = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 $submitOut = aws batch submit-job --job-name $jobName --job-queue $JobQueueName --job-definition $JobDefName --region $Region --output json 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "FAIL: submit-job failed." -ForegroundColor Red
-    if ($submitOut) { Write-Host $submitOut -ForegroundColor Gray }
+$exitCode = $LASTEXITCODE
+$ErrorActionPreference = $prevErr
+if ($exitCode -ne 0) {
+    Write-Host "FAIL: submit-job failed (exit $exitCode)." -ForegroundColor Red
+    if ($submitOut) { Write-Host ($submitOut | Out-String) -ForegroundColor Gray }
     exit 1
 }
-$submit = $submitOut | ConvertFrom-Json
+# stderr may be merged; take the line that looks like JSON
+$jsonLine = $submitOut
+if ($submitOut -is [array]) { $jsonLine = ($submitOut | Where-Object { $_ -match '^\s*\{' } | Select-Object -First 1) }
+if (-not $jsonLine) { $jsonLine = ($submitOut | Out-String).Trim() }
+$submit = $null
+try { $submit = $jsonLine | ConvertFrom-Json } catch {}
 if (-not $submit -or -not $submit.jobId) {
     Write-Host "FAIL: submit-job returned no jobId." -ForegroundColor Red
+    if ($submitOut) { Write-Host ($submitOut | Out-String) -ForegroundColor Gray }
     exit 1
 }
 $jobId = $submit.jobId
