@@ -15,7 +15,14 @@ import sys
 import threading
 import time
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "apps.api.config.settings.worker")
+import threading
+import time
+
+# Must be set by batch_entrypoint from SSM; no fallback.
+if not os.environ.get("DJANGO_SETTINGS_MODULE"):
+    print("batch_main: DJANGO_SETTINGS_MODULE not set. Run via batch_entrypoint (SSM JSON).", file=sys.stderr)
+    sys.exit(1)
+
 import django
 
 django.setup()
