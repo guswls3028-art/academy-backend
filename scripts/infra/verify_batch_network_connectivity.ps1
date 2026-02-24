@@ -151,6 +151,22 @@ if ($cacheList -and $cacheList.CacheClusters) {
     }
 }
 Write-Fact "REDIS_HOST type" $(if ($redisMatch) { "ElastiCache" } else { "UNKNOWN" })
+
+# SG comparison: Batch SG -> RDS/Redis/API
+$batchSg = $sgIds[0]
+$batchAllowedRDS = $false
+if ($rdsSgId) {
+    try {
+        $rdsInbound = aws ec2 describe-security-groups --group-ids $rdsSgId --region $Region --query "SecurityGroups[0].IpPermissions" --output json 2>&1 | ConvertFrom-Json
+        foreach ($perm in $rdsInbound) {
+            $fromBatch = $perm.UserIdGroupPairs | Where-Object { $_.GroupId -eq $batchSg }
+            if ($fromBatch -and (($perm.FromPort -eq 5432) -or ($perm.FromPort -eq 3306) -or ($null -eq $perm.FromPort))) { $batchAllowedRDS = $true; break }
+        }
+    } catch {}
+}
+Write-Fact "Batch SG allowed to RDS (5432/3306)" $(if ($batchAllowedRDS) { "ALLOWED" } elseif (-not $rdsSgId) { "UNKNOWN" } else { "NOT ALLOWED" })
+
+$batchAllowedRedis = $false
 if ($redisSgId) {
     try {
         $redisInbound = aws ec2 describe-security-groups --group-ids $redisSgId --region $Region --query "SecurityGroups[0].IpPermissions" --output json | ConvertFrom-Json
