@@ -60,9 +60,9 @@ Set in job definition container overrides or as job environment:
 - `VIDEO_JOB_HEARTBEAT_SECONDS` (optional, default 60)
 - DB/R2/Redis and `VIDEO_BATCH_JOB_QUEUE` as needed for API calls from worker
 
-### Ops jobs (Batch: reconcile, scan_stuck)
+### Ops jobs (Batch: reconcile, scan_stuck, netprobe)
 
-Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-ops-reconcile`, `academy-video-ops-scanstuck`. Same image as video worker; command: `python manage.py reconcile_batch_video_jobs` / `python manage.py scan_stuck_video_jobs`.
+Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-ops-reconcile`, `academy-video-ops-scanstuck`, `academy-video-ops-netprobe`. Same image as video worker; commands: `python manage.py reconcile_batch_video_jobs`, `python manage.py scan_stuck_video_jobs`, `python manage.py netprobe`.
 
 ---
 
