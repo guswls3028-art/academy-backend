@@ -153,6 +153,7 @@ if (-not $npJd -or -not $npJd.jobDefinitions -or $npJd.jobDefinitions.Count -eq 
             }
             if ($npStatus -eq "FAILED") {
                 Write-Host "FAIL: Netprobe job FAILED (connectivity proof failed)." -ForegroundColor Red
+                Write-Host "  Fix: 1) Run ssm_bootstrap_video_worker.ps1 -Overwrite so SSM has JSON with DJANGO_SETTINGS_MODULE=worker. 2) Rebuild/push academy-video-worker image. 3) Ensure Batch CE is in API VPC and SG allows RDS(5432)/Redis(6379)." -ForegroundColor Yellow
                 $fail = 1
                 break
             }
