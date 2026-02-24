@@ -156,6 +156,13 @@ Could not be executed due to invalid security token.
 
 ## APPENDIX: Commands to run for full verification (after fixing credentials)
 
+**Note:** The current audit run could not execute AWS CLI (invalid security token). To obtain the full report with actual AWS evidence, run the commands below and the network connectivity script in an environment with **valid AWS credentials** (e.g. `aws sts get-caller-identity` succeeds).
+
+```powershell
+# Network connectivity (VPC/SG/Subnet, Batch→RDS/Redis/API, verdict)
+.\scripts\infra\verify_batch_network_connectivity.ps1
+```
+
 ```bash
 export AWS_DEFAULT_REGION=ap-northeast-2
 
