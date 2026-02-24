@@ -1,5 +1,6 @@
 # ==============================================================================
 # EventBridge rules for video Batch: reconcile + scan-stuck (rate 2 min). Target: AWS Batch SubmitJob only.
+# Validates job definitions ACTIVE before wiring. Verifies targets after put-targets.
 # Usage: .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
 # ==============================================================================
 
@@ -15,14 +16,39 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $InfraPath = Join-Path $RepoRoot "scripts\infra"
 $EventBridgePath = Join-Path $InfraPath "eventbridge"
 
-function ExecJson($cmd) {
-    $out = Invoke-Expression $cmd 2>&1
+$RequiredOpsJobDefs = @("academy-video-ops-reconcile", "academy-video-ops-scanstuck")
+
+function ExecJson($argsArray) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = & aws @argsArray 2>&1
+    $exit = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($exit -ne 0) { return $null }
     if (-not $out) { return $null }
     try { return ($out | ConvertFrom-Json) } catch { return $null }
 }
 
 $AccountId = (aws sts get-caller-identity --query Account --output text 2>&1)
-if ($LASTEXITCODE -ne 0) { Write-Host "AWS identity check failed" -ForegroundColor Red; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: AWS identity check failed" -ForegroundColor Red; exit 1 }
+
+# Resolve JobQueueArn from name (fail if missing)
+$jqResp = ExecJson @("batch", "describe-job-queues", "--job-queues", $JobQueueName, "--region", $Region, "--output", "json")
+if (-not $jqResp -or -not $jqResp.jobQueues -or $jqResp.jobQueues.Count -eq 0) {
+    Write-Host "FAIL: Job queue $JobQueueName not found." -ForegroundColor Red
+    exit 1
+}
+$JobQueueArn = $jqResp.jobQueues[0].jobQueueArn
+if (-not $JobQueueArn) { Write-Host "FAIL: Job queue ARN empty." -ForegroundColor Red; exit 1 }
+
+# Validate job definitions ACTIVE before wiring
+foreach ($jdName in $RequiredOpsJobDefs) {
+    $jd = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $jdName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+    if (-not $jd -or -not $jd.jobDefinitions -or $jd.jobDefinitions.Count -eq 0) {
+        Write-Host "FAIL: Job definition $jdName is not ACTIVE. Register ops job defs first (batch_video_setup)." -ForegroundColor Red
+        exit 1
+    }
+}
 
 # EventBridge role for Batch SubmitJob
 $EventsRoleName = "academy-eventbridge-batch-video-role"
