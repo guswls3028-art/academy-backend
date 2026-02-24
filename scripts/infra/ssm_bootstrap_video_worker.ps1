@@ -53,7 +53,7 @@ function Get-ValueOrPrompt {
     param([hashtable]$Hash, [string]$Key, [string]$Prompt, [bool]$Interactive)
     $v = $Hash[$Key]
     if ($null -ne $v) {
-        $vStr = if ($v -is [string]) { $v.Trim() } else { [string]$v }
+        if ($v -is [string]) { $vStr = $v.Trim() } else { $vStr = [string]$v }
         if ($vStr -ne '') { return $vStr }
     }
     if ($Interactive -and $Prompt) {
