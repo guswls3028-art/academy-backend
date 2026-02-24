@@ -55,7 +55,7 @@ $EventsRoleName = "academy-eventbridge-batch-video-role"
 $trustEvents = Join-Path $InfraPath "iam\trust_events.json"
 $policyEventsBatch = Join-Path $InfraPath "iam\policy_eventbridge_batch_submit.json"
 $role = $null
-try { $role = ExecJson "aws iam get-role --role-name $EventsRoleName --output json 2>&1" } catch {}
+$role = ExecJson @("iam", "get-role", "--role-name", $EventsRoleName, "--output", "json")
 if (-not $role) {
     Write-Host "[0] Creating IAM role: $EventsRoleName" -ForegroundColor Cyan
     aws iam create-role --role-name $EventsRoleName --assume-role-policy-document "file://$($trustEvents -replace '\\','/')" | Out-Null
