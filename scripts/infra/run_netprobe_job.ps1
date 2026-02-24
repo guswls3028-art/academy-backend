@@ -24,7 +24,7 @@ function ExecJson($argsArray) {
 }
 
 $jobName = "netprobe-" + (Get-Date -Format "yyyyMMddHHmmss")
-$submit = ExecJson "batch", "submit-job", "--job-name", $jobName, "--job-queue", $JobQueueName, "--job-definition", $JobDefName, "--region", $Region, "--output", "json"
+$submit = ExecJson @("batch", "submit-job", "--job-name", $jobName, "--job-queue", $JobQueueName, "--job-definition", $JobDefName, "--region", $Region, "--output", "json")
 if (-not $submit -or -not $submit.jobId) {
     Write-Host "FAIL: submit-job failed (job definition or queue missing?)." -ForegroundColor Red
     exit 1
