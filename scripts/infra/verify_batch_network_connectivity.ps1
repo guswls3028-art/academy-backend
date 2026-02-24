@@ -123,39 +123,34 @@ try {
 } catch {}
 Write-Fact "DB_HOST type" $(if ($rdsEndpoint) { "RDS" } else { "UNKNOWN (not in describe-db-instances)" })
 
-$elbList = aws elbv2 describe-load-balancers --region $Region --output json | ConvertFrom-Json
-$apiHost = if ($apiBaseUrl) { ([System.Uri]$apiBaseUrl).Host } else { $null }
-$elbMatch = $elbList.LoadBalancers | Where-Object { $_.DNSName -eq $apiHost } | Select-Object -First 1
+$elbList = $null
+try { $elbList = aws elbv2 describe-load-balancers --region $Region --output json | ConvertFrom-Json } catch {}
+$apiHost = $null
+try { if ($apiBaseUrl) { $apiHost = ([System.Uri]$apiBaseUrl).Host } } catch {}
+$elbMatch = $null
+if ($elbList -and $elbList.LoadBalancers) { $elbMatch = $elbList.LoadBalancers | Where-Object { $_.DNSName -eq $apiHost } | Select-Object -First 1 }
 Write-Fact "API host" $apiHost
 Write-Fact "API host type" $(if ($elbMatch) { "ALB/NLB" } else { "UNKNOWN" })
 
 # Redis: ElastiCache
-$cacheList = aws elasticache describe-cache-clusters --region $Region --show-cache-node-info --output json 2>&1 | ConvertFrom-Json
+$redisSgId = $null
+$cacheList = $null
+try { $cacheList = aws elasticache describe-cache-clusters --region $Region --show-cache-node-info --output json 2>&1 | ConvertFrom-Json } catch {}
 $redisMatch = $null
-if ($cacheList.CacheClusters) {
-    $redisMatch = $cacheList.CacheClusters | ForEach-Object { $_.CacheNodes } | Where-Object { $_.Endpoint.Address -eq $redisHost } | Select-Object -First 1
-}
-Write-Fact "REDIS_HOST type" $(if ($redisMatch) { "ElastiCache" } else { "UNKNOWN" })
-
-# SG comparison: Batch SG -> RDS/Redis/API
-$batchSg = $sgIds[0]
-$batchAllowedRDS = $false
-if ($rdsSgId) {
-    $rdsInbound = aws ec2 describe-security-groups --group-ids $rdsSgId --region $Region --query "SecurityGroups[0].IpPermissions" --output json 2>&1 | ConvertFrom-Json
-    foreach ($perm in $rdsInbound) {
-        $fromBatch = $perm.UserIdGroupPairs | Where-Object { $_.GroupId -eq $batchSg }
-        if ($fromBatch -and (($perm.FromPort -eq 5432) -or ($perm.FromPort -eq 3306) -or ($null -eq $perm.FromPort))) { $batchAllowedRDS = $true; break }
+if ($cacheList -and $cacheList.CacheClusters) {
+    foreach ($cluster in $cacheList.CacheClusters) {
+        if ($cluster.CacheNodes) {
+            foreach ($node in $cluster.CacheNodes) {
+                if ($node.Endpoint -and $node.Endpoint.Address -eq $redisHost) {
+                    $redisMatch = $node
+                    if ($cluster.SecurityGroups -and $cluster.SecurityGroups.Count -gt 0) { $redisSgId = $cluster.SecurityGroups[0].SecurityGroupId }
+                    break
+                }
+            }
+        }
     }
 }
-Write-Fact "Batch SG allowed to RDS (5432/3306)" $(if ($batchAllowedRDS) { "ALLOWED" } elseif (-not $rdsSgId) { "UNKNOWN" } else { "NOT ALLOWED" })
-
-# Redis SG (if ElastiCache)
-$redisSgId = $null
-if ($cacheList.CacheClusters) {
-    $redisCluster = $cacheList.CacheClusters | Where-Object { ($_.CacheNodes | Where-Object { $_.Endpoint.Address -eq $redisHost }) } | Select-Object -First 1
-    if ($redisCluster) { $redisSgId = $redisCluster.SecurityGroups[0].SecurityGroupId }
-}
-$batchAllowedRedis = $false
+Write-Fact "REDIS_HOST type" $(if ($redisMatch) { "ElastiCache" } else { "UNKNOWN" })
 if ($redisSgId) {
     try {
         $redisInbound = aws ec2 describe-security-groups --group-ids $redisSgId --region $Region --query "SecurityGroups[0].IpPermissions" --output json | ConvertFrom-Json
