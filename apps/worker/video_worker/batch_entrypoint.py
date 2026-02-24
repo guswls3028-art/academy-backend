@@ -109,11 +109,6 @@ def main() -> int:
         dsm = os.environ["DJANGO_SETTINGS_MODULE"]
     print(f"DJANGO_SETTINGS_MODULE = {dsm}", file=sys.stderr)
 
-    # Log masked value for verification (no secrets)
-    dsm_masked = _mask("DJANGO_SETTINGS_MODULE", dsm)
-    if dsm_masked != dsm:
-        print(f"DJANGO_SETTINGS_MODULE = {dsm_masked}", file=sys.stderr)
-
     # CMD from Batch is passed as args
     argv = sys.argv[1:] if len(sys.argv) > 1 else ["python", "-m", "apps.worker.video_worker.batch_main"]
     if argv[0] == "python" or argv[0].endswith("python"):
