@@ -3,6 +3,7 @@
 Network probe for Batch nodes: TCP to DB/REDIS, GET API health. Outputs JSON to stdout.
 Used by academy-video-ops-netprobe job to prove Batch->RDS/Redis/API connectivity.
 Reads DB_HOST, DB_PORT, REDIS_HOST, REDIS_PORT, API_BASE_URL from environment (SSM-injected).
+If not set, fetches /academy/workers/env from SSM (job role has permission).
 """
 from __future__ import annotations
 
@@ -12,6 +13,23 @@ import socket
 import sys
 
 from django.core.management.base import BaseCommand
+
+
+def _load_env_from_ssm():
+    """If DB_HOST not in env, try SSM /academy/workers/env."""
+    if os.environ.get("DB_HOST"):
+        return
+    try:
+        import boto3
+        region = os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
+        ssm = boto3.client("ssm", region_name=region)
+        r = ssm.get_parameter(Name="/academy/workers/env", WithDecryption=True)
+        payload = json.loads(r["Parameter"]["Value"])
+        for k, v in (payload or {}).items():
+            if isinstance(v, str) and k not in os.environ:
+                os.environ[k] = v
+    except Exception:
+        pass
 
 
 def _tcp_connect(host: str, port: int, timeout: float = 5.0) -> bool:
@@ -36,6 +54,7 @@ class Command(BaseCommand):
     help = "Probe DB, Redis, API connectivity; output JSON to stdout"
 
     def handle(self, *args, **options):
+        _load_env_from_ssm()
         db_host = os.environ.get("DB_HOST", "").strip()
         db_port = int(os.environ.get("DB_PORT", "5432"))
         redis_host = os.environ.get("REDIS_HOST", "").strip()
