@@ -44,19 +44,12 @@ aws cloudwatch put-metric-alarm --alarm-name $j.AlarmName --alarm-description $j
 
 if ($QueueArn) {
     Write-Host "[4] AWS/Batch Failed (job queue)" -ForegroundColor Cyan
-    $dimensions = @(
-        @{
-            Name = "JobQueue"
-            Value = $QueueArn
-        }
-    )
-    $dimensionsJson = $dimensions | ConvertTo-Json -Compress
     $prevCw = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    aws cloudwatch put-metric-alarm --alarm-name "academy-video-BatchJobFailures" --alarm-description "AWS Batch failed jobs in video queue" --namespace AWS/Batch --metric-name Failed --dimensions "$dimensionsJson" --statistic Sum --period 300 --evaluation-periods 2 --threshold 5 --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching --region $Region $action 2>&1 | Out-Null
+    aws cloudwatch put-metric-alarm --alarm-name "academy-video-BatchJobFailures" --alarm-description "AWS Batch failed jobs in video queue" --namespace AWS/Batch --metric-name Failed --dimensions "Name=JobQueue,Value=$QueueArn" --statistic Sum --period 300 --evaluation-periods 2 --threshold 5 --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching --region $Region $action 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Host "WARN: put-metric-alarm BatchJobFailures failed (exit $LASTEXITCODE)." -ForegroundColor Yellow }
     Write-Host "[5] AWS/Batch RUNNABLE (queue depth)" -ForegroundColor Cyan
-    aws cloudwatch put-metric-alarm --alarm-name "academy-video-QueueRunnable" --alarm-description "AWS Batch RUNNABLE jobs above threshold" --namespace AWS/Batch --metric-name RUNNABLE --dimensions "$dimensionsJson" --statistic Average --period 300 --evaluation-periods 2 --threshold 50 --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching --region $Region $action 2>&1 | Out-Null
+    aws cloudwatch put-metric-alarm --alarm-name "academy-video-QueueRunnable" --alarm-description "AWS Batch RUNNABLE jobs above threshold" --namespace AWS/Batch --metric-name RUNNABLE --dimensions "Name=JobQueue,Value=$QueueArn" --statistic Average --period 300 --evaluation-periods 2 --threshold 50 --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching --region $Region $action 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Host "WARN: put-metric-alarm QueueRunnable failed (exit $LASTEXITCODE)." -ForegroundColor Yellow }
     $ErrorActionPreference = $prevCw
 }
