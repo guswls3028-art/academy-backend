@@ -7,6 +7,9 @@
 #   .\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -Interactive
 # ==============================================================================
 
+# Windows cp949: prefer UTF-8 for SSM value handling
+try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
+
 param(
     [Parameter(Mandatory=$true)][string]$Region,
     [string]$EnvFile = ".env",
