@@ -15,15 +15,16 @@ load_dotenv(BASE_DIR / ".env.local")
 
 def main():
     """Run administrative tasks."""
-
-    # 🔥 프로젝트 루트 (academy/), PYTHONPATH에 apps 직접 올리지 않음
     if str(BASE_DIR) not in sys.path:
         sys.path.insert(0, str(BASE_DIR))
 
-    os.environ.setdefault(
-        "DJANGO_SETTINGS_MODULE",
-        "apps.api.config.settings.dev",
-    )
+    dsm = os.environ.get("DJANGO_SETTINGS_MODULE", "").strip()
+    if not dsm:
+        print(
+            "FAIL: DJANGO_SETTINGS_MODULE is not set. Set it in .env or ensure Batch/worker runs via entrypoint (SSM JSON).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     try:
         from django.core.management import execute_from_command_line
