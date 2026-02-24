@@ -79,6 +79,46 @@ Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-o
 
 ### Deploy order (exact sequence — Option A, copy/paste runnable)
 
+Run in a **fresh PowerShell session** from the repository root. Ensure `.env` exists (copy from `.env.example` and fill required keys including `AWS_DEFAULT_REGION=ap-northeast-2`).
+
+**Step 1 — SSM bootstrap**
+```powershell
+.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite
+```
+Expected: Script exits 0; no "Required variables missing"; `OK: /academy/workers/env written successfully` or similar.
+
+**Step 2 — Recreate Batch in API VPC**
+```powershell
+.\scripts\infra\recreate_batch_in_api_vpc.ps1 -Region ap-northeast-2 -EcrRepoUri "<acct>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest" -CleanupOld:$false
+```
+Replace `<acct>` with your AWS account ID. Expected: Exit 0; queue uses CE `academy-video-batch-ce`; `DONE. Batch recreated in API VPC.` or equivalent.
+
+**Step 3 — EventBridge**
+```powershell
+.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+```
+Expected: Exit 0; `Done. EventBridge video scheduler (Batch only) deployed.`
+
+**Step 4 — CloudWatch alarms**
+```powershell
+.\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+```
+Expected: Exit 0; `Done. Video Batch CloudWatch alarms deployed.`
+
+**Step 5 — Netprobe job**
+```powershell
+.\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+```
+Expected: Exit 0; `SUCCEEDED` and job log lines.
+
+**Step 6 — Production done check**
+```powershell
+.\scripts\infra\production_done_check.ps1 -Region ap-northeast-2
+```
+Expected: Exit 0; `PRODUCTION DONE CHECK: PASS`.
+
+---
+
 **a) Fill .env from .env.example**  
 Copy `.env.example` to `.env` and set all required keys (see section 0). No silent fallback.
 
