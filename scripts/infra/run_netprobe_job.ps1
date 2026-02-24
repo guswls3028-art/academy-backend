@@ -26,15 +26,10 @@ if ($exitCode -ne 0) {
     if ($submitOut) { Write-Host ($submitOut | Out-String) -ForegroundColor Gray }
     exit 1
 }
-# stderr may be merged; take the line that looks like JSON
-$jsonLine = $submitOut
-if ($submitOut -is [array]) { $jsonLine = ($submitOut | Where-Object { $_ -match '^\s*\{' } | Select-Object -First 1) }
-if (-not $jsonLine -and $submitOut -is [string] -and $submitOut -match '\{') {
-    $jsonLine = ($submitOut -split "`r?`n" | Where-Object { $_ -match '^\s*\{' } | Select-Object -First 1)
-}
-if (-not $jsonLine) { $jsonLine = ($submitOut | Out-String).Trim() }
+# stderr may be merged; use full output as JSON (AWS CLI often returns pretty-printed multi-line)
+$jsonStr = ($submitOut | Out-String).Trim()
 $submit = $null
-try { $submit = $jsonLine | ConvertFrom-Json } catch {}
+try { $submit = $jsonStr | ConvertFrom-Json } catch {}
 if (-not $submit -or -not $submit.jobId) {
     Write-Host "FAIL: submit-job returned no jobId." -ForegroundColor Red
     if ($submitOut) { Write-Host ($submitOut | Out-String) -ForegroundColor Gray }
