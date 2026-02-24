@@ -82,8 +82,14 @@ $collected = @{}
 
 foreach ($k in $RequiredKeys) {
     $prompt = "Enter $k"
-    if ($k -eq "DB_PORT") { $collected[$k] = if ($envHash["DB_PORT"]) { $envHash["DB_PORT"] } else { "5432" }; continue }
-    if ($k -eq "REDIS_PORT") { $collected[$k] = if ($envHash["REDIS_PORT"]) { $envHash["REDIS_PORT"] } else { "6379" }; continue }
+    if ($k -eq "DB_PORT") {
+        if ($envHash["DB_PORT"]) { $collected[$k] = $envHash["DB_PORT"] } else { $collected[$k] = "5432" }
+        continue
+    }
+    if ($k -eq "REDIS_PORT") {
+        if ($envHash["REDIS_PORT"]) { $collected[$k] = $envHash["REDIS_PORT"] } else { $collected[$k] = "6379" }
+        continue
+    }
     # AWS_DEFAULT_REGION: accept AWS_REGION from .env as fallback
     if ($k -eq "AWS_DEFAULT_REGION") {
         $v = $envHash["AWS_DEFAULT_REGION"]
