@@ -4,13 +4,13 @@
 # Run with valid AWS credentials: Region ap-northeast-2, Account 809466760795.
 # If the current run cannot execute AWS CLI (e.g. invalid security token), run this script
 # in an environment with valid AWS credentials to obtain the full report.
-# Usage: .\scripts\infra\verify_batch_network_connectivity.ps1 [-ComputeEnvName academy-video-batch-ce-v3]
+# Usage: .\scripts\infra\verify_batch_network_connectivity.ps1 [-ComputeEnvName academy-video-batch-ce]
 # ==============================================================================
 
 param(
     [string]$Region = "ap-northeast-2",
-    [string]$ComputeEnvName = "academy-video-batch-ce-v3",
-    [string]$FallbackCE = "academy-video-batch-ce"
+    [string]$ComputeEnvName = "academy-video-batch-ce",
+    [string]$FallbackCE = "academy-video-batch-ce-v3"
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,15 +20,13 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 function Write-Section { param([string]$Title) Write-Host "`n========== $Title ==========" -ForegroundColor Cyan }
 function Write-Fact { param([string]$Label, [string]$Value) Write-Host "  $Label : $Value" }
 
-# Resolve CE name (try -v3 then fallback)
-$ceList = aws batch describe-compute-environments --region $Region --output json 2>&1 | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "FAIL: describe-compute-environments failed. Check AWS credentials." -ForegroundColor Red
-    exit 1
-}
-$ce = $ceList.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Select-Object -First 1
+# Resolve CE (prefer production CE academy-video-batch-ce)
+$ceList = aws batch describe-compute-environments --region $Region --output json 2>&1
+$ceListStr = ($ceList | Out-String).Trim()
+$ceListObj = $ceListStr | ConvertFrom-Json
+$ce = $ceListObj.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Select-Object -First 1
 if (-not $ce) {
-    $ce = $ceList.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $FallbackCE } | Select-Object -First 1
+    $ce = $ceListObj.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $FallbackCE } | Select-Object -First 1
     if ($ce) { $ComputeEnvName = $FallbackCE }
 }
 if (-not $ce) {
