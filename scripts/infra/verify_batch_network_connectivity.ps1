@@ -139,12 +139,13 @@ Write-Fact "REDIS_HOST type" $(if ($redisMatch) { "ElastiCache" } else { "UNKNOW
 
 # SG comparison: Batch SG -> RDS/Redis/API
 $batchSg = $sgIds[0]
-$rdsSgId = $rdsEndpoint.VpcSecurityGroups[0].VpcSecurityGroupId
-$rdsInbound = aws ec2 describe-security-groups --group-ids $rdsSgId --region $Region --query "SecurityGroups[0].IpPermissions" --output json 2>&1 | ConvertFrom-Json
 $batchAllowedRDS = $false
-foreach ($perm in $rdsInbound) {
-    $fromBatch = $perm.UserIdGroupPairs | Where-Object { $_.GroupId -eq $batchSg }
-    if ($fromBatch -and (($perm.FromPort -eq 5432) -or ($perm.FromPort -eq 3306) -or ($null -eq $perm.FromPort))) { $batchAllowedRDS = $true; break }
+if ($rdsSgId) {
+    $rdsInbound = aws ec2 describe-security-groups --group-ids $rdsSgId --region $Region --query "SecurityGroups[0].IpPermissions" --output json 2>&1 | ConvertFrom-Json
+    foreach ($perm in $rdsInbound) {
+        $fromBatch = $perm.UserIdGroupPairs | Where-Object { $_.GroupId -eq $batchSg }
+        if ($fromBatch -and (($perm.FromPort -eq 5432) -or ($perm.FromPort -eq 3306) -or ($null -eq $perm.FromPort))) { $batchAllowedRDS = $true; break }
+    }
 }
 Write-Fact "Batch SG allowed to RDS (5432/3306)" $(if ($batchAllowedRDS) { "ALLOWED" } elseif (-not $rdsSgId) { "UNKNOWN" } else { "NOT ALLOWED" })
 
@@ -156,11 +157,13 @@ if ($cacheList.CacheClusters) {
 }
 $batchAllowedRedis = $false
 if ($redisSgId) {
-    $redisInbound = aws ec2 describe-security-groups --group-ids $redisSgId --region $Region --query "SecurityGroups[0].IpPermissions" --output json | ConvertFrom-Json
-    foreach ($perm in $redisInbound) {
-        $fromBatch = $perm.UserIdGroupPairs | Where-Object { $_.GroupId -eq $batchSg }
-        if ($fromBatch -and (($perm.FromPort -eq 6379) -or ($null -eq $perm.FromPort))) { $batchAllowedRedis = $true; break }
-    }
+    try {
+        $redisInbound = aws ec2 describe-security-groups --group-ids $redisSgId --region $Region --query "SecurityGroups[0].IpPermissions" --output json | ConvertFrom-Json
+        foreach ($perm in $redisInbound) {
+            $fromBatch = $perm.UserIdGroupPairs | Where-Object { $_.GroupId -eq $batchSg }
+            if ($fromBatch -and (($perm.FromPort -eq 6379) -or ($null -eq $perm.FromPort))) { $batchAllowedRedis = $true; break }
+        }
+    } catch {}
 }
 Write-Fact "Batch SG allowed to Redis (6379)" $(if ($batchAllowedRedis) { "ALLOWED" } elseif (-not $redisSgId) { "UNKNOWN" } else { "NOT ALLOWED" })
 
