@@ -28,14 +28,20 @@ if (-not $OutFile) {
 }
 
 $raw = $null
+$exitCode = 0
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try {
     $raw = aws ssm get-parameter --name $ParamName --region $Region --with-decryption --query "Parameter.Value" --output text 2>&1
+    $exitCode = $LASTEXITCODE
 } finally { $ErrorActionPreference = $prevErr }
 
-if ($LASTEXITCODE -ne 0 -or -not $raw) {
-    Write-Host "FAIL: SSM get-parameter failed or empty (exit $LASTEXITCODE)." -ForegroundColor Red
+if ($exitCode -ne 0) {
+    Write-Host "FAIL: SSM get-parameter failed (exit $exitCode)." -ForegroundColor Red
+    exit 1
+}
+if (-not $raw) {
+    Write-Host "FAIL: SSM parameter value empty." -ForegroundColor Red
     exit 1
 }
 
