@@ -40,9 +40,15 @@ Write-Host "Submitted jobId=$jobId" -ForegroundColor Cyan
 $maxWait = 300
 $elapsed = 0
 while ($elapsed -lt $maxWait) {
+    $ErrorActionPreference = "Continue"
     $descOut = aws batch describe-jobs --jobs $jobId --region $Region --output json 2>&1
+    $ErrorActionPreference = $prevErr
     if ($LASTEXITCODE -ne 0) { Write-Host "  describe-jobs failed" -ForegroundColor Red; Start-Sleep -Seconds 10; $elapsed += 10; continue }
-    $desc = $descOut | ConvertFrom-Json
+    $descJson = $descOut
+    if ($descOut -is [array]) { $descJson = ($descOut | Where-Object { $_ -match '^\s*\{' } | Select-Object -First 1) }
+    if (-not $descJson) { $descJson = ($descOut | Out-String).Trim() }
+    $desc = $null
+    try { $desc = $descJson | ConvertFrom-Json } catch {}
     $job = $desc.jobs[0]
     $status = $job.status
     Write-Host "  status=$status" -ForegroundColor Gray
