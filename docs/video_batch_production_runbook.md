@@ -87,7 +87,10 @@ Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-o
    `.\scripts\infra\network_minimal_bootstrap.ps1 -Region ap-northeast-2`  
    Or provide existing VpcId, SubnetIds, SecurityGroupId.
 
-3. **Batch infra (manual):**  
+3. **SSM worker env:**  
+   `.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite`
+
+4. **Batch infra (manual):**  
    `.\scripts\infra\batch_video_setup.ps1 -Region ap-northeast-2 -VpcId vpc-xxx -SubnetIds @("subnet-a","subnet-b") -SecurityGroupId sg-xxx -EcrRepoUri <from step 1>`
 
 2. **EventBridge (reconcile + scan-stuck):**  
