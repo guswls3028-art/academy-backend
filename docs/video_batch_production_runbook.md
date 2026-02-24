@@ -87,12 +87,7 @@ Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-o
    `.\scripts\infra\network_minimal_bootstrap.ps1 -Region ap-northeast-2`  
    Or provide existing VpcId, SubnetIds, SecurityGroupId.
 
-3. **SSM worker env (no manual SSM creation):**  
-   Copy `.env.example` to `.env`, set all required variables (see section 0). Then:  
-   `.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env`  
-   Use `-Overwrite` to update existing parameter. Use `-Interactive` if `.env` is missing to prompt for values.
-
-4. **Batch infra:**  
+3. **Batch infra (manual):**  
    `.\scripts\infra\batch_video_setup.ps1 -Region ap-northeast-2 -VpcId vpc-xxx -SubnetIds @("subnet-a","subnet-b") -SecurityGroupId sg-xxx -EcrRepoUri <from step 1>`
 
 2. **EventBridge (reconcile + scan-stuck):**  
@@ -105,6 +100,22 @@ Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-o
 ---
 
 ## 3. Validation commands
+
+- **SSM shape (no value print):**  
+  `.\scripts\infra\verify_ssm_env_shape.ps1 -Region ap-northeast-2`  
+  Expected: `OK: SSM parameter JSON valid, all required keys present.`
+
+- **EventBridge wiring:**  
+  `.\scripts\infra\verify_eventbridge_wiring.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue`
+
+- **Repo infra names:**  
+  `.\scripts\infra\validate_repo_infra_names.ps1`
+
+- **Network connectivity (and netprobe if no live instance):**  
+  `.\scripts\infra\verify_batch_network_connectivity.ps1 -Region ap-northeast-2`
+
+- **Production done (all checks + netprobe):**  
+  `.\scripts\infra\production_done_check.ps1 -Region ap-northeast-2`
 
 Run from repo root (Django app) with AWS credentials and env configured:
 
