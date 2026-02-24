@@ -21,7 +21,8 @@ if ($exitCode -ne 0) {
     Write-Host "FAIL: SSM get-parameter failed (exit $exitCode). Parameter may not exist or no permission." -ForegroundColor Red
     exit 1
 }
-$param = $paramJson | ConvertFrom-Json
+$param = $null
+try { $param = $paramJson | ConvertFrom-Json } catch {}
 if (-not $param -or -not $param.Name) {
     Write-Host "FAIL: SSM parameter could not be read." -ForegroundColor Red
     exit 1
