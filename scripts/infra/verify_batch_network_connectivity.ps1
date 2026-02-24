@@ -22,7 +22,12 @@ function Write-Fact { param([string]$Label, [string]$Value) Write-Host "  $Label
 
 # Resolve CE (prefer production CE academy-video-batch-ce)
 $ceList = aws batch describe-compute-environments --region $Region --output json 2>&1
+$ceExit = $LASTEXITCODE
 $ceListStr = ($ceList | Out-String).Trim()
+if ($ceExit -ne 0) {
+    Write-Host "FAIL: describe-compute-environments failed. Check AWS credentials." -ForegroundColor Red
+    exit 1
+}
 $ceListObj = $ceListStr | ConvertFrom-Json
 $ce = $ceListObj.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Select-Object -First 1
 if (-not $ce) {
