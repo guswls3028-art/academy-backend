@@ -22,9 +22,10 @@ function PutAlarm($name, $ns, $metric, $threshold, $period, $evalPeriods, $dimen
     Invoke-Expression $cmd
 }
 
-# Job queue ARN for AWS/Batch alarms
-$QueueArn = (aws batch describe-job-queues --job-queues $JobQueueName --region $Region --query "jobQueues[0].jobQueueArn" --output text 2>&1)
-$QueueArn = ($QueueArn -replace "[\r\n]","").Trim()
+# Job queue ARN for AWS/Batch alarms (UTF-8 safe)
+$qOut = aws batch describe-job-queues --job-queues $JobQueueName --region $Region --query "jobQueues[0].jobQueueArn" --output text 2>&1
+$QueueArn = ($qOut | Out-String) -replace "[\r\n\s]",""
+$QueueArn = $QueueArn.Trim()
 if (-not $QueueArn -or $QueueArn -eq "None") {
     Write-Host "Job queue $JobQueueName not found; AWS/Batch alarms will be skipped." -ForegroundColor Yellow
 }
