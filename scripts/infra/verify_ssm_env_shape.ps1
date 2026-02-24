@@ -3,12 +3,13 @@
 # Usage: .\scripts\infra\verify_ssm_env_shape.ps1 -Region ap-northeast-2
 # ==============================================================================
 
-try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
-
 param(
     [Parameter(Mandatory=$true)][string]$Region,
     [string]$ParamName = "/academy/workers/env"
 )
+
+# Windows cp949: prefer UTF-8
+try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
 $ErrorActionPreference = "Stop"
 $RequiredKeys = @(
