@@ -79,6 +79,13 @@ foreach ($k in $RequiredKeys) {
     $prompt = "Enter $k"
     if ($k -eq "DB_PORT") { $collected[$k] = if ($envHash["DB_PORT"]) { $envHash["DB_PORT"] } else { "5432" }; continue }
     if ($k -eq "REDIS_PORT") { $collected[$k] = if ($envHash["REDIS_PORT"]) { $envHash["REDIS_PORT"] } else { "6379" }; continue }
+    # AWS_DEFAULT_REGION: accept AWS_REGION from .env as fallback
+    if ($k -eq "AWS_DEFAULT_REGION") {
+        $v = $envHash["AWS_DEFAULT_REGION"]
+        if ($null -eq $v -or ($v = $v.Trim()) -eq '') { $v = $envHash["AWS_REGION"] }
+        if ($null -ne $v -and ($v = $v.Trim()) -ne '') { $collected[$k] = $v } else { $missing += $k }
+        continue
+    }
     $v = Get-ValueOrPrompt -Hash $envHash -Key $k -Prompt $prompt -Interactive ($Interactive -or -not (Test-Path -LiteralPath $EnvPath))
     if ($null -eq $v -or ($v = $v.Trim()) -eq '') {
         $missing += $k
@@ -96,7 +103,7 @@ if ($missing.Count -gt 0) {
 }
 
 # AWS_DEFAULT_REGION must match -Region (hard fail)
-$envRegion = ($collected["AWS_DEFAULT_REGION"] -or $envHash["AWS_DEFAULT_REGION"] -or "").Trim()
+$envRegion = ($collected["AWS_DEFAULT_REGION"] -or $envHash["AWS_DEFAULT_REGION"] -or $envHash["AWS_REGION"] -or "").Trim()
 if ([string]::IsNullOrWhiteSpace($envRegion)) {
     Write-Host "FAIL: AWS_DEFAULT_REGION is missing in $EnvPath. Add AWS_DEFAULT_REGION=ap-northeast-2 (or -Region value)." -ForegroundColor Red
     exit 1

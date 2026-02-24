@@ -236,7 +236,7 @@ if (-not ($jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName })) {
                 if ($s -eq "DISABLED") { break }
             }
         }
-        $ceOrderJson = "[{\"order\":1,\"computeEnvironment\":\"$ComputeEnvName\"}]"
+        $ceOrderJson = '[{"order":1,"computeEnvironment":"' + $ComputeEnvName + '"}]'
         $ErrorActionPreference = "Continue"
         aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order $ceOrderJson --region $Region 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not update job queue computeEnvironmentOrder." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
