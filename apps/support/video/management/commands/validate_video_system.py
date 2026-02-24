@@ -74,6 +74,13 @@ class Command(BaseCommand):
                         if "BatchParameters" not in t:
                             errors.append(f"EventBridge rule {rule_name} target is not Batch SubmitJob")
                             self.stdout.write(self.style.ERROR(f"ERROR: EventBridge rule {rule_name} target is not Batch SubmitJob"))
+                        else:
+                            jd = (t.get("BatchParameters") or {}).get("JobDefinition") or ""
+                            jd_base = jd.split(":")[0] if jd else ""
+                            expected_jd = "academy-video-ops-reconcile" if rule_name == RECONCILE_RULE_NAME else "academy-video-ops-scanstuck"
+                            if jd_base != expected_jd:
+                                errors.append(f"EventBridge rule {rule_name} target JobDefinition={jd_base} (expected {expected_jd})")
+                                self.stdout.write(self.style.ERROR(f"ERROR: EventBridge rule {rule_name} target JobDefinition mismatch (got {jd_base})"))
                         if queue_arn and t.get("Arn") != queue_arn:
                             errors.append(f"EventBridge rule {rule_name} target JobQueue does not match settings (expected {VIDEO_BATCH_JOB_QUEUE})")
                             self.stdout.write(self.style.ERROR(f"ERROR: EventBridge rule {rule_name} JobQueueName mismatch"))
