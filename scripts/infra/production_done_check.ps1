@@ -34,7 +34,9 @@ function ExecJson($argsArray) {
     $ErrorActionPreference = $prev
     if ($exit -ne 0) { return $null }
     if (-not $out) { return $null }
-    try { return ($out | ConvertFrom-Json) } catch { return $null }
+    $str = ($out | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($str)) { return $null }
+    try { return ($str | ConvertFrom-Json) } catch { return $null }
 }
 
 # Resolve API VPC if not provided
