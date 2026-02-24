@@ -73,6 +73,17 @@ class Command(BaseCommand):
             except Exception as e:
                 failures.append(f"Job definition check: {e}")
 
+        # Ops job definitions ACTIVE (reconcile, scanstuck)
+        OPS_JOB_DEFS = ["academy-video-ops-reconcile", "academy-video-ops-scanstuck"]
+        if batch:
+            for od in OPS_JOB_DEFS:
+                try:
+                    jd = batch.describe_job_definitions(jobDefinitionName=od, status="ACTIVE").get("jobDefinitions") or []
+                    if not jd:
+                        failures.append(f"Ops job definition {od} not ACTIVE or not found")
+                except Exception as e:
+                    failures.append(f"Ops job definition {od}: {e}")
+
         # EventBridge reconcile + scan-stuck ENABLED
         try:
             events = boto3.client("events", region_name=REGION)
