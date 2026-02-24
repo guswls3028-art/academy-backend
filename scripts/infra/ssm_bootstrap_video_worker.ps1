@@ -88,12 +88,12 @@ foreach ($k in $RequiredKeys) {
     if ($k -eq "AWS_DEFAULT_REGION") {
         $v = $envHash["AWS_DEFAULT_REGION"]
         if ($null -eq $v -or (($v -is [string]) -and $v.Trim() -eq '')) { $v = $envHash["AWS_REGION"] }
-        $vStr = if ($null -ne $v -and ($v -is [string])) { $v.Trim() } elseif ($null -ne $v) { [string]$v } else { "" }
+        if ($null -ne $v -and ($v -is [string])) { $vStr = $v.Trim() } elseif ($null -ne $v) { $vStr = [string]$v } else { $vStr = "" }
         if ($vStr -ne '') { $collected[$k] = $vStr } else { $missing += $k }
         continue
     }
     $v = Get-ValueOrPrompt -Hash $envHash -Key $k -Prompt $prompt -Interactive ($Interactive -or -not (Test-Path -LiteralPath $EnvPath))
-    $vStr = if ($null -ne $v -and $v -is [string]) { $v.Trim() } elseif ($null -ne $v) { [string]$v } else { "" }
+    if ($null -ne $v -and $v -is [string]) { $vStr = $v.Trim() } elseif ($null -ne $v) { $vStr = [string]$v } else { $vStr = "" }
     if ($null -eq $v -or $vStr -eq '') {
         $missing += $k
     } else {
@@ -114,7 +114,7 @@ $envRegionRaw = $collected["AWS_DEFAULT_REGION"]
 if (-not $envRegionRaw) { $envRegionRaw = $envHash["AWS_DEFAULT_REGION"] }
 if (-not $envRegionRaw) { $envRegionRaw = $envHash["AWS_REGION"] }
 if (-not $envRegionRaw) { $envRegionRaw = "" }
-$envRegion = if ($envRegionRaw -is [string]) { $envRegionRaw.Trim() } else { [string]$envRegionRaw }
+if ($envRegionRaw -is [string]) { $envRegion = $envRegionRaw.Trim() } else { $envRegion = [string]$envRegionRaw }
 if ([string]::IsNullOrWhiteSpace($envRegion)) {
     Write-Host "FAIL: AWS_DEFAULT_REGION is missing in $EnvPath. Add AWS_DEFAULT_REGION=ap-northeast-2 (or -Region value)." -ForegroundColor Red
     exit 1
@@ -136,7 +136,7 @@ if ($envHash["R2_VIDEO_BUCKET"] -and ($envHash["R2_VIDEO_BUCKET"] -is [string]) 
     $collected["R2_VIDEO_BUCKET"] = $envHash["R2_VIDEO_BUCKET"].Trim()
 }
 $apiVal = $collected["API_BASE_URL"]
-$collected["API_BASE_URL"] = (if ($null -ne $apiVal -and ($apiVal -is [string])) { $apiVal.TrimEnd('/') } else { [string]$apiVal })
+if ($null -ne $apiVal -and ($apiVal -is [string])) { $collected["API_BASE_URL"] = $apiVal.TrimEnd('/') } else { $collected["API_BASE_URL"] = [string]$apiVal }
 
 # Parameter exists and no -Overwrite
 $exists = $false
