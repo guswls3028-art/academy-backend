@@ -1,0 +1,1 @@
+{"Name":"academy-video-scan-stuck-rate","Description":"Trigger scan_stuck_video_jobs every 2 min. Target: AWS Batch SubmitJob (academy-video-ops-scanstuck).","ScheduleExpression":"rate(2 minutes)","State":"ENABLED"}
