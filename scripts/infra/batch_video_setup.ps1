@@ -13,7 +13,7 @@ param(
     [Parameter(Mandatory=$true)][string]$EcrRepoUri,
     [int]$MaxVcpus = 32,
     [string]$InstanceType = "c6g.large",
-    [string]$ComputeEnvName = "academy-video-batch-ce-v3",
+    [string]$ComputeEnvName = "academy-video-batch-ce",
     [string]$JobQueueName = "academy-video-batch-queue",
     [string]$JobDefName = "academy-video-batch-jobdef",
     [string]$LogsGroup = "/aws/batch/academy-video-worker"
