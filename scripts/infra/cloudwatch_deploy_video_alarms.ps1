@@ -42,7 +42,7 @@ aws cloudwatch put-metric-alarm --alarm-name $j.AlarmName --alarm-description $j
 
 if ($QueueArn) {
     Write-Host "[4] AWS/Batch Failed (job queue)" -ForegroundColor Cyan
-    $dim = "[{\"Name\":\"JobQueue\",\"Value\":\"$QueueArn\"}]"
+    $dim = '[{"Name":"JobQueue","Value":"' + $QueueArn + '"}]'
     aws cloudwatch put-metric-alarm --alarm-name "academy-video-BatchJobFailures" --alarm-description "AWS Batch failed jobs in video queue" --namespace AWS/Batch --metric-name Failed --dimensions $dim --statistic Sum --period 300 --evaluation-periods 2 --threshold 5 --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching --region $Region $action
 
     Write-Host "[5] AWS/Batch RUNNABLE (queue depth)" -ForegroundColor Cyan
