@@ -28,7 +28,8 @@ $RequiredKeys = @(
     "API_BASE_URL", "INTERNAL_WORKER_TOKEN",
     "REDIS_HOST", "REDIS_PORT"
 )
-$OptionalKeys = @("REDIS_PASSWORD", "R2_PUBLIC_BASE_URL", "R2_PREFIX", "VIDEO_BATCH_JOB_QUEUE", "VIDEO_BATCH_JOB_DEFINITION")
+# Optional keys (merge from env file)
+$OptionalKeys = @("REDIS_PASSWORD", "R2_PUBLIC_BASE_URL", "R2_PREFIX", "VIDEO_BATCH_JOB_QUEUE", "VIDEO_BATCH_JOB_DEFINITION", "DJANGO_SETTINGS_MODULE")
 
 function Parse-EnvFile {
     param([string]$Path)
@@ -140,6 +141,10 @@ foreach ($k in $OptionalKeys) {
 }
 if ($envHash["R2_VIDEO_BUCKET"] -and ($envHash["R2_VIDEO_BUCKET"] -is [string]) -and $envHash["R2_VIDEO_BUCKET"].Trim() -ne '') {
     $collected["R2_VIDEO_BUCKET"] = $envHash["R2_VIDEO_BUCKET"].Trim()
+}
+# Batch/ops jobs must use worker settings (no debug_toolbar). Override so container never loads dev.
+if (-not $collected["DJANGO_SETTINGS_MODULE"] -or $collected["DJANGO_SETTINGS_MODULE"] -eq "apps.api.config.settings.dev") {
+    $collected["DJANGO_SETTINGS_MODULE"] = "apps.api.config.settings.worker"
 }
 $apiVal = $collected["API_BASE_URL"]
 if ($null -ne $apiVal -and ($apiVal -is [string])) { $collected["API_BASE_URL"] = $apiVal.TrimEnd('/') } else { $collected["API_BASE_URL"] = [string]$apiVal }
