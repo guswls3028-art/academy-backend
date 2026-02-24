@@ -1,10 +1,9 @@
 {
+    "Port":  5432,
+    "Endpoint":  "academy-db.cbm4oqigwl80.ap-northeast-2.rds.amazonaws.com",
+    "VpcId":  "vpc-0831a2484f9b114c2",
     "VpcSecurityGroups":  [
                               "sg-06cfb1f23372e2597"
                           ],
-    "Port":  5432,
-    "DBInstanceStatus":  "available",
-    "DBInstanceIdentifier":  "academy-db",
-    "VpcId":  "vpc-0831a2484f9b114c2",
-    "Endpoint":  "academy-db.cbm4oqigwl80.ap-northeast-2.rds.amazonaws.com"
+    "DBInstanceIdentifier":  "academy-db"
 }
