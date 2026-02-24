@@ -2,12 +2,12 @@
 # Verify EventBridge rules exist, ENABLED, targets present with BatchParameters. Exit non-zero if missing.
 # Usage: .\scripts\infra\verify_eventbridge_wiring.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
 # ==============================================================================
-try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
 param(
     [string]$Region = "ap-northeast-2",
     [string]$JobQueueName = "academy-video-batch-queue"
 )
+try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
 $ErrorActionPreference = "Stop"
 $ReconcileRule = "academy-reconcile-video-jobs"
