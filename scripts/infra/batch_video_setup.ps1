@@ -154,29 +154,7 @@ if (-not $ceObj) {
     Write-Host "  Creating compute environment" -ForegroundColor Yellow
     aws batch create-compute-environment --cli-input-json $ceFileUri --region $Region
 } else {
-    Write-Host "  Compute environment exists; updating instanceTypes to c6g.large,c6g.xlarge,c6g.2xlarge" -ForegroundColor Yellow
-    $cr = $ceObj.computeResources
-    # instanceTypes update requires allocationStrategy BEST_FIT_PROGRESSIVE or SPOT_CAPACITY_OPTIMIZED
-    $updateInput = @{
-        computeEnvironment = $ComputeEnvName
-        computeResources   = @{
-            allocationStrategy = "BEST_FIT_PROGRESSIVE"
-            minvCpus           = [int]$cr.minvCpus
-            maxvCpus           = [int]$cr.maxvCpus
-            subnets            = @($cr.subnets)
-            securityGroupIds   = @($cr.securityGroupIds)
-            instanceTypes      = @("c6g.large", "c6g.xlarge", "c6g.2xlarge")
-            instanceRole       = $cr.instanceRole
-        }
-    }
-    $updateFile = Join-Path $RepoRoot "batch_ce_update_temp.json"
-    $updateJson = $updateInput | ConvertTo-Json -Depth 6 -Compress
-    [System.IO.File]::WriteAllText($updateFile, $updateJson, (New-Object System.Text.UTF8Encoding $false))
-    # Windows: file:///C:/path causes [Errno 22]. Use file://C:/path (two slashes only).
-    $absPath = (Resolve-Path -LiteralPath $updateFile).Path.Replace('\', '/')
-    $updateUri = "file://" + $absPath
-    aws batch update-compute-environment --cli-input-json $updateUri --region $Region
-    Remove-Item $updateFile -Force -ErrorAction SilentlyContinue
+    Write-Host "  Compute environment exists; skipping update (use console if instanceTypes must change)." -ForegroundColor Gray
 }
 Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
 
