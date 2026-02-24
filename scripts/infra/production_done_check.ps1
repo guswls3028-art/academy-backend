@@ -40,7 +40,7 @@ if (-not $targetVpcId) {
 }
 
 # CE exists and (if targetVpcId) in API VPC
-$ceList = ExecJson "aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output json 2>&1"
+$ceList = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $ComputeEnvName, "--region", $Region, "--output", "json")
 $ce = $ceList.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Select-Object -First 1
 if (-not $ce) {
     Write-Host "FAIL: Compute environment $ComputeEnvName not found." -ForegroundColor Red
@@ -48,7 +48,7 @@ if (-not $ce) {
 } else {
     $ceVpcId = ""
     if ($ce.computeResources.subnets) {
-        $subResp = ExecJson "aws ec2 describe-subnets --subnet-ids $($ce.computeResources.subnets[0]) --region $Region --output json 2>&1"
+        $subResp = ExecJson @("ec2", "describe-subnets", "--subnet-ids", $ce.computeResources.subnets[0], "--region", $Region, "--output", "json")
         if ($subResp.Subnets) { $ceVpcId = $subResp.Subnets[0].VpcId }
     }
     if ($targetVpcId -and $ceVpcId -ne $targetVpcId) {
@@ -58,7 +58,7 @@ if (-not $ce) {
 }
 
 # Queue points to CE
-$jq = ExecJson "aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output json 2>&1"
+$jq = ExecJson @("batch", "describe-job-queues", "--job-queues", $JobQueueName, "--region", $Region, "--output", "json")
 $q = $jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName } | Select-Object -First 1
 if (-not $q -or $q.state -ne "ENABLED") {
     Write-Host "FAIL: Job queue $JobQueueName not found or not ENABLED." -ForegroundColor Red
@@ -67,7 +67,7 @@ if (-not $q -or $q.state -ne "ENABLED") {
 
 # Worker + ops jobdefs ACTIVE
 foreach ($jdName in @("academy-video-batch-jobdef", "academy-video-ops-reconcile", "academy-video-ops-scanstuck", "academy-video-ops-netprobe")) {
-    $jd = ExecJson "aws batch describe-job-definitions --job-definition-name $jdName --status ACTIVE --region $Region --output json 2>&1"
+    $jd = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $jdName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
     if (-not $jd.jobDefinitions -or $jd.jobDefinitions.Count -eq 0) {
         Write-Host "FAIL: Job definition $jdName not ACTIVE." -ForegroundColor Red
         $fail = 1
@@ -83,8 +83,8 @@ if ($LASTEXITCODE -ne 0) { $fail = 1 }
 if ($LASTEXITCODE -ne 0) { $fail = 1 }
 
 # Log groups
-$lgWorker = ExecJson "aws logs describe-log-groups --log-group-name-prefix /aws/batch/academy-video-worker --region $Region --output json 2>&1"
-$lgOps = ExecJson "aws logs describe-log-groups --log-group-name-prefix /aws/batch/academy-video-ops --region $Region --output json 2>&1"
+$lgWorker = ExecJson @("logs", "describe-log-groups", "--log-group-name-prefix", "/aws/batch/academy-video-worker", "--region", $Region, "--output", "json")
+$lgOps = ExecJson @("logs", "describe-log-groups", "--log-group-name-prefix", "/aws/batch/academy-video-ops", "--region", $Region, "--output", "json")
 if (-not ($lgWorker.logGroups | Where-Object { $_.logGroupName -eq "/aws/batch/academy-video-worker" })) {
     Write-Host "FAIL: Log group /aws/batch/academy-video-worker not found." -ForegroundColor Red
     $fail = 1
@@ -96,7 +96,7 @@ if (-not ($lgOps.logGroups | Where-Object { $_.logGroupName -eq "/aws/batch/acad
 
 # CloudWatch alarms (warn if missing)
 $alarmNames = @("academy-video-DeadJobs", "academy-video-UploadFailures", "academy-video-FailedJobs", "academy-video-BatchJobFailures", "academy-video-QueueRunnable")
-$cw = ExecJson "aws cloudwatch describe-alarms --alarm-names $alarmNames --region $Region --output json 2>&1"
+$cw = ExecJson @("cloudwatch", "describe-alarms", "--alarm-names", ($alarmNames -join " "), "--region", $Region, "--output", "json")
 $found = @(if ($cw.MetricAlarms) { $cw.MetricAlarms | ForEach-Object { $_.AlarmName } } else { @() })
 $missingAlarms = $alarmNames | Where-Object { $_ -notin $found }
 if ($missingAlarms.Count -gt 0) {
@@ -106,7 +106,7 @@ if ($missingAlarms.Count -gt 0) {
 # Netprobe: submit and ensure SUCCEEDED
 Write-Host "Submitting netprobe job..." -ForegroundColor Cyan
 $npName = "donecheck-netprobe-" + (Get-Date -Format "yyyyMMddHHmmss")
-$npSubmit = ExecJson "aws batch submit-job --job-name $npName --job-queue $JobQueueName --job-definition academy-video-ops-netprobe --region $Region --output json"
+$npSubmit = ExecJson @("batch", "submit-job", "--job-name", $npName, "--job-queue", $JobQueueName, "--job-definition", "academy-video-ops-netprobe", "--region", $Region, "--output", "json")
 if (-not $npSubmit -or -not $npSubmit.jobId) {
     Write-Host "FAIL: Netprobe submit failed." -ForegroundColor Red
     $fail = 1
@@ -114,7 +114,7 @@ if (-not $npSubmit -or -not $npSubmit.jobId) {
     $npId = $npSubmit.jobId
     $npWait = 0
     while ($npWait -lt 200) {
-        $npDesc = ExecJson "aws batch describe-jobs --jobs $npId --region $Region --output json"
+        $npDesc = ExecJson @("batch", "describe-jobs", "--jobs", $npId, "--region", $Region, "--output", "json")
         $npStatus = $npDesc.jobs[0].status
         if ($npStatus -eq "SUCCEEDED") {
             Write-Host "OK: Netprobe SUCCEEDED" -ForegroundColor Green
