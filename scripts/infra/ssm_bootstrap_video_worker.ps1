@@ -52,7 +52,10 @@ function Parse-EnvFile {
 function Get-ValueOrPrompt {
     param([hashtable]$Hash, [string]$Key, [string]$Prompt, [bool]$Interactive)
     $v = $Hash[$Key]
-    if ($null -ne $v -and ($v = $v.Trim()) -ne '') { return $v }
+    if ($null -ne $v) {
+        $vStr = if ($v -is [string]) { $v.Trim() } else { [string]$v }
+        if ($vStr -ne '') { return $vStr }
+    }
     if ($Interactive -and $Prompt) {
         $secure = $Key -match 'PASSWORD|SECRET|TOKEN'
         if ($secure) {
