@@ -144,6 +144,11 @@ docker-compose exec api python manage.py migrate
 
 **상세 배포**: [docs/배포.md](docs/배포.md)
 
+### Video Batch (AWS Batch)
+
+- **Source of truth:** `.env` → SSM `/academy/workers/env` (JSON) via `ssm_bootstrap_video_worker.ps1`. SSM 수동 수정 금지.
+- **원테이크 실행 순서:** [docs/video_batch_production_runbook.md](docs/video_batch_production_runbook.md)의 "One-shot execution" 블록 참고 (UTF-8 설정 → SSM bootstrap → Batch recreate → EventBridge → CloudWatch → netprobe → production_done_check).
+
 ---
 
 ## 🔍 주요 기능
