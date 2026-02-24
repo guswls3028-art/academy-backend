@@ -114,8 +114,13 @@ Write-Fact "API_BASE_URL" $apiBaseUrl
 Write-Fact "R2_ENDPOINT" $r2Endpoint
 
 # Resolve host type
-$rdsList = aws rds describe-db-instances --region $Region --output json | ConvertFrom-Json
-$rdsEndpoint = $rdsList.DBInstances | Where-Object { $_.Endpoint.Address -eq $dbHost } | Select-Object -First 1
+$rdsEndpoint = $null
+$rdsSgId = $null
+try {
+    $rdsList = aws rds describe-db-instances --region $Region --output json | ConvertFrom-Json
+    $rdsEndpoint = $rdsList.DBInstances | Where-Object { $_.Endpoint.Address -eq $dbHost } | Select-Object -First 1
+    if ($rdsEndpoint -and $rdsEndpoint.VpcSecurityGroups.Count -gt 0) { $rdsSgId = $rdsEndpoint.VpcSecurityGroups[0].VpcSecurityGroupId }
+} catch {}
 Write-Fact "DB_HOST type" $(if ($rdsEndpoint) { "RDS" } else { "UNKNOWN (not in describe-db-instances)" })
 
 $elbList = aws elbv2 describe-load-balancers --region $Region --output json | ConvertFrom-Json
