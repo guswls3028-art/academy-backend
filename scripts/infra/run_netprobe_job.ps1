@@ -45,11 +45,9 @@ while ($elapsed -lt $maxWait) {
     $descOut = aws batch describe-jobs --jobs $jobId --region $Region --output json 2>&1
     $ErrorActionPreference = $prevErr
     if ($LASTEXITCODE -ne 0) { Write-Host "  describe-jobs failed" -ForegroundColor Red; Start-Sleep -Seconds 10; $elapsed += 10; continue }
-    $descJson = $descOut
-    if ($descOut -is [array]) { $descJson = ($descOut | Where-Object { $_ -match '^\s*\{' } | Select-Object -First 1) }
-    if (-not $descJson) { $descJson = ($descOut | Out-String).Trim() }
+    $descStr = ($descOut | Out-String).Trim()
     $desc = $null
-    try { $desc = $descJson | ConvertFrom-Json } catch {}
+    try { $desc = $descStr | ConvertFrom-Json } catch {}
     if (-not $desc -or -not $desc.jobs -or $desc.jobs.Count -eq 0) {
         Write-Host "  describe-jobs: no jobs in response" -ForegroundColor Red
         Start-Sleep -Seconds 10
