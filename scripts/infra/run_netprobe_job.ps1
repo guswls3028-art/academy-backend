@@ -2,6 +2,8 @@
 # Submit netprobe job, poll until SUCCEEDED/FAILED, print logStreamName and last ~200 log lines.
 # Usage: .\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
 # ==============================================================================
+if ($OutputEncoding) { $OutputEncoding = [System.Text.Encoding]::UTF8 }
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 param(
     [string]$Region = "ap-northeast-2",
@@ -10,16 +12,21 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-function ExecJson($cmd) {
-    $out = Invoke-Expression $cmd 2>&1
+function ExecJson($argsArray) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = & aws @argsArray 2>&1
+    $exit = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($exit -ne 0) { return $null }
     if (-not $out) { return $null }
     try { return ($out | ConvertFrom-Json) } catch { return $null }
 }
 
 $jobName = "netprobe-" + (Get-Date -Format "yyyyMMddHHmmss")
-$submit = ExecJson "aws batch submit-job --job-name $jobName --job-queue $JobQueueName --job-definition $JobDefName --region $Region --output json"
+$submit = ExecJson "batch", "submit-job", "--job-name", $jobName, "--job-queue", $JobQueueName, "--job-definition", $JobDefName, "--region", $Region, "--output", "json"
 if (-not $submit -or -not $submit.jobId) {
-    Write-Host "FAIL: submit-job failed." -ForegroundColor Red
+    Write-Host "FAIL: submit-job failed (job definition or queue missing?)." -ForegroundColor Red
     exit 1
 }
 $jobId = $submit.jobId
