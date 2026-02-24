@@ -24,6 +24,37 @@ $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $InfraPath = Join-Path $RepoRoot "scripts\infra"
+$OutDir = Join-Path $RepoRoot "docs\deploy\actual_state"
+
+function Get-ComputeEnvironmentArn {
+    param([string]$Name)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = aws batch describe-compute-environments --compute-environments $Name --region $Region --output json 2>&1
+    $err = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($err -ne 0) { return $null }
+    $o = $null
+    try { $o = $out | ConvertFrom-Json } catch { return $null }
+    $ce = $o.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $Name } | Select-Object -First 1
+    if (-not $ce) { return $null }
+    return $ce.computeEnvironmentArn
+}
+
+function Get-JobQueueArn {
+    param([string]$Name)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = aws batch describe-job-queues --job-queues $Name --region $Region --output json 2>&1
+    $err = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($err -ne 0) { return $null }
+    $o = $null
+    try { $o = $out | ConvertFrom-Json } catch { return $null }
+    $q = $o.jobQueues | Where-Object { $_.jobQueueName -eq $Name } | Select-Object -First 1
+    if (-not $q) { return $null }
+    return $q.jobQueueArn
+}
 
 function ExecJson($cmd) {
     $out = Invoke-Expression $cmd 2>&1
