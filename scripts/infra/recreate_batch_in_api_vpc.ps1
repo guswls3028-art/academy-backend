@@ -35,17 +35,21 @@ if (-not (Test-Path -LiteralPath $OutDir)) { New-Item -ItemType Directory -Path 
 
 # --- 1) Discover API VPC/Subnet/SG ---
 Write-Host "[1] Discover API instance network" -ForegroundColor Cyan
+$apiVpcId = ""
+$apiSubnetId = ""
 if ($ApiInstanceId) {
     $r = ExecJson "aws ec2 describe-instances --instance-ids $ApiInstanceId --region $Region --output json 2>&1"
-    $apiInst = $r.Reservations.Instances | Where-Object { $_.InstanceId -eq $ApiInstanceId } | Select-Object -First 1
+    $apiInst = $r.Reservations | ForEach-Object { $_.Instances } | Where-Object { $_.InstanceId -eq $ApiInstanceId } | Select-Object -First 1
+    if (-not $apiInst) { Write-Host "FAIL: Instance $ApiInstanceId not found." -ForegroundColor Red; exit 1 }
+    $apiVpcId = $apiInst.VpcId
+    $apiSubnetId = $apiInst.SubnetId
 } else {
     & (Join-Path $ScriptRoot "discover_api_network.ps1") -Region $Region
     if ($LASTEXITCODE -ne 0) { exit 1 }
     $apiJson = Get-Content (Join-Path $OutDir "api_instance.json") -Raw | ConvertFrom-Json
-    $apiInst = @{ VpcId = $apiJson.VpcId; SubnetId = $apiJson.SubnetId; SecurityGroupIds = $apiJson.SecurityGroupIds }
+    $apiVpcId = $apiJson.VpcId
+    $apiSubnetId = $apiJson.SubnetId
 }
-$apiVpcId = if ($apiInst.VpcId) { $apiInst.VpcId } else { $apiInst.VpcId }
-$apiSubnetId = if ($apiInst.SubnetId) { $apiInst.SubnetId } else { $apiInst.SubnetId }
 if (-not $apiVpcId) {
     Write-Host "FAIL: Could not get API VpcId." -ForegroundColor Red
     exit 1
@@ -117,14 +121,15 @@ foreach ($rdsSg in $rdsSgIds) {
 }
 
 # --- 6) Redis (ElastiCache): optional ---
-$cacheList = ExecJson "aws elasticache describe-cache-clusters --region $Region --show-cache-node-info --output json 2>&1"
 $redisSgId = $null
+$cacheList = ExecJson "aws elasticache describe-cache-clusters --region $Region --output json 2>&1"
 if ($cacheList.CacheClusters) {
-    $vpcFilter = $cacheList.CacheClusters | Where-Object { $_.CacheSubnetGroupName } | Select-Object -First 1
-    if ($vpcFilter) {
-        $subnetGroup = ExecJson "aws elasticache describe-cache-subnet-groups --cache-subnet-group-name $($vpcFilter.CacheSubnetGroupName) --region $Region --output json 2>&1"
-        if ($subnetGroup.CacheSubnetGroups -and $subnetGroup.CacheSubnetGroups[0].VpcId -eq $apiVpcId) {
-            $redisSgId = $vpcFilter.SecurityGroups[0].SecurityGroupId
+    foreach ($cluster in $cacheList.CacheClusters) {
+        $sgName = $cluster.CacheSubnetGroupName
+        if (-not $sgName) { continue }
+        $subnetGroups = ExecJson "aws elasticache describe-cache-subnet-groups --cache-subnet-group-name $sgName --region $Region --output json 2>&1"
+        if ($subnetGroups.CacheSubnetGroups -and $subnetGroups.CacheSubnetGroups[0].VpcId -eq $apiVpcId) {
+            if ($cluster.SecurityGroups -and $cluster.SecurityGroups.Count -gt 0) { $redisSgId = $cluster.SecurityGroups[0].SecurityGroupId; break }
         }
     }
 }
