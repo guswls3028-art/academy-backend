@@ -2,14 +2,14 @@
 # Submit netprobe job, poll until SUCCEEDED/FAILED, print logStreamName and last ~200 log lines.
 # Usage: .\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
 # ==============================================================================
-if ($OutputEncoding) { $OutputEncoding = [System.Text.Encoding]::UTF8 }
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 param(
     [string]$Region = "ap-northeast-2",
     [string]$JobQueueName = "academy-video-batch-queue",
     [string]$JobDefName = "academy-video-ops-netprobe"
 )
+if ($OutputEncoding) { $OutputEncoding = [System.Text.Encoding]::UTF8 }
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $ErrorActionPreference = "Stop"
 function ExecJson($argsArray) {
