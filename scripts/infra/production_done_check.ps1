@@ -169,6 +169,7 @@ if (-not $npJd -or -not $npJd.jobDefinitions -or $npJd.jobDefinitions.Count -eq 
 
 if ($fail -ne 0) {
     Write-Host "`nPRODUCTION DONE CHECK: FAIL" -ForegroundColor Red
+    Write-Host "  Resolve the FAIL lines above; then re-run this script." -ForegroundColor Gray
     exit 1
 }
 Write-Host "`nPRODUCTION DONE CHECK: PASS" -ForegroundColor Green
