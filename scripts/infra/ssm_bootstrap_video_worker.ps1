@@ -95,10 +95,14 @@ if ($missing.Count -gt 0) {
     exit 1
 }
 
-# AWS_DEFAULT_REGION mismatch
+# AWS_DEFAULT_REGION must match -Region (hard fail)
 $envRegion = ($collected["AWS_DEFAULT_REGION"] -or $envHash["AWS_DEFAULT_REGION"] -or "").Trim()
-if ($envRegion -and $envRegion -ne $Region) {
-    Write-Host "FAIL: AWS_DEFAULT_REGION mismatch. .env has '$envRegion', -Region is '$Region'." -ForegroundColor Red
+if ([string]::IsNullOrWhiteSpace($envRegion)) {
+    Write-Host "FAIL: AWS_DEFAULT_REGION is missing in $EnvPath. Add AWS_DEFAULT_REGION=ap-northeast-2 (or -Region value)." -ForegroundColor Red
+    exit 1
+}
+if ($envRegion -ne $Region) {
+    Write-Host "FAIL: AWS_DEFAULT_REGION mismatch. File $EnvPath has '$envRegion', -Region is '$Region'." -ForegroundColor Red
     exit 1
 }
 if (-not $collected["AWS_DEFAULT_REGION"]) { $collected["AWS_DEFAULT_REGION"] = $Region }
