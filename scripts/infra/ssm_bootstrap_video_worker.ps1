@@ -87,8 +87,9 @@ foreach ($k in $RequiredKeys) {
     # AWS_DEFAULT_REGION: accept AWS_REGION from .env as fallback
     if ($k -eq "AWS_DEFAULT_REGION") {
         $v = $envHash["AWS_DEFAULT_REGION"]
-        if ($null -eq $v -or ($v = $v.Trim()) -eq '') { $v = $envHash["AWS_REGION"] }
-        if ($null -ne $v -and ($v = $v.Trim()) -ne '') { $collected[$k] = $v } else { $missing += $k }
+        if ($null -eq $v -or (($v -is [string]) -and $v.Trim() -eq '')) { $v = $envHash["AWS_REGION"] }
+        $vStr = if ($null -ne $v -and ($v -is [string])) { $v.Trim() } elseif ($null -ne $v) { [string]$v } else { "" }
+        if ($vStr -ne '') { $collected[$k] = $vStr } else { $missing += $k }
         continue
     }
     $v = Get-ValueOrPrompt -Hash $envHash -Key $k -Prompt $prompt -Interactive ($Interactive -or -not (Test-Path -LiteralPath $EnvPath))
