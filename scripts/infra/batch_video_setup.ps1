@@ -241,22 +241,26 @@ $fileUri = "file://" + ($jdFile -replace '\\', '/')
 aws batch register-job-definition --cli-input-json $fileUri --region $Region
 Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
 
-# 5b) Ops Job Definitions (reconcile, scan_stuck)
+# 5b) Ops Job Definitions (reconcile, scan_stuck) — same image as worker, log group /aws/batch/academy-video-ops
 Write-Host "`n[5b] Register Ops Job Definitions: academy-video-ops-reconcile, academy-video-ops-scanstuck" -ForegroundColor Cyan
-$opsJdPath = Join-Path $InfraPath "batch\video_ops_job_definition.json"
-foreach ($opsCmd in @(@{Name="academy-video-ops-reconcile"; Command="reconcile_batch_video_jobs"}, @{Name="academy-video-ops-scanstuck"; Command="scan_stuck_video_jobs"})) {
+$opsTemplates = @(
+    @{ Path = "batch\video_ops_job_definition_reconcile.json"; Name = "academy-video-ops-reconcile" },
+    @{ Path = "batch\video_ops_job_definition_scanstuck.json"; Name = "academy-video-ops-scanstuck" }
+)
+foreach ($ops in $opsTemplates) {
+    $opsJdPath = Join-Path $InfraPath $ops.Path
+    if (-not (Test-Path -LiteralPath $opsJdPath)) { Write-Host "  SKIP: $($ops.Path) not found" -ForegroundColor Yellow; continue }
     $opsContent = Get-Content $opsJdPath -Raw
     $opsContent = $opsContent -replace "PLACEHOLDER_ECR_URI", $EcrRepoUri
     $opsContent = $opsContent -replace "PLACEHOLDER_JOB_ROLE_ARN", $jobRoleArn
     $opsContent = $opsContent -replace "PLACEHOLDER_EXECUTION_ROLE_ARN", $executionRoleArn
     $opsContent = $opsContent -replace "PLACEHOLDER_REGION", $Region
-    $opsContent = $opsContent -replace "PLACEHOLDER_OPS_JOB_NAME", $opsCmd.Name
-    $opsContent = $opsContent -replace "PLACEHOLDER_OPS_COMMAND", $opsCmd.Command
-    $opsFile = Join-Path $RepoRoot "batch_ops_jd_temp.json"
+    $opsFile = Join-Path $RepoRoot "batch_ops_jd_$($ops.Name)_temp.json"
     [System.IO.File]::WriteAllText($opsFile, $opsContent, $utf8NoBom)
     $opsUri = "file://" + ($opsFile -replace '\\', '/')
     aws batch register-job-definition --cli-input-json $opsUri --region $Region | Out-Null
     Remove-Item $opsFile -Force -ErrorAction SilentlyContinue
+    Write-Host "  Registered $($ops.Name)" -ForegroundColor Gray
 }
 
 # 6) Validation
