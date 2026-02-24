@@ -1,6 +1,7 @@
 # ==============================================================================
-# Production "done" check: CE in API VPC, queue, jobdefs, EventBridge, SSM, log groups, alarms, netprobe SUCCEEDED.
-# Exit 0 only if all required checks pass. Usage: .\scripts\infra\production_done_check.ps1 -Region ap-northeast-2
+# Production "done" check: CE, queue (ENABLED), ops jobdefs ACTIVE, EventBridge targets, SSM, netprobe.
+# Exit 0 only if all required checks pass. Uses batch_final_state.json for JobQueueName when present.
+# Usage: .\scripts\infra\production_done_check.ps1 -Region ap-northeast-2
 # ==============================================================================
 
 param(
@@ -15,6 +16,15 @@ $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $fail = 0
+
+# Resolve JobQueueName from batch_final_state.json if present
+$statePath = Join-Path $RepoRoot "docs\deploy\actual_state\batch_final_state.json"
+if (Test-Path -LiteralPath $statePath) {
+    try {
+        $state = Get-Content $statePath -Raw | ConvertFrom-Json
+        if ($state.FinalJobQueueName) { $JobQueueName = $state.FinalJobQueueName }
+    } catch {}
+}
 
 function ExecJson($argsArray) {
     $prev = $ErrorActionPreference
@@ -57,13 +67,23 @@ if (-not $ce) {
     } else { Write-Host "OK: CE $ComputeEnvName" -ForegroundColor Green }
 }
 
-# Queue points to CE
+# Queue: must exist and be ENABLED (strict; describe-job-queues empty or error = FAIL)
 $jq = ExecJson @("batch", "describe-job-queues", "--job-queues", $JobQueueName, "--region", $Region, "--output", "json")
-$q = $jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName } | Select-Object -First 1
-if (-not $q -or $q.state -ne "ENABLED") {
-    Write-Host "FAIL: Job queue $JobQueueName not found or not ENABLED." -ForegroundColor Red
+if (-not $jq) {
+    Write-Host "FAIL: describe-job-queues failed or returned no data for $JobQueueName." -ForegroundColor Red
     $fail = 1
-} else { Write-Host "OK: Queue $JobQueueName ENABLED" -ForegroundColor Green }
+} else {
+    $q = $jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName } | Select-Object -First 1
+    if (-not $q) {
+        Write-Host "FAIL: Job queue $JobQueueName not found (empty result)." -ForegroundColor Red
+        $fail = 1
+    } elseif ($q.state -ne "ENABLED") {
+        Write-Host "FAIL: Job queue $JobQueueName state=$($q.state) (expected ENABLED)." -ForegroundColor Red
+        $fail = 1
+    } else {
+        Write-Host "OK: Queue $JobQueueName ENABLED" -ForegroundColor Green
+    }
+}
 
 # Worker + ops jobdefs ACTIVE
 foreach ($jdName in @("academy-video-batch-jobdef", "academy-video-ops-reconcile", "academy-video-ops-scanstuck", "academy-video-ops-netprobe")) {
@@ -103,34 +123,46 @@ if ($missingAlarms.Count -gt 0) {
     Write-Host "WARN: CloudWatch alarms missing: $($missingAlarms -join ', '). Run cloudwatch_deploy_video_alarms.ps1" -ForegroundColor Yellow
 } else { Write-Host "OK: CloudWatch alarms" -ForegroundColor Green }
 
-# Netprobe: submit and ensure SUCCEEDED
-Write-Host "Submitting netprobe job..." -ForegroundColor Cyan
-$npName = "donecheck-netprobe-" + (Get-Date -Format "yyyyMMddHHmmss")
-$npSubmit = ExecJson @("batch", "submit-job", "--job-name", $npName, "--job-queue", $JobQueueName, "--job-definition", "academy-video-ops-netprobe", "--region", $Region, "--output", "json")
-if (-not $npSubmit -or -not $npSubmit.jobId) {
-    Write-Host "FAIL: Netprobe submit failed." -ForegroundColor Red
+# Netprobe: only if jobdef ACTIVE; submit and poll to SUCCEEDED/FAILED; print logStreamName only (no log fetch)
+$npJd = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", "academy-video-ops-netprobe", "--status", "ACTIVE", "--region", $Region, "--output", "json")
+if (-not $npJd -or -not $npJd.jobDefinitions -or $npJd.jobDefinitions.Count -eq 0) {
+    Write-Host "FAIL: academy-video-ops-netprobe not ACTIVE; cannot run netprobe." -ForegroundColor Red
     $fail = 1
 } else {
-    $npId = $npSubmit.jobId
-    $npWait = 0
-    while ($npWait -lt 200) {
-        $npDesc = ExecJson @("batch", "describe-jobs", "--jobs", $npId, "--region", $Region, "--output", "json")
-        $npStatus = $npDesc.jobs[0].status
-        if ($npStatus -eq "SUCCEEDED") {
-            Write-Host "OK: Netprobe SUCCEEDED" -ForegroundColor Green
-            break
-        }
-        if ($npStatus -eq "FAILED") {
-            Write-Host "FAIL: Netprobe job FAILED (connectivity proof failed)." -ForegroundColor Red
-            $fail = 1
-            break
-        }
-        Start-Sleep -Seconds 10
-        $npWait += 10
-    }
-    if ($npWait -ge 200) {
-        Write-Host "FAIL: Netprobe job did not complete in time." -ForegroundColor Red
+    Write-Host "Submitting netprobe job..." -ForegroundColor Cyan
+    $npName = "donecheck-netprobe-" + (Get-Date -Format "yyyyMMddHHmmss")
+    $npSubmit = ExecJson @("batch", "submit-job", "--job-name", $npName, "--job-queue", $JobQueueName, "--job-definition", "academy-video-ops-netprobe", "--region", $Region, "--output", "json")
+    if (-not $npSubmit -or -not $npSubmit.jobId) {
+        Write-Host "FAIL: Netprobe submit failed." -ForegroundColor Red
         $fail = 1
+    } else {
+        $npId = $npSubmit.jobId
+        $npWait = 0
+        while ($npWait -lt 200) {
+            $npDesc = ExecJson @("batch", "describe-jobs", "--jobs", $npId, "--region", $Region, "--output", "json")
+            if (-not $npDesc -or -not $npDesc.jobs -or $npDesc.jobs.Count -eq 0) {
+                Start-Sleep -Seconds 10
+                $npWait += 10
+                continue
+            }
+            $npStatus = $npDesc.jobs[0].status
+            if ($npStatus -eq "SUCCEEDED") {
+                $logStream = $npDesc.jobs[0].container.logStreamName
+                Write-Host "OK: Netprobe SUCCEEDED (logStreamName=$logStream)" -ForegroundColor Green
+                break
+            }
+            if ($npStatus -eq "FAILED") {
+                Write-Host "FAIL: Netprobe job FAILED (connectivity proof failed)." -ForegroundColor Red
+                $fail = 1
+                break
+            }
+            Start-Sleep -Seconds 10
+            $npWait += 10
+        }
+        if ($npWait -ge 200) {
+            Write-Host "FAIL: Netprobe job did not complete in time." -ForegroundColor Red
+            $fail = 1
+        }
     }
 }
 
