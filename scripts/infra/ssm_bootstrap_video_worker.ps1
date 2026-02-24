@@ -137,6 +137,7 @@ foreach ($k in $collected.Keys) {
 $json = $obj | ConvertTo-Json -Compress
 
 # Put parameter (avoid stderr as exception)
+Write-Host "Putting SSM parameter: $ParamName (SecureString)" -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 $putOut = aws ssm put-parameter --name $ParamName --value $json --type SecureString --region $Region --overwrite 2>&1
@@ -157,6 +158,5 @@ if ($getExit -ne 0 -or -not $getOut -or $getOut.Name -ne $ParamName) {
     Write-Host "FAIL: Parameter could not be validated after write (exit $getExit)." -ForegroundColor Red
     exit 1
 }
-Write-Host "Putting SSM parameter: $ParamName (SecureString)" -ForegroundColor Cyan
 Write-Host "OK: $ParamName written successfully." -ForegroundColor Green
 Write-Host "ParameterVersion: $($getOut.Version)" -ForegroundColor Cyan
