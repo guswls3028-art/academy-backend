@@ -99,9 +99,25 @@ foreach ($sgId in $sgIds) {
 }
 
 # SSM to get DB_HOST, REDIS_HOST, API_BASE_URL
-$ssmRaw = aws ssm get-parameter --name "/academy/workers/env" --region $Region --with-decryption --query "Parameter.Value" --output text 2>&1
+$ssmRaw = $null
+$ssmExit = 0
+try {
+    $prevErrAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $ssmRaw = aws ssm get-parameter --name "/academy/workers/env" --region $Region --with-decryption --query "Parameter.Value" --output text 2>&1
+    $ssmExit = $LASTEXITCODE
+    $ErrorActionPreference = $prevErrAction
+} catch {
+    $ErrorActionPreference = 'Stop'
+    $ssmRaw = $null
+}
+if ($ssmExit -ne 0) { $ssmRaw = $null }
+if ($ssmRaw -is [System.Management.Automation.ErrorRecord]) { $ssmRaw = $null }
+if ($ssmRaw -is [object[]]) { $ssmRaw = ($ssmRaw | Where-Object { $_ -is [string] } | Select-Object -First 1) }
+if ($ssmRaw -isnot [string]) { $ssmRaw = $null }
+
 $dbHost = $null; $redisHost = $null; $apiBaseUrl = $null; $r2Endpoint = $null
-if ($LASTEXITCODE -eq 0 -and $ssmRaw) {
+if ($ssmRaw) {
     $ssmJson = $ssmRaw | ConvertFrom-Json
     $dbHost = $ssmJson.DB_HOST
     $redisHost = $ssmJson.REDIS_HOST
