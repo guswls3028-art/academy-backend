@@ -245,7 +245,8 @@ Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
 Write-Host "`n[5b] Register Ops Job Definitions: academy-video-ops-reconcile, academy-video-ops-scanstuck" -ForegroundColor Cyan
 $opsTemplates = @(
     @{ Path = "batch\video_ops_job_definition_reconcile.json"; Name = "academy-video-ops-reconcile" },
-    @{ Path = "batch\video_ops_job_definition_scanstuck.json"; Name = "academy-video-ops-scanstuck" }
+    @{ Path = "batch\video_ops_job_definition_scanstuck.json"; Name = "academy-video-ops-scanstuck" },
+    @{ Path = "batch\video_ops_job_definition_netprobe.json"; Name = "academy-video-ops-netprobe" }
 )
 foreach ($ops in $opsTemplates) {
     $opsJdPath = Join-Path $InfraPath $ops.Path
