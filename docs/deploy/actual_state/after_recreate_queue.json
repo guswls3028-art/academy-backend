@@ -1,0 +1,28 @@
+{
+    "jobQueues":  [
+                      {
+                          "jobQueueName":  "academy-video-batch-queue",
+                          "jobQueueArn":  "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-video-batch-queue",
+                          "state":  "ENABLED",
+                          "status":  "VALID",
+                          "statusReason":  "JobQueue Healthy",
+                          "priority":  1,
+                          "computeEnvironmentOrder":  [
+                                                          {
+                                                              "order":  1,
+                                                              "computeEnvironment":  "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-video-batch-ce"
+                                                          }
+                                                      ],
+                          "serviceEnvironmentOrder":  [
+
+                                                      ],
+                          "jobQueueType":  "ECS",
+                          "tags":  {
+
+                                   },
+                          "jobStateTimeLimitActions":  [
+
+                                                       ]
+                      }
+                  ]
+}

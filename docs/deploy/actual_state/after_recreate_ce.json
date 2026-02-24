@@ -1,0 +1,49 @@
+{
+    "computeEnvironments":  [
+                                {
+                                    "computeEnvironmentName":  "academy-video-batch-ce",
+                                    "computeEnvironmentArn":  "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-video-batch-ce",
+                                    "ecsClusterArn":  "arn:aws:ecs:ap-northeast-2:809466760795:cluster/academy-video-batch-ce_Batch_69fdcda2-6a53-3a5c-8a4c-74bf8b226727",
+                                    "tags":  {
+
+                                             },
+                                    "type":  "MANAGED",
+                                    "state":  "ENABLED",
+                                    "status":  "VALID",
+                                    "statusReason":  "ComputeEnvironment Healthy",
+                                    "computeResources":  {
+                                                             "type":  "EC2",
+                                                             "allocationStrategy":  "BEST_FIT_PROGRESSIVE",
+                                                             "minvCpus":  0,
+                                                             "maxvCpus":  32,
+                                                             "desiredvCpus":  4,
+                                                             "instanceTypes":  [
+                                                                                   "c6g.large",
+                                                                                   "c6g.xlarge",
+                                                                                   "c6g.2xlarge"
+                                                                               ],
+                                                             "subnets":  [
+                                                                             "subnet-049e711f41fdff71b",
+                                                                             "subnet-07a8427d3306ce910",
+                                                                             "subnet-09231ed7ecf59cfa4",
+                                                                             "subnet-0548571ac21b3bbf3"
+                                                                         ],
+                                                             "securityGroupIds":  [
+                                                                                      "sg-011ed1d9eb4a65b8f"
+                                                                                  ],
+                                                             "instanceRole":  "arn:aws:iam::809466760795:instance-profile/academy-batch-ecs-instance-profile",
+                                                             "tags":  {
+
+                                                                      },
+                                                             "ec2Configuration":  [
+                                                                                      {
+                                                                                          "imageType":  "ECS_AL2023"
+                                                                                      }
+                                                                                  ]
+                                                         },
+                                    "serviceRole":  "arn:aws:iam::809466760795:role/academy-batch-service-role",
+                                    "containerOrchestrationType":  "ECS",
+                                    "uuid":  "47c50414-ac3d-3518-bc03-33d9cdd7c2f2"
+                                }
+                            ]
+}
