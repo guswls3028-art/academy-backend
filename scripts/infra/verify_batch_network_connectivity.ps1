@@ -1,9 +1,6 @@
 # ==============================================================================
 # FACT-BASED AWS NETWORK CONNECTIVITY VERIFICATION
 # Video Batch compute environment: VPC / SG / Subnet / connectivity to RDS, Redis, R2, API, ECR, Logs.
-# Run with valid AWS credentials: Region ap-northeast-2, Account 809466760795.
-# If the current run cannot execute AWS CLI (e.g. invalid security token), run this script
-# in an environment with valid AWS credentials to obtain the full report.
 # Usage: .\scripts\infra\verify_batch_network_connectivity.ps1 [-ComputeEnvName academy-video-batch-ce]
 # ==============================================================================
 
@@ -13,6 +10,7 @@ param(
     [string]$FallbackCE = "academy-video-batch-ce-v3"
 )
 
+try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
