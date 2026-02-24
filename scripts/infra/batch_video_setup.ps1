@@ -218,11 +218,34 @@ if (-not ($jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName })) {
     $queueCe = ($jq.jobQueues[0].computeEnvironmentOrder | Where-Object { $_.order -eq 1 }).computeEnvironment
     $queueCeName = $queueCe -replace '^.*/', ''
     if ($queueCeName -ne $ComputeEnvName) {
-        Write-Host "  FAIL: Job queue $JobQueueName uses computeEnvironment=$queueCeName but expected $ComputeEnvName (mismatch)." -ForegroundColor Red
-        Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue
-        exit 1
+        Write-Host "  Job queue points to CE=$queueCeName; updating to $ComputeEnvName (auto-fix)." -ForegroundColor Yellow
+        $qState = $jq.jobQueues[0].state
+        if ($qState -eq "ENABLED") {
+            $prevErr = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            aws batch update-job-queue --job-queue $JobQueueName --state DISABLED --region $Region 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not disable job queue." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
+            $ErrorActionPreference = $prevErr
+            $waitQ = 0
+            while ($waitQ -lt 60) {
+                Start-Sleep -Seconds 5
+                $waitQ += 5
+                $jq2 = ExecJson "aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output json 2>&1"
+                $s = ($jq2.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName } | Select-Object -First 1).state
+                if ($s -eq "DISABLED") { break }
+            }
+        }
+        $ceOrderJson = "[{\"order\":1,\"computeEnvironment\":\"$ComputeEnvName\"}]"
+        $ErrorActionPreference = "Continue"
+        aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order $ceOrderJson --region $Region 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not update job queue computeEnvironmentOrder." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
+        $ErrorActionPreference = $prevErr
+        aws batch update-job-queue --job-queue $JobQueueName --state ENABLED --region $Region 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not re-enable job queue." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
+        Write-Host "  Queue updated to CE $ComputeEnvName" -ForegroundColor Green
+    } else {
+        Write-Host "  Job queue exists and matches CE $ComputeEnvName" -ForegroundColor Gray
     }
-    Write-Host "  Job queue exists and matches CE $ComputeEnvName" -ForegroundColor Gray
 }
 Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue
 
