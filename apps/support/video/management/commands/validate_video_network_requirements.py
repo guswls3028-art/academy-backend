@@ -12,7 +12,7 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 REGION = getattr(settings, "AWS_DEFAULT_REGION", None) or __import__("os").environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
-COMPUTE_ENV_NAME = getattr(settings, "VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-video-batch-ce")
+COMPUTE_ENV_NAME = getattr(settings, "VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-video-batch-ce-v3")
 
 
 class Command(BaseCommand):

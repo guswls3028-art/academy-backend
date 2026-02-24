@@ -241,7 +241,7 @@ if ($epServices -notcontains "ecr.api") { Write-Host "  - VPC endpoint ecr.api m
 if ($epServices -notcontains "logs") { Write-Host "  - VPC endpoint logs missing (CloudWatch Logs may fail in private subnet)" }
 
 Write-Host "`nDRIFT LIST (repo vs deployed):" -ForegroundColor Yellow
-if ($ComputeEnvName -eq "academy-video-batch-ce-v3") { Write-Host "  - CE name deployed: academy-video-batch-ce-v3 (repo default: academy-video-batch-ce)" }
+if ($ComputeEnvName -ne "academy-video-batch-ce-v3") { Write-Host "  - CE name: $ComputeEnvName (repo default: academy-video-batch-ce-v3)" }
 
 Write-Host "`nFINAL VERDICT:" -ForegroundColor Cyan
 $breakCount = 0
