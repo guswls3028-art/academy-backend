@@ -8,6 +8,7 @@ param(
     [string]$JobQueueName = "academy-video-batch-queue",
     [string]$SnsTopicArn = ""
 )
+try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path

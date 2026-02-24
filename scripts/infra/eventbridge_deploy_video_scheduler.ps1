@@ -7,6 +7,7 @@ param(
     [string]$Region = "ap-northeast-2",
     [string]$JobQueueName = "academy-video-batch-queue"
 )
+try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
