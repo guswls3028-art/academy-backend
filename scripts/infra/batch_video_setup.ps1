@@ -200,66 +200,92 @@ while ($wait -lt 120) {
     $wait += 5
 }
 
-# 4) Job Queue (CE name is single source of truth from param -ComputeEnvName)
+# 4) Job Queue (CE ARN is source of truth; fallback to new queue if update fails)
 Write-Host "`n[4] Ensure Job Queue: $JobQueueName" -ForegroundColor Cyan
-$ce3 = ExecJson "aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output json 2>&1"
-$ceExists = ($ce3.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Measure-Object).Count -gt 0
-$ceStatus = ($ce3.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Select-Object -First 1).status
-if (-not $ceExists) {
-    Write-Host "  FAIL: Compute environment $ComputeEnvName does not exist. Create CE first (step 3)." -ForegroundColor Red
+$ceArn = Get-ComputeEnvironmentArn -Name $ComputeEnvName
+if (-not $ceArn) {
+    Write-Host "  FAIL: Compute environment $ComputeEnvName not found or not VALID. Get CE ARN failed." -ForegroundColor Red
     exit 1
 }
-if ($ceStatus -ne "VALID") {
-    Write-Host "  FAIL: Compute environment $ComputeEnvName status is $ceStatus (expected VALID). Wait and retry." -ForegroundColor Red
-    exit 1
-}
+$prevErr = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$jqRaw = aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output json 2>&1
+$jqExit = $LASTEXITCODE
+$ErrorActionPreference = $prevErr
+$jq = $null
+if ($jqExit -eq 0 -and $jqRaw) { try { $jq = $jqRaw | ConvertFrom-Json } catch {} }
+$queueExists = $jq -and ($jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName })
+$FinalJobQueueName = $JobQueueName
+$FinalJobQueueArn = $null
 
-$jqPath = Join-Path $InfraPath "batch\video_job_queue.json"
-$jqContent = Get-Content $jqPath -Raw
-$jqContent = $jqContent -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $ComputeEnvName
-$jqTempFile = Join-Path $RepoRoot "batch_jq_temp.json"
-[System.IO.File]::WriteAllText($jqTempFile, $jqContent, $utf8NoBom)
-$jqTempUri = "file://" + ($jqTempFile -replace '\\', '/')
-
-$jq = ExecJson "aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output json 2>&1"
-if (-not ($jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName })) {
-    aws batch create-job-queue --cli-input-json $jqTempUri --region $Region
+if (-not $queueExists) {
+    Write-Host "  Creating job queue $JobQueueName" -ForegroundColor Yellow
+    $jqPath = Join-Path $InfraPath "batch\video_job_queue.json"
+    $jqContent = Get-Content $jqPath -Raw
+    $jqContent = $jqContent -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $ceArn
+    $jqTempFile = Join-Path $RepoRoot "batch_jq_temp.json"
+    [System.IO.File]::WriteAllText($jqTempFile, $jqContent, $utf8NoBom)
+    $jqTempUri = "file://" + ($jqTempFile -replace '\\', '/')
+    aws batch create-job-queue --cli-input-json $jqTempUri --region $Region 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: create-job-queue failed." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
+    Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue
+    $FinalJobQueueArn = Get-JobQueueArn -Name $JobQueueName
+    if (-not $FinalJobQueueArn) { Write-Host "  FAIL: Job queue created but get ARN failed." -ForegroundColor Red; exit 1 }
+    Write-Host "  Queue created: $FinalJobQueueArn" -ForegroundColor Green
 } else {
-    $queueCe = ($jq.jobQueues[0].computeEnvironmentOrder | Where-Object { $_.order -eq 1 }).computeEnvironment
-    $queueCeName = $queueCe -replace '^.*/', ''
-    if ($queueCeName -ne $ComputeEnvName) {
-        Write-Host "  Job queue points to CE=$queueCeName; updating to $ComputeEnvName (auto-fix)." -ForegroundColor Yellow
-        $prevErr = $ErrorActionPreference
-        $qState = $jq.jobQueues[0].state
+    $qObj = $jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName } | Select-Object -First 1
+    $currentCeArn = ($qObj.computeEnvironmentOrder | Where-Object { $_.order -eq 1 }).computeEnvironment
+    if ($currentCeArn -eq $ceArn) {
+        $FinalJobQueueArn = $qObj.jobQueueArn
+        Write-Host "  Job queue exists and points to CE (ARN match)." -ForegroundColor Gray
+    } else {
+        Write-Host "  Job queue points to different CE; updating to $ComputeEnvName (ARN)." -ForegroundColor Yellow
+        $qState = $qObj.state
         if ($qState -eq "ENABLED") {
-            $prevErr = $ErrorActionPreference
-            $ErrorActionPreference = "Continue"
             aws batch update-job-queue --job-queue $JobQueueName --state DISABLED --region $Region 2>&1 | Out-Null
-            if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not disable job queue." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
-            $ErrorActionPreference = $prevErr
+            if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not disable job queue." -ForegroundColor Red; exit 1 }
             $waitQ = 0
             while ($waitQ -lt 60) {
                 Start-Sleep -Seconds 5
                 $waitQ += 5
-                $jq2 = ExecJson "aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output json 2>&1"
+                $jq2Raw = aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output json 2>&1
+                if ($LASTEXITCODE -ne 0) { break }
+                $jq2 = $jq2Raw | ConvertFrom-Json
                 $s = ($jq2.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName } | Select-Object -First 1).state
                 if ($s -eq "DISABLED") { break }
             }
         }
-        # AWS CLI expects lowercase keys order/computeEnvironment (PowerShell ConvertTo-Json uses PascalCase)
-        $computeEnvOrderJson = '[{"order":1,"computeEnvironment":"' + $ComputeEnvName + '"}]'
-        $ErrorActionPreference = "Continue"
+        $orderObj = @(@{ order = 1; computeEnvironment = $ceArn })
+        $computeEnvOrderJson = $orderObj | ConvertTo-Json -Compress
         aws batch update-job-queue --job-queue $JobQueueName --compute-environment-order $computeEnvOrderJson --region $Region 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not update job queue computeEnvironmentOrder." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
-        $ErrorActionPreference = $prevErr
-        aws batch update-job-queue --job-queue $JobQueueName --state ENABLED --region $Region 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not re-enable job queue." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
-        Write-Host "  Queue updated to CE $ComputeEnvName" -ForegroundColor Green
-    } else {
-        Write-Host "  Job queue exists and matches CE $ComputeEnvName" -ForegroundColor Gray
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  update-job-queue failed; creating new queue academy-video-batch-queue-ce." -ForegroundColor Yellow
+            $newQueueName = "academy-video-batch-queue-ce"
+            $newJq = @{
+                jobQueueName = $newQueueName
+                state = "ENABLED"
+                priority = 1
+                computeEnvironmentOrder = @(@{ order = 1; computeEnvironment = $ceArn })
+            }
+            $newJqFile = Join-Path $RepoRoot "batch_jq_new_temp.json"
+            $newJq | ConvertTo-Json -Depth 5 | Set-Content -Path $newJqFile -Encoding UTF8
+            $newJqUri = "file://" + ($newJqFile -replace '\\', '/')
+            aws batch create-job-queue --cli-input-json $newJqUri --region $Region 2>&1 | Out-Null
+            Remove-Item $newJqFile -Force -ErrorAction SilentlyContinue
+            if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not create fallback queue $newQueueName." -ForegroundColor Red; exit 1 }
+            $FinalJobQueueName = $newQueueName
+            $FinalJobQueueArn = Get-JobQueueArn -Name $newQueueName
+            if (-not $FinalJobQueueArn) { Write-Host "  FAIL: Fallback queue created but get ARN failed." -ForegroundColor Red; exit 1 }
+            Write-Host "  Using new queue: $FinalJobQueueName ($FinalJobQueueArn)" -ForegroundColor Green
+        } else {
+            aws batch update-job-queue --job-queue $JobQueueName --state ENABLED --region $Region 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not re-enable job queue." -ForegroundColor Red; exit 1 }
+            $FinalJobQueueArn = Get-JobQueueArn -Name $JobQueueName
+            Write-Host "  Queue updated to CE (ARN)." -ForegroundColor Green
+        }
     }
 }
-Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue
+if (-not $FinalJobQueueArn) { $FinalJobQueueArn = Get-JobQueueArn -Name $FinalJobQueueName }
 
 # 5) Job Definition
 Write-Host "`n[5] Register Job Definition: $JobDefName" -ForegroundColor Cyan
