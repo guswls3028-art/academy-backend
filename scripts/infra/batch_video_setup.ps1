@@ -224,7 +224,7 @@ if (-not $queueExists) {
     $jqContent = Get-Content $jqPath -Raw
     $jqContent = $jqContent -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $ceArn
     $jqTempFile = Join-Path $RepoRoot "batch_jq_temp.json"
-    [System.IO.File]::WriteAllText($jqTempFile, $jqContent, $utf8NoBom)
+    [System.IO.File]::WriteAllText($jqTempFile, $jqContent, (New-Object System.Text.UTF8Encoding $false))
     $jqTempUri = "file://" + ($jqTempFile -replace '\\', '/')
     aws batch create-job-queue --cli-input-json $jqTempUri --region $Region 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: create-job-queue failed." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
