@@ -63,11 +63,10 @@ if (-not $role) {
 if (Test-Path $policyEventsBatch) {
     aws iam put-role-policy --role-name $EventsRoleName --policy-name "academy-eventbridge-batch-inline" --policy-document "file://$($policyEventsBatch -replace '\\','/')" | Out-Null
 }
-$EventsRoleArn = (ExecJson "aws iam get-role --role-name $EventsRoleName --output json").Role.Arn
-$JobQueueArn = (ExecJson "aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output json").jobQueues[0].jobQueueArn
-if (-not $JobQueueArn) { Write-Host "Job queue $JobQueueName not found." -ForegroundColor Red; exit 1 }
+$EventsRoleArn = (ExecJson @("iam", "get-role", "--role-name", $EventsRoleName, "--output", "json")).Role.Arn
+if (-not $EventsRoleArn) { Write-Host "FAIL: EventBridge role $EventsRoleName not found." -ForegroundColor Red; exit 1 }
 
-# Reconcile rule + Batch target
+# Reconcile rule + Batch target (Targets must be LIST)
 $ReconcileRuleName = "academy-reconcile-video-jobs"
 Write-Host "[1] EventBridge rule: $ReconcileRuleName (rate 2 minutes) -> Batch" -ForegroundColor Cyan
 aws events put-rule --name $ReconcileRuleName --schedule-expression "rate(2 minutes)" --state ENABLED --description "Trigger reconcile_batch_video_jobs via Batch SubmitJob" --region $Region | Out-Null
@@ -88,6 +87,22 @@ if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: put-targets for $ReconcileRuleName 
 $ErrorActionPreference = $prevEv
 Remove-Item $reconcileTargetFile -Force -ErrorAction SilentlyContinue
 
+# Verify reconcile targets
+$tgtReconcile = ExecJson @("events", "list-targets-by-rule", "--rule", $ReconcileRuleName, "--region", $Region, "--output", "json")
+if (-not $tgtReconcile -or -not $tgtReconcile.Targets -or $tgtReconcile.Targets.Count -eq 0) {
+    Write-Host "FAIL: Rule $ReconcileRuleName has no targets after put-targets." -ForegroundColor Red
+    exit 1
+}
+$t0 = $tgtReconcile.Targets[0]
+if (-not $t0.BatchParameters -or $t0.BatchParameters.JobDefinition -ne "academy-video-ops-reconcile") {
+    Write-Host "FAIL: Reconcile target JobDefinition mismatch." -ForegroundColor Red
+    exit 1
+}
+if ($t0.Arn -ne $JobQueueArn) {
+    Write-Host "FAIL: Reconcile target Arn does not match JobQueueArn." -ForegroundColor Red
+    exit 1
+}
+
 # Scan-stuck rule + Batch target
 $ScanStuckRuleName = "academy-video-scan-stuck-rate"
 Write-Host "[2] EventBridge rule: $ScanStuckRuleName (rate 2 minutes) -> Batch" -ForegroundColor Cyan
@@ -107,4 +122,20 @@ if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: put-targets for $ScanStuckRuleName 
 $ErrorActionPreference = $prevEv
 Remove-Item $scanstuckTargetFile -Force -ErrorAction SilentlyContinue
 
-Write-Host "Done. EventBridge video scheduler (Batch only) deployed." -ForegroundColor Green
+# Verify scan-stuck targets
+$tgtScan = ExecJson @("events", "list-targets-by-rule", "--rule", $ScanStuckRuleName, "--region", $Region, "--output", "json")
+if (-not $tgtScan -or -not $tgtScan.Targets -or $tgtScan.Targets.Count -eq 0) {
+    Write-Host "FAIL: Rule $ScanStuckRuleName has no targets after put-targets." -ForegroundColor Red
+    exit 1
+}
+$t1 = $tgtScan.Targets[0]
+if (-not $t1.BatchParameters -or $t1.BatchParameters.JobDefinition -ne "academy-video-ops-scanstuck") {
+    Write-Host "FAIL: Scan-stuck target JobDefinition mismatch." -ForegroundColor Red
+    exit 1
+}
+if ($t1.Arn -ne $JobQueueArn) {
+    Write-Host "FAIL: Scan-stuck target Arn does not match JobQueueArn." -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "Done. EventBridge video scheduler (Batch only) deployed; targets verified." -ForegroundColor Green
