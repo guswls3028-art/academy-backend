@@ -1,0 +1,120 @@
+# ==============================================================================
+# Video Batch deploy: build video-worker image, push ECR, run batch_video_setup,
+# eventbridge_deploy_video_scheduler, cloudwatch_deploy_video_alarms.
+# No secrets hardcoded. Use GitHub OIDC or repository env/secrets.
+# ==============================================================================
+
+name: Video Batch Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "docker/video-worker/**"
+      - "scripts/infra/batch/**"
+      - "scripts/infra/eventbridge/**"
+      - "scripts/infra/cloudwatch/**"
+      - ".github/workflows/video_batch_deploy.yml"
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-2' }}
+  ECR_REPO: academy-video-worker
+  JOB_QUEUE_NAME: academy-video-batch-queue
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      ecr_uri: ${{ steps.meta.outputs.ecr_uri }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_VIDEO_BATCH }}
+          aws-region: ${{ env.AWS_REGION }}
+        continue-on-error: true
+
+      - name: Configure AWS credentials (fallback keys)
+        if: failure()
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: ECR URI
+        id: meta
+        run: |
+          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          echo "ecr_uri=${REGISTRY}/${ECR_REPO}:latest" >> $GITHUB_OUTPUT
+          echo "ECR_URI=${REGISTRY}/${ECR_REPO}:latest" >> $GITHUB_ENV
+
+      - name: Build and push video-worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/video-worker/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ env.ECR_URI }}
+          cache-from: type=gha,scope=video-batch
+          cache-to: type=gha,mode=max,scope=video-batch
+
+  deploy-infra:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    env:
+      VPC_ID: ${{ vars.VIDEO_BATCH_VPC_ID }}
+      SUBNET_IDS: ${{ vars.VIDEO_BATCH_SUBNET_IDS }}
+      SECURITY_GROUP_ID: ${{ vars.VIDEO_BATCH_SECURITY_GROUP_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PowerShell
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y powershell
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_VIDEO_BATCH }}
+          aws-region: ${{ env.AWS_REGION }}
+        continue-on-error: true
+
+      - name: Configure AWS credentials (fallback keys)
+        if: failure()
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Batch video setup
+        run: |
+          pwsh -Command '
+            $subnets = ($env:SUBNET_IDS -split "[,\s]+") | Where-Object { $_ }
+            & ./scripts/infra/batch_video_setup.ps1 -Region $env:AWS_REGION -VpcId $env:VPC_ID -SubnetIds $subnets -SecurityGroupId $env:SECURITY_GROUP_ID -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"
+          '
+        continue-on-error: true
+
+      - name: EventBridge deploy video scheduler
+        run: pwsh -File scripts/infra/eventbridge_deploy_video_scheduler.ps1 -Region "${{ env.AWS_REGION }}" -JobQueueName "${{ env.JOB_QUEUE_NAME }}"
+        continue-on-error: true
+
+      - name: CloudWatch deploy video alarms
+        run: pwsh -File scripts/infra/cloudwatch_deploy_video_alarms.ps1 -Region "${{ env.AWS_REGION }}" -JobQueueName "${{ env.JOB_QUEUE_NAME }}"
+        continue-on-error: true

@@ -79,3 +79,35 @@ def submit_batch_job(video_job_id: str) -> tuple[Optional[str], Optional[str]]:
             video_job_id, e,
         )
         return (None, err_msg)
+
+
+def terminate_batch_job(video_job_id: str, reason: str = "superseded") -> bool:
+    """
+    AWS Batch Job 종료 (orphan 취소 또는 retry 시 이전 job 대체용).
+
+    Args:
+        video_job_id: VideoTranscodeJob.id (UUID 문자열). DB에서 aws_batch_job_id 조회.
+        reason: Batch terminate_job reason.
+
+    Returns:
+        True if terminate was called (or job had no aws_batch_job_id), False on error.
+    """
+    from apps.support.video.models import VideoTranscodeJob
+
+    job = VideoTranscodeJob.objects.filter(pk=video_job_id).first()
+    if not job:
+        return False
+    aws_batch_job_id = (getattr(job, "aws_batch_job_id", None) or "").strip()
+    if not aws_batch_job_id:
+        return True
+
+    region = getattr(settings, "AWS_REGION", None) or getattr(settings, "AWS_DEFAULT_REGION", "ap-northeast-2")
+    try:
+        import boto3
+        client = boto3.client("batch", region_name=region)
+        client.terminate_job(jobId=aws_batch_job_id, reason=reason[:256])
+        logger.info("BATCH_TERMINATE | job_id=%s aws_job_id=%s reason=%s", video_job_id, aws_batch_job_id, reason)
+        return True
+    except Exception as e:
+        logger.warning("BATCH_TERMINATE_FAILED | job_id=%s aws_job_id=%s error=%s", video_job_id, aws_batch_job_id, e)
+        return False

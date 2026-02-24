@@ -51,6 +51,10 @@ if (-not ($existingLg.logGroups | Where-Object { $_.logGroupName -eq $LogsGroup 
 } else {
     Write-Host "  Log group exists" -ForegroundColor Gray
 }
+$OpsLogsGroup = "/aws/batch/academy-video-ops"
+if (-not (ExecJson "aws logs describe-log-groups --log-group-name-prefix `"$OpsLogsGroup`" --region $Region --output json 2>&1" | ForEach-Object { $_.logGroups } | Where-Object { $_.logGroupName -eq $OpsLogsGroup })) {
+    aws logs create-log-group --log-group-name $OpsLogsGroup --region $Region
+}
 
 # 2) IAM Roles
 Write-Host "`n[2] Ensure IAM Roles" -ForegroundColor Cyan
@@ -64,6 +68,8 @@ $trustBatch = Join-Path $InfraPath "iam\trust_batch_service.json"
 $trustEc2 = Join-Path $InfraPath "iam\trust_ec2.json"
 $trustEcsTasks = Join-Path $InfraPath "iam\trust_ecs_tasks.json"
 $policyJob = Join-Path $InfraPath "iam\policy_video_job_role.json"
+$policyBatchService = Join-Path $InfraPath "iam\policy_batch_service_role.json"
+$policyEcsExecution = Join-Path $InfraPath "iam\policy_ecs_task_execution_role.json"
 
 # Batch service role
 $role = $null
@@ -73,6 +79,9 @@ if (-not $role) {
     aws iam create-role --role-name $BatchServiceRoleName --assume-role-policy-document "file://$($trustBatch -replace '\\','/')" | Out-Null
 }
 aws iam attach-role-policy --role-name $BatchServiceRoleName --policy-arn "arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole" 2>$null | Out-Null
+if (Test-Path $policyBatchService) {
+    aws iam put-role-policy --role-name $BatchServiceRoleName --policy-name "academy-batch-service-inline" --policy-document "file://$($policyBatchService -replace '\\','/')" | Out-Null
+}
 
 # ECS instance role
 $role = $null
@@ -102,6 +111,9 @@ if (-not $role) {
     aws iam create-role --role-name $ExecutionRoleName --assume-role-policy-document "file://$($trustEcsTasks -replace '\\','/')" | Out-Null
 }
 aws iam attach-role-policy --role-name $ExecutionRoleName --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy" 2>$null | Out-Null
+if (Test-Path $policyEcsExecution) {
+    aws iam put-role-policy --role-name $ExecutionRoleName --policy-name "academy-batch-execution-inline" --policy-document "file://$($policyEcsExecution -replace '\\','/')" | Out-Null
+}
 
 # Job role (DB/SSM/ECR/Logs)
 $role = $null
@@ -177,15 +189,41 @@ while ($wait -lt 120) {
     $wait += 5
 }
 
-# 4) Job Queue
+# 4) Job Queue (CE name is single source of truth from param -ComputeEnvName)
 Write-Host "`n[4] Ensure Job Queue: $JobQueueName" -ForegroundColor Cyan
+$ce3 = ExecJson "aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output json 2>&1"
+$ceExists = ($ce3.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Measure-Object).Count -gt 0
+$ceStatus = ($ce3.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Select-Object -First 1).status
+if (-not $ceExists) {
+    Write-Host "  FAIL: Compute environment $ComputeEnvName does not exist. Create CE first (step 3)." -ForegroundColor Red
+    exit 1
+}
+if ($ceStatus -ne "VALID") {
+    Write-Host "  FAIL: Compute environment $ComputeEnvName status is $ceStatus (expected VALID). Wait and retry." -ForegroundColor Red
+    exit 1
+}
+
 $jqPath = Join-Path $InfraPath "batch\video_job_queue.json"
+$jqContent = Get-Content $jqPath -Raw
+$jqContent = $jqContent -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $ComputeEnvName
+$jqTempFile = Join-Path $RepoRoot "batch_jq_temp.json"
+[System.IO.File]::WriteAllText($jqTempFile, $jqContent, $utf8NoBom)
+$jqTempUri = "file://" + ($jqTempFile -replace '\\', '/')
+
 $jq = ExecJson "aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output json 2>&1"
 if (-not ($jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName })) {
-    aws batch create-job-queue --cli-input-json "file://$($jqPath -replace '\\','/')" --region $Region
+    aws batch create-job-queue --cli-input-json $jqTempUri --region $Region
 } else {
-    Write-Host "  Job queue exists" -ForegroundColor Gray
+    $queueCe = ($jq.jobQueues[0].computeEnvironmentOrder | Where-Object { $_.order -eq 1 }).computeEnvironment
+    $queueCeName = $queueCe -replace '^.*/', ''
+    if ($queueCeName -ne $ComputeEnvName) {
+        Write-Host "  FAIL: Job queue $JobQueueName uses computeEnvironment=$queueCeName but expected $ComputeEnvName (mismatch)." -ForegroundColor Red
+        Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+    Write-Host "  Job queue exists and matches CE $ComputeEnvName" -ForegroundColor Gray
 }
+Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue
 
 # 5) Job Definition
 Write-Host "`n[5] Register Job Definition: $JobDefName" -ForegroundColor Cyan
@@ -201,6 +239,24 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 $fileUri = "file://" + ($jdFile -replace '\\', '/')
 aws batch register-job-definition --cli-input-json $fileUri --region $Region
 Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
+
+# 5b) Ops Job Definitions (reconcile, scan_stuck)
+Write-Host "`n[5b] Register Ops Job Definitions: academy-video-ops-reconcile, academy-video-ops-scanstuck" -ForegroundColor Cyan
+$opsJdPath = Join-Path $InfraPath "batch\video_ops_job_definition.json"
+foreach ($opsCmd in @(@{Name="academy-video-ops-reconcile"; Command="reconcile_batch_video_jobs"}, @{Name="academy-video-ops-scanstuck"; Command="scan_stuck_video_jobs"})) {
+    $opsContent = Get-Content $opsJdPath -Raw
+    $opsContent = $opsContent -replace "PLACEHOLDER_ECR_URI", $EcrRepoUri
+    $opsContent = $opsContent -replace "PLACEHOLDER_JOB_ROLE_ARN", $jobRoleArn
+    $opsContent = $opsContent -replace "PLACEHOLDER_EXECUTION_ROLE_ARN", $executionRoleArn
+    $opsContent = $opsContent -replace "PLACEHOLDER_REGION", $Region
+    $opsContent = $opsContent -replace "PLACEHOLDER_OPS_JOB_NAME", $opsCmd.Name
+    $opsContent = $opsContent -replace "PLACEHOLDER_OPS_COMMAND", $opsCmd.Command
+    $opsFile = Join-Path $RepoRoot "batch_ops_jd_temp.json"
+    [System.IO.File]::WriteAllText($opsFile, $opsContent, $utf8NoBom)
+    $opsUri = "file://" + ($opsFile -replace '\\', '/')
+    aws batch register-job-definition --cli-input-json $opsUri --region $Region | Out-Null
+    Remove-Item $opsFile -Force -ErrorAction SilentlyContinue
+}
 
 # 6) Validation
 Write-Host "`n[6] Validation" -ForegroundColor Cyan

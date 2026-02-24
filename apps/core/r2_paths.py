@@ -27,6 +27,11 @@ def video_hls_prefix(tenant_id: int, video_id: int) -> str:
     return f"tenants/{tenant_id}/video/hls/{video_id}"
 
 
+def video_hls_tmp_prefix(tenant_id: int, video_id: int, job_id: str) -> str:
+    """HLS 업로드 임시 prefix (two-phase publish). 업로드 후 final prefix로 copy 후 _tmp 삭제."""
+    return f"tenants/{tenant_id}/video/hls/{video_id}/_tmp/{job_id}"
+
+
 def video_hls_master_path(tenant_id: int, video_id: int) -> str:
     """HLS 마스터 플레이리스트 상대 경로 (DB hls_path / CDN path)."""
     return f"tenants/{tenant_id}/video/hls/{video_id}/master.m3u8"

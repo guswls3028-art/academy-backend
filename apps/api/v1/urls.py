@@ -10,6 +10,7 @@ from apps.support.video.views.internal_views import (
     VideoDlqMarkDeadView,
     VideoDeleteR2InternalView,
     VideoScanStuckView,
+    VideoReconcileView,
 )
 
 urlpatterns = [
@@ -126,6 +127,11 @@ urlpatterns = [
         "internal/video/scan-stuck/",
         VideoScanStuckView.as_view(),
         name="video-scan-stuck",
+    ),
+    path(
+        "internal/video/reconcile/",
+        VideoReconcileView.as_view(),
+        name="video-reconcile",
     ),
     path(
         "internal/video/delete-r2/",

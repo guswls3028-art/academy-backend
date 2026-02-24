@@ -198,6 +198,20 @@ def refresh_video_progress_ttl(tenant_id: int, video_id: int, ttl: int = 21600) 
         return False
 
 
+def delete_video_progress_key(tenant_id: int, video_id: int) -> bool:
+    """완료/실패/DEAD 시 진행률 키 삭제 (Redis는 cache only, DB가 source of truth)."""
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return False
+        key = _get_video_progress_key(tenant_id, video_id)
+        redis_client.delete(key)
+        return True
+    except Exception as e:
+        logger.warning("Failed to delete video progress key in Redis: %s", e)
+        return False
+
+
 # ---- Video backlog counter (Lambda BacklogCount metric, no DB) ----
 # Key: tenant:{tenant_id}:video:backlog_count. INCR on enqueue, DECR on claim/dead. Sum for endpoint.
 

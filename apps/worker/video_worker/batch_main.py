@@ -1,8 +1,8 @@
 """
 Video Worker - AWS Batch 엔트리포인트
 
-Single-execution contract. NO job_set_running. NO RUNNING state block.
-State transitions ONLY via job_complete().
+RUNNING 전환 + heartbeat + SIGTERM/SIGINT 처리로 scan_stuck 및 인프라 종료 대응.
+State: QUEUED → RUNNING(job_set_running) → SUCCEEDED(job_complete) or RETRY_WAIT(job_fail_retry).
 """
 
 from __future__ import annotations
@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import sys
+import threading
 import time
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "apps.api.config.settings.worker")
@@ -22,8 +24,10 @@ from academy.adapters.db.django.repositories_video import (
     job_get_by_id,
     job_complete,
     job_fail_retry,
+    job_heartbeat,
     job_mark_dead,
     job_is_cancel_requested,
+    job_set_running,
 )
 from apps.worker.video_worker.config import load_config
 from src.infrastructure.video.processor import process_video
@@ -34,12 +38,47 @@ from src.application.video.handler import CancelledError
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("video_worker_batch")
 
-VIDEO_PROGRESS_TTL_SECONDS = int(os.getenv("VIDEO_PROGRESS_TTL_SECONDS", "14400"))
+VIDEO_PROGRESS_TTL_SECONDS = int(os.getenv("VIDEO_PROGRESS_TTL_SECONDS", "86400"))
 VIDEO_JOB_MAX_ATTEMPTS = int(os.environ.get("VIDEO_JOB_MAX_ATTEMPTS", "5"))
+VIDEO_JOB_HEARTBEAT_SECONDS = int(os.environ.get("VIDEO_JOB_HEARTBEAT_SECONDS", "60"))
+
+# SIGTERM/SIGINT 시 핸들러에서 사용할 현재 job_id (모듈 레벨)
+_current_job_id: list[str | None] = [None]
+_shutdown_event = threading.Event()
+_heartbeat_stop = threading.Event()
 
 
-def _log_json(event: str, **kwargs) -> None:
-    logger.info(json.dumps({"event": event, **kwargs}))
+def _handle_term(signum: int, frame: object) -> None:
+    """SIGTERM/SIGINT 수신 시 DB에 종료 반영 후 즉시 종료 (Spot/scale-in/terminate-job 대응)."""
+    _shutdown_event.set()
+    jid = _current_job_id[0]
+    if jid:
+        try:
+            job_fail_retry(jid, "TERMINATED")
+            _log_json("BATCH_TERMINATED", job_id=jid, signal=signum)
+        except Exception as e:
+            logger.exception("job_fail_retry on signal failed: %s", e)
+    sys.exit(1)
+
+
+def _heartbeat_loop(job_id: str) -> None:
+    """RUNNING job의 last_heartbeat_at을 주기 갱신 (scan_stuck 동작용)."""
+    while not _heartbeat_stop.is_set():
+        if _heartbeat_stop.wait(timeout=VIDEO_JOB_HEARTBEAT_SECONDS):
+            break
+        if _shutdown_event.is_set():
+            break
+        try:
+            job_heartbeat(job_id, lease_seconds=VIDEO_JOB_HEARTBEAT_SECONDS * 2)
+        except Exception as e:
+            logger.debug("heartbeat failed: %s", e)
+
+
+def _log_json(event: str, job_id: str, tenant_id: int = None, video_id: int = None, aws_batch_job_id: str = "", **kwargs) -> None:
+    """Structured log: every batch_main log includes job_id, tenant_id, video_id, aws_batch_job_id."""
+    payload = {"event": event, "job_id": job_id, "tenant_id": tenant_id, "video_id": video_id, "aws_batch_job_id": aws_batch_job_id or ""}
+    payload.update(kwargs)
+    logger.info(json.dumps(payload))
 
 
 def _is_valid_uuid(s: str) -> bool:
@@ -56,8 +95,14 @@ def _is_valid_uuid(s: str) -> bool:
 def main() -> int:
     job_id = os.environ.get("VIDEO_JOB_ID") or (sys.argv[1] if len(sys.argv) > 1 else None)
     if not job_id:
-        _log_json("BATCH_MAIN_ERROR", error="VIDEO_JOB_ID or argv[1] required")
+        _log_json("BATCH_MAIN_ERROR", job_id=job_id or "", error="VIDEO_JOB_ID or argv[1] required")
         return 1
+
+    _current_job_id[0] = job_id
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _handle_term)
+    if hasattr(signal, "SIGINT"):
+        signal.signal(signal.SIGINT, _handle_term)
 
     if not _is_valid_uuid(job_id):
         _log_json("JOB_NOT_FOUND", job_id=job_id, reason="not_a_uuid")
@@ -67,15 +112,22 @@ def main() -> int:
     if not job_obj:
         _log_json("JOB_NOT_FOUND", job_id=job_id)
         return 0
+    aws_batch_job_id = (getattr(job_obj, "aws_batch_job_id", None) or "")
+    tid = getattr(job_obj, "tenant_id", None)
+    vid = getattr(job_obj, "video_id", None)
 
     if job_obj.state == "SUCCEEDED":
-        _log_json("IDEMPOTENT_DONE", job_id=job_id, video_id=job_obj.video_id)
+        _log_json("IDEMPOTENT_DONE", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id)
         return 0
 
     video = job_obj.video
     if video and video.status == "READY" and video.hls_path:
         job_complete(job_id, video.hls_path, video.duration)
-        _log_json("IDEMPOTENT_READY", job_id=job_id, video_id=job_obj.video_id, reason="video_already_ready")
+        _log_json("IDEMPOTENT_READY", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, reason="video_already_ready")
+        return 0
+
+    if not job_set_running(job_id):
+        _log_json("JOB_ALREADY_TAKEN", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, state=job_obj.state)
         return 0
 
     cfg = load_config()
@@ -93,7 +145,7 @@ def main() -> int:
         "tenant_id": int(job_obj.tenant_id),
         "tenant_code": "",
         "_job_id": job_id,
-        "_cancel_check": lambda: job_is_cancel_requested(job_id),
+        "_cancel_check": lambda: job_is_cancel_requested(job_id) or _shutdown_event.is_set(),
         "_cancel_event": None,
     }
     try:
@@ -102,7 +154,16 @@ def main() -> int:
     except Exception:
         pass
 
-    _log_json("BATCH_PROCESS_START", job_id=job_id, video_id=job_obj.video_id, tenant_id=job_obj.tenant_id)
+    _log_json(
+        "BATCH_PROCESS_START",
+        job_id=job_id,
+        tenant_id=job_obj.tenant_id,
+        video_id=job_obj.video_id,
+        aws_batch_job_id=aws_batch_job_id,
+    )
+
+    heartbeat_thread = threading.Thread(target=_heartbeat_loop, args=(job_id,), daemon=True)
+    heartbeat_thread.start()
 
     try:
         hls_path, duration = process_video(job=job_dict, cfg=cfg, progress=progress)
@@ -114,8 +175,9 @@ def main() -> int:
         _log_json(
             "BATCH_JOB_COMPLETED",
             job_id=job_id,
-            video_id=job_obj.video_id,
             tenant_id=job_obj.tenant_id,
+            video_id=job_obj.video_id,
+            aws_batch_job_id=aws_batch_job_id,
             duration_sec=round(elapsed, 2),
         )
 
@@ -126,7 +188,7 @@ def main() -> int:
                     from apps.infrastructure.storage.r2 import delete_object_r2_video
 
                     delete_object_r2_video(key=file_key)
-                    _log_json("R2_RAW_DELETED", video_id=job_obj.video_id, key_prefix=file_key[:80])
+                    _log_json("R2_RAW_DELETED", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, key_prefix=file_key[:80])
                     break
                 except Exception as e:
                     logger.warning("R2 raw delete failed video_id=%s attempt=%s: %s", job_obj.video_id, attempt + 1, e)
@@ -137,7 +199,7 @@ def main() -> int:
 
     except CancelledError:
         job_fail_retry(job_id, "CANCELLED")
-        _log_json("BATCH_JOB_CANCELLED", job_id=job_id, video_id=job_obj.video_id)
+        _log_json("BATCH_JOB_CANCELLED", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id)
         return 1
 
     except Exception as e:
@@ -146,8 +208,10 @@ def main() -> int:
         job_after = job_get_by_id(job_id)
         if job_after and job_after.attempt_count >= VIDEO_JOB_MAX_ATTEMPTS:
             job_mark_dead(job_id, error_code="MAX_ATTEMPTS", error_message=str(e)[:2000])
-            _log_json("BATCH_JOB_DEAD", job_id=job_id, video_id=job_obj.video_id, attempt_count=job_after.attempt_count)
+            _log_json("BATCH_JOB_DEAD", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, attempt_count=job_after.attempt_count)
         return 1
+    finally:
+        _heartbeat_stop.set()
 
 
 if __name__ == "__main__":

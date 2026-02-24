@@ -206,13 +206,55 @@ class VideoTranscodeJob(models.Model):
             models.Index(fields=["state", "updated_at"]),
             models.Index(fields=["tenant_id", "state"]),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["video"],
+                condition=Q(state__in=["QUEUED", "RUNNING", "RETRY_WAIT"]),
+                name="unique_video_active_job",
+            ),
+        ]
 
     def __str__(self):
         return f"Job {self.id} [{self.state}] video={self.video_id}"
 
 
 # ========================================================
-# Video Access (수강생별 override + 접근 규칙)
+# OpsEvent (운영 이벤트 — 관측/알림)
+# ========================================================
+
+
+class VideoOpsEvent(models.Model):
+    """운영 이벤트: JOB_DEAD, BATCH_DESYNC, UPLOAD_INTEGRITY_FAIL, ORPHAN_CANCELLED, TENANT_LIMIT_EXCEEDED 등."""
+
+    class EventType(models.TextChoices):
+        JOB_DEAD = "JOB_DEAD", "Job DEAD"
+        BATCH_DESYNC = "BATCH_DESYNC", "Batch-DB 불일치"
+        UPLOAD_INTEGRITY_FAIL = "UPLOAD_INTEGRITY_FAIL", "R2 업로드 무결성 실패"
+        ORPHAN_CANCELLED = "ORPHAN_CANCELLED", "Orphan Batch job 취소"
+        TENANT_LIMIT_EXCEEDED = "TENANT_LIMIT_EXCEEDED", "테넌트 동시 실행 한도 초과"
+
+    class Severity(models.TextChoices):
+        INFO = "INFO", "Info"
+        WARNING = "WARNING", "Warning"
+        ERROR = "ERROR", "Error"
+
+    type = models.CharField(max_length=64, choices=EventType.choices, db_index=True)
+    severity = models.CharField(max_length=16, choices=Severity.choices, default=Severity.WARNING, db_index=True)
+    tenant_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    video_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    job_id = models.UUIDField(null=True, blank=True, db_index=True)
+    aws_batch_job_id = models.CharField(max_length=256, blank=True, db_index=True)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["type", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.type} {self.created_at} video={self.video_id} job={self.job_id}"
 # - Replaces VideoPermission semantics (SSOT)
 # - DB table kept as video_videopermission for migration safety
 # ========================================================

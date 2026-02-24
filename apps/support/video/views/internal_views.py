@@ -254,3 +254,38 @@ class VideoScanStuckView(APIView):
                 recovered += 1
 
         return Response({"recovered": recovered, "dead": dead})
+
+
+class VideoReconcileView(APIView):
+    """
+    EventBridge Scheduled Lambda: reconcile_batch_video_jobs 로직 실행.
+    POST /api/v1/internal/video/reconcile/
+    body: {"dry_run": false, "older_than_minutes": 5, "resubmit": false} (optional)
+    """
+
+    permission_classes = [IsLambdaInternal]
+    authentication_classes = []
+
+    def post(self, request):
+        from django.core.management import call_command
+        from io import StringIO
+
+        data = getattr(request, "data", None) or {}
+        dry_run = bool(data.get("dry_run", False))
+        older_than_minutes = int(data.get("older_than_minutes", 5))
+        resubmit = bool(data.get("resubmit", False))
+
+        out = StringIO()
+        try:
+            call_command(
+                "reconcile_batch_video_jobs",
+                dry_run=dry_run,
+                older_than_minutes=older_than_minutes,
+                resubmit=resubmit,
+                stdout=out,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception("reconcile_batch_video_jobs failed: %s", e)
+            return Response({"detail": str(e), "ok": False}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"ok": True, "output": out.getvalue()[:2000]})

@@ -2,7 +2,7 @@
 """
 Stuck Scanner: RUNNING인데 last_heartbeat_at < now - 3분 → RETRY_WAIT, attempt_count++.
 
-attempt_count >= MAX 이면 DEAD 처리.
+attempt_count >= MAX 이면 DEAD 처리 (job_mark_dead 사용 → Video.status FAILED 반영).
 RETRY_WAIT 전환 시 submit_batch_job 호출 (Batch 재제출).
 
 Run via cron (e.g. every 2 min):
@@ -37,6 +37,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        from academy.adapters.db.django.repositories_video import job_mark_dead
+
         dry_run = options.get("dry_run", False)
         threshold_minutes = options.get("threshold", STUCK_THRESHOLD_MINUTES)
         cutoff = timezone.now() - timedelta(minutes=threshold_minutes)
@@ -57,12 +59,11 @@ class Command(BaseCommand):
                         f"DRY-RUN DEAD | job_id={job.id} video_id={job.video_id} attempt_count={job.attempt_count}"
                     )
                 else:
-                    job.state = VideoTranscodeJob.State.DEAD
-                    job.error_code = "STUCK_MAX_ATTEMPTS"
-                    job.error_message = f"Stuck (no heartbeat for {threshold_minutes}min)"
-                    job.locked_by = ""
-                    job.locked_until = None
-                    job.save(update_fields=["state", "error_code", "error_message", "locked_by", "locked_until", "updated_at"])
+                    job_mark_dead(
+                        str(job.id),
+                        error_code="STUCK_MAX_ATTEMPTS",
+                        error_message=f"Stuck (no heartbeat for {threshold_minutes}min)",
+                    )
                     self.stdout.write(self.style.WARNING(f"DEAD | job_id={job.id} video_id={job.video_id}"))
                 dead += 1
             else:

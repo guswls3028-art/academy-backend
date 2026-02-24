@@ -1,0 +1,11 @@
+[
+  {
+    "Id": "1",
+    "Arn": "PLACEHOLDER_JOB_QUEUE_ARN",
+    "RoleArn": "PLACEHOLDER_EVENTBRIDGE_BATCH_ROLE_ARN",
+    "BatchParameters": {
+      "JobDefinition": "academy-video-ops-reconcile",
+      "JobName": "reconcile-video-jobs"
+    }
+  }
+]

@@ -15,8 +15,8 @@ from libs.redis.client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
-# 진행 상태 키 TTL (1시간)
-PROGRESS_TTL_SECONDS = 3600
+# 진행 상태 키 TTL (24h; Redis cache only, no DB fallback for progress)
+PROGRESS_TTL_SECONDS = 86400
 
 
 class RedisProgressAdapter(IProgress):

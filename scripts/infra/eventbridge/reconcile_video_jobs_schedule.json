@@ -1,0 +1,1 @@
+{"Name":"academy-reconcile-video-jobs","Description":"Trigger reconcile_batch_video_jobs every 2 min. Target: AWS Batch SubmitJob (academy-video-ops-reconcile).","ScheduleExpression":"rate(2 minutes)","State":"ENABLED"}

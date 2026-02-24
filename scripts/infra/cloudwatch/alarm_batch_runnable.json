@@ -1,0 +1,13 @@
+{
+  "AlarmName": "academy-video-QueueRunnable",
+  "AlarmDescription": "AWS Batch: RUNNABLE job count above threshold (backlog)",
+  "MetricName": "RUNNABLE",
+  "Namespace": "AWS/Batch",
+  "Dimensions": [{"Name": "JobQueue", "Value": "PLACEHOLDER_JOB_QUEUE_ARN"}],
+  "Statistic": "Average",
+  "Period": 300,
+  "EvaluationPeriods": 2,
+  "Threshold": 50,
+  "ComparisonOperator": "GreaterThanThreshold",
+  "TreatMissingData": "notBreaching"
+}

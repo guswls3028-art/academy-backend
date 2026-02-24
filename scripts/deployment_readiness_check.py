@@ -148,7 +148,7 @@ def check_redis_live(*, allow_skip_unconfigured: bool = False) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# [3] SQS 메시지 1건 처리
+# [3] SQS 메시지 1건 처리 (Messaging 등. Video=Batch 전용이므로 인코딩에는 SQS 미사용)
 # ---------------------------------------------------------------------------
 
 
@@ -164,7 +164,7 @@ def _is_sqs_unconfigured_error(e: Exception) -> bool:
 
 
 def check_sqs_live(*, allow_skip_unconfigured: bool = False) -> bool:
-    """SQS 큐 접근 가능, receive_message 호출 가능 (메시지 없어도 OK)"""
+    """SQS 큐 접근 가능 (메시지 없어도 OK). Video=Batch이므로 이 검사는 Messaging/기타 SQS용."""
     try:
         os.environ.setdefault("DJANGO_SETTINGS_MODULE", "apps.api.config.settings.worker")
         import django
@@ -176,10 +176,10 @@ def check_sqs_live(*, allow_skip_unconfigured: bool = False) -> bool:
     try:
         from libs.queue import get_queue_client
         client = get_queue_client()
-        queue_name = os.getenv("VIDEO_SQS_QUEUE_NAME", "academy-video-jobs")
+        queue_name = os.getenv("WORKER_SQS_QUEUE_NAME") or os.getenv("VIDEO_SQS_QUEUE_NAME", "academy-video-jobs")
         # receive (메시지 없어도 에러 안 나면 OK)
         msg = client.receive_message(queue_name=queue_name, wait_time_seconds=1)
-        print(f"    SQS receive_message OK (queue={queue_name}, msg={'있음' if msg else '없음'})")
+        print(f"    SQS receive_message OK (queue={queue_name}, msg={'있음' if msg else '없음'}). Video=Batch 전용이므로 해당 큐는 선택사항.")
         return True
     except Exception as e:
         orig = getattr(e, "__context__", None) or e

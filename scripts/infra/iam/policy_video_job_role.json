@@ -5,9 +5,7 @@
       "Sid": "SSMGetParameter",
       "Effect": "Allow",
       "Action": "ssm:GetParameter",
-      "Resource": [
-        "arn:aws:ssm:*:*:parameter/academy/*"
-      ]
+      "Resource": ["arn:aws:ssm:*:*:parameter/academy/*"]
     },
     {
       "Sid": "ECRPull",
@@ -18,20 +16,20 @@
     {
       "Sid": "ECRGetImage",
       "Effect": "Allow",
-      "Action": [
-        "ecr:BatchGetImage",
-        "ecr:GetDownloadUrlForLayer"
-      ],
+      "Action": ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
       "Resource": "arn:aws:ecr:*:*:repository/academy-*"
     },
     {
       "Sid": "CloudWatchLogs",
       "Effect": "Allow",
-      "Action": [
-        "logs:CreateLogStream",
-        "logs:PutLogEvents"
-      ],
+      "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
       "Resource": "arn:aws:logs:*:*:log-group:/aws/batch/academy-video-worker:*"
+    },
+    {
+      "Sid": "CloudWatchPutMetric",
+      "Effect": "Allow",
+      "Action": "cloudwatch:PutMetricData",
+      "Resource": "*"
     }
   ]
 }

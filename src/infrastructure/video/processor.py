@@ -111,10 +111,12 @@ def process_video(
     except Exception as e:
         raise RuntimeError(f"presigned_get_failed:{trim_tail(str(e))}") from e
 
-    from apps.core.r2_paths import video_hls_prefix, video_hls_master_path
+    from apps.core.r2_paths import video_hls_prefix, video_hls_master_path, video_hls_tmp_prefix
 
     hls_prefix = video_hls_prefix(tenant_id=tenant_id, video_id=video_id)
     hls_master_path = video_hls_master_path(tenant_id=tenant_id, video_id=video_id)
+    job_id_str = (job.get("_job_id") or job.get("job_id") or "").strip() or str(video_id)
+    hls_tmp_prefix = video_hls_tmp_prefix(tenant_id=tenant_id, video_id=video_id, job_id=job_id_str)
 
     with temp_workdir(cfg.TEMP_DIR, prefix=f"video-{video_id}-") as wd:
         wd = Path(wd)
@@ -392,7 +394,7 @@ def process_video(
         upload_directory(
             local_dir=out_dir,
             bucket=cfg.R2_BUCKET,
-            prefix=hls_prefix,
+            prefix=hls_tmp_prefix,
             endpoint_url=cfg.R2_ENDPOINT,
             access_key=cfg.R2_ACCESS_KEY,
             secret_key=cfg.R2_SECRET_KEY,
@@ -402,6 +404,50 @@ def process_video(
             backoff_base=float(cfg.BACKOFF_BASE_SECONDS),
             backoff_cap=float(cfg.BACKOFF_CAP_SECONDS),
         )
+        from apps.worker.video_worker.video.r2_uploader import (
+            publish_tmp_to_final,
+            verify_hls_integrity_r2,
+            delete_prefix,
+            UploadIntegrityError,
+        )
+        try:
+            publish_tmp_to_final(
+                bucket=cfg.R2_BUCKET,
+                tmp_prefix=hls_tmp_prefix,
+                final_prefix=hls_prefix,
+                endpoint_url=cfg.R2_ENDPOINT,
+                access_key=cfg.R2_ACCESS_KEY,
+                secret_key=cfg.R2_SECRET_KEY,
+                region=cfg.R2_REGION,
+            )
+            verify_hls_integrity_r2(
+                bucket=cfg.R2_BUCKET,
+                final_prefix=hls_prefix,
+                endpoint_url=cfg.R2_ENDPOINT,
+                access_key=cfg.R2_ACCESS_KEY,
+                secret_key=cfg.R2_SECRET_KEY,
+                region=cfg.R2_REGION,
+                min_segments=max(3, int(getattr(cfg, "MIN_SEGMENTS_PER_VARIANT", 3))),
+            )
+        except UploadIntegrityError as e:
+            from apps.support.video.services.ops_events import emit_ops_event
+            emit_ops_event(
+                "UPLOAD_INTEGRITY_FAIL",
+                severity="ERROR",
+                tenant_id=tenant_id,
+                video_id=video_id,
+                job_id=job_id_str,
+                payload={"reason": str(e)[:500]},
+            )
+            delete_prefix(
+                bucket=cfg.R2_BUCKET,
+                prefix=hls_prefix,
+                endpoint_url=cfg.R2_ENDPOINT,
+                access_key=cfg.R2_ACCESS_KEY,
+                secret_key=cfg.R2_SECRET_KEY,
+                region=cfg.R2_REGION,
+            )
+            raise
         # ✅ 단계 완료: 100%
         progress.record_progress(
             job_id,

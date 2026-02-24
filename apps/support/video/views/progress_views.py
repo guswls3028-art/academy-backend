@@ -1,5 +1,9 @@
 # apps/support/video/views/progress_views.py
 
+# DO NOT ADD DB ACCESS HERE (PROGRESS ENDPOINT)
+# This module serves GET /media/videos/{id}/progress/ from Redis only.
+# On Redis miss return {"state": "UNKNOWN"} without querying Video/VideoTranscodeJob.
+
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
@@ -19,11 +23,12 @@ from apps.support.video.encoding_progress import (
 from apps.support.video.redis_status_cache import (
     get_video_status_from_redis,
 )
+from apps.support.video.services.ops_events import emit_progress_layer_metrics
 
 
 def _default_progress_response(video_id: int):
-    """Redis/DB에 진행 정보 없을 때 반환 (Batch mode: key 없음). Never raise."""
-    return Response({
+    """Redis에 진행 정보 없을 때 반환. DB 접근 금지."""
+    resp = Response({
         "id": video_id,
         "status": "PENDING",
         "progress": 0,
@@ -34,15 +39,35 @@ def _default_progress_response(video_id: int):
         "encoding_step_name": None,
         "encoding_step_percent": None,
     }, status=status.HTTP_200_OK)
+    resp["Retry-After"] = "3"
+    return resp
+
+
+def _unknown_state_response(video_id: int):
+    """Redis status 키 없음 — DB 조회 없이 반환 (PROGRESS ENDPOINT)."""
+    resp = Response({
+        "id": video_id,
+        "state": "UNKNOWN",
+        "status": "UNKNOWN",
+        "progress": 0,
+        "encoding_progress": 0,
+        "encoding_remaining_seconds": None,
+        "encoding_step_index": None,
+        "encoding_step_total": None,
+        "encoding_step_name": None,
+        "encoding_step_percent": None,
+    }, status=status.HTTP_200_OK)
+    resp["Retry-After"] = "3"
+    return resp
 
 
 class VideoProgressView(APIView):
-    """비디오 진행률/상태 조회 (Redis-only, DB 부하 0). Batch mode에서 progress 키 없어도 예외 없이 기본값 반환."""
+    """비디오 진행률/상태 조회 (Redis-only). DB 부하 0. Redis miss 시 state=UNKNOWN 반환."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
-        """GET /media/videos/{id}/progress/. Never raises; missing Redis (Batch mode) returns default PENDING/progress 0."""
+        # DO NOT ADD DB ACCESS HERE (PROGRESS ENDPOINT)
         try:
             video_id = int(pk)
         except (TypeError, ValueError):
@@ -61,32 +86,13 @@ class VideoProgressView(APIView):
         try:
             cached_status = get_video_status_from_redis(tenant.id, video_id)
         except Exception:
+            emit_progress_layer_metrics(progress_requests=1, redis_miss=0, db_hit=0)
             return _default_progress_response(video_id)
 
         if cached_status is None:
-            from apps.support.video.models import Video
-            try:
-                video = Video.objects.filter(
-                    pk=video_id,
-                    session__lecture__tenant_id=tenant.id,
-                ).values("status", "hls_path", "duration", "error_reason").first()
-            except Exception:
-                return _default_progress_response(video_id)
-            if video and video["status"] in ("READY", "FAILED"):
-                return Response({
-                    "id": video_id,
-                    "status": video["status"],
-                    "encoding_progress": 100 if video["status"] == "READY" else None,
-                    "encoding_remaining_seconds": None,
-                    "encoding_step_index": None,
-                    "encoding_step_total": None,
-                    "encoding_step_name": None,
-                    "encoding_step_percent": None,
-                    "hls_path": video.get("hls_path"),
-                    "duration": video.get("duration"),
-                    "error_reason": video.get("error_reason") if video["status"] == "FAILED" else None,
-                })
-            return _default_progress_response(video_id)
+            # DO NOT ADD DB ACCESS HERE (PROGRESS ENDPOINT)
+            emit_progress_layer_metrics(progress_requests=1, redis_miss=1, db_hit=0)
+            return _unknown_state_response(video_id)
 
         try:
             video_status = cached_status.get("status") if isinstance(cached_status, dict) else "PENDING"
@@ -121,8 +127,12 @@ class VideoProgressView(APIView):
                 if video_status == "FAILED":
                     response_data["error_reason"] = cached_status.get("error_reason")
 
-            return Response(response_data)
+            emit_progress_layer_metrics(progress_requests=1, redis_miss=0, db_hit=0)
+            resp = Response(response_data)
+            resp["Retry-After"] = "3"
+            return resp
         except Exception:
+            emit_progress_layer_metrics(progress_requests=1, redis_miss=0, db_hit=0)
             return _default_progress_response(video_id)
 
 

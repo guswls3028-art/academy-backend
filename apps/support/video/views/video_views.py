@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import models, transaction
+from django.db.utils import IntegrityError
 from django.utils import timezone
 
 from rest_framework import status
@@ -489,8 +490,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     @transaction.atomic
     @action(detail=True, methods=["post"], url_path="retry")
     def retry(self, request, pk=None):
-        from academy.adapters.db.django.repositories_video import job_set_cancel_requested
+        from academy.adapters.db.django.repositories_video import job_mark_dead, job_set_cancel_requested
         from apps.support.video.models import VideoTranscodeJob
+        from apps.support.video.services.batch_submit import terminate_batch_job
 
         try:
             video = Video.objects.select_for_update().select_related("session__lecture__tenant").get(
@@ -505,35 +507,47 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             raise ValidationError("강의의 프로그램(테넌트) 정보가 없어 재처리할 수 없습니다.")
 
         try:
-            # QUEUED/RETRY_WAIT: 최근이면 재시도 불가(이미 백로그). 오래됐으면 메시지 유실로 간주하고 재등록 허용.
             STALE_QUEUED_THRESHOLD = getattr(
                 settings, "VIDEO_RETRY_STALE_QUEUED_HOURS", 1
-            )  # 1시간 이상 QUEUED/RETRY_WAIT면 재처리 허용
+            )
             now = timezone.now()
             stale_cutoff = now - timedelta(hours=STALE_QUEUED_THRESHOLD)
 
+            cur = None
             if video.current_job_id:
                 cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
+                if cur and cur.state == VideoTranscodeJob.State.RUNNING and not getattr(cur, "cancel_requested", False):
+                    return Response(
+                        {"detail": "Cannot retry: a job is currently RUNNING. Request cancel first or wait for it to finish."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
                 if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
-                    # aws_batch_job_id 없음 = submit 실패/미전달 → 실제 Batch 백로그 아님. 정리 후 재처리 허용.
                     has_batch_id = bool((getattr(cur, "aws_batch_job_id", None) or "").strip())
                     if not has_batch_id:
-                        cur.state = VideoTranscodeJob.State.DEAD
-                        cur.error_message = "Stale; no aws_batch_job_id (submit failed or lost), re-enqueued via retry"
-                        cur.save(update_fields=["state", "error_message", "updated_at"])
+                        job_mark_dead(
+                            str(cur.id),
+                            error_code="STALE_NO_BATCH_ID",
+                            error_message="Stale; no aws_batch_job_id (submit failed or lost), re-enqueued via retry",
+                        )
+                        video.refresh_from_db()
                         video.current_job_id = None
-                        video.save(update_fields=["current_job_id", "updated_at"])
+                        video.status = Video.Status.UPLOADED
+                        video.save(update_fields=["current_job_id", "status", "updated_at"])
                     elif cur.updated_at >= stale_cutoff:
                         raise ValidationError("Already in backlog (job queued or retry wait)")
                     else:
-                        # 오래된 QUEUED/RETRY_WAIT → 메시지 유실 가능성. 기존 Job DEAD 처리 후 새 Job으로 재등록.
-                        cur.state = VideoTranscodeJob.State.DEAD
-                        cur.error_message = "Stale; re-enqueued via retry (was QUEUED/RETRY_WAIT too long)"
-                        cur.save(update_fields=["state", "error_message", "updated_at"])
+                        terminate_batch_job(str(cur.id), reason="superseded")
+                        job_mark_dead(
+                            str(cur.id),
+                            error_code="STALE_RETRY",
+                            error_message="Stale; re-enqueued via retry (was QUEUED/RETRY_WAIT too long)",
+                        )
+                        video.refresh_from_db()
                         video.current_job_id = None
-                        video.save(update_fields=["current_job_id", "updated_at"])
+                        video.status = Video.Status.UPLOADED
+                        video.save(update_fields=["current_job_id", "status", "updated_at"])
                 elif cur and cur.state == VideoTranscodeJob.State.RUNNING:
-                    # RUNNING: cancel_requested 설정 후 새 Job 생성
+                    terminate_batch_job(str(cur.id), reason="superseded")
                     job_set_cancel_requested(cur.id)
 
             if video.status not in (Video.Status.READY, Video.Status.FAILED):
@@ -560,6 +574,19 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
         except ValidationError:
             raise
+        except IntegrityError:
+            existing = VideoTranscodeJob.objects.filter(
+                video=video,
+                state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RUNNING, VideoTranscodeJob.State.RETRY_WAIT],
+            ).first()
+            if existing:
+                return Response(
+                    {"detail": "Job already active for this video", "job_id": str(existing.id)},
+                    status=status.HTTP_200_OK,
+                )
+            raise ValidationError(
+                "재처리 요청 처리 중 충돌이 발생했습니다. 잠시 후 다시 시도해 주세요."
+            )
         except Exception as e:
             logger.exception("VIDEO_RETRY_ERROR | video_id=%s | %s", getattr(video, "id", None), e)
             raise ValidationError(

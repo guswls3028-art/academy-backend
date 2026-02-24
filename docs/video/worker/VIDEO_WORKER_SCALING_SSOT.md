@@ -2,6 +2,8 @@
 
 **현행: Video = AWS Batch 전용.** 스케일링은 Batch CE/Job Queue가 담당. ASG/SQS 기반 Video 스케일링은 사용하지 않음.
 
+**Video Worker 요약·진입 문서**: [docs/video/worker/VIDEO_WORKER_README.md](VIDEO_WORKER_README.md), [apps/worker/video_worker/README.md](../../../apps/worker/video_worker/README.md)
+
 ---
 
 ## 1. 현행: Batch 전용
@@ -14,7 +16,7 @@
 | 로그 | /aws/batch/academy-video-worker | CloudWatch Logs |
 
 - **검증**: Batch job 제출 후 콘솔/CLI로 RUNNABLE → STARTING → RUNNING. 로그는 위 Log group에서 확인.
-- **문서**: docs/VIDEO_BATCH_REFACTOR_PLAN_OF_RECORD.md, docs/VIDEO_BATCH_VERIFICATION_CHECKLIST.md
+- **문서**: docs/video/batch/VIDEO_BATCH_REFACTOR_PLAN_OF_RECORD.md, docs/video/batch/VIDEO_BATCH_VERIFICATION_CHECKLIST.md
 
 ---
 
@@ -99,5 +101,5 @@ aws autoscaling describe-scaling-activities --auto-scaling-group-name academy-vi
 
 ### 2.7 참고 문서
 
-- `docs/VIDEO_WORKER_ASG_STRICT_INVESTIGATION.md` — 이전 BacklogCount 기반 구조 조사.
+- `docs/video/legacy/VIDEO_WORKER_ASG_STRICT_INVESTIGATION.md` — 이전 BacklogCount 기반 구조 조사.
 - `docs/SESSION_VIDEO_ASG_SSM_FINAL_STATE.md` — ASG/SSM 최종 상태 요약 (일부는 SQS 기반으로 변경됨).

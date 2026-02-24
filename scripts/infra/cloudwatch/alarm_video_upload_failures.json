@@ -1,0 +1,12 @@
+{
+  "AlarmName": "academy-video-UploadFailures",
+  "AlarmDescription": "Video encoding: UploadFailures (R2 integrity) above threshold",
+  "MetricName": "UploadFailures",
+  "Namespace": "Academy/Video",
+  "Statistic": "Sum",
+  "Period": 300,
+  "EvaluationPeriods": 2,
+  "Threshold": 5,
+  "ComparisonOperator": "GreaterThanThreshold",
+  "TreatMissingData": "notBreaching"
+}

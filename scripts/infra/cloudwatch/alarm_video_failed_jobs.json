@@ -1,0 +1,12 @@
+{
+  "AlarmName": "academy-video-FailedJobs",
+  "AlarmDescription": "Video encoding: FailedJobs (BATCH_DESYNC) above threshold",
+  "MetricName": "FailedJobs",
+  "Namespace": "Academy/Video",
+  "Statistic": "Sum",
+  "Period": 300,
+  "EvaluationPeriods": 2,
+  "Threshold": 10,
+  "ComparisonOperator": "GreaterThanThreshold",
+  "TreatMissingData": "notBreaching"
+}

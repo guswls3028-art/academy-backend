@@ -1,0 +1,14 @@
+---
+description: 이 프로젝트 확정 스택·사실 — 이 목록 외에는 추측하지 말 것
+alwaysApply: true
+---
+
+# 프로젝트 확정 사실 (추가 추측 금지)
+
+아래만 이 프로젝트의 사실로 취급한다. 설명이 없으면 다른 서비스(AWS S3, SQS 워커 등)로 대체하지 않는다.
+
+- **영상 원본·HLS 스토리지:** Cloudflare R2. (AWS S3 아님.) 설정: `R2_*`, 경로: `apps/core/r2_paths.py`, 삭제: `apps.infrastructure.storage.r2`, presign: `libs.s3_client.presign`은 R2 엔드포인트 대신 사용.
+- **영상 인코딩 실행:** AWS Batch 전용. SQS 기반 워커 없음. 엔트리: `apps/worker/video_worker/batch_main.py`, 제출: `apps/support/video/services/batch_submit.py`.
+- **DB:** Django, PostgreSQL. Job 모델: `VideoTranscodeJob` (`apps/support/video/models.py`). Video는 `current_job` FK, `tenant_id` 필드 없음(세션·강의 경유).
+- **메시징:** 인코딩 작업은 SQS로 전달하지 않음. R2 삭제만 `academy-video-delete-r2` SQS + Lambda 사용.
+- **확인 필요 시:** `docs/video/batch/VIDEO_BATCH_DESIGN_VERIFICATION_REPORT.md`, `docs/video/batch/VIDEO_BATCH_SERVICE_LAUNCH_DESIGN_FOR_GPT.md` 및 코드를 직접 참조한다.

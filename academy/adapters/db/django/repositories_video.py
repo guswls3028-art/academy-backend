@@ -722,6 +722,11 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
         duration=int(duration) if duration is not None and duration >= 0 else None,
         ttl=None,
     )
+    try:
+        from apps.support.video.redis_status_cache import delete_video_progress_key
+        delete_video_progress_key(tenant_id, video.id)
+    except Exception:
+        pass
     return True, "ok"
 
 
@@ -800,6 +805,24 @@ def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") ->
             status=Video.Status.FAILED,
             error_reason=err_msg or job.error_message,
         )
+    try:
+        from apps.support.video.services.ops_events import emit_ops_event
+        emit_ops_event(
+            "JOB_DEAD",
+            severity="ERROR",
+            tenant_id=job.tenant_id,
+            video_id=job.video_id,
+            job_id=job_id,
+            aws_batch_job_id=job.aws_batch_job_id or "",
+            payload={"error_code": err_code, "error_message": err_msg[:500]},
+        )
+    except Exception:
+        pass
+    try:
+        from apps.support.video.redis_status_cache import delete_video_progress_key
+        delete_video_progress_key(job.tenant_id, job.video_id)
+    except Exception:
+        pass
     return True
 
 
