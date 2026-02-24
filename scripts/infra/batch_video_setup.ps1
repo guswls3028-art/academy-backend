@@ -348,18 +348,46 @@ foreach ($ops in $opsJobDefs) {
     Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
     Write-Host "  Registered $($ops.jobDefinitionName)" -ForegroundColor Gray
 }
+foreach ($opsName in @("academy-video-ops-reconcile", "academy-video-ops-scanstuck", "academy-video-ops-netprobe")) {
+    $prevO = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $jdOut = aws batch describe-job-definitions --job-definition-name $opsName --status ACTIVE --region $Region --output json 2>&1
+    $ErrorActionPreference = $prevO
+    if ($LASTEXITCODE -ne 0) { Write-Host "  WARN: $opsName describe ACTIVE failed." -ForegroundColor Yellow; continue }
+    $jdObj = $jdOut | ConvertFrom-Json
+    $defs = $jdObj.jobDefinitions | Where-Object { $_.jobDefinitionName -eq $opsName }
+    if ($defs -and $defs.Count -gt 0) {
+        $latest = $defs | Sort-Object -Property revision -Descending | Select-Object -First 1
+        Write-Host "  ACTIVE $opsName revision $($latest.revision)" -ForegroundColor Gray
+    }
+}
 
-# 6) Validation
+# 6) Validation and final state
 Write-Host "`n[6] Validation" -ForegroundColor Cyan
-aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output table
-aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output table
-aws batch describe-job-definitions --job-definition-name $JobDefName --status ACTIVE --region $Region --output table
+$FinalComputeEnvArn = $ceArn
+$FinalComputeEnvName = $ComputeEnvName
+$OpsJobDefNames = @("academy-video-ops-reconcile", "academy-video-ops-scanstuck", "academy-video-ops-netprobe")
+if (-not (Test-Path -LiteralPath $OutDir)) { New-Item -ItemType Directory -Path $OutDir -Force | Out-Null }
+$finalState = @{
+    FinalComputeEnvName = $FinalComputeEnvName
+    FinalComputeEnvArn = $FinalComputeEnvArn
+    FinalJobQueueName = $FinalJobQueueName
+    FinalJobQueueArn = $FinalJobQueueArn
+    WorkerJobDefName = $JobDefName
+    OpsJobDefNames = $OpsJobDefNames
+}
+$finalStatePath = Join-Path $OutDir "batch_final_state.json"
+$finalState | ConvertTo-Json | Set-Content -Path $finalStatePath -Encoding UTF8
+Write-Host "  Wrote $finalStatePath (FinalJobQueueName=$FinalJobQueueName)" -ForegroundColor Gray
+
+aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output table 2>&1 | Out-Null
+aws batch describe-job-queues --job-queues $FinalJobQueueName --region $Region --output table 2>&1 | Out-Null
+aws batch describe-job-definitions --job-definition-name $JobDefName --status ACTIVE --region $Region --output table 2>&1 | Out-Null
 
 Write-Host "`nSubmitting test job (dry-run, job_id=TEST_DRYRUN)..." -ForegroundColor Yellow
 $testJobName = "academy-video-batch-test-" + (Get-Date -Format "yyyyMMddHHmmss")
-$submitOut = ExecJson "aws batch submit-job --job-name $testJobName --job-queue $JobQueueName --job-definition $JobDefName --parameters job_id=TEST_DRYRUN --region $Region --output json"
-$awsJobId = $submitOut.jobId
-Write-Host "Submitted AWS Batch JobId=$awsJobId" -ForegroundColor Green
-Write-Host "`nTrack: aws batch describe-jobs --jobs $awsJobId --region $Region" -ForegroundColor Gray
-
-Write-Host "`nDONE. Batch infra is ready." -ForegroundColor Green
+$submitOut = ExecJson "aws batch submit-job --job-name $testJobName --job-queue $FinalJobQueueName --job-definition $JobDefName --parameters job_id=TEST_DRYRUN --region $Region --output json"
+if (-not $submitOut -or -not $submitOut.jobId) { Write-Host "  WARN: Test submit failed." -ForegroundColor Yellow } else {
+    Write-Host "Submitted AWS Batch JobId=$($submitOut.jobId)" -ForegroundColor Green
+}
+Write-Host "`nDONE. Batch infra ready. Use JobQueueName=$FinalJobQueueName for EventBridge and run_netprobe." -ForegroundColor Green
