@@ -250,14 +250,14 @@ if ($opsCe2 -and [int]$opsCe2.computeResources.maxvCpus -ne 1) { Write-Error "Op
 if ($videoJdLatest2) {
     if ([int]$videoJdLatest2.containerProperties.memory -ne 3072) { Write-Error "Video JobDef memory != 3072"; $fail = $true }
     if ([int]$videoJdLatest2.containerProperties.vcpus -ne 2) { Write-Error "Video JobDef vcpus != 2"; $fail = $true }
-    if ($videoJdLatest2.timeout.attemptDurationSeconds -ne 14400) { Write-Error "Video JobDef timeout != 14400"; $fail = $true }
+    if (-not $videoJdLatest2.timeout -or [int]$videoJdLatest2.timeout.attemptDurationSeconds -ne 14400) { Write-Error "Video JobDef timeout != 14400"; $fail = $true }
     if (-not $videoJdLatest2.containerProperties.runtimePlatform -or $videoJdLatest2.containerProperties.runtimePlatform.cpuArchitecture -ne "ARM64") { Write-Error "Video JobDef not ARM64"; $fail = $true }
 }
 else { Write-Error "Video JobDef not found"; $fail = $true }
 if ($opsJdLatest2) {
     if ([int]$opsJdLatest2.containerProperties.memory -ne 1024) { Write-Error "Ops JobDef memory != 1024"; $fail = $true }
     if ([int]$opsJdLatest2.containerProperties.vcpus -ne 1) { Write-Error "Ops JobDef vcpus != 1"; $fail = $true }
-    if ($opsJdLatest2.timeout.attemptDurationSeconds -ne 300) { Write-Error "Ops JobDef timeout != 300"; $fail = $true }
+    if (-not $opsJdLatest2.timeout -or [int]$opsJdLatest2.timeout.attemptDurationSeconds -ne 300) { Write-Error "Ops JobDef timeout != 300"; $fail = $true }
 }
 else { Write-Error "Ops reconcile JobDef not found"; $fail = $true }
 if (-not $rule2 -or $rule2.Name -ne $ReconcileRuleName) { Write-Error "EventBridge rule missing"; $fail = $true }
