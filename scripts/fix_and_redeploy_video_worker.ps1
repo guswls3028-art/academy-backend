@@ -83,12 +83,16 @@ if (-not $ceArn) { Warn "Could not get CE from queue; skipping instance role att
             else { Write-Host "  (already attached or error): $($policyArn.Split('/')[-1])" -ForegroundColor Gray }
         }
         $attached = aws iam list-attached-role-policies --role-name $roleName --output json 2>&1 | ConvertFrom-Json
-        $hasEcr = $attached.AttachedPolicies | Where-Object { $_.PolicyArn -match "ContainerRegistryReadOnly" }
-        $hasLogs = $attached.AttachedPolicies | Where-Object { $_.PolicyArn -match "CloudWatchLogs" }
+        $hasEcr = $false
+        $hasLogs = $false
+        if ($attached -and $attached.AttachedPolicies) {
+            $hasEcr = $null -ne ($attached.AttachedPolicies | Where-Object { $_.PolicyArn -match "ContainerRegistryReadOnly" })
+            $hasLogs = $null -ne ($attached.AttachedPolicies | Where-Object { $_.PolicyArn -match "CloudWatchLogs" })
+        }
         if ($hasEcr -and $hasLogs) {
             Ok "Verified: $roleName has ECR + CloudWatch Logs attached."
         } else {
-            Warn "Verification: ECR=$($null -ne $hasEcr) Logs=$($null -ne $hasLogs). Ensure role has ecr:GetAuthorizationToken, ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, logs:CreateLogStream, logs:PutLogEvents."
+            Warn "Verification: ECR=$hasEcr Logs=$hasLogs. Ensure role has ecr:GetAuthorizationToken, ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, logs:CreateLogStream, logs:PutLogEvents."
         }
         }
     }
