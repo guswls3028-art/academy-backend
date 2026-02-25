@@ -72,26 +72,11 @@ $revisionToUse = $rev
 $needRegister = ($mem -ne 3584)
 
 if ($needRegister) {
-    # --- 3) Get ACTIVE revision as raw JSON; set memory=3584; remove illegal keys; register ---
-    $rawJson = aws batch describe-job-definitions --job-definition-name $JobDefName --status ACTIVE --region $Region --output json 2>&1 | Out-String
-    $allDefsRaw = $rawJson | ConvertFrom-Json
-    $activeDefJson = $null
-    foreach ($d in $allDefsRaw.jobDefinitions) {
-        if ([int]$d.revision -eq $maxRevision) {
-            $activeDefJson = $d
-            break
-        }
-    }
-    if (-not $activeDefJson) {
-        Write-Host "ROOT CAUSE: ACTIVE_MEMORY was $mem (expected 3584); could not get definition for revision $maxRevision"
-        Write-Host "FIX APPLIED: None"
-        Write-Host "CURRENT STATUS: N/A"
-        exit 1
-    }
+    # --- 3) Build register payload from ACTIVE definition; remove illegal keys; set memory=3584; register ---
     $illegal = @("revision", "status", "jobDefinitionArn", "containerOrchestrationType")
     $registerObj = @{}
-    foreach ($key in $activeDefJson.PSObject.Properties.Name) {
-        if ($key -notin $illegal) { $registerObj[$key] = $activeDefJson.$key }
+    foreach ($key in $activeDef.PSObject.Properties.Name) {
+        if ($key -notin $illegal) { $registerObj[$key] = $activeDef.$key }
     }
     $registerObj.containerProperties.memory = 3584
     $jdFile = Join-Path $env:TEMP "batch_jd_register_$(Get-Date -Format 'yyyyMMddHHmmss').json"
