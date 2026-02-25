@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Batch entrypoint: fetch /academy/workers/env from SSM (JSON only), set os.environ, validate, then exec.
+Batch entrypoint: fetch /academy/workers/env from SSM (JSON or base64-encoded JSON), set os.environ, validate, then exec.
 Single boot path for all Batch jobs (worker, netprobe, reconcile, scan_stuck).
 No silent fallback. Fail fast on missing/invalid config.
+SSM value may be plain JSON or base64(UTF-8 JSON) to avoid Windows CLI quoting corruption.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
