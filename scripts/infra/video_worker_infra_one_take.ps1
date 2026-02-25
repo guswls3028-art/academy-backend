@@ -28,7 +28,7 @@ Invoke-Step "1) API Private IP (discover_api_network)" {
 
 # 2) SSM bootstrap
 Invoke-Step "2) SSM bootstrap" {
-    & (Join-Path $ScriptRoot "ssm_bootstrap_video_worker.ps1") -Region $Region -EnvFile ".env" -Overwrite -UsePrivateApiIp
+    & (Join-Path $ScriptRoot "ssm_bootstrap_video_worker.ps1") -Region $Region -EnvFile (Join-Path $RepoRoot ".env") -Overwrite -UsePrivateApiIp
 }
 
 # 3) (옵션) 이미지 빌드/푸시
