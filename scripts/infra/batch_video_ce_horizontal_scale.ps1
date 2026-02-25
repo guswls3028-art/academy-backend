@@ -185,9 +185,11 @@ if ($firstCeInQueue -ne $newCeArn) {
     $orderObj = @(@{ order = 1; computeEnvironment = $newCeArn })
     $updatePayload = @{ jobQueue = $VideoQueueName; computeEnvironmentOrder = $orderObj }
     $updateFile = Join-Path $RepoRoot "batch_update_queue_temp.json"
-    [System.IO.File]::WriteAllText($updateFile, ($updatePayload | ConvertTo-Json -Depth 5), $utf8NoBom)
-    $updateFileAbs = [System.IO.Path]::GetFullPath($updateFile)
-    Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--cli-input-json", $updateFileAbs, "--region", $Region) -ErrorMessage "update-job-queue computeEnvironmentOrder failed"
+    $updateTemplate = '{"jobQueue":"PLACEHOLDER_QUEUE_NAME","computeEnvironmentOrder":[{"order":1,"computeEnvironment":"PLACEHOLDER_CE_ARN"}]}'
+    $updateContent = $updateTemplate -replace "PLACEHOLDER_QUEUE_NAME", $VideoQueueName -replace "PLACEHOLDER_CE_ARN", $newCeArn
+    [System.IO.File]::WriteAllText($updateFile, $updateContent, $utf8NoBom)
+    $updateUri = "file://" + (([System.IO.Path]::GetFullPath($updateFile)) -replace '\\', '/')
+    Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--cli-input-json", $updateUri, "--region", $Region) -ErrorMessage "update-job-queue computeEnvironmentOrder failed"
     Remove-Item $updateFile -Force -ErrorAction SilentlyContinue
     Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--job-queue", $VideoQueueName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "re-enable job queue failed"
     [void]$script:ChangesApplied.Add("Updated $VideoQueueName to use $NewVideoCEName")
