@@ -69,10 +69,10 @@ Scheduled via EventBridge → Batch SubmitJob to **academy-video-ops-queue** (Op
 |----------|--------|--------|
 | IAM roles (Batch service, ECS instance, ECS execution, job role) | `scripts/infra/batch_video_setup.ps1` | Creates/updates roles; attaches inline policies from `scripts/infra/iam/*.json` |
 | Video CE, video queue, job definitions | `scripts/infra/batch_video_setup.ps1` | Pass `-Region`, `-VpcId`, `-SubnetIds`, `-SecurityGroupId`, `-EcrRepoUri` (and optional overrides) |
-| **Ops CE + Ops queue** | `scripts/infra/batch_ops_setup.ps1` | **academy-video-ops-ce** (t4g.micro/small, max 4 vCPU), **academy-video-ops-queue**. Same VPC as video; run after video Batch. |
+| **Ops CE + Ops queue** | `scripts/infra/batch_ops_setup.ps1` | **academy-video-ops-ce** (t4g.micro/small, max 4 vCPU), **academy-video-ops-queue**. Same VPC and **same Security Group as academy-video-batch-ce**; run after video Batch. |
 | CloudWatch Log Group | `scripts/infra/batch_video_setup.ps1` | `/aws/batch/academy-video-worker` |
-| EventBridge rule (reconcile, rate 2 min) | `scripts/infra/eventbridge_deploy_video_scheduler.ps1` | Target: **academy-video-ops-queue** (use `-OpsJobQueueName academy-video-ops-queue`) |
-| EventBridge rule (scan-stuck) | `scripts/infra/eventbridge_deploy_video_scheduler.ps1` | Target: **academy-video-ops-queue** |
+| EventBridge rule (reconcile, rate 2 min) | `scripts/infra/eventbridge_deploy_video_scheduler.ps1` | Target: **academy-video-ops-queue**. Script runs **aws events put-targets** → **actual AWS EventBridge targets** updated to Ops queue. |
+| EventBridge rule (scan-stuck) | `scripts/infra/eventbridge_deploy_video_scheduler.ps1` | Target: **academy-video-ops-queue** (actual AWS target updated by same script). |
 | CloudWatch alarms | `scripts/infra/cloudwatch_deploy_video_alarms.ps1` | Pass `-Region`, `-JobQueueName` (video queue); optional `-SnsTopicArn` |
 
 ### One-shot execution (copy-paste PowerShell)
