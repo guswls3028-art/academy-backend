@@ -197,7 +197,7 @@ def main() -> None:
                                 if manifest_str:
                                     import json
                                     manifest = json.loads(manifest_str)
-                                    manifests_list = manifest.get("manifests") or manifest.get("manifests") if isinstance(manifest.get("manifests"), list) else []
+                                    manifests_list = manifest.get("manifests") or []
                                     if manifests_list:
                                         first = manifests_list[0]
                                         plat = first.get("platform") or {}
@@ -205,6 +205,8 @@ def main() -> None:
                                     else:
                                         plat = manifest.get("platform") or {}
                                         img_arch = (plat.get("architecture") or "unknown").lower()
+                                    if img_arch == "unknown":
+                                        img_arch = "unknown (single-arch manifest)"
                             except Exception as _:
                                 pass
                             out.append(f"  ECR image architecture: {img_arch}")
