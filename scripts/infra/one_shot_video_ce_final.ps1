@@ -113,13 +113,10 @@ foreach ($sn in $subnets) {
 
 # 4-4) SG outbound 0.0.0.0/0 확인 (없으면 추가; 이미 있으면 Duplicate 에러 무시)
 foreach ($sg in $sgIds) {
-  $eg = aws ec2 describe-security-groups --group-ids $sg --region $Region --query "SecurityGroups[0].IpPermissionsEgress" --output json
-  if ($eg -notmatch "0.0.0.0/0") {
-    $prevErr = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    aws ec2 authorize-security-group-egress --group-id $sg --ip-permissions IpProtocol=-1,IpRanges="[{CidrIp=0.0.0.0/0}]" --region $Region 2>&1 | Out-Null
-    $ErrorActionPreference = $prevErr
-  }
+  $prevErr = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  aws ec2 authorize-security-group-egress --group-id $sg --ip-permissions IpProtocol=-1,IpRanges="[{CidrIp=0.0.0.0/0}]" --region $Region 2>&1 | Out-Null
+  $ErrorActionPreference = $prevErr
 }
 
 Write-Host "=== 5) Ensure IAM essentials (Batch service role + Instance role policies) ==="
