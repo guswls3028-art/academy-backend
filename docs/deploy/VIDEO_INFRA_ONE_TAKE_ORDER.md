@@ -143,5 +143,5 @@ $Region = "ap-northeast-2"
 |------|------|
 | **스크립트** | `scripts/infra/one_shot_video_ce_final.ps1` |
 | **실행** | `.\scripts\infra\one_shot_video_ce_final.ps1` (상단 `$Region`, `$OldVideoCEs`, `$FinalVideoCE` 필요 시 수정) |
-| **동작** | (0) 스케줄러 비활성화(주석 처리됨) (1) 기존 CE desired=0 + DISABLED (2) VideoQ/OpsQ job cancel·terminate (3) 기존 CE에서 VPC/Subnets/SG/역할 읽기 (4) Public subnet 강화(IGW, 라우트, MapPublicIpOnLaunch, SG egress) (5) IAM 역할 부착 (6) `academy-video-batch-ce-final` 생성(없을 때만) (7) Video 큐를 해당 CE만 쓰도록 update (8) evidence 출력 |
+| **동작** | (0) 스케줄러 비활성화(주석 처리됨) (1) 기존 CE **DISABLED만** (desiredvCpus=0은 큐 연결 시 API 불가) (2) VideoQ/OpsQ job cancel·terminate (3) 기존 CE에서 VPC/Subnets/SG/역할 읽기 (4) Public subnet 강화(IGW, 라우트, MapPublicIpOnLaunch, SG egress) (5) IAM 역할 부착 (6) `academy-video-batch-ce-final` 생성(없을 때만) (7) Video 큐를 해당 CE만 쓰도록 update (8) evidence 출력 |
 | **주의** | One-shot 용도. 평소 정합은 `reconcile_video_batch_production.ps1` 사용. one_shot 이후 reconcile을 돌릴 때는 `-VideoCEName academy-video-batch-ce-final` 로 CE 이름을 맞출 것. SSOT 이름은 본문의 큐/CE 표와 맞출 것. |
