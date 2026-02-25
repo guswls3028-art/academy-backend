@@ -132,6 +132,14 @@ if ($needVideoJdRegister -and $videoJdLatest) {
     $uri = "file:///" + ([System.IO.Path]::GetFullPath($jdPath) -replace '\\', '/')
     Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uri, "--region", $Region, "--output", "json") -ErrorMessage "register Video job def failed"
     Remove-Item $jdPath -Force -ErrorAction SilentlyContinue
+    $videoJdAllAfter = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+    if ($videoJdAllAfter -and $videoJdAllAfter.jobDefinitions) {
+        foreach ($d in $videoJdAllAfter.jobDefinitions) {
+            if ([int]$d.containerProperties.memory -eq 4096) {
+                & aws batch deregister-job-definition --job-definition "$VideoJobDefName:$($d.revision)" --region $Region 2>&1 | Out-Null
+            }
+        }
+    }
 }
 $opsJdAll = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
 $opsJdLatest = $null
@@ -167,6 +175,15 @@ if ($needOpsJdRegister -and $opsJdLatest) {
     $uriO = "file:///" + ([System.IO.Path]::GetFullPath($jdPathO) -replace '\\', '/')
     Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops reconcile job def failed"
     Remove-Item $jdPathO -Force -ErrorAction SilentlyContinue
+    $opsJdAllAfter = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+    if ($opsJdAllAfter -and $opsJdAllAfter.jobDefinitions) {
+        foreach ($d in $opsJdAllAfter.jobDefinitions) {
+            $m = [int]$d.containerProperties.memory; $v = [int]$d.containerProperties.vcpus; $to = [int]$d.timeout.attemptDurationSeconds
+            if ($m -ne 1024 -or $v -ne 1 -or $to -ne 300) {
+                & aws batch deregister-job-definition --job-definition "$OpsReconcileJobDefName:$($d.revision)" --region $Region 2>&1 | Out-Null
+            }
+        }
+    }
 }
 $rule = ExecJson @("events", "describe-rule", "--name", $ReconcileRuleName, "--region", $Region, "--output", "json")
 $ruleExists = ($rule -and $rule.Name -eq $ReconcileRuleName)
