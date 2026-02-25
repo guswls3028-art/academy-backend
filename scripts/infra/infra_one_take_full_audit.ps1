@@ -451,4 +451,9 @@ if ($global:OverallPass) {
     }
     exit 1
 }
+
+Write-Host "`n--- Usage ---" -ForegroundColor Gray
+Write-Host "  .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 [-Verbose] [-FixMode]" -ForegroundColor Gray
+Write-Host "`n--- Required permissions ---" -ForegroundColor Gray
+Write-Host "  sts:GetCallerIdentity; ssm:GetParameter, SendCommand, GetCommandInvocation; autoscaling:Describe*; ec2:Describe*; batch:Describe*, SubmitJob, ListJobs; ecr:Describe*; cloudwatch:DescribeAlarms; logs:GetLogEvents; iam:PassRole (Batch)." -ForegroundColor Gray
 exit 0
