@@ -127,4 +127,9 @@ Write-Host "Video CE: $VideoCEName state=$($ce.state) status=$($ce.status) insta
 Write-Host "Video Queue: $VideoQueueName computeEnvironmentOrder=$($q.computeEnvironmentOrder[0].computeEnvironment)"
 $rule = ExecJson @("events", "describe-rule", "--name", $ReconcileRuleName, "--region", $Region, "--output", "json")
 Write-Host "EventBridge $ReconcileRuleName: $($rule.ScheduleExpression) State=$($rule.State)"
+$jdActive = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+if ($jdActive -and $jdActive.jobDefinitions -and $jdActive.jobDefinitions.Count -gt 0) {
+    $latest = $jdActive.jobDefinitions | Sort-Object { [int]$_.revision } -Descending | Select-Object -First 1
+    Write-Host "JobDef $VideoJobDefName latest: revision=$($latest.revision) vcpus=$($latest.containerProperties.vcpus) memory=$($latest.containerProperties.memory)"
+} else { Write-Host "JobDef $VideoJobDefName: no ACTIVE revision" -ForegroundColor Yellow }
 Write-Host "=== DONE (idempotent). Re-run safe. ===" -ForegroundColor Green
