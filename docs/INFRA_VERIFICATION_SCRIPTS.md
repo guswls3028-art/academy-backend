@@ -73,7 +73,7 @@
 | 구분 | 비디오 원테이크 | 원테이크 전체 감사 |
 |------|------------------|----------------|
 | **스크립트** | production_done_check.ps1 | infra_one_take_full_audit.ps1 |
-| **범위** | Video(Batch) 만 | AI(ASG) + Messaging(ASG) + Video(Batch) |
+| **범위** | Video(Batch) + SSM + netprobe + 알람 | Video/Ops CE·Queue, EventBridge, IAM, JobDef |
 | **용도** | Video 배포 후 “원테이크” 검증 | 전체 워커 인프라 무결성 검증 |
 
 둘 다 **Video Worker(Batch)** 및 Ops Queue/CE를 다룬다. EventBridge·IAM까지 포함한 점검·수정이 필요하면 **원테이크 전체 감사**를 사용한다.
