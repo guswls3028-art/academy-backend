@@ -1,19 +1,18 @@
 # PATH: apps/support/video/management/commands/reconcile_batch_video_jobs.py
 """
-Batch → DB 정합성 복구 (reconcile).
+Batch → DB 정합성 복구 (reconcile). Production-grade: Single-flight, conservative.
 
-- Sync Batch → DB (describe_jobs)
-- Detect: missing AWS job, SUCCEEDED but no READY, FAILED but DB RUNNING,
-  long-running beyond timeout, duplicate active jobs per video
-- Cancel orphan AWS jobs (Batch job with no DB active job)
+- Single-flight: Redis lock "video:reconcile:lock" (SETNX TTL=600s). Skip if lock fail.
+- Conservative: DescribeJobs 실패 시 상태 변경 없음. not_found는 3회 연속 또는 created_at 30분 초과 시에만 fail.
+- RUNNING 상태를 RETRY_WAIT로 덮어쓰지 않음. SUCCEEDED 상태는 절대 변경하지 않음.
+- READY 전이는 worker(job_complete)만 수행. Reconcile은 READY를 만들지 않음 (stuck detection only).
 
-Run every 120s via cron / EventBridge (see scripts/infra/eventbridge/reconcile_video_jobs_schedule.json):
-  python manage.py reconcile_batch_video_jobs
+Run via EventBridge → academy-video-ops-queue (rate 5 minutes).
 
 옵션:
   --dry-run: DB 변경 없이 로그만
   --older-than-minutes: 이 시간보다 오래된 job만 대상 (기본 5)
-  --resubmit: Batch FAILED/미조회 시 RETRY_WAIT로 보낸 뒤 submit_batch_job 호출
+  --resubmit: Batch FAILED 또는 not_found(fail 처리된 경우)에만 submit_batch_job 호출
 """
 from __future__ import annotations
 
@@ -29,31 +28,86 @@ from apps.support.video.services.batch_submit import submit_batch_job
 
 logger = logging.getLogger(__name__)
 
-from django.conf import settings
-
 REGION = getattr(settings, "AWS_DEFAULT_REGION", None) or __import__("os").environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
 OLDER_THAN_MINUTES_DEFAULT = 5
 VIDEO_BATCH_JOB_QUEUE = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-video-batch-queue")
+RECONCILE_LOCK_KEY = "video:reconcile:lock"
+RECONCILE_LOCK_TTL_SECONDS = 600
+NOT_FOUND_COUNT_KEY_PREFIX = "video:reconcile:not_found:"
+NOT_FOUND_COUNT_TTL_SECONDS = 3600
+NOT_FOUND_CONSECUTIVE_THRESHOLD = 3
+NOT_FOUND_MIN_AGE_MINUTES = 30
 
 
-def _describe_jobs_boto3(aws_job_ids: list[str]):
-    """boto3로 describe_jobs 호출. jobs 목록 반환 (없으면 빈 리스트)."""
+def _acquire_reconcile_lock() -> bool:
+    """Redis SETNX with TTL. Returns True if lock acquired."""
+    try:
+        from libs.redis.client import get_redis_client
+        r = get_redis_client()
+        if not r:
+            logger.warning("reconcile: Redis not available, skipping lock (proceed at own risk)")
+            return True
+        # set(key, value, nx=True, ex=ttl) -> True if set, False if key exists
+        ok = r.set(RECONCILE_LOCK_KEY, "1", nx=True, ex=RECONCILE_LOCK_TTL_SECONDS)
+        return bool(ok)
+    except Exception as e:
+        logger.warning("reconcile: lock acquire failed: %s", e)
+        return False
+
+
+def _release_reconcile_lock() -> None:
+    try:
+        from libs.redis.client import get_redis_client
+        r = get_redis_client()
+        if r:
+            r.delete(RECONCILE_LOCK_KEY)
+    except Exception as e:
+        logger.debug("reconcile: lock release failed: %s", e)
+
+
+def _incr_not_found_count(job_id: str) -> int:
+    """Increment consecutive not_found count for job. Returns new count."""
+    try:
+        from libs.redis.client import get_redis_client
+        r = get_redis_client()
+        if not r:
+            return 0
+        key = f"{NOT_FOUND_COUNT_KEY_PREFIX}{job_id}"
+        n = r.incr(key)
+        r.expire(key, NOT_FOUND_COUNT_TTL_SECONDS)
+        return n
+    except Exception as e:
+        logger.debug("reconcile: not_found count incr failed: %s", e)
+        return 0
+
+
+def _reset_not_found_count(job_id: str) -> None:
+    try:
+        from libs.redis.client import get_redis_client
+        r = get_redis_client()
+        if r:
+            r.delete(f"{NOT_FOUND_COUNT_KEY_PREFIX}{job_id}")
+    except Exception as e:
+        logger.debug("reconcile: not_found count reset failed: %s", e)
+
+
+def _describe_jobs_boto3(aws_job_ids: list[str]) -> list:
+    """
+    boto3 describe_jobs. On any failure (AccessDenied, Throttling, etc.) raises.
+    Caller must not change any DB state when this raises.
+    """
     if not aws_job_ids:
         return []
-    try:
-        import boto3
-        from botocore.exceptions import ClientError
+    import boto3
+    from botocore.exceptions import ClientError
 
-        client = boto3.client("batch", region_name=REGION)
-        resp = client.describe_jobs(jobs=aws_job_ids)
-        return resp.get("jobs") or []
-    except Exception as e:
-        logger.warning("describe_jobs failed: %s", e)
-        return []
+    client = boto3.client("batch", region_name=REGION)
+    resp = client.describe_jobs(jobs=aws_job_ids)
+    return resp.get("jobs") or []
 
 
 class Command(BaseCommand):
-    help = "Reconcile DB with AWS Batch status (describe_jobs → DB update)"
+    help = "Reconcile DB with AWS Batch status (single-flight, conservative; no READY from reconcile)"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -70,12 +124,16 @@ class Command(BaseCommand):
         parser.add_argument(
             "--resubmit",
             action="store_true",
-            help="On Batch FAILED or job not found, move to RETRY_WAIT and call submit_batch_job",
+            help="On Batch FAILED or not_found (after threshold), move to RETRY_WAIT and call submit_batch_job",
+        )
+        parser.add_argument(
+            "--skip-lock",
+            action="store_true",
+            help="Skip Redis lock (for manual one-off run)",
         )
 
     def handle(self, *args, **options):
         from academy.adapters.db.django.repositories_video import (
-            job_complete,
             job_fail_retry,
             job_mark_dead,
             job_set_running,
@@ -85,11 +143,30 @@ class Command(BaseCommand):
         dry_run = options["dry_run"]
         older_than_minutes = options["older_than_minutes"]
         resubmit = options["resubmit"]
+        skip_lock = options["skip_lock"]
         cutoff = timezone.now() - timedelta(minutes=older_than_minutes)
 
-        # Duplicate active jobs per video: keep most recent, mark older DEAD and cancel AWS job
+        if not skip_lock and not _acquire_reconcile_lock():
+            logger.info("reconcile skipped - already running (lock held)")
+            self.stdout.write("Reconcile skipped - lock held (another instance running).")
+            return
+
+        try:
+            self._run_reconcile(dry_run, resubmit, cutoff)
+        finally:
+            if not skip_lock:
+                _release_reconcile_lock()
+
+    def _run_reconcile(self, dry_run: bool, resubmit: bool, cutoff):
+        from academy.adapters.db.django.repositories_video import (
+            job_fail_retry,
+            job_mark_dead,
+            job_set_running,
+        )
+        from apps.support.video.services.batch_submit import terminate_batch_job
         from django.db.models import Count
 
+        # ----- Duplicate active jobs: keep most recent, mark older DEAD -----
         dupes = (
             VideoTranscodeJob.objects.filter(
                 state__in=[
@@ -147,10 +224,25 @@ class Command(BaseCommand):
             return
 
         aws_ids = [j.aws_batch_job_id for j in jobs]
-        batch_jobs = _describe_jobs_boto3(aws_ids)
-        by_aws_id = {b["jobId"]: b for b in batch_jobs}
+        try:
+            batch_jobs = _describe_jobs_boto3(aws_ids)
+        except Exception as e:
+            logger.warning("reconcile: describe_jobs failed (no state changes): %s", e)
+            try:
+                from apps.support.video.services.ops_events import emit_ops_event
+                emit_ops_event(
+                    "RECONCILE_DESCRIBE_JOBS_FAILED",
+                    severity="WARNING",
+                    payload={"error": str(e)[:500]},
+                )
+            except Exception:
+                pass
+            self.stdout.write(self.style.WARNING(f"Reconcile aborted: DescribeJobs failed. No DB changes. {e}"))
+            return
 
+        by_aws_id = {b["jobId"]: b for b in batch_jobs}
         updated = 0
+
         for job in jobs:
             aws_id = (job.aws_batch_job_id or "").strip()
             if not aws_id:
@@ -160,25 +252,18 @@ class Command(BaseCommand):
             status_reason = (bj or {}).get("statusReason") or ""
 
             if status == "SUCCEEDED":
-                video = getattr(job, "video", None)
-                if video and getattr(video, "status", None) == "READY" and getattr(video, "hls_path", None):
-                    if not dry_run:
-                        ok, _ = job_complete(str(job.id), video.hls_path, getattr(video, "duration", None))
-                        if ok:
-                            updated += 1
-                            self.stdout.write(self.style.SUCCESS(f"RECONCILE complete job_id={job.id}"))
-                    else:
-                        self.stdout.write(f"DRY-RUN RECONCILE complete job_id={job.id}")
-                else:
-                    if not dry_run:
-                        job_fail_retry(str(job.id), "Reconcile: Batch SUCCEEDED, output missing")
-                        updated += 1
-                    self.stdout.write(f"RECONCILE fail_retry (no output) job_id={job.id}")
+                # Reconcile does NOT change SUCCEEDED. READY is only set by worker (job_complete).
+                _reset_not_found_count(str(job.id))
+                self.stdout.write(f"RECONCILE skip SUCCEEDED job_id={job.id} (worker owns READY transition)")
 
             elif status == "FAILED":
+                _reset_not_found_count(str(job.id))
                 if not dry_run:
-                    from apps.support.video.services.ops_events import emit_ops_event
-                    emit_ops_event("BATCH_DESYNC", severity="WARNING", tenant_id=job.tenant_id, video_id=job.video_id, job_id=str(job.id), aws_batch_job_id=aws_id, payload={"reason": "Batch FAILED", "status_reason": status_reason[:200]})
+                    try:
+                        from apps.support.video.services.ops_events import emit_ops_event
+                        emit_ops_event("BATCH_DESYNC", severity="WARNING", tenant_id=job.tenant_id, video_id=job.video_id, job_id=str(job.id), aws_batch_job_id=aws_id, payload={"reason": "Batch FAILED", "status_reason": status_reason[:200]})
+                    except Exception:
+                        pass
                     job_fail_retry(str(job.id), status_reason or "Batch FAILED")
                     updated += 1
                     if resubmit:
@@ -189,16 +274,30 @@ class Command(BaseCommand):
                 self.stdout.write(f"RECONCILE fail_retry job_id={job.id} reason={status_reason[:100]}")
 
             elif status == "RUNNING" and job.state == VideoTranscodeJob.State.QUEUED:
+                _reset_not_found_count(str(job.id))
                 if not dry_run:
                     if job_set_running(str(job.id)):
                         updated += 1
                 self.stdout.write(f"RECONCILE set_running job_id={job.id}")
 
             elif bj is None:
+                # not_found: conservative. Do NOT overwrite RUNNING with RETRY_WAIT.
+                if job.state == VideoTranscodeJob.State.RUNNING:
+                    self.stdout.write(f"RECONCILE skip not_found job_id={job.id} (DB RUNNING - do not overwrite)")
+                    continue
+                count = _incr_not_found_count(str(job.id))
+                job_age_minutes = (timezone.now() - job.created_at).total_seconds() / 60
+                allow_fail = count >= NOT_FOUND_CONSECUTIVE_THRESHOLD or job_age_minutes >= NOT_FOUND_MIN_AGE_MINUTES
+                if not allow_fail:
+                    self.stdout.write(f"RECONCILE skip not_found job_id={job.id} (count={count}, age_min={job_age_minutes:.0f})")
+                    continue
                 if not dry_run:
-                    from apps.support.video.services.ops_events import emit_ops_event
-                    emit_ops_event("BATCH_DESYNC", severity="WARNING", tenant_id=job.tenant_id, video_id=job.video_id, job_id=str(job.id), aws_batch_job_id=aws_id, payload={"reason": "Batch job not found"})
-                    job_fail_retry(str(job.id), "Reconcile: Batch job not found")
+                    try:
+                        from apps.support.video.services.ops_events import emit_ops_event
+                        emit_ops_event("BATCH_DESYNC", severity="WARNING", tenant_id=job.tenant_id, video_id=job.video_id, job_id=str(job.id), aws_batch_job_id=aws_id, payload={"reason": "Batch job not found (after threshold)"})
+                    except Exception:
+                        pass
+                    job_fail_retry(str(job.id), "Reconcile: Batch job not found (after threshold)")
                     updated += 1
                     if resubmit:
                         aws_job_id, _ = submit_batch_job(str(job.id))
@@ -206,9 +305,9 @@ class Command(BaseCommand):
                             job.refresh_from_db()
                             job.aws_batch_job_id = aws_job_id
                             job.save(update_fields=["aws_batch_job_id", "updated_at"])
-                self.stdout.write(f"RECONCILE not_found job_id={job.id} aws_id={aws_id}")
+                self.stdout.write(f"RECONCILE not_found job_id={job.id} aws_id={aws_id} (count={count})")
 
-        # Orphan AWS jobs: list Batch jobs in queue (RUNNING/RUNNABLE), terminate those not in DB active set
+        # ----- Orphan AWS jobs (video queue only) -----
         try:
             import boto3
             batch_client = boto3.client("batch", region_name=REGION)
@@ -235,8 +334,11 @@ class Command(BaseCommand):
                             if not dry_run:
                                 try:
                                     batch_client.terminate_job(jobId=aws_id, reason="reconcile_orphan")
-                                    from apps.support.video.services.ops_events import emit_ops_event
-                                    emit_ops_event("ORPHAN_CANCELLED", severity="WARNING", aws_batch_job_id=aws_id, payload={"reason": "reconcile_orphan"})
+                                    try:
+                                        from apps.support.video.services.ops_events import emit_ops_event
+                                        emit_ops_event("ORPHAN_CANCELLED", severity="WARNING", aws_batch_job_id=aws_id, payload={"reason": "reconcile_orphan"})
+                                    except Exception:
+                                        pass
                                     self.stdout.write(self.style.WARNING(f"RECONCILE orphan terminated aws_id={aws_id}"))
                                 except Exception as e:
                                     logger.warning("terminate orphan %s failed: %s", aws_id, e)
