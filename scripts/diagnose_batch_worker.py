@@ -3,7 +3,7 @@
 One-take diagnostic for "worker not starting" (RUNNABLE stuck).
 Checks: RUNNABLE jobs + statusReason, CE state/scaling, JobDef image vs ECR,
 ECR pull/arch mismatch, IAM (Batch/ECR/logs on compute).
-Outputs: ROOT CAUSE, FIX PLAN, COMMANDS TO APPLY.
+Outputs: ROOT CAUSE (one line), FIX PLAN (bullets), COMMANDS TO APPLY (exact).
 Run from repo root; uses boto3. Region from AWS_REGION/AWS_DEFAULT_REGION or ap-northeast-2.
 """
 from __future__ import annotations
@@ -26,6 +26,9 @@ def main() -> None:
     runnable: list = []
     jd = None
     ce_name = None
+    jd_image_tag = None
+    ecr_latest_digest = None
+    jd_image_digest_match: bool | None = None
 
     try:
         import boto3
@@ -72,13 +75,19 @@ def main() -> None:
                 desc = batch.describe_jobs(jobs=[jid]).get("jobs") or []
                 if desc:
                     j = desc[0]
-                    out.append(f"  jobId={jid} status={j.get('status')} statusReason={j.get('statusReason', '')}")
+                    status_reason = j.get("statusReason") or ""
+                    out.append(f"  jobId={jid} status={j.get('status')} statusReason={status_reason}")
                     out.append(f"    createdAt={j.get('createdAt')} jobDefinition={j.get('jobDefinition')}")
                     container = j.get("container", {}) or {}
                     out.append(f"    image={container.get('image')}")
+                    if not status_reason and runnable:
+                        issues.append("RUNNABLE with empty statusReason; CE may not be scaling or image/arch issue")
+                    elif "MISCONFIGURATION" in status_reason:
+                        issues.append(f"RUNNABLE MISCONFIGURATION: {status_reason[:200]}")
+                    else:
+                        issues.append(f"{len(runnable)} job(s) stuck RUNNABLE; check CE capacity and image/arch")
                 else:
                     out.append(f"  jobId={jid} (describe failed)")
-            issues.append(f"{len(runnable)} job(s) stuck RUNNABLE; check statusReason and CE capacity")
     except Exception as e:
         out.append(f"  list_jobs RUNNABLE failed: {e}")
         issues.append(str(e))
@@ -89,7 +98,7 @@ def main() -> None:
         try:
             ces = batch.describe_compute_environments().get("computeEnvironments") or []
             for c in ces:
-                if "academy-video" in (c.get("computeEnvironmentName") or ""):
+                if "academy-video" in (c.get("computeEnvironmentName") or "") and "ops" not in (c.get("computeEnvironmentName") or "").lower():
                     ce_name = c["computeEnvironmentName"]
                     break
         except Exception as e:
@@ -100,13 +109,18 @@ def main() -> None:
             ce = ces[0] if ces else None
             if ce:
                 cr = ce.get("computeResources") or {}
+                desired = cr.get("desiredvCpus") or 0
+                minv = cr.get("minvCpus") or 0
+                maxv = cr.get("maxvCpus") or 0
                 out.append(f"  CE: {ce.get('computeEnvironmentName')} state={ce.get('state')} status={ce.get('status')}")
-                out.append(f"  desiredvCpus={cr.get('desiredvCpus')} min={cr.get('minvCpus')} max={cr.get('maxvCpus')}")
+                out.append(f"  desiredvCpus={desired} minvCpus={minv} maxvCpus={maxv}")
                 out.append(f"  instanceTypes={cr.get('instanceTypes')}")
                 if ce.get("state") != "ENABLED" or ce.get("status") != "VALID":
                     issues.append("CE not ENABLED/VALID")
-                if (cr.get("desiredvCpus") or 0) == 0 and runnable:
-                    issues.append("CE desiredvCpus=0 while jobs RUNNABLE (scaling not launching)")
+                if desired == 0 and runnable:
+                    issues.append("CE desiredvCpus=0 while jobs RUNNABLE (scaling not launching or maxvCpus=0)")
+                if maxv < 1:
+                    issues.append("CE maxvCpus < 1; cannot run any job")
             else:
                 out.append(f"  CE {ce_name} not found")
         except Exception as e:
@@ -128,13 +142,14 @@ def main() -> None:
                 repo_tag = img.split("/")[-1]
                 if ":" in repo_tag:
                     repo, tag = repo_tag.split(":", 1)
+                    jd_image_tag = (repo, tag)
                     try:
                         di = ecr.describe_images(repositoryName=repo, imageIds=[{"imageTag": tag}]).get("imageDetails") or []
                         if di:
                             digest = di[0].get("imageDigest", "")
-                            out.append(f"  ECR: repo={repo} tag={tag} digest={digest[:20]}...")
+                            out.append(f"  ECR (JobDef tag): repo={repo} tag={tag} digest={digest[:24]}...")
                         else:
-                            issues.append(f"ECR image not found: {repo}:{tag}")
+                            issues.append(f"ECR image not found for JobDef tag: {repo}:{tag}")
                     except ClientError as e:
                         err = e.response.get("Error", {}).get("Code", "")
                         if err == "ImageNotFoundException":
@@ -143,6 +158,19 @@ def main() -> None:
                             issues.append("ECR AccessDenied (diagnostic script role)")
                         else:
                             issues.append(f"ECR error: {e}")
+                    try:
+                        latest = ecr.describe_images(repositoryName=repo, imageIds=[{"imageTag": "latest"}]).get("imageDetails") or []
+                        if latest:
+                            ecr_latest_digest = latest[0].get("imageDigest", "")
+                            jd_di = ecr.describe_images(repositoryName=repo, imageIds=[{"imageTag": tag}]).get("imageDetails") or []
+                            jd_image_digest_match = bool(jd_di and jd_di[0].get("imageDigest") == ecr_latest_digest)
+                            if jd_image_digest_match:
+                                out.append(f"  ECR :latest digest matches JobDef image (up to date)")
+                            else:
+                                out.append(f"  ECR :latest digest differs from JobDef tag; consider registering new revision with :latest")
+                                issues.append("JobDef image tag may not match ECR :latest (stale revision)")
+                    except Exception as e:
+                        out.append(f"  ECR :latest check: {e}")
         else:
             out.append("  No ACTIVE job definition found")
             issues.append("No ACTIVE job definition")
@@ -157,69 +185,85 @@ def main() -> None:
             ces = batch.describe_compute_environments(computeEnvironments=[ce_name]).get("computeEnvironments") or []
             cr = (ces[0].get("computeResources") or {}) if ces else {}
             types = cr.get("instanceTypes") or []
-            arm = any("g" in (t or "") for t in types)
+            arm = any("g" in (t or "") for t in types) or "arm64" in str(types).lower()
             out.append(f"  CE instanceTypes: {types} -> ARM64={arm}")
             if not arm:
                 out.append("  WARN: CE is x86; image from academy-build-arm64 is ARM64 -> mismatch")
-                issues.append("Architecture mismatch: CE x86 vs image ARM64")
+                issues.append("Architecture mismatch: CE x86 vs image ARM64 (use c6g/m6g for ARM64)")
         except Exception as e:
             out.append(f"  Arch check: {e}")
     else:
         out.append("  Skipped (no CE or JobDef)")
 
     out.append("")
-    out.append("--- IAM (compute node) ---")
-    out.append("  Batch compute: ECS instance role + execution role need ecr:GetAuthorizationToken, ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, logs:CreateLogStream, logs:PutLogEvents.")
-
-    out.append("")
-    out.append("--- CloudWatch (recent errors) ---")
+    out.append("--- ECR pull / container errors (CloudWatch) ---")
+    pull_errors: list[str] = []
     try:
         streams = logs.describe_log_streams(
             logGroupName=LOG_GROUP,
             orderBy="LastEventTime",
             descending=True,
-            limit=5,
+            limit=10,
         ).get("logStreams") or []
-        for s in streams[:3]:
+        for s in streams[:5]:
             name = s.get("logStreamName", "")
-            events = logs.get_log_events(logGroupName=LOG_GROUP, logStreamName=name, limit=50).get("events") or []
+            events = logs.get_log_events(logGroupName=LOG_GROUP, logStreamName=name, limit=100).get("events") or []
             for ev in events:
                 msg = (ev.get("message") or "").lower()
-                if "cannotpullcontainererror" in msg or "manifest unknown" in msg or "no basic auth" in msg or "access denied" in msg or "exec format" in msg:
-                    out.append(f"  [{name}] {ev.get('message', '')[:120]}")
+                if "cannotpullcontainererror" in msg or "manifest unknown" in msg or "no basic auth" in msg or "access denied" in msg or "exec format" in msg or "exec format error" in msg:
+                    pull_errors.append(f"  [{name}] {(ev.get('message') or '')[:150]}")
+        if pull_errors:
+            for line in pull_errors[:5]:
+                out.append(line)
+            issues.append("ECR pull or arch error in CloudWatch logs (CannotPullContainerError/manifest/exec format)")
+        else:
+            out.append("  No recent ECR pull/arch errors in log streams (or log group empty).")
     except Exception as e:
         out.append(f"  Logs: {e}")
+
+    out.append("")
+    out.append("--- IAM (compute node) ---")
+    out.append("  Batch CE instance role (academy-batch-ecs-instance-role) needs: ecr:GetAuthorizationToken, ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, logs:CreateLogStream, logs:PutLogEvents.")
+    out.append("  Apply: .\\scripts\\infra\\batch_attach_ecs_instance_role_policies.ps1")
 
     for line in out:
         print(line)
 
-    root = issues[0] if len(issues) == 1 else "; ".join(issues[:3]) if issues else "No obvious issue; check RUNNABLE statusReason and CE scaling in console."
+    if issues:
+        root = issues[0] if len(issues) == 1 else "; ".join(issues[:3])
+    else:
+        root = "No obvious issue; check RUNNABLE statusReason and CE scaling. Ensure image pushed and JobDef points to :latest."
 
     print("")
     print("========== ROOT CAUSE ==========")
     print(root)
     print("")
     print("========== FIX PLAN ==========")
-    if "RUNNABLE" in root or "desiredvCpus" in root:
-        fix_plan.append("Ensure CE is ENABLED and maxvCpus >= 1; check scaling events.")
-    if "ECR" in root or "image" in root.lower():
+    if "RUNNABLE" in root or "desiredvCpus" in root or "scaling" in root:
+        fix_plan.append("Ensure CE is ENABLED and maxvCpus >= 1; run batch_attach_ecs_instance_role_policies.ps1 if instance role missing ECR/logs.")
+    if "ECR" in root or "image" in root.lower() or "stale" in root.lower():
         fix_plan.append("Push image: .\\scripts\\build_and_push_ecr_remote.ps1 -VideoWorkerOnly")
-        fix_plan.append("Register JobDef: run batch_video_setup.ps1 with same ECR URI.")
+        fix_plan.append("Register JobDef revision: .\\scripts\\fix_and_redeploy_video_worker.ps1 (or batch_video_verify_and_register.ps1 with ECR URI).")
     if "Architecture" in root or "mismatch" in root:
-        fix_plan.append("Use CE instanceTypes matching image: c6g/m6g for ARM64.")
-    if "IAM" in root or "AccessDenied" in root:
-        fix_plan.append("Attach ECR + logs to academy-batch-ecs-task-execution-role and instance role.")
+        fix_plan.append("Use CE instanceTypes matching image: c6g/m6g for ARM64 (academy-build-arm64 builds ARM64).")
+    if "IAM" in root or "AccessDenied" in root or "ECR pull" in root:
+        fix_plan.append("Attach ECR + logs to academy-batch-ecs-instance-role: .\\scripts\\infra\\batch_attach_ecs_instance_role_policies.ps1")
+    if "Queue" in root or "CE name" in root:
+        fix_plan.append("Run batch_video_setup.ps1 with VpcId, SubnetIds, SecurityGroupId, EcrRepoUri.")
     if not fix_plan:
-        fix_plan.append("Run scripts\\fix_and_redeploy_video_worker.ps1 for full apply.")
+        fix_plan.append("Run .\\scripts\\fix_and_redeploy_video_worker.ps1 for full apply (IAM + JobDef + test job).")
     for b in fix_plan:
         print(f"  - {b}")
     print("")
     print("========== COMMANDS TO APPLY ==========")
-    commands.append("aws batch describe-compute-environments --compute-environments " + (ce_name or "academy-video-batch-ce-v2") + " --region " + REGION)
+    commands.append("aws batch describe-compute-environments --compute-environments " + (ce_name or "academy-video-batch-ce") + " --region " + REGION)
     commands.append("aws batch list-jobs --job-queue " + QUEUE_NAME + " --job-status RUNNABLE --region " + REGION)
+    commands.append(".\\scripts\\infra\\batch_attach_ecs_instance_role_policies.ps1")
+    commands.append(".\\scripts\\build_and_push_ecr_remote.ps1 -VideoWorkerOnly")
     commands.append(".\\scripts\\fix_and_redeploy_video_worker.ps1")
     for c in commands:
         print(f"  {c}")
+    print("")
 
 
 if __name__ == "__main__":
