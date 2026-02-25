@@ -10,17 +10,24 @@
 #
 # Sample output (comment):
 # ---
-# Category  | Check                    | Expected        | Actual          | Status | FixAction
-# ----------|--------------------------|-----------------|-----------------|--------|---------------------------
-# Batch     | Video CE exists          | VALID/ENABLED   | VALID/ENABLED   | PASS   |
-# Batch     | Ops CE exists            | VALID/ENABLED   | VALID/ENABLED   | PASS   |
-# Batch     | Video Queue              | ENABLED         | ENABLED         | PASS   |
-# Batch     | Ops Queue                | ENABLED         | ENABLED         | PASS   |
-# EventBridge| Reconcile schedule      | rate(5 minutes) | rate(5 minutes) | PASS   |
-# EventBridge| Reconcile target queue  | OpsQueue        | OpsQueue        | PASS   |
-# IAM       | DescribeJobs on job role| Yes             | Yes             | PASS   |
-# ...
-# Summary: PASS=12 WARN=0 FAIL=0 -> PASS
+# Category   | Check                         | Expected         | Actual                    | Status | FixAction
+# -----------|-------------------------------|------------------|---------------------------|--------|---------------------------
+# Batch      | Video CE exists               | VALID/ENABLED    | VALID/ENABLED c6g.xlarge  | PASS   |
+# Batch      | Ops CE exists                 | VALID/ENABLED    | VALID/ENABLED t4g.small   | PASS   |
+# Batch      | Video Queue                   | ENABLED          | ENABLED CE=academy-...    | PASS   |
+# Batch      | Ops Queue                     | ENABLED          | ENABLED CE=academy-...    | PASS   |
+# Batch      | Video Queue jobs               | -                | RUNNING=2 RUNNABLE=0      | PASS   |
+# Batch      | Ops Queue RUNNING             | reconcile<=1     | reconcile=1 scan_stuck=0  | PASS   |
+# EventBridge| Reconcile schedule            | rate(5 minutes)  | rate(5 minutes)          | PASS   |
+# EventBridge| Reconcile target queue        | OpsQueue         | OpsQueue                  | PASS   |
+# EventBridge| Reconcile job def             | academy-video-ops-reconcile | academy-video-ops-reconcile | PASS   |
+# EventBridge| ScanStuck schedule            | rate(5 minutes)  | rate(5 minutes)           | PASS   |
+# EventBridge| ScanStuck target queue        | OpsQueue         | OpsQueue                  | PASS   |
+# IAM        | DescribeJobs/ListJobs on job role | Yes           | Yes                       | PASS   |
+# JobDef     | Video jobdef vcpus/memory     | >0               | vcpus=4 memory=8192      | PASS   |
+# JobDef     | Ops academy-video-ops-reconcile command/role | command set, jobRoleArn set | cmd=python manage.py... | PASS   |
+# Summary: PASS=14 WARN=0 FAIL=0
+# Result: PASS
 # ==============================================================================
 
 param(
