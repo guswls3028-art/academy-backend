@@ -8,6 +8,7 @@ param(
     [string]$Region = "ap-northeast-2",
     [string]$ComputeEnvName = "academy-video-batch-ce",
     [string]$JobQueueName = "academy-video-batch-queue",
+    [string]$OpsJobQueueName = "academy-video-ops-queue",
     [string]$ApiVpcId = ""
 )
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
