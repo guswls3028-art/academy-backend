@@ -195,6 +195,8 @@ Write-Host "=== DONE (idempotent). Re-run safe. ===" -ForegroundColor Green
 
 # 4. PR 변경 요약
 
+**반영 완료:** 아래 변경이 레포에 적용됨. 원테이크 스크립트는 `scripts/infra/video_batch_production_one_take.ps1` 로 저장됨.
+
 | 파일 | 변경 |
 |------|------|
 | `scripts/infra/batch/video_job_definition.json` | `"memory":4096` → `"memory":3072` |
