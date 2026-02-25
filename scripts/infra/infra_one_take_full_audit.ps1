@@ -256,12 +256,12 @@ function Invoke-EventBridgeAudit {
             continue
         }
         $sched = $rule.ScheduleExpression -as [string]
-        $schedOk = $sched -match "rate\s*\(\s*5\s*minute"
-        $schedWarn = $sched -match "rate\s*\(\s*2\s*minute"
+        $schedOk = $sched -match "rate\s*\(\s*15\s*minute"
+        $schedWarn = $sched -match "rate\s*\(\s*5\s*minute"
         $st = "PASS"
         if (-not $schedOk -and $schedWarn) { $st = "WARN" }
         elseif (-not $schedOk) { $st = "WARN" }
-        Add-AuditRow -Category "EventBridge" -Check "$label schedule" -Expected "rate(5 minutes)" -Actual $sched -Status $st -FixAction $(if ($st -ne "PASS") { "FixMode: put-rule rate(5 minutes)" } else { "" })
+        Add-AuditRow -Category "EventBridge" -Check "$label schedule" -Expected "rate(15 minutes)" -Actual $sched -Status $st -FixAction $(if ($st -ne "PASS") { "FixMode: put-rule rate(15 minutes)" } else { "" })
 
         $tgtJson = Aws-JsonSafe @("events", "list-targets-by-rule", "--rule", $rule.Name, "--region", $Region)
         if (-not $tgtJson -or -not $tgtJson.Targets -or $tgtJson.Targets.Count -eq 0) {
