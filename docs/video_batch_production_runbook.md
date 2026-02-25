@@ -137,6 +137,12 @@ Expected: Exit 0; `DONE. Batch recreated in API VPC. JobQueueName=<final>`.
 
 **Important:** The **final job queue name** is either `academy-video-batch-queue` (if the existing queue was updated to CE `academy-video-batch-ce`) or `academy-video-batch-queue-ce` (if update failed and a new queue was created). Use the name printed at the end of Step 2 for Steps 3–5, or read `docs/deploy/actual_state/batch_final_state.json` → `FinalJobQueueName`.
 
+**Step 2b — Ops CE + Ops queue** (reconcile/scan_stuck/netprobe on t4g; no c6g scaling for ops)
+```powershell
+.\scripts\infra\batch_ops_setup.ps1 -Region ap-northeast-2
+```
+Expected: Exit 0; `DONE. Ops CE and queue ready.` Creates `academy-video-ops-ce` and `academy-video-ops-queue`; state in `docs/deploy/actual_state/batch_ops_state.json`.
+
 **Step 3 — EventBridge** (reconcile/scan_stuck submit to Ops queue)
 ```powershell
 .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
