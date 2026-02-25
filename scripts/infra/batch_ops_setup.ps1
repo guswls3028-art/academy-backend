@@ -201,6 +201,6 @@ $opsState = @{
     OpsJobQueueArn   = $queueArn
 }
 $opsStatePath = Join-Path $OutDir "batch_ops_state.json"
-$opsState | ConvertTo-Json | Set-Content -Path $opsStatePath -Encoding UTF8
+[System.IO.File]::WriteAllText($opsStatePath, ($opsState | ConvertTo-Json), $utf8NoBom)
 Write-Host "`n  Wrote $opsStatePath" -ForegroundColor Gray
 Write-Host "`nDONE. Ops CE and queue ready. Use -OpsJobQueueName $JobQueueName when deploying EventBridge." -ForegroundColor Green
