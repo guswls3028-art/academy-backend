@@ -1,32 +1,36 @@
 # ==============================================================================
 # One-take full production integrity audit: AI Worker (ASG), Messaging Worker (ASG), Video Worker (Batch).
-# Usage: .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 [-Verbose] [-FixMode]
+# Production Audit + Fix: Discovery-based Video Batch Reconcile (DescribeJobs, EventBridge, concurrency).
+# Usage: .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 [-Verbose] [-FixMode] [-KillExtraReconcile]
 # Exit: 0 = PASS, 1 = FAIL (any critical check failed)
 #
 # Usage example:
 #   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2
 #   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -Verbose
 #   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -FixMode
+#   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -FixMode -KillExtraReconcile
 #
 # Required IAM permissions (account/region scoped as appropriate):
 #   - sts:GetCallerIdentity
 #   - ssm:GetParameter (GetParametersByPath optional), ssm:SendCommand, ssm:GetCommandInvocation
 #   - autoscaling:DescribeAutoScalingGroups, autoscaling:DescribeScalingActivities, autoscaling:DescribeLaunchConfigurations
 #   - ec2:DescribeLaunchTemplates, ec2:DescribeInstances, ec2:DescribeSecurityGroups, ec2:DescribeSubnets, ec2:DescribeVpcs
-#   - batch:DescribeComputeEnvironments, batch:DescribeJobQueues, batch:DescribeJobDefinitions, batch:SubmitJob, batch:ListJobs, batch:DescribeJobs
+#   - batch:DescribeComputeEnvironments, batch:DescribeJobQueues, batch:DescribeJobDefinitions, batch:SubmitJob, batch:ListJobs, batch:DescribeJobs, batch:TerminateJob
 #   - ecr:DescribeRepositories, ecr:DescribeImages
 #   - cloudwatch:DescribeAlarms
 #   - logs:GetLogEvents, logs:DescribeLogStreams (for netprobe log fetch)
 #   - iam:PassRole (for Batch job role / execution role if submitting netprobe)
 #   - iam:ListAttachedRolePolicies, iam:GetPolicy, iam:GetPolicyVersion, iam:ListRolePolicies, iam:GetRolePolicy (Reconcile audit)
 #   - iam:CreatePolicy, iam:AttachRolePolicy (Reconcile FixMode only)
-#   - events:DescribeRule, events:ListTargetsByRule (Reconcile audit)
+#   - iam:SimulatePrincipalPolicy (Reconcile audit optional)
+#   - events:DescribeRule, events:ListTargetsByRule, events:PutRule, events:PutTargets (Reconcile audit/FixMode)
 # ==============================================================================
 
 param(
     [Parameter(Mandatory = $true)]
     [string]$Region,
-    [switch]$FixMode
+    [switch]$FixMode,
+    [switch]$KillExtraReconcile
 )
 
 $ErrorActionPreference = "Stop"
