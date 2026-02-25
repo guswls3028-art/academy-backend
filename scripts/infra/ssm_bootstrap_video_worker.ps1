@@ -203,24 +203,29 @@ try {
     exit 1
 }
 
-# put-parameter: Base64 값은 환경 변수로 전달해 PowerShell/Windows 인자 길이·이스케이프 문제 회피
+# put-parameter: --cli-input-json file:// 사용해 값을 파일로 전달 (인자 이스케이프/길이 제한 회피)
 $jsonBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-$valueToSend = [Convert]::ToBase64String($jsonBytes)
+$valueBase64 = [Convert]::ToBase64String($jsonBytes)
 Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
 
+$cliInput = @{
+    Name      = $ParamName
+    Value     = $valueBase64
+    Type      = "SecureString"
+    Overwrite = $true
+} | ConvertTo-Json -Compress
+$cliInputPath = Join-Path ([System.IO.Path]::GetTempPath()) "academy_ssm_put_$([Guid]::NewGuid().ToString('N')).json"
+[System.IO.File]::WriteAllText($cliInputPath, $cliInput, $utf8NoBom)
+
+$cliInputUri = "file:///" + (([System.IO.Path]::GetFullPath($cliInputPath)) -replace '\\', '/')
 Write-Host "Putting SSM parameter: $ParamName (SecureString, base64-encoded JSON)" -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-# 환경 변수로 값 전달 시 자식 프로세스가 확장하므로 인자 배열 손상 방지 (cmd에서 %VAR% 확장)
-$env:ACADEMY_SSM_PUT_VALUE = $valueToSend
-try {
-    $putOut = cmd /c "aws ssm put-parameter --name $ParamName --value %ACADEMY_SSM_PUT_VALUE% --type SecureString --region $Region --overwrite 2>&1"
-} finally {
-    Remove-Item -LiteralPath Env:ACADEMY_SSM_PUT_VALUE -ErrorAction SilentlyContinue
-}
+$putOut = & aws ssm put-parameter --cli-input-json $cliInputUri --region $Region 2>&1
 $putErr = ($putOut | Out-String).Trim()
 $putExit = $LASTEXITCODE
 $ErrorActionPreference = $prevErr
+Remove-Item -LiteralPath $cliInputPath -Force -ErrorAction SilentlyContinue
 if ($putExit -ne 0) {
     Write-Host "FAIL: put-parameter failed (exit $putExit)." -ForegroundColor Red
     if ($putErr) { Write-Host $putErr -ForegroundColor Red }
