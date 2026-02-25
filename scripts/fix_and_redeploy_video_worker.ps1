@@ -46,15 +46,43 @@ if ($LASTEXITCODE -ne 0) { Fail "apply_api_batch_submit_policy.ps1 failed." }
 Ok "API role (academy-ec2-role) updated."
 Write-Host ""
 
-# 3) IAM – Batch CE instance role (ECR pull + CloudWatch logs on compute nodes)
+# 3) IAM – Batch CE instance role (auto-detect, attach ECR + logs, verify)
 Step "3) IAM – Batch CE instance role (ECR + logs)"
-$batchAttach = Join-Path $RepoRoot "scripts\infra\batch_attach_ecs_instance_role_policies.ps1"
-if (Test-Path $batchAttach) {
-    & $batchAttach
-    if ($LASTEXITCODE -ne 0) { Warn "batch_attach_ecs_instance_role_policies.ps1 failed; continue. Ensure academy-batch-ecs-instance-role has ECR + logs." }
-    else { Ok "Batch CE instance role (academy-batch-ecs-instance-role) has ECR + logs." }
-} else {
-    Warn "batch_attach_ecs_instance_role_policies.ps1 not found. Ensure academy-batch-ecs-instance-role has ecr:GetAuthorizationToken, ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, logs:CreateLogStream, logs:PutLogEvents."
+$queueDesc = aws batch describe-job-queues --job-queues academy-video-batch-queue --region $Region --output json 2>&1 | ConvertFrom-Json
+$ceArn = $null
+foreach ($o in $queueDesc.jobQueues[0].computeEnvironmentOrder) {
+    if ($o.order -eq 1) { $ceArn = $o.computeEnvironment; break }
+}
+if (-not $ceArn) { Warn "Could not get CE from queue; skipping instance role attach." } else {
+    $ceName = $ceArn.Split("/")[-1]
+    if (-not $ceName) { $ceName = $ceArn.Split(":")[-1] }
+    $ceDesc = aws batch describe-compute-environments --compute-environments $ceName --region $Region --output json 2>&1 | ConvertFrom-Json
+    $instanceProfileArn = $ceDesc.computeEnvironments[0].computeResources.instanceRole
+    if (-not $instanceProfileArn) {
+        Warn "CE has no instanceRole; skipping attach."
+    } else {
+        $profileName = $instanceProfileArn.Split("/")[-1]
+        $ip = aws iam get-instance-profile --instance-profile-name $profileName --output json 2>&1 | ConvertFrom-Json
+        $roleName = $ip.InstanceProfile.Roles[0].RoleName
+        Write-Host "  Detected CE instance role: $roleName" -ForegroundColor Gray
+        $policies = @(
+            "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+            "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+        )
+        foreach ($policyArn in $policies) {
+            aws iam attach-role-policy --role-name $roleName --policy-arn $policyArn 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { Write-Host "  Attached: $($policyArn.Split('/')[-1])" -ForegroundColor Green }
+            else { Write-Host "  (already attached or error): $($policyArn.Split('/')[-1])" -ForegroundColor Gray }
+        }
+        $attached = aws iam list-attached-role-policies --role-name $roleName --output json 2>&1 | ConvertFrom-Json
+        $hasEcr = $attached.AttachedPolicies | Where-Object { $_.PolicyArn -match "ContainerRegistryReadOnly" }
+        $hasLogs = $attached.AttachedPolicies | Where-Object { $_.PolicyArn -match "CloudWatchLogs" }
+        if ($hasEcr -and $hasLogs) {
+            Ok "Verified: $roleName has ECR + CloudWatch Logs attached."
+        } else {
+            Warn "Verification: ECR=$($null -ne $hasEcr) Logs=$($null -ne $hasLogs). Ensure role has ecr:GetAuthorizationToken, ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, logs:CreateLogStream, logs:PutLogEvents."
+        }
+    }
 }
 Write-Host ""
 
