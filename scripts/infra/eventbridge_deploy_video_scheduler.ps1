@@ -33,10 +33,24 @@ function ExecJson($argsArray) {
 $AccountId = (aws sts get-caller-identity --query Account --output text 2>&1)
 if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: AWS identity check failed" -ForegroundColor Red; exit 1 }
 
-# Resolve Ops Job Queue ARN (reconcile + scan_stuck submit here)
+# Ensure Ops Job Queue exists (auto-call batch_ops_setup if missing)
 $jqResp = ExecJson @("batch", "describe-job-queues", "--job-queues", $OpsJobQueueName, "--region", $Region, "--output", "json")
 if (-not $jqResp -or -not $jqResp.jobQueues -or $jqResp.jobQueues.Count -eq 0) {
-    Write-Host "FAIL: Ops job queue $OpsJobQueueName not found. Run batch_ops_setup.ps1 first." -ForegroundColor Red
+    Write-Host "Ops job queue $OpsJobQueueName not found; running batch_ops_setup.ps1 to create Ops CE and queue." -ForegroundColor Yellow
+    $batchOpsPath = Join-Path $ScriptRoot "batch_ops_setup.ps1"
+    if (-not (Test-Path -LiteralPath $batchOpsPath)) {
+        Write-Host "FAIL: batch_ops_setup.ps1 not found at $batchOpsPath" -ForegroundColor Red
+        exit 1
+    }
+    & $batchOpsPath -Region $Region -JobQueueName $OpsJobQueueName
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "FAIL: batch_ops_setup.ps1 exited with $LASTEXITCODE" -ForegroundColor Red
+        exit 1
+    }
+    $jqResp = ExecJson @("batch", "describe-job-queues", "--job-queues", $OpsJobQueueName, "--region", $Region, "--output", "json")
+}
+if (-not $jqResp -or -not $jqResp.jobQueues -or $jqResp.jobQueues.Count -eq 0) {
+    Write-Host "FAIL: Ops job queue $OpsJobQueueName not found after setup. Run batch_ops_setup.ps1 manually." -ForegroundColor Red
     exit 1
 }
 $JobQueueArn = $jqResp.jobQueues[0].jobQueueArn
