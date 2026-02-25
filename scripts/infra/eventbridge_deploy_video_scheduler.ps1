@@ -128,10 +128,9 @@ if ($t0.Arn -ne $JobQueueArn) {
 }
 
 # Scan-stuck rule + Batch target
-# This updates the ACTUAL AWS EventBridge target for this rule to academy-video-ops-queue.
 $ScanStuckRuleName = "academy-video-scan-stuck-rate"
 Write-Host "[2] EventBridge rule: $ScanStuckRuleName (rate 5 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
-aws events put-rule --name $ScanStuckRuleName --schedule-expression "rate(5 minutes)" --state ENABLED --description "Trigger scan_stuck_video_jobs via Batch SubmitJob" --region $Region | Out-Null
+Invoke-Aws -ArgsArray @("events", "put-rule", "--name", $ScanStuckRuleName, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--description", "Trigger scan_stuck_video_jobs via Batch SubmitJob", "--region", $Region) -ErrorMessage "events put-rule scan-stuck failed"
 $scanstuckTargetPath = Join-Path $EventBridgePath "scan_stuck_to_batch_target.json"
 $scanstuckTargetJson = Get-Content $scanstuckTargetPath -Raw
 $scanstuckTargetJson = $scanstuckTargetJson -replace "PLACEHOLDER_JOB_QUEUE_ARN", $JobQueueArn
@@ -140,12 +139,12 @@ $scanstuckTargetFile = Join-Path $RepoRoot "eventbridge_scanstuck_target_temp.js
 $scanstuckTargetObj = $scanstuckTargetJson | ConvertFrom-Json
 $scanstuckTargetsArray = @($scanstuckTargetObj)
 $scanstuckInput = @{ Rule = $ScanStuckRuleName; Targets = $scanstuckTargetsArray } | ConvertTo-Json -Depth 10 -Compress
-[System.IO.File]::WriteAllText($scanstuckTargetFile, $scanstuckInput, $utf8)
-$ErrorActionPreference = "Continue"
-aws events put-targets --cli-input-json "file://$($scanstuckTargetFile -replace '\\','/')" --region $Region 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: put-targets for $ScanStuckRuleName failed." -ForegroundColor Red; Remove-Item $scanstuckTargetFile -Force -ErrorAction SilentlyContinue; $ErrorActionPreference = $prevEv; exit 1 }
-$ErrorActionPreference = $prevEv
-Remove-Item $scanstuckTargetFile -Force -ErrorAction SilentlyContinue
+[System.IO.File]::WriteAllText($scanstuckTargetFile, $scanstuckInput, $utf8NoBom)
+try {
+    Invoke-Aws -ArgsArray @("events", "put-targets", "--cli-input-json", "file://$($scanstuckTargetFile -replace '\\','/')", "--region", $Region) -ErrorMessage "put-targets for $ScanStuckRuleName failed"
+} finally {
+    Remove-Item $scanstuckTargetFile -Force -ErrorAction SilentlyContinue
+}
 
 # Verify scan-stuck targets
 $tgtScan = ExecJson @("events", "list-targets-by-rule", "--rule", $ScanStuckRuleName, "--region", $Region, "--output", "json")
