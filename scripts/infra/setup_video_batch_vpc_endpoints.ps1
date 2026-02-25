@@ -133,24 +133,27 @@ function New-InterfaceEndpointWithSupportedSubnets {
         )
         $exit = 0
         $str = ""
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
         try {
-            $prev = $ErrorActionPreference
-            $ErrorActionPreference = "Continue"
-            $out = & aws @createArgs --output json 2>&1
+            $out = & cmd /c "aws ec2 create-vpc-endpoint --vpc-id $vpcId --vpc-endpoint-type Interface --service-name $ServiceName --subnet-ids $subId --security-group-ids $($ceSecurityGroupIds -join ' ') --private-dns-enabled --region $Region --output json 2>&1"
             $exit = $LASTEXITCODE
-            $ErrorActionPreference = $prev
             $str = ($out | Out-String).Trim()
-        } catch {
-            $exit = 1
-            $str = $_.Exception.Message
-            if ($_.ErrorRecord) { $str = $_.ErrorRecord.ToString() }
+        } finally {
+            $ErrorActionPreference = $prev
         }
-        if ($exit -eq 0) {
-            $obj = $str | ConvertFrom-Json
-            $epId = $obj.VpcEndpoint.VpcEndpointId
-            [void]$goodSubnets.Add($subId)
-            break
+        if ($LASTEXITCODE -ne 0) { $exit = $LASTEXITCODE }
+        if ($exit -eq 0 -and $str -and $str -notmatch "error|Error|Exception") {
+            try {
+                $obj = $str | ConvertFrom-Json
+                if ($obj.VpcEndpoint -and $obj.VpcEndpoint.VpcEndpointId) {
+                    $epId = $obj.VpcEndpoint.VpcEndpointId
+                    [void]$goodSubnets.Add($subId)
+                    break
+                }
+            } catch {}
         }
+        if ($exit -ne 0) { $exit = 1 }
         # AZ 미지원 오류면 다음 서브넷 시도
         $isAzUnsupported = ($str -match "availability zone") -and ($str -match "subnet")
         if (-not $isAzUnsupported) {
