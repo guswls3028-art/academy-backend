@@ -12,15 +12,15 @@ from django.test import TestCase
 from apps.support.video.models import Video, VideoTranscodeJob
 from apps.support.video.views.video_views import VideoViewSet
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.tenants.models import Tenant
+from apps.core.models import Tenant
 
 
 class VideoDeleteTerminateTest(TestCase):
     """Video perform_destroy 시 Batch terminate 호출 여부."""
 
     def setUp(self):
-        tenant = Tenant.objects.create(name="Test Tenant", code="TEST")
-        lecture = Lecture.objects.create(title="L", tenant=tenant)
+        tenant = Tenant.objects.create(name="Test Tenant", code="TEST_VIDEO_DEL")
+        lecture = Lecture.objects.create(title="L", name="L", tenant=tenant)
         session = Session.objects.create(lecture=lecture, title="S", order=1)
         self.video = Video.objects.create(
             session=session,
