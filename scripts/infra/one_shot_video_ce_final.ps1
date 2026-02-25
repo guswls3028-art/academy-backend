@@ -30,15 +30,15 @@ Write-Host "=== 0) Safety: stop cost bleed (disable schedulers optional) ==="
 # aws events disable-rule --name academy-video-scan-stuck-rate --region $Region | Out-Null
 # aws events disable-rule --name academy-worker-queue-depth-rate --region $Region | Out-Null
 
-Write-Host "=== 1) Freeze all old Video CEs (desired=0 + DISABLE) to stop instance spawning ==="
+Write-Host "=== 1) Freeze all old Video CEs (DISABLED only; desiredvCpus=0 not supported while queue attached) ==="
 foreach ($ceName in $OldVideoCEs) {
+  $prevErr = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
   try {
-    # desired 0로 눌러서 증식 멈춤
-    aws batch update-compute-environment --compute-environment $ceName --compute-resources desiredvCpus=0 --region $Region | Out-Null
-  } catch {}
-  try {
-    aws batch update-compute-environment --compute-environment $ceName --state DISABLED --region $Region | Out-Null
-  } catch {}
+    aws batch update-compute-environment --compute-environment $ceName --state DISABLED --region $Region 2>&1 | Out-Null
+  } finally {
+    $ErrorActionPreference = $prevErr
+  }
 }
 
 Write-Host "=== 2) Cancel/Terminate any jobs in VideoQ/OpsQ (leave SUCCEEDED/FAILED alone) ==="
@@ -111,13 +111,14 @@ foreach ($sn in $subnets) {
   aws ec2 modify-subnet-attribute --subnet-id $sn --map-public-ip-on-launch --region $Region | Out-Null
 }
 
-# 4-4) SG outbound 0.0.0.0/0 확인 (없으면 추가) - 이미 열려있어도 안전
+# 4-4) SG outbound 0.0.0.0/0 확인 (없으면 추가; 이미 있으면 Duplicate 에러 무시)
 foreach ($sg in $sgIds) {
   $eg = aws ec2 describe-security-groups --group-ids $sg --region $Region --query "SecurityGroups[0].IpPermissionsEgress" --output json
   if ($eg -notmatch "0.0.0.0/0") {
-    try {
-      aws ec2 authorize-security-group-egress --group-id $sg --ip-permissions IpProtocol=-1,IpRanges="[{CidrIp=0.0.0.0/0}]" --region $Region | Out-Null
-    } catch {}
+    $prevErr = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    aws ec2 authorize-security-group-egress --group-id $sg --ip-permissions IpProtocol=-1,IpRanges="[{CidrIp=0.0.0.0/0}]" --region $Region 2>&1 | Out-Null
+    $ErrorActionPreference = $prevErr
   }
 }
 
