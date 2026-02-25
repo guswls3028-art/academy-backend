@@ -18,6 +18,20 @@ CE_NAME_PREFIX = "academy-video-batch-ce"
 LOG_GROUP = "/aws/batch/academy-video-worker"
 
 
+def _check_root_credentials() -> None:
+    """Exit with code 3 if caller identity ARN contains ':root'."""
+    try:
+        import boto3
+        sts = boto3.client("sts", region_name=REGION)
+        ident = sts.get_caller_identity()
+        arn = (ident.get("Arn") or "").strip()
+        if ":root" in arn:
+            print("ROOT CAUSE: Running with root credentials (unsafe, not representative of production roles)")
+            sys.exit(3)
+    except Exception:
+        pass
+
+
 def main() -> None:
     out: list[str] = []
     issues: list[str] = []
@@ -41,6 +55,9 @@ def main() -> None:
     batch = boto3.client("batch", region_name=REGION)
     ecr = boto3.client("ecr", region_name=REGION)
     logs = boto3.client("logs", region_name=REGION)
+    iam = boto3.client("iam")
+
+    _check_root_credentials()
 
     try:
         qs = batch.describe_job_queues(jobQueues=[QUEUE_NAME]).get("jobQueues") or []
