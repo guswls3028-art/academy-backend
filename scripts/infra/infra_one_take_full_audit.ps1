@@ -263,7 +263,7 @@ function Test-RuntimeAudit {
         if ($sendRaw) { $sendStr = ($sendRaw | Out-String).Trim(); if ($sendStr) { try { $sendOut = $sendStr | ConvertFrom-Json } catch {} } }
         if (-not $sendOut -or -not $sendOut.Command.CommandId) {
             $errMsg = "SSM send-command failed"
-            if ($sendRaw) { $errDetail = ($sendRaw | Out-String).Trim(); if ($errDetail -match "InvalidInstanceId|NotRegistered|AccessDenied|TargetNotConnected|AssociationDoesNotExist") { $errMsg = $errDetail } }
+            if ($sendExit -ne 0 -and $sendRaw) { $errDetail = ($sendRaw | Out-String).Trim(); if ($errDetail.Length -gt 0 -and $errDetail.Length -lt 500) { $errMsg = $errDetail } elseif ($errDetail.Length -ge 500) { $errMsg = $errDetail.Substring(0, 497) + "..." } }
             Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $instancesAi[0] -Message $errMsg
             $aiOk = $false
         } else {
@@ -297,7 +297,7 @@ function Test-RuntimeAudit {
         if ($sendRaw) { $sendStr = ($sendRaw | Out-String).Trim(); if ($sendStr) { try { $sendOut = $sendStr | ConvertFrom-Json } catch {} } }
         if (-not $sendOut -or -not $sendOut.Command.CommandId) {
             $errMsg = "SSM send-command failed"
-            if ($sendRaw) { $errDetail = ($sendRaw | Out-String).Trim(); if ($errDetail -match "InvalidInstanceId|NotRegistered|AccessDenied|TargetNotConnected|AssociationDoesNotExist") { $errMsg = $errDetail } }
+            if ($sendExit -ne 0 -and $sendRaw) { $errDetail = ($sendRaw | Out-String).Trim(); if ($errDetail.Length -gt 0 -and $errDetail.Length -lt 500) { $errMsg = $errDetail } elseif ($errDetail.Length -ge 500) { $errMsg = $errDetail.Substring(0, 497) + "..." } }
             Add-Failure -Worker "Messaging Worker" -Area "Runtime" -Resource $instancesMsg[0] -Message $errMsg
             $msgOk = $false
         } else {
