@@ -130,9 +130,9 @@ if (-not $opsQueueCeOk) {
     $tf = Join-Path $env:TEMP "reconcile_oq_$(Get-Date -Format 'yyyyMMddHHmmss').json"
     [System.IO.File]::WriteAllText($tf, $payload, [System.Text.UTF8Encoding]::new($false))
     $uri = "file:///" + ([System.IO.Path]::GetFullPath($tf) -replace '\\', '/')
-    Invoke-Aws @("batch", "update-job-queue", "--cli-input-json", $uri, "--region", $Region) -ErrorMessage "update Ops queue computeEnvironmentOrder failed"
+    Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--cli-input-json", $uri, "--region", $Region) -ErrorMessage "update Ops queue computeEnvironmentOrder failed"
     Remove-Item $tf -Force -ErrorAction SilentlyContinue
-    if ($stateBefore -eq "ENABLED") { Invoke-Aws @("batch", "update-job-queue", "--job-queue", $OpsQueueName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "re-enable Ops queue failed" }
+    if ($stateBefore -eq "ENABLED") { Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--job-queue", $OpsQueueName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "re-enable Ops queue failed" }
 }
 $runnableList = ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNABLE", "--region", $Region, "--output", "json")
 if ($runnableList -and $runnableList.jobSummaryList) {
@@ -149,7 +149,7 @@ $minV = [int]$crV.minvCpus
 $maxV = [int]$crV.maxvCpus
 $allocV = $crV.allocationStrategy
 if ($minV -ne 0 -or $maxV -ne 32 -or $allocV -ne "BEST_FIT_PROGRESSIVE") {
-    Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $VideoCEName, "--compute-resources", "minvCpus=0,maxvCpus=32", "--region", $Region) -ErrorMessage "update Video CE failed"
+    Invoke-Aws -ArgsArray @("batch", "update-compute-environment", "--compute-environment", $VideoCEName, "--compute-resources", "minvCpus=0,maxvCpus=32", "--region", $Region) -ErrorMessage "update Video CE failed"
     $wait = 0
     while ($wait -lt 90) {
         Start-Sleep -Seconds 5
@@ -162,7 +162,7 @@ if ($minV -ne 0 -or $maxV -ne 32 -or $allocV -ne "BEST_FIT_PROGRESSIVE") {
 }
 $maxO = [int]$crO.maxvCpus
 if ($maxO -ne 1) {
-    Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $OpsCEName, "--compute-resources", "minvCpus=0,maxvCpus=1", "--region", $Region) -ErrorMessage "update Ops CE failed"
+    Invoke-Aws -ArgsArray @("batch", "update-compute-environment", "--compute-environment", $OpsCEName, "--compute-resources", "minvCpus=0,maxvCpus=1", "--region", $Region) -ErrorMessage "update Ops CE failed"
     $wait = 0
     while ($wait -lt 90) {
         Start-Sleep -Seconds 5
