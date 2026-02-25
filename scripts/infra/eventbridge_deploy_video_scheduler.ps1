@@ -42,6 +42,7 @@ if (-not $jqResp -or -not $jqResp.jobQueues -or $jqResp.jobQueues.Count -eq 0) {
 $JobQueueArn = $jqResp.jobQueues[0].jobQueueArn
 if (-not $JobQueueArn) { Write-Host "FAIL: Ops job queue ARN empty." -ForegroundColor Red; exit 1 }
 Write-Host "Ops Job Queue: $OpsJobQueueName -> $JobQueueArn" -ForegroundColor Gray
+Write-Host "Will update actual AWS EventBridge targets (reconcile + scan_stuck) to this queue." -ForegroundColor Cyan
 
 # Validate job definitions ACTIVE before wiring
 foreach ($jdName in $RequiredOpsJobDefs) {
