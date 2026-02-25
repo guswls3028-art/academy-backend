@@ -165,14 +165,16 @@ foreach ($svc in $GatewayServices) {
         continue
     }
     Write-Host "Creating Gateway endpoint: $svc" -ForegroundColor Cyan
-    $createOut = Aws-JsonSafe @(
+    $createArgs = @(
         "ec2", "create-vpc-endpoint",
         "--vpc-id", $vpcId,
         "--vpc-endpoint-type", "Gateway",
         "--service-name", $svc,
-        "--route-table-ids", $routeTableIdsArr,
+        "--route-table-ids"
+    ) + @($routeTableIdsArr) + @(
         "--region", $Region
     )
+    $createOut = Aws-JsonSafe $createArgs
     if (-not $createOut -or -not $createOut.VpcEndpoint -or -not $createOut.VpcEndpoint.VpcEndpointId) {
         Write-Host "FAIL: create-vpc-endpoint $svc failed." -ForegroundColor Red
         exit 1
