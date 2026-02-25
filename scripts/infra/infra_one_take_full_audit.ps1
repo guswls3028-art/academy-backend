@@ -2,6 +2,22 @@
 # One-take full production integrity audit: AI Worker (ASG), Messaging Worker (ASG), Video Worker (Batch).
 # Usage: .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 [-Verbose] [-FixMode]
 # Exit: 0 = PASS, 1 = FAIL (any critical check failed)
+#
+# Usage example:
+#   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2
+#   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -Verbose
+#   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -FixMode
+#
+# Required IAM permissions (account/region scoped as appropriate):
+#   - sts:GetCallerIdentity
+#   - ssm:GetParameter (GetParametersByPath optional), ssm:SendCommand, ssm:GetCommandInvocation
+#   - autoscaling:DescribeAutoScalingGroups, autoscaling:DescribeScalingActivities, autoscaling:DescribeLaunchConfigurations
+#   - ec2:DescribeLaunchTemplates, ec2:DescribeInstances, ec2:DescribeSecurityGroups, ec2:DescribeSubnets, ec2:DescribeVpcs
+#   - batch:DescribeComputeEnvironments, batch:DescribeJobQueues, batch:DescribeJobDefinitions, batch:SubmitJob, batch:ListJobs, batch:DescribeJobs
+#   - ecr:DescribeRepositories, ecr:DescribeImages
+#   - cloudwatch:DescribeAlarms
+#   - logs:GetLogEvents, logs:DescribeLogStreams (for netprobe log fetch)
+#   - iam:PassRole (for Batch job role / execution role if submitting netprobe)
 # ==============================================================================
 
 param(
