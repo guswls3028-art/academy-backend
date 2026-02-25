@@ -164,7 +164,7 @@ foreach ($svc in $InterfaceServices) {
         "--private-dns-enabled",
         "--region", $Region
     )
-    $createOut = Aws-JsonSafe $createArgs
+    $createOut = Invoke-CreateVpcEndpoint -CreateArgs $createArgs -ServiceName $svc
     if (-not $createOut -or -not $createOut.VpcEndpoint -or -not $createOut.VpcEndpoint.VpcEndpointId) {
         Write-Host "FAIL: create-vpc-endpoint $svc failed." -ForegroundColor Red
         exit 1
@@ -191,7 +191,7 @@ foreach ($svc in $GatewayServices) {
     ) + @($routeTableIdsArr) + @(
         "--region", $Region
     )
-    $createOut = Aws-JsonSafe $createArgs
+    $createOut = Invoke-CreateVpcEndpoint -CreateArgs $createArgs -ServiceName $svc
     if (-not $createOut -or -not $createOut.VpcEndpoint -or -not $createOut.VpcEndpoint.VpcEndpointId) {
         Write-Host "FAIL: create-vpc-endpoint $svc failed." -ForegroundColor Red
         exit 1
