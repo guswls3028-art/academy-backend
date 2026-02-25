@@ -175,8 +175,14 @@ $jq = ExecJson @("batch", "describe-job-queues", "--job-queues", $JobQueueName, 
 $queueExists = $jq -and ($jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName })
 if (-not $queueExists) {
     Write-Host "  Creating job queue" -ForegroundColor Yellow
-    aws batch create-job-queue --cli-input-json $jqTempUri --region $Region
-    if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: create-job-queue failed." -ForegroundColor Red; Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue; exit 1 }
+    $jqTempUri = "file://" + ($jqTempFile -replace '\\', '/')
+    try {
+        Invoke-Aws -ArgsArray @("batch", "create-job-queue", "--cli-input-json", $jqTempUri, "--region", $Region) -ErrorMessage "create-job-queue failed"
+    } catch {
+        Write-Host "  FAIL: $_" -ForegroundColor Red
+        Remove-Item $jqTempFile -Force -ErrorAction SilentlyContinue
+        throw
+    }
 } else {
     Write-Host "  Job queue exists." -ForegroundColor Gray
 }
