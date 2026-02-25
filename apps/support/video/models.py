@@ -232,6 +232,8 @@ class VideoOpsEvent(models.Model):
         UPLOAD_INTEGRITY_FAIL = "UPLOAD_INTEGRITY_FAIL", "R2 업로드 무결성 실패"
         ORPHAN_CANCELLED = "ORPHAN_CANCELLED", "Orphan Batch job 취소"
         TENANT_LIMIT_EXCEEDED = "TENANT_LIMIT_EXCEEDED", "테넌트 동시 실행 한도 초과"
+        VIDEO_DELETE_TERMINATE_REQUESTED = "VIDEO_DELETE_TERMINATE_REQUESTED", "영상 삭제 시 Batch 종료 요청"
+        VIDEO_DELETE_TERMINATE_FAILED = "VIDEO_DELETE_TERMINATE_FAILED", "영상 삭제 시 Batch 종료 실패"
 
     class Severity(models.TextChoices):
         INFO = "INFO", "Info"
