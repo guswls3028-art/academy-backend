@@ -758,7 +758,9 @@ function Invoke-VideoBatchProductionAudit {
             if ($FixMode -and $mins -lt 5) {
                 $newSchedule = "rate(5 minutes)"
                 try {
-                    ExecJsonThrow @("events", "put-rule", "--name", $reconcileRuleName, "--schedule-expression", $newSchedule, "--state", "ENABLED", "--region", $Region)
+                    $putRuleArgs = @("events", "put-rule", "--name", $reconcileRuleName, "--schedule-expression", $newSchedule, "--state", "ENABLED", "--region", $Region)
+                    if ($ruleOut -and $ruleOut.Description) { $putRuleArgs += @("--description", $ruleOut.Description) }
+                    ExecJsonThrow $putRuleArgs
                     Add-FixApplied -Action "EB.ScheduleRelax" -Details "Updated schedule from $scheduleExpr to $newSchedule"
                     Write-Ok "Updated schedule to $newSchedule"
                 } catch {
