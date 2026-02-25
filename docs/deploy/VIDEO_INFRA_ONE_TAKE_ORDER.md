@@ -9,7 +9,7 @@
 
 | 구분 | 큐 | CE | 용도 |
 |------|-----|-----|------|
-| **Video 워커** | `academy-video-batch-queue` | `academy-video-batch-ce-v2` (또는 academy-video-batch-ce) | 영상 인코딩 |
+| **Video 워커** | `academy-video-batch-queue` | `academy-video-batch-ce-final` (단일 CE SSOT; 레거시: v2, academy-video-batch-ce) | 영상 인코딩 |
 | **Ops** | `academy-video-ops-queue` | `academy-video-ops-ce` | reconcile, scan_stuck, netprobe |
 
 - EventBridge(reconcile/scan_stuck) 타깃 = **Ops 큐** (`academy-video-ops-queue`). Video 큐 아님.
