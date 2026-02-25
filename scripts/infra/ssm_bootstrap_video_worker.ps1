@@ -203,26 +203,27 @@ try {
     exit 1
 }
 
-# put-parameter: 값은 file:// 로 전달하여 PowerShell/Windows 인자 이스케이프(따옴표 손상) 방지
-$tempJsonFullPath = [System.IO.Path]::GetFullPath($tempJsonPath)
-$tempJsonUri = "file:///" + ($tempJsonFullPath -replace '\\', '/')
+# put-parameter: Windows에서 인자 이스케이프로 JSON 따옴표가 손상되므로 Base64로 인코딩해 전달
+$jsonBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+$valueToSend = [Convert]::ToBase64String($jsonBytes)
+Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
+
 $putArgs = @(
     'ssm', 'put-parameter',
     '--name', $ParamName,
-    '--value', $tempJsonUri,
+    '--value', $valueToSend,
     '--type', 'SecureString',
     '--region', $Region,
     '--overwrite'
 )
-Write-Host "Putting SSM parameter: $ParamName (SecureString)" -ForegroundColor Cyan
+Write-Host "Putting SSM parameter: $ParamName (SecureString, base64-encoded JSON)" -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-& aws @putArgs 2>&1 | Out-Null
+$putErr = & aws @putArgs 2>&1
 $putExit = $LASTEXITCODE
 $ErrorActionPreference = $prevErr
-Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
 if ($putExit -ne 0) {
-    Write-Host "FAIL: put-parameter failed (exit $putExit)." -ForegroundColor Red
+    Write-Host "FAIL: put-parameter failed (exit $putExit): $putErr" -ForegroundColor Red
     exit 1
 }
 
