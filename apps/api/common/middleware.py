@@ -25,7 +25,9 @@ def _add_cors_headers_to_response(request, response):
         response["Access-Control-Allow-Origin"] = allowed[0]
     if getattr(settings, "CORS_ALLOW_CREDENTIALS", False):
         response["Access-Control-Allow-Credentials"] = "true"
-    response["Vary"] = (response.get("Vary") or "") + (", Origin" if response.get("Vary") else "Origin")
+    vary = (response.get("Vary") or "").strip()
+    if "Origin" not in vary:
+        response["Vary"] = f"{vary}, Origin".lstrip(", ")
     return response
 
 
