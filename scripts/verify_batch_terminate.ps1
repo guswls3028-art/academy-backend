@@ -1,7 +1,8 @@
 # Optional wrapper: run Batch TerminateJob verification (Python script).
 # Usage: .\scripts\verify_batch_terminate.ps1
-#        .\scripts\verify_batch_terminate.ps1 -JobId "abc12345-..."
+#        .\scripts\verify_batch_terminate.ps1 -JobId "YOUR_AWS_BATCH_JOB_ID"
 #        .\scripts\verify_batch_terminate.ps1 -Region ap-northeast-2
+# Note: Use quotes for -JobId; PowerShell treats < and > as redirection.
 
 param(
     [string]$Region = "",
