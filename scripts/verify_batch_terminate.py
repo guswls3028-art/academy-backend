@@ -121,7 +121,7 @@ def main() -> int:
     try:
         iam = session.client("iam", region_name=region)
         result = iam.simulate_principal_policy(
-            PolicySourceArn=arn,
+            PolicySourceArn=policy_source_arn,
             ActionNames=["batch:TerminateJob", "batch:DescribeJobs"],
         )
         results = result.get("EvaluationResults", [])
