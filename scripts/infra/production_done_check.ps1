@@ -113,8 +113,8 @@ foreach ($jdName in @("academy-video-batch-jobdef", "academy-video-ops-reconcile
     } else { Write-Host "OK: JobDef $jdName" -ForegroundColor Green }
 }
 
-# EventBridge rules ENABLED with Batch targets
-& (Join-Path $ScriptRoot "verify_eventbridge_wiring.ps1") -Region $Region -JobQueueName $JobQueueName
+# EventBridge rules ENABLED with Batch targets (reconcile/scan_stuck -> Ops queue)
+& (Join-Path $ScriptRoot "verify_eventbridge_wiring.ps1") -Region $Region -OpsJobQueueName $OpsJobQueueName
 if ($LASTEXITCODE -ne 0) { $fail = 1 }
 
 # SSM parameter exists and valid
@@ -175,9 +175,9 @@ if (-not $npJd -or -not $npJd.jobDefinitions -or $npJd.jobDefinitions.Count -eq 
     Write-Host "FAIL: academy-video-ops-netprobe not ACTIVE; cannot run netprobe." -ForegroundColor Red
     $fail = 1
 } else {
-    Write-Host "Submitting netprobe job..." -ForegroundColor Cyan
+    Write-Host "Submitting netprobe job (Ops queue: $OpsJobQueueName)..." -ForegroundColor Cyan
     $npName = "donecheck-netprobe-" + (Get-Date -Format "yyyyMMddHHmmss")
-    $npSubmit = ExecJson @("batch", "submit-job", "--job-name", $npName, "--job-queue", $JobQueueName, "--job-definition", "academy-video-ops-netprobe", "--region", $Region, "--output", "json")
+    $npSubmit = ExecJson @("batch", "submit-job", "--job-name", $npName, "--job-queue", $OpsJobQueueName, "--job-definition", "academy-video-ops-netprobe", "--region", $Region, "--output", "json")
     if (-not $npSubmit -or -not $npSubmit.jobId) {
         Write-Host "FAIL: Netprobe submit failed." -ForegroundColor Red
         $fail = 1
