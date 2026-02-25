@@ -335,8 +335,25 @@ if (-not $tgtCorrect) {
     $roleResp = ExecJson @("iam", "get-role", "--role-name", $EventsRoleName, "--output", "json")
     if (-not $roleResp -or -not $roleResp.Role) { Write-Error "EventBridge role $EventsRoleName not found"; exit 1 }
     $eventsRoleArn = $roleResp.Role.Arn
-    $targetsJson = '[{"Id":"1","Arn":"' + $opsQueueArn + '","RoleArn":"' + $eventsRoleArn + '","BatchParameters":{"JobDefinition":"' + $OpsJobDefName + '","JobName":"reconcile-video-jobs"}}]'
-    Invoke-Aws -ArgsArray @("events", "put-targets", "--rule", $ReconcileRuleName, "--targets", $targetsJson, "--region", $Region) -ErrorMessage "put-targets failed"
+    $targetsArray = @(@{
+        Id = "1"
+        Arn = [string]$opsQueueArn
+        RoleArn = [string]$eventsRoleArn
+        BatchParameters = @{
+            JobDefinition = $OpsJobDefName
+            JobName = "reconcile-video-jobs"
+        }
+    })
+    $putTargetsInput = @{ Rule = $ReconcileRuleName; Targets = $targetsArray }
+    $putTargetsJson = $putTargetsInput | ConvertTo-Json -Depth 5 -Compress
+    $putTargetsFile = Join-Path $RepoRoot "reconcile_put_targets_temp.json"
+    [System.IO.File]::WriteAllText($putTargetsFile, $putTargetsJson, $utf8NoBom)
+    $putTargetsUri = "file://" + ($putTargetsFile -replace '\\', '/')
+    try {
+        Invoke-Aws -ArgsArray @("events", "put-targets", "--cli-input-json", $putTargetsUri, "--region", $Region) -ErrorMessage "put-targets failed"
+    } finally {
+        Remove-Item $putTargetsFile -Force -ErrorAction SilentlyContinue
+    }
 }
 $alarmList = ExecJson @("cloudwatch", "describe-alarms", "--alarm-names", $RunnableAlarmName, "--region", $Region, "--output", "json")
 $alarmExists = ($alarmList -and $alarmList.MetricAlarms -and $alarmList.MetricAlarms.Count -gt 0)
