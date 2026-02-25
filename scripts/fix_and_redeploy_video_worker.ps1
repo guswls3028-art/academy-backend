@@ -44,13 +44,8 @@ Step "3) IAM – Batch job role (reconcile)"
 $jobRoleName = "academy-video-batch-job-role"
 $policyPath = Join-Path $RepoRoot "scripts\infra\iam\policy_video_job_role.json"
 if (-not (Test-Path $policyPath)) { Fail "policy_video_job_role.json not found." }
-$policyDoc = Get-Content -LiteralPath $policyPath -Raw -Encoding UTF8
-$policyDoc = $policyDoc -replace "`r`n", "`n" -replace "`n", "" -replace "  ", ""
-$tmpPolicy = Join-Path $RepoRoot "scripts\infra\iam\policy_video_job_role_temp.json"
-[System.IO.File]::WriteAllText($tmpPolicy, $policyDoc, [System.Text.UTF8Encoding]::new($false))
-$fileUri = "file://" + ((Resolve-Path -LiteralPath $tmpPolicy).Path -replace '\\', '/')
+$fileUri = "file://" + ((Resolve-Path -LiteralPath $policyPath).Path -replace '\\', '/')
 aws iam put-role-policy --role-name $jobRoleName --policy-name "academy-video-batch-job-inline" --policy-document $fileUri 2>&1 | Out-Null
-Remove-Item $tmpPolicy -Force -ErrorAction SilentlyContinue
 if ($LASTEXITCODE -ne 0) { Warn "put-role-policy for $jobRoleName failed (role may not exist yet). Continue." } else { Ok "Job role policy updated." }
 Write-Host ""
 
