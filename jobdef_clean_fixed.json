@@ -1,0 +1,66 @@
+{
+    "jobDefinitionName":  "academy-video-batch-jobdef",
+    "type":  "container",
+    "containerProperties":  {
+                                "image":  "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest",
+                                "vcpus":  2,
+                                "memory":  3584,
+                                "command":  [
+                                                "python",
+                                                "-m",
+                                                "apps.worker.video_worker.batch_main",
+                                                "Ref::job_id"
+                                            ],
+                                "jobRoleArn":  "arn:aws:iam::809466760795:role/academy-video-batch-job-role",
+                                "executionRoleArn":  "arn:aws:iam::809466760795:role/academy-batch-ecs-task-execution-role",
+                                "volumes":  [
+
+                                            ],
+                                "environment":  [
+
+                                                ],
+                                "mountPoints":  [
+
+                                                ],
+                                "ulimits":  [
+
+                                            ],
+                                "resourceRequirements":  [
+
+                                                         ],
+                                "linuxParameters":  {
+                                                        "devices":  [
+
+                                                                    ],
+                                                        "tmpfs":  [
+
+                                                                  ]
+                                                    },
+                                "logConfiguration":  {
+                                                         "logDriver":  "awslogs",
+                                                         "options":  {
+                                                                         "awslogs-group":  "/aws/batch/academy-video-worker",
+                                                                         "awslogs-region":  "ap-northeast-2",
+                                                                         "awslogs-stream-prefix":  "batch"
+                                                                     },
+                                                         "secretOptions":  [
+
+                                                                           ]
+                                                     },
+                                "secrets":  [
+
+                                            ]
+                            },
+    "retryStrategy":  {
+                          "attempts":  1,
+                          "evaluateOnExit":  [
+
+                                             ]
+                      },
+    "timeout":  {
+                    "attemptDurationSeconds":  14400
+                },
+    "platformCapabilities":  [
+                                 "EC2"
+                             ]
+}
