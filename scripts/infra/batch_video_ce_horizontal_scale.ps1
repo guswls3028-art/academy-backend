@@ -176,7 +176,7 @@ foreach ($arn in $ceArnsInQueue) {
         exit 1
     }
 }
-Write-Host "`n[3] Job Queue $VideoQueueName: ENABLED=$($qObj.state -eq 'ENABLED'), computeEnvironmentOrder has Video CE only (no Ops)." -ForegroundColor Green
+Write-Host "`n[3] Job Queue ${VideoQueueName}: ENABLED=$($qObj.state -eq 'ENABLED'), computeEnvironmentOrder has Video CE only (no Ops)." -ForegroundColor Green
 
 $firstCeInQueue = ($currentOrder | Where-Object { $_.order -eq 1 } | Select-Object -First 1).computeEnvironment
 if ($firstCeInQueue -ne $newCeArn) {
