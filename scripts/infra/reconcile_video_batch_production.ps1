@@ -247,9 +247,7 @@ if ($opsJdLatest) {
     $memO = [int]$opsJdLatest.containerProperties.memory
     $vcpusO = [int]$opsJdLatest.containerProperties.vcpus
     $timeoutO = 0; if ($opsJdLatest.timeout -and $opsJdLatest.timeout.attemptDurationSeconds) { $timeoutO = [int]$opsJdLatest.timeout.attemptDurationSeconds }
-    $rpO = $opsJdLatest.containerProperties.runtimePlatform
-    $armO = ($rpO -and $rpO.cpuArchitecture -eq "ARM64")
-    if ($memO -ne 1024 -or $vcpusO -ne 1 -or $timeoutO -ne 300 -or -not $armO) { $needOpsJdRegister = $true }
+    if ($memO -ne 1024 -or $vcpusO -ne 1 -or $timeoutO -ne 300) { $needOpsJdRegister = $true }
 }
 if (-not $opsJdLatest) {
     $src = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
@@ -264,7 +262,7 @@ if (-not $opsJdLatest) {
     $regO.containerProperties.memory = 1024
     $regO.containerProperties.vcpus = 1
     $regO.containerProperties.command = @("python", "manage.py", "reconcile_batch_video_jobs")
-    $regO.containerProperties.runtimePlatform = @{ cpuArchitecture = "ARM64" }
+    if ($regO.containerProperties.PSObject.Properties['runtimePlatform']) { $regO.containerProperties.PSObject.Properties.Remove('runtimePlatform') }
     $regO.timeout = @{ attemptDurationSeconds = 300 }
     if ($regO.parameters) { $regO.parameters = @{} }
     if ($regO.containerProperties.logConfiguration) {
@@ -290,8 +288,7 @@ elseif ($needOpsJdRegister -and $opsJdLatest) {
     }
     $regO.containerProperties.memory = 1024
     $regO.containerProperties.vcpus = 1
-    if (-not $regO.containerProperties.runtimePlatform) { $regO.containerProperties | Add-Member -NotePropertyName "runtimePlatform" -NotePropertyValue @{ cpuArchitecture = "ARM64" } -Force }
-    else { $regO.containerProperties.runtimePlatform = @{ cpuArchitecture = "ARM64" } }
+    if ($regO.containerProperties.PSObject.Properties['runtimePlatform']) { $regO.containerProperties.PSObject.Properties.Remove('runtimePlatform') }
     $regO.timeout = @{ attemptDurationSeconds = 300 }
     $jdPathO = Join-Path $RepoRoot "reconcile_ops_jd_temp.json"
     $jsonStrO = $regO | ConvertTo-Json -Depth 25 -Compress:$false
