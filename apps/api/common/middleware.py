@@ -25,7 +25,7 @@ def _add_cors_headers_to_response(request, response):
         response["Access-Control-Allow-Origin"] = allowed[0]
     if getattr(settings, "CORS_ALLOW_CREDENTIALS", False):
         response["Access-Control-Allow-Credentials"] = "true"
-    # preflight가 이미 통과한 요청이므로 Allow-Headers는 생략해도 됨 (필요 시 추가 가능)
+    response["Vary"] = (response.get("Vary") or "") + (", Origin" if response.get("Vary") else "Origin")
     return response
 
 
