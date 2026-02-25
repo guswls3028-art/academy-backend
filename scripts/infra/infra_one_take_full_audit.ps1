@@ -638,29 +638,22 @@ function Invoke-VideoBatchProductionAudit {
                     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
                     [System.IO.File]::WriteAllText($tempFile, $policyDoc, $utf8NoBom)
                     try {
-                        $createOut = ExecJson @("iam", "create-policy", "--policy-name", $policyName, "--policy-document", "file://$($tempFile -replace '\\','/')", "--description", "Allows Batch job role DescribeJobs/ListJobs for reconcile", "--output", "json")
-                        if ($createOut -and $createOut.Policy -and $createOut.Policy.Arn) {
-                            ExecJsonThrow @("iam", "attach-role-policy", "--role-name", $jobRoleName, "--policy-arn", $createOut.Policy.Arn)
+                        $createRaw = & aws iam create-policy --policy-name $policyName --policy-document "file://$($tempFile -replace '\\','/')" --description "Allows Batch job role DescribeJobs/ListJobs for reconcile" --output json 2>&1
+                        if ($LASTEXITCODE -eq 0 -and $createRaw) {
+                            $createJson = $createRaw | ConvertFrom-Json
+                            $newArn = $createJson.Policy.Arn
+                            ExecJsonThrow @("iam", "attach-role-policy", "--role-name", $jobRoleName, "--policy-arn", $newArn)
                             Add-FixApplied -Action "IAM.CreatePolicyAndAttach" -Details "Created $policyName and attached to $jobRoleName"
                             Write-Ok "Created managed policy $policyName and attached to $jobRoleName"
                             $ok = $true
+                        } elseif (($createRaw | Out-String) -match "EntityAlreadyExists") {
+                            ExecJsonThrow @("iam", "attach-role-policy", "--role-name", $jobRoleName, "--policy-arn", $policyArn)
+                            Add-FixApplied -Action "IAM.AttachRolePolicy" -Details "Attached existing $policyName to $jobRoleName"
+                            Write-Ok "Attached existing $policyName to $jobRoleName"
+                            $ok = $true
                         } else {
-                            $createRaw = & aws iam create-policy --policy-name $policyName --policy-document "file://$($tempFile -replace '\\','/')" --description "Reconcile DescribeJobs" 2>&1
-                            if ($LASTEXITCODE -eq 0) {
-                                $createJson = $createRaw | ConvertFrom-Json
-                                ExecJsonThrow @("iam", "attach-role-policy", "--role-name", $jobRoleName, "--policy-arn", $createJson.Policy.Arn)
-                                Add-FixApplied -Action "IAM.CreatePolicyAndAttach" -Details "Created $policyName and attached to $jobRoleName"
-                                Write-Ok "Created managed policy $policyName and attached"
-                                $ok = $true
-                            } elseif (($createRaw | Out-String) -match "EntityAlreadyExists") {
-                                ExecJsonThrow @("iam", "attach-role-policy", "--role-name", $jobRoleName, "--policy-arn", $policyArn)
-                                Add-FixApplied -Action "IAM.AttachRolePolicy" -Details "Attached existing $policyName to $jobRoleName"
-                                Write-Ok "Attached existing $policyName"
-                                $ok = $true
-                            } else {
-                                Write-Blocker "Create policy failed: $createRaw"
-                                $ok = $false
-                            }
+                            Write-Blocker "Create policy failed: $createRaw"
+                            $ok = $false
                         }
                     } finally {
                         if (Test-Path -LiteralPath $tempFile) { Remove-Item $tempFile -Force -ErrorAction SilentlyContinue }
