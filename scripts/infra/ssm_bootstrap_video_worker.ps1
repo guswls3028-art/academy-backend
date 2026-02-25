@@ -203,27 +203,27 @@ try {
     exit 1
 }
 
-# put-parameter: Windows에서 인자 이스케이프로 JSON 따옴표가 손상되므로 Base64로 인코딩해 전달
+# put-parameter: Base64 값은 환경 변수로 전달해 PowerShell/Windows 인자 길이·이스케이프 문제 회피
 $jsonBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
 $valueToSend = [Convert]::ToBase64String($jsonBytes)
 Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
 
-$putArgs = @(
-    'ssm', 'put-parameter',
-    '--name', $ParamName,
-    '--value', $valueToSend,
-    '--type', 'SecureString',
-    '--region', $Region,
-    '--overwrite'
-)
 Write-Host "Putting SSM parameter: $ParamName (SecureString, base64-encoded JSON)" -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-$putErr = & aws @putArgs 2>&1
+# 환경 변수로 값 전달 시 자식 프로세스가 확장하므로 인자 배열 손상 방지 (cmd에서 %VAR% 확장)
+$env:ACADEMY_SSM_PUT_VALUE = $valueToSend
+try {
+    $putOut = cmd /c "aws ssm put-parameter --name $ParamName --value %ACADEMY_SSM_PUT_VALUE% --type SecureString --region $Region --overwrite 2>&1"
+} finally {
+    Remove-Item -LiteralPath Env:ACADEMY_SSM_PUT_VALUE -ErrorAction SilentlyContinue
+}
+$putErr = ($putOut | Out-String).Trim()
 $putExit = $LASTEXITCODE
 $ErrorActionPreference = $prevErr
 if ($putExit -ne 0) {
-    Write-Host "FAIL: put-parameter failed (exit $putExit): $putErr" -ForegroundColor Red
+    Write-Host "FAIL: put-parameter failed (exit $putExit)." -ForegroundColor Red
+    if ($putErr) { Write-Host $putErr -ForegroundColor Red }
     exit 1
 }
 
