@@ -72,23 +72,45 @@ $revisionToUse = $rev
 $needRegister = ($mem -ne 3584)
 
 if ($needRegister) {
-    # --- 3) Build new job definition from ACTIVE, only memory=3584; remove illegal fields ---
-    $illegal = @("revision", "status", "jobDefinitionArn", "containerOrchestrationType")
-    $jd = @{}
-    foreach ($key in $activeDef.PSObject.Properties.Name) {
-        if ($key -notin $illegal) { $jd[$key] = $activeDef.$key }
-    }
-    if ($jd.containerProperties) {
-        $cp = @{}
-        foreach ($k in $jd.containerProperties.PSObject.Properties.Name) {
-            $cp[$k] = $jd.containerProperties.$k
+    # --- 3) Get ACTIVE revision as raw JSON; set memory=3584; remove illegal keys; register ---
+    $rawJson = aws batch describe-job-definitions --job-definition-name $JobDefName --status ACTIVE --region $Region --output json 2>&1 | Out-String
+    $allDefsRaw = $rawJson | ConvertFrom-Json
+    $activeDefJson = $null
+    foreach ($d in $allDefsRaw.jobDefinitions) {
+        if ([int]$d.revision -eq $maxRevision) {
+            $activeDefJson = $d
+            break
         }
-        $cp["memory"] = 3584
-        $jd["containerProperties"] = $cp
     }
+    if (-not $activeDefJson) {
+        Write-Host "ROOT CAUSE: ACTIVE_MEMORY was $mem (expected 3584); could not get definition for revision $maxRevision"
+        Write-Host "FIX APPLIED: None"
+        Write-Host "CURRENT STATUS: N/A"
+        exit 1
+    }
+    $illegal = @("revision", "status", "jobDefinitionArn", "containerOrchestrationType")
+    $registerObj = @{}
+    foreach ($key in $activeDefJson.PSObject.Properties.Name) {
+        if ($key -notin $illegal) { $registerObj[$key] = $activeDefJson.$key }
+    }
+    $registerObj.containerProperties.memory = 3584
     $jdFile = Join-Path $env:TEMP "batch_jd_register_$(Get-Date -Format 'yyyyMMddHHmmss').json"
     $absPath = [System.IO.Path]::GetFullPath($jdFile)
-    $jd | ConvertTo-Json -Depth 25 -Compress:$false | Set-Content -Path $jdFile -Encoding UTF8 -NoNewline:$false
+    $jsonStr = $registerObj | ConvertTo-Json -Depth 25 -Compress:$false
+    if ($jsonStr -match '"JobDefinitionName"') { $jsonStr = $jsonStr -replace '"JobDefinitionName"', '"jobDefinitionName"' }
+    if ($jsonStr -match '"ContainerProperties"') { $jsonStr = $jsonStr -replace '"ContainerProperties"', '"containerProperties"' }
+    if ($jsonStr -match '"ContainerProperties":\s*\{') {
+        $jsonStr = $jsonStr -replace '"Memory":', '"memory":' -replace '"Vcpus":', '"vcpus":' -replace '"Image":', '"image":' -replace '"Command":', '"command":' -replace '"JobRoleArn":', '"jobRoleArn":' -replace '"ExecutionRoleArn":', '"executionRoleArn":' -replace '"ResourceRequirements":', '"resourceRequirements":' -replace '"LogConfiguration":', '"logConfiguration":' -replace '"Environment":', '"environment":' -replace '"Secrets":', '"secrets":' -replace '"MountPoints":', '"mountPoints":' -replace '"Volumes":', '"volumes":' -replace '"LinuxParameters":', '"linuxParameters":'
+        $jsonStr = $jsonStr -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options":' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
+    }
+    if ($jsonStr -match '"PlatformCapabilities"') { $jsonStr = $jsonStr -replace '"PlatformCapabilities"', '"platformCapabilities"' }
+    if ($jsonStr -match '"Parameters"') { $jsonStr = $jsonStr -replace '"Parameters"', '"parameters"' }
+    if ($jsonStr -match '"RetryStrategy"') { $jsonStr = $jsonStr -replace '"RetryStrategy"', '"retryStrategy"' }
+    if ($jsonStr -match '"Attempts":') { $jsonStr = $jsonStr -replace '"Attempts":', '"attempts":' }
+    if ($jsonStr -match '"Timeout"') { $jsonStr = $jsonStr -replace '"Timeout"', '"timeout"' }
+    if ($jsonStr -match '"AttemptDurationSeconds"') { $jsonStr = $jsonStr -replace '"AttemptDurationSeconds"', '"attemptDurationSeconds"' }
+    if ($jsonStr -match '"Type"') { $jsonStr = $jsonStr -replace '(\s)"Type":', '$1"type":' }
+    [System.IO.File]::WriteAllText($jdFile, $jsonStr, [System.Text.UTF8Encoding]::new($false))
     $fileUri = "file:///" + ($absPath -replace '\\', '/')
     $regOut = Invoke-AwsJson @("batch", "register-job-definition", "--cli-input-json", $fileUri, "--region", $Region, "--output", "json")
     Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
