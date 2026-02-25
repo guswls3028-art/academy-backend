@@ -1,11 +1,11 @@
 # ==============================================================================
-# Submit netprobe job, poll until SUCCEEDED/FAILED, print logStreamName and last ~200 log lines.
-# Usage: .\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+# Submit netprobe job to Ops queue, poll until SUCCEEDED/FAILED, print logStreamName and last ~200 log lines.
+# Usage: .\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-ops-queue
 # ==============================================================================
 
 param(
     [string]$Region = "ap-northeast-2",
-    [string]$JobQueueName = "academy-video-batch-queue",
+    [string]$JobQueueName = "academy-video-ops-queue",
     [string]$JobDefName = "academy-video-ops-netprobe"
 )
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
