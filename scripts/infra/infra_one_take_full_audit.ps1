@@ -513,6 +513,7 @@ function Test-VideoBatchReconcileAudit {
                         $ErrorActionPreference = $prevErr
                         if ($LASTEXITCODE -eq 0) {
                             [void]$summary.Add("  FixMode: Attached existing managed policy $ManagedPolicyNameDescribeJobs to $jobRoleName")
+                            $ok = $true
                         } else {
                             [void]$summary.Add("  FixMode: FAILED to attach policy to role")
                             $ok = $false
@@ -538,6 +539,7 @@ function Test-VideoBatchReconcileAudit {
                             & aws iam attach-role-policy --role-name $jobRoleName --policy-arn $newArn 2>&1 | Out-Null
                             if ($LASTEXITCODE -eq 0) {
                                 [void]$summary.Add("  FixMode: Created managed policy $ManagedPolicyNameDescribeJobs and attached to $jobRoleName")
+                                $ok = $true
                             } else {
                                 [void]$summary.Add("  FixMode: Policy created but attach failed")
                                 $ok = $false
