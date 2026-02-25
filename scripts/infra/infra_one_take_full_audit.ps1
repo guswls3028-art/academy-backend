@@ -169,8 +169,9 @@ function Test-NetworkAudit {
             if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
         } else {
             $ltVer = ExecJson @("ec2", "describe-launch-template-versions", "--launch-template-name", $ltName, "--region", $Region, "--output", "json")
-            $ltData = $ltVer.LaunchTemplateVersions[0].LaunchTemplateData
-            if ($ltData.SecurityGroupIds -and $ltData.SecurityGroupIds.Count -gt 0) {
+            $ltData = $null
+            if ($ltVer -and $ltVer.LaunchTemplateVersions -and $ltVer.LaunchTemplateVersions.Count -gt 0) { $ltData = $ltVer.LaunchTemplateVersions[0].LaunchTemplateData }
+            if ($ltData -and $ltData.SecurityGroupIds -and $ltData.SecurityGroupIds.Count -gt 0) {
                 Write-AuditVerbose "  ASG $asgName SG: $($ltData.SecurityGroupIds -join ', ')"
             }
         }
