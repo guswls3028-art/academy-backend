@@ -59,7 +59,7 @@ Set in job definition container overrides or as job environment:
 
 ### Ops jobs (Batch: reconcile, scan_stuck, netprobe)
 
-Scheduled via EventBridge → Batch SubmitJob to **academy-video-ops-queue** (Ops CE: t4g.micro/small, max 4 vCPU). Job definitions: `academy-video-ops-reconcile`, `academy-video-ops-scanstuck`, `academy-video-ops-netprobe`. Same image as video worker. **All run via batch_entrypoint:** container ENTRYPOINT is the entrypoint script; it loads SSM JSON into env, then runs the job command (`python manage.py reconcile_batch_video_jobs`, `python manage.py scan_stuck_video_jobs`, `python manage.py netprobe`). Do not invoke `python manage.py` directly from job definition without going through the entrypoint.
+Scheduled via EventBridge → Batch SubmitJob to **academy-video-ops-queue** (Ops CE: **default_arm64**, max 2 vCPU). Job definitions: `academy-video-ops-reconcile`, `academy-video-ops-scanstuck`, `academy-video-ops-netprobe`. Same image as video worker. **All run via batch_entrypoint:** container ENTRYPOINT loads SSM JSON into env, then runs the job command (`python manage.py reconcile_batch_video_jobs`, `python manage.py scan_stuck_video_jobs`, `python manage.py netprobe`). Do not invoke `python manage.py` directly from job definition without going through the entrypoint.
 
 ---
 
@@ -177,7 +177,7 @@ Uses `batch_final_state.json` to resolve the queue name automatically. Expected:
 | Video compute environment | `academy-video-batch-ce` |
 | Video job queue (primary) | `academy-video-batch-queue` |
 | Video job queue (fallback) | `academy-video-batch-queue-ce` (created only when update of existing queue to CE fails) |
-| **Ops compute environment** | **`academy-video-ops-ce`** (t4g.micro, t4g.small, max 4 vCPU). **Same Security Group as academy-video-batch-ce.** |
+| **Ops compute environment** | **`academy-video-ops-ce`** (instanceTypes: **default_arm64**, min=0, max=2 vCPU). Same Security Group as academy-video-batch-ce. |
 | **Ops job queue** | **`academy-video-ops-queue`** (reconcile, scan_stuck, netprobe) |
 | Worker job definition | `academy-video-batch-jobdef` |
 | Ops job definitions | `academy-video-ops-reconcile`, `academy-video-ops-scanstuck`, `academy-video-ops-netprobe` |
