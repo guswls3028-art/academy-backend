@@ -215,14 +215,17 @@ if ($needVideoJdRegister -and $videoJdLatest) {
     else { $regObj.containerProperties.runtimePlatform = @{ cpuArchitecture = "ARM64" } }
     if (-not $regObj.timeout) { $regObj | Add-Member -NotePropertyName "timeout" -NotePropertyValue @{ attemptDurationSeconds = 14400 } -Force }
     else { $regObj.timeout = @{ attemptDurationSeconds = 14400 } }
-    $jdPath = Join-Path $env:TEMP "reconcile_video_jd_$(Get-Date -Format 'yyyyMMddHHmmss').json"
+    $jdPath = Join-Path $RepoRoot "reconcile_video_jd_temp.json"
     $jsonStr = $regObj | ConvertTo-Json -Depth 25 -Compress:$false
     $jsonStr = $jsonStr -replace '"JobDefinitionName"', '"jobDefinitionName"' -replace '"ContainerProperties"', '"containerProperties"' -replace '"Memory":', '"memory":' -replace '"Vcpus":', '"vcpus":' -replace '"Image":', '"image":' -replace '"Command":', '"command":' -replace '"JobRoleArn":', '"jobRoleArn":' -replace '"ExecutionRoleArn":', '"executionRoleArn"' -replace '"ResourceRequirements":', '"resourceRequirements"' -replace '"LogConfiguration":', '"logConfiguration"' -replace '"RuntimePlatform":', '"runtimePlatform"' -replace '"CpuArchitecture":', '"cpuArchitecture"' -replace '"Timeout"', '"timeout"' -replace '"AttemptDurationSeconds"', '"attemptDurationSeconds"' -replace '"PlatformCapabilities"', '"platformCapabilities"' -replace '"Parameters"', '"parameters"' -replace '"RetryStrategy"', '"retryStrategy"' -replace '"Attempts":', '"attempts":' -replace '(\s)"Type":', '$1"type":'
     $jsonStr = $jsonStr -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
-    [System.IO.File]::WriteAllText($jdPath, $jsonStr, [System.Text.UTF8Encoding]::new($false))
-    $absPath = [System.IO.Path]::GetFullPath($jdPath)
-    $regOutRaw = Invoke-Aws -ArgsArray @("batch", "register-job-definition", "--cli-input-json", $absPath, "--region", $Region, "--output", "json") -ErrorMessage "register Video job def failed"
-    Remove-Item $jdPath -Force -ErrorAction SilentlyContinue
+    [System.IO.File]::WriteAllText($jdPath, $jsonStr, $utf8NoBom)
+    $fileUri = "file://" + ($jdPath -replace '\\', '/')
+    try {
+        $regOutRaw = Invoke-Aws -ArgsArray @("batch", "register-job-definition", "--cli-input-json", $fileUri, "--region", $Region, "--output", "json") -ErrorMessage "register Video job def failed"
+    } finally {
+        Remove-Item $jdPath -Force -ErrorAction SilentlyContinue
+    }
     $regOut = ($regOutRaw | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim() | ConvertFrom-Json
     $newRev = $null; if ($regOut -and $regOut.revision) { $newRev = [int]$regOut.revision }
     $videoJdAllAfter = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
