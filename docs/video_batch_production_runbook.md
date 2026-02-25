@@ -96,10 +96,10 @@ $acctId = (aws sts get-caller-identity --query Account --output text)
 $ecrUri = "${acctId}.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest"
 .\scripts\infra\recreate_batch_in_api_vpc.ps1 -Region ap-northeast-2 -EcrRepoUri $ecrUri
 
-# 4b) Ops CE + Ops queue (reconcile/scan_stuck/netprobe -> t4g, no c6g)
+# 4b) Ops CE + Ops queue (reconcile/scan_stuck/netprobe → default_arm64, max 2 vCPU)
 .\scripts\infra\batch_ops_setup.ps1 -Region ap-northeast-2
 
-# 5) EventBridge wiring (reconcile/scan_stuck -> academy-video-ops-queue)
+# 5) EventBridge wiring (reconcile/scan_stuck → academy-video-ops-queue). Ops queue 없으면 위 스크립트가 batch_ops_setup 호출.
 .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
 
 # 6) CloudWatch alarms
@@ -137,19 +137,20 @@ Expected: Exit 0; `DONE. Batch recreated in API VPC. JobQueueName=<final>`.
 
 **Important:** The **final job queue name** is either `academy-video-batch-queue` (if the existing queue was updated to CE `academy-video-batch-ce`) or `academy-video-batch-queue-ce` (if update failed and a new queue was created). Use the name printed at the end of Step 2 for Steps 3–5, or read `docs/deploy/actual_state/batch_final_state.json` → `FinalJobQueueName`.
 
-**Step 2b — Ops CE + Ops queue** (reconcile/scan_stuck/netprobe on t4g; no c6g scaling for ops)
+**Step 2b — Ops CE + Ops queue** (reconcile/scan_stuck/netprobe; default_arm64, max 2 vCPU)
 ```powershell
 .\scripts\infra\batch_ops_setup.ps1 -Region ap-northeast-2
 ```
-Uses the **same Security Group as academy-video-batch-ce** (discovered from the video CE).  
-Expected: Exit 0; `DONE. Ops CE and queue ready.` Creates `academy-video-ops-ce` and `academy-video-ops-queue`; state in `docs/deploy/actual_state/batch_ops_state.json`.
+Uses the **same Security Group as academy-video-batch-ce** (discovered from the video CE). CE가 이미 있으면 생성 생략(또는 DISABLED면 ENABLED로 변경).  
+Expected: Exit 0; `DONE. Ops CE and queue ready.` State in `docs/deploy/actual_state/batch_ops_state.json`.  
+실패 시 `-Verbose`로 요청 JSON 출력.
 
 **Step 3 — EventBridge** (reconcile/scan_stuck submit to Ops queue)
 ```powershell
 .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
 ```
-This updates the **actual AWS EventBridge targets** (put-targets) for both rules to **academy-video-ops-queue**; not only the repo JSON templates.  
-Or if you created Ops queue with a different name, pass that. Expected: Exit 0; `Done. EventBridge: actual AWS targets updated; reconcile/scan_stuck -> academy-video-ops-queue; targets verified.`
+Ops queue가 없으면 **batch_ops_setup.ps1을 자동 호출**한 뒤 rule/target 설정. **Region만 넘겨도 단독 실행 가능.**  
+Expected: Exit 0; `Done. EventBridge: actual AWS targets updated; reconcile/scan_stuck -> academy-video-ops-queue; targets verified.`
 
 **Step 4 — CloudWatch alarms** (use same final queue name)
 ```powershell
