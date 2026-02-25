@@ -211,7 +211,7 @@ def main() -> None:
                             except Exception as _:
                                 pass
                             out.append(f"  ECR image architecture: {img_arch}")
-                            ecr_image_arch = img_arch if img_arch != "unknown (single-arch manifest)" else None
+                            ecr_image_arch = img_arch
                         else:
                             issues.append(f"ECR image not found for JobDef tag: {repo}:{tag}")
                     except ClientError as e:
