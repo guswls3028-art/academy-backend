@@ -176,7 +176,7 @@ Uses `batch_final_state.json` to resolve the queue name automatically. Expected:
 | Video compute environment | `academy-video-batch-ce` |
 | Video job queue (primary) | `academy-video-batch-queue` |
 | Video job queue (fallback) | `academy-video-batch-queue-ce` (created only when update of existing queue to CE fails) |
-| **Ops compute environment** | **`academy-video-ops-ce`** (t4g.micro, t4g.small, max 4 vCPU) |
+| **Ops compute environment** | **`academy-video-ops-ce`** (t4g.micro, t4g.small, max 4 vCPU). **Same Security Group as academy-video-batch-ce.** |
 | **Ops job queue** | **`academy-video-ops-queue`** (reconcile, scan_stuck, netprobe) |
 | Worker job definition | `academy-video-batch-jobdef` |
 | Ops job definitions | `academy-video-ops-reconcile`, `academy-video-ops-scanstuck`, `academy-video-ops-netprobe` |
