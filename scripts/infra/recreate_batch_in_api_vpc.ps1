@@ -25,6 +25,18 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $OutDir = Join-Path $RepoRoot "docs\deploy\actual_state"
 $InfraPath = Join-Path $RepoRoot "scripts\infra"
 
+# AccountId 자동 감지 후 placeholder <acct> 치환 (있으면)
+$acctId = (& aws @('sts', 'get-caller-identity', '--query', 'Account', '--output', 'text') 2>&1)
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($acctId)) {
+    Write-Host "FAIL: Could not get AWS Account ID (aws sts get-caller-identity)." -ForegroundColor Red
+    exit 1
+}
+$acctId = $acctId.Trim()
+if ($EcrRepoUri -match '<acct>') {
+    $EcrRepoUri = $EcrRepoUri -replace '<acct>', $acctId
+    Write-Host "EcrRepoUri placeholder <acct> replaced with AccountId=$acctId" -ForegroundColor Gray
+}
+
 # EcrRepoUri 엄격 검증: placeholder(<acct> 등) 및 잘못된 형식이 JobDefinition에 등록되지 않도록
 $EcrRepoUri = $EcrRepoUri.Trim()
 if ($EcrRepoUri -match '[<>]') {
