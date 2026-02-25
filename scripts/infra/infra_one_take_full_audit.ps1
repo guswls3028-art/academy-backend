@@ -287,6 +287,13 @@ function Invoke-EventBridgeAudit {
 # --- C. IAM ---
 function Invoke-IAMAudit {
     $roleName = "academy-video-batch-job-role"
+    $jdResp = Aws-JsonSafe @("batch", "describe-job-definitions", "--job-definition-name", "academy-video-ops-reconcile", "--status", "ACTIVE", "--region", $Region)
+    if ($jdResp -and $jdResp.jobDefinitions -and $jdResp.jobDefinitions.Count -gt 0) {
+        $jobRoleArn = $jdResp.jobDefinitions[0].containerProperties.jobRoleArn -as [string]
+        if (-not [string]::IsNullOrWhiteSpace($jobRoleArn) -and $jobRoleArn -match '([^/]+)$') {
+            $roleName = $Matches[1]
+        }
+    }
     $roleJson = Aws-JsonSafe @("iam", "get-role", "--role-name", $roleName)
     if (-not $roleJson -or -not $roleJson.Role) {
         Add-AuditRow -Category "IAM" -Check "Job role exists" -Expected $roleName -Actual "not found" -Status "FAIL" -FixAction "Run batch_video_setup / IAM create role"
