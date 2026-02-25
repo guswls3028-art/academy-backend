@@ -103,43 +103,69 @@ if (-not $vpcId) {
 
 Write-Host "VPC ID: $vpcId | CE subnets: $($ceSubnets.Count) | SG: $($ceSecurityGroupIds -join ',')" -ForegroundColor Gray
 
-# CE 서브넷 ID -> AZ 이름 및 AZ ID 매핑 (Interface 엔드포인트는 서비스별 지원 AZ만 사용해야 함)
+# CE 서브넷 ID -> AZ 이름 및 AZ ID 매핑 (로그용)
 $subnetAzMap = @{}
-$subnetAzIdMap = @{}
 $subRespAll = Aws-JsonSafe @("ec2", "describe-subnets", "--subnet-ids", $ceSubnets, "--region", $Region)
 if ($subRespAll -and $subRespAll.Subnets) {
     foreach ($s in $subRespAll.Subnets) {
-        $az = $s.AvailabilityZone
-        $azId = $s.AvailabilityZoneId
-        if ($az) { $subnetAzMap[$s.SubnetId] = $az }
-        if ($azId) { $subnetAzIdMap[$s.SubnetId] = $azId }
+        if ($s.AvailabilityZone) { $subnetAzMap[$s.SubnetId] = $s.AvailabilityZone }
     }
 }
 
-# 서비스별 지원 AZ 조회 후, 해당 AZ에 있는 CE 서브넷만 반환 (서비스는 zone name 또는 zone ID 반환 가능)
-function Get-SubnetsForService {
+# Interface 엔드포인트 생성: 서비스가 지원하지 않는 AZ의 서브넷은 제외.
+# describe-vpc-endpoint-services 응답 형식 차이를 피하기 위해, 먼저 한 서브넷만으로 생성 시도 후
+# 지원하는 서브넷만 add-subnet으로 추가.
+function New-InterfaceEndpointWithSupportedSubnets {
     param([string]$ServiceName)
-    $svcResp = Aws-JsonSafe @("ec2", "describe-vpc-endpoint-services", "--service-names", $ServiceName, "--region", $Region)
-    $supportedAzs = @()
-    if ($svcResp -and $svcResp.ServiceDetails -and $svcResp.ServiceDetails.Count -gt 0) {
-        $detail = $svcResp.ServiceDetails[0]
-        $azSet = $detail.AvailabilityZoneSet
-        if (-not $azSet) { $azSet = $detail.availabilityZoneSet }
-        if ($azSet) { $supportedAzs = @($azSet) }
-    }
-    if ($supportedAzs.Count -eq 0) {
-        return @($ceSubnets)
-    }
-    $filtered = @()
+    $goodSubnets = [System.Collections.ArrayList]::new()
+    $epId = $null
     foreach ($subId in $ceSubnets) {
-        $az = $subnetAzMap[$subId]
-        $azId = $subnetAzIdMap[$subId]
-        $match = ($az -and ($supportedAzs -contains $az)) -or ($azId -and ($supportedAzs -contains $azId))
-        if ($match) {
-            $filtered += $subId
+        $createArgs = @(
+            "ec2", "create-vpc-endpoint",
+            "--vpc-id", $vpcId,
+            "--vpc-endpoint-type", "Interface",
+            "--service-name", $ServiceName,
+            "--subnet-ids", $subId,
+            "--security-group-ids"
+        ) + @($ceSecurityGroupIds) + @(
+            "--private-dns-enabled",
+            "--region", $Region
+        )
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $out = & aws @createArgs --output json 2>&1
+        $exit = $LASTEXITCODE
+        $ErrorActionPreference = $prev
+        $str = ($out | Out-String).Trim()
+        if ($exit -eq 0) {
+            $obj = $str | ConvertFrom-Json
+            $epId = $obj.VpcEndpoint.VpcEndpointId
+            [void]$goodSubnets.Add($subId)
+            break
+        }
+        if ($str -notmatch "does not support the availability zone") {
+            Write-Host "FAIL: create-vpc-endpoint $ServiceName failed." -ForegroundColor Red
+            Write-Host "AWS output: $str" -ForegroundColor Gray
+            exit 1
         }
     }
-    return $filtered
+    if (-not $epId) {
+        $ceAzs = ($ceSubnets | ForEach-Object { $subnetAzMap[$_] } | Where-Object { $_ } | Select-Object -Unique) -join ", "
+        Write-Host "FAIL: No CE subnet in an AZ supported by $ServiceName (CE subnet AZs: $ceAzs)." -ForegroundColor Red
+        exit 1
+    }
+    foreach ($subId in $ceSubnets) {
+        if ($goodSubnets -contains $subId) { continue }
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $out = & aws ec2 modify-vpc-endpoint --vpc-endpoint-id $epId --add-subnet-ids $subId --region $Region 2>&1
+        $exit = $LASTEXITCODE
+        $ErrorActionPreference = $prev
+        if ($exit -eq 0) {
+            [void]$goodSubnets.Add($subId)
+        }
+    }
+    return $epId
 }
 
 # 필수 서비스 이름 (region 치환)
