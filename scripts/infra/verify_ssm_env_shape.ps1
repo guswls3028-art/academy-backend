@@ -51,7 +51,7 @@ if (-not $outer -or -not $outer.Parameter -or $null -eq $outer.Parameter.Value) 
     exit 1
 }
 
-# 저장된 값(문자열)을 다시 JSON으로 파싱
+# 저장된 값(문자열): 평문 JSON 또는 Base64(UTF-8 JSON) — ssm_bootstrap이 Windows에서 Base64로 저장함
 $valueStr = $outer.Parameter.Value
 if (-not ($valueStr -is [string]) -or [string]::IsNullOrWhiteSpace($valueStr)) {
     Write-Host "FAIL: SSM parameter value is not a non-empty string." -ForegroundColor Red
@@ -62,8 +62,14 @@ $payload = $null
 try {
     $payload = $valueStr | ConvertFrom-Json
 } catch {
-    Write-Host "FAIL: SSM parameter value is not valid JSON." -ForegroundColor Red
-    exit 1
+    try {
+        $valueBytes = [Convert]::FromBase64String($valueStr)
+        $valueStr = [System.Text.Encoding]::UTF8.GetString($valueBytes)
+        $payload = $valueStr | ConvertFrom-Json
+    } catch {
+        Write-Host "FAIL: SSM parameter value is not valid JSON nor valid base64(JSON)." -ForegroundColor Red
+        exit 1
+    }
 }
 
 if (-not $payload -or $payload -isnot [System.Management.Automation.PSCustomObject]) {
