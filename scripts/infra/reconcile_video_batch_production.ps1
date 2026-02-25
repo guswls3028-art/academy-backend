@@ -222,7 +222,7 @@ if ($needVideoJdRegister -and $videoJdLatest) {
             $darm = ($d.containerProperties.runtimePlatform -and $d.containerProperties.runtimePlatform.cpuArchitecture -eq "ARM64")
             $wrong = ($dm -ne 3072 -or $dv -ne 2 -or $dt -ne 14400 -or -not $darm)
             if ($wrong -and ($null -eq $newRev -or [int]$d.revision -ne $newRev)) {
-                & aws batch deregister-job-definition --job-definition "$VideoJobDefName:$($d.revision)" --region $Region 2>&1 | Out-Null
+                & aws batch deregister-job-definition --job-definition "${VideoJobDefName}:$($d.revision)" --region $Region 2>&1 | Out-Null
             }
         }
     }
@@ -296,7 +296,7 @@ elseif ($needOpsJdRegister -and $opsJdLatest) {
             $m = [int]$d.containerProperties.memory; $v = [int]$d.containerProperties.vcpus
             $to = 0; if ($d.timeout -and $d.timeout.attemptDurationSeconds) { $to = [int]$d.timeout.attemptDurationSeconds }
             if (($m -ne 1024 -or $v -ne 1 -or $to -ne 300) -and ($null -eq $newRevO -or [int]$d.revision -ne $newRevO)) {
-                & aws batch deregister-job-definition --job-definition "$OpsJobDefName:$($d.revision)" --region $Region 2>&1 | Out-Null
+                & aws batch deregister-job-definition --job-definition "${OpsJobDefName}:$($d.revision)" --region $Region 2>&1 | Out-Null
             }
         }
     }
