@@ -127,3 +127,7 @@ $Region = "ap-northeast-2"
 - Ops: `docs\deploy\actual_state\batch_ops_state.json` (batch_ops_setup.ps1 실행 후 생성)
 - 감사로 전체 정합 한 번에 점검:  
   `.\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2`
+
+- **SSOT 검증(원테이크):**  
+  `.\scripts\infra\verify_video_batch_ssot.ps1 -Region ap-northeast-2`  
+  Video/Ops 정렬, 1동영상=1워커, CE 스케일 경로, 네트워크, IAM, EventBridge, reconcile 설정까지 한 번에 PASS/FAIL + evidence 출력. root 자격증명 사용 시 exit 3.

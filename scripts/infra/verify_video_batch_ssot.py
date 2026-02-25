@@ -145,7 +145,11 @@ def run_cloudwatch_log_checks(region: str, hours: int = 6) -> None:
         "ResourceInitializationError",
     ]
     since = int((datetime.now(timezone.utc) - timedelta(hours=hours)).timestamp() * 1000)
-    groups = ["/aws/batch/academy-video-worker", "/aws/batch/academy-video-ops-worker"]
+    groups = [
+        "/aws/batch/academy-video-worker",
+        "/aws/batch/academy-video-ops-worker",
+        "/aws/batch/academy-video-ops",
+    ]
     found_any = False
     for log_group in groups:
         try:
