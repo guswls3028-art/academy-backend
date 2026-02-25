@@ -73,6 +73,7 @@
 | 구분 | 비디오 원테이크 | 원테이크 전체 감사 |
 |------|------------------|----------------|
 | **스크립트** | production_done_check.ps1 | infra_one_take_full_audit.ps1 |
+| **FixMode** | 없음 | 있음(Ops 생성, IAM 부착, EventBridge 정렬) |
 | **범위** | Video(Batch) + SSM + netprobe + 알람 | Video/Ops CE·Queue, EventBridge, IAM, JobDef |
 | **용도** | Video 배포 후 “원테이크” 검증 | 정기 점검·자동 수정 |
 
