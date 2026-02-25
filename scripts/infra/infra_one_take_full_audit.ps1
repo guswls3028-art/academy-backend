@@ -842,7 +842,11 @@ $r3 = Test-RuntimeAudit
 $r4 = Test-ImageAudit
 $r5 = Test-AsgAudit
 $r6 = Test-AlarmsAudit
-$r7 = Test-VideoBatchReconcileAudit
+$r7 = Invoke-VideoBatchProductionAudit
+
+if ($script:AuditReport) {
+    $reportPath = Write-AuditReportJson
+}
 
 function Status { param($ok) if ($ok) { Write-Host "OK" -ForegroundColor Green } else { Write-Host "FAIL" -ForegroundColor Red } }
 
@@ -866,7 +870,7 @@ Write-Host "  Network: " -NoNewline; Status $r2.Video
 Write-Host "  Runtime: " -NoNewline; Status $r3.Video
 Write-Host "  Batch: " -NoNewline; Status $r2.Video
 Write-Host "  Image: " -NoNewline; Status $r4.Video
-Write-Host "  Reconcile (DescribeJobs/EventBridge): " -NoNewline; Status $r7.Ok
+Write-Host "  Reconcile (Production Audit): " -NoNewline; Status $r7.Ok
 if ($r7.Summary -and $r7.Summary.Count -gt 0) {
     Write-Host "`n  Video Batch Reconcile summary:" -ForegroundColor Gray
     foreach ($line in $r7.Summary) { Write-Host $line -ForegroundColor Gray }
