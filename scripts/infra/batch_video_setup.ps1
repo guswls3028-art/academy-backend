@@ -279,27 +279,10 @@ if (-not $queueExists) {
         aws batch update-job-queue --cli-input-json $updateUri --region $Region 2>&1 | Out-Null
         Remove-Item $updateFile -Force -ErrorAction SilentlyContinue
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "  update-job-queue failed; creating new queue academy-video-batch-queue-ce." -ForegroundColor Yellow
-            $newQueueName = "academy-video-batch-queue-ce"
-            $newJqContent = Get-Content (Join-Path $InfraPath "batch\video_job_queue.json") -Raw
-            $newJqContent = $newJqContent -replace "academy-video-batch-queue", $newQueueName
-            $newJqContent = $newJqContent -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $ceArn
-            $newJqFile = Join-Path $RepoRoot "batch_jq_new_temp.json"
-            [System.IO.File]::WriteAllText($newJqFile, $newJqContent, (New-Object System.Text.UTF8Encoding $false))
-            $newJqUri = "file://" + ($newJqFile -replace '\\', '/')
-            aws batch create-job-queue --cli-input-json $newJqUri --region $Region 2>&1 | Out-Null
-            Remove-Item $newJqFile -Force -ErrorAction SilentlyContinue
-            if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not create fallback queue $newQueueName." -ForegroundColor Red; exit 1 }
-            $FinalJobQueueName = $newQueueName
-            $FinalJobQueueArn = Get-JobQueueArn -Name $newQueueName
-            if (-not $FinalJobQueueArn) { Write-Host "  FAIL: Fallback queue created but get ARN failed." -ForegroundColor Red; exit 1 }
-            Write-Host "  Using new queue: $FinalJobQueueName ($FinalJobQueueArn)" -ForegroundColor Green
-        } else {
-            aws batch update-job-queue --job-queue $JobQueueName --state ENABLED --region $Region 2>&1 | Out-Null
-            if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not re-enable job queue." -ForegroundColor Red; exit 1 }
-            $FinalJobQueueArn = Get-JobQueueArn -Name $JobQueueName
-            Write-Host "  Queue updated to CE (ARN)." -ForegroundColor Green
+            Write-Host "  FAIL: update-job-queue failed. Fix queue/CE manually; do not create extra queue." -ForegroundColor Red
+            exit 1
         }
+        aws batch update-job-queue --job-queue $JobQueueName --state ENABLED --region $Region 2>&1 | Out-Null
     }
 }
 if (-not $FinalJobQueueArn) { $FinalJobQueueArn = Get-JobQueueArn -Name $FinalJobQueueName }
