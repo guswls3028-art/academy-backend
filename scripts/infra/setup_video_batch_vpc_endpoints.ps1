@@ -187,7 +187,8 @@ foreach ($svc in $InterfaceServices) {
     }
     $subnetsForSvc = Get-SubnetsForService -ServiceName $svc
     if (-not $subnetsForSvc -or $subnetsForSvc.Count -eq 0) {
-        Write-Host "FAIL: No CE subnet in an AZ supported by $svc (CE subnets AZs: $($ceSubnets | ForEach-Object { $subnetAzMap[$_] } | Select-Object -Unique) -join ', ')." -ForegroundColor Red
+        $ceAzs = ($ceSubnets | ForEach-Object { $subnetAzMap[$_] } | Where-Object { $_ } | Select-Object -Unique) -join ", "
+        Write-Host "FAIL: No CE subnet in an AZ supported by $svc (CE subnet AZs: $ceAzs)." -ForegroundColor Red
         exit 1
     }
     Write-Host "Creating Interface endpoint: $svc (subnets: $($subnetsForSvc.Count)/$($ceSubnets.Count))" -ForegroundColor Cyan
