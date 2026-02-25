@@ -1,7 +1,7 @@
 # ==============================================================================
 # One-shot: 꼬인 Video CE 정리 후 단일 "final" CE로 Video 큐 고정 (SSOT lock)
 #
-# - 기존 v2/v3/public CE는 desired=0 + DISABLED
+# - 기존 v2/v3/public CE는 DISABLED만 (desiredvCpus=0은 큐 연결 시 API 불가)
 # - VideoQ/OpsQ의 SUBMITTED~RUNNING job 일괄 cancel/terminate
 # - 기존 CE에서 VPC/Subnets/SG/역할 읽어 재사용
 # - Public subnet 강화 (IGW, 0.0.0.0/0, MapPublicIpOnLaunch, SG egress)
