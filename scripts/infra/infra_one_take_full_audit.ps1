@@ -23,7 +23,6 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Region,
-    [switch]$Verbose,
     [switch]$FixMode
 )
 
@@ -66,7 +65,7 @@ if (Test-Path -LiteralPath $batchStatePath) {
 $global:AuditFailures = @()
 $global:OverallPass = $true
 
-function Write-AuditVerbose { param([string]$Message) if ($Verbose) { Write-Host $Message -ForegroundColor Gray } }
+function Write-AuditVerbose { param([string]$Message) if ($VerbosePreference -eq 'Continue') { Write-Host $Message -ForegroundColor Gray } }
 function Add-Failure { param([string]$Worker, [string]$Area, [string]$Resource, [string]$Message)
     $global:AuditFailures += @{ Worker = $Worker; Area = $Area; Resource = $Resource; Message = $Message }
     $global:OverallPass = $false
