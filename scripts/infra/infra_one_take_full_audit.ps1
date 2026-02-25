@@ -92,30 +92,10 @@ function Aws-Json {
     if ($exit -ne 0) { return $null }
     $str = ($out | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($str)) { return $null }
-    try {
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($str)
-        $utf8 = New-Object System.Text.UTF8Encoding $false
-        return [System.Text.Json.JsonSerializer]::Deserialize([string]$utf8.GetString($bytes), [System.Object])
-    } catch {
-        try { return $str | ConvertFrom-Json } catch { return $null }
-    }
-}
-
-# PowerShell 5.x may not have System.Text.Json; fallback
-function Aws-JsonLegacy {
-    param([string[]]$ArgsArray)
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $out = & aws @ArgsArray 2>&1
-    $exit = $LASTEXITCODE
-    $ErrorActionPreference = $prev
-    if ($exit -ne 0) { return $null }
-    $str = ($out | Out-String).Trim()
-    if ([string]::IsNullOrWhiteSpace($str)) { return $null }
     try { return $str | ConvertFrom-Json } catch { return $null }
 }
 
-# Use legacy JSON parse (works on PS 5.x; ensure UTF-8 from aws)
+# Avoid cp949: write aws json to temp file as UTF-8 no BOM then parse
 function Aws-JsonSafe {
     param([string[]]$ArgsArray)
     $prev = $ErrorActionPreference
