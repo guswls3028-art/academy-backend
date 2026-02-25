@@ -5,9 +5,9 @@
 # ==============================================================================
 
 param(
-    [string]$Region = "ap-northeast-2",
+    [Parameter(Mandatory=$true)][string]$Region,
     [string]$OpsJobQueueName = "academy-video-ops-queue",
-    [string]$VideoCeNameForDiscovery = ""
+    [string]$VideoCeNameForDiscovery = "academy-video-batch-ce-final"
 )
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
