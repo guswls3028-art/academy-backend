@@ -283,6 +283,47 @@ Run from repo root (Django app) with AWS credentials and env configured:
 
 ---
 
+## 3b. 원테이크 운영 점검 (One-take full audit)
+
+Video/Ops Queue·CE 분리 상태, EventBridge 스케줄·타깃, IAM(DescribeJobs), JobDefinition을 한 번에 점검한다.  
+**ReadOnly** 실행 시 실제 변경 없이 결과만 출력하며, **-FixMode** 시 Ops CE/Queue 생성, IAM 정책 부착, EventBridge rule/target 정렬을 자동 수행한다.
+
+**실행 예 (저장소 루트에서):**
+
+```powershell
+# UTF-8 (cp949/aws json 디코딩 문제 회피)
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+
+# ReadOnly 감사만
+.\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2
+
+# 상세 로그
+.\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -Verbose
+
+# 실제 수정 적용 (Ops CE/Queue 없으면 생성, IAM 부착, EventBridge rate(5분)·OpsQueue 타깃 정렬)
+.\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -FixMode
+
+# FixMode + RUNNING reconcile 1개 초과 시 나머지 terminate
+.\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -FixMode -FixModeWithCleanup
+```
+
+**선택 파라미터:**
+
+| 파라미터 | 기본값 | 설명 |
+|----------|--------|------|
+| `-ExpectedVideoQueueName` | `batch_final_state.json`의 FinalJobQueueName | Video 작업용 큐 이름 |
+| `-ExpectedOpsQueueName` | `academy-video-ops-queue` | Ops(reconcile/scan_stuck)용 큐 |
+| `-ExpectedVideoCEName` | `academy-video-batch-ce` | Video CE 이름 |
+| `-ExpectedOpsCEName` | `academy-video-ops-ce` | Ops CE 이름 |
+| `-ReconcileRuleName` | 자동 탐색(이름에 reconcile 포함) | EventBridge 규칙 이름 |
+| `-ScanStuckRuleName` | 자동 탐색(이름에 scan-stuck 포함) | EventBridge 규칙 이름 |
+
+**출력:**  
+콘솔에 `Category | Check | Expected | Actual | Status(PASS/WARN/FAIL) | FixAction` 테이블이 출력되고, 마지막에 `Summary: PASS=n WARN=n FAIL=n` 및 `Result: PASS` / `NEEDS_ACTION` / `FAIL`이 표시된다.  
+`-FixMode` 사용 시 적용된 변경 사항 목록이 함께 출력된다.
+
+---
+
 ## 4. Rollback steps
 
 - **Batch job definition:** Register a new revision in `scripts/infra/batch/video_job_definition.json` and point the app to the new revision via `VIDEO_BATCH_JOB_DEFINITION` (with revision) or rely on “ACTIVE” latest. To revert, register the previous revision and update env or job submission to use it.
