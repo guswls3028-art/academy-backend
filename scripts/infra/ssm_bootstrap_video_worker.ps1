@@ -157,18 +157,61 @@ if ($exists -and -not $Overwrite) {
     exit 1
 }
 
-# Build JSON payload (single-line; same style as batch_video_setup.ps1 ConvertTo-Json + file)
-$obj = @{}
-foreach ($k in $collected.Keys) {
+# --- JSON 직렬화: PowerShell 객체 -> 한 줄 JSON, UTF-8 no BOM, file 기반으로 quoting 제거 ---
+# 정렬된 키 순서로 객체 생성 (필수 + 선택 + DJANGO_SETTINGS_MODULE)
+$orderedKeys = @($RequiredKeys) + @($OptionalKeys) | Where-Object { $collected.ContainsKey($_) }
+$obj = [ordered]@{}
+foreach ($k in $orderedKeys) {
     $obj[$k] = $collected[$k]
 }
-$json = $obj | ConvertTo-Json -Compress
+# 선택 키 중 collected에만 있는 것 추가
+foreach ($k in $collected.Keys) {
+    if (-not $obj.Contains($k)) { $obj[$k] = $collected[$k] }
+}
+if (-not $obj["DJANGO_SETTINGS_MODULE"]) {
+    $obj["DJANGO_SETTINGS_MODULE"] = "apps.api.config.settings.worker"
+}
 
-# Put parameter: pass --value as single argument to avoid PowerShell quote/brace interpretation (codebase pattern: file:// for JSON; here value is string so use array form)
+$json = $obj | ConvertTo-Json -Compress -Depth 10
+
+# UTF-8 no BOM으로 temp 파일에 기록 (키는 반드시 double-quote, 한 줄 JSON)
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$tempJsonPath = Join-Path ([System.IO.Path]::GetTempPath()) "academy_ssm_env_$([Guid]::NewGuid().ToString('N')).json"
+try {
+    [System.IO.File]::WriteAllText($tempJsonPath, $json, $utf8NoBom)
+} catch {
+    Write-Host "FAIL: Could not write temp JSON file: $_" -ForegroundColor Red
+    exit 1
+}
+
+# 직렬화 검증: 생성한 JSON을 ConvertFrom-Json으로 파싱 가능한지 + DJANGO_SETTINGS_MODULE 확인
+try {
+    $roundTrip = $json | ConvertFrom-Json
+    if (-not $roundTrip.PSObject.Properties["DJANGO_SETTINGS_MODULE"]) {
+        Write-Host "FAIL: JSON round-trip missing DJANGO_SETTINGS_MODULE." -ForegroundColor Red
+        Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+    $dsm = ($roundTrip.PSObject.Properties["DJANGO_SETTINGS_MODULE"].Value -as [string]).Trim()
+    if ($dsm -ne "apps.api.config.settings.worker") {
+        Write-Host "FAIL: DJANGO_SETTINGS_MODULE must be 'apps.api.config.settings.worker' (got '$dsm')." -ForegroundColor Red
+        Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+} catch {
+    Write-Host "FAIL: Generated JSON is not valid (ConvertFrom-Json failed): $_" -ForegroundColor Red
+    Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
+    exit 1
+}
+
+# put-parameter: 값은 temp 파일 내용으로 전달 (quoting 문제 제거)
+$valueToSend = [System.IO.File]::ReadAllText($tempJsonPath, [System.Text.UTF8Encoding]::new($false))
+Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
+
 $putArgs = @(
     'ssm', 'put-parameter',
     '--name', $ParamName,
-    '--value', $json,
+    '--value', $valueToSend,
     '--type', 'SecureString',
     '--region', $Region,
     '--overwrite'
@@ -184,25 +227,50 @@ if ($putExit -ne 0) {
     exit 1
 }
 
-# Confirm (do not print Value) — same JSON read pattern as production_done_check / verify_ssm_env_shape
-$prevErr2 = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-$getRaw = aws ssm get-parameter --name $ParamName --region $Region --query "Parameter.{Name:Name,Type:Type,Version:Version}" --output json 2>&1
-$getExit = $LASTEXITCODE
-$ErrorActionPreference = $prevErr2
-if ($getExit -ne 0) {
-    Write-Host "FAIL: Parameter could not be validated after write (exit $getExit)." -ForegroundColor Red
+# 저장 직후 get-parameter --with-decryption 으로 읽어서 ConvertFrom-Json 검증 (실패 시 exit 1)
+$getValueRaw = aws ssm get-parameter --name $ParamName --region $Region --with-decryption --output json 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "FAIL: get-parameter (with-decryption) after put failed." -ForegroundColor Red
     exit 1
 }
+$getValueStr = ($getValueRaw | Out-String).Trim()
 try {
-    $getOut = ($getRaw | Out-String).Trim() | ConvertFrom-Json
+    $outerResp = $getValueStr | ConvertFrom-Json
 } catch {
     Write-Host "FAIL: get-parameter response is not valid JSON." -ForegroundColor Red
     exit 1
 }
-if (-not $getOut -or $getOut.Name -ne $ParamName) {
-    Write-Host "FAIL: Parameter could not be validated after write." -ForegroundColor Red
+if (-not $outerResp -or -not $outerResp.Parameter -or $null -eq $outerResp.Parameter.Value) {
+    Write-Host "FAIL: SSM parameter value missing or empty after put." -ForegroundColor Red
     exit 1
 }
-Write-Host "OK: $ParamName written successfully." -ForegroundColor Green
-Write-Host "ParameterVersion: $($getOut.Version)" -ForegroundColor Cyan
+$storedValueStr = $outerResp.Parameter.Value
+try {
+    $storedPayload = $storedValueStr | ConvertFrom-Json
+} catch {
+    Write-Host "FAIL: Stored SSM value is not valid JSON (ConvertFrom-Json failed). SSM serialization may be corrupt." -ForegroundColor Red
+    exit 1
+}
+if (-not $storedPayload -or $storedPayload -isnot [System.Management.Automation.PSCustomObject]) {
+    Write-Host "FAIL: Stored SSM value is not a JSON object." -ForegroundColor Red
+    exit 1
+}
+if (-not $storedPayload.PSObject.Properties["DJANGO_SETTINGS_MODULE"]) {
+    Write-Host "FAIL: Stored value missing DJANGO_SETTINGS_MODULE." -ForegroundColor Red
+    exit 1
+}
+$storedDsm = ($storedPayload.PSObject.Properties["DJANGO_SETTINGS_MODULE"].Value -as [string]).Trim()
+if ($storedDsm -ne "apps.api.config.settings.worker") {
+    Write-Host "FAIL: Stored DJANGO_SETTINGS_MODULE is not worker (got '$storedDsm')." -ForegroundColor Red
+    exit 1
+}
+
+# Confirm (version만 출력, 값은 출력하지 않음)
+$getMetaRaw = aws ssm get-parameter --name $ParamName --region $Region --query "Parameter.{Name:Name,Type:Type,Version:Version}" --output json 2>&1
+try {
+    $getOut = ($getMetaRaw | Out-String).Trim() | ConvertFrom-Json
+} catch {}
+if ($getOut -and $getOut.Name -eq $ParamName) {
+    Write-Host "ParameterVersion: $($getOut.Version)" -ForegroundColor Cyan
+}
+Write-Host "OK: $ParamName written successfully. Stored value validated as valid JSON with DJANGO_SETTINGS_MODULE=worker." -ForegroundColor Green
