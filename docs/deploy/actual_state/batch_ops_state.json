@@ -1,0 +1,6 @@
+{
+    "OpsJobQueueName":  "academy-video-ops-queue",
+    "OpsComputeEnvName":  "academy-video-ops-ce",
+    "OpsJobQueueArn":  "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-video-ops-queue",
+    "OpsComputeEnvArn":  "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-video-ops-ce"
+}
