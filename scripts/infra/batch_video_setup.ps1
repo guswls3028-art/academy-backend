@@ -369,10 +369,10 @@ foreach ($ops in $opsJobDefs) {
     $jobDefJson = $jobDef | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($tmpFile, $jobDefJson, $utf8NoBom)
     $tmpUri = "file://" + ($tmpFile -replace '\\', '/')
-    aws batch register-job-definition --cli-input-json $tmpUri --region $Region | Out-Null
+    & aws @('batch', 'register-job-definition', '--cli-input-json', $tmpUri, '--region', $Region) | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: register-job-definition $($ops.jobDefinitionName)" -ForegroundColor Red; Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue; exit 1 }
     Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
-    Write-Host "  Registered $($ops.jobDefinitionName)" -ForegroundColor Gray
+    Write-Host "  Registered $($ops.jobDefinitionName) (image: $EcrRepoUri)" -ForegroundColor Gray
 }
 foreach ($opsName in @("academy-video-ops-reconcile", "academy-video-ops-scanstuck", "academy-video-ops-netprobe")) {
     $prevO = $ErrorActionPreference
