@@ -49,6 +49,9 @@ class CorsResponseFixMiddleware:
         response["Access-Control-Allow-Origin"] = origin
         if getattr(settings, "CORS_ALLOW_CREDENTIALS", False):
             response["Access-Control-Allow-Credentials"] = "true"
+        vary = (response.get("Vary") or "").strip()
+        if "Origin" not in vary:
+            response["Vary"] = f"{vary}, Origin".lstrip(", ")
         return response
 
 
