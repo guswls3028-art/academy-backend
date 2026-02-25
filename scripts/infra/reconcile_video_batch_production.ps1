@@ -90,8 +90,16 @@ $videoQueueCeOk = ($videoOrder -and $videoOrder.Count -eq 1 -and ($videoOrder[0]
 if (-not $videoQueueCeOk) {
     $stateBefore = $videoQueue.state
     if ($stateBefore -eq "ENABLED") {
-        Invoke-Aws @("batch", "update-job-queue", "--job-queue", $VideoQueueName, "--state", "DISABLED", "--region", $Region) -ErrorMessage "disable Video queue failed"
-        $w = 0; while ($w -lt 60) { Start-Sleep -Seconds 3; $w += 3; $q2 = ExecJson @("batch", "describe-job-queues", "--job-queues", $VideoQueueName, "--region", $Region, "--output", "json"); $s = ($q2.jobQueues | Where-Object { $_.jobQueueName -eq $VideoQueueName } | Select-Object -First 1).state; if ($s -eq "DISABLED") { break } }
+        Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--job-queue", $VideoQueueName, "--state", "DISABLED", "--region", $Region) -ErrorMessage "disable Video queue failed"
+        $w = 0
+        while ($w -lt 60) {
+            Start-Sleep -Seconds 3
+            $w += 3
+            $q2 = ExecJson @("batch", "describe-job-queues", "--job-queues", $VideoQueueName, "--region", $Region, "--output", "json")
+            if (-not $q2 -or -not $q2.jobQueues) { continue }
+            $s = ($q2.jobQueues | Where-Object { $_.jobQueueName -eq $VideoQueueName } | Select-Object -First 1).state
+            if ($s -eq "DISABLED") { break }
+        }
     }
     $payload = '{"jobQueue":"' + $VideoQueueName + '","computeEnvironmentOrder":[{"order":1,"computeEnvironment":"' + $videoCeArn + '"}]}'
     $tf = Join-Path $env:TEMP "reconcile_vq_$(Get-Date -Format 'yyyyMMddHHmmss').json"
