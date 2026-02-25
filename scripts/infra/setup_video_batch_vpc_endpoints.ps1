@@ -113,29 +113,42 @@ if ($subRespAll -and $subRespAll.Subnets) {
 }
 
 # Interface 엔드포인트 생성: 서비스가 지원하지 않는 AZ의 서브넷은 제외.
-# describe-vpc-endpoint-services 응답 형식 차이를 피하기 위해, 먼저 한 서브넷만으로 생성 시도 후
-# 지원하는 서브넷만 add-subnet으로 추가.
+# 한 서브넷씩 create 시도 후, 성공한 엔드포인트에 나머지 서브넷을 add-subnet으로 추가.
 function New-InterfaceEndpointWithSupportedSubnets {
     param([string]$ServiceName)
     $goodSubnets = [System.Collections.ArrayList]::new()
     $epId = $null
     foreach ($subId in $ceSubnets) {
+        $createArgs = @(
+            "ec2", "create-vpc-endpoint",
+            "--vpc-id", $vpcId,
+            "--vpc-endpoint-type", "Interface",
+            "--service-name", $ServiceName,
+            "--subnet-ids", $subId,
+            "--security-group-ids"
+        ) + @($ceSecurityGroupIds) + @(
+            "--private-dns-enabled",
+            "--region", $Region
+        )
         $prev = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
-        $awscmd = "aws ec2 create-vpc-endpoint --vpc-id $vpcId --vpc-endpoint-type Interface --service-name $ServiceName --subnet-ids $subId --security-group-ids $($ceSecurityGroupIds -join ' ') --private-dns-enabled --region $Region --output json 2>&1"
-        $out = cmd /c $awscmd
+        $out = & aws @createArgs --output json 2>&1
         $exit = $LASTEXITCODE
         $ErrorActionPreference = $prev
+        # stderr가 ErrorRecord로 올 수 있으므로 Out-String으로 전체 메시지 확보 (batch_video_verify_and_register.ps1 참고)
         $str = ($out | Out-String).Trim()
         if ($exit -eq 0) {
-            try {
-                $obj = $str | ConvertFrom-Json
-                if ($obj.VpcEndpoint -and $obj.VpcEndpoint.VpcEndpointId) {
-                    $epId = $obj.VpcEndpoint.VpcEndpointId
-                    [void]$goodSubnets.Add($subId)
-                    break
-                }
-            } catch {}
+            $text = ($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($text)) {
+                try {
+                    $obj = $text | ConvertFrom-Json
+                    if ($obj.VpcEndpoint -and $obj.VpcEndpoint.VpcEndpointId) {
+                        $epId = $obj.VpcEndpoint.VpcEndpointId
+                        [void]$goodSubnets.Add($subId)
+                        break
+                    }
+                } catch {}
+            }
         }
         # 실패 시 AZ 미지원 오류면 다음 서브넷 시도
         $isAzUnsupported = ($str -match "availability zone") -and ($str -match "subnet")
