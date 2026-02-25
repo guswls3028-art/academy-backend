@@ -395,12 +395,17 @@ Write-Host "Video CE: instanceTypes=$vInst imageType=$vImg minvCpus=$($vCr.minvC
 Write-Host "Ops CE: maxvCpus=$($opsCe2.computeResources.maxvCpus)"
 if ($videoJdLatest2) { Write-Host "Video jobdef latest: vcpus=$($videoJdLatest2.containerProperties.vcpus) memory=$($videoJdLatest2.containerProperties.memory) timeout=$($videoJdLatest2.timeout.attemptDurationSeconds) runtimePlatform=$($videoJdLatest2.containerProperties.runtimePlatform.cpuArchitecture)" }
 if ($opsJdLatest2) { Write-Host "Ops jobdef latest: vcpus=$($opsJdLatest2.containerProperties.vcpus) memory=$($opsJdLatest2.containerProperties.memory) timeout=$($opsJdLatest2.timeout.attemptDurationSeconds) runtimePlatform=$($opsJdLatest2.containerProperties.runtimePlatform.cpuArchitecture)" }
-if ($tgtList2 -and $tgtList2.Targets -and $tgtList2.Targets.Count -gt 0) { Write-Host "EventBridge target: queueArn=$($tgtList2.Targets[0].Arn) jobDef=$($tgtList2.Targets[0].BatchParameters.JobDefinition)" }
-$jv = ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNABLE", "--region", $Region, "--output", "json"); $runV = 0; if ($jv -and $jv.jobSummaryList) { $runV = $jv.jobSummaryList.Count }
-$jv2 = ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "STARTING", "--region", $Region, "--output", "json"); $startV = 0; if ($jv2 -and $jv2.jobSummaryList) { $startV = $jv2.jobSummaryList.Count }
-$jv3 = ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNING", "--region", $Region, "--output", "json"); $runningV = 0; if ($jv3 -and $jv3.jobSummaryList) { $runningV = $jv3.jobSummaryList.Count }
-$jo = ExecJson @("batch", "list-jobs", "--job-queue", $opsQueueArn, "--job-status", "RUNNABLE", "--region", $Region, "--output", "json"); $runO = 0; if ($jo -and $jo.jobSummaryList) { $runO = $jo.jobSummaryList.Count }
-$jo2 = ExecJson @("batch", "list-jobs", "--job-queue", $opsQueueArn, "--job-status", "STARTING", "--region", $Region, "--output", "json"); $startO = 0; if ($jo2 -and $jo2.jobSummaryList) { $startO = $jo2.jobSummaryList.Count }
-$jo3 = ExecJson @("batch", "list-jobs", "--job-queue", $opsQueueArn, "--job-status", "RUNNING", "--region", $Region, "--output", "json"); $runningO = 0; if ($jo3 -and $jo3.jobSummaryList) { $runningO = $jo3.jobSummaryList.Count }
+$tgtJobDef = "n/a"
+if ($tgtList2 -and $tgtList2.Targets -and $tgtList2.Targets.Count -gt 0) {
+    $t0 = $tgtList2.Targets[0]
+    if ($t0.BatchParameters -and $t0.BatchParameters.JobDefinition) { $tgtJobDef = $t0.BatchParameters.JobDefinition }
+    Write-Host "EventBridge target: queueArn=$($t0.Arn) jobDef=$tgtJobDef"
+}
+$jv = ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNABLE", "--region", $Region, "--output", "json"); $runV = 0; if ($jv -and $jv.jobSummaryList) { $runV = @($jv.jobSummaryList).Count }
+$jv2 = ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "STARTING", "--region", $Region, "--output", "json"); $startV = 0; if ($jv2 -and $jv2.jobSummaryList) { $startV = @($jv2.jobSummaryList).Count }
+$jv3 = ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNING", "--region", $Region, "--output", "json"); $runningV = 0; if ($jv3 -and $jv3.jobSummaryList) { $runningV = @($jv3.jobSummaryList).Count }
+$jo = ExecJson @("batch", "list-jobs", "--job-queue", $opsQueueArn, "--job-status", "RUNNABLE", "--region", $Region, "--output", "json"); $runO = 0; if ($jo -and $jo.jobSummaryList) { $runO = @($jo.jobSummaryList).Count }
+$jo2 = ExecJson @("batch", "list-jobs", "--job-queue", $opsQueueArn, "--job-status", "STARTING", "--region", $Region, "--output", "json"); $startO = 0; if ($jo2 -and $jo2.jobSummaryList) { $startO = @($jo2.jobSummaryList).Count }
+$jo3 = ExecJson @("batch", "list-jobs", "--job-queue", $opsQueueArn, "--job-status", "RUNNING", "--region", $Region, "--output", "json"); $runningO = 0; if ($jo3 -and $jo3.jobSummaryList) { $runningO = @($jo3.jobSummaryList).Count }
 Write-Host "Video queue: RUNNABLE=$runV STARTING=$startV RUNNING=$runningV"
 Write-Host "Ops queue: RUNNABLE=$runO STARTING=$startO RUNNING=$runningO"
