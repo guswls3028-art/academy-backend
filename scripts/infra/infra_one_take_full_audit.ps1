@@ -354,7 +354,7 @@ function Test-AsgAudit {
 function Test-AlarmsAudit {
     $aiOk = $true; $msgOk = $true; $videoOk = $true
 
-    $cw = ExecJson @("cloudwatch", "describe-alarms", "--alarm-names") + $VideoAlarmNames + @("--region", $Region, "--output", "json")
+    $cw = ExecJson @("cloudwatch", "describe-alarms", "--alarm-names") + @($VideoAlarmNames) + @("--region", $Region, "--output", "json")
     $found = @(if ($cw.MetricAlarms) { $cw.MetricAlarms | ForEach-Object { $_.AlarmName } } else { @() })
     $missing = $VideoAlarmNames | Where-Object { $_ -notin $found }
     if ($missing.Count -gt 0) {
