@@ -47,6 +47,16 @@ param(
 $ErrorActionPreference = "Stop"
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 
+# Default Region from aws configure get region when not provided
+if ([string]::IsNullOrWhiteSpace($Region)) {
+    $Region = (aws configure get region 2>&1)
+    if (-not $Region -or $Region -match "not set|error") {
+        Write-Host "FAIL: -Region not specified and 'aws configure get region' returned nothing. Set default region or pass -Region." -ForegroundColor Red
+        exit 1
+    }
+    $Region = $Region.Trim()
+}
+
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $batchStatePath = Join-Path $RepoRoot "docs\deploy\actual_state\batch_final_state.json"
@@ -438,6 +448,32 @@ Write-Host "`nSummary: PASS=$passCount WARN=$warnCount FAIL=$failCount" -Foregro
 if ($script:FixesApplied.Count -gt 0) {
     Write-Host "`nApplied changes (FixMode):" -ForegroundColor Yellow
     foreach ($f in $script:FixesApplied) { Write-Host "  - $f" -ForegroundColor Gray }
+}
+
+# 권장 다음 조치 (Recommendations)
+$failRows = $script:AuditRows | Where-Object { $_.Status -eq "FAIL" }
+$warnRows = $script:AuditRows | Where-Object { $_.Status -eq "WARN" }
+if ($failRows.Count -gt 0 -or $warnRows.Count -gt 0) {
+    Write-Host "`n--- 권장 다음 조치 (Recommendations) ---" -ForegroundColor Cyan
+    if ($failRows.Count -gt 0) {
+        Write-Host "  [FAIL 항목 수정]" -ForegroundColor Red
+        foreach ($r in $failRows) {
+            $fa = if ($r.FixAction) { $r.FixAction } else { "수동 점검" }
+            Write-Host "    - $($r.Category) / $($r.Check): $fa" -ForegroundColor Gray
+        }
+        Write-Host "  수정 후 재실행: .\scripts\infra\infra_one_take_full_audit.ps1 -Region $Region -FixMode" -ForegroundColor Gray
+    }
+    if ($warnRows.Count -gt 0) {
+        Write-Host "  [WARN 항목 점검]" -ForegroundColor Yellow
+        foreach ($r in $warnRows) {
+            Write-Host "    - $($r.Category) / $($r.Check): $($r.Actual)" -ForegroundColor Gray
+        }
+    }
+    Write-Host "  전체 점검: .\scripts\infra\infra_one_take_full_audit.ps1 -Region $Region" -ForegroundColor Gray
+} else {
+    Write-Host "`n--- 권장 다음 조치 ---" -ForegroundColor Cyan
+    Write-Host "  정기 실행: .\scripts\infra\infra_one_take_full_audit.ps1 -Region $Region" -ForegroundColor Gray
+    Write-Host "  (필요 시 -FixMode로 자동 수정)" -ForegroundColor Gray
 }
 
 $overall = "PASS"
