@@ -211,8 +211,8 @@ if ($needVideoJdRegister -and $videoJdLatest) {
     $jsonStr = $jsonStr -replace '"JobDefinitionName"', '"jobDefinitionName"' -replace '"ContainerProperties"', '"containerProperties"' -replace '"Memory":', '"memory":' -replace '"Vcpus":', '"vcpus":' -replace '"Image":', '"image":' -replace '"Command":', '"command":' -replace '"JobRoleArn":', '"jobRoleArn":' -replace '"ExecutionRoleArn":', '"executionRoleArn"' -replace '"ResourceRequirements":', '"resourceRequirements"' -replace '"LogConfiguration":', '"logConfiguration"' -replace '"RuntimePlatform":', '"runtimePlatform"' -replace '"CpuArchitecture":', '"cpuArchitecture"' -replace '"Timeout"', '"timeout"' -replace '"AttemptDurationSeconds"', '"attemptDurationSeconds"' -replace '"PlatformCapabilities"', '"platformCapabilities"' -replace '"Parameters"', '"parameters"' -replace '"RetryStrategy"', '"retryStrategy"' -replace '"Attempts":', '"attempts":' -replace '(\s)"Type":', '$1"type":'
     $jsonStr = $jsonStr -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
     [System.IO.File]::WriteAllText($jdPath, $jsonStr, [System.Text.UTF8Encoding]::new($false))
-    $uri = "file:///" + ([System.IO.Path]::GetFullPath($jdPath) -replace '\\', '/')
-    $regOutRaw = Invoke-Aws -ArgsArray @("batch", "register-job-definition", "--cli-input-json", $uri, "--region", $Region, "--output", "json") -ErrorMessage "register Video job def failed"
+    $absPath = [System.IO.Path]::GetFullPath($jdPath)
+    $regOutRaw = Invoke-Aws -ArgsArray @("batch", "register-job-definition", "--cli-input-json", $absPath, "--region", $Region, "--output", "json") -ErrorMessage "register Video job def failed"
     Remove-Item $jdPath -Force -ErrorAction SilentlyContinue
     $regOut = ($regOutRaw | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim() | ConvertFrom-Json
     $newRev = $null; if ($regOut -and $regOut.revision) { $newRev = [int]$regOut.revision }
