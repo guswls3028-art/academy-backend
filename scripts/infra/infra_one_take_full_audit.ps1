@@ -30,11 +30,11 @@
 # Result: PASS
 # ==============================================================================
 
+[CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
     [string]$Region = "",
     [switch]$FixMode,
-    [switch]$Verbose,
     [string]$ExpectedVideoQueueName = "",
     [string]$ExpectedOpsQueueName = "academy-video-ops-queue",
     [string]$ExpectedVideoCEName = "academy-video-batch-ce",
