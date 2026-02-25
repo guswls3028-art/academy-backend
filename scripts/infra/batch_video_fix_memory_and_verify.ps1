@@ -125,8 +125,10 @@ if ($needRegister) {
 # --- 4) Submit test job with exact revision ---
 $submitOut = Invoke-AwsJson @("batch", "submit-job", "--job-name", "batch-verify-$([guid]::NewGuid().ToString().Substring(0,8))", "--job-queue", $JobQueueName, "--job-definition", "${JobDefName}:$revisionToUse", "--parameters", "job_id=test123", "--region", $Region, "--output", "json")
 if (-not $submitOut -or -not $submitOut.jobId) {
+    $fixMsg = "None"
+    if ($needRegister) { $fixMsg = "Re-registered jobdef with memory=3584 (revision $revisionToUse)" }
     Write-Host "ROOT CAUSE: submit-job failed"
-    Write-Host "FIX APPLIED: $($needRegister ? "Re-registered jobdef with memory=3584 (revision $revisionToUse)" : "None")"
+    Write-Host "FIX APPLIED: $fixMsg"
     Write-Host "CURRENT STATUS: Test job submit failed"
     exit 1
 }
