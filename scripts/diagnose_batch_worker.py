@@ -340,5 +340,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    _check_root_credentials()
     main()
