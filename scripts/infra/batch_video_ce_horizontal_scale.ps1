@@ -112,7 +112,8 @@ if (-not $v2Obj) {
     $ceFile = Join-Path $RepoRoot "batch_video_ce_v2_temp.json"
     $ceJson = $cePayload | ConvertTo-Json -Depth 6 -Compress:$false
     [System.IO.File]::WriteAllText($ceFile, $ceJson, $utf8NoBom)
-    $ceFileUri = "file://" + ($ceFile -replace '\\', '/')
+    $absPath = [System.IO.Path]::GetFullPath($ceFile) -replace '\\', '/'
+    $ceFileUri = if ($absPath -match '^[A-Za-z]:') { "file:///$absPath" } else { "file://$absPath" }
     try {
         Invoke-Aws -ArgsArray @("batch", "create-compute-environment", "--cli-input-json", $ceFileUri, "--region", $Region) -ErrorMessage "create-compute-environment $NewVideoCEName failed"
         [void]$script:ChangesApplied.Add("Created compute environment: $NewVideoCEName")
@@ -195,7 +196,8 @@ if ($firstCeInQueue -ne $newCeArn) {
     $updatePayload = @{ jobQueue = $VideoQueueName; computeEnvironmentOrder = $orderObj }
     $updateFile = Join-Path $RepoRoot "batch_update_queue_temp.json"
     [System.IO.File]::WriteAllText($updateFile, ($updatePayload | ConvertTo-Json -Depth 5), $utf8NoBom)
-    $updateUri = "file://" + ($updateFile -replace '\\', '/')
+    $absUpdate = [System.IO.Path]::GetFullPath($updateFile) -replace '\\', '/'
+    $updateUri = if ($absUpdate -match '^[A-Za-z]:') { "file:///$absUpdate" } else { "file://$absUpdate" }
     Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--cli-input-json", $updateUri, "--region", $Region) -ErrorMessage "update-job-queue computeEnvironmentOrder failed"
     Remove-Item $updateFile -Force -ErrorAction SilentlyContinue
     Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--job-queue", $VideoQueueName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "re-enable job queue failed"
