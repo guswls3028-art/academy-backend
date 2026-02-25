@@ -270,6 +270,10 @@ class Command(BaseCommand):
 
             if status == "SUCCEEDED":
                 # Reconcile does NOT change SUCCEEDED. READY is only set by worker (job_complete).
+                logger.info(
+                    "reconcile skip SUCCEEDED (worker owns READY)",
+                    extra={"event": "reconcile_skip_succeeded", "job_id": str(job.id)},
+                )
                 self.stdout.write(f"RECONCILE skip SUCCEEDED job_id={job.id} (worker owns READY transition)")
 
             elif status == "FAILED":
