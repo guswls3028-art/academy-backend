@@ -261,7 +261,7 @@ if ($opsJdLatest2) {
 }
 else { Write-Error "Ops reconcile JobDef not found"; $fail = $true }
 if (-not $rule2 -or $rule2.Name -ne $ReconcileRuleName) { Write-Error "EventBridge rule missing"; $fail = $true }
-if ($rule2.ScheduleExpression -notmatch "rate\s*\(\s*5\s*minute") { Write-Error "Reconcile rule schedule not rate(5 minutes)"; $fail = $true }
+if ($rule2 -and $rule2.ScheduleExpression -notmatch "rate\s*\(\s*5\s*minute") { Write-Error "Reconcile rule schedule not rate(5 minutes)"; $fail = $true }
 $tgtOk = $false
 if ($tgtList2 -and $tgtList2.Targets -and $tgtList2.Targets.Count -gt 0) {
     $t0 = $tgtList2.Targets[0]
