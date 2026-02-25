@@ -122,11 +122,21 @@ if ($ssmRaw) {
         $ssmOuter = $ssmStr | ConvertFrom-Json
         $valueStr = $ssmOuter.Parameter.Value
         if ($valueStr -and ($valueStr -is [string])) {
-            $ssmJson = $valueStr | ConvertFrom-Json
-            $dbHost = $ssmJson.DB_HOST
-            $redisHost = $ssmJson.REDIS_HOST
-            $apiBaseUrl = $ssmJson.API_BASE_URL
-            $r2Endpoint = $ssmJson.R2_ENDPOINT
+            try {
+                $ssmJson = $valueStr | ConvertFrom-Json
+            } catch {
+                try {
+                    $valueBytes = [Convert]::FromBase64String($valueStr)
+                    $valueStr = [System.Text.Encoding]::UTF8.GetString($valueBytes)
+                    $ssmJson = $valueStr | ConvertFrom-Json
+                } catch { $ssmJson = $null }
+            }
+            if ($ssmJson) {
+                $dbHost = $ssmJson.DB_HOST
+                $redisHost = $ssmJson.REDIS_HOST
+                $apiBaseUrl = $ssmJson.API_BASE_URL
+                $r2Endpoint = $ssmJson.R2_ENDPOINT
+            }
         }
     } catch {
         Write-Host "  WARN: SSM parameter /academy/workers/env could not be parsed as JSON (hostnames will be empty)." -ForegroundColor Yellow
