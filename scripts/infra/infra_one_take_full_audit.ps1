@@ -18,6 +18,9 @@
 #   - cloudwatch:DescribeAlarms
 #   - logs:GetLogEvents, logs:DescribeLogStreams (for netprobe log fetch)
 #   - iam:PassRole (for Batch job role / execution role if submitting netprobe)
+#   - iam:ListAttachedRolePolicies, iam:GetPolicy, iam:GetPolicyVersion, iam:ListRolePolicies, iam:GetRolePolicy (Reconcile audit)
+#   - iam:CreatePolicy, iam:AttachRolePolicy (Reconcile FixMode only)
+#   - events:DescribeRule, events:ListTargetsByRule (Reconcile audit)
 # ==============================================================================
 
 param(
@@ -585,7 +588,7 @@ function Test-VideoBatchReconcileAudit {
             $jdInTarget = $tgtOut.Targets[0].BatchParameters.JobDefinition -as [string]
             $fixedRevision = $jdInTarget -and $jdInTarget -match ':\d+$'
             if ($fixedRevision) {
-                [void]$summary.Add("  EventBridge JobDefinition: $jdInTarget (fixed revision)"
+                [void]$summary.Add("  EventBridge JobDefinition: $jdInTarget (fixed revision)")
             } else {
                 [void]$summary.Add("  EventBridge JobDefinition: $jdInTarget (name only, not fixed revision)")
             }
