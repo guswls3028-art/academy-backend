@@ -1,11 +1,11 @@
 # ==============================================================================
-# Verify EventBridge rules exist, ENABLED, targets present with BatchParameters. Exit non-zero if missing.
-# Usage: .\scripts\infra\verify_eventbridge_wiring.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+# Verify EventBridge rules exist, ENABLED, targets present with BatchParameters (reconcile/scan_stuck -> Ops queue).
+# Usage: .\scripts\infra\verify_eventbridge_wiring.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
 # ==============================================================================
 
 param(
     [string]$Region = "ap-northeast-2",
-    [string]$JobQueueName = "academy-video-batch-queue"
+    [string]$OpsJobQueueName = "academy-video-ops-queue"
 )
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
@@ -25,9 +25,9 @@ function ExecJson($argsArray) {
 }
 
 $fail = 0
-$queueArn = (ExecJson @("batch", "describe-job-queues", "--job-queues", $JobQueueName, "--region", $Region, "--output", "json")).jobQueues[0].jobQueueArn
+$queueArn = (ExecJson @("batch", "describe-job-queues", "--job-queues", $OpsJobQueueName, "--region", $Region, "--output", "json")).jobQueues[0].jobQueueArn
 if (-not $queueArn) {
-    Write-Host "FAIL: Job queue $JobQueueName not found." -ForegroundColor Red
+    Write-Host "FAIL: Ops job queue $OpsJobQueueName not found." -ForegroundColor Red
     exit 1
 }
 
