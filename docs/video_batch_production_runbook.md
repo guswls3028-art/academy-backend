@@ -106,7 +106,7 @@ $ecrUri = "${acctId}.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:l
 .\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName $q
 
 # 7) Netprobe SUCCESS
-.\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName $q
+.\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-ops-queue
 
 # 8) production_done_check PASS
 .\scripts\infra\production_done_check.ps1 -Region ap-northeast-2
@@ -159,7 +159,7 @@ Expected: Exit 0; `Done. Video Batch CloudWatch alarms deployed.`
 
 **Step 5 — Netprobe** (use same final queue name)
 ```powershell
-.\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName $q
+.\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-ops-queue
 ```
 Expected: Exit 0; `SUCCEEDED` and job log lines.
 
@@ -205,9 +205,9 @@ $ecrUri = "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worke
 If replacing existing Batch in another VPC: add `-CleanupOld` (only when no RUNNING/RUNNABLE jobs).  
 Expected: `DONE. Batch recreated in API VPC.`
 
-**d) EventBridge**  
+**d) EventBridge** (updates actual AWS targets to Ops queue)
 ```powershell
-.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
 ```
 
 **e) CloudWatch alarms**  
