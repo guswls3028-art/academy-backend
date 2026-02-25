@@ -131,19 +131,27 @@ function New-InterfaceEndpointWithSupportedSubnets {
             "--private-dns-enabled",
             "--region", $Region
         )
-        $prev = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        $out = & aws @createArgs --output json 2>&1
-        $exit = $LASTEXITCODE
-        $ErrorActionPreference = $prev
-        $str = ($out | Out-String).Trim()
+        $exit = 0
+        $str = ""
+        try {
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $out = & aws @createArgs --output json 2>&1
+            $exit = $LASTEXITCODE
+            $ErrorActionPreference = $prev
+            $str = ($out | Out-String).Trim()
+        } catch {
+            $exit = 1
+            $str = $_.Exception.Message
+            if ($_.ErrorRecord) { $str = $_.ErrorRecord.ToString() }
+        }
         if ($exit -eq 0) {
             $obj = $str | ConvertFrom-Json
             $epId = $obj.VpcEndpoint.VpcEndpointId
             [void]$goodSubnets.Add($subId)
             break
         }
-        # AZ 미지원 오류면 다음 서브넷 시도 (PowerShell stderr 포맷 차이 대비해 패턴 완화)
+        # AZ 미지원 오류면 다음 서브넷 시도
         $isAzUnsupported = ($str -match "availability zone") -and ($str -match "subnet")
         if (-not $isAzUnsupported) {
             Write-Host "FAIL: create-vpc-endpoint $ServiceName failed." -ForegroundColor Red
