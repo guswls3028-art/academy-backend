@@ -74,6 +74,6 @@
 |------|------------------|----------------|
 | **스크립트** | production_done_check.ps1 | infra_one_take_full_audit.ps1 |
 | **범위** | Video(Batch) + SSM + netprobe + 알람 | Video/Ops CE·Queue, EventBridge, IAM, JobDef |
-| **용도** | Video 배포 후 “원테이크” 검증 | 전체 워커 인프라 무결성 검증 |
+| **용도** | Video 배포 후 “원테이크” 검증 | 정기 점검·자동 수정 |
 
 둘 다 **Video Worker(Batch)** 및 Ops Queue/CE를 다룬다. EventBridge·IAM까지 포함한 점검·수정이 필요하면 **원테이크 전체 감사**를 사용한다.
