@@ -95,6 +95,22 @@ def main() -> int:
     print(f"\nCredential source: {_get_credential_source()}")
     print(f"Region:            {region}\n")
 
+    # For SimulatePrincipalPolicy we need role ARN when caller is assumed-role (e.g. EC2 instance profile).
+    policy_source_arn = arn
+    if ":assumed-role/" in arn:
+        # arn:aws:sts::123456789:assumed-role/academy-ec2-role/i-xxx -> arn:aws:iam::123456789:role/academy-ec2-role
+        parts = arn.split(":assumed-role/", 1)
+        if len(parts) == 2:
+            prefix = parts[0]  # arn:aws:sts
+            rest = parts[1]    # role-name/session
+            if "/" in rest:
+                role_name = rest.split("/", 1)[0]
+            else:
+                role_name = rest
+            # sts -> iam, assumed-role -> role
+            policy_source_arn = f"arn:aws:iam::{account}:role/{role_name}"
+            print(f"PolicySourceArn for simulation: {policy_source_arn}\n")
+
     sim_allowed: bool | None = None  # True = allowed, False = denied, None = skipped
     batch_access_denied: bool = False
     batch_network_error: bool = False
