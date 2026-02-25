@@ -347,7 +347,8 @@ function Test-AsgAudit {
             if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
         }
         $act = ExecJson @("autoscaling", "describe-scaling-activities", "--auto-scaling-group-name", $asgName, "--region", $Region, "--max-items", "5", "--output", "json")
-        $failed = @($act.Activities | Where-Object { $_.StatusCode -match "Failed" })
+        $failed = @()
+        if ($act -and $act.Activities) { $failed = @($act.Activities | Where-Object { $_.StatusCode -match "Failed" }) }
         if ($failed -and $failed.Count -gt 0) {
             Add-Failure -Worker $(if ($asgName -eq $AsgAiName) { "AI Worker" } else { "Messaging Worker" }) -Area "ASG" -Resource $asgName -Message "Recent scaling activity failure: $($failed[0].StatusCode)"
             if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
