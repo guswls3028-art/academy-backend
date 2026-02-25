@@ -329,10 +329,13 @@ function Invoke-JobDefAudit {
         if (-not $oj) {
             Add-AuditRow -Category "JobDef" -Check "Ops $name" -Expected "ACTIVE" -Actual "not found" -Status "FAIL" -FixAction "Register ops job def"
         } else {
-            $cmd = ($oj.containerProperties.command | ForEach-Object { $_ }) -join " "
+            $cmd = if ($oj.containerProperties.command) { ($oj.containerProperties.command | ForEach-Object { $_ }) -join " " } else { "" }
+            $cmdStr = ($cmd -as [string])
+            if (-not $cmdStr) { $cmdStr = "" }
+            $cmdShort = if ($cmdStr.Length -gt 40) { $cmdStr.Substring(0, 40) + "..." } else { $cmdStr }
             $role = $oj.containerProperties.jobRoleArn -as [string]
             $hasRole = -not [string]::IsNullOrWhiteSpace($role)
-            Add-AuditRow -Category "JobDef" -Check "Ops $name command/role" -Expected "command set, jobRoleArn set" -Actual "cmd=$($cmd.Substring(0, [Math]::Min(40, $cmd.Length)))... role=$hasRole" -Status $(if ($hasRole) { "PASS" } else { "WARN" }) -FixAction ""
+            Add-AuditRow -Category "JobDef" -Check "Ops $name command/role" -Expected "command set, jobRoleArn set" -Actual "cmd=$cmdShort role=$hasRole" -Status $(if ($hasRole) { "PASS" } else { "WARN" }) -FixAction ""
         }
     }
 }
