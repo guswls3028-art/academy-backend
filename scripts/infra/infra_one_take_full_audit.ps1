@@ -51,6 +51,9 @@ $VideoAlarmNames = @(
 $EcrAi = "academy-ai-worker-cpu"
 $EcrMessaging = "academy-messaging-worker"
 $EcrVideo = "academy-video-worker"
+$ReconcileJobDefName = "academy-video-ops-reconcile"
+$ReconcileRuleName = "academy-reconcile-video-jobs"
+$ManagedPolicyNameDescribeJobs = "academy-video-batch-job-describe-jobs"
 
 # Resolve JobQueueName / ComputeEnvName from actual_state if present
 $batchStatePath = Join-Path $RepoRoot "docs\deploy\actual_state\batch_final_state.json"
