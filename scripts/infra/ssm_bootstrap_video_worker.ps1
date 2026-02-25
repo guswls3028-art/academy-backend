@@ -204,7 +204,8 @@ try {
 }
 
 # put-parameter: 값은 file:// 로 전달하여 PowerShell/Windows 인자 이스케이프(따옴표 손상) 방지
-$tempJsonUri = "file://" + (([System.IO.Path]::GetFullPath($tempJsonPath)) -replace '\\', '/')
+$tempJsonFullPath = [System.IO.Path]::GetFullPath($tempJsonPath)
+$tempJsonUri = "file:///" + ($tempJsonFullPath -replace '\\', '/')
 $putArgs = @(
     'ssm', 'put-parameter',
     '--name', $ParamName,
