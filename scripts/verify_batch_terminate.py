@@ -120,33 +120,39 @@ def main() -> int:
 
     # --- 1) SimulatePrincipalPolicy ---
     print("--- 1) IAM SimulatePrincipalPolicy ---")
-    try:
-        iam = session.client("iam", region_name=region)
-        result = iam.simulate_principal_policy(
-            PolicySourceArn=policy_source_arn,
-            ActionNames=["batch:TerminateJob", "batch:DescribeJobs"],
-        )
-        results = result.get("EvaluationResults", [])
-        term_result = next((r for r in results if r.get("EvalActionName") == "batch:TerminateJob"), None)
-        desc_result = next((r for r in results if r.get("EvalActionName") == "batch:DescribeJobs"), None)
-        if term_result:
-            effect = term_result.get("EvalDecision")  # "allowed" | "explicitDeny"
-            sim_allowed = effect == "allowed"
-            print(f"  batch:TerminateJob  -> {effect}")
-        else:
-            print("  batch:TerminateJob  -> (no result)")
-        if desc_result:
-            print(f"  batch:DescribeJobs  -> {desc_result.get('EvalDecision', 'N/A')}")
-        else:
-            print("  batch:DescribeJobs  -> (no result)")
-    except Exception as e:
-        err_str = str(e).lower()
-        if "accessdenied" in err_str or "not authorized" in err_str:
-            print("  SKIPPED (caller lacks iam:SimulatePrincipalPolicy)")
-            sim_allowed = None
-        else:
-            print(f"  SKIPPED (error): {e}")
-            sim_allowed = None
+    if policy_source_arn.rstrip("/").endswith(":root"):
+        print("  SKIPPED (SimulatePrincipalPolicy does not support root account ARN; use --job-id for API probe or run with IAM role credentials).")
+    else:
+        try:
+            iam = session.client("iam", region_name=region)
+            result = iam.simulate_principal_policy(
+                PolicySourceArn=policy_source_arn,
+                ActionNames=["batch:TerminateJob", "batch:DescribeJobs"],
+            )
+            results = result.get("EvaluationResults", [])
+            term_result = next((r for r in results if r.get("EvalActionName") == "batch:TerminateJob"), None)
+            desc_result = next((r for r in results if r.get("EvalActionName") == "batch:DescribeJobs"), None)
+            if term_result:
+                effect = term_result.get("EvalDecision")  # "allowed" | "explicitDeny"
+                sim_allowed = effect == "allowed"
+                print(f"  batch:TerminateJob  -> {effect}")
+            else:
+                print("  batch:TerminateJob  -> (no result)")
+            if desc_result:
+                print(f"  batch:DescribeJobs  -> {desc_result.get('EvalDecision', 'N/A')}")
+            else:
+                print("  batch:DescribeJobs  -> (no result)")
+        except Exception as e:
+            err_str = str(e).lower()
+            if "accessdenied" in err_str or "not authorized" in err_str:
+                print("  SKIPPED (caller lacks iam:SimulatePrincipalPolicy)")
+                sim_allowed = None
+            elif "invalidinput" in err_str or "invalid arn" in err_str:
+                print("  SKIPPED (SimulatePrincipalPolicy does not support this principal ARN; use --job-id for API probe).")
+                sim_allowed = None
+            else:
+                print(f"  SKIPPED (error): {e}")
+                sim_allowed = None
 
     # --- 2) API-level probe ---
     print("\n--- 2) API-level permission probe ---")
