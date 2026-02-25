@@ -182,7 +182,8 @@ if ($needOpsJdRegister -and $opsJdLatest) {
     $opsJdAllAfter = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
     if ($opsJdAllAfter -and $opsJdAllAfter.jobDefinitions) {
         foreach ($d in $opsJdAllAfter.jobDefinitions) {
-            $m = [int]$d.containerProperties.memory; $v = [int]$d.containerProperties.vcpus; $to = [int]$d.timeout.attemptDurationSeconds
+            $m = [int]$d.containerProperties.memory; $v = [int]$d.containerProperties.vcpus
+            $to = 0; if ($d.timeout -and $d.timeout.attemptDurationSeconds) { $to = [int]$d.timeout.attemptDurationSeconds }
             if (($m -ne 1024 -or $v -ne 1 -or $to -ne 300) -and ($null -eq $newRevO -or [int]$d.revision -ne $newRevO)) {
                 & aws batch deregister-job-definition --job-definition "$OpsReconcileJobDefName:$($d.revision)" --region $Region 2>&1 | Out-Null
             }
