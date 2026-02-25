@@ -11,6 +11,12 @@ $QueueName = "academy-video-batch-queue"
 $JobDefName = "academy-video-batch-jobdef"
 $CeName = "academy-video-batch-ce"
 
+$callerArn = aws sts get-caller-identity --query Arn --output text 2>&1
+if ($LASTEXITCODE -eq 0 -and $callerArn -match ":root") {
+    Write-Host "ROOT CAUSE: Running with root credentials (unsafe, not representative of production roles)" -ForegroundColor Red
+    exit 3
+}
+
 Write-Host "`n=== Batch Worker Diagnostic (queue=$QueueName region=$Region) ===" -ForegroundColor Cyan
 
 $pythonOk = $false
