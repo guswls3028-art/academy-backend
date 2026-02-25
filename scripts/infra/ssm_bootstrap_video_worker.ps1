@@ -203,14 +203,12 @@ try {
     exit 1
 }
 
-# put-parameter: 값은 temp 파일 내용으로 전달 (quoting 문제 제거)
-$valueToSend = [System.IO.File]::ReadAllText($tempJsonPath, [System.Text.UTF8Encoding]::new($false))
-Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
-
+# put-parameter: 값은 file:// 로 전달하여 PowerShell/Windows 인자 이스케이프(따옴표 손상) 방지
+$tempJsonUri = "file://" + (([System.IO.Path]::GetFullPath($tempJsonPath)) -replace '\\', '/')
 $putArgs = @(
     'ssm', 'put-parameter',
     '--name', $ParamName,
-    '--value', $valueToSend,
+    '--value', $tempJsonUri,
     '--type', 'SecureString',
     '--region', $Region,
     '--overwrite'
@@ -221,6 +219,7 @@ $ErrorActionPreference = "Continue"
 & aws @putArgs 2>&1 | Out-Null
 $putExit = $LASTEXITCODE
 $ErrorActionPreference = $prevErr
+Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
 if ($putExit -ne 0) {
     Write-Host "FAIL: put-parameter failed (exit $putExit)." -ForegroundColor Red
     exit 1
