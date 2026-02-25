@@ -39,17 +39,24 @@ if (-not $inst) {
 }
 
 $eni = $inst.NetworkInterfaces | Select-Object -First 1
+$privateIp = $inst.PrivateIpAddress
+if (-not $privateIp -and $eni) { $privateIp = $eni.PrivateIpAddress }
 $result = @{
-    InstanceId       = $inst.InstanceId
-    VpcId            = $inst.VpcId
-    SubnetId         = $inst.SubnetId
-    SecurityGroupIds = @($inst.SecurityGroups | ForEach-Object { $_.GroupId })
-    PrivateIpAddress = $inst.PrivateIpAddress
-    PublicIpAddress  = $inst.PublicIpAddress
-    State            = $inst.State.Name
+    InstanceId         = $inst.InstanceId
+    VpcId              = $inst.VpcId
+    SubnetId           = $inst.SubnetId
+    SecurityGroupIds   = @($inst.SecurityGroups | ForEach-Object { $_.GroupId })
+    PrivateIpAddress   = $privateIp
+    PublicIpAddress    = $inst.PublicIpAddress
+    State              = $inst.State.Name
+    PrivateApiBaseUrl  = $null
+}
+if ($privateIp) {
+    $result.PrivateApiBaseUrl = "http://${privateIp}:8000"
 }
 $json = $result | ConvertTo-Json
 $utf8 = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($OutFile, $json, $utf8)
 Write-Host "VpcId=$($result.VpcId) SubnetId=$($result.SubnetId) SecurityGroupIds=$($result.SecurityGroupIds -join ',')" -ForegroundColor Cyan
+Write-Host "PrivateIpAddress=$($result.PrivateIpAddress) PrivateApiBaseUrl=$($result.PrivateApiBaseUrl)" -ForegroundColor Cyan
 Write-Host "Saved: $OutFile" -ForegroundColor Gray
