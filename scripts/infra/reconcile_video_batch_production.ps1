@@ -175,8 +175,9 @@ if ($needOpsJdRegister -and $opsJdLatest) {
     $jsonStrO = $jsonStrO -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
     [System.IO.File]::WriteAllText($jdPathO, $jsonStrO, [System.Text.UTF8Encoding]::new($false))
     $uriO = "file:///" + ([System.IO.Path]::GetFullPath($jdPathO) -replace '\\', '/')
-    $regOutO = Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops reconcile job def failed"
+    $regOutORaw = Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops reconcile job def failed"
     Remove-Item $jdPathO -Force -ErrorAction SilentlyContinue
+    $regOutO = ($regOutORaw | Out-String).Trim() | ConvertFrom-Json
     $newRevO = $null; if ($regOutO -and $regOutO.revision) { $newRevO = [int]$regOutO.revision }
     $opsJdAllAfter = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
     if ($opsJdAllAfter -and $opsJdAllAfter.jobDefinitions) {
