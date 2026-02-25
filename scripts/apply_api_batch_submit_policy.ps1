@@ -30,4 +30,4 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host $out
 Write-Host ""
-Write-Host "Done. academy-ec2-role can now call batch:SubmitJob. Test video upload_complete (no API restart required for IAM)." -ForegroundColor Green
+Write-Host "Done. academy-ec2-role can call batch:SubmitJob, batch:TerminateJob, batch:DescribeJobs. Video delete Terminate works (no API restart for IAM)." -ForegroundColor Green
