@@ -76,23 +76,29 @@ Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-o
 
 ### One-shot execution (copy-paste PowerShell)
 
-Run from repository root. Replace `<acct>` with your AWS account ID (e.g. `809466760795`). Ensure `.env` exists and is filled.
+Run from repository root. **Set `$acctId` to your real AWS account ID** (e.g. `809466760795`). Do not use literal `<acct>` in the ECR URI or Batch will fail with "Container.image contains invalid characters". Ensure `.env` exists and is filled.
+
+- **JSON read**: Same as codebase — `Get-Content path -Raw | ConvertFrom-Json`.
+- **SSM**: Bootstrap script passes JSON to AWS via argument array (no inline quote/brace interpretation).
 
 ```powershell
 # Windows cp949 / SSM JSON
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+
+# Account ID — replace with your real value (e.g. 809466760795)
+$acctId = "809466760795"
 
 # a) .env prepared (copy from .env.example and fill required keys)
 
 # b) SSM bootstrap (source of truth -> SSM JSON)
 .\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite
 
-# c) Batch in API VPC
-$ecrUri = "<acct>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest"
+# c) Batch in API VPC (ECR URI from variable only)
+$ecrUri = "${acctId}.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest"
 .\scripts\infra\recreate_batch_in_api_vpc.ps1 -Region ap-northeast-2 -EcrRepoUri $ecrUri
 
-# d) EventBridge
-$q = (Get-Content docs\deploy\actual_state\batch_final_state.json -Raw | ConvertFrom-Json).FinalJobQueueName
+# d) EventBridge (final queue from batch_final_state.json — Get-Content -Raw | ConvertFrom-Json)
+$q = (Get-Content (Join-Path $PWD "docs\deploy\actual_state\batch_final_state.json") -Raw | ConvertFrom-Json).FinalJobQueueName
 .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName $q
 
 # e) CloudWatch alarms
