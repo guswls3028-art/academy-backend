@@ -95,30 +95,17 @@ if (-not $v2Obj) {
     Write-Host "`n[2] Creating $NewVideoCEName (c6g.large only, maxvCpus=$MaxvCpus)" -ForegroundColor Cyan
     $subnetArr = ($subnets | ForEach-Object { "`"$_`"" }) -join ","
     $sgArr = ($securityGroupIds | ForEach-Object { "`"$_`"" }) -join ","
-    $typesArr = ($InstanceTypes | ForEach-Object { "`"$_`"" }) -join ","
-    $cePayload = @{
-        computeEnvironmentName = $NewVideoCEName
-        type                   = "MANAGED"
-        state                  = "ENABLED"
-        serviceRole            = $serviceRoleArn
-        computeResources       = @{
-            type                 = "EC2"
-            allocationStrategy   = "BEST_FIT_PROGRESSIVE"
-            minvCpus             = $MinvCpus
-            maxvCpus             = $MaxvCpus
-            desiredvCpus         = 0
-            instanceTypes        = @($InstanceTypes)
-            subnets              = @($subnets)
-            securityGroupIds     = @($securityGroupIds)
-            instanceRole         = $instanceProfileArn
-        }
-    }
+    $ceTemplate = '{"computeEnvironmentName":"PLACEHOLDER_CE_NAME","type":"MANAGED","state":"ENABLED","serviceRole":"PLACEHOLDER_SERVICE_ROLE_ARN","computeResources":{"type":"EC2","allocationStrategy":"BEST_FIT_PROGRESSIVE","minvCpus":0,"maxvCpus":32,"desiredvCpus":0,"instanceTypes":["c6g.large"],"subnets":["PLACEHOLDER_SUBNET_1"],"securityGroupIds":["PLACEHOLDER_SECURITY_GROUP_ID"],"instanceRole":"PLACEHOLDER_INSTANCE_PROFILE_ARN"}}'
+    $ceContent = $ceTemplate -replace "PLACEHOLDER_CE_NAME", $NewVideoCEName
+    $ceContent = $ceContent -replace "PLACEHOLDER_SERVICE_ROLE_ARN", $serviceRoleArn
+    $ceContent = $ceContent -replace "PLACEHOLDER_INSTANCE_PROFILE_ARN", $instanceProfileArn
+    $ceContent = $ceContent -replace '"PLACEHOLDER_SUBNET_1"', $subnetArr
+    $ceContent = $ceContent -replace '"PLACEHOLDER_SECURITY_GROUP_ID"', $sgArr
     $ceFile = Join-Path $RepoRoot "batch_video_ce_v2_temp.json"
-    $ceJson = $cePayload | ConvertTo-Json -Depth 6 -Compress:$false
-    [System.IO.File]::WriteAllText($ceFile, $ceJson, $utf8NoBom)
-    $ceFileAbs = [System.IO.Path]::GetFullPath($ceFile)
+    [System.IO.File]::WriteAllText($ceFile, $ceContent, $utf8NoBom)
+    $ceFileUri = "file://" + ($ceFile -replace '\\', '/')
     try {
-        Invoke-Aws -ArgsArray @("batch", "create-compute-environment", "--cli-input-json", $ceFileAbs, "--region", $Region) -ErrorMessage "create-compute-environment $NewVideoCEName failed"
+        Invoke-Aws -ArgsArray @("batch", "create-compute-environment", "--cli-input-json", $ceFileUri, "--region", $Region) -ErrorMessage "create-compute-environment $NewVideoCEName failed"
         [void]$script:ChangesApplied.Add("Created compute environment: $NewVideoCEName")
     } finally {
         Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
