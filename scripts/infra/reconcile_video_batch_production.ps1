@@ -206,9 +206,9 @@ if ($needVideoJdRegister -and $videoJdLatest) {
     $jsonStr = $jsonStr -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
     [System.IO.File]::WriteAllText($jdPath, $jsonStr, [System.Text.UTF8Encoding]::new($false))
     $uri = "file:///" + ([System.IO.Path]::GetFullPath($jdPath) -replace '\\', '/')
-    $regOutRaw = Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uri, "--region", $Region, "--output", "json") -ErrorMessage "register Video job def failed"
+    $regOutRaw = Invoke-Aws -ArgsArray @("batch", "register-job-definition", "--cli-input-json", $uri, "--region", $Region, "--output", "json") -ErrorMessage "register Video job def failed"
     Remove-Item $jdPath -Force -ErrorAction SilentlyContinue
-    $regOut = ($regOutRaw | Out-String).Trim() | ConvertFrom-Json
+    $regOut = ($regOutRaw | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim() | ConvertFrom-Json
     $newRev = $null; if ($regOut -and $regOut.revision) { $newRev = [int]$regOut.revision }
     $videoJdAllAfter = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
     if ($videoJdAllAfter -and $videoJdAllAfter.jobDefinitions) {
@@ -262,7 +262,7 @@ if (-not $opsJdLatest) {
     $jsonStrO = $jsonStrO -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
     [System.IO.File]::WriteAllText($jdPathO, $jsonStrO, [System.Text.UTF8Encoding]::new($false))
     $uriO = "file:///" + ([System.IO.Path]::GetFullPath($jdPathO) -replace '\\', '/')
-    Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops job def failed"
+    Invoke-Aws -ArgsArray @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops job def failed"
     Remove-Item $jdPathO -Force -ErrorAction SilentlyContinue
 }
 elseif ($needOpsJdRegister -and $opsJdLatest) {
@@ -282,9 +282,9 @@ elseif ($needOpsJdRegister -and $opsJdLatest) {
     $jsonStrO = $jsonStrO -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
     [System.IO.File]::WriteAllText($jdPathO, $jsonStrO, [System.Text.UTF8Encoding]::new($false))
     $uriO = "file:///" + ([System.IO.Path]::GetFullPath($jdPathO) -replace '\\', '/')
-    $regOutORaw = Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops job def failed"
+    $regOutORaw = Invoke-Aws -ArgsArray @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops job def failed"
     Remove-Item $jdPathO -Force -ErrorAction SilentlyContinue
-    $regOutO = ($regOutORaw | Out-String).Trim() | ConvertFrom-Json
+    $regOutO = ($regOutORaw | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim() | ConvertFrom-Json
     $newRevO = $null; if ($regOutO -and $regOutO.revision) { $newRevO = [int]$regOutO.revision }
     $opsJdAllAfter = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
     if ($opsJdAllAfter -and $opsJdAllAfter.jobDefinitions) {
@@ -300,11 +300,11 @@ elseif ($needOpsJdRegister -and $opsJdLatest) {
 $rule = ExecJson @("events", "describe-rule", "--name", $ReconcileRuleName, "--region", $Region, "--output", "json")
 $ruleExists = ($rule -and $rule.Name -eq $ReconcileRuleName)
 if (-not $ruleExists) {
-    Invoke-Aws @("events", "put-rule", "--name", $ReconcileRuleName, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--description", "Reconcile video jobs", "--region", $Region) -ErrorMessage "put-rule failed"
+    Invoke-Aws -ArgsArray @("events", "put-rule", "--name", $ReconcileRuleName, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--description", "Reconcile video jobs", "--region", $Region) -ErrorMessage "put-rule failed"
 }
 else {
     if ($rule.ScheduleExpression -notmatch "rate\s*\(\s*5\s*minute") {
-        Invoke-Aws @("events", "put-rule", "--name", $ReconcileRuleName, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--region", $Region) -ErrorMessage "put-rule schedule failed"
+        Invoke-Aws -ArgsArray @("events", "put-rule", "--name", $ReconcileRuleName, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--region", $Region) -ErrorMessage "put-rule schedule failed"
     }
 }
 $tgtList = ExecJson @("events", "list-targets-by-rule", "--rule", $ReconcileRuleName, "--region", $Region, "--output", "json")
@@ -319,7 +319,7 @@ if (-not $tgtCorrect) {
     if (-not $roleResp -or -not $roleResp.Role) { Write-Error "EventBridge role $EventsRoleName not found"; exit 1 }
     $eventsRoleArn = $roleResp.Role.Arn
     $targetsJson = '[{"Id":"1","Arn":"' + $opsQueueArn + '","RoleArn":"' + $eventsRoleArn + '","BatchParameters":{"JobDefinition":"' + $OpsJobDefName + '","JobName":"reconcile-video-jobs"}}]'
-    Invoke-Aws @("events", "put-targets", "--rule", $ReconcileRuleName, "--targets", $targetsJson, "--region", $Region) -ErrorMessage "put-targets failed"
+    Invoke-Aws -ArgsArray @("events", "put-targets", "--rule", $ReconcileRuleName, "--targets", $targetsJson, "--region", $Region) -ErrorMessage "put-targets failed"
 }
 $alarmList = ExecJson @("cloudwatch", "describe-alarms", "--alarm-names", $RunnableAlarmName, "--region", $Region, "--output", "json")
 $alarmExists = ($alarmList -and $alarmList.MetricAlarms -and $alarmList.MetricAlarms.Count -gt 0)
