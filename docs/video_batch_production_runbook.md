@@ -147,7 +147,8 @@ Expected: Exit 0; `DONE. Ops CE and queue ready.` Creates `academy-video-ops-ce`
 ```powershell
 .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
 ```
-Or if you created Ops queue with a different name, pass that. Expected: Exit 0; `Done. EventBridge video scheduler deployed; reconcile/scan_stuck -> academy-video-ops-queue; targets verified.`
+This updates the **actual AWS EventBridge targets** (put-targets) for both rules to **academy-video-ops-queue**; not only the repo JSON templates.  
+Or if you created Ops queue with a different name, pass that. Expected: Exit 0; `Done. EventBridge: actual AWS targets updated; reconcile/scan_stuck -> academy-video-ops-queue; targets verified.`
 
 **Step 4 — CloudWatch alarms** (use same final queue name)
 ```powershell
