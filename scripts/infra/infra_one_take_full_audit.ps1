@@ -253,10 +253,11 @@ function Test-RuntimeAudit {
         $aiOk = $false
     } elseif ($apiBaseUrl) {
         $healthUrl = $apiBaseUrl.TrimEnd('/') + "/health"
-        $cmdPayload = "{`"commands`":[`"curl -sf --connect-timeout 5 \`"$healthUrl\`" || echo CURL_FAIL`"]}"
+        $params = @{ commands = @("curl -sf --connect-timeout 5 `"$healthUrl`" || echo CURL_FAIL") }
+        $json = $params | ConvertTo-Json -Compress
         $prevErr = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
-        $sendRaw = & aws ssm send-command --instance-ids $instancesAi[0] --document-name "AWS-RunShellScript" --parameters $cmdPayload --region $Region --output json 2>&1
+        $sendRaw = & aws @('ssm','send-command','--instance-ids',$instancesAi[0],'--document-name','AWS-RunShellScript','--parameters',$json,'--region',$Region,'--output','json') 2>&1
         $sendExit = $LASTEXITCODE
         $ErrorActionPreference = $prevErr
         $sendOut = $null
