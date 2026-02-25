@@ -7,6 +7,7 @@
 # If VpcId/SubnetIds/SecurityGroupId omitted, discovers from existing academy-video-batch-ce.
 # ==============================================================================
 
+[CmdletBinding()]
 param(
     [string]$Region = "ap-northeast-2",
     [string]$VpcId = "",
@@ -15,9 +16,6 @@ param(
     [string]$ComputeEnvName = "academy-video-ops-ce",
     [string]$JobQueueName = "academy-video-ops-queue"
 )
-[CmdletBinding()]
-param()
-
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
 $ErrorActionPreference = "Stop"
