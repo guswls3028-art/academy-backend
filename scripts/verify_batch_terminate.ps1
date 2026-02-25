@@ -20,11 +20,11 @@ if (-not (Test-Path -LiteralPath $PyScript)) {
     exit 3
 }
 
-$args = @()
-if ($Region) { $args += "--region"; $args += $Region }
-if ($JobId)  { $args += "--job-id"; $args += $JobId }
-if ($Profile) { $args += "--profile"; $args += $Profile }
-if ($SettingsModule) { $args += "--settings-module"; $args += $SettingsModule }
+$pyArgs = @()
+if ($Region) { $pyArgs += "--region"; $pyArgs += $Region }
+if ($JobId)  { $pyArgs += "--job-id"; $pyArgs += $JobId }
+if ($Profile) { $pyArgs += "--profile"; $pyArgs += $Profile }
+if ($SettingsModule) { $pyArgs += "--settings-module"; $pyArgs += $SettingsModule }
 
-& python $PyScript @args
+& python $PyScript @pyArgs
 exit $LASTEXITCODE
