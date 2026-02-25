@@ -116,10 +116,9 @@ if (-not $v2Obj) {
     $ceFile = Join-Path $RepoRoot "batch_video_ce_v2_temp.json"
     $ceJson = $cePayload | ConvertTo-Json -Depth 6 -Compress:$false
     [System.IO.File]::WriteAllText($ceFile, $ceJson, $utf8NoBom)
-    $absPath = [System.IO.Path]::GetFullPath($ceFile) -replace '\\', '/'
-    $ceFileUri = if ($absPath -match '^[A-Za-z]:') { "file:///$absPath" } else { "file://$absPath" }
+    $ceFileAbs = [System.IO.Path]::GetFullPath($ceFile)
     try {
-        Invoke-Aws -ArgsArray @("batch", "create-compute-environment", "--cli-input-json", $ceFileUri, "--region", $Region) -ErrorMessage "create-compute-environment $NewVideoCEName failed"
+        Invoke-Aws -ArgsArray @("batch", "create-compute-environment", "--cli-input-json", "file://$($ceFileAbs -replace '\\', '/')", "--region", $Region) -ErrorMessage "create-compute-environment $NewVideoCEName failed"
         [void]$script:ChangesApplied.Add("Created compute environment: $NewVideoCEName")
     } finally {
         Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
