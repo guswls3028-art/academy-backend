@@ -222,7 +222,10 @@ function Test-RuntimeAudit {
 
     # AI Worker: one instance, SSM send-command curl API/health
     $asgAi = ExecJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $AsgAiName, "--region", $Region, "--output", "json")
-    $instancesAi = @($asgAi.AutoScalingGroups[0].Instances | Where-Object { $_.LifecycleState -eq "InService" -and $_.HealthStatus -eq "Healthy" } | ForEach-Object { $_.InstanceId })
+    $instancesAi = @()
+    if ($asgAi -and $asgAi.AutoScalingGroups -and $asgAi.AutoScalingGroups.Count -gt 0) {
+        $instancesAi = @($asgAi.AutoScalingGroups[0].Instances | Where-Object { $_.LifecycleState -eq "InService" -and $_.HealthStatus -eq "Healthy" } | ForEach-Object { $_.InstanceId })
+    }
     if ($instancesAi.Count -eq 0) {
         Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $AsgAiName -Message "No InService/Healthy instance for SSM command"
         $aiOk = $false
