@@ -167,6 +167,12 @@ function Test-NetworkAudit {
         if (-not $lt) {
             Add-Failure -Worker $(if ($asgName -eq $AsgAiName) { "AI Worker" } else { "Messaging Worker" }) -Area "Network" -Resource $ltName -Message "Launch Template not found"
             if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
+        } else {
+            $ltVer = ExecJson @("ec2", "describe-launch-template-versions", "--launch-template-name", $ltName, "--region", $Region, "--output", "json")
+            $ltData = $ltVer.LaunchTemplateVersions[0].LaunchTemplateData
+            if ($ltData.SecurityGroupIds -and $ltData.SecurityGroupIds.Count -gt 0) {
+                Write-AuditVerbose "  ASG $asgName SG: $($ltData.SecurityGroupIds -join ', ')"
+            }
         }
         if (-not $ag.VpcZoneIdentifier) {
             Add-Failure -Worker $(if ($asgName -eq $AsgAiName) { "AI Worker" } else { "Messaging Worker" }) -Area "Network" -Resource $asgName -Message "VPC/Subnet (VpcZoneIdentifier) not set"
