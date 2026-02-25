@@ -106,8 +106,8 @@ if (-not $videoQueueCeOk) {
     $payload = '{"jobQueue":"' + $VideoQueueName + '","computeEnvironmentOrder":[{"order":1,"computeEnvironment":"' + $videoCeArn + '"}]}'
     $tf = Join-Path $env:TEMP "reconcile_vq_$(Get-Date -Format 'yyyyMMddHHmmss').json"
     [System.IO.File]::WriteAllText($tf, $payload, [System.Text.UTF8Encoding]::new($false))
-    $uri = "file:///" + ([System.IO.Path]::GetFullPath($tf) -replace '\\', '/')
-    Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--cli-input-json", $uri, "--region", $Region) -ErrorMessage "update Video queue computeEnvironmentOrder failed"
+    $absPath = [System.IO.Path]::GetFullPath($tf)
+    Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--cli-input-json", $absPath, "--region", $Region) -ErrorMessage "update Video queue computeEnvironmentOrder failed"
     Remove-Item $tf -Force -ErrorAction SilentlyContinue
     if ($stateBefore -eq "ENABLED") { Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--job-queue", $VideoQueueName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "re-enable Video queue failed" }
 }
