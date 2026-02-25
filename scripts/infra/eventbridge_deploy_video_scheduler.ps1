@@ -72,8 +72,8 @@ if (-not $EventsRoleArn) { Write-Host "FAIL: EventBridge role $EventsRoleName no
 # Reconcile rule + Batch target (Targets must be LIST)
 # This updates the ACTUAL AWS EventBridge target for this rule to academy-video-ops-queue.
 $ReconcileRuleName = "academy-reconcile-video-jobs"
-Write-Host "[1] EventBridge rule: $ReconcileRuleName (rate 2 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
-aws events put-rule --name $ReconcileRuleName --schedule-expression "rate(2 minutes)" --state ENABLED --description "Trigger reconcile_batch_video_jobs via Batch SubmitJob" --region $Region | Out-Null
+Write-Host "[1] EventBridge rule: $ReconcileRuleName (rate 5 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
+aws events put-rule --name $ReconcileRuleName --schedule-expression "rate(5 minutes)" --state ENABLED --description "Trigger reconcile_batch_video_jobs via Batch SubmitJob (single-flight)" --region $Region | Out-Null
 $reconcileTargetPath = Join-Path $EventBridgePath "reconcile_to_batch_target.json"
 $reconcileTargetJson = Get-Content $reconcileTargetPath -Raw
 $reconcileTargetJson = $reconcileTargetJson -replace "PLACEHOLDER_JOB_QUEUE_ARN", $JobQueueArn
@@ -110,8 +110,8 @@ if ($t0.Arn -ne $JobQueueArn) {
 # Scan-stuck rule + Batch target
 # This updates the ACTUAL AWS EventBridge target for this rule to academy-video-ops-queue.
 $ScanStuckRuleName = "academy-video-scan-stuck-rate"
-Write-Host "[2] EventBridge rule: $ScanStuckRuleName (rate 2 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
-aws events put-rule --name $ScanStuckRuleName --schedule-expression "rate(2 minutes)" --state ENABLED --description "Trigger scan_stuck_video_jobs via Batch SubmitJob" --region $Region | Out-Null
+Write-Host "[2] EventBridge rule: $ScanStuckRuleName (rate 5 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
+aws events put-rule --name $ScanStuckRuleName --schedule-expression "rate(5 minutes)" --state ENABLED --description "Trigger scan_stuck_video_jobs via Batch SubmitJob" --region $Region | Out-Null
 $scanstuckTargetPath = Join-Path $EventBridgePath "scan_stuck_to_batch_target.json"
 $scanstuckTargetJson = Get-Content $scanstuckTargetPath -Raw
 $scanstuckTargetJson = $scanstuckTargetJson -replace "PLACEHOLDER_JOB_QUEUE_ARN", $JobQueueArn
