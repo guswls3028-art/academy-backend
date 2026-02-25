@@ -4,7 +4,7 @@
   "containerProperties": {
     "image": "PLACEHOLDER_ECR_URI",
     "vcpus": 2,
-    "memory": 4096,
+    "memory": 3072,
     "command": ["python", "-m", "apps.worker.video_worker.batch_main", "Ref::job_id"],
     "jobRoleArn": "PLACEHOLDER_JOB_ROLE_ARN",
     "executionRoleArn": "PLACEHOLDER_EXECUTION_ROLE_ARN",
