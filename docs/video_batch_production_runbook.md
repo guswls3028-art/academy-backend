@@ -141,6 +141,7 @@ Expected: Exit 0; `DONE. Batch recreated in API VPC. JobQueueName=<final>`.
 ```powershell
 .\scripts\infra\batch_ops_setup.ps1 -Region ap-northeast-2
 ```
+Uses the **same Security Group as academy-video-batch-ce** (discovered from the video CE).  
 Expected: Exit 0; `DONE. Ops CE and queue ready.` Creates `academy-video-ops-ce` and `academy-video-ops-queue`; state in `docs/deploy/actual_state/batch_ops_state.json`.
 
 **Step 3 — EventBridge** (reconcile/scan_stuck submit to Ops queue)
@@ -230,7 +231,7 @@ Expected: `PRODUCTION DONE CHECK: PASS`.
 2. **Optional network:** `.\scripts\infra\network_minimal_bootstrap.ps1 -Region ap-northeast-2` or provide VpcId, SubnetIds, SecurityGroupId.
 3. **SSM:** `.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite`
 4. **Batch:** `.\scripts\infra\batch_video_setup.ps1 -Region ap-northeast-2 -VpcId vpc-xxx -SubnetIds @("subnet-a","subnet-b") -SecurityGroupId sg-xxx -EcrRepoUri <uri>`
-5. **EventBridge:** `.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue`
+5. **EventBridge:** `.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue` (updates actual AWS targets to Ops queue)
 6. **CloudWatch alarms:** `.\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue` — optional `-SnsTopicArn`
 
 ---
