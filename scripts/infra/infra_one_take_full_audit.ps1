@@ -1,92 +1,88 @@
 # ==============================================================================
-# One-take full production integrity audit: AI Worker (ASG), Messaging Worker (ASG), Video Worker (Batch).
-# Production Audit + Fix: Discovery-based Video Batch Reconcile (DescribeJobs, EventBridge, concurrency).
-# Usage: .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 [-Verbose] [-FixMode] [-KillExtraReconcile]
-# Exit: 0 = PASS, 1 = FAIL (any critical check failed)
+# One-take Video/Ops Batch + EventBridge + IAM audit. Queue/CE separation check.
+# Copy-paste runnable on Windows PowerShell. UTF-8 to avoid cp949/aws json issues.
 #
-# Usage example:
+# Usage:
 #   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2
 #   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -Verbose
 #   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -FixMode
-#   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -FixMode -KillExtraReconcile
+#   .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 -FixMode -FixModeWithCleanup
 #
-# Required IAM permissions (account/region scoped as appropriate):
-#   - sts:GetCallerIdentity
-#   - ssm:GetParameter (GetParametersByPath optional), ssm:SendCommand, ssm:GetCommandInvocation
-#   - autoscaling:DescribeAutoScalingGroups, autoscaling:DescribeScalingActivities, autoscaling:DescribeLaunchConfigurations
-#   - ec2:DescribeLaunchTemplates, ec2:DescribeInstances, ec2:DescribeSecurityGroups, ec2:DescribeSubnets, ec2:DescribeVpcs
-#   - batch:DescribeComputeEnvironments, batch:DescribeJobQueues, batch:DescribeJobDefinitions, batch:SubmitJob, batch:ListJobs, batch:DescribeJobs, batch:TerminateJob
-#   - ecr:DescribeRepositories, ecr:DescribeImages
-#   - cloudwatch:DescribeAlarms
-#   - logs:GetLogEvents, logs:DescribeLogStreams (for netprobe log fetch)
-#   - iam:PassRole (for Batch job role / execution role if submitting netprobe)
-#   - iam:ListAttachedRolePolicies, iam:GetPolicy, iam:GetPolicyVersion, iam:ListRolePolicies, iam:GetRolePolicy (Reconcile audit)
-#   - iam:CreatePolicy, iam:AttachRolePolicy (Reconcile FixMode only)
-#   - iam:SimulatePrincipalPolicy (Reconcile audit optional)
-#   - events:DescribeRule, events:ListTargetsByRule, events:PutRule, events:PutTargets (Reconcile audit/FixMode)
+# Sample output (comment):
+# ---
+# Category  | Check                    | Expected        | Actual          | Status | FixAction
+# ----------|--------------------------|-----------------|-----------------|--------|---------------------------
+# Batch     | Video CE exists          | VALID/ENABLED   | VALID/ENABLED   | PASS   |
+# Batch     | Ops CE exists            | VALID/ENABLED   | VALID/ENABLED   | PASS   |
+# Batch     | Video Queue              | ENABLED         | ENABLED         | PASS   |
+# Batch     | Ops Queue                | ENABLED         | ENABLED         | PASS   |
+# EventBridge| Reconcile schedule      | rate(5 minutes) | rate(5 minutes) | PASS   |
+# EventBridge| Reconcile target queue  | OpsQueue        | OpsQueue        | PASS   |
+# IAM       | DescribeJobs on job role| Yes             | Yes             | PASS   |
+# ...
+# Summary: PASS=12 WARN=0 FAIL=0 -> PASS
 # ==============================================================================
 
 param(
     [Parameter(Mandatory = $true)]
     [string]$Region,
     [switch]$FixMode,
-    [switch]$KillExtraReconcile
+    [switch]$Verbose,
+    [string]$ExpectedVideoQueueName = "",
+    [string]$ExpectedOpsQueueName = "academy-video-ops-queue",
+    [string]$ExpectedVideoCEName = "academy-video-batch-ce",
+    [string]$ExpectedOpsCEName = "academy-video-ops-ce",
+    [string]$ReconcileRuleName = "",
+    [string]$ScanStuckRuleName = "",
+    [switch]$FixModeWithCleanup
 )
 
 $ErrorActionPreference = "Stop"
-try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
-
-# Resource names (from repo SSOT)
-$AsgAiName = "academy-ai-worker-asg"
-$AsgMessagingName = "academy-messaging-worker-asg"
-$LtAiName = "academy-ai-worker-lt"
-$LtMessagingName = "academy-messaging-worker-lt"
-$SsmWorkersEnv = "/academy/workers/env"
-$ComputeEnvName = "academy-video-batch-ce"
-$ComputeEnvFallback = "academy-video-batch-ce-v3"
-$JobQueueName = "academy-video-batch-queue"
-$VideoAlarmNames = @(
-    "academy-video-DeadJobs",
-    "academy-video-UploadFailures",
-    "academy-video-FailedJobs",
-    "academy-video-BatchJobFailures",
-    "academy-video-QueueRunnable"
-)
-$EcrAi = "academy-ai-worker-cpu"
-$EcrMessaging = "academy-messaging-worker"
-$EcrVideo = "academy-video-worker"
-$ReconcileJobDefName = "academy-video-ops-reconcile"
-$ReconcileRuleName = "academy-reconcile-video-jobs"
-$ManagedPolicyNameDescribeJobs = "academy-video-batch-job-describe-jobs"
-$ManagedPolicyNameDescribeJobsProduction = "AcademyAllowBatchDescribeJobs"
-
-# Resolve JobQueueName / ComputeEnvName from actual_state if present
 $batchStatePath = Join-Path $RepoRoot "docs\deploy\actual_state\batch_final_state.json"
-if (Test-Path -LiteralPath $batchStatePath) {
+
+# Resolve expected names from actual_state
+if (-not $ExpectedVideoQueueName -and (Test-Path -LiteralPath $batchStatePath)) {
     try {
-        $batchState = Get-Content $batchStatePath -Raw | ConvertFrom-Json
-        if ($batchState.FinalJobQueueName) { $JobQueueName = $batchState.FinalJobQueueName }
-        if ($batchState.FinalComputeEnvName) { $ComputeEnvName = $batchState.FinalComputeEnvName }
+        $raw = [System.IO.File]::ReadAllText($batchStatePath, [System.Text.UTF8Encoding]::new($false))
+        $batchState = $raw | ConvertFrom-Json
+        if ($batchState.FinalJobQueueName) { $ExpectedVideoQueueName = $batchState.FinalJobQueueName }
+        if ($batchState.FinalComputeEnvName) { $ExpectedVideoCEName = $batchState.FinalComputeEnvName }
     } catch {}
 }
+if (-not $ExpectedVideoQueueName) { $ExpectedVideoQueueName = "academy-video-batch-queue" }
 
-$global:AuditFailures = @()
-$global:OverallPass = $true
+$script:AuditRows = [System.Collections.ArrayList]::new()
+$script:FixesApplied = [System.Collections.ArrayList]::new()
 
-function Write-AuditVerbose { param([string]$Message) if ($VerbosePreference -eq 'Continue') { Write-Host $Message -ForegroundColor Gray } }
-function Write-Section { param([string]$Title) Write-Host "`n--- $Title ---" -ForegroundColor Cyan }
-function Write-Ok { param([string]$Message) Write-Host "  [OK] $Message" -ForegroundColor Green }
-function Write-Warn { param([string]$Message) Write-Host "  [WARN] $Message" -ForegroundColor Yellow }
-function Write-Blocker { param([string]$Message) Write-Host "  [BLOCKER] $Message" -ForegroundColor Red }
-function Add-Failure { param([string]$Worker, [string]$Area, [string]$Resource, [string]$Message)
-    $global:AuditFailures += @{ Worker = $Worker; Area = $Area; Resource = $Resource; Message = $Message }
-    $global:OverallPass = $false
+function Add-AuditRow {
+    param([string]$Category, [string]$Check, [string]$Expected, [string]$Actual, [string]$Status, [string]$FixAction = "")
+    [void]$script:AuditRows.Add([PSCustomObject]@{
+        Category = $Category
+        Check = $Check
+        Expected = $Expected
+        Actual = $Actual
+        Status = $Status
+        FixAction = $FixAction
+    })
 }
 
-function ExecJson {
+function Aws-Text {
+    param([string[]]$ArgsArray)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = & aws @ArgsArray 2>&1
+    $exit = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    $str = ($out | Out-String).Trim()
+    if ($exit -ne 0) { return $null }
+    return $str
+}
+
+function Aws-Json {
     param([string[]]$ArgsArray)
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -96,805 +92,366 @@ function ExecJson {
     if ($exit -ne 0) { return $null }
     $str = ($out | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($str)) { return $null }
-    try { return ($str | ConvertFrom-Json) } catch { return $null }
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($str)
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        return [System.Text.Json.JsonSerializer]::Deserialize([string]$utf8.GetString($bytes), [System.Object])
+    } catch {
+        try { return $str | ConvertFrom-Json } catch { return $null }
+    }
 }
 
-function ExecJsonThrow {
+# PowerShell 5.x may not have System.Text.Json; fallback
+function Aws-JsonLegacy {
     param([string[]]$ArgsArray)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $out = & aws @ArgsArray 2>&1
     $exit = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($exit -ne 0) { return $null }
     $str = ($out | Out-String).Trim()
-    if ($exit -ne 0) {
-        if ($str.Length -gt 500) { $str = $str.Substring(0, 497) + "..." }
-        throw "AWS CLI failed (exit $exit): $str"
-    }
     if ([string]::IsNullOrWhiteSpace($str)) { return $null }
-    try { return ($str | ConvertFrom-Json) } catch { return $null }
+    try { return $str | ConvertFrom-Json } catch { return $null }
 }
 
-# --- [1] SSM ---
-function Test-SsmAudit {
-    $aiOk = $true; $msgOk = $true; $videoOk = $true
-
-    # AI / Messaging: same path /academy/workers/env exists and get-parameter succeeds
-    $paramOut = ExecJson @("ssm", "get-parameter", "--name", $SsmWorkersEnv, "--region", $Region, "--with-decryption", "--output", "json")
-    if (-not $paramOut -or -not $paramOut.Parameter -or $null -eq $paramOut.Parameter.Value) {
-        Add-Failure -Worker "AI Worker" -Area "SSM" -Resource $SsmWorkersEnv -Message "Parameter missing or empty"
-        $aiOk = $false; $msgOk = $false
-    } else {
-        Write-AuditVerbose "  AI/Messaging SSM path $SsmWorkersEnv exists."
-    }
-
-    # Video: full JSON validity, required keys, DJANGO_SETTINGS_MODULE, API_BASE_URL public warning
-    if ($paramOut -and $paramOut.Parameter.Value) {
-        $valueStr = $paramOut.Parameter.Value
-        $payload = $null
-        try { $payload = $valueStr | ConvertFrom-Json } catch {
-            try {
-                $valueBytes = [Convert]::FromBase64String($valueStr)
-                $valueStr = [System.Text.Encoding]::UTF8.GetString($valueBytes)
-                $payload = $valueStr | ConvertFrom-Json
-            } catch {}
-        }
-        if (-not $payload -or $payload -isnot [System.Management.Automation.PSCustomObject]) {
-            Add-Failure -Worker "Video Worker" -Area "SSM" -Resource $SsmWorkersEnv -Message "Value is not valid JSON (or base64 JSON)"
-            $videoOk = $false
-        } else {
-            $required = @("AWS_DEFAULT_REGION", "DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_PORT",
-                "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_ENDPOINT", "R2_VIDEO_BUCKET",
-                "API_BASE_URL", "INTERNAL_WORKER_TOKEN", "REDIS_HOST", "REDIS_PORT", "DJANGO_SETTINGS_MODULE")
-            $missing = @()
-            foreach ($k in $required) {
-                $v = $payload.PSObject.Properties[$k]
-                if ($null -eq $v -or $null -eq $v.Value -or ([string]$v.Value).Trim() -eq '') { $missing += $k }
-            }
-            if ($missing.Count -gt 0) {
-                Add-Failure -Worker "Video Worker" -Area "SSM" -Resource $SsmWorkersEnv -Message "Missing or empty keys: $($missing -join ', ')"
-                $videoOk = $false
-            }
-            $dsm = ($payload.PSObject.Properties["DJANGO_SETTINGS_MODULE"].Value -as [string]).Trim()
-            if ($dsm -ne "apps.api.config.settings.worker") {
-                Add-Failure -Worker "Video Worker" -Area "SSM" -Resource $SsmWorkersEnv -Message "DJANGO_SETTINGS_MODULE must be 'apps.api.config.settings.worker' (got '$dsm')"
-                $videoOk = $false
-            }
-            $apiBase = $payload.API_BASE_URL -as [string]
-            if ($apiBase -and $apiBase -match '^https?://([^/:]+)') {
-                $hostPart = $Matches[1]
-                if ($hostPart -notmatch '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)') {
-                    Write-Host "  WARN: API_BASE_URL appears to be public (not private IP). Video Batch should use private API URL in VPC." -ForegroundColor Yellow
-                }
-            }
-        }
-    }
-
-    return @{ AI = $aiOk; Messaging = $msgOk; Video = $videoOk }
-}
-
-# --- [2] Network (ASG: LT, SG, VPC, Subnet; Batch: CE, Queue, JobDefs, SG, API private) ---
-function Test-NetworkAudit {
-    $aiOk = $true; $msgOk = $true; $videoOk = $true
-
-    # ASG: describe ASGs to get LT, VPC, Subnets, SG
-    foreach ($asgName in @($AsgAiName, $AsgMessagingName)) {
-        $asgJson = ExecJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $asgName, "--region", $Region, "--output", "json")
-        $ag = $asgJson.AutoScalingGroups | Where-Object { $_.AutoScalingGroupName -eq $asgName } | Select-Object -First 1
-        if (-not $ag) {
-            Add-Failure -Worker $(if ($asgName -eq $AsgAiName) { "AI Worker" } else { "Messaging Worker" }) -Area "Network" -Resource $asgName -Message "ASG not found"
-            if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
-            continue
-        }
-        $ltName = $ag.LaunchTemplate.LaunchTemplateName
-        if (-not $ltName) {
-            Add-Failure -Worker $(if ($asgName -eq $AsgAiName) { "AI Worker" } else { "Messaging Worker" }) -Area "Network" -Resource $asgName -Message "Launch Template not set"
-            if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
-            continue
-        }
-        $ltDesc = ExecJson @("ec2", "describe-launch-templates", "--launch-template-names", $ltName, "--region", $Region, "--output", "json")
-        $lt = $ltDesc.LaunchTemplates | Where-Object { $_.LaunchTemplateName -eq $ltName } | Select-Object -First 1
-        if (-not $lt) {
-            Add-Failure -Worker $(if ($asgName -eq $AsgAiName) { "AI Worker" } else { "Messaging Worker" }) -Area "Network" -Resource $ltName -Message "Launch Template not found"
-            if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
-        } else {
-            $ltVer = ExecJson @("ec2", "describe-launch-template-versions", "--launch-template-name", $ltName, "--region", $Region, "--output", "json")
-            $ltData = $null
-            if ($ltVer -and $ltVer.LaunchTemplateVersions -and $ltVer.LaunchTemplateVersions.Count -gt 0) { $ltData = $ltVer.LaunchTemplateVersions[0].LaunchTemplateData }
-            if ($ltData -and $ltData.SecurityGroupIds -and $ltData.SecurityGroupIds.Count -gt 0) {
-                Write-AuditVerbose "  ASG $asgName SG: $($ltData.SecurityGroupIds -join ', ')"
-            }
-        }
-        if (-not $ag.VpcZoneIdentifier) {
-            Add-Failure -Worker $(if ($asgName -eq $AsgAiName) { "AI Worker" } else { "Messaging Worker" }) -Area "Network" -Resource $asgName -Message "VPC/Subnet (VpcZoneIdentifier) not set"
-            if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
-        }
-        Write-AuditVerbose "  ASG $asgName LT=$ltName VpcZoneIdentifier set."
-    }
-
-    # Batch: CE ENABLED & VALID, Queue ENABLED, JobDefs ACTIVE, SG consistency
-    $ceList = ExecJson @("batch", "describe-compute-environments", "--region", $Region, "--output", "json")
-    $ce = $ceList.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Select-Object -First 1
-    if (-not $ce) { $ce = $ceList.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvFallback } | Select-Object -First 1 }
-    if (-not $ce) {
-        Add-Failure -Worker "Video Worker" -Area "Network" -Resource $ComputeEnvName -Message "Compute environment not found"
-        $videoOk = $false
-    } else {
-        if ($ce.state -ne "ENABLED") {
-            Add-Failure -Worker "Video Worker" -Area "Network" -Resource $ce.computeEnvironmentName -Message "CE state=$($ce.state) (expected ENABLED)"
-            $videoOk = $false
-        }
-        if ($ce.status -ne "VALID") {
-            Add-Failure -Worker "Video Worker" -Area "Network" -Resource $ce.computeEnvironmentName -Message "CE status=$($ce.status) (expected VALID)"
-            $videoOk = $false
-        }
-        if ($ce.computeResources.securityGroupIds -and $ce.computeResources.securityGroupIds.Count -gt 0) {
-            Write-AuditVerbose "  Batch CE SG: $($ce.computeResources.securityGroupIds -join ', ')"
-        }
-    }
-
-    $jq = ExecJson @("batch", "describe-job-queues", "--job-queues", $JobQueueName, "--region", $Region, "--output", "json")
-    $q = $jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName } | Select-Object -First 1
-    if (-not $q) {
-        Add-Failure -Worker "Video Worker" -Area "Network" -Resource $JobQueueName -Message "Job queue not found"
-        $videoOk = $false
-    } elseif ($q.state -ne "ENABLED") {
-        Add-Failure -Worker "Video Worker" -Area "Network" -Resource $JobQueueName -Message "Queue state=$($q.state) (expected ENABLED)"
-        $videoOk = $false
-    }
-
-    foreach ($jdName in @("academy-video-batch-jobdef", "academy-video-ops-netprobe")) {
-        $jd = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $jdName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
-        if (-not $jd.jobDefinitions -or $jd.jobDefinitions.Count -eq 0) {
-            Add-Failure -Worker "Video Worker" -Area "Network" -Resource $jdName -Message "Job definition not ACTIVE"
-            $videoOk = $false
-        }
-    }
-
-    Write-AuditVerbose "  Video Batch: CE/Queue/JobDefs checked; API private IP checked via SSM."
-
-    return @{ AI = $aiOk; Messaging = $msgOk; Video = $videoOk }
-}
-
-# --- [3] Runtime connectivity ---
-function Test-RuntimeAudit {
-    $aiOk = $true; $msgOk = $true; $videoOk = $true
-
-    $paramOut = ExecJson @("ssm", "get-parameter", "--name", $SsmWorkersEnv, "--region", $Region, "--with-decryption", "--output", "json")
-    $apiBaseUrl = $null
-    if ($paramOut -and $paramOut.Parameter.Value) {
-        $valueStr = $paramOut.Parameter.Value
-        try { $payload = $valueStr | ConvertFrom-Json } catch {
-            try { $payload = ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($valueStr))) | ConvertFrom-Json } catch { $payload = $null }
-        }
-        if ($payload) { $apiBaseUrl = $payload.API_BASE_URL -as [string] }
-    }
-    if (-not $apiBaseUrl) {
-        Write-Host "  WARN: Cannot get API_BASE_URL from SSM; skipping ASG runtime curl." -ForegroundColor Yellow
-    }
-
-    # AI Worker: one instance, SSM send-command curl API/health
-    $asgAi = ExecJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $AsgAiName, "--region", $Region, "--output", "json")
-    $instancesAi = @()
-    if ($asgAi -and $asgAi.AutoScalingGroups -and $asgAi.AutoScalingGroups.Count -gt 0) {
-        $instancesAi = @($asgAi.AutoScalingGroups[0].Instances | Where-Object { $_.LifecycleState -eq "InService" -and $_.HealthStatus -eq "Healthy" } | ForEach-Object { $_.InstanceId })
-    }
-    if ($instancesAi.Count -eq 0) {
-        Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $AsgAiName -Message "No InService/Healthy instance for SSM command"
-        $aiOk = $false
-    } elseif ($apiBaseUrl) {
-        $healthUrl = $apiBaseUrl.TrimEnd('/') + "/health"
-        $payload = @{
-            InstanceIds = @($instancesAi[0])
-            DocumentName = "AWS-RunShellScript"
-            Parameters = @{
-                commands = @("curl -sf --connect-timeout 5 `"$healthUrl`" || echo CURL_FAIL")
-            }
-        }
-        $json = $payload | ConvertTo-Json -Depth 5 -Compress
-        $prevErr = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        $sendRaw = & aws ssm send-command --cli-input-json $json --region $Region --output json 2>&1
-        $sendExit = $LASTEXITCODE
-        $ErrorActionPreference = $prevErr
-        $sendOut = $null
-        if ($sendRaw) { $sendStr = ($sendRaw | Out-String).Trim(); if ($sendStr) { try { $sendOut = $sendStr | ConvertFrom-Json } catch {} } }
-        if (-not $sendOut -or -not $sendOut.Command.CommandId) {
-            $errMsg = "SSM send-command failed"
-            if ($sendExit -ne 0 -and $sendRaw) { $errDetail = ($sendRaw | Out-String).Trim(); if ($errDetail.Length -gt 0 -and $errDetail.Length -lt 500) { $errMsg = $errDetail } elseif ($errDetail.Length -ge 500) { $errMsg = $errDetail.Substring(0, 497) + "..." } }
-            Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $instancesAi[0] -Message $errMsg
-            $aiOk = $false
-        } else {
-            $cmdId = $sendOut.Command.CommandId
-            Start-Sleep -Seconds 8
-            $invOut = ExecJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instancesAi[0], "--region", $Region, "--output", "json")
-            if ($invOut.Status -ne "Success" -or ($invOut.StandardOutputContent -and $invOut.StandardOutputContent -match "CURL_FAIL")) {
-                Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $instancesAi[0] -Message "API health check failed (SSM command status=$($invOut.Status))"
-                $aiOk = $false
-            }
-        }
-    }
-
-    $asgMsg = ExecJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $AsgMessagingName, "--region", $Region, "--output", "json")
-    $instancesMsg = @()
-    if ($asgMsg -and $asgMsg.AutoScalingGroups -and $asgMsg.AutoScalingGroups.Count -gt 0) {
-        $instancesMsg = @($asgMsg.AutoScalingGroups[0].Instances | Where-Object { $_.LifecycleState -eq "InService" -and $_.HealthStatus -eq "Healthy" } | ForEach-Object { $_.InstanceId })
-    }
-    if ($instancesMsg.Count -eq 0) {
-        Add-Failure -Worker "Messaging Worker" -Area "Runtime" -Resource $AsgMessagingName -Message "No InService/Healthy instance for SSM command"
-        $msgOk = $false
-    } elseif ($apiBaseUrl) {
-        $healthUrl = $apiBaseUrl.TrimEnd('/') + "/health"
-        $payload = @{
-            InstanceIds = @($instancesMsg[0])
-            DocumentName = "AWS-RunShellScript"
-            Parameters = @{
-                commands = @("curl -sf --connect-timeout 5 `"$healthUrl`" || echo CURL_FAIL")
-            }
-        }
-        $json = $payload | ConvertTo-Json -Depth 5 -Compress
-        $prevErr = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        $sendRaw = & aws ssm send-command --cli-input-json $json --region $Region --output json 2>&1
-        $sendExit = $LASTEXITCODE
-        $ErrorActionPreference = $prevErr
-        $sendOut = $null
-        if ($sendRaw) { $sendStr = ($sendRaw | Out-String).Trim(); if ($sendStr) { try { $sendOut = $sendStr | ConvertFrom-Json } catch {} } }
-        if (-not $sendOut -or -not $sendOut.Command.CommandId) {
-            $errMsg = "SSM send-command failed"
-            if ($sendExit -ne 0 -and $sendRaw) { $errDetail = ($sendRaw | Out-String).Trim(); if ($errDetail.Length -gt 0 -and $errDetail.Length -lt 500) { $errMsg = $errDetail } elseif ($errDetail.Length -ge 500) { $errMsg = $errDetail.Substring(0, 497) + "..." } }
-            Add-Failure -Worker "Messaging Worker" -Area "Runtime" -Resource $instancesMsg[0] -Message $errMsg
-            $msgOk = $false
-        } else {
-            Start-Sleep -Seconds 8
-            $invOut = ExecJson @("ssm", "get-command-invocation", "--command-id", $sendOut.Command.CommandId, "--instance-id", $instancesMsg[0], "--region", $Region, "--output", "json")
-            if ($invOut.Status -ne "Success" -or ($invOut.StandardOutputContent -and $invOut.StandardOutputContent -match "CURL_FAIL")) {
-                Add-Failure -Worker "Messaging Worker" -Area "Runtime" -Resource $instancesMsg[0] -Message "API health check failed (SSM command status=$($invOut.Status))"
-                $msgOk = $false
-            }
-        }
-    }
-
-    $netprobeScript = Join-Path $ScriptRoot "run_netprobe_job.ps1"
-    if (-not (Test-Path -LiteralPath $netprobeScript)) {
-        Add-Failure -Worker "Video Worker" -Area "Runtime" -Resource "run_netprobe_job.ps1" -Message "Script not found"
-        $videoOk = $false
-    } else {
-        $prevErr = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        & $netprobeScript -Region $Region -JobQueueName $JobQueueName -JobDefName "academy-video-ops-netprobe" 2>&1 | Out-Null
-        $npExit = $LASTEXITCODE
-        $ErrorActionPreference = $prevErr
-        if ($npExit -ne 0) {
-            Add-Failure -Worker "Video Worker" -Area "Runtime" -Resource "netprobe job" -Message "run_netprobe_job.ps1 did not return SUCCEEDED (exit $npExit)"
-            $videoOk = $false
-        }
-    }
-
-    return @{ AI = $aiOk; Messaging = $msgOk; Video = $videoOk }
-}
-
-# --- [4] Image integrity ---
-function Test-ImageAudit {
-    $aiOk = $true; $msgOk = $true; $videoOk = $true
-    $accountId = (aws sts get-caller-identity --query Account --output text 2>$null)
-    if (-not $accountId) {
-        Add-Failure -Worker "All" -Area "Image" -Resource "sts get-caller-identity" -Message "Cannot get account ID"
-        return @{ AI = $false; Messaging = $false; Video = $false }
-    }
-
-    foreach ($repo in @($EcrAi, $EcrMessaging, $EcrVideo)) {
-        $img = ExecJson @("ecr", "describe-images", "--repository-name", $repo, "--image-ids", "imageTag=latest", "--region", $Region, "--output", "json")
-        $details = $img.imageDetails | Where-Object { $_.imageTags -contains "latest" } | Select-Object -First 1
-        if (-not $details -or -not $details.imageDigest) {
-            $w = switch ($repo) { $EcrAi { "AI Worker" } $EcrMessaging { "Messaging Worker" } default { "Video Worker" } }
-            Add-Failure -Worker $w -Area "Image" -Resource "${repo}:latest" -Message "ECR image latest not found or no digest"
-            if ($repo -eq $EcrAi) { $aiOk = $false } elseif ($repo -eq $EcrMessaging) { $msgOk = $false } else { $videoOk = $false }
-        }
-    }
-
-    $jd = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", "academy-video-batch-jobdef", "--status", "ACTIVE", "--region", $Region, "--output", "json")
-    if ($jd -and $jd.jobDefinitions -and $jd.jobDefinitions.Count -gt 0) {
-        $containerImage = $jd.jobDefinitions[0].containerProperties.image
-        if ($containerImage -match '@(sha256:[a-fA-F0-9:]+)$') {
-            $jobDigest = $Matches[1]
-            $ecrImg = ExecJson @("ecr", "describe-images", "--repository-name", $EcrVideo, "--image-ids", "imageTag=latest", "--region", $Region, "--output", "json")
-            if ($ecrImg -and $ecrImg.imageDetails -and $ecrImg.imageDetails.Count -gt 0) {
-                $ecrDigest = $ecrImg.imageDetails[0].imageDigest
-                if ($ecrDigest -and $jobDigest -ne $ecrDigest) {
-                    Write-Host "  WARN: Video Job Def image digest differs from ECR latest. Consider registering new job definition revision." -ForegroundColor Yellow
-                }
-            }
-        }
-    }
-
-    return @{ AI = $aiOk; Messaging = $msgOk; Video = $videoOk }
-}
-
-# --- [5] AutoScaling state ---
-function Test-AsgAudit {
-    $aiOk = $true; $msgOk = $true
-
-    foreach ($asgName in @($AsgAiName, $AsgMessagingName)) {
-        $asgJson = ExecJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $asgName, "--region", $Region, "--output", "json")
-        $ag = $null
-        if ($asgJson -and $asgJson.AutoScalingGroups -and $asgJson.AutoScalingGroups.Count -gt 0) { $ag = $asgJson.AutoScalingGroups[0] }
-        if (-not $ag) {
-            Add-Failure -Worker $(if ($asgName -eq $AsgAiName) { "AI Worker" } else { "Messaging Worker" }) -Area "ASG" -Resource $asgName -Message "ASG not found"
-            if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
-            continue
-        }
-        $unhealthy = @($ag.Instances | Where-Object { $_.HealthStatus -ne "Healthy" -and $_.LifecycleState -eq "InService" }).Count
-        if ($unhealthy -gt 0) {
-            Add-Failure -Worker $(if ($asgName -eq $AsgAiName) { "AI Worker" } else { "Messaging Worker" }) -Area "ASG" -Resource $asgName -Message "Unhealthy InService instance count: $unhealthy"
-            if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
-        }
-        $act = ExecJson @("autoscaling", "describe-scaling-activities", "--auto-scaling-group-name", $asgName, "--region", $Region, "--max-items", "5", "--output", "json")
-        $failed = @()
-        if ($act -and $act.Activities) { $failed = @($act.Activities | Where-Object { $_.StatusCode -match "Failed" }) }
-        if ($failed -and $failed.Count -gt 0) {
-            Add-Failure -Worker $(if ($asgName -eq $AsgAiName) { "AI Worker" } else { "Messaging Worker" }) -Area "ASG" -Resource $asgName -Message "Recent scaling activity failure: $($failed[0].StatusCode)"
-            if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
-        }
-    }
-
-    return @{ AI = $aiOk; Messaging = $msgOk; Video = $true }
-}
-
-# --- [6] CloudWatch alarms ---
-function Test-AlarmsAudit {
-    $aiOk = $true; $msgOk = $true; $videoOk = $true
-
-    $cw = ExecJson @("cloudwatch", "describe-alarms", "--alarm-names") + @($VideoAlarmNames) + @("--region", $Region, "--output", "json")
-    $found = @(if ($cw.MetricAlarms) { $cw.MetricAlarms | ForEach-Object { $_.AlarmName } } else { @() })
-    $missing = $VideoAlarmNames | Where-Object { $_ -notin $found }
-    if ($missing.Count -gt 0) {
-        Add-Failure -Worker "Video Worker" -Area "CloudWatch" -Resource ($missing -join ", ") -Message "Missing alarms. Run cloudwatch_deploy_video_alarms.ps1"
-        $videoOk = $false
-    }
-    if ($VerbosePreference -eq 'Continue' -and $cw.MetricAlarms) {
-        foreach ($a in $cw.MetricAlarms) { Write-AuditVerbose "  Alarm $($a.AlarmName) = $($a.StateValue)" }
-    }
-
-    return @{ AI = $aiOk; Messaging = $msgOk; Video = $videoOk }
-}
-
-# --- [7] Video Batch Production Audit: Discovery-based Reconcile + JSON report ---
-function Add-Check { param([string]$Id, [string]$Level, [string]$Details)
-    $script:AuditReport.checks += @{ id = $Id; level = $Level; details = $Details }
-}
-function Add-FixApplied { param([string]$Action, [string]$Details)
-    $script:AuditReport.fixesApplied += @{ action = $Action; details = $Details }
-}
-
-function Invoke-VideoBatchProductionAudit {
-    $timestamp = Get-Date -Format "yyyyMMddHHmmss"
-    $script:AuditReport = @{
-        meta = @{
-            region = $Region
-            accountId = $accountId
-            timestamp = $timestamp
-            fixMode = [bool]$FixMode
-            killExtraReconcile = [bool]$KillExtraReconcile
-        }
-        discovery = @{}
-        checks = @()
-        fixesApplied = @()
-    }
-    $summary = [System.Collections.ArrayList]::new()
-    $ok = $true
-
+# Use legacy JSON parse (works on PS 5.x; ensure UTF-8 from aws)
+function Aws-JsonSafe {
+    param([string[]]$ArgsArray)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) "aws_out_$(Get-Date -Format 'yyyyMMddHHmmss').json"
+    $utf8 = New-Object System.Text.UTF8Encoding $false
     try {
-        # ---- [A] Discovery ----
-        Write-Section "Video Batch Production Audit (Discovery)"
-        $qList = ExecJson @("batch", "describe-job-queues", "--region", $Region, "--output", "json")
-        $enabledQueues = @()
-        if ($qList -and $qList.jobQueues) {
-            $enabledQueues = @($qList.jobQueues | Where-Object { $_.state -eq "ENABLED" })
-        }
-        if ($enabledQueues.Count -eq 0) {
-            Add-Check -Id "DISCOVERY.NO_ENABLED_QUEUE" -Level "BLOCKER" -Details "No ENABLED job queue found in region."
-            Add-Failure -Worker "Video Worker" -Area "Reconcile" -Resource "Batch" -Message "No ENABLED job queue"
-            [void]$summary.Add("  Discovery: No ENABLED job queue.")
-            return @{ Ok = $false; Summary = $summary }
-        }
-        $script:AuditReport.discovery.jobQueues = @($enabledQueues | ForEach-Object { $_.jobQueueName })
-        $script:AuditReport.discovery.computeEnvironments = @($enabledQueues[0].computeEnvironmentOrder | ForEach-Object { $_.computeEnvironment })
-        Write-Ok "JobQueues (ENABLED): $($script:AuditReport.discovery.jobQueues -join ', ')"
-
-        $rulesOut = ExecJson @("events", "list-rules", "--region", $Region, "--output", "json")
-        $rulesWithBatch = @()
-        $reconcileRuleName = $null
-        $reconcileJobDefInTarget = $null
-        if ($rulesOut -and $rulesOut.Rules) {
-            foreach ($r in $rulesOut.Rules) {
-                $tgt = ExecJson @("events", "list-targets-by-rule", "--rule", $r.Name, "--region", $Region, "--output", "json")
-                if (-not $tgt -or -not $tgt.Targets) { continue }
-                foreach ($t in $tgt.Targets) {
-                    if ($t.BatchParameters -and $t.BatchParameters.JobDefinition) {
-                        $rulesWithBatch += @{ RuleName = $r.Name; JobDefinition = $t.BatchParameters.JobDefinition; TargetId = $t.Id; Arn = $t.Arn; RoleArn = $t.RoleArn }
-                        if (($t.BatchParameters.JobDefinition -as [string]) -match 'reconcile') {
-                            $reconcileRuleName = $r.Name
-                            $reconcileJobDefInTarget = $t.BatchParameters.JobDefinition -as [string]
-                        }
-                    }
-                }
-            }
-        }
-        $script:AuditReport.discovery.eventBridgeRulesWithBatch = @($rulesWithBatch | ForEach-Object { $_.RuleName } | Select-Object -Unique)
-        if (-not $reconcileRuleName) {
-            Add-Check -Id "DISCOVERY.NO_RECONCILE_RULE" -Level "BLOCKER" -Details "No EventBridge rule with Batch target for reconcile job definition found."
-            Add-Failure -Worker "Video Worker" -Area "Reconcile" -Resource "EventBridge" -Message "Reconcile rule not found (no Batch target with 'reconcile' in JobDefinition)"
-            [void]$summary.Add("  Discovery: Reconcile EventBridge rule not found.")
-            return @{ Ok = $false; Summary = $summary }
-        }
-        $script:AuditReport.discovery.reconcileRuleName = $reconcileRuleName
-        $script:AuditReport.discovery.reconcileJobDefinitionInTarget = $reconcileJobDefInTarget
-        Write-Ok "Reconcile rule: $reconcileRuleName (JobDefinition in target: $reconcileJobDefInTarget)"
-
-        $jdNameBase = $reconcileJobDefInTarget -replace ':\d+$', ''
-        $jdList = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $jdNameBase, "--status", "ACTIVE", "--region", $Region, "--output", "json")
-        $reconcileJd = $null
-        if ($jdList -and $jdList.jobDefinitions -and $jdList.jobDefinitions.Count -gt 0) {
-            $reconcileJd = $jdList.jobDefinitions | Sort-Object -Property revision -Descending | Select-Object -First 1
-        }
-        if (-not $reconcileJd) {
-            Add-Check -Id "DISCOVERY.NO_RECONCILE_JOB_DEF" -Level "BLOCKER" -Details "Job definition '$jdNameBase' not ACTIVE."
-            Add-Failure -Worker "Video Worker" -Area "Reconcile" -Resource $jdNameBase -Message "Reconcile job definition not ACTIVE"
-            [void]$summary.Add("  Discovery: Reconcile job definition not ACTIVE.")
-            return @{ Ok = $false; Summary = $summary }
-        }
-        $jobRoleArn = $reconcileJd.containerProperties.jobRoleArn
-        $jobRoleName = $null
-        if ($jobRoleArn -match '/role/([^/]+)$') { $jobRoleName = $Matches[1] }
-        if (-not $jobRoleName) {
-            Add-Check -Id "DISCOVERY.NO_JOB_ROLE" -Level "BLOCKER" -Details "Reconcile job definition has no jobRoleArn."
-            [void]$summary.Add("  Discovery: jobRoleArn not set.")
-            return @{ Ok = $false; Summary = $summary }
-        }
-        $script:AuditReport.discovery.reconcileJobDefinitionArn = $reconcileJd.jobDefinitionArn
-        $script:AuditReport.discovery.jobRoleArn = $jobRoleArn
-        $script:AuditReport.discovery.jobRoleName = $jobRoleName
-        [void]$summary.Add("  Reconcile jobRoleArn: $jobRoleArn")
-
-        $runningReconcileJobs = @()
-        foreach ($q in $enabledQueues) {
-            $listOut = ExecJson @("batch", "list-jobs", "--job-queue", $q.jobQueueArn, "--job-status", "RUNNING", "--region", $Region, "--output", "json")
-            if (-not $listOut -or -not $listOut.jobSummaryList) { continue }
-            $ids = @($listOut.jobSummaryList | ForEach-Object { $_.jobId })
-            if ($ids.Count -eq 0) { continue }
-            $desc = ExecJson @("batch", "describe-jobs", "--jobs", $ids, "--region", $Region, "--output", "json")
-            if ($desc -and $desc.jobs) {
-                foreach ($j in $desc.jobs) {
-                    if (($j.jobDefinition -as [string]) -match 'reconcile') {
-                        $runningReconcileJobs += @{ jobId = $j.jobId; jobQueue = $q.jobQueueName; startedAt = $j.startedAt }
-                    }
-                }
-            }
-        }
-        $script:AuditReport.discovery.runningReconcileJobCount = $runningReconcileJobs.Count
-        $script:AuditReport.discovery.runningReconcileJobs = @($runningReconcileJobs | ForEach-Object { $_.jobId })
-        [void]$summary.Add("  RUNNING reconcile jobs: $($runningReconcileJobs.Count)")
-
-        # ---- [B] IAM DescribeJobs ----
-        Write-Section "IAM (batch:DescribeJobs)"
-        $hasDescribeJobs = $false
-        $attached = ExecJson @("iam", "list-attached-role-policies", "--role-name", $jobRoleName, "--output", "json")
-        if ($attached -and $attached.AttachedPolicies) {
-            foreach ($ap in $attached.AttachedPolicies) {
-                $policyOut = ExecJson @("iam", "get-policy", "--policy-arn", $ap.PolicyArn, "--output", "json")
-                if (-not $policyOut -or -not $policyOut.Policy) { continue }
-                $verOut = ExecJson @("iam", "get-policy-version", "--policy-arn", $ap.PolicyArn, "--version-id", $policyOut.Policy.DefaultVersionId, "--output", "json")
-                if ($verOut -and $verOut.PolicyVersion.Document) {
-                    $docStr = if ($verOut.PolicyVersion.Document -is [string]) { $verOut.PolicyVersion.Document } else { $verOut.PolicyVersion.Document | ConvertTo-Json -Compress }
-                    if ($docStr -match 'batch:\*|batch:DescribeJobs') { $hasDescribeJobs = $true; break }
-                }
-            }
-        }
-        if (-not $hasDescribeJobs) {
-            $inlineList = ExecJson @("iam", "list-role-policies", "--role-name", $jobRoleName, "--output", "json")
-            if ($inlineList -and $inlineList.PolicyNames) {
-                foreach ($pn in $inlineList.PolicyNames) {
-                    $rpOut = ExecJson @("iam", "get-role-policy", "--role-name", $jobRoleName, "--policy-name", $pn, "--output", "json")
-                    if ($rpOut -and $rpOut.PolicyDocument) {
-                        $docStr = if ($rpOut.PolicyDocument -is [string]) { $rpOut.PolicyDocument } else { $rpOut.PolicyDocument | ConvertTo-Json -Compress }
-                        if ($docStr -match 'batch:\*|batch:DescribeJobs') { $hasDescribeJobs = $true; break }
-                    }
-                }
-            }
-        }
-        if (-not $hasDescribeJobs) {
-            Add-Check -Id "IAM.DESCRIBEJOBS" -Level "BLOCKER" -Details "Role $jobRoleName has no batch:DescribeJobs (or batch:*) in attached or inline policies. Reconcile will get AccessDenied and mis-detect RUNNING jobs."
-            Write-Blocker "Job role $jobRoleName missing batch:DescribeJobs"
-            Add-Failure -Worker "Video Worker" -Area "Reconcile" -Resource $jobRoleName -Message "Job role missing batch:DescribeJobs"
-            $ok = $false
-            [void]$summary.Add("  Job role batch:DescribeJobs: MISSING")
-
-            if ($FixMode) {
-                $policyName = $ManagedPolicyNameDescribeJobsProduction
-                $policyArn = "arn:aws:iam::${accountId}:policy/$policyName"
-                $policyExists = ExecJson @("iam", "get-policy", "--policy-arn", $policyArn, "--output", "json")
-                if ($policyExists -and $policyExists.Policy) {
-                    $attachList = ExecJson @("iam", "list-attached-role-policies", "--role-name", $jobRoleName, "--output", "json")
-                    $alreadyAttached = $false
-                    if ($attachList -and $attachList.AttachedPolicies) {
-                        foreach ($a in $attachList.AttachedPolicies) { if ($a.PolicyArn -eq $policyArn) { $alreadyAttached = $true; break } }
-                    }
-                    if (-not $alreadyAttached) {
-                        try {
-                            ExecJsonThrow @("iam", "attach-role-policy", "--role-name", $jobRoleName, "--policy-arn", $policyArn)
-                            Add-FixApplied -Action "IAM.AttachRolePolicy" -Details "Attached $policyName to $jobRoleName"
-                            Write-Ok "Attached existing managed policy $policyName to $jobRoleName"
-                            $ok = $true
-                        } catch {
-                            Add-Check -Id "FIX.IAM_ATTACH" -Level "BLOCKER" -Details $_.Exception.Message
-                            Write-Blocker "Attach failed: $($_.Exception.Message)"
-                        }
-                    } else {
-                        Add-FixApplied -Action "IAM.AttachRolePolicy" -Details "Policy $policyName already attached (no change)"
-                        Write-Ok "Policy already attached (no change)"
-                        $ok = $true
-                    }
-                } else {
-                    $policyDoc = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["batch:DescribeJobs","batch:ListJobs"],"Resource":"*"}]}'
-                    $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) "AcademyAllowBatchDescribeJobs-$(Get-Date -Format 'yyyyMMddHHmmss').json"
-                    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-                    [System.IO.File]::WriteAllText($tempFile, $policyDoc, $utf8NoBom)
-                    try {
-                        $createRaw = & aws iam create-policy --policy-name $policyName --policy-document "file://$($tempFile -replace '\\','/')" --description "Allows Batch job role DescribeJobs/ListJobs for reconcile" --output json 2>&1
-                        if ($LASTEXITCODE -eq 0 -and $createRaw) {
-                            $createJson = $createRaw | ConvertFrom-Json
-                            $newArn = $createJson.Policy.Arn
-                            ExecJsonThrow @("iam", "attach-role-policy", "--role-name", $jobRoleName, "--policy-arn", $newArn)
-                            Add-FixApplied -Action "IAM.CreatePolicyAndAttach" -Details "Created $policyName and attached to $jobRoleName"
-                            Write-Ok "Created managed policy $policyName and attached to $jobRoleName"
-                            $ok = $true
-                        } elseif (($createRaw | Out-String) -match "EntityAlreadyExists") {
-                            ExecJsonThrow @("iam", "attach-role-policy", "--role-name", $jobRoleName, "--policy-arn", $policyArn)
-                            Add-FixApplied -Action "IAM.AttachRolePolicy" -Details "Attached existing $policyName to $jobRoleName"
-                            Write-Ok "Attached existing $policyName to $jobRoleName"
-                            $ok = $true
-                        } else {
-                            Write-Blocker "Create policy failed: $createRaw"
-                            $ok = $false
-                        }
-                    } finally {
-                        if (Test-Path -LiteralPath $tempFile) { Remove-Item $tempFile -Force -ErrorAction SilentlyContinue }
-                    }
-                }
-            }
-        } else {
-            Add-Check -Id "IAM.DESCRIBEJOBS" -Level "OK" -Details "Role $jobRoleName has batch:DescribeJobs (or batch:*)"
-            Write-Ok "Job role has batch:DescribeJobs"
-            [void]$summary.Add("  Job role batch:DescribeJobs: OK")
-        }
-
-        # ---- [C] EventBridge revision pinning ----
-        Write-Section "EventBridge Revision Pinning"
-        $ruleOut = ExecJson @("events", "describe-rule", "--name", $reconcileRuleName, "--region", $Region, "--output", "json")
-        $scheduleExpr = $null
-        if ($ruleOut) { $scheduleExpr = $ruleOut.ScheduleExpression -as [string] }
-        $script:AuditReport.discovery.scheduleExpression = $scheduleExpr
-        $tgtOut = ExecJson @("events", "list-targets-by-rule", "--rule", $reconcileRuleName, "--region", $Region, "--output", "json")
-        $jdInTarget = $null
-        if ($tgtOut -and $tgtOut.Targets -and $tgtOut.Targets.Count -gt 0) {
-            $jdInTarget = $tgtOut.Targets[0].BatchParameters.JobDefinition -as [string]
-        }
-        $revisionPinned = $jdInTarget -and $jdInTarget -match ':\d+$'
-        if ($revisionPinned) {
-            Add-Check -Id "EB.REVISION_PIN" -Level "WARN" -Details "EventBridge target uses fixed revision: $jdInTarget. New job definition revisions will not be used until target is updated."
-            Write-Warn "Target JobDefinition is pinned to revision: $jdInTarget"
-            $ok = $false
-            [void]$summary.Add("  EventBridge JobDefinition: $jdInTarget (fixed revision - WARN)")
-
-            if ($FixMode) {
-                $latestRev = $reconcileJd.revision
-                $jobDefNameOnly = $jdNameBase
-                $newJobDefValue = "${jobDefNameOnly}:$latestRev"
-                $targets = @($tgtOut.Targets)
-                $updated = $false
-                for ($i = 0; $i -lt $targets.Count; $i++) {
-                    if ($targets[$i].BatchParameters -and $targets[$i].BatchParameters.JobDefinition -eq $jdInTarget) {
-                        $targets[$i].BatchParameters.JobDefinition = $newJobDefValue
-                        $updated = $true
-                        break
-                    }
-                }
-                if ($updated) {
-                    $putTargetsJson = @{ Rule = $reconcileRuleName; Targets = @($targets) } | ConvertTo-Json -Depth 10 -Compress
-                    $putFile = Join-Path ([System.IO.Path]::GetTempPath()) "eventbridge_put_targets_$(Get-Date -Format 'yyyyMMddHHmmss').json"
-                    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-                    [System.IO.File]::WriteAllText($putFile, $putTargetsJson, $utf8NoBom)
-                    try {
-                        ExecJsonThrow @("events", "put-targets", "--cli-input-json", "file://$($putFile -replace '\\','/')", "--region", $Region)
-                        Add-FixApplied -Action "EB.UpdateTargetRevision" -Details "Updated target JobDefinition from $jdInTarget to $newJobDefValue (latest ACTIVE revision)"
-                        Write-Ok "Updated target to latest revision: $newJobDefValue"
-                        $ok = $true
-                    } catch {
-                        Write-Blocker "put-targets failed: $($_.Exception.Message)"
-                    } finally {
-                        if (Test-Path -LiteralPath $putFile) { Remove-Item $putFile -Force -ErrorAction SilentlyContinue }
-                    }
-                }
-            }
-        } else {
-            Add-Check -Id "EB.REVISION_PIN" -Level "OK" -Details "Target uses job definition name only (not pinned to revision): $jdInTarget"
-            Write-Ok "Target not pinned to revision: $jdInTarget"
-            [void]$summary.Add("  EventBridge JobDefinition: $jdInTarget (name only)")
-        }
-        [void]$summary.Add("  EventBridge schedule: $scheduleExpr")
-
-        # ---- [D] Reconcile concurrency ----
-        Write-Section "Reconcile Concurrency"
-        if ($runningReconcileJobs.Count -gt 1) {
-            $jobIdsStr = ($runningReconcileJobs | ForEach-Object { $_.jobId }) -join ', '
-            Add-Check -Id "RECONCILE.CONCURRENT" -Level "WARN" -Details "RUNNING reconcile job count is $($runningReconcileJobs.Count). More than one can cause duplicate status updates. JobIds: $jobIdsStr"
-            Write-Warn "RUNNING reconcile jobs: $($runningReconcileJobs.Count)"
-            $ok = $false
-            [void]$summary.Add("  RUNNING reconcile count: $($runningReconcileJobs.Count) (WARN)")
-
-            if ($FixMode -and $KillExtraReconcile) {
-                $sorted = @($runningReconcileJobs | Sort-Object { $_.startedAt } -Descending)
-                $keepId = $sorted[0].jobId
-                $toTerminate = @($sorted[1..($sorted.Count - 1)] | ForEach-Object { $_.jobId })
-                foreach ($jid in $toTerminate) {
-                    try {
-                        ExecJsonThrow @("batch", "terminate-job", "--job-id", $jid, "--reason", "Audit FixMode KillExtraReconcile", "--region", $Region)
-                        Add-FixApplied -Action "Batch.TerminateJob" -Details "Terminated reconcile job $jid (kept $keepId)"
-                        Write-Ok "Terminated extra reconcile job: $jid"
-                    } catch {
-                        Write-Blocker "Terminate job $jid failed: $($_.Exception.Message)"
-                    }
-                }
-                $ok = $true
-            }
-        } else {
-            Add-Check -Id "RECONCILE.CONCURRENT" -Level "OK" -Details "RUNNING reconcile job count: $($runningReconcileJobs.Count)"
-            Write-Ok "RUNNING reconcile jobs: $($runningReconcileJobs.Count)"
-        }
-        if ($scheduleExpr -match 'rate\s*\(\s*(\d+)\s*minute') {
-            $mins = [int]$Matches[1]
-            if ($mins -lt 5) {
-                Add-Check -Id "RECONCILE.SCHEDULE_RATE" -Level "WARN" -Details "Schedule is rate($mins minutes). Consider rate(5 minutes) to reduce overlap."
-                Write-Warn "Schedule rate($mins minutes) may cause overlap; consider rate(5 minutes)"
-            }
-            if ($FixMode -and $mins -lt 5) {
-                $newSchedule = "rate(5 minutes)"
-                try {
-                    $putRuleArgs = @("events", "put-rule", "--name", $reconcileRuleName, "--schedule-expression", $newSchedule, "--state", "ENABLED", "--region", $Region)
-                    if ($ruleOut -and $ruleOut.Description) { $putRuleArgs += @("--description", $ruleOut.Description) }
-                    ExecJsonThrow $putRuleArgs
-                    Add-FixApplied -Action "EB.ScheduleRelax" -Details "Updated schedule from $scheduleExpr to $newSchedule"
-                    Write-Ok "Updated schedule to $newSchedule"
-                } catch {
-                    Write-Blocker "PutRule failed: $($_.Exception.Message)"
-                }
-            }
-        }
-
-        # ---- [E] Batch state ----
-        Write-Section "Batch State"
-        $runningCount = 0; $runnableCount = 0; $submittedCount = 0
-        $videoJobNames = 0; $reconcileJobNames = 0
-        foreach ($q in $enabledQueues) {
-            foreach ($status in @("RUNNING", "RUNNABLE", "SUBMITTED")) {
-                $listOut = ExecJson @("batch", "list-jobs", "--job-queue", $q.jobQueueArn, "--job-status", $status, "--region", $Region, "--output", "json")
-                $jobIds = @(if ($listOut -and $listOut.jobSummaryList) { $listOut.jobSummaryList | ForEach-Object { $_.jobId } } else { @() })
-                if ($status -eq "RUNNING") { $runningCount += $jobIds.Count }
-                elseif ($status -eq "RUNNABLE") { $runnableCount += $jobIds.Count }
-                else { $submittedCount += $jobIds.Count }
-                if ($jobIds.Count -gt 0 -and $jobIds.Count -le 100) {
-                    $desc = ExecJson @("batch", "describe-jobs", "--jobs", $jobIds, "--region", $Region, "--output", "json")
-                    if ($desc -and $desc.jobs) {
-                        foreach ($j in $desc.jobs) {
-                            if (($j.jobDefinition -as [string]) -match 'reconcile') { $reconcileJobNames++ } else { $videoJobNames++ }
-                        }
-                    }
-                }
-            }
-        }
-        $script:AuditReport.discovery.batchState = @{
-            RUNNING = $runningCount
-            RUNNABLE = $runnableCount
-            SUBMITTED = $submittedCount
-            videoJobCount = $videoJobNames
-            reconcileJobCount = $reconcileJobNames
-        }
-        Add-Check -Id "BATCH.STATE" -Level "INFO" -Details "RUNNING=$runningCount RUNNABLE=$runnableCount SUBMITTED=$submittedCount (video*: $videoJobNames reconcile*: $reconcileJobNames)"
-        Write-Ok "RUNNING=$runningCount RUNNABLE=$runnableCount SUBMITTED=$submittedCount (video: $videoJobNames reconcile: $reconcileJobNames)"
-        [void]$summary.Add("  Batch: RUNNING=$runningCount RUNNABLE=$runnableCount SUBMITTED=$submittedCount")
-    } catch {
-        Add-Check -Id "AUDIT.ERROR" -Level "BLOCKER" -Details $_.Exception.Message
-        Write-Blocker "Audit error: $($_.Exception.Message)"
-        $ok = $false
+        $out = & aws @ArgsArray --output json 2>&1
+        $exit = $LASTEXITCODE
+        if ($exit -ne 0) { return $null }
+        $str = ($out | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($str)) { return $null }
+        [System.IO.File]::WriteAllText($tempFile, $str, $utf8)
+        $content = [System.IO.File]::ReadAllText($tempFile, $utf8)
+        return $content | ConvertFrom-Json
+    } finally {
+        if (Test-Path -LiteralPath $tempFile) { Remove-Item $tempFile -Force -ErrorAction SilentlyContinue }
     }
-
-    return @{ Ok = $ok; Summary = $summary }
 }
 
-function Write-AuditReportJson {
-    $reportDir = Join-Path $RepoRoot "docs\deploy\audit_reports"
-    if (-not (Test-Path -LiteralPath $reportDir)) {
-        New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+# --- A. Batch ---
+function Invoke-BatchAudit {
+    $ceList = Aws-JsonSafe @("batch", "describe-compute-environments", "--region", $Region)
+    if (-not $ceList) {
+        Add-AuditRow -Category "Batch" -Check "Describe CE" -Expected "OK" -Actual "CLI failed" -Status "FAIL" -FixAction "Check AWS credentials/region"
+        return
     }
-    $ts = $script:AuditReport.meta.timestamp
-    $path = Join-Path $reportDir "infra_audit_$ts.json"
-    $json = $script:AuditReport | ConvertTo-Json -Depth 10
-    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($path, $json, $utf8NoBom)
-    Write-Host "`n  Report: $path" -ForegroundColor Gray
-    return $path
+    $ces = $ceList.computeEnvironments
+    if (-not $ces) { $ces = @() }
+
+    $videoCe = $ces | Where-Object { $_.computeEnvironmentName -eq $ExpectedVideoCEName } | Select-Object -First 1
+    if (-not $videoCe) {
+        Add-AuditRow -Category "Batch" -Check "Video CE exists" -Expected $ExpectedVideoCEName -Actual "not found" -Status "FAIL" -FixAction "Run batch_video_setup or recreate_batch_in_api_vpc"
+    } else {
+        $s = "$($videoCe.status)/$($videoCe.state)"
+        $st = if ($videoCe.status -eq "VALID" -and $videoCe.state -eq "ENABLED") { "PASS" } else { "FAIL" }
+        $types = $videoCe.computeResources.instanceTypes -join ","
+        $minMax = "min=$($videoCe.computeResources.minvCpus) max=$($videoCe.computeResources.maxvCpus)"
+        Add-AuditRow -Category "Batch" -Check "Video CE" -Expected "VALID/ENABLED" -Actual "$s $types $minMax" -Status $st -FixAction $(if ($st -eq "FAIL") { "Update or recreate CE" } else { "" })
+    }
+
+    $opsCe = $ces | Where-Object { $_.computeEnvironmentName -eq $ExpectedOpsCEName } | Select-Object -First 1
+    if (-not $opsCe) {
+        Add-AuditRow -Category "Batch" -Check "Ops CE exists" -Expected $ExpectedOpsCEName -Actual "not found" -Status "FAIL" -FixAction "Run batch_ops_setup.ps1 -Region $Region"
+    } else {
+        $s = "$($opsCe.status)/$($opsCe.state)"
+        $st = if ($opsCe.status -eq "VALID" -and $opsCe.state -eq "ENABLED") { "PASS" } else { "FAIL" }
+        $types = $opsCe.computeResources.instanceTypes -join ","
+        $minMax = "min=$($opsCe.computeResources.minvCpus) max=$($opsCe.computeResources.maxvCpus)"
+        Add-AuditRow -Category "Batch" -Check "Ops CE" -Expected "VALID/ENABLED" -Actual "$s $types $minMax" -Status $st -FixAction $(if ($st -eq "FAIL") { "Run batch_ops_setup.ps1" } else { "" })
+    }
+
+    $jqList = Aws-JsonSafe @("batch", "describe-job-queues", "--region", $Region)
+    if (-not $jqList -or -not $jqList.jobQueues) {
+        Add-AuditRow -Category "Batch" -Check "Describe Queues" -Expected "OK" -Actual "CLI failed or empty" -Status "FAIL" -FixAction ""
+        return
+    }
+    $queues = $jqList.jobQueues
+
+    $videoQ = $queues | Where-Object { $_.jobQueueName -eq $ExpectedVideoQueueName } | Select-Object -First 1
+    if (-not $videoQ) {
+        Add-AuditRow -Category "Batch" -Check "Video Queue" -Expected $ExpectedVideoQueueName -Actual "not found" -Status "FAIL" -FixAction "Create video queue"
+    } else {
+        $st = if ($videoQ.state -eq "ENABLED") { "PASS" } else { "FAIL" }
+        $ceNames = ($videoQ.computeEnvironmentOrder | ForEach-Object { $_.computeEnvironment -replace '.*/', '' }) -join ","
+        Add-AuditRow -Category "Batch" -Check "Video Queue" -Expected "ENABLED" -Actual "$($videoQ.state) CE=$ceNames" -Status $st -FixAction ""
+    }
+
+    $opsQ = $queues | Where-Object { $_.jobQueueName -eq $ExpectedOpsQueueName } | Select-Object -First 1
+    if (-not $opsQ) {
+        Add-AuditRow -Category "Batch" -Check "Ops Queue" -Expected $ExpectedOpsQueueName -Actual "not found" -Status "FAIL" -FixAction "Run batch_ops_setup.ps1 -Region $Region"
+    } else {
+        $st = if ($opsQ.state -eq "ENABLED") { "PASS" } else { "FAIL" }
+        $ceNames = ($opsQ.computeEnvironmentOrder | ForEach-Object { $_.computeEnvironment -replace '.*/', '' }) -join ","
+        Add-AuditRow -Category "Batch" -Check "Ops Queue" -Expected "ENABLED" -Actual "$($opsQ.state) CE=$ceNames" -Status $st -FixAction $(if ($st -eq "FAIL") { "Run batch_ops_setup.ps1" } else { "" })
+    }
+
+    $videoQueueArn = $videoQ.jobQueueArn
+    $opsQueueArn = $opsQ.jobQueueArn
+    if ($videoQueueArn) {
+        $runningV = (Aws-Text @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNING", "--region", $Region, "--query", "length(jobSummaryList)", "--output", "text")) -as [int]
+        if (-not $runningV) { $runningV = 0 }
+        $runnableV = (Aws-Text @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNABLE", "--region", $Region, "--query", "length(jobSummaryList)", "--output", "text")) -as [int]
+        if (-not $runnableV) { $runnableV = 0 }
+        Add-AuditRow -Category "Batch" -Check "Video Queue jobs" -Expected "-" -Actual "RUNNING=$runningV RUNNABLE=$runnableV" -Status "PASS" -FixAction ""
+    }
+    if ($opsQueueArn) {
+        $listRun = Aws-JsonSafe @("batch", "list-jobs", "--job-queue", $opsQueueArn, "--job-status", "RUNNING", "--region", $Region)
+        $runningO = 0
+        $reconcileRun = 0
+        $scanStuckRun = 0
+        if ($listRun -and $listRun.jobSummaryList) {
+            $runningO = $listRun.jobSummaryList.Count
+            foreach ($j in $listRun.jobSummaryList) {
+                $name = $j.jobName -as [string]
+                if ($name -match "reconcile") { $reconcileRun++ }
+                elseif ($name -match "scan") { $scanStuckRun++ }
+            }
+        }
+        Add-AuditRow -Category "Batch" -Check "Ops Queue RUNNING" -Expected "reconcile<=1" -Actual "reconcile=$reconcileRun scan_stuck=$scanStuckRun" -Status $(if ($reconcileRun -gt 1) { "WARN" } else { "PASS" }) -FixAction $(if ($reconcileRun -gt 1 -and $FixModeWithCleanup) { "FixModeWithCleanup: terminate extra" } else { "" })
+    }
+
+    $script:VideoQueueArn = $videoQueueArn
+    $script:OpsQueueArn = $opsQueueArn
+}
+
+# --- B. EventBridge (auto-discover rule names) ---
+function Invoke-EventBridgeAudit {
+    $rulesJson = Aws-JsonSafe @("events", "list-rules", "--region", $Region)
+    if (-not $rulesJson -or -not $rulesJson.Rules) {
+        Add-AuditRow -Category "EventBridge" -Check "List rules" -Expected "OK" -Actual "CLI failed" -Status "FAIL" -FixAction ""
+        return
+    }
+    $reconcileRule = $null
+    $scanStuckRule = $null
+    if ($ReconcileRuleName) {
+        $reconcileRule = $rulesJson.Rules | Where-Object { $_.Name -eq $ReconcileRuleName } | Select-Object -First 1
+    }
+    if (-not $reconcileRule) {
+        $reconcileRule = $rulesJson.Rules | Where-Object { $_.Name -match "reconcile" } | Select-Object -First 1
+    }
+    if (-not $ScanStuckRuleName) {
+        $scanStuckRule = $rulesJson.Rules | Where-Object { $_.Name -match "scan-stuck|scanstuck" } | Select-Object -First 1
+    } else {
+        $scanStuckRule = $rulesJson.Rules | Where-Object { $_.Name -eq $ScanStuckRuleName } | Select-Object -First 1
+    }
+
+    $script:ReconcileRuleName = $reconcileRule.Name
+    $script:ScanStuckRuleName = $scanStuckRule.Name
+
+    foreach ($r in @(@{ Rule = $reconcileRule; Label = "Reconcile"; ExpectedJobDef = "academy-video-ops-reconcile" }, @{ Rule = $scanStuckRule; Label = "ScanStuck"; ExpectedJobDef = "academy-video-ops-scanstuck" })) {
+        $rule = $r.Rule
+        $label = $r.Label
+        $expJd = $r.ExpectedJobDef
+        if (-not $rule) {
+            Add-AuditRow -Category "EventBridge" -Check "$label rule exists" -Expected "found" -Actual "not found" -Status "FAIL" -FixAction "Run eventbridge_deploy_video_scheduler.ps1"
+            continue
+        }
+        $sched = $rule.ScheduleExpression -as [string]
+        $schedOk = $sched -match "rate\s*\(\s*5\s*minute"
+        $schedWarn = $sched -match "rate\s*\(\s*2\s*minute"
+        $st = "PASS"
+        if (-not $schedOk -and $schedWarn) { $st = "WARN" }
+        elseif (-not $schedOk) { $st = "WARN" }
+        Add-AuditRow -Category "EventBridge" -Check "$label schedule" -Expected "rate(5 minutes)" -Actual $sched -Status $st -FixAction $(if ($st -ne "PASS") { "FixMode: put-rule rate(5 minutes)" } else { "" })
+
+        $tgtJson = Aws-JsonSafe @("events", "list-targets-by-rule", "--rule", $rule.Name, "--region", $Region)
+        if (-not $tgtJson -or -not $tgtJson.Targets -or $tgtJson.Targets.Count -eq 0) {
+            Add-AuditRow -Category "EventBridge" -Check "$label target" -Expected "Batch SubmitJob" -Actual "no targets" -Status "FAIL" -FixAction "Run eventbridge_deploy_video_scheduler.ps1"
+            continue
+        }
+        $t = $tgtJson.Targets[0]
+        $isBatch = $t.BatchParameters -ne $null
+        if (-not $isBatch) {
+            Add-AuditRow -Category "EventBridge" -Check "$label target type" -Expected "Batch SubmitJob" -Actual "not Batch" -Status "FAIL" -FixAction "Run eventbridge_deploy_video_scheduler.ps1"
+            continue
+        }
+        $jdTarget = $t.BatchParameters.JobDefinition -as [string]
+        $queueArn = $t.Arn -as [string]
+        $useOpsQueue = $script:OpsQueueArn -and ($queueArn -eq $script:OpsQueueArn)
+        $stQ = if ($useOpsQueue) { "PASS" } else { "FAIL" }
+        Add-AuditRow -Category "EventBridge" -Check "$label target queue" -Expected "OpsQueue" -Actual $(if ($useOpsQueue) { "OpsQueue" } else { "Video or other" }) -Status $stQ -FixAction $(if ($stQ -eq "FAIL") { "FixMode: put-targets OpsQueue" } else { "" })
+        $jdOk = $jdTarget -eq $expJd -or $jdTarget -like "${expJd}:*"
+        Add-AuditRow -Category "EventBridge" -Check "$label job def" -Expected $expJd -Actual $jdTarget -Status $(if ($jdOk) { "PASS" } else { "FAIL" }) -FixAction $(if (-not $jdOk) { "FixMode: put-targets jobDefinition" } else { "" })
+    }
+}
+
+# --- C. IAM ---
+function Invoke-IAMAudit {
+    $roleName = "academy-video-batch-job-role"
+    $roleJson = Aws-JsonSafe @("iam", "get-role", "--role-name", $roleName)
+    if (-not $roleJson -or -not $roleJson.Role) {
+        Add-AuditRow -Category "IAM" -Check "Job role exists" -Expected $roleName -Actual "not found" -Status "FAIL" -FixAction "Run batch_video_setup / IAM create role"
+        return
+    }
+    $attached = Aws-JsonSafe @("iam", "list-attached-role-policies", "--role-name", $roleName)
+    $hasDescribe = $false
+    if ($attached -and $attached.AttachedPolicies) {
+        $policyArn = "arn:aws:iam::$(Aws-Text @('sts','get-caller-identity','--query','Account','--output','text')):policy/AcademyAllowBatchDescribeJobs"
+        foreach ($ap in $attached.AttachedPolicies) {
+            if ($ap.PolicyArn -eq $policyArn) { $hasDescribe = $true; break }
+        }
+        if (-not $hasDescribe) {
+            foreach ($ap in $attached.AttachedPolicies) {
+                $pol = Aws-JsonSafe @("iam", "get-policy", "--policy-arn", $ap.PolicyArn)
+                if (-not $pol -or -not $pol.Policy) { continue }
+                $ver = Aws-JsonSafe @("iam", "get-policy-version", "--policy-arn", $ap.PolicyArn, "--version-id", $pol.Policy.DefaultVersionId)
+                if (-not $ver -or -not $ver.PolicyVersion -or -not $ver.PolicyVersion.Document) { continue }
+                $doc = $ver.PolicyVersion.Document
+                if ($doc -is [string]) { $docStr = $doc } else { $docStr = $doc | ConvertTo-Json -Compress }
+                if ($docStr -match "batch:\*|batch:DescribeJobs") { $hasDescribe = $true; break }
+            }
+        }
+    }
+    if (-not $hasDescribe) {
+        $inlineList = Aws-JsonSafe @("iam", "list-role-policies", "--role-name", $roleName)
+        if ($inlineList -and $inlineList.PolicyNames) {
+            foreach ($pn in $inlineList.PolicyNames) {
+                $rp = Aws-JsonSafe @("iam", "get-role-policy", "--role-name", $roleName, "--policy-name", $pn)
+                if ($rp -and $rp.PolicyDocument) {
+                    $docStr = if ($rp.PolicyDocument -is [string]) { $rp.PolicyDocument } else { $rp.PolicyDocument | ConvertTo-Json -Compress }
+                    if ($docStr -match "batch:\*|batch:DescribeJobs") { $hasDescribe = $true; break }
+                }
+            }
+        }
+    }
+    $st = if ($hasDescribe) { "PASS" } else { "FAIL" }
+    Add-AuditRow -Category "IAM" -Check "DescribeJobs/ListJobs on job role" -Expected "Yes" -Actual $(if ($hasDescribe) { "Yes" } else { "No" }) -Status $st -FixAction $(if (-not $hasDescribe) { "FixMode: iam_attach_batch_describe_jobs.ps1" } else { "" })
+}
+
+# --- D. JobDefinition sanity ---
+function Invoke-JobDefAudit {
+    $videoJd = Aws-JsonSafe @("batch", "describe-job-definitions", "--job-definition-name", "academy-video-batch-jobdef", "--status", "ACTIVE", "--region", $Region)
+    $jd = $null
+    if ($videoJd -and $videoJd.jobDefinitions -and $videoJd.jobDefinitions.Count -gt 0) {
+        $jd = $videoJd.jobDefinitions[0]
+    }
+    if (-not $jd) {
+        Add-AuditRow -Category "JobDef" -Check "Video jobdef" -Expected "ACTIVE" -Actual "not found" -Status "FAIL" -FixAction ""
+    } else {
+        $vcpus = $jd.containerProperties.vcpus
+        $mem = $jd.containerProperties.memory
+        Add-AuditRow -Category "JobDef" -Check "Video jobdef vcpus/memory" -Expected ">0" -Actual "vcpus=$vcpus memory=$mem" -Status "PASS" -FixAction ""
+    }
+    foreach ($name in @("academy-video-ops-reconcile", "academy-video-ops-scanstuck")) {
+        $opsJd = Aws-JsonSafe @("batch", "describe-job-definitions", "--job-definition-name", $name, "--status", "ACTIVE", "--region", $Region)
+        $oj = $null
+        if ($opsJd -and $opsJd.jobDefinitions -and $opsJd.jobDefinitions.Count -gt 0) {
+            $oj = $opsJd.jobDefinitions[0]
+        }
+        if (-not $oj) {
+            Add-AuditRow -Category "JobDef" -Check "Ops $name" -Expected "ACTIVE" -Actual "not found" -Status "FAIL" -FixAction "Register ops job def"
+        } else {
+            $cmd = ($oj.containerProperties.command | ForEach-Object { $_ }) -join " "
+            $role = $oj.containerProperties.jobRoleArn -as [string]
+            $hasRole = -not [string]::IsNullOrWhiteSpace($role)
+            Add-AuditRow -Category "JobDef" -Check "Ops $name command/role" -Expected "command set, jobRoleArn set" -Actual "cmd=$($cmd.Substring(0, [Math]::Min(40, $cmd.Length)))... role=$hasRole" -Status $(if ($hasRole) { "PASS" } else { "WARN" }) -FixAction ""
+        }
+    }
+}
+
+# --- FixMode ---
+function Invoke-FixMode {
+    $batchOpsPath = Join-Path $ScriptRoot "batch_ops_setup.ps1"
+    $iamPath = Join-Path $ScriptRoot "iam_attach_batch_describe_jobs.ps1"
+    $ebPath = Join-Path $ScriptRoot "eventbridge_deploy_video_scheduler.ps1"
+
+    $needOps = $script:AuditRows | Where-Object { $_.Category -eq "Batch" -and $_.Check -eq "Ops CE exists" -and $_.Status -eq "FAIL" }
+    if ($needOps -and (Test-Path -LiteralPath $batchOpsPath)) {
+        & $batchOpsPath -Region $Region
+        if ($LASTEXITCODE -eq 0) {
+            [void]$script:FixesApplied.Add("batch_ops_setup.ps1: Ops CE/Queue created or verified")
+        }
+    }
+
+    $needIam = $script:AuditRows | Where-Object { $_.Category -eq "IAM" -and $_.Check -like "*DescribeJobs*" -and $_.Status -eq "FAIL" }
+    if ($needIam -and (Test-Path -LiteralPath $iamPath)) {
+        & $iamPath -Region $Region
+        if ($LASTEXITCODE -eq 0) {
+            [void]$script:FixesApplied.Add("iam_attach_batch_describe_jobs.ps1: Policy attached to academy-video-batch-job-role")
+        }
+    }
+
+    $needEb = $script:AuditRows | Where-Object { $_.Category -eq "EventBridge" -and ($_.Status -eq "FAIL" -or $_.Status -eq "WARN") -and $_.FixAction -match "FixMode" }
+    if ($needEb -and (Test-Path -LiteralPath $ebPath)) {
+        & $ebPath -Region $Region -OpsJobQueueName $ExpectedOpsQueueName
+        if ($LASTEXITCODE -eq 0) {
+            [void]$script:FixesApplied.Add("eventbridge_deploy_video_scheduler.ps1: Rules/targets updated to rate(5 min), OpsQueue")
+        }
+    }
+
+    if ($FixModeWithCleanup -and $script:OpsQueueArn) {
+        $listRun = Aws-JsonSafe @("batch", "list-jobs", "--job-queue", $script:OpsQueueArn, "--job-status", "RUNNING", "--region", $Region)
+        $reconcileJobs = @()
+        if ($listRun -and $listRun.jobSummaryList) {
+            foreach ($j in $listRun.jobSummaryList) {
+                if (($j.jobName -as [string]) -match "reconcile") {
+                    $reconcileJobs += $j
+                }
+            }
+        }
+        if ($reconcileJobs.Count -gt 1) {
+            $sorted = $reconcileJobs | Sort-Object { $_.startedAt } -Descending
+            $keep = $sorted[0].jobId
+            for ($i = 1; $i -lt $sorted.Count; $i++) {
+                $jid = $sorted[$i].jobId
+                & aws batch terminate-job --job-id $jid --reason "Audit FixModeWithCleanup" --region $Region 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    [void]$script:FixesApplied.Add("Terminated extra reconcile job: $jid (kept $keep)")
+                }
+            }
+        }
+    }
 }
 
 # --- Main ---
-$accountId = $null
 try {
-    $accountId = (aws sts get-caller-identity --query Account --output text 2>&1)
-    if (-not $accountId -or $accountId -match "error|Exception") {
-        Write-Host "FAIL: sts get-caller-identity failed. Set AWS credentials." -ForegroundColor Red
+    $accountId = Aws-Text @("sts", "get-caller-identity", "--query", "Account", "--output", "text")
+    if (-not $accountId) {
+        Write-Host "FAIL: AWS identity check failed. Set credentials and region." -ForegroundColor Red
         exit 1
     }
 } catch {
-    Write-Host "FAIL: sts get-caller-identity failed. Set AWS credentials." -ForegroundColor Red
+    Write-Host "FAIL: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "`n===== FULL WORKER INFRA AUDIT =====" -ForegroundColor Cyan
-Write-Host "Region: $Region | Account: $accountId" -ForegroundColor Gray
+Write-Host "`n===== One-Take Video/Ops Batch Audit =====" -ForegroundColor Cyan
+Write-Host "Region: $Region | Account: $accountId | FixMode: $FixMode" -ForegroundColor Gray
+Write-Host "Expected VideoQueue: $ExpectedVideoQueueName | OpsQueue: $ExpectedOpsQueueName" -ForegroundColor Gray
 
-$r1 = Test-SsmAudit
-$r2 = Test-NetworkAudit
-$r3 = Test-RuntimeAudit
-$r4 = Test-ImageAudit
-$r5 = Test-AsgAudit
-$r6 = Test-AlarmsAudit
-$r7 = Invoke-VideoBatchProductionAudit
+Invoke-BatchAudit
+Invoke-EventBridgeAudit
+Invoke-IAMAudit
+Invoke-JobDefAudit
 
-if ($script:AuditReport) {
-    $reportPath = Write-AuditReportJson
+if ($FixMode) {
+    Write-Host "`n--- FixMode: applying fixes ---" -ForegroundColor Yellow
+    Invoke-FixMode
 }
 
-function Status { param($ok) if ($ok) { Write-Host "OK" -ForegroundColor Green } else { Write-Host "FAIL" -ForegroundColor Red } }
+Write-Host "`n--- Audit Table ---" -ForegroundColor Cyan
+$script:AuditRows | Format-Table -AutoSize -Wrap -Property Category, Check, Expected, Actual, Status, FixAction
 
-Write-Host "`nAI Worker:" -ForegroundColor Cyan
-Write-Host "  SSM: " -NoNewline; Status $r1.AI
-Write-Host "  Network: " -NoNewline; Status $r2.AI
-Write-Host "  Runtime: " -NoNewline; Status $r3.AI
-Write-Host "  ASG: " -NoNewline; Status $r5.AI
-Write-Host "  Image: " -NoNewline; Status $r4.AI
+$passCount = ($script:AuditRows | Where-Object { $_.Status -eq "PASS" }).Count
+$warnCount = ($script:AuditRows | Where-Object { $_.Status -eq "WARN" }).Count
+$failCount = ($script:AuditRows | Where-Object { $_.Status -eq "FAIL" }).Count
+Write-Host "`nSummary: PASS=$passCount WARN=$warnCount FAIL=$failCount" -ForegroundColor Gray
 
-Write-Host "`nMessaging Worker:" -ForegroundColor Cyan
-Write-Host "  SSM: " -NoNewline; Status $r1.Messaging
-Write-Host "  Network: " -NoNewline; Status $r2.Messaging
-Write-Host "  Runtime: " -NoNewline; Status $r3.Messaging
-Write-Host "  ASG: " -NoNewline; Status $r5.Messaging
-Write-Host "  Image: " -NoNewline; Status $r4.Messaging
-
-Write-Host "`nVideo Worker:" -ForegroundColor Cyan
-Write-Host "  SSM: " -NoNewline; Status $r1.Video
-Write-Host "  Network: " -NoNewline; Status $r2.Video
-Write-Host "  Runtime: " -NoNewline; Status $r3.Video
-Write-Host "  Batch: " -NoNewline; Status $r2.Video
-Write-Host "  Image: " -NoNewline; Status $r4.Video
-Write-Host "  Reconcile (Production Audit): " -NoNewline; Status $r7.Ok
-if ($r7.Summary -and $r7.Summary.Count -gt 0) {
-    Write-Host "`n  Video Batch Reconcile summary:" -ForegroundColor Gray
-    foreach ($line in $r7.Summary) { Write-Host $line -ForegroundColor Gray }
+if ($script:FixesApplied.Count -gt 0) {
+    Write-Host "`nApplied changes (FixMode):" -ForegroundColor Yellow
+    foreach ($f in $script:FixesApplied) { Write-Host "  - $f" -ForegroundColor Gray }
 }
 
-if ($global:OverallPass) {
-    Write-Host "`nOVERALL STATUS: PASS" -ForegroundColor Green
-} else {
-    Write-Host "`nOVERALL STATUS: FAIL" -ForegroundColor Red
-    Write-Host "`nFailures (Worker | Area | Resource | Message):" -ForegroundColor Yellow
-    foreach ($f in $global:AuditFailures) {
-        Write-Host "  $($f.Worker) | $($f.Area) | $($f.Resource) | $($f.Message)" -ForegroundColor Gray
-    }
-    if ($FixMode) {
-        Write-Host "`nFixMode: no automatic fix implemented for reported failures. Resolve manually." -ForegroundColor Yellow
-    }
-    exit 1
-}
-
-Write-Host "`n--- Usage ---" -ForegroundColor Gray
-Write-Host "  .\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2 [-Verbose] [-FixMode] [-KillExtraReconcile]" -ForegroundColor Gray
-Write-Host "`n--- Required permissions ---" -ForegroundColor Gray
-Write-Host "  sts:GetCallerIdentity; ssm:GetParameter, SendCommand, GetCommandInvocation; autoscaling:Describe*; ec2:Describe*; batch:Describe*, SubmitJob, ListJobs; ecr:Describe*; cloudwatch:DescribeAlarms; logs:GetLogEvents; iam:PassRole (Batch)." -ForegroundColor Gray
-exit 0
+$overall = "PASS"
+if ($failCount -gt 0) { $overall = "FAIL" }
+elseif ($warnCount -gt 0) { $overall = "NEEDS_ACTION" }
+Write-Host "`nResult: $overall" -ForegroundColor $(if ($overall -eq "PASS") { "Green" } elseif ($overall -eq "NEEDS_ACTION") { "Yellow" } else { "Red" })
+exit $(if ($overall -eq "FAIL") { 1 } else { 0 })
