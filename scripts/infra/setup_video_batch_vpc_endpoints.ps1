@@ -46,6 +46,23 @@ function Aws-JsonSafe {
     }
 }
 
+# create-vpc-endpoint 실행, 실패 시 AWS 오류 출력 후 exit 1
+function Invoke-CreateVpcEndpoint {
+    param([string[]]$CreateArgs, [string]$ServiceName)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = & aws @CreateArgs --output json 2>&1
+    $exit = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    $str = ($out | Out-String).Trim()
+    if ($exit -ne 0) {
+        Write-Host "FAIL: create-vpc-endpoint $ServiceName failed." -ForegroundColor Red
+        Write-Host "AWS output: $str" -ForegroundColor Gray
+        exit 1
+    }
+    $str | ConvertFrom-Json
+}
+
 # B. CE describe → subnets 추출
 $ceList = Aws-JsonSafe @("batch", "describe-compute-environments", "--compute-environments", $CeName, "--region", $Region)
 $ce = $null
