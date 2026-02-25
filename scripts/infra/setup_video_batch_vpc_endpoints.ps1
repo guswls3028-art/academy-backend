@@ -103,17 +103,20 @@ if (-not $vpcId) {
 
 Write-Host "VPC ID: $vpcId | CE subnets: $($ceSubnets.Count) | SG: $($ceSecurityGroupIds -join ',')" -ForegroundColor Gray
 
-# CE 서브넷 ID -> AZ 이름 매핑 (Interface 엔드포인트는 서비스별 지원 AZ만 사용해야 함)
+# CE 서브넷 ID -> AZ 이름 및 AZ ID 매핑 (Interface 엔드포인트는 서비스별 지원 AZ만 사용해야 함)
 $subnetAzMap = @{}
+$subnetAzIdMap = @{}
 $subRespAll = Aws-JsonSafe @("ec2", "describe-subnets", "--subnet-ids", $ceSubnets, "--region", $Region)
 if ($subRespAll -and $subRespAll.Subnets) {
     foreach ($s in $subRespAll.Subnets) {
         $az = $s.AvailabilityZone
+        $azId = $s.AvailabilityZoneId
         if ($az) { $subnetAzMap[$s.SubnetId] = $az }
+        if ($azId) { $subnetAzIdMap[$s.SubnetId] = $azId }
     }
 }
 
-# 서비스별 지원 AZ 조회 후, 해당 AZ에 있는 CE 서브넷만 반환
+# 서비스별 지원 AZ 조회 후, 해당 AZ에 있는 CE 서브넷만 반환 (서비스는 zone name 또는 zone ID 반환 가능)
 function Get-SubnetsForService {
     param([string]$ServiceName)
     $svcResp = Aws-JsonSafe @("ec2", "describe-vpc-endpoint-services", "--service-names", $ServiceName, "--region", $Region)
@@ -130,7 +133,9 @@ function Get-SubnetsForService {
     $filtered = @()
     foreach ($subId in $ceSubnets) {
         $az = $subnetAzMap[$subId]
-        if ($az -and ($supportedAzs -contains $az)) {
+        $azId = $subnetAzIdMap[$subId]
+        $match = ($az -and ($supportedAzs -contains $az)) -or ($azId -and ($supportedAzs -contains $azId))
+        if ($match) {
             $filtered += $subId
         }
     }
