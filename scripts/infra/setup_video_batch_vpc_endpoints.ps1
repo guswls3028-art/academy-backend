@@ -120,30 +120,14 @@ function New-InterfaceEndpointWithSupportedSubnets {
     $goodSubnets = [System.Collections.ArrayList]::new()
     $epId = $null
     foreach ($subId in $ceSubnets) {
-        $createArgs = @(
-            "ec2", "create-vpc-endpoint",
-            "--vpc-id", $vpcId,
-            "--vpc-endpoint-type", "Interface",
-            "--service-name", $ServiceName,
-            "--subnet-ids", $subId,
-            "--security-group-ids"
-        ) + @($ceSecurityGroupIds) + @(
-            "--private-dns-enabled",
-            "--region", $Region
-        )
-        $exit = 0
-        $str = ""
         $prev = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
-        try {
-            $out = & cmd /c "aws ec2 create-vpc-endpoint --vpc-id $vpcId --vpc-endpoint-type Interface --service-name $ServiceName --subnet-ids $subId --security-group-ids $($ceSecurityGroupIds -join ' ') --private-dns-enabled --region $Region --output json 2>&1"
-            $exit = $LASTEXITCODE
-            $str = ($out | Out-String).Trim()
-        } finally {
-            $ErrorActionPreference = $prev
-        }
-        if ($LASTEXITCODE -ne 0) { $exit = $LASTEXITCODE }
-        if ($exit -eq 0 -and $str -and $str -notmatch "error|Error|Exception") {
+        $awscmd = "aws ec2 create-vpc-endpoint --vpc-id $vpcId --vpc-endpoint-type Interface --service-name $ServiceName --subnet-ids $subId --security-group-ids $($ceSecurityGroupIds -join ' ') --private-dns-enabled --region $Region --output json 2>&1"
+        $out = cmd /c $awscmd
+        $exit = $LASTEXITCODE
+        $ErrorActionPreference = $prev
+        $str = ($out | Out-String).Trim()
+        if ($exit -eq 0) {
             try {
                 $obj = $str | ConvertFrom-Json
                 if ($obj.VpcEndpoint -and $obj.VpcEndpoint.VpcEndpointId) {
@@ -153,8 +137,7 @@ function New-InterfaceEndpointWithSupportedSubnets {
                 }
             } catch {}
         }
-        if ($exit -ne 0) { $exit = 1 }
-        # AZ 미지원 오류면 다음 서브넷 시도
+        # 실패 시 AZ 미지원 오류면 다음 서브넷 시도
         $isAzUnsupported = ($str -match "availability zone") -and ($str -match "subnet")
         if (-not $isAzUnsupported) {
             Write-Host "FAIL: create-vpc-endpoint $ServiceName failed." -ForegroundColor Red
