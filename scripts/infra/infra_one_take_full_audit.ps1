@@ -520,6 +520,7 @@ function Test-VideoBatchReconcileAudit {
                         }
                     } else {
                         [void]$summary.Add("  FixMode: Policy already attached (no change)")
+                        $ok = $true
                     }
                 } else {
                     $policyDoc = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["batch:DescribeJobs","batch:ListJobs"],"Resource":"*"}]}'
