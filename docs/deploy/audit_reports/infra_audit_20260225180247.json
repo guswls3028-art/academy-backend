@@ -1,0 +1,33 @@
+{
+    "checks":  [
+                   {
+                       "level":  "BLOCKER",
+                       "id":  "DISCOVERY.NO_JOB_ROLE",
+                       "details":  "Reconcile job definition has no jobRoleArn."
+                   }
+               ],
+    "discovery":  {
+                      "reconcileRuleName":  "academy-reconcile-video-jobs",
+                      "computeEnvironments":  [
+                                                  "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-video-batch-ce"
+                                              ],
+                      "jobQueues":  [
+                                        "academy-video-batch-queue"
+                                    ],
+                      "reconcileJobDefinitionInTarget":  "academy-video-ops-reconcile",
+                      "eventBridgeRulesWithBatch":  [
+                                                        "academy-reconcile-video-jobs",
+                                                        "academy-video-scan-stuck-rate"
+                                                    ]
+                  },
+    "fixesApplied":  [
+
+                     ],
+    "meta":  {
+                 "region":  "ap-northeast-2",
+                 "killExtraReconcile":  false,
+                 "timestamp":  "20260225180247",
+                 "accountId":  "809466760795",
+                 "fixMode":  false
+             }
+}
