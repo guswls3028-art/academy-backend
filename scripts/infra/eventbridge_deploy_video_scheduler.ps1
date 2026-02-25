@@ -1,7 +1,6 @@
 # ==============================================================================
-# EventBridge rules for video Batch: reconcile + scan-stuck (rate 2 min). Target: AWS Batch SubmitJob only.
-# Updates both repo template usage AND the actual AWS EventBridge targets to academy-video-ops-queue.
-# Ops jobs (reconcile, scan_stuck) submit to academy-video-ops-queue. Video jobs stay on academy-video-batch-queue.
+# EventBridge rules for video Batch: reconcile + scan-stuck (rate 5 min). Target: AWS Batch SubmitJob only.
+# Ops queue missing时 batch_ops_setup.ps1 自动调用后继续。Independent runnable.
 # Usage: .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
 # ==============================================================================
 
@@ -16,6 +15,7 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $InfraPath = Join-Path $RepoRoot "scripts\infra"
 $EventBridgePath = Join-Path $InfraPath "eventbridge"
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
 $RequiredOpsJobDefs = @("academy-video-ops-reconcile", "academy-video-ops-scanstuck")
 
@@ -28,6 +28,16 @@ function ExecJson($argsArray) {
     if ($exit -ne 0) { return $null }
     if (-not $out) { return $null }
     try { return ($out | ConvertFrom-Json) } catch { return $null }
+}
+
+function Invoke-Aws {
+    param([string[]]$ArgsArray, [string]$ErrorMessage = "AWS CLI failed")
+    $out = & aws @ArgsArray 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $text = ($out | Out-String).Trim()
+        throw "${ErrorMessage}. ExitCode=$LASTEXITCODE. Output: $text"
+    }
+    return $out
 }
 
 $AccountId = (aws sts get-caller-identity --query Account --output text 2>&1)
