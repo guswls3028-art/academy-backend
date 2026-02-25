@@ -231,9 +231,8 @@ if (-not $opsJdLatest) {
     $regO.containerProperties.runtimePlatform = @{ cpuArchitecture = "ARM64" }
     $regO.timeout = @{ attemptDurationSeconds = 300 }
     if ($regO.parameters) { $regO.parameters = @{} }
-    if ($regO.containerProperties.logConfiguration.options) {
-        $regO.containerProperties.logConfiguration.options["awslogs-group"] = "/aws/batch/academy-video-ops"
-        $regO.containerProperties.logConfiguration.options["awslogs-stream-prefix"] = "ops"
+    if ($regO.containerProperties.logConfiguration) {
+        $regO.containerProperties.logConfiguration.options = @{ "awslogs-group" = "/aws/batch/academy-video-ops"; "awslogs-region" = $Region; "awslogs-stream-prefix" = "ops" }
     }
     $jdPathO = Join-Path $env:TEMP "reconcile_ops_jd_new_$(Get-Date -Format 'yyyyMMddHHmmss').json"
     $jsonStrO = $regO | ConvertTo-Json -Depth 25 -Compress:$false
