@@ -217,7 +217,7 @@ $cliInput = @{
 $cliInputPath = Join-Path ([System.IO.Path]::GetTempPath()) "academy_ssm_put_$([Guid]::NewGuid().ToString('N')).json"
 [System.IO.File]::WriteAllText($cliInputPath, $cliInput, $utf8NoBom)
 
-$cliInputUri = "file:///" + (([System.IO.Path]::GetFullPath($cliInputPath)) -replace '\\', '/')
+$cliInputUri = "file://" + (([System.IO.Path]::GetFullPath($cliInputPath)) -replace '\\', '/')
 Write-Host "Putting SSM parameter: $ParamName (SecureString, base64-encoded JSON)" -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
