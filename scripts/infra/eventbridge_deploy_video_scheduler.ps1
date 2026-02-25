@@ -1,5 +1,6 @@
 # ==============================================================================
 # EventBridge rules for video Batch: reconcile + scan-stuck (rate 2 min). Target: AWS Batch SubmitJob only.
+# Updates both repo template usage AND the actual AWS EventBridge targets to academy-video-ops-queue.
 # Ops jobs (reconcile, scan_stuck) submit to academy-video-ops-queue. Video jobs stay on academy-video-batch-queue.
 # Usage: .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
 # ==============================================================================
