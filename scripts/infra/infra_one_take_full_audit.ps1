@@ -724,7 +724,8 @@ function Invoke-VideoBatchProductionAudit {
         # ---- [D] Reconcile concurrency ----
         Write-Section "Reconcile Concurrency"
         if ($runningReconcileJobs.Count -gt 1) {
-            Add-Check -Id "RECONCILE.CONCURRENT" -Level "WARN" -Details "RUNNING reconcile job count is $($runningReconcileJobs.Count). More than one can cause duplicate status updates. JobIds: $($runningReconcileJobs -join ', ')"
+            $jobIdsStr = ($runningReconcileJobs | ForEach-Object { $_.jobId }) -join ', '
+            Add-Check -Id "RECONCILE.CONCURRENT" -Level "WARN" -Details "RUNNING reconcile job count is $($runningReconcileJobs.Count). More than one can cause duplicate status updates. JobIds: $jobIdsStr"
             Write-Warn "RUNNING reconcile jobs: $($runningReconcileJobs.Count)"
             $ok = $false
             [void]$summary.Add("  RUNNING reconcile count: $($runningReconcileJobs.Count) (WARN)")
