@@ -255,7 +255,7 @@ def main() -> None:
             if not arm:
                 out.append("  WARN: CE is x86; image from academy-build-arm64 is ARM64 -> mismatch")
                 issues.append("Architecture mismatch: CE x86 vs image ARM64 (use c6g/m6g for ARM64)")
-            if ce_arch and ecr_image_arch:
+            if ce_arch and ecr_image_arch and ecr_image_arch not in ("unknown", "unknown (single-arch manifest)"):
                 if (ce_arch == "arm64" and ecr_image_arch == "arm64") or (ce_arch == "amd64" and ecr_image_arch == "amd64"):
                     out.append(f"  Verdict: Compatible ({ce_arch})")
                 else:
