@@ -1,5 +1,5 @@
-﻿{
-    "FinalComputeEnvName":  "academy-video-batch-ce",
+{
+    "FinalComputeEnvName":  "academy-video-batch-ce-v2",
     "WorkerJobDefName":  "academy-video-batch-jobdef",
     "FinalJobQueueName":  "academy-video-batch-queue",
     "OpsJobDefNames":  [
@@ -7,6 +7,6 @@
                            "academy-video-ops-scanstuck",
                            "academy-video-ops-netprobe"
                        ],
-    "FinalComputeEnvArn":  "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-video-batch-ce",
+    "FinalComputeEnvArn":  "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-video-batch-ce-v2",
     "FinalJobQueueArn":  "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-video-batch-queue"
 }
