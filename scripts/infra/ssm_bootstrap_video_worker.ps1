@@ -149,7 +149,7 @@ if ($null -ne $apiVal -and ($apiVal -is [string])) { $collected["API_BASE_URL"] 
 # Parameter exists and no -Overwrite
 $exists = $false
 try {
-    $null = aws ssm get-parameter --name $ParamName --region $Region 2>&1
+    $null = & aws @('ssm', 'get-parameter', '--name', $ParamName, '--region', $Region) 2>&1
     if ($LASTEXITCODE -eq 0) { $exists = $true }
 } catch {}
 if ($exists -and -not $Overwrite) {
@@ -270,8 +270,9 @@ if ($storedDsm -ne "apps.api.config.settings.worker") {
     exit 1
 }
 
-# Confirm (version만 출력, 값은 출력하지 않음)
-$getMetaRaw = aws ssm get-parameter --name $ParamName --region $Region --query "Parameter.{Name:Name,Type:Type,Version:Version}" --output json 2>&1
+# Confirm (version만 출력, 값은 출력하지 않음) — ArgumentList 방식
+$getMetaArgs = @('ssm', 'get-parameter', '--name', $ParamName, '--region', $Region, '--query', 'Parameter.{Name:Name,Type:Type,Version:Version}', '--output', 'json')
+$getMetaRaw = & aws @getMetaArgs 2>&1
 try {
     $getOut = ($getMetaRaw | Out-String).Trim() | ConvertFrom-Json
 } catch {}
