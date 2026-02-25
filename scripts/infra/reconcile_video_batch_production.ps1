@@ -105,7 +105,7 @@ if (-not $videoQueueCeOk) {
     $tf = Join-Path $env:TEMP "reconcile_vq_$(Get-Date -Format 'yyyyMMddHHmmss').json"
     [System.IO.File]::WriteAllText($tf, $payload, [System.Text.UTF8Encoding]::new($false))
     $uri = "file:///" + ([System.IO.Path]::GetFullPath($tf) -replace '\\', '/')
-    Invoke-Aws @("batch", "update-job-queue", "--cli-input-json", $uri, "--region", $Region) -ErrorMessage "update Video queue computeEnvironmentOrder failed"
+    Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--cli-input-json", $uri, "--region", $Region) -ErrorMessage "update Video queue computeEnvironmentOrder failed"
     Remove-Item $tf -Force -ErrorAction SilentlyContinue
     if ($stateBefore -eq "ENABLED") { Invoke-Aws @("batch", "update-job-queue", "--job-queue", $VideoQueueName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "re-enable Video queue failed" }
 }
@@ -115,8 +115,16 @@ if (-not $opsQueueCeOk) {
     $oqObj = $opsJqList.jobQueues | Where-Object { $_.jobQueueName -eq $OpsQueueName } | Select-Object -First 1
     $stateBefore = $oqObj.state
     if ($stateBefore -eq "ENABLED") {
-        Invoke-Aws @("batch", "update-job-queue", "--job-queue", $OpsQueueName, "--state", "DISABLED", "--region", $Region) -ErrorMessage "disable Ops queue failed"
-        $w = 0; while ($w -lt 60) { Start-Sleep -Seconds 3; $w += 3; $q2 = ExecJson @("batch", "describe-job-queues", "--job-queues", $OpsQueueName, "--region", $Region, "--output", "json"); $s = ($q2.jobQueues | Where-Object { $_.jobQueueName -eq $OpsQueueName } | Select-Object -First 1).state; if ($s -eq "DISABLED") { break } }
+        Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--job-queue", $OpsQueueName, "--state", "DISABLED", "--region", $Region) -ErrorMessage "disable Ops queue failed"
+        $w = 0
+        while ($w -lt 60) {
+            Start-Sleep -Seconds 3
+            $w += 3
+            $q2 = ExecJson @("batch", "describe-job-queues", "--job-queues", $OpsQueueName, "--region", $Region, "--output", "json")
+            if (-not $q2 -or -not $q2.jobQueues) { continue }
+            $s = ($q2.jobQueues | Where-Object { $_.jobQueueName -eq $OpsQueueName } | Select-Object -First 1).state
+            if ($s -eq "DISABLED") { break }
+        }
     }
     $payload = '{"jobQueue":"' + $OpsQueueName + '","computeEnvironmentOrder":[{"order":1,"computeEnvironment":"' + $opsCeArn + '"}]}'
     $tf = Join-Path $env:TEMP "reconcile_oq_$(Get-Date -Format 'yyyyMMddHHmmss').json"
