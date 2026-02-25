@@ -14,7 +14,8 @@ param(
     [string[]]$SubnetIds = @(),
     [string]$SecurityGroupId = "",
     [string]$ComputeEnvName = "academy-video-ops-ce",
-    [string]$JobQueueName = "academy-video-ops-queue"
+    [string]$JobQueueName = "academy-video-ops-queue",
+    [string]$VideoCeNameForDiscovery = "academy-video-batch-ce"
 )
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
