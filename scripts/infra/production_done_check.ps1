@@ -158,7 +158,13 @@ if (-not $npJd -or -not $npJd.jobDefinitions -or $npJd.jobDefinitions.Count -eq 
             $npStatus = $npDesc.jobs[0].status
             if ($npStatus -eq "SUCCEEDED") {
                 $logStream = $npDesc.jobs[0].container.logStreamName
-                Write-Host "OK: Netprobe SUCCEEDED (logStreamName=$logStream)" -ForegroundColor Green
+                $exitCode = $npDesc.jobs[0].container.exitCode
+                if ($null -ne $exitCode -and $exitCode -ne 0) {
+                    Write-Host "FAIL: Netprobe container exitCode=$exitCode (expected 0)." -ForegroundColor Red
+                    $fail = 1
+                } else {
+                    Write-Host "OK: Netprobe SUCCEEDED (exitCode=0, logStreamName=$logStream)" -ForegroundColor Green
+                }
                 break
             }
             if ($npStatus -eq "FAILED") {
@@ -183,4 +189,5 @@ if ($fail -ne 0) {
     exit 1
 }
 Write-Host "`nPRODUCTION DONE CHECK: PASS" -ForegroundColor Green
+Write-Host "VIDEO WORKER PRODUCTION READY" -ForegroundColor Green
 exit 0
