@@ -99,6 +99,12 @@ def _is_valid_uuid(s: str) -> bool:
         return False
 
 
+def _video_still_exists(video_id: int) -> bool:
+    """Video 행이 아직 존재하는지 (삭제/취소 시 Worker 중단 판단용)."""
+    from apps.support.video.models import Video
+    return Video.objects.filter(pk=video_id).exists()
+
+
 def main() -> int:
     job_id = os.environ.get("VIDEO_JOB_ID") or (sys.argv[1] if len(sys.argv) > 1 else None)
     if not job_id:
@@ -135,6 +141,10 @@ def main() -> int:
 
     if not job_set_running(job_id):
         _log_json("JOB_ALREADY_TAKEN", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, state=job_obj.state)
+        return 0
+
+    if not _video_still_exists(job_obj.video_id):
+        _log_json("WORKER_CANCELLED_BY_VIDEO_DELETE", job_id=job_id, tenant_id=tid, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, reason="video_deleted_or_cancelled")
         return 0
 
     cfg = load_config()
