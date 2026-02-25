@@ -251,9 +251,11 @@ class Command(BaseCommand):
             status = (bj or {}).get("status")
             status_reason = (bj or {}).get("statusReason") or ""
 
+            if bj is not None:
+                _reset_not_found_count(str(job.id))
+
             if status == "SUCCEEDED":
                 # Reconcile does NOT change SUCCEEDED. READY is only set by worker (job_complete).
-                _reset_not_found_count(str(job.id))
                 self.stdout.write(f"RECONCILE skip SUCCEEDED job_id={job.id} (worker owns READY transition)")
 
             elif status == "FAILED":
