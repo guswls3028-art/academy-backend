@@ -6,9 +6,14 @@ Run on API server (EC2) or same IAM/credentials. Prints PASS/FAIL for TerminateJ
 
 Example commands:
   python scripts/verify_batch_terminate.py
-  python scripts/verify_batch_terminate.py --job-id <AWS_BATCH_JOB_ID>
+  python scripts/verify_batch_terminate.py --job-id "YOUR_AWS_BATCH_JOB_ID"
   python scripts/verify_batch_terminate.py --region ap-northeast-2
   python scripts/verify_batch_terminate.py --settings-module apps.api.config.settings.base
+
+PowerShell (use quotes for -JobId; angle brackets < > are redirection):
+  .\scripts\verify_batch_terminate.ps1
+  .\scripts\verify_batch_terminate.ps1 -JobId "YOUR_AWS_BATCH_JOB_ID"
+  .\scripts\verify_batch_terminate.ps1 -Region ap-northeast-2
 
 Exit codes: 0=PASS, 2=FAIL(permission), 3=FAIL(network/config), 4=WARN/SKIPPED.
 
