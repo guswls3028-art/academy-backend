@@ -26,6 +26,21 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $InfraPath = Join-Path $RepoRoot "scripts\infra"
 $OutDir = Join-Path $RepoRoot "docs\deploy\actual_state"
 
+# EcrRepoUri 엄격 검증: placeholder(<acct> 등) 및 잘못된 형식이 JobDefinition에 등록되지 않도록
+$EcrRepoUri = $EcrRepoUri.Trim()
+if ($EcrRepoUri -match '[<>]') {
+    Write-Host "Invalid ECR URI. Example: 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/repo:tag" -ForegroundColor Red
+    exit 1
+}
+if ($EcrRepoUri -match '\s') {
+    Write-Host "Invalid ECR URI. Example: 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/repo:tag" -ForegroundColor Red
+    exit 1
+}
+if ($EcrRepoUri -notmatch '^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[a-z0-9\-_]+:[a-zA-Z0-9\.\-_]+$') {
+    Write-Host "Invalid ECR URI. Example: 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/repo:tag" -ForegroundColor Red
+    exit 1
+}
+
 function Get-ComputeEnvironmentArn {
     param([string]$Name)
     $prev = $ErrorActionPreference
