@@ -155,24 +155,11 @@ if ($minV -ne 0 -or $maxV -ne 32 -or $allocV -ne "BEST_FIT_PROGRESSIVE") {
         Start-Sleep -Seconds 5
         $wait += 5
         $v = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $VideoCEName, "--region", $Region, "--output", "json")
-        $ve = $v.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $VideoCEName } | Select-Object -First 1
+        $ve = $null
+        if ($v -and $v.computeEnvironments) { $ve = $v.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $VideoCEName } | Select-Object -First 1 }
+        if (-not $ve) { continue }
         if ($ve.status -eq "VALID") { break }
-        if ($ve.status -eq "INVALID") { Write-Error "Video CE INVALID"; exit 1 }
-    }
-}
-$maxO = [int]$crO.maxvCpus
-if ($maxO -ne 1) {
-    Invoke-Aws -ArgsArray @("batch", "update-compute-environment", "--compute-environment", $OpsCEName, "--compute-resources", "minvCpus=0,maxvCpus=1", "--region", $Region) -ErrorMessage "update Ops CE failed"
-    $wait = 0
-    while ($wait -lt 90) {
-        Start-Sleep -Seconds 5
-        $wait += 5
-        $o = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $OpsCEName, "--region", $Region, "--output", "json")
-        $oe = $o.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $OpsCEName } | Select-Object -First 1
-        if ($oe.status -eq "VALID") { break }
         if ($oe.status -eq "INVALID") { Write-Error "Ops CE INVALID"; exit 1 }
-    }
-}
 $videoJdAll = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
 $videoJdLatest = $null
 if ($videoJdAll -and $videoJdAll.jobDefinitions -and $videoJdAll.jobDefinitions.Count -gt 0) {
