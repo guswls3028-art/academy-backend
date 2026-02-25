@@ -147,6 +147,39 @@ $collected["DJANGO_SETTINGS_MODULE"] = "apps.api.config.settings.worker"
 $apiVal = $collected["API_BASE_URL"]
 if ($null -ne $apiVal -and ($apiVal -is [string])) { $collected["API_BASE_URL"] = $apiVal.TrimEnd('/') } else { $collected["API_BASE_URL"] = [string]$apiVal }
 
+# API_BASE_URL가 https 퍼블릭 도메인일 경우 경고 (Batch는 VPC 내부 Private IP 사용 권장)
+$apiUrl = $collected["API_BASE_URL"]
+if ($apiUrl -and ($apiUrl -match '^https://')) {
+    Write-Host "WARN: API_BASE_URL is a public HTTPS URL ($apiUrl). Batch in VPC should use private IP (e.g. http://10.x.x.x:8000). Use -UsePrivateApiIp after running discover_api_network.ps1." -ForegroundColor Yellow
+}
+
+# -UsePrivateApiIp: api_instance.json에서 Private IP 기반 URL로 교체 (Batch 내부 통신용)
+if ($UsePrivateApiIp) {
+    $apiInstancePath = Join-Path $RepoRoot "docs\deploy\actual_state\api_instance.json"
+    if (-not (Test-Path -LiteralPath $apiInstancePath)) {
+        Write-Host "FAIL: -UsePrivateApiIp requires api_instance.json. Run discover_api_network.ps1 first." -ForegroundColor Red
+        exit 1
+    }
+    try {
+        $apiInstance = Get-Content $apiInstancePath -Raw | ConvertFrom-Json
+        $privateApiBase = $apiInstance.PrivateApiBaseUrl
+        if (-not $privateApiBase) {
+            $privateIp = $apiInstance.PrivateIpAddress
+            if ($privateIp) { $privateApiBase = "http://${privateIp}:8000" } else { $privateApiBase = $null }
+        }
+        if ($privateApiBase) {
+            $collected["API_BASE_URL"] = $privateApiBase.TrimEnd('/')
+            Write-Host "API_BASE_URL set to private (VPC): $($collected['API_BASE_URL'])" -ForegroundColor Cyan
+        } else {
+            Write-Host "FAIL: api_instance.json has no PrivateIpAddress/PrivateApiBaseUrl." -ForegroundColor Red
+            exit 1
+        }
+    } catch {
+        Write-Host "FAIL: Could not read api_instance.json: $_" -ForegroundColor Red
+        exit 1
+    }
+}
+
 # Parameter exists and no -Overwrite
 $exists = $false
 try {
