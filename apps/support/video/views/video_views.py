@@ -160,8 +160,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
     def perform_destroy(self, instance):
         """
-        영상 삭제: 현재 Job DEAD 처리 -> DB 삭제 -> R2 정리는 SQS로 워커 위임.
-        Worker는 job 없으면(삭제된 영상) 메시지 consume 후 스킵.
+        영상 삭제: 진행 중 Job에 대해 AWS Batch Terminate 호출 → Job DEAD 처리 → DB 삭제 → R2 정리는 SQS로 워커 위임.
+        Terminate 실패해도 삭제 요청은 성공. Worker는 job 없으면(삭제된 영상) 메시지 consume 후 스킵.
         """
         video = video_repo.get_video_by_pk_with_relations(instance.pk)
         tenant_id = None
@@ -171,12 +171,25 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         if video and video.session and video.session.lecture:
             tenant_id = video.session.lecture.tenant_id
             hls_prefix = video_hls_prefix(tenant_id=tenant_id, video_id=video_id)
-        # 삭제 전 현재 Job DEAD 처리 (SQS 메시지는 Worker가 job 없을 때 consume)
         if video and video.current_job_id:
             try:
                 from apps.support.video.models import VideoTranscodeJob
+                from apps.support.video.services.batch_control import terminate_batch_job
+
                 cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
-                if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
+                if cur and cur.state in (
+                    VideoTranscodeJob.State.QUEUED,
+                    VideoTranscodeJob.State.RUNNING,
+                    VideoTranscodeJob.State.RETRY_WAIT,
+                ):
+                    aws_batch_job_id = (getattr(cur, "aws_batch_job_id", None) or "").strip()
+                    if aws_batch_job_id:
+                        terminate_batch_job(
+                            aws_batch_job_id,
+                            "video_deleted",
+                            video_id=video_id,
+                            job_id=str(cur.id),
+                        )
                     cur.state = VideoTranscodeJob.State.DEAD
                     cur.save(update_fields=["state", "updated_at"])
                     logger.info("Video delete: job DEAD video_id=%s job_id=%s", video_id, cur.id)
