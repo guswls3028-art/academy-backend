@@ -238,9 +238,11 @@ $rule2 = ExecJson @("events", "describe-rule", "--name", $ReconcileRuleName, "--
 $tgtList2 = ExecJson @("events", "list-targets-by-rule", "--rule", $ReconcileRuleName, "--region", $Region, "--output", "json")
 $alarmList2 = ExecJson @("cloudwatch", "describe-alarms", "--alarm-names", $RunnableAlarmName, "--region", $Region, "--output", "json")
 $fail = $false
-if ($videoCe2.status -ne "VALID" -or $videoCe2.state -ne "ENABLED") { Write-Error "Video CE state=$($videoCe2.state) status=$($videoCe2.status)"; $fail = $true }
-if ($opsCe2.status -ne "VALID" -or $opsCe2.state -ne "ENABLED") { Write-Error "Ops CE state=$($opsCe2.state) status=$($opsCe2.status)"; $fail = $true }
-$crV2 = $videoCe2.computeResources
+if (-not $videoCe2) { Write-Error "Video CE not found"; $fail = $true }
+elseif ($videoCe2.status -ne "VALID" -or $videoCe2.state -ne "ENABLED") { Write-Error "Video CE state=$($videoCe2.state) status=$($videoCe2.status)"; $fail = $true }
+if (-not $opsCe2) { Write-Error "Ops CE not found"; $fail = $true }
+elseif ($opsCe2.status -ne "VALID" -or $opsCe2.state -ne "ENABLED") { Write-Error "Ops CE state=$($opsCe2.state) status=$($opsCe2.status)"; $fail = $true }
+if ($videoCe2) {
 if ([int]$crV2.minvCpus -ne 0 -or [int]$crV2.maxvCpus -ne 32) { Write-Error "Video CE min/max vCpus mismatch"; $fail = $true }
 if ([int]$opsCe2.computeResources.maxvCpus -ne 1) { Write-Error "Ops CE maxvCpus != 1"; $fail = $true }
 if ($videoJdLatest2) {
