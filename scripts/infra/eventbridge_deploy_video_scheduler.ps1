@@ -1,6 +1,6 @@
 # ==============================================================================
 # EventBridge rules for video Batch: reconcile + scan-stuck (rate 5 min). Target: AWS Batch SubmitJob only.
-# Ops queue missing时 batch_ops_setup.ps1 自动调用后继续。Independent runnable.
+# When Ops queue is missing, batch_ops_setup.ps1 is invoked automatically. Independent runnable.
 # Usage: .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
 # ==============================================================================
 
