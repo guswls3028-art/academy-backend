@@ -53,11 +53,11 @@ foreach ($ruleName in @($ReconcileRule, $ScanStuckRule)) {
             $fail = 1
         }
         if ($t.Arn -ne $queueArn) {
-            Write-Host "FAIL: EventBridge rule $ruleName target JobQueue ARN does not match." -ForegroundColor Red
+            Write-Host "FAIL: EventBridge rule $ruleName target JobQueue ARN does not match Ops queue $OpsJobQueueName." -ForegroundColor Red
             $fail = 1
         }
     }
 }
 
 if ($fail -ne 0) { exit 1 }
-Write-Host "EventBridge wiring: rules exist, ENABLED, Batch targets present." -ForegroundColor Green
+Write-Host "EventBridge wiring: rules exist, ENABLED, Batch targets -> $OpsJobQueueName." -ForegroundColor Green
