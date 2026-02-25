@@ -18,12 +18,20 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $fail = 0
 
-# Resolve JobQueueName from batch_final_state.json if present
+# Resolve JobQueueName from batch_final_state.json if present (video queue)
 $statePath = Join-Path $RepoRoot "docs\deploy\actual_state\batch_final_state.json"
 if (Test-Path -LiteralPath $statePath) {
     try {
         $state = Get-Content $statePath -Raw | ConvertFrom-Json
         if ($state.FinalJobQueueName) { $JobQueueName = $state.FinalJobQueueName }
+    } catch {}
+}
+# Ops queue for EventBridge and netprobe (optional: from batch_ops_state.json)
+$opsStatePath = Join-Path $RepoRoot "docs\deploy\actual_state\batch_ops_state.json"
+if (Test-Path -LiteralPath $opsStatePath) {
+    try {
+        $opsState = Get-Content $opsStatePath -Raw | ConvertFrom-Json
+        if ($opsState.OpsJobQueueName) { $OpsJobQueueName = $opsState.OpsJobQueueName }
     } catch {}
 }
 
