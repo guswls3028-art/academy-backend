@@ -68,12 +68,17 @@ function Get-JobQueueArn {
 Write-Host "== Ops Batch Setup (academy-video-ops-ce / academy-video-ops-queue) ==" -ForegroundColor Cyan
 
 # Resolve VpcId, SubnetIds, SecurityGroupId from existing video CE if not provided
-# Security Group: Ops CE uses the SAME security group as academy-video-batch-ce (e.g. academy-video-batch-sg).
+# Tries VideoCeNameForDiscovery first (e.g. academy-video-batch-ce-final), then academy-video-batch-ce.
 if (-not $VpcId -or $SubnetIds.Count -eq 0 -or -not $SecurityGroupId) {
-    $videoCe = ExecJson @("batch", "describe-compute-environments", "--compute-environments", "academy-video-batch-ce", "--region", $Region, "--output", "json")
-    $videoCeObj = $videoCe.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq "academy-video-batch-ce" } | Select-Object -First 1
+    $videoCeObj = $null
+    foreach ($ceName in @($VideoCeNameForDiscovery, "academy-video-batch-ce")) {
+        if ([string]::IsNullOrWhiteSpace($ceName)) { continue }
+        $videoCe = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $ceName, "--region", $Region, "--output", "json")
+        $videoCeObj = $videoCe.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ceName } | Select-Object -First 1
+        if ($videoCeObj -and $videoCeObj.status -eq "VALID") { break }
+    }
     if (-not $videoCeObj -or $videoCeObj.status -ne "VALID") {
-        Write-Host "FAIL: academy-video-batch-ce not found or not VALID. Create video Batch first or pass -VpcId -SubnetIds -SecurityGroupId." -ForegroundColor Red
+        Write-Host "FAIL: Video CE ($VideoCeNameForDiscovery / academy-video-batch-ce) not found or not VALID. Create video Batch first or pass -VpcId -SubnetIds -SecurityGroupId." -ForegroundColor Red
         exit 1
     }
     $cr = $videoCeObj.computeResources
