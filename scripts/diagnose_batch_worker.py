@@ -26,9 +26,6 @@ def main() -> None:
     runnable: list = []
     jd = None
     ce_name = None
-    jd_image_tag = None
-    ecr_latest_digest = None
-    jd_image_digest_match: bool | None = None
 
     try:
         import boto3
@@ -70,6 +67,7 @@ def main() -> None:
         if not runnable:
             out.append("No RUNNABLE jobs.")
         else:
+            runnable_issue_added = False
             for s in runnable:
                 jid = s.get("jobId")
                 desc = batch.describe_jobs(jobs=[jid]).get("jobs") or []
@@ -80,12 +78,14 @@ def main() -> None:
                     out.append(f"    createdAt={j.get('createdAt')} jobDefinition={j.get('jobDefinition')}")
                     container = j.get("container", {}) or {}
                     out.append(f"    image={container.get('image')}")
-                    if not status_reason and runnable:
-                        issues.append("RUNNABLE with empty statusReason; CE may not be scaling or image/arch issue")
-                    elif "MISCONFIGURATION" in status_reason:
-                        issues.append(f"RUNNABLE MISCONFIGURATION: {status_reason[:200]}")
-                    else:
-                        issues.append(f"{len(runnable)} job(s) stuck RUNNABLE; check CE capacity and image/arch")
+                    if not runnable_issue_added:
+                        if not status_reason:
+                            issues.append("RUNNABLE with empty statusReason; CE may not be scaling or image/arch issue")
+                        elif "MISCONFIGURATION" in status_reason:
+                            issues.append(f"RUNNABLE MISCONFIGURATION: {status_reason[:200]}")
+                        else:
+                            issues.append(f"{len(runnable)} job(s) stuck RUNNABLE; check CE capacity and image/arch")
+                        runnable_issue_added = True
                 else:
                     out.append(f"  jobId={jid} (describe failed)")
     except Exception as e:
