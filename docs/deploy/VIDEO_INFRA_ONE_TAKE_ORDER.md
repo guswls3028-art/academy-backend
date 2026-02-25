@@ -158,3 +158,5 @@ CE/큐/JobDef/EventBridge/알람을 **기존 이름 기준**으로만 맞추는 
 | **실행** | `.\scripts\infra\reconcile_video_batch_production.ps1 -Region ap-northeast-2` |
 | **Video CE가 final인 경우** | `-VideoCEName academy-video-batch-ce-final` 추가 (기본값은 v2). |
 | **기본 파라미터** | Video 큐 `academy-video-batch-queue`, Video JobDef `academy-video-batch-jobdef`, Ops 큐/CE/JobDef 이름은 스크립트 상단 param 참고. |
+
+**프로덕션 원테이크(1워커=1작업·재실행 증식 없음):** `scripts/infra/video_batch_production_one_take.ps1` — 단일 Video CE(c6g.large), 큐 단일 CE 연결, JobDef 2vCPU/3072MB, EventBridge reconcile 15분, Evidence 출력. 재실행 시 증식하지 않음. 상세 설계는 `docs/deploy/VIDEO_BATCH_PRODUCTION_FIX_FINAL.md` 참고.
