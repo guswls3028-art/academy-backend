@@ -1,20 +1,22 @@
-# API EC2 Role에 Batch SubmitJob 권한 부여 (Video upload_complete -> Batch 제출용)
+# API EC2 Role에 Batch SubmitJob + TerminateJob + DescribeJobs 권한 부여 (Video upload_complete / delete 시 Terminate)
 # Usage: .\scripts\apply_api_batch_submit_policy.ps1
 # Prerequisite: academy-ec2-role 존재
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = Split-Path -Parent $ScriptRoot
 $RoleName = "academy-ec2-role"
 $PolicyName = "BatchSubmitVideoJob"
-$PolicyPath = "C:\academy\infra\worker_asg\iam_policy_api_batch_submit.json"
+$PolicyPath = Join-Path $RepoRoot "infra\worker_asg\iam_policy_api_batch_submit.json"
 
 if (!(Test-Path $PolicyPath)) {
     throw "Policy file not found: $PolicyPath"
 }
 
 Write-Host "[1/3] Creating minified JSON (PowerShell-safe)..." -ForegroundColor Cyan
-$minPath = "C:\academy\infra\worker_asg\iam_policy_api_batch_submit.min.json"
+$minPath = Join-Path $RepoRoot "infra\worker_asg\iam_policy_api_batch_submit.min.json"
 (Get-Content $PolicyPath -Raw | ConvertFrom-Json | ConvertTo-Json -Depth 10 -Compress) | Out-File $minPath -Encoding ascii
 
 Write-Host "[2/3] Applying IAM policy to $RoleName..." -ForegroundColor Cyan
