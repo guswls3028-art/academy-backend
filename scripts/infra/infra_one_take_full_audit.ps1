@@ -109,7 +109,7 @@ function ExecJsonThrow {
         throw "AWS CLI failed (exit $exit): $str"
     }
     if ([string]::IsNullOrWhiteSpace($str)) { return $null }
-    try { return ($str | ConvertFrom-Json) } catch { throw "AWS CLI output is not valid JSON: $str" }
+    try { return ($str | ConvertFrom-Json) } catch { return $null }
 }
 
 # --- [1] SSM ---
