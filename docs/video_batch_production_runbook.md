@@ -137,13 +137,11 @@ Expected: Exit 0; `DONE. Batch recreated in API VPC. JobQueueName=<final>`.
 
 **Important:** The **final job queue name** is either `academy-video-batch-queue` (if the existing queue was updated to CE `academy-video-batch-ce`) or `academy-video-batch-queue-ce` (if update failed and a new queue was created). Use the name printed at the end of Step 2 for Steps 3–5, or read `docs/deploy/actual_state/batch_final_state.json` → `FinalJobQueueName`.
 
-**Step 3 — EventBridge** (use final queue name from Step 2)
+**Step 3 — EventBridge** (reconcile/scan_stuck submit to Ops queue)
 ```powershell
-$q = (Get-Content (Join-Path $PWD "docs\deploy\actual_state\batch_final_state.json") -Raw | ConvertFrom-Json).FinalJobQueueName
-.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName $q
+.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
 ```
-Or if you know the name: `-JobQueueName academy-video-batch-queue` or `-JobQueueName academy-video-batch-queue-ce`.
-Expected: Exit 0; `Done. EventBridge video scheduler (Batch only) deployed; targets verified.`
+Or if you created Ops queue with a different name, pass that. Expected: Exit 0; `Done. EventBridge video scheduler deployed; reconcile/scan_stuck -> academy-video-ops-queue; targets verified.`
 
 **Step 4 — CloudWatch alarms** (use same final queue name)
 ```powershell
@@ -167,9 +165,11 @@ Uses `batch_final_state.json` to resolve the queue name automatically. Expected:
 
 | Resource | Expected name(s) |
 |----------|-------------------|
-| Compute environment | `academy-video-batch-ce` |
-| Job queue (primary) | `academy-video-batch-queue` |
-| Job queue (fallback) | `academy-video-batch-queue-ce` (created only when update of existing queue to CE fails) |
+| Video compute environment | `academy-video-batch-ce` |
+| Video job queue (primary) | `academy-video-batch-queue` |
+| Video job queue (fallback) | `academy-video-batch-queue-ce` (created only when update of existing queue to CE fails) |
+| **Ops compute environment** | **`academy-video-ops-ce`** (t4g.micro, t4g.small, max 4 vCPU) |
+| **Ops job queue** | **`academy-video-ops-queue`** (reconcile, scan_stuck, netprobe) |
 | Worker job definition | `academy-video-batch-jobdef` |
 | Ops job definitions | `academy-video-ops-reconcile`, `academy-video-ops-scanstuck`, `academy-video-ops-netprobe` |
 
