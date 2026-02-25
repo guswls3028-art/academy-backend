@@ -248,7 +248,10 @@ function Test-RuntimeAudit {
     }
 
     $asgMsg = ExecJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $AsgMessagingName, "--region", $Region, "--output", "json")
-    $instancesMsg = @($asgMsg.AutoScalingGroups[0].Instances | Where-Object { $_.LifecycleState -eq "InService" -and $_.HealthStatus -eq "Healthy" } | ForEach-Object { $_.InstanceId })
+    $instancesMsg = @()
+    if ($asgMsg -and $asgMsg.AutoScalingGroups -and $asgMsg.AutoScalingGroups.Count -gt 0) {
+        $instancesMsg = @($asgMsg.AutoScalingGroups[0].Instances | Where-Object { $_.LifecycleState -eq "InService" -and $_.HealthStatus -eq "Healthy" } | ForEach-Object { $_.InstanceId })
+    }
     if ($instancesMsg.Count -eq 0) {
         Add-Failure -Worker "Messaging Worker" -Area "Runtime" -Resource $AsgMessagingName -Message "No InService/Healthy instance for SSM command"
         $msgOk = $false
@@ -331,7 +334,8 @@ function Test-AsgAudit {
 
     foreach ($asgName in @($AsgAiName, $AsgMessagingName)) {
         $asgJson = ExecJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $asgName, "--region", $Region, "--output", "json")
-        $ag = $asgJson.AutoScalingGroups[0]
+        $ag = $null
+        if ($asgJson -and $asgJson.AutoScalingGroups -and $asgJson.AutoScalingGroups.Count -gt 0) { $ag = $asgJson.AutoScalingGroups[0] }
         if (-not $ag) {
             Add-Failure -Worker $(if ($asgName -eq $AsgAiName) { "AI Worker" } else { "Messaging Worker" }) -Area "ASG" -Resource $asgName -Message "ASG not found"
             if ($asgName -eq $AsgAiName) { $aiOk = $false } else { $msgOk = $false }
