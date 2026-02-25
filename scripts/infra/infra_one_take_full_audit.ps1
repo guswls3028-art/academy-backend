@@ -431,6 +431,171 @@ function Test-AlarmsAudit {
     return @{ AI = $aiOk; Messaging = $msgOk; Video = $videoOk }
 }
 
+# --- [7] Video Batch Reconcile: job role DescribeJobs, EventBridge rule/target, concurrency ---
+function Test-VideoBatchReconcileAudit {
+    $summary = [System.Collections.ArrayList]::new()
+    $ok = $true
+
+    # 1) Reconcile job definition: get jobRoleArn (auto-discover)
+    $jdList = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $ReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+    $reconcileJd = $null
+    if ($jdList -and $jdList.jobDefinitions -and $jdList.jobDefinitions.Count -gt 0) {
+        $reconcileJd = $jdList.jobDefinitions[0]
+    }
+    if (-not $reconcileJd) {
+        Add-Failure -Worker "Video Worker" -Area "Reconcile" -Resource $ReconcileJobDefName -Message "Reconcile job definition not ACTIVE"
+        [void]$summary.Add("  Reconcile job definition: NOT FOUND (ACTIVE)")
+        return @{ Ok = $false; Summary = $summary }
+    }
+
+    $jobRoleArn = $reconcileJd.containerProperties.jobRoleArn
+    $jobRoleName = $null
+    if ($jobRoleArn -match '/role/([^/]+)$') { $jobRoleName = $Matches[1] }
+    if (-not $jobRoleName) {
+        Add-Failure -Worker "Video Worker" -Area "Reconcile" -Resource $ReconcileJobDefName -Message "Reconcile job definition has no jobRoleArn"
+        [void]$summary.Add("  Reconcile jobRoleArn: NOT SET")
+        return @{ Ok = $false; Summary = $summary }
+    }
+    [void]$summary.Add("  Reconcile jobRoleArn: $jobRoleArn")
+
+    # 2) Check role has batch:DescribeJobs (managed + inline)
+    $hasDescribeJobs = $false
+    $attached = ExecJson @("iam", "list-attached-role-policies", "--role-name", $jobRoleName, "--output", "json")
+    if ($attached -and $attached.AttachedPolicies) {
+        foreach ($ap in $attached.AttachedPolicies) {
+            $policyArn = $ap.PolicyArn
+            $policyOut = ExecJson @("iam", "get-policy", "--policy-arn", $policyArn, "--output", "json")
+            if (-not $policyOut -or -not $policyOut.Policy) { continue }
+            $verId = $policyOut.Policy.DefaultVersionId
+            $verOut = ExecJson @("iam", "get-policy-version", "--policy-arn", $policyArn, "--version-id", $verId, "--output", "json")
+            if ($verOut -and $verOut.PolicyVersion -and $verOut.PolicyVersion.Document) {
+                $doc = $verOut.PolicyVersion.Document
+                if ($doc -match 'batch:\*|batch:DescribeJobs') { $hasDescribeJobs = $true; break }
+            }
+        }
+    }
+    if (-not $hasDescribeJobs) {
+        $inlineList = ExecJson @("iam", "list-role-policies", "--role-name", $jobRoleName, "--output", "json")
+        if ($inlineList -and $inlineList.PolicyNames) {
+            foreach ($pn in $inlineList.PolicyNames) {
+                $rpOut = ExecJson @("iam", "get-role-policy", "--role-name", $jobRoleName, "--policy-name", $pn, "--output", "json")
+                if ($rpOut -and $rpOut.PolicyDocument) {
+                    $doc = $rpOut.PolicyDocument
+                    if ($doc -match 'batch:\*|batch:DescribeJobs') { $hasDescribeJobs = $true; break }
+                }
+            }
+        }
+    }
+
+    if (-not $hasDescribeJobs) {
+        Add-Failure -Worker "Video Worker" -Area "Reconcile" -Resource $jobRoleName -Message "Job role missing batch:DescribeJobs (reconcile needs it to avoid AccessDenied)"
+        $ok = $false
+        [void]$summary.Add("  Job role batch:DescribeJobs: MISSING")
+
+        if ($FixMode) {
+            $accountId = (aws sts get-caller-identity --query Account --output text 2>$null)
+            if (-not $accountId) {
+                [void]$summary.Add("  FixMode: SKIP (cannot get account ID)")
+            } else {
+                $policyArn = "arn:aws:iam::${accountId}:policy/$ManagedPolicyNameDescribeJobs"
+                $policyExists = $null
+                $policyExists = ExecJson @("iam", "get-policy", "--policy-arn", $policyArn, "--output", "json") 2>$null
+                if ($policyExists -and $policyExists.Policy) {
+                    $attachList = ExecJson @("iam", "list-attached-role-policies", "--role-name", $jobRoleName, "--output", "json")
+                    $alreadyAttached = $false
+                    if ($attachList -and $attachList.AttachedPolicies) {
+                        foreach ($a in $attachList.AttachedPolicies) { if ($a.PolicyArn -eq $policyArn) { $alreadyAttached = $true; break } }
+                    }
+                    if (-not $alreadyAttached) {
+                        $prevErr = $ErrorActionPreference
+                        $ErrorActionPreference = "Continue"
+                        & aws iam attach-role-policy --role-name $jobRoleName --policy-arn $policyArn 2>&1 | Out-Null
+                        $ErrorActionPreference = $prevErr
+                        if ($LASTEXITCODE -eq 0) {
+                            [void]$summary.Add("  FixMode: Attached existing managed policy $ManagedPolicyNameDescribeJobs to $jobRoleName")
+                        } else {
+                            [void]$summary.Add("  FixMode: FAILED to attach policy to role")
+                            $ok = $false
+                        }
+                    } else {
+                        [void]$summary.Add("  FixMode: Policy already attached (no change)")
+                    }
+                } else {
+                    $policyDoc = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["batch:DescribeJobs","batch:ListJobs"],"Resource":"*"}]}'
+                    $tempDir = [System.IO.Path]::GetTempPath()
+                    $tempFile = Join-Path $tempDir "academy-video-batch-describe-jobs-policy-$(Get-Date -Format 'yyyyMMddHHmmss').json"
+                    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+                    [System.IO.File]::WriteAllText($tempFile, $policyDoc, $utf8NoBom)
+                    try {
+                        $prevErr = $ErrorActionPreference
+                        $ErrorActionPreference = "Continue"
+                        $createOut = & aws iam create-policy --policy-name $ManagedPolicyNameDescribeJobs --policy-document "file://$($tempFile -replace '\\','/')" --description "Allows Batch job role to DescribeJobs/ListJobs for reconcile" 2>&1
+                        $createExit = $LASTEXITCODE
+                        $ErrorActionPreference = $prevErr
+                        if ($createExit -eq 0) {
+                            $createJson = $createOut | ConvertFrom-Json
+                            $newArn = $createJson.Policy.Arn
+                            & aws iam attach-role-policy --role-name $jobRoleName --policy-arn $newArn 2>&1 | Out-Null
+                            if ($LASTEXITCODE -eq 0) {
+                                [void]$summary.Add("  FixMode: Created managed policy $ManagedPolicyNameDescribeJobs and attached to $jobRoleName")
+                            } else {
+                                [void]$summary.Add("  FixMode: Policy created but attach failed")
+                                $ok = $false
+                            }
+                        } elseif (($createOut | Out-String) -match "EntityAlreadyExists") {
+                            & aws iam attach-role-policy --role-name $jobRoleName --policy-arn $policyArn 2>&1 | Out-Null
+                            if ($LASTEXITCODE -eq 0) {
+                                [void]$summary.Add("  FixMode: Attached existing managed policy $ManagedPolicyNameDescribeJobs to $jobRoleName")
+                            } else {
+                                [void]$summary.Add("  FixMode: Policy exists but attach failed")
+                                $ok = $false
+                            }
+                        } else {
+                            [void]$summary.Add("  FixMode: Create policy failed: $createOut")
+                            $ok = $false
+                        }
+                    } finally {
+                        if (Test-Path -LiteralPath $tempFile) { Remove-Item $tempFile -Force -ErrorAction SilentlyContinue }
+                    }
+                }
+            }
+        } else {
+            [void]$summary.Add("  Job role batch:DescribeJobs: OK (found in inline or managed)")
+        }
+    }
+
+    if ($hasDescribeJobs) { [void]$summary.Add("  Job role batch:DescribeJobs: OK") }
+
+    # 4) EventBridge: rule exists, schedule, target JobDefinition fixed revision?
+    $ruleOut = ExecJson @("events", "describe-rule", "--name", $ReconcileRuleName, "--region", $Region, "--output", "json")
+    if (-not $ruleOut -or -not $ruleOut.Name) {
+        Add-Failure -Worker "Video Worker" -Area "Reconcile" -Resource $ReconcileRuleName -Message "EventBridge rule not found"
+        [void]$summary.Add("  EventBridge rule: NOT FOUND")
+        $ok = $false
+    } else {
+        $sched = $ruleOut.ScheduleExpression -as [string]
+        [void]$summary.Add("  EventBridge schedule: $sched")
+        $tgtOut = ExecJson @("events", "list-targets-by-rule", "--rule", $ReconcileRuleName, "--region", $Region, "--output", "json")
+        if (-not $tgtOut -or -not $tgtOut.Targets -or $tgtOut.Targets.Count -eq 0) {
+            [void]$summary.Add("  EventBridge target JobDefinition: (no targets)")
+            $ok = $false
+        } else {
+            $jdInTarget = $tgtOut.Targets[0].BatchParameters.JobDefinition -as [string]
+            $fixedRevision = $jdInTarget -and $jdInTarget -match ':\d+$'
+            if ($fixedRevision) {
+                [void]$summary.Add("  EventBridge JobDefinition: $jdInTarget (fixed revision)"
+            } else {
+                [void]$summary.Add("  EventBridge JobDefinition: $jdInTarget (name only, not fixed revision)")
+            }
+        }
+    }
+
+    # 5) Concurrency: rate allows overlap; EventBridge has no single-flight
+    [void]$summary.Add("  Concurrency: EventBridge has no single-flight; rate can start new job every interval. Consider rate(5 minutes) or Lambda guard if overlap is undesirable.")
+
+    return @{ Ok = $ok; Summary = $summary }
+}
+
 # --- Main ---
 $accountId = $null
 try {
