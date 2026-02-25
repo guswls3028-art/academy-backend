@@ -1,5 +1,6 @@
 # ==============================================================================
-# Attach Managed Policy (AcademyAllowBatchDescribeJobs) to academy-video-batch-job-role.
+# Attach Managed Policy (AcademyAllowBatchDescribeJobs) to the role used by reconcile job.
+# Role: discovered from Batch job definition academy-video-ops-reconcile (jobRoleArn), else academy-video-batch-job-role.
 # Reconcile job runs with this role and needs batch:DescribeJobs / batch:ListJobs.
 # Inline policy not used; Managed Policy only. Idempotent.
 # Usage: .\scripts\infra\iam_attach_batch_describe_jobs.ps1 [-Region ap-northeast-2]
@@ -11,8 +12,9 @@ $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 
-$RoleName = "academy-video-batch-job-role"
 $PolicyName = "AcademyAllowBatchDescribeJobs"
+$FallbackRoleName = "academy-video-batch-job-role"
+$ReconcileJobDefName = "academy-video-ops-reconcile"
 
 function ExecJson($argsArray) {
     $prev = $ErrorActionPreference
@@ -27,6 +29,17 @@ function ExecJson($argsArray) {
 
 $AccountId = (aws sts get-caller-identity --query Account --output text 2>&1)
 if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: AWS identity check failed" -ForegroundColor Red; exit 1 }
+
+# Discover role from reconcile job definition (jobRoleArn)
+$RoleName = $FallbackRoleName
+$jdResp = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $ReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+if ($jdResp -and $jdResp.jobDefinitions -and $jdResp.jobDefinitions.Count -gt 0) {
+    $jobRoleArn = $jdResp.jobDefinitions[0].containerProperties.jobRoleArn -as [string]
+    if (-not [string]::IsNullOrWhiteSpace($jobRoleArn)) {
+        if ($jobRoleArn -match '([^/]+)$') { $RoleName = $Matches[1] }
+    }
+}
+Write-Host "Target role: $RoleName (from job def or fallback)" -ForegroundColor Gray
 
 $PolicyArn = "arn:aws:iam::${AccountId}:policy/$PolicyName"
 $policyDoc = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["batch:DescribeJobs","batch:ListJobs"],"Resource":"*"}]}'
