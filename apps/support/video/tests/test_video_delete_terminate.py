@@ -40,7 +40,7 @@ class VideoDeleteTerminateTest(TestCase):
         self.video.current_job_id = job.id
         self.video.save(update_fields=["current_job_id"])
 
-        with patch("apps.support.video.views.video_views.terminate_batch_job") as mock_terminate:
+        with patch("apps.support.video.services.batch_control.terminate_batch_job") as mock_terminate:
             with patch("apps.support.video.views.video_views.enqueue_delete_r2"):
                 view = VideoViewSet()
                 view.perform_destroy(self.video)
@@ -62,7 +62,7 @@ class VideoDeleteTerminateTest(TestCase):
         self.video.current_job_id = job.id
         self.video.save(update_fields=["current_job_id"])
 
-        with patch("apps.support.video.views.video_views.terminate_batch_job") as mock_terminate:
+        with patch("apps.support.video.services.batch_control.terminate_batch_job") as mock_terminate:
             with patch("apps.support.video.views.video_views.enqueue_delete_r2"):
                 view = VideoViewSet()
                 view.perform_destroy(self.video)
@@ -79,7 +79,7 @@ class VideoDeleteTerminateTest(TestCase):
         self.video.current_job_id = job.id
         self.video.save(update_fields=["current_job_id"])
 
-        with patch("apps.support.video.views.video_views.terminate_batch_job") as mock_terminate:
+        with patch("apps.support.video.services.batch_control.terminate_batch_job") as mock_terminate:
             with patch("apps.support.video.views.video_views.enqueue_delete_r2"):
                 view = VideoViewSet()
                 view.perform_destroy(self.video)
@@ -97,7 +97,7 @@ class VideoDeleteTerminateTest(TestCase):
         self.video.current_job_id = job.id
         self.video.save(update_fields=["current_job_id"])
 
-        with patch("apps.support.video.views.video_views.terminate_batch_job") as mock_terminate:
+        with patch("apps.support.video.services.batch_control.terminate_batch_job") as mock_terminate:
             mock_terminate.side_effect = Exception("network error")
             with patch("apps.support.video.views.video_views.enqueue_delete_r2"):
                 view = VideoViewSet()
