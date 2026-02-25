@@ -71,8 +71,8 @@ Scheduled via EventBridge → Batch SubmitJob to **academy-video-ops-queue** (Op
 | Video CE, video queue, job definitions | `scripts/infra/batch_video_setup.ps1` | Pass `-Region`, `-VpcId`, `-SubnetIds`, `-SecurityGroupId`, `-EcrRepoUri` (and optional overrides) |
 | **Ops CE + Ops queue** | `scripts/infra/batch_ops_setup.ps1` | **academy-video-ops-ce** (instanceTypes: **default_arm64**, min=0, max=2 vCPU). Same VPC and **same Security Group as academy-video-batch-ce**. 존재 시 update(state ENABLED), 없으면 create. |
 | CloudWatch Log Group | `scripts/infra/batch_video_setup.ps1` | `/aws/batch/academy-video-worker` |
-| EventBridge rule (reconcile, rate 5 min) | `scripts/infra/eventbridge_deploy_video_scheduler.ps1` | Target: **academy-video-ops-queue**. Script runs **aws events put-targets** → **actual AWS EventBridge targets** updated to Ops queue. |
-| EventBridge rule (scan-stuck) | `scripts/infra/eventbridge_deploy_video_scheduler.ps1` | Target: **academy-video-ops-queue** (actual AWS target updated by same script). |
+| EventBridge rule (reconcile, rate 5 min) | `scripts/infra/eventbridge_deploy_video_scheduler.ps1` | Target: **academy-video-ops-queue**. Ops queue 없으면 **batch_ops_setup.ps1 자동 호출** 후 rule/target 설정. 단독 실행 가능. |
+| EventBridge rule (scan-stuck) | `scripts/infra/eventbridge_deploy_video_scheduler.ps1` | 동일. Target **academy-video-ops-queue** (같은 스크립트에서 put-targets). |
 | CloudWatch alarms | `scripts/infra/cloudwatch_deploy_video_alarms.ps1` | Pass `-Region`, `-JobQueueName` (video queue); optional `-SnsTopicArn` |
 
 ### One-shot execution (copy-paste PowerShell)
