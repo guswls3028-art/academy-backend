@@ -459,6 +459,7 @@ $passCount = ($script:AuditRows | Where-Object { $_.Status -eq "PASS" }).Count
 $warnCount = ($script:AuditRows | Where-Object { $_.Status -eq "WARN" }).Count
 $failCount = ($script:AuditRows | Where-Object { $_.Status -eq "FAIL" }).Count
 Write-Host "`nSummary: PASS=$passCount WARN=$warnCount FAIL=$failCount" -ForegroundColor Gray
+Write-Host "PASS 개수: $passCount | WARN 개수: $warnCount | FAIL 개수: $failCount" -ForegroundColor Gray
 
 if ($script:FixesApplied.Count -gt 0) {
     Write-Host "`nApplied changes (FixMode):" -ForegroundColor Yellow
