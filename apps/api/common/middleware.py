@@ -1,6 +1,7 @@
 # apps/api/common/middleware.py
 # 뷰에서 미처리 예외 발생 시 500 JSON 반환.
 # process_exception 응답은 CorsMiddleware를 거치지 않으므로 여기서 CORS 헤더 추가.
+# CorsResponseFixMiddleware: 모든 응답(5xx 포함)에 CORS 헤더가 빠졌을 때 보강.
 from __future__ import annotations
 
 import logging
@@ -26,6 +27,29 @@ def _add_cors_headers_to_response(request, response):
         response["Access-Control-Allow-Credentials"] = "true"
     # preflight가 이미 통과한 요청이므로 Allow-Headers는 생략해도 됨 (필요 시 추가 가능)
     return response
+
+
+class CorsResponseFixMiddleware:
+    """
+    모든 응답에서 Access-Control-Allow-Origin 이 없고, 요청 Origin 이 허용 목록에 있으면 CORS 헤더 추가.
+    django-cors-headers 는 보통 2xx만 처리하므로 5xx 응답에 CORS가 빠져 브라우저가 'blocked by CORS policy' 하는 경우 방지.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        if response.get("Access-Control-Allow-Origin"):
+            return response
+        origin = (request.META.get("HTTP_ORIGIN") or "").strip()
+        allowed = getattr(settings, "CORS_ALLOWED_ORIGINS", []) or []
+        if not origin or origin not in allowed:
+            return response
+        response["Access-Control-Allow-Origin"] = origin
+        if getattr(settings, "CORS_ALLOW_CREDENTIALS", False):
+            response["Access-Control-Allow-Credentials"] = "true"
+        return response
 
 
 class UnhandledExceptionMiddleware:
