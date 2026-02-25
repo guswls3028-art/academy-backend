@@ -318,7 +318,7 @@ Write-Fact "Internet (0.0.0.0/0)" $(if ($igw.InternetGateways.Count -gt 0) { "IG
 Write-Host "`nCONNECTIVITY MATRIX:" -ForegroundColor Cyan
 Write-Host "  Batch -> RDS    : $(if ($batchAllowedRDS) { 'ALLOWED' } elseif ($rdsSgId) { 'BLOCKED' } else { 'UNKNOWN' })"
 Write-Host "  Batch -> Redis  : $(if ($batchAllowedRedis) { 'ALLOWED' } elseif ($redisSgId) { 'BLOCKED' } else { 'UNKNOWN' })"
-Write-Host "  Batch -> API    : UNKNOWN (API SG not resolved from API_BASE_URL)"
+Write-Host "  Batch -> API    : $(if ($apiBaseIsPrivate) { 'PRIVATE (http://internal)' } else { 'NOT PRIVATE - use API_BASE_URL with private IP' })"
 Write-Host "  Batch -> Internet : $(if ($igw.InternetGateways.Count -gt 0) { 'IGW' } elseif ($nat.NatGateways.Count -gt 0) { 'NAT' } else { 'NONE' })"
 
 Write-Host "`nCRITICAL BREAKAGES LIST:" -ForegroundColor Red
