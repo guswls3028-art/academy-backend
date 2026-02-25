@@ -27,10 +27,17 @@ Write-Host "Parameter.Value length: $($valueStr.Length) chars" -ForegroundColor 
 
 ---
 
-## 3) ConvertFrom-Json 테스트 (저장된 값이 유효한 JSON인지)
+## 3) ConvertFrom-Json 테스트 (저장된 값이 유효한 JSON인지; Base64면 디코딩 후 파싱)
 
 ```powershell
-$payload = $valueStr | ConvertFrom-Json
+# 값이 Base64로 저장된 경우 디코딩 후 파싱
+try {
+    $payload = $valueStr | ConvertFrom-Json
+} catch {
+    $valueBytes = [Convert]::FromBase64String($valueStr)
+    $valueStr = [System.Text.Encoding]::UTF8.GetString($valueBytes)
+    $payload = $valueStr | ConvertFrom-Json
+}
 $payload.PSObject.Properties.Name | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
 if ($payload.DJANGO_SETTINGS_MODULE -eq "apps.api.config.settings.worker") { Write-Host "OK: DJANGO_SETTINGS_MODULE=worker" -ForegroundColor Green } else { Write-Host "FAIL: DJANGO_SETTINGS_MODULE missing or wrong" -ForegroundColor Red }
 ```
@@ -82,13 +89,13 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 # 1) SSM bootstrap
 .\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite
 
-# 2) get-parameter + 3) ConvertFrom-Json 테스트
+# 2) get-parameter + 3) ConvertFrom-Json 테스트 (Base64 저장 시 디코딩 후 파싱)
 $raw = aws ssm get-parameter --name "/academy/workers/env" --region ap-northeast-2 --with-decryption --output json 2>&1
 $responseStr = ($raw | Out-String).Trim()
 $outer = $responseStr | ConvertFrom-Json
 $valueStr = $outer.Parameter.Value
 Write-Host "Parameter.Value length: $($valueStr.Length) chars" -ForegroundColor Cyan
-$payload = $valueStr | ConvertFrom-Json
+try { $payload = $valueStr | ConvertFrom-Json } catch { $valueBytes = [Convert]::FromBase64String($valueStr); $valueStr = [System.Text.Encoding]::UTF8.GetString($valueBytes); $payload = $valueStr | ConvertFrom-Json }
 $payload.PSObject.Properties.Name | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
 if ($payload.DJANGO_SETTINGS_MODULE -eq "apps.api.config.settings.worker") { Write-Host "OK: DJANGO_SETTINGS_MODULE=worker" -ForegroundColor Green } else { Write-Host "FAIL: DJANGO_SETTINGS_MODULE missing or wrong" -ForegroundColor Red }
 
