@@ -223,8 +223,8 @@ function Invoke-EventBridgeAudit {
         $scanStuckRule = $rulesJson.Rules | Where-Object { $_.Name -eq $ScanStuckRuleName } | Select-Object -First 1
     }
 
-    $script:ReconcileRuleName = $reconcileRule.Name
-    $script:ScanStuckRuleName = $scanStuckRule.Name
+    $script:ReconcileRuleName = if ($reconcileRule) { $reconcileRule.Name } else { "" }
+    $script:ScanStuckRuleName = if ($scanStuckRule) { $scanStuckRule.Name } else { "" }
 
     foreach ($r in @(@{ Rule = $reconcileRule; Label = "Reconcile"; ExpectedJobDef = "academy-video-ops-reconcile" }, @{ Rule = $scanStuckRule; Label = "ScanStuck"; ExpectedJobDef = "academy-video-ops-scanstuck" })) {
         $rule = $r.Rule
