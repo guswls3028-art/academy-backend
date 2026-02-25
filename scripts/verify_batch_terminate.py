@@ -67,7 +67,7 @@ def _get_credential_source() -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify Batch TerminateJob permission for Video Delete flow.")
     parser.add_argument("--region", default=None, help="AWS region (default: settings/env/ap-northeast-2)")
-    parser.add_argument("--job-id", default=None, help="Optional AWS Batch job ID for real DescribeJobs + TerminateJob probe")
+    parser.add_argument("--job-id", default=None, help='Optional AWS Batch job ID for real DescribeJobs + TerminateJob probe (use quotes in PowerShell: -JobId "job-id-here")')
     parser.add_argument("--profile", default=None, help="Optional AWS profile name")
     parser.add_argument("--settings-module", default=None, help="Optional Django settings module for region default")
     args = parser.parse_args()
@@ -238,7 +238,7 @@ def main() -> int:
         return 2
     # sim_allowed is None and no job-id or no terminate call
     print("WARN/SKIPPED: Could not conclusively verify TerminateJob (no --job-id, SimulatePrincipalPolicy skipped).")
-    print("Run with --job-id <AWS_BATCH_JOB_ID> for a real TerminateJob probe.")
+    print('Run with --job-id "YOUR_AWS_BATCH_JOB_ID" for a real TerminateJob probe (PowerShell: -JobId "YOUR_AWS_BATCH_JOB_ID").')
     print("Exit code: 4 (WARN/SKIPPED)")
     return 4
 
