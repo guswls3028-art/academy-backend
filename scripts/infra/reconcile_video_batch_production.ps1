@@ -107,7 +107,7 @@ if (-not $videoQueueCeOk) {
     $uri = "file:///" + ([System.IO.Path]::GetFullPath($tf) -replace '\\', '/')
     Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--cli-input-json", $uri, "--region", $Region) -ErrorMessage "update Video queue computeEnvironmentOrder failed"
     Remove-Item $tf -Force -ErrorAction SilentlyContinue
-    if ($stateBefore -eq "ENABLED") { Invoke-Aws @("batch", "update-job-queue", "--job-queue", $VideoQueueName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "re-enable Video queue failed" }
+    if ($stateBefore -eq "ENABLED") { Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--job-queue", $VideoQueueName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "re-enable Video queue failed" }
 }
 $opsOrder = ($opsJqList.jobQueues | Where-Object { $_.jobQueueName -eq $OpsQueueName } | Select-Object -First 1).computeEnvironmentOrder
 $opsQueueCeOk = ($opsOrder -and $opsOrder.Count -eq 1 -and ($opsOrder[0].computeEnvironment -eq $opsCeArn -or $opsOrder[0].computeEnvironment -eq $OpsCEName))
