@@ -225,8 +225,8 @@ if (-not (Test-Path -LiteralPath $finalStatePath)) {
 $finalState = Get-Content $finalStatePath -Raw | ConvertFrom-Json
 $FinalJobQueueName = $finalState.FinalJobQueueName
 $FinalJobQueueArn = $finalState.FinalJobQueueArn
-Write-Host "[6] EventBridge with JobQueueName=$FinalJobQueueName" -ForegroundColor Cyan
-& (Join-Path $InfraPath "eventbridge_deploy_video_scheduler.ps1") -Region $Region -JobQueueName $FinalJobQueueName
+Write-Host "[6] EventBridge (Ops queue) with VideoCeNameForDiscovery=$ComputeEnvName" -ForegroundColor Cyan
+& (Join-Path $InfraPath "eventbridge_deploy_video_scheduler.ps1") -Region $Region -OpsJobQueueName "academy-video-ops-queue" -VideoCeNameForDiscovery $ComputeEnvName
 if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: eventbridge_deploy_video_scheduler failed." -ForegroundColor Red; exit 1 }
 
 # --- 10) Verify and save state ---

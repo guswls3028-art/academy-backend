@@ -90,11 +90,11 @@ if (-not $VpcId -or $SubnetIds.Count -eq 0 -or -not $SecurityGroupId) {
     }
 }
 if (-not $VpcId -or $SubnetIds.Count -eq 0 -or -not $SecurityGroupId) {
-    Write-Host "FAIL: Could not resolve VpcId, SubnetIds, SecurityGroupId. Pass explicitly or ensure academy-video-batch-ce exists." -ForegroundColor Red
+    Write-Host "FAIL: Could not resolve VpcId, SubnetIds, SecurityGroupId. Pass explicitly or ensure Video CE ($VideoCeNameForDiscovery / academy-video-batch-ce) exists." -ForegroundColor Red
     exit 1
 }
 Write-Host "  VpcId=$VpcId SubnetIds=$($SubnetIds -join ',')" -ForegroundColor Gray
-Write-Host "  SecurityGroupId=$SecurityGroupId (same as academy-video-batch-ce)" -ForegroundColor Gray
+Write-Host "  SecurityGroupId=$SecurityGroupId (from $($videoCeObj.computeEnvironmentName))" -ForegroundColor Gray
 
 # IAM (same as video CE)
 $BatchServiceRoleName = "academy-batch-service-role"

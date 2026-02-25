@@ -53,7 +53,9 @@ if (-not $jqResp -or -not $jqResp.jobQueues -or $jqResp.jobQueues.Count -eq 0) {
         Write-Host "FAIL: batch_ops_setup.ps1 not found at $batchOpsPath" -ForegroundColor Red
         exit 1
     }
-    & $batchOpsPath -Region $Region -JobQueueName $OpsJobQueueName
+    $batchOpsArgs = @("-Region", $Region, "-JobQueueName", $OpsJobQueueName)
+    if (-not [string]::IsNullOrWhiteSpace($VideoCeNameForDiscovery)) { $batchOpsArgs += "-VideoCeNameForDiscovery", $VideoCeNameForDiscovery }
+    & $batchOpsPath @batchOpsArgs
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FAIL: batch_ops_setup.ps1 exited with $LASTEXITCODE" -ForegroundColor Red
         exit 1
