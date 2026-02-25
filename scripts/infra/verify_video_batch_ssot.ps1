@@ -182,6 +182,16 @@ if ($ceSubnets.Count -gt 0) {
     if ($subResp -and $subResp.Subnets -and $subResp.Subnets[0]) { $vpcId = $subResp.Subnets[0].VpcId }
 }
 
+# 서브넷에 명시 연결된 RT가 없으면 메인 라우트 테이블 사용(프라이빗 서브넷). 메인 RT에서 0.0.0.0/0 확인.
+if (-not $hasDefaultRoute -and $vpcId) {
+    $mainRt = Aws-JsonSafe @("ec2", "describe-route-tables", "--filters", "Name=vpc-id,Values=$vpcId", "Name=association.main,Values=true", "--region", $Region)
+    if ($mainRt -and $mainRt.RouteTables -and $mainRt.RouteTables.Count -gt 0) {
+        foreach ($r in $mainRt.RouteTables[0].Routes) {
+            if ($r.DestinationCidrBlock -eq "0.0.0.0/0") { $hasDefaultRoute = $true; break }
+        }
+    }
+}
+
 $hasEcrLogsEndpoints = $false
 if ($vpcId) {
     $epList = Aws-JsonSafe @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "--region", $Region)
