@@ -230,9 +230,9 @@ $videoCe2 = $videoCeList2.computeEnvironments | Where-Object { $_.computeEnviron
 $opsCeList2 = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $OpsCEName, "--region", $Region, "--output", "json")
 $opsCe2 = $opsCeList2.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $OpsCEName } | Select-Object -First 1
 $videoJdAll2 = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
-$videoJdLatest2 = $videoJdAll2.jobDefinitions | Sort-Object { [int]$_.revision } -Descending | Select-Object -First 1
+$videoJdLatest2 = $null; if ($videoJdAll2 -and $videoJdAll2.jobDefinitions) { $videoJdLatest2 = $videoJdAll2.jobDefinitions | Sort-Object { [int]$_.revision } -Descending | Select-Object -First 1 }
 $opsJdAll2 = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
-$opsJdLatest2 = $opsJdAll2.jobDefinitions | Sort-Object { [int]$_.revision } -Descending | Select-Object -First 1
+$opsJdLatest2 = $null; if ($opsJdAll2 -and $opsJdAll2.jobDefinitions) { $opsJdLatest2 = $opsJdAll2.jobDefinitions | Sort-Object { [int]$_.revision } -Descending | Select-Object -First 1 }
 $rule2 = ExecJson @("events", "describe-rule", "--name", $ReconcileRuleName, "--region", $Region, "--output", "json")
 $tgtList2 = ExecJson @("events", "list-targets-by-rule", "--rule", $ReconcileRuleName, "--region", $Region, "--output", "json")
 $alarmList2 = ExecJson @("cloudwatch", "describe-alarms", "--alarm-names", $RunnableAlarmName, "--region", $Region, "--output", "json")
