@@ -4,6 +4,7 @@
 # Usage:
 #   .\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2
 #   .\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite
+#   .\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite -UsePrivateApiIp   # Batch→API VPC 내부 Private IP 사용
 #   .\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -Interactive
 # ==============================================================================
 
