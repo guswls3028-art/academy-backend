@@ -5,14 +5,12 @@ param(
     [string]$OpsCEName = "academy-video-ops-ce",
     [string]$OpsQueueName = "academy-video-ops-queue",
     [string]$VideoJobDefName = "academy-video-batch-jobdef",
-    [string]$OpsReconcileJobDefName = "academy-video-ops-reconcile",
+    [string]$OpsJobDefName = "academy-video-ops-jobdef",
     [string]$ReconcileRuleName = "academy-reconcile-video-jobs",
     [string]$RunnableAlarmName = "academy-video-QueueRunnable"
 )
 $ErrorActionPreference = "Stop"
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
-$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 function ExecJson($argsArray) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -46,6 +44,28 @@ $opsCe = $null
 if ($opsCeList -and $opsCeList.computeEnvironments) {
     $opsCe = $opsCeList.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $OpsCEName } | Select-Object -First 1
 }
+if (-not $videoCe) { Write-Error "Video CE $VideoCEName not found"; exit 1 }
+if (-not $opsCe) { Write-Error "Ops CE $OpsCEName not found"; exit 1 }
+$crV = $videoCe.computeResources
+if ($crV.subnets -and $crV.subnets.Count -eq 0) { Write-Error "Video CE has no subnets; required network resources missing"; exit 1 }
+if ($crV.securityGroupIds -and $crV.securityGroupIds.Count -eq 0) { Write-Error "Video CE has no securityGroupIds; required network resources missing"; exit 1 }
+$crO = $opsCe.computeResources
+if ($crO.subnets -and $crO.subnets.Count -eq 0) { Write-Error "Ops CE has no subnets; required network resources missing"; exit 1 }
+if ($crO.securityGroupIds -and $crO.securityGroupIds.Count -eq 0) { Write-Error "Ops CE has no securityGroupIds; required network resources missing"; exit 1 }
+$videoCeImageType = $null
+if ($crV.ec2Configuration -and $crV.ec2Configuration.Count -gt 0 -and $crV.ec2Configuration[0].imageType) {
+    $videoCeImageType = $crV.ec2Configuration[0].imageType
+}
+if ($videoCeImageType -and $videoCeImageType -ne "ECS_AL2023_ARM64") {
+    Write-Error "Video CE imageType is $videoCeImageType; ECS_AL2023_ARM64 required and cannot be changed in-place"; exit 1
+}
+$opsCeImageType = $null
+if ($crO.ec2Configuration -and $crO.ec2Configuration.Count -gt 0 -and $crO.ec2Configuration[0].imageType) {
+    $opsCeImageType = $crO.ec2Configuration[0].imageType
+}
+if ($opsCeImageType -and $opsCeImageType -ne "ECS_AL2023_ARM64") {
+    Write-Error "Ops CE imageType is $opsCeImageType; ECS_AL2023_ARM64 required"; exit 1
+}
 $videoJqList = ExecJson @("batch", "describe-job-queues", "--job-queues", $VideoQueueName, "--region", $Region, "--output", "json")
 $videoQueueArn = $null
 $videoQueue = $null
@@ -59,15 +79,54 @@ if ($opsJqList -and $opsJqList.jobQueues) {
     $oq = $opsJqList.jobQueues | Where-Object { $_.jobQueueName -eq $OpsQueueName } | Select-Object -First 1
     if ($oq) { $opsQueueArn = $oq.jobQueueArn }
 }
-if (-not $videoCe) { Write-Error "Video CE $VideoCEName not found"; exit 1 }
-if (-not $opsCe) { Write-Error "Ops CE $OpsCEName not found"; exit 1 }
 if (-not $videoQueueArn) { Write-Error "Video queue $VideoQueueName not found"; exit 1 }
 if (-not $opsQueueArn) { Write-Error "Ops queue $OpsQueueName not found"; exit 1 }
-$crV = $videoCe.computeResources
-$desiredV = [int]$crV.desiredvCpus
-$runningV = (ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNING", "--region", $Region, "--query", "length(jobSummaryList)", "--output", "json")) -as [int]
-if (-not $runningV) { $runningV = 0 }
-if ($desiredV -gt 0 -and $runningV -eq 0) { Write-Warning "Video CE desiredvCpus=$desiredV but no RUNNING jobs on Video queue" }
+$videoCeArn = $videoCe.computeEnvironmentArn
+$opsCeArn = $opsCe.computeEnvironmentArn
+$videoOrder = $videoQueue.computeEnvironmentOrder
+$videoQueueCeOk = ($videoOrder -and $videoOrder.Count -eq 1 -and ($videoOrder[0].computeEnvironment -eq $videoCeArn -or $videoOrder[0].computeEnvironment -eq $VideoCEName))
+if (-not $videoQueueCeOk) {
+    $stateBefore = $videoQueue.state
+    if ($stateBefore -eq "ENABLED") {
+        Invoke-Aws @("batch", "update-job-queue", "--job-queue", $VideoQueueName, "--state", "DISABLED", "--region", $Region) -ErrorMessage "disable Video queue failed"
+        $w = 0; while ($w -lt 60) { Start-Sleep -Seconds 3; $w += 3; $q2 = ExecJson @("batch", "describe-job-queues", "--job-queues", $VideoQueueName, "--region", $Region, "--output", "json"); $s = ($q2.jobQueues | Where-Object { $_.jobQueueName -eq $VideoQueueName } | Select-Object -First 1).state; if ($s -eq "DISABLED") { break } }
+    }
+    $payload = '{"jobQueue":"' + $VideoQueueName + '","computeEnvironmentOrder":[{"order":1,"computeEnvironment":"' + $videoCeArn + '"}]}'
+    $tf = Join-Path $env:TEMP "reconcile_vq_$(Get-Date -Format 'yyyyMMddHHmmss').json"
+    [System.IO.File]::WriteAllText($tf, $payload, [System.Text.UTF8Encoding]::new($false))
+    $uri = "file:///" + ([System.IO.Path]::GetFullPath($tf) -replace '\\', '/')
+    Invoke-Aws @("batch", "update-job-queue", "--cli-input-json", $uri, "--region", $Region) -ErrorMessage "update Video queue computeEnvironmentOrder failed"
+    Remove-Item $tf -Force -ErrorAction SilentlyContinue
+    if ($stateBefore -eq "ENABLED") { Invoke-Aws @("batch", "update-job-queue", "--job-queue", $VideoQueueName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "re-enable Video queue failed" }
+}
+$opsOrder = ($opsJqList.jobQueues | Where-Object { $_.jobQueueName -eq $OpsQueueName } | Select-Object -First 1).computeEnvironmentOrder
+$opsQueueCeOk = ($opsOrder -and $opsOrder.Count -eq 1 -and ($opsOrder[0].computeEnvironment -eq $opsCeArn -or $opsOrder[0].computeEnvironment -eq $OpsCEName))
+if (-not $opsQueueCeOk) {
+    $oqObj = $opsJqList.jobQueues | Where-Object { $_.jobQueueName -eq $OpsQueueName } | Select-Object -First 1
+    $stateBefore = $oqObj.state
+    if ($stateBefore -eq "ENABLED") {
+        Invoke-Aws @("batch", "update-job-queue", "--job-queue", $OpsQueueName, "--state", "DISABLED", "--region", $Region) -ErrorMessage "disable Ops queue failed"
+        $w = 0; while ($w -lt 60) { Start-Sleep -Seconds 3; $w += 3; $q2 = ExecJson @("batch", "describe-job-queues", "--job-queues", $OpsQueueName, "--region", $Region, "--output", "json"); $s = ($q2.jobQueues | Where-Object { $_.jobQueueName -eq $OpsQueueName } | Select-Object -First 1).state; if ($s -eq "DISABLED") { break } }
+    }
+    $payload = '{"jobQueue":"' + $OpsQueueName + '","computeEnvironmentOrder":[{"order":1,"computeEnvironment":"' + $opsCeArn + '"}]}'
+    $tf = Join-Path $env:TEMP "reconcile_oq_$(Get-Date -Format 'yyyyMMddHHmmss').json"
+    [System.IO.File]::WriteAllText($tf, $payload, [System.Text.UTF8Encoding]::new($false))
+    $uri = "file:///" + ([System.IO.Path]::GetFullPath($tf) -replace '\\', '/')
+    Invoke-Aws @("batch", "update-job-queue", "--cli-input-json", $uri, "--region", $Region) -ErrorMessage "update Ops queue computeEnvironmentOrder failed"
+    Remove-Item $tf -Force -ErrorAction SilentlyContinue
+    if ($stateBefore -eq "ENABLED") { Invoke-Aws @("batch", "update-job-queue", "--job-queue", $OpsQueueName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "re-enable Ops queue failed" }
+}
+$runnableList = ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNABLE", "--region", $Region, "--output", "json")
+if ($runnableList -and $runnableList.jobSummaryList) {
+    foreach ($j in $runnableList.jobSummaryList) {
+        $detail = ExecJson @("batch", "describe-jobs", "--jobs", $j.jobId, "--region", $Region, "--output", "json")
+        $statusReason = $null
+        if ($detail -and $detail.jobs -and $detail.jobs[0].statusReason) { $statusReason = $detail.jobs[0].statusReason }
+        if ($statusReason -and $statusReason -match "MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT") {
+            & aws batch terminate-job --job-id $j.jobId --reason "Reconcile: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT cleanup" --region $Region 2>&1 | Out-Null
+        }
+    }
+}
 $minV = [int]$crV.minvCpus
 $maxV = [int]$crV.maxvCpus
 $allocV = $crV.allocationStrategy
@@ -83,7 +142,6 @@ if ($minV -ne 0 -or $maxV -ne 32 -or $allocV -ne "BEST_FIT_PROGRESSIVE") {
         if ($ve.status -eq "INVALID") { Write-Error "Video CE INVALID"; exit 1 }
     }
 }
-$crO = $opsCe.computeResources
 $maxO = [int]$crO.maxvCpus
 if ($maxO -ne 1) {
     Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $OpsCEName, "--compute-resources", "minvCpus=0,maxvCpus=1", "--region", $Region) -ErrorMessage "update Ops CE failed"
@@ -143,7 +201,7 @@ if ($needVideoJdRegister -and $videoJdLatest) {
         }
     }
 }
-$opsJdAll = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+$opsJdAll = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
 $opsJdLatest = $null
 if ($opsJdAll -and $opsJdAll.jobDefinitions -and $opsJdAll.jobDefinitions.Count -gt 0) {
     $opsJdLatest = $opsJdAll.jobDefinitions | Sort-Object { [int]$_.revision } -Descending | Select-Object -First 1
@@ -152,13 +210,40 @@ $needOpsJdRegister = $false
 if ($opsJdLatest) {
     $memO = [int]$opsJdLatest.containerProperties.memory
     $vcpusO = [int]$opsJdLatest.containerProperties.vcpus
-    $timeoutO = $null
-    if ($opsJdLatest.timeout -and $opsJdLatest.timeout.attemptDurationSeconds) { $timeoutO = [int]$opsJdLatest.timeout.attemptDurationSeconds }
+    $timeoutO = 0; if ($opsJdLatest.timeout -and $opsJdLatest.timeout.attemptDurationSeconds) { $timeoutO = [int]$opsJdLatest.timeout.attemptDurationSeconds }
     $rpO = $opsJdLatest.containerProperties.runtimePlatform
     $armO = ($rpO -and $rpO.cpuArchitecture -eq "ARM64")
     if ($memO -ne 1024 -or $vcpusO -ne 1 -or $timeoutO -ne 300 -or -not $armO) { $needOpsJdRegister = $true }
 }
-if ($needOpsJdRegister -and $opsJdLatest) {
+if (-not $opsJdLatest) {
+    $src = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+    $srcJd = $src.jobDefinitions | Sort-Object { [int]$_.revision } -Descending | Select-Object -First 1
+    if (-not $srcJd) { Write-Error "Cannot create Ops job def: Video job def has no ACTIVE revision"; exit 1 }
+    $illegal = @("revision", "status", "jobDefinitionArn", "containerOrchestrationType")
+    $regO = @{}
+    foreach ($key in $srcJd.PSObject.Properties.Name) {
+        if ($key -notin $illegal) { $regO[$key] = $srcJd.$key }
+    }
+    $regO.jobDefinitionName = $OpsJobDefName
+    $regO.containerProperties.memory = 1024
+    $regO.containerProperties.vcpus = 1
+    $regO.containerProperties.command = @("python", "manage.py", "reconcile_batch_video_jobs")
+    $regO.containerProperties.runtimePlatform = @{ cpuArchitecture = "ARM64" }
+    $regO.timeout = @{ attemptDurationSeconds = 300 }
+    if ($regO.containerProperties.logConfiguration.options) {
+        $regO.containerProperties.logConfiguration.options["awslogs-group"] = "/aws/batch/academy-video-ops"
+        $regO.containerProperties.logConfiguration.options["awslogs-stream-prefix"] = "ops"
+    }
+    $jdPathO = Join-Path $env:TEMP "reconcile_ops_jd_new_$(Get-Date -Format 'yyyyMMddHHmmss').json"
+    $jsonStrO = $regO | ConvertTo-Json -Depth 25 -Compress:$false
+    $jsonStrO = $jsonStrO -replace '"JobDefinitionName"', '"jobDefinitionName"' -replace '"ContainerProperties"', '"containerProperties"' -replace '"Memory":', '"memory":' -replace '"Vcpus":', '"vcpus":' -replace '"Timeout"', '"timeout"' -replace '"AttemptDurationSeconds"', '"attemptDurationSeconds"' -replace '"RuntimePlatform"', '"runtimePlatform"' -replace '"CpuArchitecture"', '"cpuArchitecture"' -replace '"Image":', '"image":' -replace '"Command":', '"command":' -replace '"JobRoleArn":', '"jobRoleArn":' -replace '"ExecutionRoleArn":', '"executionRoleArn"' -replace '"LogConfiguration":', '"logConfiguration"' -replace '"PlatformCapabilities"', '"platformCapabilities"' -replace '"RetryStrategy"', '"retryStrategy"'
+    $jsonStrO = $jsonStrO -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
+    [System.IO.File]::WriteAllText($jdPathO, $jsonStrO, [System.Text.UTF8Encoding]::new($false))
+    $uriO = "file:///" + ([System.IO.Path]::GetFullPath($jdPathO) -replace '\\', '/')
+    Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops job def failed"
+    Remove-Item $jdPathO -Force -ErrorAction SilentlyContinue
+}
+elseif ($needOpsJdRegister -and $opsJdLatest) {
     $illegal = @("revision", "status", "jobDefinitionArn", "containerOrchestrationType")
     $regO = @{}
     foreach ($key in $opsJdLatest.PSObject.Properties.Name) {
@@ -175,17 +260,17 @@ if ($needOpsJdRegister -and $opsJdLatest) {
     $jsonStrO = $jsonStrO -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
     [System.IO.File]::WriteAllText($jdPathO, $jsonStrO, [System.Text.UTF8Encoding]::new($false))
     $uriO = "file:///" + ([System.IO.Path]::GetFullPath($jdPathO) -replace '\\', '/')
-    $regOutORaw = Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops reconcile job def failed"
+    $regOutORaw = Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops job def failed"
     Remove-Item $jdPathO -Force -ErrorAction SilentlyContinue
     $regOutO = ($regOutORaw | Out-String).Trim() | ConvertFrom-Json
     $newRevO = $null; if ($regOutO -and $regOutO.revision) { $newRevO = [int]$regOutO.revision }
-    $opsJdAllAfter = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+    $opsJdAllAfter = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
     if ($opsJdAllAfter -and $opsJdAllAfter.jobDefinitions) {
         foreach ($d in $opsJdAllAfter.jobDefinitions) {
             $m = [int]$d.containerProperties.memory; $v = [int]$d.containerProperties.vcpus
             $to = 0; if ($d.timeout -and $d.timeout.attemptDurationSeconds) { $to = [int]$d.timeout.attemptDurationSeconds }
             if (($m -ne 1024 -or $v -ne 1 -or $to -ne 300) -and ($null -eq $newRevO -or [int]$d.revision -ne $newRevO)) {
-                & aws batch deregister-job-definition --job-definition "$OpsReconcileJobDefName:$($d.revision)" --region $Region 2>&1 | Out-Null
+                & aws batch deregister-job-definition --job-definition "$OpsJobDefName:$($d.revision)" --region $Region 2>&1 | Out-Null
             }
         }
     }
@@ -204,26 +289,26 @@ $tgtList = ExecJson @("events", "list-targets-by-rule", "--rule", $ReconcileRule
 $tgtCorrect = $false
 if ($tgtList -and $tgtList.Targets -and $tgtList.Targets.Count -gt 0) {
     $t = $tgtList.Targets[0]
-    if ($t.Arn -eq $opsQueueArn -and $t.BatchParameters -and $t.BatchParameters.JobDefinition -like "${OpsReconcileJobDefName}*") { $tgtCorrect = $true }
+    if ($t.Arn -eq $opsQueueArn -and $t.BatchParameters -and $t.BatchParameters.JobDefinition -like "${OpsJobDefName}*") { $tgtCorrect = $true }
 }
 if (-not $tgtCorrect) {
     $EventsRoleName = "academy-eventbridge-batch-video-role"
     $roleResp = ExecJson @("iam", "get-role", "--role-name", $EventsRoleName, "--output", "json")
     if (-not $roleResp -or -not $roleResp.Role) { Write-Error "EventBridge role $EventsRoleName not found"; exit 1 }
     $eventsRoleArn = $roleResp.Role.Arn
-    $targetsJson = '[{"Id":"1","Arn":"' + $opsQueueArn + '","RoleArn":"' + $eventsRoleArn + '","BatchParameters":{"JobDefinition":"' + $OpsReconcileJobDefName + '","JobName":"reconcile-video-jobs"}}]'
+    $targetsJson = '[{"Id":"1","Arn":"' + $opsQueueArn + '","RoleArn":"' + $eventsRoleArn + '","BatchParameters":{"JobDefinition":"' + $OpsJobDefName + '","JobName":"reconcile-video-jobs"}}]'
     Invoke-Aws @("events", "put-targets", "--rule", $ReconcileRuleName, "--targets", $targetsJson, "--region", $Region) -ErrorMessage "put-targets failed"
 }
 $alarmList = ExecJson @("cloudwatch", "describe-alarms", "--alarm-names", $RunnableAlarmName, "--region", $Region, "--output", "json")
 $alarmExists = ($alarmList -and $alarmList.MetricAlarms -and $alarmList.MetricAlarms.Count -gt 0)
 $dimensionsJson = "Name=JobQueue,Value=$videoQueueArn"
 if (-not $alarmExists) {
-    & aws cloudwatch put-metric-alarm --alarm-name $RunnableAlarmName --alarm-description "Video queue RUNNABLE > 0" --namespace AWS/Batch --metric-name RUNNABLE --dimensions $dimensionsJson --statistic Average --period 300 --evaluation-periods 1 --threshold 0 --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching --region $Region 2>&1 | Out-Null
+    & aws cloudwatch put-metric-alarm --alarm-name $RunnableAlarmName --alarm-description "Video queue RUNNABLE > 0 for 10 min" --namespace AWS/Batch --metric-name RUNNABLE --dimensions $dimensionsJson --statistic Average --period 300 --evaluation-periods 2 --threshold 0 --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching --region $Region 2>&1 | Out-Null
 }
 else {
     $a = $alarmList.MetricAlarms[0]
-    if ([int]$a.Threshold -ne 0 -or $a.ComparisonOperator -ne "GreaterThanThreshold") {
-        & aws cloudwatch put-metric-alarm --alarm-name $RunnableAlarmName --alarm-description "Video queue RUNNABLE > 0" --namespace AWS/Batch --metric-name RUNNABLE --dimensions $dimensionsJson --statistic Average --period 300 --evaluation-periods 1 --threshold 0 --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching --region $Region 2>&1 | Out-Null
+    if ([int]$a.Threshold -ne 0 -or $a.ComparisonOperator -ne "GreaterThanThreshold" -or [int]$a.EvaluationPeriods -lt 2) {
+        & aws cloudwatch put-metric-alarm --alarm-name $RunnableAlarmName --alarm-description "Video queue RUNNABLE > 0 for 10 min" --namespace AWS/Batch --metric-name RUNNABLE --dimensions $dimensionsJson --statistic Average --period 300 --evaluation-periods 2 --threshold 0 --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching --region $Region 2>&1 | Out-Null
     }
 }
 $videoCeList2 = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $VideoCEName, "--region", $Region, "--output", "json")
@@ -232,7 +317,7 @@ $opsCeList2 = ExecJson @("batch", "describe-compute-environments", "--compute-en
 $opsCe2 = $null; if ($opsCeList2 -and $opsCeList2.computeEnvironments) { $opsCe2 = $opsCeList2.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $OpsCEName } | Select-Object -First 1 }
 $videoJdAll2 = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
 $videoJdLatest2 = $null; if ($videoJdAll2 -and $videoJdAll2.jobDefinitions) { $videoJdLatest2 = $videoJdAll2.jobDefinitions | Sort-Object { [int]$_.revision } -Descending | Select-Object -First 1 }
-$opsJdAll2 = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+$opsJdAll2 = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
 $opsJdLatest2 = $null; if ($opsJdAll2 -and $opsJdAll2.jobDefinitions) { $opsJdLatest2 = $opsJdAll2.jobDefinitions | Sort-Object { [int]$_.revision } -Descending | Select-Object -First 1 }
 $rule2 = ExecJson @("events", "describe-rule", "--name", $ReconcileRuleName, "--region", $Region, "--output", "json")
 $tgtList2 = ExecJson @("events", "list-targets-by-rule", "--rule", $ReconcileRuleName, "--region", $Region, "--output", "json")
@@ -245,6 +330,8 @@ elseif ($opsCe2.status -ne "VALID" -or $opsCe2.state -ne "ENABLED") { Write-Erro
 if ($videoCe2) {
     $crV2 = $videoCe2.computeResources
     if ([int]$crV2.minvCpus -ne 0 -or [int]$crV2.maxvCpus -ne 32) { Write-Error "Video CE min/max vCpus mismatch"; $fail = $true }
+    $imgType = $null; if ($crV2.ec2Configuration -and $crV2.ec2Configuration.Count -gt 0) { $imgType = $crV2.ec2Configuration[0].imageType }
+    if ($imgType -and $imgType -ne "ECS_AL2023_ARM64") { Write-Error "Video CE imageType not ECS_AL2023_ARM64"; $fail = $true }
 }
 if ($opsCe2 -and [int]$opsCe2.computeResources.maxvCpus -ne 1) { Write-Error "Ops CE maxvCpus != 1"; $fail = $true }
 if ($videoJdLatest2) {
@@ -254,22 +341,40 @@ if ($videoJdLatest2) {
     if (-not $videoJdLatest2.containerProperties.runtimePlatform -or $videoJdLatest2.containerProperties.runtimePlatform.cpuArchitecture -ne "ARM64") { Write-Error "Video JobDef not ARM64"; $fail = $true }
 }
 else { Write-Error "Video JobDef not found"; $fail = $true }
-if ($opsJdLatest2) {
+if (-not $opsJdLatest2) { Write-Error "Ops JobDef not found"; $fail = $true }
+elseif ($opsJdLatest2) {
     if ([int]$opsJdLatest2.containerProperties.memory -ne 1024) { Write-Error "Ops JobDef memory != 1024"; $fail = $true }
     if ([int]$opsJdLatest2.containerProperties.vcpus -ne 1) { Write-Error "Ops JobDef vcpus != 1"; $fail = $true }
     if (-not $opsJdLatest2.timeout -or [int]$opsJdLatest2.timeout.attemptDurationSeconds -ne 300) { Write-Error "Ops JobDef timeout != 300"; $fail = $true }
+    if (-not $opsJdLatest2.containerProperties.runtimePlatform -or $opsJdLatest2.containerProperties.runtimePlatform.cpuArchitecture -ne "ARM64") { Write-Error "Ops JobDef not ARM64"; $fail = $true }
 }
-else { Write-Error "Ops reconcile JobDef not found"; $fail = $true }
 if (-not $rule2 -or $rule2.Name -ne $ReconcileRuleName) { Write-Error "EventBridge rule missing"; $fail = $true }
 if ($rule2 -and $rule2.ScheduleExpression -notmatch "rate\s*\(\s*5\s*minute") { Write-Error "Reconcile rule schedule not rate(5 minutes)"; $fail = $true }
 $tgtOk = $false
 if ($tgtList2 -and $tgtList2.Targets -and $tgtList2.Targets.Count -gt 0) {
     $t0 = $tgtList2.Targets[0]
-    if ($t0.Arn -eq $opsQueueArn -and $t0.BatchParameters.JobDefinition -like "${OpsReconcileJobDefName}*") { $tgtOk = $true }
+    if ($t0.Arn -eq $opsQueueArn -and $t0.BatchParameters.JobDefinition -like "${OpsJobDefName}*") { $tgtOk = $true }
 }
 if (-not $tgtOk) { Write-Error "EventBridge target not Ops queue or wrong job def"; $fail = $true }
 if (-not $alarmList2 -or -not $alarmList2.MetricAlarms -or $alarmList2.MetricAlarms.Count -eq 0) { Write-Error "CloudWatch RUNNABLE alarm missing"; $fail = $true }
 else {
-    if ([int]$alarmList2.MetricAlarms[0].Threshold -ne 0 -or $alarmList2.MetricAlarms[0].ComparisonOperator -ne "GreaterThanThreshold") { Write-Error "RUNNABLE alarm threshold not > 0"; $fail = $true }
+    if ([int]$alarmList2.MetricAlarms[0].Threshold -ne 0 -or $alarmList2.MetricAlarms[0].ComparisonOperator -ne "GreaterThanThreshold" -or [int]$alarmList2.MetricAlarms[0].EvaluationPeriods -lt 2) { Write-Error "RUNNABLE alarm threshold/period mismatch"; $fail = $true }
 }
 if ($fail) { exit 1 }
+$vCr = $videoCe2.computeResources
+$vImg = $null; if ($vCr.ec2Configuration -and $vCr.ec2Configuration.Count -gt 0) { $vImg = $vCr.ec2Configuration[0].imageType }
+$vInst = ""; if ($vCr.instanceTypes -and $vCr.instanceTypes.Count -gt 0) { $vInst = ($vCr.instanceTypes -join ",") }
+Write-Host "=== EVIDENCE ==="
+Write-Host "Video CE: instanceTypes=$vInst imageType=$vImg minvCpus=$($vCr.minvCpus) maxvCpus=$($vCr.maxvCpus) desiredvCpus=$($vCr.desiredvCpus)"
+Write-Host "Ops CE: maxvCpus=$($opsCe2.computeResources.maxvCpus)"
+if ($videoJdLatest2) { Write-Host "Video jobdef latest: vcpus=$($videoJdLatest2.containerProperties.vcpus) memory=$($videoJdLatest2.containerProperties.memory) timeout=$($videoJdLatest2.timeout.attemptDurationSeconds) runtimePlatform=$($videoJdLatest2.containerProperties.runtimePlatform.cpuArchitecture)" }
+if ($opsJdLatest2) { Write-Host "Ops jobdef latest: vcpus=$($opsJdLatest2.containerProperties.vcpus) memory=$($opsJdLatest2.containerProperties.memory) timeout=$($opsJdLatest2.timeout.attemptDurationSeconds) runtimePlatform=$($opsJdLatest2.containerProperties.runtimePlatform.cpuArchitecture)" }
+if ($tgtList2 -and $tgtList2.Targets -and $tgtList2.Targets.Count -gt 0) { Write-Host "EventBridge target: queueArn=$($tgtList2.Targets[0].Arn) jobDef=$($tgtList2.Targets[0].BatchParameters.JobDefinition)" }
+$runV = (ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNABLE", "--region", $Region, "--output", "json")).jobSummaryList.Count; if (-not $runV) { $runV = 0 }
+$startV = (ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "STARTING", "--region", $Region, "--output", "json")).jobSummaryList.Count; if (-not $startV) { $startV = 0 }
+$runningV = (ExecJson @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNING", "--region", $Region, "--output", "json")).jobSummaryList.Count; if (-not $runningV) { $runningV = 0 }
+$runO = (ExecJson @("batch", "list-jobs", "--job-queue", $opsQueueArn, "--job-status", "RUNNABLE", "--region", $Region, "--output", "json")).jobSummaryList.Count; if (-not $runO) { $runO = 0 }
+$startO = (ExecJson @("batch", "list-jobs", "--job-queue", $opsQueueArn, "--job-status", "STARTING", "--region", $Region, "--output", "json")).jobSummaryList.Count; if (-not $startO) { $startO = 0 }
+$runningO = (ExecJson @("batch", "list-jobs", "--job-queue", $opsQueueArn, "--job-status", "RUNNING", "--region", $Region, "--output", "json")).jobSummaryList.Count; if (-not $runningO) { $runningO = 0 }
+Write-Host "Video queue: RUNNABLE=$runV STARTING=$startV RUNNING=$runningV"
+Write-Host "Ops queue: RUNNABLE=$runO STARTING=$startO RUNNING=$runningO"
