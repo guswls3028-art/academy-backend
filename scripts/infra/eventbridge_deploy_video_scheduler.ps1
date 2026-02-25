@@ -108,8 +108,9 @@ if ($t0.Arn -ne $JobQueueArn) {
 }
 
 # Scan-stuck rule + Batch target
+# This updates the ACTUAL AWS EventBridge target for this rule to academy-video-ops-queue.
 $ScanStuckRuleName = "academy-video-scan-stuck-rate"
-Write-Host "[2] EventBridge rule: $ScanStuckRuleName (rate 2 minutes) -> Batch" -ForegroundColor Cyan
+Write-Host "[2] EventBridge rule: $ScanStuckRuleName (rate 2 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
 aws events put-rule --name $ScanStuckRuleName --schedule-expression "rate(2 minutes)" --state ENABLED --description "Trigger scan_stuck_video_jobs via Batch SubmitJob" --region $Region | Out-Null
 $scanstuckTargetPath = Join-Path $EventBridgePath "scan_stuck_to_batch_target.json"
 $scanstuckTargetJson = Get-Content $scanstuckTargetPath -Raw
@@ -142,4 +143,4 @@ if ($t1.Arn -ne $JobQueueArn) {
     exit 1
 }
 
-Write-Host "Done. EventBridge video scheduler deployed; reconcile/scan_stuck -> $OpsJobQueueName; targets verified." -ForegroundColor Green
+Write-Host "Done. EventBridge: actual AWS targets updated; reconcile/scan_stuck -> $OpsJobQueueName; targets verified." -ForegroundColor Green
