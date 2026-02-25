@@ -1,6 +1,7 @@
 # ==============================================================================
 # Verify SSM /academy/workers/env: exists, valid JSON, required keys present and non-empty.
 # Fetches value with --with-decryption; does NOT print secret values.
+# JSON 파싱 로직: ssm_bootstrap_video_worker.ps1 저장 직후 검증과 동일 (전체 응답 문자열 -> ConvertFrom-Json -> .Parameter.Value -> ConvertFrom-Json).
 # Usage: .\scripts\infra\verify_ssm_env_shape.ps1 -Region ap-northeast-2
 # Exit: 0 = PASS, 1 = FAIL
 # ==============================================================================
@@ -23,6 +24,7 @@ $RequiredKeys = @(
     "DJANGO_SETTINGS_MODULE"
 )
 
+# --- SSM 응답 파싱 (ssm_bootstrap의 get-parameter 검증과 동일) ---
 $prev = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 $raw = aws ssm get-parameter --name $ParamName --region $Region --with-decryption --output json 2>&1
@@ -34,10 +36,11 @@ if ($exitCode -ne 0) {
     exit 1
 }
 
+# 전체 응답을 하나의 문자열로 합친 뒤 JSON 파싱 (멀티라인/인코딩 안전)
+$responseStr = ($raw | Out-String).Trim()
 $outer = $null
 try {
-    $str = ($raw | Out-String).Trim()
-    $outer = $str | ConvertFrom-Json
+    $outer = $responseStr | ConvertFrom-Json
 } catch {
     Write-Host "FAIL: SSM response is not valid JSON." -ForegroundColor Red
     exit 1
@@ -48,6 +51,7 @@ if (-not $outer -or -not $outer.Parameter -or $null -eq $outer.Parameter.Value) 
     exit 1
 }
 
+# 저장된 값(문자열)을 다시 JSON으로 파싱
 $valueStr = $outer.Parameter.Value
 if (-not ($valueStr -is [string]) -or [string]::IsNullOrWhiteSpace($valueStr)) {
     Write-Host "FAIL: SSM parameter value is not a non-empty string." -ForegroundColor Red
