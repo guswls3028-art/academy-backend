@@ -188,7 +188,7 @@ if ($created.Count -gt 0) {
     do {
         Start-Sleep -Seconds 10
         $waited += 10
-        $desc = Aws-JsonSafe @("ec2", "describe-vpc-endpoints", "--vpc-endpoint-ids", $created, "--region", $Region)
+        $desc = Aws-JsonSafe (@("ec2", "describe-vpc-endpoints", "--vpc-endpoint-ids") + @($created) + @("--region", $Region))
         $allOk = $true
         if ($desc -and $desc.VpcEndpoints) {
             foreach ($ep in $desc.VpcEndpoints) {
