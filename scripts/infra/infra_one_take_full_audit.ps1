@@ -391,7 +391,7 @@ function Test-AlarmsAudit {
         Add-Failure -Worker "Video Worker" -Area "CloudWatch" -Resource ($missing -join ", ") -Message "Missing alarms. Run cloudwatch_deploy_video_alarms.ps1"
         $videoOk = $false
     }
-    if ($Verbose -and $cw.MetricAlarms) {
+    if ($VerbosePreference -eq 'Continue' -and $cw.MetricAlarms) {
         foreach ($a in $cw.MetricAlarms) { Write-AuditVerbose "  Alarm $($a.AlarmName) = $($a.StateValue)" }
     }
 
