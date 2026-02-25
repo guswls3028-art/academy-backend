@@ -219,7 +219,7 @@ Optional: `-SnsTopicArn "arn:aws:sns:ap-northeast-2:809466760795:topic"`
 
 **f) Netprobe and production done check**  
 ```powershell
-.\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+.\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-ops-queue
 .\scripts\infra\production_done_check.ps1 -Region ap-northeast-2
 ```
 Expected: `PRODUCTION DONE CHECK: PASS`.
