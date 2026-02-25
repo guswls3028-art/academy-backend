@@ -122,10 +122,15 @@ Run in a **fresh PowerShell session** from the repository root. Ensure `.env` ex
 Expected: Script exits 0; no "Required variables missing"; `OK: /academy/workers/env written successfully` or similar.
 
 **Step 2 — Recreate Batch in API VPC**
+
+Set `$acctId` to your AWS account ID (e.g. `809466760795`). Do not pass a string containing literal `<acct>` — it produces invalid image URI in job definitions.
+
 ```powershell
-.\scripts\infra\recreate_batch_in_api_vpc.ps1 -Region ap-northeast-2 -EcrRepoUri "<acct>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest" -CleanupOld:$false
+$acctId = "809466760795"
+$ecrUri = "${acctId}.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest"
+.\scripts\infra\recreate_batch_in_api_vpc.ps1 -Region ap-northeast-2 -EcrRepoUri $ecrUri -CleanupOld:$false
 ```
-Replace `<acct>` with your AWS account ID. Expected: Exit 0; `DONE. Batch recreated in API VPC. JobQueueName=<final>`.
+Expected: Exit 0; `DONE. Batch recreated in API VPC. JobQueueName=<final>`.
 
 **Important:** The **final job queue name** is either `academy-video-batch-queue` (if the existing queue was updated to CE `academy-video-batch-ce`) or `academy-video-batch-queue-ce` (if update failed and a new queue was created). Use the name printed at the end of Step 2 for Steps 3–5, or read `docs/deploy/actual_state/batch_final_state.json` → `FinalJobQueueName`.
 
