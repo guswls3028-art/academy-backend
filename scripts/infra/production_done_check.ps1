@@ -51,22 +51,30 @@ if (-not $targetVpcId) {
     Write-Host "WARN: ApiVpcId not set and api_instance.json not found; skipping CE-in-API-VPC check." -ForegroundColor Yellow
 }
 
-# CE exists and (if targetVpcId) in API VPC
+# CE exists and (if targetVpcId) in API VPC; state ENABLED, status VALID
 $ceList = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $ComputeEnvName, "--region", $Region, "--output", "json")
 $ce = $ceList.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Select-Object -First 1
 if (-not $ce) {
     Write-Host "FAIL: Compute environment $ComputeEnvName not found." -ForegroundColor Red
     $fail = 1
 } else {
-    $ceVpcId = ""
-    if ($ce.computeResources.subnets) {
-        $subResp = ExecJson @("ec2", "describe-subnets", "--subnet-ids", $ce.computeResources.subnets[0], "--region", $Region, "--output", "json")
-        if ($subResp.Subnets) { $ceVpcId = $subResp.Subnets[0].VpcId }
-    }
-    if ($targetVpcId -and $ceVpcId -ne $targetVpcId) {
-        Write-Host "FAIL: CE $ComputeEnvName is in VPC $ceVpcId, expected API VPC $targetVpcId." -ForegroundColor Red
+    if ($ce.state -ne "ENABLED") {
+        Write-Host "FAIL: CE $ComputeEnvName state=$($ce.state) (expected ENABLED)." -ForegroundColor Red
         $fail = 1
-    } else { Write-Host "OK: CE $ComputeEnvName" -ForegroundColor Green }
+    } elseif ($ce.status -ne "VALID") {
+        Write-Host "FAIL: CE $ComputeEnvName status=$($ce.status) (expected VALID)." -ForegroundColor Red
+        $fail = 1
+    } else {
+        $ceVpcId = ""
+        if ($ce.computeResources.subnets) {
+            $subResp = ExecJson @("ec2", "describe-subnets", "--subnet-ids", $ce.computeResources.subnets[0], "--region", $Region, "--output", "json")
+            if ($subResp.Subnets) { $ceVpcId = $subResp.Subnets[0].VpcId }
+        }
+        if ($targetVpcId -and $ceVpcId -ne $targetVpcId) {
+            Write-Host "FAIL: CE $ComputeEnvName is in VPC $ceVpcId, expected API VPC $targetVpcId." -ForegroundColor Red
+            $fail = 1
+        } else { Write-Host "OK: CE $ComputeEnvName (ENABLED, VALID)" -ForegroundColor Green }
+    }
 }
 
 # Queue: must exist and be ENABLED (strict; describe-job-queues empty or error = FAIL)
