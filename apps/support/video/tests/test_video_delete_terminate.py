@@ -5,7 +5,7 @@ Video 삭제 시 AWS Batch Terminate 호출 검증.
 - RUNNING/QUEUED/RETRY_WAIT + aws_batch_job_id 있으면 terminate 호출.
 - SUCCEEDED 이면 terminate 미호출.
 """
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from django.test import TestCase
 
