@@ -37,6 +37,10 @@ NOT_FOUND_COUNT_KEY_PREFIX = "video:reconcile:not_found:"
 NOT_FOUND_COUNT_TTL_SECONDS = 3600
 NOT_FOUND_CONSECUTIVE_THRESHOLD = 3
 NOT_FOUND_MIN_AGE_MINUTES = 30
+# Do not terminate RUNNABLE orphans until job has been RUNNABLE this long AND CE has scaled (desiredvCpus > 0)
+RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES = getattr(settings, "RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES", 15)
+# Set True to disable orphan terminate entirely (e.g. operator switch)
+RECONCILE_ORPHAN_DISABLED = getattr(settings, "RECONCILE_ORPHAN_DISABLED", False)
 
 
 def _acquire_reconcile_lock() -> bool:
