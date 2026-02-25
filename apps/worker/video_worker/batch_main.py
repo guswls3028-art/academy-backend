@@ -162,7 +162,7 @@ def main() -> int:
         "tenant_id": int(job_obj.tenant_id),
         "tenant_code": "",
         "_job_id": job_id,
-        "_cancel_check": lambda: job_is_cancel_requested(job_id) or _shutdown_event.is_set(),
+        "_cancel_check": lambda: job_is_cancel_requested(job_id) or _shutdown_event.is_set() or not _video_still_exists(job_obj.video_id),
         "_cancel_event": None,
     }
     try:
@@ -184,6 +184,9 @@ def main() -> int:
 
     try:
         hls_path, duration = process_video(job=job_dict, cfg=cfg, progress=progress)
+        if not _video_still_exists(job_obj.video_id):
+            _log_json("WORKER_CANCELLED_BY_VIDEO_DELETE", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, reason="video_deleted_before_complete")
+            return 0
         ok, reason = job_complete(job_id, hls_path, duration)
         if not ok:
             raise RuntimeError(f"job_complete failed: {reason}")
@@ -215,6 +218,9 @@ def main() -> int:
         return 0
 
     except CancelledError:
+        if not _video_still_exists(job_obj.video_id):
+            _log_json("WORKER_CANCELLED_BY_VIDEO_DELETE", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, reason="video_deleted_or_cancelled")
+            return 0
         job_fail_retry(job_id, "CANCELLED")
         _log_json("BATCH_JOB_CANCELLED", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id)
         return 1
