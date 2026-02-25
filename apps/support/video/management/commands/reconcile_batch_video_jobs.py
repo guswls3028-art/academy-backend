@@ -301,12 +301,29 @@ class Command(BaseCommand):
             elif bj is None:
                 # not_found: conservative. Do NOT overwrite RUNNING with RETRY_WAIT.
                 if job.state == VideoTranscodeJob.State.RUNNING:
+                    logger.info(
+                        "reconcile not_found skip (DB RUNNING, do not overwrite)",
+                        extra={
+                            "event": "reconcile_not_found_skip",
+                            "job_id": str(job.id),
+                            "reason": "db_running",
+                        },
+                    )
                     self.stdout.write(f"RECONCILE skip not_found job_id={job.id} (DB RUNNING - do not overwrite)")
                     continue
                 count = _incr_not_found_count(str(job.id))
                 job_age_minutes = (timezone.now() - job.created_at).total_seconds() / 60
                 allow_fail = count >= NOT_FOUND_CONSECUTIVE_THRESHOLD or job_age_minutes >= NOT_FOUND_MIN_AGE_MINUTES
                 if not allow_fail:
+                    logger.info(
+                        "reconcile not_found defer (below threshold)",
+                        extra={
+                            "event": "reconcile_not_found_defer",
+                            "job_id": str(job.id),
+                            "not_found_count": count,
+                            "age_minutes": round(job_age_minutes, 1),
+                        },
+                    )
                     self.stdout.write(f"RECONCILE skip not_found job_id={job.id} (count={count}, age_min={job_age_minutes:.0f})")
                     continue
                 if not dry_run:
@@ -323,6 +340,15 @@ class Command(BaseCommand):
                             job.refresh_from_db()
                             job.aws_batch_job_id = aws_job_id
                             job.save(update_fields=["aws_batch_job_id", "updated_at"])
+                logger.info(
+                    "reconcile not_found fail (after threshold)",
+                    extra={
+                        "event": "reconcile_not_found_fail",
+                        "job_id": str(job.id),
+                        "aws_batch_job_id": aws_id,
+                        "not_found_count": count,
+                    },
+                )
                 self.stdout.write(f"RECONCILE not_found job_id={job.id} aws_id={aws_id} (count={count})")
 
         # ----- Orphan AWS jobs (video queue only) -----
