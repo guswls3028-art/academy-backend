@@ -173,8 +173,8 @@ function Invoke-BatchAudit {
         Add-AuditRow -Category "Batch" -Check "Ops Queue" -Expected "ENABLED" -Actual "$($opsQ.state) CE=$ceNames" -Status $st -FixAction $(if ($st -eq "FAIL") { "Run batch_ops_setup.ps1" } else { "" })
     }
 
-    $videoQueueArn = $videoQ.jobQueueArn
-    $opsQueueArn = $opsQ.jobQueueArn
+    $videoQueueArn = if ($videoQ) { $videoQ.jobQueueArn } else { $null }
+    $opsQueueArn = if ($opsQ) { $opsQ.jobQueueArn } else { $null }
     if ($videoQueueArn) {
         $runningV = (Aws-Text @("batch", "list-jobs", "--job-queue", $videoQueueArn, "--job-status", "RUNNING", "--region", $Region, "--query", "length(jobSummaryList)", "--output", "text")) -as [int]
         if (-not $runningV) { $runningV = 0 }
