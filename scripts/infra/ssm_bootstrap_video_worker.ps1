@@ -211,8 +211,9 @@ Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
 Write-Host "Putting SSM parameter: $ParamName (SecureString, base64-encoded JSON)" -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-# Base64만 전달(따옴표/공백 없음) → PowerShell 인자 손상 가능성 최소화
-$putOut = & aws ssm put-parameter --name $ParamName --value $valueBase64 --type SecureString --region $Region --overwrite 2>&1
+# AWS CLI 호출: ArgumentList(배열) 방식으로 인자 손상 방지
+$putArgs = @('ssm', 'put-parameter', '--name', $ParamName, '--value', $valueBase64, '--type', 'SecureString', '--region', $Region, '--overwrite')
+$putOut = & aws @putArgs 2>&1
 $putErr = ($putOut | Out-String).Trim()
 $putExit = $LASTEXITCODE
 $ErrorActionPreference = $prevErr
@@ -223,7 +224,8 @@ if ($putExit -ne 0) {
 }
 
 # 저장 직후 get-parameter --with-decryption 으로 읽어서 Base64 디코딩 후 JSON 검증 (실패 시 exit 1)
-$getValueRaw = aws ssm get-parameter --name $ParamName --region $Region --with-decryption --output json 2>&1
+$getArgs = @('ssm', 'get-parameter', '--name', $ParamName, '--region', $Region, '--with-decryption', '--output', 'json')
+$getValueRaw = & aws @getArgs 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "FAIL: get-parameter (with-decryption) after put failed." -ForegroundColor Red
     exit 1
