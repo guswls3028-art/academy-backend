@@ -38,23 +38,29 @@
 
 ## 최종 원테이크 실행 (복붙 PowerShell)
 
-저장소 루트에서 **PowerShell**로 실행. `<acct>`를 AWS 계정 ID로 교체 (예: `809466760795`). `.env`는 `.env.example`에서 복사 후 필수 값 채워 둔 상태여야 함.
+저장소 루트에서 **PowerShell**로 실행. **반드시 `$acctId`를 실제 AWS 계정 ID로 설정** (예: `809466760795`). `.env`는 `.env.example`에서 복사 후 필수 값 채워 둔 상태여야 함.
+
+- **JSON 파일 읽기**: 코드베이스와 동일하게 `Get-Content path -Raw | ConvertFrom-Json` 사용.
+- **ECR 이미지 URI**: `$acctId` 한 곳만 바꾸면 되도록 변수 조합. 리터럴 `<acct>`를 쓰면 Batch jobdef에 invalid characters 로 실패함.
 
 ```powershell
 # UTF-8 (Windows cp949 / SSM JSON 방지)
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+
+# 계정 ID — 반드시 실제 값으로 교체 (예: 809466760795)
+$acctId = "809466760795"
 
 # a) .env 준비됨 가정 (copy .env.example .env 후 필수 키 입력)
 
 # b) SSM bootstrap (.env -> /academy/workers/env JSON)
 .\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite
 
-# c) Batch in API VPC
-$ecrUri = "<acct>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest"
+# c) Batch in API VPC (ECR URI는 변수로만 전달 — 코드베이스의 file:///cli-input-json 패턴과 동일하게 인자 손상 방지)
+$ecrUri = "${acctId}.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest"
 .\scripts\infra\recreate_batch_in_api_vpc.ps1 -Region ap-northeast-2 -EcrRepoUri $ecrUri
 
-# d) EventBridge (최종 큐 이름 사용)
-$q = (Get-Content docs\deploy\actual_state\batch_final_state.json -Raw | ConvertFrom-Json).FinalJobQueueName
+# d) EventBridge (최종 큐 이름: Get-Content -Raw | ConvertFrom-Json — production_done_check.ps1과 동일)
+$q = (Get-Content (Join-Path $PWD "docs\deploy\actual_state\batch_final_state.json") -Raw | ConvertFrom-Json).FinalJobQueueName
 .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName $q
 
 # e) CloudWatch alarms
