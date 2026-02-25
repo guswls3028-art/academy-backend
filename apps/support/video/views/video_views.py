@@ -175,6 +175,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             try:
                 from apps.support.video.models import VideoTranscodeJob
                 from apps.support.video.services.batch_control import terminate_batch_job
+                from academy.adapters.db.django.repositories_video import job_mark_dead_if_active
 
                 cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
                 if cur and cur.state in (
@@ -190,9 +191,15 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                             video_id=video_id,
                             job_id=str(cur.id),
                         )
-                    cur.state = VideoTranscodeJob.State.DEAD
-                    cur.save(update_fields=["state", "updated_at"])
-                    logger.info("Video delete: job DEAD video_id=%s job_id=%s", video_id, cur.id)
+                    _, rows = job_mark_dead_if_active(
+                        str(cur.id),
+                        error_code="VIDEO_DELETED",
+                        error_message="Video deleted; job marked DEAD",
+                    )
+                    if rows:
+                        logger.info("Video delete: DEAD_UPDATED (rows=1) video_id=%s job_id=%s", video_id, cur.id)
+                    else:
+                        logger.info("Video delete: DEAD_SKIPPED_ALREADY_TERMINAL (rows=0) video_id=%s job_id=%s", video_id, cur.id)
             except Exception as e:
                 logger.warning("Video delete: job DEAD mark failed video_id=%s: %s", video_id, e)
         super().perform_destroy(instance)
