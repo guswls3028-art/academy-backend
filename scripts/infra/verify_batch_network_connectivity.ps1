@@ -149,6 +149,18 @@ Write-Fact "REDIS_HOST" $redisHost
 Write-Fact "API_BASE_URL" $apiBaseUrl
 Write-Fact "R2_ENDPOINT" $r2Endpoint
 
+# API_BASE_URL가 VPC 내부 Private IP 기반인지 검사 (Batch는 반드시 private 통신)
+$apiBaseIsPrivate = $false
+if ($apiBaseUrl -match '^http://([^/:]+)') {
+    $apiHostPart = $Matches[1]
+    if ($apiHostPart -match '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)') { $apiBaseIsPrivate = $true }
+}
+if ($apiBaseUrl -and -not $apiBaseIsPrivate) {
+    Write-Host "  WARN: API_BASE_URL is not private (Batch in VPC must use http://private-ip:port). Current: $apiBaseUrl" -ForegroundColor Yellow
+} elseif ($apiBaseIsPrivate) {
+    Write-Fact "API_BASE_URL (private)" "YES (VPC internal)"
+}
+
 # Resolve host type
 $rdsEndpoint = $null
 $rdsSgId = $null
