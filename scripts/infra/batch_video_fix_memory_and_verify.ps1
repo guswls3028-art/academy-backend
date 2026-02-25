@@ -87,8 +87,9 @@ if ($needRegister) {
         $jd["containerProperties"] = $cp
     }
     $jdFile = Join-Path $env:TEMP "batch_jd_register_$(Get-Date -Format 'yyyyMMddHHmmss').json"
-    $jd | ConvertTo-Json -Depth 20 -Compress:$false | Set-Content -Path $jdFile -Encoding UTF8
-    $fileUri = "file:///$($jdFile -replace '\\', '/')"
+    $absPath = [System.IO.Path]::GetFullPath($jdFile)
+    $jd | ConvertTo-Json -Depth 25 -Compress:$false | Set-Content -Path $jdFile -Encoding UTF8 -NoNewline:$false
+    $fileUri = "file:///" + ($absPath -replace '\\', '/')
     $regOut = Invoke-AwsJson @("batch", "register-job-definition", "--cli-input-json", $fileUri, "--region", $Region, "--output", "json")
     Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
     if (-not $regOut -or -not $regOut.revision) {
