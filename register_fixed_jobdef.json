@@ -1,0 +1,8 @@
+{
+    "retryStrategy":  null,
+    "type":  null,
+    "containerProperties":  null,
+    "jobDefinitionName":  null,
+    "platformCapabilities":  null,
+    "timeout":  null
+}
