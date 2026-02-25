@@ -4,10 +4,15 @@
     {
       "Sid": "BatchSubmitVideoJob",
       "Effect": "Allow",
-      "Action": "batch:SubmitJob",
+      "Action": [
+        "batch:SubmitJob",
+        "batch:TerminateJob",
+        "batch:DescribeJobs"
+      ],
       "Resource": [
         "arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-video-batch-jobdef",
-        "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-video-batch-queue"
+        "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-video-batch-queue",
+        "arn:aws:batch:ap-northeast-2:809466760795:job/*"
       ]
     }
   ]
