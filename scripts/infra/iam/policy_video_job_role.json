@@ -30,6 +30,16 @@
       "Effect": "Allow",
       "Action": "cloudwatch:PutMetricData",
       "Resource": "*"
+    },
+    {
+      "Sid": "BatchReconcile",
+      "Effect": "Allow",
+      "Action": ["batch:DescribeJobs", "batch:TerminateJob", "batch:SubmitJob"],
+      "Resource": [
+        "arn:aws:batch:*:*:job-definition/academy-video-batch-jobdef",
+        "arn:aws:batch:*:*:job-queue/academy-video-batch-queue",
+        "arn:aws:batch:*:*:job/*"
+      ]
     }
   ]
 }
