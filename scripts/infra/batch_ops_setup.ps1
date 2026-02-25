@@ -35,6 +35,17 @@ function ExecJson($argsArray) {
     try { return ($out | ConvertFrom-Json) } catch { return $null }
 }
 
+function Invoke-Aws {
+    param([string[]]$ArgsArray, [string]$ErrorMessage = "AWS CLI failed")
+    $out = & aws @ArgsArray 2>&1
+    $exit = $LASTEXITCODE
+    if ($exit -ne 0) {
+        $text = ($out | Out-String).Trim()
+        throw "${ErrorMessage}. ExitCode=$exit. Output: $text"
+    }
+    return $out
+}
+
 function Get-ComputeEnvironmentArn {
     param([string]$Name)
     $ce = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $Name, "--region", $Region, "--output", "json")
