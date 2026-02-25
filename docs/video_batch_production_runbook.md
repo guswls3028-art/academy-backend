@@ -283,6 +283,7 @@ Run from repo root (Django app) with AWS credentials and env configured:
   Re-enable: `--state ENABLED`.
 - **EventBridge:** Disable the rule to stop reconcile triggers:  
   `aws events disable-rule --name academy-reconcile-video-jobs --region <region>`  
-  Re-enable: `aws events enable-rule --name academy-reconcile-video-jobs --region <region>`.
+  Re-enable: `aws events enable-rule --name academy-reconcile-video-jobs --region <region>`.  
+  Reconcile/scan_stuck submit to **academy-video-ops-queue** (Ops CE); video jobs stay on **academy-video-batch-queue**.
 - **CloudWatch alarms:** Delete or adjust threshold via console/CLI; alarm names are in `scripts/infra/cloudwatch/*.json` and in `cloudwatch_deploy_video_alarms.ps1`.
 - **IAM:** Detach or remove inline policies from roles via console/CLI; policy names are in `batch_video_setup.ps1` (e.g. `academy-batch-service-inline`, `academy-video-batch-job-inline`). Avoid removing roles while Batch CE/job definition reference them.
