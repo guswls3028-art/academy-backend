@@ -72,7 +72,7 @@ cd C:\academy
 ```powershell
 cd C:\academyfront
 # 프론트엔드 배포 스크립트 실행 (프로젝트에 따라 다름)
-# 예: npm run build && 배포 스크립트 실행
+# 예: pnpm run build && 배포 스크립트 실행
 ```
 
 ---

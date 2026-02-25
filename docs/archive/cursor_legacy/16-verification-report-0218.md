@@ -65,7 +65,7 @@
 | 대상 | 명령 | 결과 |
 |------|------|------|
 | Backend | `python manage.py check` | ✓ 통과 |
-| Frontend | `npm run build` | ✓ 통과 |
+| Frontend | `pnpm run build` | ✓ 통과 |
 
 **참고**: DecimalField min_value 경고는 `Decimal("1")`로 수정하여 해소.
 
