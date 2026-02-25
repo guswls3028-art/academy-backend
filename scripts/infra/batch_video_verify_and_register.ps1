@@ -43,6 +43,12 @@ function Fail($msg) {
 Write-Host "== Batch Video JobDefinition Verify and Register ==" -ForegroundColor Cyan
 Write-Host "Region=$Region JobDef=$JobDefName" -ForegroundColor Gray
 
+$callerArn = aws sts get-caller-identity --query Arn --output text 2>&1
+if ($LASTEXITCODE -eq 0 -and $callerArn -match ":root") {
+    Write-Host "ROOT CAUSE: Running with root credentials (unsafe, not representative of production roles)" -ForegroundColor Red
+    exit 3
+}
+
 # 1) Verify source JSON has retryStrategy.attempts == 1
 Write-Host ""
 Write-Host "[1] Verify source video_job_definition.json" -ForegroundColor Cyan
