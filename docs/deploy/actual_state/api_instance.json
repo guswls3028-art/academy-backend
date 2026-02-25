@@ -1,11 +1,12 @@
 {
-    "State":  "running",
-    "PublicIpAddress":  "15.165.147.157",
     "InstanceId":  "i-0c8ae616abf345fd1",
-    "PrivateIpAddress":  "172.30.3.142",
     "SecurityGroupIds":  [
                              "sg-0051cc8f79c04b058"
                          ],
+    "State":  "running",
+    "PrivateApiBaseUrl":  "http://172.30.3.142:8000",
     "VpcId":  "vpc-0831a2484f9b114c2",
-    "SubnetId":  "subnet-049e711f41fdff71b"
+    "SubnetId":  "subnet-049e711f41fdff71b",
+    "PrivateIpAddress":  "172.30.3.142",
+    "PublicIpAddress":  "15.165.147.157"
 }
