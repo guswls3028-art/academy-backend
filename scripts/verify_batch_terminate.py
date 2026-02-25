@@ -93,7 +93,8 @@ def main() -> int:
         return 3
 
     print(f"\nCredential source: {_get_credential_source()}")
-    print(f"Region:            {region}\n")
+    print(f"Region:            {region}")
+    print("Operator note:     IAM policy = infra/worker_asg/iam_policy_api_batch_submit.json | Apply = scripts/apply_api_batch_submit_policy.ps1\n")
 
     # For SimulatePrincipalPolicy we need role ARN when caller is assumed-role (e.g. EC2 instance profile).
     policy_source_arn = arn
