@@ -153,16 +153,13 @@ if (-not $ceValid) {
     $script:Summary.VideoCeScalePath.Evidence = "CE $VideoCEName status=$($videoCe.status) state=$($videoCe.state); expected VALID/ENABLED"
 } elseif (-not $asgFound) {
     $script:Summary.VideoCeScalePath.Evidence = "CE VALID/ENABLED but no ASG with tag aws:batch:computeEnvironmentArn or name academy-video-batch-ce-v2-asg-* (capacity/perm/subnet)"
-} elseif ($asgInstanceCount -eq 0) {
-    $script:Summary.VideoCeScalePath.Status = "PASS"
-    $script:Summary.VideoCeScalePath.Evidence = "CE VALID/ENABLED; ASG exists desired=0 (scale-to-zero ok)"
 } else {
     $script:Summary.VideoCeScalePath.Status = "PASS"
-    $script:Summary.VideoCeScalePath.Evidence = "CE VALID/ENABLED; ASG exists desired=$asgInstanceCount; instanceTypes=$($ceInstanceTypes -join ',')"
-}
-
-if (-not $scalePathOk) {
-    $script:Summary.VideoCeScalePath.Evidence = if ($script:Summary.VideoCeScalePath.Evidence) { $script:Summary.VideoCeScalePath.Evidence } else { "CE missing or not VALID/ENABLED or ASG not found" }
+    if ($asgInstanceCount -eq 0) {
+        $script:Summary.VideoCeScalePath.Evidence = "CE VALID/ENABLED; ASG exists desired=0 (scale-to-zero ok)"
+    } else {
+        $script:Summary.VideoCeScalePath.Evidence = "CE VALID/ENABLED; ASG exists desired=$asgInstanceCount; instanceTypes=$($ceInstanceTypes -join ',')"
+    }
 }
 
 # ---------- C. 네트워크/egress ----------
