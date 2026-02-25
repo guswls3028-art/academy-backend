@@ -15,6 +15,17 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $OutDir = Join-Path $RepoRoot "docs\deploy\actual_state"
 
+function ExecJson($a) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = & aws @a 2>&1
+    $ErrorActionPreference = $prev
+    if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
+    $s = ($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($s)) { return $null }
+    try { return $s | ConvertFrom-Json } catch { return $null }
+}
+
 function Invoke-Step { param([string]$Name, [scriptblock]$Block)
     Write-Host "`n=== $Name ===" -ForegroundColor Cyan
     & $Block
@@ -120,16 +131,6 @@ if ($FixMode) {
 
 # Evidence (B): CE instanceTypes, Queue computeEnvironmentOrder, JobDef latest vcpus/memory, submit 경로
 Write-Host "`n=== Evidence (production fix) ===" -ForegroundColor Cyan
-function ExecJson($a) {
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $out = & aws @a 2>&1
-    $ErrorActionPreference = $prev
-    if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
-    $s = ($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim()
-    if ([string]::IsNullOrWhiteSpace($s)) { return $null }
-    try { return $s | ConvertFrom-Json } catch { return $null }
-}
 $ceOut = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $videoCeName, "--region", $Region, "--output", "json")
 if ($ceOut -and $ceOut.computeEnvironments -and $ceOut.computeEnvironments.Count -gt 0) {
     $ce = $ceOut.computeEnvironments[0]
