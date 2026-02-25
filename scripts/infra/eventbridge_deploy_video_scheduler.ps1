@@ -100,7 +100,7 @@ if (-not $t0.BatchParameters -or $t0.BatchParameters.JobDefinition -ne "academy-
     exit 1
 }
 if ($t0.Arn -ne $JobQueueArn) {
-    Write-Host "FAIL: Reconcile target Arn does not match JobQueueArn." -ForegroundColor Red
+    Write-Host "FAIL: Reconcile target Arn does not match Ops job queue ARN." -ForegroundColor Red
     exit 1
 }
 
