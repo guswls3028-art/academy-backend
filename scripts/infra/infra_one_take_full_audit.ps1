@@ -466,30 +466,30 @@ if ($script:FixesApplied.Count -gt 0) {
     foreach ($f in $script:FixesApplied) { Write-Host "  - $f" -ForegroundColor Gray }
 }
 
-# 권장 다음 조치 (Recommendations)
+# Recommendations
 $failRows = $script:AuditRows | Where-Object { $_.Status -eq "FAIL" }
 $warnRows = $script:AuditRows | Where-Object { $_.Status -eq "WARN" }
 if ($failRows.Count -gt 0 -or $warnRows.Count -gt 0) {
-    Write-Host "`n--- 권장 다음 조치 (Recommendations) ---" -ForegroundColor Cyan
+    Write-Host "`n--- Recommendations ---" -ForegroundColor Cyan
     if ($failRows.Count -gt 0) {
-        Write-Host "  [FAIL 항목 수정]" -ForegroundColor Red
+        Write-Host "  [FAIL items]" -ForegroundColor Red
         foreach ($r in $failRows) {
-            $fa = if ($r.FixAction) { $r.FixAction } else { "수동 점검" }
+            $fa = if ($r.FixAction) { $r.FixAction } else { "Manual check" }
             Write-Host "    - $($r.Category) / $($r.Check): $fa" -ForegroundColor Gray
         }
-        Write-Host "  수정 후 재실행: .\scripts\infra\infra_one_take_full_audit.ps1 -Region $Region -FixMode" -ForegroundColor Gray
+        Write-Host "  Then re-run: .\scripts\infra\infra_one_take_full_audit.ps1 -Region $Region -FixMode" -ForegroundColor Gray
     }
     if ($warnRows.Count -gt 0) {
-        Write-Host "  [WARN 항목 점검]" -ForegroundColor Yellow
+        Write-Host "  [WARN items]" -ForegroundColor Yellow
         foreach ($r in $warnRows) {
             Write-Host "    - $($r.Category) / $($r.Check): $($r.Actual)" -ForegroundColor Gray
         }
     }
-    Write-Host "  전체 점검: .\scripts\infra\infra_one_take_full_audit.ps1 -Region $Region" -ForegroundColor Gray
+    Write-Host "  Full audit: .\scripts\infra\infra_one_take_full_audit.ps1 -Region $Region" -ForegroundColor Gray
 } else {
-    Write-Host "`n--- 권장 다음 조치 ---" -ForegroundColor Cyan
-    Write-Host "  정기 실행: .\scripts\infra\infra_one_take_full_audit.ps1 -Region $Region" -ForegroundColor Gray
-    Write-Host "  (필요 시 -FixMode로 자동 수정)" -ForegroundColor Gray
+    Write-Host "`n--- Recommendations ---" -ForegroundColor Cyan
+    Write-Host "  Regular run: .\scripts\infra\infra_one_take_full_audit.ps1 -Region $Region" -ForegroundColor Gray
+    Write-Host "  (Use -FixMode to auto-apply fixes if needed)" -ForegroundColor Gray
 }
 
 $overall = "PASS"
