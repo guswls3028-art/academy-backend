@@ -14,9 +14,16 @@ function Ok($msg)  { Write-Host "  OK $msg" -ForegroundColor Green }
 function Warn($msg) { Write-Host "  WARN: $msg" -ForegroundColor Yellow }
 function Fail($msg) { Write-Host "  FAIL: $msg" -ForegroundColor Red; exit 1 }
 
-# 0) AWS identity
-$AccountId = aws sts get-caller-identity --query Account --output text 2>&1
+# 0) AWS identity and root check
+$callerJson = aws sts get-caller-identity --output json 2>&1
 if ($LASTEXITCODE -ne 0) { Fail "AWS identity check failed. Run aws configure or set AWS_PROFILE." }
+$callerObj = $callerJson | ConvertFrom-Json
+$AccountId = $callerObj.Account
+$callerArn = $callerObj.Arn
+if ($callerArn -match ":root") {
+    Write-Host "ROOT CAUSE: Running with root credentials (unsafe, not representative of production roles)" -ForegroundColor Red
+    exit 3
+}
 $EcrUri = "${AccountId}.dkr.ecr.${Region}.amazonaws.com/academy-video-worker:latest"
 
 Write-Host "`n========== FIX AND REDEPLOY VIDEO WORKER (one-take) ==========" -ForegroundColor Cyan
