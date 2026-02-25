@@ -20,7 +20,7 @@ class VideoDeleteTerminateTest(TestCase):
 
     def setUp(self):
         tenant = Tenant.objects.create(name="Test Tenant", code="TEST_VIDEO_DEL")
-        lecture = Lecture.objects.create(title="L", name="L", tenant=tenant)
+        lecture = Lecture.objects.create(title="L", name="L", subject="S", tenant=tenant)
         session = Session.objects.create(lecture=lecture, title="S", order=1)
         self.video = Video.objects.create(
             session=session,
