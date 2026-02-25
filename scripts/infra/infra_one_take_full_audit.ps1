@@ -163,6 +163,10 @@ function Invoke-BatchAudit {
         $types = $opsCe.computeResources.instanceTypes -join ","
         $minMax = "min=$($opsCe.computeResources.minvCpus) max=$($opsCe.computeResources.maxvCpus)"
         Add-AuditRow -Category "Batch" -Check "Ops CE" -Expected "VALID/ENABLED" -Actual "$s $types $minMax" -Status $st -FixAction $(if ($st -eq "FAIL") { "Run batch_ops_setup.ps1" } else { "" })
+        $t4gOnly = ($opsCe.computeResources.instanceTypes | Where-Object { $_ -eq "t4g.small" }).Count -eq $opsCe.computeResources.instanceTypes.Count -and $opsCe.computeResources.instanceTypes.Count -gt 0
+        $minMaxOk = $opsCe.computeResources.minvCpus -eq 0 -and $opsCe.computeResources.maxvCpus -eq 2
+        Add-AuditRow -Category "Batch" -Check "Ops CE instanceTypes" -Expected "t4g.small only" -Actual $types -Status $(if ($t4gOnly) { "PASS" } else { "WARN" }) -FixAction ""
+        Add-AuditRow -Category "Batch" -Check "Ops CE min/max vCpus" -Expected "min=0 max=2" -Actual $minMax -Status $(if ($minMaxOk) { "PASS" } else { "WARN" }) -FixAction ""
     }
 
     $jqList = Aws-JsonSafe @("batch", "describe-job-queues", "--region", $Region)
