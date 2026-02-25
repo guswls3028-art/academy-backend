@@ -1,12 +1,12 @@
 # ==============================================================================
 # EventBridge rules for video Batch: reconcile + scan-stuck (rate 2 min). Target: AWS Batch SubmitJob only.
-# Validates job definitions ACTIVE before wiring. Verifies targets after put-targets.
-# Usage: .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue
+# Ops jobs (reconcile, scan_stuck) submit to academy-video-ops-queue. Video jobs stay on academy-video-batch-queue.
+# Usage: .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
 # ==============================================================================
 
 param(
     [string]$Region = "ap-northeast-2",
-    [string]$JobQueueName = "academy-video-batch-queue"
+    [string]$OpsJobQueueName = "academy-video-ops-queue"
 )
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
@@ -32,14 +32,15 @@ function ExecJson($argsArray) {
 $AccountId = (aws sts get-caller-identity --query Account --output text 2>&1)
 if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: AWS identity check failed" -ForegroundColor Red; exit 1 }
 
-# Resolve JobQueueArn from name (fail if missing)
-$jqResp = ExecJson @("batch", "describe-job-queues", "--job-queues", $JobQueueName, "--region", $Region, "--output", "json")
+# Resolve Ops Job Queue ARN (reconcile + scan_stuck submit here)
+$jqResp = ExecJson @("batch", "describe-job-queues", "--job-queues", $OpsJobQueueName, "--region", $Region, "--output", "json")
 if (-not $jqResp -or -not $jqResp.jobQueues -or $jqResp.jobQueues.Count -eq 0) {
-    Write-Host "FAIL: Job queue $JobQueueName not found." -ForegroundColor Red
+    Write-Host "FAIL: Ops job queue $OpsJobQueueName not found. Run batch_ops_setup.ps1 first." -ForegroundColor Red
     exit 1
 }
 $JobQueueArn = $jqResp.jobQueues[0].jobQueueArn
-if (-not $JobQueueArn) { Write-Host "FAIL: Job queue ARN empty." -ForegroundColor Red; exit 1 }
+if (-not $JobQueueArn) { Write-Host "FAIL: Ops job queue ARN empty." -ForegroundColor Red; exit 1 }
+Write-Host "Ops Job Queue: $OpsJobQueueName -> $JobQueueArn" -ForegroundColor Gray
 
 # Validate job definitions ACTIVE before wiring
 foreach ($jdName in $RequiredOpsJobDefs) {
