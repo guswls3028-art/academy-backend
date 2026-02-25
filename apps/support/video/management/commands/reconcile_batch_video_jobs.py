@@ -356,44 +356,14 @@ class Command(BaseCommand):
                 self.stdout.write(f"RECONCILE not_found job_id={job.id} aws_id={aws_id} (count={count})")
 
         # ----- Orphan AWS jobs (video queue only) -----
-        try:
-            import boto3
-            batch_client = boto3.client("batch", region_name=REGION)
-            db_aws_ids = set(
-                VideoTranscodeJob.objects.filter(
-                    state__in=[
-                        VideoTranscodeJob.State.QUEUED,
-                        VideoTranscodeJob.State.RUNNING,
-                        VideoTranscodeJob.State.RETRY_WAIT,
-                    ],
-                )
-                .exclude(aws_batch_job_id="")
-                .values_list("aws_batch_job_id", flat=True)
+        if RECONCILE_ORPHAN_DISABLED:
+            logger.info(
+                "reconcile orphan block skipped (RECONCILE_ORPHAN_DISABLED=True)",
+                extra={"event": "reconcile_orphan_disabled"},
             )
-            paginator = batch_client.get_paginator("list_jobs")
-            for status_filter in ["RUNNING", "RUNNABLE"]:
-                for page in paginator.paginate(
-                    jobQueue=VIDEO_BATCH_JOB_QUEUE,
-                    jobStatus=status_filter,
-                ):
-                    for j in page.get("jobSummaryList") or []:
-                        aws_id = j.get("jobId")
-                        if aws_id and aws_id not in db_aws_ids:
-                            if not dry_run:
-                                try:
-                                    batch_client.terminate_job(jobId=aws_id, reason="reconcile_orphan")
-                                    try:
-                                        from apps.support.video.services.ops_events import emit_ops_event
-                                        emit_ops_event("ORPHAN_CANCELLED", severity="WARNING", aws_batch_job_id=aws_id, payload={"reason": "reconcile_orphan"})
-                                    except Exception:
-                                        pass
-                                    self.stdout.write(self.style.WARNING(f"RECONCILE orphan terminated aws_id={aws_id}"))
-                                except Exception as e:
-                                    logger.warning("terminate orphan %s failed: %s", aws_id, e)
-                            else:
-                                self.stdout.write(f"DRY-RUN RECONCILE would terminate orphan aws_id={aws_id}")
-        except Exception as e:
-            logger.warning("orphan cancel list/terminate failed: %s", e)
+            self.stdout.write("RECONCILE orphan block skipped (RECONCILE_ORPHAN_DISABLED=True).")
+        else:
+            self._run_orphan_terminate(dry_run)
 
         self.stdout.write(
             self.style.SUCCESS(f"Done: {updated} updated" + (" (dry-run)" if dry_run else ""))
