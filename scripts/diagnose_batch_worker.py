@@ -243,16 +243,28 @@ def main() -> None:
 
     out.append("")
     out.append("--- Architecture ---")
+    ce_arch: str | None = None
     if ce_name and jd:
         try:
             ces = batch.describe_compute_environments(computeEnvironments=[ce_name]).get("computeEnvironments") or []
             cr = (ces[0].get("computeResources") or {}) if ces else {}
             types = cr.get("instanceTypes") or []
             arm = any("g" in (t or "") for t in types) or "arm64" in str(types).lower()
-            out.append(f"  CE instanceTypes: {types} -> ARM64={arm}")
+            ce_arch = "arm64" if arm else "amd64"
+            out.append(f"  CE instanceTypes: {types} -> CE architecture: {ce_arch}")
             if not arm:
                 out.append("  WARN: CE is x86; image from academy-build-arm64 is ARM64 -> mismatch")
                 issues.append("Architecture mismatch: CE x86 vs image ARM64 (use c6g/m6g for ARM64)")
+            img_arch_display = ecr_image_arch if ecr_image_arch else "unknown"
+            out.append(f"  ECR image architecture: {img_arch_display}")
+            if ce_arch and ecr_image_arch:
+                if (ce_arch == "arm64" and ecr_image_arch == "arm64") or (ce_arch == "amd64" and ecr_image_arch == "amd64"):
+                    out.append(f"  Verdict: Compatible ({ce_arch})")
+                else:
+                    out.append(f"  Verdict: Mismatch (CE is {ce_arch}, image is {ecr_image_arch})")
+                    issues.append(f"Architecture mismatch: CE {ce_arch} vs image {ecr_image_arch}")
+            else:
+                out.append("  Verdict: (cannot determine; ensure CE instanceTypes match image arch)")
         except Exception as e:
             out.append(f"  Arch check: {e}")
     else:
