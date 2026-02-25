@@ -1,9 +1,9 @@
 # ==============================================================================
-# Create Ops-only Batch CE and Queue (t4g.micro/small, max 4 vCPU). Same VPC as video CE.
+# Create Ops-only Batch CE and Queue (default_arm64, max 2 vCPU). Same VPC as video CE.
 # Security Group: Uses the SAME security group as academy-video-batch-ce (no new SG).
 # Ops jobs (reconcile, scan_stuck, netprobe) submit to academy-video-ops-queue only.
 # Usage: .\scripts\infra\batch_ops_setup.ps1 -Region ap-northeast-2
-#        .\scripts\infra\batch_ops_setup.ps1 -Region ap-northeast-2 -VpcId vpc-xxx -SubnetIds @("subnet-a","subnet-b") -SecurityGroupId sg-xxx
+#        .\scripts\infra\batch_ops_setup.ps1 -Region ap-northeast-2 -Verbose
 # If VpcId/SubnetIds/SecurityGroupId omitted, discovers from existing academy-video-batch-ce.
 # ==============================================================================
 
@@ -15,6 +15,9 @@ param(
     [string]$ComputeEnvName = "academy-video-ops-ce",
     [string]$JobQueueName = "academy-video-ops-queue"
 )
+[CmdletBinding()]
+param()
+
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
 $ErrorActionPreference = "Stop"
