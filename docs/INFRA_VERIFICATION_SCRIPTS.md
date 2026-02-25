@@ -76,5 +76,4 @@
 | **범위** | Video(Batch) 만 | AI(ASG) + Messaging(ASG) + Video(Batch) |
 | **용도** | Video 배포 후 “원테이크” 검증 | 전체 워커 인프라 무결성 검증 |
 
-둘 다 **Video Worker** 에 대해서는 netprobe job 제출·SUCCEEDED 확인을 수행한다.  
-전체 3종 워커를 한 번에 검증할 때는 **워커 3종 체크**만 실행하면 된다.
+둘 다 **Video Worker(Batch)** 및 Ops Queue/CE를 다룬다. EventBridge·IAM까지 포함한 점검·수정이 필요하면 **원테이크 전체 감사**를 사용한다.
