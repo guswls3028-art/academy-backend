@@ -703,7 +703,7 @@ function Invoke-VideoBatchProductionAudit {
                     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
                     [System.IO.File]::WriteAllText($putFile, $putTargetsJson, $utf8NoBom)
                     try {
-                        ExecJsonThrow @("events", "put-targets", "--rule", $reconcileRuleName, "--targets", "file://$($putFile -replace '\\','/')", "--region", $Region)
+                        ExecJsonThrow @("events", "put-targets", "--cli-input-json", "file://$($putFile -replace '\\','/')", "--region", $Region)
                         Add-FixApplied -Action "EB.UpdateTargetRevision" -Details "Updated target JobDefinition from $jdInTarget to $newJobDefValue (latest ACTIVE revision)"
                         Write-Ok "Updated target to latest revision: $newJobDefValue"
                         $ok = $true
