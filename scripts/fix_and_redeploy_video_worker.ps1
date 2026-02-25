@@ -59,12 +59,18 @@ if (-not $ceArn) { Warn "Could not get CE from queue; skipping instance role att
     $ceName = $ceArn.Split("/")[-1]
     if (-not $ceName) { $ceName = $ceArn.Split(":")[-1] }
     $ceDesc = aws batch describe-compute-environments --compute-environments $ceName --region $Region --output json 2>&1 | ConvertFrom-Json
+    if (-not $ceDesc -or -not $ceDesc.computeEnvironments -or $ceDesc.computeEnvironments.Count -eq 0) {
+        Warn "Could not describe CE $ceName; skipping instance role attach."
+    } else {
     $instanceProfileArn = $ceDesc.computeEnvironments[0].computeResources.instanceRole
     if (-not $instanceProfileArn) {
         Warn "CE has no instanceRole; skipping attach."
     } else {
         $profileName = $instanceProfileArn.Split("/")[-1]
         $ip = aws iam get-instance-profile --instance-profile-name $profileName --output json 2>&1 | ConvertFrom-Json
+        if (-not $ip -or -not $ip.InstanceProfile.Roles -or $ip.InstanceProfile.Roles.Count -eq 0) {
+            Warn "Instance profile $profileName has no role; skipping attach."
+        } else {
         $roleName = $ip.InstanceProfile.Roles[0].RoleName
         Write-Host "  Detected CE instance role: $roleName" -ForegroundColor Gray
         $policies = @(
@@ -84,6 +90,8 @@ if (-not $ceArn) { Warn "Could not get CE from queue; skipping instance role att
         } else {
             Warn "Verification: ECR=$($null -ne $hasEcr) Logs=$($null -ne $hasLogs). Ensure role has ecr:GetAuthorizationToken, ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, logs:CreateLogStream, logs:PutLogEvents."
         }
+        }
+    }
     }
 }
 Write-Host ""
