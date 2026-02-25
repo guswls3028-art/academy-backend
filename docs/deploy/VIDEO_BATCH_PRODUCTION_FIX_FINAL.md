@@ -56,6 +56,8 @@
 
 # 3. 원테이크 실행 스크립트
 
+**파일:** `scripts/infra/video_batch_production_one_take.ps1` (실행 가능). EventBridge 타깃 JobDefinition은 `academy-video-ops-reconcile` 사용.
+
 ```powershell
 # scripts/infra/video_batch_production_one_take.ps1
 param(
@@ -65,7 +67,7 @@ param(
     [string]$OpsCEName = "academy-video-ops-ce",
     [string]$OpsQueueName = "academy-video-ops-queue",
     [string]$VideoJobDefName = "academy-video-batch-jobdef",
-    [string]$OpsJobDefName = "academy-video-ops-jobdef",
+    [string]$OpsJobDefName = "academy-video-ops-reconcile",
     [string]$ReconcileRuleName = "academy-reconcile-video-jobs"
 )
 $ErrorActionPreference = "Stop"
