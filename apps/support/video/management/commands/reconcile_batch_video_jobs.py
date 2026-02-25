@@ -259,7 +259,6 @@ class Command(BaseCommand):
                 self.stdout.write(f"RECONCILE skip SUCCEEDED job_id={job.id} (worker owns READY transition)")
 
             elif status == "FAILED":
-                _reset_not_found_count(str(job.id))
                 if not dry_run:
                     try:
                         from apps.support.video.services.ops_events import emit_ops_event
@@ -276,7 +275,6 @@ class Command(BaseCommand):
                 self.stdout.write(f"RECONCILE fail_retry job_id={job.id} reason={status_reason[:100]}")
 
             elif status == "RUNNING" and job.state == VideoTranscodeJob.State.QUEUED:
-                _reset_not_found_count(str(job.id))
                 if not dry_run:
                     if job_set_running(str(job.id)):
                         updated += 1
