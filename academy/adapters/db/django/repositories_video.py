@@ -784,7 +784,7 @@ def job_cancel(job_id: str) -> bool:
 
 
 def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") -> bool:
-    """Job DEAD. Transactional: Job + Video 원자적 업데이트."""
+    """Job DEAD. Transactional: Job + Video 원자적 업데이트. Use job_mark_dead_if_active when deleting video to avoid overwriting SUCCEEDED."""
     from django.db import transaction
     from django.utils import timezone
     from apps.support.video.models import Video, VideoTranscodeJob
@@ -824,6 +824,68 @@ def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") ->
     except Exception:
         pass
     return True
+
+
+def job_mark_dead_if_active(
+    job_id: str,
+    error_code: str = "",
+    error_message: str = "",
+) -> tuple[bool, int]:
+    """
+    Mark job DEAD only if state is QUEUED, RUNNING, or RETRY_WAIT (conditional UPDATE).
+    Prevents overwriting SUCCEEDED with DEAD during video delete (race with worker job_complete).
+    Returns (success, rows_updated). Log DEAD_UPDATED (rows=1) vs DEAD_SKIPPED_ALREADY_TERMINAL (rows=0).
+    """
+    from django.db import transaction
+    from django.utils import timezone
+    from apps.support.video.models import Video, VideoTranscodeJob
+
+    err_msg = str(error_message)[:2000]
+    err_code = str(error_code)[:64]
+    with transaction.atomic():
+        # Conditional update: only non-terminal states
+        n = VideoTranscodeJob.objects.filter(
+            pk=job_id,
+            state__in=[
+                VideoTranscodeJob.State.QUEUED,
+                VideoTranscodeJob.State.RUNNING,
+                VideoTranscodeJob.State.RETRY_WAIT,
+            ],
+        ).update(
+            state=VideoTranscodeJob.State.DEAD,
+            error_code=err_code,
+            error_message=err_msg,
+            locked_by="",
+            locked_until=None,
+            updated_at=timezone.now(),
+        )
+        if n == 0:
+            return True, 0
+        Video.objects.filter(current_job_id=job_id).update(
+            status=Video.Status.FAILED,
+            error_reason=err_msg,
+        )
+        job = VideoTranscodeJob.objects.filter(pk=job_id).first()
+        if job:
+            try:
+                from apps.support.video.services.ops_events import emit_ops_event
+                emit_ops_event(
+                    "JOB_DEAD",
+                    severity="ERROR",
+                    tenant_id=job.tenant_id,
+                    video_id=job.video_id,
+                    job_id=job_id,
+                    aws_batch_job_id=job.aws_batch_job_id or "",
+                    payload={"error_code": err_code, "error_message": err_msg[:500]},
+                )
+            except Exception:
+                pass
+            try:
+                from apps.support.video.redis_status_cache import delete_video_progress_key
+                delete_video_progress_key(job.tenant_id, job.video_id)
+            except Exception:
+                pass
+    return True, n
 
 
 def job_count_backlog() -> int:
