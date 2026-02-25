@@ -11,7 +11,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Region,
     [string]$EnvFile = ".env",
     [switch]$Interactive,
-    [switch]$Overwrite
+    [switch]$Overwrite,
+    [switch]$UsePrivateApiIp
 )
 
 # Windows cp949: prefer UTF-8 for SSM value handling
