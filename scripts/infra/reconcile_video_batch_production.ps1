@@ -274,14 +274,17 @@ if (-not $opsJdLatest) {
     if ($regO.containerProperties.logConfiguration) {
         $regO.containerProperties.logConfiguration.options = @{ "awslogs-group" = "/aws/batch/academy-video-ops"; "awslogs-region" = $Region; "awslogs-stream-prefix" = "ops" }
     }
-    $jdPathO = Join-Path $env:TEMP "reconcile_ops_jd_new_$(Get-Date -Format 'yyyyMMddHHmmss').json"
+    $jdPathO = Join-Path $RepoRoot "reconcile_ops_jd_new_temp.json"
     $jsonStrO = $regO | ConvertTo-Json -Depth 25 -Compress:$false
     $jsonStrO = $jsonStrO -replace '"JobDefinitionName"', '"jobDefinitionName"' -replace '"ContainerProperties"', '"containerProperties"' -replace '"Memory":', '"memory":' -replace '"Vcpus":', '"vcpus":' -replace '"Timeout"', '"timeout"' -replace '"AttemptDurationSeconds"', '"attemptDurationSeconds"' -replace '"RuntimePlatform"', '"runtimePlatform"' -replace '"CpuArchitecture"', '"cpuArchitecture"' -replace '"Image":', '"image":' -replace '"Command":', '"command":' -replace '"JobRoleArn":', '"jobRoleArn":' -replace '"ExecutionRoleArn":', '"executionRoleArn"' -replace '"LogConfiguration":', '"logConfiguration"' -replace '"PlatformCapabilities"', '"platformCapabilities"' -replace '"RetryStrategy"', '"retryStrategy"'
     $jsonStrO = $jsonStrO -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
-    [System.IO.File]::WriteAllText($jdPathO, $jsonStrO, [System.Text.UTF8Encoding]::new($false))
-    $absPathO = [System.IO.Path]::GetFullPath($jdPathO)
-    Invoke-Aws -ArgsArray @("batch", "register-job-definition", "--cli-input-json", $absPathO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops job def failed"
-    Remove-Item $jdPathO -Force -ErrorAction SilentlyContinue
+    [System.IO.File]::WriteAllText($jdPathO, $jsonStrO, $utf8NoBom)
+    $fileUriO = "file://" + ($jdPathO -replace '\\', '/')
+    try {
+        Invoke-Aws -ArgsArray @("batch", "register-job-definition", "--cli-input-json", $fileUriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops job def failed"
+    } finally {
+        Remove-Item $jdPathO -Force -ErrorAction SilentlyContinue
+    }
 }
 elseif ($needOpsJdRegister -and $opsJdLatest) {
     $illegal = @("revision", "status", "jobDefinitionArn", "containerOrchestrationType")
