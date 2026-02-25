@@ -161,9 +161,10 @@ if ($needOpsJdRegister -and $opsJdLatest) {
     $regO.timeout = @{ attemptDurationSeconds = 300 }
     $jdPathO = Join-Path $env:TEMP "reconcile_ops_jd_$(Get-Date -Format 'yyyyMMddHHmmss').json"
     $jsonStrO = $regO | ConvertTo-Json -Depth 25 -Compress:$false
-    $jsonStrO = $jsonStrO -replace '"JobDefinitionName"', '"jobDefinitionName"' -replace '"ContainerProperties"', '"containerProperties"' -replace '"Memory":', '"memory":' -replace '"Vcpus":', '"vcpus":' -replace '"Timeout"', '"timeout"' -replace '"AttemptDurationSeconds"', '"attemptDurationSeconds"' -replace '"RuntimePlatform"', '"runtimePlatform"' -replace '"CpuArchitecture"', '"cpuArchitecture"'
+    $jsonStrO = $jsonStrO -replace '"JobDefinitionName"', '"jobDefinitionName"' -replace '"ContainerProperties"', '"containerProperties"' -replace '"Memory":', '"memory":' -replace '"Vcpus":', '"vcpus":' -replace '"Timeout"', '"timeout"' -replace '"AttemptDurationSeconds"', '"attemptDurationSeconds"' -replace '"RuntimePlatform"', '"runtimePlatform"' -replace '"CpuArchitecture"', '"cpuArchitecture"' -replace '"Image":', '"image":' -replace '"Command":', '"command":' -replace '"JobRoleArn":', '"jobRoleArn":' -replace '"ExecutionRoleArn":', '"executionRoleArn"' -replace '"LogConfiguration":', '"logConfiguration"' -replace '"PlatformCapabilities"', '"platformCapabilities"' -replace '"RetryStrategy"', '"retryStrategy"'
+    $jsonStrO = $jsonStrO -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
     [System.IO.File]::WriteAllText($jdPathO, $jsonStrO, [System.Text.UTF8Encoding]::new($false))
-    $uriO = "file:///" + ($jdPathO -replace '\\', '/')
+    $uriO = "file:///" + ([System.IO.Path]::GetFullPath($jdPathO) -replace '\\', '/')
     Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops reconcile job def failed"
     Remove-Item $jdPathO -Force -ErrorAction SilentlyContinue
 }
