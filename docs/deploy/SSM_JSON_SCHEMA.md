@@ -36,6 +36,6 @@ All Batch jobs (worker, netprobe, reconcile, scan_stuck) require these keys to b
 
 ## Runtime contract
 
-- **batch_entrypoint.py** reads this parameter, parses JSON, sets `os.environ`, and validates required keys.
-- If the value is not valid JSON or any required key is missing/empty, the entrypoint exits non-zero (no fallback).
+- **batch_entrypoint.py** reads this parameter, then parses as JSON (or base64-decode then JSON). Sets `os.environ`, validates required keys.
+- If the value is not valid JSON (or valid base64(JSON)), or any required key is missing/empty, the entrypoint exits non-zero (no fallback).
 - `DJANGO_SETTINGS_MODULE` must be exactly `apps.api.config.settings.worker` for Batch; dev/prod defaults are not allowed.
