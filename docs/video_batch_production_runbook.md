@@ -243,7 +243,7 @@ Expected: `PRODUCTION DONE CHECK: PASS`.
   Expected: `OK: SSM parameter JSON valid, all required keys present.`
 
 - **EventBridge wiring:**  
-  `.\scripts\infra\verify_eventbridge_wiring.ps1 -Region ap-northeast-2 -JobQueueName academy-video-batch-queue`
+  `.\scripts\infra\verify_eventbridge_wiring.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue`
 
 - **Repo infra names:**  
   `.\scripts\infra\validate_repo_infra_names.ps1`
