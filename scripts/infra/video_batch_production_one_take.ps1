@@ -6,7 +6,7 @@ param(
     [string]$OpsCEName = "academy-video-ops-ce",
     [string]$OpsQueueName = "academy-video-ops-queue",
     [string]$VideoJobDefName = "academy-video-batch-jobdef",
-    [string]$OpsJobDefName = "academy-video-ops-jobdef",
+    [string]$OpsJobDefName = "academy-video-ops-reconcile",
     [string]$ReconcileRuleName = "academy-reconcile-video-jobs"
 )
 $ErrorActionPreference = "Stop"
