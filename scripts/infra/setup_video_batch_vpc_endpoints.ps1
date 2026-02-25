@@ -143,7 +143,9 @@ function New-InterfaceEndpointWithSupportedSubnets {
             [void]$goodSubnets.Add($subId)
             break
         }
-        if ($str -notmatch "does not support the availability zone") {
+        # AZ 미지원 오류면 다음 서브넷 시도 (PowerShell stderr 포맷 차이 대비해 패턴 완화)
+        $isAzUnsupported = ($str -match "availability zone") -and ($str -match "subnet")
+        if (-not $isAzUnsupported) {
             Write-Host "FAIL: create-vpc-endpoint $ServiceName failed." -ForegroundColor Red
             Write-Host "AWS output: $str" -ForegroundColor Gray
             exit 1
