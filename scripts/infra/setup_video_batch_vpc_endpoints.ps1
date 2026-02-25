@@ -185,14 +185,19 @@ foreach ($svc in $InterfaceServices) {
     if ($existing -and $existing.Count -gt 0) {
         continue
     }
-    Write-Host "Creating Interface endpoint: $svc" -ForegroundColor Cyan
+    $subnetsForSvc = Get-SubnetsForService -ServiceName $svc
+    if (-not $subnetsForSvc -or $subnetsForSvc.Count -eq 0) {
+        Write-Host "FAIL: No CE subnet in an AZ supported by $svc (CE subnets AZs: $($ceSubnets | ForEach-Object { $subnetAzMap[$_] } | Select-Object -Unique) -join ', ')." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "Creating Interface endpoint: $svc (subnets: $($subnetsForSvc.Count)/$($ceSubnets.Count))" -ForegroundColor Cyan
     $createArgs = @(
         "ec2", "create-vpc-endpoint",
         "--vpc-id", $vpcId,
         "--vpc-endpoint-type", "Interface",
         "--service-name", $svc,
         "--subnet-ids"
-    ) + @($ceSubnets) + @(
+    ) + @($subnetsForSvc) + @(
         "--security-group-ids"
     ) + @($ceSecurityGroupIds) + @(
         "--private-dns-enabled",
