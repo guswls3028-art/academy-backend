@@ -47,11 +47,11 @@ if ($opsCeList -and $opsCeList.computeEnvironments) {
 if (-not $videoCe) { Write-Error "Video CE $VideoCEName not found"; exit 1 }
 if (-not $opsCe) { Write-Error "Ops CE $OpsCEName not found"; exit 1 }
 $crV = $videoCe.computeResources
-if ($crV.subnets -and $crV.subnets.Count -eq 0) { Write-Error "Video CE has no subnets; required network resources missing"; exit 1 }
-if ($crV.securityGroupIds -and $crV.securityGroupIds.Count -eq 0) { Write-Error "Video CE has no securityGroupIds; required network resources missing"; exit 1 }
+if (-not $crV.subnets -or $crV.subnets.Count -eq 0) { Write-Error "Video CE has no subnets; required network resources missing"; exit 1 }
+if (-not $crV.securityGroupIds -or $crV.securityGroupIds.Count -eq 0) { Write-Error "Video CE has no securityGroupIds; required network resources missing"; exit 1 }
 $crO = $opsCe.computeResources
-if ($crO.subnets -and $crO.subnets.Count -eq 0) { Write-Error "Ops CE has no subnets; required network resources missing"; exit 1 }
-if ($crO.securityGroupIds -and $crO.securityGroupIds.Count -eq 0) { Write-Error "Ops CE has no securityGroupIds; required network resources missing"; exit 1 }
+if (-not $crO.subnets -or $crO.subnets.Count -eq 0) { Write-Error "Ops CE has no subnets; required network resources missing"; exit 1 }
+if (-not $crO.securityGroupIds -or $crO.securityGroupIds.Count -eq 0) { Write-Error "Ops CE has no securityGroupIds; required network resources missing"; exit 1 }
 $videoCeImageType = $null
 if ($crV.ec2Configuration -and $crV.ec2Configuration.Count -gt 0 -and $crV.ec2Configuration[0].imageType) {
     $videoCeImageType = $crV.ec2Configuration[0].imageType
