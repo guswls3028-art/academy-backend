@@ -256,12 +256,13 @@ function Invoke-EventBridgeAudit {
             continue
         }
         $sched = $rule.ScheduleExpression -as [string]
-        $schedOk = $sched -match "rate\s*\(\s*15\s*minute"
+        $expSched = if ($label -eq "Reconcile") { "rate(15 minutes)" } else { "rate(5 minutes)" }
+        $schedOk = if ($label -eq "Reconcile") { $sched -match "rate\s*\(\s*15\s*minute" } else { $sched -match "rate\s*\(\s*5\s*minute" }
         $schedWarn = $sched -match "rate\s*\(\s*5\s*minute"
         $st = "PASS"
-        if (-not $schedOk -and $schedWarn) { $st = "WARN" }
+        if (-not $schedOk -and $schedWarn -and $label -eq "ScanStuck") { $st = "PASS" }
         elseif (-not $schedOk) { $st = "WARN" }
-        Add-AuditRow -Category "EventBridge" -Check "$label schedule" -Expected "rate(15 minutes)" -Actual $sched -Status $st -FixAction $(if ($st -ne "PASS") { "FixMode: put-rule rate(15 minutes)" } else { "" })
+        Add-AuditRow -Category "EventBridge" -Check "$label schedule" -Expected $expSched -Actual $sched -Status $st -FixAction $(if ($st -ne "PASS") { "FixMode: put-rule $expSched" } else { "" })
 
         $tgtJson = Aws-JsonSafe @("events", "list-targets-by-rule", "--rule", $rule.Name, "--region", $Region)
         if (-not $tgtJson -or -not $tgtJson.Targets -or $tgtJson.Targets.Count -eq 0) {
