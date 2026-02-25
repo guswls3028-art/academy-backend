@@ -227,7 +227,7 @@ if ($putExit -ne 0) {
     exit 1
 }
 
-# 저장 직후 get-parameter --with-decryption 으로 읽어서 ConvertFrom-Json 검증 (실패 시 exit 1)
+# 저장 직후 get-parameter --with-decryption 으로 읽어서 Base64 디코딩 후 JSON 검증 (실패 시 exit 1)
 $getValueRaw = aws ssm get-parameter --name $ParamName --region $Region --with-decryption --output json 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "FAIL: get-parameter (with-decryption) after put failed." -ForegroundColor Red
@@ -245,10 +245,18 @@ if (-not $outerResp -or -not $outerResp.Parameter -or $null -eq $outerResp.Param
     exit 1
 }
 $storedValueStr = $outerResp.Parameter.Value
+# 값이 Base64로 저장되어 있으므로 디코딩 후 JSON 파싱
 try {
-    $storedPayload = $storedValueStr | ConvertFrom-Json
+    $storedValueBytes = [Convert]::FromBase64String($storedValueStr)
+    $storedJsonStr = [System.Text.Encoding]::UTF8.GetString($storedValueBytes)
 } catch {
-    Write-Host "FAIL: Stored SSM value is not valid JSON (ConvertFrom-Json failed). SSM serialization may be corrupt." -ForegroundColor Red
+    Write-Host "FAIL: Stored SSM value is not valid base64." -ForegroundColor Red
+    exit 1
+}
+try {
+    $storedPayload = $storedJsonStr | ConvertFrom-Json
+} catch {
+    Write-Host "FAIL: Stored SSM value (after base64 decode) is not valid JSON." -ForegroundColor Red
     exit 1
 }
 if (-not $storedPayload -or $storedPayload -isnot [System.Management.Automation.PSCustomObject]) {
