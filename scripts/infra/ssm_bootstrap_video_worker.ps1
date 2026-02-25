@@ -157,33 +157,51 @@ if ($exists -and -not $Overwrite) {
     exit 1
 }
 
-# Build JSON payload
+# Build JSON payload (single-line; same style as batch_video_setup.ps1 ConvertTo-Json + file)
 $obj = @{}
 foreach ($k in $collected.Keys) {
     $obj[$k] = $collected[$k]
 }
 $json = $obj | ConvertTo-Json -Compress
 
-# Put parameter (avoid stderr as exception)
+# Put parameter: pass --value as single argument to avoid PowerShell quote/brace interpretation (codebase pattern: file:// for JSON; here value is string so use array form)
+$putArgs = @(
+    'ssm', 'put-parameter',
+    '--name', $ParamName,
+    '--value', $json,
+    '--type', 'SecureString',
+    '--region', $Region,
+    '--overwrite'
+)
 Write-Host "Putting SSM parameter: $ParamName (SecureString)" -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-$putOut = aws ssm put-parameter --name $ParamName --value $json --type SecureString --region $Region --overwrite 2>&1
+& aws @putArgs 2>&1 | Out-Null
 $putExit = $LASTEXITCODE
 $ErrorActionPreference = $prevErr
 if ($putExit -ne 0) {
-    Write-Host "FAIL: put-parameter failed (exit $putExit): $putOut" -ForegroundColor Red
+    Write-Host "FAIL: put-parameter failed (exit $putExit)." -ForegroundColor Red
     exit 1
 }
 
-# Confirm (do not print Value)
+# Confirm (do not print Value) — same JSON read pattern as production_done_check / verify_ssm_env_shape
 $prevErr2 = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-$getOut = aws ssm get-parameter --name $ParamName --region $Region --query "Parameter.{Name:Name,Type:Type,Version:Version}" --output json 2>&1 | ConvertFrom-Json
+$getRaw = aws ssm get-parameter --name $ParamName --region $Region --query "Parameter.{Name:Name,Type:Type,Version:Version}" --output json 2>&1
 $getExit = $LASTEXITCODE
 $ErrorActionPreference = $prevErr2
-if ($getExit -ne 0 -or -not $getOut -or $getOut.Name -ne $ParamName) {
+if ($getExit -ne 0) {
     Write-Host "FAIL: Parameter could not be validated after write (exit $getExit)." -ForegroundColor Red
+    exit 1
+}
+try {
+    $getOut = ($getRaw | Out-String).Trim() | ConvertFrom-Json
+} catch {
+    Write-Host "FAIL: get-parameter response is not valid JSON." -ForegroundColor Red
+    exit 1
+}
+if (-not $getOut -or $getOut.Name -ne $ParamName) {
+    Write-Host "FAIL: Parameter could not be validated after write." -ForegroundColor Red
     exit 1
 }
 Write-Host "OK: $ParamName written successfully." -ForegroundColor Green
