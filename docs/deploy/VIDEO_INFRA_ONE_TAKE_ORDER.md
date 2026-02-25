@@ -18,6 +18,31 @@
 
 ---
 
+## Reconcile 관련 설정
+
+reconcile은 EventBridge로 5분마다 **Ops 큐**에서 `reconcile_batch_video_jobs` 가 돌며, **Video 큐**의 job과 DB 정합을 맞춘다. 아래는 그 동작을 바꾸는 설정이다.
+
+### 환경 변수 / Django 설정 (`apps/api/config/settings/base.py`)
+
+| 설정 | 환경 변수 | 기본값 | 설명 |
+|------|-----------|--------|------|
+| Video 큐 이름 | `VIDEO_BATCH_JOB_QUEUE` | `academy-video-batch-queue` | reconcile가 orphan을 찾는 큐. API/워커와 동일해야 함. |
+| orphan 최소 대기 시간(분) | `RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES` | `15` | RUNNABLE orphan을 terminate하기 전에 “RUNNABLE인 지속 시간”이 이 값 이상이고, CE `desiredvCpus > 0`일 때만 terminate. 스케일 대기 중인 job 보호용. |
+| orphan terminate 끄기 | `RECONCILE_ORPHAN_DISABLED` | (비설정) | `1` / `true` / `yes` 이면 orphan terminate 블록 전체 스킵. 긴급 시 스위치로 사용. |
+
+- 적용 위치: API 서버는 `.env` / OS 환경변수. **Batch 컨테이너(reconcile job)** 는 SSM `/academy/workers/env` JSON에 넣어두면 entrypoint가 읽음. SSM은 `ssm_bootstrap_video_worker.ps1` 로만 갱신.
+- reconcile 코드: `apps/support/video/management/commands/reconcile_batch_video_jobs.py`
+
+### EventBridge 규칙 (스케줄 on/off)
+
+| 규칙 이름 | 역할 | 끄기 | 다시 켜기 |
+|-----------|------|------|------------|
+| `academy-reconcile-video-jobs` | 5분마다 reconcile job 제출 (Ops 큐) | `aws events put-rule --name academy-reconcile-video-jobs --state DISABLED --schedule-expression "rate(5 minutes)" --description "..." --region ap-northeast-2` | `--state ENABLED` 로 동일 호출 |
+
+- 재배포 후 reconcile 코드/설정 반영이 끝나면 ENABLED로 다시 켜면 됨.
+
+---
+
 ## A) 처음부터 전부 세팅 (API VPC + Video + Ops + EventBridge + 알람 + 검증)
 
 저장소 루트에서 PowerShell. `.env` 준비됨 가정.
