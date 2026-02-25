@@ -132,6 +132,25 @@ def main() -> None:
                 out.append(f"  CE: {ce.get('computeEnvironmentName')} state={ce.get('state')} status={ce.get('status')}")
                 out.append(f"  desiredvCpus={desired} minvCpus={minv} maxvCpus={maxv}")
                 out.append(f"  instanceTypes={cr.get('instanceTypes')}")
+                instance_role_arn = cr.get("instanceRole") or ""
+                if instance_role_arn:
+                    out.append(f"  instanceProfile/instanceRole: {instance_role_arn}")
+                    try:
+                        profile_name = instance_role_arn.split("/")[-1] if "/" in instance_role_arn else instance_role_arn.split(":")[-1]
+                        ip = iam.get_instance_profile(InstanceProfileName=profile_name)
+                        roles = ip.get("InstanceProfile", {}).get("Roles") or []
+                        if roles:
+                            role_name = roles[0].get("RoleName", "")
+                            r = iam.get_role(RoleName=role_name)
+                            role_arn = r.get("Role", {}).get("Arn", "")
+                            out.append(f"  resolved role name: {role_name}")
+                            out.append(f"  resolved role ARN: {role_arn}")
+                        else:
+                            out.append("  resolved role: (instance profile has no role)")
+                    except Exception as e:
+                        out.append(f"  resolved role: (failed: {e})")
+                else:
+                    out.append("  instanceProfile/instanceRole: (not set)")
                 if ce.get("state") != "ENABLED" or ce.get("status") != "VALID":
                     issues.append("CE not ENABLED/VALID")
                 if desired == 0 and runnable:
