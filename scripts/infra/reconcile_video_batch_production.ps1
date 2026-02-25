@@ -195,7 +195,11 @@ if ($needVideoJdRegister -and $videoJdLatest) {
     $videoJdAllAfter = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
     if ($videoJdAllAfter -and $videoJdAllAfter.jobDefinitions) {
         foreach ($d in $videoJdAllAfter.jobDefinitions) {
-            if ([int]$d.containerProperties.memory -eq 4096 -and ($null -eq $newRev -or [int]$d.revision -ne $newRev)) {
+            $dm = [int]$d.containerProperties.memory; $dv = [int]$d.containerProperties.vcpus
+            $dt = 0; if ($d.timeout -and $d.timeout.attemptDurationSeconds) { $dt = [int]$d.timeout.attemptDurationSeconds }
+            $darm = ($d.containerProperties.runtimePlatform -and $d.containerProperties.runtimePlatform.cpuArchitecture -eq "ARM64")
+            $wrong = ($dm -ne 3072 -or $dv -ne 2 -or $dt -ne 14400 -or -not $darm)
+            if ($wrong -and ($null -eq $newRev -or [int]$d.revision -ne $newRev)) {
                 & aws batch deregister-job-definition --job-definition "$VideoJobDefName:$($d.revision)" --region $Region 2>&1 | Out-Null
             }
         }
