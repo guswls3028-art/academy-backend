@@ -1,0 +1,48 @@
+{
+    "retryStrategy":  {
+                          "attempts":  1
+                      },
+    "type":  "container",
+    "containerProperties":  {
+                                "image":  "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest",
+                                "resourceRequirements":  [
+
+                                                         ],
+                                "secrets":  [
+
+                                            ],
+                                "environment":  [
+
+                                                ],
+                                "jobRoleArn":  "arn:aws:iam::809466760795:role/academy-video-batch-job-role",
+                                "volumes":  [
+
+                                            ],
+                                "command":  [
+                                                "python",
+                                                "manage.py",
+                                                "reconcile_batch_video_jobs"
+                                            ],
+                                "memory":  2048,
+                                "executionRoleArn":  "arn:aws:iam::809466760795:role/academy-batch-ecs-task-execution-role",
+                                "logConfiguration":  {
+                                                         "logDriver":  "awslogs",
+                                                         "options":  {
+                                                                         "awslogs-region":  "ap-northeast-2",
+                                                                         "awslogs-stream-prefix":  "ops",
+                                                                         "awslogs-group":  "/aws/batch/academy-video-ops"
+                                                                     }
+                                                     },
+                                "mountPoints":  [
+
+                                                ],
+                                "vcpus":  1
+                            },
+    "jobDefinitionName":  "academy-video-ops-reconcile",
+    "platformCapabilities":  [
+                                 "EC2"
+                             ],
+    "timeout":  {
+                    "attemptDurationSeconds":  900
+                }
+}
