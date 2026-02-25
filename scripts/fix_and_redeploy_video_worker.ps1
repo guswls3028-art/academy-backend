@@ -50,8 +50,10 @@ Write-Host ""
 Step "3) IAM – Batch CE instance role (ECR + logs)"
 $queueDesc = aws batch describe-job-queues --job-queues academy-video-batch-queue --region $Region --output json 2>&1 | ConvertFrom-Json
 $ceArn = $null
-foreach ($o in $queueDesc.jobQueues[0].computeEnvironmentOrder) {
-    if ($o.order -eq 1) { $ceArn = $o.computeEnvironment; break }
+if ($queueDesc -and $queueDesc.jobQueues -and $queueDesc.jobQueues.Count -gt 0) {
+    foreach ($o in $queueDesc.jobQueues[0].computeEnvironmentOrder) {
+        if ($o.order -eq 1) { $ceArn = $o.computeEnvironment; break }
+    }
 }
 if (-not $ceArn) { Warn "Could not get CE from queue; skipping instance role attach." } else {
     $ceName = $ceArn.Split("/")[-1]
