@@ -142,7 +142,6 @@ def main() -> None:
                 repo_tag = img.split("/")[-1]
                 if ":" in repo_tag:
                     repo, tag = repo_tag.split(":", 1)
-                    jd_image_tag = (repo, tag)
                     try:
                         di = ecr.describe_images(repositoryName=repo, imageIds=[{"imageTag": tag}]).get("imageDetails") or []
                         if di:
@@ -163,8 +162,7 @@ def main() -> None:
                         if latest:
                             ecr_latest_digest = latest[0].get("imageDigest", "")
                             jd_di = ecr.describe_images(repositoryName=repo, imageIds=[{"imageTag": tag}]).get("imageDetails") or []
-                            jd_image_digest_match = bool(jd_di and jd_di[0].get("imageDigest") == ecr_latest_digest)
-                            if jd_image_digest_match:
+                            if jd_di and jd_di[0].get("imageDigest") == ecr_latest_digest:
                                 out.append(f"  ECR :latest digest matches JobDef image (up to date)")
                             else:
                                 out.append(f"  ECR :latest digest differs from JobDef tag; consider registering new revision with :latest")
