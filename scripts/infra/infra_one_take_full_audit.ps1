@@ -255,26 +255,33 @@ function Test-RuntimeAudit {
         $healthUrl = $apiBaseUrl.TrimEnd('/') + "/health"
         $params = @{ commands = @("curl -sf --connect-timeout 5 `"$healthUrl`" || echo CURL_FAIL") }
         $json = $params | ConvertTo-Json -Compress
-        $prevErr = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        $sendRaw = & aws @('ssm','send-command','--instance-ids',$instancesAi[0],'--document-name','AWS-RunShellScript','--parameters',$json,'--region',$Region,'--output','json') 2>&1
-        $sendExit = $LASTEXITCODE
-        $ErrorActionPreference = $prevErr
-        $sendOut = $null
-        if ($sendRaw) { $sendStr = ($sendRaw | Out-String).Trim(); if ($sendStr) { try { $sendOut = $sendStr | ConvertFrom-Json } catch {} } }
-        if (-not $sendOut -or -not $sendOut.Command.CommandId) {
-            $errMsg = "SSM send-command failed"
-            if ($sendExit -ne 0 -and $sendRaw) { $errDetail = ($sendRaw | Out-String).Trim(); if ($errDetail.Length -gt 0 -and $errDetail.Length -lt 500) { $errMsg = $errDetail } elseif ($errDetail.Length -ge 500) { $errMsg = $errDetail.Substring(0, 497) + "..." } }
-            Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $instancesAi[0] -Message $errMsg
-            $aiOk = $false
-        } else {
-            $cmdId = $sendOut.Command.CommandId
-            Start-Sleep -Seconds 8
-            $invOut = ExecJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instancesAi[0], "--region", $Region, "--output", "json")
-            if ($invOut.Status -ne "Success" -or ($invOut.StandardOutputContent -and $invOut.StandardOutputContent -match "CURL_FAIL")) {
-                Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $instancesAi[0] -Message "API health check failed (SSM command status=$($invOut.Status))"
+        $paramFile = New-TemporaryFile
+        try {
+            Set-Content -LiteralPath $paramFile.FullName -Value $json -Encoding UTF8 -NoNewline
+            $fileUri = "file:///" + ($paramFile.FullName -replace '\\', '/')
+            $prevErr = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $sendRaw = & aws ssm send-command --instance-ids $instancesAi[0] --document-name "AWS-RunShellScript" --parameters $fileUri --region $Region --output json 2>&1
+            $sendExit = $LASTEXITCODE
+            $ErrorActionPreference = $prevErr
+            $sendOut = $null
+            if ($sendRaw) { $sendStr = ($sendRaw | Out-String).Trim(); if ($sendStr) { try { $sendOut = $sendStr | ConvertFrom-Json } catch {} } }
+            if (-not $sendOut -or -not $sendOut.Command.CommandId) {
+                $errMsg = "SSM send-command failed"
+                if ($sendExit -ne 0 -and $sendRaw) { $errDetail = ($sendRaw | Out-String).Trim(); if ($errDetail.Length -gt 0 -and $errDetail.Length -lt 500) { $errMsg = $errDetail } elseif ($errDetail.Length -ge 500) { $errMsg = $errDetail.Substring(0, 497) + "..." } }
+                Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $instancesAi[0] -Message $errMsg
                 $aiOk = $false
+            } else {
+                $cmdId = $sendOut.Command.CommandId
+                Start-Sleep -Seconds 8
+                $invOut = ExecJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instancesAi[0], "--region", $Region, "--output", "json")
+                if ($invOut.Status -ne "Success" -or ($invOut.StandardOutputContent -and $invOut.StandardOutputContent -match "CURL_FAIL")) {
+                    Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $instancesAi[0] -Message "API health check failed (SSM command status=$($invOut.Status))"
+                    $aiOk = $false
+                }
             }
+        } finally {
+            Remove-Item -LiteralPath $paramFile.FullName -Force -ErrorAction SilentlyContinue
         }
     }
 
