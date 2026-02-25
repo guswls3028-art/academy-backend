@@ -227,9 +227,9 @@ else {
     }
 }
 $videoCeList2 = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $VideoCEName, "--region", $Region, "--output", "json")
-$videoCe2 = $videoCeList2.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $VideoCEName } | Select-Object -First 1
+$videoCe2 = $null; if ($videoCeList2 -and $videoCeList2.computeEnvironments) { $videoCe2 = $videoCeList2.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $VideoCEName } | Select-Object -First 1 }
 $opsCeList2 = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $OpsCEName, "--region", $Region, "--output", "json")
-$opsCe2 = $opsCeList2.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $OpsCEName } | Select-Object -First 1
+$opsCe2 = $null; if ($opsCeList2 -and $opsCeList2.computeEnvironments) { $opsCe2 = $opsCeList2.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $OpsCEName } | Select-Object -First 1 }
 $videoJdAll2 = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
 $videoJdLatest2 = $null; if ($videoJdAll2 -and $videoJdAll2.jobDefinitions) { $videoJdLatest2 = $videoJdAll2.jobDefinitions | Sort-Object { [int]$_.revision } -Descending | Select-Object -First 1 }
 $opsJdAll2 = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $OpsReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
