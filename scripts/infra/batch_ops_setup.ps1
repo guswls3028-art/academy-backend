@@ -100,9 +100,9 @@ if (-not $serviceRoleArn -or -not $instanceProfileArn) {
     exit 1
 }
 
-# Create Ops CE
+# Create Ops CE (instanceTypes: default_arm64 per region; create or update state)
 Write-Host "`n[1] Compute Environment: $ComputeEnvName" -ForegroundColor Cyan
-Write-Host "  (t4g.small, max 2 vCPU, On-Demand)" -ForegroundColor Gray
+Write-Host "  (instanceTypes: default_arm64, max 2 vCPU, On-Demand)" -ForegroundColor Gray
 $ceJsonPath = Join-Path $InfraPath "batch\ops_compute_env.json"
 $ceContent = Get-Content $ceJsonPath -Raw
 $ceContent = $ceContent -replace "PLACEHOLDER_SERVICE_ROLE_ARN", $serviceRoleArn
@@ -117,12 +117,33 @@ $ceFileUri = "file://" + ($ceFile -replace '\\', '/')
 
 $ce = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $ComputeEnvName, "--region", $Region, "--output", "json")
 $ceObj = $ce.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Select-Object -First 1
-if (-not $ceObj) {
-    Write-Host "  Creating compute environment (t4g.small, max 2 vCPU)" -ForegroundColor Yellow
-    aws batch create-compute-environment --cli-input-json $ceFileUri --region $Region
-    if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: create-compute-environment failed." -ForegroundColor Red; Remove-Item $ceFile -Force -ErrorAction SilentlyContinue; exit 1 }
+if ($ceObj) {
+    if ($ceObj.state -eq "DISABLED") {
+        Write-Host "  Compute environment exists but DISABLED; enabling." -ForegroundColor Yellow
+        try {
+            Invoke-Aws -ArgsArray @("batch", "update-compute-environment", "--compute-environment", $ComputeEnvName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "update-compute-environment failed"
+        } catch {
+            Write-Host "  FAIL: $_" -ForegroundColor Red
+            Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
+            throw
+        }
+    } else {
+        Write-Host "  Compute environment exists; skipping create." -ForegroundColor Gray
+    }
 } else {
-    Write-Host "  Compute environment exists; skipping create." -ForegroundColor Gray
+    Write-Host "  Creating compute environment (default_arm64, max 2 vCPU)" -ForegroundColor Yellow
+    try {
+        Invoke-Aws -ArgsArray @("batch", "create-compute-environment", "--cli-input-json", $ceFileUri, "--region", $Region) -ErrorMessage "create-compute-environment failed"
+    } catch {
+        if ($PSCmdlet.MyInvocation.BoundParameters["Verbose"].IsPresent) {
+            Write-Verbose "Request payload file: $ceFile"
+            Write-Verbose "Payload content:"
+            Write-Verbose ([System.IO.File]::ReadAllText($ceFile, [System.Text.UTF8Encoding]::new($false)))
+        }
+        Write-Host "  FAIL: $_" -ForegroundColor Red
+        Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
+        throw
+    }
 }
 Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
 
