@@ -39,6 +39,8 @@ class VideoDeleteTerminateTest(TestCase):
         )
         self.video.current_job_id = job.id
         self.video.save(update_fields=["current_job_id"])
+        video_id_before = self.video.id
+        job_id_str = str(job.id)
 
         with patch("apps.support.video.services.batch_control.terminate_batch_job") as mock_terminate:
             with patch("apps.support.video.views.video_views.enqueue_delete_r2"):
@@ -47,8 +49,8 @@ class VideoDeleteTerminateTest(TestCase):
 
         mock_terminate.assert_called_once()
         call_kw = mock_terminate.call_args[1]
-        self.assertEqual(call_kw["video_id"], self.video.id)
-        self.assertEqual(call_kw["job_id"], str(job.id))
+        self.assertEqual(call_kw["video_id"], video_id_before)
+        self.assertEqual(call_kw["job_id"], job_id_str)
         self.assertEqual(mock_terminate.call_args[0][0], "aws-job-123")
         self.assertEqual(mock_terminate.call_args[0][1], "video_deleted")
 
