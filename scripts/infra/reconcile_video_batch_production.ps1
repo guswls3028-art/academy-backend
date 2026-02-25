@@ -230,6 +230,7 @@ if (-not $opsJdLatest) {
     $regO.containerProperties.command = @("python", "manage.py", "reconcile_batch_video_jobs")
     $regO.containerProperties.runtimePlatform = @{ cpuArchitecture = "ARM64" }
     $regO.timeout = @{ attemptDurationSeconds = 300 }
+    if ($regO.parameters) { $regO.parameters = @{} }
     if ($regO.containerProperties.logConfiguration.options) {
         $regO.containerProperties.logConfiguration.options["awslogs-group"] = "/aws/batch/academy-video-ops"
         $regO.containerProperties.logConfiguration.options["awslogs-stream-prefix"] = "ops"
