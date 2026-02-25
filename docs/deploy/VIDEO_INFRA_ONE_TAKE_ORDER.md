@@ -40,6 +40,7 @@ reconcile은 EventBridge로 5분마다 **Ops 큐**에서 `reconcile_batch_video_
 | `academy-reconcile-video-jobs` | 5분마다 reconcile job 제출 (Ops 큐) | `aws events put-rule --name academy-reconcile-video-jobs --state DISABLED --schedule-expression "rate(5 minutes)" --description "..." --region ap-northeast-2` | `--state ENABLED` 로 동일 호출 |
 
 - 재배포 후 reconcile 코드/설정 반영이 끝나면 ENABLED로 다시 켜면 됨.
+- **현재 규칙 상태·Ops 백로그 정리·향후 삭제/업로드 인프라 검토:** `docs/deploy/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md` 참고.
 
 ---
 
