@@ -216,31 +216,9 @@ foreach ($svc in $InterfaceServices) {
     if ($existing -and $existing.Count -gt 0) {
         continue
     }
-    $subnetsForSvc = Get-SubnetsForService -ServiceName $svc
-    if (-not $subnetsForSvc -or $subnetsForSvc.Count -eq 0) {
-        $ceAzs = ($ceSubnets | ForEach-Object { $subnetAzMap[$_] } | Where-Object { $_ } | Select-Object -Unique) -join ", "
-        Write-Host "FAIL: No CE subnet in an AZ supported by $svc (CE subnet AZs: $ceAzs)." -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "Creating Interface endpoint: $svc (subnets: $($subnetsForSvc.Count)/$($ceSubnets.Count))" -ForegroundColor Cyan
-    $createArgs = @(
-        "ec2", "create-vpc-endpoint",
-        "--vpc-id", $vpcId,
-        "--vpc-endpoint-type", "Interface",
-        "--service-name", $svc,
-        "--subnet-ids"
-    ) + @($subnetsForSvc) + @(
-        "--security-group-ids"
-    ) + @($ceSecurityGroupIds) + @(
-        "--private-dns-enabled",
-        "--region", $Region
-    )
-    $createOut = Invoke-CreateVpcEndpoint -CreateArgs $createArgs -ServiceName $svc
-    if (-not $createOut -or -not $createOut.VpcEndpoint -or -not $createOut.VpcEndpoint.VpcEndpointId) {
-        Write-Host "FAIL: create-vpc-endpoint $svc failed." -ForegroundColor Red
-        exit 1
-    }
-    $created += $createOut.VpcEndpoint.VpcEndpointId
+    Write-Host "Creating Interface endpoint: $svc" -ForegroundColor Cyan
+    $epId = New-InterfaceEndpointWithSupportedSubnets -ServiceName $svc
+    $created += $epId
 }
 
 foreach ($svc in $GatewayServices) {
