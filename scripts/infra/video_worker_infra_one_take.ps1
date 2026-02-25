@@ -51,8 +51,24 @@ $batchStatePath = Join-Path $OutDir "batch_final_state.json"
 if (-not (Test-Path -LiteralPath $batchStatePath)) { throw "batch_final_state.json not found after step 4" }
 
 # 5) Ops CE + Ops Queue + IAM
+$videoCeForOps = ExecJson @("batch", "describe-compute-environments", "--compute-environments", "academy-video-batch-ce-final", "--region", $Region, "--output", "json")
+$videoCeObj = $videoCeForOps.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq "academy-video-batch-ce-final" } | Select-Object -First 1
+$opsVpcId = ""; $opsSubnetIds = @(); $opsSgId = ""
+if ($videoCeObj -and $videoCeObj.computeResources) {
+    $cr = $videoCeObj.computeResources
+    if ($cr.securityGroupIds -and $cr.securityGroupIds.Count -gt 0) { $opsSgId = $cr.securityGroupIds[0] }
+    if ($cr.subnets) { $opsSubnetIds = @($cr.subnets) }
+    if ($opsSubnetIds.Count -gt 0) {
+        $subResp = ExecJson @("ec2", "describe-subnets", "--subnet-ids", $opsSubnetIds[0], "--region", $Region, "--output", "json")
+        if ($subResp -and $subResp.Subnets -and $subResp.Subnets.Count -gt 0) { $opsVpcId = $subResp.Subnets[0].VpcId }
+    }
+}
 Invoke-Step "5) Ops CE + Ops Queue" {
-    & (Join-Path $ScriptRoot "batch_ops_setup.ps1") -Region $Region
+    if ($opsVpcId -and $opsSubnetIds.Count -gt 0 -and $opsSgId) {
+        & (Join-Path $ScriptRoot "batch_ops_setup.ps1") -Region $Region -VpcId $opsVpcId -SubnetIds $opsSubnetIds -SecurityGroupId $opsSgId
+    } else {
+        & (Join-Path $ScriptRoot "batch_ops_setup.ps1") -Region $Region
+    }
 }
 Invoke-Step "5b) IAM attach Batch DescribeJobs" {
     & (Join-Path $ScriptRoot "iam_attach_batch_describe_jobs.ps1") -Region $Region
