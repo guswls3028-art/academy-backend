@@ -100,9 +100,9 @@ $deployedAttempts = [int]$retry.attempts
 if ($deployedAttempts -ne 1) { Fail "retryStrategy.attempts must be 1 (got $deployedAttempts)" }
 Write-Host "  OK retryStrategy.attempts=$deployedAttempts" -ForegroundColor Green
 
-# 5) Submit test job and verify RUNNING within 180s (detect MISCONFIGURATION)
+# 5) Submit test job and wait until STARTING/RUNNING (or SUCCEEDED/FAILED); on RUNNABLE stuck print statusReason
 Write-Host ""
-Write-Host "[5] Submit test job and verify RUNNING within 180s" -ForegroundColor Cyan
+Write-Host "[5] Submit test job and wait until STARTING/RUNNING or completed (max 180s)" -ForegroundColor Cyan
 $JobQueueName = "academy-video-batch-queue"
 $verifyJobName = "academy-video-verify-" + (Get-Date -Format "yyyyMMddHHmmss")
 $verifyJobId = [guid]::NewGuid().ToString()
@@ -115,6 +115,7 @@ $maxWait = 180
 $interval = 15
 $elapsed = 0
 $status = "UNKNOWN"
+$statusReason = ""
 while ($elapsed -lt $maxWait) {
     Start-Sleep -Seconds $interval
     $elapsed += $interval
@@ -122,22 +123,23 @@ while ($elapsed -lt $maxWait) {
     if (-not $jobDesc -or -not $jobDesc.jobs) { continue }
     $job = $jobDesc.jobs[0]
     $status = $job.status
-    $reason = $job.statusReason
+    $statusReason = $job.statusReason
     Write-Host "  [$elapsed s] status=$status" -ForegroundColor Gray
-    if ($status -eq "RUNNING") {
-        Write-Host "  OK: Job reached RUNNING" -ForegroundColor Green
+    if ($status -eq "STARTING" -or $status -eq "RUNNING") {
+        Write-Host "  OK: Job reached $status" -ForegroundColor Green
         break
     }
     if ($status -eq "SUCCEEDED" -or $status -eq "FAILED") {
         Write-Host "  OK: Job completed (status=$status)" -ForegroundColor Green
         break
     }
-    if ($status -eq "RUNNABLE" -and $reason -match "MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT") {
+    if ($status -eq "RUNNABLE" -and $statusReason -match "MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT") {
         Fail "Job stuck RUNNABLE with MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT. Update CE instanceTypes (add c6g.xlarge,c6g.2xlarge)."
     }
 }
-if ($status -ne "RUNNING" -and $status -ne "SUCCEEDED" -and $status -ne "FAILED") {
-    Fail "Job did not reach RUNNING within $maxWait s (status=$status). Check CE instanceTypes and capacity."
+if ($status -ne "STARTING" -and $status -ne "RUNNING" -and $status -ne "SUCCEEDED" -and $status -ne "FAILED") {
+    Write-Host "RUNNABLE stuck cause: $statusReason" -ForegroundColor Red
+    Fail "Job did not reach STARTING/RUNNING within $maxWait s (status=$status). statusReason=$statusReason"
 }
 
 # 6) Output result
