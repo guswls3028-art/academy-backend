@@ -41,10 +41,14 @@ function ExecJson($argsArray) {
 
 function Invoke-Aws {
     param([string[]]$ArgsArray, [string]$ErrorMessage = "AWS CLI failed")
+    $prevErr = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     $out = & aws @ArgsArray 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = $prevErr
+    if ($exitCode -ne 0) {
         $text = ($out | Out-String).Trim()
-        throw "${ErrorMessage}. ExitCode=$LASTEXITCODE. Output: $text"
+        throw "${ErrorMessage}. ExitCode=$exitCode. Output: $text"
     }
     return $out
 }
