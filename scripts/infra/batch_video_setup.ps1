@@ -316,8 +316,17 @@ $jdFile = Join-Path $RepoRoot "batch_jd_temp.json"
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($jdFile, $jdContent, $utf8NoBom)
 $fileUri = "file://" + ($jdFile -replace '\\', '/')
-aws batch register-job-definition --cli-input-json $fileUri --region $Region
+& aws @('batch', 'register-job-definition', '--cli-input-json', $fileUri, '--region', $Region) | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: register-job-definition $JobDefName" -ForegroundColor Red; Remove-Item $jdFile -Force -ErrorAction SilentlyContinue; exit 1 }
 Remove-Item $jdFile -Force -ErrorAction SilentlyContinue
+Write-Host "  JobDef image URI: $EcrRepoUri" -ForegroundColor Gray
+# ECR image digest 출력 (repo:tag 파싱)
+if ($EcrRepoUri -match '\.amazonaws\.com/([^:]+):(.+)$') {
+    $ecrRepoName = $Matches[1]
+    $ecrTag = $Matches[2]
+    $digestOut = & aws @('ecr', 'describe-images', '--repository-name', $ecrRepoName, '--image-ids', "imageTag=$ecrTag", '--query', 'imageDetails[0].imageDigest', '--output', 'text', '--region', $Region) 2>&1
+    if ($LASTEXITCODE -eq 0 -and $digestOut) { Write-Host "  ECR image digest: $($digestOut.Trim())" -ForegroundColor Gray }
+}
 
 # 5b) Ops Job Definitions (reconcile, scan_stuck, netprobe) — same image as worker, log group /aws/batch/academy-video-ops
 Write-Host "`n[5b] Register Ops Job Definitions: academy-video-ops-reconcile, academy-video-ops-scanstuck, academy-video-ops-netprobe" -ForegroundColor Cyan
