@@ -241,3 +241,14 @@ Worker의 **상태 전이 로직(job_set_running / job_complete)** 이 실행되
 - **job_complete** 가 호출되었는지(BATCH_JOB_COMPLETED 여부),  
 - Batch는 **SUCCEEDED** 인데 DB만 안 바뀐 건지(다른 DB에 썼을 가능성)  
 까지 구체적으로 좁혀서 2차 원인 분석 보고서로 이어갈 수 있다.
+
+(venv) PS C:\academy> aws batch describe-jobs --jobs 4119b4bc-85cf-4973-b9bd-ca108fd5bc26 --region ap-northeast-2 --query "jobs[0].{status:status,exitCode:container.exitCode,reason:statusReason,logStream:container.logStreamName}" --output table
+-----------------------------------------------------------------
+|                         DescribeJobs                          |
++-----------+---------------------------------------------------+
+|  exitCode |  None                                             |
+|  logStream|  batch/default/88163161eaa046afa68c0992d9c1a0ba   |
+|  reason   |  None                                             |
+|  status   |  RUNNING                                          |
++-----------+---------------------------------------------------+
+
