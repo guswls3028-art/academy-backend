@@ -136,20 +136,21 @@ Expected: Exit 0; `DONE. Batch recreated in API VPC. JobQueueName=<final>`.
 
 **Step 3 — EventBridge** (use final queue name from Step 2)
 ```powershell
-$q = (Get-Content docs\deploy\actual_state\batch_final_state.json | ConvertFrom-Json).FinalJobQueueName; .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName $q
+$q = (Get-Content (Join-Path $PWD "docs\deploy\actual_state\batch_final_state.json") -Raw | ConvertFrom-Json).FinalJobQueueName
+.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName $q
 ```
 Or if you know the name: `-JobQueueName academy-video-batch-queue` or `-JobQueueName academy-video-batch-queue-ce`.
 Expected: Exit 0; `Done. EventBridge video scheduler (Batch only) deployed; targets verified.`
 
 **Step 4 — CloudWatch alarms** (use same final queue name)
 ```powershell
-$q = (Get-Content docs\deploy\actual_state\batch_final_state.json | ConvertFrom-Json).FinalJobQueueName; .\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName $q
+.\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName $q
 ```
 Expected: Exit 0; `Done. Video Batch CloudWatch alarms deployed.`
 
-**Step 5 — Netprobe job** (use same final queue name)
+**Step 5 — Netprobe** (use same final queue name)
 ```powershell
-$q = (Get-Content docs\deploy\actual_state\batch_final_state.json | ConvertFrom-Json).FinalJobQueueName; .\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName $q
+.\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName $q
 ```
 Expected: Exit 0; `SUCCEEDED` and job log lines.
 
