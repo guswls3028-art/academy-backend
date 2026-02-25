@@ -126,9 +126,10 @@ if ($needVideoJdRegister -and $videoJdLatest) {
     else { $regObj.timeout = @{ attemptDurationSeconds = 14400 } }
     $jdPath = Join-Path $env:TEMP "reconcile_video_jd_$(Get-Date -Format 'yyyyMMddHHmmss').json"
     $jsonStr = $regObj | ConvertTo-Json -Depth 25 -Compress:$false
-    $jsonStr = $jsonStr -replace '"JobDefinitionName"', '"jobDefinitionName"' -replace '"ContainerProperties"', '"containerProperties"' -replace '"Memory":', '"memory":' -replace '"Vcpus":', '"vcpus":' -replace '"Image":', '"image":' -replace '"Command":', '"command":' -replace '"JobRoleArn":', '"jobRoleArn":' -replace '"ExecutionRoleArn":', '"executionRoleArn"' -replace '"LogConfiguration":', '"logConfiguration"' -replace '"RuntimePlatform":', '"runtimePlatform"' -replace '"CpuArchitecture":', '"cpuArchitecture"' -replace '"Timeout"', '"timeout"' -replace '"AttemptDurationSeconds"', '"attemptDurationSeconds"'
+    $jsonStr = $jsonStr -replace '"JobDefinitionName"', '"jobDefinitionName"' -replace '"ContainerProperties"', '"containerProperties"' -replace '"Memory":', '"memory":' -replace '"Vcpus":', '"vcpus":' -replace '"Image":', '"image":' -replace '"Command":', '"command":' -replace '"JobRoleArn":', '"jobRoleArn":' -replace '"ExecutionRoleArn":', '"executionRoleArn"' -replace '"ResourceRequirements":', '"resourceRequirements"' -replace '"LogConfiguration":', '"logConfiguration"' -replace '"RuntimePlatform":', '"runtimePlatform"' -replace '"CpuArchitecture":', '"cpuArchitecture"' -replace '"Timeout"', '"timeout"' -replace '"AttemptDurationSeconds"', '"attemptDurationSeconds"' -replace '"PlatformCapabilities"', '"platformCapabilities"' -replace '"Parameters"', '"parameters"' -replace '"RetryStrategy"', '"retryStrategy"' -replace '"Attempts":', '"attempts":' -replace '"Type"', '"type"'
+    $jsonStr = $jsonStr -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
     [System.IO.File]::WriteAllText($jdPath, $jsonStr, [System.Text.UTF8Encoding]::new($false))
-    $uri = "file:///" + ($jdPath -replace '\\', '/')
+    $uri = "file:///" + ([System.IO.Path]::GetFullPath($jdPath) -replace '\\', '/')
     Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uri, "--region", $Region, "--output", "json") -ErrorMessage "register Video job def failed"
     Remove-Item $jdPath -Force -ErrorAction SilentlyContinue
 }
