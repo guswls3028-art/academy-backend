@@ -14,9 +14,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Terminal Batch job statuses: no need to call TerminateJob
-_BATCH_TERMINAL = frozenset({"SUCCEEDED", "FAILED", "SUBMITTED", "PENDING", "RUNNABLE"})
-# Actually terminal (job finished or will not run container again)
+# Terminal Batch job statuses for which we skip TerminateJob (idempotent)
 _BATCH_JOB_TERMINAL = frozenset({"SUCCEEDED", "FAILED"})
 
 
