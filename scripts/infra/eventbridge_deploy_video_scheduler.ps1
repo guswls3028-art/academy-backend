@@ -70,8 +70,9 @@ $EventsRoleArn = (ExecJson @("iam", "get-role", "--role-name", $EventsRoleName, 
 if (-not $EventsRoleArn) { Write-Host "FAIL: EventBridge role $EventsRoleName not found." -ForegroundColor Red; exit 1 }
 
 # Reconcile rule + Batch target (Targets must be LIST)
+# This updates the ACTUAL AWS EventBridge target for this rule to academy-video-ops-queue.
 $ReconcileRuleName = "academy-reconcile-video-jobs"
-Write-Host "[1] EventBridge rule: $ReconcileRuleName (rate 2 minutes) -> Batch" -ForegroundColor Cyan
+Write-Host "[1] EventBridge rule: $ReconcileRuleName (rate 2 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
 aws events put-rule --name $ReconcileRuleName --schedule-expression "rate(2 minutes)" --state ENABLED --description "Trigger reconcile_batch_video_jobs via Batch SubmitJob" --region $Region | Out-Null
 $reconcileTargetPath = Join-Path $EventBridgePath "reconcile_to_batch_target.json"
 $reconcileTargetJson = Get-Content $reconcileTargetPath -Raw
