@@ -11,6 +11,9 @@ param(
 )
 $ErrorActionPreference = "Stop"
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
+$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
 function ExecJson($argsArray) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
