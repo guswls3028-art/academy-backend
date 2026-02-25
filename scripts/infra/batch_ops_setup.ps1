@@ -55,6 +55,7 @@ function Get-JobQueueArn {
 Write-Host "== Ops Batch Setup (academy-video-ops-ce / academy-video-ops-queue) ==" -ForegroundColor Cyan
 
 # Resolve VpcId, SubnetIds, SecurityGroupId from existing video CE if not provided
+# Security Group: Ops CE uses the SAME security group as academy-video-batch-ce (e.g. academy-video-batch-sg).
 if (-not $VpcId -or $SubnetIds.Count -eq 0 -or -not $SecurityGroupId) {
     $videoCe = ExecJson @("batch", "describe-compute-environments", "--compute-environments", "academy-video-batch-ce", "--region", $Region, "--output", "json")
     $videoCeObj = $videoCe.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq "academy-video-batch-ce" } | Select-Object -First 1
@@ -74,7 +75,8 @@ if (-not $VpcId -or $SubnetIds.Count -eq 0 -or -not $SecurityGroupId) {
     Write-Host "FAIL: Could not resolve VpcId, SubnetIds, SecurityGroupId. Pass explicitly or ensure academy-video-batch-ce exists." -ForegroundColor Red
     exit 1
 }
-Write-Host "  VpcId=$VpcId SubnetIds=$($SubnetIds -join ',') SecurityGroupId=$SecurityGroupId" -ForegroundColor Gray
+Write-Host "  VpcId=$VpcId SubnetIds=$($SubnetIds -join ',')" -ForegroundColor Gray
+Write-Host "  SecurityGroupId=$SecurityGroupId (same as academy-video-batch-ce)" -ForegroundColor Gray
 
 # IAM (same as video CE)
 $BatchServiceRoleName = "academy-batch-service-role"
