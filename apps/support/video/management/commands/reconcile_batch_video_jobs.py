@@ -147,11 +147,18 @@ class Command(BaseCommand):
         cutoff = timezone.now() - timedelta(minutes=older_than_minutes)
 
         if not skip_lock and not _acquire_reconcile_lock():
-            logger.info("reconcile skipped - already running (lock held)")
+            logger.info(
+                "reconcile skipped - lock held",
+                extra={"event": "reconcile_skipped", "reason": "lock_held"},
+            )
             self.stdout.write("Reconcile skipped - lock held (another instance running).")
             return
 
         try:
+            logger.info(
+                "reconcile lock acquired, starting run",
+                extra={"event": "reconcile_lock_acquired"},
+            )
             self._run_reconcile(dry_run, resubmit, cutoff)
         finally:
             if not skip_lock:
@@ -227,7 +234,14 @@ class Command(BaseCommand):
         try:
             batch_jobs = _describe_jobs_boto3(aws_ids)
         except Exception as e:
-            logger.warning("reconcile: describe_jobs failed (no state changes): %s", e)
+            logger.warning(
+                "reconcile: describe_jobs failed (no state changes): %s",
+                e,
+                extra={
+                    "event": "reconcile_describe_jobs_failed",
+                    "error": str(e)[:500],
+                },
+            )
             try:
                 from apps.support.video.services.ops_events import emit_ops_event
                 emit_ops_event(
