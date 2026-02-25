@@ -76,40 +76,40 @@ Scheduled via EventBridge → Batch SubmitJob. Job definitions: `academy-video-o
 
 ### One-shot execution (copy-paste PowerShell)
 
-Run from repository root. **Set `$acctId` to your real AWS account ID** (e.g. `809466760795`). Do not use literal `<acct>` in the ECR URI or Batch will fail with "Container.image contains invalid characters". Ensure `.env` exists and is filled.
-
-- **JSON read**: Same as codebase — `Get-Content path -Raw | ConvertFrom-Json`.
-- **SSM**: Bootstrap script passes JSON to AWS via argument array (no inline quote/brace interpretation).
+Run from repository root. Account ID is auto-detected; EcrRepoUri placeholder `<acct>` is replaced automatically in `recreate_batch_in_api_vpc.ps1`. Ensure `.env` exists and is filled.
 
 ```powershell
-# Windows cp949 / SSM JSON
+# UTF-8
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 
-# Account ID — replace with your real value (e.g. 809466760795)
-$acctId = "809466760795"
+# Account auto-detect
+$acctId = (aws sts get-caller-identity --query Account --output text)
 
-# a) .env prepared (copy from .env.example and fill required keys)
-
-# b) SSM bootstrap (source of truth -> SSM JSON)
+# 1) .env -> SSM (JSON, SecureString)
 .\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite
 
-# c) Batch in API VPC (ECR URI from variable only)
+# 2) Docker build & push (Video Worker only)
+.\scripts\build_and_push_ecr_remote.ps1 -VideoWorkerOnly
+
+# 3–4) Batch CE/Queue 정합 확인 및 Job Definitions 재등록
 $ecrUri = "${acctId}.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest"
 .\scripts\infra\recreate_batch_in_api_vpc.ps1 -Region ap-northeast-2 -EcrRepoUri $ecrUri
 
-# d) EventBridge (final queue from batch_final_state.json — Get-Content -Raw | ConvertFrom-Json)
+# 5) EventBridge wiring
 $q = (Get-Content (Join-Path $PWD "docs\deploy\actual_state\batch_final_state.json") -Raw | ConvertFrom-Json).FinalJobQueueName
 .\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName $q
 
-# e) CloudWatch alarms
+# 6) CloudWatch alarms
 .\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName $q
 
-# f) Netprobe + production done check
+# 7) Netprobe SUCCESS
 .\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName $q
+
+# 8) production_done_check PASS
 .\scripts\infra\production_done_check.ps1 -Region ap-northeast-2
 ```
 
-All steps must exit 0. Final line must show `PRODUCTION DONE CHECK: PASS`.
+Success: final lines show `PRODUCTION DONE CHECK: PASS` and `VIDEO WORKER PRODUCTION READY`.
 
 ### Deploy order (exact sequence — Option A, copy/paste runnable)
 
