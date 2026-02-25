@@ -1,5 +1,73 @@
 # Video 인코딩 완료 후 상태 미전이 이슈 보고서 (2차 — 팩트 확보용)
 
+---
+
+## 3차 — 실제 조회 결과 및 해석
+
+### 1️⃣ DB 조회 결과 (실행 완료)
+
+**job_id:** `155f1003-734e-4a27-a95e-3f961e45cdab`
+
+| 필드 | 값 |
+|------|-----|
+| **state** | `RETRY_WAIT` |
+| **last_heartbeat_at** | `2026-02-25 05:40:18.034290+00:00` |
+| **aws_batch_job_id** | `4119b4bc-85cf-4973-b9bd-ca108fd5bc26` |
+| **error_message** | `'Reconcile: Batch job not found'` |
+| **updated_at** | `2026-02-25 07:05:26.088175+00:00` |
+
+**해석:**
+
+- **Worker는 API와 같은 DB에 썼다.**  
+  `job_set_running()` 성공 → `last_heartbeat_at`이 05:40:18로 갱신된 것은 Worker가 이 Job을 RUNNING으로 바꾸고 heartbeat까지 호출했다는 뜻이다. 즉 **DB_HOST/다른 DB 가설은 성립하지 않는다.**
+- **현재 state가 RETRY_WAIT인 이유:**  
+  Reconcile(`reconcile_batch_video_jobs`)이 **나중에** 이 Job을 대상으로 `describe_jobs(aws_batch_job_id)`를 호출했을 때, 해당 Batch Job을 찾지 못해 `job_fail_retry(..., "Reconcile: Batch job not found")`를 호출했다.  
+  즉 DB의 `state`가 RUNNING → **reconcile에 의해** RETRY_WAIT로 바뀐 상태다.
+- **Video.status가 READY가 아닌 이유:**  
+  **`job_complete()`가 호출되지 않았다.**  
+  `job_complete()`가 한 번이라도 성공했으면 `job.state`가 SUCCEEDED로 바뀌어 있어야 하고, reconcile은 QUEUED/RUNNING/RETRY_WAIT만 대상으로 하므로 SUCCEEDED인 Job은 건드리지 않는다.  
+  따라서 Worker가 `process_video()` 완료 후 `job_complete()`를 호출하기 **전에** 컨테이너가 종료되었거나, `job_complete()` 호출 직후 예외로 인해 커밋 전에 프로세스가 죽었을 가능성이 높다.
+
+### 2️⃣ AWS Batch describe-jobs (사용자 실행)
+
+**현재 환경에서는 AWS 인증으로 실행 불가. 아래를 로컬에서 실행해 주세요.**
+
+```powershell
+aws batch describe-jobs `
+  --jobs 4119b4bc-85cf-4973-b9bd-ca108fd5bc26 `
+  --region ap-northeast-2 `
+  --query "jobs[0].{status:status,exitCode:container.exitCode,reason:statusReason,logStream:container.logStreamName}" `
+  --output table
+```
+
+**해석 가이드:**
+
+- **status = SUCCEEDED, exitCode = 0**  
+  → Worker는 정상 종료. 그런데 DB에 반영이 안 됐다면 `job_complete()` 직후 커밋 전 종료(시그널/타임아웃) 또는 reconcile이 먼저 “Batch job not found”로 실패 처리한 타이밍 이슈 가능성.
+- **status = FAILED**  
+  → 컨테이너 실패. `statusReason` / 로그로 원인 확인.
+- **job not found**  
+  → 다른 리전·계정이거나, 해당 Batch Job이 이미 삭제/만료된 경우.
+
+### 3️⃣ CloudWatch 로그 4종 존재 여부 (사용자 실행)
+
+**로그 그룹:** `/aws/batch/academy-video-worker`  
+**스트림:** 2번에서 얻은 `logStream` 값 사용. 또는 Batch 콘솔에서 job `4119b4bc-85cf-4973-b9bd-ca108fd5bc26` 로그 스트림으로 이동.
+
+**검색할 문자열 (각각 존재 여부 확인):**
+
+- `BATCH_PROCESS_START` — Worker가 `job_set_running` 성공 후 처리 시작한 시점.
+- `BATCH_JOB_COMPLETED` — `job_complete()` 호출 직후 정상 완료 로그. **있으면** Worker는 완료까지 갔고, 그 경우 DB 반영 실패는 트랜잭션/커밋 이슈.
+- `BATCH_JOB_FAILED` — 예외 발생 시. 스택트레이스로 `job_complete` 호출 전/후 실패 구분.
+- `JOB_ALREADY_TAKEN` — `job_set_running()` 실패 시. (이번 사례에서는 `last_heartbeat_at`이 있으므로 없을 가능성 높음.)
+
+**2번·3번 결과를 알려주시면**,  
+- Batch가 SUCCEEDED인데 DB만 RETRY_WAIT인지,  
+- Worker 로그에 `BATCH_JOB_COMPLETED`가 있는지,  
+에 따라 **reconcile 타이밍(완료 직후 “not found” 처리)** vs **Worker 비정상 종료** 중 어느 쪽인지 확정하고, 수정 지점(재시도 정책, reconcile 제외 조건, Worker 종료 시퀀스 등)을 3차 보고서에 구체적으로 적겠습니다.
+
+---
+
 ## 1. 현상 요약
 
 | 항목 | 상태 |
