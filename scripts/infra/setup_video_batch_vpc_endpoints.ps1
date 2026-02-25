@@ -103,6 +103,40 @@ if (-not $vpcId) {
 
 Write-Host "VPC ID: $vpcId | CE subnets: $($ceSubnets.Count) | SG: $($ceSecurityGroupIds -join ',')" -ForegroundColor Gray
 
+# CE 서브넷 ID -> AZ 이름 매핑 (Interface 엔드포인트는 서비스별 지원 AZ만 사용해야 함)
+$subnetAzMap = @{}
+$subRespAll = Aws-JsonSafe @("ec2", "describe-subnets", "--subnet-ids", $ceSubnets, "--region", $Region)
+if ($subRespAll -and $subRespAll.Subnets) {
+    foreach ($s in $subRespAll.Subnets) {
+        $az = $s.AvailabilityZone
+        if ($az) { $subnetAzMap[$s.SubnetId] = $az }
+    }
+}
+
+# 서비스별 지원 AZ 조회 후, 해당 AZ에 있는 CE 서브넷만 반환
+function Get-SubnetsForService {
+    param([string]$ServiceName)
+    $svcResp = Aws-JsonSafe @("ec2", "describe-vpc-endpoint-services", "--service-names", $ServiceName, "--region", $Region)
+    $supportedAzs = @()
+    if ($svcResp -and $svcResp.ServiceDetails -and $svcResp.ServiceDetails.Count -gt 0) {
+        $detail = $svcResp.ServiceDetails[0]
+        $azSet = $detail.AvailabilityZoneSet
+        if (-not $azSet) { $azSet = $detail.availabilityZoneSet }
+        if ($azSet) { $supportedAzs = @($azSet) }
+    }
+    if ($supportedAzs.Count -eq 0) {
+        return @($ceSubnets)
+    }
+    $filtered = @()
+    foreach ($subId in $ceSubnets) {
+        $az = $subnetAzMap[$subId]
+        if ($az -and ($supportedAzs -contains $az)) {
+            $filtered += $subId
+        }
+    }
+    return $filtered
+}
+
 # 필수 서비스 이름 (region 치환)
 $InterfaceServices = @(
     "com.amazonaws.$Region.ecr.api",
