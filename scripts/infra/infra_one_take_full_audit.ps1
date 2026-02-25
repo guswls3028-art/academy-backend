@@ -61,6 +61,7 @@ $EcrVideo = "academy-video-worker"
 $ReconcileJobDefName = "academy-video-ops-reconcile"
 $ReconcileRuleName = "academy-reconcile-video-jobs"
 $ManagedPolicyNameDescribeJobs = "academy-video-batch-job-describe-jobs"
+$ManagedPolicyNameDescribeJobsProduction = "AcademyAllowBatchDescribeJobs"
 
 # Resolve JobQueueName / ComputeEnvName from actual_state if present
 $batchStatePath = Join-Path $RepoRoot "docs\deploy\actual_state\batch_final_state.json"
@@ -76,6 +77,10 @@ $global:AuditFailures = @()
 $global:OverallPass = $true
 
 function Write-AuditVerbose { param([string]$Message) if ($VerbosePreference -eq 'Continue') { Write-Host $Message -ForegroundColor Gray } }
+function Write-Section { param([string]$Title) Write-Host "`n--- $Title ---" -ForegroundColor Cyan }
+function Write-Ok { param([string]$Message) Write-Host "  [OK] $Message" -ForegroundColor Green }
+function Write-Warn { param([string]$Message) Write-Host "  [WARN] $Message" -ForegroundColor Yellow }
+function Write-Blocker { param([string]$Message) Write-Host "  [BLOCKER] $Message" -ForegroundColor Red }
 function Add-Failure { param([string]$Worker, [string]$Area, [string]$Resource, [string]$Message)
     $global:AuditFailures += @{ Worker = $Worker; Area = $Area; Resource = $Resource; Message = $Message }
     $global:OverallPass = $false
