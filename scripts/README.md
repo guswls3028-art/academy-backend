@@ -27,6 +27,7 @@ scripts/
 │   ├── iam/                     IAM 정책·Trust JSON
 │   │
 │   ├── reconcile_video_batch_production.ps1   프로덕션 정합 (CE/큐/JobDef/EventBridge/알람)
+│   ├── one_shot_video_ce_final.ps1            One-shot: 꼬인 Video CE 정리 후 단일 CE(final)로 큐 고정
 │   ├── verify_video_batch_ssot.ps1            Video/Ops SSOT 검증 + evidence
 │   ├── verify_video_batch_ssot.py             ECR/CloudWatch 보조 검증
 │   ├── batch_ops_setup.ps1                    Ops CE/큐/JobDef 생성
@@ -83,6 +84,7 @@ scripts/
 | 용도 | 스크립트 |
 |------|----------|
 | **프로덕션 인프라 정합** (CE/큐/JobDef/EventBridge/알람, 멱등) | `infra/reconcile_video_batch_production.ps1` |
+| **One-shot Video CE 정리** (꼬인 CE 정지 후 단일 final CE로 큐 고정) | `infra/one_shot_video_ce_final.ps1` |
 | **Video/Ops SSOT 검증** | `infra/verify_video_batch_ssot.ps1` |
 | **전체 감사 + 수정** | `infra/infra_one_take_full_audit.ps1` (-FixMode) |
 | **원테이크 순서** | `docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md` |

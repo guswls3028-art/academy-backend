@@ -132,3 +132,16 @@ $Region = "ap-northeast-2"
 - **SSOT 검증(원테이크):**  
   `.\scripts\infra\verify_video_batch_ssot.ps1 -Region ap-northeast-2`  
   Video/Ops 정렬, 1동영상=1워커, CE 스케일 경로, 네트워크, IAM, EventBridge, reconcile 설정까지 한 번에 PASS/FAIL + evidence 출력. root 자격증명 사용 시 exit 3.
+
+---
+
+## One-shot: 꼬인 Video CE 정리 후 단일 CE로 고정
+
+여러 Video CE(v2/v3/public 등)가 섞여 있을 때 **한 번만** 실행해, 기존 CE는 정지하고 **단일 Video CE(`academy-video-batch-ce-final`)만** 쓰도록 큐를 고정하는 스크립트.
+
+| 항목 | 내용 |
+|------|------|
+| **스크립트** | `scripts/infra/one_shot_video_ce_final.ps1` |
+| **실행** | `.\scripts\infra\one_shot_video_ce_final.ps1` (상단 `$Region`, `$OldVideoCEs`, `$FinalVideoCE` 필요 시 수정) |
+| **동작** | (0) 스케줄러 비활성화(주석 처리됨) (1) 기존 CE desired=0 + DISABLED (2) VideoQ/OpsQ job cancel·terminate (3) 기존 CE에서 VPC/Subnets/SG/역할 읽기 (4) Public subnet 강화(IGW, 라우트, MapPublicIpOnLaunch, SG egress) (5) IAM 역할 부착 (6) `academy-video-batch-ce-final` 생성(없을 때만) (7) Video 큐를 해당 CE만 쓰도록 update (8) evidence 출력 |
+| **주의** | one-shot 용도. 평소 정합은 `reconcile_video_batch_production.ps1` 사용. SSOT 이름은 `VIDEO_INFRA_ONE_TAKE_ORDER.md`의 큐/CE 이름과 맞출 것. |
