@@ -112,6 +112,33 @@ if ($LASTEXITCODE -ne 0) { $fail = 1 }
 & (Join-Path $ScriptRoot "verify_ssm_env_shape.ps1") -Region $Region
 if ($LASTEXITCODE -ne 0) { $fail = 1 }
 
+# VPC 모드일 때 API_BASE_URL는 반드시 Private IP (Batch 내부 통신)
+if ($targetVpcId) {
+    $ssmRaw = & aws @('ssm', 'get-parameter', '--name', '/academy/workers/env', '--region', $Region, '--with-decryption', '--output', 'json') 2>&1
+    if ($LASTEXITCODE -eq 0 -and $ssmRaw) {
+        $ssmStr = ($ssmRaw | Out-String).Trim()
+        try {
+            $outer = $ssmStr | ConvertFrom-Json
+            $valStr = $outer.Parameter.Value
+            try { $payload = $valStr | ConvertFrom-Json } catch { $valBytes = [Convert]::FromBase64String($valStr); $valStr = [System.Text.Encoding]::UTF8.GetString($valBytes); $payload = $valStr | ConvertFrom-Json }
+            $apiBase = $payload.API_BASE_URL
+            $isPrivate = $false
+            if ($apiBase -match '^http://([^/:]+)') {
+                $hostPart = $Matches[1]
+                if ($hostPart -match '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)') { $isPrivate = $true }
+            }
+            if (-not $isPrivate) {
+                Write-Host "FAIL: API_BASE_URL must be private IP when running in VPC mode (e.g. http://10.x.x.x:8000). Run discover_api_network.ps1 then ssm_bootstrap_video_worker.ps1 -UsePrivateApiIp -Overwrite." -ForegroundColor Red
+                $fail = 1
+            } else {
+                Write-Host "OK: API_BASE_URL is private (VPC internal)" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "WARN: Could not verify API_BASE_URL from SSM (VPC mode)." -ForegroundColor Yellow
+        }
+    }
+}
+
 # Log groups
 $lgWorker = ExecJson @("logs", "describe-log-groups", "--log-group-name-prefix", "/aws/batch/academy-video-worker", "--region", $Region, "--output", "json")
 $lgOps = ExecJson @("logs", "describe-log-groups", "--log-group-name-prefix", "/aws/batch/academy-video-ops", "--region", $Region, "--output", "json")
