@@ -90,6 +90,7 @@ if (-not $serviceRoleArn -or -not $instanceProfileArn) {
 
 # Create Ops CE
 Write-Host "`n[1] Compute Environment: $ComputeEnvName" -ForegroundColor Cyan
+Write-Host "  (t4g.small, max 2 vCPU, On-Demand)" -ForegroundColor Gray
 $ceJsonPath = Join-Path $InfraPath "batch\ops_compute_env.json"
 $ceContent = Get-Content $ceJsonPath -Raw
 $ceContent = $ceContent -replace "PLACEHOLDER_SERVICE_ROLE_ARN", $serviceRoleArn
@@ -105,7 +106,7 @@ $ceFileUri = "file://" + ($ceFile -replace '\\', '/')
 $ce = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $ComputeEnvName, "--region", $Region, "--output", "json")
 $ceObj = $ce.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName } | Select-Object -First 1
 if (-not $ceObj) {
-    Write-Host "  Creating compute environment (t4g.micro, t4g.small, max 4 vCPU)" -ForegroundColor Yellow
+    Write-Host "  Creating compute environment (t4g.small, max 2 vCPU)" -ForegroundColor Yellow
     aws batch create-compute-environment --cli-input-json $ceFileUri --region $Region
     if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: create-compute-environment failed." -ForegroundColor Red; Remove-Item $ceFile -Force -ErrorAction SilentlyContinue; exit 1 }
 } else {
