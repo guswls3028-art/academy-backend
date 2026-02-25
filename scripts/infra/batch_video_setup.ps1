@@ -283,6 +283,9 @@ if (-not $queueExists) {
             exit 1
         }
         aws batch update-job-queue --job-queue $JobQueueName --state ENABLED --region $Region 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: Could not re-enable job queue." -ForegroundColor Red; exit 1 }
+        $FinalJobQueueArn = Get-JobQueueArn -Name $JobQueueName
+        Write-Host "  Queue updated to CE (ARN)." -ForegroundColor Green
     }
 }
 if (-not $FinalJobQueueArn) { $FinalJobQueueArn = Get-JobQueueArn -Name $FinalJobQueueName }
