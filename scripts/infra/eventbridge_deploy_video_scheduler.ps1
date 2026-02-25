@@ -81,39 +81,35 @@ foreach ($jdName in $RequiredOpsJobDefs) {
 $EventsRoleName = "academy-eventbridge-batch-video-role"
 $trustEvents = Join-Path $InfraPath "iam\trust_events.json"
 $policyEventsBatch = Join-Path $InfraPath "iam\policy_eventbridge_batch_submit.json"
-$role = $null
 $role = ExecJson @("iam", "get-role", "--role-name", $EventsRoleName, "--output", "json")
 if (-not $role) {
     Write-Host "[0] Creating IAM role: $EventsRoleName" -ForegroundColor Cyan
-    aws iam create-role --role-name $EventsRoleName --assume-role-policy-document "file://$($trustEvents -replace '\\','/')" | Out-Null
+    Invoke-Aws -ArgsArray @("iam", "create-role", "--role-name", $EventsRoleName, "--assume-role-policy-document", "file://$($trustEvents -replace '\\','/')") -ErrorMessage "iam create-role failed"
 }
 if (Test-Path $policyEventsBatch) {
-    aws iam put-role-policy --role-name $EventsRoleName --policy-name "academy-eventbridge-batch-inline" --policy-document "file://$($policyEventsBatch -replace '\\','/')" | Out-Null
+    Invoke-Aws -ArgsArray @("iam", "put-role-policy", "--role-name", $EventsRoleName, "--policy-name", "academy-eventbridge-batch-inline", "--policy-document", "file://$($policyEventsBatch -replace '\\','/')") -ErrorMessage "iam put-role-policy failed"
 }
 $EventsRoleArn = (ExecJson @("iam", "get-role", "--role-name", $EventsRoleName, "--output", "json")).Role.Arn
 if (-not $EventsRoleArn) { Write-Host "FAIL: EventBridge role $EventsRoleName not found." -ForegroundColor Red; exit 1 }
 
-# Reconcile rule + Batch target (Targets must be LIST)
-# This updates the ACTUAL AWS EventBridge target for this rule to academy-video-ops-queue.
+# Reconcile rule + Batch target
 $ReconcileRuleName = "academy-reconcile-video-jobs"
 Write-Host "[1] EventBridge rule: $ReconcileRuleName (rate 5 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
-aws events put-rule --name $ReconcileRuleName --schedule-expression "rate(5 minutes)" --state ENABLED --description "Trigger reconcile_batch_video_jobs via Batch SubmitJob (single-flight)" --region $Region | Out-Null
+Invoke-Aws -ArgsArray @("events", "put-rule", "--name", $ReconcileRuleName, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--description", "Trigger reconcile_batch_video_jobs via Batch SubmitJob (single-flight)", "--region", $Region) -ErrorMessage "events put-rule reconcile failed"
 $reconcileTargetPath = Join-Path $EventBridgePath "reconcile_to_batch_target.json"
 $reconcileTargetJson = Get-Content $reconcileTargetPath -Raw
 $reconcileTargetJson = $reconcileTargetJson -replace "PLACEHOLDER_JOB_QUEUE_ARN", $JobQueueArn
 $reconcileTargetJson = $reconcileTargetJson -replace "PLACEHOLDER_EVENTBRIDGE_BATCH_ROLE_ARN", $EventsRoleArn
 $reconcileTargetFile = Join-Path $RepoRoot "eventbridge_reconcile_target_temp.json"
-$utf8 = New-Object System.Text.UTF8Encoding $false
 $reconcileTargetObj = $reconcileTargetJson | ConvertFrom-Json
 $reconcileTargetsArray = @($reconcileTargetObj)
 $reconcileInput = @{ Rule = $ReconcileRuleName; Targets = $reconcileTargetsArray } | ConvertTo-Json -Depth 10 -Compress
-[System.IO.File]::WriteAllText($reconcileTargetFile, $reconcileInput, $utf8)
-$prevEv = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-aws events put-targets --cli-input-json "file://$($reconcileTargetFile -replace '\\','/')" --region $Region 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: put-targets for $ReconcileRuleName failed." -ForegroundColor Red; Remove-Item $reconcileTargetFile -Force -ErrorAction SilentlyContinue; $ErrorActionPreference = $prevEv; exit 1 }
-$ErrorActionPreference = $prevEv
-Remove-Item $reconcileTargetFile -Force -ErrorAction SilentlyContinue
+[System.IO.File]::WriteAllText($reconcileTargetFile, $reconcileInput, $utf8NoBom)
+try {
+    Invoke-Aws -ArgsArray @("events", "put-targets", "--cli-input-json", "file://$($reconcileTargetFile -replace '\\','/')", "--region", $Region) -ErrorMessage "put-targets for $ReconcileRuleName failed"
+} finally {
+    Remove-Item $reconcileTargetFile -Force -ErrorAction SilentlyContinue
+}
 
 # Verify reconcile targets
 $tgtReconcile = ExecJson @("events", "list-targets-by-rule", "--rule", $ReconcileRuleName, "--region", $Region, "--output", "json")
