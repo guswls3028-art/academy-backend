@@ -118,7 +118,7 @@ if (-not $v2Obj) {
     [System.IO.File]::WriteAllText($ceFile, $ceJson, $utf8NoBom)
     $ceFileAbs = [System.IO.Path]::GetFullPath($ceFile)
     try {
-        Invoke-Aws -ArgsArray @("batch", "create-compute-environment", "--cli-input-json", "file://$($ceFileAbs -replace '\\', '/')", "--region", $Region) -ErrorMessage "create-compute-environment $NewVideoCEName failed"
+        Invoke-Aws -ArgsArray @("batch", "create-compute-environment", "--cli-input-json", $ceFileAbs, "--region", $Region) -ErrorMessage "create-compute-environment $NewVideoCEName failed"
         [void]$script:ChangesApplied.Add("Created compute environment: $NewVideoCEName")
     } finally {
         Remove-Item $ceFile -Force -ErrorAction SilentlyContinue
@@ -200,8 +200,7 @@ if ($firstCeInQueue -ne $newCeArn) {
     $updateFile = Join-Path $RepoRoot "batch_update_queue_temp.json"
     [System.IO.File]::WriteAllText($updateFile, ($updatePayload | ConvertTo-Json -Depth 5), $utf8NoBom)
     $updateFileAbs = [System.IO.Path]::GetFullPath($updateFile)
-    $updateJsonParam = "file://$($updateFileAbs -replace '\\', '/')"
-    Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--cli-input-json", $updateJsonParam, "--region", $Region) -ErrorMessage "update-job-queue computeEnvironmentOrder failed"
+    Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--cli-input-json", $updateFileAbs, "--region", $Region) -ErrorMessage "update-job-queue computeEnvironmentOrder failed"
     Remove-Item $updateFile -Force -ErrorAction SilentlyContinue
     Invoke-Aws -ArgsArray @("batch", "update-job-queue", "--job-queue", $VideoQueueName, "--state", "ENABLED", "--region", $Region) -ErrorMessage "re-enable job queue failed"
     [void]$script:ChangesApplied.Add("Updated $VideoQueueName to use $NewVideoCEName")
