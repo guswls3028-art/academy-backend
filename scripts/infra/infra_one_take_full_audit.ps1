@@ -31,8 +31,8 @@
 # ==============================================================================
 
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Region,
+    [Parameter(Mandatory = $false)]
+    [string]$Region = "",
     [switch]$FixMode,
     [switch]$Verbose,
     [string]$ExpectedVideoQueueName = "",
