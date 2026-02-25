@@ -254,9 +254,17 @@ function Test-RuntimeAudit {
     } elseif ($apiBaseUrl) {
         $healthUrl = $apiBaseUrl.TrimEnd('/') + "/health"
         $cmdPayload = "{`"commands`":[`"curl -sf --connect-timeout 5 \`"$healthUrl\`" || echo CURL_FAIL`"]}"
-        $sendOut = ExecJson @("ssm", "send-command", "--instance-ids", $instancesAi[0], "--document-name", "AWS-RunShellScript", "--parameters", $cmdPayload, "--region", $Region, "--output", "json")
+        $prevErr = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $sendRaw = & aws ssm send-command --instance-ids $instancesAi[0] --document-name "AWS-RunShellScript" --parameters $cmdPayload --region $Region --output json 2>&1
+        $sendExit = $LASTEXITCODE
+        $ErrorActionPreference = $prevErr
+        $sendOut = $null
+        if ($sendRaw) { $sendStr = ($sendRaw | Out-String).Trim(); if ($sendStr) { try { $sendOut = $sendStr | ConvertFrom-Json } catch {} } }
         if (-not $sendOut -or -not $sendOut.Command.CommandId) {
-            Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $instancesAi[0] -Message "SSM send-command failed"
+            $errMsg = "SSM send-command failed"
+            if ($sendRaw) { $errDetail = ($sendRaw | Out-String).Trim(); if ($errDetail -match "InvalidInstanceId|NotRegistered|AccessDenied|TargetNotConnected|AssociationDoesNotExist") { $errMsg = $errDetail } }
+            Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $instancesAi[0] -Message $errMsg
             $aiOk = $false
         } else {
             $cmdId = $sendOut.Command.CommandId
