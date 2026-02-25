@@ -277,6 +277,10 @@ function Invoke-EventBridgeAudit {
         Add-AuditRow -Category "EventBridge" -Check "$label target queue" -Expected "OpsQueue" -Actual $(if ($useOpsQueue) { "OpsQueue" } else { "Video or other" }) -Status $stQ -FixAction $(if ($stQ -eq "FAIL") { "FixMode: put-targets OpsQueue" } else { "" })
         $jdOk = $jdTarget -eq $expJd -or $jdTarget -like "${expJd}:*"
         Add-AuditRow -Category "EventBridge" -Check "$label job def" -Expected $expJd -Actual $jdTarget -Status $(if ($jdOk) { "PASS" } else { "FAIL" }) -FixAction $(if (-not $jdOk) { "FixMode: put-targets jobDefinition" } else { "" })
+        $revisionPinned = $jdTarget -and $jdTarget -like "*:*"
+        if ($revisionPinned) {
+            Add-AuditRow -Category "EventBridge" -Check "$label job def pinning" -Expected "name only (latest)" -Actual "revision pinned" -Status "WARN" -FixAction "FixMode: eventbridge_deploy uses name only for latest ACTIVE"
+        }
     }
 }
 
