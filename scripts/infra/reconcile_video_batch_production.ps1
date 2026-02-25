@@ -243,8 +243,10 @@ elseif ($videoCe2.status -ne "VALID" -or $videoCe2.state -ne "ENABLED") { Write-
 if (-not $opsCe2) { Write-Error "Ops CE not found"; $fail = $true }
 elseif ($opsCe2.status -ne "VALID" -or $opsCe2.state -ne "ENABLED") { Write-Error "Ops CE state=$($opsCe2.state) status=$($opsCe2.status)"; $fail = $true }
 if ($videoCe2) {
-if ([int]$crV2.minvCpus -ne 0 -or [int]$crV2.maxvCpus -ne 32) { Write-Error "Video CE min/max vCpus mismatch"; $fail = $true }
-if ([int]$opsCe2.computeResources.maxvCpus -ne 1) { Write-Error "Ops CE maxvCpus != 1"; $fail = $true }
+    $crV2 = $videoCe2.computeResources
+    if ([int]$crV2.minvCpus -ne 0 -or [int]$crV2.maxvCpus -ne 32) { Write-Error "Video CE min/max vCpus mismatch"; $fail = $true }
+}
+if ($opsCe2 -and [int]$opsCe2.computeResources.maxvCpus -ne 1) { Write-Error "Ops CE maxvCpus != 1"; $fail = $true }
 if ($videoJdLatest2) {
     if ([int]$videoJdLatest2.containerProperties.memory -ne 3072) { Write-Error "Video JobDef memory != 3072"; $fail = $true }
     if ([int]$videoJdLatest2.containerProperties.vcpus -ne 2) { Write-Error "Video JobDef vcpus != 2"; $fail = $true }
