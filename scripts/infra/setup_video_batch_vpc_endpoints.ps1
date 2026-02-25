@@ -135,16 +135,19 @@ foreach ($svc in $InterfaceServices) {
         continue
     }
     Write-Host "Creating Interface endpoint: $svc" -ForegroundColor Cyan
-    $createOut = Aws-JsonSafe @(
+    $createArgs = @(
         "ec2", "create-vpc-endpoint",
         "--vpc-id", $vpcId,
         "--vpc-endpoint-type", "Interface",
         "--service-name", $svc,
-        "--subnet-ids", $ceSubnets,
-        "--security-group-ids", $ceSecurityGroupIds,
+        "--subnet-ids"
+    ) + @($ceSubnets) + @(
+        "--security-group-ids"
+    ) + @($ceSecurityGroupIds) + @(
         "--private-dns-enabled",
         "--region", $Region
     )
+    $createOut = Aws-JsonSafe $createArgs
     if (-not $createOut -or -not $createOut.VpcEndpoint -or -not $createOut.VpcEndpoint.VpcEndpointId) {
         Write-Host "FAIL: create-vpc-endpoint $svc failed." -ForegroundColor Red
         exit 1
