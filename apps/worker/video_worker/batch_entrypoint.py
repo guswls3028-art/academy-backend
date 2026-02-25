@@ -28,13 +28,23 @@ REQUIRED_KEYS = frozenset({
 
 def load_env_from_ssm_json(content: str) -> int:
     """
-    Parse SSM value as JSON object and set os.environ. No legacy KEY=VALUE.
+    Parse SSM value as JSON object and set os.environ.
+    Value may be plain JSON or base64-encoded UTF-8 JSON (used by ssm_bootstrap on Windows).
     Returns number of keys set. Raises on invalid JSON or non-dict.
     """
     content = (content or "").strip()
     if not content:
         raise RuntimeError("SSM parameter value is empty")
-    data = json.loads(content)
+    raw = content
+    # Try plain JSON first; if it fails, try base64-decode then JSON
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            decoded = base64.b64decode(raw).decode("utf-8")
+            data = json.loads(decoded)
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            raise ValueError("SSM value is neither valid JSON nor valid base64(JSON)")
     if not isinstance(data, dict):
         raise ValueError("SSM value must be a JSON object")
     for k, v in data.items():
