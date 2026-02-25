@@ -317,6 +317,7 @@ class StudentViewSet(ModelViewSet):
         POST: multipart — file (엑셀), initial_password (4자 이상).
         응답: 202 { job_id, status }.
         """
+        import logging
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response(
@@ -330,41 +331,50 @@ class StudentViewSet(ModelViewSet):
         if len(initial_password) < 4:
             raise ValidationError({"detail": "initial_password는 4자 이상 필요합니다."})
 
-        ext = "xlsx"
-        if getattr(upload_file, "name", "") and "." in upload_file.name:
-            ext = upload_file.name.rsplit(".", 1)[-1].lower() or "xlsx"
-        file_key = f"excel/{tenant.id}/{uuid.uuid4().hex}.{ext}"
-        bucket = getattr(settings, "R2_EXCEL_BUCKET", getattr(settings, "EXCEL_BUCKET_NAME", "academy-excel"))
-        upload_fileobj_to_r2_excel(
-            fileobj=upload_file,
-            key=file_key,
-            content_type=getattr(upload_file, "content_type", None)
-            or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        payload = {
-            "file_key": file_key,
-            "bucket": bucket,
-            "tenant_id": tenant.id,
-            "initial_password": initial_password,
-        }
-        out = dispatch_job(
-            job_type="excel_parsing",
-            payload=payload,
-            tenant_id=str(tenant.id),
-            source_domain="students",
-            source_id=None,
-            tier="basic",
-            idempotency_key=f"excel:{file_key}",
-        )
-        if not out.get("ok"):
-            return Response(
-                {"detail": out.get("error", "job 등록 실패")},
-                status=400,
+        try:
+            ext = "xlsx"
+            if getattr(upload_file, "name", "") and "." in upload_file.name:
+                ext = upload_file.name.rsplit(".", 1)[-1].lower() or "xlsx"
+            file_key = f"excel/{tenant.id}/{uuid.uuid4().hex}.{ext}"
+            bucket = getattr(settings, "R2_EXCEL_BUCKET", getattr(settings, "EXCEL_BUCKET_NAME", "academy-excel"))
+            upload_fileobj_to_r2_excel(
+                fileobj=upload_file,
+                key=file_key,
+                content_type=getattr(upload_file, "content_type", None)
+                or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
-        return Response(
-            {"job_id": out["job_id"], "status": "PENDING"},
-            status=202,
-        )
+            payload = {
+                "file_key": file_key,
+                "bucket": bucket,
+                "tenant_id": tenant.id,
+                "initial_password": initial_password,
+            }
+            out = dispatch_job(
+                job_type="excel_parsing",
+                payload=payload,
+                tenant_id=str(tenant.id),
+                source_domain="students",
+                source_id=None,
+                tier="basic",
+                idempotency_key=f"excel:{file_key}",
+            )
+            if not out.get("ok"):
+                return Response(
+                    {"detail": out.get("error", "job 등록 실패")},
+                    status=400,
+                )
+            return Response(
+                {"job_id": out["job_id"], "status": "PENDING"},
+                status=202,
+            )
+        except ValidationError:
+            raise
+        except Exception as e:
+            logging.getLogger(__name__).exception("bulk_create_from_excel failed: %s", e)
+            return Response(
+                {"detail": "서버 오류가 발생했습니다.", "error": str(e)[:200]},
+                status=500,
+            )
 
     @action(detail=False, methods=["get"], url_path="excel_job_status/<str:job_id>")
     def excel_job_status(self, request, job_id=None):
