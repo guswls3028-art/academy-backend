@@ -251,7 +251,7 @@ function Test-RuntimeAudit {
         $msgOk = $false
     } elseif ($apiBaseUrl) {
         $healthUrl = $apiBaseUrl.TrimEnd('/') + "/health"
-        $cmdPayload = @{ commands = @("curl -sf --connect-timeout 5 \"$healthUrl\" || echo CURL_FAIL") } | ConvertTo-Json -Compress
+        $cmdPayload = "{`"commands`":[`"curl -sf --connect-timeout 5 \`"$healthUrl\`" || echo CURL_FAIL`"]}"
         $sendOut = ExecJson @("ssm", "send-command", "--instance-ids", $instancesMsg[0], "--document-name", "AWS-RunShellScript", "--parameters", $cmdPayload, "--region", $Region, "--output", "json")
         if (-not $sendOut -or -not $sendOut.Command.CommandId) {
             Add-Failure -Worker "Messaging Worker" -Area "Runtime" -Resource $instancesMsg[0] -Message "SSM send-command failed"
