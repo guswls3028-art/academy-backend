@@ -20,7 +20,7 @@
 
 ## Reconcile 관련 설정
 
-reconcile은 EventBridge로 5분마다 **Ops 큐**에서 `reconcile_batch_video_jobs` 가 돌며, **Video 큐**의 job과 DB 정합을 맞춘다. 아래는 그 동작을 바꾸는 설정이다.
+reconcile은 EventBridge로 **15분마다** **Ops 큐**에서 `reconcile_batch_video_jobs` 가 돌며, **Video 큐**의 job과 DB 정합을 맞춘다. 아래는 그 동작을 바꾸는 설정이다.
 
 ### 환경 변수 / Django 설정 (`apps/api/config/settings/base.py`)
 
@@ -37,7 +37,7 @@ reconcile은 EventBridge로 5분마다 **Ops 큐**에서 `reconcile_batch_video_
 
 | 규칙 이름 | 역할 | 끄기 | 다시 켜기 |
 |-----------|------|------|------------|
-| `academy-reconcile-video-jobs` | 5분마다 reconcile job 제출 (Ops 큐) | `aws events put-rule --name academy-reconcile-video-jobs --state DISABLED --schedule-expression "rate(5 minutes)" --description "..." --region ap-northeast-2` | `--state ENABLED` 로 동일 호출 |
+| `academy-reconcile-video-jobs` | 15분마다 reconcile job 제출 (Ops 큐) | `aws events put-rule --name academy-reconcile-video-jobs --state DISABLED --schedule-expression "rate(15 minutes)" --description "..." --region ap-northeast-2` | `--state ENABLED` 로 동일 호출 |
 
 - 재배포 후 reconcile 코드/설정 반영이 끝나면 ENABLED로 다시 켜면 됨.
 - **현재 규칙 상태·Ops 백로그 정리·향후 삭제/업로드 인프라 검토:** `docs/deploy/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md` 참고.
