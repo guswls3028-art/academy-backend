@@ -559,8 +559,6 @@ function Test-VideoBatchReconcileAudit {
                     }
                 }
             }
-        } else {
-            [void]$summary.Add("  Job role batch:DescribeJobs: OK (found in inline or managed)")
         }
     }
 
