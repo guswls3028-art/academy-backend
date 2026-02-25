@@ -228,9 +228,8 @@ function Test-RuntimeAudit {
         $aiOk = $false
     } elseif ($apiBaseUrl) {
         $healthUrl = $apiBaseUrl.TrimEnd('/') + "/health"
-        $cmdDoc = "AWS-RunShellScript"
-        $cmdPayload = @{ commands = @("curl -sf --connect-timeout 5 \"$healthUrl\" || echo CURL_FAIL") } | ConvertTo-Json -Compress
-        $sendOut = ExecJson @("ssm", "send-command", "--instance-ids", $instancesAi[0], "--document-name", $cmdDoc, "--parameters", $cmdPayload, "--region", $Region, "--output", "json")
+        $cmdPayload = "{`"commands`":[`"curl -sf --connect-timeout 5 \`"$healthUrl\`" || echo CURL_FAIL`"]}"
+        $sendOut = ExecJson @("ssm", "send-command", "--instance-ids", $instancesAi[0], "--document-name", "AWS-RunShellScript", "--parameters", $cmdPayload, "--region", $Region, "--output", "json")
         if (-not $sendOut -or -not $sendOut.Command.CommandId) {
             Add-Failure -Worker "AI Worker" -Area "Runtime" -Resource $instancesAi[0] -Message "SSM send-command failed"
             $aiOk = $false
