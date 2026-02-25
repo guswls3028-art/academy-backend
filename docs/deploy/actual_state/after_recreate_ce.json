@@ -16,7 +16,7 @@
                                                              "allocationStrategy":  "BEST_FIT_PROGRESSIVE",
                                                              "minvCpus":  0,
                                                              "maxvCpus":  32,
-                                                             "desiredvCpus":  4,
+                                                             "desiredvCpus":  0,
                                                              "instanceTypes":  [
                                                                                    "c6g.large",
                                                                                    "c6g.xlarge",
