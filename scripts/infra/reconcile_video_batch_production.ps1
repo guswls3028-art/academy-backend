@@ -58,15 +58,17 @@ $videoCeImageType = $null
 if ($crV.ec2Configuration -and $crV.ec2Configuration.Count -gt 0 -and $crV.ec2Configuration[0].imageType) {
     $videoCeImageType = $crV.ec2Configuration[0].imageType
 }
-if ($videoCeImageType -and $videoCeImageType -ne "ECS_AL2023_ARM64") {
-    Write-Error "Video CE imageType is $videoCeImageType; ECS_AL2023_ARM64 required and cannot be changed in-place"; exit 1
+$videoCeImageOk = ($videoCeImageType -eq "ECS_AL2023_ARM64" -or $videoCeImageType -eq "ECS_AL2023")
+if ($videoCeImageType -and -not $videoCeImageOk) {
+    Write-Error "Video CE imageType is $videoCeImageType; ECS_AL2023 or ECS_AL2023_ARM64 required and cannot be changed in-place"; exit 1
 }
 $opsCeImageType = $null
 if ($crO.ec2Configuration -and $crO.ec2Configuration.Count -gt 0 -and $crO.ec2Configuration[0].imageType) {
     $opsCeImageType = $crO.ec2Configuration[0].imageType
 }
-if ($opsCeImageType -and $opsCeImageType -ne "ECS_AL2023_ARM64") {
-    Write-Error "Ops CE imageType is $opsCeImageType; ECS_AL2023_ARM64 required"; exit 1
+$opsCeImageOk = ($opsCeImageType -eq "ECS_AL2023_ARM64" -or $opsCeImageType -eq "ECS_AL2023")
+if ($opsCeImageType -and -not $opsCeImageOk) {
+    Write-Error "Ops CE imageType is $opsCeImageType; ECS_AL2023 or ECS_AL2023_ARM64 required"; exit 1
 }
 $videoJqList = ExecJson @("batch", "describe-job-queues", "--job-queues", $VideoQueueName, "--region", $Region, "--output", "json")
 $videoQueueArn = $null
@@ -357,7 +359,8 @@ if ($videoCe2) {
     $crV2 = $videoCe2.computeResources
     if ([int]$crV2.minvCpus -ne 0 -or [int]$crV2.maxvCpus -ne 32) { Write-Error "Video CE min/max vCpus mismatch"; $fail = $true }
     $imgType = $null; if ($crV2.ec2Configuration -and $crV2.ec2Configuration.Count -gt 0) { $imgType = $crV2.ec2Configuration[0].imageType }
-    if ($imgType -and $imgType -ne "ECS_AL2023_ARM64") { Write-Error "Video CE imageType not ECS_AL2023_ARM64"; $fail = $true }
+    $imgOk = ($imgType -eq "ECS_AL2023_ARM64" -or $imgType -eq "ECS_AL2023")
+    if ($imgType -and -not $imgOk) { Write-Error "Video CE imageType not ECS_AL2023/ECS_AL2023_ARM64"; $fail = $true }
 }
 if ($opsCe2 -and [int]$opsCe2.computeResources.maxvCpus -ne 1) { Write-Error "Ops CE maxvCpus != 1"; $fail = $true }
 if ($videoJdLatest2) {
