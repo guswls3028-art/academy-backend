@@ -265,6 +265,7 @@ if (-not $runJobId) {
         Write-Fact "Running job" $runJobId
         Write-Fact "containerInstanceArn" $ec2Id
         # Batch ECS ARN: arn:aws:ecs:region:account:container-instance/clusterName/containerInstanceId
+        # cluster identifier: full ARN 사용 시 DescribeContainerInstances가 안정 동작
         $clusterArn = $null
         $ciId = $null
         if ($cont.containerInstanceArn -match '^arn:aws:ecs:([^:]+):(\d+):container-instance/([^/]+)/([^/]+)$') {
@@ -272,20 +273,21 @@ if (-not $runJobId) {
             $ciId = $Matches[4]
         }
         if ($clusterArn -and $ciId) {
-            $ciRaw = aws ecs describe-container-instances --cluster $clusterArn --container-instances $ciId --region $Region --output json 2>&1
+            $ciRaw = & aws @('ecs', 'describe-container-instances', '--cluster', $clusterArn, '--container-instances', $ciId, '--region', $Region, '--output', 'json') 2>&1
             $ciStr = ($ciRaw | Out-String).Trim()
             $ci = $null
             try { $ci = $ciStr | ConvertFrom-Json } catch {}
-            if ($ci -and $ci.containerInstances -and $ci.containerInstances.Count -gt 0) {
-                $ec2InstanceId = $ci.containerInstances[0].ec2InstanceId
+            $ciList = @(if ($ci -and $ci.containerInstances) { $ci.containerInstances } else { @() })
+            if ($ciList.Count -gt 0) {
+                $ec2InstanceId = $ciList[0].ec2InstanceId
                 Write-Fact "EC2 InstanceId" $ec2InstanceId
-                $eni = aws ec2 describe-instances --instance-ids $ec2InstanceId --region $Region --query "Reservations[0].Instances[0].NetworkInterfaces[0].{SubnetId:SubnetId,GroupIds:Groups[*].GroupId}" --output json 2>&1 | ConvertFrom-Json
+                $eni = & aws @('ec2', 'describe-instances', '--instance-ids', $ec2InstanceId, '--region', $Region, '--query', 'Reservations[0].Instances[0].NetworkInterfaces[0].{SubnetId:SubnetId,GroupIds:Groups[*].GroupId}', '--output', 'json') 2>&1 | ConvertFrom-Json
                 if ($eni -and $eni.SubnetId) {
                     Write-Fact "SubnetId" $eni.SubnetId
                     Write-Fact "SecurityGroups" ($eni.GroupIds -join ", ")
                 }
             } else {
-                Write-Host "  describe-container-instances failed or returned no instances (cluster may be Batch-managed)." -ForegroundColor Yellow
+                Write-Host "  describe-container-instances returned no instances (cluster may be Batch-managed)." -ForegroundColor Yellow
             }
         } else {
             Write-Host "  Could not parse containerInstanceArn for ECS cluster." -ForegroundColor Yellow
