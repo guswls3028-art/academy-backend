@@ -443,7 +443,7 @@ function Test-VideoBatchReconcileAudit {
     $jdList = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $ReconcileJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
     $reconcileJd = $null
     if ($jdList -and $jdList.jobDefinitions -and $jdList.jobDefinitions.Count -gt 0) {
-        $reconcileJd = $jdList.jobDefinitions[0]
+        $reconcileJd = $jdList.jobDefinitions | Sort-Object -Property revision -Descending | Select-Object -First 1
     }
     if (-not $reconcileJd) {
         Add-Failure -Worker "Video Worker" -Area "Reconcile" -Resource $ReconcileJobDefName -Message "Reconcile job definition not ACTIVE"
