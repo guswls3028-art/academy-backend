@@ -135,8 +135,8 @@ if (-not $t1.BatchParameters -or $t1.BatchParameters.JobDefinition -ne "academy-
     exit 1
 }
 if ($t1.Arn -ne $JobQueueArn) {
-    Write-Host "FAIL: Scan-stuck target Arn does not match JobQueueArn." -ForegroundColor Red
+    Write-Host "FAIL: Scan-stuck target Arn does not match Ops job queue ARN." -ForegroundColor Red
     exit 1
 }
 
-Write-Host "Done. EventBridge video scheduler (Batch only) deployed; targets verified." -ForegroundColor Green
+Write-Host "Done. EventBridge video scheduler deployed; reconcile/scan_stuck -> $OpsJobQueueName; targets verified." -ForegroundColor Green
