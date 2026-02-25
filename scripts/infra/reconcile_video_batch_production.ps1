@@ -18,19 +18,21 @@ function ExecJson($argsArray) {
     $exit = $LASTEXITCODE
     $ErrorActionPreference = $prev
     if ($exit -ne 0) { return $null }
-    $str = ($out | Out-String).Trim()
+    if (-not $out) { return $null }
+    $str = ($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($str)) { return $null }
     try { return $str | ConvertFrom-Json } catch { return $null }
 }
-function Invoke-Aws($ArgsArray, $ErrorMessage = "AWS failed") {
-    $prev = $ErrorActionPreference
+function Invoke-Aws {
+    param([string[]]$ArgsArray, [string]$ErrorMessage = "AWS failed")
+    $prevErr = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $out = & aws @ArgsArray 2>&1
-    $exit = $LASTEXITCODE
-    $ErrorActionPreference = $prev
-    if ($exit -ne 0) {
-        $txt = ($out | Out-String).Trim()
-        Write-Error "$ErrorMessage. ExitCode=$exit. $txt"
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = $prevErr
+    if ($exitCode -ne 0) {
+        $text = ($out | Out-String).Trim()
+        throw "${ErrorMessage}. ExitCode=$exitCode. $text"
     }
     return $out
 }
