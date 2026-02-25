@@ -183,6 +183,31 @@ def main() -> None:
                         if di:
                             digest = di[0].get("imageDigest", "")
                             out.append(f"  ECR (JobDef tag): repo={repo} tag={tag} digest={digest[:24]}...")
+                            img_arch = "unknown"
+                            try:
+                                resp = ecr.batch_get_image(
+                                    repositoryName=repo,
+                                    imageIds=[{"imageTag": tag}],
+                                    acceptedMediaTypes=[
+                                        "application/vnd.docker.distribution.manifest.list.v2+json",
+                                        "application/vnd.oci.image.index.v1+json",
+                                    ],
+                                )
+                                manifest_str = (resp.get("images") or [{}])[0].get("imageManifest")
+                                if manifest_str:
+                                    import json
+                                    manifest = json.loads(manifest_str)
+                                    manifests_list = manifest.get("manifests") or manifest.get("manifests") if isinstance(manifest.get("manifests"), list) else []
+                                    if manifests_list:
+                                        first = manifests_list[0]
+                                        plat = first.get("platform") or {}
+                                        img_arch = (plat.get("architecture") or "unknown").lower()
+                                    else:
+                                        plat = manifest.get("platform") or {}
+                                        img_arch = (plat.get("architecture") or "unknown").lower()
+                            except Exception as _:
+                                pass
+                            out.append(f"  ECR image architecture: {img_arch}")
                         else:
                             issues.append(f"ECR image not found for JobDef tag: {repo}:{tag}")
                     except ClientError as e:
