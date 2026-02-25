@@ -53,13 +53,18 @@ if (-not $jqResp -or -not $jqResp.jobQueues -or $jqResp.jobQueues.Count -eq 0) {
         Write-Host "FAIL: batch_ops_setup.ps1 not found at $batchOpsPath" -ForegroundColor Red
         exit 1
     }
-    $batchOpsArgs = @("-Region", $Region, "-JobQueueName", $OpsJobQueueName)
-    if (-not [string]::IsNullOrWhiteSpace($VideoCeNameForDiscovery)) { $batchOpsArgs += "-VideoCeNameForDiscovery", $VideoCeNameForDiscovery }
-    & $batchOpsPath @batchOpsArgs
+    if (-not $VideoCeNameForDiscovery) {
+        throw "VideoCeNameForDiscovery is required when Ops queue is missing."
+    }
+    & $batchOpsPath `
+        -Region $Region `
+        -VideoCeNameForDiscovery $VideoCeNameForDiscovery
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FAIL: batch_ops_setup.ps1 exited with $LASTEXITCODE" -ForegroundColor Red
         exit 1
     }
+    aws batch describe-job-queues --job-queues $OpsJobQueueName --region $Region --query "jobQueues[0].jobQueueName" --output text 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "batch_ops_setup succeeded but describe-job-queues for $OpsJobQueueName failed." }
     $jqResp = ExecJson @("batch", "describe-job-queues", "--job-queues", $OpsJobQueueName, "--region", $Region, "--output", "json")
 }
 if (-not $jqResp -or -not $jqResp.jobQueues -or $jqResp.jobQueues.Count -eq 0) {
