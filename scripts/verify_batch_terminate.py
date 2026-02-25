@@ -97,6 +97,7 @@ def main() -> int:
     print("Operator note:     IAM policy = infra/worker_asg/iam_policy_api_batch_submit.json | Apply = scripts/apply_api_batch_submit_policy.ps1\n")
 
     # For SimulatePrincipalPolicy we need role ARN when caller is assumed-role (e.g. EC2 instance profile).
+    # Root account ARN (arn:aws:iam::account:root) is not supported by SimulatePrincipalPolicy.
     policy_source_arn = arn
     if ":assumed-role/" in arn:
         # arn:aws:sts::123456789:assumed-role/academy-ec2-role/i-xxx -> arn:aws:iam::123456789:role/academy-ec2-role
