@@ -203,29 +203,19 @@ try {
     exit 1
 }
 
-# put-parameter: --cli-input-json file:// 사용해 값을 파일로 전달 (인자 이스케이프/길이 제한 회피)
+# put-parameter: 수동 실행 시 --value "{}" 가 동작하므로, Base64(따옴표 없음)를 --value 로 직접 전달
 $jsonBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
 $valueBase64 = [Convert]::ToBase64String($jsonBytes)
 Remove-Item -LiteralPath $tempJsonPath -Force -ErrorAction SilentlyContinue
 
-$cliInput = @{
-    Name      = $ParamName
-    Value     = $valueBase64
-    Type      = "SecureString"
-    Overwrite = $true
-} | ConvertTo-Json -Compress
-$cliInputPath = Join-Path ([System.IO.Path]::GetTempPath()) "academy_ssm_put_$([Guid]::NewGuid().ToString('N')).json"
-[System.IO.File]::WriteAllText($cliInputPath, $cliInput, $utf8NoBom)
-
-$cliInputUri = "file://" + (([System.IO.Path]::GetFullPath($cliInputPath)) -replace '\\', '/')
 Write-Host "Putting SSM parameter: $ParamName (SecureString, base64-encoded JSON)" -ForegroundColor Cyan
 $prevErr = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-$putOut = & aws ssm put-parameter --cli-input-json $cliInputUri --region $Region 2>&1
+# Base64만 전달(따옴표/공백 없음) → PowerShell 인자 손상 가능성 최소화
+$putOut = & aws ssm put-parameter --name $ParamName --value $valueBase64 --type SecureString --region $Region --overwrite 2>&1
 $putErr = ($putOut | Out-String).Trim()
 $putExit = $LASTEXITCODE
 $ErrorActionPreference = $prevErr
-Remove-Item -LiteralPath $cliInputPath -Force -ErrorAction SilentlyContinue
 if ($putExit -ne 0) {
     Write-Host "FAIL: put-parameter failed (exit $putExit)." -ForegroundColor Red
     if ($putErr) { Write-Host $putErr -ForegroundColor Red }
