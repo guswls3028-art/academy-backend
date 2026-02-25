@@ -99,6 +99,19 @@ function ExecJson {
     try { return ($str | ConvertFrom-Json) } catch { return $null }
 }
 
+function ExecJsonThrow {
+    param([string[]]$ArgsArray)
+    $out = & aws @ArgsArray 2>&1
+    $exit = $LASTEXITCODE
+    $str = ($out | Out-String).Trim()
+    if ($exit -ne 0) {
+        if ($str.Length -gt 500) { $str = $str.Substring(0, 497) + "..." }
+        throw "AWS CLI failed (exit $exit): $str"
+    }
+    if ([string]::IsNullOrWhiteSpace($str)) { return $null }
+    try { return ($str | ConvertFrom-Json) } catch { throw "AWS CLI output is not valid JSON: $str" }
+}
+
 # --- [1] SSM ---
 function Test-SsmAudit {
     $aiOk = $true; $msgOk = $true; $videoOk = $true
