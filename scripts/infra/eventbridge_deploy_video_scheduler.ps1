@@ -94,8 +94,8 @@ if (-not $EventsRoleArn) { Write-Host "FAIL: EventBridge role $EventsRoleName no
 
 # Reconcile rule + Batch target
 $ReconcileRuleName = "academy-reconcile-video-jobs"
-Write-Host "[1] EventBridge rule: $ReconcileRuleName (rate 5 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
-Invoke-Aws -ArgsArray @("events", "put-rule", "--name", $ReconcileRuleName, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--description", "Trigger reconcile_batch_video_jobs via Batch SubmitJob (single-flight)", "--region", $Region) -ErrorMessage "events put-rule reconcile failed"
+Write-Host "[1] EventBridge rule: $ReconcileRuleName (rate 15 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
+Invoke-Aws -ArgsArray @("events", "put-rule", "--name", $ReconcileRuleName, "--schedule-expression", "rate(15 minutes)", "--state", "ENABLED", "--description", "Trigger reconcile_batch_video_jobs via Batch SubmitJob (single-flight)", "--region", $Region) -ErrorMessage "events put-rule reconcile failed"
 $reconcileTargetPath = Join-Path $EventBridgePath "reconcile_to_batch_target.json"
 $reconcileTargetJson = Get-Content $reconcileTargetPath -Raw
 $reconcileTargetJson = $reconcileTargetJson -replace "PLACEHOLDER_JOB_QUEUE_ARN", $JobQueueArn
