@@ -267,8 +267,8 @@ if (-not $opsJdLatest) {
     $jsonStrO = $jsonStrO -replace '"JobDefinitionName"', '"jobDefinitionName"' -replace '"ContainerProperties"', '"containerProperties"' -replace '"Memory":', '"memory":' -replace '"Vcpus":', '"vcpus":' -replace '"Timeout"', '"timeout"' -replace '"AttemptDurationSeconds"', '"attemptDurationSeconds"' -replace '"RuntimePlatform"', '"runtimePlatform"' -replace '"CpuArchitecture"', '"cpuArchitecture"' -replace '"Image":', '"image":' -replace '"Command":', '"command":' -replace '"JobRoleArn":', '"jobRoleArn":' -replace '"ExecutionRoleArn":', '"executionRoleArn"' -replace '"LogConfiguration":', '"logConfiguration"' -replace '"PlatformCapabilities"', '"platformCapabilities"' -replace '"RetryStrategy"', '"retryStrategy"'
     $jsonStrO = $jsonStrO -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
     [System.IO.File]::WriteAllText($jdPathO, $jsonStrO, [System.Text.UTF8Encoding]::new($false))
-    $uriO = "file:///" + ([System.IO.Path]::GetFullPath($jdPathO) -replace '\\', '/')
-    Invoke-Aws -ArgsArray @("batch", "register-job-definition", "--cli-input-json", $uriO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops job def failed"
+    $absPathO = [System.IO.Path]::GetFullPath($jdPathO)
+    Invoke-Aws -ArgsArray @("batch", "register-job-definition", "--cli-input-json", $absPathO, "--region", $Region, "--output", "json") -ErrorMessage "register Ops job def failed"
     Remove-Item $jdPathO -Force -ErrorAction SilentlyContinue
 }
 elseif ($needOpsJdRegister -and $opsJdLatest) {
