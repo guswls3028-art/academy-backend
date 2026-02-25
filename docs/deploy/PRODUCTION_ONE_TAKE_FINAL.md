@@ -45,6 +45,8 @@
 
 저장소 루트에서 PowerShell로 실행. `.env`는 `.env.example`에서 복사 후 필수 값 채워 둔 상태여야 함.
 
+**Batch → API는 VPC 내부 Private IP 사용 필수.** `discover_api_network.ps1`로 API Private IP를 추출한 뒤, `ssm_bootstrap_video_worker.ps1 -UsePrivateApiIp`로 SSM의 `API_BASE_URL`을 `http://<PrivateIp>:8000`으로 넣는다.
+
 ```powershell
 # UTF-8
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
@@ -52,8 +54,11 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 # Account auto-detect
 $acctId = (aws sts get-caller-identity --query Account --output text)
 
-# 1) .env -> SSM (JSON, SecureString)
-.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite
+# 0) API Private IP 추출 (api_instance.json 생성 → SSM에서 API_BASE_URL private 치환에 사용)
+.\scripts\infra\discover_api_network.ps1 -Region ap-northeast-2
+
+# 1) .env -> SSM (API_BASE_URL을 Private IP로 치환하여 Batch 내부 통신)
+.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite -UsePrivateApiIp
 
 # 2) Docker build & push (Video Worker only)
 .\scripts\build_and_push_ecr_remote.ps1 -VideoWorkerOnly
@@ -69,7 +74,7 @@ $q = (Get-Content (Join-Path $PWD "docs\deploy\actual_state\batch_final_state.js
 # 6) CloudWatch alarms
 .\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName $q
 
-# 7) Netprobe SUCCESS
+# 7) Netprobe SUCCESS (API_BASE_URL이 private이면 api:ok)
 .\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName $q
 
 # 8) production_done_check PASS
