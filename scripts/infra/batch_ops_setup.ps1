@@ -135,7 +135,7 @@ if ($ceObj) {
     try {
         Invoke-Aws -ArgsArray @("batch", "create-compute-environment", "--cli-input-json", $ceFileUri, "--region", $Region) -ErrorMessage "create-compute-environment failed"
     } catch {
-        if ($PSCmdlet.MyInvocation.BoundParameters["Verbose"].IsPresent) {
+        if ($PSCmdlet.BoundParameters.ContainsKey("Verbose") -and $PSCmdlet.BoundParameters["Verbose"]) {
             Write-Verbose "Request payload file: $ceFile"
             Write-Verbose "Payload content:"
             Write-Verbose ([System.IO.File]::ReadAllText($ceFile, [System.Text.UTF8Encoding]::new($false)))
