@@ -92,13 +92,15 @@ $acctId = (aws sts get-caller-identity --query Account --output text)
 # 2) Docker build & push (Video Worker only)
 .\scripts\build_and_push_ecr_remote.ps1 -VideoWorkerOnly
 
-# 3–4) Batch CE/Queue 정합 확인 및 Job Definitions 재등록
+# 3–4) Batch CE/Queue 정합 확인 및 Job Definitions 재등록 (video only)
 $ecrUri = "${acctId}.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest"
 .\scripts\infra\recreate_batch_in_api_vpc.ps1 -Region ap-northeast-2 -EcrRepoUri $ecrUri
 
-# 5) EventBridge wiring
-$q = (Get-Content (Join-Path $PWD "docs\deploy\actual_state\batch_final_state.json") -Raw | ConvertFrom-Json).FinalJobQueueName
-.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -JobQueueName $q
+# 4b) Ops CE + Ops queue (reconcile/scan_stuck/netprobe -> t4g, no c6g)
+.\scripts\infra\batch_ops_setup.ps1 -Region ap-northeast-2
+
+# 5) EventBridge wiring (reconcile/scan_stuck -> academy-video-ops-queue)
+.\scripts\infra\eventbridge_deploy_video_scheduler.ps1 -Region ap-northeast-2 -OpsJobQueueName academy-video-ops-queue
 
 # 6) CloudWatch alarms
 .\scripts\infra\cloudwatch_deploy_video_alarms.ps1 -Region ap-northeast-2 -JobQueueName $q
