@@ -430,11 +430,12 @@ class Command(BaseCommand):
                         runnable_age_minutes = None
                         if job_status == "RUNNABLE" and created_at:
                             try:
-                                if hasattr(created_at, "timestamp"):
-                                    created_ts = created_at.timestamp()
+                                from django.utils import timezone as tz
+                                if getattr(created_at, "tzinfo", None):
+                                    created_dt = created_at
                                 else:
-                                    created_ts = float(created_at)
-                                runnable_age_minutes = (now.timestamp() - created_ts) / 60.0
+                                    created_dt = tz.make_aware(created_at, tz.utc)
+                                runnable_age_minutes = (now - created_dt).total_seconds() / 60.0
                             except Exception:
                                 runnable_age_minutes = 0.0
                             skip_pending = (
