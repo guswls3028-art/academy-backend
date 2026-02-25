@@ -199,9 +199,7 @@ if ($videoJdLatest) {
     $vcpus = [int]$videoJdLatest.containerProperties.vcpus
     $timeoutSec = $null
     if ($videoJdLatest.timeout -and $videoJdLatest.timeout.attemptDurationSeconds) { $timeoutSec = [int]$videoJdLatest.timeout.attemptDurationSeconds }
-    $rp = $videoJdLatest.containerProperties.runtimePlatform
-    $arm = ($rp -and $rp.cpuArchitecture -eq "ARM64")
-    if ($mem -eq 4096 -or $mem -ne 3072 -or $vcpus -ne 2 -or $timeoutSec -ne 14400 -or -not $arm) { $needVideoJdRegister = $true }
+    if ($mem -ne 3072 -or $vcpus -ne 2 -or $timeoutSec -ne 14400) { $needVideoJdRegister = $true }
 }
 if ($needVideoJdRegister -and $videoJdLatest) {
     $illegal = @("revision", "status", "jobDefinitionArn", "containerOrchestrationType")
@@ -211,8 +209,7 @@ if ($needVideoJdRegister -and $videoJdLatest) {
     }
     $regObj.containerProperties.memory = 3072
     $regObj.containerProperties.vcpus = 2
-    if (-not $regObj.containerProperties.runtimePlatform) { $regObj.containerProperties | Add-Member -NotePropertyName "runtimePlatform" -NotePropertyValue @{ cpuArchitecture = "ARM64" } -Force }
-    else { $regObj.containerProperties.runtimePlatform = @{ cpuArchitecture = "ARM64" } }
+    if ($regObj.containerProperties.PSObject.Properties['runtimePlatform']) { $regObj.containerProperties.PSObject.Properties.Remove('runtimePlatform') }
     if (-not $regObj.timeout) { $regObj | Add-Member -NotePropertyName "timeout" -NotePropertyValue @{ attemptDurationSeconds = 14400 } -Force }
     else { $regObj.timeout = @{ attemptDurationSeconds = 14400 } }
     $jdPath = Join-Path $RepoRoot "reconcile_video_jd_temp.json"
@@ -233,8 +230,7 @@ if ($needVideoJdRegister -and $videoJdLatest) {
         foreach ($d in $videoJdAllAfter.jobDefinitions) {
             $dm = [int]$d.containerProperties.memory; $dv = [int]$d.containerProperties.vcpus
             $dt = 0; if ($d.timeout -and $d.timeout.attemptDurationSeconds) { $dt = [int]$d.timeout.attemptDurationSeconds }
-            $darm = ($d.containerProperties.runtimePlatform -and $d.containerProperties.runtimePlatform.cpuArchitecture -eq "ARM64")
-            $wrong = ($dm -ne 3072 -or $dv -ne 2 -or $dt -ne 14400 -or -not $darm)
+            $wrong = ($dm -ne 3072 -or $dv -ne 2 -or $dt -ne 14400)
             if ($wrong -and ($null -eq $newRev -or [int]$d.revision -ne $newRev)) {
                 & aws batch deregister-job-definition --job-definition "${VideoJobDefName}:$($d.revision)" --region $Region 2>&1 | Out-Null
             }
