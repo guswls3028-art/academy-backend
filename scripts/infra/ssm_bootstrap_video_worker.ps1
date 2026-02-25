@@ -158,13 +158,12 @@ if ($exists -and -not $Overwrite) {
 }
 
 # --- JSON 직렬화: PowerShell 객체 -> 한 줄 JSON, UTF-8 no BOM, file 기반으로 quoting 제거 ---
-# 정렬된 키 순서로 객체 생성 (필수 + 선택 + DJANGO_SETTINGS_MODULE)
-$orderedKeys = @($RequiredKeys) + @($OptionalKeys) | Where-Object { $collected.ContainsKey($_) }
+# 정렬된 키 순서: 필수 + 선택 + DJANGO_SETTINGS_MODULE (이미 collected에 있음)
+$allOrderedKeys = @($RequiredKeys) + @($OptionalKeys) + "DJANGO_SETTINGS_MODULE"
 $obj = [ordered]@{}
-foreach ($k in $orderedKeys) {
-    $obj[$k] = $collected[$k]
+foreach ($k in $allOrderedKeys) {
+    if ($collected.ContainsKey($k)) { $obj[$k] = $collected[$k] }
 }
-# 선택 키 중 collected에만 있는 것 추가
 foreach ($k in $collected.Keys) {
     if (-not $obj.Contains($k)) { $obj[$k] = $collected[$k] }
 }
