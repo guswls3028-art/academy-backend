@@ -130,12 +130,13 @@ if ($needVideoJdRegister -and $videoJdLatest) {
     $jsonStr = $jsonStr -replace '"LogDriver":', '"logDriver":' -replace '"Options":', '"options"' -replace '"Awslogs-group":', '"awslogs-group":' -replace '"Awslogs-region":', '"awslogs-region":' -replace '"Awslogs-stream-prefix":', '"awslogs-stream-prefix":'
     [System.IO.File]::WriteAllText($jdPath, $jsonStr, [System.Text.UTF8Encoding]::new($false))
     $uri = "file:///" + ([System.IO.Path]::GetFullPath($jdPath) -replace '\\', '/')
-    Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uri, "--region", $Region, "--output", "json") -ErrorMessage "register Video job def failed"
+    $regOut = Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $uri, "--region", $Region, "--output", "json") -ErrorMessage "register Video job def failed"
     Remove-Item $jdPath -Force -ErrorAction SilentlyContinue
+    $newRev = $null; if ($regOut -and $regOut.revision) { $newRev = [int]$regOut.revision }
     $videoJdAllAfter = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
     if ($videoJdAllAfter -and $videoJdAllAfter.jobDefinitions) {
         foreach ($d in $videoJdAllAfter.jobDefinitions) {
-            if ([int]$d.containerProperties.memory -eq 4096) {
+            if ([int]$d.containerProperties.memory -eq 4096 -and ($null -eq $newRev -or [int]$d.revision -ne $newRev)) {
                 & aws batch deregister-job-definition --job-definition "$VideoJobDefName:$($d.revision)" --region $Region 2>&1 | Out-Null
             }
         }
