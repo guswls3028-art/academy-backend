@@ -39,77 +39,32 @@
 
 ---
 
-## 2. 워커 3종 체크 (Full Worker Infra Audit)
+## 2. 원테이크 전체 감사 (Video/Ops Batch + EventBridge + IAM)
 
-**목적:** AI Worker(ASG), Messaging Worker(ASG), Video Worker(Batch) **3종 워커 전체**를 한 번에 프로덕션 무결성 검증한다.
+**목적:** Video Worker(Batch), Ops Queue/CE 분리, EventBridge(reconcile/scan-stuck), IAM(DescribeJobs), JobDefinition을 한 번에 검증한다.
 
 | 항목 | 내용 |
 |------|------|
 | **스크립트** | `scripts/infra/infra_one_take_full_audit.ps1` |
-| **대상** | AI Worker (ASG), Messaging Worker (ASG), Video Worker (Batch) |
+| **대상** | Video CE/Queue, Ops CE/Queue, EventBridge 규칙·타깃, IAM(academy-video-batch-job-role 등), JobDef |
 | **실행 예** | `.\scripts\infra\infra_one_take_full_audit.ps1 -Region ap-northeast-2` |
-| **옵션** | `-Verbose` 상세 로그, `-FixMode` 실패 시 수정 안내(자동 수정 없음) |
-| **종료 코드** | 0 = PASS, 1 = FAIL |
+| **Region** | 생략 시 `aws configure get region` 사용 |
+| **옵션** | `-Verbose` 상세 로그, `-FixMode` 실패 항목 자동 수정(Ops CE/Queue 생성, IAM 부착, EventBridge 정렬), `-FixModeWithCleanup` reconcile RUNNING 1개 초과 시 나머지 terminate |
+| **출력** | Category \| Check \| Expected \| Actual \| Status(PASS/WARN/FAIL) \| FixAction 테이블, Summary(PASS/WARN/FAIL count), Result: PASS/NEEDS_ACTION/FAIL |
+| **종료 코드** | 0 = PASS 또는 NEEDS_ACTION, 1 = FAIL |
 
 ### 검사 항목 요약
 
-| 구분 | AI Worker (ASG) | Messaging Worker (ASG) | Video Worker (Batch) |
-|------|------------------|------------------------|----------------------|
-| **SSM** | `/academy/workers/env` 존재 | 동일 | JSON 유효성, 필수키, DJANGO_SETTINGS_MODULE, API_BASE_URL 퍼블릭 경고 |
-| **Network** | Launch Template, SG, VPC/Subnet | 동일 | CE ENABLED/VALID, Queue ENABLED, JobDefs ACTIVE, SG |
-| **Runtime** | SSM send-command 로 `curl API_BASE_URL/health` | 동일 | `run_netprobe_job.ps1` 실행 후 SUCCEEDED |
-| **Image** | ECR `academy-ai-worker-cpu:latest` digest | ECR `academy-messaging-worker:latest` | ECR `academy-video-worker` + Job Def 이미지 |
-| **ASG** | Desired/Min/Max, Unhealthy 없음, scaling 활동 실패 없음 | 동일 | — |
-| **Batch** | — | — | CE/Queue/JobDef 상태 |
-| **CloudWatch** | (Video 알람만 검사) | (동일) | 5개 알람 존재 여부 |
-
-### 최종 출력 형식
-
-```
-===== FULL WORKER INFRA AUDIT =====
-
-AI Worker:
-  SSM: OK / FAIL
-  Network: OK / FAIL
-  Runtime: OK / FAIL
-  ASG: OK / FAIL
-  Image: OK / FAIL
-
-Messaging Worker:
-  (동일)
-
-Video Worker:
-  SSM: OK / FAIL
-  Network: OK / FAIL
-  Runtime: OK / FAIL
-  Batch: OK / FAIL
-  Image: OK / FAIL
-
-OVERALL STATUS: PASS / FAIL
-```
-
-실패 시: **워커 | 영역(Area) | 리소스 | 메시지** 형태로 구체적 실패 내역 출력.
-
-### 설정
-
-- **계정**: `aws sts get-caller-identity` 로 자동 감지 (placeholder 사용 없음).
-- **Queue/CE 이름**: `docs/deploy/actual_state/batch_final_state.json` 의 `FinalJobQueueName`, `FinalComputeEnvName` 이 있으면 사용.
-
-### 필요 권한 (요약)
-
-- sts:GetCallerIdentity  
-- ssm:GetParameter, SendCommand, GetCommandInvocation  
-- autoscaling:DescribeAutoScalingGroups, DescribeScalingActivities  
-- ec2:DescribeLaunchTemplates, DescribeLaunchTemplateVersions, DescribeInstances, DescribeSecurityGroups, DescribeSubnets, DescribeVpcs  
-- batch:DescribeComputeEnvironments, DescribeJobQueues, DescribeJobDefinitions, SubmitJob, ListJobs, DescribeJobs  
-- ecr:DescribeRepositories, DescribeImages  
-- cloudwatch:DescribeAlarms  
-- logs:GetLogEvents, DescribeLogStreams  
-- iam:PassRole (Batch netprobe 제출 시)
+- **Batch:** Video CE/Ops CE 존재·상태(VALID/ENABLED)·instanceTypes·min/max, Video/Ops Queue 상태, Video/Ops Queue job 수, reconcile RUNNING 1개 이하 여부
+- **EventBridge:** reconcile/scan-stuck 규칙 존재, schedule rate(5 minutes), target queue=OpsQueue, jobDefinition
+- **IAM:** reconcile job definition의 jobRoleArn 역할에 AcademyAllowBatchDescribeJobs(batch:DescribeJobs, batch:ListJobs) 부착 여부
+- **JobDef:** academy-video-batch-jobdef vcpus/memory, academy-video-ops-reconcile / academy-video-ops-scanstuck command·jobRoleArn
 
 ### 참고 문서
 
-- `docs/infra_audit_runtime_ssm_failure_report.md` — AI/Messaging Runtime FAIL 시 원인(SSM Send Command) 및 조치
+- `docs/video_batch_production_runbook.md` — 배포·검증 순서, 원테이크 운영 점검(3b)
+- `docs/RECONCILE_STABILIZATION_DEPLOY.md` — Reconcile 안정화 변경 요약·배포/롤백 순서
+- `docs/video/RECONCILE_STABILIZATION_VERIFICATION_COMMANDS.md` — 운영 검증 커맨드
 
 ---
 
