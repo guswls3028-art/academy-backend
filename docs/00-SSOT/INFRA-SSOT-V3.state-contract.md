@@ -94,3 +94,11 @@
 | --verbose | 상세 로그. |
 
 params.yaml 경로는 환경변수(예: `SSOT_PARAMS`) 또는 기본값 `docs/00-SSOT/INFRA-SSOT-V3.params.yaml`로 지정.
+
+---
+
+## 7. Legacy 실행 차단 (Kill-Switch)
+
+- **단일 진입점:** 모든 배포는 `scripts_v3/deploy.ps1`만 실행한다.
+- **CI 가드:** GitHub Actions 등 CI에서 `scripts/infra/*.ps1`(예: batch_video_setup.ps1, eventbridge_deploy_video_scheduler.ps1)을 **직접 호출하면 안 된다**. workflow에 denylist 검사 step을 두어, 레거시 스크립트 직접 실행 시 **즉시 실패**하도록 한다.
+- **(선택)** 레거시 스크립트 상단에 deprecated guard: 직접 실행 시 `throw "DEPRECATED: Use scripts_v3/deploy.ps1"` 로 중단. 단, 다른 스크립트에서 dot-source로 불러오는 경우는 예외(환경변수 등으로 제어 가능).
