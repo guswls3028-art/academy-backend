@@ -118,4 +118,10 @@ cd C:\academy
 - [x] EventBridge는 Rule 존재 시 put-targets만 최신화
 - [x] ASG는 Desired 유지 (update 시 0 덮어쓰기 금지, 문서·스크립트 반영)
 - [x] Preflight 실패 시 즉시 중단
-- [x] Netprobe: Ops Queue 테스트 jo
+- [x] Netprobe: Ops Queue 테스트 job → SUCCEEDED 확인
+- [x] Evidence 표: Batch CE/Queue/JobDef, EventBridge, ASG, API, Netprobe, **imageDigest** 포함
+- [x] CI는 scripts_v3/deploy.ps1만 호출, 레거시 denylist 가드 있음
+
+---
+
+**이상으로 V3 SSOT 확정 및 구현을 마쳤습니다.**
