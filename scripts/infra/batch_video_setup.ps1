@@ -18,6 +18,8 @@ param(
     [string]$JobDefName = "academy-video-batch-jobdef",
     [string]$LogsGroup = "/aws/batch/academy-video-worker"
 )
+# SSOT v3 Legacy kill-switch: 직접 실행 금지. scripts_v3/deploy.ps1 만 사용.
+if (-not $env:ALLOW_LEGACY_IMPORT) { throw "DEPRECATED: Use scripts_v3/deploy.ps1" }
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 
 $ErrorActionPreference = "Stop"
