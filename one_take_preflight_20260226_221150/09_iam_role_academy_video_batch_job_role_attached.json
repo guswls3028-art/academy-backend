@@ -1,0 +1,8 @@
+{
+    "AttachedPolicies": [
+        {
+            "PolicyName": "AcademyAllowBatchDescribeJobs",
+            "PolicyArn": "arn:aws:iam::809466760795:policy/AcademyAllowBatchDescribeJobs"
+        }
+    ]
+}
