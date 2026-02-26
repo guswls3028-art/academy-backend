@@ -71,6 +71,8 @@
 **산출물 위치:** `docs/02-OPERATIONS/actual_state/*.json` 및 콘솔 "VIDEO WORKER SSOT AUDIT" 블록.  
 **최종 결과:** 위 항목 중 필수(CE status/state, Queue state, Netprobe SUCCEEDED, SSM shape)가 모두 정상이면 **PASS**, 하나라도 아니면 **FAIL**.
 
+**이미지 digest:** JobDef가 `:latest` 등 태그만 사용하더라도, 배포 시 ECR `describe-images`로 해당 이미지의 **imageDigest**를 조회하여 Evidence 표에 반드시 포함한다. (추후 digest 기반 drift 판단 전환 시 활용.)
+
 ---
 
 ## 5. 동시 실행
