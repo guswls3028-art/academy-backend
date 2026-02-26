@@ -1,1 +1,109 @@
-{ "Error": "ExitCode=252", "Output": "aws.exe : \n위치 C:\\\\academy\\\\scripts\\\\infra\\\\infra_forensic_collect.ps1:20 문자:16\n+         $raw = & aws @Args 2>&1\n+                ~~~~~~~~~~~~~~~~\n    + CategoryInfo          : NotSpecified: (:String) [], RemoteException\n    + FullyQualifiedErrorId : NativeCommandError\n \naws: [ERROR]: the following arguments are required: command\n\nusage: aws [options] <command> <subcommand> [<subcommand> ...] [parameters]\nTo see help text, you can run:\n\n  aws help\n  aws <command> help\n  aws <command> <subcommand> help" }
+{
+    "RouteTables": [
+        {
+            "Associations": [
+                {
+                    "Main": true,
+                    "RouteTableAssociationId": "rtbassoc-098d7fc38894fc996",
+                    "RouteTableId": "rtb-0c6a0b68df5c49578",
+                    "AssociationState": {
+                        "State": "associated"
+                    }
+                }
+            ],
+            "PropagatingVgws": [],
+            "RouteTableId": "rtb-0c6a0b68df5c49578",
+            "Routes": [
+                {
+                    "DestinationCidrBlock": "172.30.0.0/16",
+                    "Origin": "CreateRoute",
+                    "State": "active",
+                    "VpcPeeringConnectionId": "pcx-0b5aa682ec93e25be"
+                },
+                {
+                    "DestinationCidrBlock": "10.1.0.0/16",
+                    "GatewayId": "local",
+                    "Origin": "CreateRouteTable",
+                    "State": "active"
+                }
+            ],
+            "Tags": [],
+            "VpcId": "vpc-009e3ea6265c7a203",
+            "OwnerId": "809466760795"
+        },
+        {
+            "Associations": [
+                {
+                    "Main": true,
+                    "RouteTableAssociationId": "rtbassoc-0c501005d9ba46c1b",
+                    "RouteTableId": "rtb-0a770875852c8a220",
+                    "AssociationState": {
+                        "State": "associated"
+                    }
+                }
+            ],
+            "PropagatingVgws": [],
+            "RouteTableId": "rtb-0a770875852c8a220",
+            "Routes": [
+                {
+                    "DestinationCidrBlock": "172.30.0.0/16",
+                    "GatewayId": "local",
+                    "Origin": "CreateRouteTable",
+                    "State": "active"
+                },
+                {
+                    "DestinationCidrBlock": "10.1.0.0/16",
+                    "Origin": "CreateRoute",
+                    "State": "active",
+                    "VpcPeeringConnectionId": "pcx-0b5aa682ec93e25be"
+                },
+                {
+                    "DestinationCidrBlock": "0.0.0.0/0",
+                    "GatewayId": "igw-0d0ff2f33976b474f",
+                    "Origin": "CreateRoute",
+                    "State": "active"
+                },
+                {
+                    "DestinationPrefixListId": "pl-78a54011",
+                    "GatewayId": "vpce-05e329f9317c25a6c",
+                    "Origin": "CreateRoute",
+                    "State": "active"
+                }
+            ],
+            "Tags": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "OwnerId": "809466760795"
+        },
+        {
+            "Associations": [
+                {
+                    "Main": true,
+                    "RouteTableAssociationId": "rtbassoc-021616f87d8e01c2b",
+                    "RouteTableId": "rtb-09c52697da9c13176",
+                    "AssociationState": {
+                        "State": "associated"
+                    }
+                }
+            ],
+            "PropagatingVgws": [],
+            "RouteTableId": "rtb-09c52697da9c13176",
+            "Routes": [
+                {
+                    "DestinationCidrBlock": "172.31.0.0/16",
+                    "GatewayId": "local",
+                    "Origin": "CreateRouteTable",
+                    "State": "active"
+                },
+                {
+                    "DestinationCidrBlock": "0.0.0.0/0",
+                    "GatewayId": "igw-088988aa4a4dd0cad",
+                    "Origin": "CreateRoute",
+                    "State": "active"
+                }
+            ],
+            "Tags": [],
+            "VpcId": "vpc-0b89e02241aae4b0e",
+            "OwnerId": "809466760795"
+        }
+    ]
+}

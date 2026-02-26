@@ -1,1 +1,73 @@
-{ "Error": "ExitCode=252", "Output": "aws.exe : \n위치 C:\\\\academy\\\\scripts\\\\infra\\\\infra_forensic_collect.ps1:20 문자:16\n+         $raw = & aws @Args 2>&1\n+                ~~~~~~~~~~~~~~~~\n    + CategoryInfo          : NotSpecified: (:String) [], RemoteException\n    + FullyQualifiedErrorId : NativeCommandError\n \naws: [ERROR]: the following arguments are required: command\n\nusage: aws [options] <command> <subcommand> [<subcommand> ...] [parameters]\nTo see help text, you can run:\n\n  aws help\n  aws <command> help\n  aws <command> <subcommand> help" }
+{
+    "Vpcs": [
+        {
+            "OwnerId": "809466760795",
+            "InstanceTenancy": "default",
+            "CidrBlockAssociationSet": [
+                {
+                    "AssociationId": "vpc-cidr-assoc-0eb65a413a6c343ad",
+                    "CidrBlock": "10.1.0.0/16",
+                    "CidrBlockState": {
+                        "State": "associated"
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Tags": [
+                {
+                    "Key": "Name",
+                    "Value": "academy-lambda-metric-vpc"
+                }
+            ],
+            "BlockPublicAccessStates": {
+                "InternetGatewayBlockMode": "off"
+            },
+            "VpcId": "vpc-009e3ea6265c7a203",
+            "State": "available",
+            "CidrBlock": "10.1.0.0/16",
+            "DhcpOptionsId": "dopt-0639ddd9e11ef86e3"
+        },
+        {
+            "OwnerId": "809466760795",
+            "InstanceTenancy": "default",
+            "CidrBlockAssociationSet": [
+                {
+                    "AssociationId": "vpc-cidr-assoc-05d9d0062f6dfe575",
+                    "CidrBlock": "172.31.0.0/16",
+                    "CidrBlockState": {
+                        "State": "associated"
+                    }
+                }
+            ],
+            "IsDefault": true,
+            "BlockPublicAccessStates": {
+                "InternetGatewayBlockMode": "off"
+            },
+            "VpcId": "vpc-0b89e02241aae4b0e",
+            "State": "available",
+            "CidrBlock": "172.31.0.0/16",
+            "DhcpOptionsId": "dopt-0639ddd9e11ef86e3"
+        },
+        {
+            "OwnerId": "809466760795",
+            "InstanceTenancy": "default",
+            "CidrBlockAssociationSet": [
+                {
+                    "AssociationId": "vpc-cidr-assoc-0cd6c1b1ae5b95f01",
+                    "CidrBlock": "172.30.0.0/16",
+                    "CidrBlockState": {
+                        "State": "associated"
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "BlockPublicAccessStates": {
+                "InternetGatewayBlockMode": "off"
+            },
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "State": "available",
+            "CidrBlock": "172.30.0.0/16",
+            "DhcpOptionsId": "dopt-0639ddd9e11ef86e3"
+        }
+    ]
+}
