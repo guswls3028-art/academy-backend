@@ -10,10 +10,8 @@
 | 파일경로 | 목적 | 신뢰도(SSOT 후보) | 중복여부 | 최신추정근거 |
 |----------|------|-------------------|----------|--------------|
 | scripts/infra/infra_full_alignment_public_one_take.ps1 | 원테이크 전체 정렬(네트워크·API·빌드·Batch·EventBridge·Netprobe·Audit) | **높음** (실행 가능 스크립트) | 없음 | PUBLIC_V2 기준, 2026-02 사용 |
-| docs/deploy/VIDEO_WORKER_INFRA_SSOT_PUBLIC_V2.md | Video Worker 인프라 스펙(Public Model) | **높음** (문서 SSOT) | V1/v1_1과 주제 중복 | 원테이크 스크립트가 참조 |
-| docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md | Video Worker 인프라 스펙(Production Lock, Private/NAT 포함) | 중간(레거시 참고) | v1_1, PUBLIC_V2와 충돌 | README·다른 문서에서 링크 |
-| docs/deploy/VIDEO_WORKER_INFRA_SSOT_v1_1.md | Video Worker 인프라 스펙(최종 확정) | 중간 | V1, PUBLIC_V2와 동일 주제 | "최종 확정" 문구 |
-| docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md | 원테이크 실행 순서·스크립트 목록 | 참조 | runbook과 유사 | SSOT_V1 링크 |
+| docs/archive/deploy_legacy/VIDEO_WORKER_INFRA_SSOT_*.md | Video Worker 인프라 스펙(과거 버전) | 참고용 | SSOT는 본 문서·RESOURCE-INVENTORY | archive 보관 |
+| docs/archive/deploy_legacy/VIDEO_INFRA_ONE_TAKE_ORDER.md | 원테이크 실행 순서·스크립트 목록(과거) | 참조 | runbook과 유사 | archive 보관 |
 | docs/02-OPERATIONS/video_batch_production_runbook.md | 런북(환경·리소스·배포 순서·검증·롤백) | **높음** | ONE_TAKE_ORDER와 순서 중복 | 상세 단계·검증 명령 |
 | docs/02-OPERATIONS/SSM_JSON_SCHEMA.md | SSM /academy/workers/env 스키마 | **높음** | runbook에 요약 반복 | 데이터 계약 SSOT |
 | scripts/infra/recreate_batch_in_api_vpc.ps1 | Batch를 API VPC에 생성·재생성(Describe→SG→CE/Queue/JobDef) | **높음** | batch_video_setup과 역할 겹침 | 원테이크에서 호출, Describe 기반 |
