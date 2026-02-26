@@ -165,7 +165,7 @@ aws events disable-rule --name academy-video-scan-stuck-rate --region ap-northea
 
 - **일일/주간:** production_done_check.ps1, Netprobe 수동 1회.
 - **배포 전:** deploy_preflight.ps1, verify_video_batch_ssot.ps1.
-- **상태 스냅샷:** infra_forensic_collect.ps1로 수집한 JSON을 docs/deploy/actual_state 또는 별도 디렉터리에 보관(날짜 접미사 권장).
+- **상태 스냅샷:** infra_forensic_collect.ps1로 수집한 JSON을 docs/02-OPERATIONS/actual_state 또는 별도 디렉터리에 보관(날짜 접미사 권장).
 - **EventBridge:** 규칙 State(ENABLED/DISABLED), Schedule, Target 주기 확인. 변경 시 EVENTBRIDGE_RULES_STATE_AND_FUTURE.md 갱신.
 
 ---
