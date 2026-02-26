@@ -12,7 +12,18 @@ New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
 
 function Save-Json { param([string]$Name, [string]$Json) $path = Join-Path $OutDir "$Name.json"; [System.IO.File]::WriteAllText($path, $Json, [System.Text.UTF8Encoding]::new($false)) }
-function Run-Aws { param([string]$Name, [string[]]$Args) $raw = & aws @Args 2>&1; $out = ($raw | Out-String).Trim(); if ($LASTEXITCODE -ne 0) { Save-Json $Name "{ `"Error`": `"ExitCode=$LASTEXITCODE`", `"Output`": $(($out -replace '\\','\\\\' -replace '"','\"') | ForEach-Object { "`"$_`"" }) }"; return $null }; return $out }
+function Run-Aws {
+    param([string]$Name, [string[]]$Args)
+    $raw = & aws @Args 2>&1
+    $out = ($raw | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        $esc = $out -replace '\\', '\\\\' -replace '"', '\"'
+        $errJson = "{ `"Error`": `"ExitCode=" + $LASTEXITCODE + "`", `"Output`": `"" + $esc + "`" }"
+        Save-Json $Name $errJson
+        return $null
+    }
+    return $out
+}
 
 Write-Host "=== AWS 인프라 포렌식 수집 ===" -ForegroundColor Cyan
 Write-Host "Region: $Region  OutDir: $OutDir" -ForegroundColor Gray
