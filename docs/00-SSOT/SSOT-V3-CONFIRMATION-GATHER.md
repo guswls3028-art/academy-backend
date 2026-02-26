@@ -115,7 +115,11 @@ cd C:\academy
 ## 7. 체크리스트 (원테이크 SSOT)
 
 - [x] 모든 리소스는 Describe → Decision → Update/Create 순서
-- [x] CE INVALID 시 Queue DISABLED → CE 삭제 → Wait 삭제 완료
+- [x] CE INVALID 시 Full Recreate(삭제→Wait→Create→Wait→Enable) scripts_v3 내 완결
+- [x] CE/Queue/JobDef 없으면 Create(템플릿)·Register
+- [x] EventBridge Rule 없으면 put-rule 후 put-targets
+- [x] JobDef drift 기반 revision (image/vcpus/memory/command/roles/logConfig/timeout)
+- [x] Netprobe 실패(FAILED/타임아웃/RUNNABLE 정체) 시 throw
 - [x] CE/Queue DISABLED → ENABLED로 수렴
 - [x] EventBridge는 Rule 존재 시 put-targets만 최신화
 - [x] ASG는 Desired 유지 (update 시 0 덮어쓰기 금지, 문서·스크립트 반영)
