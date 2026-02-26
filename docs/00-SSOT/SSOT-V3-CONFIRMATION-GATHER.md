@@ -326,6 +326,61 @@ TAG=latest
 aws ecr describe-images --repository-name $REPO --region $REGION --image-ids imageTag=$TAG --query 'imageDetails[0].imageDigest' --output text
 ```
 
+### PowerShell (Windows) — 한 번에 복붙용
+
+아래는 **PowerShell**에서 변수 설정·리전 인자 방식이 Bash와 다르므로, Windows에서는 아래 블록을 그대로 복붙해 실행하면 된다.
+
+```powershell
+$REGION = "ap-northeast-2"
+
+# Account
+aws sts get-caller-identity --query Account --output text
+
+# Video CE
+aws batch describe-compute-environments --compute-environments academy-video-batch-ce-final --region $REGION --output json
+
+# Ops CE
+aws batch describe-compute-environments --compute-environments academy-video-ops-ce --region $REGION --output json
+
+# Video Queue
+aws batch describe-job-queues --job-queues academy-video-batch-queue --region $REGION --output json
+
+# Ops Queue
+aws batch describe-job-queues --job-queues academy-video-ops-queue --region $REGION --output json
+
+# Video JobDef (최신 ACTIVE)
+aws batch describe-job-definitions --job-definition-name academy-video-batch-jobdef --status ACTIVE --region $REGION --output json
+
+# EventBridge reconcile
+aws events describe-rule --name academy-reconcile-video-jobs --region $REGION --output json
+aws events list-targets-by-rule --rule academy-reconcile-video-jobs --region $REGION --output json
+
+# EventBridge scan-stuck
+aws events describe-rule --name academy-video-scan-stuck-rate --region $REGION --output json
+aws events list-targets-by-rule --rule academy-video-scan-stuck-rate --region $REGION --output json
+
+# ASG Messaging / AI
+aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names academy-messaging-worker-asg --region $REGION --output json
+aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names academy-ai-worker-asg --region $REGION --output json
+
+# ALB / Target Groups (TG_ARN은 describe-target-groups 출력으로 확인 후 교체)
+aws elbv2 describe-load-balancers --region $REGION --output json
+aws elbv2 describe-target-groups --region $REGION --output json
+
+# SSM
+aws ssm get-parameter --name "/academy/workers/env" --region $REGION --with-decryption --query Parameter.Name --output text
+aws ssm get-parameter --name "/academy/api/env" --region $REGION --with-decryption --query Parameter.Name --output text
+
+# RDS / Redis
+aws rds describe-db-instances --db-instance-identifier academy-db --region $REGION --output json
+aws elasticache describe-replication-groups --replication-group-id academy-redis --region $REGION --output json
+
+# ECR digest (PowerShell 변수)
+$REPO = "academy-video-worker"
+$TAG = "latest"
+aws ecr describe-images --repository-name $REPO --region $REGION --image-ids imageTag=$TAG --query "imageDetails[0].imageDigest" --output text
+```
+
 ---
 
 ## 최종 출력 요약
