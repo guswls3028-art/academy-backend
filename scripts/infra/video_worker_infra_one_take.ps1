@@ -270,14 +270,16 @@ $opsQOut2 = ExecJson @("batch", "describe-job-queues", "--job-queues", $OpsQueue
 $opsQArn = ($opsQOut2.jobQueues | Where-Object { $_.jobQueueName -eq $OpsQueueName }).jobQueueArn
 $ruleReconcile = ExecJson @("events", "describe-rule", "--name", $ReconcileRuleName, "--region", $Region, "--output", "json")
 if ($ruleReconcile) {
-    if ($ruleReconcile.ScheduleExpression -ne "rate(15 minutes)") {
+    $scheduleOk = ($ruleReconcile.ScheduleExpression -eq "rate(15 minutes)")
+    if (-not $scheduleOk) {
         & aws events put-rule --name $ReconcileRuleName --schedule-expression "rate(15 minutes)" --state ENABLED --description "Reconcile video jobs" --region $Region 2>&1 | Out-Null
     }
     $tgtReconcile = ExecJson @("events", "list-targets-by-rule", "--rule", $ReconcileRuleName, "--region", $Region, "--output", "json")
     $t0 = $tgtReconcile.Targets | Select-Object -First 1
-    if ($t0 -and $t0.Arn -eq $opsQArn) { $script:Audit5 = "PASS" }
-    $script:Audit5Detail = "Reconcile rule: $ReconcileRuleName -> $OpsQueueName  ScanStuck rule: $ScanStuckRuleName -> $OpsQueueName"
-} else { $script:Audit5Detail = "EventBridge rules not found" }
+    $targetOk = ($t0 -and $t0.Arn -eq $opsQArn)
+    if ($scheduleOk -and $targetOk) { $script:Audit5 = "PASS" } else { $script:Audit5 = "FAIL"; $script:AnyFail = $true }
+    $script:Audit5Detail = "Reconcile rule: $ReconcileRuleName (rate 15 minutes) -> $OpsQueueName  ScanStuck rule: $ScanStuckRuleName -> $OpsQueueName"
+} else { $script:Audit5 = "FAIL"; $script:Audit5Detail = "EventBridge rules not found"; $script:AnyFail = $true }
 
 # 8) CloudWatch 알람
 Invoke-Step "7) CloudWatch alarms (Video queue)" {
