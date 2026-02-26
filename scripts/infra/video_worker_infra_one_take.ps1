@@ -1,11 +1,11 @@
 # ==============================================================================
-# Video 워커 인프라 원테이크 — SSOT 강제. 구축 + Netprobe + Audit PASS 필수.
-# Usage: .\scripts\infra\video_worker_infra_one_take.ps1 -Region ap-northeast-2 -EcrRepoUri "<real-account>.dkr.ecr.<region>.amazonaws.com/academy-video-worker:<real-tag>"
-#        (Replace <real-account> and <real-tag> with actual values. Do not pass literal "<account>" or "<immutable-tag>".)
-#        $acct = aws sts get-caller-identity --query Account --output text
+# Video 워커 인프라 원테이크 — SSOT v1.1 강제. 구축 + Netprobe + Audit PASS 필수.
+# Usage: .\scripts\infra\video_worker_infra_one_take.ps1 -Region ap-northeast-2 -EcrRepoUri "<account>.dkr.ecr.<region>.amazonaws.com/academy-video-worker:<immutable-tag>"
+#        -EcrRepoUri 필수. :latest 금지. immutable tag 사용.
+#        $acct = (aws sts get-caller-identity --query Account --output text)
 #        $tag  = (aws ecr describe-images --repository-name academy-video-worker --region ap-northeast-2 --query "imageDetails[0].imageTags[0]" --output text)
 #        .\scripts\infra\video_worker_infra_one_take.ps1 -Region ap-northeast-2 -EcrRepoUri "$acct.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:$tag"
-#        .\scripts\infra\video_worker_infra_one_take.ps1 -Region ap-northeast-2 -BuildPush -EcrRepoUri ... -FixMode
+#        .\scripts\infra\video_worker_infra_one_take.ps1 -Region ap-northeast-2 -BuildPush -EcrRepoUri "..." -FixMode
 # ==============================================================================
 param(
     [string]$Region = "ap-northeast-2",
