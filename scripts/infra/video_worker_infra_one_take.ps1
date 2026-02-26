@@ -178,7 +178,7 @@ if ($needReregister) {
     $jdOut = ExecJson @("batch", "describe-job-definitions", "--job-definition-name", $VideoJobDefName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
     $latestJd = $jdOut.jobDefinitions | Where-Object { $_.jobDefinitionName -eq $VideoJobDefName } | Sort-Object { [int]$_.revision } -Descending | Select-Object -First 1
 }
-$script:Audit3Detail = "Name: $VideoJobDefName  Latest Revision: $($latestJd.revision)  vCPUs: $($latestJd.containerProperties.vcpus)  Memory: $($latestJd.containerProperties.memory)  Image: $img"
+$script:Audit3Detail = "Name: $VideoJobDefName  Latest Revision: $($latestJd.revision)  vCPUs: $($latestJd.containerProperties.vcpus)  Memory: $($latestJd.containerProperties.memory)  retryStrategy: 1  Image: $img"
 $script:Audit3 = "PASS"
 
 $batchSubmitPy = Join-Path $RepoRoot "apps\support\video\services\batch_submit.py"
@@ -229,11 +229,13 @@ Invoke-Step "5b) IAM attach Batch DescribeJobs" {
 
 $opsCeOut = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $OpsCEName, "--region", $Region, "--output", "json")
 $opsCeObj = $opsCeOut.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $OpsCEName } | Select-Object -First 1
-if ($opsCeObj) {
+if (-not $opsCeObj) {
+    $script:Audit4 = "FAIL"; $script:Audit4Detail = "Name: $OpsCEName not found"; $script:AnyFail = $true
+} else {
     $omax = [int]$opsCeObj.computeResources.maxvCpus
-    if ($omax -eq 2) { $script:Audit4 = "PASS" }
-    $script:Audit4Detail = "Name: $OpsCEName  State: $($opsCeObj.state)  maxvCpus: $omax"
-} else { $script:Audit4Detail = "Name: $OpsCEName not found" }
+    if ($opsCeObj.state -eq "ENABLED" -and $opsCeObj.status -eq "VALID" -and $omax -eq 2) { $script:Audit4 = "PASS" } else { $script:Audit4 = "FAIL"; $script:AnyFail = $true }
+    $script:Audit4Detail = "Name: $OpsCEName  State: $($opsCeObj.state)  Status: $($opsCeObj.status)  maxvCpus: $omax"
+}
 $opsQOut = ExecJson @("batch", "describe-job-queues", "--job-queues", $OpsQueueName, "--region", $Region, "--output", "json")
 $opsQObj = $opsQOut.jobQueues | Where-Object { $_.jobQueueName -eq $OpsQueueName } | Select-Object -First 1
 if ($opsQObj -and @($opsQObj.computeEnvironmentOrder).Count -ne 1) { Fail-SSOT "Ops Queue must have single CE." }
