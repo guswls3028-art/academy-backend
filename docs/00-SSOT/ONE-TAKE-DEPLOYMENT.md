@@ -27,11 +27,11 @@
 | .github/workflows/video_batch_deploy.yml | CI: 빌드·푸시·batch_video_setup·EventBridge·CloudWatch | 중간 | 스크립트와 경로 일치 필요 | JOB_QUEUE_NAME=academy-video-batch-queue, Ops Queue 별도 확인 필요 |
 | scripts/infra/batch/video_job_definition.json | Video JobDef 템플릿(vcpus=2, memory=3072, retry=1) | **높음** | SSOT 문서와 수치 일치 | retryStrategy.attempts=1, timeout 14400 |
 | scripts/infra/batch/ops_compute_env.json | Ops CE 템플릿 | 참조 | 없음 | batch_ops_setup에서 사용 |
-| docs/deploy/actual_state/*.json | 실제 상태 스냅샷(api_instance, batch_final_state 등) | 산출물 | 없음 | 스크립트 생성 |
-| docs/deploy/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md | EventBridge 규칙 상태·향후 조치 | 참조 | 없음 | 규칙 on/off 기록 |
-| docs/INFRA_VERIFICATION_SCRIPTS.md | 검증 스크립트 정리 | 참조 | 없음 | 문서 |
+| docs/02-OPERATIONS/actual_state/*.json | 실제 상태 스냅샷(api_instance, batch_final_state 등) | 산출물 | 없음 | 스크립트 생성 |
+| docs/02-OPERATIONS/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md | EventBridge 규칙 상태·향후 조치 | 참조 | 없음 | 규칙 on/off 기록 |
+| docs/02-OPERATIONS/INFRA_VERIFICATION_SCRIPTS.md | 검증 스크립트 정리 | 참조 | 없음 | 문서 |
 | scripts/README.md | 스크립트 트리·용도 | 참조 | 없음 | 진입점 |
-| docs/REFERENCE.md | 백엔드·설정·배포 요약 | 참조 | 없음 | R2/CDN 언급 |
+| docs/01-ARCHITECTURE/REFERENCE.md | 백엔드·설정·배포 요약 | 참조 | 없음 | R2/CDN 언급 |
 | infra/worker_asg/*.json | ASG/Lambda IAM 정책(Messaging 등) | 참조 | 없음 | IaC 없을 때 스크립트·문서 우선 |
 
 ---
