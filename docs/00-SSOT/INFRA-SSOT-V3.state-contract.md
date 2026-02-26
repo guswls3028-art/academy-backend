@@ -13,9 +13,9 @@
 |--------|--------------|------|
 | **Batch CE** | Describe 없으면 Create(템플릿). INVALID → Queue DISABLED → CE DISABLED → delete → Wait 삭제 → Create → Wait VALID → Enable CE/Queue. 수동 bootstrap 불필요. |
 | **Batch Queue** | Describe 없으면 Create(CE ARN). state=ENABLED, computeEnvironmentOrder SSOT 일치. |
-| **Job Definition** | vCPU/Memory/Image 변경 시에만 새 revision 등록. 동일 스펙이면 기존 ACTIVE 재사용. 이름만 사용, revision 하드코딩 금지. | 이미지 immutable tag 필수. |
+| **Job Definition** | Describe ACTIVE 없으면 Register. drift 시에만 새 revision. Evidence에 revision·imageDigest 포함. |
 | **ASG** | LT 변경 시 새 버전 생성 → ASG를 새 LT 버전으로만 업데이트. **DesiredCapacity는 현재값 유지.** 0으로 덮어쓰기 금지. | describe 후 동일하면 update 없음. |
-| **EventBridge** | Rule 존재 시 **Target만** put-targets로 최신화. Rule 삭제 후 재생성 금지. Enable/Disable만 enable-rule/disable-rule. | ScheduleExpression 일치 확인. |
+| **EventBridge** | Rule 없으면 put-rule 후 put-targets. Rule 있으면 Target만 put-targets. |
 | **SSM** | get-parameter 후 put-parameter --overwrite. ssm_bootstrap_video_worker.ps1로만 갱신. | 값 shape는 SSM_JSON_SCHEMA 검증. |
 | **RDS/Redis SG** | describe-security-groups → 기존 규칙 확인 후, 없으면 authorize-security-group-ingress(Batch SG → 5432/6379). | 중복 규칙 추가 방지. |
 | **ECR** | create-repository 없으면 생성. 이미지 태그는 배포 파이프라인에서 immutable 보장. | :latest 금지(원테이크 시 FAIL). |
