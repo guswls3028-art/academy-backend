@@ -120,7 +120,7 @@ if ($buildInstances) {
         $b = $buildInstances | ConvertFrom-Json
         $buildInst = $b.Reservations | ForEach-Object { $_.Instances } | Where-Object { $_.Tags | Where-Object { $_.Key -eq "Name" -and $_.Value -match "build" } } | Select-Object -First 1
         if ($buildInst -and $buildInst.SubnetId) {
-            $rtAssoc = Run-Aws "04_build_subnet_route_tables" @("ec2", "describe-route-tables", "--region", $Region, "--filters", "Name=association.subnet-id", "Values=$($buildInst.SubnetId)", "--output", "json"); if ($rtAssoc) { Save-Json "04_build_subnet_route_tables" $rtAssoc }
+            $rtAssoc = Run-Aws "04_build_subnet_route_tables" @("ec2", "describe-route-tables", "--region", $Region, "--filters", "Name=association.subnet-id,Values=$($buildInst.SubnetId)", "--output", "json"); if ($rtAssoc) { Save-Json "04_build_subnet_route_tables" $rtAssoc }
         }
     } catch {}
 }
