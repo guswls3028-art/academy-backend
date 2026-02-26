@@ -172,8 +172,8 @@ aws events disable-rule --name academy-video-scan-stuck-rate --region ap-northea
 
 ## 6. 참조 문서
 
-- [SSOT-ONE-TAKE-DEPLOYMENT.md](SSOT-ONE-TAKE-DEPLOYMENT.md) — 최종 설계·순서·리소스 규칙.
-- [SSOT-RESOURCE-INVENTORY.md](SSOT-RESOURCE-INVENTORY.md) — 리소스 이름·ARN.
-- [SSOT-IDEMPOTENCY-RULES.md](SSOT-IDEMPOTENCY-RULES.md) — 멱등성·Wait 루프.
-- [docs/video_batch_production_runbook.md](video_batch_production_runbook.md) — 상세 runbook·환경 변수.
-- [docs/deploy/SSM_JSON_SCHEMA.md](deploy/SSM_JSON_SCHEMA.md) — SSM 스키마.
+- [ONE-TAKE-DEPLOYMENT.md](ONE-TAKE-DEPLOYMENT.md) — 최종 설계·순서·리소스 규칙.
+- [RESOURCE-INVENTORY.md](RESOURCE-INVENTORY.md) — 리소스 이름·ARN.
+- [IDEMPOTENCY-RULES.md](IDEMPOTENCY-RULES.md) — 멱등성·Wait 루프.
+- [02-OPERATIONS/video_batch_production_runbook.md](../02-OPERATIONS/video_batch_production_runbook.md) — 상세 runbook·환경 변수.
+- [02-OPERATIONS/SSM_JSON_SCHEMA.md](../02-OPERATIONS/SSM_JSON_SCHEMA.md) — SSM 스키마.
