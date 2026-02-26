@@ -1,1 +1,3 @@
-{ "Error": "ExitCode=252", "Output": "aws.exe : \n위치 C:\\\\academy\\\\scripts\\\\infra\\\\infra_forensic_collect.ps1:20 문자:16\n+         $raw = & aws @Args 2>&1\n+                ~~~~~~~~~~~~~~~~\n    + CategoryInfo          : NotSpecified: (:String) [], RemoteException\n    + FullyQualifiedErrorId : NativeCommandError\n \naws: [ERROR]: the following arguments are required: command\n\nusage: aws [options] <command> <subcommand> [<subcommand> ...] [parameters]\nTo see help text, you can run:\n\n  aws help\n  aws <command> help\n  aws <command> <subcommand> help" }
+{
+    "NatGateways": []
+}
