@@ -82,7 +82,7 @@
 |-----------|------|------|
 | /academy/workers/env | SecureString | Batch Job 환경 변수(JSON). .env → ssm_bootstrap_video_worker.ps1로만 생성·갱신. |
 
-스키마: [docs/deploy/SSM_JSON_SCHEMA.md](deploy/SSM_JSON_SCHEMA.md).
+스키마: [02-OPERATIONS/SSM_JSON_SCHEMA.md](../02-OPERATIONS/SSM_JSON_SCHEMA.md).
 
 ---
 
