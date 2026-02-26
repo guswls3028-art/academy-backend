@@ -1,0 +1,796 @@
+{
+    "SecurityGroups": [
+        {
+            "GroupId": "sg-011ed1d9eb4a65b8f",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-011ed1d9eb4a65b8f",
+            "OwnerId": "809466760795",
+            "GroupName": "academy-video-batch-sg",
+            "Description": "Batch compute (API VPC)",
+            "IpPermissions": []
+        },
+        {
+            "GroupId": "sg-0405c1afe368b4e6b",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0405c1afe368b4e6b",
+            "OwnerId": "809466760795",
+            "GroupName": "default",
+            "Description": "default VPC security group",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0405c1afe368b4e6b"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-0280fb93e16a9afd8",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-0b89e02241aae4b0e",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0280fb93e16a9afd8",
+            "OwnerId": "809466760795",
+            "GroupName": "launch-wizard-3",
+            "Description": "launch-wizard-3 created 2025-12-26T04:55:02.851Z",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 80,
+                    "ToPort": 80,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 8000,
+                    "ToPort": 8000,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0bcb33ce553123e02"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-06ee0b63bfa3a00f4"
+                        }
+                    ],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "222.107.38.38/32"
+                        },
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 6379,
+                    "ToPort": 6379,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-06ee0b63bfa3a00f4"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0bcb33ce553123e02"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 443,
+                    "ToPort": 443,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-0bcb33ce553123e02",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-0b89e02241aae4b0e",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0bcb33ce553123e02",
+            "OwnerId": "809466760795",
+            "GroupName": "launch-wizard-5",
+            "Description": "launch-wizard-5 created 2025-12-31T13:27:35.666Z",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 8000,
+                    "ToPort": 8000,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0280fb93e16a9afd8"
+                        }
+                    ],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "222.107.38.38/32"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "222.107.38.38/32"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 6379,
+                    "ToPort": 6379,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0280fb93e16a9afd8"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-061700a84decdc148",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-0b89e02241aae4b0e",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-061700a84decdc148",
+            "OwnerId": "809466760795",
+            "GroupName": "default",
+            "Description": "default VPC security group",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 5432,
+                    "ToPort": 5432,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-06ee0b63bfa3a00f4"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0280fb93e16a9afd8"
+                        }
+                    ],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "222.107.38.38/32"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-0051cc8f79c04b058",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "Tags": [
+                {
+                    "Key": "Name",
+                    "Value": "academy-api-sg"
+                }
+            ],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0051cc8f79c04b058",
+            "OwnerId": "809466760795",
+            "GroupName": "academy-api-sg",
+            "Description": "academy-api-sg",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 80,
+                    "ToPort": 80,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 8000,
+                    "ToPort": 8000,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-02692600fbf8e26f7"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0051cc8f79c04b058"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0caaa6c43e12758e6"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0ff11f1b511861447"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0944a30cabd0c022e"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-011ed1d9eb4a65b8f"
+                        }
+                    ],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        },
+                        {
+                            "CidrIp": "172.30.0.0/16"
+                        },
+                        {
+                            "CidrIp": "10.1.0.0/16"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "222.107.38.38/32"
+                        },
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 443,
+                    "ToPort": 443,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-02692600fbf8e26f7"
+                        }
+                    ],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-06ee0b63bfa3a00f4",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-0b89e02241aae4b0e",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-06ee0b63bfa3a00f4",
+            "OwnerId": "809466760795",
+            "GroupName": "launch-wizard-2",
+            "Description": "launch-wizard-2 created 2025-12-22T15:33:43.047Z",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 8000,
+                    "ToPort": 8000,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "222.107.38.38/32"
+                        },
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 6379,
+                    "ToPort": 6379,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0280fb93e16a9afd8"
+                        }
+                    ],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-0944a30cabd0c022e",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0944a30cabd0c022e",
+            "OwnerId": "809466760795",
+            "GroupName": "academy-lambda-endpoint-sg",
+            "Description": "lambda-to-endpoint",
+            "IpPermissions": []
+        },
+        {
+            "GroupId": "sg-02692600fbf8e26f7",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "222.107.38.38/32"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "Tags": [
+                {
+                    "Key": "Name",
+                    "Value": "academy-worker-sg"
+                }
+            ],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-02692600fbf8e26f7",
+            "OwnerId": "809466760795",
+            "GroupName": "academy-worker-sg",
+            "Description": "academy-worker-sg",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "222.107.38.38/32"
+                        },
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-0f4069135b6215cad",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0f4069135b6215cad",
+            "OwnerId": "809466760795",
+            "GroupName": "academy-redis-sg",
+            "Description": "ElastiCache Redis - allow 6379 from API/Worker",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 6379,
+                    "ToPort": 6379,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-02692600fbf8e26f7"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0051cc8f79c04b058"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-011ed1d9eb4a65b8f"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-02f18e775a41753e0",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-009e3ea6265c7a203",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-02f18e775a41753e0",
+            "OwnerId": "809466760795",
+            "GroupName": "default",
+            "Description": "default VPC security group",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-02f18e775a41753e0"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-007bba3b7c40fe9c6",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-009e3ea6265c7a203",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-007bba3b7c40fe9c6",
+            "OwnerId": "809466760795",
+            "GroupName": "academy-lambda-metric-sg",
+            "Description": "Lambda queue-depth + CloudWatch endpoint",
+            "IpPermissions": []
+        },
+        {
+            "GroupId": "sg-0ff11f1b511861447",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0ff11f1b511861447",
+            "OwnerId": "809466760795",
+            "GroupName": "academy-lambda-internal-sg",
+            "Description": "Lambda to academy-api internal http",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 443,
+                    "ToPort": 443,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0944a30cabd0c022e"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0051cc8f79c04b058"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-02692600fbf8e26f7"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-0caaa6c43e12758e6",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0caaa6c43e12758e6",
+            "OwnerId": "809466760795",
+            "GroupName": "academy-lambda-video-sg",
+            "Description": "Lambda to API access",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 443,
+                    "ToPort": 443,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0caaa6c43e12758e6"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0ff11f1b511861447"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0944a30cabd0c022e"
+                        }
+                    ],
+                    "IpRanges": [],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        },
+        {
+            "GroupId": "sg-06cfb1f23372e2597",
+            "IpPermissionsEgress": [
+                {
+                    "IpProtocol": "-1",
+                    "UserIdGroupPairs": [],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "0.0.0.0/0"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ],
+            "Tags": [
+                {
+                    "Key": "Name",
+                    "Value": "academy-rds"
+                }
+            ],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-06cfb1f23372e2597",
+            "OwnerId": "809466760795",
+            "GroupName": "academy-rds",
+            "Description": "Created by RDS management console",
+            "IpPermissions": [
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 5432,
+                    "ToPort": 5432,
+                    "UserIdGroupPairs": [
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-0051cc8f79c04b058"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-02692600fbf8e26f7"
+                        },
+                        {
+                            "UserId": "809466760795",
+                            "GroupId": "sg-011ed1d9eb4a65b8f"
+                        }
+                    ],
+                    "IpRanges": [
+                        {
+                            "CidrIp": "222.107.38.38/32"
+                        }
+                    ],
+                    "Ipv6Ranges": [],
+                    "PrefixListIds": []
+                }
+            ]
+        }
+    ]
+}

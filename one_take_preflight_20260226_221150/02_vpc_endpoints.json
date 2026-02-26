@@ -1,0 +1,643 @@
+{
+    "VpcEndpoints": [
+        {
+            "VpcEndpointId": "vpce-04fd95b8f2bd1911b",
+            "VpcEndpointType": "Interface",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "ServiceName": "com.amazonaws.ap-northeast-2.monitoring",
+            "State": "available",
+            "PolicyDocument": "{\n  \"Statement\": [\n    {\n      \"Action\": \"*\",\n      \"Effect\": \"Allow\",\n      \"Principal\": \"*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}",
+            "RouteTableIds": [],
+            "SubnetIds": [
+                "subnet-049e711f41fdff71b"
+            ],
+            "Groups": [
+                {
+                    "GroupId": "sg-0caaa6c43e12758e6",
+                    "GroupName": "academy-lambda-video-sg"
+                }
+            ],
+            "IpAddressType": "ipv4",
+            "DnsOptions": {
+                "DnsRecordIpType": "ipv4"
+            },
+            "PrivateDnsEnabled": true,
+            "RequesterManaged": false,
+            "NetworkInterfaceIds": [
+                "eni-0faca4ed356b4baee"
+            ],
+            "DnsEntries": [
+                {
+                    "DnsName": "vpce-04fd95b8f2bd1911b-glivvgbf.monitoring.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-04fd95b8f2bd1911b-glivvgbf-ap-northeast-2d.monitoring.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "monitoring.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z08063483FKWWG1IZKSYZ"
+                },
+                {
+                    "DnsName": "monitoring.ap-northeast-2.api.aws",
+                    "HostedZoneId": "Z08063902P3A0E20TYAEB"
+                }
+            ],
+            "CreationTimestamp": "2026-02-21T14:23:30.182000+00:00",
+            "Tags": [],
+            "OwnerId": "809466760795",
+            "ServiceRegion": "ap-northeast-2"
+        },
+        {
+            "VpcEndpointId": "vpce-0d385038c84d47b49",
+            "VpcEndpointType": "Interface",
+            "VpcId": "vpc-009e3ea6265c7a203",
+            "ServiceName": "com.amazonaws.ap-northeast-2.monitoring",
+            "State": "available",
+            "PolicyDocument": "{\n  \"Statement\": [\n    {\n      \"Action\": \"*\",\n      \"Effect\": \"Allow\",\n      \"Principal\": \"*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}",
+            "RouteTableIds": [],
+            "SubnetIds": [
+                "subnet-0759ef4e7f3817e6d"
+            ],
+            "Groups": [
+                {
+                    "GroupId": "sg-007bba3b7c40fe9c6",
+                    "GroupName": "academy-lambda-metric-sg"
+                }
+            ],
+            "IpAddressType": "ipv4",
+            "DnsOptions": {
+                "DnsRecordIpType": "ipv4"
+            },
+            "PrivateDnsEnabled": true,
+            "RequesterManaged": false,
+            "NetworkInterfaceIds": [
+                "eni-00aa8f8dec7262386"
+            ],
+            "DnsEntries": [
+                {
+                    "DnsName": "vpce-0d385038c84d47b49-li3zeq6t.monitoring.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-0d385038c84d47b49-li3zeq6t-ap-northeast-2a.monitoring.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "monitoring.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z06489615IZASAOQC10U"
+                },
+                {
+                    "DnsName": "monitoring.ap-northeast-2.api.aws",
+                    "HostedZoneId": "Z06489601GRILM0CEXG4Q"
+                }
+            ],
+            "CreationTimestamp": "2026-02-21T14:56:23.094000+00:00",
+            "Tags": [],
+            "OwnerId": "809466760795",
+            "ServiceRegion": "ap-northeast-2"
+        },
+        {
+            "VpcEndpointId": "vpce-0dd30c5bc1d31bd81",
+            "VpcEndpointType": "Interface",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "ServiceName": "com.amazonaws.ap-northeast-2.sqs",
+            "State": "available",
+            "PolicyDocument": "{\n  \"Statement\": [\n    {\n      \"Action\": \"*\",\n      \"Effect\": \"Allow\",\n      \"Principal\": \"*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}",
+            "RouteTableIds": [],
+            "SubnetIds": [
+                "subnet-049e711f41fdff71b"
+            ],
+            "Groups": [
+                {
+                    "GroupId": "sg-0ff11f1b511861447",
+                    "GroupName": "academy-lambda-internal-sg"
+                }
+            ],
+            "IpAddressType": "ipv4",
+            "DnsOptions": {
+                "DnsRecordIpType": "ipv4"
+            },
+            "PrivateDnsEnabled": true,
+            "RequesterManaged": false,
+            "NetworkInterfaceIds": [
+                "eni-0069cb23c4aa50700"
+            ],
+            "DnsEntries": [
+                {
+                    "DnsName": "vpce-0dd30c5bc1d31bd81-uvxffryd.sqs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-0dd30c5bc1d31bd81-uvxffryd-ap-northeast-2d.sqs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "sqs.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z0170236I2ONE9XMZ18O"
+                },
+                {
+                    "DnsName": "sqs.ap-northeast-2.api.aws",
+                    "HostedZoneId": "Z073237121U990Y9WDBBJ"
+                }
+            ],
+            "CreationTimestamp": "2026-02-21T16:39:26.658000+00:00",
+            "Tags": [],
+            "OwnerId": "809466760795",
+            "ServiceRegion": "ap-northeast-2"
+        },
+        {
+            "VpcEndpointId": "vpce-02112079b9f53f62f",
+            "VpcEndpointType": "Interface",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "ServiceName": "com.amazonaws.ap-northeast-2.ecr.api",
+            "State": "available",
+            "PolicyDocument": "{\n  \"Statement\": [\n    {\n      \"Action\": \"*\",\n      \"Effect\": \"Allow\",\n      \"Principal\": \"*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}",
+            "RouteTableIds": [],
+            "SubnetIds": [
+                "subnet-07a8427d3306ce910",
+                "subnet-09231ed7ecf59cfa4",
+                "subnet-0548571ac21b3bbf3"
+            ],
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "IpAddressType": "ipv4",
+            "DnsOptions": {
+                "DnsRecordIpType": "ipv4"
+            },
+            "PrivateDnsEnabled": true,
+            "RequesterManaged": false,
+            "NetworkInterfaceIds": [
+                "eni-0c92e3a169e6fd853",
+                "eni-08eb689e87bb26770",
+                "eni-09faf9534c4c1a0c5"
+            ],
+            "DnsEntries": [
+                {
+                    "DnsName": "vpce-02112079b9f53f62f-c25xeubp.api.ecr.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-02112079b9f53f62f-c25xeubp-ap-northeast-2c.api.ecr.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-02112079b9f53f62f-c25xeubp-ap-northeast-2a.api.ecr.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-02112079b9f53f62f-c25xeubp-ap-northeast-2b.api.ecr.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "api.ecr.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z05145861GQ40MZ9Q9KDN"
+                },
+                {
+                    "DnsName": "ecr.ap-northeast-2.api.aws",
+                    "HostedZoneId": "Z05508633ILNT1SRPGEBP"
+                }
+            ],
+            "CreationTimestamp": "2026-02-25T19:02:50.027000+00:00",
+            "Tags": [],
+            "OwnerId": "809466760795",
+            "ServiceRegion": "ap-northeast-2"
+        },
+        {
+            "VpcEndpointId": "vpce-048f655243f4c3ce6",
+            "VpcEndpointType": "Interface",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "ServiceName": "com.amazonaws.ap-northeast-2.ecr.dkr",
+            "State": "available",
+            "PolicyDocument": "{\n  \"Statement\": [\n    {\n      \"Action\": \"*\",\n      \"Effect\": \"Allow\",\n      \"Principal\": \"*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}",
+            "RouteTableIds": [],
+            "SubnetIds": [
+                "subnet-07a8427d3306ce910",
+                "subnet-09231ed7ecf59cfa4",
+                "subnet-0548571ac21b3bbf3"
+            ],
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "IpAddressType": "ipv4",
+            "DnsOptions": {
+                "DnsRecordIpType": "ipv4"
+            },
+            "PrivateDnsEnabled": true,
+            "RequesterManaged": false,
+            "NetworkInterfaceIds": [
+                "eni-093b2694b76e0ede0",
+                "eni-01ba83d08441a7462",
+                "eni-08db6d4d3ec00f123"
+            ],
+            "DnsEntries": [
+                {
+                    "DnsName": "vpce-048f655243f4c3ce6-mfsdetpb.dkr.ecr.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-048f655243f4c3ce6-mfsdetpb-ap-northeast-2b.dkr.ecr.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-048f655243f4c3ce6-mfsdetpb-ap-northeast-2c.dkr.ecr.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-048f655243f4c3ce6-mfsdetpb-ap-northeast-2a.dkr.ecr.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "dkr.ecr.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z05499061XR9B5O0XBX04"
+                },
+                {
+                    "DnsName": "*.dkr.ecr.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z05499061XR9B5O0XBX04"
+                },
+                {
+                    "DnsName": "dkr-ecr.ap-northeast-2.on.aws",
+                    "HostedZoneId": "Z055085137UNMD0Q3F4VB"
+                },
+                {
+                    "DnsName": "*.dkr-ecr.ap-northeast-2.on.aws",
+                    "HostedZoneId": "Z055085137UNMD0Q3F4VB"
+                }
+            ],
+            "CreationTimestamp": "2026-02-25T19:03:01.843000+00:00",
+            "Tags": [],
+            "OwnerId": "809466760795",
+            "ServiceRegion": "ap-northeast-2"
+        },
+        {
+            "VpcEndpointId": "vpce-01909f79e1cffd102",
+            "VpcEndpointType": "Interface",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "ServiceName": "com.amazonaws.ap-northeast-2.logs",
+            "State": "available",
+            "PolicyDocument": "{\n  \"Statement\": [\n    {\n      \"Action\": \"*\",\n      \"Effect\": \"Allow\",\n      \"Principal\": \"*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}",
+            "RouteTableIds": [],
+            "SubnetIds": [
+                "subnet-049e711f41fdff71b",
+                "subnet-07a8427d3306ce910",
+                "subnet-09231ed7ecf59cfa4",
+                "subnet-0548571ac21b3bbf3"
+            ],
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "IpAddressType": "ipv4",
+            "DnsOptions": {
+                "DnsRecordIpType": "ipv4"
+            },
+            "PrivateDnsEnabled": true,
+            "RequesterManaged": false,
+            "NetworkInterfaceIds": [
+                "eni-061a0594a37dff8fb",
+                "eni-0f39c7cac79452fcf",
+                "eni-02f6b314c15221c10",
+                "eni-0c86512c790a92a60"
+            ],
+            "DnsEntries": [
+                {
+                    "DnsName": "vpce-01909f79e1cffd102-tlkjtadj.logs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-01909f79e1cffd102-tlkjtadj-ap-northeast-2b.logs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-01909f79e1cffd102-tlkjtadj-ap-northeast-2a.logs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-01909f79e1cffd102-tlkjtadj-ap-northeast-2d.logs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-01909f79e1cffd102-tlkjtadj-ap-northeast-2c.logs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "logs.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z01490731RAMZATOGLSWF"
+                },
+                {
+                    "DnsName": "logs.ap-northeast-2.api.aws",
+                    "HostedZoneId": "Z101842637VLPF43IKZE0"
+                },
+                {
+                    "DnsName": "streaming-logs.ap-northeast-2.api.aws",
+                    "HostedZoneId": "Z10179113CC0EPISKL7E6"
+                },
+                {
+                    "DnsName": "streaming-logs.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z0011659A2UEAIU86LGG"
+                }
+            ],
+            "CreationTimestamp": "2026-02-25T19:03:11.360000+00:00",
+            "Tags": [],
+            "OwnerId": "809466760795",
+            "ServiceRegion": "ap-northeast-2"
+        },
+        {
+            "VpcEndpointId": "vpce-0d8d3ea9b91368cae",
+            "VpcEndpointType": "Interface",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "ServiceName": "com.amazonaws.ap-northeast-2.ecs",
+            "State": "available",
+            "PolicyDocument": "{\n  \"Statement\": [\n    {\n      \"Action\": \"*\",\n      \"Effect\": \"Allow\",\n      \"Principal\": \"*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}",
+            "RouteTableIds": [],
+            "SubnetIds": [
+                "subnet-049e711f41fdff71b",
+                "subnet-07a8427d3306ce910",
+                "subnet-09231ed7ecf59cfa4",
+                "subnet-0548571ac21b3bbf3"
+            ],
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "IpAddressType": "ipv4",
+            "DnsOptions": {
+                "DnsRecordIpType": "ipv4"
+            },
+            "PrivateDnsEnabled": true,
+            "RequesterManaged": false,
+            "NetworkInterfaceIds": [
+                "eni-0e591b0ba1720a968",
+                "eni-0a153e2b0d1290fd5",
+                "eni-0ef61318e27e53509",
+                "eni-00264c942b4c02880"
+            ],
+            "DnsEntries": [
+                {
+                    "DnsName": "vpce-0d8d3ea9b91368cae-r1rv0bzv.ecs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-0d8d3ea9b91368cae-r1rv0bzv-ap-northeast-2a.ecs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-0d8d3ea9b91368cae-r1rv0bzv-ap-northeast-2d.ecs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-0d8d3ea9b91368cae-r1rv0bzv-ap-northeast-2b.ecs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-0d8d3ea9b91368cae-r1rv0bzv-ap-northeast-2c.ecs.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "ecs.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z10167301JE2TZ9N58L66"
+                },
+                {
+                    "DnsName": "ecs.ap-northeast-2.api.aws",
+                    "HostedZoneId": "Z0512820NO25R9Q7NWMK"
+                }
+            ],
+            "CreationTimestamp": "2026-02-25T19:03:22.303000+00:00",
+            "Tags": [],
+            "OwnerId": "809466760795",
+            "ServiceRegion": "ap-northeast-2"
+        },
+        {
+            "VpcEndpointId": "vpce-079f608543b5bf812",
+            "VpcEndpointType": "Interface",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "ServiceName": "com.amazonaws.ap-northeast-2.ecs-agent",
+            "State": "available",
+            "PolicyDocument": "{\n  \"Statement\": [\n    {\n      \"Action\": \"*\",\n      \"Effect\": \"Allow\",\n      \"Principal\": \"*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}",
+            "RouteTableIds": [],
+            "SubnetIds": [
+                "subnet-049e711f41fdff71b",
+                "subnet-07a8427d3306ce910",
+                "subnet-09231ed7ecf59cfa4",
+                "subnet-0548571ac21b3bbf3"
+            ],
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "IpAddressType": "ipv4",
+            "DnsOptions": {
+                "DnsRecordIpType": "ipv4"
+            },
+            "PrivateDnsEnabled": true,
+            "RequesterManaged": false,
+            "NetworkInterfaceIds": [
+                "eni-015d5c1d818d62b0a",
+                "eni-0a7424075cb6c6a0c",
+                "eni-021aa53ad7e6bcc4d",
+                "eni-0fa9aa97cd90c4d30"
+            ],
+            "DnsEntries": [
+                {
+                    "DnsName": "vpce-079f608543b5bf812-hrvd0ueg.ecs-a.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-079f608543b5bf812-hrvd0ueg-ap-northeast-2c.ecs-a.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-079f608543b5bf812-hrvd0ueg-ap-northeast-2d.ecs-a.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-079f608543b5bf812-hrvd0ueg-ap-northeast-2b.ecs-a.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-079f608543b5bf812-hrvd0ueg-ap-northeast-2a.ecs-a.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "ecs-a.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z101861426G52W42LUYZF"
+                },
+                {
+                    "DnsName": "ecs-a.ap-northeast-2.api.aws",
+                    "HostedZoneId": "Z10167659N5QU7H9ATLP"
+                }
+            ],
+            "CreationTimestamp": "2026-02-25T19:03:32.990000+00:00",
+            "Tags": [],
+            "OwnerId": "809466760795",
+            "ServiceRegion": "ap-northeast-2"
+        },
+        {
+            "VpcEndpointId": "vpce-0615c8e1395828539",
+            "VpcEndpointType": "Interface",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "ServiceName": "com.amazonaws.ap-northeast-2.ecs-telemetry",
+            "State": "available",
+            "PolicyDocument": "{\n  \"Statement\": [\n    {\n      \"Action\": \"*\",\n      \"Effect\": \"Allow\",\n      \"Principal\": \"*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}",
+            "RouteTableIds": [],
+            "SubnetIds": [
+                "subnet-049e711f41fdff71b",
+                "subnet-07a8427d3306ce910",
+                "subnet-09231ed7ecf59cfa4",
+                "subnet-0548571ac21b3bbf3"
+            ],
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "IpAddressType": "ipv4",
+            "DnsOptions": {
+                "DnsRecordIpType": "ipv4"
+            },
+            "PrivateDnsEnabled": true,
+            "RequesterManaged": false,
+            "NetworkInterfaceIds": [
+                "eni-0dc7ab43b37760129",
+                "eni-0b9823f28e5c68b55",
+                "eni-0f160132d3e316a98",
+                "eni-0cd8a562d44677a18"
+            ],
+            "DnsEntries": [
+                {
+                    "DnsName": "vpce-0615c8e1395828539-g9y0rpz1.ecs-t.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-0615c8e1395828539-g9y0rpz1-ap-northeast-2d.ecs-t.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-0615c8e1395828539-g9y0rpz1-ap-northeast-2c.ecs-t.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-0615c8e1395828539-g9y0rpz1-ap-northeast-2b.ecs-t.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-0615c8e1395828539-g9y0rpz1-ap-northeast-2a.ecs-t.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "ecs-t.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z0011533354UNKSE7LJVC"
+                },
+                {
+                    "DnsName": "ecs-t.ap-northeast-2.api.aws",
+                    "HostedZoneId": "Z00115281AQOAYHIM52H5"
+                }
+            ],
+            "CreationTimestamp": "2026-02-25T19:03:44.353000+00:00",
+            "Tags": [],
+            "OwnerId": "809466760795",
+            "ServiceRegion": "ap-northeast-2"
+        },
+        {
+            "VpcEndpointId": "vpce-02732201cdeb556dd",
+            "VpcEndpointType": "Interface",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "ServiceName": "com.amazonaws.ap-northeast-2.sts",
+            "State": "available",
+            "PolicyDocument": "{\n  \"Statement\": [\n    {\n      \"Action\": \"*\",\n      \"Effect\": \"Allow\",\n      \"Principal\": \"*\",\n      \"Resource\": \"*\"\n    }\n  ]\n}",
+            "RouteTableIds": [],
+            "SubnetIds": [
+                "subnet-07a8427d3306ce910",
+                "subnet-09231ed7ecf59cfa4",
+                "subnet-0548571ac21b3bbf3"
+            ],
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "IpAddressType": "ipv4",
+            "DnsOptions": {
+                "DnsRecordIpType": "ipv4"
+            },
+            "PrivateDnsEnabled": true,
+            "RequesterManaged": false,
+            "NetworkInterfaceIds": [
+                "eni-094e69ef27a4b237a",
+                "eni-0515cdfabd10ee871",
+                "eni-001ba5475aa16f7d3"
+            ],
+            "DnsEntries": [
+                {
+                    "DnsName": "vpce-02732201cdeb556dd-in3b87cr.sts.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-02732201cdeb556dd-in3b87cr-ap-northeast-2a.sts.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-02732201cdeb556dd-in3b87cr-ap-northeast-2b.sts.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "vpce-02732201cdeb556dd-in3b87cr-ap-northeast-2c.sts.ap-northeast-2.vpce.amazonaws.com",
+                    "HostedZoneId": "Z27UANNT0PRK1T"
+                },
+                {
+                    "DnsName": "sts.ap-northeast-2.amazonaws.com",
+                    "HostedZoneId": "Z01487213BC2MV8KCWRF4"
+                },
+                {
+                    "DnsName": "sts.ap-northeast-2.api.aws",
+                    "HostedZoneId": "Z014906812LGU20K8TNVM"
+                }
+            ],
+            "CreationTimestamp": "2026-02-25T19:03:56.991000+00:00",
+            "Tags": [],
+            "OwnerId": "809466760795",
+            "ServiceRegion": "ap-northeast-2"
+        },
+        {
+            "VpcEndpointId": "vpce-05e329f9317c25a6c",
+            "VpcEndpointType": "Gateway",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "ServiceName": "com.amazonaws.ap-northeast-2.s3",
+            "State": "available",
+            "PolicyDocument": "{\"Version\":\"2008-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"*\",\"Resource\":\"*\"}]}",
+            "RouteTableIds": [
+                "rtb-0a770875852c8a220"
+            ],
+            "SubnetIds": [],
+            "Groups": [],
+            "IpAddressType": "ipv4",
+            "DnsOptions": {
+                "DnsRecordIpType": "service-defined"
+            },
+            "PrivateDnsEnabled": false,
+            "RequesterManaged": false,
+            "NetworkInterfaceIds": [],
+            "DnsEntries": [],
+            "CreationTimestamp": "2026-02-25T19:04:06+00:00",
+            "Tags": [],
+            "OwnerId": "809466760795",
+            "ServiceRegion": "ap-northeast-2"
+        }
+    ]
+}
