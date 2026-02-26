@@ -7,7 +7,7 @@ param(
     [ValidateSet("prod","staging","dev")]
     [string]$Env = "prod",
     [string]$EcrRepoUri = "",
-    [switch]$AllowRebuild = $true,
+    [bool]$AllowRebuild = $true,
     [switch]$SkipNetprobe = $false
 )
 $ErrorActionPreference = "Stop"
@@ -19,7 +19,7 @@ Write-Host "`n=== ONE-TAKE DEPLOY START ($Env) [Full Rebuild] ===" -ForegroundCo
 # Env (SSOT values)
 . (Join-Path $ScriptRoot "env\prod.ps1")
 if ($EcrRepoUri) { $script:EcrRepoUri = $EcrRepoUri } else { $script:EcrRepoUri = "" }
-$script:AllowRebuild = $AllowRebuild.IsPresent
+$script:AllowRebuild = $AllowRebuild
 
 # Core
 . (Join-Path $ScriptRoot "core\logging.ps1")
