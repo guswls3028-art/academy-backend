@@ -17,8 +17,6 @@ param(
     [string]$JobQueueName = "academy-video-ops-queue",
     [string]$VideoCeNameForDiscovery = "academy-video-batch-ce-final"
 )
-# SSOT v3 Legacy kill-switch: 직접 실행 금지. scripts_v3/deploy.ps1 만 사용.
-if (-not $env:ALLOW_LEGACY_IMPORT) { throw "DEPRECATED: Use scripts_v3/deploy.ps1" }
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
 $ErrorActionPreference = "Stop"
