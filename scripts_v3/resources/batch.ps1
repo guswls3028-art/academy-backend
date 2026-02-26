@@ -43,8 +43,8 @@ function Ensure-OpsCE {
     $status = $c.status
     $state = $c.state
     if ($status -eq "INVALID") {
-        Write-Host "  INVALID -> delete, wait, recreate" -ForegroundColor Yellow
-        Invoke-Aws @("batch", "update-job-queue", "--job-queue", $script:OpsQueueName, "--compute-environment-order", "[{\"order\":1,\"computeEnvironment\":\"\"}]", "--region", $script:Region) -ErrorMessage "Update Ops queue" 2>$null
+        Write-Host "  INVALID -> disable queue, disable CE, delete CE, wait" -ForegroundColor Yellow
+        Invoke-Aws @("batch", "update-job-queue", "--job-queue", $script:OpsQueueName, "--state", "DISABLED", "--region", $script:Region) -ErrorMessage "Disable Ops Queue" 2>$null
         Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $script:OpsCEName, "--state", "DISABLED", "--region", $script:Region) -ErrorMessage "Disable Ops CE"
         Invoke-Aws @("batch", "delete-compute-environment", "--compute-environment", $script:OpsCEName, "--region", $script:Region) -ErrorMessage "Delete Ops CE"
         Wait-CEDeleted -CEName $script:OpsCEName -Reg $script:Region
