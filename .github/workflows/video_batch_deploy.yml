@@ -117,8 +117,3 @@ jobs:
 
       - name: One-Take Deploy (SSOT v3)
         run: pwsh -File scripts_v3/deploy.ps1 -Env prod
-
-      - name: CloudWatch deploy video alarms (optional)
-        run: pwsh -File scripts/infra/cloudwatch_deploy_video_alarms.ps1 -Region "${{ env.AWS_REGION }}" -JobQueueName "${{ env.JOB_QUEUE_NAME }}"
-        continue-on-error: true
-        if: false
