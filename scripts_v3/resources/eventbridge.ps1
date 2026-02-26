@@ -30,7 +30,8 @@ function Ensure-EventBridgeRules {
 
     $rule = Invoke-AwsJson @("events", "describe-rule", "--name", $script:EventBridgeReconcileRule, "--region", $script:Region, "--output", "json")
     if ($rule) {
-        $targetsInput = @{ Rule = $script:EventBridgeReconcileRule; Targets = ($reconcileJson | ConvertFrom-Json) } | ConvertTo-Json -Depth 10 -Compress
+        $targetsObj = $reconcileJson | ConvertFrom-Json
+        $targetsInput = @{ Rule = $script:EventBridgeReconcileRule; Targets = @($targetsObj) } | ConvertTo-Json -Depth 15 -Compress
         $tmpFile = [System.IO.Path]::GetTempFileName()
         try {
             [System.IO.File]::WriteAllText($tmpFile, $targetsInput, [System.Text.UTF8Encoding]::new($false))
@@ -43,7 +44,8 @@ function Ensure-EventBridgeRules {
 
     $rule2 = Invoke-AwsJson @("events", "describe-rule", "--name", $script:EventBridgeScanStuckRule, "--region", $script:Region, "--output", "json")
     if ($rule2) {
-        $targetsInput2 = @{ Rule = $script:EventBridgeScanStuckRule; Targets = ($scanStuckJson | ConvertFrom-Json) } | ConvertTo-Json -Depth 10 -Compress
+        $targetsObj2 = $scanStuckJson | ConvertFrom-Json
+        $targetsInput2 = @{ Rule = $script:EventBridgeScanStuckRule; Targets = @($targetsObj2) } | ConvertTo-Json -Depth 15 -Compress
         $tmpFile2 = [System.IO.Path]::GetTempFileName()
         try {
             [System.IO.File]::WriteAllText($tmpFile2, $targetsInput2, [System.Text.UTF8Encoding]::new($false))
