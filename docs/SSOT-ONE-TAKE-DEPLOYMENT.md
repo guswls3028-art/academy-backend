@@ -228,3 +228,30 @@
 - [SSOT-IDEMPOTENCY-RULES.md](SSOT-IDEMPOTENCY-RULES.md) — 멱등성 규칙·Wait 루프·SSOT 기준.
 - [SSOT-RUNBOOK.md](SSOT-RUNBOOK.md) — 운영(배포·검증·장애·롤백·점검).
 - [SSOT-CHANGELOG.md](SSOT-CHANGELOG.md) — 문서 기준 변경 로그.
+
+---
+
+## 남은 확인 필요 항목 (TODO)
+
+### P0 (배포/운영 안정성에 직결)
+
+| 항목 | 내용 | 확인 방법 |
+|------|------|-----------|
+| CI EventBridge 대상 | `.github/workflows/video_batch_deploy.yml`의 EventBridge 단계가 `academy-video-batch-queue`가 아닌 **academy-video-ops-queue**를 쓰는지 | workflow 파일에서 `eventbridge_deploy_video_scheduler.ps1` 호출 인자 확인. 스크립트는 `-OpsJobQueueName` 필요. |
+| 원테이크 CE 이름 일치 | `recreate_batch_in_api_vpc.ps1`를 원테이크에서 호출할 때 항상 `-ComputeEnvName academy-video-batch-ce-final` 전달하는지 | `infra_full_alignment_public_one_take.ps1` 내 호출부 확인(현재 전달함). 다른 호출 경로도 ce-final 사용 여부 검색. |
+
+### P1 (멱등성·운영 명확화)
+
+| 항목 | 내용 | 확인 방법 |
+|------|------|-----------|
+| 배포 동시 실행 락 | 동시에 원테이크가 2개 이상 실행되면 CE/Queue 중복 생성 가능. 락 전략 없음 | DynamoDB conditional write, S3 기반 락, 또는 GitHub 환경/배포 락 도입 후 SSOT-IDEMPOTENCY-RULES·RUNBOOK에 명시. |
+| ASG Desired Capacity 유지 | Messaging ASG 등 업데이트 시 Desired를 0으로 덮어쓰지 않는지 | `deploy_worker_asg.ps1`, `redeploy_worker_asg.ps1` 등에서 update 전 describe로 현재 Desired 읽고, 동일 값으로만 업데이트하는지 grep/검토. |
+| VIDEO_WORKER 인프라 SSOT 문서 통일 | VIDEO_WORKER_INFRA_SSOT_V1, v1_1, PUBLIC_V2 세 파일이 공존. README·다른 문서 링크가 어느 것을 가리키는지 | PUBLIC_V2를 현재 설계로 고정하고, V1/v1_1은 "과거/Private 모델"로 archive 또는 링크만 유지. docs/README.md 빠른 참조 표 갱신. |
+
+### P2 (문서·선택 개선)
+
+| 항목 | 내용 | 확인 방법 |
+|------|------|-----------|
+| Plan 아티팩트 | Describe→Decision 후 변경 목록을 파일로 저장하는 단계 미구현 | 원테이크 또는 통합 스크립트에 `--plan` 시 plan.json 등 출력하도록 추가 검토. |
+| --env/--dry-run 인터페이스 | 배포 스크립트에 --env, --dry-run, --plan, --apply, --lock 통일 인터페이스 없음 | 새 통합 스크립트 작성 시 SSOT-IDEMPOTENCY-RULES의 "스크립트 인터페이스" 반영. |
+| R2/CDN 프로비저닝 | R2 버킷·CDN 생성이 레포 IaC/스크립트에 없음 | 외부 관리로 인벤토리에만 기입됨. 필요 시 별도 Runbook 섹션 추가. |
