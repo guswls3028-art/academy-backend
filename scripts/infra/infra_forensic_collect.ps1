@@ -34,15 +34,18 @@ function Run-Aws {
 Write-Host "=== AWS Infra Forensic Collect ===" -ForegroundColor Cyan
 Write-Host "Region: $Region  OutDir: $OutDir" -ForegroundColor Gray
 
-# Credential check (allow success if output looks like identity JSON, in case exit code is wrong)
-$identity = Run-Aws "01_caller_identity" @("sts", "get-caller-identity", "--output", "json")
-if (-not $identity -or $identity.Trim().Length -eq 0) {
+# Credential check (call aws directly; treat as OK if output contains valid identity JSON)
+$ErrorActionPreference = "Continue"
+$identityRaw = & aws sts get-caller-identity --output json 2>&1
+$identity = ($identityRaw | Out-String).Trim()
+$ErrorActionPreference = "Stop"
+if ($identity.Length -eq 0) {
     Write-Host "FAIL: No output from aws sts get-caller-identity. Check credentials." -ForegroundColor Red
     exit 1
 }
 if ($identity -notmatch '"Account"') {
-    Write-Host "FAIL: aws sts get-caller-identity did not return valid identity (missing Account). Output may be an error." -ForegroundColor Red
-    Save-Json "01_caller_identity" $identity
+    Write-Host "FAIL: get-caller-identity did not return valid JSON. Check credentials." -ForegroundColor Red
+    Write-Host $identity -ForegroundColor Gray
     exit 1
 }
 Save-Json "01_caller_identity" $identity
