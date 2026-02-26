@@ -1,7 +1,6 @@
 # ==============================================================================
-# Video Batch deploy: build video-worker image, push ECR, run batch_video_setup,
-# eventbridge_deploy_video_scheduler, cloudwatch_deploy_video_alarms.
-# No secrets hardcoded. Use GitHub OIDC or repository env/secrets.
+# Video Batch deploy — SSOT v3. Build video-worker, push ECR, run scripts_v3/deploy.ps1 only.
+# Legacy: scripts/infra/*.ps1 직접 호출 금지 (denylist 가드).
 # ==============================================================================
 
 name: Video Batch Deploy
@@ -12,10 +11,15 @@ on:
     branches: [main]
     paths:
       - "docker/video-worker/**"
+      - "scripts_v3/**"
       - "scripts/infra/batch/**"
       - "scripts/infra/eventbridge/**"
       - "scripts/infra/cloudwatch/**"
       - ".github/workflows/video_batch_deploy.yml"
+
+concurrency:
+  group: video-batch-deploy
+  cancel-in-progress: false
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-2' }}
@@ -23,6 +27,18 @@ env:
   JOB_QUEUE_NAME: academy-video-batch-queue
 
 jobs:
+  guard-no-legacy-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guard — no legacy script execution
+        run: |
+          if grep -E 'scripts/infra/[^"]*\.ps1' .github/workflows/video_batch_deploy.yml; then
+            echo "::error::Legacy script call detected. Use scripts_v3/deploy.ps1 only."
+            exit 1
+          fi
+          echo "Guard OK: no scripts/infra/*.ps1 in run steps"
+
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
@@ -74,12 +90,8 @@ jobs:
           cache-to: type=gha,mode=max,scope=video-batch
 
   deploy-infra:
-    needs: build-and-push
+    needs: [guard-no-legacy-scripts, build-and-push]
     runs-on: ubuntu-latest
-    env:
-      VPC_ID: ${{ vars.VIDEO_BATCH_VPC_ID }}
-      SUBNET_IDS: ${{ vars.VIDEO_BATCH_SUBNET_IDS }}
-      SECURITY_GROUP_ID: ${{ vars.VIDEO_BATCH_SECURITY_GROUP_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -103,18 +115,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Batch video setup
-        run: |
-          pwsh -Command '
-            $subnets = ($env:SUBNET_IDS -split "[,\s]+") | Where-Object { $_ }
-            & ./scripts/infra/batch_video_setup.ps1 -Region $env:AWS_REGION -VpcId $env:VPC_ID -SubnetIds $subnets -SecurityGroupId $env:SECURITY_GROUP_ID -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"
-          '
-        continue-on-error: true
+      - name: One-Take Deploy (SSOT v3)
+        run: pwsh -File scripts_v3/deploy.ps1 -Env prod
 
-      - name: EventBridge deploy video scheduler
-        run: pwsh -File scripts/infra/eventbridge_deploy_video_scheduler.ps1 -Region "${{ env.AWS_REGION }}" -JobQueueName "${{ env.JOB_QUEUE_NAME }}"
-        continue-on-error: true
-
-      - name: CloudWatch deploy video alarms
+      - name: CloudWatch deploy video alarms (optional)
         run: pwsh -File scripts/infra/cloudwatch_deploy_video_alarms.ps1 -Region "${{ env.AWS_REGION }}" -JobQueueName "${{ env.JOB_QUEUE_NAME }}"
         continue-on-error: true
+        if: false
