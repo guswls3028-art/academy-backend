@@ -9,7 +9,7 @@
 # ==============================================================================
 param(
     [string]$Region = "ap-northeast-2",
-    [string]$EcrRepoUri = "",
+    [Parameter(Mandatory=$true)][string]$EcrRepoUri,
     [switch]$BuildPush = $false,
     [switch]$FixMode = $true
 )
