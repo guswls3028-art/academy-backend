@@ -11,8 +11,8 @@
 
 | 리소스 | Ensure 규칙 | 비고 |
 |--------|--------------|------|
-| **Batch CE** | INVALID → Queue에서 CE 분리 → CE DISABLED → delete → **Wait 삭제 완료** → 동일 이름으로 recreate → **Wait VALID/ENABLED** → Queue 재연결 | Update 시도 금지. |
-| **Batch Queue** | state=ENABLED, computeEnvironmentOrder가 SSOT와 일치. CE만 바꿀 때 update-job-queue. | Queue 삭제는 RUNNING/RUNNABLE job 없을 때만. |
+| **Batch CE** | Describe 없으면 Create(템플릿). INVALID → Queue DISABLED → CE DISABLED → delete → Wait 삭제 → Create → Wait VALID → Enable CE/Queue. 수동 bootstrap 불필요. |
+| **Batch Queue** | Describe 없으면 Create(CE ARN). state=ENABLED, computeEnvironmentOrder SSOT 일치. |
 | **Job Definition** | vCPU/Memory/Image 변경 시에만 새 revision 등록. 동일 스펙이면 기존 ACTIVE 재사용. 이름만 사용, revision 하드코딩 금지. | 이미지 immutable tag 필수. |
 | **ASG** | LT 변경 시 새 버전 생성 → ASG를 새 LT 버전으로만 업데이트. **DesiredCapacity는 현재값 유지.** 0으로 덮어쓰기 금지. | describe 후 동일하면 update 없음. |
 | **EventBridge** | Rule 존재 시 **Target만** put-targets로 최신화. Rule 삭제 후 재생성 금지. Enable/Disable만 enable-rule/disable-rule. | ScheduleExpression 일치 확인. |
