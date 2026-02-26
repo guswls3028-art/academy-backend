@@ -24,7 +24,7 @@
 | **Batch Ops** | CE `academy-video-ops-ce`, Queue `academy-video-ops-queue`, JobDef reconcile/scanstuck/netprobe |
 | **EventBridge** | `academy-reconcile-video-jobs` (15분), `academy-video-scan-stuck-rate` (5분), Target은 Ops Queue |
 | **이미지 정책** | 당분간 `:latest` 허용. Evidence 표에는 ECR **imageDigest** 필수 기록. |
-| **멱등 규칙** | CE INVALID → Queue DISABLED → CE 삭제 → Wait 삭제 완료 → 수동 재생성 후 재배포. CE/Queue DISABLED → ENABLED로 수렴. |
+| **멱등 규칙** | CE INVALID → Queue DISABLED → CE 삭제 → Wait → **동일 스크립트로 Create** → Wait VALID → Enable CE/Queue. **수동 bootstrap 불필요.** |
 
 ---
 
