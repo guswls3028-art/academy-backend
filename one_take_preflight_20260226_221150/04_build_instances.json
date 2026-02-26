@@ -1,0 +1,167 @@
+{
+    "Reservations": [
+        {
+            "ReservationId": "r-06f80625f0b2265e6",
+            "OwnerId": "809466760795",
+            "Groups": [],
+            "Instances": [
+                {
+                    "Architecture": "arm64",
+                    "BlockDeviceMappings": [
+                        {
+                            "DeviceName": "/dev/xvda",
+                            "Ebs": {
+                                "AttachTime": "2026-02-16T06:41:17+00:00",
+                                "DeleteOnTermination": true,
+                                "Status": "attached",
+                                "VolumeId": "vol-08e7c3324183a225f",
+                                "EbsCardIndex": 0
+                            }
+                        }
+                    ],
+                    "ClientToken": "03a0457b-6bd6-4099-9d1b-0a6c690292ff",
+                    "EbsOptimized": false,
+                    "EnaSupport": true,
+                    "Hypervisor": "xen",
+                    "IamInstanceProfile": {
+                        "Arn": "arn:aws:iam::809466760795:instance-profile/academy-ec2-role",
+                        "Id": "AIPA3Y572RZNQDBTRV633"
+                    },
+                    "NetworkInterfaces": [
+                        {
+                            "Association": {
+                                "IpOwnerId": "amazon",
+                                "PublicDnsName": "ec2-43-203-128-17.ap-northeast-2.compute.amazonaws.com",
+                                "PublicIp": "43.203.128.17"
+                            },
+                            "Attachment": {
+                                "AttachTime": "2026-02-16T06:41:16+00:00",
+                                "AttachmentId": "eni-attach-0fed68947744e8f9c",
+                                "DeleteOnTermination": true,
+                                "DeviceIndex": 0,
+                                "Status": "attached",
+                                "NetworkCardIndex": 0
+                            },
+                            "Description": "",
+                            "Groups": [
+                                {
+                                    "GroupId": "sg-02692600fbf8e26f7",
+                                    "GroupName": "academy-worker-sg"
+                                }
+                            ],
+                            "Ipv6Addresses": [],
+                            "MacAddress": "02:50:ae:35:42:ed",
+                            "NetworkInterfaceId": "eni-0c1e17956da95b0b1",
+                            "OwnerId": "809466760795",
+                            "PrivateDnsName": "ip-172-30-0-184.ap-northeast-2.compute.internal",
+                            "PrivateIpAddress": "172.30.0.184",
+                            "PrivateIpAddresses": [
+                                {
+                                    "Association": {
+                                        "IpOwnerId": "amazon",
+                                        "PublicDnsName": "ec2-43-203-128-17.ap-northeast-2.compute.amazonaws.com",
+                                        "PublicIp": "43.203.128.17"
+                                    },
+                                    "Primary": true,
+                                    "PrivateDnsName": "ip-172-30-0-184.ap-northeast-2.compute.internal",
+                                    "PrivateIpAddress": "172.30.0.184"
+                                }
+                            ],
+                            "SourceDestCheck": true,
+                            "Status": "in-use",
+                            "SubnetId": "subnet-07a8427d3306ce910",
+                            "VpcId": "vpc-0831a2484f9b114c2",
+                            "InterfaceType": "interface",
+                            "Operator": {
+                                "Managed": false
+                            }
+                        }
+                    ],
+                    "RootDeviceName": "/dev/xvda",
+                    "RootDeviceType": "ebs",
+                    "SecurityGroups": [
+                        {
+                            "GroupId": "sg-02692600fbf8e26f7",
+                            "GroupName": "academy-worker-sg"
+                        }
+                    ],
+                    "SourceDestCheck": true,
+                    "Tags": [
+                        {
+                            "Key": "Name",
+                            "Value": "academy-build-arm64"
+                        }
+                    ],
+                    "VirtualizationType": "hvm",
+                    "CpuOptions": {
+                        "CoreCount": 2,
+                        "ThreadsPerCore": 1
+                    },
+                    "CapacityReservationSpecification": {
+                        "CapacityReservationPreference": "open"
+                    },
+                    "HibernationOptions": {
+                        "Configured": false
+                    },
+                    "MetadataOptions": {
+                        "State": "applied",
+                        "HttpTokens": "required",
+                        "HttpPutResponseHopLimit": 2,
+                        "HttpEndpoint": "enabled",
+                        "HttpProtocolIpv6": "disabled",
+                        "InstanceMetadataTags": "disabled"
+                    },
+                    "EnclaveOptions": {
+                        "Enabled": false
+                    },
+                    "BootMode": "uefi",
+                    "PlatformDetails": "Linux/UNIX",
+                    "UsageOperation": "RunInstances",
+                    "UsageOperationUpdateTime": "2026-02-16T06:41:16+00:00",
+                    "PrivateDnsNameOptions": {
+                        "HostnameType": "ip-name",
+                        "EnableResourceNameDnsARecord": false,
+                        "EnableResourceNameDnsAAAARecord": false
+                    },
+                    "MaintenanceOptions": {
+                        "AutoRecovery": "default",
+                        "RebootMigration": "default"
+                    },
+                    "CurrentInstanceBootMode": "uefi",
+                    "NetworkPerformanceOptions": {
+                        "BandwidthWeighting": "default"
+                    },
+                    "Operator": {
+                        "Managed": false
+                    },
+                    "InstanceId": "i-0133290c3502844ab",
+                    "ImageId": "ami-03d8f5845b3facccd",
+                    "State": {
+                        "Code": 16,
+                        "Name": "running"
+                    },
+                    "PrivateDnsName": "ip-172-30-0-184.ap-northeast-2.compute.internal",
+                    "PublicDnsName": "ec2-43-203-128-17.ap-northeast-2.compute.amazonaws.com",
+                    "StateTransitionReason": "",
+                    "AmiLaunchIndex": 0,
+                    "ProductCodes": [],
+                    "InstanceType": "t4g.medium",
+                    "LaunchTime": "2026-02-26T12:00:07+00:00",
+                    "Placement": {
+                        "AvailabilityZoneId": "apne2-az1",
+                        "GroupName": "",
+                        "Tenancy": "default",
+                        "AvailabilityZone": "ap-northeast-2a"
+                    },
+                    "Monitoring": {
+                        "State": "disabled"
+                    },
+                    "SubnetId": "subnet-07a8427d3306ce910",
+                    "VpcId": "vpc-0831a2484f9b114c2",
+                    "PrivateIpAddress": "172.30.0.184",
+                    "PublicIpAddress": "43.203.128.17"
+                }
+            ]
+        }
+    ]
+}
