@@ -75,10 +75,9 @@ if ($BuildPush) {
     Write-Host "`n=== 3) ECR build/push SKIPPED (-BuildPush not set) ===" -ForegroundColor Gray
 }
 
-# 4) ECR URI: :latest 금지, placeholder 금지, 형식 검사
+# 4) ECR URI: :latest 금지, placeholder 금지, 형식 검사 (SSOT: immutable tag 필수)
 $acctId = (aws sts get-caller-identity --query Account --output text 2>&1).Trim()
 if (-not $acctId) { throw "Could not get Account ID" }
-if (-not $EcrRepoUri) { $EcrRepoUri = "${acctId}.dkr.ecr.${Region}.amazonaws.com/academy-video-worker:latest" }
 if ($EcrRepoUri -match ':latest$') { Fail-SSOT "image :latest forbidden. Pass -EcrRepoUri with immutable tag." }
 if ($EcrRepoUri -match '<account>|<immutable-tag>|<\w+>') {
     Write-Host "SSOT FAIL: EcrRepoUri must be a real URI. Do not use placeholders like <account> or <immutable-tag>." -ForegroundColor Red
@@ -107,7 +106,7 @@ if (-not (Test-Path -LiteralPath $batchStatePath)) { Fail-SSOT "batch_final_stat
 $ceOut = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $VideoCEName, "--region", $Region, "--output", "json")
 $ceObj = $ceOut.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $VideoCEName } | Select-Object -First 1
 if (-not $ceObj) { Fail-SSOT "Video CE $VideoCEName not found." }
-if ($ceObj.state -eq "INVALID") {
+if ($ceObj.status -eq "INVALID") {
     Write-Host "Video CE INVALID; performing §9: Queue DISABLED, CE DISABLED, delete, recreate c6g.large, Queue reattach." -ForegroundColor Yellow
     $cr = $ceObj.computeResources
     $vpcId = ""; if ($cr.subnets -and $cr.subnets.Count -gt 0) {
@@ -129,8 +128,8 @@ if ($ceObj.state -eq "INVALID") {
     $ceOut = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $VideoCEName, "--region", $Region, "--output", "json")
     $ceObj = $ceOut.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $VideoCEName } | Select-Object -First 1
 }
-if ($ceObj.state -ne "VALID") { Fail-SSOT "Video CE state is $($ceObj.state), not VALID." }
-if ($ceObj.status -ne "ENABLED") { Fail-SSOT "Video CE status is $($ceObj.status), not ENABLED." }
+if ($ceObj.state -ne "ENABLED") { Fail-SSOT "Video CE state is $($ceObj.state), not ENABLED." }
+if ($ceObj.status -ne "VALID") { Fail-SSOT "Video CE status is $($ceObj.status), not VALID." }
 $instTypes = @($ceObj.computeResources.instanceTypes)
 $badTypes = $instTypes | Where-Object { $_ -ne "c6g.large" }
 if ($badTypes -and $badTypes.Count -gt 0) { Fail-SSOT "Video CE instanceTypes has non-c6g.large: $($instTypes -join ',')" }
