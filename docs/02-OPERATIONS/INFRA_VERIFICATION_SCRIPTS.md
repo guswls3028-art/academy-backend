@@ -64,7 +64,7 @@
 
 - `docs/video_batch_production_runbook.md` — 배포·검증 순서, 원테이크 운영 점검(3b)
 - `docs/RECONCILE_STABILIZATION_DEPLOY.md` — Reconcile 안정화 변경 요약·배포/롤백 순서
-- `docs/video/RECONCILE_STABILIZATION_VERIFICATION_COMMANDS.md` — 운영 검증 커맨드
+- `docs/02-OPERATIONS/RECONCILE_STABILIZATION_VERIFICATION_COMMANDS.md` — 운영 검증 커맨드
 
 ---
 

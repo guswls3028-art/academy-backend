@@ -323,7 +323,7 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 콘솔에 `Category | Check | Expected | Actual | Status(PASS/WARN/FAIL) | FixAction` 테이블이 출력되고, 마지막에 `Summary: PASS=n WARN=n FAIL=n` 및 `Result: PASS` / `NEEDS_ACTION` / `FAIL`이 표시된다.  
 `-FixMode` 사용 시 적용된 변경 사항 목록이 함께 출력된다.
 
-**운영 검증 체크:** Reconcile 안정화 배포 후 RUNNING reconcile 1개 이하, AccessDenied 없음, SUCCEEDED→READY 전이, Ops CE scale down 등은 [Reconcile 안정화 — 운영 검증 체크](video/RECONCILE_STABILIZATION_VERIFICATION_COMMANDS.md) 문서의 커맨드로 확인한다.
+**운영 검증 체크:** Reconcile 안정화 배포 후 RUNNING reconcile 1개 이하, AccessDenied 없음, SUCCEEDED→READY 전이, Ops CE scale down 등은 [Reconcile 안정화 — 운영 검증 체크](RECONCILE_STABILIZATION_VERIFICATION_COMMANDS.md) 문서의 커맨드로 확인한다.
 
 ---
 
