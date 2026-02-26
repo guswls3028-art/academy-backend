@@ -50,7 +50,7 @@
 - 순서: RDS → SQS → IAM → 보안그룹 → EC2 API(Messaging/Video/AI). Video 4GB+100GB EBS, /mnt/transcode.
 - Docker: docker/Dockerfile.base, docker/api/Dockerfile, docker/messaging-worker/, docker/video-worker/, docker/ai-worker-cpu/. ECR 푸시 후 EC2에서 pull, .env, migrate, health.
 - 환경: `scripts/prepare_deploy_env.py -o .env.deploy`. EC2 API 자동 배포: scripts/auto_deploy_cron_on.sh, auto_deploy_cron_off.sh (cron 1분마다 origin/main 감지).
-- **인프라 원테이크 검증**: `docs/INFRA_VERIFICATION_SCRIPTS.md` — 비디오 원테이크(`production_done_check.ps1`), 원테이크 전체 감사(`infra_one_take_full_audit.ps1`) 기록.
+- **인프라 원테이크 검증**: `docs/02-OPERATIONS/INFRA_VERIFICATION_SCRIPTS.md` — 비디오 원테이크(`production_done_check.ps1`), 원테이크 전체 감사(`infra_one_take_full_audit.ps1`) 기록.
 
 ---
 
