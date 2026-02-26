@@ -1,8 +1,8 @@
-# Netprobe: submit job to Ops queue, wait SUCCEEDED. Returns jobId and status for Evidence.
-# Requires script:Region, script:OpsQueueName, script:OpsJobDefNetprobe (from env/prod.ps1).
+# Netprobe: submit job to Ops queue, wait SUCCEEDED. FAILED or TIMEOUT -> throw (deploy fails).
+# Default timeout 20 min. RUNNABLE stuck > RunnableFailSec also throws.
 function Invoke-Netprobe {
     param(
-        [int]$TimeoutSec = 300,
+        [int]$TimeoutSec = 1200,
         [int]$RunnableFailSec = 180
     )
     $ErrorActionPreference = "Stop"
@@ -20,18 +20,17 @@ function Invoke-Netprobe {
         $status = $job.status
         Write-Host "  status=$status" -ForegroundColor Gray
         if ($status -eq "RUNNABLE" -and $elapsed -ge $RunnableFailSec) {
-            Write-Host "Netprobe stuck RUNNABLE ($RunnableFailSec)s" -ForegroundColor Red
-            return @{ jobId = $jobId; status = $status }
+            throw "Netprobe stuck RUNNABLE ($RunnableFailSec)s; jobId=$jobId statusReason=$($job.statusReason)"
         }
         if ($status -eq "SUCCEEDED") {
             Write-Ok "Netprobe SUCCEEDED"
             return @{ jobId = $jobId; status = $status }
         }
         if ($status -eq "FAILED") {
-            throw "Netprobe FAILED: $($job.statusReason)"
+            throw "Netprobe FAILED: jobId=$jobId statusReason=$($job.statusReason)"
         }
         Start-Sleep -Seconds 10
         $elapsed += 10
     }
-    throw "Netprobe timeout (${TimeoutSec}s)"
+    throw "Netprobe timeout (${TimeoutSec}s); jobId=$jobId"
 }
