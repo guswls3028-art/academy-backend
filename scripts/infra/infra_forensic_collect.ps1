@@ -31,7 +31,7 @@ function Run-Aws {
     return $out
 }
 
-Write-Host "=== AWS 인프라 포렌식 수집 ===" -ForegroundColor Cyan
+Write-Host "=== AWS Infra Forensic Collect ===" -ForegroundColor Cyan
 Write-Host "Region: $Region  OutDir: $OutDir" -ForegroundColor Gray
 
 # Credential check
