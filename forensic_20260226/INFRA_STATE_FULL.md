@@ -163,4 +163,4 @@ DescribeInstances 필터 오류로 미수집. 전달 전 아래 명령으로 수
 
 ---
 
-**전달 방법:** 이 문서 전체 선택(Ctrl+A) 후 복사(Ctrl+C)하여 전달. 02_vpc_endpoints.json, 02_security_groups.json은 파일 자체를 첨부하면 됩니다.
+**전달 방법:** 위 "전달 방법 (어캐 함)" 섹션 참고. 이 문서 전체 선택(Ctrl+A) 후 복사하면 REPORT+02 네트워크 증거가 전달됨. 02_vpc_endpoints/02_security_groups·03~09 포함하려면 해당 절차대로 첨부 또는 ZIP 전달.
