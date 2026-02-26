@@ -43,19 +43,21 @@
 
 | 경로 | 역할 |
 |------|------|
-| **deploy.ps1** | 단일 진입점. env → core → resources → netprobe 로드 후 Preflight → Ensure Batch/EventBridge/ASG/SSM/API → Netprobe → Evidence |
+| **deploy.ps1** | 단일 진입점. IAM → Video/Ops CE → Video/Ops Queue → Video/Ops JobDef(4종) → EventBridge → Validate → Netprobe(20분 타임아웃, 실패 시 throw) → Evidence. -EcrRepoUri, -AllowRebuild 지원. |
 | **env/prod.ps1** | SSOT 변수 (Region, AccountId, VpcId, Subnets, Batch/API/EventBridge/ASG/SSM 이름 등). params.yaml과 동기화 유지 |
 | **core/logging.ps1** | Write-Step, Write-Ok, Write-Warn, Write-Fail |
 | **core/aws-wrapper.ps1** | Invoke-AwsJson, Invoke-Aws |
 | **core/wait.ps1** | Wait-CEDeleted, Wait-CEValidEnabled |
 | **core/preflight.ps1** | Invoke-PreflightCheck (AWS identity, VPC, SSM, ECR) |
 | **core/evidence.ps1** | Show-Evidence (CE/Queue/JobDef/EventBridge/ASG/API/Netprobe, ECR digest 포함) |
-| **resources/batch.ps1** | Ensure-VideoCE, Ensure-OpsCE, Ensure-VideoQueue, Ensure-OpsQueue (Describe→Decision→Update, INVALID 시 Queue DISABLED 후 CE 삭제+Wait) |
-| **resources/eventbridge.ps1** | Ensure-EventBridgeRules (put-targets만, repo의 eventbridge/*.json 참조) |
+| **resources/iam.ps1** | Ensure-BatchIAM (Batch/ECS/Execution/Job 역할·인스턴스 프로파일). scripts/infra/iam/*.json 참조. |
+| **resources/batch.ps1** | Ensure-VideoCE/OpsCE/VideoQueue/OpsQueue. 없으면 Create(템플릿), INVALID면 Full Recreate(삭제→Wait→Create→Wait→Enable). |
+| **resources/jobdef.ps1** | Ensure-VideoJobDef, Ensure-OpsJobDefReconcile/ScanStuck/Netprobe. drift 시에만 새 revision 등록. |
+| **resources/eventbridge.ps1** | Rule 없으면 put-rule 후 put-targets; 있으면 put-targets만. EventBridge IAM 역할 없으면 생성. |
 | **resources/asg.ps1** | Confirm-ASGState (조회만) |
 | **resources/ssm.ps1** | Confirm-SSMEnv (조회만) |
 | **resources/api.ps1** | Confirm-APIHealth (GET /health) |
-| **netprobe/batch.ps1** | Invoke-Netprobe (Ops Queue에 netprobe job 제출 → SUCCEEDED 대기, jobId/status 반환) |
+| **netprobe/batch.ps1** | Invoke-Netprobe (타임아웃 20분, RUNNABLE 180초 초과 또는 FAILED 시 throw). |
 
 ### 3.3 CI (.github/workflows/)
 
