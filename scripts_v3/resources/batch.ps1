@@ -15,8 +15,8 @@ function Ensure-VideoCE {
     $status = $c.status
     $state = $c.state
     if ($status -eq "INVALID") {
-        Write-Host "  INVALID -> delete, wait, recreate (re-run deploy after bootstrap)" -ForegroundColor Yellow
-        Invoke-Aws @("batch", "update-job-queue", "--job-queue", $script:VideoQueueName, "--compute-environment-order", "[{\"order\":1,\"computeEnvironment\":\"\"}]", "--region", $script:Region) -ErrorMessage "Update queue to remove CE" 2>$null
+        Write-Host "  INVALID -> disable queue, disable CE, delete CE, wait" -ForegroundColor Yellow
+        Invoke-Aws @("batch", "update-job-queue", "--job-queue", $script:VideoQueueName, "--state", "DISABLED", "--region", $script:Region) -ErrorMessage "Disable Video Queue" 2>$null
         Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $script:VideoCEName, "--state", "DISABLED", "--region", $script:Region) -ErrorMessage "Disable CE"
         Invoke-Aws @("batch", "delete-compute-environment", "--compute-environment", $script:VideoCEName, "--region", $script:Region) -ErrorMessage "Delete CE"
         Wait-CEDeleted -CEName $script:VideoCEName -Reg $script:Region
