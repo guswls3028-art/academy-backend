@@ -1,0 +1,20 @@
+{
+    "AttachedPolicies": [
+        {
+            "PolicyName": "AmazonSSMManagedInstanceCore",
+            "PolicyArn": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        },
+        {
+            "PolicyName": "CloudWatchLogsFullAccess",
+            "PolicyArn": "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+        },
+        {
+            "PolicyName": "AmazonEC2ContainerServiceforEC2Role",
+            "PolicyArn": "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+        },
+        {
+            "PolicyName": "AmazonEC2ContainerRegistryReadOnly",
+            "PolicyArn": "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        }
+    ]
+}

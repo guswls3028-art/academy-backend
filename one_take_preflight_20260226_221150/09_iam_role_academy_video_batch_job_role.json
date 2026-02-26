@@ -1,0 +1,26 @@
+{
+    "Role": {
+        "Path": "/",
+        "RoleName": "academy-video-batch-job-role",
+        "RoleId": "AROA3Y572RZNXS7SF2RP4",
+        "Arn": "arn:aws:iam::809466760795:role/academy-video-batch-job-role",
+        "CreateDate": "2026-02-22T07:07:34+00:00",
+        "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": "ecs-tasks.amazonaws.com"
+                    },
+                    "Action": "sts:AssumeRole"
+                }
+            ]
+        },
+        "MaxSessionDuration": 3600,
+        "RoleLastUsed": {
+            "LastUsedDate": "2026-02-25T19:01:42+00:00",
+            "Region": "ap-northeast-2"
+        }
+    }
+}
