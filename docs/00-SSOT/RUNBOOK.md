@@ -43,7 +43,7 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 
 ### 1.4 단계별 수동 배포 (원테이크 불가 시)
 
-순서만 변경하지 말 것. [SSOT-ONE-TAKE-DEPLOYMENT.md](SSOT-ONE-TAKE-DEPLOYMENT.md) 및 [docs/video_batch_production_runbook.md](video_batch_production_runbook.md) 참조.
+순서만 변경하지 말 것. [ONE-TAKE-DEPLOYMENT.md](ONE-TAKE-DEPLOYMENT.md) 및 [02-OPERATIONS/video_batch_production_runbook.md](../02-OPERATIONS/video_batch_production_runbook.md) 참조.
 
 1. SSM: `.\scripts\infra\ssm_bootstrap_video_worker.ps1 -Region ap-northeast-2 -EnvFile .env -Overwrite`
 2. API 네트워크 수집: `.\scripts\infra\discover_api_network.ps1 -Region ap-northeast-2`
@@ -105,12 +105,12 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 - **확인:**  
   `aws batch describe-compute-environments --compute-environments academy-video-batch-ce-final --region ap-northeast-2`  
   → statusReason, computeResources.subnets 확인.
-- **조치:** CE가 INVALID면 [SSOT-IDEMPOTENCY-RULES.md](SSOT-IDEMPOTENCY-RULES.md)에 따라 Queue 분리 → CE 삭제 → 재생성 → Queue 재연결. 이후 Netprobe 재실행.
+- **조치:** CE가 INVALID면 [IDEMPOTENCY-RULES.md](IDEMPOTENCY-RULES.md)에 따라 Queue 분리 → CE 삭제 → 재생성 → Queue 재연결. 이후 Netprobe 재실행.
 
 ### 3.2 API healthcheck 실패
 
 - **확인:** `curl -s -o /dev/null -w "%{http_code}\n" http://15.165.147.157:8000/`
-- **조치:** EC2 상태, Docker 컨테이너, SSM `/academy/api/env`(또는 API용 env) 복구. [docs/infra/API_ENV_RECOVERY_STRICT.md](infra/API_ENV_RECOVERY_STRICT.md) 등 참조.
+- **조치:** EC2 상태, Docker 컨테이너, SSM `/academy/api/env`(또는 API용 env) 복구. [02-OPERATIONS/API_ENV_RECOVERY_STRICT.md](../02-OPERATIONS/API_ENV_RECOVERY_STRICT.md) 등 참조.
 
 ### 3.3 Batch Job FAILED 반복
 
@@ -122,7 +122,7 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 
 - 재개: `aws events enable-rule --name academy-reconcile-video-jobs --region ap-northeast-2`  
   `aws events enable-rule --name academy-video-scan-stuck-rate --region ap-northeast-2`
-- 비활성화: `disable-rule`. 상태는 [docs/deploy/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md](deploy/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md)에 기록 권장.
+- 비활성화: `disable-rule`. 상태는 [02-OPERATIONS/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md](../02-OPERATIONS/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md)에 기록 권장.
 
 ---
 
