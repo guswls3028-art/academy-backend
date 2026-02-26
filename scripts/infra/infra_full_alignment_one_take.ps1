@@ -67,12 +67,12 @@ foreach ($rt in $rtResp.RouteTables) {
 
 if ($natCount -eq 0 -and $FixMode) {
     $pubSubnetId = $null
-    foreach ($rtId in $publicRtIds) {
-        $assoc = $rtResp.RouteTables | Where-Object { $_.RouteTableId -eq $rtId } | Select-Object -First 1
-        if ($assoc -and $assoc.Associations) {
-            $subId = ($assoc.Associations | Where-Object { $_.SubnetId } | Select-Object -First 1).SubnetId
-            if ($subId) { $pubSubnetId = $subId; break }
+    foreach ($rt in $rtResp.RouteTables) {
+        if ($rt.RouteTableId -notin $publicRtIds) { continue }
+        foreach ($a in $rt.Associations) {
+            if ($a.SubnetId) { $pubSubnetId = $a.SubnetId; break }
         }
+        if ($pubSubnetId) { break }
     }
     if (-not $pubSubnetId -and $subnetsResp -and $subnetsResp.Subnets -and $subnetsResp.Subnets.Count -gt 0) {
         $pubSubnetId = $subnetsResp.Subnets[0].SubnetId
