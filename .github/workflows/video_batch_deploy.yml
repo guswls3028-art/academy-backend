@@ -116,4 +116,4 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: One-Take Deploy (SSOT v3)
-        run: pwsh -File scripts_v3/deploy.ps1 -Env prod
+        run: pwsh -File scripts_v3/deploy.ps1 -Env prod -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"
