@@ -61,7 +61,7 @@
 
 | 파일 | 변경 내용 |
 |------|-----------|
-| **video_batch_deploy.yml** | ① concurrency group `video-batch-deploy` 추가 ② **guard-no-legacy-scripts** job 추가 (워크플로 내 `scripts/infra/*.ps1` 실행 검사, 있으면 실패) ③ deploy-infra에서 `batch_video_setup.ps1`, `eventbridge_deploy_video_scheduler.ps1` 제거 → **One-Take Deploy** 단일 단계: `pwsh -File scripts_v3/deploy.ps1 -Env prod` ④ paths에 `scripts_v3/**` 추가 |
+| **video_batch_deploy.yml** | deploy-infra: `pwsh -File scripts_v3/deploy.ps1 -Env prod -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"`. guard·concurrency·paths 동일. |
 
 ---
 
@@ -72,8 +72,12 @@
 ```powershell
 cd C:\academy
 .\scripts_v3\deploy.ps1 -Env prod
-# Netprobe 생략 시:
+# 이미지 URI 지정 (CI 연동 시):
+.\scripts_v3\deploy.ps1 -Env prod -EcrRepoUri "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:latest"
+# Netprobe 생략:
 .\scripts_v3\deploy.ps1 -Env prod -SkipNetprobe
+# 재생성/생성 비활성화 (Describe·Update만):
+.\scripts_v3\deploy.ps1 -Env prod -AllowRebuild $false
 ```
 
 ### CI
@@ -114,10 +118,4 @@ cd C:\academy
 - [x] EventBridge는 Rule 존재 시 put-targets만 최신화
 - [x] ASG는 Desired 유지 (update 시 0 덮어쓰기 금지, 문서·스크립트 반영)
 - [x] Preflight 실패 시 즉시 중단
-- [x] Netprobe: Ops Queue 테스트 job → SUCCEEDED 확인
-- [x] Evidence 표: Batch CE/Queue/JobDef, EventBridge, ASG, API, Netprobe, **imageDigest** 포함
-- [x] CI는 scripts_v3/deploy.ps1만 호출, 레거시 denylist 가드 있음
-
----
-
-**이상으로 V3 SSOT 확정 및 구현을 마쳤습니다.**
+- [x] Netprobe: Ops Queue 테스트 jo
