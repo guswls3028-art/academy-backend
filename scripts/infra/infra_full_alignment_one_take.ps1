@@ -160,11 +160,13 @@ foreach ($status in @("RUNNABLE", "RUNNING")) {
     foreach ($j in $list.jobSummaryList) {
         $jobId = $j.jobId
         $desc = ExecJson @("batch", "describe-jobs", "--jobs", $jobId, "--region", $Region, "--output", "json")
-        $jdName = $null
-        if ($desc -and $desc.jobs -and $desc.jobs[0].jobDefinition) { $jdName = ($desc.jobs[0].jobDefinition -split "/")[0] -replace "arn:aws:batch:$Region:\d+:job-definition/", ""; $jdName = ($desc.jobs[0].jobDefinition -split ":")[-1] }
-        if (-not $jdName -and $desc.jobs[0].jobDefinition) { $jdName = ($desc.jobs[0].jobDefinition -split "/")[-1] }
+        $jdName = ""
+        if ($desc -and $desc.jobs -and $desc.jobs[0].jobDefinition) {
+            $jdPart = ($desc.jobs[0].jobDefinition -split "/")[-1]
+            if ($jdPart) { $jdName = ($jdPart -split ":")[0] }
+        }
         $match = $false
-        foreach ($n in $jobDefNamesToClean) { if ($jdName -like "*$n*" -or $jdName -eq $n) { $match = $true; break } }
+        foreach ($n in $jobDefNamesToClean) { if ($jdName -eq $n) { $match = $true; break } }
         if ($match) {
             & aws batch terminate-job --job-id $jobId --reason "OneTake RUNNABLE cleanup" --region $Region 2>&1 | Out-Null
             Write-Host "  Terminated $jobId ($status)" -ForegroundColor Gray
