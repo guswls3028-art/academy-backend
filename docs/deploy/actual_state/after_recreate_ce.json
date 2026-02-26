@@ -1,26 +1,24 @@
 {
     "computeEnvironments":  [
                                 {
-                                    "computeEnvironmentName":  "academy-video-batch-ce",
-                                    "computeEnvironmentArn":  "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-video-batch-ce",
-                                    "ecsClusterArn":  "arn:aws:ecs:ap-northeast-2:809466760795:cluster/academy-video-batch-ce_Batch_69fdcda2-6a53-3a5c-8a4c-74bf8b226727",
+                                    "computeEnvironmentName":  "academy-video-batch-ce-final",
+                                    "computeEnvironmentArn":  "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-video-batch-ce-final",
+                                    "ecsClusterArn":  "arn:aws:ecs:ap-northeast-2:809466760795:cluster/academy-video-batch-ce-final_Batch_cc675caf-faf8-398b-a3f7-3aace425524a",
                                     "tags":  {
 
                                              },
                                     "type":  "MANAGED",
                                     "state":  "ENABLED",
-                                    "status":  "VALID",
-                                    "statusReason":  "ComputeEnvironment Healthy",
+                                    "status":  "INVALID",
+                                    "statusReason":  "CLIENT_ERROR - Your compute environment has been INVALIDATED and scaled down because none of the instances joined the underlying ECS Cluster. Common issues preventing instances joining are the following: VPC/Subnet configuration preventing communication to ECS, incorrect Instance Profile policy preventing authorization to ECS, or customized AMI or LaunchTemplate configurations affecting ECS agent.",
                                     "computeResources":  {
                                                              "type":  "EC2",
                                                              "allocationStrategy":  "BEST_FIT_PROGRESSIVE",
                                                              "minvCpus":  0,
                                                              "maxvCpus":  32,
-                                                             "desiredvCpus":  12,
+                                                             "desiredvCpus":  0,
                                                              "instanceTypes":  [
-                                                                                   "c6g.large",
-                                                                                   "c6g.xlarge",
-                                                                                   "c6g.2xlarge"
+                                                                                   "c6g.large"
                                                                                ],
                                                              "subnets":  [
                                                                              "subnet-049e711f41fdff71b",
@@ -43,7 +41,7 @@
                                                          },
                                     "serviceRole":  "arn:aws:iam::809466760795:role/academy-batch-service-role",
                                     "containerOrchestrationType":  "ECS",
-                                    "uuid":  "47c50414-ac3d-3518-bc03-33d9cdd7c2f2"
+                                    "uuid":  "0babe8ec-53ff-3962-a426-ef161c3b7dfc"
                                 }
                             ]
 }

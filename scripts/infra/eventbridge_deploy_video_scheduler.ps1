@@ -7,7 +7,10 @@
 param(
     [Parameter(Mandatory=$true)][string]$Region,
     [string]$OpsJobQueueName = "academy-video-ops-queue",
-    [string]$VideoCeNameForDiscovery = "academy-video-batch-ce-final"
+    [string]$VideoCeNameForDiscovery = "academy-video-batch-ce-final",
+    [string]$VpcId = "",
+    [string[]]$SubnetIds = @(),
+    [string]$SecurityGroupId = ""
 )
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
@@ -17,6 +20,9 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $InfraPath = Join-Path $RepoRoot "scripts\infra"
 $EventBridgePath = Join-Path $InfraPath "eventbridge"
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+. (Join-Path $InfraPath "eventbridge_video_rule_names.ps1")
+$ReconcileRuleName = $script:ReconcileRuleName
+$ScanStuckRuleName = $script:ScanStuckRuleName
 
 $RequiredOpsJobDefs = @("academy-video-ops-reconcile", "academy-video-ops-scanstuck")
 
@@ -53,12 +59,14 @@ if (-not $jqResp -or -not $jqResp.jobQueues -or $jqResp.jobQueues.Count -eq 0) {
         Write-Host "FAIL: batch_ops_setup.ps1 not found at $batchOpsPath" -ForegroundColor Red
         exit 1
     }
-    if (-not $VideoCeNameForDiscovery) {
-        throw "VideoCeNameForDiscovery is required when Ops queue is missing."
+    if ($VpcId -and $SubnetIds.Count -gt 0 -and $SecurityGroupId) {
+        & $batchOpsPath -Region $Region -VpcId $VpcId -SubnetIds $SubnetIds -SecurityGroupId $SecurityGroupId
+    } else {
+        if (-not $VideoCeNameForDiscovery) {
+            throw "VideoCeNameForDiscovery is required when Ops queue is missing and VpcId/SubnetIds/SecurityGroupId not provided."
+        }
+        & $batchOpsPath -Region $Region -VideoCeNameForDiscovery $VideoCeNameForDiscovery
     }
-    & $batchOpsPath `
-        -Region $Region `
-        -VideoCeNameForDiscovery $VideoCeNameForDiscovery
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FAIL: batch_ops_setup.ps1 exited with $LASTEXITCODE" -ForegroundColor Red
         exit 1
@@ -100,8 +108,7 @@ if (Test-Path $policyEventsBatch) {
 $EventsRoleArn = (ExecJson @("iam", "get-role", "--role-name", $EventsRoleName, "--output", "json")).Role.Arn
 if (-not $EventsRoleArn) { Write-Host "FAIL: EventBridge role $EventsRoleName not found." -ForegroundColor Red; exit 1 }
 
-# Reconcile rule + Batch target
-$ReconcileRuleName = "academy-reconcile-video-jobs"
+# Reconcile rule + Batch target (rate 15 minutes fixed; do not change to 5)
 Write-Host "[1] EventBridge rule: $ReconcileRuleName (rate 15 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
 Invoke-Aws -ArgsArray @("events", "put-rule", "--name", $ReconcileRuleName, "--schedule-expression", "rate(15 minutes)", "--state", "ENABLED", "--description", "Trigger reconcile_batch_video_jobs via Batch SubmitJob (single-flight)", "--region", $Region) -ErrorMessage "events put-rule reconcile failed"
 $reconcileTargetPath = Join-Path $EventBridgePath "reconcile_to_batch_target.json"
@@ -135,8 +142,7 @@ if ($t0.Arn -ne $JobQueueArn) {
     exit 1
 }
 
-# Scan-stuck rule + Batch target
-$ScanStuckRuleName = "academy-video-scan-stuck-rate"
+# Scan-stuck rule + Batch target (rate 5 minutes; name SSOT: academy-video-scan-stuck-rate)
 Write-Host "[2] EventBridge rule: $ScanStuckRuleName (rate 5 minutes) -> Batch target = $OpsJobQueueName (put-targets)" -ForegroundColor Cyan
 Invoke-Aws -ArgsArray @("events", "put-rule", "--name", $ScanStuckRuleName, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--description", "Trigger scan_stuck_video_jobs via Batch SubmitJob", "--region", $Region) -ErrorMessage "events put-rule scan-stuck failed"
 $scanstuckTargetPath = Join-Path $EventBridgePath "scan_stuck_to_batch_target.json"

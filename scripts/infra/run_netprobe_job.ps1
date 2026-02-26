@@ -1,12 +1,15 @@
 # ==============================================================================
 # Submit netprobe job to Ops queue, poll until SUCCEEDED/FAILED, print logStreamName and last ~200 log lines.
+# On timeout: outputs Evidence E (describe-jobs statusReason/container.reason) and clear failure message.
 # Usage: .\scripts\infra\run_netprobe_job.ps1 -Region ap-northeast-2 -JobQueueName academy-video-ops-queue
 # ==============================================================================
 
 param(
     [string]$Region = "ap-northeast-2",
     [string]$JobQueueName = "academy-video-ops-queue",
-    [string]$JobDefName = "academy-video-ops-netprobe"
+    [string]$JobDefName = "academy-video-ops-netprobe",
+    [string]$JobIdOutFile = "",
+    [int]$RunnableFailSeconds = 180
 )
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 
@@ -26,7 +29,6 @@ if ($exitCode -ne 0) {
     if ($submitOut) { Write-Host ($submitOut | Out-String) -ForegroundColor Gray }
     exit 1
 }
-# stderr may be merged; use full output as JSON (AWS CLI often returns pretty-printed multi-line)
 $jsonStr = ($submitOut | Out-String).Trim()
 $submit = $null
 try { $submit = $jsonStr | ConvertFrom-Json } catch {}
@@ -36,7 +38,18 @@ if (-not $submit -or -not $submit.jobId) {
     exit 1
 }
 $jobId = $submit.jobId
+if ($JobIdOutFile) { [System.IO.File]::WriteAllText($JobIdOutFile, $jobId, [System.Text.UTF8Encoding]::new($false)) }
 Write-Host "Submitted jobId=$jobId" -ForegroundColor Cyan
+
+function Get-DescribeJobsEvidence {
+    param([string]$Jid, [string]$Reg)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = aws batch describe-jobs --jobs $Jid --region $Reg --output json 2>&1
+    $ErrorActionPreference = $prev
+    if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
+    try { return ($out | Out-String).Trim() | ConvertFrom-Json } catch { return $null }
+}
 
 $maxWait = 300
 $elapsed = 0
@@ -57,6 +70,13 @@ while ($elapsed -lt $maxWait) {
     $job = $desc.jobs[0]
     $status = $job.status
     Write-Host "  status=$status" -ForegroundColor Gray
+    if ($status -eq "RUNNABLE" -and $elapsed -ge $RunnableFailSeconds) {
+        Write-Host "`n=== Evidence E (Netprobe job describe-jobs) ===" -ForegroundColor Cyan
+        Write-Host "  jobId=$jobId status=$status statusReason=$($job.statusReason)" -ForegroundColor Gray
+        if ($job.container) { Write-Host "  container.reason=$($job.container.reason) exitCode=$($job.container.exitCode)" -ForegroundColor Gray }
+        Write-Host "`nNetprobe stuck RUNNABLE ($RunnableFailSeconds)s: no ECS capacity or no outbound. Check Ops CE subnets (NAT/VPCE), Batch SG egress." -ForegroundColor Red
+        exit 1
+    }
     if ($status -eq "SUCCEEDED") {
         $cont = $job.container
         $logStream = $cont.logStreamName
@@ -84,5 +104,18 @@ while ($elapsed -lt $maxWait) {
     Start-Sleep -Seconds 10
     $elapsed += 10
 }
-Write-Host "Timeout waiting for job." -ForegroundColor Red
+
+# Timeout: Evidence E + clear error message
+Write-Host "`n=== Evidence E (Netprobe job describe-jobs) ===" -ForegroundColor Cyan
+$ev = Get-DescribeJobsEvidence -Jid $jobId -Reg $Region
+if ($ev -and $ev.jobs -and $ev.jobs.Count -gt 0) {
+    $j = $ev.jobs[0]
+    Write-Host "  jobId=$jobId status=$($j.status) statusReason=$($j.statusReason)" -ForegroundColor Gray
+    if ($j.container) {
+        Write-Host "  container.reason=$($j.container.reason) exitCode=$($j.container.exitCode)" -ForegroundColor Gray
+    }
+} else {
+    Write-Host "  describe-jobs failed or empty for jobId=$jobId" -ForegroundColor Yellow
+}
+Write-Host "`nNetprobe stuck RUNNABLE: likely no ECS container instances / no outbound network from subnets. Check Ops CE subnets have NAT Gateway or IGW outbound (or required VPC Endpoints). Ensure Batch SG egress allows 0.0.0.0/0." -ForegroundColor Red
 exit 1

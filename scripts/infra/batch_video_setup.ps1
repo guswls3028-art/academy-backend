@@ -199,6 +199,37 @@ $ceObj = $ce.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq 
 if (-not $ceObj) {
     Write-Host "  Creating compute environment" -ForegroundColor Yellow
     aws batch create-compute-environment --cli-input-json $ceFileUri --region $Region
+} elseif ($ceObj.status -eq "INVALID") {
+    Write-Host "  Compute environment exists but INVALID; disabling, detaching queue, deleting, recreating (c6g.large)." -ForegroundColor Yellow
+    $errPrev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $jqRaw = aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output json 2>&1
+        $jq = $null; if ($LASTEXITCODE -eq 0 -and $jqRaw) { try { $jq = $jqRaw | ConvertFrom-Json } catch {} }
+        $qObj = $jq.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName } | Select-Object -First 1
+        if ($qObj -and $qObj.state -eq "ENABLED") {
+            aws batch update-job-queue --job-queue $JobQueueName --state DISABLED --region $Region 2>&1 | Out-Null
+            $waitQ = 0; while ($waitQ -lt 90) { Start-Sleep -Seconds 5; $waitQ += 5; $jq2 = (aws batch describe-job-queues --job-queues $JobQueueName --region $Region --output json 2>&1) | ConvertFrom-Json; $s = ($jq2.jobQueues | Where-Object { $_.jobQueueName -eq $JobQueueName }).state; if ($s -eq "DISABLED") { break } }
+        }
+        aws batch update-compute-environment --compute-environment $ComputeEnvName --state DISABLED --region $Region 2>&1 | Out-Null
+        $waitCe = 0; while ($waitCe -lt 120) { Start-Sleep -Seconds 10; $waitCe += 10; $ceD = ExecJson "aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output json 2>&1"; $ceO = $ceD.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName }; if ($ceO.state -eq "DISABLED") { break } }
+        aws batch delete-compute-environment --compute-environment $ComputeEnvName --region $Region 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Host "  WARN: delete-compute-environment exit $LASTEXITCODE (CE may still be draining). Waiting..." -ForegroundColor Yellow }
+        $waitDel = 0; while ($waitDel -lt 120) { Start-Sleep -Seconds 10; $waitDel += 10; $ceL = ExecJson "aws batch describe-compute-environments --compute-environments $ComputeEnvName --region $Region --output json 2>&1"; if (-not $ceL.computeEnvironments -or ($ceL.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ComputeEnvName }).Count -eq 0) { break } }
+        $ceContent = Get-Content $ceJsonPath -Raw
+        $ceContent = $ceContent -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $ComputeEnvName
+        $ceContent = $ceContent -replace "PLACEHOLDER_SERVICE_ROLE_ARN", $serviceRoleArn
+        $ceContent = $ceContent -replace "PLACEHOLDER_INSTANCE_PROFILE_ARN", $instanceProfileArn
+        $ceContent = $ceContent -replace "PLACEHOLDER_SECURITY_GROUP_ID", $SecurityGroupId
+        $ceContent = $ceContent -replace '"PLACEHOLDER_SUBNET_1"', $subnetArr
+        $ceContent = $ceContent -replace "32", $MaxVcpus
+        if ($ceContent -notmatch '"instanceTypes"\s*:\s*\[.*c6g\.large') { $ceContent = $ceContent -replace '"instanceTypes"\s*:\s*\[[^\]]*\]', '"instanceTypes":["c6g.large"]' }
+        [System.IO.File]::WriteAllText($ceFile, $ceContent, $utf8NoBom)
+        aws batch create-compute-environment --cli-input-json $ceFileUri --region $Region 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Host "  FAIL: create-compute-environment after INVALID recreate." -ForegroundColor Red; Remove-Item $ceFile -Force -ErrorAction SilentlyContinue; exit 1 }
+    } finally {
+        $ErrorActionPreference = $errPrev
+    }
 } else {
     Write-Host "  Compute environment exists; skipping update (use console if instanceTypes must change)." -ForegroundColor Gray
 }

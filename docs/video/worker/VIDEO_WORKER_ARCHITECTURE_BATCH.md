@@ -1,6 +1,7 @@
 # Video Worker Architecture (AWS Batch)
 
-> **현행 인프라 기준.** Video 인코딩 = Batch 전용. SQS/ASG 경로 없음.
+> **현행 인프라 기준.** Video 인코딩 = Batch 전용. SQS/ASG 경로 없음.  
+> **인프라 스펙·리소스 이름·성공 조건:** [Video Worker 인프라 SSOT v1.1](../deploy/VIDEO_WORKER_INFRA_SSOT_V1.md) (docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md)
 
 ## 개요
 
@@ -79,7 +80,7 @@ Batch 컨테이너 시작
 | Retry 판단 | Django scan_stuck_video_jobs |
 | Retry 실행 | submit_batch_job |
 | 중복 실행 방지 | READY idempotency guard |
-| Batch retry | 비활성화 (retryStrategy.attempts=1) |
+| Batch retry | 비활성화 (retryStrategy.attempts=1, SSOT v1.1 §3) |
 
 ## delete_r2 (R2 비동기 삭제)
 
@@ -90,10 +91,10 @@ Batch 컨테이너 시작
 
 | 항목 | 스크립트/경로 |
 |------|---------------|
-| 전체 설정 (권장) | `scripts/infra/batch_video_setup_full.ps1` |
+| **SSOT (스펙·이름·성공 조건)** | [docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](../../deploy/VIDEO_WORKER_INFRA_SSOT_V1.md) |
+| 원테이크 (권장) | `scripts/infra/video_worker_infra_one_take.ps1` |
 | 개별 설정 | `scripts/infra/batch_video_setup.ps1` |
-| retryStrategy 검증 | `scripts/infra/batch_video_verify_and_register.ps1` |
-| IAM | `scripts/infra/iam/` (trust_*, policy_video_job_role.json) |
+| IAM | `scripts/infra/iam/` |
 | Batch JSON | `scripts/infra/batch/` (video_compute_env, job_queue, job_definition) |
 
 ## 환경 변수 (API)
@@ -113,8 +114,7 @@ Batch 컨테이너 시작
 
 ## 더 보기
 
+- **인프라 SSOT (프로덕션 기준):** [docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](../../deploy/VIDEO_WORKER_INFRA_SSOT_V1.md)
+- **실행 순서:** [docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md](../../deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md)
 - **워커 패키지 설명**: `apps/worker/video_worker/README.md`
-- **스케일링/레거시 구분**: `docs/video/worker/VIDEO_WORKER_SCALING_SSOT.md`
-- **프로덕션 체크리스트·로드맵**: `docs/video/batch/VIDEO_BATCH_PRODUCTION_MINIMUM_CHECKLIST_AND_ROADMAP.md`
-- **Spot/인프라 안전성 증거**: `docs/video/batch/VIDEO_BATCH_SPOT_AND_INFRA_SAFETY_EVIDENCE_REPORT.md`
-- **서비스 런칭 설계(GPT용)**: `docs/video/batch/VIDEO_BATCH_SERVICE_LAUNCH_DESIGN_FOR_GPT.md`
+- **스케일링/레거시 구분**: [VIDEO_WORKER_SCALING_SSOT.md](VIDEO_WORKER_SCALING_SSOT.md)

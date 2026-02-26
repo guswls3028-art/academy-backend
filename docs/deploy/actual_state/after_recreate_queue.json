@@ -10,7 +10,7 @@
                           "computeEnvironmentOrder":  [
                                                           {
                                                               "order":  1,
-                                                              "computeEnvironment":  "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-video-batch-ce"
+                                                              "computeEnvironment":  "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-video-batch-ce-final"
                                                           }
                                                       ],
                           "serviceEnvironmentOrder":  [

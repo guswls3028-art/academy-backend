@@ -1,5 +1,7 @@
 # 1) 검색 결과 인덱스 (파일 경로 목록)
 
+**Video 인프라 스펙·리소스 이름·성공 조건의 최종 SSOT:** [VIDEO_WORKER_INFRA_SSOT_V1.md](VIDEO_WORKER_INFRA_SSOT_V1.md)
+
 ## academy-video-job-def / jobDefinition / revision / vcpus / memory / 3072 / c6g / instanceTypes
 - `docs/deploy/VIDEO_BATCH_PRODUCTION_FIX_FINAL.md`
 - `docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md`

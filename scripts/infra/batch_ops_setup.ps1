@@ -15,7 +15,7 @@ param(
     [string]$SecurityGroupId = "",
     [string]$ComputeEnvName = "academy-video-ops-ce",
     [string]$JobQueueName = "academy-video-ops-queue",
-    [string]$VideoCeNameForDiscovery = "academy-video-batch-ce"
+    [string]$VideoCeNameForDiscovery = "academy-video-batch-ce-final"
 )
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 
@@ -69,12 +69,26 @@ Write-Host "== Ops Batch Setup (academy-video-ops-ce / academy-video-ops-queue) 
 
 # Resolve VpcId, SubnetIds, SecurityGroupId from existing video CE if not provided
 # Tries VideoCeNameForDiscovery first (e.g. academy-video-batch-ce-final), then academy-video-batch-ce.
+# Then filters to "working" subnets only (NAT/IGW outbound or full VPCE set).
 if (-not $VpcId -or $SubnetIds.Count -eq 0 -or -not $SecurityGroupId) {
     $videoCeObj = $null
     foreach ($ceName in @($VideoCeNameForDiscovery, "academy-video-batch-ce")) {
         if ([string]::IsNullOrWhiteSpace($ceName)) { continue }
         $videoCe = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $ceName, "--region", $Region, "--output", "json")
+        if (-not $videoCe -or -not $videoCe.computeEnvironments) { continue }
         $videoCeObj = $videoCe.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ceName } | Select-Object -First 1
+        if (-not $videoCeObj) { continue }
+        if ($videoCeObj.status -eq "VALID") { break }
+        $wait = 0
+        while ($wait -lt 90 -and $videoCeObj.status -ne "VALID") {
+            Start-Sleep -Seconds 5
+            $wait += 5
+            $videoCe = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $ceName, "--region", $Region, "--output", "json")
+            if ($videoCe -and $videoCe.computeEnvironments) {
+                $videoCeObj = $videoCe.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $ceName } | Select-Object -First 1
+            }
+            if (-not $videoCeObj -or $videoCeObj.status -eq "INVALID") { break }
+        }
         if ($videoCeObj -and $videoCeObj.status -eq "VALID") { break }
     }
     if (-not $videoCeObj -or $videoCeObj.status -ne "VALID") {
@@ -89,12 +103,76 @@ if (-not $VpcId -or $SubnetIds.Count -eq 0 -or -not $SecurityGroupId) {
         if ($subResp.Subnets) { $VpcId = $subResp.Subnets[0].VpcId }
     }
 }
+
+# Subnet selection: only use subnets with working outbound (NAT/IGW or full VPCE)
+function Test-SubnetHasOutbound {
+    param([string]$SubId, [string]$Reg)
+    $rt = ExecJson @("ec2", "describe-route-tables", "--filters", "Name=association.subnet-id,Values=$SubId", "--region", $Reg, "--output", "json")
+    if (-not $rt -or -not $rt.RouteTables -or $rt.RouteTables.Count -eq 0) { return $false }
+    $routes = $rt.RouteTables[0].Routes
+    foreach ($r in $routes) {
+        if ($r.DestinationCidrBlock -eq "0.0.0.0/0" -and $r.GatewayId) {
+            if ($r.GatewayId.StartsWith("nat-") -or $r.GatewayId.StartsWith("igw-")) { return $true }
+        }
+    }
+    return $false
+}
+function Test-VpcHasRequiredVpce {
+    param([string]$Vpc, [string]$Reg)
+    $vpce = ExecJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$Vpc", "--region", $Reg, "--output", "json")
+    if (-not $vpce -or -not $vpce.VpcEndpoints) { return $false }
+    $serviceNames = $vpce.VpcEndpoints | ForEach-Object { $_.ServiceName }
+    $suffixes = @("ecr.api", "ecr.dkr", "ecs", "ecs-telemetry", "logs", "ssm", "ec2messages", "ssmmessages")
+    foreach ($suf in $suffixes) {
+        $has = $false
+        foreach ($sn in $serviceNames) {
+            if ($sn -and $sn.EndsWith($suf)) { $has = $true; break }
+        }
+        if (-not $has) { return $false }
+    }
+    return $true
+}
+
+$WorkingSubnetIds = @()
+foreach ($sid in $SubnetIds) {
+    if (Test-SubnetHasOutbound -SubId $sid -Reg $Region) { $WorkingSubnetIds += $sid }
+}
+if ($WorkingSubnetIds.Count -eq 0) {
+    if (Test-VpcHasRequiredVpce -Vpc $VpcId -Reg $Region) {
+        $WorkingSubnetIds = @($SubnetIds)
+        Write-Host "  No NAT/IGW outbound; using all subnets (VPCE set present)." -ForegroundColor Gray
+    } else {
+        Write-Host "FAIL: No subnet has 0.0.0.0/0 to NAT or IGW, and VPC does not have required VPC Endpoints (ecr.api, ecr.dkr, ecs, ecs-telemetry, logs, ssm, ec2messages, ssmmessages). Add NAT/IGW or create VPCEs." -ForegroundColor Red
+        exit 1
+    }
+} else {
+    $SubnetIds = @($WorkingSubnetIds)
+    Write-Host "  Using $($WorkingSubnetIds.Count) subnet(s) with outbound (NAT/IGW)." -ForegroundColor Gray
+}
+$SubnetIds = @($WorkingSubnetIds)
 if (-not $VpcId -or $SubnetIds.Count -eq 0 -or -not $SecurityGroupId) {
     Write-Host "FAIL: Could not resolve VpcId, SubnetIds, SecurityGroupId. Pass explicitly or ensure Video CE ($VideoCeNameForDiscovery / academy-video-batch-ce) exists." -ForegroundColor Red
     exit 1
 }
+# Ensure SG egress allows 0.0.0.0/0 (reuse Batch SG; add if missing)
+$sgDesc = ExecJson @("ec2", "describe-security-groups", "--group-ids", $SecurityGroupId, "--region", $Region, "--output", "json")
+$hasEgressAll = $false
+if ($sgDesc -and $sgDesc.SecurityGroups -and $sgDesc.SecurityGroups.Count -gt 0) {
+    $egress = $sgDesc.SecurityGroups[0].IpPermissionsEgress
+    foreach ($e in $egress) {
+        if ($e.IpProtocol -eq "-1" -or $e.IpProtocol -eq "all") {
+            $hasCidr = $e.IpRanges | Where-Object { $_.CidrIp -eq "0.0.0.0/0" }
+            if ($hasCidr) { $hasEgressAll = $true; break }
+        }
+    }
+}
+if (-not $hasEgressAll) {
+    Write-Host "  Adding egress 0.0.0.0/0 to SG $SecurityGroupId" -ForegroundColor Yellow
+    try { Invoke-Aws -ArgsArray @("ec2", "authorize-security-group-egress", "--group-id", $SecurityGroupId, "--protocol", "all", "--cidr", "0.0.0.0/0", "--region", $Region) -ErrorMessage "authorize-security-group-egress failed" } catch {
+    }
+}
 Write-Host "  VpcId=$VpcId SubnetIds=$($SubnetIds -join ',')" -ForegroundColor Gray
-Write-Host "  SecurityGroupId=$SecurityGroupId (from $($videoCeObj.computeEnvironmentName))" -ForegroundColor Gray
+Write-Host "  SecurityGroupId=$SecurityGroupId $(if ($videoCeObj) { "(from $($videoCeObj.computeEnvironmentName))" } else { "" })" -ForegroundColor Gray
 
 # IAM (same as video CE)
 $BatchServiceRoleName = "academy-batch-service-role"

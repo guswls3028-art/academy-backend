@@ -87,7 +87,9 @@ scripts/
 | **One-shot Video CE 정리** (꼬인 CE 정지 후 단일 final CE로 큐 고정) | `infra/one_shot_video_ce_final.ps1` |
 | **Video/Ops SSOT 검증** | `infra/verify_video_batch_ssot.ps1` |
 | **전체 감사 + 수정** | `infra/infra_one_take_full_audit.ps1` (-FixMode) |
-| **원테이크 순서** | `docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md` |
+| **원테이크 (구축+Netprobe+Audit)** | `infra/video_worker_infra_one_take.ps1` |
+| **원테이크 순서·스크립트** | [docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md](../docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md) |
+| **Video 인프라 SSOT (스펙·이름·성공 조건)** | [docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](../docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md) |
 | **EventBridge 규칙 상태·향후 조치** | `docs/deploy/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md` |
 
 ---
@@ -95,5 +97,6 @@ scripts/
 ## 관련 문서
 
 - [docs/README.md](../docs/README.md) — 문서 폴더 트리
-- [docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md](../docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md) — 인프라 원테이크 순서(SSOT)
+- [docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](../docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md) — Video 인프라 SSOT (프로덕션 기준)
+- [docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md](../docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md) — 인프라 원테이크 실행 순서
 - [docs/INFRA_VERIFICATION_SCRIPTS.md](../docs/INFRA_VERIFICATION_SCRIPTS.md) — 검증 스크립트 상세

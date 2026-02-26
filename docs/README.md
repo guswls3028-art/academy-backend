@@ -27,7 +27,8 @@ docs/
 │   └── API_ENV_*.md, LAMBDA_*.md, INTERNAL_*.md, …
 │
 ├── deploy/                    배포·재배포·검증·실제 상태
-│   ├── VIDEO_INFRA_ONE_TAKE_ORDER.md   Video/Ops 인프라 원테이크 순서(SSOT)
+│   ├── VIDEO_WORKER_INFRA_SSOT_V1.md   Video Worker 인프라 SSOT (프로덕션 기준, 단일 문서)
+│   ├── VIDEO_INFRA_ONE_TAKE_ORDER.md   Video/Ops 인프라 원테이크 실행 순서 (SSOT 참조)
 │   ├── EVENTBRIDGE_RULES_STATE_AND_FUTURE.md   규칙 비활성화 기록·향후 조치
 │   ├── actual_state/          스크립트 생성 실제 상태 JSON
 │   │   ├── batch_final_state.json
@@ -47,7 +48,8 @@ docs/
 
 | 목적 | 문서 |
 |------|------|
-| Video/Ops Batch 인프라 순서·역할 구분 | [deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md](deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md) |
+| **Video Worker 인프라 SSOT** (리소스 이름·스펙·성공 조건) | [deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](deploy/VIDEO_WORKER_INFRA_SSOT_V1.md) |
+| Video/Ops Batch 원테이크 실행 순서·스크립트 | [deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md](deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md) |
 | EventBridge 규칙 비활성화·재활성화·삭제·업로드 인프라 검토 | [deploy/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md](deploy/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md) |
 | 인프라 검증 스크립트 정리 | [INFRA_VERIFICATION_SCRIPTS.md](INFRA_VERIFICATION_SCRIPTS.md) |
 | 스크립트 폴더·용도 | [scripts/README.md](../scripts/README.md) |

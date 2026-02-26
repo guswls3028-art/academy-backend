@@ -39,8 +39,8 @@ param(
     [string]$ExpectedOpsQueueName = "academy-video-ops-queue",
     [string]$ExpectedVideoCEName = "academy-video-batch-ce",
     [string]$ExpectedOpsCEName = "academy-video-ops-ce",
-    [string]$ReconcileRuleName = "",
-    [string]$ScanStuckRuleName = "",
+    [string]$ReconcileRuleName = "academy-reconcile-video-jobs",
+    [string]$ScanStuckRuleName = "academy-video-scan-stuck-rate",
     [switch]$FixModeWithCleanup
 )
 
@@ -399,7 +399,7 @@ function Invoke-FixMode {
     if ($needEb -and (Test-Path -LiteralPath $ebPath)) {
         & $ebPath -Region $Region -OpsJobQueueName $ExpectedOpsQueueName
         if ($LASTEXITCODE -eq 0) {
-            [void]$script:FixesApplied.Add("eventbridge_deploy_video_scheduler.ps1: Rules/targets updated to rate(5 min), OpsQueue")
+            [void]$script:FixesApplied.Add("eventbridge_deploy_video_scheduler.ps1: Rules/targets updated (reconcile rate(15 min), scan_stuck rate(5 min))")
         }
     }
 
