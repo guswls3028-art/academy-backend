@@ -99,8 +99,7 @@ $s3GwExists = $epList -and $epList.VpcEndpoints -and $epList.VpcEndpoints.Count 
 if (-not $s3GwExists -and $FixMode) {
     $rtIdsForS3 = if ($privateRtIds.Count -gt 0) { $privateRtIds } else { $publicRtIds }
     if ($rtIdsForS3.Count -eq 0) { $rtIdsForS3 = @($rtResp.RouteTables[0].RouteTableId) }
-    $s3Args = @("ec2", "create-vpc-endpoint", "--vpc-id", $VpcId, "--vpc-endpoint-type", "Gateway", "--service-name", "com.amazonaws.$Region.s3", "--region", $Region)
-    foreach ($rid in $rtIdsForS3) { $s3Args += "--route-table-ids"; $s3Args += $rid }
+    $s3Args = @("ec2", "create-vpc-endpoint", "--vpc-id", $VpcId, "--vpc-endpoint-type", "Gateway", "--service-name", "com.amazonaws.$Region.s3", "--region", $Region, "--route-table-ids") + @($rtIdsForS3)
     & aws @s3Args 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail-OneTake "S3 Gateway Endpoint creation failed" "" }
     Write-Host "S3 Gateway Endpoint created" -ForegroundColor Green
