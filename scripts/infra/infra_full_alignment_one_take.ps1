@@ -17,6 +17,21 @@ param(
 )
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 $ErrorActionPreference = "Stop"
+
+# EcrRepoUri 사전 검증: 태그에 공백/None/비어있으면 즉시 FAIL
+$EcrRepoUri = $EcrRepoUri.Trim()
+if ($EcrRepoUri -match ':[^:]+$') {
+    $tagPart = $Matches[0].TrimStart(':')
+    $firstLine = ($tagPart -split "[\s`n]+")[0]
+    if ([string]::IsNullOrWhiteSpace($tagPart) -or $tagPart -match '\s' -or $firstLine -eq "None" -or $tagPart -eq "None") {
+        Write-Host "EcrRepoUri FAIL: tag must be a single non-empty value (no spaces, not None)." -ForegroundColor Red
+        Write-Host "  Got tag part: '$tagPart'" -ForegroundColor Gray
+        Write-Host "  Use: Get single tag from ECR (first line only). If None or empty, build/push image first." -ForegroundColor Gray
+        exit 1
+    }
+}
+if ($EcrRepoUri -match ':latest$') { Write-Host "EcrRepoUri FAIL: :latest forbidden." -ForegroundColor Red; exit 1 }
+
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $PreflightDir = Join-Path $RepoRoot "one_take_preflight_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
