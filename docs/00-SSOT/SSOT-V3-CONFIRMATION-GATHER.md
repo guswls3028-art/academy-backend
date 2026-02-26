@@ -96,19 +96,13 @@ cd C:\academy
 
 ## 6. 제한사항 및 권장 후속
 
-- **CE/Queue 최초 생성**  
-  - scripts_v3는 **기존 CE/Queue가 있을 때** Enable/Update만 수행.  
-  - CE가 없거나 INVALID로 삭제한 뒤에는 **수동으로** `scripts/infra/batch_video_setup.ps1`, `scripts/infra/batch_ops_setup.ps1` 1회 실행 후 다시 `scripts_v3/deploy.ps1` 실행 권장.
+- **Full Rebuild:** scripts_v3/deploy.ps1 단일 실행으로 CE/Queue/JobDef/EventBridge를 **빈 상태에서도 생성** 가능. **수동 bootstrap(scripts/infra/*.ps1)은 필요 없음.** INVALID CE는 삭제 후 동일 스크립트로 재생성까지 수행.
 
-- **JobDef 갱신**  
-  - 현재 deploy.ps1는 JobDefinition 신규 revision 등록을 하지 않음.  
-  - 이미지 변경 반영이 필요하면 기존처럼 `batch_video_setup.ps1` 1회 실행하거나, 추후 scripts_v3에 Ensure-JobDefinition(이미지/vcpu/memory drift 시 revision 등록) 추가 가능.
+- **JobDef:** deploy.ps1에서 Ensure-VideoJobDef, Ensure-OpsJobDefReconcile/ScanStuck/Netprobe로 drift 시 새 revision 등록. CI에서 -EcrRepoUri를 넘기면 해당 이미지로 revision 반영.
 
-- **CloudWatch 알람**  
-  - 워크플로에서는 제거됨. 필요 시 수동 또는 별도 job에서 `scripts/infra/cloudwatch_deploy_video_alarms.ps1` 실행.
+- **CloudWatch 알람:** 워크플로에서는 제거됨. 필요 시 수동 또는 별도 job에서 `scripts/infra/cloudwatch_deploy_video_alarms.ps1` 실행.
 
-- **env/prod.ps1 동기화**  
-  - params.yaml 변경 시 `scripts_v3/env/prod.ps1` 값을 동일하게 맞출 것.
+- **env/prod.ps1 동기화:** params.yaml 변경 시 `scripts_v3/env/prod.ps1` 값을 동일하게 맞출 것.
 
 ---
 
