@@ -1,7 +1,11 @@
 # ==============================================================================
 # 인프라 전체 정렬 원테이크 — SSOT v1.1 강제. 구축 + 검증 + 감사 PASS까지.
 # 부분 해결책 금지. 하나라도 실패하면 전체 FAIL + reason + evidence 출력.
-# Usage: .\scripts\infra\infra_full_alignment_one_take.ps1 -Region ap-northeast-2 -VpcId vpc-0831a2484f9b114c2 -EcrRepoUri "<acct>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:<immutable-tag>" [-FixMode] [-EnableSchedulers]
+# Usage:
+#   .\scripts\infra\infra_full_alignment_one_take.ps1 -Region ap-northeast-2 -VpcId vpc-0831a2484f9b114c2 -EcrRepoUri "<acct>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:<immutable-tag>" -FixMode -EnableSchedulers
+#   $acct = (aws sts get-caller-identity --query Account --output text)
+#   $tag  = (aws ecr describe-images --repository-name academy-video-worker --region ap-northeast-2 --query "imageDetails[0].imageTags[0]" --output text)
+#   .\scripts\infra\infra_full_alignment_one_take.ps1 -Region ap-northeast-2 -VpcId vpc-0831a2484f9b114c2 -EcrRepoUri "$acct.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:$tag" -FixMode -EnableSchedulers
 # ==============================================================================
 param(
     [string]$Region = "ap-northeast-2",
