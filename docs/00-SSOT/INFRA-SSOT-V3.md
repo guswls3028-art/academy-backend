@@ -47,7 +47,7 @@
 | **VPC (prod)** | vpc-0831a2484f9b114c2 | `scripts/infra/discover_api_network.ps1` 또는 `docs/02-OPERATIONS/actual_state/api_instance.json` |
 | **Public Subnet** | (API/Build/Batch와 동일 VPC 내 0.0.0.0/0→IGW 서브넷) | `aws ec2 describe-route-tables --filters Name=vpc-id,Values=$VpcId` → IGW 연결된 서브넷 |
 | **Private Subnet** | 확인 필요(일부 문서에 subnet-049e711f41fdff71b 등) | describe-subnets, describe-route-tables. API가 Private이면 해당 서브넷. |
-| **Route/NAT/IGW** | Public 모델: IGW만. NAT 사용 안 함(원테이크 PUBLIC_V2 기준). | describe-internet-gateways, describe-route-tables |
+| **Route/NAT/IGW** | **Public Subnet + NAT + IGW 유지.** (SSOT v3 확정) Phase 2에서 VPC Endpoint 전환 검토. | describe-internet-gateways, describe-route-tables |
 | **VPC Endpoints** | Batch용: ECR, ECS, logs, SSM 등 필요 시 설정. | `scripts/infra/setup_video_batch_vpc_endpoints.ps1` 또는 describe-vpc-endpoints |
 | **Naming** | 리소스 이름은 아래 서비스별 표 준수. 태그 Project=academy 등 선택. | |
 
@@ -59,13 +59,14 @@
 
 | 리소스 | 이름/식별 | 비고 |
 |--------|-----------|------|
-| EC2 | Tag Name=academy-api (또는 Elastic IP로 연동) | describe-instances, describe-addresses |
-| Elastic IP | 15.165.147.157 (prod) | actual_state/api_instance.json |
-| API_BASE_URL | http://15.165.147.157:8000 | 트레일링 슬래시 없음 |
-| SSM Parameter | /academy/api/env | API 전용 env. REFERENCE·배포.md 참조. |
-| ALB/Target Group | **확인 필요.** 운영.md에 "ALB, Target Group /health" 언급. | `scripts/check_api_alb.ps1`, describe-load-balancers, describe-target-groups |
-| SG | API용 SG (Batch SG→API 8000 허용 등) | describe-security-groups (tag 또는 academy-api 인스턴스 연동) |
-| Logs/Alarms | (선택) CloudWatch 로그 그룹 | 확인 필요 |
+| **식별 방식** | **Elastic IP 고정** | SSOT: 단일 진실. 태그 drift 무관. |
+| Elastic IP | 15.165.147.157 | prod 공개 IP |
+| AllocationId | eipalloc-071ef2b5b5bec9428 | describe-addresses로 확인 |
+| InstanceId | i-0c8ae616abf345fd1 | EIP 연동 인스턴스 |
+| 컨테이너 이름 | academy-api | Docker 컨테이너. env 변경 후 **recreate 필수**(restart 금지). |
+| SSM Parameter | /academy/api/env | API 전용 env. |
+| ALB/Target Group | **없음** (prod) | API는 EC2 + EIP 직접 노출. describe-load-balancers 빈 결과. |
+| Health | GET /health → 200 | Evidence·Netprobe 전 API 상태 확인. |
 
 ### Build Server
 
