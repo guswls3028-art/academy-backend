@@ -1,6 +1,6 @@
 # Academy Backend — 참조 문서 (단일 SSOT)
 
-실제 코드·설정 기준만 기술. Cursor·개발 시 이 파일 + 루트 README + docs/배포.md 등만 보면 됨.
+실제 코드·설정 기준만 기술. Cursor·개발 시 이 파일 + 루트 README + docs/02-OPERATIONS/배포.md 등만 보면 됨.
 
 ---
 
@@ -45,7 +45,7 @@
 
 ## 4. 배포 요약
 
-**상세**: `docs/배포.md`. 리전 ap-northeast-2(서울).
+**상세**: `docs/02-OPERATIONS/배포.md`. 리전 ap-northeast-2(서울).
 
 - 순서: RDS → SQS → IAM → 보안그룹 → EC2 API(Messaging/Video/AI). Video 4GB+100GB EBS, /mnt/transcode.
 - Docker: docker/Dockerfile.base, docker/api/Dockerfile, docker/messaging-worker/, docker/video-worker/, docker/ai-worker-cpu/. ECR 푸시 후 EC2에서 pull, .env, migrate, health.
