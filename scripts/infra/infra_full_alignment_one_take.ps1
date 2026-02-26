@@ -4,7 +4,8 @@
 # Usage:
 #   .\scripts\infra\infra_full_alignment_one_take.ps1 -Region ap-northeast-2 -VpcId vpc-0831a2484f9b114c2 -EcrRepoUri "<acct>.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:<immutable-tag>" -FixMode -EnableSchedulers
 #   $acct = (aws sts get-caller-identity --query Account --output text)
-#   $tag  = (aws ecr describe-images --repository-name academy-video-worker --region ap-northeast-2 --query "imageDetails[0].imageTags[0]" --output text)
+#   $tag  = (aws ecr describe-images --repository-name academy-video-worker --region ap-northeast-2 --query "sort_by(imageDetails,& to_string(imagePushedAt))[-1].imageTags[0]" --output text 2>$null)
+#   $tag  = ($tag -split "`n")[0].Trim(); if (-not $tag -or $tag -eq "None") { Write-Host "No image in ECR. Build/push first." -ForegroundColor Red; exit 1 }
 #   .\scripts\infra\infra_full_alignment_one_take.ps1 -Region ap-northeast-2 -VpcId vpc-0831a2484f9b114c2 -EcrRepoUri "$acct.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:$tag" -FixMode -EnableSchedulers
 # ==============================================================================
 param(
