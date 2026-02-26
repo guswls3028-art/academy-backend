@@ -38,7 +38,7 @@ $apiInstances = Run-Aws "03_api_instances" @("ec2", "describe-instances", "--reg
 Write-Host "[3] API instances collected" -ForegroundColor Green
 
 # 4) Build EC2
-$buildInstances = Run-Aws "04_build_instances" @("ec2", "describe-instances", "--region", $Region, "--filters", "Name=tag:Name", "Values=*build*", "Name=instance-state-name", "Values=running,stopped", "--output", "json"); if ($buildInstances) { Save-Json "04_build_instances" $buildInstances }
+$buildInstances = Run-Aws "04_build_instances" @("ec2", "describe-instances", "--region", $Region, "--filters", "Name=tag:Name", "Values=academy-build-arm64", "Name=instance-state-name", "Values=running", "Name=instance-state-name", "Values=stopped", "--output", "json"); if (-not $buildInstances) { $buildInstances = Run-Aws "04_build_instances" @("ec2", "describe-instances", "--region", $Region, "--filters", "Name=tag:Name", "Values=academy-build-arm64", "--output", "json") }; if ($buildInstances) { Save-Json "04_build_instances" $buildInstances }
 Write-Host "[4] Build instances collected" -ForegroundColor Green
 
 # 5) Batch Video
