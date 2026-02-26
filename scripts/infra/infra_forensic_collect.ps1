@@ -108,52 +108,50 @@ if ($buildInstances) {
     } catch {}
 }
 
-# Report generator
+# Report generator (ASCII only to avoid encoding/parse issues)
 $reportPath = Join-Path $OutDir "REPORT.md"
-$sb = [System.Text.StringBuilder]::new()
-[void]$sb.AppendLine("# AWS 인프라 포렌식 보고서")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("Region: $Region  |  수집 시각: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  |  OutDir: $OutDir")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("---")
-[void]$sb.AppendLine("## 1. 네트워크 구조 요약")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("| 항목 | 증거 파일 |")
-[void]$sb.AppendLine("|------|------------|")
-[void]$sb.AppendLine("| VPC | 02_vpcs.json |")
-[void]$sb.AppendLine("| Subnets | 02_subnets.json |")
-[void]$sb.AppendLine("| Route Tables | 02_route_tables.json |")
-[void]$sb.AppendLine("| NAT Gateways | 02_nat_gateways.json |")
-[void]$sb.AppendLine("| Internet Gateways | 02_internet_gateways.json |")
-[void]$sb.AppendLine("| VPC Endpoints | 02_vpc_endpoints.json |")
-[void]$sb.AppendLine("| Security Groups | 02_security_groups.json |")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("## 2. 인터넷 경로 존재 여부 (API / Build / Worker)")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("- API: 03_api_instances.json → SubnetId → 02_route_tables.json / 02_nat_gateways.json 로 확인")
-[void]$sb.AppendLine("- Build: 04_build_instances.json, 04_build_subnet_route_tables.json 로 확인")
-[void]$sb.AppendLine("- Worker(Batch): 05_batch_compute_environments.json → subnets → 02_route_tables / 02_nat_gateways")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("## 3. SSOT 위반 체크 리스트")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("- Video CE: academy-video-batch-ce-final, state=ENABLED, status=VALID, instanceTypes=c6g.large 단일 → 05_batch_compute_environments.json")
-[void]$sb.AppendLine("- Video Queue: CE 1개만 → 05_batch_job_queues.json")
-[void]$sb.AppendLine("- JobDef: vcpus=2, memory=3072, retryStrategy.attempts=1 → 05_batch_job_definitions.json")
-[void]$sb.AppendLine("- EventBridge reconcile: rate(15 minutes), target=Ops Queue → 07_eventbridge_*.json")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("## 4. 잠재적 장애 포인트")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("- Build 서버: 04_build_instances.json + 04_build_subnet_route_tables.json → 0.0.0.0/0 → nat/igw 없으면 STS/ECR 타임아웃")
-[void]$sb.AppendLine("- Batch CE INVALID → 05_batch_compute_environments.json status/statusReason")
-[void]$sb.AppendLine("- ECS Container Instances 0개 + desiredvCpus>0 → RUNNABLE 정체")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("## 5. 재구성 필요 여부")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("위 JSON 파일 기준으로 2~4 항목 검토 후 판단. 모든 증거는 동일 폴더 내 JSON 원문 참고.")
-[void]$sb.AppendLine("")
-[void]$sb.AppendLine("---")
-[void]$sb.AppendLine("(모든 CLI 출력은 해당 디렉터리의 *.json 파일에 저장됨. 추측 없음.)")
-[System.IO.File]::WriteAllText($reportPath, $sb.ToString(), [System.Text.UTF8Encoding]::new($false))
+$reportLines = @(
+    "# AWS Infra Forensic Report",
+    "",
+    "Region: $Region  |  OutDir: $OutDir",
+    "",
+    "---",
+    "## 1. Network structure",
+    "",
+    "| Item | Evidence file |",
+    "|------|---------------|",
+    "| VPC | 02_vpcs.json |",
+    "| Subnets | 02_subnets.json |",
+    "| Route Tables | 02_route_tables.json |",
+    "| NAT Gateways | 02_nat_gateways.json |",
+    "| Internet Gateways | 02_internet_gateways.json |",
+    "| VPC Endpoints | 02_vpc_endpoints.json |",
+    "| Security Groups | 02_security_groups.json |",
+    "",
+    "## 2. Internet path (API / Build / Worker)",
+    "",
+    "- API: 03_api_instances.json -> SubnetId -> 02_route_tables / 02_nat_gateways",
+    "- Build: 04_build_instances.json, 04_build_subnet_route_tables.json",
+    "- Worker: 05_batch_compute_environments.json -> subnets -> 02_route_tables",
+    "",
+    "## 3. SSOT check list",
+    "",
+    "- Video CE: academy-video-batch-ce-final, state ENABLED, status VALID, instanceTypes c6g.large only -> 05_batch_compute_environments.json",
+    "- Video Queue: single CE only -> 05_batch_job_queues.json",
+    "- JobDef: vcpus 2, memory 3072, retryStrategy attempts 1 -> 05_batch_job_definitions.json",
+    "- EventBridge reconcile: rate 15 minutes, target Ops Queue -> 07_eventbridge_*.json",
+    "",
+    "## 4. Potential failure points",
+    "",
+    "- Build: no 0.0.0.0/0 to nat or igw -> STS/ECR timeout",
+    "- Batch CE INVALID -> 05_batch_compute_environments.json statusReason",
+    "- ECS container instances 0 with desiredvCpus gt 0 -> RUNNABLE stuck",
+    "",
+    "## 5. Rebuild needed?",
+    "",
+    "Review JSON in this folder for sections 2-4."
+)
+[System.IO.File]::WriteAllText($reportPath, ($reportLines -join "`r`n"), [System.Text.UTF8Encoding]::new($false))
 
 Write-Host "`nDone. Report: $reportPath" -ForegroundColor Green
 Write-Host "All JSON evidence: $OutDir" -ForegroundColor Gray
