@@ -114,7 +114,7 @@ Batch 컨테이너 시작
 
 ## 더 보기
 
-- **인프라 SSOT (프로덕션 기준):** [docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](../../deploy/VIDEO_WORKER_INFRA_SSOT_V1.md)
-- **실행 순서:** [docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md](../../deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md)
+- **인프라 SSOT (프로덕션 기준):** [00-SSOT/RESOURCE-INVENTORY.md](../../00-SSOT/RESOURCE-INVENTORY.md)
+- **실행 순서:** [00-SSOT/RUNBOOK.md](../../00-SSOT/RUNBOOK.md), [02-OPERATIONS/video_batch_production_runbook.md](../../02-OPERATIONS/video_batch_production_runbook.md)
 - **워커 패키지 설명**: `apps/worker/video_worker/README.md`
 - **스케일링/레거시 구분**: [VIDEO_WORKER_SCALING_SSOT.md](VIDEO_WORKER_SCALING_SSOT.md)
