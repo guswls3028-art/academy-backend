@@ -14,7 +14,13 @@ $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
 function Save-Json { param([string]$Name, [string]$Json) $path = Join-Path $OutDir "$Name.json"; [System.IO.File]::WriteAllText($path, $Json, [System.Text.UTF8Encoding]::new($false)) }
 function Run-Aws {
     param([string]$Name, [string[]]$Args)
-    $raw = & aws @Args 2>&1
+    $prevErr = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $raw = & aws @Args 2>&1
+    } finally {
+        $ErrorActionPreference = $prevErr
+    }
     $out = ($raw | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) {
         $esc = $out -replace '\\', '\\\\' -replace '"', '\"' -replace "`r", '' -replace "`n", '\n'
