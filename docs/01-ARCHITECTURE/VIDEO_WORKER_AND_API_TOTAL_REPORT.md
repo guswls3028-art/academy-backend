@@ -1,7 +1,7 @@
 # Video 워커 및 API 서버 총괄 보고서
 
 이 문서는 HakwonPlus 프로젝트의 **Video 워커(AWS Batch)** 와 **API 서버** 에 대한 코드·인프라 총괄 설명입니다.  
-**Video 인프라 리소스 이름·스펙·성공 조건의 단일 기준(SSOT)은 [docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](deploy/VIDEO_WORKER_INFRA_SSOT_V1.md) 이다.**  
+**Video 인프라 리소스 이름·스펙·성공 조건의 단일 기준(SSOT)은 [00-SSOT/RESOURCE-INVENTORY.md](../00-SSOT/RESOURCE-INVENTORY.md) 및 [00-SSOT/ONE-TAKE-DEPLOYMENT.md](../00-SSOT/ONE-TAKE-DEPLOYMENT.md) 이다.**  
 (외부 채팅에서 사용된 리소스 이름과 실제 코드/인프라가 다를 수 있으므로, 여기서는 **저장소와 SSOT 기준**으로만 기술합니다.)
 
 ---
@@ -18,9 +18,9 @@
 | **EventBridge (reconcile)** | `academy-reconcile-video-jobs` | rate(15 minutes) → Ops Queue. Redis lock 사용. |
 | **EventBridge (scan-stuck)** | `academy-video-scan-stuck-rate` | rate(5 minutes) → Ops Queue. |
 
-- **전체 스펙·성공 조건:** [docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](deploy/VIDEO_WORKER_INFRA_SSOT_V1.md)  
-- 최종 상태 파일: `docs/deploy/actual_state/batch_final_state.json`  
-- 실행 순서: [docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md](deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md)
+- **전체 스펙·성공 조건:** [00-SSOT/RESOURCE-INVENTORY.md](../00-SSOT/RESOURCE-INVENTORY.md)
+- 최종 상태 파일: `docs/02-OPERATIONS/actual_state/batch_final_state.json`
+- 실행 순서: [00-SSOT/RUNBOOK.md](../00-SSOT/RUNBOOK.md), [02-OPERATIONS/video_batch_production_runbook.md](../02-OPERATIONS/video_batch_production_runbook.md)
 
 ---
 
