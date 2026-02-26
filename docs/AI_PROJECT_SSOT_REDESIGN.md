@@ -9,6 +9,8 @@
 
 ## 1.1 전체 문서 트리 (요약)
 
+**전체 트리 출력:** 저장소 루트에서 `Get-ChildItem -Path docs -Recurse -Name | Sort-Object` 실행.
+
 ```
 docs/
 ├── README.md
