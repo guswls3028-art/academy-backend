@@ -100,7 +100,7 @@
 | Ops Queue | academy-video-ops-queue | 동일 | |
 | SSM Parameter | /academy/workers/env | 동일(값만 env별) | JSON, SSM_JSON_SCHEMA 준수 |
 
-환경별 차이는 **SSOT-RESOURCE-INVENTORY.md**에만 열거하며, 스크립트는 `--env`(또는 동등)로 구분할 수 있도록 확장 권장.
+환경별 차이는 **RESOURCE-INVENTORY.md**에만 열거하며, 스크립트는 `--env`(또는 동등)로 구분할 수 있도록 확장 권장.
 
 ---
 
