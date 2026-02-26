@@ -1,0 +1,74 @@
+{
+    "repositories": [
+        {
+            "repositoryArn": "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-api",
+            "registryId": "809466760795",
+            "repositoryName": "academy-api",
+            "repositoryUri": "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api",
+            "createdAt": "2026-02-15T11:57:00.885000+09:00",
+            "imageTagMutability": "MUTABLE",
+            "imageScanningConfiguration": {
+                "scanOnPush": false
+            },
+            "encryptionConfiguration": {
+                "encryptionType": "AES256"
+            }
+        },
+        {
+            "repositoryArn": "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-messaging-worker",
+            "registryId": "809466760795",
+            "repositoryName": "academy-messaging-worker",
+            "repositoryUri": "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-messaging-worker",
+            "createdAt": "2026-02-15T18:45:58.258000+09:00",
+            "imageTagMutability": "MUTABLE",
+            "imageScanningConfiguration": {
+                "scanOnPush": false
+            },
+            "encryptionConfiguration": {
+                "encryptionType": "AES256"
+            }
+        },
+        {
+            "repositoryArn": "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-ai-worker-cpu",
+            "registryId": "809466760795",
+            "repositoryName": "academy-ai-worker-cpu",
+            "repositoryUri": "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-ai-worker-cpu",
+            "createdAt": "2026-02-15T18:46:00.740000+09:00",
+            "imageTagMutability": "MUTABLE",
+            "imageScanningConfiguration": {
+                "scanOnPush": false
+            },
+            "encryptionConfiguration": {
+                "encryptionType": "AES256"
+            }
+        },
+        {
+            "repositoryArn": "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-video-worker",
+            "registryId": "809466760795",
+            "repositoryName": "academy-video-worker",
+            "repositoryUri": "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker",
+            "createdAt": "2026-02-15T18:46:03.213000+09:00",
+            "imageTagMutability": "MUTABLE",
+            "imageScanningConfiguration": {
+                "scanOnPush": false
+            },
+            "encryptionConfiguration": {
+                "encryptionType": "AES256"
+            }
+        },
+        {
+            "repositoryArn": "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-base",
+            "registryId": "809466760795",
+            "repositoryName": "academy-base",
+            "repositoryUri": "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-base",
+            "createdAt": "2026-02-15T21:40:34.786000+09:00",
+            "imageTagMutability": "MUTABLE",
+            "imageScanningConfiguration": {
+                "scanOnPush": false
+            },
+            "encryptionConfiguration": {
+                "encryptionType": "AES256"
+            }
+        }
+    ]
+}

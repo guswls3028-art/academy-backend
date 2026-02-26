@@ -1,0 +1,9 @@
+{
+    "Name": "academy-reconcile-video-jobs",
+    "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-reconcile-video-jobs",
+    "ScheduleExpression": "rate(15 minutes)",
+    "State": "ENABLED",
+    "Description": "Trigger reconcile_batch_video_jobs via Batch SubmitJob (single-flight)",
+    "EventBusName": "default",
+    "CreatedBy": "809466760795"
+}

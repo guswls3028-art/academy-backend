@@ -1,0 +1,13 @@
+{
+    "Targets": [
+        {
+            "Id": "1",
+            "Arn": "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-video-ops-queue",
+            "RoleArn": "arn:aws:iam::809466760795:role/academy-eventbridge-batch-video-role",
+            "BatchParameters": {
+                "JobDefinition": "academy-video-ops-scanstuck",
+                "JobName": "scanstuck-video-jobs"
+            }
+        }
+    ]
+}

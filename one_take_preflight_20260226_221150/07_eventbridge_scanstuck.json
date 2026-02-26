@@ -1,0 +1,9 @@
+{
+    "Name": "academy-video-scan-stuck-rate",
+    "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-video-scan-stuck-rate",
+    "ScheduleExpression": "rate(5 minutes)",
+    "State": "ENABLED",
+    "Description": "Trigger scan_stuck_video_jobs via Batch SubmitJob",
+    "EventBusName": "default",
+    "CreatedBy": "809466760795"
+}
