@@ -2,7 +2,33 @@
 
 **Region:** ap-northeast-2  
 **수집일:** forensic_20260226  
-**용도:** 인프라 상태 전체 전달 — 아래 내용 전체 선택 후 복사하여 전달.
+**용도:** 인프라 상태 전체 전달.
+
+---
+
+## 전달 방법 (어캐 함)
+
+### 1) 이 문서만 복사해서 보낼 때
+- **INFRA_STATE_FULL.md** 파일 열기 → **Ctrl+A** → **Ctrl+C** → 전달할 곳(메일/채팅/문서)에 붙여넣기.
+- REPORT + 01_caller_identity + 02_vpcs/subnets/route_tables/nat/igw 가 한 번에 전달됨.
+
+### 2) 02_vpc_endpoints.json, 02_security_groups.json 도 함께 보낼 때
+- **같은 폴더** `C:\academy\forensic_20260226` 에 있는 두 파일을 **첨부**해서 보내면 됨.
+  - 메일: `02_vpc_endpoints.json`, `02_security_groups.json` 첨부
+  - 슬랙/팀스: 파일 업로드
+- 또는: 두 JSON 파일을 열어서 내용 복사한 뒤, 이 문서 맨 아래에 "02_vpc_endpoints.json 내용:", "02_security_groups.json 내용:" 섹션 만들어 붙여넣어도 됨. 그러면 **문서 하나만** 보내면 됨.
+
+### 3) 03~09(Batch, EventBridge, ECR, IAM 등)까지 전부 보낼 때
+1. 터미널(PowerShell)에서 프로젝트 루트로 이동 후 실행:
+   ```powershell
+   cd C:\academy
+   .\scripts\infra\infra_forensic_collect.ps1 -Region ap-northeast-2 -OutDir "C:\academy\forensic_20260226"
+   ```
+2. 실행이 끝나면 **`C:\academy\forensic_20260226` 폴더 전체**를 ZIP으로 압축.
+3. **INFRA_STATE_FULL.md** + **압축한 ZIP** 을 전달.
+   → 받는 쪽에서 압축 풀면 01~09 모든 JSON + REPORT 확인 가능.
+
+**요약:** 문서만 보낼지, 02 두 개 첨부할지, 폴더 통째로 ZIP 할지 위에서 골라서 하면 됨.
 
 ---
 
