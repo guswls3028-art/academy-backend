@@ -1,45 +1,37 @@
-# docs — 문서 (폴더 트리)
+# docs — 문서 (SSOT 기준 구조)
 
-**진입점은 이 파일 하나.** 아래 트리만 보면 된다.
+**진입점은 이 파일 하나.** 루트에는 현재 유효한 문서만 두며, 과거/감사 문서는 `archive`, `03-REPORTS`로 격리한다.
 
 ```
 docs/
-├── README.md                 ← 지금 보고 있는 파일
-├── REFERENCE.md              개발·Cursor 참조 (Core, API, 규칙, 프론트 계약)
-├── 배포.md
-├── 운영.md
-├── 설계.md
-├── 10K_기준.md
-├── 30K_기준.md
+├── README.md                   ← 지금 보고 있는 파일
 │
-├── ai/                        AI/GPT 맥락 전달용
-│   └── AI_HANDOFF_CONTEXT.md
+├── 00-SSOT/                    현재 유효한 SSOT만
+│   ├── ONE-TAKE-DEPLOYMENT.md   원테이크 멱등성 배포 설계
+│   ├── RESOURCE-INVENTORY.md    리소스/이름/ARN/태그/환경별 값
+│   ├── IDEMPOTENCY-RULES.md     멱등성 규칙·Wait 루프
+│   ├── RUNBOOK.md               운영(배포·검증·장애·롤백·점검)
+│   └── CHANGELOG.md             문서 기준 변경 로그
 │
-├── video/
-│   ├── batch/                 Video Batch — 설계·검증·런칭·체크리스트
-│   │   └── VIDEO_BATCH_*.md, …
-│   ├── worker/                Video Worker — 아키텍처·스케일링·전환
-│   │   └── VIDEO_WORKER_*.md, …
-│   └── legacy/                레거시·과거 보고서 (Enterprise, SQS, B1, ASG 등)
-│       └── VIDEO_ENTERPRISE_*.md, B1_*.md, …
+├── 01-ARCHITECTURE/             설명·설계·기준 문서
+│   ├── 설계.md
+│   ├── 10K_기준.md, 30K_기준.md
+│   ├── REFERENCE.md
+│   ├── AI_BATCH_WORKER_VS_OPS.md, VIDEO_WORKER_*.md, VIDEO_BATCH_*.md
+│   └── infra/ API_ENV_*, LAMBDA_*, INTERNAL_* 등
 │
-├── infra/                     API·Lambda·내부 API·VPC
-│   └── API_ENV_*.md, LAMBDA_*.md, INTERNAL_*.md, …
+├── 02-OPERATIONS/               실제 운영 가이드
+│   ├── 배포.md, 운영.md
+│   ├── video_batch_production_runbook.md
+│   ├── INFRA_VERIFICATION_SCRIPTS.md
+│   ├── SSM_JSON_SCHEMA.md, EVENTBRIDGE_RULES_STATE_AND_FUTURE.md
+│   ├── actual_state/            스크립트 생성 실제 상태 JSON
+│   └── audit_reports/           감사 스크립트 출력
 │
-├── deploy/                    배포·재배포·검증·실제 상태
-│   ├── VIDEO_WORKER_INFRA_SSOT_V1.md   Video Worker 인프라 SSOT (프로덕션 기준, 단일 문서)
-│   ├── VIDEO_INFRA_ONE_TAKE_ORDER.md   Video/Ops 인프라 원테이크 실행 순서 (SSOT 참조)
-│   ├── EVENTBRIDGE_RULES_STATE_AND_FUTURE.md   규칙 비활성화 기록·향후 조치
-│   ├── actual_state/          스크립트 생성 실제 상태 JSON
-│   │   ├── batch_final_state.json
-│   │   ├── batch_ops_state.json
-│   │   ├── api_instance.json
-│   │   └── …
-│   ├── audit_reports/         감사 스크립트 출력 (infra_audit_*.json)
-│   └── FULL_REDEPLOY_*.md, PRODUCTION_ONE_TAKE_FINAL.md, …
+├── 03-REPORTS/                  감사·검증·포렌식 결과 (역사 기록)
+│   └── *_REPORT.md, *_AUDIT.md, *_VERIFICATION.md, *_FACTUAL.md
 │
-└── archive/                  과거 스냅샷 — 참고용
-    └── cursor_legacy/, …
+└── archive/                    완전 과거 (deploy_legacy, video_legacy, cursor_legacy, SSOT_0217, SSOT_0218)
 ```
 
 ---
@@ -48,10 +40,12 @@ docs/
 
 | 목적 | 문서 |
 |------|------|
-| **Video Worker 인프라 SSOT** (리소스 이름·스펙·성공 조건) | [deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](deploy/VIDEO_WORKER_INFRA_SSOT_V1.md) |
-| Video/Ops Batch 원테이크 실행 순서·스크립트 | [deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md](deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md) |
-| EventBridge 규칙 비활성화·재활성화·삭제·업로드 인프라 검토 | [deploy/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md](deploy/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md) |
-| 인프라 검증 스크립트 정리 | [INFRA_VERIFICATION_SCRIPTS.md](INFRA_VERIFICATION_SCRIPTS.md) |
+| **배포/운영 SSOT** (원테이크·리소스·멱등성·런북) | [00-SSOT/ONE-TAKE-DEPLOYMENT.md](00-SSOT/ONE-TAKE-DEPLOYMENT.md) |
+| 리소스 이름·ARN·환경별 값 | [00-SSOT/RESOURCE-INVENTORY.md](00-SSOT/RESOURCE-INVENTORY.md) |
+| 운영 절차(배포·검증·롤백) | [00-SSOT/RUNBOOK.md](00-SSOT/RUNBOOK.md) |
+| Video Batch 상세 런북·환경 변수 | [02-OPERATIONS/video_batch_production_runbook.md](02-OPERATIONS/video_batch_production_runbook.md) |
+| EventBridge 규칙 상태·향후 조치 | [02-OPERATIONS/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md](02-OPERATIONS/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md) |
+| 인프라 검증 스크립트 정리 | [02-OPERATIONS/INFRA_VERIFICATION_SCRIPTS.md](02-OPERATIONS/INFRA_VERIFICATION_SCRIPTS.md) |
 | 스크립트 폴더·용도 | [scripts/README.md](../scripts/README.md) |
 
 저장소 최상위: [README.md](../README.md)
