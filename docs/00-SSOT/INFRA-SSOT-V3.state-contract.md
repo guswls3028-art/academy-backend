@@ -28,7 +28,7 @@
 |-----------|------|----------|---------|
 | **CE 삭제 후** | describe-compute-environments에서 해당 CE가 목록에 없음 | 300초 | FAIL, 수동 확인 |
 | **CE 생성 후** | describe-compute-environments: status=VALID, state=ENABLED | 600초 | FAIL, 수동 확인 |
-| **Netprobe Job** | describe-jobs: job status=SUCCEEDED (또는 FAILED로 종료) | 300초 | FAIL. RUNNABLE 정체 시 별도 정책(예: 180초 후 경고). |
+| **Netprobe Job** | describe-jobs: job status=SUCCEEDED (또는 FAILED로 종료) | 1200초(20분) | FAIL. RUNNABLE 정체 180초 초과 시에도 throw. |
 
 폴링 간격: 10~15초 권장. 타임아웃 초과 시 **원테이크 전체를 FAIL**로 처리하고 Evidence에는 해당 리소스 상태를 기록한다.
 
@@ -39,9 +39,8 @@
 - **목적:** Ops Queue·Ops CE·Job Definition이 정상 동작하는지 검증.
 - **방법:** Ops Queue에 **netprobe** Job Definition(academy-video-ops-netprobe)으로 Job 제출.
 - **성공 기준:** Job status가 **SUCCEEDED**.
-- **실행 스크립트:** `scripts/infra/run_netprobe_job.ps1`.
-- **위치:** OneTake 배포 순서에서 **EventBridge·ASG 배포 이후**, **Evidence 출력 이전**에 실행.
-- **실패 시:** 원테이크 FAIL. Evidence 표에 netprobe jobId·status 기록 후 종료.
+- **실행:** scripts_v3 내 Invoke-Netprobe (Ops Queue에 academy-video-ops-netprobe Job 제출).
+- **실패 시:** SUCCEEDED가 아니면 **원테이크 FAIL (throw)**. FAILED 또는 타임아웃(20분) 또는 RUNNABLE 정체(180초) 시 배포 중단.
 
 ---
 
