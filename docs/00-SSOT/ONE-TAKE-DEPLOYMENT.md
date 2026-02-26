@@ -14,8 +14,8 @@
 | docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md | Video Worker 인프라 스펙(Production Lock, Private/NAT 포함) | 중간(레거시 참고) | v1_1, PUBLIC_V2와 충돌 | README·다른 문서에서 링크 |
 | docs/deploy/VIDEO_WORKER_INFRA_SSOT_v1_1.md | Video Worker 인프라 스펙(최종 확정) | 중간 | V1, PUBLIC_V2와 동일 주제 | "최종 확정" 문구 |
 | docs/deploy/VIDEO_INFRA_ONE_TAKE_ORDER.md | 원테이크 실행 순서·스크립트 목록 | 참조 | runbook과 유사 | SSOT_V1 링크 |
-| docs/video_batch_production_runbook.md | 런북(환경·리소스·배포 순서·검증·롤백) | **높음** | ONE_TAKE_ORDER와 순서 중복 | 상세 단계·검증 명령 |
-| docs/deploy/SSM_JSON_SCHEMA.md | SSM /academy/workers/env 스키마 | **높음** | runbook에 요약 반복 | 데이터 계약 SSOT |
+| docs/02-OPERATIONS/video_batch_production_runbook.md | 런북(환경·리소스·배포 순서·검증·롤백) | **높음** | ONE_TAKE_ORDER와 순서 중복 | 상세 단계·검증 명령 |
+| docs/02-OPERATIONS/SSM_JSON_SCHEMA.md | SSM /academy/workers/env 스키마 | **높음** | runbook에 요약 반복 | 데이터 계약 SSOT |
 | scripts/infra/recreate_batch_in_api_vpc.ps1 | Batch를 API VPC에 생성·재생성(Describe→SG→CE/Queue/JobDef) | **높음** | batch_video_setup과 역할 겹침 | 원테이크에서 호출, Describe 기반 |
 | scripts/infra/batch_ops_setup.ps1 | Ops CE/Queue/JobDef 생성 | **높음** | 없음 | VideoCeNameForDiscovery=ce-final |
 | scripts/infra/eventbridge_deploy_video_scheduler.ps1 | EventBridge 규칙·타깃 배포 | **높음** | 없음 | reconcile/scan_stuck → Ops Queue |
@@ -205,7 +205,7 @@
 | EventBridge scan_stuck | academy-video-scan-stuck-rate, State=ENABLED/DISABLED, Schedule=rate(5 minutes) |
 | Netprobe | jobId, status=SUCCEEDED |
 
-출력 형식: `docs/deploy/actual_state/` 하위 JSON 및 콘솔 "VIDEO WORKER SSOT AUDIT" 블록. 자세한 필드는 **SSOT-RESOURCE-INVENTORY.md** 및 **SSOT-IDEMPOTENCY-RULES.md** 참조.
+출력 형식: `02-OPERATIONS/actual_state/` 하위 JSON 및 콘솔 "VIDEO WORKER SSOT AUDIT" 블록. 자세한 필드는 **RESOURCE-INVENTORY.md** 및 **IDEMPOTENCY-RULES.md** 참조.
 
 ---
 
@@ -224,10 +224,10 @@
 
 ## 관련 문서
 
-- [SSOT-RESOURCE-INVENTORY.md](SSOT-RESOURCE-INVENTORY.md) — 리소스 이름·ARN·태그·환경별 값.
-- [SSOT-IDEMPOTENCY-RULES.md](SSOT-IDEMPOTENCY-RULES.md) — 멱등성 규칙·Wait 루프·SSOT 기준.
-- [SSOT-RUNBOOK.md](SSOT-RUNBOOK.md) — 운영(배포·검증·장애·롤백·점검).
-- [SSOT-CHANGELOG.md](SSOT-CHANGELOG.md) — 문서 기준 변경 로그.
+- [RESOURCE-INVENTORY.md](RESOURCE-INVENTORY.md) — 리소스 이름·ARN·태그·환경별 값.
+- [IDEMPOTENCY-RULES.md](IDEMPOTENCY-RULES.md) — 멱등성 규칙·Wait 루프·SSOT 기준.
+- [RUNBOOK.md](RUNBOOK.md) — 운영(배포·검증·장애·롤백·점검).
+- [CHANGELOG.md](CHANGELOG.md) — 문서 기준 변경 로그.
 
 ---
 
