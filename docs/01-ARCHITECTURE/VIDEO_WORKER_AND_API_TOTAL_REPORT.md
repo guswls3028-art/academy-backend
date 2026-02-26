@@ -61,7 +61,7 @@
 
 ### 3.1 Job Definition (워커)
 
-- **스펙·이미지 정책:** [docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](deploy/VIDEO_WORKER_INFRA_SSOT_V1.md) §3 (vcpus=2, memory=3072, retryStrategy=1, immutable tag).
+- **스펙·이미지 정책:** [00-SSOT/RESOURCE-INVENTORY.md](../00-SSOT/RESOURCE-INVENTORY.md) § Video Batch (vcpus=2, memory=3072, retryStrategy=1, immutable tag).
 - **파일:** `scripts/infra/batch/video_job_definition.json`
 - **등록:** `scripts/infra/batch_video_setup.ps1` [5] 단계에서 위 JSON 치환 후 `register-job-definition` 호출.
 - **현재 내용 요약:** vcpus=2, memory=3072 (SSOT v1.1). `resourceRequirements` 는 Batch 스케줄링용으로 VCPU/MEMORY 명시 권장.
@@ -142,5 +142,5 @@
 
 - **API:** 영상 업로드 완료 시 `create_job_and_submit_batch` → `submit_batch_job` → `academy-video-batch-jobdef` (이름만, 최신 revision) 로 `academy-video-batch-queue` 에 제출.
 - **워커:** 동일 이미지 + `batch_entrypoint` → SSM → `batch_main`, ffmpeg HLS + R2 + heartbeat.  
-- **리소스 이름·스펙:** Video 인프라 SSOT는 [docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](deploy/VIDEO_WORKER_INFRA_SSOT_V1.md). CE=`academy-video-batch-ce-final`, Queue=`academy-video-batch-queue`, JobDef=`academy-video-batch-jobdef`.
+- **리소스 이름·스펙:** Video 인프라 SSOT는 [00-SSOT/RESOURCE-INVENTORY.md](../00-SSOT/RESOURCE-INVENTORY.md). CE=`academy-video-batch-ce-final`, Queue=`academy-video-batch-queue`, JobDef=`academy-video-batch-jobdef`.
 - **Reconcile:** rate(15 minutes) + Redis lock. 다중 RUNNING은 주기 완화 및 single-flight로 해소됨 (SSOT v1.1).

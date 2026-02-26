@@ -1,7 +1,7 @@
 # Video Worker Architecture (AWS Batch)
 
 > **현행 인프라 기준.** Video 인코딩 = Batch 전용. SQS/ASG 경로 없음.  
-> **인프라 스펙·리소스 이름·성공 조건:** [Video Worker 인프라 SSOT v1.1](../deploy/VIDEO_WORKER_INFRA_SSOT_V1.md) (docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md)
+> **인프라 스펙·리소스 이름·성공 조건:** [00-SSOT/RESOURCE-INVENTORY.md](../00-SSOT/RESOURCE-INVENTORY.md) (현재 유효 SSOT). 과거 버전: [archive/deploy_legacy/VIDEO_WORKER_INFRA_SSOT_V1.md](../archive/deploy_legacy/VIDEO_WORKER_INFRA_SSOT_V1.md)
 
 ## 개요
 
@@ -91,8 +91,8 @@ Batch 컨테이너 시작
 
 | 항목 | 스크립트/경로 |
 |------|---------------|
-| **SSOT (스펙·이름·성공 조건)** | [docs/deploy/VIDEO_WORKER_INFRA_SSOT_V1.md](../../deploy/VIDEO_WORKER_INFRA_SSOT_V1.md) |
-| 원테이크 (권장) | `scripts/infra/video_worker_infra_one_take.ps1` |
+| **SSOT (스펙·이름·성공 조건)** | [00-SSOT/RESOURCE-INVENTORY.md](../../00-SSOT/RESOURCE-INVENTORY.md) |
+| 원테이크 (권장) | `scripts/infra/infra_full_alignment_public_one_take.ps1` |
 | 개별 설정 | `scripts/infra/batch_video_setup.ps1` |
 | IAM | `scripts/infra/iam/` |
 | Batch JSON | `scripts/infra/batch/` (video_compute_env, job_queue, job_definition) |
