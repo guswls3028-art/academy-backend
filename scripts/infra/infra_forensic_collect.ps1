@@ -17,7 +17,7 @@ function Run-Aws {
     $raw = & aws @Args 2>&1
     $out = ($raw | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) {
-        $esc = $out -replace '\\', '\\\\' -replace '"', '\"'
+        $esc = $out -replace '\\', '\\\\' -replace '"', '\"' -replace "`r", '' -replace "`n", '\n'
         $errJson = "{ `"Error`": `"ExitCode=" + $LASTEXITCODE + "`", `"Output`": `"" + $esc + "`" }"
         Save-Json $Name $errJson
         return $null
