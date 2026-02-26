@@ -61,12 +61,12 @@ $vpcEndpoints = Run-Aws "02_vpc_endpoints" @("ec2", "describe-vpc-endpoints", "-
 $sgs = Run-Aws "02_security_groups" @("ec2", "describe-security-groups", "--region", $Region, "--output", "json"); if ($sgs) { Save-Json "02_security_groups" $sgs }
 Write-Host "[2] VPC/Subnet/Route/NAT/IGW/Endpoints/SG collected" -ForegroundColor Green
 
-# 3) API EC2
-$apiInstances = Run-Aws "03_api_instances" @("ec2", "describe-instances", "--region", $Region, "--filters", "Name=tag:Name", "Values=*api*", "Name=instance-state-name", "Values=running", "--output", "json"); if ($apiInstances) { Save-Json "03_api_instances" $apiInstances }
+# 3) API EC2 (filter format: each filter one string "Name=...,Values=...")
+$apiInstances = Run-Aws "03_api_instances" @("ec2", "describe-instances", "--region", $Region, "--filters", "Name=tag:Name,Values=*api*", "Name=instance-state-name,Values=running", "--output", "json"); if ($apiInstances) { Save-Json "03_api_instances" $apiInstances }
 Write-Host "[3] API instances collected" -ForegroundColor Green
 
-# 4) Build EC2
-$buildInstances = Run-Aws "04_build_instances" @("ec2", "describe-instances", "--region", $Region, "--filters", "Name=tag:Name", "Values=academy-build-arm64", "Name=instance-state-name", "Values=running,stopped", "--output", "json"); if ($buildInstances) { Save-Json "04_build_instances" $buildInstances }
+# 4) Build EC2 (filter format: one string per filter)
+$buildInstances = Run-Aws "04_build_instances" @("ec2", "describe-instances", "--region", $Region, "--filters", "Name=tag:Name,Values=academy-build-arm64", "Name=instance-state-name,Values=running,stopped", "--output", "json"); if ($buildInstances) { Save-Json "04_build_instances" $buildInstances }
 Write-Host "[4] Build instances collected" -ForegroundColor Green
 
 # 5) Batch Video
