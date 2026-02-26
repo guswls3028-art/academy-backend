@@ -232,6 +232,7 @@ $script:Audit4Detail = "Video CE $VideoCEName VALID ENABLED Public Subnets"
 
 & (Join-Path $ScriptRoot "batch_ops_setup.ps1") -Region $Region -VpcId $VpcId -SubnetIds $publicSubnetIds -VideoCeNameForDiscovery $VideoCEName 2>&1
 if ($LASTEXITCODE -ne 0) { Fail-OneTake "batch_ops_setup.ps1 failed" "" }
+& (Join-Path $ScriptRoot "iam_attach_batch_describe_jobs.ps1") -Region $Region 2>&1 | Out-Null
 
 $opsCe = ExecJson @("batch", "describe-compute-environments", "--compute-environments", $OpsCEName, "--region", $Region, "--output", "json")
 $opsCeObj = $opsCe.computeEnvironments | Where-Object { $_.computeEnvironmentName -eq $OpsCEName } | Select-Object -First 1
