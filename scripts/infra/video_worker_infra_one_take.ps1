@@ -273,6 +273,7 @@ if ($ruleReconcile) {
     $scheduleOk = ($ruleReconcile.ScheduleExpression -eq "rate(15 minutes)")
     if (-not $scheduleOk) {
         & aws events put-rule --name $ReconcileRuleName --schedule-expression "rate(15 minutes)" --state ENABLED --description "Reconcile video jobs" --region $Region 2>&1 | Out-Null
+        $scheduleOk = $true
     }
     $tgtReconcile = ExecJson @("events", "list-targets-by-rule", "--rule", $ReconcileRuleName, "--region", $Region, "--output", "json")
     $t0 = $tgtReconcile.Targets | Select-Object -First 1
