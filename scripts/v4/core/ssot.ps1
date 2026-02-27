@@ -146,7 +146,7 @@ function Load-SSOT {
     $script:SSOT_Queue = @($script:VideoQueueName, $script:OpsQueueName)
     $script:SSOT_JobDef = @($script:VideoJobDefName, $script:OpsJobDefReconcile, $script:OpsJobDefScanStuck, $script:OpsJobDefNetprobe)
     $script:SSOT_EventBridgeRule = @($script:EventBridgeReconcileRule, $script:EventBridgeScanStuckRule)
-    $script:SSOT_ASG = @($script:MessagingASGName, $script:AiASGName)
+    $script:SSOT_ASG = @($script:ApiASGName, $script:MessagingASGName, $script:AiASGName)
     $script:SSOT_RDS = @($script:RdsDbIdentifier)
     $script:SSOT_Redis = @($script:RedisReplicationGroupId)
     $script:SSOT_ECR = @($script:EcrApiRepo, $script:VideoWorkerRepo, $script:EcrMessagingRepo, $script:EcrAiRepo)
