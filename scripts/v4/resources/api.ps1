@@ -12,8 +12,14 @@ function Confirm-APIHealth {
     if ($script:PlanMode) { Write-Ok "API check skipped (Plan)"; return }
     try {
         $r = Invoke-WebRequest -Uri "$($script:ApiBaseUrl)/health" -UseBasicParsing -TimeoutSec 10
-        if ($r.StatusCode -eq 200) { Write-Ok "GET $($script:ApiBaseUrl)/health -> 200" } else { Write-Warn "GET /health -> $($r.StatusCode)" }
+        if ($r.StatusCode -eq 200) {
+            Write-Ok "GET $($script:ApiBaseUrl)/health -> 200"
+        } else {
+            Write-Fail "API health returned $($r.StatusCode); expected 200. Infra alignment failure."
+            throw "API health check failed: status=$($r.StatusCode)"
+        }
     } catch {
-        Write-Warn "API health check failed: $_"
+        Write-Fail "API health check failed: $_"
+        throw "API health check failed: $_"
     }
 }
