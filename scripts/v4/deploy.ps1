@@ -103,6 +103,10 @@ try {
         }
     }
 
+    if ($PurgeAndRecreate -and -not $Plan) {
+        Invoke-PurgeAndRecreate -IncludePruneLegacy:$false
+    }
+
     if ($Plan) {
         $ev = Show-Evidence -NetprobeJobId "" -NetprobeStatus "skipped"
         if ($ev) { Save-EvidenceReport -MarkdownContent (Convert-EvidenceToMarkdown -Ev $ev) }
