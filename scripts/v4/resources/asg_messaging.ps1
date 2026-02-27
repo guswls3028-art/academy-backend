@@ -9,7 +9,7 @@ function Get-MessagingLaunchTemplate {
 
 function Get-MessagingLaunchTemplateDefaultVersion {
     param([string]$LtId)
-    $r = Invoke-AwsJson @("ec2", "describe-launch-template-versions", "--launch-template-id", $LtId, "--versions", "'`$Default'", "--region", $script:Region, "--output", "json")
+    $r = Invoke-AwsJson @("ec2", "describe-launch-template-versions", "--launch-template-id", $LtId, "--versions", '$Default', "--region", $script:Region, "--output", "json")
     if (-not $r -or -not $r.LaunchTemplateVersions -or $r.LaunchTemplateVersions.Count -eq 0) { return $null }
     return $r.LaunchTemplateVersions[0]
 }
