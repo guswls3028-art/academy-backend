@@ -84,12 +84,12 @@ function Load-SSOT {
     $script:ApiUserData = $p["api"]["userData"]
     $script:ApiASGName = $p["api"]["asgName"]
     $script:ApiLaunchTemplateName = $p["api"]["asgLaunchTemplateName"]
-    $script:ApiASGMinSize = [int](($p["api"]["asgMinSize"] -as [int]))
-    if (-not $script:ApiASGMinSize -and $script:ApiASGMinSize -ne 0) { $script:ApiASGMinSize = 1 }
-    $script:ApiASGMaxSize = [int](($p["api"]["asgMaxSize"] -as [int]))
-    if (-not $script:ApiASGMaxSize -and $script:ApiASGMaxSize -ne 0) { $script:ApiASGMaxSize = 1 }
-    $script:ApiASGDesiredCapacity = [int](($p["api"]["asgDesiredCapacity"] -as [int]))
-    if (-not $script:ApiASGDesiredCapacity -and $script:ApiASGDesiredCapacity -ne 0) { $script:ApiASGDesiredCapacity = 1 }
+    $script:ApiASGMinSize = 1
+    $script:ApiASGMaxSize = 1
+    $script:ApiASGDesiredCapacity = 1
+    if ($p["api"]["asgMinSize"]) { $script:ApiASGMinSize = [int]$p["api"]["asgMinSize"] }
+    if ($p["api"]["asgMaxSize"]) { $script:ApiASGMaxSize = [int]$p["api"]["asgMaxSize"] }
+    if ($p["api"]["asgDesiredCapacity"]) { $script:ApiASGDesiredCapacity = [int]$p["api"]["asgDesiredCapacity"] }
 
     $script:BuildTagKey = $p["build"]["instanceTagKey"] = $p["build"]["instanceTagKey"]
     $script:BuildTagValue = $p["build"]["instanceTagValue"]
