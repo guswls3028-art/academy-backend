@@ -92,4 +92,41 @@ catch {
 Write-Log "`n=== Verify v4 result table ==="
 $results | Format-Table -AutoSize
 Write-Log "`nLog: $LogFile"
+
+# Write verify.latest.md from current state (drift + evidence snapshot)
+try {
+    Push-Location $RepoRoot | Out-Null
+    . (Join-Path $ScriptRoot "core\ssot.ps1")
+    . (Join-Path $ScriptRoot "core\aws.ps1")
+    . (Join-Path $ScriptRoot "core\diff.ps1")
+    . (Join-Path $ScriptRoot "core\evidence.ps1")
+    . (Join-Path $ScriptRoot "core\reports.ps1")
+    Load-SSOT -Env prod | Out-Null
+    $script:PlanMode = $true
+    $driftRows = Get-StructuralDrift
+    $ev = Get-EvidenceSnapshot -NetprobeJobId "" -NetprobeStatus "see deploy"
+    $sb = [System.Text.StringBuilder]::new()
+    [void]$sb.AppendLine("## Checks")
+    $ceOk = ($driftRows | Where-Object { $_.ResourceType -eq "Batch CE" -and $_.Actual -eq "exists" }).Count -eq $script:SSOT_CE.Count
+    [void]$sb.AppendLine("- Batch CE VALID/ENABLED: $(if ($ceOk) { 'PASS' } else { 'FAIL' })")
+    $qOk = ($driftRows | Where-Object { $_.ResourceType -eq "Batch Queue" -and $_.Actual -eq "exists" }).Count -eq $script:SSOT_Queue.Count
+    [void]$sb.AppendLine("- Batch Queue ENABLED: $(if ($qOk) { 'PASS' } else { 'FAIL' })")
+    $ebOk = ($driftRows | Where-Object { $_.ResourceType -eq "EventBridge" -and $_.Actual -eq "exists" }).Count -eq $script:SSOT_EventBridgeRule.Count
+    [void]$sb.AppendLine("- EventBridge ENABLED: $(if ($ebOk) { 'PASS' } else { 'FAIL' })")
+    $asgOk = ($driftRows | Where-Object { $_.ResourceType -eq "ASG" -and $_.Actual -eq "exists" }).Count -eq $script:SSOT_ASG.Count
+    [void]$sb.AppendLine("- ASG desired/min/max: $(if ($asgOk) { 'PASS' } else { 'FAIL' })")
+    $apiOk = ($ev -and $ev["apiHealth"] -eq "OK")
+    [void]$sb.AppendLine("- API health 200: $(if ($apiOk) { 'PASS' } else { 'FAIL' })")
+    $ssmOk = ($ev -and $ev["ssmWorkersEnvExists"] -eq "yes")
+    [void]$sb.AppendLine("- SSM online: $(if ($ssmOk) { 'PASS' } else { 'FAIL' })")
+    [void]$sb.AppendLine("- Netprobe: (see last deploy Evidence)")
+    [void]$sb.AppendLine("")
+    [void]$sb.AppendLine("## Result table")
+    foreach ($r in $results) { [void]$sb.AppendLine("- $($r.Step): $($r.Result) $($r.Detail)") }
+    Save-VerifyReport -MarkdownContent $sb.ToString()
+    Pop-Location | Out-Null
+} catch {
+    Write-Log "  Could not write verify.latest.md: $_"
+}
+
 Write-Log "=== Verify v4 done ===`n"
