@@ -81,6 +81,15 @@ function Load-SSOT {
     $script:ApiInstanceType = if ($p["api"]["instanceType"]) { $p["api"]["instanceType"] } else { "t3.small" }
     if (-not $script:ApiSubnetId -and $script:PublicSubnets -and $script:PublicSubnets.Count -gt 0) { $script:ApiSubnetId = $script:PublicSubnets[0] }
     if (-not $script:ApiSecurityGroupId) { $script:ApiSecurityGroupId = $script:BatchSecurityGroupId }
+    $script:ApiUserData = $p["api"]["userData"]
+    $script:ApiASGName = $p["api"]["asgName"]
+    $script:ApiLaunchTemplateName = $p["api"]["asgLaunchTemplateName"]
+    $script:ApiASGMinSize = [int](($p["api"]["asgMinSize"] -as [int]))
+    if (-not $script:ApiASGMinSize -and $script:ApiASGMinSize -ne 0) { $script:ApiASGMinSize = 1 }
+    $script:ApiASGMaxSize = [int](($p["api"]["asgMaxSize"] -as [int]))
+    if (-not $script:ApiASGMaxSize -and $script:ApiASGMaxSize -ne 0) { $script:ApiASGMaxSize = 1 }
+    $script:ApiASGDesiredCapacity = [int](($p["api"]["asgDesiredCapacity"] -as [int]))
+    if (-not $script:ApiASGDesiredCapacity -and $script:ApiASGDesiredCapacity -ne 0) { $script:ApiASGDesiredCapacity = 1 }
 
     $script:BuildTagKey = $p["build"]["instanceTagKey"]
     $script:BuildTagValue = $p["build"]["instanceTagValue"]
