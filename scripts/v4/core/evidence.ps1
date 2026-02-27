@@ -71,4 +71,13 @@ function Show-Evidence {
 
     $ev.GetEnumerator() | ForEach-Object { Write-Host "  $($_.Key): $($_.Value)" -ForegroundColor Gray }
     Write-Host "=== END EVIDENCE ===`n" -ForegroundColor Cyan
+    return $ev
+}
+
+function Convert-EvidenceToMarkdown {
+    param($Ev)
+    if (-not $Ev) { return "" }
+    $lines = @()
+    $Ev.GetEnumerator() | ForEach-Object { $lines += "- **$($_.Key):** $($_.Value)" }
+    return $lines -join "`n"
 }
