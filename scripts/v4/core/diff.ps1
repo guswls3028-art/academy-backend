@@ -68,6 +68,7 @@ function Get-StructuralDrift {
     $allAsgNames = @($asgArr | ForEach-Object { $_.AutoScalingGroupName } | Where-Object { $_ })
     Write-Host "  [DRIFT-DEBUG] ASG ActualNames from AWS: ($($allAsgNames -join ', '))" -ForegroundColor DarkGray
     $asgExpected = @{
+        $script:ApiASGName = @{ Min = $script:ApiASGMinSize; Max = $script:ApiASGMaxSize; Desired = $script:ApiASGDesiredCapacity }
         $script:MessagingASGName = @{ Min = $script:MessagingMinSize; Max = $script:MessagingMaxSize; Desired = $script:MessagingDesiredCapacity }
         $script:AiASGName = @{ Min = $script:AiMinSize; Max = $script:AiMaxSize; Desired = $script:AiDesiredCapacity }
     }
