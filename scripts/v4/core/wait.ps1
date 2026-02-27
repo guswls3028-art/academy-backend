@@ -123,3 +123,77 @@ function Wait-CEValidEnabled {
     }
     throw "Timeout waiting for CE $CEName VALID/ENABLED (${TimeoutSec}s)"
 }
+
+function Wait-InstanceTerminated {
+    param([string]$InstanceId, [string]$Reg, [int]$TimeoutSec = 300)
+    $elapsed = 0
+    while ($elapsed -lt $TimeoutSec) {
+        $r = Invoke-AwsJson @("ec2", "describe-instances", "--instance-ids", $InstanceId, "--region", $Reg, "--output", "json")
+        if (-not $r -or -not $r.Reservations -or $r.Reservations.Count -eq 0) {
+            Write-Ok "Instance $InstanceId no longer found (terminated)"
+            return
+        }
+        $state = $r.Reservations[0].Instances[0].State.Name
+        if ($state -eq "terminated") {
+            Write-Ok "Instance $InstanceId terminated"
+            return
+        }
+        Write-Host "  Waiting for instance $InstanceId to terminate (state=$state)..." -ForegroundColor Gray
+        Start-Sleep -Seconds 10
+        $elapsed += 10
+    }
+    throw "Timeout waiting for instance $InstanceId to terminate (${TimeoutSec}s)"
+}
+
+function Wait-InstanceRunning {
+    param([string]$InstanceId, [string]$Reg, [int]$TimeoutSec = 300)
+    $elapsed = 0
+    while ($elapsed -lt $TimeoutSec) {
+        $r = Invoke-AwsJson @("ec2", "describe-instances", "--instance-ids", $InstanceId, "--region", $Reg, "--output", "json")
+        if (-not $r -or -not $r.Reservations -or $r.Reservations.Count -eq 0) { Start-Sleep -Seconds 10; $elapsed += 10; continue }
+        $state = $r.Reservations[0].Instances[0].State.Name
+        if ($state -eq "running") {
+            Write-Ok "Instance $InstanceId running"
+            return
+        }
+        Write-Host "  Waiting for instance $InstanceId to run (state=$state)..." -ForegroundColor Gray
+        Start-Sleep -Seconds 10
+        $elapsed += 10
+    }
+    throw "Timeout waiting for instance $InstanceId to run (${TimeoutSec}s)"
+}
+
+function Wait-SSMOnline {
+    param([string]$InstanceId, [string]$Reg, [int]$TimeoutSec = 300)
+    $elapsed = 0
+    while ($elapsed -lt $TimeoutSec) {
+        $r = Invoke-AwsJson @("ssm", "describe-instance-information", "--filters", "Key=InstanceIds,Values=$InstanceId", "--region", $Reg, "--output", "json")
+        if ($r -and $r.InstanceInformationList -and $r.InstanceInformationList.Count -gt 0) {
+            Write-Ok "SSM online for instance $InstanceId"
+            return
+        }
+        Write-Host "  Waiting for SSM agent on $InstanceId..." -ForegroundColor Gray
+        Start-Sleep -Seconds 10
+        $elapsed += 10
+    }
+    throw "Timeout waiting for SSM on instance $InstanceId (${TimeoutSec}s)"
+}
+
+function Wait-ApiHealth200 {
+    param([string]$ApiBaseUrl, [int]$TimeoutSec = 300)
+    $elapsed = 0
+    $uri = "$ApiBaseUrl/health"
+    while ($elapsed -lt $TimeoutSec) {
+        try {
+            $r = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 15
+            if ($r.StatusCode -eq 200) {
+                Write-Ok "GET $uri -> 200"
+                return
+            }
+        } catch {}
+        Write-Host "  Waiting for API health 200..." -ForegroundColor Gray
+        Start-Sleep -Seconds 10
+        $elapsed += 10
+    }
+    throw "Timeout waiting for API health 200 at $uri (${TimeoutSec}s)"
+}
