@@ -64,6 +64,7 @@ try {
     Invoke-PreflightCheck
     $driftRows = Get-StructuralDrift
     Show-DriftTable -Rows $driftRows
+    if (-not $Plan) { Save-DriftReport -Rows $driftRows }
 
     if ($PruneLegacy) {
         $all = Get-AllAwsResourcesForPrune
@@ -80,7 +81,8 @@ try {
     }
 
     if ($Plan) {
-        Show-Evidence -NetprobeJobId "" -NetprobeStatus "skipped"
+        $ev = Show-Evidence -NetprobeJobId "" -NetprobeStatus "skipped"
+        if ($ev) { Save-EvidenceReport -MarkdownContent (Convert-EvidenceToMarkdown -Ev $ev) }
         Write-Host "`n=== PLAN COMPLETE ===`n" -ForegroundColor Green
         Release-DeployLock -Reg $script:Region
         exit 0
