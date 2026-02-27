@@ -114,7 +114,9 @@ try {
     $ebOk = ($driftRows | Where-Object { $_.ResourceType -eq "EventBridge" -and $_.Actual -eq "exists" }).Count -eq $script:SSOT_EventBridgeRule.Count
     [void]$sb.AppendLine("- EventBridge ENABLED: $(if ($ebOk) { 'PASS' } else { 'FAIL' })")
     $asgOk = ($driftRows | Where-Object { $_.ResourceType -eq "ASG" -and $_.Actual -eq "exists" }).Count -eq $script:SSOT_ASG.Count
-    [void]$sb.AppendLine("- ASG desired/min/max: $(if ($asgOk) { 'PASS' } else { 'FAIL' })")
+    [void]$sb.AppendLine("- ASG desired/min/max (incl. API ASG): $(if ($asgOk) { 'PASS' } else { 'FAIL' })")
+    $apiLtOk = ($driftRows | Where-Object { $_.ResourceType -eq "API LT" -and ($_.Action -eq "NoOp" -or $_.Actual -eq "exists") }).Count -ge 1
+    [void]$sb.AppendLine("- API ASG/LT drift: $(if ($apiLtOk) { 'PASS' } else { 'FAIL' })")
     $apiOk = ($ev -and $ev["apiHealth"] -eq "OK")
     [void]$sb.AppendLine("- API health 200: $(if ($apiOk) { 'PASS' } else { 'FAIL' })")
     $buildOk = ($ev -and $ev["buildInstanceId"] -and $ev["buildInstanceId"] -ne "not found")
