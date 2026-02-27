@@ -135,8 +135,8 @@ try {
     Ensure-OpsJobDefScanStuck
     Ensure-OpsJobDefNetprobe
     Ensure-EventBridgeRules
-    Confirm-APIHealth
-    Confirm-BuildInstance
+    Ensure-API
+    Ensure-Build
 
     $netJobId = ""
     $netStatus = ""
