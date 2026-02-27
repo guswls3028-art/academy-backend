@@ -1,8 +1,9 @@
 # ==============================================================================
-# Academy SSOT v4 — 단일 진입점. 풀스택 Ensure + PruneLegacy + Netprobe + Evidence.
-# Usage: pwsh scripts/v4/deploy.ps1 [-Env prod] [-Plan] [-PruneLegacy] [-ForceRecreateAll] [-SkipNetprobe] [-Ci] [-EcrRepoUri ...]
+# Academy SSOT v4 — 단일 진입점. 풀스택 Ensure + PruneLegacy + PurgeAndRecreate + Netprobe + Evidence.
+# Usage: pwsh scripts/v4/deploy.ps1 [-Env prod] [-Plan] [-PruneLegacy] [-PurgeAndRecreate] [-DryRun] [-ForceRecreateAll] [-SkipNetprobe] [-Ci] [-EcrRepoUri ...]
 # -Plan: AWS 변경 0, 표/리포트만 출력.
 # -PruneLegacy: SSOT 외 academy-* 삭제 후 Ensure. -Plan이면 후보 표만 출력.
+# -PurgeAndRecreate: SSOT Batch/EventBridge 전부 삭제 후 전체 Ensure 재실행. -DryRun이면 삭제 예정만 출력 후 종료.
 # ==============================================================================
 [CmdletBinding()]
 param(
@@ -10,6 +11,8 @@ param(
     [string]$Env = "prod",
     [switch]$Plan = $false,
     [switch]$PruneLegacy = $false,
+    [switch]$PurgeAndRecreate = $false,
+    [switch]$DryRun = $false,
     [switch]$ForceRecreateAll = $false,
     [switch]$SkipNetprobe = $false,
     [switch]$Ci = $false,
