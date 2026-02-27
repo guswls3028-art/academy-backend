@@ -39,6 +39,11 @@ api:
     type: elastic_ip
     allocationId: eipalloc-071ef2b5b5bec9428
     publicIp: 15.165.147.157
+  amiId: ami-0c55b159cbfafe1f0
+  instanceProfile: academy-api-instance-profile
+  subnetId: subnet-049e711f41fdff71b
+  securityGroupId: sg-011ed1d9eb4a65b8f
+  instanceType: t3.small
   containerName: academy-api
   albName: ""
   targetGroupName: ""
@@ -49,10 +54,17 @@ api:
 build:
   instanceTagKey: Name
   instanceTagValue: academy-build-arm64
+  amiId: ami-0c55b159cbfafe1f0
+  instanceProfile: academy-build-instance-profile
+  subnetId: subnet-049e711f41fdff71b
+  securityGroupId: sg-011ed1d9eb4a65b8f
+  instanceType: t4g.small
 
 messagingWorker:
   asgName: academy-messaging-worker-asg
   launchTemplateName: academy-messaging-worker-lt
+  amiId: ami-0c55b159cbfafe1f0
+  instanceType: t3.small
   scaling:
     minSize: 0
     maxSize: 4
@@ -61,6 +73,8 @@ messagingWorker:
 aiWorker:
   asgName: academy-ai-worker-asg
   launchTemplateName: academy-ai-worker-lt
+  amiId: ami-0c55b159cbfafe1f0
+  instanceType: t3.small
   scaling:
     minSize: 0
     maxSize: 4
