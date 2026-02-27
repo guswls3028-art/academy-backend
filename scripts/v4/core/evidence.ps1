@@ -65,6 +65,17 @@ function Get-EvidenceSnapshot {
         $ssm = Invoke-AwsJson @("ssm", "get-parameter", "--name", $script:SsmWorkersEnv, "--region", $R, "--output", "json")
         $ev["ssmWorkersEnvExists"] = if ($ssm -and $ssm.Parameter) { "yes" } else { "no" }
     } catch { $ev["ssmWorkersEnvExists"] = "no" }
+    $buildRes = Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=tag:$($script:BuildTagKey),Values=$($script:BuildTagValue)", "Name=instance-state-name,Values=running,pending,stopped", "--region", $R, "--output", "json")
+    if ($buildRes -and $buildRes.Reservations -and $buildRes.Reservations.Count -gt 0 -and $buildRes.Reservations[0].Instances.Count -gt 0) {
+        $b = $buildRes.Reservations[0].Instances[0]
+        $ev["buildInstanceId"] = $b.InstanceId
+        $ev["buildState"] = $b.State.Name
+        $ev["buildAmi"] = $b.ImageId
+    } else {
+        $ev["buildInstanceId"] = "not found"
+        $ev["buildState"] = "-"
+        $ev["buildAmi"] = "-"
+    }
     $ev["ssmShapeCheck"] = "PASS"
     return $ev
 }
