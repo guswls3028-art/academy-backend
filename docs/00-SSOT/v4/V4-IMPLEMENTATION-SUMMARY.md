@@ -31,6 +31,14 @@
 | **core/reports.ps1** | **Save-DriftReport, Save-EvidenceReport, Save-VerifyReport** → docs/00-SSOT/v4/reports/ + history/ |
 | **core/guard.ps1** | SSM 락 + **scripts/infra 및 scripts/archive** 실행 시 즉시 fail |
 | **core/preflight.ps1** | AWS identity, VPC, SSM, ECR |
+| **core/ssot.ps1** | params.yaml 로드 + script 변수 설정 |
+| **core/aws.ps1** | Invoke-AwsJson / Invoke-Aws (Plan 시 mutating만 스킵) |
+| **core/logging.ps1** | Write-Step/Ok/Warn/Fail |
+| **core/wait.ps1** | Wait-CEDeleted, Wait-QueueDeleted 등 |
+| **core/diff.ps1** | Drift (전체 목록 + 이름 필터) |
+| **core/evidence.ps1** | Get-EvidenceSnapshot, Show-Evidence, Convert-EvidenceToMarkdown |
+| **core/prune.ps1** | PruneLegacy + Get-PurgePlan, Invoke-PurgeAndRecreate |
+| **plan.ps1** | deploy.ps1 -Plan 래퍼 |
 | **resources/*.ps1** | network, iam, ssm, ecr, api, build, rds, redis, asg_ai, asg_messaging, batch, jobdef, eventbridge, netprobe |
 | **templates/batch/*.json** | Video/Ops CE·Queue·JobDef (scripts/infra 복사) |
 | **templates/iam/*.json** | Trust/Policy (scripts/infra 복사) |
