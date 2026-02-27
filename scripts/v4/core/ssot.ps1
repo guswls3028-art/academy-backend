@@ -74,14 +74,38 @@ function Load-SSOT {
     $script:ApiBaseUrl = $p["api"]["apiBaseUrl"]
     $script:ApiInstanceTagKey = $p["api"]["instanceTagKey"]
     $script:ApiInstanceTagValue = $p["api"]["instanceTagValue"]
+    $script:ApiAmiId = $p["api"]["amiId"]
+    $script:ApiInstanceProfile = $p["api"]["instanceProfile"]
+    $script:ApiSubnetId = $p["api"]["subnetId"]
+    $script:ApiSecurityGroupId = $p["api"]["securityGroupId"]
+    $script:ApiInstanceType = if ($p["api"]["instanceType"]) { $p["api"]["instanceType"] } else { "t3.small" }
+    if (-not $script:ApiSubnetId -and $script:PublicSubnets -and $script:PublicSubnets.Count -gt 0) { $script:ApiSubnetId = $script:PublicSubnets[0] }
+    if (-not $script:ApiSecurityGroupId) { $script:ApiSecurityGroupId = $script:BatchSecurityGroupId }
 
     $script:BuildTagKey = $p["build"]["instanceTagKey"]
     $script:BuildTagValue = $p["build"]["instanceTagValue"]
+    $script:BuildAmiId = $p["build"]["amiId"]
+    $script:BuildInstanceProfile = $p["build"]["instanceProfile"]
+    $script:BuildSubnetId = $p["build"]["subnetId"]
+    $script:BuildSecurityGroupId = $p["build"]["securityGroupId"]
+    $script:BuildInstanceType = if ($p["build"]["instanceType"]) { $p["build"]["instanceType"] } else { "t4g.small" }
+    if (-not $script:BuildSubnetId -and $script:PublicSubnets -and $script:PublicSubnets.Count -gt 0) { $script:BuildSubnetId = $script:PublicSubnets[0] }
+    if (-not $script:BuildSecurityGroupId) { $script:BuildSecurityGroupId = $script:BatchSecurityGroupId }
 
     $script:MessagingASGName = $p["messagingWorker"]["asgName"]
     $script:MessagingLaunchTemplateName = $p["messagingWorker"]["launchTemplateName"]
+    $script:MessagingAmiId = $p["messagingWorker"]["amiId"]
+    $script:MessagingInstanceType = if ($p["messagingWorker"]["instanceType"]) { $p["messagingWorker"]["instanceType"] } else { "t3.small" }
+    $script:MessagingMinSize = [int]($p["messagingWorker"]["scaling"]["minSize"])
+    $script:MessagingMaxSize = [int]($p["messagingWorker"]["scaling"]["maxSize"])
+    $script:MessagingDesiredCapacity = [int]($p["messagingWorker"]["scaling"]["desiredCapacity"])
     $script:AiASGName = $p["aiWorker"]["asgName"]
     $script:AiLaunchTemplateName = $p["aiWorker"]["launchTemplateName"]
+    $script:AiAmiId = $p["aiWorker"]["amiId"]
+    $script:AiInstanceType = if ($p["aiWorker"]["instanceType"]) { $p["aiWorker"]["instanceType"] } else { "t3.small" }
+    $script:AiMinSize = [int]($p["aiWorker"]["scaling"]["minSize"])
+    $script:AiMaxSize = [int]($p["aiWorker"]["scaling"]["maxSize"])
+    $script:AiDesiredCapacity = [int]($p["aiWorker"]["scaling"]["desiredCapacity"])
 
     $script:VideoCEName = $p["videoBatch"]["computeEnvironmentName"]
     $script:VideoQueueName = $p["videoBatch"]["videoQueueName"]
