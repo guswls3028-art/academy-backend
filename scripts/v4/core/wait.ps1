@@ -1,6 +1,3 @@
-# Wait loops — describe-based polling only. No fixed sleep after delete.
-$ErrorActionPreference = "Stop"
-
 function Wait-CEDeleted {
     param([string]$CEName, [string]$Reg, [int]$TimeoutSec = 300)
     $elapsed = 0
