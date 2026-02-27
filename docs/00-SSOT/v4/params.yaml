@@ -44,6 +44,14 @@ api:
   subnetId: subnet-049e711f41fdff71b
   securityGroupId: sg-011ed1d9eb4a65b8f
   instanceType: t3.small
+  userData: ""
+  asg:
+    asgName: academy-api-asg
+    launchTemplateName: academy-api-lt
+    scaling:
+      minSize: 1
+      maxSize: 1
+      desiredCapacity: 1
   containerName: academy-api
   albName: ""
   targetGroupName: ""
