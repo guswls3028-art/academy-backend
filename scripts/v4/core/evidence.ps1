@@ -66,7 +66,13 @@ function Get-EvidenceSnapshot {
         $ev["ssmWorkersEnvExists"] = if ($ssm -and $ssm.Parameter) { "yes" } else { "no" }
     } catch { $ev["ssmWorkersEnvExists"] = "no" }
     $ev["ssmShapeCheck"] = "PASS"
+    return $ev
+}
 
+function Show-Evidence {
+    param([string]$NetprobeJobId = "", [string]$NetprobeStatus = "")
+    $ev = Get-EvidenceSnapshot -NetprobeJobId $NetprobeJobId -NetprobeStatus $NetprobeStatus
+    Write-Host "`n=== EVIDENCE ===" -ForegroundColor Cyan
     $ev.GetEnumerator() | ForEach-Object { Write-Host "  $($_.Key): $($_.Value)" -ForegroundColor Gray }
     Write-Host "=== END EVIDENCE ===`n" -ForegroundColor Cyan
     return $ev
