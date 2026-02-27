@@ -264,6 +264,22 @@ function Invoke-PurgeAndRecreate {
             }
         }
     }
+    # 5) API ASG: scale to 0, delete
+    Write-Host "  [Purge] API ASG: $($script:ApiASGName)" -ForegroundColor Yellow
+    try {
+        Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--min-size", "0", "--max-size", "0", "--desired-capacity", "0", "--region", $R) -ErrorMessage "scale API ASG to 0" 2>$null | Out-Null
+        $wait = 0
+        while ($wait -lt 120) {
+            $d = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $script:ApiASGName, "--region", $R, "--output", "json")
+            $arr = if ($d -and $d.AutoScalingGroups) { @($d.AutoScalingGroups) } else { @() }
+            $a = $arr | Where-Object { $_.AutoScalingGroupName -eq $script:ApiASGName } | Select-Object -First 1
+            if (-not $a -or $a.DesiredCapacity -eq 0) { break }
+            Start-Sleep -Seconds 10
+            $wait += 10
+        }
+        Invoke-Aws @("autoscaling", "delete-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--force-delete", "--region", $R) -ErrorMessage "delete API ASG" | Out-Null
+        Wait-ASGDeleted -ASGName $script:ApiASGName -Reg $R -TimeoutSec 300
+    } catch { Write-Warn "    $_" }
     if ($IncludePruneLegacy) {
         $all = Get-AllAwsResourcesForPrune
         $candidates = Get-DeleteCandidates -All $all
