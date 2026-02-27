@@ -67,13 +67,24 @@ function Get-StructuralDrift {
     $asgArr = if ($asgResult -and $asgResult.PSObject.Properties['AutoScalingGroups']) { @($asgResult.AutoScalingGroups) } else { @() }
     $allAsgNames = @($asgArr | ForEach-Object { $_.AutoScalingGroupName } | Where-Object { $_ })
     Write-Host "  [DRIFT-DEBUG] ASG ActualNames from AWS: ($($allAsgNames -join ', '))" -ForegroundColor DarkGray
+    $asgExpected = @{
+        $script:MessagingASGName = @{ Min = $script:MessagingMinSize; Max = $script:MessagingMaxSize; Desired = $script:MessagingDesiredCapacity }
+        $script:AiASGName = @{ Min = $script:AiMinSize; Max = $script:AiMaxSize; Desired = $script:AiDesiredCapacity }
+    }
     foreach ($asgName in $script:SSOT_ASG) {
         Write-Host "  [DRIFT-DEBUG] ASG ExpectedName: $asgName" -ForegroundColor DarkGray
         $matched = $asgArr | Where-Object { $_.AutoScalingGroupName -eq $asgName }
         if (-not $matched -or @($matched).Count -eq 0) {
             [void]$rows.Add([PSCustomObject]@{ ResourceType = "ASG"; Name = $asgName; Expected = "exists"; Actual = "missing"; Action = "Create" })
         } else {
-            [void]$rows.Add([PSCustomObject]@{ ResourceType = "ASG"; Name = $asgName; Expected = "exists"; Actual = "exists"; Action = "NoOp" })
+            $a = @($matched)[0]
+            $exp = $asgExpected[$asgName]
+            $capDrift = ($a.MinSize -ne $exp.Min) -or ($a.MaxSize -ne $exp.Max) -or ($a.DesiredCapacity -ne $exp.Desired)
+            if ($capDrift) {
+                [void]$rows.Add([PSCustomObject]@{ ResourceType = "ASG"; Name = $asgName; Expected = "Min=$($exp.Min) Max=$($exp.Max) Desired=$($exp.Desired)"; Actual = "Min=$($a.MinSize) Max=$($a.MaxSize) Desired=$($a.DesiredCapacity)"; Action = "Update" })
+            } else {
+                [void]$rows.Add([PSCustomObject]@{ ResourceType = "ASG"; Name = $asgName; Expected = "exists"; Actual = "exists"; Action = "NoOp" })
+            }
         }
     }
     return $rows
