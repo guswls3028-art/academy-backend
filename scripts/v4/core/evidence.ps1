@@ -1,12 +1,9 @@
 # Evidence table — fixed columns per evidence.schema.md. Netprobe jobId/status included.
 $ErrorActionPreference = "Stop"
 
-function Show-Evidence {
+function Get-EvidenceSnapshot {
     param([string]$NetprobeJobId = "", [string]$NetprobeStatus = "")
-    $R = $script:Region
-    Write-Host "`n=== EVIDENCE ===" -ForegroundColor Cyan
-
-    $ceV = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:VideoCEName, "--region", $R, "--output", "json")
+    $R = $script:Region @("batch", "describe-compute-environments", "--compute-environments", $script:VideoCEName, "--region", $R, "--output", "json")
     $ceO = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:OpsCEName, "--region", $R, "--output", "json")
     $qV = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoQueueName, "--region", $R, "--output", "json")
     $qO = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:OpsQueueName, "--region", $R, "--output", "json")
