@@ -64,7 +64,7 @@ try {
     Invoke-PreflightCheck
     $driftRows = Get-StructuralDrift
     Show-DriftTable -Rows $driftRows
-    if (-not $Plan) { Save-DriftReport -Rows $driftRows }
+    Save-DriftReport -Rows $driftRows
 
     if ($PruneLegacy) {
         $all = Get-AllAwsResourcesForPrune
