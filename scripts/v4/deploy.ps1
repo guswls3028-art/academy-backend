@@ -35,6 +35,7 @@ if ($EcrRepoUri) { $script:EcrRepoUri = $EcrRepoUri } else { $script:EcrRepoUri 
 . (Join-Path $ScriptRoot "core\prune.ps1")
 . (Join-Path $ScriptRoot "core\guard.ps1")
 . (Join-Path $ScriptRoot "core\preflight.ps1")
+. (Join-Path $ScriptRoot "core\reports.ps1")
 
 # Resources
 . (Join-Path $ScriptRoot "resources\network.ps1")
