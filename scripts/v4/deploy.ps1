@@ -121,7 +121,8 @@ try {
         Write-Warn "Netprobe skipped (-SkipNetprobe)"
     }
 
-    Show-Evidence -NetprobeJobId $netJobId -NetprobeStatus $netStatus
+    $ev = Show-Evidence -NetprobeJobId $netJobId -NetprobeStatus $netStatus
+    if ($ev) { Save-EvidenceReport -MarkdownContent (Convert-EvidenceToMarkdown -Ev $ev) }
 }
 catch {
     Write-Fail $_.Exception.Message
