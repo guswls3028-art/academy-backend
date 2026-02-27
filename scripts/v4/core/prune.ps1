@@ -192,3 +192,82 @@ function Invoke-PruneLegacyDeletes {
         try { Invoke-Aws @("ec2", "release-address", "--allocation-id", $allocId, "--region", $R) -ErrorMessage "release-address $allocId" | Out-Null } catch { Write-Warn "    $_" }
     }
 }
+
+# Purge (SSOT scope): disable+delete in order, then caller runs full Ensure.
+function Get-PurgePlan {
+    $R = $script:Region
+    $plan = [ordered]@{}
+    $plan["EventBridge Rules"] = @($script:SSOT_EventBridgeRule)
+    $plan["Batch Queues"] = @($script:SSOT_Queue)
+    $plan["Batch CEs"] = @($script:SSOT_CE)
+    $plan["Batch JobDefs (deregister ACTIVE)"] = @($script:SSOT_JobDef)
+    return $plan
+}
+
+function Invoke-PurgeAndRecreate {
+    param([switch]$IncludePruneLegacy = $false)
+    $R = $script:Region
+    Write-Host "`n=== PURGE (SSOT scope) ===" -ForegroundColor Yellow
+    # 1) EventBridge: disable + remove targets
+    foreach ($ruleName in $script:SSOT_EventBridgeRule) {
+        Write-Host "  [Purge] EventBridge: $ruleName" -ForegroundColor Yellow
+        try {
+            $targets = Invoke-AwsJson @("events", "list-targets-by-rule", "--rule", $ruleName, "--region", $R, "--output", "json")
+            if ($targets -and $targets.Targets -and $targets.Targets.Count -gt 0) {
+                $ids = $targets.Targets | ForEach-Object { $_.Id }
+                $args = @("events", "remove-targets", "--rule", $ruleName, "--ids") + [string[]]$ids + @("--region", $R)
+                Invoke-Aws $args -ErrorMessage "remove-targets $ruleName" 2>$null | Out-Null
+            }
+            Invoke-Aws @("events", "put-rule", "--name", $ruleName, "--state", "DISABLED", "--region", $R) -ErrorMessage "disable rule $ruleName" 2>$null | Out-Null
+        } catch { Write-Warn "    $_" }
+    }
+    # 2) Queues disable + delete + wait
+    foreach ($qName in $script:SSOT_Queue) {
+        Write-Host "  [Purge] Queue: $qName" -ForegroundColor Yellow
+        try {
+            Invoke-Aws @("batch", "update-job-queue", "--job-queue", $qName, "--state", "DISABLED", "--region", $R) -ErrorMessage "disable queue $qName" 2>$null | Out-Null
+            $wait = 0; while ($wait -lt 90) {
+                $d = Invoke-AwsJson @("batch", "describe-job-queues", "--region", $R, "--output", "json")
+                $arr = if ($d -and $d.jobQueues) { @($d.jobQueues) } else { @() }
+                $q = $arr | Where-Object { $_.jobQueueName -eq $qName } | Select-Object -First 1
+                if (-not $q -or $q.state -eq "DISABLED") { break }
+                Start-Sleep -Seconds 10; $wait += 10
+            }
+            Invoke-Aws @("batch", "delete-job-queue", "--job-queue", $qName, "--region", $R) -ErrorMessage "delete-job-queue $qName" | Out-Null
+            Wait-QueueDeleted -QueueName $qName -Reg $R -TimeoutSec 180
+        } catch { Write-Warn "    $_" }
+    }
+    # 3) CEs disable + delete + wait
+    foreach ($ceName in $script:SSOT_CE) {
+        Write-Host "  [Purge] CE: $ceName" -ForegroundColor Yellow
+        try {
+            Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $ceName, "--state", "DISABLED", "--region", $R) -ErrorMessage "disable CE $ceName" 2>$null | Out-Null
+            $wait = 0; while ($wait -lt 120) {
+                $d = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $ceName, "--region", $R, "--output", "json")
+                $arr = if ($d -and $d.computeEnvironments) { @($d.computeEnvironments) } else { @() }
+                $c = $arr | Where-Object { $_.computeEnvironmentName -eq $ceName } | Select-Object -First 1
+                if (-not $c -or $c.state -eq "DISABLED") { break }
+                Start-Sleep -Seconds 10; $wait += 10
+            }
+            Invoke-Aws @("batch", "delete-compute-environment", "--compute-environment", $ceName, "--region", $R) -ErrorMessage "delete CE $ceName" | Out-Null
+            Wait-CEDeleted -CEName $ceName -Reg $R -TimeoutSec 300
+        } catch { Write-Warn "    $_" }
+    }
+    # 4) JobDef deregister ACTIVE for SSOT names
+    foreach ($jdName in $script:SSOT_JobDef) {
+        $list = Invoke-AwsJson @("batch", "describe-job-definitions", "--job-definition-name", $jdName, "--status", "ACTIVE", "--region", $R, "--output", "json")
+        if ($list -and $list.jobDefinitions) {
+            foreach ($jd in $list.jobDefinitions) {
+                Write-Host "  [Purge] JobDef: $($jd.jobDefinitionArn)" -ForegroundColor Yellow
+                try { Invoke-Aws @("batch", "deregister-job-definition", "--job-definition", $jd.jobDefinitionArn, "--region", $R) -ErrorMessage "deregister $jdName" | Out-Null } catch { Write-Warn "    $_" }
+            }
+        }
+    }
+    if ($IncludePruneLegacy) {
+        $all = Get-AllAwsResourcesForPrune
+        $candidates = Get-DeleteCandidates -All $all
+        $count = Show-DeleteCandidateTable -Candidates $candidates
+        if ($count -gt 0) { Invoke-PruneLegacyDeletes -Candidates $candidates }
+    }
+    Write-Host "=== PURGE done; running full Ensure ===`n" -ForegroundColor Green
+}
