@@ -5,7 +5,10 @@ $ReportsRepoRoot = (Resolve-Path (Join-Path $ReportsScriptDir "..\..\..")).Path
 $ReportsBase = Join-Path $ReportsRepoRoot "docs\00-SSOT\v4\reports"
 $ReportsHistory = Join-Path $ReportsBase "history"
 
-function Get-ReportsDir { return $ReportsBase }
+function Get-ReportsDir {
+    if (-not (Test-Path $ReportsBase)) { New-Item -ItemType Directory -Path $ReportsBase -Force | Out-Null }
+    return $ReportsBase
+}
 function Get-ReportsHistoryDir {
     if (-not (Test-Path $ReportsHistory)) { New-Item -ItemType Directory -Path $ReportsHistory -Force | Out-Null }
     return $ReportsHistory
