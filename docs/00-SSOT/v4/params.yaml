@@ -47,11 +47,10 @@ api:
   userData: ""
   asg:
     asgName: academy-api-asg
-    launchTemplateName: academy-api-lt
-    scaling:
-      minSize: 1
-      maxSize: 1
-      desiredCapacity: 1
+    asgLaunchTemplateName: academy-api-lt
+    asgMinSize: 1
+    asgMaxSize: 1
+    asgDesiredCapacity: 1
   containerName: academy-api
   albName: ""
   targetGroupName: ""
