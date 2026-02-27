@@ -16,25 +16,20 @@
 | **state-contract.md** | 멱등/Wait/Netprobe/Evidence/Legacy kill-switch/PruneLegacy 계약 |
 | **runbook.md** | 장애·운영 점검 최소 커맨드셋 |
 | **evidence.schema.md** | Evidence 표 컬럼 고정 |
-| **reports/drift.latest.md** | Drift 표 (deploy -Plan으로 갱신) |
-| **reports/audit.latest.md** | 감사 출력 |
-| **reports/history/.gitkeep** | 타임스탬프 리포트 디렉터리 |
+| **reports/drift.latest.md** | Drift 표 (deploy 시마다 갱신) |
+| **reports/audit.latest.md** | Evidence/감사 (deploy 종료 시 저장) |
+| **reports/verify.latest.md** | verify.ps1 결과 (Batch/EventBridge/ASG/API/SSM PASS/FAIL) |
+| **reports/history/** | 타임스탬프별 drift/audit/verify 보관 |
 
 ### scripts/v4
 
 | 경로 | 역할 |
 |------|------|
-| **deploy.ps1** | 단일 진입점. -Plan, -PruneLegacy, -ForceRecreateAll, -SkipNetprobe, -Ci, -EcrRepoUri |
-| **bootstrap.ps1** | 새 PC 준비 (aws cli, pwsh, 인증, params.yaml 확인) |
-| **plan.ps1** | deploy.ps1 -Plan 래퍼 |
-| **core/ssot.ps1** | params.yaml 로드 + script 변수 설정 |
-| **core/aws.ps1** | Invoke-AwsJson / Invoke-Aws |
-| **core/logging.ps1** | Write-Step/Ok/Warn/Fail |
-| **core/wait.ps1** | Wait-CEDeleted, Wait-QueueDeleted, Wait-ASGDeleted 등 (폴링만) |
-| **core/diff.ps1** | Drift 비교 |
-| **core/evidence.ps1** | Evidence 표 출력 |
-| **core/prune.ps1** | SSOT 외 삭제 엔진 (순서 + Wait) |
-| **core/guard.ps1** | SSM 락 + Legacy kill-switch |
+| **deploy.ps1** | 단일 진입점. -Plan, -PruneLegacy, **-PurgeAndRecreate**, **-DryRun**, -ForceRecreateAll, -SkipNetprobe, -Ci, -EcrRepoUri |
+| **bootstrap.ps1** | 새 PC 준비 (UTF-8, aws --version, 인증, region, 최소 describe 테스트, params.yaml) |
+| **verify.ps1** | 5단계 검증 + **verify.latest.md** 저장 (Batch/EventBridge/ASG/API/SSM 체크) |
+| **core/reports.ps1** | **Save-DriftReport, Save-EvidenceReport, Save-VerifyReport** → docs/00-SSOT/v4/reports/ + history/ |
+| **core/guard.ps1** | SSM 락 + **scripts/infra 및 scripts/archive** 실행 시 즉시 fail |
 | **core/preflight.ps1** | AWS identity, VPC, SSM, ECR |
 | **resources/*.ps1** | network, iam, ssm, ecr, api, build, rds, redis, asg_ai, asg_messaging, batch, jobdef, eventbridge, netprobe |
 | **templates/batch/*.json** | Video/Ops CE·Queue·JobDef (scripts/infra 복사) |
