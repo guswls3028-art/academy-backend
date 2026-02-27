@@ -33,7 +33,7 @@ function Test-APIInstanceSSMOnline {
 
 function New-APIInstanceAndAttachEIP {
     # Run instance with SSOT AMI, profile, subnet, SG; tag Name=academy-api; then associate EIP.
-    $args = @("ec2", "run-instances",
+    $runArgs = @("ec2", "run-instances",
         "--image-id", $script:ApiAmiId,
         "--instance-type", $script:ApiInstanceType,
         "--iam-instance-profile", "Name=$($script:ApiInstanceProfile)",
@@ -41,7 +41,7 @@ function New-APIInstanceAndAttachEIP {
         "--security-group-ids", $script:ApiSecurityGroupId,
         "--tag-specifications", "ResourceType=instance,Tags=[{Key=Name,Value=$($script:ApiInstanceTagValue)}]",
         "--region", $script:Region, "--output", "json")
-    $run = Invoke-AwsJson $args
+    $run = Invoke-AwsJson $runArgs
     if (-not $run -or -not $run.Instances -or $run.Instances.Count -eq 0) { throw "run-instances returned no instance" }
     $newId = $run.Instances[0].InstanceId
     Write-Ok "Created API instance $newId"
