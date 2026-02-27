@@ -37,7 +37,8 @@ docs/
 
 | 목적 | 문서 |
 |------|------|
-| **배포/운영 SSOT** | [00-SSOT/v4/SSOT.md](00-SSOT/v4/SSOT.md), [00-SSOT/v4/runbook.md](00-SSOT/v4/runbook.md) |
+| **00-SSOT/v4/SSOT.md** | [00-SSOT/v4/SSOT.md](00-SSOT/v4/SSOT.md), [00-SSOT/v4/runbook.md](00-SSOT/v4/runbook.md) |
+| **리포트** | [00-SSOT/v4/reports/](00-SSOT/v4/reports/) — drift.latest.md, audit.latest.md, verify.latest.md, history/ |
 | Video Batch 런북·환경 변수 | [02-OPERATIONS/video_batch_production_runbook.md](02-OPERATIONS/video_batch_production_runbook.md) |
 | EventBridge 규칙 상태 | [02-OPERATIONS/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md](02-OPERATIONS/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md) |
 | 인프라 검증 스크립트 | [02-OPERATIONS/INFRA_VERIFICATION_SCRIPTS.md](02-OPERATIONS/INFRA_VERIFICATION_SCRIPTS.md) |
