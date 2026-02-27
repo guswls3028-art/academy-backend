@@ -96,16 +96,16 @@ function Load-SSOT {
     $script:MessagingLaunchTemplateName = $p["messagingWorker"]["launchTemplateName"]
     $script:MessagingAmiId = $p["messagingWorker"]["amiId"]
     $script:MessagingInstanceType = if ($p["messagingWorker"]["instanceType"]) { $p["messagingWorker"]["instanceType"] } else { "t3.small" }
-    $script:MessagingMinSize = [int]($p["messagingWorker"]["scaling"]["minSize"])
-    $script:MessagingMaxSize = [int]($p["messagingWorker"]["scaling"]["maxSize"])
-    $script:MessagingDesiredCapacity = [int]($p["messagingWorker"]["scaling"]["desiredCapacity"])
+    $script:MessagingMinSize = [int]($p["messagingWorker"]["minSize"])
+    $script:MessagingMaxSize = [int]($p["messagingWorker"]["maxSize"])
+    $script:MessagingDesiredCapacity = [int]($p["messagingWorker"]["desiredCapacity"])
     $script:AiASGName = $p["aiWorker"]["asgName"]
     $script:AiLaunchTemplateName = $p["aiWorker"]["launchTemplateName"]
     $script:AiAmiId = $p["aiWorker"]["amiId"]
     $script:AiInstanceType = if ($p["aiWorker"]["instanceType"]) { $p["aiWorker"]["instanceType"] } else { "t3.small" }
-    $script:AiMinSize = [int]($p["aiWorker"]["scaling"]["minSize"])
-    $script:AiMaxSize = [int]($p["aiWorker"]["scaling"]["maxSize"])
-    $script:AiDesiredCapacity = [int]($p["aiWorker"]["scaling"]["desiredCapacity"])
+    $script:AiMinSize = [int]($p["aiWorker"]["minSize"])
+    $script:AiMaxSize = [int]($p["aiWorker"]["maxSize"])
+    $script:AiDesiredCapacity = [int]($p["aiWorker"]["desiredCapacity"])
 
     $script:VideoCEName = $p["videoBatch"]["computeEnvironmentName"]
     $script:VideoQueueName = $p["videoBatch"]["videoQueueName"]
