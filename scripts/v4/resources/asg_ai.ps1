@@ -44,7 +44,7 @@ function Ensure-AiLaunchTemplate {
             "--region", $script:Region, "--output", "json")
         if (-not $newVer -or -not $newVer.LaunchTemplateVersion) { throw "create-launch-template-version failed" }
         $newVersion = $newVer.LaunchTemplateVersion.VersionNumber
-        Invoke-Aws @("ec2", "modify-launch-template", "--launch-template-id", $ltId, "--default-version", "Version=$newVersion", "--region", $script:Region) -ErrorMessage "modify-launch-template set default failed" | Out-Null
+        Invoke-Aws @("ec2", "modify-launch-template", "--launch-template-id", $ltId, "--default-version", $newVersion.ToString(), "--region", $script:Region) -ErrorMessage "modify-launch-template set default failed" | Out-Null
         Write-Ok "LaunchTemplate $($script:AiLaunchTemplateName) new default version $newVersion (AMI/type drift)"
         $script:ChangesMade = $true
         return @{ LtId = $ltId; LtVersion = $newVersion; Updated = $true }
