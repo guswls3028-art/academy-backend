@@ -91,7 +91,7 @@ function Load-SSOT {
     $script:ApiASGDesiredCapacity = [int](($p["api"]["asgDesiredCapacity"] -as [int]))
     if (-not $script:ApiASGDesiredCapacity -and $script:ApiASGDesiredCapacity -ne 0) { $script:ApiASGDesiredCapacity = 1 }
 
-    $script:BuildTagKey = $p["build"]["instanceTagKey"]
+    $script:BuildTagKey = $p["build"]["instanceTagKey"] = $p["build"]["instanceTagKey"]
     $script:BuildTagValue = $p["build"]["instanceTagValue"]
     $script:BuildAmiId = $p["build"]["amiId"]
     $script:BuildInstanceProfile = $p["build"]["instanceProfile"]
