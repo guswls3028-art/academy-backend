@@ -2,6 +2,18 @@
 
 학원 관리 시스템 백엔드 API 서버
 
+---
+
+## 인프라 SSOT v4 (정식)
+
+| 용도 | 경로 |
+|------|------|
+| **정식 문서** | [docs/00-SSOT/v4/SSOT.md](docs/00-SSOT/v4/SSOT.md) |
+| **정식 배포** | [scripts/v4/deploy.ps1](scripts/v4/deploy.ps1) |
+| **검증(5단계)** | [scripts/v4/verify.ps1](scripts/v4/verify.ps1) |
+
+---
+
 **문서**: 이 README가 **최상위 유일 진입 문서**입니다.  
 **개발·Cursor 참조**: [docs/REFERENCE.md](docs/REFERENCE.md) 한 파일만 보면 됩니다. 문서 인덱스: [docs/README.md](docs/README.md).
 

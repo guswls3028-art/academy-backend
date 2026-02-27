@@ -1,0 +1,16 @@
+=== Verify v4 started 20260227-152307 ===
+Log: C:\academy\logs\v4\20260227-152307-verify.log
+
+--- 1) bootstrap.ps1 ---
+
+--- 2) deploy.ps1 -Plan ---
+
+--- 3) deploy.ps1 -PruneLegacy ---
+{
+    "FailedEntryCount": 0,
+    "FailedEntries": []
+}
+{
+    "FailedEntryCount": 0,
+    "FailedEntries": []
+}

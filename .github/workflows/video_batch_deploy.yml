@@ -1,6 +1,6 @@
 # ==============================================================================
-# Video Batch deploy — SSOT v3. Build video-worker, push ECR, run scripts_v3/deploy.ps1 only.
-# Legacy: scripts/infra/*.ps1 직접 호출 금지 (denylist 가드).
+# Video Batch deploy — SSOT v4. Build video-worker, push ECR, run scripts/v4/deploy.ps1 only.
+# Legacy: scripts/infra/*.ps1 실행/호출 금지 (denylist 가드).
 # ==============================================================================
 
 name: Video Batch Deploy
@@ -11,10 +11,12 @@ on:
     branches: [main]
     paths:
       - "docker/video-worker/**"
+      - "scripts/v4/**"
       - "scripts_v3/**"
       - "scripts/infra/batch/**"
       - "scripts/infra/eventbridge/**"
       - "scripts/infra/cloudwatch/**"
+      - "docs/00-SSOT/**"
       - ".github/workflows/video_batch_deploy.yml"
 
 concurrency:
@@ -31,13 +33,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Guard — no legacy script execution
+      - name: Guard — no legacy script execution (all workflows)
         run: |
-          if grep -E 'scripts/infra/[^"]*\.ps1' .github/workflows/video_batch_deploy.yml; then
-            echo "::error::Legacy script call detected. Use scripts_v3/deploy.ps1 only."
-            exit 1
-          fi
-          echo "Guard OK: no scripts/infra/*.ps1 in run steps"
+          for f in .github/workflows/*.yml .github/workflows/*.yaml; do
+            [ -f "$f" ] || continue
+            if grep -E 'run:.*scripts/infra|pwsh.*scripts/infra|-File.*scripts/infra' "$f"; then
+              echo "::error::Legacy script execution detected in $f. Use scripts/v4/deploy.ps1 only."
+              exit 1
+            fi
+          done
+          echo "Guard OK: no scripts/infra execution in workflows"
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -115,5 +120,5 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: One-Take Deploy (SSOT v3)
-        run: pwsh -File scripts_v3/deploy.ps1 -Env prod -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"
+      - name: One-Take Deploy (SSOT v4)
+        run: pwsh -File scripts/v4/deploy.ps1 -Env prod -Ci -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"

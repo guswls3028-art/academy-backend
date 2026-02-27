@@ -1,0 +1,1 @@
+{"Version":"2012-10-17","Statement":[{"Sid":"BatchManageCE","Effect":"Allow","Action":["batch:CreateComputeEnvironment","batch:DeleteComputeEnvironment","batch:DescribeComputeEnvironments","batch:UpdateComputeEnvironment","ec2:DescribeInstanceStatus","ec2:DescribeInstances","ec2:DescribeSubnets","ec2:DescribeSecurityGroups","ec2:DescribeVpcs","iam:PassRole"],"Resource":"*"}]}

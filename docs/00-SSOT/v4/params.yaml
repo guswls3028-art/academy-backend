@@ -1,0 +1,96 @@
+# Academy SSOT v4 — 기계용 단일소스. scripts/v4 전용. 사람용: SSOT.md
+# 계약: state-contract.md
+
+global:
+  env: prod
+  region: ap-northeast-2
+  accountId: "809466760795"
+  namingPrefix: academy-
+  tags:
+    Project: academy
+    ManagedBy: ssot-v4
+
+network:
+  vpcId: vpc-0831a2484f9b114c2
+  publicSubnets:
+    - subnet-049e711f41fdff71b
+    - subnet-07a8427d3306ce910
+    - subnet-09231ed7ecf59cfa4
+    - subnet-0548571ac21b3bbf3
+  securityGroups:
+    batch: sg-011ed1d9eb4a65b8f
+    api: ""
+    workers: ""
+    redis: academy-redis-sg
+
+ssm:
+  apiEnv: /academy/api/env
+  workersEnv: /academy/workers/env
+
+ecr:
+  baseRepo: academy-base
+  apiRepo: academy-api
+  videoWorkerRepo: academy-video-worker
+  messagingWorkerRepo: academy-messaging-worker
+  aiWorkerRepo: academy-ai-worker-cpu
+
+api:
+  identification:
+    type: elastic_ip
+    allocationId: eipalloc-071ef2b5b5bec9428
+    publicIp: 15.165.147.157
+  containerName: academy-api
+  albName: ""
+  targetGroupName: ""
+  instanceTagKey: Name
+  instanceTagValue: academy-api
+  apiBaseUrl: "http://15.165.147.157:8000"
+
+build:
+  instanceTagKey: Name
+  instanceTagValue: academy-build-arm64
+
+messagingWorker:
+  asgName: academy-messaging-worker-asg
+  launchTemplateName: academy-messaging-worker-lt
+  scaling:
+    minSize: 0
+    maxSize: 4
+    desiredCapacity: 0
+
+aiWorker:
+  asgName: academy-ai-worker-asg
+  launchTemplateName: academy-ai-worker-lt
+  scaling:
+    minSize: 0
+    maxSize: 4
+    desiredCapacity: 0
+
+videoBatch:
+  computeEnvironmentName: academy-video-batch-ce-final
+  videoQueueName: academy-video-batch-queue
+  workerJobDefName: academy-video-batch-jobdef
+  opsComputeEnvironmentName: academy-video-ops-ce
+  opsQueueName: academy-video-ops-queue
+  opsJobDefs:
+    reconcile: academy-video-ops-reconcile
+    scanstuck: academy-video-ops-scanstuck
+    netprobe: academy-video-ops-netprobe
+
+eventBridge:
+  reconcileRuleName: academy-reconcile-video-jobs
+  scanStuckRuleName: academy-video-scan-stuck-rate
+  roleName: academy-eventbridge-batch-video-role
+
+rds:
+  dbIdentifier: academy-db
+  # validate only; no delete unless ForceRecreateAll + DangerIncludeData
+
+redis:
+  replicationGroupId: academy-redis
+  subnetGroupName: academy-redis-subnets
+  securityGroupId: academy-redis-sg
+
+r2:
+  bucket: ""
+  publicBaseUrl: ""
