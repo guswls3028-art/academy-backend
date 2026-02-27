@@ -117,6 +117,8 @@ try {
     [void]$sb.AppendLine("- ASG desired/min/max: $(if ($asgOk) { 'PASS' } else { 'FAIL' })")
     $apiOk = ($ev -and $ev["apiHealth"] -eq "OK")
     [void]$sb.AppendLine("- API health 200: $(if ($apiOk) { 'PASS' } else { 'FAIL' })")
+    $buildOk = ($ev -and $ev["buildInstanceId"] -and $ev["buildInstanceId"] -ne "not found")
+    [void]$sb.AppendLine("- Build instance (Name=academy-build-arm64): $(if ($buildOk) { 'PASS' } else { 'FAIL' })")
     $ssmOk = ($ev -and $ev["ssmWorkersEnvExists"] -eq "yes")
     [void]$sb.AppendLine("- SSM online: $(if ($ssmOk) { 'PASS' } else { 'FAIL' })")
     [void]$sb.AppendLine("- Netprobe: (see last deploy Evidence)")
