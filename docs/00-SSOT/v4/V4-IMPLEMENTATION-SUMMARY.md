@@ -86,9 +86,9 @@ pwsh scripts/v4/deploy.ps1
 - **deploy -PurgeAndRecreate -DryRun:** SSOT Batch/EventBridge 삭제 예정 목록만 출력 후 종료
 - **deploy -PurgeAndRecreate:** SSOT 범위 전부 삭제 후 풀스택 Ensure 재실행
 - **deploy -PruneLegacy:** SSOT 외 삭제 후 FullStack Ensure
-- **deploy:** 풀스택 Ensure → Netprobe → Evidence → **audit.latest.md 저장**
-- **API health:** 200이 아니면 인프라 정렬 실패로 throw
-- **verify.ps1:** bootstrap → deploy -Plan → deploy -PruneLegacy → deploy → deploy (No-op) + **verify.latest.md 저장**
+- **deploy:** 풀스택 Ensure (Batch + **API + ASG + Build**) → Netprobe → Evidence → **audit.latest.md 저장**
+- **API/Build/ASG:** **완전 Ensure** (create if missing, AMI/LT/capacity drift 시 recreate 또는 update/instance-refresh). 재실행 시 No-op.
+- **verify.ps1:** bootstrap → deploy -Plan → deploy -PruneLegacy → deploy → deploy (No-op) + **verify.latest.md** (Batch/EventBridge/ASG/**API/Build** PASS 조건 포함)
 
 ---
 
