@@ -201,6 +201,7 @@ function Get-PurgePlan {
     $plan["Batch Queues"] = @($script:SSOT_Queue)
     $plan["Batch CEs"] = @($script:SSOT_CE)
     $plan["Batch JobDefs (deregister ACTIVE)"] = @($script:SSOT_JobDef)
+    $plan["API ASG"] = @($script:ApiASGName)
     return $plan
 }
 
