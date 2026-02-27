@@ -88,6 +88,31 @@ function Get-StructuralDrift {
             }
         }
     }
+
+    # API Launch Template drift: AMI, SG, UserData, InstanceProfile
+    $apiLtName = $script:ApiLaunchTemplateName
+    $apiLtR = Invoke-AwsJson @("ec2", "describe-launch-templates", "--launch-template-names", $apiLtName, "--region", $R, "--output", "json")
+    if (-not $apiLtR -or -not $apiLtR.LaunchTemplates -or $apiLtR.LaunchTemplates.Count -eq 0) {
+        [void]$rows.Add([PSCustomObject]@{ ResourceType = "API LT"; Name = $apiLtName; Expected = "exists"; Actual = "missing"; Action = "Create" })
+    } else {
+        $apiLtId = $apiLtR.LaunchTemplates[0].LaunchTemplateId
+        $apiVerR = Invoke-AwsJson @("ec2", "describe-launch-template-versions", "--launch-template-id", $apiLtId, "--versions", '$Default', "--region", $R, "--output", "json")
+        $apiLtDrift = $false
+        if ($apiVerR -and $apiVerR.LaunchTemplateVersions -and $apiVerR.LaunchTemplateVersions.Count -gt 0) {
+            $d = $apiVerR.LaunchTemplateVersions[0].LaunchTemplateData
+            $actualAmi = if ($d.PSObject.Properties['ImageId']) { $d.ImageId } else { $null }
+            $actualSg = $null; if ($d.PSObject.Properties['SecurityGroupIds'] -and $d.SecurityGroupIds -and $d.SecurityGroupIds.Count -gt 0) { $actualSg = $d.SecurityGroupIds[0] }
+            $actualProfile = $null; if ($d.PSObject.Properties['IamInstanceProfile'] -and $d.IamInstanceProfile) { $actualProfile = $d.IamInstanceProfile.Name }
+            $expectedUserData = if ($script:ApiUserData) { [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($script:ApiUserData)) } else { "" }
+            $actualUserData = if ($d.PSObject.Properties['UserData']) { $d.UserData } else { "" }
+            $apiLtDrift = ($actualAmi -ne $script:ApiAmiId) -or ($actualSg -ne $script:ApiSecurityGroupId) -or ($actualProfile -ne $script:ApiInstanceProfile) -or ($actualUserData -ne $expectedUserData)
+        }
+        if ($apiLtDrift) {
+            [void]$rows.Add([PSCustomObject]@{ ResourceType = "API LT"; Name = $apiLtName; Expected = "AMI/SG/Profile/UserData SSOT"; Actual = "drift"; Action = "NewVersion" })
+        } else {
+            [void]$rows.Add([PSCustomObject]@{ ResourceType = "API LT"; Name = $apiLtName; Expected = "exists"; Actual = "exists"; Action = "NoOp" })
+        }
+    }
     return $rows
 }
 
