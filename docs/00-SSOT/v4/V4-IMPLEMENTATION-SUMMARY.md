@@ -58,11 +58,11 @@
 - **Batch Queue:** academy-video-batch-queue, academy-video-ops-queue  
 - **Batch JobDef:** academy-video-batch-jobdef, academy-video-ops-reconcile, academy-video-ops-scanstuck, academy-video-ops-netprobe  
 - **EventBridge Rule:** academy-reconcile-video-jobs, academy-video-scan-stuck-rate  
-- **ASG:** academy-messaging-worker-asg, academy-ai-worker-asg  
+- **ASG:** academy-messaging-worker-asg, academy-ai-worker-asg — **Ensure-ASG:** LT drift·Desired/Min/Max drift 시 update 또는 instance-refresh, drift 표 반영  
 - **RDS:** academy-db  
 - **Redis:** academy-redis  
-- **API:** EIP eipalloc-071ef2b5b5bec9428  
-- **Build:** Tag Name=academy-build-arm64  
+- **API:** EIP eipalloc-071ef2b5b5bec9428 — **Ensure-API:** Tag Name=academy-api, 없으면 create, health≠200/AMI/SSM drift 시 recreate, EIP·SSM·health 200 확인  
+- **Build:** Tag Name=academy-build-arm64 — **Ensure-Build:** 없으면 create, AMI drift 시 recreate, stopped 허용  
 - **IAM:** academy-batch-service-role, academy-batch-ecs-instance-role, academy-batch-ecs-task-execution-role, academy-video-batch-job-role, academy-eventbridge-batch-video-role  
 - **SSM:** /academy/api/env, /academy/workers/env  
 - **ECR:** academy-api, academy-video-worker, academy-messaging-worker, academy-ai-worker-cpu  
