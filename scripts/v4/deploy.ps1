@@ -61,6 +61,8 @@ Load-SSOT -Env $Env | Out-Null
 Write-Host "`n=== DEPLOY v4 ($Env) ===" -ForegroundColor Cyan
 if ($Plan) { Write-Host "MODE: Plan (no AWS changes)" -ForegroundColor Yellow }
 if ($PruneLegacy -and -not $Plan) { Write-Host "MODE: PruneLegacy" -ForegroundColor Yellow }
+if ($PurgeAndRecreate) { Write-Host "MODE: PurgeAndRecreate" -ForegroundColor Yellow }
+if ($DryRun) { Write-Host "MODE: DryRun (no changes)" -ForegroundColor Yellow }
 
 try {
     Assert-NoLegacyScripts -Ci:$Ci
@@ -69,6 +71,23 @@ try {
     $driftRows = Get-StructuralDrift
     Show-DriftTable -Rows $driftRows
     Save-DriftReport -Rows $driftRows
+
+    if ($PurgeAndRecreate -and $DryRun) {
+        $purgePlan = Get-PurgePlan
+        $sb = [System.Text.StringBuilder]::new()
+        [void]$sb.AppendLine("# Purge plan (DryRun)")
+        [void]$sb.AppendLine("**Generated:** $(Get-Date -Format 'o')")
+        [void]$sb.AppendLine("")
+        foreach ($key in $purgePlan.Keys) {
+            [void]$sb.AppendLine("## $key")
+            foreach ($id in $purgePlan[$key]) { [void]$sb.AppendLine("- $id") }
+            [void]$sb.AppendLine("")
+        }
+        Save-EvidenceReport -MarkdownContent $sb.ToString()
+        Write-Host "`n=== PURGE DRY RUN COMPLETE (no changes) ===`n" -ForegroundColor Green
+        Release-DeployLock -Reg $script:Region
+        exit 0
+    }
 
     if ($PruneLegacy) {
         $all = Get-AllAwsResourcesForPrune
