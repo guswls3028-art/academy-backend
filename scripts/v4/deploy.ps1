@@ -60,6 +60,7 @@ if ($Plan) { Write-Host "MODE: Plan (no AWS changes)" -ForegroundColor Yellow }
 if ($PruneLegacy -and -not $Plan) { Write-Host "MODE: PruneLegacy" -ForegroundColor Yellow }
 
 try {
+    Assert-NoLegacyScripts -Ci:$Ci
     Acquire-DeployLock -Reg $script:Region
     Invoke-PreflightCheck
     $driftRows = Get-StructuralDrift

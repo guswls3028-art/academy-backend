@@ -45,11 +45,15 @@ function Release-DeployLock {
 function Assert-NoLegacyScripts {
     param([switch]$Ci)
     if ($Ci) { return }
-    $caller = (Get-PSCallStack | Select-Object -Skip 1 -First 1).InvocationInfo.ScriptName
-    if ($caller -and $caller -match 'scripts[\\/]infra') {
-        throw "DEPRECATED: Do not run scripts/infra. Use scripts/v4/deploy.ps1 only."
-    }
-    if ($caller -and $caller -match 'scripts[\\/]archive') {
-        throw "FORBIDDEN: Do not run scripts/archive. Use scripts/v4 only."
+    $stack = Get-PSCallStack
+    foreach ($frame in $stack) {
+        $path = $frame.InvocationInfo.ScriptName
+        if (-not $path) { continue }
+        if ($path -match 'scripts[\\/]infra[\\/]') {
+            throw "DEPRECATED: Do not run scripts/infra. Use scripts/v4/deploy.ps1 only."
+        }
+        if ($path -match 'scripts[\\/]archive[\\/]') {
+            throw "FORBIDDEN: Do not run scripts/archive. Use scripts/v4 only."
+        }
     }
 }
