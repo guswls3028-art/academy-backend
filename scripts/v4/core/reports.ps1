@@ -50,3 +50,17 @@ function Save-EvidenceReport {
     Set-Content -Path $historyPath -Value $content -Encoding UTF8 -Force
     Write-Host "  Evidence report: $latestPath" -ForegroundColor DarkGray
 }
+
+function Save-VerifyReport {
+    param([string]$MarkdownContent)
+    $dir = Get-ReportsDir
+    $historyDir = Get-ReportsHistoryDir
+    $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+    $header = "# Verify v4`n**Generated:** $(Get-Date -Format 'o')`n`n"
+    $content = $header + $MarkdownContent
+    $latestPath = Join-Path $dir "verify.latest.md"
+    $historyPath = Join-Path $historyDir "${ts}-verify.md"
+    Set-Content -Path $latestPath -Value $content -Encoding UTF8 -Force
+    Set-Content -Path $historyPath -Value $content -Encoding UTF8 -Force
+    Write-Host "  Verify report: $latestPath" -ForegroundColor DarkGray
+}
