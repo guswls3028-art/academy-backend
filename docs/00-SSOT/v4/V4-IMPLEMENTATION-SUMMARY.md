@@ -73,11 +73,14 @@ pwsh scripts/v4/deploy.ps1 -PruneLegacy
 pwsh scripts/v4/deploy.ps1
 ```
 
-- **bootstrap:** aws cli·인증·params.yaml 존재 확인  
-- **deploy -Plan:** AWS 변경 0, Drift 표·Evidence 스타일 출력  
-- **deploy -Plan -PruneLegacy:** 삭제 후보 표만 출력  
-- **deploy -PruneLegacy:** SSOT 외 삭제 후 FullStack Ensure  
-- **deploy:** 풀스택 Ensure → Netprobe → Evidence  
+- **deploy -Plan:** AWS 변경 0, Drift 표·Evidence 출력·**drift.latest.md / audit.latest.md 저장**
+- **deploy -Plan -PruneLegacy:** 삭제 후보 표만 출력
+- **deploy -PurgeAndRecreate -DryRun:** SSOT Batch/EventBridge 삭제 예정 목록만 출력 후 종료
+- **deploy -PurgeAndRecreate:** SSOT 범위 전부 삭제 후 풀스택 Ensure 재실행
+- **deploy -PruneLegacy:** SSOT 외 삭제 후 FullStack Ensure
+- **deploy:** 풀스택 Ensure → Netprobe → Evidence → **audit.latest.md 저장**
+- **API health:** 200이 아니면 인프라 정렬 실패로 throw
+- **verify.ps1:** bootstrap → deploy -Plan → deploy -PruneLegacy → deploy → deploy (No-op) + **verify.latest.md 저장**
 
 ---
 

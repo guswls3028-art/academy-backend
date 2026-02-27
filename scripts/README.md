@@ -10,9 +10,8 @@
 |------|------|
 | **배포** | `scripts/v4/deploy.ps1` |
 | **새 PC 준비** | `scripts/v4/bootstrap.ps1` |
-| **검증(5단계 자동)** | `scripts/v4/verify.ps1` |
-| **플로우·5단계** | [scripts/v4/README.md](v4/README.md) |
-| **템플릿** | `scripts/v4/templates/` (정식) |
+| **검증(5단계)** | `scripts/v4/verify.ps1` → reports/verify.latest.md |
+| **옵션** | -Plan, -PruneLegacy, -PurgeAndRecreate, -PurgeAndRecreate -DryRun |
 
 ---
 
