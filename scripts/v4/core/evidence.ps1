@@ -56,6 +56,17 @@ function Get-EvidenceSnapshot {
     }
     $addr = Invoke-AwsJson @("ec2", "describe-addresses", "--allocation-ids", $script:ApiAllocationId, "--region", $R, "--output", "json")
     $ev["apiInstanceId"] = if ($addr -and $addr.Addresses -and $addr.Addresses.Count -gt 0 -and $addr.Addresses[0].InstanceId) { $addr.Addresses[0].InstanceId } else { "no instance" }
+    $asgApi = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $script:ApiASGName, "--region", $R, "--output", "json")
+    if ($asgApi -and $asgApi.AutoScalingGroups -and $asgApi.AutoScalingGroups.Count -gt 0) {
+        $a = $asgApi.AutoScalingGroups[0]
+        $ev["apiAsgDesired"] = $a.DesiredCapacity
+        $ev["apiAsgMin"] = $a.MinSize
+        $ev["apiAsgMax"] = $a.MaxSize
+        if ($a.LaunchTemplate) { $ev["apiAsgLtVersion"] = $a.LaunchTemplate.Version }
+    } else {
+        $ev["apiAsgDesired"] = "not found"
+        $ev["apiAsgLtVersion"] = "-"
+    }
     $ev["apiBaseUrl"] = $script:ApiBaseUrl
     try {
         $hr = Invoke-WebRequest -Uri "$($script:ApiBaseUrl)/health" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
