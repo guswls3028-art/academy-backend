@@ -194,7 +194,7 @@ function Ensure-SecurityGroups {
         $script:SecurityGroupApp = $c.GroupId
         Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupApp, "--protocol", "tcp", "--port", "80", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "sg-app 80" | Out-Null
         Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupApp, "--protocol", "tcp", "--port", "443", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "sg-app 443" | Out-Null
-        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupApp, "--protocol", "tcp", "--port", "8000", "--cidr", "10.0.0.0/16", "--region", $script:Region) -ErrorMessage "sg-app 8000" | Out-Null
+        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupApp, "--protocol", "tcp", "--port", "8000", "--cidr", $script:VpcCidr, "--region", $script:Region) -ErrorMessage "sg-app 8000" | Out-Null
         if (-not (Test-SgHasDefaultEgress -GroupId $script:SecurityGroupApp)) {
             Invoke-Aws @("ec2", "authorize-security-group-egress", "--group-id", $script:SecurityGroupApp, "--protocol", "all", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "sg-app egress" | Out-Null
         }
