@@ -100,6 +100,9 @@ messagingWorker:
   scalingPolicyScaleInThreshold: 0
   sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-messaging-queue
   sqsQueueName: academy-v1-messaging-queue
+  visibilityTimeoutSeconds: 900
+  dlqMaxReceiveCount: 5
+  dlqSuffix: -dlq
 
 aiWorker:
   asgName: academy-v1-ai-worker-asg
@@ -117,6 +120,9 @@ aiWorker:
   scalingPolicyScaleInThreshold: 0
   sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-ai-queue
   sqsQueueName: academy-v1-ai-queue
+  visibilityTimeoutSeconds: 3600
+  dlqMaxReceiveCount: 5
+  dlqSuffix: -dlq
 
 videoBatch:
   # standard: 기존 계열 유지. 3시간 이하 일반 작업. maxvCpus=40, Spot 혼합.
@@ -193,8 +199,31 @@ rds:
   dbSubnetGroupName: academy-v1-db-subnets
   masterUsername: admin97
   masterPasswordSsmParam: "/academy/rds/master_password"
+  performanceInsightsEnabled: true
+  performanceInsightsRetentionDays: 7
+  multiAz: false
 
-redis:
+observability:
+  logRetentionDays: 30
+  alarmEvaluationPeriods: 2
+  alarmPeriodSeconds: 300
+  api:
+    alb5xxThreshold: 10
+    targetUnhealthyThreshold: 1
+  sqs:
+    queueDepthThreshold: 100
+    dlqDepthThreshold: 5
+  batch:
+    queueDepthThreshold: 50
+    failedJobsThreshold: 5
+    stuckDetectedEnabled: true
+  rds:
+    cpuThresholdPercent: 80
+    freeStorageGbThreshold: 5
+    connectionsThreshold: 90
+  redis:
+    cpuThresholdPercent: 75
+    evictionsThreshold: 100
   replicationGroupId: academy-v1-redis
   subnetGroupName: academy-v1-redis-subnets
   securityGroupId: ""
