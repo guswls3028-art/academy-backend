@@ -296,9 +296,10 @@ function Ensure-ECR-VpcEndpoints {
     $existing = Invoke-AwsJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "Name=service-name,Values=$ecrApiSvc", "--region", $region, "--output", "json") 2>$null
     if (-not $existing -or -not $existing.VpcEndpoints -or $existing.VpcEndpoints.Count -eq 0) {
         if (-not $script:PlanMode) {
-            $subIds = ($script:PublicSubnets + $script:PrivateSubnets) | Where-Object { $_ -match '^subnet-' } | Select-Object -First 2
+            $subIds = @($script:PublicSubnets + $script:PrivateSubnets) | Where-Object { $_ -match '^subnet-' } | Select-Object -First 2
             if ($subIds.Count -lt 1) { Write-Warn "No subnets for ECR endpoint"; return }
-            Invoke-Aws @("ec2", "create-vpc-endpoint", "--vpc-id", $vpcId, "--vpc-endpoint-type", "Interface", "--service-name", $ecrApiSvc, "--subnet-ids", $subIds, "--security-group-ids", $vpceSgId, "--private-dns-enabled", "--region", $region) -ErrorMessage "create-vpc-endpoint ecr.api" | Out-Null
+            $argsEcrApi = @("ec2", "create-vpc-endpoint", "--vpc-id", $vpcId, "--vpc-endpoint-type", "Interface", "--service-name", $ecrApiSvc, "--subnet-ids") + @($subIds) + @("--security-group-ids", $vpceSgId, "--private-dns-enabled", "--region", $region)
+            Invoke-Aws $argsEcrApi -ErrorMessage "create-vpc-endpoint ecr.api" | Out-Null
             Write-Ok "VPC endpoint $ecrApiSvc created"
             $script:ChangesMade = $true
         }
