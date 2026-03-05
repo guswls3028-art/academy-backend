@@ -51,7 +51,7 @@ ecr:
   aiWorkerRepo: academy-ai-worker-cpu
   immutableTagRequired: true
 
-# API: max=2 고정 (solo dev, medium reliability)
+# API: max=1 (비용 절감, 개발/초기 단계)
 api:
   amiId: ami-0885e191a9bcf28b0
   instanceProfile: academy-ec2-role
@@ -61,7 +61,7 @@ api:
   asgName: academy-v1-api-asg
   asgLaunchTemplateName: academy-v1-api-lt
   asgMinSize: 1
-  asgMaxSize: 2
+  asgMaxSize: 1
   asgDesiredCapacity: 1
   containerName: academy-api
   albName: academy-v1-api-alb
