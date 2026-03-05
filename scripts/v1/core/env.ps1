@@ -1,6 +1,7 @@
 # .env 자동 로드 및 AWS 자격 증명 검증. 모든 v1 스크립트에서 공통 사용.
 # .env 형식: KEY=value (한 줄씩). # 주석·빈 줄 무시. PowerShell $env: 문법 사용하지 않음.
 $ErrorActionPreference = "Stop"
+$script:EnvLoaded = $false
 
 function Get-RepoRoot {
     $coreDir = $PSScriptRoot   # scripts/v1/core
