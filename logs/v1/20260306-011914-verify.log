@@ -6,3 +6,10 @@ Log: C:\academy\logs\v1\20260306-011914-verify.log
 --- 2) deploy.ps1 -Plan ---
 
 --- 3) deploy.ps1 -PruneLegacy ---
+FAIL: PruneLegacy failed. Check log.
+Command/Error: SSM send-command failed for build
+Log file: C:\academy\logs\v1\20260306-011914-verify.log
+
+=== VERIFY STOPPED ===
+Failure: SSM send-command failed for build
+Log: C:\academy\logs\v1\20260306-011914-verify.log
