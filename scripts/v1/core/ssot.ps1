@@ -58,10 +58,10 @@ function Load-SSOT {
     $script:PublicSubnetCidr2 = if ($n["publicSubnetCidr2"]) { $n["publicSubnetCidr2"] } else { "10.0.2.0/24" }
     $script:PrivateSubnetCidr1 = if ($n["privateSubnetCidr1"]) { $n["privateSubnetCidr1"] } else { "10.0.11.0/24" }
     $script:PrivateSubnetCidr2 = if ($n["privateSubnetCidr2"]) { $n["privateSubnetCidr2"] } else { "10.0.12.0/24" }
-    $script:VpcName = if ($n["vpcName"]) { $n["vpcName"] } else { "academy-v4-vpc" }
-    $script:SgAppName = if ($n["sgAppName"]) { $n["sgAppName"] } else { "academy-v4-sg-app" }
-    $script:SgBatchName = if ($n["sgBatchName"]) { $n["sgBatchName"] } else { "academy-v4-sg-batch" }
-    $script:SgDataName = if ($n["sgDataName"]) { $n["sgDataName"] } else { "academy-v4-sg-data" }
+    $script:VpcName = if ($n["vpcName"]) { $n["vpcName"] } else { "academy-v1-vpc" }
+    $script:SgAppName = if ($n["sgAppName"]) { $n["sgAppName"] } else { "academy-v1-sg-app" }
+    $script:SgBatchName = if ($n["sgBatchName"]) { $n["sgBatchName"] } else { "academy-v1-sg-batch" }
+    $script:SgDataName = if ($n["sgDataName"]) { $n["sgDataName"] } else { "academy-v1-sg-data" }
     $script:PublicSubnets = @()
     if ($p["networkPublicSubnets"] -and $p["networkPublicSubnets"]["_list"]) { $script:PublicSubnets = @($p["networkPublicSubnets"]["_list"]) }
     elseif ($n["_list"]) { $script:PublicSubnets = @($n["_list"]) }
@@ -219,5 +219,5 @@ function Load-SSOT {
         "academy-eventbridge-batch-video-role"
     )
     $script:SSOT_InstanceProfile = @("academy-batch-ecs-instance-profile")
-    $script:SSOT_ECSClusterPatterns = @("*academy-video-batch-ce-final*", "*academy-video-ops-ce*")
+    $script:SSOT_ECSClusterPatterns = @("*academy-video-batch-ce*", "*academy-video-ops-ce*")
 }
