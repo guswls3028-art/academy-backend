@@ -52,16 +52,22 @@
 
 ---
 
-## 5. Video Batch
+## 5. Video Batch (standard / long 2-tier)
 
-| 항목 | 값 |
-|------|-----|
-| CE | academy-v1-video-batch-ce |
-| Queue | academy-v1-video-batch-queue |
-| JobDef | academy-v1-video-batch-jobdef |
-| Ops CE/Queue | academy-v1-video-ops-ce, academy-v1-video-ops-queue |
-| EventBridge | academy-v1-reconcile-video-jobs, academy-v1-video-scan-stuck-rate |
-| DynamoDB Lock | academy-v1-video-job-lock |
+| 항목 | standard | long |
+|------|----------|------|
+| **용도** | 3시간 이하 일반 작업 | 3시간 초과·장시간 작업 (Spot 중단 회피) |
+| CE | academy-v1-video-batch-ce | academy-v1-video-batch-long-ce |
+| Queue | academy-v1-video-batch-queue | academy-v1-video-batch-long-queue |
+| JobDef | academy-v1-video-batch-jobdef | academy-v1-video-batch-long-jobdef |
+| **maxvCpus** | 40 | 80 |
+| **Job timeout** | 6h (21600s) | 12h (43200s) |
+| **Stuck(heartbeat_age)** | 20분 | 45분 |
+| **할당** | Spot 혼합 (BEST_FIT_PROGRESSIVE) | On-Demand (BEST_FIT) |
+| Ops CE/Queue | academy-v1-video-ops-ce, academy-v1-video-ops-queue | (동일) |
+| EventBridge | academy-v1-reconcile-video-jobs, academy-v1-video-scan-stuck-rate | (동일) |
+| DynamoDB Lock | academy-v1-video-job-lock | (동일) |
+| DynamoDB Checkpoint | academy-v1-video-upload-checkpoints (R2 multipart resume) | (동일) |
 
 ---
 
