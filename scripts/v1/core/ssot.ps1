@@ -205,6 +205,7 @@ function Load-SSOT {
 
     $script:DynamoLockTableName = if ($p["dynamodb"]["lockTableName"]) { $p["dynamodb"]["lockTableName"] } else { "video_job_lock" }
     $script:DynamoLockTtlAttribute = if ($p["dynamodb"]["lockTableTtlAttribute"]) { $p["dynamodb"]["lockTableTtlAttribute"] } else { "ttl" }
+    $script:DynamoUploadCheckpointTableName = if ($p["dynamodb"]["uploadCheckpointTableName"]) { $p["dynamodb"]["uploadCheckpointTableName"] } else { "academy-v1-video-upload-checkpoints" }
 
     $script:RdsDbIdentifier = $p["rds"]["dbIdentifier"]
     if (-not $script:RdsDbIdentifier) { $script:RdsDbIdentifier = Get-ParamFromRaw $raw "dbIdentifier" }
@@ -230,6 +231,11 @@ function Load-SSOT {
     $script:SSOT_CE = @($script:VideoCEName, $script:OpsCEName)
     $script:SSOT_Queue = @($script:VideoQueueName, $script:OpsQueueName)
     $script:SSOT_JobDef = @($script:VideoJobDefName, $script:OpsJobDefReconcile, $script:OpsJobDefScanStuck, $script:OpsJobDefNetprobe)
+    if ($script:VideoLongCEName) {
+        $script:SSOT_CE = @($script:VideoCEName, $script:VideoLongCEName, $script:OpsCEName)
+        $script:SSOT_Queue = @($script:VideoQueueName, $script:VideoLongQueueName, $script:OpsQueueName)
+        $script:SSOT_JobDef = @($script:VideoJobDefName, $script:VideoLongJobDefName, $script:OpsJobDefReconcile, $script:OpsJobDefScanStuck, $script:OpsJobDefNetprobe)
+    }
     $script:SSOT_EventBridgeRule = @($script:EventBridgeReconcileRule, $script:EventBridgeScanStuckRule)
     $script:SSOT_ASG = @($script:ApiASGName, $script:MessagingASGName, $script:AiASGName)
     $script:SSOT_RDS = @($script:RdsDbIdentifier)
