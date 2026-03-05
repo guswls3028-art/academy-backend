@@ -23,7 +23,7 @@ network:
   natEnabled: true
   albEnabled: true
   natGatewayId: ""
-  securityGroupApp: ""
+  securityGroupApp: "sg-088fa3315c12754d0"
   securityGroupBatch: ""
   securityGroupData: ""
   vpcName: academy-v1-vpc
