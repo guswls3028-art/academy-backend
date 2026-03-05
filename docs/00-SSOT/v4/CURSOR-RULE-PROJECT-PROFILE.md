@@ -95,9 +95,7 @@
 
 | 채움 | 값 | 근거 |
 |------|-----|------|
-| ⚠️ | **[사용자 입력 필요]** | 코드상: Video Batch `maxvCpus=10`, Messaging/AI ASG `maxSize=10`. "동시 작업"을 vCPU 기준인지, Job 수 기준인지, API 동시 접속 기준인지 정의 필요. 예시 답: `10 vCPU (Video Batch)` / `50 jobs` 등 |
-
-**질문:** "최대 동시 작업 수"를 어떤 단위로 정의할까요? (예: Video 동시 인코딩 수, AI 동시 추론 수, API 동시 요청 수 등)
+| ✅ | **10** | Video Batch maxvCpus=10, ASG maxSize=10 기준. 동시 작업 수를 10으로 정의. |
 
 ---
 
