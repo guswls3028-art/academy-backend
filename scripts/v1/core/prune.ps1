@@ -28,7 +28,8 @@ function Get-AllAwsResourcesForPrune {
     try {
         $r = Invoke-AwsJson @("ssm", "get-parameters-by-path", "--path", "/academy", "--recursive", "--region", $R, "--output", "json")
         $all["SSM"] = if ($r -and $r.Parameters) { $r.Parameters | ForEach-Object { $_.Name } } else { @() }
-    } catch { $all["SSM"] = @() }
+    }
+    catch { $all["SSM"] = @() }
     $r = Invoke-AwsJson @("ecr", "describe-repositories", "--region", $R, "--output", "json")
     $all["ECR"] = if ($r -and $r.repositories) { $r.repositories | ForEach-Object { $_.repositoryName } } else { @() }
     return $all
@@ -45,7 +46,10 @@ function Get-DeleteCandidates {
         $cand["Batch JobDef"] = $All["Batch JobDefArn"] | Where-Object { $_.jobDefinitionName -in $namesToDel } | ForEach-Object { $_.jobDefinitionArn }
     }
     $cand["EventBridge Rule"] = $All["EventBridge Rule"] | Where-Object { $_ -notin $script:SSOT_EventBridgeRule }
-    $cand["IAM Role"] = $All["IAM Role"] | Where-Object { $_ -notin $script:SSOT_IAMRoles }
+    $cand["IAM Role"] = $All["IAM Role"] | Where-Object { 
+        $_ -notin $script:SSOT_IAMRoles -and 
+        $_ -notin @("academy-ec2-role", "academy-v1-eventbridge-batch-video-role")
+    }
     $cand["ASG"] = $All["ASG"] | Where-Object {
         $_ -notin $script:SSOT_ASG -and $_ -notlike "*academy-video-batch-ce-final*" -and $_ -notlike "*academy-video-ops-ce*"
     }
@@ -93,7 +97,8 @@ function Invoke-PruneLegacyDeletes {
             }
             Invoke-Aws @("events", "delete-rule", "--name", $ruleName, "--region", $R) -ErrorMessage "delete-rule $ruleName" | Out-Null
             Wait-EventBridgeRuleDeleted -RuleName $ruleName -Reg $R -TimeoutSec 120
-        } catch { Write-Warn "    $_" }
+        }
+        catch { Write-Warn "    $_" }
     }
     # 2) Batch Queue
     foreach ($qName in $Candidates["Batch Queue"]) {
@@ -107,7 +112,8 @@ function Invoke-PruneLegacyDeletes {
             }
             Invoke-Aws @("batch", "delete-job-queue", "--job-queue", $qName, "--region", $R) -ErrorMessage "delete-job-queue $qName" | Out-Null
             Wait-QueueDeleted -QueueName $qName -Reg $R -TimeoutSec 180
-        } catch { Write-Warn "    $_" }
+        }
+        catch { Write-Warn "    $_" }
     }
     # 3) Batch CE
     foreach ($ceName in $Candidates["Batch CE"]) {
@@ -121,7 +127,8 @@ function Invoke-PruneLegacyDeletes {
             }
             Invoke-Aws @("batch", "delete-compute-environment", "--compute-environment", $ceName, "--region", $R) -ErrorMessage "delete CE $ceName" | Out-Null
             Wait-CEDeleted -CEName $ceName -Reg $R -TimeoutSec 300
-        } catch { Write-Warn "    $_" }
+        }
+        catch { Write-Warn "    $_" }
     }
     # 4) JobDef deregister
     foreach ($arn in $Candidates["Batch JobDef"]) {
@@ -140,7 +147,8 @@ function Invoke-PruneLegacyDeletes {
             }
             Invoke-Aws @("autoscaling", "delete-auto-scaling-group", "--auto-scaling-group-name", $asgName, "--force-delete", "--region", $R) -ErrorMessage "delete ASG $asgName" | Out-Null
             Wait-ASGDeleted -ASGName $asgName -Reg $R -TimeoutSec 300
-        } catch { Write-Warn "    $_" }
+        }
+        catch { Write-Warn "    $_" }
     }
     # 6) ECS cluster
     foreach ($clusterName in $Candidates["ECS Cluster"]) {
@@ -148,7 +156,8 @@ function Invoke-PruneLegacyDeletes {
         try {
             Invoke-Aws @("ecs", "delete-cluster", "--cluster", $clusterName, "--region", $R) -ErrorMessage "delete-cluster $clusterName" 2>$null | Out-Null
             Wait-ECSClusterDeleted -ClusterName $clusterName -Reg $R -TimeoutSec 120
-        } catch { Write-Warn "    $_" }
+        }
+        catch { Write-Warn "    $_" }
     }
     # 7) IAM
     foreach ($roleName in $Candidates["IAM Role"]) {
@@ -174,7 +183,8 @@ function Invoke-PruneLegacyDeletes {
             }
             Invoke-Aws @("iam", "delete-role", "--role-name", $roleName) -ErrorMessage "delete-role $roleName" | Out-Null
             Wait-IAMRoleDeleted -RoleName $roleName -TimeoutSec 60
-        } catch { Write-Warn "    $_" }
+        }
+        catch { Write-Warn "    $_" }
     }
     # 8) ECR (SSOT external only - already in candidates)
     foreach ($repo in $Candidates["ECR"]) {
@@ -220,7 +230,8 @@ function Invoke-PurgeAndRecreate {
                 Invoke-Aws $args -ErrorMessage "remove-targets $ruleName" 2>$null | Out-Null
             }
             Invoke-Aws @("events", "put-rule", "--name", $ruleName, "--state", "DISABLED", "--region", $R) -ErrorMessage "disable rule $ruleName" 2>$null | Out-Null
-        } catch { Write-Warn "    $_" }
+        }
+        catch { Write-Warn "    $_" }
     }
     # 2) Queues disable + delete + wait
     foreach ($qName in $script:SSOT_Queue) {
@@ -236,7 +247,8 @@ function Invoke-PurgeAndRecreate {
             }
             Invoke-Aws @("batch", "delete-job-queue", "--job-queue", $qName, "--region", $R) -ErrorMessage "delete-job-queue $qName" | Out-Null
             Wait-QueueDeleted -QueueName $qName -Reg $R -TimeoutSec 180
-        } catch { Write-Warn "    $_" }
+        }
+        catch { Write-Warn "    $_" }
     }
     # 3) CEs disable + delete + wait
     foreach ($ceName in $script:SSOT_CE) {
@@ -252,7 +264,8 @@ function Invoke-PurgeAndRecreate {
             }
             Invoke-Aws @("batch", "delete-compute-environment", "--compute-environment", $ceName, "--region", $R) -ErrorMessage "delete CE $ceName" | Out-Null
             Wait-CEDeleted -CEName $ceName -Reg $R -TimeoutSec 300
-        } catch { Write-Warn "    $_" }
+        }
+        catch { Write-Warn "    $_" }
     }
     # 4) JobDef deregister ACTIVE for SSOT names
     foreach ($jdName in $script:SSOT_JobDef) {
@@ -279,7 +292,8 @@ function Invoke-PurgeAndRecreate {
         }
         Invoke-Aws @("autoscaling", "delete-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--force-delete", "--region", $R) -ErrorMessage "delete API ASG" | Out-Null
         Wait-ASGDeleted -ASGName $script:ApiASGName -Reg $R -TimeoutSec 300
-    } catch { Write-Warn "    $_" }
+    }
+    catch { Write-Warn "    $_" }
     if ($IncludePruneLegacy) {
         $all = Get-AllAwsResourcesForPrune
         $candidates = Get-DeleteCandidates -All $all
