@@ -297,6 +297,12 @@ function Invoke-BootstrapEcrUri {
         Write-Ok "ECR image exists: $uri"
         return
     }
+    if ($script:SkipBuild) {
+        Write-Warn "SkipBuild: ECR image not found; not triggering build server. Deploy continues (Netprobe/JobDef may need image). Pass -EcrRepoUri or push image to unblock."
+        $script:EcrRepoUriResolved = $uri
+        $script:EcrRepoUri = $uri
+        return
+    }
     Write-Host "  ECR image not found; triggering build server..." -ForegroundColor Yellow
     Invoke-BuildServerBuild -Tag $tag -Uri $uri
     Write-Ok "ECR URI resolved after build: $uri"
