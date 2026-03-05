@@ -290,7 +290,13 @@ class Command(BaseCommand):
                     job_fail_retry(str(job.id), status_reason or "Batch FAILED")
                     updated += 1
                     if resubmit:
-                        aws_job_id, _ = submit_batch_job(str(job.id))
+                        dur = None
+                        try:
+                            if getattr(job, "video", None) and getattr(job.video, "duration", None):
+                                dur = int(job.video.duration)
+                        except Exception:
+                            pass
+                        aws_job_id, _ = submit_batch_job(str(job.id), duration_seconds=dur)
                         if aws_job_id:
                             job.aws_batch_job_id = aws_job_id
                             job.save(update_fields=["aws_batch_job_id", "updated_at"])
@@ -339,7 +345,13 @@ class Command(BaseCommand):
                     job_fail_retry(str(job.id), "Reconcile: Batch job not found (after threshold)")
                     updated += 1
                     if resubmit:
-                        aws_job_id, _ = submit_batch_job(str(job.id))
+                        dur = None
+                        try:
+                            if getattr(job, "video", None) and getattr(job.video, "duration", None):
+                                dur = int(job.video.duration)
+                        except Exception:
+                            pass
+                        aws_job_id, _ = submit_batch_job(str(job.id), duration_seconds=dur)
                         if aws_job_id:
                             job.refresh_from_db()
                             job.aws_batch_job_id = aws_job_id
