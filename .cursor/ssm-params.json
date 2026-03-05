@@ -1,0 +1,6 @@
+{
+  "commands": [
+    "docker ps -a",
+    "CID=$(docker ps -q 2>/dev/null | head -1); if [ -n \"$CID\" ]; then docker logs $CID --tail 100 2>&1; else echo no-docker-container; fi"
+  ]
+}
