@@ -1,0 +1,51 @@
+---
+description: Project context and world model for Academy. Read first.
+globs: 
+alwaysApply: true
+---
+
+# Project: Academy
+
+**Architecture Type:** Mixed
+
+## Components
+
+**Client**
+  │
+**ALB**
+  │
+**API** (EC2 ASG)
+  │
+**RDS PostgreSQL**
+
+**Async workloads:**
+
+**SQS**
+  │
+**Workers** (EC2 ASG)
+  │
+**AI Processing**
+
+**Video pipeline:**
+
+**SQS**
+  │
+**AWS Batch**
+  │
+**Video Workers**
+  │
+**Cloudflare R2**
+  │
+**Cloudflare CDN**
+
+**Cache:** Redis (ElastiCache)
+
+**Locks:** DynamoDB
+
+**Region:** ap-northeast-2
+
+**Account:** single account
+
+**Deployment:** PowerShell scripts using AWS CLI
+
+**SSOT:** docs/00-SSOT/v4
