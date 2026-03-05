@@ -54,7 +54,7 @@ ecr:
 # API: max=2 고정 (solo dev, medium reliability)
 api:
   amiId: ami-0885e191a9bcf28b0
-  instanceProfile: academy-api-instance-profile
+  instanceProfile: academy-ec2-role
   securityGroupId: ""
   instanceType: t4g.medium
   userData: ""
@@ -75,7 +75,7 @@ build:
   instanceTagKey: Name
   instanceTagValue: academy-build-arm64
   amiId: ami-0885e191a9bcf28b0
-  instanceProfile: academy-build-instance-profile
+  instanceProfile: academy-ec2-role
   subnetId: ""
   securityGroupId: ""
   instanceType: t4g.medium
