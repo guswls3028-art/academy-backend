@@ -121,6 +121,29 @@ pwsh scripts/v1/deploy.ps1 -PurgeAndRecreate -AwsProfile default
 - **동작:** v1 EventBridge 규칙 비활성화·타깃 제거 → v1 Batch Queue 비활성화·삭제 → v1 Batch CE 비활성화·삭제 → v1 JobDef deregister → **academy-v1-api-asg** 삭제(있을 경우) → 이후 스크립트가 **전체 Ensure** 재실행.
 - **주의:** RDS·Redis·DynamoDB·ECR 이미지는 **삭제하지 않음**. 네트워크(VPC/서브넷)도 Purge 대상이 아님.
 
+### 4.4 EC2 미사용 리소스 정리 (cleanup-unused-ec2.ps1)
+
+**목적:** v1에서 쓰는 EC2 리소스만 남기고, 미사용 EIP·고아 인스턴스·미사용 보안 그룹을 정리.
+
+**유지 대상**
+- **EIP:** NAT Gateway에 연결된 1개만 (academy-v1-nat-eip)
+- **인스턴스:** 다음에 속한 것만 유지  
+  - ASG: `academy-v1-api-asg`, `academy-v1-messaging-worker-asg`, `academy-v1-ai-worker-asg`, `academy-v1-video-ops-ce-asg-*`  
+  - 태그 `Name=academy-build-arm64`
+- **보안 그룹:** `academy-v1-sg-app`, `academy-v1-sg-batch`, `academy-v1-sg-data`, default, 및 ENI가 붙어 있는 SG
+
+**실행 (동일 PowerShell 세션에서 .env 로드 후):**
+
+```powershell
+cd C:\academy
+Get-Content .env | Where-Object { $_ -match '^AWS_ACCESS_KEY_ID=' -or $_ -match '^AWS_SECRET_ACCESS_KEY=' -or $_ -match '^AWS_DEFAULT_REGION=' } | ForEach-Object { $n,$v = ($_ -split '=',2); if ($n) { [Environment]::SetEnvironmentVariable($n.Trim(), $v.Trim(), 'Process') } }
+pwsh scripts/v1/cleanup-unused-ec2.ps1
+```
+
+- **기본:** `-DryRun` — 삭제 없이 후보만 출력.
+- **실제 삭제:** `-Execute` (미사용 EIP 해제, v1 유지 목록에 없는 인스턴스 종료).
+- **옵션:** `-EIPOnly`(EIP만), `-InstancesOnly`(인스턴스만), `-RemoveUnusedSGs`(ENI 없는 SG도 삭제 시도).
+
 ---
 
 ## 5. Phase 2 — V1 배포 (Ensure)
