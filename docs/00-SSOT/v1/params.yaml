@@ -1,0 +1,156 @@
+# Academy SSOT v1 — 풀셋팅 단일소스. scripts/v1 전용.
+# API ASG max=2 고정. VPC Endpoint 미사용. ARM64 (API/빌드/워커: t4g.medium, Video Batch: c6g.large). ECR immutable tag 필수.
+
+global:
+  env: prod
+  region: ap-northeast-2
+  accountId: "809466760795"
+  namingPrefix: academy-
+  validationMode: "Strict"
+  tags:
+    Project: academy
+    ManagedBy: ssot-v1
+
+# 2-tier: Public 2 + Private 2, NAT 1개. academy-v1-* 네이밍.
+network:
+  vpcId: ""
+  vpcCidr: 10.0.0.0/16
+  publicSubnetCidr1: 10.0.1.0/24
+  publicSubnetCidr2: 10.0.2.0/24
+  privateSubnetCidr1: 10.0.11.0/24
+  privateSubnetCidr2: 10.0.12.0/24
+  natEnabled: true
+  albEnabled: true
+  natGatewayId: ""
+  securityGroupApp: ""
+  securityGroupBatch: ""
+  securityGroupData: ""
+  vpcName: academy-v1-vpc
+  sgAppName: academy-v1-sg-app
+  sgBatchName: academy-v1-sg-batch
+  sgDataName: academy-v1-sg-data
+
+networkPublicSubnets:
+  - ""
+  - ""
+networkPrivateSubnets:
+  - ""
+  - ""
+
+ssm:
+  apiEnv: /academy/api/env
+  workersEnv: /academy/workers/env
+  deployLockParam: /academy/deploy-lock
+
+ecr:
+  baseRepo: academy-base
+  apiRepo: academy-api
+  videoWorkerRepo: academy-video-worker
+  messagingWorkerRepo: academy-messaging-worker
+  aiWorkerRepo: academy-ai-worker-cpu
+  immutableTagRequired: true
+
+# API: max=2 고정 (solo dev, medium reliability)
+api:
+  amiId: ami-0c55b159cbfafe1f0
+  instanceProfile: academy-api-instance-profile
+  securityGroupId: ""
+  instanceType: t4g.medium
+  userData: ""
+  asgName: academy-v1-api-asg
+  asgLaunchTemplateName: academy-v1-api-lt
+  asgMinSize: 1
+  asgMaxSize: 2
+  asgDesiredCapacity: 1
+  containerName: academy-api
+  albName: academy-v1-api-alb
+  targetGroupName: academy-v1-api-tg
+  healthPath: /health
+  instanceTagKey: Name
+  instanceTagValue: academy-v1-api
+  apiBaseUrl: ""
+
+build:
+  instanceTagKey: Name
+  instanceTagValue: academy-build-arm64
+  amiId: ami-0c55b159cbfafe1f0
+  instanceProfile: academy-build-instance-profile
+  subnetId: ""
+  securityGroupId: ""
+  instanceType: t4g.medium
+
+messagingWorker:
+  asgName: academy-v1-messaging-worker-asg
+  launchTemplateName: academy-v1-messaging-worker-lt
+  amiId: ami-0c55b159cbfafe1f0
+  instanceType: t4g.medium
+  minSize: 1
+  maxSize: 10
+  desiredCapacity: 1
+  scaleInProtection: true
+  scalingPolicyScaleOutCooldown: 300
+  scalingPolicyScaleInCooldown: 900
+  scalingPolicyScaleOutThreshold: 20
+  scalingPolicyScaleInThreshold: 0
+  sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-messaging-queue
+  sqsQueueName: academy-v1-messaging-queue
+
+aiWorker:
+  asgName: academy-v1-ai-worker-asg
+  launchTemplateName: academy-v1-ai-worker-lt
+  amiId: ami-0c55b159cbfafe1f0
+  instanceType: t4g.medium
+  minSize: 1
+  maxSize: 10
+  desiredCapacity: 1
+  scaleInProtection: true
+  scalingPolicyScaleOutCooldown: 300
+  scalingPolicyScaleInCooldown: 900
+  scalingPolicyScaleOutThreshold: 20
+  scalingPolicyScaleInThreshold: 0
+  sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-ai-queue
+  sqsQueueName: academy-v1-ai-queue
+
+videoBatch:
+  computeEnvironmentName: academy-v1-video-batch-ce
+  videoQueueName: academy-v1-video-batch-queue
+  workerJobDefName: academy-v1-video-batch-jobdef
+  minvCpus: 0
+  maxvCpus: 10
+  instanceType: c6g.large
+  opsComputeEnvironmentName: academy-v1-video-ops-ce
+  opsQueueName: academy-v1-video-ops-queue
+  opsJobDefs:
+    reconcile: academy-v1-video-ops-reconcile
+    scanstuck: academy-v1-video-ops-scanstuck
+    netprobe: academy-v1-video-ops-netprobe
+
+eventBridge:
+  reconcileRuleName: academy-v1-reconcile-video-jobs
+  scanStuckRuleName: academy-v1-video-scan-stuck-rate
+  roleName: academy-v1-eventbridge-batch-video-role
+
+dynamodb:
+  lockTableName: academy-v1-video-job-lock
+  lockTableTtlAttribute: ttl
+
+rds:
+  engine: postgres
+  engineVersion: "15.16"
+  instanceClass: "db.t4g.medium"
+  allocatedStorage: 20
+  dbIdentifier: academy-v1-db
+  dbSubnetGroupName: academy-v1-db-subnets
+  masterUsername: academy
+  masterPasswordSsmParam: "/academy/rds/master_password"
+
+redis:
+  replicationGroupId: academy-v1-redis
+  subnetGroupName: academy-v1-redis-subnets
+  securityGroupId: ""
+  nodeType: cache.t4g.small
+  engineVersion: "7.1"
+
+r2:
+  bucket: ""
+  publicBaseUrl: ""
