@@ -108,13 +108,14 @@ messagingWorker:
   dlqSuffix: -dlq
 
 aiWorker:
+  # 엑셀 학생등록 등으로 1대 상시 대기. min=1이면 scale-in으로도 1 밑으로 내려가지 않음.
   asgName: academy-v1-ai-worker-asg
   launchTemplateName: academy-v1-ai-worker-lt
   instanceTagValue: academy-v1-ai-worker
   amiId: ami-0885e191a9bcf28b0
   instanceType: t4g.medium
   minSize: 1
-  maxSize: 10
+  maxSize: 5
   desiredCapacity: 1
   scaleInProtection: true
   scalingPolicyScaleOutCooldown: 300
@@ -123,7 +124,7 @@ aiWorker:
   scalingPolicyScaleInThreshold: 0
   sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-ai-queue
   sqsQueueName: academy-v1-ai-queue
-  visibilityTimeoutSeconds: 3600
+  visibilityTimeoutSeconds: 1800
   dlqMaxReceiveCount: 5
   dlqSuffix: -dlq
 
