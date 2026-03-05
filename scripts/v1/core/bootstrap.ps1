@@ -116,7 +116,8 @@ function Invoke-BootstrapSqs {
 
         if (-not $url) {
             $redrive = '{"deadLetterTargetArn":"' + $dlqArn + '","maxReceiveCount":"' + $maxReceiveCount + '"}'
-            Invoke-AwsJson @("sqs", "create-queue", "--queue-name", $qName, "--attributes", "VisibilityTimeout=$visibility", "MessageRetentionPeriod=1209600", "RedrivePolicy=$redrive", "--region", $script:Region, "--output", "json") | Out-Null
+            $redriveArg = 'RedrivePolicy="' + ($redrive.Replace('"', '\"')) + '"'
+            Invoke-AwsJson @("sqs", "create-queue", "--queue-name", $qName, "--attributes", "VisibilityTimeout=$visibility", "MessageRetentionPeriod=1209600", $redriveArg, "--region", $script:Region, "--output", "json") | Out-Null
             $get = Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $qName, "--region", $script:Region, "--output", "json")
             if ($get -and $get.QueueUrl) { $url = $get.QueueUrl; $script:ChangesMade = $true }
         } else {
