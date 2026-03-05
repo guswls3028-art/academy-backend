@@ -290,7 +290,7 @@ function Ensure-ECR-VpcEndpoints {
             if ($rtId -and $rtIds -notcontains $rtId) { $rtIds += $rtId }
         }
     }
-    if ($rtIds.Count -eq 0) { $rtIds = @("") }
+    $rtIds = @($rtIds | Where-Object { $_ -and $_ -match '^rtb-' })
 
     # ECR API interface endpoint
     $existing = Invoke-AwsJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "Name=service-name,Values=$ecrApiSvc", "--region", $region, "--output", "json") 2>$null
