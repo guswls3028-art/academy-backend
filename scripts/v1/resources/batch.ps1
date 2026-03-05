@@ -64,6 +64,40 @@ function New-VideoQueue { param([string]$CeArn)
     } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
 }
 
+function New-VideoLongCE {
+    if (-not $script:VideoLongCEName) { return }
+    $iam = $script:BatchIam
+    $subnets = @($script:PrivateSubnets | Where-Object { $_ })
+    if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @($script:PublicSubnets | Where-Object { $_ }) }
+    $subnetArr = ($subnets | ForEach-Object { "`"$_`"" }) -join ","
+    $path = Join-Path $BatchPath "video_compute_env_long.json"
+    $content = [System.IO.File]::ReadAllText($path, $utf8NoBom)
+    $content = $content -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $script:VideoLongCEName
+    $content = $content -replace "PLACEHOLDER_SERVICE_ROLE_ARN", $iam.ServiceRoleArn
+    $content = $content -replace "PLACEHOLDER_INSTANCE_PROFILE_ARN", $iam.InstanceProfileArn
+    $content = $content -replace "PLACEHOLDER_SECURITY_GROUP_ID", $script:BatchSecurityGroupId
+    $content = $content -replace "PLACEHOLDER_SUBNETS", $subnetArr
+    $content = $content -replace "PLACEHOLDER_MIN_VCPUS", $script:VideoLongMinvCpus
+    $content = $content -replace "PLACEHOLDER_MAX_VCPUS", $script:VideoLongMaxvCpus
+    $content = $content -replace "PLACEHOLDER_INSTANCE_TYPE", $script:VideoLongInstanceType
+    $tmp = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllText($tmp, $content, $utf8NoBom)
+    try {
+        Invoke-Aws @("batch", "create-compute-environment", "--cli-input-json", "file://$($tmp -replace '\\','/')", "--region", $script:Region) -ErrorMessage "create Video Long CE" | Out-Null
+    } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+}
+
+function New-VideoLongQueue { param([string]$CeArn)
+    $path = Join-Path $BatchPath "video_job_queue_long.json"
+    $content = [System.IO.File]::ReadAllText($path, $utf8NoBom)
+    $content = $content -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $CeArn
+    $tmp = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllText($tmp, $content, $utf8NoBom)
+    try {
+        Invoke-Aws @("batch", "create-job-queue", "--cli-input-json", "file://$($tmp -replace '\\','/')", "--region", $script:Region) -ErrorMessage "create Video Long Queue" | Out-Null
+    } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+}
+
 function New-OpsQueue { param([string]$CeArn)
     $path = Join-Path $BatchPath "ops_job_queue.json"
     $content = [System.IO.File]::ReadAllText($path, $utf8NoBom)
