@@ -188,3 +188,25 @@ UserData 실행 시 `aws ecr get-login-password`가 **api.ecr.ap-northeast-2.ama
 - **원인:** 퍼블릭 경로(IGW)로 ECR API 접근 시 Connect timeout이 지속됨.
 - **조치:** `Ensure-ECR-VpcEndpoints` 추가 — (1) academy-v1-vpce-sg 생성(443 from VpcCidr), (2) ecr.api·ecr.dkr 인터페이스 엔드포인트(PrivateDnsEnabled), (3) S3 게이트웨이 엔드포인트(API 서브넷 연동 RT). 배포 시 "VPC endpoint ... exists" 확인됨(기존 엔드포인트 활용). LT v9 적용 후 instance-refresh 자동 시작.
 - **상태:** 배포 실행 중(Ensure API Instance에서 /health 200 대기). 인스턴스 리프레시 InProgress. 완료 후 검증 재실행 예정.
+
+---
+
+## 10) ECR 엔드포인트 SG 443 조치 및 검증 (2026-03-06)
+
+### 10.1 원인
+- 기존 ECR 인터페이스 엔드포인트(ecr.api, ecr.dkr)가 사용하는 SG(sg-011ed1d9eb4a65b8f)에 **인바운드 규칙이 없음**(IpPermissions []).  
+- 인스턴스가 엔드포인트를 통해 ECR에 접근할 때 443이 차단되어 Connect timeout 발생.
+
+### 10.2 조치 (deploy.ps1 / network.ps1)
+- `Ensure-ECR-VpcEndpoints`에서 **기존** ECR API·DKR 엔드포인트를 조회한 뒤, 각 엔드포인트에 붙은 SG에 **TCP 443 from VpcCidr(172.30.0.0/16)** 규칙이 없으면 추가.
+- 배포 로그: `OK: ECR endpoint SG sg-011ed1d9eb4a65b8f added 443 from 172.30.0.0/16` 확인됨.
+
+### 10.3 SSM 검증 (인스턴스 i-08d981b23dd629a79)
+- **docker ps -a:** `academy-api:latest` 컨테이너 **Up 11 minutes (healthy)**, 0.0.0.0:8000->8000/tcp.
+- **docker images:** 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api latest 존재.
+- **결론:** ECR SG 443 추가 후 해당 인스턴스에서 ECR 로그인·풀·컨테이너 기동 정상.
+
+### 10.4 Instance Refresh 및 TG
+- API ASG Instance Refresh: **InProgress**, 25% (StartTime 2026-03-05T20:58:00Z).
+- 현재 API 인스턴스 3대: i-08d981b23dd629a79, i-0f1c248995c9d5265, i-0dba59de278989f41.
+- 검증 시점(2026-03-06 06:01) ALB target healthy 0/3 — Refresh 미완료·구 인스턴스 미교체로 TG가 아직 healthy로 전환되지 않은 상태로 해석. Refresh 완료 및 TG 수렴 후 GATE-A 통과 예상.
