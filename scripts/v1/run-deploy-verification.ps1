@@ -359,6 +359,9 @@ if ($apiPublicUrl) {
 [void]$sb.AppendLine("| 유령데이터 방지(READY 전 미공개) | 설계 반영 | API playback_mixin READY만 허용, 목록 READY 필터 |")
 [void]$sb.AppendLine("| 업로드 실패 재시도/복구 | 설계 반영 | DynamoDB checkpoint, 재인코딩 최소화 (V1-DEPLOYMENT-VERIFICATION §7.3) |")
 [void]$sb.AppendLine("| 동시 2~3건 | 수동 검증 권장 | 2~3건 동시 제출 후 Job 완료·queue depth 확인 |")
+if ($videoE2EEvidence) {
+    [void]$sb.AppendLine("| Video E2E 근거 (VIDEO_E2E_TEST_JOB_ID) | 자동 수집 | $videoE2EEvidence |")
+}
 [void]$sb.AppendLine("| **섹션 5 종합** | **$s5Video** | $s5VideoNote |")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## 6) 관측/알람")
