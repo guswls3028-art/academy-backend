@@ -172,12 +172,12 @@ function Load-SSOT {
     $script:VideoCEName = if ($vbs["computeEnvironmentName"]) { $vbs["computeEnvironmentName"] } else { "academy-v1-video-batch-ce" }
     $script:VideoQueueName = if ($vbs["videoQueueName"]) { $vbs["videoQueueName"] } else { "academy-v1-video-batch-queue" }
     $script:VideoJobDefName = if ($vbs["workerJobDefName"]) { $vbs["workerJobDefName"] } else { "academy-v1-video-batch-jobdef" }
-    $script:VideoCEMinvCpus = Coerce-Int (if ($vbs["minvCpus"]) { $vbs["minvCpus"] } else { 0 }) 0
-    $script:VideoCEMaxvCpus = Coerce-Int (if ($vbs["maxvCpus"]) { $vbs["maxvCpus"] } else { 40 }) 40
+    $script:VideoCEMinvCpus = Coerce-Int $(if ($vbs["minvCpus"]) { $vbs["minvCpus"] } else { 0 }) 0
+    $script:VideoCEMaxvCpus = Coerce-Int $(if ($vbs["maxvCpus"]) { $vbs["maxvCpus"] } else { 40 }) 40
     $script:VideoCEInstanceType = if ($vbs["instanceType"]) { $vbs["instanceType"] } else { "c6g.xlarge" }
-    $script:VideoCERootVolumeSizeGb = Coerce-Int (if ($vbs["rootVolumeSizeGb"]) { $vbs["rootVolumeSizeGb"] } else { 200 }) 200
-    $script:VideoJobTimeoutStandardSeconds = Coerce-Int (if ($vb["jobTimeoutStandardSeconds"]) { $vb["jobTimeoutStandardSeconds"] } elseif ($vbs["jobTimeoutSeconds"]) { $vbs["jobTimeoutSeconds"] } else { 21600 }) 21600
-    $script:VideoStuckHeartbeatAgeStandardMinutes = Coerce-Int (if ($vb["stuckHeartbeatAgeStandardMinutes"]) { $vb["stuckHeartbeatAgeStandardMinutes"] } elseif ($vbs["stuckHeartbeatAgeMinutes"]) { $vbs["stuckHeartbeatAgeMinutes"] } else { 20 }) 20
+    $script:VideoCERootVolumeSizeGb = Coerce-Int $(if ($vbs["rootVolumeSizeGb"]) { $vbs["rootVolumeSizeGb"] } else { 200 }) 200
+    $script:VideoJobTimeoutStandardSeconds = Coerce-Int $(if ($vb["jobTimeoutStandardSeconds"]) { $vb["jobTimeoutStandardSeconds"] } elseif ($vbs["jobTimeoutSeconds"]) { $vbs["jobTimeoutSeconds"] } else { 21600 }) 21600
+    $script:VideoStuckHeartbeatAgeStandardMinutes = Coerce-Int $(if ($vb["stuckHeartbeatAgeStandardMinutes"]) { $vb["stuckHeartbeatAgeStandardMinutes"] } elseif ($vbs["stuckHeartbeatAgeMinutes"]) { $vbs["stuckHeartbeatAgeMinutes"] } else { 20 }) 20
     $script:VideoUseSpot = ($vbs["useSpot"] -eq $true -or $vbs["useSpot"] -eq "true")
     if ($vbl) {
         $script:VideoLongCEName = $vbl["computeEnvironmentName"]
@@ -186,9 +186,9 @@ function Load-SSOT {
         $script:VideoLongMinvCpus = Coerce-Int $vbl["minvCpus"] 0
         $script:VideoLongMaxvCpus = Coerce-Int $vbl["maxvCpus"] 80
         $script:VideoLongInstanceType = if ($vbl["instanceType"]) { $vbl["instanceType"] } else { "c6g.xlarge" }
-        $script:VideoLongRootVolumeSizeGb = Coerce-Int (if ($vbl["rootVolumeSizeGb"]) { $vbl["rootVolumeSizeGb"] } else { 300 }) 300
-        $script:VideoJobTimeoutLongSeconds = Coerce-Int (if ($vb["jobTimeoutLongSeconds"]) { $vb["jobTimeoutLongSeconds"] } elseif ($vbl["jobTimeoutSeconds"]) { $vbl["jobTimeoutSeconds"] } else { 43200 }) 43200
-        $script:VideoStuckHeartbeatAgeLongMinutes = Coerce-Int (if ($vb["stuckHeartbeatAgeLongMinutes"]) { $vb["stuckHeartbeatAgeLongMinutes"] } elseif ($vbl["stuckHeartbeatAgeMinutes"]) { $vbl["stuckHeartbeatAgeMinutes"] } else { 45 }) 45
+        $script:VideoLongRootVolumeSizeGb = Coerce-Int $(if ($vbl["rootVolumeSizeGb"]) { $vbl["rootVolumeSizeGb"] } else { 300 }) 300
+        $script:VideoJobTimeoutLongSeconds = Coerce-Int $(if ($vb["jobTimeoutLongSeconds"]) { $vb["jobTimeoutLongSeconds"] } elseif ($vbl["jobTimeoutSeconds"]) { $vbl["jobTimeoutSeconds"] } else { 43200 }) 43200
+        $script:VideoStuckHeartbeatAgeLongMinutes = Coerce-Int $(if ($vb["stuckHeartbeatAgeLongMinutes"]) { $vb["stuckHeartbeatAgeLongMinutes"] } elseif ($vbl["stuckHeartbeatAgeMinutes"]) { $vbl["stuckHeartbeatAgeMinutes"] } else { 45 }) 45
         $script:VideoLongUseSpot = ($vbl["useSpot"] -eq $true -or $vbl["useSpot"] -eq "true")
     } else {
         $script:VideoLongCEName = $null
