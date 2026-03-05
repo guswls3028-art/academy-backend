@@ -29,7 +29,12 @@ $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 $ScriptRoot = $PSScriptRoot
 
-# Cursor/다른 프로세스에서 실행 시: 이 프로세스에는 env 인증이 없을 수 있음. -AwsProfile 이면 AWS CLI가 해당 프로파일 사용.
+# .env 자동 로드 (AWS 권한 — 동일 세션 수동 로드 불필요)
+. (Join-Path $ScriptRoot "core\env.ps1")
+$RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
+Load-EnvFile -RepoRoot $RepoRoot | Out-Null
+
+# Cursor/다른 프로세스에서 실행 시: -AwsProfile 이면 해당 프로파일 사용 ( .env 보다 우선 )
 if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
     $env:AWS_PROFILE = $AwsProfile.Trim()
     if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" }
