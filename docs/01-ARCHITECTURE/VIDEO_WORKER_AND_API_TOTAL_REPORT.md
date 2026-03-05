@@ -64,7 +64,7 @@
 - **스펙·이미지 정책:** [00-SSOT/RESOURCE-INVENTORY.md](../00-SSOT/RESOURCE-INVENTORY.md) § Video Batch (vcpus=2, memory=3072, retryStrategy=1, immutable tag).
 - **파일:** `scripts/infra/batch/video_job_definition.json`
 - **등록:** `scripts/infra/batch_video_setup.ps1` [5] 단계에서 위 JSON 치환 후 `register-job-definition` 호출.
-- **현재 내용 요약:** vcpus=2, memory=3072 (SSOT v1.1). `resourceRequirements` 는 Batch 스케줄링용으로 VCPU/MEMORY 명시 권장.
+- **현재 내용 요약:** vcpus=2, memory=3072 (SSOT v1). `resourceRequirements` 는 Batch 스케줄링용으로 VCPU/MEMORY 명시 권장.
 
 ### 3.2 resourceRequirements 이슈 (스케줄링)
 
@@ -75,7 +75,7 @@
   - ffmpeg가 CPU 집약 작업인데 한 인스턴스에 2~3개가 동시 실행되면 CPU 경합 → HLS 지연 → R2 업로드/Redis heartbeat 지연 → RUNNING stuck → RETRY 가능성 증가.
 
 **조치:**  
-- `video_job_definition.json` 에 `resourceRequirements` 로 VCPU/MEMORY 명시 (SSOT v1.1: 2 vCPU, 3072 MiB).  
+- `video_job_definition.json` 에 `resourceRequirements` 로 VCPU/MEMORY 명시 (SSOT v1: 2 vCPU, 3072 MiB).  
 - API는 이미 Job Definition **이름만** 쓰므로 revision 지정 없음 → 새 revision 등록만 하면 이후 제출분부터 최신 revision 사용.
 
 ### 3.3 컨테이너 부팅 경로 (모든 Batch Job 공통)
@@ -100,14 +100,14 @@
 
 - **EventBridge 규칙:** `academy-reconcile-video-jobs`
 - **스크립트:** `scripts/infra/eventbridge_deploy_video_scheduler.ps1`
-- **스케줄:** `rate(15 minutes)` (SSOT v1.1). Redis lock `video:reconcile:lock` TTL 600초로 동시 실행 1개만.
+- **스케줄:** `rate(15 minutes)` (SSOT v1). Redis lock `video:reconcile:lock` TTL 600초로 동시 실행 1개만.
 - **타깃:** Ops Queue. Job Definition: `academy-video-ops-reconcile`.
 
 ### 4.2 원인 (과거 2분 주기 시)
 
 - reconcile 커맨드(`reconcile_batch_video_jobs`)는 DB 스캔, `describe_jobs`, orphan terminate 등으로 **한 번에 2분 이상 걸릴 수 있음**.
 - EventBridge가 이전 실행 완료 여부를 보지 않고 주기마다 SubmitJob만 하면 RUNNING이 쌓임.
-- **현재:** rate(15 minutes) + reconcile 코드 내 Redis lock으로 동시 실행 1개로 제한 (SSOT v1.1).
+- **현재:** rate(15 minutes) + reconcile 코드 내 Redis lock으로 동시 실행 1개로 제한 (SSOT v1).
 
 ### 4.3 정리
 
@@ -116,7 +116,7 @@
 
 ### 4.4 개선 옵션 (참고)
 
-**현행:** rate(15 minutes) + Redis lock (SSOT v1.1). 아래 옵션은 과거 2분 주기 시 참고용이다.
+**현행:** rate(15 minutes) + Redis lock (SSOT v1). 아래 옵션은 과거 2분 주기 시 참고용이다.
 
 1. **스케줄 완화:** EventBridge 규칙을 `rate(5 minutes)` 등으로 변경해, 한 번 실행이 끝날 시간을 주기.
 2. **Single-flight:**  
@@ -143,4 +143,4 @@
 - **API:** 영상 업로드 완료 시 `create_job_and_submit_batch` → `submit_batch_job` → `academy-video-batch-jobdef` (이름만, 최신 revision) 로 `academy-video-batch-queue` 에 제출.
 - **워커:** 동일 이미지 + `batch_entrypoint` → SSM → `batch_main`, ffmpeg HLS + R2 + heartbeat.  
 - **리소스 이름·스펙:** Video 인프라 SSOT는 [00-SSOT/RESOURCE-INVENTORY.md](../00-SSOT/RESOURCE-INVENTORY.md). CE=`academy-video-batch-ce-final`, Queue=`academy-video-batch-queue`, JobDef=`academy-video-batch-jobdef`.
-- **Reconcile:** rate(15 minutes) + Redis lock. 다중 RUNNING은 주기 완화 및 single-flight로 해소됨 (SSOT v1.1).
+- **Reconcile:** rate(15 minutes) + Redis lock. 다중 RUNNING은 주기 완화 및 single-flight로 해소됨 (SSOT v1).
