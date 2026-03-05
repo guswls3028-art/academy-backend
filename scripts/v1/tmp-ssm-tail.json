@@ -1,0 +1,7 @@
+{
+  "commands": [
+    "tail -80 /tmp/base.log",
+    "echo ---",
+    "tail -80 /tmp/api.log"
+  ]
+}
