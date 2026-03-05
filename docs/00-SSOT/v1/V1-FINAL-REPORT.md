@@ -54,10 +54,9 @@ pwsh scripts/v1/deploy.ps1 -Env prod -AwsProfile default -SkipNetprobe
 | 컴포넌트 | 확인 방법 |
 |----------|-----------|
 | **API** | `curl -s -o /dev/null -w "%{http_code}" https://v1-api.hakwonplus.com/health` → **200** |
-| **ALB 직접** | `curl -s -o /dev/null -w "%{http_code}" http://academy-v1-api-alb-1317506512.ap-northeast-2.elb.amazonaws.com/health` → **200** |
-| **Target Health** | `aws elbv2 describe-target-health --target-group-arn <academy-v1-api-tg ARN> --profile default --region ap-northeast-2` → healthy |
+| **Video Batch** | **2-tier:** standard 큐(academy-v1-video-batch-queue, timeout 6h, stuck 20분), long 큐(academy-v1-video-batch-long-queue, timeout 12h, stuck 45분). 3시간 이상 영상은 long 큐/JobDef 자동 사용. |
 | **AI/Messaging 워커** | SQS academy-v1-ai-queue, academy-v1-messaging-queue에 메시지 투입 후 처리 여부 확인 |
-| **Video 워커** | AWS Batch Job 제출 후 RUNNING → SUCCEEDED. JobDef: academy-v1-video-batch-jobdef (이미지: EcrRepoUri) |
+| **Video 워커** | AWS Batch Job 제출 후 RUNNING → SUCCEEDED. JobDef: academy-v1-video-batch-jobdef 또는 academy-v1-video-batch-long-jobdef (이미지: EcrRepoUri) |
 
 ---
 
