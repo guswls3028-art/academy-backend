@@ -180,4 +180,11 @@ UserData 실행 시 `aws ecr get-login-password`가 **api.ecr.ap-northeast-2.ama
 
 - 명령: `pwsh -File scripts/v1/run-with-env.ps1 -- pwsh -File scripts/v1/deploy.ps1 -Env prod`
 - LT UserData 변경으로 drift 발생 → 새 LT 버전 생성 → API ASG instance refresh 예상.
-- **실행:** `deploy.ps1 -Env prod -SkipBuild` (Bootstrap video-worker 빌드 스킵). 결과: **LaunchTemplate academy-v1-api-lt new default version 8 (drift)** 적용됨. start-instance-refresh는 기존 리프레시 진행 중이라 실패(InstanceRefreshInProgress). 이후 수동으로 `aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg --preferences "MinHealthyPercentage=100,InstanceWarmup=300"` 실행함. InstanceRefreshId: 0a304893-29f3-4d05-8152-9226d9411929.
+- **실행:** `deploy.ps1 -Env prod -SkipBuild` (Bootstrap video-worker 빌드 스킵). 결과: **LaunchTemplate academy-v1-api-lt new default version 8 (drift)** 적용됨. start-instance-refresh는 기존 리프레시 진행 중이라 실패(InstanceRefreshInProgress). 이후 수동으로 `aws autoscaling start-instance-refresh ...` 실행함. InstanceRefreshId: 0a304893-29f3-4d05-8152-9226d9411929.
+- **재검증:** instance refresh 완료 후 run-deploy-verification.ps1 실행 → 여전히 /health unreachable, TG healthy 0/2. 새 인스턴스(i-0cd80a2d841cf8805) academy-api-userdata.log에 "ECR attempt 1 failed, retrying in 15s" 및 Connect timeout 기록 → **ECR 연결이 재시도 후에도 지속 실패**.
+
+### 9.3 추가 조치 — ECR VPC 엔드포인트 (network.ps1)
+
+- **원인:** 퍼블릭 경로(IGW)로 ECR API 접근 시 Connect timeout이 지속됨.
+- **조치:** `Ensure-ECR-VpcEndpoints` 추가 — (1) academy-v1-vpce-sg 생성(443 from VpcCidr), (2) ecr.api·ecr.dkr 인터페이스 엔드포인트(PrivateDnsEnabled), (3) S3 게이트웨이 엔드포인트(API 서브넷 연동 RT). 배포 시 "VPC endpoint ... exists" 확인됨(기존 엔드포인트 활용). LT v9 적용 후 instance-refresh 자동 시작.
+- **상태:** 배포 실행 중(Ensure API Instance에서 /health 200 대기). 인스턴스 리프레시 InProgress. 완료 후 검증 재실행 예정.
