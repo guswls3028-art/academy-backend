@@ -343,6 +343,7 @@ function Ensure-Network {
     }
     Ensure-RouteTables -IgwId $igwId -NatAllocId $natAllocId
     Ensure-SecurityGroups
+    Ensure-ECR-VpcEndpoints
     Write-Ok "Network ready: VpcId=$($script:VpcId) PublicSubnets=$($script:PublicSubnets -join ',') PrivateSubnets=$($script:PrivateSubnets -join ',')"
 }
 
