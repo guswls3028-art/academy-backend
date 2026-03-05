@@ -12,7 +12,7 @@
 |------|----------|------------|---------------|----------------------|-------------|
 | **역할** | Django API (Gunicorn) | Docker 이미지 빌드·ECR 푸시 | AI 작업(Lite/Basic/Premium SQS) | SMS/알림톡(SQS) | 영상 인코딩(FFmpeg HLS) |
 | **유형** | ALB + ASG | EC2 1대 (태그 기반) | ASG | ASG | Batch CE + Job Queue |
-| **인스턴스 타입** | c6g.large | c6g.large | c6g.large | c6g.large | c6g.large |
+| **인스턴스 타입** | t4g.medium | t4g.medium | t4g.medium | t4g.medium | c6g.large |
 | **아키텍처** | ARM64 (Graviton) | ARM64 | ARM64 | ARM64 | ARM64 |
 | **최소/최대** | min=1, max=2 | 1대 고정 | min=1, max=10 | min=1, max=10 | minvCpus=0, maxvCpus=10 |
 | **기본 desired** | 1 | — | 1 | 1 | 0 (작업 없을 때 스케일 다운) |
