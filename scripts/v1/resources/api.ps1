@@ -11,6 +11,13 @@ function Get-ApiLaunchTemplateUserData {
 #!/bin/bash
 set -e
 export AWS_REGION="$Region"
+LOG=/var/log/academy-api-userdata.log
+log() { echo "$(date -Iseconds) $*" >> "`$LOG"; }
+# 0) 네트워크/IMDS 준비 대기 (ECR 연결 타임아웃 방지)
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  if curl -sf --connect-timeout 2 http://169.254.169.254/latest/meta-data/instance-id >/dev/null 2>&1; then break; fi
+  sleep 3
+done
 # 1) Docker 설치 및 기동 (Amazon Linux 2 / AL2023)
 if command -v dnf &>/dev/null; then
   dnf install -y docker
@@ -19,9 +26,19 @@ else
 fi
 systemctl start docker
 systemctl enable docker
-# 2) ECR 로그인 및 이미지 Pull
-aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $ecrHost
-docker pull $ApiImageUri
+# 2) ECR 로그인 및 이미지 Pull (재시도로 일시적 타임아웃 완화)
+ecr_ok=false
+for attempt in 1 2 3 4 5; do
+  if aws ecr get-login-password --region $Region 2>>"`$LOG" | docker login --username AWS --password-stdin $ecrHost 2>>"`$LOG"; then
+    if docker pull $ApiImageUri 2>>"`$LOG"; then ecr_ok=true; break; fi
+  fi
+  log "ECR attempt `$attempt failed, retrying in 15s"
+  sleep 15
+done
+if [ "`$ecr_ok" != "true" ]; then
+  log "ECR login/pull failed after retries. Image: $ApiImageUri"
+  exit 1
+fi
 # 3) API env (SSM, 선택) -> env 파일로 저장
 API_ENV_FILE=""
 if [ -n "$SsmApiEnvParam" ]; then
@@ -32,8 +49,11 @@ if [ -n "$SsmApiEnvParam" ]; then
     [ -s /opt/api.env ] && API_ENV_FILE="--env-file /opt/api.env"
   fi
 fi
-# 4) Django 컨테이너 8000 포트로 실행 (0.0.0.0 바인딩은 이미지 내 gunicorn 설정에 따름)
-docker run -d --restart unless-stopped -p 8000:8000 `$API_ENV_FILE $ApiImageUri || { echo "docker run failed at `$(date)" >> /var/log/academy-api-userdata.log; exit 1; }
+# 4) Django 컨테이너 8000 포트로 실행
+if ! docker run -d --restart unless-stopped -p 8000:8000 `$API_ENV_FILE $ApiImageUri 2>>"`$LOG"; then
+  log "docker run failed. Image: $ApiImageUri"
+  exit 1
+fi
 "@
     return $script.Trim()
 }
