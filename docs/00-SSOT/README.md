@@ -1,33 +1,37 @@
 # 00-SSOT — 인프라 단일 진실(SSOT)
 
-**정식은 v4 한 세트만 사용합니다.**
+**정식: 풀셋팅 v1.** (기존 v4 인프라 제거 후 v1으로 새로 셋팅)
 
 ---
 
-## 정식 문서 (v4)
+## 정식 문서 (v1)
 
 | 문서 | 설명 |
 |------|------|
-| [v4/SSOT.md](v4/SSOT.md) | **진입 문서** — 리소스 이름·규칙·원칙 |
-| [v4/params.yaml](v4/params.yaml) | 환경별 파라미터 (스크립트 단일 입력) |
-| [v4/INFRA-AND-SPECS.md](v4/INFRA-AND-SPECS.md) | **인프라·스펙 한눈에 보기** — API/빌드/AI/Messaging ASG, Video Batch |
-| [v4/state-contract.md](v4/state-contract.md) | 상태 계약·Wait·삭제 순서 |
-| [v4/runbook.md](v4/runbook.md) | 배포·검증·장애·롤백 절차 |
-| [v4/evidence.schema.md](v4/evidence.schema.md) | Evidence 테이블 스키마 |
-| [v4/V4-IMPLEMENTATION-SUMMARY.md](v4/V4-IMPLEMENTATION-SUMMARY.md) | v4 구현 요약 |
-| [v4/reports/](v4/reports/) | drift.latest.md, audit.latest.md, history/ |
+| [v1/SSOT.md](v1/SSOT.md) | **진입 문서** — 리소스 이름·규칙·원칙 |
+| [v1/params.yaml](v1/params.yaml) | 환경별 파라미터 (스크립트 단일 입력). **API ASG max=2 고정** |
+| [v1/INFRA-AND-SPECS.md](v1/INFRA-AND-SPECS.md) | **인프라·스펙 한눈에 보기** — API/빌드/AI/Messaging ASG, Video Batch |
+
+---
+
+## 정식 배포·검증
+
+- **배포:** `scripts/v1/deploy.ps1`
+- **검증:** `scripts/v1/verify.ps1` — 새 PC 5단계 검증 자동화
+- **네이밍:** 모든 리소스 `academy-v1-*` (VPC, ASG, Batch, RDS, Redis, DynamoDB, EventBridge 등)
 
 ---
 
 ## 아카이브 (참고용, 실행/배포에 사용하지 않음)
 
-- **v3_archive/** — v3 문서·증명·감사 (INFRA-SSOT-V3.*, IDEMPOTENCY-RULES, PRUNE-DELETE-ORDER 등)
-- **legacy_reports_archive/** — 과거 리포트 (FULLSTACK-*, AUDIT-*, OPERATIONAL-* 등)
+- **v4/** — 이전 SSOT v4. 풀셋팅 v1 전환 후 참고용.
+- **v3_archive/** — v3 문서·증명
+- **legacy_reports_archive/** — 과거 리포트
 
 ---
 
 ## 원칙·용어
 
-- **SSOT**: Single Source of Truth. 인프라 스펙·이름·파라미터는 v4 문서와 `params.yaml`만 기준으로 한다.
-- **정식 배포**: `scripts/v4/deploy.ps1` (bootstrap → deploy -Plan → 필요 시 -PruneLegacy → deploy 재실행으로 No-op 확인).
-- **검증**: `scripts/v4/verify.ps1` — 새 PC 5단계 검증 자동화.
+- **SSOT**: Single Source of Truth. 인프라 스펙·이름·파라미터는 **v1** 문서와 `docs/00-SSOT/v1/params.yaml`만 기준으로 한다.
+- **정식 배포**: `scripts/v1/deploy.ps1` (bootstrap → deploy -Plan → 필요 시 -PruneLegacy → deploy 재실행으로 No-op 확인).
+- **검증**: `scripts/v1/verify.ps1`
