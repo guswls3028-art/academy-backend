@@ -12,6 +12,7 @@ function Get-ApiLaunchTemplateUserData {
 set -e
 export AWS_REGION="$Region"
 LOG=/var/log/academy-api-userdata.log
+touch "`$LOG"
 log() { echo "`$(date -Iseconds) `$*" >> "`$LOG"; }
 # 0) 네트워크/IMDS 준비 대기 (ECR 연결 타임아웃 방지)
 for i in 1 2 3 4 5 6 7 8 9 10; do
