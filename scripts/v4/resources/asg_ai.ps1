@@ -15,13 +15,15 @@ function Get-AiLaunchTemplateDefaultVersion {
 }
 
 function Ensure-AiLaunchTemplate {
-    # Returns: @{ LtId = $id; LtVersion = $ver; Updated = $true/$false }
+    $sg = $script:SecurityGroupApp
+    if (-not $sg) { $sg = $script:BatchSecurityGroupId }
+    $data = "ImageId=$($script:AiAmiId),InstanceType=$($script:AiInstanceType)"
+    if ($sg) { $data += ",SecurityGroupIds=$sg" }
     $lt = Get-AiLaunchTemplate
     if (-not $lt) {
-        $data = "ImageId=$($script:AiAmiId),InstanceType=$($script:AiInstanceType)"
         $create = Invoke-AwsJson @("ec2", "create-launch-template",
             "--launch-template-name", $script:AiLaunchTemplateName,
-            "--version-description", "SSOT v4",
+            "--version-description", "SSOT v4 FD1",
             "--launch-template-data", $data,
             "--region", $script:Region, "--output", "json")
         if (-not $create -or -not $create.LaunchTemplate) { throw "create-launch-template failed for $($script:AiLaunchTemplateName)" }
@@ -35,8 +37,9 @@ function Ensure-AiLaunchTemplate {
     $verData = $defVer.LaunchTemplateData
     $currentAmi = if ($verData.PSObject.Properties['ImageId']) { $verData.ImageId } else { $null }
     $currentType = if ($verData.PSObject.Properties['InstanceType']) { $verData.InstanceType } else { $null }
-    if ($currentAmi -ne $script:AiAmiId -or $currentType -ne $script:AiInstanceType) {
-        $data = "ImageId=$($script:AiAmiId),InstanceType=$($script:AiInstanceType)"
+    $currentSg = $null
+    if ($verData.PSObject.Properties['SecurityGroupIds'] -and $verData.SecurityGroupIds -and $verData.SecurityGroupIds.Count -gt 0) { $currentSg = $verData.SecurityGroupIds[0] }
+    if ($currentAmi -ne $script:AiAmiId -or $currentType -ne $script:AiInstanceType -or $currentSg -ne $sg) {
         $newVer = Invoke-AwsJson @("ec2", "create-launch-template-version",
             "--launch-template-id", $ltId,
             "--version-description", "SSOT v4 drift",
@@ -45,11 +48,134 @@ function Ensure-AiLaunchTemplate {
         if (-not $newVer -or -not $newVer.LaunchTemplateVersion) { throw "create-launch-template-version failed" }
         $newVersion = $newVer.LaunchTemplateVersion.VersionNumber
         Invoke-Aws @("ec2", "modify-launch-template", "--launch-template-id", $ltId, "--default-version", $newVersion.ToString(), "--region", $script:Region) -ErrorMessage "modify-launch-template set default failed" | Out-Null
-        Write-Ok "LaunchTemplate $($script:AiLaunchTemplateName) new default version $newVersion (AMI/type drift)"
+        Write-Ok "LaunchTemplate $($script:AiLaunchTemplateName) new default version $newVersion"
         $script:ChangesMade = $true
         return @{ LtId = $ltId; LtVersion = $newVersion; Updated = $true }
     }
     return @{ LtId = $ltId; LtVersion = $defVer.VersionNumber; Updated = $false }
+}
+
+function Ensure-AiSqsScaling {
+    if ($script:PlanMode) { return }
+    $relaxed = $script:RelaxedValidation
+
+    $url = if ($script:AiSqsQueueUrl) { $script:AiSqsQueueUrl.Trim() } else { "" }
+    $queueName = if ($script:AiSqsQueueName) { $script:AiSqsQueueName.Trim() } else { "" }
+
+    if (-not $queueName -and $url) {
+        if ($url -like "arn:*") {
+            $queueName = ($url -split ":")[-1].Trim()
+        } else {
+            try {
+                $u = [Uri]$url
+                $path = $u.AbsolutePath.Trim("/")
+                $parts = if ($path) { $path -split "/" } else { @() }
+                $queueName = if ($parts.Count -gt 0) { $parts[-1].Trim() } else { "" }
+            } catch {
+                $queueName = ""
+            }
+        }
+    }
+
+    if (-not $queueName) {
+        if ($relaxed) {
+            Write-Warn "AI SQS scaling skipped: sqsQueueName empty and queue name could not be parsed from URL"
+            return
+        }
+        throw "AI SQS scaling: sqsQueueName is empty and queue name could not be parsed from sqsQueueUrl (last path segment). Set sqsQueueName in params or fix URL."
+    }
+
+    $doScaling = {
+        $resourceId = "auto-scaling-group/$($script:AiASGName)"
+        $region = $script:Region
+        $ns = "ec2"
+        $dim = "ec2:autoScalingGroup:DesiredCapacity"
+        $scaleOutPolicyName = "$($script:AiASGName)-sqs-scale-out"
+        $scaleInPolicyName = "$($script:AiASGName)-sqs-scale-in"
+        $alarmOutName = "$($script:AiASGName)-sqs-scale-out"
+        $alarmInName = "$($script:AiASGName)-sqs-scale-in"
+        $scaleOutThreshold = $script:AiScaleOutThreshold
+        $scaleInThreshold = $script:AiScaleInThreshold
+        $treatMissing = "notBreaching"
+
+        Invoke-Aws @("application-autoscaling", "register-scalable-target",
+            "--service-namespace", $ns,
+            "--resource-id", $resourceId,
+            "--scalable-dimension", $dim,
+            "--min-capacity", $script:AiMinSize.ToString(),
+            "--max-capacity", $script:AiMaxSize.ToString(),
+            "--region", $region) -ErrorMessage "register-scalable-target ai" | Out-Null
+
+        $targets = Invoke-AwsJson @("application-autoscaling", "describe-scalable-targets",
+            "--service-namespace", $ns, "--resource-ids", $resourceId, "--region", $region, "--output", "json")
+        $st = $targets.ScalableTargets | Where-Object { $_.ResourceId -eq $resourceId } | Select-Object -First 1
+        if (-not $st -or [int]$st.MinCapacity -ne $script:AiMinSize -or [int]$st.MaxCapacity -ne $script:AiMaxSize) {
+            throw "ScalableTarget min/max mismatch: expected Min=$($script:AiMinSize) Max=$($script:AiMaxSize)"
+        }
+
+        $stepOut = '{"AdjustmentType":"ChangeInCapacity","MetricAggregationType":"Average","Cooldown":' + $script:AiScaleOutCooldown + ',"StepAdjustments":[{"MetricIntervalLowerBound":0,"ScalingAdjustment":1}]}'
+        $putOut = Invoke-AwsJson @("application-autoscaling", "put-scaling-policy",
+            "--service-namespace", $ns, "--resource-id", $resourceId, "--scalable-dimension", $dim,
+            "--policy-name", $scaleOutPolicyName, "--policy-type", "StepScaling",
+            "--step-scaling-policy-configuration", $stepOut,
+            "--region", $region, "--output", "json")
+        $policyOutArn = $putOut.PolicyARN
+
+        $stepIn = '{"AdjustmentType":"ChangeInCapacity","MetricAggregationType":"Average","Cooldown":' + $script:AiScaleInCooldown + ',"StepAdjustments":[{"MetricIntervalUpperBound":0,"ScalingAdjustment":-1}]}'
+        $putIn = Invoke-AwsJson @("application-autoscaling", "put-scaling-policy",
+            "--service-namespace", $ns, "--resource-id", $resourceId, "--scalable-dimension", $dim,
+            "--policy-name", $scaleInPolicyName, "--policy-type", "StepScaling",
+            "--step-scaling-policy-configuration", $stepIn,
+            "--region", $region, "--output", "json")
+        $policyInArn = $putIn.PolicyARN
+
+        Invoke-Aws @("cloudwatch", "put-metric-alarm",
+            "--alarm-name", $alarmOutName,
+            "--metric-name", "ApproximateNumberOfMessagesVisible",
+            "--namespace", "AWS/SQS",
+            "--dimensions", "Name=QueueName,Value=$queueName",
+            "--statistic", "Average", "--period", "60", "--evaluation-periods", "1",
+            "--threshold", $scaleOutThreshold.ToString(),
+            "--comparison-operator", "GreaterThanThreshold",
+            "--treat-missing-data", $treatMissing,
+            "--alarm-actions", $policyOutArn,
+            "--region", $region) -ErrorMessage "put-metric-alarm ai scale-out" | Out-Null
+        Invoke-Aws @("cloudwatch", "put-metric-alarm",
+            "--alarm-name", $alarmInName,
+            "--metric-name", "ApproximateNumberOfMessagesVisible",
+            "--namespace", "AWS/SQS",
+            "--dimensions", "Name=QueueName,Value=$queueName",
+            "--statistic", "Average", "--period", "60", "--evaluation-periods", "1",
+            "--threshold", $scaleInThreshold.ToString(),
+            "--comparison-operator", "LessThanOrEqualToThreshold",
+            "--treat-missing-data", $treatMissing,
+            "--alarm-actions", $policyInArn,
+            "--region", $region) -ErrorMessage "put-metric-alarm ai scale-in" | Out-Null
+
+        $descOut = Invoke-AwsJson @("cloudwatch", "describe-alarms", "--alarm-names", $alarmOutName, "--region", $region, "--output", "json")
+        $descIn = Invoke-AwsJson @("cloudwatch", "describe-alarms", "--alarm-names", $alarmInName, "--region", $region, "--output", "json")
+        $aOut = $descOut.MetricAlarms | Where-Object { $_.AlarmName -eq $alarmOutName } | Select-Object -First 1
+        $aIn = $descIn.MetricAlarms | Where-Object { $_.AlarmName -eq $alarmInName } | Select-Object -First 1
+        if (-not $aOut -or -not $aOut.AlarmActions -or $aOut.AlarmActions -notcontains $policyOutArn) {
+            throw "Alarm $alarmOutName alarm-actions does not reference policy ARN"
+        }
+        if (-not $aIn -or -not $aIn.AlarmActions -or $aIn.AlarmActions -notcontains $policyInArn) {
+            throw "Alarm $alarmInName alarm-actions does not reference policy ARN"
+        }
+
+        Write-Ok "AI SQS scaling ensured (queue=$queueName)"
+    }
+
+    if ($relaxed) {
+        try {
+            & $doScaling
+        } catch {
+            $script:SqsScalingNotEnforced = $true
+            Write-Warn "AI SQS scaling skipped (RelaxedValidation): $($_.Exception.Message)"
+        }
+    } else {
+        & $doScaling
+    }
 }
 
 function Ensure-ASGAi {
@@ -57,8 +183,10 @@ function Ensure-ASGAi {
     if ($script:PlanMode) { Write-Ok "ASG AI check skipped (Plan)"; return }
 
     $ltResult = Ensure-AiLaunchTemplate
-    $vpcZone = ($script:PublicSubnets -join ",")
-    if (-not $vpcZone) { throw "PublicSubnets empty; cannot create ASG" }
+    $subnets = @($script:PrivateSubnets | Where-Object { $_ })
+    if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @($script:PublicSubnets | Where-Object { $_ }) }
+    $vpcZone = ($subnets -join ",")
+    if (-not $vpcZone) { throw "PublicSubnets or PrivateSubnets empty; cannot create ASG" }
 
     $asgList = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--region", $script:Region, "--output", "json")
     $asgArr = if ($asgList -and $asgList.PSObject.Properties['AutoScalingGroups']) { @($asgList.AutoScalingGroups) } else { @() }
@@ -66,28 +194,38 @@ function Ensure-ASGAi {
 
     if (-not $asg) {
         $ltSpec = "LaunchTemplateId=$($ltResult.LtId),Version='`$Latest'"
-        Invoke-Aws @("autoscaling", "create-auto-scaling-group",
+        $createArgs = @("autoscaling", "create-auto-scaling-group",
             "--auto-scaling-group-name", $script:AiASGName,
             "--launch-template", $ltSpec,
             "--min-size", $script:AiMinSize.ToString(),
             "--max-size", $script:AiMaxSize.ToString(),
             "--desired-capacity", $script:AiDesiredCapacity.ToString(),
             "--vpc-zone-identifier", $vpcZone,
-            "--region", $script:Region) -ErrorMessage "create-auto-scaling-group failed" | Out-Null
+            "--region", $script:Region)
+        if ($script:AiScaleInProtection) { $createArgs += "--new-instances-protected-from-scale-in" }
+        Invoke-Aws $createArgs -ErrorMessage "create-auto-scaling-group failed" | Out-Null
         Write-Ok "ASG $($script:AiASGName) created"
         $script:ChangesMade = $true
+        if ($script:AiSqsQueueUrl -or $script:AiSqsQueueName) { Ensure-AiSqsScaling }
         return
     }
 
-    $capacityDrift = ($asg.MinSize -ne $script:AiMinSize) -or ($asg.MaxSize -ne $script:AiMaxSize) -or ($asg.DesiredCapacity -ne $script:AiDesiredCapacity)
-    if ($capacityDrift) {
+    $capacityDrift = ($asg.MinSize -ne $script:AiMinSize) -or ($asg.MaxSize -ne $script:AiMaxSize)
+    $clampedDesired = [Math]::Max($script:AiMinSize, [Math]::Min($script:AiMaxSize, $asg.DesiredCapacity))
+    if ($capacityDrift -or $asg.DesiredCapacity -ne $clampedDesired) {
         Invoke-Aws @("autoscaling", "update-auto-scaling-group",
             "--auto-scaling-group-name", $script:AiASGName,
             "--min-size", $script:AiMinSize.ToString(),
             "--max-size", $script:AiMaxSize.ToString(),
-            "--desired-capacity", $script:AiDesiredCapacity.ToString(),
+            "--desired-capacity", $clampedDesired.ToString(),
+            "--new-instances-protected-from-scale-in",
             "--region", $script:Region) -ErrorMessage "update-auto-scaling-group failed" | Out-Null
-        Write-Ok "ASG $($script:AiASGName) capacity updated to Min=$($script:AiMinSize) Max=$($script:AiMaxSize) Desired=$($script:AiDesiredCapacity)"
+        Write-Ok "ASG $($script:AiASGName) min=$($script:AiMinSize) max=$($script:AiMaxSize) desired(clamp)=$clampedDesired protection=ON"
+        $script:ChangesMade = $true
+    }
+    if ($script:AiScaleInProtection -and -not $asg.NewInstancesProtectedFromScaleIn) {
+        Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:AiASGName, "--new-instances-protected-from-scale-in", "--region", $script:Region) -ErrorMessage "set scale-in protection" | Out-Null
+        Write-Ok "ASG $($script:AiASGName) scale-in protection enabled"
         $script:ChangesMade = $true
     }
 
@@ -97,7 +235,9 @@ function Ensure-ASGAi {
         $script:ChangesMade = $true
     }
 
+    if ($script:AiSqsQueueUrl -or $script:AiSqsQueueName) { Ensure-AiSqsScaling }
+
     if (-not $capacityDrift -and -not $ltResult.Updated) {
-        Write-Ok "ASG $($script:AiASGName) idempotent Desired=$($asg.DesiredCapacity) Min=$($asg.MinSize) Max=$($asg.MaxSize)"
+        Write-Ok "ASG $($script:AiASGName) idempotent Desired(clamp)=$clampedDesired Min=$($asg.MinSize) Max=$($asg.MaxSize)"
     }
 }

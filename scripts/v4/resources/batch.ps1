@@ -12,14 +12,19 @@ function Get-CEArn { param([string]$Name)
 
 function New-VideoCE {
     $iam = $script:BatchIam
-    $subnetArr = ($script:PublicSubnets | ForEach-Object { "`"$_`"" }) -join ","
+    $subnets = @($script:PrivateSubnets | Where-Object { $_ })
+    if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @($script:PublicSubnets | Where-Object { $_ }) }
+    $subnetArr = ($subnets | ForEach-Object { "`"$_`"" }) -join ","
     $path = Join-Path $BatchPath "video_compute_env.json"
     $content = [System.IO.File]::ReadAllText($path, $utf8NoBom)
     $content = $content -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $script:VideoCEName
     $content = $content -replace "PLACEHOLDER_SERVICE_ROLE_ARN", $iam.ServiceRoleArn
     $content = $content -replace "PLACEHOLDER_INSTANCE_PROFILE_ARN", $iam.InstanceProfileArn
     $content = $content -replace "PLACEHOLDER_SECURITY_GROUP_ID", $script:BatchSecurityGroupId
-    $content = $content -replace '"PLACEHOLDER_SUBNET_1"', $subnetArr
+    $content = $content -replace "PLACEHOLDER_SUBNETS", $subnetArr
+    $content = $content -replace "PLACEHOLDER_MIN_VCPUS", $script:VideoCEMinvCpus
+    $content = $content -replace "PLACEHOLDER_MAX_VCPUS", $script:VideoCEMaxvCpus
+    $content = $content -replace "PLACEHOLDER_INSTANCE_TYPE", $script:VideoCEInstanceType
     $tmp = [System.IO.Path]::GetTempFileName()
     [System.IO.File]::WriteAllText($tmp, $content, $utf8NoBom)
     try {
@@ -29,13 +34,15 @@ function New-VideoCE {
 
 function New-OpsCE {
     $iam = $script:BatchIam
-    $subnetArr = ($script:PublicSubnets | ForEach-Object { "`"$_`"" }) -join ","
+    $subnets = @($script:PrivateSubnets | Where-Object { $_ })
+    if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @($script:PublicSubnets | Where-Object { $_ }) }
+    $subnetArr = ($subnets | ForEach-Object { "`"$_`"" }) -join ","
     $path = Join-Path $BatchPath "ops_compute_env.json"
     $content = [System.IO.File]::ReadAllText($path, $utf8NoBom)
     $content = $content -replace "PLACEHOLDER_SERVICE_ROLE_ARN", $iam.ServiceRoleArn
     $content = $content -replace "PLACEHOLDER_INSTANCE_PROFILE_ARN", $iam.InstanceProfileArn
     $content = $content -replace "PLACEHOLDER_SECURITY_GROUP_ID", $script:BatchSecurityGroupId
-    $content = $content -replace '"PLACEHOLDER_SUBNET_1"', $subnetArr
+    $content = $content -replace "PLACEHOLDER_SUBNETS", $subnetArr
     $tmp = [System.IO.Path]::GetTempFileName()
     [System.IO.File]::WriteAllText($tmp, $content, $utf8NoBom)
     try {

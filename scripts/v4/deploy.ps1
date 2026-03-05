@@ -1,21 +1,24 @@
-# ==============================================================================
-# Academy SSOT v4 — 단일 진입점. 풀스택 Ensure + PruneLegacy + PurgeAndRecreate + Netprobe + Evidence.
-# Usage: pwsh scripts/v4/deploy.ps1 [-Env prod] [-Plan] [-PruneLegacy] [-PurgeAndRecreate] [-DryRun] [-ForceRecreateAll] [-SkipNetprobe] [-Ci] [-EcrRepoUri ...]
-# -Plan: AWS 변경 0, 표/리포트만 출력.
-# -PruneLegacy: SSOT 외 academy-* 삭제 후 Ensure. -Plan이면 후보 표만 출력.
-# -PurgeAndRecreate: SSOT Batch/EventBridge 전부 삭제 후 전체 Ensure 재실행. -DryRun이면 삭제 예정만 출력 후 종료.
+# Usage: pwsh scripts/v4/deploy.ps1 [-Env prod] [-Plan] [-Bootstrap] [-StrictValidation] [-SkipBuild] [-SkipSqs] [-SkipRds] [-SkipRedis] ...
+# 원테이크: Bootstrap 기본 ON. SSM/SQS/RDS engineVersion/ECR 자동 준비 후 Ensure. 사용자 사전 작업 없음.
 # ==============================================================================
 [CmdletBinding()]
 param(
     [ValidateSet("prod","staging","dev")]
     [string]$Env = "prod",
     [switch]$Plan = $false,
+    [switch]$Bootstrap = $true,
+    [switch]$StrictValidation = $true,
+    [switch]$SkipBuild = $false,
+    [switch]$SkipSqs = $false,
+    [switch]$SkipRds = $false,
+    [switch]$SkipRedis = $false,
     [switch]$PruneLegacy = $false,
     [switch]$PurgeAndRecreate = $false,
     [switch]$DryRun = $false,
     [switch]$ForceRecreateAll = $false,
     [switch]$SkipNetprobe = $false,
     [switch]$Ci = $false,
+    [switch]$RelaxedValidation = $false,
     [string]$EcrRepoUri = ""
 )
 $ErrorActionPreference = "Stop"
@@ -26,7 +29,8 @@ $script:PlanMode = $Plan
 $script:AllowRebuild = -not $Plan -and (-not $ForceRecreateAll -or $true)
 $script:ChangesMade = $false
 $script:DeployLockAcquired = $false
-if ($EcrRepoUri) { $script:EcrRepoUri = $EcrRepoUri } else { $script:EcrRepoUri = "" }
+$script:SqsScalingNotEnforced = $false
+switch ($true) { { $EcrRepoUri } { $script:EcrRepoUri = $EcrRepoUri } default { $script:EcrRepoUri = "" } }
 
 # Core (order: ssot first so Load-SSOT sets vars)
 . (Join-Path $ScriptRoot "core\ssot.ps1")
@@ -39,12 +43,14 @@ if ($EcrRepoUri) { $script:EcrRepoUri = $EcrRepoUri } else { $script:EcrRepoUri 
 . (Join-Path $ScriptRoot "core\guard.ps1")
 . (Join-Path $ScriptRoot "core\preflight.ps1")
 . (Join-Path $ScriptRoot "core\reports.ps1")
+. (Join-Path $ScriptRoot "core\bootstrap.ps1")
 
 # Resources
 . (Join-Path $ScriptRoot "resources\network.ps1")
 . (Join-Path $ScriptRoot "resources\iam.ps1")
 . (Join-Path $ScriptRoot "resources\ssm.ps1")
 . (Join-Path $ScriptRoot "resources\ecr.ps1")
+. (Join-Path $ScriptRoot "resources\alb.ps1")
 . (Join-Path $ScriptRoot "resources\api.ps1")
 . (Join-Path $ScriptRoot "resources\build.ps1")
 . (Join-Path $ScriptRoot "resources\rds.ps1")
@@ -54,12 +60,60 @@ if ($EcrRepoUri) { $script:EcrRepoUri = $EcrRepoUri } else { $script:EcrRepoUri 
 . (Join-Path $ScriptRoot "resources\batch.ps1")
 . (Join-Path $ScriptRoot "resources\jobdef.ps1")
 . (Join-Path $ScriptRoot "resources\eventbridge.ps1")
+. (Join-Path $ScriptRoot "resources\dynamodb.ps1")
 . (Join-Path $ScriptRoot "resources\netprobe.ps1")
 
-Load-SSOT -Env $Env | Out-Null
+$null = Load-SSOT -Env $Env
+$script:RelaxedValidation = $RelaxedValidation
+if ($EcrRepoUri) { $script:EcrRepoUri = $EcrRepoUri } else { $script:EcrRepoUri = "" }
+
+# Bootstrap (원테이크): SSM password, SQS, RDS engineVersion, ECR URI 자동 준비. Plan이면 스킵.
+if ($Bootstrap -and -not $Plan) {
+    Invoke-Bootstrap -Bootstrap:$true -SkipSqs:$SkipSqs -SkipRds:$SkipRds -SkipRedis:$SkipRedis -SkipBuild:$SkipBuild
+}
+# Bootstrap 이후 최종 EcrRepoUri 사용 (param 또는 Bootstrap이 채움)
+if ($script:EcrRepoUriResolved) { $script:EcrRepoUri = $script:EcrRepoUriResolved }
+
+# Strict Gate (Bootstrap 이후 평가): 준비 못한 항목만 실패
+$strictCheck = -not $Plan -and $StrictValidation -and -not $script:RelaxedValidation
+switch ($true) {
+    { $strictCheck -and $script:EcrImmutableTagRequired -and (-not $script:EcrRepoUri -or $script:EcrRepoUri.Trim() -eq "") } {
+        Write-Fail "Strict: EcrRepoUri not set. Bootstrap could not resolve image. Pass -EcrRepoUri or ensure build/ECR available."
+        throw "Strict: EcrRepoUri required."
+    }
+    { $script:EcrRepoUri -and ($script:EcrRepoUri -match ':latest\s*$') } {
+        Write-Fail ":latest tag is prohibited. Use an immutable tag."
+        throw "EcrRepoUri must not contain :latest."
+    }
+    { $strictCheck -and [string]::IsNullOrWhiteSpace($script:MessagingSqsQueueUrl) -and [string]::IsNullOrWhiteSpace($script:MessagingSqsQueueName) } {
+        Write-Fail "Strict: messagingWorker SQS not set. Bootstrap could not create/find queue."
+        throw "Strict: set messagingWorker.sqsQueueUrl or sqsQueueName, or allow Bootstrap to create."
+    }
+    { $strictCheck -and [string]::IsNullOrWhiteSpace($script:AiSqsQueueUrl) -and [string]::IsNullOrWhiteSpace($script:AiSqsQueueName) } {
+        Write-Fail "Strict: aiWorker SQS not set. Bootstrap could not create/find queue."
+        throw "Strict: set aiWorker.sqsQueueUrl or sqsQueueName, or allow Bootstrap to create."
+    }
+    { $strictCheck -and $script:RdsDbIdentifier -and [string]::IsNullOrWhiteSpace($script:RdsMasterPasswordSsmParam) } {
+        Write-Fail "Strict: rds.masterPasswordSsmParam not set. Bootstrap could not create SSM password."
+        throw "Strict: set rds.masterPasswordSsmParam in params.yaml."
+    }
+    { $strictCheck -and $script:RdsDbIdentifier -and $script:RdsMasterPasswordSsmParam } {
+        $rdsParam = Invoke-AwsJson @("ssm", "get-parameter", "--name", $script:RdsMasterPasswordSsmParam, "--with-decryption", "--region", $script:Region, "--output", "json")
+        $badParam = -not $rdsParam -or -not $rdsParam.Parameter -or -not $rdsParam.Parameter.Value
+        switch ($badParam) {
+            $true {
+                Write-Fail "Strict: RDS master password SSM parameter not found: $($script:RdsMasterPasswordSsmParam)"
+                throw "Strict: create SSM SecureString or run with Bootstrap."
+            }
+        }
+    }
+}
 
 Write-Host "`n=== DEPLOY v4 ($Env) ===" -ForegroundColor Cyan
 if ($Plan) { Write-Host "MODE: Plan (no AWS changes)" -ForegroundColor Yellow }
+if ($Bootstrap) { Write-Host "MODE: Bootstrap ON (one-take)" -ForegroundColor Cyan }
+if ($StrictValidation) { Write-Host "MODE: StrictValidation ON" -ForegroundColor Cyan }
+if ($RelaxedValidation) { Write-Host "MODE: RelaxedValidation (SQS scaling failure non-fatal)" -ForegroundColor Yellow }
 if ($PruneLegacy -and -not $Plan) { Write-Host "MODE: PruneLegacy" -ForegroundColor Yellow }
 if ($PurgeAndRecreate) { Write-Host "MODE: PurgeAndRecreate" -ForegroundColor Yellow }
 if ($DryRun) { Write-Host "MODE: DryRun (no changes)" -ForegroundColor Yellow }
@@ -116,14 +170,14 @@ try {
     }
 
     $script:BatchIam = Ensure-BatchIAM
+    Ensure-Network
     Ensure-NetworkVpc
     Confirm-SubnetsMatchSSOT
     Confirm-RDSState
-    Ensure-RDSSecurityGroup
     Confirm-RedisState
-    Ensure-RedisSecurityGroup
     Confirm-SSMEnv
     Ensure-ECRRepos
+    Ensure-DynamoLockTable
     Ensure-ASGMessaging
     Ensure-ASGAi
     Ensure-VideoCE
@@ -135,6 +189,7 @@ try {
     Ensure-OpsJobDefScanStuck
     Ensure-OpsJobDefNetprobe
     Ensure-EventBridgeRules
+    Ensure-ALBStack
     Ensure-API
     Ensure-Build
 

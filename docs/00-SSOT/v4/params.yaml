@@ -1,31 +1,49 @@
-# Academy SSOT v4 — 기계용 단일소스. scripts/v4 전용. 사람용: SSOT.md
-# 계약: state-contract.md
+# Academy SSOT v4 — Final Design v1.0. 기계용 단일소스. scripts/v4 전용.
+# 계약: state-contract.md, 설계: ARCHITECTURE.md
+# VPC Endpoint 미사용. ARM64(c6g.large) 고정. ECR immutable tag 필수.
 
 global:
   env: prod
   region: ap-northeast-2
   accountId: "809466760795"
   namingPrefix: academy-
+  validationMode: "Strict"
   tags:
     Project: academy
-    ManagedBy: ssot-v4
+    ManagedBy: ssot-v4-fd1
 
+# 2-tier: Public 2 + Private 2, NAT 1개. VPC Endpoint 미사용.
+# vpcId/subnet IDs 비어 있으면 Ensure-Network가 academy-v4-* 네이밍으로 생성 후 이름으로 발견.
 network:
-  vpcId: vpc-0831a2484f9b114c2
-  publicSubnets:
-    - subnet-049e711f41fdff71b
-    - subnet-07a8427d3306ce910
-    - subnet-09231ed7ecf59cfa4
-    - subnet-0548571ac21b3bbf3
-  securityGroups:
-    batch: sg-011ed1d9eb4a65b8f
-    api: ""
-    workers: ""
-    redis: academy-redis-sg
+  vpcId: ""
+  vpcCidr: 10.0.0.0/16
+  publicSubnetCidr1: 10.0.1.0/24
+  publicSubnetCidr2: 10.0.2.0/24
+  privateSubnetCidr1: 10.0.11.0/24
+  privateSubnetCidr2: 10.0.12.0/24
+  natEnabled: true
+  albEnabled: true
+  natGatewayId: ""
+  securityGroupApp: ""
+  securityGroupBatch: ""
+  securityGroupData: ""
+  vpcName: academy-v4-vpc
+  sgAppName: academy-v4-sg-app
+  sgBatchName: academy-v4-sg-batch
+  sgDataName: academy-v4-sg-data
+
+# 서브넷 ID는 Ensure 생성 후 채우거나, 마이그레이션 시 기존 값 사용. (파서: 섹션당 _list 1개)
+networkPublicSubnets:
+  - ""
+  - ""
+networkPrivateSubnets:
+  - ""
+  - ""
 
 ssm:
   apiEnv: /academy/api/env
   workersEnv: /academy/workers/env
+  deployLockParam: /academy/deploy-lock
 
 ecr:
   baseRepo: academy-base
@@ -33,84 +51,111 @@ ecr:
   videoWorkerRepo: academy-video-worker
   messagingWorkerRepo: academy-messaging-worker
   aiWorkerRepo: academy-ai-worker-cpu
+  immutableTagRequired: true
 
+# ALB + ASG. EIP 제거. Private 서브넷 + sg-app.
 api:
-  identification:
-    type: elastic_ip
-    allocationId: eipalloc-071ef2b5b5bec9428
-    publicIp: 15.165.147.157
   amiId: ami-0c55b159cbfafe1f0
   instanceProfile: academy-api-instance-profile
-  subnetId: subnet-049e711f41fdff71b
-  securityGroupId: sg-011ed1d9eb4a65b8f
-  instanceType: t3.small
+  securityGroupId: ""
+  instanceType: c6g.large
   userData: ""
-  asg:
-    asgName: academy-api-asg
-    asgLaunchTemplateName: academy-api-lt
-    asgMinSize: 1
-    asgMaxSize: 1
-    asgDesiredCapacity: 1
+  asgName: academy-v4-api-asg
+  asgLaunchTemplateName: academy-v4-api-lt
+  asgMinSize: 1
+  asgMaxSize: 2
+  asgDesiredCapacity: 1
   containerName: academy-api
-  albName: ""
-  targetGroupName: ""
+  albName: academy-v4-api-alb
+  targetGroupName: academy-v4-api-tg
+  healthPath: /health
   instanceTagKey: Name
-  instanceTagValue: academy-api
-  apiBaseUrl: "http://15.165.147.157:8000"
+  instanceTagValue: academy-v4-api
+  apiBaseUrl: ""
 
 build:
   instanceTagKey: Name
   instanceTagValue: academy-build-arm64
   amiId: ami-0c55b159cbfafe1f0
   instanceProfile: academy-build-instance-profile
-  subnetId: subnet-049e711f41fdff71b
-  securityGroupId: sg-011ed1d9eb4a65b8f
-  instanceType: t4g.small
+  subnetId: ""
+  securityGroupId: ""
+  instanceType: c6g.large
 
+# min=1 max=10 desired=1, scale-in protection ON, SQS backlog step scaling
 messagingWorker:
-  asgName: academy-messaging-worker-asg
-  launchTemplateName: academy-messaging-worker-lt
+  asgName: academy-v4-messaging-worker-asg
+  launchTemplateName: academy-v4-messaging-worker-lt
   amiId: ami-0c55b159cbfafe1f0
-  instanceType: t3.small
-  scaling:
-    minSize: 0
-    maxSize: 4
-    desiredCapacity: 0
+  instanceType: c6g.large
+  minSize: 1
+  maxSize: 10
+  desiredCapacity: 1
+  scaleInProtection: true
+  scalingPolicyScaleOutCooldown: 300
+  scalingPolicyScaleInCooldown: 900
+  scalingPolicyScaleOutThreshold: 20
+  scalingPolicyScaleInThreshold: 0
+  sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v4-messaging-queue
+  sqsQueueName: academy-v4-messaging-queue
 
 aiWorker:
-  asgName: academy-ai-worker-asg
-  launchTemplateName: academy-ai-worker-lt
+  asgName: academy-v4-ai-worker-asg
+  launchTemplateName: academy-v4-ai-worker-lt
   amiId: ami-0c55b159cbfafe1f0
-  instanceType: t3.small
-  scaling:
-    minSize: 0
-    maxSize: 4
-    desiredCapacity: 0
+  instanceType: c6g.large
+  minSize: 1
+  maxSize: 10
+  desiredCapacity: 1
+  scaleInProtection: true
+  scalingPolicyScaleOutCooldown: 300
+  scalingPolicyScaleInCooldown: 900
+  scalingPolicyScaleOutThreshold: 20
+  scalingPolicyScaleInThreshold: 0
+  sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v4-ai-queue
+  sqsQueueName: academy-v4-ai-queue
 
+# Video Batch: minvCpus=0 maxvCpus=10, c6g.large, Private subnet + sg-batch
 videoBatch:
-  computeEnvironmentName: academy-video-batch-ce-final
-  videoQueueName: academy-video-batch-queue
-  workerJobDefName: academy-video-batch-jobdef
-  opsComputeEnvironmentName: academy-video-ops-ce
-  opsQueueName: academy-video-ops-queue
+  computeEnvironmentName: academy-v4-video-batch-ce
+  videoQueueName: academy-v4-video-batch-queue
+  workerJobDefName: academy-v4-video-batch-jobdef
+  minvCpus: 0
+  maxvCpus: 10
+  instanceType: c6g.large
+  opsComputeEnvironmentName: academy-v4-video-ops-ce
+  opsQueueName: academy-v4-video-ops-queue
   opsJobDefs:
-    reconcile: academy-video-ops-reconcile
-    scanstuck: academy-video-ops-scanstuck
-    netprobe: academy-video-ops-netprobe
+    reconcile: academy-v4-video-ops-reconcile
+    scanstuck: academy-v4-video-ops-scanstuck
+    netprobe: academy-v4-video-ops-netprobe
 
 eventBridge:
-  reconcileRuleName: academy-reconcile-video-jobs
-  scanStuckRuleName: academy-video-scan-stuck-rate
-  roleName: academy-eventbridge-batch-video-role
+  reconcileRuleName: academy-v4-reconcile-video-jobs
+  scanStuckRuleName: academy-v4-video-scan-stuck-rate
+  roleName: academy-v4-eventbridge-batch-video-role
+
+# videoId 중복 submit 방지
+dynamodb:
+  lockTableName: academy-v4-video-job-lock
+  lockTableTtlAttribute: ttl
 
 rds:
-  dbIdentifier: academy-db
-  # validate only; no delete unless ForceRecreateAll + DangerIncludeData
+  engine: postgres
+  engineVersion: "15.16"
+  instanceClass: "db.t4g.medium"
+  allocatedStorage: 20
+  dbIdentifier: academy-v4-db
+  dbSubnetGroupName: academy-v4-db-subnets
+  masterUsername: academy
+  masterPasswordSsmParam: "/academy/rds/master_password"
 
 redis:
-  replicationGroupId: academy-redis
-  subnetGroupName: academy-redis-subnets
-  securityGroupId: academy-redis-sg
+  replicationGroupId: academy-v4-redis
+  subnetGroupName: academy-v4-redis-subnets
+  securityGroupId: ""
+  nodeType: cache.t4g.small
+  engineVersion: "7.1"
 
 r2:
   bucket: ""

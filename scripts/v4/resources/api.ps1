@@ -1,13 +1,5 @@
-# API: ASG(1) + EIP + /health. Ensure-API-LaunchTemplate, Ensure-API-ASG, Ensure-API-Instance.
+# API: ALB + ASG (Step D). EIP 제거. Private subnet + sg-app, health /health.
 $ErrorActionPreference = "Stop"
-
-function Get-APIInstanceByEIP {
-    $addr = Invoke-AwsJson @("ec2", "describe-addresses", "--allocation-ids", $script:ApiAllocationId, "--region", $script:Region, "--output", "json")
-    if (-not $addr -or -not $addr.Addresses -or $addr.Addresses.Count -eq 0 -or -not $addr.Addresses[0].InstanceId) {
-        return $null
-    }
-    return $addr.Addresses[0].InstanceId
-}
 
 function Get-APIASGInstanceIds {
     $r = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $script:ApiASGName, "--region", $script:Region, "--output", "json")
@@ -17,26 +9,25 @@ function Get-APIASGInstanceIds {
 }
 
 function Test-APIHealth200 {
+    param([string]$BaseUrl)
+    $url = if ($BaseUrl) { $BaseUrl.TrimEnd('/') } else { $script:ApiBaseUrl }
+    if (-not $url) { return $false }
     try {
-        $r = Invoke-WebRequest -Uri "$($script:ApiBaseUrl)/health" -UseBasicParsing -TimeoutSec 10
+        $r = Invoke-WebRequest -Uri "$url/$($script:ApiHealthPath.TrimStart('/'))" -UseBasicParsing -TimeoutSec 10
         return ($r.StatusCode -eq 200)
     } catch { return $false }
-}
-
-function Test-APIInstanceSSMOnline {
-    param([string]$InstanceId)
-    $r = Invoke-AwsJson @("ssm", "describe-instance-information", "--filters", "Key=InstanceIds,Values=$InstanceId", "--region", $script:Region, "--output", "json")
-    return ($r -and $r.InstanceInformationList -and $r.InstanceInformationList.Count -gt 0)
 }
 
 # Ensure API Launch Template: drift on AMI, SG, UserData, InstanceProfile → new version.
 function Ensure-API-LaunchTemplate {
     if ($script:PlanMode) { return @{ LtId = $null; Updated = $false } }
     $ltName = $script:ApiLaunchTemplateName
+    $currentSg = $script:ApiSecurityGroupId
+    if (-not $currentSg -and $script:SecurityGroupApp) { $currentSg = $script:SecurityGroupApp }
+    if (-not $currentSg) { throw "API SG required (SecurityGroupApp or api.securityGroupId)" }
     $r = Invoke-AwsJson @("ec2", "describe-launch-templates", "--launch-template-names", $ltName, "--region", $script:Region, "--output", "json")
     $currentAmi = $script:ApiAmiId
     $currentType = $script:ApiInstanceType
-    $currentSg = $script:ApiSecurityGroupId
     $currentProfile = $script:ApiInstanceProfile
     $currentUserData = if ($script:ApiUserData) { [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($script:ApiUserData)) } else { "" }
 
@@ -45,7 +36,7 @@ function Ensure-API-LaunchTemplate {
     if ($currentUserData) { $baseData += ",UserData=$currentUserData" }
 
     if (-not $r -or -not $r.LaunchTemplates -or $r.LaunchTemplates.Count -eq 0) {
-        $create = Invoke-AwsJson @("ec2", "create-launch-template", "--launch-template-name", $ltName, "--version-description", "SSOT v4", "--launch-template-data", $baseData, "--region", $script:Region, "--output", "json")
+        $create = Invoke-AwsJson @("ec2", "create-launch-template", "--launch-template-name", $ltName, "--version-description", "SSOT v4 FD1", "--launch-template-data", $baseData, "--region", $script:Region, "--output", "json")
         if (-not $create -or -not $create.LaunchTemplate) { throw "create-launch-template failed for $ltName" }
         Write-Ok "LaunchTemplate $ltName created"
         $script:ChangesMade = $true
@@ -83,8 +74,10 @@ function Ensure-API-ASG {
     if ($script:PlanMode) { Write-Ok "Ensure-API-ASG skipped (Plan)"; return }
 
     $ltResult = Ensure-API-LaunchTemplate
-    $vpcZone = ($script:PublicSubnets -join ",")
-    if (-not $vpcZone) { throw "PublicSubnets empty" }
+    $subnets = @($script:PrivateSubnets | Where-Object { $_ })
+    if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @($script:PublicSubnets | Where-Object { $_ }) }
+    $vpcZone = ($subnets -join ",")
+    if (-not $vpcZone) { throw "PublicSubnets or PrivateSubnets empty" }
 
     $asgList = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--region", $script:Region, "--output", "json")
     $asgArr = if ($asgList -and $asgList.PSObject.Properties['AutoScalingGroups']) { @($asgList.AutoScalingGroups) } else { @() }
@@ -112,11 +105,20 @@ function Ensure-API-ASG {
     if (-not $capacityDrift -and -not $ltResult.Updated) {
         Write-Ok "ASG $($script:ApiASGName) idempotent"
     }
+    if ($script:ApiTargetGroupArn) {
+        $attached = Invoke-AwsJson @("autoscaling", "describe-load-balancer-target-groups", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region, "--output", "json")
+        $hasTg = $attached.LoadBalancerTargetGroups | Where-Object { $_.TargetGroupARN -eq $script:ApiTargetGroupArn } | Select-Object -First 1
+        if (-not $hasTg) {
+            Invoke-Aws @("autoscaling", "attach-load-balancer-target-groups", "--auto-scaling-group-name", $script:ApiASGName, "--target-group-arns", $script:ApiTargetGroupArn, "--region", $script:Region) -ErrorMessage "attach target group to API ASG" | Out-Null
+            Write-Ok "API ASG attached to Target Group"
+            $script:ChangesMade = $true
+        }
+    }
 }
 
-# EIP reassociate → SSM → health 200; on failure start-instance-refresh.
+# Wait for ASG instance then health on ApiBaseUrl (ALB DNS). No EIP.
 function Ensure-API-Instance {
-    Write-Step "Ensure API Instance (EIP + SSM + health)"
+    Write-Step "Ensure API Instance (ALB health)"
     if ($script:PlanMode) { Write-Ok "Ensure-API-Instance skipped (Plan)"; return }
 
     $maxWait = 300
@@ -124,46 +126,37 @@ function Ensure-API-Instance {
     $instanceId = $null
     while ($elapsed -lt $maxWait) {
         $ids = Get-APIASGInstanceIds
-        if ($ids -and $ids.Count -gt 0) {
-            $currentEip = Get-APIInstanceByEIP
-            if ($currentEip -and $ids -contains $currentEip) {
-                if (Test-APIHealth200) {
-                    Write-Ok "EIP already on ASG instance $currentEip, health 200"
-                    return
-                }
-                $instanceId = $currentEip
-                break
-            }
-            $instanceId = $ids[0]
-            break
-        }
+        if ($ids -and $ids.Count -gt 0) { $instanceId = $ids[0]; break }
         Write-Host "  Waiting for API ASG instance..." -ForegroundColor Gray
         Start-Sleep -Seconds 15
         $elapsed += 15
     }
     if (-not $instanceId) { throw "No API ASG instance after ${maxWait}s" }
 
-    Invoke-Aws @("ec2", "associate-address", "--instance-id", $instanceId, "--allocation-id", $script:ApiAllocationId, "--allow-reassociation", "--region", $script:Region) -ErrorMessage "associate-address failed" | Out-Null
-    Write-Ok "EIP associated to $instanceId"
-    $script:ChangesMade = $true
-
     Wait-SSMOnline -InstanceId $instanceId -Reg $script:Region -TimeoutSec 300
-    try {
-        Wait-ApiHealth200 -ApiBaseUrl $script:ApiBaseUrl -TimeoutSec 300
-    } catch {
-        Write-Warn "API health 200 timeout; starting instance-refresh"
-        Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed" | Out-Null
-        $script:ChangesMade = $true
-        throw "API health check failed; instance-refresh started. Re-run deploy."
+    if ($script:ApiBaseUrl) {
+        try {
+            Wait-ApiHealth200 -ApiBaseUrl $script:ApiBaseUrl -TimeoutSec 300
+        } catch {
+            Write-Warn "API health 200 timeout; starting instance-refresh"
+            Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed" | Out-Null
+            $script:ChangesMade = $true
+            throw "API health check failed; instance-refresh started. Re-run deploy."
+        }
+    } else {
+        Write-Ok "API instance $instanceId ready (ApiBaseUrl not set)"
     }
 }
 
 function Confirm-APIHealth {
     Write-Step "API health"
     if ($script:PlanMode) { Write-Ok "API check skipped (Plan)"; return }
+    $url = $script:ApiBaseUrl
+    if (-not $url) { Write-Warn "ApiBaseUrl not set"; return }
     try {
-        $r = Invoke-WebRequest -Uri "$($script:ApiBaseUrl)/health" -UseBasicParsing -TimeoutSec 10
-        if ($r.StatusCode -eq 200) { Write-Ok "GET $($script:ApiBaseUrl)/health -> 200" } else { throw "status=$($r.StatusCode)" }
+        $path = $script:ApiHealthPath.TrimStart('/')
+        $r = Invoke-WebRequest -Uri "$($url.TrimEnd('/'))/$path" -UseBasicParsing -TimeoutSec 10
+        if ($r.StatusCode -eq 200) { Write-Ok "GET $url/$path -> 200" } else { throw "status=$($r.StatusCode)" }
     } catch {
         Write-Fail "API health check failed: $_"
         throw "API health check failed: $_"

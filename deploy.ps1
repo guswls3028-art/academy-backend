@@ -3,6 +3,8 @@
 # Video = AWS Batch 전용. 이 스크립트로 video 워커 EC2 배포하지 않음.
 # 실행: .\deploy.ps1  (빌드+푸시+배포)  .\deploy.ps1 -SkipBuild  (푸시+배포만)
 # ==============================================================================
+# LEGACY DISABLED: 배포 엔트리포인트는 scripts/v4/deploy.ps1 단 하나만 사용한다.
+throw "Legacy deploy script is disabled. Use scripts/v4/deploy.ps1."
 
 param([switch]$SkipBuild, [switch]$StartInstances = $true)
 

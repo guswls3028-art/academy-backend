@@ -54,8 +54,12 @@ function Get-EvidenceSnapshot {
         $ev["asgAiDesired"] = $a.DesiredCapacity; $ev["asgAiMin"] = $a.MinSize; $ev["asgAiMax"] = $a.MaxSize
         if ($a.LaunchTemplate) { $ev["asgAiLtVersion"] = $a.LaunchTemplate.Version }
     }
-    $addr = Invoke-AwsJson @("ec2", "describe-addresses", "--allocation-ids", $script:ApiAllocationId, "--region", $R, "--output", "json")
-    $ev["apiInstanceId"] = if ($addr -and $addr.Addresses -and $addr.Addresses.Count -gt 0 -and $addr.Addresses[0].InstanceId) { $addr.Addresses[0].InstanceId } else { "no instance" }
+    if ($script:ApiAllocationId) {
+        $addr = Invoke-AwsJson @("ec2", "describe-addresses", "--allocation-ids", $script:ApiAllocationId, "--region", $R, "--output", "json")
+        $ev["apiInstanceId"] = if ($addr -and $addr.Addresses -and $addr.Addresses.Count -gt 0 -and $addr.Addresses[0].InstanceId) { $addr.Addresses[0].InstanceId } else { "no instance" }
+    } else {
+        $ev["apiInstanceId"] = "n/a (EIP not used)"
+    }
     $asgApi = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $script:ApiASGName, "--region", $R, "--output", "json")
     if ($asgApi -and $asgApi.AutoScalingGroups -and $asgApi.AutoScalingGroups.Count -gt 0) {
         $a = $asgApi.AutoScalingGroups[0]
@@ -88,6 +92,11 @@ function Get-EvidenceSnapshot {
         $ev["buildAmi"] = "-"
     }
     $ev["ssmShapeCheck"] = "PASS"
+    if ($script:SqsScalingNotEnforced -eq $true) {
+        $ev["sqsScalingEnforced"] = "NO - SQS scaling NOT enforced"
+    } else {
+        $ev["sqsScalingEnforced"] = "yes"
+    }
     return $ev
 }
 
