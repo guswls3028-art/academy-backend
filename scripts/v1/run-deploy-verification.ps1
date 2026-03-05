@@ -57,7 +57,7 @@ Save-EvidenceReport -MarkdownContent $auditMd
 
 $driftFail = $driftRows | Where-Object { $_.Action -ne "NoOp" }
 if ($driftFail -and $driftFail.Count -gt 0) {
-    Add-Finding -Severity "WARNING" -Area "Drift" -Message ("SSOT와 불일치 $($driftFail.Count)건: " + ($driftFail | ForEach-Object { "$($_.ResourceType)/$($_.Name)" } -join ", "))
+    Add-Finding -Severity "WARNING" -Area "Drift" -Message ("SSOT와 불일치 $($driftFail.Count)건: " + (($driftFail | ForEach-Object { "$($_.ResourceType)/$($_.Name)" }) -join ", "))
 }
 
 # --- 2. ALB DNS 및 /health (상세) ---
