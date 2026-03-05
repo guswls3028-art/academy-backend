@@ -299,6 +299,28 @@ function Ensure-ECR-VpcEndpoints {
             $script:ChangesMade = $true
         }
     } else { Write-Ok "VPC endpoint $ecrApiSvc exists" }
+    # 기존 ECR 엔드포인트가 다른 SG를 쓰는 경우 443 허용 보장(Connect timeout 방지)
+    if ($existing -and $existing.VpcEndpoints -and $existing.VpcEndpoints.Count -gt 0 -and -not $script:PlanMode) {
+        foreach ($ep in $existing.VpcEndpoints) {
+            $epSgs = $ep.Groups | Where-Object { $_.GroupId } | ForEach-Object { $_.GroupId }
+            foreach ($sgId in $epSgs) {
+                $sgDesc = Invoke-AwsJson @("ec2", "describe-security-groups", "--group-ids", $sgId, "--region", $region, "--output", "json") 2>$null
+                $has443 = $false
+                if ($sgDesc -and $sgDesc.SecurityGroups -and $sgDesc.SecurityGroups[0].IpPermissions) {
+                    foreach ($perm in $sgDesc.SecurityGroups[0].IpPermissions) {
+                        if ($perm.FromPort -eq 443 -and $perm.ToPort -eq 443) {
+                            foreach ($r in $perm.IpRanges) { if ($r.CidrIp -eq $vpcCidr) { $has443 = $true; break } }
+                        }
+                    }
+                }
+                if (-not $has443) {
+                    Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $sgId, "--protocol", "tcp", "--port", "443", "--cidr", $vpcCidr, "--region", $region) -ErrorMessage "vpce-sg 443 from VpcCidr" | Out-Null
+                    Write-Ok "ECR endpoint SG $sgId: added 443 from $vpcCidr"
+                    $script:ChangesMade = $true
+                }
+            }
+        }
+    }
 
     # ECR DKR interface endpoint
     $existingDkr = Invoke-AwsJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "Name=service-name,Values=$ecrDkrSvc", "--region", $region, "--output", "json") 2>$null
