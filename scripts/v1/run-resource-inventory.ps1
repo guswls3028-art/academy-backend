@@ -246,11 +246,11 @@ $planPath = Join-Path $RepoRoot "docs\00-SSOT\v1\reports\resource-cleanup-plan.l
 $planSb = [System.Text.StringBuilder]::new()
 [void]$planSb.AppendLine("# V1 리소스 정리 계획 (비용 절감)")
 [void]$planSb.AppendLine("")
-[void]$planSb.AppendLine("**Region:** $R **Generated:** $(Get-Date -Format 'o') **Rule:** No delete of SSOT-listed resources.")
+[void]$planSb.AppendLine("**리전:** $R **생성:** $(Get-Date -Format 'o') **전제:** SSOT 명시 리소스 삭제 금지.")
 [void]$planSb.AppendLine("")
-[void]$planSb.AppendLine("## Cleanup targets")
+[void]$planSb.AppendLine("## 삭제/정리 대상")
 [void]$planSb.AppendLine("")
-[void]$planSb.AppendLine("| Target | Action | Reason | SSOT | Cost saving |")
+[void]$planSb.AppendLine("| 대상 | 삭제/동작 | 삭제 이유 | SSOT 매칭 | 예상 비용 절감 |")
 [void]$planSb.AppendLine("|------|------------|-----------|------------|-----------------|")
 # EIP
 foreach ($e in $orphanEIPs) {
@@ -271,7 +271,7 @@ foreach ($s in $unusedSGs) {
     [void]$planSb.AppendLine("| SG $($s.GroupId) ($($s.GroupName)) | delete | no ENI attached | LEGACY_CANDIDATE | cleanup |")
 }
 [void]$planSb.AppendLine("")
-[void]$planSb.AppendLine("## Run")
+[void]$planSb.AppendLine("## 실행 방법")
 [void]$planSb.AppendLine('```powershell')
 [void]$planSb.AppendLine("pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/cleanup-legacy.ps1   # DryRun 기본")
 [void]$planSb.AppendLine("pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/cleanup-legacy.ps1 -Execute   # 실제 적용")
