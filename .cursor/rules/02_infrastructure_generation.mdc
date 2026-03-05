@@ -1,0 +1,17 @@
+---
+description: How infrastructure is created. PowerShell + AWS CLI only.
+globs: scripts/v4/**/*
+alwaysApply: false
+---
+
+# Infrastructure Generation
+
+Infrastructure is created using:
+
+- **PowerShell scripts** + **AWS CLI**
+
+NOT Terraform. NOT CloudFormation.
+
+- Infrastructure must follow **SSOT:** docs/00-SSOT/v4
+- Scripts must be: **idempotent**, **safe to re-run**
+- Cursor must modify scripts in: **scripts/v4**
