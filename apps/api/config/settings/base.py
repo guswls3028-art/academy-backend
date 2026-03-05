@@ -348,9 +348,24 @@ SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
 # delete_r2 전용 SQS (Encoding = Batch ONLY)
 VIDEO_SQS_QUEUE_DELETE_R2 = os.getenv("VIDEO_SQS_QUEUE_DELETE_R2", "academy-video-delete-r2")
 
-# AWS Batch Video Encoding (SSOT: DB VideoTranscodeJob)
-VIDEO_BATCH_JOB_QUEUE = os.getenv("VIDEO_BATCH_JOB_QUEUE", "academy-video-batch-queue")
-VIDEO_BATCH_JOB_DEFINITION = os.getenv("VIDEO_BATCH_JOB_DEFINITION", "academy-video-batch-jobdef")
+# AWS Batch Video Encoding (SSOT: DB VideoTranscodeJob). 2-tier: standard / long (3h+).
+VIDEO_BATCH_JOB_QUEUE = os.getenv("VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
+VIDEO_BATCH_JOB_DEFINITION = os.getenv("VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
+VIDEO_BATCH_JOB_QUEUE_LONG = os.getenv("VIDEO_BATCH_JOB_QUEUE_LONG", "academy-v1-video-batch-long-queue")
+VIDEO_BATCH_JOB_DEFINITION_LONG = os.getenv("VIDEO_BATCH_JOB_DEFINITION_LONG", "academy-v1-video-batch-long-jobdef")
+# 3시간(10800초) 이상이면 long 큐 사용
+VIDEO_LONG_DURATION_THRESHOLD_SECONDS = int(os.getenv("VIDEO_LONG_DURATION_THRESHOLD_SECONDS", "10800"))
+# Stuck 판정: heartbeat_age 기반. standard 20분, long 45분
+VIDEO_STUCK_HEARTBEAT_STANDARD_MINUTES = int(os.getenv("VIDEO_STUCK_HEARTBEAT_STANDARD_MINUTES", "20"))
+VIDEO_STUCK_HEARTBEAT_LONG_MINUTES = int(os.getenv("VIDEO_STUCK_HEARTBEAT_LONG_MINUTES", "45"))
+# R2 업로드 multipart + checkpoint (params SSOT)
+R2_UPLOAD_PART_SIZE_MB = int(os.getenv("R2_UPLOAD_PART_SIZE_MB", "64"))
+R2_UPLOAD_MAX_CONCURRENCY = int(os.getenv("R2_UPLOAD_MAX_CONCURRENCY", "8"))
+R2_UPLOAD_MAX_ATTEMPTS = int(os.getenv("R2_UPLOAD_MAX_ATTEMPTS", "8"))
+R2_UPLOAD_CHECKPOINT_TABLE = os.getenv("R2_UPLOAD_CHECKPOINT_TABLE", "academy-v1-video-upload-checkpoints")
+# Job timeout (Batch JobDef에 반영; 앱에서는 참고용)
+VIDEO_JOB_TIMEOUT_STANDARD_SECONDS = int(os.getenv("VIDEO_JOB_TIMEOUT_STANDARD_SECONDS", "21600"))
+VIDEO_JOB_TIMEOUT_LONG_SECONDS = int(os.getenv("VIDEO_JOB_TIMEOUT_LONG_SECONDS", "43200"))
 # Reconcile orphan safety: min RUNNABLE age (minutes) before terminating; skip if CE desiredvCpus=0
 RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES = int(os.getenv("RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES", "15"))
 RECONCILE_ORPHAN_DISABLED = os.getenv("RECONCILE_ORPHAN_DISABLED", "").lower() in ("1", "true", "yes")

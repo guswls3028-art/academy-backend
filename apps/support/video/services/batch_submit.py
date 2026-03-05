@@ -61,8 +61,8 @@ def submit_batch_job(video_job_id: str) -> tuple[Optional[str], Optional[str]]:
         )
         aws_job_id = resp.get("jobId")
         logger.info(
-            "BATCH_SUBMIT | job_id=%s | aws_job_id=%s | queue=%s",
-            video_job_id, aws_job_id, queue_name,
+            "BATCH_SUBMIT | job_id=%s | aws_job_id=%s | queue=%s | long=%s",
+            video_job_id, aws_job_id, queue_name, use_long,
         )
         return (aws_job_id, None)
     except ClientError as e:
