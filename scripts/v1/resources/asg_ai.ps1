@@ -42,7 +42,7 @@ function Ensure-AiLaunchTemplate {
     if ($currentAmi -ne $script:AiAmiId -or $currentType -ne $script:AiInstanceType -or $currentSg -ne $sg) {
         $newVer = Invoke-AwsJson @("ec2", "create-launch-template-version",
             "--launch-template-id", $ltId,
-            "--version-description", "SSOT v4 drift",
+            "--version-description", "SSOT v1 drift",
             "--launch-template-data", $data,
             "--region", $script:Region, "--output", "json")
         if (-not $newVer -or -not $newVer.LaunchTemplateVersion) { throw "create-launch-template-version failed" }
