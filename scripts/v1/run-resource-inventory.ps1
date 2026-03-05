@@ -236,7 +236,7 @@ foreach ($a in $albList) { [void]$sb.AppendLine("| $($a.Name) | $($a.Scheme) | $
 foreach ($t in $tgList) { [void]$sb.AppendLine("| $($t.Name) | $($t.Port) | $($t.VpcId) | $($t.SSOT) |") }
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("---")
-[void]$sb.AppendLine("SSOT 유지: API ASG/ALB/TG, Workers ASG, Batch CE/Queue, academy-db, academy-v1-redis. 그 외 LEGACY_CANDIDATE.")
+[void]$sb.AppendLine("SSOT keep: API ASG/ALB/TG, Workers ASG, Batch CE/Queue, academy-db, academy-v1-redis. Others LEGACY_CANDIDATE.")
 Set-Content -Path $invPath -Value $sb.ToString() -Encoding UTF8 -Force
 Write-Host "  인벤토리: $invPath" -ForegroundColor Green
 
@@ -245,11 +245,11 @@ $planPath = Join-Path $RepoRoot "docs\00-SSOT\v1\reports\resource-cleanup-plan.l
 $planSb = [System.Text.StringBuilder]::new()
 [void]$planSb.AppendLine("# V1 리소스 정리 계획 (비용 절감)")
 [void]$planSb.AppendLine("")
-[void]$planSb.AppendLine("**리전:** $R **생성:** $(Get-Date -Format 'o') **전제:** 서비스 런칭 전, SSOT 명시 리소스 삭제 금지.")
+[void]$planSb.AppendLine("**Region:** $R **Generated:** $(Get-Date -Format 'o') **Rule:** No delete of SSOT-listed resources.")
 [void]$planSb.AppendLine("")
-[void]$planSb.AppendLine("## 삭제/정리 대상")
+[void]$planSb.AppendLine("## Cleanup targets")
 [void]$planSb.AppendLine("")
-[void]$planSb.AppendLine("| 대상 | 삭제/동작 | 삭제 이유 | SSOT 매칭 | 예상 비용 절감 |")
+[void]$planSb.AppendLine("| Target | Action | Reason | SSOT | Cost saving |")
 [void]$planSb.AppendLine("|------|------------|-----------|------------|-----------------|")
 # EIP
 foreach ($e in $orphanEIPs) {
