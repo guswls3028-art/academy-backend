@@ -29,6 +29,8 @@
 | Launch Template | academy-v1-api-lt |
 | 인스턴스 타입 | t4g.medium |
 | **min / max** | **2 / 4** (V1.1 최소 HA) |
+| desired | 2 |
+| 롤링 배포 | MinHealthyPercentage=100, InstanceWarmup=300s |
 
 ---
 
