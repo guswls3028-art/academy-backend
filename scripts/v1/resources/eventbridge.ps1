@@ -38,6 +38,12 @@ function Ensure-EventBridgeRules {
         Write-Host "  Creating rule $($script:EventBridgeReconcileRule)" -ForegroundColor Yellow
         $script:ChangesMade = $true
         Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeReconcileRule, "--schedule-expression", "rate(15 minutes)", "--state", "ENABLED", "--region", $script:Region) | Out-Null
+    } else {
+        if ($rule.State -ne "ENABLED") {
+            Write-Host "  Enabling rule $($script:EventBridgeReconcileRule) (was $($rule.State))" -ForegroundColor Yellow
+            $script:ChangesMade = $true
+            Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeReconcileRule, "--schedule-expression", "rate(15 minutes)", "--state", "ENABLED", "--region", $script:Region) | Out-Null
+        }
     }
     $targetsObj = $reconcileJson | ConvertFrom-Json
     $targetsInput = @{ Rule = $script:EventBridgeReconcileRule; Targets = @($targetsObj) } | ConvertTo-Json -Depth 15 -Compress
