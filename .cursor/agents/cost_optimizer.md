@@ -1,11 +1,11 @@
 # Cost Optimizer Agent
 
-Reduce infrastructure cost.
+Reduce AWS cost.
 
 **Focus:**
 
-- instance types (t4g.medium for API/workers, c6g.large for Video batch)
-- autoscaling (maxSize/maxvCpus = 10)
-- unused resources
+- instance types (t4g.medium for workers, c6g.large for batch)
+- autoscaling (max = 10)
+- idle resources
 
-**Constraints:** Goal is balanced cost/performance. Follow 05_cost_optimization, 04_scaling_rules. Do not break reliability (06_reliability_rules).
+**Constraints:** Goal is balanced cost/performance. Follow 04_cost_engine, 03_scaling_logic. Do not break reliability (05_reliability_engine). Prefer ARM; avoid m5/c5/large fleets.
