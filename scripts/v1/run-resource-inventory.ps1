@@ -275,7 +275,7 @@ foreach ($s in $unusedSGs) {
 [void]$planSb.AppendLine("```powershell")
 [void]$planSb.AppendLine("pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/cleanup-legacy.ps1   # DryRun 기본")
 [void]$planSb.AppendLine("pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/cleanup-legacy.ps1 -Execute   # 실제 적용")
-[void]$planSb.AppendLine("```")
+[void]$planSb.AppendLine('```')
 [void]$planSb.AppendLine("")
 [void]$planSb.AppendLine('Before cleanup, confirm this plan and aws-resource-inventory.latest.md.')
 Set-Content -Path $planPath -Value $planSb.ToString() -Encoding UTF8 -Force
