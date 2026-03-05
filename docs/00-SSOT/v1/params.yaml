@@ -54,7 +54,7 @@ ecr:
   useLatestTag: true
   immutableTagRequired: true
 
-# API: V1 최소 HA. 롤링 배포 시 새 인스턴스 healthy 후 구 인스턴스 제거(instance-refresh MinHealthyPercentage).
+# API: V1. 런칭 전 비용 절감으로 min/desired=1, max=2. 롤링 배포 시 instance-refresh MinHealthyPercentage.
 # Gunicorn/ALB 타임아웃 60s 내 권장(동영상/AI는 비동기 전용).
 api:
   amiId: ami-0885e191a9bcf28b0
@@ -64,9 +64,9 @@ api:
   userData: ""
   asgName: academy-v1-api-asg
   asgLaunchTemplateName: academy-v1-api-lt
-  asgMinSize: 2
-  asgMaxSize: 4
-  asgDesiredCapacity: 2
+  asgMinSize: 1
+  asgMaxSize: 2
+  asgDesiredCapacity: 1
   instanceRefreshMinHealthyPercentage: 100
   instanceRefreshInstanceWarmup: 300
   containerName: academy-api
