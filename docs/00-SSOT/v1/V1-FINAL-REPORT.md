@@ -81,6 +81,8 @@ pwsh scripts/v1/deploy.ps1 -Env prod -AwsProfile default -SkipNetprobe
   - tagged: `v1-`, `bootstrap-` 접두사 이미지 중 최신 20개만 유지.
   - untagged: 1일 경과 후 만료.
 - 수동 적용이 필요한 경우(저장소만 먼저 만들 때 등):
+
+```powershell
 $policyPath = (Resolve-Path "C:\academy\docs\00-SSOT\v1\scripts\ecr-lifecycle-policy.json").Path -replace '\\','/'
 aws ecr put-lifecycle-policy --repository-name academy-video-worker --lifecycle-policy-text "file://$policyPath" --profile default --region ap-northeast-2
 # academy-api, academy-messaging-worker, academy-ai-worker-cpu 동일 적용 가능
@@ -131,7 +133,7 @@ aws ecr put-lifecycle-policy --repository-name academy-video-worker --lifecycle-
 | 2 | 배포 실행 | 2절 Option A 또는 B (동일 셸에서) |
 | 3 | API 헬스 | `curl -s -o /dev/null -w "%{http_code}" https://v1-api.hakwonplus.com/health` → 200 |
 | 4 | 프론트 API URL | api.hakwonplus.com CNAME 또는 VITE_API_BASE_URL=v1-api.hakwonplus.com 후 재배포 |
-| 5 | ECR 라이프사이클 (선택) | 5절 명령으로 저장소별 적용 |
+| 5 | ECR 라이프사이클 (선택) | 배포 시 자동 적용됨. 수동만 필요 시 5절 명령으로 저장소별 적용 |
 
 ---
 
