@@ -279,4 +279,6 @@ foreach ($s in $unusedSGs) {
 [void]$planSb.AppendLine('Before cleanup, confirm this plan and aws-resource-inventory.latest.md.')
 Set-Content -Path $planPath -Value $planSb.ToString() -Encoding UTF8 -Force
 Write-Host '  Cleanup plan:' $planPath -ForegroundColor Green
-Write-Host "`n=== Done ===`n" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "=== Done ===" -ForegroundColor Cyan
+Write-Host ""
