@@ -30,12 +30,11 @@ $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 $ScriptRoot = $PSScriptRoot
 
-# .env 자동 로드 (AWS 권한 — 동일 세션 수동 로드 불필요)
+# 인증: 스크립트는 .env를 로드하지 않음. Cursor(에이전트)가 루트 .env를 열람해 AWS/Cloudflare 등을 환경변수로 설정한 뒤 본 스크립트를 실행한다.
 . (Join-Path $ScriptRoot "core\env.ps1")
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-Load-EnvFile -RepoRoot $RepoRoot | Out-Null
 
-# Cursor/다른 프로세스에서 실행 시: -AwsProfile 이면 해당 프로파일 사용 ( .env 보다 우선 )
+# -AwsProfile 이 있으면 해당 프로파일 사용 (환경변수보다 우선)
 if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
     $env:AWS_PROFILE = $AwsProfile.Trim()
     if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" }

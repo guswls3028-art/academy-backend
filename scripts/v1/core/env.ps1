@@ -49,8 +49,8 @@ function Assert-AwsCredentials {
     if ($exit -ne 0 -or -not $out) {
         $msg = @"
 AWS 자격 증명이 없거나 만료되었습니다.
-  - .env에 AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION 이 설정되어 있는지 확인하세요.
-  - 프로젝트 루트의 .env 파일이 있는지 확인하세요. (계정 루트가 아닌 academy 리포 루트)
+  - 호출 전에 루트 .env의 AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION 을 환경변수로 설정해 주세요.
+  - Cursor에서 배포 시: 에이전트가 .env를 열람해 환경변수로 등록한 뒤 스크립트를 실행합니다.
   - 프로파일 사용 시: -AwsProfile <이름> 으로 실행하세요.
 "@
         throw $msg
