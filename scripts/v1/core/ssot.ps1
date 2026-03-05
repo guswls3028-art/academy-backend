@@ -209,6 +209,8 @@ function Load-SSOT {
     $script:EventBridgeReconcileRule = $p["eventBridge"]["reconcileRuleName"]
     $script:EventBridgeScanStuckRule = $p["eventBridge"]["scanStuckRuleName"]
     $script:EventBridgeRoleName = $p["eventBridge"]["roleName"]
+    $script:EventBridgeReconcileState = if ($p["eventBridge"]["reconcileState"]) { $p["eventBridge"]["reconcileState"] } else { "ENABLED" }
+    $script:EventBridgeScanStuckState = if ($p["eventBridge"]["scanStuckState"]) { $p["eventBridge"]["scanStuckState"] } else { "ENABLED" }
 
     $script:DynamoLockTableName = if ($p["dynamodb"]["lockTableName"]) { $p["dynamodb"]["lockTableName"] } else { "video_job_lock" }
     $script:DynamoLockTtlAttribute = if ($p["dynamodb"]["lockTableTtlAttribute"]) { $p["dynamodb"]["lockTableTtlAttribute"] } else { "ttl" }
