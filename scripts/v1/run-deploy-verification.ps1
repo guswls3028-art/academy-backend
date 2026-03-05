@@ -233,6 +233,80 @@ if (Get-Command npx -ErrorAction SilentlyContinue) {
     } catch { $r2Status = "wrangler not run" }
 }
 
+# --- 6b. 프론트 증거 기반 검증 (SSOT front.domains.app / api 있으면) ---
+$frontAppUrl = ""
+if ($script:FrontDomainApp -and $script:FrontDomainApp.Trim() -ne "") {
+    $frontAppUrl = "https://$($script:FrontDomainApp.Trim())".TrimEnd('/')
+}
+if (-not $frontAppUrl -and $env:FRONT_APP_URL) { $frontAppUrl = $env:FRONT_APP_URL.Trim().TrimEnd('/') }
+
+$frontAppStatusCode = ""
+$frontIndexCacheControl = ""
+$frontAssetSampleUrl = ""
+$frontAssetCacheControl = ""
+$corsStaticStatus = "not checked"
+$corsStaticDetail = ""
+
+if ($frontAppUrl) {
+    try {
+        $frMain = Invoke-WebRequest -Uri "$frontAppUrl/" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        $frontAppStatusCode = $frMain.StatusCode
+        $frontIndexCacheControl = $frMain.Headers["Cache-Control"]
+        if (-not $frontIndexCacheControl) { $frontIndexCacheControl = "(none)" }
+        # no-cache 계열 여부: max-age=0 또는 no-cache 포함
+        $indexNoCacheOk = ($frontIndexCacheControl -match "max-age\s*=\s*0" -or $frontIndexCacheControl -match "no-cache")
+        if (-not $indexNoCacheOk -and $frontIndexCacheControl -ne "(none)") {
+            Add-Finding -Severity "WARNING" -Area "Front" -Message "index Cache-Control no-cache 권장: 현재 '$frontIndexCacheControl'"
+        }
+        # 해시된 asset 1개 찾기: script src 또는 link href에서 .js/.css (해시 패턴 또는 /assets/)
+        $content = $frMain.Content
+        $assetUrl = $null
+        if ($content -match '<script[^>]+src\s*=\s*["'']([^"'']+\.(?:js|mjs))["'']') { $assetUrl = $matches[1] }
+        elseif ($content -match '<link[^>]+href\s*=\s*["'']([^"'']+\.css)["'']') { $assetUrl = $matches[1] }
+        if ($assetUrl) {
+            if ($assetUrl -notmatch '^https?://') {
+                $base = $frontAppUrl.TrimEnd('/')
+                $assetUrl = if ($assetUrl.StartsWith("/")) { "$base$assetUrl" } else { "$base/$assetUrl" }
+            }
+            $frontAssetSampleUrl = $assetUrl
+            try {
+                $frAsset = Invoke-WebRequest -Uri $assetUrl -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+                $frontAssetCacheControl = $frAsset.Headers["Cache-Control"]
+                if (-not $frontAssetCacheControl) { $frontAssetCacheControl = "(none)" }
+                $assetLongCacheOk = $frontAssetCacheControl -match "max-age\s*=\s*31536000|31536000"
+                if (-not $assetLongCacheOk -and $frontAssetCacheControl -ne "(none)") {
+                    Add-Finding -Severity "WARNING" -Area "Front" -Message "해시 자산 Cache-Control 1년 권장: 현재 '$frontAssetCacheControl'"
+                }
+            } catch {
+                $frontAssetCacheControl = "fetch failed: $($_.Exception.Message)"
+                Add-Finding -Severity "WARNING" -Area "Front" -Message "자산 요청 실패: $assetUrl"
+            }
+        } else {
+            $frontAssetCacheControl = "no hashed asset found in index"
+        }
+    } catch {
+        $frontAppStatusCode = "error"
+        $frontIndexCacheControl = $_.Exception.Message
+        Add-Finding -Severity "WARNING" -Area "Front" -Message "프론트 URL 접속 실패: $frontAppUrl — $_"
+    }
+    # CORS 정적 검사: allowedOrigins에 app 도메인 포함 여부
+    $appOrigin = "https://$($script:FrontDomainApp.Trim())".TrimEnd('/')
+    if (-not $script:FrontCorsAllowedOrigins -or $script:FrontCorsAllowedOrigins.Count -eq 0) {
+        $corsStaticStatus = "WARNING"
+        $corsStaticDetail = "front.cors.allowedOrigins 비어 있음. CORS 사용 시 params에 app 도메인 추가 권장."
+        Add-Finding -Severity "WARNING" -Area "Front" -Message $corsStaticDetail
+    } else {
+        $found = $false
+        foreach ($o in $script:FrontCorsAllowedOrigins) {
+            $oo = if ($o -is [string]) { $o.Trim().TrimEnd('/') } else { "" }
+            if ($oo -eq $appOrigin -or $oo -eq "https://$($script:FrontDomainApp.Trim())") { $found = $true; break }
+        }
+        $corsStaticStatus = if ($found) { "OK" } else { "WARNING" }
+        $corsStaticDetail = if ($found) { "app 도메인 포함됨" } else { "allowedOrigins에 $appOrigin 없음" }
+        if (-not $found) { Add-Finding -Severity "WARNING" -Area "Front" -Message $corsStaticDetail }
+    }
+}
+
 # --- 7. 프론트/API Smoke (선택: env) ---
 $frontStatus = "not checked"
 $apiSmokeStatus = "not checked"
