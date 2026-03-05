@@ -85,6 +85,7 @@ function Ensure-JobDefOne { param([string]$JobDefName, [string]$TemplateFileName
 }
 
 function Ensure-VideoJobDef { Ensure-JobDefOne -JobDefName $script:VideoJobDefName -TemplateFileName "video_job_definition.json" | Out-Null }
+function Ensure-VideoLongJobDef { if ($script:VideoLongJobDefName) { Ensure-JobDefOne -JobDefName $script:VideoLongJobDefName -TemplateFileName "video_job_definition_long.json" | Out-Null } }
 function Ensure-OpsJobDefReconcile { Ensure-JobDefOne -JobDefName $script:OpsJobDefReconcile -TemplateFileName "video_ops_job_definition_reconcile.json" | Out-Null }
 function Ensure-OpsJobDefScanStuck { Ensure-JobDefOne -JobDefName $script:OpsJobDefScanStuck -TemplateFileName "video_ops_job_definition_scanstuck.json" | Out-Null }
 function Ensure-OpsJobDefNetprobe { Ensure-JobDefOne -JobDefName $script:OpsJobDefNetprobe -TemplateFileName "video_ops_job_definition_netprobe.json" | Out-Null }

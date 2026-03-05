@@ -199,10 +199,13 @@ try {
     Ensure-ASGMessaging
     Ensure-ASGAi
     Ensure-VideoCE
+    if ($script:VideoLongCEName) { Ensure-VideoLongCE }
     Ensure-OpsCE
     Ensure-VideoQueue
+    if ($script:VideoLongQueueName) { Ensure-VideoLongQueue }
     Ensure-OpsQueue
     Ensure-VideoJobDef
+    if ($script:VideoLongJobDefName) { Ensure-VideoLongJobDef }
     Ensure-OpsJobDefReconcile
     Ensure-OpsJobDefScanStuck
     Ensure-OpsJobDefNetprobe
