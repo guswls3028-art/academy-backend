@@ -210,3 +210,16 @@ UserData 실행 시 `aws ecr get-login-password`가 **api.ecr.ap-northeast-2.ama
 - API ASG Instance Refresh: **InProgress**, 25% (StartTime 2026-03-05T20:58:00Z).
 - 현재 API 인스턴스 3대: i-08d981b23dd629a79, i-0f1c248995c9d5265, i-0dba59de278989f41.
 - 검증 시점(2026-03-06 06:01) ALB target healthy 0/3 — Refresh 미완료·구 인스턴스 미교체로 TG가 아직 healthy로 전환되지 않은 상태로 해석. Refresh 완료 및 TG 수렴 후 GATE-A 통과 예상.
+
+---
+
+## 11) ALB Health Check 400 및 /healthz 분리 (2026-03-06)
+
+### 11.1 원인
+ALB health check Host가 private IP → ALLOWED_HOSTS 거부 → 400.
+
+### 11.2 수정
+HealthCheckHostMiddleware, healthz 뷰/라우트/BYPASS 추가. SSOT api.healthPath=/healthz. alb.ps1에서 TG 존재 시 describe-target-groups로 HealthCheckPath 조회 후 다르면 **modify-target-group --health-check-path** 호출. TG academy-v1-api-tg를 수동으로 /healthz 적용 완료.
+
+### 11.3 상태
+api-health-fix-2는 빌드 서버(academy-build-arm64) terminated으로 미빌드. 검증 FAIL(0/3 healthy). 빌드 서버 기동 후 빌드·푸시·배포·검증 재실행.
