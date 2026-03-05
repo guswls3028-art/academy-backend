@@ -54,8 +54,16 @@
 
 - `aws sts get-caller-identity --profile default` 로 확인.
 - Cursor/자동화에서는 `deploy.ps1 -AwsProfile default` 사용 권장.
+- **토큰 만료 시:** `UnrecognizedClientException` / `AuthFailure` 발생. 자격증명 갱신 후 **같은 셸**에서 `deploy.ps1` 재실행.
+- 스크립트 내부: `scripts/v1/core/aws.ps1`에서 `AWS_PROFILE`이 설정되면 모든 `aws` 호출에 `--profile`을 자동 주입(2026-03-05 반영).
 
-### 3.4 다운타임 허용 범위
+### 3.4 빌드 서버 (Spot + 온디맨드 폴백)
+
+- **경로:** `scripts/v1/resources/build.ps1`
+- **동작:** 빌드 인스턴스가 없을 때 `run-instances`를 먼저 **Spot**으로 요청. 인스턴스가 0개면 **온디맨드**로 재시도.
+- 빌드 시 로컬이 아닌 **빌드용 서버**에서 Docker 빌드·ECR 푸시 수행. 도커 파일은 최적화된 상태에 맞춰 사용.
+
+### 3.5 다운타임 허용 범위
 
 - PruneLegacy + Purge + Ensure 동안 **Batch·API·EventBridge**는 순차적으로 삭제 후 재생성되므로 **영상 배치·API 서버 다운타임** 발생.
 - RDS/Redis는 스크립트가 삭제하지 않으나, 새 VPC/서브넷 사용 시 보안 그룹·라우팅 변경으로 접근 경로가 바뀔 수 있음.
@@ -196,3 +204,4 @@ pwsh scripts/v1/deploy.ps1 -Env prod -EcrRepoUri "809466760795.dkr.ecr.ap-northe
 - **현재 인프라:** `docs/00-SSOT/v1/AWS-INFRA-REPORT.md`
 - **배포 스크립트:** `scripts/v1/deploy.ps1`, `scripts/v1/core/prune.ps1`
 - **검증:** `scripts/v1/verify.ps1` (Bootstrap → Plan → PruneLegacy → deploy 순서 점검)
+- **최종 보고·스크립트 변경:** `docs/00-SSOT/v1/V1-FINAL-REPORT.md` (자격증명·Bootstrap workers env·aws.ps1 프로파일 주입·빌드 Spot 폴백 등)
