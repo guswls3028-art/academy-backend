@@ -41,3 +41,14 @@ pwsh scripts/v1/verify.ps1
 ## 주의
 
 - **PruneLegacy**: SSOT에 없는 academy-* 리소스를 삭제합니다. 실행 전 Plan으로 후보를 확인하세요.
+
+---
+
+## Cursor / 새 셸에서 인증 에러 날 때
+
+- **원인**: `$env:AWS_ACCESS_KEY_ID` 등은 현재 터미널 세션에만 적용됨. Cursor가 새 프로세스로 실행하면 인증이 없음.
+- **진단**: `pwsh scripts/v1/aws-diagnose.ps1` — credential source·에러 메시지 확인.
+- **해결**  
+  - **방법 1**: `aws configure` 로 default 프로파일 저장 → 어떤 셸에서든 동작.  
+  - **방법 2**: named 프로파일(또는 SSO) 사용 시 `pwsh scripts/v1/deploy.ps1 -Env prod -AwsProfile prod`, `pwsh scripts/v1/verify.ps1 -AwsProfile prod`.
+- **상세**: [docs/00-SSOT/v1/AWS-CURSOR-SETUP.md](../../docs/00-SSOT/v1/AWS-CURSOR-SETUP.md)

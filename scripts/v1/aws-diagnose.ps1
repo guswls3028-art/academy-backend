@@ -27,9 +27,9 @@ $ak = $env:AWS_ACCESS_KEY_ID; $sk = $env:AWS_SECRET_ACCESS_KEY; $st = $env:AWS_S
 Write-Host "  AWS_ACCESS_KEY_ID: $(if ($ak) { $ak.Substring(0, [Math]::Min(4, $ak.Length)) + '...' } else { '(not set)' })"
 Write-Host "  AWS_SECRET_ACCESS_KEY: $(if ($sk) { '****' } else { '(not set)' })"
 Write-Host "  AWS_SESSION_TOKEN: $(if ($st) { '****' } else { '(not set)' })"
-Write-Host "  AWS_PROFILE: $($env:AWS_PROFILE ?? '(not set)')"
-Write-Host "  AWS_DEFAULT_REGION: $($env:AWS_DEFAULT_REGION ?? '(not set)')"
-Write-Host "  AWS_REGION: $($env:AWS_REGION ?? '(not set)')"
+Write-Host "  AWS_PROFILE: $(if ($env:AWS_PROFILE) { $env:AWS_PROFILE } else { '(not set)' })"
+Write-Host "  AWS_DEFAULT_REGION: $(if ($env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION } else { '(not set)' })"
+Write-Host "  AWS_REGION: $(if ($env:AWS_REGION) { $env:AWS_REGION } else { '(not set)' })"
 Write-Host ""
 
 # 5) sts get-caller-identity (exact error)
