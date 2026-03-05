@@ -169,9 +169,9 @@ try {
             Write-Fail "Strict: EcrRepoUri not set. Bootstrap could not resolve image. Pass -EcrRepoUri or ensure build/ECR available."
             throw "Strict: EcrRepoUri required."
         }
-        { $script:EcrRepoUri -and ($script:EcrRepoUri -match ':latest\s*$') } {
-            Write-Fail ":latest tag is prohibited. Use an immutable tag."
-            throw "EcrRepoUri must not contain :latest."
+        { $script:EcrRepoUri -and ($script:EcrRepoUri -match ':latest\s*$') -and -not $script:EcrUseLatestTag } {
+            Write-Fail ":latest tag is prohibited. Use an immutable tag or set ecr.useLatestTag in SSOT."
+            throw "EcrRepoUri must not contain :latest when useLatestTag is false."
         }
         { $strictCheck -and [string]::IsNullOrWhiteSpace($script:MessagingSqsQueueUrl) -and [string]::IsNullOrWhiteSpace($script:MessagingSqsQueueName) } {
             Write-Fail "Strict: messagingWorker SQS not set. Bootstrap could not create/find queue."
