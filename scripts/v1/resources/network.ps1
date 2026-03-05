@@ -315,7 +315,7 @@ function Ensure-ECR-VpcEndpoints {
                 }
                 if (-not $has443) {
                     Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $sgId, "--protocol", "tcp", "--port", "443", "--cidr", $vpcCidr, "--region", $region) -ErrorMessage "vpce-sg 443 from VpcCidr" | Out-Null
-                    Write-Ok "ECR endpoint SG $sgId: added 443 from $vpcCidr"
+                    Write-Ok "ECR endpoint SG ${sgId} added 443 from $vpcCidr"
                     $script:ChangesMade = $true
                 }
             }
@@ -350,7 +350,7 @@ function Ensure-ECR-VpcEndpoints {
                 }
                 if (-not $has443) {
                     Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $sgId, "--protocol", "tcp", "--port", "443", "--cidr", $vpcCidr, "--region", $region) -ErrorMessage "vpce-sg 443 from VpcCidr (dkr)" | Out-Null
-                    Write-Ok "ECR DKR endpoint SG $sgId: added 443 from $vpcCidr"
+                    Write-Ok "ECR DKR endpoint SG ${sgId} added 443 from $vpcCidr"
                     $script:ChangesMade = $true
                 }
             }
