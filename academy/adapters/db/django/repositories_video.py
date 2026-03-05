@@ -878,6 +878,11 @@ def job_mark_dead_if_active(
         job = VideoTranscodeJob.objects.filter(pk=job_id).first()
         if job:
             try:
+                from apps.support.video.services.video_job_lock import release as lock_release
+                lock_release(job.video_id)
+            except Exception:
+                pass
+            try:
                 from apps.support.video.services.ops_events import emit_ops_event
                 emit_ops_event(
                     "JOB_DEAD",
