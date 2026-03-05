@@ -70,6 +70,7 @@ api:
   containerName: academy-api
   albName: academy-v1-api-alb
   targetGroupName: academy-v1-api-tg
+  # ALB health check는 DB/외부 의존성 체크 금지. 200만 반환하는 /healthz 사용. /health는 DB 연동·503 가능 → readiness/관측용.
   healthPath: /healthz
   instanceTagKey: Name
   instanceTagValue: academy-v1-api
