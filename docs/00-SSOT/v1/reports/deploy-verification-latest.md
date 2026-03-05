@@ -80,6 +80,24 @@
 - **FAIL** [API] /health unreachable: The request was canceled due to the configured HttpClient.Timeout of 10 seconds elapsing.
 - **FAIL** [API] ALB target healthy 0 / 2
 
+### PHASE A 배포 시 적용한 조치(근거)
+| 조치 | 파일/위치 | 내용 |
+|------|-----------|------|
+| SQS RedrivePolicy | core/bootstrap.ps1 | --attributes 시 콤마 파싱 이슈로 --cli-input-json 인라인 JSON 사용 |
+| Bootstrap 순서 | deploy.ps1 | Ensure-Network 이후에 Bootstrap 실행(빌드 서버 Ensure 시 서브넷 필요) |
+| 빌드 서버 SSM 대기 | core/bootstrap.ps1 | send-command 전 Wait-SSMOnline 600s 추가 |
+| SkipBuild 시 이미지 없음 | core/bootstrap.ps1 | ECR 이미지 없을 때 빌드 미호출, 경고 후 URI 설정하여 진행 |
+| Ops CE 삭제 재시도 | resources/batch.ps1 | "resource is being modified" 시 30s 대기 후 최대 5회 재시도 |
+| API LT SecurityGroupId | resources/api.ps1 | SSOT 값에 YAML 주석(#) 포함 시 (값 -split '#')[0].Trim() 적용 |
+| API ASG capacity | deploy.ps1 | SSOT min/desired/max 2/2/4 반영, instance-refresh MinHealthy=100 Warmup=300 |
+
+### 게이트 A 미달 시 권장 조치(다음 단계)
+- **TG unhealthy 원인:** `aws elbv2 describe-target-health --target-group-arn <TG_ARN> --region ap-northeast-2` 로 Reason/Description 확인 후 보고서에 기록.
+- **인스턴스 내부 확인:** API ASG 인스턴스에 SSM 접속 후 `docker ps`, `docker logs academy-api`, `ss -lntp 8000`, `curl 127.0.0.1:8000/health` 수행.
+- **TG/앱 설정:** Target Group Port=8000, HealthCheckPath=/health(SSOT) 일치 여부 확인; 필요 시 `modify-target-group` 적용.
+- **SG:** ALB → EC2 8000 인바운드(sg-app 또는 VPC CIDR) 존재 여부 확인 및 추가.
+- **앱 바인딩:** Gunicorn/Django가 0.0.0.0:8000 리스닝하는지 확인; UserData/docker run 검토.
+
 ### GO/NO-GO
 | 판정 | 내용 |
 |------|------|
