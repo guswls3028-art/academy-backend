@@ -47,7 +47,7 @@
 ### 1.3 EventBridge reconcile/scan-stuck DISABLED 처리
 
 - **정책:** 운영 자동 복구 목적이면 규칙을 ENABLED로 유지하고 SSOT/문서에 명시.
-- **구현:** 기존 규칙이 있어도 `put-rule --state ENABLED`로 재설정하여 수동 DISABLED 상태를 복구할 수 있도록 함. (선택) params.yaml에 eventBridge 규칙 상태 문서화.
+- **구현:** `resources/eventbridge.ps1`에서 규칙 존재 시에도 `put-rule --state ENABLED` 호출하여 수동 DISABLED 상태를 복구. params.yaml `eventBridge.reconcileState` / `scanStuckState` = ENABLED 명시.
 - **게이트:** 의도/정책이 SSOT 또는 본 문서에 명확히 기록됨.
 
 ### PHASE 1 완료 후 필수
