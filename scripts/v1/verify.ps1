@@ -32,7 +32,8 @@ function Run-Step {
         $out | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "ExitCode $LASTEXITCODE" }
         return @{ Ok = $true; Output = $out }
-    } catch {
+    }
+    catch {
         Write-Log "FAIL: $FailMessage"
         Write-Log "Command/Error: $_"
         Write-Log "Log file: $LogFile"
@@ -57,8 +58,9 @@ try {
     $planOut = $null
     $null = Run-Step "2) deploy.ps1 -Plan" {
         Push-Location $RepoRoot
-        $args = @("-Env", "prod", "-Plan"); if ($AwsProfile) { $args += "-AwsProfile", $AwsProfile }
-        $planOut = & (Join-Path $ScriptRoot "deploy.ps1") @args 2>&1
+        $deployArgs = @{ Env = "prod"; Plan = $true }
+        if ($AwsProfile) { $deployArgs["AwsProfile"] = $AwsProfile }
+        $planOut = & (Join-Path $ScriptRoot "deploy.ps1") @deployArgs 2>&1
         $planOut | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "ExitCode $LASTEXITCODE" }
         Pop-Location
@@ -69,8 +71,9 @@ try {
     # 3) deploy -PruneLegacy
     $null = Run-Step "3) deploy.ps1 -PruneLegacy" {
         Push-Location $RepoRoot
-        $args = @("-Env", "prod", "-PruneLegacy"); if ($AwsProfile) { $args += "-AwsProfile", $AwsProfile }
-        & (Join-Path $ScriptRoot "deploy.ps1") @args 2>&1 | ForEach-Object { Write-Log $_ }
+        $deployArgs = @{ Env = "prod"; PruneLegacy = $true }
+        if ($AwsProfile) { $deployArgs["AwsProfile"] = $AwsProfile }
+        & (Join-Path $ScriptRoot "deploy.ps1") @deployArgs 2>&1 | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "ExitCode $LASTEXITCODE" }
         Pop-Location
     } "PruneLegacy failed. Check log."
@@ -143,7 +146,8 @@ try {
     foreach ($r in $results) { [void]$sb.AppendLine("- $($r.Step): $($r.Result) $($r.Detail)") }
     Save-VerifyReport -MarkdownContent $sb.ToString()
     Pop-Location | Out-Null
-} catch {
+}
+catch {
     Write-Log "  Could not write verify.latest.md: $_"
 }
 
