@@ -584,6 +584,9 @@ if (-not (Test-Path $reportPath)) { New-Item -ItemType Directory -Path $reportPa
 Save-DeployVerificationReport -MarkdownContent $sb.ToString()
 
 # V1 최종 배포 검증 보고서 (reports/V1-FINAL-REPORT.md)
+$consistencySummary = "PASS"
+if (-not $apiConsensusOk -or -not $aiConsensusOk -or -not $msgConsensusOk) { $consistencySummary = "WARNING" }
+if ($eipCountTotal -gt 0 -or $buildRunningCount -gt 0) { if ($consistencySummary -eq "PASS") { $consistencySummary = "WARNING" } }
 $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("# V1 최종 배포 검증 보고서")
 [void]$finalSb.AppendLine("")
@@ -594,12 +597,43 @@ $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("|------|-----|")
 [void]$finalSb.AppendLine("| 검증 시각 | $verificationTime |")
 [void]$finalSb.AppendLine("| 최종 상태 | $finalStatus |")
+[void]$finalSb.AppendLine("| SSOT↔Actual 정합성 | **$consistencySummary** |")
 [void]$finalSb.AppendLine("| GO/NO-GO | **$goNoGo** |")
 [void]$finalSb.AppendLine("")
 [void]$finalSb.AppendLine("$goNoGoDetail")
 [void]$finalSb.AppendLine("")
+[void]$finalSb.AppendLine("## 합의사항 체크")
+[void]$finalSb.AppendLine("| 항목 | 결과 |")
+[void]$finalSb.AppendLine("|------|------|")
+[void]$finalSb.AppendLine("| API ASG min/desired=1 | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$finalSb.AppendLine("| AI ASG min/desired=1 | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$finalSb.AppendLine("| Messaging ASG min/desired=1 | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$finalSb.AppendLine("| Solapi 고정 IP(NAT/EIP) 취소 | $(if ($eipCountTotal -eq 0) { 'PASS' } else { 'WARNING(EIP 잔여)' }) |")
+[void]$finalSb.AppendLine("| 빌드 서버 최종 0대 목표 | $(if ($buildRunningCount -eq 0) { 'PASS' } else { '전환중' }) |")
+[void]$finalSb.AppendLine("")
+[void]$finalSb.AppendLine("## Front V1 연결")
+[void]$finalSb.AppendLine("프론트를 V1 인프라(app/api 도메인, CORS, CDN/R2) 기준으로 연결한 검증 결과: **[front-connection.latest.md](./front-connection.latest.md)**")
+[void]$finalSb.AppendLine("")
+[void]$finalSb.AppendLine("| 항목 | 결과 |")
+[void]$finalSb.AppendLine("|------|------|")
+[void]$finalSb.AppendLine("| app 도메인 200 | $(if ($frontAppStatusCode -eq 200) { 'PASS' } else { "$frontAppStatusCode" }) |")
+[void]$finalSb.AppendLine("| API 공개 /health | $apiPublicHealthStatus |")
+[void]$finalSb.AppendLine("| CORS/Cache | $corsStaticStatus / $(if ($frontAssetCacheControl -match '31536000') { '1y' } else { '-' }) |")
+[void]$finalSb.AppendLine("")
+[void]$finalSb.AppendLine("## 남은 WARNING 및 후속 작업")
+[void]$finalSb.AppendLine("- Drift 1건 이상 시: SSOT 반영 또는 합의된 예외 문서화 후 drift.latest.md 갱신.")
+if ($eipCountTotal -gt 0) { [void]$finalSb.AppendLine("- EIP/NAT 잔여: Solapi 고정 IP 요구 취소에 따라 제거 검토(비용·불필요 리소스).") }
+if ($buildRunningCount -gt 0) { [void]$finalSb.AppendLine("- 빌드 서버: GitHub Actions 전환 완료 후 0대로 정리.") }
+if ($findings.Count -gt 0) {
+    foreach ($f in $findings) { [void]$finalSb.AppendLine("- [$($f.Severity)] $($f.Area): $($f.Message)") }
+} else {
+    [void]$finalSb.AppendLine("- (현재 리스크 없음)")
+}
+[void]$finalSb.AppendLine("")
 [void]$finalSb.AppendLine("## 상세 보고서")
-[void]$finalSb.AppendLine("- [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·**프론트/R2/CDN(근거)**·SQS·Video·관측·GO/NO-GO 상세")
+[void]$finalSb.AppendLine("- [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트/R2/CDN·SQS·Video·관측·GO/NO-GO 상세")
+[void]$finalSb.AppendLine("- [consistency.latest.md](./consistency.latest.md) — SSOT↔실제↔합의사항 정합성")
+[void]$finalSb.AppendLine("- [front-connection.latest.md](./front-connection.latest.md) — Front V1 연결 검증·근거")
 [void]$finalSb.AppendLine("- [scale-policy.latest.md](./scale-policy.latest.md) — API ASG 스케일 정책 (런칭 전 min/desired=1)")
 [void]$finalSb.AppendLine("- [resource-cleanup.latest.md](./resource-cleanup.latest.md) — 리소스 정리 기록 (EIP/EBS/SG/ASG)")
 [void]$finalSb.AppendLine("- [cleanup-run.latest.md](./cleanup-run.latest.md) — 정리 스크립트 실행 결과")
