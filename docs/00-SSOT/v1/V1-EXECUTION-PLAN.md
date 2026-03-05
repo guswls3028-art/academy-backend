@@ -1,0 +1,65 @@
+# V1 실행 계획 (PHASE 0)
+
+**명칭:** V1 통일 (V1.1 미사용). **SSOT:** docs/00-SSOT/v1/params.yaml.  
+**전제:** 1인 운영, 장애 대응 10~60분, 치명 이슈 해결 전에는 최종 배포/레거시 제거/프론트 완전 연결 금지.
+
+---
+
+## 작업 단위 및 게이트
+
+| Phase | 작업 단위(커밋/PR 권장) | 완료 조건(게이트) | 검증 스크립트 |
+|-------|--------------------------|-------------------|----------------|
+| **0** | 본 문서 작성 | 문서 존재 | - |
+| **1.1** | API /health 복구 + API LT drift 해소 | deploy-verification: apiHealth OK(200), target healthy ≥1, API LT drift NoOp | run-deploy-verification.ps1 |
+| **1.2** | Video ops CE INVALID → Recreate | evidence: opsCeStatus=VALID | run-deploy-verification.ps1 |
+| **1.3** | EventBridge reconcile/scan-stuck 정책 확정 | 의도/정책이 SSOT 또는 문서에 명시됨, 필요 시 ENABLED | run-deploy-verification.ps1 |
+| **1 종료** | PHASE 1 통합 검증 | FAIL 0, 다음 단계 진행 가능 | run-deploy-verification.ps1 |
+| **2** | Video 파이프라인 보강 (3시간 영상 E2E) | 3시간 샘플 1건 E2E + READY 전환, 보고서 근거 | 수동 + 보고서 |
+| **3** | SQS 워커 안정성 (DLQ, visibility, graceful, 멱등) | 테스트 메시지 consume 성공, DLQ 정책 검증 | 수동 + 스크립트 |
+| **4** | Front + R2 + CDN 완전 연결 | 프론트 200, 정적 로딩, CORS/쿠키/CSRF 정상 | run-deploy-verification.ps1 + 수동 |
+| **5** | 레거시/불필요 리소스 안전 삭제 | drift 정리, 서비스 영향 없음 | run-deploy-verification.ps1 |
+| **6** | 최종 검증 + 최종 보고서 | FAIL 0, GO 또는 CONDITIONAL GO 판정 | run-deploy-verification.ps1 |
+
+---
+
+## PHASE 1 상세
+
+### 1.1 API /health unreachable 해결
+
+- **점검 순서 (SSOT 기준):**
+  1. ALB DNS: `describe-load-balancers` → `academy-v1-api-alb` 존재 및 DNS 획득.
+  2. Target Group health check path: SSOT `api.healthPath` = `/health` → TG 생성 시 `--health-check-path` 일치 여부 (Ensure-TargetGroup에서 이미 SSOT 사용).
+  3. 컨테이너: UserData에서 `docker run -p 8000:8000` → 앱이 `0.0.0.0:8000` 리스닝 및 `/health` 200 반환 필요.
+  4. SG: ALB → EC2 8000 인바운드 허용 (sg-app 등).
+  5. UserData 실패 시: EC2 콘솔 → 인스턴스 → 사용자 데이터 로그 / cloud-init / docker logs 확인.
+
+- **API Launch Template drift (NewVersion) 해소:**
+  - `Ensure-API-LaunchTemplate`: AMI/SG/Profile/UserData SSOT 기준으로 새 LT 버전 생성 → `Ensure-API-ASG`에서 instance-refresh (MinHealthyPercentage=100, InstanceWarmup=300) → 새 인스턴스 healthy 후 구 인스턴스 교체.
+  - 배포 시 `Ensure-ALB`가 `ApiBaseUrl` 설정 → `Ensure-API-Instance`에서 `/health` 200 대기.
+
+- **게이트:** `run-deploy-verification.ps1` 실행 후 deploy-verification-latest.md에서 apiHealth OK(200), target healthy ≥1, drift.latest.md에서 API LT Action = NoOp.
+
+### 1.2 Video ops compute environment INVALID → Recreate
+
+- `Ensure-OpsCE`: status=INVALID 또는 instance type drift 시 → Ops Queue DISABLED → Ops CE DISABLED → delete → wait → create (SSOT: opsInstanceType, opsMaxvCpus) → wait VALID → Ops Queue ENABLED.
+- **게이트:** audit.latest.md / evidence에서 opsCeStatus=VALID.
+
+### 1.3 EventBridge reconcile/scan-stuck DISABLED 처리
+
+- **정책:** 운영 자동 복구 목적이면 규칙을 ENABLED로 유지하고 SSOT/문서에 명시.
+- **구현:** 기존 규칙이 있어도 `put-rule --state ENABLED`로 재설정하여 수동 DISABLED 상태를 복구할 수 있도록 함. (선택) params.yaml에 eventBridge 규칙 상태 문서화.
+- **게이트:** 의도/정책이 SSOT 또는 본 문서에 명확히 기록됨.
+
+### PHASE 1 완료 후 필수
+
+- `scripts/v1/run-deploy-verification.ps1` 실행 (에이전트는 run-with-env.ps1로 .env 로드 후 실행).
+- reports 갱신: deploy-verification-latest.md, audit.latest.md, drift.latest.md, V1-FINAL-REPORT.md.
+- **FAIL 0**일 때만 PHASE 2 진행.
+
+---
+
+## 실행 시 인증
+
+- AWS/Cloudflare: Cursor 룰(.cursor/rules) 준수. 에이전트가 루트 `.env`를 열어 환경변수로 설정한 뒤 실행.
+- 예: `pwsh -File scripts/v1/run-with-env.ps1 -- pwsh scripts/v1/deploy.ps1 -Env prod`
+- 예: `pwsh -File scripts/v1/run-with-env.ps1 -- pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default`
