@@ -37,12 +37,14 @@ function Ensure-EventBridgeRules {
     if (-not $ruleExists) {
         Write-Host "  Creating rule $($script:EventBridgeReconcileRule)" -ForegroundColor Yellow
         $script:ChangesMade = $true
-        Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeReconcileRule, "--schedule-expression", "rate(15 minutes)", "--state", "ENABLED", "--region", $script:Region) | Out-Null
+        $state = if ($script:EventBridgeReconcileState -eq "DISABLED") { "DISABLED" } else { "ENABLED" }
+        Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeReconcileRule, "--schedule-expression", "rate(15 minutes)", "--state", $state, "--region", $script:Region) | Out-Null
     } else {
-        if ($rule.State -ne "ENABLED") {
-            Write-Host "  Enabling rule $($script:EventBridgeReconcileRule) (was $($rule.State))" -ForegroundColor Yellow
+        $desiredState = if ($script:EventBridgeReconcileState -eq "DISABLED") { "DISABLED" } else { "ENABLED" }
+        if ($rule.State -ne $desiredState) {
+            Write-Host "  Setting rule $($script:EventBridgeReconcileRule) to $desiredState (was $($rule.State), SSOT: reconcileState)" -ForegroundColor Yellow
             $script:ChangesMade = $true
-            Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeReconcileRule, "--schedule-expression", "rate(15 minutes)", "--state", "ENABLED", "--region", $script:Region) | Out-Null
+            Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeReconcileRule, "--schedule-expression", "rate(15 minutes)", "--state", $desiredState, "--region", $script:Region) | Out-Null
         }
     }
     $targetsObj = $reconcileJson | ConvertFrom-Json
