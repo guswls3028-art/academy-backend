@@ -83,6 +83,7 @@ build:
 messagingWorker:
   asgName: academy-v1-messaging-worker-asg
   launchTemplateName: academy-v1-messaging-worker-lt
+  instanceTagValue: academy-v1-messaging-worker
   amiId: ami-0885e191a9bcf28b0
   instanceType: t4g.medium
   minSize: 1
@@ -99,6 +100,7 @@ messagingWorker:
 aiWorker:
   asgName: academy-v1-ai-worker-asg
   launchTemplateName: academy-v1-ai-worker-lt
+  instanceTagValue: academy-v1-ai-worker
   amiId: ami-0885e191a9bcf28b0
   instanceType: t4g.medium
   minSize: 1
