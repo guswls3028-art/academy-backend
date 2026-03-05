@@ -115,6 +115,7 @@ aiWorker:
   sqsQueueName: academy-v1-ai-queue
 
 videoBatch:
+  # min 0, max 10 동시 워커. 1동영상 1작업: 업로드 N개 → Job N개 제출 → 워커 최대 N대 기동, 각 1개 처리 후 종료. 1워커가 2개 이상 작업 처리 금지.
   computeEnvironmentName: academy-v1-video-batch-ce
   videoQueueName: academy-v1-video-batch-queue
   workerJobDefName: academy-v1-video-batch-jobdef
