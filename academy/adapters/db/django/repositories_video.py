@@ -714,6 +714,11 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
         job.locked_by = ""
         job.locked_until = None
         job.save(update_fields=["state", "locked_by", "locked_until", "updated_at"])
+        try:
+            from apps.support.video.services.video_job_lock import release as lock_release
+            lock_release(video.id)
+        except Exception:
+            pass
         tenant_id = _tenant_id_from_video(video)
     _cache_video_status_safe(
         video.id, tenant_id,
