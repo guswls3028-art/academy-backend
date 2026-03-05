@@ -12,13 +12,14 @@
 
 ## PHASE 2 — 빌드 서버 빌드·푸시
 
-(아래는 빌드·푸시 실행 후 채움)
-
 | 항목 | 값 |
 |------|-----|
-| 빌드 서버 InstanceId | |
-| 빌드 경로 | /opt/academy 또는 $HOME/academy |
-| 이미지 태그 | |
-| ECR URI | 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:* |
-| 푸시 완료 시각 | |
-| describe-images digest | |
+| 빌드 서버 InstanceId | i-07f6f245de7026361 |
+| 빌드 경로 | /home/ec2-user/academy (clone 후) |
+| 이미지 태그 | api-health-fix-1 |
+| ECR URI | 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:api-health-fix-1 |
+| 푸시 완료 시각 | 2026-03-06T06:35:10+09:00 |
+| describe-images digest | sha256:b277bf1c5885b2d53916c3d89e8ba95c8f20b86843977efea2e83bd3853fc029 |
+
+- Git/Docker 설치 후 clone, `docker build -f docker/Dockerfile.base`, `docker build -f docker/api/Dockerfile` (--platform linux/arm64), tag, push 수행.
+- academy-ec2-role 에 AmazonEC2ContainerRegistryPowerUser 부착 후 push 성공.
