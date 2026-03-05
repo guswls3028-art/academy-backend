@@ -115,16 +115,53 @@ aiWorker:
   sqsQueueName: academy-v1-ai-queue
 
 videoBatch:
-  # min 0, max 10 동시 워커. 1동영상 1작업: 업로드 N개 → Job N개 제출 → 워커 최대 N대 기동, 각 1개 처리 후 종료. 1워커가 2개 이상 작업 처리 금지.
-  computeEnvironmentName: academy-v1-video-batch-ce
-  videoQueueName: academy-v1-video-batch-queue
-  workerJobDefName: academy-v1-video-batch-jobdef
-  minvCpus: 0
-  maxvCpus: 10
-  instanceType: c6g.xlarge
+  # standard: 기존 계열 유지. 3시간 이하 일반 작업. maxvCpus=40, Spot 혼합.
+  standard:
+    computeEnvironmentName: academy-v1-video-batch-ce
+    videoQueueName: academy-v1-video-batch-queue
+    workerJobDefName: academy-v1-video-batch-jobdef
+    minvCpus: 0
+    maxvCpus: 40
+    instanceType: c6g.xlarge
+    rootVolumeSizeGb: 200
+    jobTimeoutSeconds: 21600
+    stuckHeartbeatAgeMinutes: 20
+    allocationStrategy: BEST_FIT_PROGRESSIVE
+    useSpot: true
+  # long: 3시간 초과·장시간 작업. On-Demand 우선(Spot 중단 리스크 회피). maxvCpus=80.
+  long:
+    computeEnvironmentName: academy-v1-video-batch-long-ce
+    videoQueueName: academy-v1-video-batch-long-queue
+    workerJobDefName: academy-v1-video-batch-long-jobdef
+    minvCpus: 0
+    maxvCpus: 80
+    instanceType: c6g.xlarge
+    rootVolumeSizeGb: 300
+    jobTimeoutSeconds: 43200
+    stuckHeartbeatAgeMinutes: 45
+    allocationStrategy: BEST_FIT
+    useSpot: false
+  # Job timeout / stuck / retry (3시간 영상 기준)
+  jobTimeoutStandardSeconds: 21600
+  jobTimeoutLongSeconds: 43200
+  stuckHeartbeatAgeStandardMinutes: 20
+  stuckHeartbeatAgeLongMinutes: 45
+  retryNetworkUploadAttempts: 8
+  retryFfmpegContentAttempts: 1
+  # R2 업로드 안정화
+  r2UploadPartSizeMb: 64
+  r2UploadMaxConcurrency: 8
+  r2UploadMaxAttempts: 8
+  r2UploadCheckpointTable: academy-v1-video-upload-checkpoints
+  # 관측/알람 SSOT
+  observability:
+    queueDepthAlarmThreshold: 50
+    failedJobsAlarmThreshold: 5
+    stuckDetectedAlarmEnabled: true
+    logRetentionDays: 30
+  # Ops (기존)
   opsComputeEnvironmentName: academy-v1-video-ops-ce
   opsQueueName: academy-v1-video-ops-queue
-  # Ops: t4g.medium 1대만, min 0 → 워커(video batch) 없을 땐 Ops 인스턴스도 0대. (Batch가 ap-northeast-2에서 t4g 미지원이면 m6g.medium 사용)
   opsInstanceType: m6g.medium
   opsMaxvCpus: 2
   opsJobDefs:
@@ -140,6 +177,7 @@ eventBridge:
 dynamodb:
   lockTableName: academy-v1-video-job-lock
   lockTableTtlAttribute: ttl
+  uploadCheckpointTableName: academy-v1-video-upload-checkpoints
 
 rds:
   engine: postgres
