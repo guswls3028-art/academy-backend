@@ -238,11 +238,9 @@ function Invoke-BuildServerBuild {
         "docker tag ${repo}:${Tag} ${acc}.dkr.ecr.${region}.amazonaws.com/${repo}:${Tag}",
         "docker push ${acc}.dkr.ecr.${region}.amazonaws.com/${repo}:${Tag}"
     )
-    $params = @{ commands = $commands } | ConvertTo-Json -Compress -Depth 10
-    $tmpFile = [System.IO.Path]::GetTempFileName()
-    $params | Out-File -FilePath $tmpFile -Encoding utf8 -NoNewline
+    $paramsJson = @{ commands = $commands } | ConvertTo-Json -Compress -Depth 10
     try {
-        $sendOut = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instanceId, "--document-name", "AWS-RunShellScript", "--parameters", "fileb://$tmpFile", "--region", $script:Region, "--output", "json")
+        $sendOut = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instanceId, "--document-name", "AWS-RunShellScript", "--parameters", $paramsJson, "--region", $script:Region, "--output", "json")
         $cmdId = $sendOut.Command.CommandId
         if (-not $cmdId) { throw "SSM send-command failed for build" }
         $waitSec = 1200
