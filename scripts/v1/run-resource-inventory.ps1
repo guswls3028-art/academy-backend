@@ -47,7 +47,7 @@ $BatchOpsASGPrefix = "academy-v1-video-ops-ce-asg-"
 $BatchStandardASGPrefix = "academy-v1-video-batch-ce"  # Batch managed ASG name may contain this
 
 Write-Host ""
-Write-Host "=== V1 AWS Resource Inventory (region $R) ===" -ForegroundColor Cyan
+Write-Host ('=== V1 AWS Resource Inventory (region ' + $R + ') ===') -ForegroundColor Cyan
 
 # --- EC2 ---
 $ec2List = @()
