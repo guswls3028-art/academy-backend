@@ -194,7 +194,7 @@ DATABASES = {
         "PASSWORD": os.getenv("DB_PASSWORD"),
         "HOST": os.getenv("DB_HOST"),
         "PORT": os.getenv("DB_PORT", "5432"),
-        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "0")),  # 0=close after request (RDS slot 절약). 60=persist when using RDS Proxy/pool.
+        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),  # V1.1: 60s reuse (커넥션 폭증 방지). 0=매 요청 후 종료.
         "OPTIONS": {
             "connect_timeout": 10,
         },
