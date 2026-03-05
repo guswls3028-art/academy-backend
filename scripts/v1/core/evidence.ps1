@@ -23,6 +23,19 @@ function Get-EvidenceSnapshot {
         $ev["batchVideoCeStatus"] = $c.status
         $ev["batchVideoCeState"] = $c.state
     } else { $ev["batchVideoCeArn"] = "not found" }
+    if ($script:VideoLongCEName) {
+        $ceLong = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:VideoLongCEName, "--region", $R, "--output", "json")
+        if ($ceLong -and $ceLong.computeEnvironments -and $ceLong.computeEnvironments.Count -gt 0) {
+            $c = $ceLong.computeEnvironments[0]
+            $ev["batchVideoLongCeArn"] = $c.computeEnvironmentArn
+            $ev["batchVideoLongCeStatus"] = $c.status
+        } else { $ev["batchVideoLongCeArn"] = "not found" }
+        $qLong = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoLongQueueName, "--region", $R, "--output", "json")
+        if ($qLong -and $qLong.jobQueues -and $qLong.jobQueues.Count -gt 0) {
+            $ev["videoLongQueueArn"] = $qLong.jobQueues[0].jobQueueArn
+            $ev["videoLongQueueState"] = $qLong.jobQueues[0].state
+        } else { $ev["videoLongQueueArn"] = "not found" }
+    }
     if ($ceO -and $ceO.computeEnvironments -and $ceO.computeEnvironments.Count -gt 0) {
         $c = $ceO.computeEnvironments[0]
         $ev["opsCeArn"] = $c.computeEnvironmentArn
