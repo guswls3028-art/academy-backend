@@ -221,4 +221,19 @@ V1이 standard/long 2-tier·timeout·stuck(heartbeat_age)·R2 checkpoint·관측
 
 ---
 
+## 9. V1.1 검증 시나리오 (최종 배포 필수)
+
+| # | 시나리오 | 확인 방법 |
+|---|----------|-----------|
+| 1 | API 롤링 배포 무중단 | LT 변경 후 instance-refresh(MinHealthyPercentage=100). 배포 중 `/health` 200 유지 |
+| 2 | 3시간 영상 1건 완주 | §7.1. long 큐/JobDef, SUCCEEDED → READY, HLS 재생 |
+| 3 | 동시 3건(standard/long 혼합) | §7.2. 3건 동시 제출 → 3 Job 완료, queue depth 알람 미발동 |
+| 4 | 업로드 실패 후 업로드만 재시도 | §7.3. checkpoint 복구 후 재업로드(재인코딩 최소화) |
+| 5 | 메시징 중복 방지 / DLQ | idempotency key 중복 방지. 실패 시 DLQ 적재 확인 |
+| 6 | Evidence/Drift 최신화 | 배포 후 `scripts/v1/check-v1-infra.ps1` 실행 → drift.latest.md, audit.latest.md 갱신 |
+
+자세한 내용: `V1.1-OPERATIONS-GUIDE.md` §4.
+
+---
+
 **문서 끝.**
