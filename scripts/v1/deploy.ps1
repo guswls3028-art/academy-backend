@@ -245,6 +245,7 @@ try {
     if ($ev) { Save-EvidenceReport -MarkdownContent (Convert-EvidenceToMarkdown -Ev $ev) }
 
     if ($DeployFront -and -not $Plan) {
+        Assert-SSOTFrontR2Required
         try {
             & (Join-Path $ScriptRoot "deploy-front.ps1") -RepoRoot $RepoRoot
         } catch {
