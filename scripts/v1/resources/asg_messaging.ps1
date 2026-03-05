@@ -98,13 +98,22 @@ function Ensure-MessagingSqsScaling {
         $scaleInThreshold = $script:MessagingScaleInThreshold
         $treatMissing = "notBreaching"
 
-        Invoke-Aws @("application-autoscaling", "register-scalable-target",
-            "--service-namespace", $ns,
-            "--resource-id", $resourceId,
-            "--scalable-dimension", $dim,
-            "--min-capacity", $script:MessagingMinSize.ToString(),
-            "--max-capacity", $script:MessagingMaxSize.ToString(),
-            "--region", $region) -ErrorMessage "register-scalable-target messaging" | Out-Null
+        try {
+            Invoke-Aws @("application-autoscaling", "register-scalable-target",
+                "--service-namespace", $ns,
+                "--resource-id", $resourceId,
+                "--scalable-dimension", $dim,
+                "--min-capacity", $script:MessagingMinSize.ToString(),
+                "--max-capacity", $script:MessagingMaxSize.ToString(),
+                "--region", $region) -ErrorMessage "register-scalable-target messaging" | Out-Null
+        } catch {
+            if ($_.Exception.Message -match "scalableDimension|ValidationException|ec2:autoScalingGroup") {
+                Write-Warn "Application Auto Scaling does not support EC2 ASG; SQS-based scaling skipped. Use ASG min/max/desired or EC2 scaling policies."
+                $script:SqsScalingNotEnforced = $true
+                return
+            }
+            throw
+        }
 
         $targets = Invoke-AwsJson @("application-autoscaling", "describe-scalable-targets",
             "--service-namespace", $ns, "--resource-ids", $resourceId, "--region", $region, "--output", "json")
