@@ -131,8 +131,12 @@ function Invoke-BootstrapSqs {
             }
             if ($needsUpdate) {
                 $redrive = '{"deadLetterTargetArn":"' + $dlqArn + '","maxReceiveCount":"' + $maxReceiveCount + '"}'
-                $redriveArg = 'RedrivePolicy="' + ($redrive.Replace('"', '\"')) + '"'
-                Invoke-Aws @("sqs", "set-queue-attributes", "--queue-url", $url, "--attributes", "VisibilityTimeout=$visibility", $redriveArg, "--region", $script:Region) -ErrorMessage "set-queue-attributes $qName" | Out-Null
+                $body = @{ QueueUrl = $url; Attributes = @{ VisibilityTimeout = $visibility.ToString(); RedrivePolicy = $redrive } } | ConvertTo-Json -Compress -Depth 5
+                $tmp = [System.IO.Path]::GetTempFileName()
+                try {
+                    [System.IO.File]::WriteAllText($tmp, $body, [System.Text.UTF8Encoding]::new($false))
+                    Invoke-Aws @("sqs", "set-queue-attributes", "--cli-input-json", "file://$($tmp.Replace('\','/'))", "--region", $script:Region) -ErrorMessage "set-queue-attributes $qName" | Out-Null
+                } finally { Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue }
                 Write-Host "  SQS attributes set: $qName VisibilityTimeout=$visibility RedrivePolicy->DLQ" -ForegroundColor Yellow
                 $script:ChangesMade = $true
             }
