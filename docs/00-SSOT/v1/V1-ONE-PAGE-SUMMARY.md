@@ -1,6 +1,7 @@
-# V1 총괄 보고서 (한 장) — 스펙·인프라 일괄
+# V1.1 총괄 보고서 (한 장) — 스펙·인프라 일괄
 
-**갱신:** 2026-03-06 · **SSOT:** `docs/00-SSOT/v1/params.yaml` · **배포:** `scripts/v1/deploy.ps1` · **리전:** ap-northeast-2 · **계정:** 809466760795
+**갱신:** 2026-03-06 · **SSOT:** `docs/00-SSOT/v1/params.yaml` · **배포:** `scripts/v1/deploy.ps1` · **리전:** ap-northeast-2 · **계정:** 809466760795  
+**V1.1:** 1인 운영(장애 10~60분 대응), 1k~1.5k 사용자·동시 50~300 버스트. API 최소 HA 2/2/4.
 
 ---
 
@@ -19,7 +20,8 @@
 | ALB / Target Group | academy-v1-api-alb / academy-v1-api-tg |
 | Launch Template | academy-v1-api-lt |
 | 인스턴스 타입 | t4g.medium |
-| **min / desired / max** | 1 / 1 / 3 |
+| **min / desired / max** | 2 / 2 / 4 (V1.1 최소 HA) |
+| 롤링 배포 | MinHealthyPercentage=100, InstanceWarmup=300s (새 인스턴스 healthy 후 구 인스턴스 제거) |
 | AMI | ami-0885e191a9bcf28b0 |
 | Instance Profile | academy-ec2-role |
 | Security Group | sg-088fa3315c12754d0 (network.securityGroupApp) |
