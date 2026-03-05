@@ -74,13 +74,13 @@ pwsh scripts/v1/deploy.ps1 -Env prod -AwsProfile default -SkipNetprobe
 
 ## 5. 불필요 이미지·비용 최적화
 
-### 5.1 ECR 라이프사이클
+### 5.1 ECR 라이프사이클 (배포 시 자동 적용)
 
-- **정책 예시:** `docs/00-SSOT/v1/scripts/ecr-lifecycle-policy.json`
+- **자동 적용:** `scripts/v1/resources/ecr.ps1`의 `Ensure-ECRRepos`가 ECR 저장소 Ensure 후 **저장소별로 라이프사이클 정책을 자동 적용**한다. 별도 수동 적용 불필요.
+- **정책 파일:** `docs/00-SSOT/v1/scripts/ecr-lifecycle-policy.json`
   - tagged: `v1-`, `bootstrap-` 접두사 이미지 중 최신 20개만 유지.
   - untagged: 1일 경과 후 만료.
-
-```powershell
+- 수동 적용이 필요한 경우(저장소만 먼저 만들 때 등):
 $policyPath = (Resolve-Path "C:\academy\docs\00-SSOT\v1\scripts\ecr-lifecycle-policy.json").Path -replace '\\','/'
 aws ecr put-lifecycle-policy --repository-name academy-video-worker --lifecycle-policy-text "file://$policyPath" --profile default --region ap-northeast-2
 # academy-api, academy-messaging-worker, academy-ai-worker-cpu 동일 적용 가능
