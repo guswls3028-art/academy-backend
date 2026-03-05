@@ -31,7 +31,8 @@ $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 $ScriptRoot = $PSScriptRoot
 
-# 인증: 스크립트는 .env를 로드하지 않음. Cursor(에이전트)가 루트 .env를 열람해 AWS/Cloudflare 등을 환경변수로 설정한 뒤 본 스크립트를 실행한다.
+# 인증: AWS·Cloudflare(클플) 인증은 Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않음.
+# Cursor(에이전트)가 루트 .env를 열람해 AWS/Cloudflare 등을 환경변수로 설정한 뒤 본 스크립트를 실행한다.
 . (Join-Path $ScriptRoot "core\env.ps1")
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
 
