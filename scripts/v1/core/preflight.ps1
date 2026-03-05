@@ -1,5 +1,6 @@
 # Preflight: AWS identity, region, VPC (optional), SSM, ECR. Fail fast.
-# .env 는 deploy.ps1 등에서 이미 로드됨. 여기서는 검증만.
+# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
+# .env 는 deploy.ps1 등 호출 전 에이전트가 환경변수로 넣음. 여기서는 검증만.
 function Invoke-PreflightCheck {
     Write-Step "Preflight"
 
