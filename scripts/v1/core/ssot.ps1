@@ -224,6 +224,9 @@ function Load-SSOT {
     $script:RdsMasterPasswordSsmParam = $p["rds"]["masterPasswordSsmParam"]
     if (-not $script:RdsMasterPasswordSsmParam) { $script:RdsMasterPasswordSsmParam = "" }
     if ($script:RdsDbIdentifier -and $script:RdsMasterPasswordSsmParam.Trim() -eq "") { $script:RdsMasterPasswordSsmParam = "/academy/rds/master_password" }
+    $script:RdsPerformanceInsightsEnabled = ($p["rds"]["performanceInsightsEnabled"] -eq "true")
+    $script:RdsPerformanceInsightsRetentionDays = Coerce-Int $p["rds"]["performanceInsightsRetentionDays"] 7
+    $script:RdsMultiAz = ($p["rds"]["multiAz"] -eq "true")
     $script:RedisReplicationGroupId = $p["redis"]["replicationGroupId"]
     if (-not $script:RedisReplicationGroupId) { $script:RedisReplicationGroupId = Get-ParamFromRaw $raw "replicationGroupId" }
     $script:RedisSubnetGroupName = $p["redis"]["subnetGroupName"]
