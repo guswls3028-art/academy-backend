@@ -219,7 +219,8 @@ try {
     $netStatus = ""
     if (-not $SkipNetprobe) {
         try {
-            $net = Invoke-Netprobe -TimeoutSec 1200 -RunnableFailSec 300
+            # RunnableFailSec 600: Ops CE cold start (minvCpus=0) can take 5+ min to schedule job.
+            $net = Invoke-Netprobe -TimeoutSec 1200 -RunnableFailSec 600
             $netJobId = $net.jobId
             $netStatus = $net.status
         } catch {
