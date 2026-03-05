@@ -87,7 +87,9 @@ pwsh scripts/v1/deploy.ps1 -Env prod -AwsProfile default -SkipNetprobe
 - **리포지토리별 적용:**
 
 ```powershell
-aws ecr put-lifecycle-policy --repository-name academy-video-worker --lifecycle-policy-text "file://C:/academy/docs/00-SSOT/v1/scripts/ecr-lifecycle-policy.json" --profile default --region ap-northeast-2
+# 프로젝트 루트에서 (경로는 환경에 맞게 조정)
+$policyPath = (Resolve-Path "docs/00-SSOT/v1/scripts/ecr-lifecycle-policy.json").Path -replace '\\','/'
+aws ecr put-lifecycle-policy --repository-name academy-video-worker --lifecycle-policy-text "file://$policyPath" --profile default --region ap-northeast-2
 # 필요 시 academy-api, academy-messaging-worker, academy-ai-worker-cpu 등에도 동일 적용
 ```
 
