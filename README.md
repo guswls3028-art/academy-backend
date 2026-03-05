@@ -60,7 +60,7 @@ academy/
 ## 🏗️ 인프라 아키텍처
 
 ### 스토리지
-- **Cloudflare R2**: 모든 미디어·파일 저장 (S3-compatible)
+- **Cloudflare R2**: 모든 미디어·파일 저장 (S3 호환 API, AWS S3 미사용)
 - **버킷**: `academy-ai`, `academy-video`, `academy-excel`, `academy-storage` (설정: `.env.example`, `apps/api/config/settings/base.py`)
 
 ### CDN
