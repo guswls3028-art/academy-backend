@@ -226,3 +226,9 @@ HealthCheckHostMiddleware, healthz 뷰/라우트/BYPASS 추가. SSOT api.healthP
 
 ### 11.4 상태
 api-health-fix-2는 빌드 서버(academy-build-arm64) terminated으로 미빌드. 검증 FAIL(0/3 healthy). 빌드 서버 기동 후 빌드·푸시·배포·검증 재실행.
+
+---
+
+## 12) latest 전략·CI·배포 강제 갱신 (2026-03-06)
+
+- **SSOT:** ecr.useLatestTag: true. **GitHub Actions:** build-and-push-latest.yml (main push/workflow_dispatch, academy-api:latest, ci-build.latest.md 기록). **deploy:** 배포 nonce·docker pull 강제·instance refresh, runtime-images.latest.md 수집. **Build 서버 전환:** BUILD-SERVER-TRANSITION.md 참고.
