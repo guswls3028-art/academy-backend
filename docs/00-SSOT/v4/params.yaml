@@ -87,7 +87,7 @@ messagingWorker:
   asgName: academy-v4-messaging-worker-asg
   launchTemplateName: academy-v4-messaging-worker-lt
   amiId: ami-0c55b159cbfafe1f0
-  instanceType: c6g.large
+  instanceType: t4g.medium
   minSize: 1
   maxSize: 10
   desiredCapacity: 1

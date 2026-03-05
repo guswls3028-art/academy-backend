@@ -99,7 +99,7 @@ function Load-SSOT {
     $script:ApiSubnetId = $p["api"]["subnetId"]
     $script:ApiSecurityGroupId = if ($p["api"]["securityGroupId"]) { $p["api"]["securityGroupId"] } else { $script:SecurityGroupApp }
     if (-not $script:ApiSecurityGroupId) { $script:ApiSecurityGroupId = $script:BatchSecurityGroupId }
-    $script:ApiInstanceType = if ($p["api"]["instanceType"]) { $p["api"]["instanceType"] } else { "c6g.large" }
+    $script:ApiInstanceType = if ($p["api"]["instanceType"]) { $p["api"]["instanceType"] } else { "t4g.medium" }
     if (-not $script:ApiSubnetId -and $script:PrivateSubnets -and $script:PrivateSubnets.Count -gt 0) { $script:ApiSubnetId = $script:PrivateSubnets[0] }
     if (-not $script:ApiSubnetId -and $script:PublicSubnets -and $script:PublicSubnets.Count -gt 0) { $script:ApiSubnetId = $script:PublicSubnets[0] }
     $script:ApiUserData = $p["api"]["userData"]
@@ -121,7 +121,7 @@ function Load-SSOT {
     $script:BuildInstanceProfile = $p["build"]["instanceProfile"]
     $script:BuildSubnetId = $p["build"]["subnetId"]
     $script:BuildSecurityGroupId = $p["build"]["securityGroupId"]
-    $script:BuildInstanceType = if ($p["build"]["instanceType"]) { $p["build"]["instanceType"] } else { "c6g.large" }
+    $script:BuildInstanceType = if ($p["build"]["instanceType"]) { $p["build"]["instanceType"] } else { "t4g.medium" }
     if (-not $script:BuildSubnetId -and $script:PrivateSubnets -and $script:PrivateSubnets.Count -gt 0) { $script:BuildSubnetId = $script:PrivateSubnets[0] }
     if (-not $script:BuildSubnetId -and $script:PublicSubnets -and $script:PublicSubnets.Count -gt 0) { $script:BuildSubnetId = $script:PublicSubnets[0] }
     if (-not $script:BuildSecurityGroupId) { $script:BuildSecurityGroupId = $script:SecurityGroupApp }
@@ -131,7 +131,7 @@ function Load-SSOT {
     $script:MessagingASGName = $p["messagingWorker"]["asgName"]
     $script:MessagingLaunchTemplateName = $p["messagingWorker"]["launchTemplateName"]
     $script:MessagingAmiId = $p["messagingWorker"]["amiId"]
-    $script:MessagingInstanceType = if ($p["messagingWorker"]["instanceType"]) { $p["messagingWorker"]["instanceType"] } else { "c6g.large" }
+    $script:MessagingInstanceType = if ($p["messagingWorker"]["instanceType"]) { $p["messagingWorker"]["instanceType"] } else { "t4g.medium" }
     $script:MessagingMinSize = Coerce-Int $p["messagingWorker"]["minSize"] 1
     $script:MessagingMaxSize = Coerce-Int $p["messagingWorker"]["maxSize"] 10
     $script:MessagingDesiredCapacity = Coerce-Int $p["messagingWorker"]["desiredCapacity"] 1
@@ -145,7 +145,7 @@ function Load-SSOT {
     $script:AiASGName = $p["aiWorker"]["asgName"]
     $script:AiLaunchTemplateName = $p["aiWorker"]["launchTemplateName"]
     $script:AiAmiId = $p["aiWorker"]["amiId"]
-    $script:AiInstanceType = if ($p["aiWorker"]["instanceType"]) { $p["aiWorker"]["instanceType"] } else { "c6g.large" }
+    $script:AiInstanceType = if ($p["aiWorker"]["instanceType"]) { $p["aiWorker"]["instanceType"] } else { "t4g.medium" }
     $script:AiMinSize = Coerce-Int $p["aiWorker"]["minSize"] 1
     $script:AiMaxSize = Coerce-Int $p["aiWorker"]["maxSize"] 10
     $script:AiDesiredCapacity = Coerce-Int $p["aiWorker"]["desiredCapacity"] 1
