@@ -144,4 +144,53 @@
 
 ---
 
+## 7. 3시간 영상 검증 절차 (V1 보강 후)
+
+V1이 standard/long 2-tier·timeout·stuck(heartbeat_age)·R2 checkpoint·관측 SSOT로 보강된 상태에서, 배포 후 아래 절차로 정상 케이스를 검증한다.
+
+### 7.1 3시간 샘플 1건 완주
+
+| 단계 | 작업 | 확인 |
+|------|------|------|
+| 1 | 3시간 분량 원본 업로드 (duration ≥ 10800초로 long 큐 사용되는지 확인) | API/DB에서 Video 생성 후 Batch 제출 시 `VIDEO_LONG_DURATION_THRESHOLD_SECONDS`(10800) 이상이면 long 큐/JobDef 사용 |
+| 2 | Batch Job 제출 | `academy-v1-video-batch-long-queue`, `academy-v1-video-batch-long-jobdef` 사용 여부 로그 확인 |
+| 3 | Job RUNNING → heartbeat 유지 | `last_heartbeat_at` 주기 갱신 (VIDEO_JOB_HEARTBEAT_SECONDS) |
+| 4 | Job 완료 대기 (최대 12h timeout) | Job SUCCEEDED, Video.status READY, HLS 재생 가능 |
+| 5 | Stuck 미판정 | heartbeat_age 45분 미만 유지 시 scan_stuck에서 RETRY_WAIT/DEAD 처리 없음 |
+
+### 7.2 동시 3건
+
+| 단계 | 작업 | 확인 |
+|------|------|------|
+| 1 | 동시에 3건 업로드·Batch 제출 (standard 또는 long 혼합 가능) | 3개 Job이 각각 QUEUED → RUNNING, 서로 간섭 없이 처리 |
+| 2 | Queue depth | standard/long 큐별 대기 건수 확인 (observability.queueDepthAlarmThreshold 50 초과 시 알람) |
+| 3 | 완료 | 3건 모두 SUCCEEDED 및 HLS 정상 |
+
+### 7.3 업로드 실패 복구
+
+| 단계 | 작업 | 확인 |
+|------|------|------|
+| 1 | R2 multipart 업로드 중 네트워크 단절 시뮬레이션 (또는 part 실패) | DynamoDB checkpoint table(academy-v1-video-upload-checkpoints)에 진행 상황 저장 |
+| 2 | 재시도 | part_size 64MB, max_concurrency 8, max_attempts 8 기준으로 재개·완료 |
+| 3 | 실패 시 | job_fail_retry → 네트워크/업로드 원인만 재시도, ffmpeg/콘텐츠 오류는 재시도 최소화(retryFfmpegContentAttempts 1) |
+
+### 7.4 디스크 피크 측정
+
+| 단계 | 작업 | 확인 |
+|------|------|------|
+| 1 | Batch 인스턴스 루트 볼륨 | standard CE 200GB(gp3), long CE 300GB(gp3) 권장(params rootVolumeSizeGb). Launch Template으로 CE 생성 시 반영 |
+| 2 | 워커 임시 디스크 | process_video 내 temp_workdir 사용 후 정리; 세그먼트 생성 즉시 R2 업로드 후 로컬 삭제로 디스크 피크 완화 |
+| 3 | (선택) CloudWatch 디스크 메트릭 | Batch 인스턴스에서 disk_used_percent 등 커스텀 메트릭 수집 시 피크 값 기록 |
+
+### 7.5 관측·알람
+
+| 항목 | SSOT (params.yaml) | 적용 |
+|------|---------------------|------|
+| Queue depth 알람 | videoBatch.observability.queueDepthAlarmThreshold: 50 | CloudWatch Alarm에서 해당 큐 depth ≥ 50 시 알람 |
+| Failed jobs 알람 | videoBatch.observability.failedJobsAlarmThreshold: 5 | Batch failed job 수 ≥ 5 시 알람 |
+| Stuck detected | videoBatch.observability.stuckDetectedAlarmEnabled: true | scan_stuck에서 DEAD/RETRY_WAIT 전환 시 이벤트 발송 시 알람 연동 |
+| 로그 보존 | videoBatch.observability.logRetentionDays: 30 | `/aws/batch/academy-video-worker` 등 로그 그룹에 put-retention-policy 30일 적용 |
+
+---
+
 **문서 끝.**
