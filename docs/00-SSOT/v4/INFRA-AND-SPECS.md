@@ -46,7 +46,7 @@
 |------|-----|
 | **식별** | EC2 태그 Name=academy-build-arm64 |
 | **용도** | Docker 이미지 빌드(ARM64) 후 ECR 푸시 |
-| **인스턴스 타입** | c6g.large |
+| **인스턴스 타입** | t4g.medium |
 | **AMI** | params.build.amiId |
 | **Instance Profile** | academy-build-instance-profile |
 | **서브넷/SG** | params.build.subnetId, securityGroupId (비어 있으면 스크립트에서 결정) |
@@ -61,7 +61,7 @@
 |------|-----|
 | **ASG** | academy-v4-ai-worker-asg |
 | **Launch Template** | academy-v4-ai-worker-lt |
-| **인스턴스 타입** | c6g.large |
+| **인스턴스 타입** | t4g.medium |
 | **min / max / desired** | 1 / 10 / 1 |
 | **Scale-in protection** | ON |
 | **SQS 큐** | academy-v4-ai-queue |
@@ -80,7 +80,7 @@
 |------|-----|
 | **ASG** | academy-v4-messaging-worker-asg |
 | **Launch Template** | academy-v4-messaging-worker-lt |
-| **인스턴스 타입** | c6g.large |
+| **인스턴스 타입** | t4g.medium |
 | **min / max / desired** | 1 / 10 / 1 |
 | **Scale-in protection** | ON |
 | **SQS 큐** | academy-v4-messaging-queue |
@@ -100,7 +100,7 @@
 | **Compute Environment** | academy-v4-video-batch-ce |
 | **Video Job Queue** | academy-v4-video-batch-queue |
 | **Worker Job Definition** | academy-v4-video-batch-jobdef |
-| **인스턴스 타입** | c6g.large |
+| **인스턴스 타입** | t4g.medium |
 | **minvCpus / maxvCpus** | 0 / 10 |
 | **Ops CE** | academy-v4-video-ops-ce |
 | **Ops Queue** | academy-v4-video-ops-queue |
