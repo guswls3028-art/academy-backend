@@ -67,9 +67,10 @@ function Invoke-Aws {
     if ($script:PlanMode -and (Test-AwsArgsMutating -ArgsArray $ArgsArray)) {
         return $null
     }
+    $fullArgs = Get-AwsArgsWithProfile -ArgsArray $ArgsArray
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $out = & aws @ArgsArray 2>&1
+    $out = & aws @fullArgs 2>&1
     $exit = $LASTEXITCODE
     $ErrorActionPreference = $prev
     if ($exit -ne 0) {
