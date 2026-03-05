@@ -339,9 +339,33 @@ $reportPath = Join-Path $RepoRoot "docs\00-SSOT\v1\reports"
 if (-not (Test-Path $reportPath)) { New-Item -ItemType Directory -Path $reportPath -Force | Out-Null }
 Save-DeployVerificationReport -MarkdownContent $sb.ToString()
 
+# V1 최종 배포 검증 보고서 (reports/V1-FINAL-REPORT.md)
+$finalSb = [System.Text.StringBuilder]::new()
+[void]$finalSb.AppendLine("# V1 최종 배포 검증 보고서")
+[void]$finalSb.AppendLine("")
+[void]$finalSb.AppendLine("**명칭:** V1 통일. **SSOT:** docs/00-SSOT/v1/params.yaml. **배포:** scripts/v1/deploy.ps1. **리전:** $R.")
+[void]$finalSb.AppendLine("")
+[void]$finalSb.AppendLine("## 요약")
+[void]$finalSb.AppendLine("| 항목 | 값 |")
+[void]$finalSb.AppendLine("|------|-----|")
+[void]$finalSb.AppendLine("| 검증 시각 | $verificationTime |")
+[void]$finalSb.AppendLine("| 최종 상태 | $finalStatus |")
+[void]$finalSb.AppendLine("| GO/NO-GO | **$goNoGo** |")
+[void]$finalSb.AppendLine("")
+[void]$finalSb.AppendLine("$goNoGoDetail")
+[void]$finalSb.AppendLine("")
+[void]$finalSb.AppendLine("## 상세 보고서")
+[void]$finalSb.AppendLine("- [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트·SQS·Video·관측·GO/NO-GO 상세")
+[void]$finalSb.AppendLine("- [audit.latest.md](./audit.latest.md) — 리소스·지표 스냅샷")
+[void]$finalSb.AppendLine("- [drift.latest.md](./drift.latest.md) — SSOT 대비 drift")
+[void]$finalSb.AppendLine("")
+Save-V1FinalReportInReports -MarkdownContent $finalSb.ToString()
+
 Write-Host "`n=== 검증 완료 ===" -ForegroundColor Green
 Write-Host "  최종 상태: $finalStatus" -ForegroundColor $(if ($finalStatus -eq "PASS") { "Green" } elseif ($finalStatus -eq "WARNING") { "Yellow" } else { "Red" })
+Write-Host "  GO/NO-GO: $goNoGo" -ForegroundColor Cyan
 Write-Host "  보고서: docs/00-SSOT/v1/reports/deploy-verification-latest.md" -ForegroundColor Cyan
+Write-Host "  V1 최종: docs/00-SSOT/v1/reports/V1-FINAL-REPORT.md" -ForegroundColor Cyan
 Write-Host "  audit.latest.md, drift.latest.md 갱신됨." -ForegroundColor Gray
 if ($findings.Count -gt 0) {
     Write-Host "  발견 사항: $($findings.Count)건" -ForegroundColor Yellow
