@@ -203,7 +203,11 @@ try {
     Ensure-EventBridgeRules
     Ensure-ALBStack
     Ensure-API
-    Ensure-Build
+    if (-not $SkipBuild) {
+        Ensure-Build
+    } else {
+        Write-Warn "Build skipped (-SkipBuild). ECR image already provided."
+    }
 
     $netJobId = ""
     $netStatus = ""
