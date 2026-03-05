@@ -230,3 +230,24 @@ redis:
 r2:
   bucket: ""
   publicBaseUrl: ""
+
+# 프론트 정적 + R2 + CDN (엔드투엔드). S3 미사용·R2만.
+# 도메인/라우팅: app.<domain> → CDN → R2(static), api.<domain> → ALB(또는 Cloudflare proxy 정책 명시).
+front:
+  domains:
+    app: ""          # 예: app.hakwonplus.com
+    api: ""          # 예: api.hakwonplus.com
+  cors:
+    allowedOrigins: []  # [ "https://app.hakwonplus.com" ] — 와일드카드 금지
+    credentials: true   # 쿠키 인증 사용 시 true
+  deployStrategy: "versioned"  # versioned | atomic
+  buildOutputDir: "dist"       # Vite 등 빌드 산출물 디렉터리(프론트 repo 기준)
+  r2StaticBucket: ""           # 정적 배포용 R2 버킷(예: academy-storage)
+  r2StaticPrefix: "static/front"  # 버전 디렉터리 상위 prefix
+  purgeOnDeploy: true          # 배포 시 CDN 캐시 purge 여부
+  cdnCacheControl:
+    assetMaxAge: "31536000"    # 해시 파일명 정적 자산 1년
+    indexMaxAge: "0"           # index.html no-cache 권장
+  uploadDownload:
+    multipartResume: true      # 대용량 multipart + resume/checkpoint
+    signedUrlMethod: "server"  # server(서버 중계) | presigned
