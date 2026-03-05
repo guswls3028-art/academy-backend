@@ -201,63 +201,116 @@ try {
     }
 } catch { }
 
-# --- 9. 보고서 생성 ---
+# --- 9. 보고서 생성 (PASS/WARNING/FAIL + 근거, GO/NO-GO) ---
+$s1Infra = "PASS"
+if ($apiHealthStatus -ne "OK") { $s1Infra = "FAIL" }
+elseif ($targetHealthyCount -eq 0 -and $targetTotalCount -gt 0) { $s1Infra = "FAIL" }
+elseif ($rdsStatus -ne "available" -or $redisStatus -ne "available") { $s1Infra = "WARNING" }
+elseif ($driftFail -and $driftFail.Count -gt 0) { $s1Infra = "WARNING" }
+
+$s2Smoke = "PASS"
+if ($apiHealthStatus -ne "OK") { $s2Smoke = "FAIL" }
+elseif ($apiHealthResponseTime -and [int]($apiHealthResponseTime -replace 'ms','') -gt 2000) { $s2Smoke = "WARNING" }
+elseif ($apiSmokeStatus -eq "root unreachable") { $s2Smoke = "WARNING" }
+
+$s3Front = "PASS"
+if ($frontStatus -eq "not checked") { $s3Front = "WARNING" }
+elseif ($frontStatus -ne "OK") { $s3Front = "WARNING" }
+if ($r2Status -ne "OK (wrangler list success)" -and $r2Status -ne "not checked") { $s3Front = "WARNING" }
+
+$s4Sqs = "PASS"
+if ([int]$msgDlqDepth -gt 0 -or [int]$aiDlqDepth -gt 0) { $s4Sqs = "WARNING" }
+
+$s5Video = "WARNING"
+$s5VideoNote = "수동 검증 권장: 3시간 샘플 1건 end-to-end, READY 전 미공개, 업로드 재시도·동시 2~3건. 근거: deploy-verification-latest.md 또는 수동 실행 로그."
+
+$s6Obs = "PASS"
+if ($alarmSummary -eq "not listed" -or $alarmSummary -match "0 alarms") { $s6Obs = "WARNING" }
+
+$goNoGo = "GO"
+$goNoGoDetail = ""
+if ($finalStatus -eq "FAIL") { $goNoGo = "NO-GO"; $goNoGoDetail = "FAIL 항목 해결 후 재검증 필요." }
+elseif ($finalStatus -eq "WARNING") { $goNoGo = "CONDITIONAL GO"; $goNoGoDetail = "WARNING 영향도·완화책·추적 계획 확인 후 배포 판단. 상세: 아래 리스크 섹션 및 deploy-verification-latest.md." }
+
 $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("# V1 Deployment Verification Report")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("**명칭:** V1 통일 (V1.1 미사용). **SSOT:** docs/00-SSOT/v1/params.yaml. **리전:** $R. **전제:** 사용자 1,000~1,500, 동시 50~300 버스트, 운영 1인, 장애 대응 10~60분.")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## 배포 정보")
 [void]$sb.AppendLine("| 항목 | 값 |")
 [void]$sb.AppendLine("|------|-----|")
-[void]$sb.AppendLine("| **검증 시각** | $verificationTime |")
-[void]$sb.AppendLine("| **리전** | $R |")
-[void]$sb.AppendLine("| **배포 스크립트** | scripts/v1/deploy.ps1 |")
-[void]$sb.AppendLine("| **SSOT** | docs/00-SSOT/v1/params.yaml |")
+[void]$sb.AppendLine("| 검증 시각 | $verificationTime |")
+[void]$sb.AppendLine("| 리전 | $R |")
+[void]$sb.AppendLine("| 배포 스크립트 | scripts/v1/deploy.ps1 |")
+[void]$sb.AppendLine("| 근거·로그 | reports/audit.latest.md, reports/drift.latest.md |")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("## 인프라 상태")
-[void]$sb.AppendLine("| 영역 | 항목 | 상태 |")
+[void]$sb.AppendLine("---")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("## 1) 인프라 상태 (PASS/WARNING/FAIL + 근거)")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("| 항목 | 결과 | 근거(로그/지표/스크린샷 경로) |")
+[void]$sb.AppendLine("|------|------|-------------------------------------|")
+[void]$sb.AppendLine("| API ASG min/desired/max | $($ev.apiAsgDesired)/$($ev.apiAsgMin)/$($ev.apiAsgMax) | reports/audit.latest.md (apiAsg*) |")
+[void]$sb.AppendLine("| ALB target health | $targetHealthyCount / $targetTotalCount healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |")
+[void]$sb.AppendLine("| /health 200 | $apiHealthStatus $apiHealthResponseTime | curl 위 URL 또는 ALB DNS 직접 호출 |")
+[void]$sb.AppendLine("| AI/Messaging ASG | $($ev.asgAiDesired)/$($ev.asgMessagingDesired) | reports/audit.latest.md (asgAi*, asgMessaging*) |")
+[void]$sb.AppendLine("| SQS queue 연결·DLQ | Messaging depth $msgQueueDepth DLQ $msgDlqDepth / AI depth $aiQueueDepth DLQ $aiDlqDepth | SQS Console 또는 get-queue-attributes |")
+[void]$sb.AppendLine("| Video Batch CE/Queue/JobDef | CE $($ev.batchVideoCeStatus) Queue $($ev.videoQueueState) JobDef rev $($ev.videoJobDefRevision) | reports/audit.latest.md, Batch Console |")
+[void]$sb.AppendLine("| RDS 연결 가능 | $rdsStatus | RDS describe-db-instances (연결 테스트는 앱/psql 수동) |")
+[void]$sb.AppendLine("| Redis 연결 가능 | $redisStatus | ElastiCache describe-replication-groups |")
+[void]$sb.AppendLine("| **섹션 1 종합** | **$s1Infra** | |")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("## 2) 기능 Smoke Test (PASS/WARNING/FAIL + 근거)")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("| 항목 | 결과 | 근거 |")
 [void]$sb.AppendLine("|------|------|------|")
-[void]$sb.AppendLine("| **API** | ASG desired/min/max | $($ev.apiAsgDesired) / $($ev.apiAsgMin) / $($ev.apiAsgMax) |")
-[void]$sb.AppendLine("| **API** | ALB target health | $targetHealthyCount / $targetTotalCount healthy |")
-[void]$sb.AppendLine("| **API** | /health | $apiHealthStatus $apiHealthResponseTime |")
-[void]$sb.AppendLine("| **Video Batch** | CE (video) | $($ev.batchVideoCeStatus) / $($ev.batchVideoCeState) |")
-[void]$sb.AppendLine("| **Video Batch** | Queue | $($ev.videoQueueState) |")
-[void]$sb.AppendLine("| **Video Batch** | JobDef revision | $($ev.videoJobDefRevision) |")
-[void]$sb.AppendLine("| **AI Worker** | ASG | $($ev.asgAiDesired)/$($ev.asgAiMin)/$($ev.asgAiMax) |")
-[void]$sb.AppendLine("| **Messaging Worker** | ASG | $($ev.asgMessagingDesired)/$($ev.asgMessagingMin)/$($ev.asgMessagingMax) |")
-[void]$sb.AppendLine("| **DB** | RDS | $rdsStatus |")
-[void]$sb.AppendLine("| **Cache** | Redis | $redisStatus |")
-[void]$sb.AppendLine("| **스토리지** | R2 | $r2Status |")
-[void]$sb.AppendLine("| **CDN/프론트** | 접근 | $frontStatus |")
+[void]$sb.AppendLine("| /health | $apiHealthStatus | 응답시간: $apiHealthResponseTime (기준 p95 &lt; 2s, 샘플 1회) |")
+[void]$sb.AppendLine("| API root | $apiSmokeStatus | 동일 ALB DNS |")
+[void]$sb.AppendLine("| 핵심 API 1~2개(인증/CRUD) | 수동 검증 권장 | 샘플 20회 평균/최대 기록 시 reports/ 에 URL 또는 로그 경로 기입 |")
+[void]$sb.AppendLine("| **섹션 2 종합** | **$s2Smoke** | |")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("## SQS / 메시징")
-[void]$sb.AppendLine("| 큐 | 메인 depth | DLQ depth |")
-[void]$sb.AppendLine("|-----|-------------|------------|")
-[void]$sb.AppendLine("| Messaging | $msgQueueDepth | $msgDlqDepth |")
-[void]$sb.AppendLine("| AI | $aiQueueDepth | $aiDlqDepth |")
+[void]$sb.AppendLine("## 3) 프론트 / R2 / CDN (PASS/WARNING/FAIL + 근거)")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("## 기능 테스트")
-[void]$sb.AppendLine("| 항목 | 결과 |")
-[void]$sb.AppendLine("|------|------|")
-[void]$sb.AppendLine("| API /health | $apiHealthStatus |")
-[void]$sb.AppendLine("| API root/smoke | $apiSmokeStatus |")
-[void]$sb.AppendLine("| 프론트 URL | $frontStatus |")
-[void]$sb.AppendLine("| 메시징/AI enqueue·DLQ | 수동 검증 권장 |")
-[void]$sb.AppendLine("| Video pipeline | 수동 검증 권장 (샘플 업로드 → Job → READY) |")
+[void]$sb.AppendLine("| 항목 | 결과 | 근거 |")
+[void]$sb.AppendLine("|------|------|------|")
+[void]$sb.AppendLine("| 프론트 URL 접속 | $frontStatus | FRONT_APP_URL env 설정 시 자동 검사 |")
+[void]$sb.AppendLine("| 정적 자산(JS/CSS) 로딩 | 수동 검증 권장 | 브라우저 개발자도구 Network 탭 |")
+[void]$sb.AppendLine("| CDN 캐시 정책 | 수동 검증 권장 | Cache-Control 헤더, 배포 시 purge 전략 (params front.*) |")
+[void]$sb.AppendLine("| 프론트→API(CORS/쿠키/CSRF) | 수동 검증 권장 | 동일 도메인/credentials 요청 |")
+[void]$sb.AppendLine("| R2 버킷 접근 | $r2Status | wrangler r2 bucket list |")
+[void]$sb.AppendLine("| **섹션 3 종합** | **$s3Front** | |")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("## 관측/알람")
-[void]$sb.AppendLine("| 항목 | 상태 |")
-[void]$sb.AppendLine("|------|------|")
-[void]$sb.AppendLine("| CloudWatch 알람 | $alarmSummary |")
+[void]$sb.AppendLine("## 4) SQS 워커 테스트 (PASS/WARNING/FAIL + 근거)")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("## 비용·리소스 요약")
-[void]$sb.AppendLine("| 항목 | 값 |")
-[void]$sb.AppendLine("|------|-----|")
-[void]$sb.AppendLine("| EC2 (running, Project=academy) | $ec2Count |")
-[void]$sb.AppendLine("| Batch RUNNING jobs (video queue) | $batchActiveJobs |")
-[void]$sb.AppendLine("| RDS | $rdsStatus |")
-[void]$sb.AppendLine("| Redis | $redisStatus |")
+[void]$sb.AppendLine("| 항목 | 결과 | 근거 |")
+[void]$sb.AppendLine("|------|------|------|")
+[void]$sb.AppendLine("| AI queue enqueue→consume | 수동 검증 권장 | SQS 메시지 발송 후 워커 로그 확인 |")
+[void]$sb.AppendLine("| Messaging queue enqueue→consume | 수동 검증 권장 | 동일 |")
+[void]$sb.AppendLine("| DLQ 적재 없음 | Messaging DLQ=$msgDlqDepth AI DLQ=$aiDlqDepth | get-queue-attributes ApproximateNumberOfMessages (DLQ) |")
+[void]$sb.AppendLine("| **섹션 4 종합** | **$s4Sqs** | |")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("## 리스크 및 권장 사항")
+[void]$sb.AppendLine("## 5) Video Pipeline 테스트 (3시간 영상 기준)")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("| 항목 | 결과 | 근거 |")
+[void]$sb.AppendLine("|------|------|------|")
+[void]$sb.AppendLine("| 3시간 샘플 1건 end-to-end | 수동 검증 권장 | 인코딩→R2 staging→검증→READY, HLS 재생 |")
+[void]$sb.AppendLine("| 유령데이터 방지(READY 전 미공개) | 설계 반영 | API playback_mixin READY만 허용, 목록 READY 필터 |")
+[void]$sb.AppendLine("| 업로드 실패 재시도/복구 | 설계 반영 | DynamoDB checkpoint, 재인코딩 최소화 (V1-DEPLOYMENT-VERIFICATION §7.3) |")
+[void]$sb.AppendLine("| 동시 2~3건 | 수동 검증 권장 | 2~3건 동시 제출 후 Job 완료·queue depth 확인 |")
+[void]$sb.AppendLine("| **섹션 5 종합** | **$s5Video** | $s5VideoNote |")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("## 6) 관측/알람")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("| 항목 | 결과 | 근거 |")
+[void]$sb.AppendLine("|------|------|------|")
+[void]$sb.AppendLine("| 최소 알람 세트(API 5XX, SQS depth/DLQ, Batch failed/stuck/backlog, RDS, Redis) | $alarmSummary | CloudWatch > Alarms (academy/v1 필터) |")
+[void]$sb.AppendLine("| 로그 retention 30d | params observability.logRetentionDays | Ensure-VideoBatchLogRetention, Batch 로그 그룹 |")
+[void]$sb.AppendLine("| **섹션 6 종합** | **$s6Obs** | |")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("## 7) 리스크 및 GO/NO-GO 권고")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("### 발견 사항(리스크)")
 if ($findings.Count -gt 0) {
     foreach ($f in $findings) {
         [void]$sb.AppendLine("- **$($f.Severity)** [$($f.Area)] $($f.Message)")
@@ -266,11 +319,21 @@ if ($findings.Count -gt 0) {
     [void]$sb.AppendLine("- Drift 없음, 인프라 상태 정상 범위.")
 }
 [void]$sb.AppendLine("")
+[void]$sb.AppendLine("### GO/NO-GO")
+[void]$sb.AppendLine("| 판정 | 내용 |")
+[void]$sb.AppendLine("|------|------|")
+[void]$sb.AppendLine("| **$goNoGo** | $goNoGoDetail |")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("- **FAIL 1건 이상** → **NO-GO**. 재검증 후 재실행.")
+[void]$sb.AppendLine("- **WARNING만** → **CONDITIONAL GO**. 영향도·완화책·추적 계획 확인 후 배포 여부 결정.")
+[void]$sb.AppendLine("- **PASS만** → **GO**.")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine("---")
+[void]$sb.AppendLine("")
 [void]$sb.AppendLine("## 최종 상태")
 [void]$sb.AppendLine("**$finalStatus**")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("---")
-[void]$sb.AppendLine("**Evidence/Drift:** audit.latest.md, drift.latest.md 동시 갱신됨.")
+[void]$sb.AppendLine("**연관 보고서:** audit.latest.md, drift.latest.md (동시 갱신됨).")
 
 $reportPath = Join-Path $RepoRoot "docs\00-SSOT\v1\reports"
 if (-not (Test-Path $reportPath)) { New-Item -ItemType Directory -Path $reportPath -Force | Out-Null }
