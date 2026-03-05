@@ -35,6 +35,6 @@ Do NOT introduce: ECS, EKS, AWS S3, AWS CloudFront.
 - NOT Terraform, NOT CloudFormation
 - Must follow **SSOT:** docs/00-SSOT/v1
 - Scripts must be **idempotent**, **safe to re-run**
-- Cursor must modify scripts in: **scripts/v1**
+- Cursor must modify scripts in: **scripts/v1** only. Do **not** modify or run **scripts/archive** or **docs/00-SSOT/archive** (reference only; see 00_ssot_v1_archive_structure.mdc).
 
 **Canonical topology:** Before designing or changing infrastructure, read `.cursor/knowledge/infra_topology.yaml`. Services, queues, storage, and flows must match that file; do not add components not listed there.

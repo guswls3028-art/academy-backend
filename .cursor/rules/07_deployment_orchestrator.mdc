@@ -8,6 +8,8 @@ alwaysApply: false
 
 **Primary deploy entry:** scripts/v1/deploy.ps1
 
+Do **not** use scripts/archive for deploy or CI; only scripts/v1. Archive is reference-only (00_ssot_v1_archive_structure.mdc).
+
 **Deployment flow:**
 
 1. Build image
