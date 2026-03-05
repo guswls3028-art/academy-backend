@@ -271,7 +271,7 @@ Run from repo root (Django app) with AWS credentials and env configured:
 
 - **Network (Batch CE subnets; private subnet NAT/VPC endpoints):**  
   `python manage.py validate_video_network_requirements`  
-  If something cannot be determined via SDK, the command prints **DEPENDS ON MANUAL AWS CONSOLE CONFIG** and lists required endpoints/routes (ECR api/dkr, logs, S3).
+  If something cannot be determined via SDK, the command prints **DEPENDS ON MANUAL AWS CONSOLE CONFIG** and lists required endpoints/routes (ECR api/dkr, CloudWatch Logs).
 
 - **Architecture (no Lambda):**  
   `python manage.py validate_video_architecture_mode`

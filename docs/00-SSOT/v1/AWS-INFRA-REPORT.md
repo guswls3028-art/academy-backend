@@ -174,7 +174,7 @@
 - **EC2 키 페어:** backend-api-key, ai-worker-key, message-key, video-worker-key
 - **Elastic IP:** 4개 (API EC2 1개 연결, academy-v4-nat-eip 1개, RDS 1개, 미연결 1개)
 - **KMS:** RDS용 alias/aws/rds 사용 중
-- **S3:** 버킷 없음 → .cursorrules 정책(S3 사용 금지) 준수
+- **오브젝트 스토리지 / CDN:** AWS S3 미사용. 파일 저장은 Cloudflare R2, CDN은 Cloudflare 사용.
 
 ---
 

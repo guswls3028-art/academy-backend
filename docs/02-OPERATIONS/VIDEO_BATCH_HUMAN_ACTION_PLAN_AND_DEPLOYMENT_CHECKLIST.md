@@ -101,7 +101,7 @@
 | 항목 | 내용 |
 |------|------|
 | **VPC, 서브넷, 라우트 테이블** | **MANUAL STEP**. batch_video_setup.ps1은 기존 VpcId, SubnetIds, SecurityGroupId를 인자로 받음. 리포지토리에 VPC/서브넷 생성 스크립트 없음. |
-| **NAT/IGW 또는 VPC 엔드포인트** | **MANUAL STEP**. `validate_video_network_requirements`는 CE 서브넷의 라우트 테이블에서 IGW 라우트 존재 여부만 확인. 사설 서브넷이면 "DEPENDS ON MANUAL AWS CONSOLE CONFIG" 출력하며, 필요 시 NAT 또는 VPC 엔드포인트(ecr.api, ecr.dkr, logs, s3) 안내. 실제 NAT/엔드포인트 생성 스크립트 없음. |
+| **NAT/IGW 또는 VPC 엔드포인트** | **MANUAL STEP**. `validate_video_network_requirements`는 CE 서브넷의 라우트 테이블에서 IGW 라우트 존재 여부만 확인. 사설 서브넷이면 "DEPENDS ON MANUAL AWS CONSOLE CONFIG" 출력하며, 필요 시 NAT 또는 VPC 엔드포인트(ecr.api, ecr.dkr, logs) 안내. 실제 NAT/엔드포인트 생성 스크립트 없음. |
 | **검증** | `python manage.py validate_video_network_requirements` (Django 앱 루트, AWS 자격 증명·설정 필요). |
 
 ### 7) 시크릿 저장소 (SSM/Secrets Manager)
@@ -142,7 +142,7 @@
    **검증:** `python manage.py showmigrations video` 에서 [X] 표시.
 
 3. **네트워크 준비 (MANUAL)**  
-   - VPC, 서브넷, 보안 그룹, 필요 시 NAT 또는 VPC 엔드포인트(ECR, logs, S3).  
+   - VPC, 서브넷, 보안 그룹, 필요 시 NAT 또는 VPC 엔드포인트(ECR, CloudWatch Logs).  
    **검증:** (선택) `python manage.py validate_video_network_requirements`.
 
 4. **ECR 이미지**  
