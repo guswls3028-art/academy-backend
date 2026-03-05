@@ -138,6 +138,7 @@ aws ecr put-lifecycle-policy --repository-name academy-video-worker --lifecycle-
 - **배포 플랜:** `docs/00-SSOT/v1/V1-DEPLOYMENT-PLAN.md`
 - **배포 최종 상태:** `docs/00-SSOT/v1/V1-DEPLOYMENT-FINAL-STATE.md`
 - **배포 검증:** `docs/00-SSOT/v1/V1-DEPLOYMENT-VERIFICATION.md`
+- **스크립트 변경 이력:** `docs/00-SSOT/v1/SCRIPTS-CHANGELOG.md`
 
 ---
 
