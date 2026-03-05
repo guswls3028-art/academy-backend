@@ -58,6 +58,27 @@
 
 ---
 
+## Backend CI 및 배포 절차 (OIDC 전용)
+
+- **빌드/푸시:** GitHub Actions만 사용. Access Key 워크플로우 폐기.
+  - **워크플로:** `.github/workflows/v1-build-and-push-latest.yml` (OIDC: `secrets.AWS_ROLE_ARN_FOR_ECR_BUILD`).
+  - **트리거:** main push, workflow_dispatch.
+  - **대상:** academy-base, academy-api, academy-video-worker, academy-messaging-worker, academy-ai-worker-cpu (linux/arm64, tag=latest).
+  - **산출물:** push 후 각 repo의 imageDigest를 `docs/00-SSOT/v1/reports/ci-build.latest.md`에 기록·커밋, artifact 업로드.
+
+- **배포 순서 (로컬):**
+  1. Backend repo에서 main push 후 CI로 latest 이미지 빌드/푸시 완료 대기 (또는 workflow_dispatch 실행).
+  2. `pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/deploy.ps1 -Env prod -SkipBuild`
+  3. `pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/run-deploy-verification.ps1 -AwsProfile default`
+
+- **배포 보장:** API UserData에 배포 nonce(DeploymentId) 포함 → 매 배포마다 LT 버전 변경 → instance refresh. 컨테이너 실행 전 `docker pull`·기존 컨테이너 stop/rm 후 재실행. Messaging/AI 워커 ASG는 v1에서 UserData 미사용(AMI/인스턴스 타입만).
+
+- **추적:** 배포 후 `runtime-images.latest.md`에 API 인스턴스별 RepoDigests 기록. `ci-build.latest.md`의 academy-api digest와 불일치 시 보고서에 "CI vs Runtime: MISMATCH (배포/갱신 실패 가능)" 명시.
+
+- **Build 서버:** OIDC CI로 빌드/푸시 2회 성공 확인 후 build 서버(academy-build-arm64) Stop/terminate. `docs/00-SSOT/v1/BUILD-SERVER-TRANSITION.md` 참고.
+
+---
+
 ## 실행 시 인증
 
 - AWS/Cloudflare: Cursor 룰(.cursor/rules) 준수. 에이전트가 루트 `.env`를 열어 환경변수로 설정한 뒤 실행.
