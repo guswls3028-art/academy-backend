@@ -83,7 +83,7 @@ function Ensure-BatchIAM {
     }
 }
 
-# API/Build EC2 인스턴스가 SSM에 등록되도록 instance profile 역할에 AmazonSSMManagedInstanceCore 부여
+# API/Build EC2 인스턴스가 SSM에 등록되고 ECR에서 이미지를 Pull할 수 있도록 instance profile 역할에 정책 부여
 function Ensure-EC2InstanceProfileSSM {
     if ($script:PlanMode) { return }
     $profileName = $script:ApiInstanceProfile
@@ -97,11 +97,19 @@ function Ensure-EC2InstanceProfileSSM {
     $roleName = $ip.InstanceProfile.Roles[0].RoleName
     $policies = Invoke-AwsJson @("iam", "list-attached-role-policies", "--role-name", $roleName, "--output", "json")
     $hasSsm = $policies.AttachedPolicies | Where-Object { $_.PolicyArn -eq "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" }
-    if ($hasSsm) {
+    if (-not $hasSsm) {
+        Invoke-Aws @("iam", "attach-role-policy", "--role-name", $roleName, "--policy-arn", "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore") -ErrorMessage "attach SSM to EC2 role" | Out-Null
+        Write-Ok "Attached AmazonSSMManagedInstanceCore to $roleName (SSM agent can register)"
+        $script:ChangesMade = $true
+    } else {
         Write-Ok "EC2 role $roleName already has AmazonSSMManagedInstanceCore"
-        return
     }
-    Invoke-Aws @("iam", "attach-role-policy", "--role-name", $roleName, "--policy-arn", "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore") -ErrorMessage "attach SSM to EC2 role" | Out-Null
-    Write-Ok "Attached AmazonSSMManagedInstanceCore to $roleName (SSM agent can register)"
-    $script:ChangesMade = $true
+    $hasEcr = $policies.AttachedPolicies | Where-Object { $_.PolicyArn -eq "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly" }
+    if (-not $hasEcr) {
+        Invoke-Aws @("iam", "attach-role-policy", "--role-name", $roleName, "--policy-arn", "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly") -ErrorMessage "attach ECR read to EC2 role" | Out-Null
+        Write-Ok "Attached AmazonEC2ContainerRegistryReadOnly to $roleName (API/Build can pull ECR images)"
+        $script:ChangesMade = $true
+    } else {
+        Write-Ok "EC2 role $roleName already has AmazonEC2ContainerRegistryReadOnly"
+    }
 }
