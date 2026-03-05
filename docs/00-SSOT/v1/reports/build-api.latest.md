@@ -23,3 +23,8 @@
 
 - Git/Docker 설치 후 clone, `docker build -f docker/Dockerfile.base`, `docker build -f docker/api/Dockerfile` (--platform linux/arm64), tag, push 수행.
 - academy-ec2-role 에 AmazonEC2ContainerRegistryPowerUser 부착 후 push 성공.
+
+## api-health-fix-2 (예정, 2026-03-06)
+- **목적:** /healthz 라우트 반영(ALB health check path SSOT /healthz).
+- **상태:** 미빌드. 빌드 서버 academy-build-arm64 (i-07f6f245de7026361) terminated.
+- **방법:** 빌드 서버 기동 후 run-ssm-build-api.ps1 또는 tmp-ssm-api-build.json 기준 SSM 실행. 태그 api-health-fix-2.
