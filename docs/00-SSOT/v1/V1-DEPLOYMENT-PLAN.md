@@ -44,7 +44,7 @@
 - **필수 확인:**
   - `network.vpcId`: 비어 있으면 **academy-v1-vpc**를 태그로 찾거나 **신규 생성**. 기존 VPC 재사용 시 해당 VPC ID 입력.
   - `networkPublicSubnets` / `networkPrivateSubnets`: 비어 있으면 스크립트가 **academy-v1-vpc** 내 서브넷을 이름(academy-v1-public-a/b, academy-v1-private-a/b)으로 찾거나 신규 생성.
-  - `rds.dbIdentifier`: **academy-v1-db**. 기존 academy-db를 그대로 쓰지 않으면 새 RDS가 생성됨(스크립트는 RDS 삭제 안 함).
+  - `rds.dbIdentifier`: **academy-v1-db**. 기존 academy-db를 그대로 쓰지 않으면 새 RDS가 생성됨(스크립트는 RDS 삭제 안 함). **V1.1:** Performance Insights 7일·Multi-AZ toggle(SSOT). 슬로우 쿼리 등 운영 최소선 활성화.
   - `rds.masterPasswordSsmParam`: `/academy/rds/master_password` 등 SSM SecureString에 마스터 비밀번호 저장 필수.
   - **Bootstrap** 시 SSM 비밀번호·SQS·ECR URI 등 자동 준비 가능하나, RDS/Redis는 Strict 검사에서 실패할 수 있으므로 `-SkipRds -SkipRedis`로 1차 배포 후 수동 생성 가능.
 
