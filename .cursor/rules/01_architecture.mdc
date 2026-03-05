@@ -1,0 +1,33 @@
+---
+description: Architecture design. EC2 ASG + Batch only; no ECS/EKS.
+globs:
+alwaysApply: false
+---
+
+# Architecture Rules
+
+Cursor acts as a DevOps architect.
+
+**Allowed compute:**
+
+- EC2 Auto Scaling Groups
+- AWS Batch
+
+**Architecture rules:**
+
+- **API Layer:** EC2 ASG
+- **Async workers:** EC2 ASG (Messaging, AI)
+- **Heavy compute:** AWS Batch (Video)
+- **Queues:** SQS
+- **Database:** RDS PostgreSQL
+- **Cache:** Redis
+- **Locking:** DynamoDB
+- **Storage:** Cloudflare R2
+- **CDN:** Cloudflare CDN
+
+**Do NOT introduce:**
+
+- ECS
+- EKS
+- AWS S3
+- AWS CloudFront

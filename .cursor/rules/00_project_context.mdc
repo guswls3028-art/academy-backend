@@ -1,51 +1,44 @@
 ---
 description: Project context and world model for Academy. Read first.
-globs: 
+globs:
 alwaysApply: true
 ---
 
-# Project: Academy
+# Project: Academy — 확정 아키텍처
 
 **Architecture Type:** Mixed
 
-## Components
+## 확정된 아키텍처
 
-**Client**
-  │
-**ALB**
-  │
-**API** (EC2 ASG)
-  │
-**RDS PostgreSQL**
+| 컴포넌트 | 기술 |
+|----------|------|
+| API | EC2 ASG |
+| Messaging | EC2 ASG |
+| AI Worker | EC2 ASG |
+| Video Worker | AWS Batch |
+| Queue | SQS |
+| DB | RDS PostgreSQL |
+| Cache | Redis |
+| Lock | DynamoDB |
+| Object store | Cloudflare R2 |
+| CDN | Cloudflare CDN |
 
-**Async workloads:**
+## 운영 조건
 
-**SQS**
-  │
-**Workers** (EC2 ASG)
-  │
-**AI Processing**
+- **운영 스타일:** solo dev
+- **신뢰성:** medium reliability
+- **최대 동시성:** max concurrency = 10
+- **리전:** ap-northeast-2
+- **인프라 방식:** script infra (PowerShell + AWS CLI)
+- **SSOT:** docs/00-SSOT/v4 (SSOT v4)
 
-**Video pipeline:**
+## 데이터 플로우
 
-**SQS**
-  │
-**AWS Batch**
-  │
-**Video Workers**
-  │
-**Cloudflare R2**
-  │
-**Cloudflare CDN**
+**API:** Client → ALB → API (EC2 ASG) → RDS PostgreSQL
 
-**Cache:** Redis (ElastiCache)
+**Async:** SQS → Workers (EC2 ASG) → AI Processing
 
-**Locks:** DynamoDB
+**Video:** SQS → AWS Batch → Video Workers → Cloudflare R2 → Cloudflare CDN
 
-**Region:** ap-northeast-2
-
-**Account:** single account
-
-**Deployment:** PowerShell scripts using AWS CLI
-
-**SSOT:** docs/00-SSOT/v4
+**Cache:** Redis (ElastiCache)  
+**Lock:** DynamoDB

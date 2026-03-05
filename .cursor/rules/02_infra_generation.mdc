@@ -1,0 +1,38 @@
+---
+description: AI infrastructure auto-design. PowerShell + AWS CLI only.
+globs: scripts/v4/**/*
+alwaysApply: false
+---
+
+# Infra Generation
+
+Cursor may design infrastructure automatically.
+
+**Allowed compute:**
+
+- EC2 Auto Scaling Groups
+- AWS Batch
+
+**Architecture rules:**
+
+- **API Layer:** EC2 ASG
+- **Async workers:** EC2 ASG
+- **Heavy compute:** AWS Batch
+- **Queues:** SQS
+- **Database:** RDS PostgreSQL
+- **Cache:** Redis
+- **Locking:** DynamoDB
+- **Storage:** Cloudflare R2
+- **CDN:** Cloudflare CDN
+
+**Important restrictions:**
+
+Do NOT introduce: ECS, EKS, AWS S3, AWS CloudFront.
+
+**Implementation:**
+
+- Infrastructure is created using **PowerShell scripts** + **AWS CLI**
+- NOT Terraform, NOT CloudFormation
+- Must follow **SSOT:** docs/00-SSOT/v4
+- Scripts must be **idempotent**, **safe to re-run**
+- Cursor must modify scripts in: **scripts/v4**
