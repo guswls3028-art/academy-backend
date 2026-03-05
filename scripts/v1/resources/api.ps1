@@ -4,12 +4,14 @@ $ErrorActionPreference = "Stop"
 
 # EC2 부팅 시 Docker 설치 → ECR Pull → Django 컨테이너 8000 포트 실행. API_IMAGE_URI 등은 런타임 치환.
 function Get-ApiLaunchTemplateUserData {
-    param([string]$ApiImageUri, [string]$Region, [string]$SsmApiEnvParam)
+    param([string]$ApiImageUri, [string]$Region, [string]$SsmApiEnvParam, [string]$DeploymentId = "")
     if (-not $ApiImageUri -or -not $Region) { return "" }
     $ecrHost = $ApiImageUri.Split("/")[0]
+    $deployComment = if ($DeploymentId) { "# DEPLOYMENT_ID=$DeploymentId" } else { "# DEPLOYMENT_ID=" }
     $script = @"
 #!/bin/bash
 set -e
+$deployComment
 export AWS_REGION="$Region"
 LOG=/var/log/academy-api-userdata.log
 touch "`$LOG"
@@ -27,7 +29,7 @@ else
 fi
 systemctl start docker
 systemctl enable docker
-# 2) ECR 로그인 및 이미지 Pull (재시도로 일시적 타임아웃 완화)
+# 2) ECR 로그인 및 이미지 Pull (재시도로 일시적 타임아웃 완화). 매 배포 최신 latest 강제 pull.
 ecr_ok=false
 for attempt in 1 2 3 4 5; do
   if aws ecr get-login-password --region $Region 2>>"`$LOG" | docker login --username AWS --password-stdin $ecrHost 2>>"`$LOG"; then
@@ -50,8 +52,10 @@ if [ -n "$SsmApiEnvParam" ]; then
     [ -s /opt/api.env ] && API_ENV_FILE="--env-file /opt/api.env"
   fi
 fi
-# 4) Django 컨테이너 8000 포트로 실행
-if ! docker run -d --restart unless-stopped -p 8000:8000 `$API_ENV_FILE $ApiImageUri 2>>"`$LOG"; then
+# 4) 기존 academy-api 컨테이너 정리 후 최신 이미지로 실행 (강제 갱신)
+docker stop academy-api 2>/dev/null || true
+docker rm academy-api 2>/dev/null || true
+if ! docker run -d --restart unless-stopped --name academy-api -p 8000:8000 `$API_ENV_FILE $ApiImageUri 2>>"`$LOG"; then
   log "docker run failed. Image: $ApiImageUri"
   exit 1
 fi
@@ -59,10 +63,15 @@ fi
     return $script.Trim()
 }
 
-# ECR academy-api 리포지터리에서 최신 이미지 태그 1개 반환. (latest 제외 우선, 없으면 latest 사용)
+# ECR academy-api: 당분간 useLatestTag면 latest만 사용, 아니면 non-latest 최신 1개.
 function Get-LatestApiImageUri {
     $repo = $script:EcrApiRepo
     if (-not $repo) { return $null }
+    if ($script:EcrUseLatestTag) {
+        $acc = $script:AccountId
+        $reg = $script:Region
+        return "${acc}.dkr.ecr.${reg}.amazonaws.com/${repo}:latest"
+    }
     $list = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $repo, "--region", $script:Region, "--output", "json") 2>$null
     if (-not $list -or -not $list.imageDetails -or $list.imageDetails.Count -eq 0) { return $null }
     $nonLatest = @($list.imageDetails | Where-Object { $_.imageTags -and ($_.imageTags | Where-Object { $_ -ne "latest" }) } | ForEach-Object {
