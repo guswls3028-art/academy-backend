@@ -167,8 +167,11 @@ function Ensure-API-ASG {
         $script:ChangesMade = $true
     }
     if ($ltResult.Updated) {
-        Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region) -ErrorMessage "start-instance-refresh API ASG failed" | Out-Null
-        Write-Ok "ASG $($script:ApiASGName) instance-refresh started"
+        $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
+        $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInstanceRefreshInstanceWarmup } else { 300 }
+        $prefs = "{`"MinHealthyPercentage`":$minHealthy,`"InstanceWarmup`":$warmup}"
+        Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh API ASG failed" | Out-Null
+        Write-Ok "ASG $($script:ApiASGName) instance-refresh started (MinHealthyPercentage=$minHealthy, InstanceWarmup=${warmup}s)"
         $script:ChangesMade = $true
     }
     if (-not $capacityDrift -and -not $ltResult.Updated) {

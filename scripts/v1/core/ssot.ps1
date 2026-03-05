@@ -235,6 +235,7 @@ function Load-SSOT {
     $script:RedisEngineVersion = if ($p["redis"]["engineVersion"]) { $p["redis"]["engineVersion"] } else { "" }
 
     $obs = $p["observability"]
+    if (-not $obs) { $obs = @{} }
     $script:ObservabilityLogRetentionDays = Coerce-Int $obs["logRetentionDays"] 30
     $script:ObservabilityAlarmPeriodSeconds = Coerce-Int $obs["alarmPeriodSeconds"] 300
     $script:ObservabilityAlarmEvaluationPeriods = Coerce-Int $obs["alarmEvaluationPeriods"] 2
