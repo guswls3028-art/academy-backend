@@ -250,6 +250,83 @@ function Ensure-SecurityGroups {
     }
 }
 
+    } else {
+        $script:SecurityGroupData = $byName[$script:SgDataName].GroupId
+    }
+}
+
+# ECR/S3 VPC Endpoints so API instances (public or private) can pull images without internet path (avoids ECR connect timeout).
+function Ensure-ECR-VpcEndpoints {
+    $vpcId = $script:VpcId
+    $region = $script:Region
+    $vpcCidr = $script:VpcCidr
+    if (-not $vpcId -or -not $region -or $script:PlanMode) { return }
+    $svcPrefix = "com.amazonaws.$region"
+    $ecrApiSvc = "$svcPrefix.ecr.api"
+    $ecrDkrSvc = "$svcPrefix.ecr.dkr"
+    $s3Svc = "$svcPrefix.s3"
+
+    # SG for interface endpoints: allow 443 from VPC
+    $sgName = "academy-v1-vpce-sg"
+    $r = Invoke-AwsJson @("ec2", "describe-security-groups", "--filters", "Name=vpc-id,Values=$vpcId", "Name=group-name,Values=$sgName", "--region", $region, "--output", "json")
+    $vpceSg = $r.SecurityGroups | Where-Object { $_.GroupName -eq $sgName } | Select-Object -First 1
+    if (-not $vpceSg -and -not $script:PlanMode) {
+        $c = Invoke-AwsJson @("ec2", "create-security-group", "--group-name", $sgName, "--description", "VPC endpoints (ECR etc.)", "--vpc-id", $vpcId, "--tag-specifications", "ResourceType=security-group,Tags=[{Key=Name,Value=$sgName},{Key=Project,Value=academy}]", "--region", $region, "--output", "json")
+        $vpceSgId = $c.GroupId
+        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $vpceSgId, "--protocol", "tcp", "--port", "443", "--cidr", $vpcCidr, "--region", $region) -ErrorMessage "vpce-sg 443" | Out-Null
+        Write-Ok "SG $sgName created for VPC endpoints"
+        $script:ChangesMade = $true
+    } else {
+        $vpceSgId = $vpceSg.GroupId
+    }
+
+    # Route table IDs used by API subnets (public + private) for S3 gateway endpoint
+    $allSubnets = @($script:PublicSubnets) + @($script:PrivateSubnets) | Where-Object { $_ -match '^subnet-' }
+    $rtIds = @()
+    foreach ($subId in $allSubnets) {
+        $a = Invoke-AwsJson @("ec2", "describe-route-tables", "--filters", "Name=association.subnet-id,Values=$subId", "Name=vpc-id,Values=$vpcId", "--region", $region, "--output", "json")
+        foreach ($rt in $a.RouteTables) {
+            $rtId = $rt.RouteTableId
+            if ($rtId -and $rtIds -notcontains $rtId) { $rtIds += $rtId }
+        }
+    }
+    if ($rtIds.Count -eq 0) { $rtIds = @("") }
+
+    # ECR API interface endpoint
+    $existing = Invoke-AwsJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "Name=service-name,Values=$ecrApiSvc", "--region", $region, "--output", "json") 2>$null
+    if (-not $existing -or -not $existing.VpcEndpoints -or $existing.VpcEndpoints.Count -eq 0) {
+        if (-not $script:PlanMode) {
+            $subIds = ($script:PublicSubnets + $script:PrivateSubnets) | Where-Object { $_ -match '^subnet-' } | Select-Object -First 2
+            if ($subIds.Count -lt 1) { Write-Warn "No subnets for ECR endpoint"; return }
+            Invoke-Aws @("ec2", "create-vpc-endpoint", "--vpc-id", $vpcId, "--vpc-endpoint-type", "Interface", "--service-name", $ecrApiSvc, "--subnet-ids", $subIds, "--security-group-ids", $vpceSgId, "--private-dns-enabled", "--region", $region) -ErrorMessage "create-vpc-endpoint ecr.api" | Out-Null
+            Write-Ok "VPC endpoint $ecrApiSvc created"
+            $script:ChangesMade = $true
+        }
+    } else { Write-Ok "VPC endpoint $ecrApiSvc exists" }
+
+    # ECR DKR interface endpoint
+    $existingDkr = Invoke-AwsJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "Name=service-name,Values=$ecrDkrSvc", "--region", $region, "--output", "json") 2>$null
+    if (-not $existingDkr -or -not $existingDkr.VpcEndpoints -or $existingDkr.VpcEndpoints.Count -eq 0) {
+        if (-not $script:PlanMode) {
+            $subIds = ($script:PublicSubnets + $script:PrivateSubnets) | Where-Object { $_ -match '^subnet-' } | Select-Object -First 2
+            if ($subIds.Count -lt 1) { return }
+            Invoke-Aws @("ec2", "create-vpc-endpoint", "--vpc-id", $vpcId, "--vpc-endpoint-type", "Interface", "--service-name", $ecrDkrSvc, "--subnet-ids", $subIds, "--security-group-ids", $vpceSgId, "--private-dns-enabled", "--region", $region) -ErrorMessage "create-vpc-endpoint ecr.dkr" | Out-Null
+            Write-Ok "VPC endpoint $ecrDkrSvc created"
+            $script:ChangesMade = $true
+        }
+    } else { Write-Ok "VPC endpoint $ecrDkrSvc exists" }
+
+    # S3 gateway endpoint (ECR image layers)
+    $existingS3 = Invoke-AwsJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "Name=service-name,Values=$s3Svc", "--region", $region, "--output", "json") 2>$null
+    if (-not $existingS3 -or -not $existingS3.VpcEndpoints -or $existingS3.VpcEndpoints.Count -eq 0) {
+        if (-not $script:PlanMode -and $rtIds -and $rtIds[0] -ne "") {
+            Invoke-Aws @("ec2", "create-vpc-endpoint", "--vpc-id", $vpcId, "--vpc-endpoint-type", "Gateway", "--service-name", $s3Svc, "--route-table-ids", $rtIds, "--region", $region) -ErrorMessage "create-vpc-endpoint s3" | Out-Null
+            Write-Ok "VPC endpoint $s3Svc (gateway) created"
+            $script:ChangesMade = $true
+        }
+    } else { Write-Ok "VPC endpoint $s3Svc exists" }
+}
+
 function Ensure-Network {
     Write-Step "Ensure Network (2-tier VPC, NAT, SG)"
     if ($script:PlanMode) {
