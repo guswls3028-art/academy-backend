@@ -238,7 +238,7 @@ foreach ($t in $tgList) { [void]$sb.AppendLine("| $($t.Name) | $($t.Port) | $($t
 [void]$sb.AppendLine("---")
 [void]$sb.AppendLine("SSOT keep: API ASG/ALB/TG, Workers ASG, Batch CE/Queue, academy-db, academy-v1-redis. Others LEGACY_CANDIDATE.")
 Set-Content -Path $invPath -Value $sb.ToString() -Encoding UTF8 -Force
-Write-Host "  Inventory: $invPath" -ForegroundColor Green
+Write-Host '  Inventory:' $invPath -ForegroundColor Green
 
 # --- resource-cleanup-plan.latest.md ---
 $planPath = Join-Path $RepoRoot "docs\00-SSOT\v1\reports\resource-cleanup-plan.latest.md"
