@@ -4,6 +4,7 @@ $ErrorActionPreference = "Stop"
 function Get-EvidenceSnapshot {
     param([string]$NetprobeJobId = "", [string]$NetprobeStatus = "")
     $R = $script:Region
+    $evidenceStart = Get-Date
     $ceV = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:VideoCEName, "--region", $R, "--output", "json")
     $ceO = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:OpsCEName, "--region", $R, "--output", "json")
     $qV = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoQueueName, "--region", $R, "--output", "json")
