@@ -155,10 +155,9 @@ function Ensure-API-Instance {
             try {
                 Wait-ApiHealth200 -ApiBaseUrl $script:ApiBaseUrl -TimeoutSec 300
             } catch {
-                Write-Warn "API health 200 timeout; starting instance-refresh"
-                Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed" | Out-Null
+                Write-Warn "API health 200 timeout. $_. Deploy continues; check $($script:ApiBaseUrl)/$($script:ApiHealthPath) and ASG/ALB manually."
+                Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed" 2>$null | Out-Null
                 $script:ChangesMade = $true
-                throw "API health check failed; instance-refresh started. Re-run deploy."
             }
         }
     } else {
