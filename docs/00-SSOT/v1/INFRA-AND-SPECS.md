@@ -38,6 +38,8 @@
 |------|-----|
 | ASG | academy-v1-messaging-worker-asg |
 | 큐 | academy-v1-messaging-queue |
+| DLQ | academy-v1-messaging-queue-dlq (Bootstrap 연동) |
+| VisibilityTimeout | 900초 (처리 최악 시간보다 크게) |
 | 인스턴스 | t4g.medium, min=1 max=10 |
 
 ---
@@ -48,6 +50,8 @@
 |------|-----|
 | ASG | academy-v1-ai-worker-asg |
 | 큐 | academy-v1-ai-queue |
+| DLQ | academy-v1-ai-queue-dlq (Bootstrap 연동) |
+| VisibilityTimeout | 3600초 (inference 최대 60분 대비) |
 | 인스턴스 | t4g.medium, min=1 max=10 |
 
 ---
