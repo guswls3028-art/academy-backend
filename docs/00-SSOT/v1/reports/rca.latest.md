@@ -91,6 +91,14 @@
 
 ## 6) 조치 방향 (PHASE 2 반영)
 
-1. **SG:** network.ps1에서 sg-app 8000 인바운드를 SSOT의 VpcCidr(172.30.0.0/16) 기준으로 보장. (신규 생성 시 VpcCidr 사용, 기존 SG에는 8000 from VpcCidr 규칙 추가.)
+1. **SG:** network.ps1에서 sg-app 8000 인바운드를 SSOT의 VpcCidr(172.30.0.0/16) 기준으로 보장. (신규 생성 시 VpcCidr 사용, 기존 SG에는 8000 from VpcCidr 규칙 추가.) → **적용 완료.** 배포 시 "SG ... added 8000 from 172.30.0.0/16 (SSOT)" 확인.
 2. **TG:** 이미 SSOT와 일치하므로 변경 없음.
 3. **컨테이너 기동:** UserData/이미지/실행 인자 점검 — 0.0.0.0:8000 리스닝, 실패 시 로그 남기도록 보강.
+
+---
+
+## 7) 조치 후 재검증 (이력)
+
+- **Target health 변화:** SG 적용 후 기존 인스턴스는 Target.Timeout → instance refresh로 신규 2대(i-007504ce07a1b7c4a, i-0a5fef2a26e7c5132) 등록. 해당 2대는 **Target.FailedHealthChecks / Health checks failed** (Timeout 아님). 즉 ALB→EC2:8000 연결은 성공했으나 /health가 200이 아님.
+- **SSM 신규 인스턴스(i-007504ce07a1b7c4a):** docker ps -a 빈 결과, curl 127.0.0.1:8000/health 실패. **컨테이너 미기동 상태 유지.**
+- **결론:** SG 수정으로 네트워크 차단은 해소됨. 게이트 A 미달 원인은 **academy-api 컨테이너가 인스턴스에서 기동하지 않음**(이미지/ENV/DB 연결 등). 인스턴스 내 `/var/log/cloud-init-output.log`, `/var/log/academy-api-userdata.log` 확인 및 이미지 빌드/실행 조건 점검 필요.
