@@ -210,7 +210,9 @@ if ($e2eJobId -and $e2eJobId.Trim() -ne "") {
         $jobDesc = Invoke-AwsJson @("batch", "describe-jobs", "--jobs", $e2eJobId.Trim(), "--region", $R, "--output", "json")
         if ($jobDesc -and $jobDesc.jobs -and $jobDesc.jobs.Count -gt 0) {
             $j = $jobDesc.jobs[0]
-            $videoE2EEvidence = "jobId=$($j.jobId) status=$($j.status) statusReason=$($j.statusReason) createdAt=$($j.createdAt) stoppedAt=$($j.stoppedAt) containerExitCode=$($j.container.exitCode)"
+            $exitCode = ""
+            if ($j.container -and $null -ne $j.container.exitCode) { $exitCode = " containerExitCode=$($j.container.exitCode)" }
+            $videoE2EEvidence = "jobId=$($j.jobId) status=$($j.status) statusReason=$($j.statusReason) createdAt=$($j.createdAt) stoppedAt=$($j.stoppedAt)$exitCode"
             if ($j.status -eq "SUCCEEDED") { $videoE2EEvidence += " (E2E 완주 근거)" }
             else { Add-Finding -Severity "WARNING" -Area "Video" -Message "VIDEO_E2E_TEST_JOB_ID=$e2eJobId status=$($j.status). SUCCEEDED이면 보고서에 근거로 기록됨." }
         } else {
