@@ -100,7 +100,7 @@ function Wait-IAMRoleDeleted {
 }
 
 function Wait-CEValidEnabled {
-    param([string]$CEName, [string]$Reg, [int]$TimeoutSec = 600)
+    param([string]$CEName, [string]$Reg, [int]$TimeoutSec = 1800)
     $elapsed = 0
     while ($elapsed -lt $TimeoutSec) {
         $r = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $CEName, "--region", $Reg, "--output", "json")
@@ -114,19 +114,20 @@ function Wait-CEValidEnabled {
         $state = $ce.state
         Write-Host "  CE $CEName status=$status state=$state" -ForegroundColor Gray
         if ($ce.statusReason -and $ce.statusReason -like "*INVALID*") {
-            throw "CE $CEName statusReason indicates INVALID: $($ce.statusReason)"
+            throw "CE $CEName statusReason indicates INVALID: $($ce.statusReason). 다음 액션: SSOT(instanceType/subnet/role 등) 확인 후 Ensure-OpsCE/Ensure-VideoCE 재실행."
         }
         if ($status -eq "VALID" -and $state -eq "ENABLED") {
             Write-Ok "CE $CEName VALID and ENABLED"
             return
         }
         if ($status -eq "INVALID") {
-            throw "CE $CEName is INVALID. statusReason: $($ce.statusReason)"
+            throw "CE $CEName is INVALID. statusReason: $($ce.statusReason). 다음 액션: AWS Batch 콘솔에서 statusReason 확인, SSOT(videoBatch/ops) 설정 수정 후 재배포."
         }
         Start-Sleep -Seconds 15
         $elapsed += 15
     }
-    throw "Timeout waiting for CE $CEName VALID/ENABLED (${TimeoutSec}s)"
+    $min = [math]::Floor($TimeoutSec / 60)
+    throw "Timeout (${min}min) waiting for CE $CEName VALID/ENABLED. 다음 액션: AWS Batch 콘솔에서 CE 상태 확인, 필요 시 수동 개입 또는 재시도."
 }
 
 function Wait-InstanceTerminated {
