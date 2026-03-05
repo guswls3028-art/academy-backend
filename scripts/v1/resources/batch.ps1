@@ -132,9 +132,18 @@ function Ensure-VideoCE {
         return
     }
     $c = $ce.computeEnvironments[0]
-    if ($c.status -eq "INVALID") {
-        if (-not $script:AllowRebuild) { Write-Warn "Video CE INVALID; skip recreate."; return }
-        Write-Host "  INVALID -> disable queue, disable CE, delete, wait, create, wait" -ForegroundColor Yellow
+    $res = $c.computeResources
+    $currentMax = if ($res -and $res.maxvCpus) { [int]$res.maxvCpus } else { 0 }
+    $currentType = if ($res -and $res.instanceTypes -and $res.instanceTypes.Count -gt 0) { $res.instanceTypes[0] } else { $null }
+    $videoCEDrift = ($currentMax -ne $script:VideoCEMaxvCpus) -or ($currentType -ne $script:VideoCEInstanceType)
+    if ($c.status -eq "INVALID" -or $videoCEDrift) {
+        if (-not $script:AllowRebuild) {
+            if ($videoCEDrift) { Write-Warn "Video CE drift (current max=$currentMax type=$currentType, SSOT max=$($script:VideoCEMaxvCpus) type=$($script:VideoCEInstanceType)); run with -AllowRebuild to recreate." }
+            else { Write-Warn "Video CE INVALID; skip recreate." }
+            return
+        }
+        if ($videoCEDrift) { Write-Host "  Video CE drift (maxvCpus/instanceType) -> disable queue, disable CE, delete, create, enable queue" -ForegroundColor Yellow }
+        else { Write-Host "  INVALID -> disable queue, disable CE, delete, wait, create, wait" -ForegroundColor Yellow }
         $script:ChangesMade = $true
         $qCheck = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoQueueName, "--region", $script:Region, "--output", "json")
         if ($qCheck -and $qCheck.jobQueues -and $qCheck.jobQueues.Count -gt 0) {
