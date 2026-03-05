@@ -139,13 +139,17 @@ function Ensure-API-Instance {
         Wait-SSMOnline -InstanceId $instanceId -Reg $script:Region -TimeoutSec 300
     }
     if ($script:ApiBaseUrl) {
-        try {
-            Wait-ApiHealth200 -ApiBaseUrl $script:ApiBaseUrl -TimeoutSec 300
-        } catch {
-            Write-Warn "API health 200 timeout; starting instance-refresh"
-            Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed" | Out-Null
-            $script:ChangesMade = $true
-            throw "API health check failed; instance-refresh started. Re-run deploy."
+        if ($script:SkipApiSSMWait) {
+            Write-Warn "Skip API health wait (-SkipApiSSMWait). Check $($script:ApiBaseUrl)/$($script:ApiHealthPath) manually."
+        } else {
+            try {
+                Wait-ApiHealth200 -ApiBaseUrl $script:ApiBaseUrl -TimeoutSec 300
+            } catch {
+                Write-Warn "API health 200 timeout; starting instance-refresh"
+                Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed" | Out-Null
+                $script:ChangesMade = $true
+                throw "API health check failed; instance-refresh started. Re-run deploy."
+            }
         }
     } else {
         Write-Ok "API instance $instanceId ready (ApiBaseUrl not set)"
