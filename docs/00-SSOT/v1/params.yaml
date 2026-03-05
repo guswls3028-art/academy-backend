@@ -1,6 +1,6 @@
 # Academy SSOT v1 — 풀셋팅 단일소스. scripts/v1 전용.
 # 1인 개발·운영(장애 대응 10~60분), 1k~1.5k 사용자·동시 50~300 버스트.
-# API ASG min/desired/max = 2/2/4 (최소 HA). ARM64. ECR immutable tag 필수. S3 미사용·R2만.
+# API ASG: 런칭 전 비용 절감으로 min/desired=1, max=2 (docs/00-SSOT/v1/reports/scale-policy.latest.md).
 
 global:
   env: prod
