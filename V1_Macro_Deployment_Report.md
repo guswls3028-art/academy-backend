@@ -73,6 +73,7 @@
 | 인프라 현황(참고) | `docs/00-SSOT/v1/AWS-INFRA-REPORT.md` |
 | SSOT 사람용 | `docs/00-SSOT/v1/SSOT.md` |
 | params(기계용) | `docs/00-SSOT/v1/params.yaml` |
+| 스펙 한눈에 | `docs/00-SSOT/v1/INFRA-AND-SPECS.md` |
 | Evidence/Drift | `docs/00-SSOT/v1/reports/audit.latest.md`, `drift.latest.md` |
 | 배포 타이밍 점검 | `docs/00-SSOT/v1/reports/DEPLOY-TIMING-CHECKLIST.md` |
 | 배포 룰(Cursor) | `.cursor/rules/07_deployment_orchestrator.mdc` |

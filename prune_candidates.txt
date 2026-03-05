@@ -21,3 +21,27 @@ MODE: StrictValidation ON
   [DRIFT-DEBUG] Batch Queue ExpectedName: academy-v1-video-batch-queue
   [DRIFT-DEBUG] Batch Queue ExpectedName: academy-v1-video-ops-queue
   [DRIFT-DEBUG] EventBridge ExpectedName (describe-rule --name): academy-v1-reconcile-video-jobs
+  [DRIFT-DEBUG] EventBridge ActualName from AWS: academy-v1-reconcile-video-jobs
+  [DRIFT-DEBUG] EventBridge ExpectedName (describe-rule --name): academy-v1-video-scan-stuck-rate
+  [DRIFT-DEBUG] EventBridge ActualName from AWS: academy-v1-video-scan-stuck-rate
+  [DRIFT-DEBUG] ASG ActualNames from AWS: (academy-v1-ai-worker-asg, academy-v1-api-asg, academy-v1-messaging-worker-asg, academy-v1-video-ops-ce-asg-823f2525-3a00-318c-85cf-2ccfc033c170)
+  [DRIFT-DEBUG] ASG ExpectedName: academy-v1-api-asg
+  [DRIFT-DEBUG] ASG ExpectedName: academy-v1-messaging-worker-asg
+  [DRIFT-DEBUG] ASG ExpectedName: academy-v1-ai-worker-asg
+
+=== DRIFT ===
+| ResourceType | Name | Expected | Actual | Action |
+|--------------|------|----------|--------|--------|
+| Batch CE | academy-v1-video-batch-ce | exists | exists | NoOp |
+| Batch CE | academy-v1-video-ops-ce | exists | exists | NoOp |
+| Batch Queue | academy-v1-video-batch-queue | exists | exists | NoOp |
+| Batch Queue | academy-v1-video-ops-queue | exists | exists | NoOp |
+| EventBridge | academy-v1-reconcile-video-jobs | exists | exists | NoOp |
+| EventBridge | academy-v1-video-scan-stuck-rate | exists | exists | NoOp |
+| ASG | academy-v1-api-asg | Min=1 Max=3 Desired=1 | Min=1 Max=1 Desired=1 | Update |
+| ASG | academy-v1-messaging-worker-asg | exists | exists | NoOp |
+| ASG | academy-v1-ai-worker-asg | exists | exists | NoOp |
+| API LT | academy-v1-api-lt | AMI/SG/Profile/UserData SSOT | drift | NewVersion |
+=== END DRIFT ===
+
+  Drift report: C:\academy\docs\00-SSOT\v1\reports\drift.latest.md
