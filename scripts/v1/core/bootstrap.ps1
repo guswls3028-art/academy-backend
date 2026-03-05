@@ -257,8 +257,6 @@ function Invoke-BuildServerBuild {
             }
         }
         throw "Build server SSM command did not complete within ${waitSec}s."
-    } finally {
-        Remove-Item -Path $tmpFile -Force -ErrorAction SilentlyContinue
     }
 }
 
