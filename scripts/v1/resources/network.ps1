@@ -202,6 +202,23 @@ function Ensure-SecurityGroups {
         $script:ChangesMade = $true
     } else {
         $script:SecurityGroupApp = $byName[$script:SgAppName].GroupId
+        # 기존 sg-app에 8000 from VpcCidr(SSOT) 규칙 보장 — ALB→EC2 헬스체크 허용
+        if (-not $script:PlanMode -and $script:VpcCidr) {
+            $desc = Invoke-AwsJson @("ec2", "describe-security-groups", "--group-ids", $script:SecurityGroupApp, "--region", $script:Region, "--output", "json")
+            $has8000FromVpc = $false
+            foreach ($perm in $desc.SecurityGroups[0].IpPermissions) {
+                if ($perm.FromPort -eq 8000 -and $perm.ToPort -eq 8000) {
+                    foreach ($ir in $perm.IpRanges) {
+                        if ($ir.CidrIp -eq $script:VpcCidr) { $has8000FromVpc = $true; break }
+                    }
+                }
+            }
+            if (-not $has8000FromVpc) {
+                Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupApp, "--protocol", "tcp", "--port", "8000", "--cidr", $script:VpcCidr, "--region", $script:Region) -ErrorMessage "sg-app 8000 from VpcCidr" | Out-Null
+                Write-Ok "SG $script:SgAppName: added 8000 from $($script:VpcCidr) (SSOT)"
+                $script:ChangesMade = $true
+            }
+        }
     }
     # sg-batch: outbound 0.0.0.0/0
     if (-not $byName[$script:SgBatchName] -and -not $script:PlanMode) {
