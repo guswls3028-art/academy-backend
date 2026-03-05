@@ -58,7 +58,7 @@ api:
   amiId: ami-0c55b159cbfafe1f0
   instanceProfile: academy-api-instance-profile
   securityGroupId: ""
-  instanceType: c6g.large
+  instanceType: t4g.medium
   userData: ""
   asgName: academy-v4-api-asg
   asgLaunchTemplateName: academy-v4-api-lt
