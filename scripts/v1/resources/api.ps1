@@ -129,16 +129,9 @@ function Ensure-API-LaunchTemplate {
     $drift = ($actualAmi -ne $currentAmi) -or ($actualType -ne $currentType) -or ($actualSg -ne $currentSg) -or ($actualProfile -ne $currentProfile) -or ($actualUserData -ne $currentUserData)
     if (-not $drift) { return @{ LtId = $ltId; Updated = $false } }
 
-    $createArgs = @("ec2", "create-launch-template-version", "--launch-template-id", $ltId, "--version-description", "SSOT v1 drift", "--launch-template-data", $baseData, "--region", $script:Region, "--output", "json")
-    $newVer = Invoke-AwsJson $createArgs
-    if (-not $newVer -or -not $newVer.LaunchTemplateVersion) {
-        $prev = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        $errOut = & aws @createArgs 2>&1
-        $ErrorActionPreference = $prev
-        $errText = ($errOut | Out-String).Trim()
-        throw "create-launch-template-version failed. AWS: $errText"
-    }
+    $raw = Invoke-Aws @("ec2", "create-launch-template-version", "--launch-template-id", $ltId, "--version-description", "SSOT v1 drift", "--launch-template-data", $baseData, "--region", $script:Region, "--output", "json") -ErrorMessage "create-launch-template-version failed"
+    $newVer = ($raw | Out-String).Trim() | ConvertFrom-Json
+    if (-not $newVer -or -not $newVer.LaunchTemplateVersion) { throw "create-launch-template-version returned no version" }
     $newVersion = $newVer.LaunchTemplateVersion.VersionNumber
     Invoke-Aws @("ec2", "modify-launch-template", "--launch-template-id", $ltId, "--default-version", $newVersion.ToString(), "--region", $script:Region) -ErrorMessage "modify-launch-template set default failed" | Out-Null
     Write-Ok "LaunchTemplate $ltName new default version $newVersion (drift)"
