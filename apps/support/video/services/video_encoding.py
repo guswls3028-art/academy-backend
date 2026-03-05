@@ -1,8 +1,8 @@
 """
 Video Encoding - DB → Batch ONLY.
 
-Upload Complete → Create VideoTranscodeJob → submit_batch_job → Exit.
-NO SQS. NO queue. NO backlog.
+Upload Complete → Create VideoTranscodeJob → DDB lock(video_id) → submit_batch_job → Exit.
+1 video 1 job: DynamoDB lock key=video_id, TTL 12h+, heartbeat로 lease 연장.
 """
 
 from __future__ import annotations
@@ -21,12 +21,14 @@ def create_job_and_submit_batch(video: Video) -> Optional["VideoTranscodeJob"]:
     """
     Job 생성 + AWS Batch 제출.
     video.status must be UPLOADED.
-    Idempotent: if video already has active job (QUEUED/RUNNING/RETRY_WAIT), return it.
-    Uses select_for_update on video to prevent duplicate submit under concurrency.
-    Transactional: on submit failure, rollback job creation.
+    Idempotent: DDB lock(video_id)로 1 video 1 job 보장. 기존 active job 있으면 해당 job 반환.
     """
     from apps.support.video.models import VideoTranscodeJob
     from .batch_submit import submit_batch_job
+    from .video_job_lock import acquire as lock_acquire, release as lock_release
+    from django.conf import settings
+
+    lock_ttl = int(getattr(settings, "VIDEO_JOB_LOCK_TTL_SECONDS", 43200))
 
     with transaction.atomic():
         video = Video.objects.select_for_update().filter(pk=video.pk).first()
@@ -96,13 +98,24 @@ def create_job_and_submit_batch(video: Video) -> Optional["VideoTranscodeJob"]:
             video.current_job_id = job.id
             video.save(update_fields=["current_job_id", "updated_at"])
 
+            if not lock_acquire(video.id, str(job.id), ttl_seconds=lock_ttl):
+                job.delete()
+                video.current_job_id = None
+                video.save(update_fields=["current_job_id", "updated_at"])
+                existing_after = VideoTranscodeJob.objects.filter(
+                    video=video,
+                    state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RUNNING, VideoTranscodeJob.State.RETRY_WAIT],
+                ).first()
+                logger.info("create_job_and_submit_batch: video %s DDB lock failed, returning existing=%s", video.id, existing_after.id if existing_after else None)
+                return existing_after
+
             aws_job_id, submit_error = submit_batch_job(str(job.id), duration_seconds=video.duration if video.duration else None)
             if aws_job_id:
                 job.aws_batch_job_id = aws_job_id
                 job.save(update_fields=["aws_batch_job_id", "updated_at"])
                 return job
 
-            # Submit failed: rollback job creation (do not leave job without aws_batch_job_id)
+            lock_release(video.id)
             raise RuntimeError(submit_error or "submit_batch_job returned None")
         except RuntimeError:
             logger.exception("create_job_and_submit_batch: submit failed for video %s", video.id)
