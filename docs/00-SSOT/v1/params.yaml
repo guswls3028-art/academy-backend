@@ -12,13 +12,14 @@ global:
     ManagedBy: ssot-v1
 
 # 2-tier: Public 2 + Private 2, NAT 1개. academy-v1-* 네이밍.
+# 기존 RDS(academy-db) 사용 시 동일 VPC 사용.
 network:
-  vpcId: ""
-  vpcCidr: 10.0.0.0/16
-  publicSubnetCidr1: 10.0.1.0/24
-  publicSubnetCidr2: 10.0.2.0/24
-  privateSubnetCidr1: 10.0.11.0/24
-  privateSubnetCidr2: 10.0.12.0/24
+  vpcId: "vpc-0831a2484f9b114c2"
+  vpcCidr: 172.30.0.0/16
+  publicSubnetCidr1: 172.30.0.0/24
+  publicSubnetCidr2: 172.30.2.0/24
+  privateSubnetCidr1: 172.30.1.0/24
+  privateSubnetCidr2: 172.30.3.0/24
   natEnabled: true
   albEnabled: true
   natGatewayId: ""
@@ -139,9 +140,9 @@ rds:
   engineVersion: "15.16"
   instanceClass: "db.t4g.medium"
   allocatedStorage: 20
-  dbIdentifier: academy-v1-db
+  dbIdentifier: academy-db
   dbSubnetGroupName: academy-v1-db-subnets
-  masterUsername: academy
+  masterUsername: admin97
   masterPasswordSsmParam: "/academy/rds/master_password"
 
 redis:
