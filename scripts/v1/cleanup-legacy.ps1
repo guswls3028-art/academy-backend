@@ -19,6 +19,17 @@ $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
 $ReportsDir = Join-Path $RepoRoot "docs\00-SSOT\v1\reports"
 $InventoryPath = Join-Path $ReportsDir "aws-resource-inventory.latest.md"
 $PlanPath = Join-Path $ReportsDir "resource-cleanup-plan.latest.md"
+$CleanupRunPath = Join-Path $ReportsDir "cleanup-run.latest.md"
+$ResourceCleanupPath = Join-Path $ReportsDir "resource-cleanup.latest.md"
+
+# Run result collection (for cleanup-run.latest.md / resource-cleanup.latest.md)
+$runEIPReleased = [System.Collections.ArrayList]::new()
+$runVolumesDeleted = [System.Collections.ArrayList]::new()
+$runSGsDeleted = [System.Collections.ArrayList]::new()
+$runBuildStopped = [System.Collections.ArrayList]::new()
+$runEC2Terminated = [System.Collections.ArrayList]::new()
+$runASGRemoved = [System.Collections.ArrayList]::new()
+$runErrors = [System.Collections.ArrayList]::new()
 
 . (Join-Path $ScriptRoot "core\ssot.ps1")
 . (Join-Path $ScriptRoot "core\aws.ps1")
