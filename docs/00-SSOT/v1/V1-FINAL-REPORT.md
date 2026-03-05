@@ -122,6 +122,7 @@ aws ecr put-lifecycle-policy --repository-name academy-video-worker --lifecycle-
 | **scripts/v1/resources/ssm.ps1** | `Confirm-SSMEnv`에서 raw `aws` → `Invoke-AwsJson` 사용. |
 | **scripts/v1/resources/jobdef.ps1** | `Register-JobDefFromJson`에서 raw `aws batch register-job-definition` → `Invoke-Aws` 사용. |
 | **scripts/v1/resources/build.ps1** | Spot `run-instances` 실패 시 인스턴스 0개면 온디맨드로 재시도. |
+| **scripts/v1/resources/ecr.ps1** | Ensure-ECRRepos 후 저장소별 ECR 라이프사이클 정책 자동 적용(불필요 이미지 미보관, 비용 최적화). |
 
 ---
 
