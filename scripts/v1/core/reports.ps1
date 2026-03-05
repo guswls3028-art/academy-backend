@@ -96,3 +96,19 @@ function Save-RuntimeImagesReport {
     Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
     Write-Host "  Runtime images report: $latestPath" -ForegroundColor DarkGray
 }
+
+function Save-ConsistencyReport {
+    param([string]$MarkdownContent)
+    $dir = Get-ReportsDir
+    $latestPath = Join-Path $dir "consistency.latest.md"
+    Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
+    Write-Host "  Consistency report: $latestPath" -ForegroundColor DarkGray
+}
+
+function Save-FrontConnectionReport {
+    param([string]$MarkdownContent)
+    $dir = Get-ReportsDir
+    $latestPath = Join-Path $dir "front-connection.latest.md"
+    Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
+    Write-Host "  Front connection report: $latestPath" -ForegroundColor DarkGray
+}
