@@ -1,0 +1,6 @@
+=== Verify v1 started 20260306-011914 ===
+Log: C:\academy\logs\v1\20260306-011914-verify.log
+
+--- 1) bootstrap.ps1 ---
+
+--- 2) deploy.ps1 -Plan ---
