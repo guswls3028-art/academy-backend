@@ -121,7 +121,7 @@ function Ensure-API-Instance {
     Write-Step "Ensure API Instance (ALB health)"
     if ($script:PlanMode) { Write-Ok "Ensure-API-Instance skipped (Plan)"; return }
 
-    $maxWait = 300
+    $maxWait = if ($script:SkipApiSSMWait) { 30 } else { 300 }
     $elapsed = 0
     $instanceId = $null
     while ($elapsed -lt $maxWait) {
@@ -131,7 +131,13 @@ function Ensure-API-Instance {
         Start-Sleep -Seconds 15
         $elapsed += 15
     }
-    if (-not $instanceId) { throw "No API ASG instance after ${maxWait}s" }
+    if (-not $instanceId) {
+        if ($script:SkipApiSSMWait) {
+            Write-Warn "No API ASG instance after ${maxWait}s (-SkipApiSSMWait). Deploy continues; check ASG/ALB manually."
+            return
+        }
+        throw "No API ASG instance after ${maxWait}s"
+    }
 
     if ($script:SkipApiSSMWait) {
         Write-Warn "Skip API SSM wait (-SkipApiSSMWait). Instance $instanceId may not be in SSM yet."
