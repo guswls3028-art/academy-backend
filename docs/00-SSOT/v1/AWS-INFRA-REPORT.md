@@ -17,7 +17,7 @@
 | **ECR** | 4개 리포지토리 |
 | **Lambda** | 2개 함수 |
 | **VPC** | 4개 |
-| **S3** | 버킷 없음 (정책 준수) |
+| **오브젝트 스토리지 / CDN** | AWS S3 미사용. Cloudflare R2(파일 저장) + Cloudflare CDN 사용. |
 | **Auto Scaling Group** | 없음 |
 | **Load Balancer** | 없음 |
 
