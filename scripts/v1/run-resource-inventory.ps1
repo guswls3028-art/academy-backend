@@ -238,7 +238,7 @@ foreach ($t in $tgList) { [void]$sb.AppendLine("| $($t.Name) | $($t.Port) | $($t
 [void]$sb.AppendLine("---")
 [void]$sb.AppendLine("SSOT keep: API ASG/ALB/TG, Workers ASG, Batch CE/Queue, academy-db, academy-v1-redis. Others LEGACY_CANDIDATE.")
 Set-Content -Path $invPath -Value $sb.ToString() -Encoding UTF8 -Force
-Write-Host "  인벤토리: $invPath" -ForegroundColor Green
+Write-Host "  Inventory: $invPath" -ForegroundColor Green
 
 # --- resource-cleanup-plan.latest.md ---
 $planPath = Join-Path $RepoRoot "docs\00-SSOT\v1\reports\resource-cleanup-plan.latest.md"
@@ -253,24 +253,24 @@ $planSb = [System.Text.StringBuilder]::new()
 [void]$planSb.AppendLine("|------|------------|-----------|------------|-----------------|")
 # EIP
 foreach ($e in $orphanEIPs) {
-    [void]$planSb.AppendLine("| EIP $($e.AllocationId) ($($e.PublicIp)) | release | EC2 미연결 | LEGACY_CANDIDATE | ~\$3.65/월 |")
+    [void]$planSb.AppendLine("| EIP $($e.AllocationId) ($($e.PublicIp)) | release | unassociated | LEGACY_CANDIDATE | ~\$3.65/mo |")
 }
 # Build server
 foreach ($b in $buildInstances) {
     $name = ($b.Tags | Where-Object { $_.Key -eq "Name" } | Select-Object -First 1).Value
-    [void]$planSb.AppendLine("| EC2 $($b.InstanceId) ($name) | stop | Build 서버 사용 시에만 기동 | KEEP(stop) | Stopped 시 인스턴스 요금만 절감(스토리지 유지) |")
+    [void]$planSb.AppendLine("| EC2 $($b.InstanceId) ($name) | stop | Build server, start only when needed | KEEP(stop) | Instance cost when stopped |")
 }
 # Orphan EC2 (excluding build - build is stop only)
 $orphanForTerminate = @($orphanEC2 | Where-Object { $_.Name -ne $BuildTagValue })
 foreach ($o in $orphanForTerminate) {
-    [void]$planSb.AppendLine("| EC2 $($o.InstanceId) ($($o.Name)) | terminate | 어떤 유지 ASG에도 속하지 않음 | LEGACY_CANDIDATE | 인스턴스+스토리지 절감 |")
+    [void]$planSb.AppendLine("| EC2 $($o.InstanceId) ($($o.Name)) | terminate | not in keep ASGs | LEGACY_CANDIDATE | instance+storage |")
 }
 # Unused SG
 foreach ($s in $unusedSGs) {
-    [void]$planSb.AppendLine("| SG $($s.GroupId) ($($s.GroupName)) | delete | ENI 연결 없음 | LEGACY_CANDIDATE | 직접 비용 없음(정리) |")
+    [void]$planSb.AppendLine("| SG $($s.GroupId) ($($s.GroupName)) | delete | no ENI attached | LEGACY_CANDIDATE | cleanup |")
 }
 [void]$planSb.AppendLine("")
-[void]$planSb.AppendLine("## 실행 방법")
+[void]$planSb.AppendLine("## Run")
 [void]$planSb.AppendLine("```powershell")
 [void]$planSb.AppendLine("pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/cleanup-legacy.ps1   # DryRun 기본")
 [void]$planSb.AppendLine("pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/cleanup-legacy.ps1 -Execute   # 실제 적용")
@@ -278,5 +278,5 @@ foreach ($s in $unusedSGs) {
 [void]$planSb.AppendLine("")
 [void]$planSb.AppendLine('Before cleanup, confirm this plan and aws-resource-inventory.latest.md.')
 Set-Content -Path $planPath -Value $planSb.ToString() -Encoding UTF8 -Force
-Write-Host "  정리 계획: $planPath" -ForegroundColor Green
-Write-Host "`n=== 완료 ===`n" -ForegroundColor Cyan
+Write-Host "  Cleanup plan: $planPath" -ForegroundColor Green
+Write-Host "`n=== Done ===`n" -ForegroundColor Cyan
