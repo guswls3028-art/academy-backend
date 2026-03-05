@@ -165,9 +165,9 @@ function Load-SSOT {
     $script:VideoCEInstanceType = if ($p["videoBatch"]["instanceType"]) { $p["videoBatch"]["instanceType"] } else { "c6g.large" }
     $script:OpsCEName = $p["videoBatch"]["opsComputeEnvironmentName"]
     $script:OpsQueueName = $p["videoBatch"]["opsQueueName"]
-    $script:OpsJobDefReconcile = "academy-video-ops-reconcile"
-    $script:OpsJobDefScanStuck = "academy-video-ops-scanstuck"
-    $script:OpsJobDefNetprobe = "academy-video-ops-netprobe"
+    $script:OpsJobDefReconcile = "academy-v1-video-ops-reconcile"
+    $script:OpsJobDefScanStuck = "academy-v1-video-ops-scanstuck"
+    $script:OpsJobDefNetprobe = "academy-v1-video-ops-netprobe"
     if ($raw -match 'reconcile:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefReconcile = $matches[1] }
     if ($raw -match 'scanstuck:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefScanStuck = $matches[1] }
     if ($raw -match 'netprobe:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefNetprobe = $matches[1] }
@@ -219,5 +219,5 @@ function Load-SSOT {
         "academy-eventbridge-batch-video-role"
     )
     $script:SSOT_InstanceProfile = @("academy-batch-ecs-instance-profile")
-    $script:SSOT_ECSClusterPatterns = @("*academy-video-batch-ce*", "*academy-video-ops-ce*")
+    $script:SSOT_ECSClusterPatterns = @("*academy-v1-video-batch-ce*", "*academy-v1-video-ops-ce*")
 }

@@ -1,4 +1,4 @@
-# Usage: pwsh scripts/v4/deploy.ps1 [-Env prod] [-Plan] [-Bootstrap] [-StrictValidation] [-SkipBuild] [-SkipSqs] [-SkipRds] [-SkipRedis] ...
+# Usage: pwsh scripts/v1/deploy.ps1 [-Env prod] [-Plan] [-Bootstrap] ...
 # 원테이크: Bootstrap 기본 ON. SSM/SQS/RDS engineVersion/ECR 자동 준비 후 Ensure. 사용자 사전 작업 없음.
 # ==============================================================================
 [CmdletBinding()]
@@ -109,7 +109,7 @@ switch ($true) {
     }
 }
 
-Write-Host "`n=== DEPLOY v4 ($Env) ===" -ForegroundColor Cyan
+Write-Host "`n=== DEPLOY v1 ($Env) ===" -ForegroundColor Cyan
 if ($Plan) { Write-Host "MODE: Plan (no AWS changes)" -ForegroundColor Yellow }
 if ($Bootstrap) { Write-Host "MODE: Bootstrap ON (one-take)" -ForegroundColor Cyan }
 if ($StrictValidation) { Write-Host "MODE: StrictValidation ON" -ForegroundColor Cyan }
