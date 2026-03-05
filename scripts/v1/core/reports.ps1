@@ -88,3 +88,11 @@ function Save-V1FinalReportInReports {
     Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
     Write-Host "  V1 Final report (reports): $latestPath" -ForegroundColor DarkGray
 }
+
+function Save-RuntimeImagesReport {
+    param([string]$MarkdownContent)
+    $dir = Get-ReportsDir
+    $latestPath = Join-Path $dir "runtime-images.latest.md"
+    Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
+    Write-Host "  Runtime images report: $latestPath" -ForegroundColor DarkGray
+}
