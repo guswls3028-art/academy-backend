@@ -50,6 +50,8 @@ ecr:
   videoWorkerRepo: academy-video-worker
   messagingWorkerRepo: academy-messaging-worker
   aiWorkerRepo: academy-ai-worker-cpu
+  # 당분간 빠른 반복을 위해 latest 사용. CI 빌드/푸시 후 deploy에서 강제 pull·refresh.
+  useLatestTag: true
   immutableTagRequired: true
 
 # API: V1 최소 HA. 롤링 배포 시 새 인스턴스 healthy 후 구 인스턴스 제거(instance-refresh MinHealthyPercentage).

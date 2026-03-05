@@ -90,6 +90,7 @@ function Load-SSOT {
     $script:EcrAiRepo = $p["ecr"]["aiWorkerRepo"]
     $script:EcrBaseRepo = if ($p["ecr"]["baseRepo"]) { $p["ecr"]["baseRepo"] } else { "academy-base" }
     $script:EcrImmutableTagRequired = ($p["ecr"]["immutableTagRequired"] -eq "true")
+    $script:EcrUseLatestTag = ($p["ecr"]["useLatestTag"] -eq "true")
 
     $script:ApiAllocationId = Get-ParamFromRaw $raw "allocationId"
     if (-not $script:ApiAllocationId) { $script:ApiAllocationId = "" }
