@@ -142,9 +142,25 @@ if ($tgRes -and $tgRes.TargetGroups) {
 # --- Used instance IDs (keep ASG + build tag + Batch-managed) ---
 $usedInstanceIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($asg in $asgRes.AutoScalingGroups) {
-    $keep = $asg.AutoScalingGroupName -in $KeepASG -or $asg.AutoScalingGroupName -like "${BatchOpsASGPrefix}*" -or $asg.AutoScalingGroupName -like "*academy-v1-video-batch*"
+    $keep = $asg.AutoScalingGroupName -in $KeepASG -or $asg.AutoScalingGroupName -like "${BatchOpsASGPrefix}*" -or $asg.AutoScalingGroupName -like "*academy-v1-video*"
     if (-not $keep) { continue }
     foreach ($inst in $asg.Instances) { [void]$usedInstanceIds.Add($inst.InstanceId) }
+}
+# Batch CE ECS cluster 인스턴스도 유지
+if ($ceRes -and $ceRes.computeEnvironments) {
+    foreach ($ce in $ceRes.computeEnvironments) {
+        if ($ce.computeEnvironmentName -notin $KeepBatchCE) { continue }
+        if ($ce.ecsClusterArn) {
+            $clusterName = $ce.ecsClusterArn -replace '^.*/', ''
+            $ciRes = Invoke-AwsJson @("ecs", "list-container-instances", "--cluster", $clusterName, "--region", $R, "--output", "json")
+            if ($ciRes -and $ciRes.containerInstanceArns -and $ciRes.containerInstanceArns.Count -gt 0) {
+                $desc = Invoke-AwsJson @("ecs", "describe-container-instances", "--cluster", $clusterName, "--container-instances", ($ciRes.containerInstanceArns -join ","), "--region", $R, "--output", "json")
+                if ($desc -and $desc.containerInstances) {
+                    foreach ($ci in $desc.containerInstances) { if ($ci.ec2InstanceId) { [void]$usedInstanceIds.Add($ci.ec2InstanceId) } }
+                }
+            }
+        }
+    }
 }
 $buildRes = Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=tag:$BuildTagKey,Values=$BuildTagValue", "Name=instance-state-name,Values=running,pending,stopped", "--region", $R, "--output", "json")
 if ($buildRes -and $buildRes.Reservations) {
