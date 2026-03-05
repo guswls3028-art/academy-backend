@@ -3,15 +3,9 @@
     "set -e",
     "export AWS_DEFAULT_REGION=ap-northeast-2",
     "cd /home/ec2-user/academy",
-    "git fetch origin || true",
     "git pull origin main || git pull origin master || true",
     "aws ecr get-login-password --region ap-northeast-2 | sudo docker login --username AWS --password-stdin 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com",
-    "sudo docker build -f docker/Dockerfile.base -t academy-base:latest . > /tmp/base.log 2>&1 || true",
-    "sudo docker build --platform linux/arm64 -f docker/api/Dockerfile -t academy-api:api-health-fix-1 . > /tmp/api.log 2>&1",
-    "sudo docker tag academy-api:api-health-fix-1 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:api-health-fix-1",
-    "sudo docker push 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:api-health-fix-1 > /tmp/push.log 2>&1",
-    "echo DONE",
-    "tail -20 /tmp/api.log",
-    "tail -5 /tmp/push.log"
+    "sudo docker build -f docker/Dockerfile.base -t academy-base:latest . 2>&1 | tail -30",
+    "sudo docker build --platform linux/arm64 -f docker/api/Dockerfile -t academy-api:api-health-fix-1 . 2>&1 | tail -50"
   ]
 }
