@@ -78,6 +78,7 @@ switch ($true) { { $EcrRepoUri } { $script:EcrRepoUri = $EcrRepoUri } default { 
 . (Join-Path $ScriptRoot "resources\eventbridge.ps1")
 . (Join-Path $ScriptRoot "resources\dynamodb.ps1")
 . (Join-Path $ScriptRoot "resources\netprobe.ps1")
+. (Join-Path $ScriptRoot "resources\cloudwatch.ps1")
 
 $null = Load-SSOT -Env $Env
 $script:RelaxedValidation = $RelaxedValidation
@@ -211,6 +212,7 @@ try {
     Ensure-OpsJobDefScanStuck
     Ensure-OpsJobDefNetprobe
     Ensure-EventBridgeRules
+    Ensure-VideoBatchLogRetention
     Ensure-ALBStack
     Ensure-API
     if (-not $SkipBuild) {
