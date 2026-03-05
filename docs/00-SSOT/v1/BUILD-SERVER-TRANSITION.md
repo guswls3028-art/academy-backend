@@ -8,9 +8,9 @@
 ## 현재 상태 (당분간 latest 전략)
 
 - **이미지 태그:** academy-* 모두 `latest` 사용 (params.yaml `ecr.useLatestTag: true`).
-- **빌드/푸시:** GitHub Actions `.github/workflows/build-and-push-latest.yml` (main push / workflow_dispatch). ARM64, ECR push 태그 `latest`, push 후 digest를 `docs/00-SSOT/v1/reports/ci-build.latest.md`에 기록.
+- **빌드/푸시:** GitHub Actions **OIDC 전용** `.github/workflows/v1-build-and-push-latest.yml` (main push / workflow_dispatch). Access Key 워크플로우 폐기. `secrets.AWS_ROLE_ARN_FOR_ECR_BUILD` 사용. ARM64, 5개 이미지 latest 푸시 후 digest를 `docs/00-SSOT/v1/reports/ci-build.latest.md`에 기록.
 - **배포:** deploy.ps1 매 배포마다 UserData에 배포 nonce(DeploymentId) 포함 → LT 버전 변경 → instance refresh로 최신 `latest` pull·실행. API UserData에서 기존 컨테이너 stop/rm 후 `docker pull` → `docker run --name academy-api`.
-- **추적:** 배포 후 API 인스턴스에서 `docker inspect academy-api`로 Image/RepoDigests 수집 → `docs/00-SSOT/v1/reports/runtime-images.latest.md` 기록.
+- **추적:** 배포 후 API 인스턴스에서 `docker inspect academy-api`로 Image/RepoDigests 수집 → `docs/00-SSOT/v1/reports/runtime-images.latest.md` 기록. `ci-build.latest.md`의 academy-api digest와 런타임 RepoDigests 불일치 시 보고서에 "CI vs Runtime: MISMATCH" 명시.
 
 ---
 
