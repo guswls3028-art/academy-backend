@@ -93,6 +93,21 @@
 
 ---
 
+## 보완 8건 반영 요약 (실행/검증/안전성)
+
+| # | 항목 | 조치 |
+|---|------|------|
+| 1 | run-with-env 사용 예시 | 문서 표준 A(권장): `--` 구분자 사용. 스크립트는 `--` 유무 관계없이 동작 |
+| 2 | SSOT 공란 체크 | `-DeployFront` 시 `Assert-SSOTFrontR2Required`: front.domains.app/api, front.r2StaticBucket, r2.bucket, r2.publicBaseUrl 공란이면 FAIL |
+| 3 | api.securityGroupId | params.yaml에 `sg-088fa3315c12754d0` 명시 (network.securityGroupApp와 동일). LT/health 일관 |
+| 4 | API 공개 URL /health | `API_PUBLIC_URL` env 또는 `front.domains.api` 기반으로 도메인/HTTPS /health 검증 추가, 보고서에 기록 |
+| 5 | EventBridge state SSOT | `eventBridge.reconcileState` / `scanStuckState` 읽어 ENABLED/DISABLED 적용 |
+| 6 | Ops CE wait 타임아웃 | `Wait-CEDeleted` / `Wait-CEValidEnabled` 기본 30분(1800s), 실패 시 다음 액션 메시지 출력 |
+| 7 | SQS DLQ URL | SSOT queue name + dlqSuffix로 `get-queue-url` 조회 후 사용. fallback으로 기존 replace 유지 |
+| 8 | Video E2E 근거 | `VIDEO_E2E_TEST_JOB_ID` 설정 시 Batch describe-jobs로 상태 수집 후 보고서 섹션 5에 기록 |
+
+---
+
 ## PHASE 2 ~ 6 요약
 
 | Phase | 목표 | 완료 기준 |
