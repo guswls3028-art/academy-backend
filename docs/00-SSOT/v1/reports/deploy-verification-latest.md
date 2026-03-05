@@ -80,6 +80,11 @@
 - **FAIL** [API] /health unreachable: The request was canceled due to the configured HttpClient.Timeout of 10 seconds elapsing.
 - **FAIL** [API] ALB target healthy 0 / 3
 
+### RCA 및 조치 요약
+- **확정 원인:** sg-app 8000 인바운드가 10.0.0.0/16만 있어 VPC 172.30.0.0/16 ALB→EC2 차단(Target.Timeout) + academy-api 컨테이너 미기동.  
+- **조치 반영:** resources/network.ps1 — sg-app에 8000 from SSOT VpcCidr(172.30.0.0/16) 추가. 조치 후 Target는 FailedHealthChecks(연결 성공·앱 미응답).  
+- **상세:** [rca.latest.md](./rca.latest.md)
+
 ### GO/NO-GO
 | 판정 | 내용 |
 |------|------|
