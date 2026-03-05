@@ -135,4 +135,11 @@
 
 ---
 
+## 6. 배포 스크립트 변경에 따른 검증 참고 (2026-03-05)
+
+- **자격증명:** `deploy.ps1 -AwsProfile default` 사용 시 `core/aws.ps1`에서 모든 `aws` 호출에 `--profile`이 주입됨. 동일 셸에서 `aws sts get-caller-identity --profile default` 성공한 뒤 `deploy.ps1` 실행하면 토큰 오류 없이 동작.
+- **SSM workers env:** Bootstrap에서 `/academy/workers/env`가 없으면 `.env`에서 읽어 생성. Preflight SSM 확인은 `Invoke-AwsJson` 사용으로 프로파일 적용됨.
+
+---
+
 **문서 끝.**
