@@ -100,12 +100,16 @@ def create_job_and_submit_batch(video: Video) -> Optional["VideoTranscodeJob"]:
 
             if not lock_acquire(video.id, str(job.id), ttl_seconds=lock_ttl):
                 job.delete()
-                video.current_job_id = None
-                video.save(update_fields=["current_job_id", "updated_at"])
                 existing_after = VideoTranscodeJob.objects.filter(
                     video=video,
                     state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RUNNING, VideoTranscodeJob.State.RETRY_WAIT],
                 ).first()
+                if existing_after:
+                    video.current_job_id = existing_after.id
+                    video.save(update_fields=["current_job_id", "updated_at"])
+                else:
+                    video.current_job_id = None
+                    video.save(update_fields=["current_job_id", "updated_at"])
                 logger.info("create_job_and_submit_batch: video %s DDB lock failed, returning existing=%s", video.id, existing_after.id if existing_after else None)
                 return existing_after
 
