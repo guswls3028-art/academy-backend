@@ -2,6 +2,7 @@
   "commands": [
     "set -e",
     "export AWS_DEFAULT_REGION=ap-northeast-2",
+    "sudo yum install -y git || sudo dnf install -y git || true",
     "mkdir -p /home/ec2-user",
     "if [ ! -d /home/ec2-user/academy/.git ]; then git clone https://github.com/guswls3028-art/academy-backend.git /home/ec2-user/academy; fi",
     "cd /home/ec2-user/academy",
