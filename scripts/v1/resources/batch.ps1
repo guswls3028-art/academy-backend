@@ -192,7 +192,19 @@ function Ensure-OpsCE {
         }
         Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $script:OpsCEName, "--state", "DISABLED", "--region", $script:Region) | Out-Null
         $wait = 0; while ($wait -lt 120) { Start-Sleep -Seconds 5; $wait += 5; $ce2 = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:OpsCEName, "--region", $script:Region, "--output", "json"); if ($ce2 -and $ce2.computeEnvironments -and $ce2.computeEnvironments[0].state -eq "DISABLED") { break } }
-        Invoke-Aws @("batch", "delete-compute-environment", "--compute-environment", $script:OpsCEName, "--region", $script:Region) | Out-Null
+        $deleteRetries = 0
+        while ($deleteRetries -lt 5) {
+            try {
+                Invoke-Aws @("batch", "delete-compute-environment", "--compute-environment", $script:OpsCEName, "--region", $script:Region) -ErrorMessage "delete Ops CE" | Out-Null
+                break
+            } catch {
+                if ($_.Exception.Message -match "resource is being modified" -and $deleteRetries -lt 4) {
+                    Write-Host "  Ops CE delete delayed (resource modifying); retry in 30s..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 30
+                    $deleteRetries++
+                } else { throw }
+            }
+        }
         Wait-CEDeleted -CEName $script:OpsCEName -Reg $script:Region
         New-OpsCE
         Wait-CEValidEnabled -CEName $script:OpsCEName -Reg $script:Region
