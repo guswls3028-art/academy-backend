@@ -53,3 +53,19 @@ function Invoke-PreflightCheck {
 
     Write-Ok "Preflight done"
 }
+
+# PHASE 4: -DeployFront 시 SSOT 필수값 공란이면 FAIL. 프론트 배포/검증 불가 방지.
+function Assert-SSOTFrontR2Required {
+    $missing = [System.Collections.ArrayList]::new()
+    if (-not $script:FrontDomainApp -or $script:FrontDomainApp.Trim() -eq "") { [void]$missing.Add("front.domains.app") }
+    if (-not $script:FrontDomainApi -or $script:FrontDomainApi.Trim() -eq "") { [void]$missing.Add("front.domains.api") }
+    if (-not $script:FrontR2StaticBucket -or $script:FrontR2StaticBucket.Trim() -eq "") { [void]$missing.Add("front.r2StaticBucket") }
+    if (-not $script:R2Bucket -or $script:R2Bucket.Trim() -eq "") { [void]$missing.Add("r2.bucket") }
+    if (-not $script:R2PublicBaseUrl -or $script:R2PublicBaseUrl.Trim() -eq "") { [void]$missing.Add("r2.publicBaseUrl") }
+    if (-not $script:FrontCorsAllowedOrigins -or $script:FrontCorsAllowedOrigins.Count -eq 0) { [void]$missing.Add("front.cors.allowedOrigins (최소 1개)") }
+    if ($missing.Count -gt 0) {
+        $msg = "SSOT 필수값 공란. params.yaml에서 다음을 채운 뒤 재실행: " + ($missing -join ", ")
+        throw "Preflight FAIL (DeployFront): $msg"
+    }
+    Write-Ok "SSOT front/r2 필수값 확인됨"
+}
