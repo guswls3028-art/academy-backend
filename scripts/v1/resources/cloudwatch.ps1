@@ -1,4 +1,5 @@
 # CloudWatch: Video Batch 로그 그룹 생성 및 retention (SSOT: videoBatch.observability.logRetentionDays)
+# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
 
 function Ensure-VideoBatchLogRetention {
