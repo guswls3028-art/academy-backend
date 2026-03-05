@@ -29,7 +29,7 @@ function Ensure-RedisSubnetGroup {
     $args = @(
         "elasticache", "create-cache-subnet-group",
         "--cache-subnet-group-name", $name,
-        "--cache-subnet-group-description", "Academy v4 Redis (FD1)",
+        "--cache-subnet-group-description", "Academy v1 Redis",
         "--subnet-ids"
     ) + $subnetIds + @(
         "--region", $script:Region, "--output", "json"
@@ -96,7 +96,7 @@ function Confirm-RedisState {
         $createArgs = @(
             "elasticache", "create-replication-group",
             "--replication-group-id", $script:RedisReplicationGroupId,
-            "--replication-group-description", "Academy v4 Redis (FD1)",
+            "--replication-group-description", "Academy v1 Redis",
             "--engine", "redis",
             "--cache-node-type", $nodeType,
             "--cache-subnet-group-name", (Get-RedisSubnetGroupName),

@@ -29,7 +29,7 @@ function Ensure-DynamoLockTable {
             "--attribute-definitions", "AttributeName=videoId,AttributeType=S",
             "--key-schema", "AttributeName=videoId,KeyType=HASH",
             "--billing-mode", "PAY_PER_REQUEST",
-            "--tags", "Key=Project,Value=academy", "Key=ManagedBy,Value=ssot-v4-fd1",
+            "--tags", "Key=Project,Value=academy", "Key=ManagedBy,Value=ssot-v1",
             "--region", $script:Region, "--output", "json"
         )
         $create = Invoke-AwsJson $createArgs

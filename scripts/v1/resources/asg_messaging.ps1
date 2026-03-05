@@ -23,7 +23,7 @@ function Ensure-MessagingLaunchTemplate {
     if (-not $lt) {
         $create = Invoke-AwsJson @("ec2", "create-launch-template",
             "--launch-template-name", $script:MessagingLaunchTemplateName,
-            "--version-description", "SSOT v4 FD1",
+            "--version-description", "SSOT v1",
             "--launch-template-data", $data,
             "--region", $script:Region, "--output", "json")
         if (-not $create -or -not $create.LaunchTemplate) { throw "create-launch-template failed for $($script:MessagingLaunchTemplateName)" }

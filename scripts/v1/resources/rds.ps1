@@ -29,10 +29,10 @@ function Ensure-RdsSubnetGroup {
     $args = @(
         "rds", "create-db-subnet-group",
         "--db-subnet-group-name", $name,
-        "--db-subnet-group-description", "Academy v4 RDS (FD1)",
+        "--db-subnet-group-description", "Academy v1 RDS",
         "--subnet-ids"
     ) + $subnetIds + @(
-        "--tags", "Key=Project,Value=academy", "Key=ManagedBy,Value=ssot-v4-fd1",
+        "--tags", "Key=Project,Value=academy", "Key=ManagedBy,Value=ssot-v1",
         "--region", $script:Region, "--output", "json"
     )
     $create = Invoke-AwsJson $args
@@ -138,7 +138,7 @@ function Confirm-RDSState {
             "--backup-retention-period", "7",
             "--deletion-protection",
             "--copy-tags-to-snapshot",
-            "--tags", "Key=Project,Value=academy", "Key=ManagedBy,Value=ssot-v4-fd1",
+            "--tags", "Key=Project,Value=academy", "Key=ManagedBy,Value=ssot-v1",
             "--region", $script:Region, "--output", "json"
         )
         $create = Invoke-AwsJson $createArgs
