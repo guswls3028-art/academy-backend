@@ -83,7 +83,6 @@ switch ($true) { { $EcrRepoUri } { $script:EcrRepoUri = $EcrRepoUri } default { 
 . (Join-Path $ScriptRoot "resources\cloudwatch.ps1")
 
 $null = Load-SSOT -Env $Env
-Write-Host "Load-SSOT done" -ForegroundColor Green
 $script:RelaxedValidation = $RelaxedValidation
 $script:SkipApiSSMWait = $SkipApiSSMWait
 if ($EcrRepoUri) { $script:EcrRepoUri = $EcrRepoUri } else { $script:EcrRepoUri = "" }
