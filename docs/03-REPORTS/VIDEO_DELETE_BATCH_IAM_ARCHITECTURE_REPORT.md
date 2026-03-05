@@ -217,7 +217,7 @@
                          │  R2 upload (HLS), delete_object_r2_video
                          ▼
          ┌─────────────────────┐         ┌─────────────────────────────────────────────┐
-         │  R2 (S3-compat)      │         │  Reconcile (Batch Job, academy-video-ops-*)  │
+         │  R2 (Cloudflare, S3 호환 API) │         │  Reconcile (Batch Job, academy-video-ops-*)  │
          │  VIDEO_BUCKET       │         │  Role: academy-video-batch-job-role         │
          └─────────────────────┘         │  • describe_jobs, list_jobs, terminate_job  │
                                          │  • Credentials: Batch task role             │
