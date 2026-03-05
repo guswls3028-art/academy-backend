@@ -118,7 +118,7 @@ pwsh scripts/v1/deploy.ps1 -PruneLegacy -AwsProfile default
 | **ECR** | lifecycle: 최신 20개 유지(v1-, bootstrap- 태그), untagged 1일 만료. 전체 repo에 동일 정책. | `docs/00-SSOT/v1/scripts/ecr-lifecycle-policy.json` — Ensure-ECRRepos에서 일괄 적용됨. immutable tag 필수(params ecr.immutableTagRequired). |
 | **SSM** | /academy/api/env, /academy/workers/env 구조 일관화. 필수 키: workers 쪽 DB_*, R2_*, API_BASE_URL, INTERNAL_WORKER_TOKEN, REDIS_* 등. | Bootstrap이 workers env를 .env에서 채움. SSM 삭제 후보에서 /academy/rds/master_password 제외(ssot.ps1). |
 | **로그/알람** | retention 30일. 알람 최소세트(API 5xx, Target Unhealthy, SQS depth/DLQ, Batch backlog/failed/stuck, RDS/Redis). 평가 5~15분, 노이즈 최소화. | params observability.*. CloudWatch 알람 생성은 스크립트 또는 수동 가이드(V1-DEPLOYMENT-VERIFICATION.md). |
-| **배포 재현성** | 빌드 서버 재생성 시 /opt/academy 또는 $HOME/academy 클론 후 빌드/푸시 재현. | bootstrap.ps1 Invoke-BuildServerBuild에서 `$buildPath = /opt/academy \|\| $HOME/academy`. params build.repoPath(선택) 추가 가능. |
+| **배포 재현성** | 빌드 서버 재생성 시 /opt/academy 또는 $HOME/academy 클론 후 빌드/푸시 재현. | bootstrap.ps1 Invoke-BuildServerBuild에서 `$buildPath = /opt/academy || $HOME/academy`. params build.repoPath(선택) 추가 가능. |
 | **보안 최소선** | SG 인바운드 최소화, IAM 최소 권한(R2/SSM read 범위 점검), SSH 대신 SSM Session Manager. | params network.securityGroupApp 등. 문서에 "SSH 의존 최소화, SSM 우선" 명시. |
 
 ---
