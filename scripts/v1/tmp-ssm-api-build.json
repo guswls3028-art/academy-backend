@@ -2,8 +2,9 @@
   "commands": [
     "set -e",
     "export AWS_DEFAULT_REGION=ap-northeast-2",
-    "cd /opt/academy || cd /home/ec2-user/academy",
-    "test -d .git",
+    "mkdir -p /home/ec2-user",
+    "if [ ! -d /home/ec2-user/academy/.git ]; then git clone https://github.com/guswls3028-art/academy-backend.git /home/ec2-user/academy; fi",
+    "cd /home/ec2-user/academy",
     "git fetch origin || true",
     "git pull origin main || git pull origin master || true",
     "aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com",
