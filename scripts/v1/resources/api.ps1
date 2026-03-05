@@ -125,8 +125,8 @@ function Ensure-API-Instance {
     $elapsed = 0
     $instanceId = $null
     while ($elapsed -lt $maxWait) {
-        $ids = Get-APIASGInstanceIds
-        if ($ids -and $ids.Count -gt 0) { $instanceId = $ids[0]; break }
+        $ids = @(Get-APIASGInstanceIds)
+        if ($ids -and $ids.Count -gt 0) { $instanceId = [string]$ids[0]; break }
         Write-Host "  Waiting for API ASG instance..." -ForegroundColor Gray
         Start-Sleep -Seconds 15
         $elapsed += 15
