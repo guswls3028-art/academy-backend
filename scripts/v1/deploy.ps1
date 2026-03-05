@@ -19,6 +19,7 @@ param(
     [switch]$DryRun = $false,
     [switch]$ForceRecreateAll = $false,
     [switch]$SkipNetprobe = $false,
+    [switch]$SkipApiSSMWait = $false,
     [switch]$Ci = $false,
     [switch]$RelaxedValidation = $false,
     [string]$EcrRepoUri = "",
