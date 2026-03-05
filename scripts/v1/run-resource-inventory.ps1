@@ -281,5 +281,5 @@ foreach ($s in $unusedSGs) {
 Set-Content -Path $planPath -Value $planSb.ToString() -Encoding UTF8 -Force
 Write-Host '  Cleanup plan:' $planPath -ForegroundColor Green
 Write-Host ""
-Write-Host "=== Done ===" -ForegroundColor Cyan
+Write-Host '=== Done ===' -ForegroundColor Cyan
 Write-Host ""
