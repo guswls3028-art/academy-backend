@@ -1,5 +1,5 @@
 {
-    "jobDefinitionName": "academy-v1-video-batch-jobdef",
+    "jobDefinitionName": "academy-v1-video-batch-long-jobdef",
     "type": "container",
     "containerProperties": {
         "image": "PLACEHOLDER_ECR_URI",
@@ -19,7 +19,7 @@
             "options": {
                 "awslogs-group": "/aws/batch/academy-video-worker",
                 "awslogs-region": "PLACEHOLDER_REGION",
-                "awslogs-stream-prefix": "batch"
+                "awslogs-stream-prefix": "batch-long"
             }
         },
         "environment": [],
@@ -38,6 +38,6 @@
         "attempts": 1
     },
     "timeout": {
-        "attemptDurationSeconds": 21600
+        "attemptDurationSeconds": 43200
     }
 }
