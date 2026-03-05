@@ -85,3 +85,16 @@
    ```
 
 3. **게이트:** FAIL 0, apiHealth OK, opsCeStatus=VALID, API LT drift NoOp.
+
+---
+
+## PHASE 2 ~ 6 요약
+
+| Phase | 목표 | 완료 기준 |
+|-------|------|-----------|
+| **2** | Video 파이프라인 보강 | 1영상=1Job=1워커, 유령데이터 방지(READY 전 미공개), multipart/resume, 3시간 샘플 1건 E2E |
+| **3** | SQS 워커 안정성 | DLQ·visibility SSOT, graceful shutdown, 멱등 키, enqueue→consume 검증 |
+| **4** | Front + R2 + CDN | app/api 도메인 라우팅, 캐시 정책, CORS/쿠키/CSRF, 배포 파이프라인 |
+| **5** | 레거시 제거 | SSOT 인벤토리, 삭제 전 증거, 단계 삭제 후 verification |
+| **6** | 최종 검증·보고서 | FAIL 0, GO/CONDITIONAL GO, V1-FINAL-REPORT.md·deploy-verification-latest.md 갱신 |
+
