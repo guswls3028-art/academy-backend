@@ -31,6 +31,7 @@ alwaysApply: true
 - **리전:** ap-northeast-2
 - **인프라 방식:** script infra (PowerShell + AWS CLI)
 - **SSOT:** docs/00-SSOT/v1 (풀셋팅 v1)
+- **정식 스크립트:** scripts/v1 (deploy.ps1, verify.ps1 등). V1 제외 문서·스크립트는 docs/00-SSOT/archive, scripts/archive 에만 둠 — 참고용, 수정/실행 금지. 상세: 규칙 `00_ssot_v1_archive_structure.mdc` 참조.
 - **API ASG max:** 2 고정
 
 **Canonical topology (서비스·큐·스토리지 연결):**  

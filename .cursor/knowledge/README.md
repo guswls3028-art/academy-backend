@@ -2,6 +2,11 @@
 
 이 폴더는 Cursor 규칙·에이전트·프롬프트가 공통으로 참조하는 **인프라 지식**을 담습니다.
 
+## 폴더 구조 (SSOT·스크립트)
+
+- **정식:** docs/00-SSOT/v1, scripts/v1 만 수정·실행·참조.
+- **아카이브/레거시:** docs/00-SSOT/archive, scripts/archive — 참고용만. 수정/실행 금지. 상세는 규칙 `00_ssot_v1_archive_structure.mdc` 참조.
+
 ## 필수 참조 파일
 
 | 파일 | 용도 | 참조 키워드 |
