@@ -54,7 +54,7 @@ if ($driftFail -and $driftFail.Count -gt 0) {
     Add-Finding -Severity "WARNING" -Area "Drift" -Message "SSOT와 불일치 $($driftFail.Count)건: $($driftFail | ForEach-Object { "$($_.ResourceType)/$($_.Name)" } | Join-String -Separator ', ')"
 }
 
-# --- 2. ALB DNS 및 /health ---
+# --- 2. ALB DNS 및 /health (상세) ---
 $apiHealthStatus = "unreachable"
 $apiHealthResponseTime = ""
 $albDns = ""
