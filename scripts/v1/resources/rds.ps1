@@ -41,7 +41,7 @@ function Ensure-RdsSubnetGroup {
     $script:ChangesMade = $true
 }
 
-function Ensure-RDSSecurityGroup {
+function Get-RdsMasterPassword {
     if (-not $script:RdsMasterPasswordSsmParam) {
         throw "rds.masterPasswordSsmParam is required in params.yaml (SSM SecureString with DB master password)."
     }
