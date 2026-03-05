@@ -20,6 +20,7 @@ function Get-ParamsYaml {
         }
         if ($l -match '^\s{2}([a-zA-Z0-9_]+):\s*(.*)$') {
             $key = $matches[1]; $val = $matches[2].Trim()
+            if ($val -match '#') { $val = ($val -split '#')[0].Trim() }
             if ($val -match '^"(.*)"$') { $val = $matches[1] }
             if ($section) { $h[$section][$key] = $val }
             continue
