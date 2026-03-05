@@ -1,4 +1,5 @@
 # API: ALB + ASG (Step D). EIP 제거. Private subnet + sg-app, health /health.
+# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
 
 # EC2 부팅 시 Docker 설치 → ECR Pull → Django 컨테이너 8000 포트 실행. API_IMAGE_URI 등은 런타임 치환.
