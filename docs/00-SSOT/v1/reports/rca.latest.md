@@ -180,3 +180,4 @@ UserData 실행 시 `aws ecr get-login-password`가 **api.ecr.ap-northeast-2.ama
 
 - 명령: `pwsh -File scripts/v1/run-with-env.ps1 -- pwsh -File scripts/v1/deploy.ps1 -Env prod`
 - LT UserData 변경으로 drift 발생 → 새 LT 버전 생성 → API ASG instance refresh 예상.
+- **실행:** `deploy.ps1 -Env prod -SkipBuild` (Bootstrap video-worker 빌드 스킵). 결과: **LaunchTemplate academy-v1-api-lt new default version 8 (drift)** 적용됨. start-instance-refresh는 기존 리프레시 진행 중이라 실패(InstanceRefreshInProgress). 이후 수동으로 `aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg --preferences "MinHealthyPercentage=100,InstanceWarmup=300"` 실행함. InstanceRefreshId: 0a304893-29f3-4d05-8152-9226d9411929.
