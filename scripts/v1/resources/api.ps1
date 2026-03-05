@@ -83,8 +83,8 @@ function Test-APIHealth200 {
 function Ensure-API-LaunchTemplate {
     if ($script:PlanMode) { return @{ LtId = $null; Updated = $false } }
     $ltName = $script:ApiLaunchTemplateName
-    $currentSg = $script:ApiSecurityGroupId
-    if (-not $currentSg -and $script:SecurityGroupApp) { $currentSg = $script:SecurityGroupApp }
+    $currentSg = ($script:ApiSecurityGroupId -split '#')[0].Trim()
+    if (-not $currentSg -and $script:SecurityGroupApp) { $currentSg = ($script:SecurityGroupApp -split '#')[0].Trim() }
     if (-not $currentSg) { throw "API SG required (SecurityGroupApp or api.securityGroupId)" }
     $r = Invoke-AwsJson @("ec2", "describe-launch-templates", "--launch-template-names", $ltName, "--region", $script:Region, "--output", "json")
     $currentAmi = $script:ApiAmiId
