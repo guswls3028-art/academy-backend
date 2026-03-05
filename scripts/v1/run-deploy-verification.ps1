@@ -72,7 +72,7 @@ if ($script:ApiAlbName) {
                 $hr = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
                 $sw.Stop()
                 $apiHealthStatus = if ($hr.StatusCode -eq 200) { "OK" } else { "HTTP $($hr.StatusCode)" }
-                $apiHealthResponseTime = "${$sw.ElapsedMilliseconds}ms"
+                $apiHealthResponseTime = "$($sw.ElapsedMilliseconds)ms"
                 if ($hr.StatusCode -ne 200) { Add-Finding -Severity "WARNING" -Area "API" -Message "/health returned $($hr.StatusCode)" }
                 if ($sw.ElapsedMilliseconds -gt 2000) { Add-Finding -Severity "WARNING" -Area "API" -Message "/health 응답 > 2s ($apiHealthResponseTime)" }
             } catch {
