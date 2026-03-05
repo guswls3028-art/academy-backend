@@ -31,6 +31,16 @@ function Add-Finding { param([string]$Severity, [string]$Area, [string]$Message)
 
 Write-Host "`n=== V1 배포 검증 (read-only) ===" -ForegroundColor Cyan
 
+# --- 0. ALB DNS (Evidence /health 체크용) ---
+if ($script:ApiAlbName) {
+    try {
+        $alb0 = Invoke-AwsJson @("elbv2", "describe-load-balancers", "--names", $script:ApiAlbName, "--region", $R, "--output", "json")
+        if ($alb0 -and $alb0.LoadBalancers -and $alb0.LoadBalancers.Count -gt 0) {
+            $script:ApiBaseUrl = "http://$($alb0.LoadBalancers[0].DNSName)"
+        }
+    } catch { }
+}
+
 # --- 1. Drift / Evidence (audit, drift 갱신) ---
 Write-Host "`n[1] Drift / Evidence 수집..." -ForegroundColor Cyan
 $driftRows = Get-StructuralDrift
