@@ -2,11 +2,16 @@
 # 리소스 변경 없음. 검증만 수행. 결과: docs/00-SSOT/v1/reports/deploy-verification-latest.md, audit.latest.md, drift.latest.md 갱신.
 # 사용: pwsh -File scripts/v1/run-deploy-verification.ps1 [-AwsProfile default] (run-with-env 권장)
 $ErrorActionPreference = "Stop"
+param([string]$AwsProfile = "")
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
 
 . (Join-Path $ScriptRoot "core\env.ps1")
-if ($args -match '-AwsProfile\s+(\S+)') { $env:AWS_PROFILE = $matches[1]; if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" } }
+if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
+    $env:AWS_PROFILE = $AwsProfile.Trim()
+    if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" }
+    Write-Host "Using AWS_PROFILE: $env:AWS_PROFILE" -ForegroundColor Gray
+}
 
 . (Join-Path $ScriptRoot "core\ssot.ps1")
 . (Join-Path $ScriptRoot "core\logging.ps1")
