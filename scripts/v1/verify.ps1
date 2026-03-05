@@ -2,8 +2,14 @@
 # Academy v1 — 새 PC 5단계 검증 자동화.
 # 1) bootstrap  2) deploy -Plan  3) deploy -PruneLegacy  4) deploy 재실행(No-op)  5) Evidence 위치 안내
 # 로그: logs/v1/YYYYMMDD-HHMMSS-verify.log
+# Cursor 등: -AwsProfile <이름> 으로 프로파일 지정 가능.
 # ==============================================================================
+param([string]$AwsProfile = "")
 $ErrorActionPreference = "Stop"
+if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
+    $env:AWS_PROFILE = $AwsProfile.Trim()
+    if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" }
+}
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
 $LogDir = Join-Path $RepoRoot "logs\v1"
@@ -46,7 +52,8 @@ try {
     $planOut = $null
     $null = Run-Step "2) deploy.ps1 -Plan" {
         Push-Location $RepoRoot
-        $planOut = & (Join-Path $ScriptRoot "deploy.ps1") -Plan 2>&1
+        $args = @("-Plan"); if ($AwsProfile) { $args += "-AwsProfile", $AwsProfile }
+        $planOut = & (Join-Path $ScriptRoot "deploy.ps1") @args 2>&1
         $planOut | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "ExitCode $LASTEXITCODE" }
         Pop-Location
