@@ -32,8 +32,8 @@ if [ -n "$SsmApiEnvParam" ]; then
     [ -s /opt/api.env ] && API_ENV_FILE="--env-file /opt/api.env"
   fi
 fi
-# 4) Django 컨테이너 8000 포트로 실행
-docker run -d --restart unless-stopped -p 8000:8000 `$API_ENV_FILE $ApiImageUri
+# 4) Django 컨테이너 8000 포트로 실행 (0.0.0.0 바인딩은 이미지 내 gunicorn 설정에 따름)
+docker run -d --restart unless-stopped -p 8000:8000 `$API_ENV_FILE $ApiImageUri || { echo "docker run failed at `$(date)" >> /var/log/academy-api-userdata.log; exit 1; }
 "@
     return $script.Trim()
 }
