@@ -108,12 +108,14 @@ function Load-SSOT {
     $script:ApiAlbName = if ($p["api"]["albName"]) { $p["api"]["albName"] } else { "" }
     $script:ApiTargetGroupName = if ($p["api"]["targetGroupName"]) { $p["api"]["targetGroupName"] } else { "" }
     $script:ApiHealthPath = if ($p["api"]["healthPath"]) { $p["api"]["healthPath"] } else { "/health" }
-    $script:ApiASGMinSize = 1
-    $script:ApiASGMaxSize = 2
-    $script:ApiASGDesiredCapacity = 1
+    $script:ApiASGMinSize = 2
+    $script:ApiASGMaxSize = 4
+    $script:ApiASGDesiredCapacity = 2
     if ($p["api"]["asgMinSize"]) { $script:ApiASGMinSize = [int]$p["api"]["asgMinSize"] }
     if ($p["api"]["asgMaxSize"]) { $script:ApiASGMaxSize = [int]$p["api"]["asgMaxSize"] }
     if ($p["api"]["asgDesiredCapacity"]) { $script:ApiASGDesiredCapacity = [int]$p["api"]["asgDesiredCapacity"] }
+    $script:ApiInstanceRefreshMinHealthyPercentage = Coerce-Int $p["api"]["instanceRefreshMinHealthyPercentage"] 100
+    $script:ApiInstanceRefreshInstanceWarmup = Coerce-Int $p["api"]["instanceRefreshInstanceWarmup"] 300
 
     $script:BuildTagKey = $p["build"]["instanceTagKey"] = $p["build"]["instanceTagKey"]
     $script:BuildTagValue = $p["build"]["instanceTagValue"]
