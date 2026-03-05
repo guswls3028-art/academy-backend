@@ -224,6 +224,8 @@ observability:
   redis:
     cpuThresholdPercent: 75
     evictionsThreshold: 100
+
+redis:
   replicationGroupId: academy-v1-redis
   subnetGroupName: academy-v1-redis-subnets
   securityGroupId: ""
