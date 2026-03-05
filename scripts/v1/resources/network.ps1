@@ -250,11 +250,6 @@ function Ensure-SecurityGroups {
     }
 }
 
-    } else {
-        $script:SecurityGroupData = $byName[$script:SgDataName].GroupId
-    }
-}
-
 # ECR/S3 VPC Endpoints so API instances (public or private) can pull images without internet path (avoids ECR connect timeout).
 function Ensure-ECR-VpcEndpoints {
     $vpcId = $script:VpcId
