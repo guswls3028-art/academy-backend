@@ -1,5 +1,8 @@
 # V1 기준 기존 인프라 정리 및 재배포 플랜
 
+**AI·Cursor 룰:** 본 문서를 포함한 리포지토리 내 **모든 문서·코드에 대해 AI(Cursor Agent)는 열람·수정 권한**이 있다. 배포·인프라 변경 시 **.cursor/rules/** 내 해당 룰(예: `07_deployment_orchestrator.mdc`, `04_cost_engine.mdc`)을 **적재적소에 항시 확인**한다.  
+**배포 원칙:** 모든 배포·재배포는 **빌드 서버 경유**이며, `-SkipBuild`는 예외 상황에만 사용한다. **비용 최적화:** ECR 라이프사이클 정책이 배포 시 자동 적용된다.
+
 **기준 문서:** `docs/00-SSOT/v1/SSOT.md`, `params.yaml`, `INFRA-AND-SPECS.md`  
 **배포 스크립트:** `scripts/v1/deploy.ps1`  
 **현재 인프라:** `docs/00-SSOT/v1/AWS-INFRA-REPORT.md`  
