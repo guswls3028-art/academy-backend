@@ -254,6 +254,8 @@ function Load-SSOT {
             $script:FrontDomainApi = if ($p["front"]["domains"]["api"]) { $p["front"]["domains"]["api"] } else { "" }
         }
         $script:FrontR2StaticBucket = if ($p["front"]["r2StaticBucket"]) { $p["front"]["r2StaticBucket"] } else { "" }
+        $script:FrontR2StaticPrefix = if ($p["front"]["r2StaticPrefix"]) { $p["front"]["r2StaticPrefix"] } else { "static/front" }
+        $script:FrontPurgeOnDeploy = ($p["front"]["purgeOnDeploy"] -eq $true -or $p["front"]["purgeOnDeploy"] -eq "true")
         if ($p["front"]["cors"] -and $p["front"]["cors"]["_list"]) { $script:FrontCorsAllowedOrigins = @($p["front"]["cors"]["_list"]) }
         elseif ($p["front"]["cors"] -and $p["front"]["cors"]["allowedOrigins"]) { $script:FrontCorsAllowedOrigins = @($p["front"]["cors"]["allowedOrigins"]) }
     }
