@@ -85,7 +85,7 @@
 |------|------|
 | **NO-GO** | FAIL 항목 해결 후 재검증 필요. |
 
-- **최근 반영(2026-03-06):** SSOT `ecr.useLatestTag: true`, GitHub Actions `build-and-push-latest.yml`, deploy에서 배포 nonce·docker pull 강제·instance refresh, runtime-images.latest.md 수집. ALB target 1/3 healthy. GATE-A 통과를 위해 ECR `academy-api:latest`에 /healthz 포함 빌드 푸시 후 재배포·재검증 필요.
+- **최근 반영(2026-03-06):** ECR 빌드/푸시는 OIDC 전용 `v1-build-and-push-latest.yml`로 통일. Access Key 워크플로우 삭제. SSOT useLatestTag, 배포 nonce·docker pull 강제·runtime-images 수집·CI vs Runtime digest 비교 반영. GATE-A 통과를 위해 CI로 academy-api:latest 푸시 후 재배포·재검증 필요.
 - **FAIL 1건 이상** → **NO-GO**. 재검증 후 재실행.
 - **WARNING만** → **CONDITIONAL GO**. 영향도·완화책·추적 계획 확인 후 배포 여부 결정.
 - **PASS만** → **GO**.
