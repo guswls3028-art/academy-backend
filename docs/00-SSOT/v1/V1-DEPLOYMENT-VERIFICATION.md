@@ -221,7 +221,7 @@ V1이 standard/long 2-tier·timeout·stuck(heartbeat_age)·R2 checkpoint·관측
 
 ---
 
-## 9. V1.1 검증 시나리오 (최종 배포 필수)
+## 9. V1 검증 시나리오 (최종 배포 필수)
 
 | # | 시나리오 | 확인 방법 |
 |---|----------|-----------|
@@ -232,11 +232,11 @@ V1이 standard/long 2-tier·timeout·stuck(heartbeat_age)·R2 checkpoint·관측
 | 5 | 메시징 중복 방지 / DLQ | idempotency key 중복 방지. 실패 시 DLQ 적재 확인 |
 | 6 | Evidence/Drift 최신화 | 배포 후 `scripts/v1/check-v1-infra.ps1` 실행 → drift.latest.md, audit.latest.md 갱신 |
 
-자세한 내용: `V1.1-OPERATIONS-GUIDE.md` §4.
+자세한 내용: `V1-OPERATIONS-GUIDE.md` §4.
 
 ---
 
-## 10. 프론트 배포 + R2 + CDN 엔드투엔드 검증 (V1.1)
+## 10. 프론트 배포 + R2 + CDN 엔드투엔드 검증 (V1)
 
 ### 10.1 프론트 배포 후 체크리스트
 
@@ -264,7 +264,7 @@ V1이 standard/long 2-tier·timeout·stuck(heartbeat_age)·R2 checkpoint·관측
 ### 10.4 Evidence/Drift 갱신
 
 - 배포 완료 후: `pwsh scripts/v1/check-v1-infra.ps1` 실행 → `docs/00-SSOT/v1/reports/drift.latest.md`, `audit.latest.md` 갱신.
-- PR/커밋 시 삭제 전 검증 로그·근거 문서: `V1.1-INVENTORY-AND-LEGACY-REMOVAL-PLAN.md` §2 참고.
+- PR/커밋 시 삭제 전 검증 로그·근거 문서: `V1-INVENTORY-AND-LEGACY-REMOVAL-PLAN.md` §2 참고.
 
 ---
 
