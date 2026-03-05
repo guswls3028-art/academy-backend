@@ -1,0 +1,20 @@
+# [Project: Academy SaaS Development Rules - Antigravity Constitution]
+
+## 1. 인프라 원칙 (Infrastructure Principles) - **가장 중요**
+- **AWS S3 절대 금지:** 오브젝트 스토리지 및 CDN은 반드시 **Cloudflare R2 및 CDN**을 사용합니다. 
+- AWS S3 호환 SDK 사용 역시 금지하며, Cloudflare Native API (또는 Fetch API, Wrangler)를 통해 조작하는 것을 원칙으로 합니다.
+- **AWS의 역할:** 컴퓨팅, 큐, 데이터베이스(RDS, DynamoDB, EC2/ASG, Batch, ALB, SQS, ElastiCache, ECR) 구성에만 국한하여 사용합니다. 두 인프라 영역(AWS vs Cloudflare)을 명확히 분리하십시오.
+
+## 2. 배포 및 환경 설정 (Deployment & Environment)
+- **배포 프로세스:** 모든 배포 체계의 진실의 원천(SSOT)은 `.github/workflows/video_batch_deploy.yml` 파이프라인과 그 내부적으로 호출되는 `scripts/v1/deploy.ps1` 스크립트를 기준으로 합니다.
+- **인증 권한 관리:** AWS 및 Cloudflare(Wrangler) 등 인프라 접근/인증은 시스템 전역 설정보다 `.env` 파일에 명시된 환경변수(`AWS_ACCESS_KEY_ID`, `CLOUDFLARE_API_KEY` 등)를 터미널에 로드(Export)하여 사용하는 것을 최우선으로 합니다.
+- Cloudflare 제어를 위한 기본 CLI는 `wrangler`를 사용합니다.
+
+## 3. 백엔드 아키텍처 (Backend Architecture)
+- **도메인 주도 설계 (DDD):** 백엔드 설계는 도메인 주도 설계(Domain-Driven Design)를 엄격하게 따릅니다.
+- **계층의 분리:** 컨트롤러/API 라우팅, 비즈니스 로직(Service), 도메인(Domain), 인프라스트럭처(Infrastructure) 계층을 완전히 분리하여 모듈 간 결합도를 낮추고 유지보수성을 극대화합니다.
+
+## 4. 자율주행 및 에이전트 권한 (YOLO Mode)
+- 본 프로젝트 체계는 에이전트의 **YOLO(You Only Look Once) 모드**가 전면 활성화되어 보장됩니다.
+- 에이전트는 사용자의 중간 프롬프트 승인 없이도 주도적으로 소스 코드를 생성/수정하고, 터미널 명령어를 실행하며, 인프라 배포 명령어 조작까지 자율적으로 진행할 수 있습니다.
+- 단, 인프라나 실 배포 적용 전에는 항상 주어진 도구(터미널)를 통해 대상 시스템의 현재 상태(AWS CLI, Wrangler CLI 등)와 인증을 직접 검증해야 합니다.
