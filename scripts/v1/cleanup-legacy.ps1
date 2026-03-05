@@ -1,15 +1,17 @@
 # V1 Legacy 리소스 정리 — SSOT에 없는 리소스만 대상. 삭제 전 reports 기록 필수.
-# AWS·Cloudflare(클플) 인증: Cursor 룰에 따라 .env를 환경변수로 주입 후 실행 (run-with-env.ps1 권장).
-# 기능: orphan EIP release, unused SG delete, build server stop, legacy EC2 terminate.
-# 사용: -DryRun (기본, 변경 없음) / -Execute (실제 적용). -RefreshReports 이면 먼저 인벤토리·정리계획 갱신.
+# 기능: orphan EIP release, orphan EBS volume delete, unused SG delete, build server stop, legacy EC2 terminate, legacy ASG inventory/remove.
+# 실행 결과: docs/00-SSOT/v1/reports/cleanup-run.latest.md, resource-cleanup.latest.md 갱신.
 param(
     [switch]$DryRun = $true,
     [switch]$Execute,
     [switch]$RefreshReports,
     [switch]$EIPOnly,
+    [switch]$VolumesOnly,
     [switch]$SGOnly,
     [switch]$BuildStopOnly,
-    [switch]$EC2Only
+    [switch]$EC2Only,
+    [switch]$ASGOnly,
+    [switch]$RemoveLegacyASG
 )
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
