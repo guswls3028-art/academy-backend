@@ -126,7 +126,6 @@ aiWorker:
   sqsQueueName: academy-v1-ai-queue
   visibilityTimeoutSeconds: 1800
   dlqMaxReceiveCount: 5
-  dlqSuffix: -dlq
 
 videoBatch:
   # standard: 기존 계열 유지. 3시간 이하 일반 작업. maxvCpus=40, Spot 혼합.
