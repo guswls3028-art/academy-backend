@@ -211,7 +211,7 @@ foreach ($a in $asgList) { [void]$sb.AppendLine("| $($a.Name) | $($a.Desired) | 
 foreach ($e in $eipList) { [void]$sb.AppendLine("| $($e.AllocationId) | $($e.PublicIp) | $($e.AssociationId) | $($e.SSOT) |") }
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Security Groups (VPC)")
-[void]$sb.AppendLine("| GroupId | GroupName | ENI 수 | SSOT |")
+[void]$sb.AppendLine("| GroupId | GroupName | ENICount | SSOT |")
 [void]$sb.AppendLine("|---------|-----------|--------|------|")
 foreach ($s in $sgList) { [void]$sb.AppendLine("| $($s.GroupId) | $($s.GroupName) | $($s.ENICount) | $($s.SSOT) |") }
 [void]$sb.AppendLine("")
