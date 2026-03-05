@@ -1,7 +1,6 @@
 # 미사용 EC2 리소스 정리 — academy v1에서 쓰는 것만 남기고 나머지 제거.
-# 사용: .env 로드 후 동일 세션에서 실행. -DryRun (기본) 시 삭제 없이 후보만 출력.
+# 사용: 호출 전에 .env를 환경변수로 설정한 뒤 실행 (Cursor가 설정). -DryRun (기본) 시 삭제 없이 후보만 출력.
 # 실제 삭제: -Execute
-# 필요: AWS CLI 인증(동일 세션에서 .env의 AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION 설정)
 param(
     [switch]$DryRun,
     [switch]$Execute,
@@ -18,10 +17,9 @@ $null = Load-SSOT -Env "prod"
 if (-not $PSBoundParameters.ContainsKey('DryRun')) { $DryRun = $true }
 if ($Execute) { $DryRun = $false }
 
-# .env 자동 로드 및 AWS 자격 증명 검증
+# AWS 자격 증명 검증 (호출자가 이미 설정한 환경변수 사용)
 . (Join-Path $ScriptRoot "core\env.ps1")
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-Load-EnvFile -RepoRoot $RepoRoot | Out-Null
 $null = Assert-AwsCredentials -RepoRoot $RepoRoot
 
 $R = $script:Region
