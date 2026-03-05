@@ -811,6 +811,11 @@ def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") ->
             error_reason=err_msg or job.error_message,
         )
     try:
+        from apps.support.video.services.video_job_lock import release as lock_release
+        lock_release(job.video_id)
+    except Exception:
+        pass
+    try:
         from apps.support.video.services.ops_events import emit_ops_event
         emit_ops_event(
             "JOB_DEAD",
