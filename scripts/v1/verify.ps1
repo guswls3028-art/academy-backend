@@ -69,7 +69,7 @@ try {
     # 3) deploy -PruneLegacy
     $null = Run-Step "3) deploy.ps1 -PruneLegacy" {
         Push-Location $RepoRoot
-        $args = @("-PruneLegacy"); if ($AwsProfile) { $args += "-AwsProfile", $AwsProfile }
+        $args = @("-Env", "prod", "-PruneLegacy"); if ($AwsProfile) { $args += "-AwsProfile", $AwsProfile }
         & (Join-Path $ScriptRoot "deploy.ps1") @args 2>&1 | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "ExitCode $LASTEXITCODE" }
         Pop-Location
