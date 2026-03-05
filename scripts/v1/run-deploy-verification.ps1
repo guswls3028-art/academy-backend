@@ -150,8 +150,8 @@ function Get-SqsDepth {
     if (-not $QueueUrl) { return "n/a" }
     try {
         $a = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $QueueUrl, "--attribute-names", "ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible", "--region", $R, "--output", "json")
-        $vis = [int]($a.Attributes.ApproximateNumberOfMessages ?? 0)
-        $inFlight = [int]($a.Attributes.ApproximateNumberOfMessagesNotVisible ?? 0)
+        $vis = [int](if ($null -eq $a.Attributes.ApproximateNumberOfMessages) { 0 } else { $a.Attributes.ApproximateNumberOfMessages })
+        $inFlight = [int](if ($null -eq $a.Attributes.ApproximateNumberOfMessagesNotVisible) { 0 } else { $a.Attributes.ApproximateNumberOfMessagesNotVisible })
         return "$vis (in-flight $inFlight)"
     } catch { return "error" }
 }
