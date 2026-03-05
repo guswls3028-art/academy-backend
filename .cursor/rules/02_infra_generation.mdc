@@ -33,8 +33,8 @@ Do NOT introduce: ECS, EKS, AWS S3, AWS CloudFront.
 
 - Infrastructure is created using **PowerShell scripts** + **AWS CLI**
 - NOT Terraform, NOT CloudFormation
-- Must follow **SSOT:** docs/00-SSOT/v4
+- Must follow **SSOT:** docs/00-SSOT/v1
 - Scripts must be **idempotent**, **safe to re-run**
-- Cursor must modify scripts in: **scripts/v4**
+- Cursor must modify scripts in: **scripts/v1**
 
 **Canonical topology:** Before designing or changing infrastructure, read `.cursor/knowledge/infra_topology.yaml`. Services, queues, storage, and flows must match that file; do not add components not listed there.

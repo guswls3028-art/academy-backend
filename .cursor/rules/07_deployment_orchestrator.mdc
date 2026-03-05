@@ -6,7 +6,7 @@ alwaysApply: false
 
 # Deployment Orchestrator
 
-**Primary deploy entry:** scripts/v4/deploy.ps1
+**Primary deploy entry:** scripts/v1/deploy.ps1
 
 **Deployment flow:**
 

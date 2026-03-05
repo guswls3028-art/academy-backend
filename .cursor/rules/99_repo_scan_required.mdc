@@ -10,8 +10,8 @@ Before making architectural decisions Cursor must:
 
 1. Scan the entire repository
 2. Read **canonical topology:** `.cursor/knowledge/infra_topology.yaml`
-3. Read SSOT documents (docs/00-SSOT/v4)
-4. Read scripts/v4
+3. Read SSOT documents (docs/00-SSOT/v1)
+4. Read scripts/v1
 5. Read GitHub workflows (.github/workflows)
 
 **No architecture change before repository scan.** Do not introduce services or connections not defined in infra_topology.yaml.

@@ -13,7 +13,7 @@ Infrastructure must match **SSOT** and **canonical topology.**
 
 **If drift detected:**
 
-- Recommend **script fix** (scripts/v4)
+- Recommend **script fix** (scripts/v1)
 - NOT manual console changes
 
 **Rules:**
