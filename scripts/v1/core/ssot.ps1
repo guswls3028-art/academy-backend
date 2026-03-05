@@ -248,6 +248,8 @@ function Load-SSOT {
     $script:FrontDomainApi = ""
     $script:FrontCorsAllowedOrigins = @()
     $script:FrontR2StaticBucket = ""
+    $script:FrontR2StaticPrefix = "static/front"
+    $script:FrontPurgeOnDeploy = $false
     if ($p["front"]) {
         if ($p["front"]["domains"]) {
             $script:FrontDomainApp = if ($p["front"]["domains"]["app"]) { $p["front"]["domains"]["app"] } else { "" }
