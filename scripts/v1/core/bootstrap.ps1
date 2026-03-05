@@ -215,6 +215,12 @@ function Invoke-BuildServerBuild {
         }
         Start-Sleep -Seconds 30
     }
+    # SSM 에이전트 준비 대기 (신규 생성/시작 직후 send-command 실패 방지)
+    try {
+        Wait-SSMOnline -InstanceId $instanceId -Reg $script:Region -TimeoutSec 600
+    } catch {
+        Write-Warn "SSM wait failed: $_. Proceeding with send-command (may fail)."
+    }
     $region = $script:Region
     $repo = $script:VideoWorkerRepo
     $acc = $script:AccountId
