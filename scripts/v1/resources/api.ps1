@@ -138,8 +138,9 @@ function Invoke-CollectRuntimeImagesReport {
         [void]$rows.Add([PSCustomObject]@{ InstanceId = $instId; Image = $imageId; RepoDigests = $repoDigests })
     }
     $ciDigest = $null
-    $ciPath = Join-Path $script:ReportsRepoRoot "docs\00-SSOT\v1\reports\ci-build.latest.md"
-    if ($script:ReportsRepoRoot -and (Test-Path $ciPath)) {
+    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+    $ciPath = Join-Path $repoRoot "docs\00-SSOT\v1\reports\ci-build.latest.md"
+    if (Test-Path $ciPath) {
         $ciContent = Get-Content -Path $ciPath -Raw -ErrorAction SilentlyContinue
         if ($ciContent -match '\|\s*academy-api\s*\|\s*latest\s*\|\s*(sha256:[a-fA-F0-9]+)\s*\|') {
             $ciDigest = $matches[1].Trim()
@@ -160,7 +161,7 @@ function Invoke-CollectRuntimeImagesReport {
     if ($null -ne $ciDigest -and -not $anyMatch) {
         [void]$sb.AppendLine("### CI vs Runtime")
         [void]$sb.AppendLine("**MISMATCH** — CI digest(academy-api:latest)와 런타임 RepoDigests가 일치하지 않음. 배포/갱신 실패 가능.")
-        [void]$sb.AppendLine("- CI digest (ci-build.latest.md): `$ciDigest`")
+        [void]$sb.AppendLine("- CI digest (ci-build.latest.md): $ciDigest")
         [void]$sb.AppendLine("")
     }
     [void]$sb.AppendLine("| InstanceId | Image | RepoDigests |")
