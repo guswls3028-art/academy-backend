@@ -43,21 +43,19 @@
 
 ---
 
-## 3. Video Batch
+## 3. Video Batch (standard / long 2-tier)
 
 | 항목 | 스펙 |
 |------|------|
-| **역할** | 영상 인코딩(FFmpeg HLS), 1동영상 1 Job·1워커, 동시 N개 업로드 → 최대 N대 기동 |
-| **Compute Environment** | academy-v1-video-batch-ce (minvCpus=0, maxvCpus=10) |
-| **인스턴스 타입** | c6g.xlarge |
-| Job Queue | academy-v1-video-batch-queue |
-| Job Definition | academy-v1-video-batch-jobdef (이미지: academy-video-worker) |
-| **Ops CE** | academy-v1-video-ops-ce (min 0, max 2 vCPU, m6g.medium) |
-| Ops Queue | academy-v1-video-ops-queue |
-| Ops JobDefs | academy-v1-video-ops-reconcile, academy-v1-video-ops-scanstuck, academy-v1-video-ops-netprobe |
-| EventBridge | academy-v1-reconcile-video-jobs, academy-v1-video-scan-stuck-rate |
-| DynamoDB Lock | academy-v1-video-job-lock (ttl) |
-| ECR | academy-video-worker |
+| **역할** | 영상 인코딩(FFmpeg HLS), 1동영상 1 Job·1워커. **standard:** 3h 이하 / **long:** 3h 초과(On-Demand, Spot 회피) |
+| **Standard CE** | academy-v1-video-batch-ce (minvCpus=0, maxvCpus=40, c6g.xlarge) |
+| **Standard Queue/JobDef** | academy-v1-video-batch-queue, academy-v1-video-batch-jobdef (timeout 6h, stuck heartbeat 20분) |
+| **Long CE** | academy-v1-video-batch-long-ce (minvCpus=0, maxvCpus=80, c6g.xlarge, On-Demand) |
+| **Long Queue/JobDef** | academy-v1-video-batch-long-queue, academy-v1-video-batch-long-jobdef (timeout 12h, stuck 45분) |
+| **Ops CE/Queue** | academy-v1-video-ops-ce, academy-v1-video-ops-queue |
+| **EventBridge** | academy-v1-reconcile-video-jobs, academy-v1-video-scan-stuck-rate |
+| **DynamoDB** | academy-v1-video-job-lock, academy-v1-video-upload-checkpoints (R2 multipart resume) |
+| **ECR** | academy-video-worker |
 
 ---
 
