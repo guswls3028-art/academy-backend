@@ -263,7 +263,7 @@ function Invoke-BuildServerBuild {
 function Invoke-BootstrapEcrUri {
     if ($script:SkipBuild) {
         if (-not $script:EcrRepoUri -or $script:EcrRepoUri.Trim() -eq "") {
-            $tag = Get-EcrResolvedTag
+            $tag = if ($script:EcrUseLatestTag) { "latest" } else { Get-EcrResolvedTag }
             if ($tag) {
                 $reg = $script:Region
                 $acc = $script:AccountId
@@ -275,12 +275,12 @@ function Invoke-BootstrapEcrUri {
         return
     }
     if ($script:EcrRepoUri -and $script:EcrRepoUri.Trim() -ne "") {
-        if ($script:EcrRepoUri -match ':latest\s*$') { throw "Resolved ECR URI must not be :latest." }
+        if (($script:EcrRepoUri -match ':latest\s*$') -and -not $script:EcrUseLatestTag) { throw "Resolved ECR URI must not be :latest when useLatestTag is false." }
         $script:EcrRepoUriResolved = $script:EcrRepoUri
         Write-Ok "ECR URI from parameter: $script:EcrRepoUriResolved"
         return
     }
-    $tag = Get-EcrResolvedTag
+    $tag = if ($script:EcrUseLatestTag) { "latest" } else { Get-EcrResolvedTag }
     if (-not $tag) { $tag = "bootstrap-" + (Get-Date -Format "yyyyMMdd-HHmmss") }
     $reg = $script:Region
     $acc = $script:AccountId
