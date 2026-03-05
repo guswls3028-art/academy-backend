@@ -1,5 +1,5 @@
-# .env 자동 로드 및 AWS 자격 증명 검증. 모든 v1 스크립트에서 공통 사용.
-# .env 형식: KEY=value (한 줄씩). # 주석·빈 줄 무시. PowerShell $env: 문법 사용하지 않음.
+# .env 는 스크립트에서 로드하지 않음. Cursor(에이전트)가 루트 .env를 열람해 환경변수로 설정한 뒤 스크립트를 실행한다.
+# 이 파일은 Assert-AwsCredentials 등 공통 함수만 제공. Load-EnvFile 은 사용하지 않음.
 $ErrorActionPreference = "Stop"
 $script:EnvLoaded = $false
 
@@ -10,6 +10,7 @@ function Get-RepoRoot {
 
 function Load-EnvFile {
     param([string]$RepoRoot = (Get-RepoRoot))
+    # Deprecated: 호출하지 말 것. 에이전트가 .env를 읽어 환경변수로 설정한 뒤 스크립트를 실행한다.
     if ($script:EnvLoaded) { return }
     $envPath = Join-Path $RepoRoot ".env"
     if (-not (Test-Path $envPath)) { return }
@@ -33,7 +34,7 @@ function Load-EnvFile {
 
 function Assert-AwsCredentials {
     param([string]$RepoRoot = (Get-RepoRoot))
-    Load-EnvFile -RepoRoot $RepoRoot | Out-Null
+    # .env 로드 없이 현재 프로세스 환경변수만으로 검증 (에이전트가 이미 설정한 값 사용)
     $region = $env:AWS_DEFAULT_REGION
     if (-not $region) { $region = $env:AWS_REGION }
     if (-not $region) { $region = "ap-northeast-2" }
