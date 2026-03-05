@@ -6,7 +6,7 @@
 **기준 문서:** `docs/00-SSOT/v1/SSOT.md`, `params.yaml`, `INFRA-AND-SPECS.md`  
 **배포 스크립트:** `scripts/v1/deploy.ps1`  
 **현재 인프라:** `docs/00-SSOT/v1/AWS-INFRA-REPORT.md`  
-**작성일:** 2026-03-05 · **V1.1 갱신:** 2026-03-06
+**작성일:** 2026-03-05 · **갱신:** 2026-03-06
 
 ---
 

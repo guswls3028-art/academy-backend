@@ -4,8 +4,8 @@
 **배포 원칙:** 모든 배포·재배포는 **빌드 서버 경유**이며, `-SkipBuild`는 예외 상황에만 사용한다. **비용 최적화:** ECR 라이프사이클 정책이 배포 시 자동 적용되어 불필요한 이미지를 남기지 않는다.
 
 **기준일:** 2026-03-06  
-**기준:** V1.1 SSOT (`docs/00-SSOT/v1/params.yaml`)  
-**변경:** API ASG 2/2/4(최소 HA), 롤링 배포 MinHealthyPercentage=100, RDS Performance Insights 7일, Observability SSOT, SQS DLQ/Visibility SSOT. 상세: `V1.1-OPERATIONS-GUIDE.md`.
+**기준:** V1 SSOT (`docs/00-SSOT/v1/params.yaml`)  
+**내용:** API ASG 2/2/4(최소 HA), 롤링 배포 MinHealthyPercentage=100, RDS Performance Insights 7일, Observability SSOT, SQS DLQ/Visibility SSOT. 상세: `V1-OPERATIONS-GUIDE.md`.
 
 ---
 
