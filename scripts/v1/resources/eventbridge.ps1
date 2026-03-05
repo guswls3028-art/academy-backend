@@ -60,12 +60,14 @@ function Ensure-EventBridgeRules {
     if (-not $rule2Exists) {
         Write-Host "  Creating rule $($script:EventBridgeScanStuckRule)" -ForegroundColor Yellow
         $script:ChangesMade = $true
-        Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeScanStuckRule, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--region", $script:Region) | Out-Null
+        $state2 = if ($script:EventBridgeScanStuckState -eq "DISABLED") { "DISABLED" } else { "ENABLED" }
+        Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeScanStuckRule, "--schedule-expression", "rate(5 minutes)", "--state", $state2, "--region", $script:Region) | Out-Null
     } else {
-        if ($rule2.State -ne "ENABLED") {
-            Write-Host "  Enabling rule $($script:EventBridgeScanStuckRule) (was $($rule2.State))" -ForegroundColor Yellow
+        $desiredState2 = if ($script:EventBridgeScanStuckState -eq "DISABLED") { "DISABLED" } else { "ENABLED" }
+        if ($rule2.State -ne $desiredState2) {
+            Write-Host "  Setting rule $($script:EventBridgeScanStuckRule) to $desiredState2 (was $($rule2.State), SSOT: scanStuckState)" -ForegroundColor Yellow
             $script:ChangesMade = $true
-            Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeScanStuckRule, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--region", $script:Region) | Out-Null
+            Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeScanStuckRule, "--schedule-expression", "rate(5 minutes)", "--state", $desiredState2, "--region", $script:Region) | Out-Null
         }
     }
     $targetsObj2 = $scanStuckJson | ConvertFrom-Json
