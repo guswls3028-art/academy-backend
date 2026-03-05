@@ -1,5 +1,7 @@
 # Scaling Playbook
 
+**Source of limits:** `.cursor/knowledge/infra_topology.yaml` (limits.max_concurrency, services.*.scaling, video_batch.max_vcpus).
+
 **Scaling signals:**
 
 - SQS queue depth

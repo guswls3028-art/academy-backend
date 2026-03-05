@@ -1,5 +1,7 @@
 # Incident Playbook
 
+**Topology reference:** `.cursor/knowledge/infra_topology.yaml` — architecture_flow, services.connects_to/consumes for tracing dependencies.
+
 ## Incident: SQS queue backlog
 
 **Possible causes:**

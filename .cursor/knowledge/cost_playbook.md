@@ -1,5 +1,7 @@
 # Cost Playbook
 
+**Instance and scale source:** `.cursor/knowledge/infra_topology.yaml` (services.*.instance_type, scaling.min/max, video_batch.max_vcpus).
+
 **Cost strategy:** balanced
 
 **Instance rules:**
