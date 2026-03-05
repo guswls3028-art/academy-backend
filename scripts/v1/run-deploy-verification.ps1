@@ -138,8 +138,24 @@ function Get-SqsDepth {
 }
 if ($script:MessagingSqsQueueUrl) { $msgQueueDepth = Get-SqsDepth -QueueUrl $script:MessagingSqsQueueUrl }
 if ($script:AiSqsQueueUrl) { $aiQueueDepth = Get-SqsDepth -QueueUrl $script:AiSqsQueueUrl }
-$msgDlqUrl = $script:MessagingSqsQueueUrl -replace '/academy-v1-messaging-queue$', '/academy-v1-messaging-queue-dlq'
-$aiDlqUrl = $script:AiSqsQueueUrl -replace '/academy-v1-ai-queue$', '/academy-v1-ai-queue-dlq'
+$msgDlqUrl = $null
+$aiDlqUrl = $null
+if ($script:MessagingSqsQueueName -and $script:MessagingDlqSuffix) {
+    $msgDlqName = $script:MessagingSqsQueueName.TrimEnd() + $script:MessagingDlqSuffix.TrimStart()
+    try {
+        $mq = Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $msgDlqName, "--region", $R, "--output", "json")
+        if ($mq -and $mq.QueueUrl) { $msgDlqUrl = $mq.QueueUrl }
+    } catch { }
+}
+if (-not $msgDlqUrl) { $msgDlqUrl = $script:MessagingSqsQueueUrl -replace '/academy-v1-messaging-queue$', '/academy-v1-messaging-queue-dlq' }
+if ($script:AiSqsQueueName -and $script:AiDlqSuffix) {
+    $aiDlqName = $script:AiSqsQueueName.TrimEnd() + $script:AiDlqSuffix.TrimStart()
+    try {
+        $aq = Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $aiDlqName, "--region", $R, "--output", "json")
+        if ($aq -and $aq.QueueUrl) { $aiDlqUrl = $aq.QueueUrl }
+    } catch { }
+}
+if (-not $aiDlqUrl) { $aiDlqUrl = $script:AiSqsQueueUrl -replace '/academy-v1-ai-queue$', '/academy-v1-ai-queue-dlq' }
 try {
     $dlqA = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $msgDlqUrl, "--attribute-names", "ApproximateNumberOfMessages", "--region", $R, "--output", "json")
     $msgDlqDepth = $dlqA.Attributes.ApproximateNumberOfMessages
