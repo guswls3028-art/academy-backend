@@ -95,8 +95,8 @@ function Invoke-BootstrapSqs {
 
     $msgDlq = "${msgName}-dlq"
     $aiDlq = "${aiName}-dlq"
-    $msgVisibility = 900
-    $aiVisibility = 3600
+    $msgVisibility = if ($script:MessagingVisibilityTimeoutSeconds -gt 0) { $script:MessagingVisibilityTimeoutSeconds } else { 900 }
+    $aiVisibility = if ($script:AiVisibilityTimeoutSeconds -gt 0) { $script:AiVisibilityTimeoutSeconds } else { 1800 }
     $maxReceiveCount = 5
 
     foreach ($qName in @($msgName, $aiName)) {

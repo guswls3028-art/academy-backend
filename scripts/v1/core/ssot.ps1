@@ -151,6 +151,7 @@ function Load-SSOT {
     $script:MessagingScaleInThreshold = Coerce-Int $p["messagingWorker"]["scalingPolicyScaleInThreshold"] 0
     $script:MessagingSqsQueueUrl = if ($p["messagingWorker"]["sqsQueueUrl"]) { $p["messagingWorker"]["sqsQueueUrl"] } else { "" }
     $script:MessagingSqsQueueName = if ($p["messagingWorker"]["sqsQueueName"]) { $p["messagingWorker"]["sqsQueueName"] } else { "" }
+    $script:MessagingVisibilityTimeoutSeconds = Coerce-Int $p["messagingWorker"]["visibilityTimeoutSeconds"] 900
     $script:AiASGName = $p["aiWorker"]["asgName"]
     $script:AiLaunchTemplateName = $p["aiWorker"]["launchTemplateName"]
     $script:AiInstanceTagValue = if ($p["aiWorker"]["instanceTagValue"]) { $p["aiWorker"]["instanceTagValue"] } else { "academy-v1-ai-worker" }
@@ -166,6 +167,7 @@ function Load-SSOT {
     $script:AiScaleInThreshold = Coerce-Int $p["aiWorker"]["scalingPolicyScaleInThreshold"] 0
     $script:AiSqsQueueUrl = if ($p["aiWorker"]["sqsQueueUrl"]) { $p["aiWorker"]["sqsQueueUrl"] } else { "" }
     $script:AiSqsQueueName = if ($p["aiWorker"]["sqsQueueName"]) { $p["aiWorker"]["sqsQueueName"] } else { "" }
+    $script:AiVisibilityTimeoutSeconds = Coerce-Int $p["aiWorker"]["visibilityTimeoutSeconds"] 1800
 
     $vb = $p["videoBatch"]
     $vbs = if ($vb["standard"]) { $vb["standard"] } else { $vb }
