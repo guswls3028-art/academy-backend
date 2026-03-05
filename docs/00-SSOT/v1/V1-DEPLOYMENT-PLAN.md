@@ -223,7 +223,19 @@ pwsh scripts/v1/deploy.ps1 -Env prod -EcrRepoUri "809466760795.dkr.ecr.ap-northe
 
 ---
 
-## 8. 참조
+## 8. V1.1 마스터 설계 반영
+
+| 영역 | 반영 내용 |
+|------|-----------|
+| **API** | ASG 2/2/4, instance-refresh MinHealthyPercentage=100·InstanceWarmup=300. Gunicorn/ALB 타임아웃 60s 권장. |
+| **RDS** | Performance Insights 7일, Multi-AZ toggle. Django/워커 CONN_MAX_AGE=60. |
+| **SQS** | DLQ·VisibilityTimeout·dlqMaxReceiveCount SSOT(params messagingWorker/aiWorker). Graceful shutdown·멱등성 유지. |
+| **Observability** | params `observability.*`(로그 30일, 알람 threshold). CloudWatch 알람은 SSOT 기반 스크립트 또는 수동 생성 가이드 참조. |
+| **검증** | `V1-DEPLOYMENT-VERIFICATION.md` §9, `V1.1-OPERATIONS-GUIDE.md` §4. Evidence/Drift: 배포 후 `check-v1-infra.ps1` 갱신. |
+
+---
+
+## 9. 참조
 
 - **SSOT:** `docs/00-SSOT/v1/SSOT.md`
 - **params:** `docs/00-SSOT/v1/params.yaml`
