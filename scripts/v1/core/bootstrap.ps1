@@ -114,7 +114,7 @@ function Invoke-BootstrapSqs {
         $dlqArn = (Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $dlqUrl, "--attribute-names", "QueueArn", "--region", $script:Region, "--output", "json")).Attributes.QueueArn
 
         if (-not $url) {
-            $redrive = "{\`"deadLetterTargetArn\`":\`"$dlqArn\`",\`"maxReceiveCount\`":\`"$maxReceiveCount\`"}"
+            $redrive = '{"deadLetterTargetArn":"' + $dlqArn + '","maxReceiveCount":"' + $maxReceiveCount + '"}'
             Invoke-AwsJson @("sqs", "create-queue", "--queue-name", $qName, "--attributes", "VisibilityTimeout=$visibility", "MessageRetentionPeriod=1209600", "RedrivePolicy=$redrive", "--region", $script:Region, "--output", "json") | Out-Null
             $get = Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $qName, "--region", $script:Region, "--output", "json")
             if ($get -and $get.QueueUrl) { $url = $get.QueueUrl; $script:ChangesMade = $true }
@@ -128,7 +128,7 @@ function Invoke-BootstrapSqs {
                 $needsUpdate = $true
             }
             if ($needsUpdate) {
-                $redrive = "{\`"deadLetterTargetArn\`":\`"$dlqArn\`",\`"maxReceiveCount\`":\`"$maxReceiveCount\`"}"
+                $redrive = '{"deadLetterTargetArn":"' + $dlqArn + '","maxReceiveCount":"' + $maxReceiveCount + '"}'
                 Invoke-Aws @("sqs", "set-queue-attributes", "--queue-url", $url, "--attributes", "VisibilityTimeout=$visibility", "RedrivePolicy=$redrive", "--region", $script:Region) -ErrorMessage "set-queue-attributes $qName" | Out-Null
                 Write-Host "  SQS attributes set: $qName VisibilityTimeout=$visibility RedrivePolicy->DLQ" -ForegroundColor Yellow
                 $script:ChangesMade = $true
