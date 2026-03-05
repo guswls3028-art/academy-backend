@@ -1,6 +1,6 @@
 ---
 description: Mandatory repo scan before any architecture change.
-globs: 
+globs:
 alwaysApply: true
 ---
 

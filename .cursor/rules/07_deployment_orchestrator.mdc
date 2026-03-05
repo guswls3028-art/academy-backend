@@ -1,0 +1,20 @@
+---
+description: Deploy entrypoint and flow. deploy.ps1 + ECR + verify.
+globs:
+alwaysApply: false
+---
+
+# Deployment Orchestrator
+
+**Primary deploy entry:** scripts/v4/deploy.ps1
+
+**Deployment flow:**
+
+1. Build image
+2. Push ECR
+3. Run deploy.ps1
+4. Verify infrastructure
+
+**CI:** GitHub Actions. Workflows may trigger ECR build and/or deploy.ps1.
+
+Deployment must support **one-take deployment**.

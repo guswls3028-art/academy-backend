@@ -1,0 +1,22 @@
+---
+description: Drift prevention. SSOT match; script fix only.
+globs: scripts/v4/**/*
+alwaysApply: false
+---
+
+# Drift Guard
+
+Infrastructure must match **SSOT.**
+
+**SSOT location:** docs/00-SSOT/v4
+
+**If drift detected:**
+
+- Recommend **script fix** (scripts/v4)
+- NOT manual console changes
+
+**Rules:**
+
+- Before creating a resource: check existence
+- Prefer Ensure-* scripts
+- Never blindly recreate infrastructure
