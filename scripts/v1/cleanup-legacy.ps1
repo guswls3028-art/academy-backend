@@ -276,4 +276,82 @@ if ($doASG) {
     }
 }
 
-Write-Host "`n=== 완료 ===`n" -ForegroundColor Cyan
+# --- Write cleanup-run.latest.md ---
+$runAt = Get-Date -Format "o"
+$sbRun = [System.Text.StringBuilder]::new()
+[void]$sbRun.AppendLine("# V1 Cleanup Run")
+[void]$sbRun.AppendLine("")
+[void]$sbRun.AppendLine("**RunAt:** $runAt **Mode:** $(if ($DryRun) { 'DryRun' } else { 'Execute' }) **Region:** $R")
+[void]$sbRun.AppendLine("")
+[void]$sbRun.AppendLine("## Summary")
+[void]$sbRun.AppendLine("| Action | Count |")
+[void]$sbRun.AppendLine("|--------|-------|")
+[void]$sbRun.AppendLine("| EIP released | $($runEIPReleased.Count) |")
+[void]$sbRun.AppendLine("| EBS volumes deleted | $($runVolumesDeleted.Count) |")
+[void]$sbRun.AppendLine("| SGs deleted | $($runSGsDeleted.Count) |")
+[void]$sbRun.AppendLine("| Build stopped | $($runBuildStopped.Count) |")
+[void]$sbRun.AppendLine("| EC2 terminated | $($runEC2Terminated.Count) |")
+[void]$sbRun.AppendLine("| ASGs removed | $($runASGRemoved.Count) |")
+[void]$sbRun.AppendLine("| Errors | $($runErrors.Count) |")
+[void]$sbRun.AppendLine("")
+if ($runEIPReleased.Count -gt 0) {
+    [void]$sbRun.AppendLine("## EIP Released")
+    foreach ($e in $runEIPReleased) { [void]$sbRun.AppendLine("- $($e.AllocationId) $($e.PublicIp)") }
+    [void]$sbRun.AppendLine("")
+}
+if ($runVolumesDeleted.Count -gt 0) {
+    [void]$sbRun.AppendLine("## EBS Volumes Deleted")
+    foreach ($e in $runVolumesDeleted) { [void]$sbRun.AppendLine("- $($e.VolumeId) $($e.Size) GiB") }
+    [void]$sbRun.AppendLine("")
+}
+if ($runSGsDeleted.Count -gt 0) {
+    [void]$sbRun.AppendLine("## SGs Deleted")
+    foreach ($e in $runSGsDeleted) { [void]$sbRun.AppendLine("- $($e.GroupId) $($e.GroupName)") }
+    [void]$sbRun.AppendLine("")
+}
+if ($runASGRemoved.Count -gt 0) {
+    [void]$sbRun.AppendLine("## ASGs Removed")
+    foreach ($e in $runASGRemoved) { [void]$sbRun.AppendLine("- $($e.ASGName)") }
+    [void]$sbRun.AppendLine("")
+}
+if ($runErrors.Count -gt 0) {
+    [void]$sbRun.AppendLine("## Errors")
+    foreach ($e in $runErrors) { [void]$sbRun.AppendLine("- $e") }
+}
+if (-not (Test-Path $ReportsDir)) { New-Item -ItemType Directory -Path $ReportsDir -Force | Out-Null }
+Set-Content -Path $CleanupRunPath -Value $sbRun.ToString() -Encoding UTF8 -Force
+Write-Host "  cleanup-run: $CleanupRunPath" -ForegroundColor Green
+
+# --- Update resource-cleanup.latest.md when Execute ---
+if (-not $DryRun -and ($runEIPReleased.Count -gt 0 -or $runVolumesDeleted.Count -gt 0 -or $runSGsDeleted.Count -gt 0 -or $runASGRemoved.Count -gt 0)) {
+    $rcSb = [System.Text.StringBuilder]::new()
+    $rcSb.AppendLine("# V1 리소스 정리 기록 (증거)")
+    $rcSb.AppendLine("")
+    $rcSb.AppendLine("**리전:** $R **갱신:** $runAt **SSOT:** docs/00-SSOT/v1/params.yaml")
+    $rcSb.AppendLine("")
+    $rcSb.AppendLine("## Elastic IP (released)")
+    $rcSb.AppendLine("| AllocationId | PublicIp | 조치 | 시각 |")
+    $rcSb.AppendLine("|--------------|----------|------|------|")
+    foreach ($e in $runEIPReleased) { $rcSb.AppendLine("| $($e.AllocationId) | $($e.PublicIp) | release | $runAt |") }
+    $rcSb.AppendLine("")
+    $rcSb.AppendLine("## EBS 볼륨 (deleted)")
+    $rcSb.AppendLine("| VolumeId | Size | 조치 | 시각 |")
+    $rcSb.AppendLine("|----------|------|------|------|")
+    foreach ($e in $runVolumesDeleted) { $rcSb.AppendLine("| $($e.VolumeId) | $($e.Size) GiB | delete | $runAt |") }
+    $rcSb.AppendLine("")
+    $rcSb.AppendLine("## Security Group (deleted)")
+    $rcSb.AppendLine("| GroupId | GroupName | 조치 | 시각 |")
+    $rcSb.AppendLine("|---------|-----------|------|------|")
+    foreach ($e in $runSGsDeleted) { $rcSb.AppendLine("| $($e.GroupId) | $($e.GroupName) | delete | $runAt |") }
+    $rcSb.AppendLine("")
+    $rcSb.AppendLine("## Legacy ASG (removed)")
+    $rcSb.AppendLine("| ASG Name | 조치 | 시각 |")
+    $rcSb.AppendLine("|----------|------|------|")
+    foreach ($e in $runASGRemoved) { $rcSb.AppendLine("| $($e.ASGName) | delete | $runAt |") }
+    Set-Content -Path $ResourceCleanupPath -Value $rcSb.ToString() -Encoding UTF8 -Force
+    Write-Host "  resource-cleanup: $ResourceCleanupPath" -ForegroundColor Green
+}
+
+Write-Host ""
+Write-Host "=== 완료 ===" -ForegroundColor Cyan
+Write-Host ""
