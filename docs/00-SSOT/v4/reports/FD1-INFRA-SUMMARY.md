@@ -145,14 +145,14 @@ pwsh scripts/v4/deploy.ps1 -Env prod -PurgeAndRecreate
 | ALB | 1 | internet-facing, Public Subnets (`academy-v4-api-alb`) |
 | Target Group | 1 | port 8000, health path `/health` (`academy-v4-api-tg`) |
 | Listener | 1 | HTTP 80 → Target Group |
-| Launch Template | 1 | API용 (c6g.large, sg-app, Private Subnets) |
+| Launch Template | 1 | API용 (t4g.medium, sg-app, Private Subnets) |
 | ASG | 1 | API ASG (min=1, max=2, desired=1, `academy-v4-api-asg`), Target Group 연결 |
 | EC2 인스턴스 | 1 | ASG 의해 기동 (Private Subnet), ALB DNS 기반 ApiBaseUrl |
 
 ### Step E — Workers ASG
 | 리소스 유형 | 수량 | 이름/설명 |
 |-------------|------|-----------|
-| Launch Template | 2 | Messaging, AI 각 1 (c6g.large, sg-app) |
+| Launch Template | 2 | Messaging, AI 각 1 (t4g.medium, sg-app) |
 | ASG | 2 | `academy-v4-messaging-worker-asg`, `academy-v4-ai-worker-asg` (min=1, max=10, desired clamp, scale-in protection) |
 | Application Auto Scaling Target | 2 | ASG당 1 (min=1, max=10) — sqsQueueUrl 설정 시 |
 | Scaling Policy | 2×2 | scale-out / scale-in 각 ASG당 2개 (sqsQueueUrl 설정 시, 임계값은 params로 조정 가능) |

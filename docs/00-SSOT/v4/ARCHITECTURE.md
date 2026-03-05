@@ -70,7 +70,7 @@
 
 ### 2.4 Build
 
-- **인스턴스:** 1대, 태그 기반. Private 또는 Public(선택). c6g.large
+- **인스턴스:** 1대, 태그 기반. Private 또는 Public(선택). t4g.medium
 - **역할:** 이미지 빌드·ECR 푸시
 
 ---
