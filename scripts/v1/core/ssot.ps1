@@ -234,6 +234,18 @@ function Load-SSOT {
     $script:RedisNodeType = if ($p["redis"]["nodeType"]) { $p["redis"]["nodeType"] } else { "cache.t4g.small" }
     $script:RedisEngineVersion = if ($p["redis"]["engineVersion"]) { $p["redis"]["engineVersion"] } else { "" }
 
+    $obs = $p["observability"]
+    $script:ObservabilityLogRetentionDays = Coerce-Int $obs["logRetentionDays"] 30
+    $script:ObservabilityAlarmPeriodSeconds = Coerce-Int $obs["alarmPeriodSeconds"] 300
+    $script:ObservabilityAlarmEvaluationPeriods = Coerce-Int $obs["alarmEvaluationPeriods"] 2
+    $script:ObservabilityApiAlb5xxThreshold = Coerce-Int $obs["apiAlb5xxThreshold"] 10
+    $script:ObservabilitySqsQueueDepthThreshold = Coerce-Int $obs["sqsQueueDepthThreshold"] 100
+    $script:ObservabilitySqsDlqDepthThreshold = Coerce-Int $obs["sqsDlqDepthThreshold"] 5
+    $script:ObservabilityRdsCpuThresholdPercent = Coerce-Int $obs["rdsCpuThresholdPercent"] 80
+    $script:ObservabilityRdsFreeStorageGbThreshold = Coerce-Int $obs["rdsFreeStorageGbThreshold"] 5
+    $script:ObservabilityRdsConnectionsThreshold = Coerce-Int $obs["rdsConnectionsThreshold"] 90
+    $script:ObservabilityRedisCpuThresholdPercent = Coerce-Int $obs["redisCpuThresholdPercent"] 75
+
     $script:VideoLogGroup = "/aws/batch/academy-video-worker"
     $script:OpsLogGroup = "/aws/batch/academy-video-ops"
 
