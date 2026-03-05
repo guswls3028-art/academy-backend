@@ -1,5 +1,6 @@
 # ==============================================================================
 # Academy v1 — 새 PC 준비. aws cli, pwsh, 인증, region·권한 확인.
+# .env 자동 로드 — AWS 권한 수동 설정 불필요.
 # Usage: pwsh scripts/v1/bootstrap.ps1
 # ==============================================================================
 $ErrorActionPreference = "Stop"
@@ -28,17 +29,22 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "OK: $($awsVersion | Out-String | Select-Object -First 1)" -ForegroundColor Green
 
-# AWS identity
-$region = $env:AWS_REGION
-if (-not $region) { $region = "ap-northeast-2" }
-$id = aws sts get-caller-identity --output json --region $region 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "FAIL: AWS not configured or no credentials. Run: aws configure" -ForegroundColor Red
+# .env 로드 후 AWS 자격 증명 검증
+$ScriptRoot = $PSScriptRoot
+$RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
+. (Join-Path $ScriptRoot "core\env.ps1")
+Load-EnvFile -RepoRoot $RepoRoot | Out-Null
+try {
+    $idObj = Assert-AwsCredentials -RepoRoot $RepoRoot
+} catch {
+    Write-Host "FAIL: $_" -ForegroundColor Red
     exit 1
 }
-$idObj = $id | ConvertFrom-Json
+$region = $env:AWS_DEFAULT_REGION
+if (-not $region) { $region = $env:AWS_REGION }
+if (-not $region) { $region = "ap-northeast-2" }
 Write-Host "OK: Account $($idObj.Account)" -ForegroundColor Green
-Write-Host "OK: Region $region (set AWS_REGION to override)" -ForegroundColor Green
+Write-Host "OK: Region $region (set AWS_DEFAULT_REGION to override)" -ForegroundColor Green
 
 # Minimal describe (required for drift/deploy)
 $null = aws ec2 describe-vpcs --max-items 1 --region $region --output json 2>&1
@@ -49,8 +55,6 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "OK: Minimal describe permission" -ForegroundColor Green
 
 # params.yaml
-$ScriptRoot = $PSScriptRoot
-$RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
 $ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\v1\params.yaml"
 if (-not (Test-Path $ParamsPath)) {
     Write-Host "FAIL: params.yaml not found at $ParamsPath" -ForegroundColor Red
