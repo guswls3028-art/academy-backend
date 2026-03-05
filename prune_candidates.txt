@@ -6,3 +6,18 @@ MODE: Bootstrap ON (one-take)
 MODE: StrictValidation ON
 
 [Preflight]
+  OK: Account: 809466760795
+  OK: Region: ap-northeast-2
+  OK: VPC: vpc-0831a2484f9b114c2
+  OK: SSM /academy/workers/env
+  OK: ECR academy-video-worker
+  OK: Preflight done
+
+  [DRIFT-DEBUG] --- ExpectedName vs ActualNames from AWS ---
+  [DRIFT-DEBUG] Batch CE ActualNames from AWS: (academy-v1-video-batch-ce, academy-v1-video-ops-ce)
+  [DRIFT-DEBUG] Batch CE ExpectedName: academy-v1-video-batch-ce
+  [DRIFT-DEBUG] Batch CE ExpectedName: academy-v1-video-ops-ce
+  [DRIFT-DEBUG] Batch Queue ActualNames from AWS: (academy-v1-video-batch-queue, academy-v1-video-ops-queue)
+  [DRIFT-DEBUG] Batch Queue ExpectedName: academy-v1-video-batch-queue
+  [DRIFT-DEBUG] Batch Queue ExpectedName: academy-v1-video-ops-queue
+  [DRIFT-DEBUG] EventBridge ExpectedName (describe-rule --name): academy-v1-reconcile-video-jobs

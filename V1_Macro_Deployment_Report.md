@@ -47,9 +47,26 @@
 - **해결 방안**: 배포 단위에서 불필요한 전체 삭제를 멈추고, SQS 및 EventBridge를 활용한 객체 단위(Granular) 타겟 변경 캐시 무효화 체계를 구축해야 합니다.
 
 ### 🔴 Action Item 2: 배포 스크립트 절차주의의 한계 (IaC 마이그레이션)
-- **상태/취약점**: 훌륭한 배포 자동화(`deploy.ps1`) 스크립트지만, 절차적으로 진행되어 전체 실행 시간이 20~25분(Netprobe 및 콜드스타트 포함) 이상 소요됩니다. 셸 기반 제어는 스크립트가 비대해질수록 병렬 처리가 불가능해 배포/롤백 속도가 저하되는 근본 병목이 됩니다.
+- **상태/취약점**: 훌륭한 배포 자동화(`deploy.ps1`) 스크립트지만, 절차적으로 진행되어 전체 실행 시간이 **25~30분**(Netprobe 및 콜드스타트 포함) 이상 소요됩니다. 셸 기반 제어는 스크립트가 비대해질수록 병렬 처리가 불가능해 배포/롤백 속도가 저하되는 근본 병목이 됩니다.
 - **해결 방안**: 향후 V2에서는 Terraform 또는 AWS CDK와 같은 **선언적 IaC(Infrastructure as Code)**로 마이그레이션하여, 의존성 그래프 기반 병렬 리소스 생성 및 더욱 빠르고 안전한 상태(State) 관리를 달성해야 합니다.
 
 ### 🔴 Action Item 3: 데이터베이스의 Single Point of Failure (SPOF)
 - **상태/취약점**: Worker, AI, API 모두 ASG 및 Batch 기반 다중화로 설계되었으나, `academy-v1-db`(RDS)와 `academy-v1-redis`는 단일 노드로 설정되어 있습니다. (현재 비용 최적화 사유로 파악됨)
 - **해결 방안**: 프로덕션 규모가 커질 경우 읽기 레이블 분산(Read Replica) 및 Multi-AZ 이중화를 통한 Failover 구성을 필수 반영하여 수평 확장의 장점(Stateless 서버)을 뒷받침하는 데이터 티어 고가용성을 확보해야 합니다.
+
+---
+
+## 5. 참조 문서 (V1 기준)
+
+| 용도 | 문서 |
+|------|------|
+| 배포 플랜·절차 | `docs/00-SSOT/v1/V1-DEPLOYMENT-PLAN.md` |
+| 배포 검증 | `docs/00-SSOT/v1/V1-DEPLOYMENT-VERIFICATION.md` |
+| 최종 보고·실행 요약 | `docs/00-SSOT/v1/V1-FINAL-REPORT.md` |
+| 인프라 현황(참고) | `docs/00-SSOT/v1/AWS-INFRA-REPORT.md` |
+| SSOT 사람용 | `docs/00-SSOT/v1/SSOT.md` |
+| params(기계용) | `docs/00-SSOT/v1/params.yaml` |
+| Evidence/Drift | `docs/00-SSOT/v1/reports/audit.latest.md`, `drift.latest.md` |
+| 배포 타이밍 점검 | `docs/00-SSOT/v1/reports/DEPLOY-TIMING-CHECKLIST.md` |
+| 배포 룰(Cursor) | `.cursor/rules/07_deployment_orchestrator.mdc` |
+| 배포 스크립트 | `scripts/v1/deploy.ps1`, `scripts/v1/verify.ps1` |
