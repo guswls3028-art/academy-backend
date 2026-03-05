@@ -41,7 +41,7 @@ function Ensure-RdsSubnetGroup {
     $script:ChangesMade = $true
 }
 
-function Get-RdsMasterPassword {
+function Ensure-RDSSecurityGroup {
     if (-not $script:RdsMasterPasswordSsmParam) {
         throw "rds.masterPasswordSsmParam is required in params.yaml (SSM SecureString with DB master password)."
     }
@@ -173,6 +173,7 @@ function Confirm-RDSState {
                 $ep = $db.Endpoint
                 Write-Ok "RDS $($script:RdsDbIdentifier) available (endpoint: $($ep.Address):$($ep.Port))"
                 Ensure-RDSSecurityGroup -DbInstance $db
+                Ensure-RdsObservability -DbInstance $db
                 return
             }
             if ($status -eq "failed") {
