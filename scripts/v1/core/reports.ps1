@@ -80,3 +80,11 @@ function Save-DeployVerificationReport {
     Set-Content -Path $historyPath -Value $MarkdownContent -Encoding UTF8 -Force
     Write-Host "  Deploy verification report: $latestPath" -ForegroundColor DarkGray
 }
+
+function Save-V1FinalReportInReports {
+    param([string]$MarkdownContent)
+    $dir = Get-ReportsDir
+    $latestPath = Join-Path $dir "V1-FINAL-REPORT.md"
+    Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
+    Write-Host "  V1 Final report (reports): $latestPath" -ForegroundColor DarkGray
+}
