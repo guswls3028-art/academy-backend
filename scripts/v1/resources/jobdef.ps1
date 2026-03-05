@@ -1,4 +1,4 @@
-# JobDef: drift-based register. Uses v4/templates/batch.
+# JobDef: drift-based register. Uses v1/templates/batch.
 $ErrorActionPreference = "Stop"
 $V4Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $BatchPath = Join-Path $V4Root "templates\batch"

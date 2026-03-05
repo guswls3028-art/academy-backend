@@ -50,7 +50,7 @@ function Assert-NoLegacyScripts {
         $path = $frame.InvocationInfo.ScriptName
         if (-not $path) { continue }
         if ($path -match 'scripts[\\/]infra[\\/]') {
-            throw "DEPRECATED: Do not run scripts/infra. Use scripts/v4/deploy.ps1 only."
+            throw "DEPRECATED: Do not run scripts/infra. Use scripts/v1/deploy.ps1 only."
         }
         if ($path -match 'scripts[\\/]archive[\\/]') {
             throw "FORBIDDEN: Do not run scripts/archive. Use scripts/v4 only."

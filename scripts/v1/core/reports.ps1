@@ -2,7 +2,7 @@
 $ErrorActionPreference = "Stop"
 $ReportsScriptDir = $PSScriptRoot
 $ReportsRepoRoot = (Resolve-Path (Join-Path $ReportsScriptDir "..\..\..")).Path
-$ReportsBase = Join-Path $ReportsRepoRoot "docs\00-SSOT\v4\reports"
+$ReportsBase = Join-Path $ReportsRepoRoot "docs\00-SSOT\v1\reports"
 $ReportsHistory = Join-Path $ReportsBase "history"
 
 function Get-ReportsDir {
@@ -59,7 +59,7 @@ function Save-VerifyReport {
     $dir = Get-ReportsDir
     $historyDir = Get-ReportsHistoryDir
     $ts = Get-Date -Format "yyyyMMdd-HHmmss"
-    $header = "# Verify v4`n**Generated:** $(Get-Date -Format 'o')`n`n"
+    $header = "# Verify v1`n**Generated:** $(Get-Date -Format 'o')`n`n"
     $content = $header + $MarkdownContent
     $latestPath = Join-Path $dir "verify.latest.md"
     $historyPath = Join-Path $historyDir "${ts}-verify.md"

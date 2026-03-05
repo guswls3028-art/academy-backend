@@ -1,6 +1,6 @@
 # ==============================================================================
-# Academy v4 — 새 PC 준비. aws cli, pwsh, 인증, region·권한 확인.
-# Usage: pwsh scripts/v4/bootstrap.ps1
+# Academy v1 — 새 PC 준비. aws cli, pwsh, 인증, region·권한 확인.
+# Usage: pwsh scripts/v1/bootstrap.ps1
 # ==============================================================================
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
@@ -58,5 +58,5 @@ if (-not (Test-Path $ParamsPath)) {
 }
 Write-Host "OK: params.yaml found" -ForegroundColor Green
 
-Write-Host "`nNext: pwsh scripts/v4/deploy.ps1 -Plan" -ForegroundColor Cyan
+Write-Host "`nNext: pwsh scripts/v1/deploy.ps1 -Plan" -ForegroundColor Cyan
 Write-Host "=== Bootstrap done ===`n" -ForegroundColor Green

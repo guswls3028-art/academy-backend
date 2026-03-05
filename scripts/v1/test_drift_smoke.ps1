@@ -1,5 +1,5 @@
 # Smoke check: Describe wrappers and DRIFT consistency. No AWS changes.
-# Run from repo root: pwsh scripts/v4/test_drift_smoke.ps1
+# Run from repo root: pwsh scripts/v1/test_drift_smoke.ps1
 # Requires: AWS configured, params.yaml, and existing SSOT resources (or run will report missing).
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
