@@ -46,7 +46,7 @@ $BuildTagValue = $script:BuildTagValue
 $BatchOpsASGPrefix = "academy-v1-video-ops-ce-asg-"
 $BatchStandardASGPrefix = "academy-v1-video-batch-ce"  # Batch managed ASG name may contain this
 
-Write-Host "`n=== V1 AWS 리소스 인벤토리 (리전 $R) ===" -ForegroundColor Cyan
+Write-Host "`n=== V1 AWS Resource Inventory (region $R) ===" -ForegroundColor Cyan
 
 # --- EC2 ---
 $ec2List = @()
@@ -196,7 +196,7 @@ $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("| InstanceId | State | Name | SSOT |")
 [void]$sb.AppendLine("|------------|-------|------|------|")
 foreach ($e in $ec2List) {
-    $ssot = if ($usedInstanceIds.Contains($e.InstanceId)) { "KEEP" } elseif ($e.Name -eq $BuildTagValue) { "KEEP (build, stop 권장)" } else { "LEGACY_CANDIDATE" }
+    $ssot = if ($usedInstanceIds.Contains($e.InstanceId)) { "KEEP" } elseif ($e.Name -eq $BuildTagValue) { "KEEP (build, stop only)" } else { "LEGACY_CANDIDATE" }
     [void]$sb.AppendLine("| $($e.InstanceId) | $($e.State) | $($e.Name) | $ssot |")
 }
 [void]$sb.AppendLine("")
