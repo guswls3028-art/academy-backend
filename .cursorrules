@@ -1,6 +1,36 @@
-# Academy 프로젝트 규칙
+# [Project: Academy SaaS Development Rules]
 
-## 인프라 전략
-- **AWS:** RDS(PostgreSQL)와 DynamoDB만 사용함.
-- **Cloudflare:** 파일 저장(R2), CDN, DNS, 보안은 모두 Cloudflare를 사용함. (S3 사용 금지)
-- **인증:** AWS 명령어 실행 시 반드시 `--profile default`를 붙이거나 환경변수를 정리할 것.
+## 1. 인프라 전략 (구분)
+- **AWS:** RDS(PostgreSQL), DynamoDB, Batch, EC2/ASG, ALB, SQS, ElastiCache, ECR 등. **S3 사용 금지.**
+- **Cloudflare:** 파일 저장(R2), CDN, DNS, 보안. (스토리지·CDN은 AWS S3/CloudFront 사용 금지)
+- 두 영역을 혼동하지 말 것. AWS 작업 시에는 AWS 규칙만, Cloudflare 작업 시에는 Cloudflare 규칙만 적용한다.
+
+---
+
+## 2. AWS 관련 규칙
+- **인증:** AWS 명령어 실행 시 반드시 `--profile default`를 붙이거나, 환경 변수 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`를 정리한 뒤 프로파일을 사용할 것.
+- **배포:** V1 인프라는 `scripts/v1/deploy.ps1` 및 `docs/00-SSOT/v1/` 기준. Cursor에서 배포/인프라 조회 시 `-AwsProfile default` 사용 권장.
+- **스토리지:** AWS 쪽에서는 S3 도입·사용 금지. 오브젝트 스토리지는 Cloudflare R2만 사용.
+
+---
+
+## 3. Cloudflare 관련 규칙
+
+### 3.1 환경 변수 및 인프라 접근
+- 루트의 `.env` 파일에 있는 `CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`를 최우선으로 참조한다.
+- Cloudflare 상태 확인이나 조작이 필요할 때는 터미널에서 `wrangler` CLI를 직접 사용한다.
+- 인프라를 새로 생성하지 말고, 이미 존재하는 5개의 R2 버킷(**academy-admin**, **academy-ai**, **academy-excel**, **academy-storage**, **academy-video**)을 활용한다.
+
+### 3.2 기술 제약 사항 (중요)
+- **S3 SDK 절대 사용 금지:** Cloudflare R2 연결 시 AWS S3 호환 SDK를 쓰지 않는다. 대신 Cloudflare Worker Native API나 R2 전용 Fetch API 방식을 지향한다. (필요 시 `wrangler`를 통한 조작 우선)
+- **Terraform/IaC 사용 금지:** Cloudflare 인프라는 수동으로 관리 중이므로, 인프라 코드를 생성하지 않는다.
+
+### 3.3 작업 스타일
+- 코드를 작성하기 전, Cloudflare 관련 작업 시 터미널을 통해 현재 인프라 상태(R2 버킷 목록, CDN 설정 등)를 먼저 확인하고 보고한다.
+- 지저분한 기존 코드를 이식할 때는 `src/services/` 등의 구조로 모듈화하여 정렬한다.
+- Cloudflare 배포 및 리소스 확인은 `pnpm scripts` 또는 `wrangler`를 활용한다.
+
+---
+
+## 4. 공통
+- AWS 작업과 Cloudflare 작업이 한 PR/한 대화에 섞일 경우, 섹션 2와 섹션 3을 구분하여 각각의 규칙을 적용한다.
