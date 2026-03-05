@@ -2,16 +2,15 @@
   "commands": [
     "set -e",
     "export AWS_DEFAULT_REGION=ap-northeast-2",
-    "TAG=api-health-fix-1",
-    "cd /opt/academy 2>/dev/null || cd /home/ec2-user/academy 2>/dev/null || { echo REPO_PATH_NOT_FOUND; exit 1 }",
+    "cd /opt/academy 2>/dev/null || cd /home/ec2-user/academy 2>/dev/null || echo REPO_PATH_NOT_FOUND",
+    "test -d .git || exit 1",
     "git fetch origin 2>/dev/null || true",
     "git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || true",
-    "echo BUILD_TAG=$TAG",
     "aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com",
-    "docker build -f docker/Dockerfile.base -t academy-base:latest . 2>&1 || true",
-    "docker build --platform linux/arm64 -f docker/api/Dockerfile -t academy-api:$TAG . 2>&1",
-    "docker tag academy-api:$TAG 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:$TAG",
-    "docker push 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:$TAG 2>&1",
-    "echo PUSHED_TAG=$TAG"
+    "docker build -f docker/Dockerfile.base -t academy-base:latest . || true",
+    "docker build --platform linux/arm64 -f docker/api/Dockerfile -t academy-api:api-health-fix-1 .",
+    "docker tag academy-api:api-health-fix-1 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:api-health-fix-1",
+    "docker push 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:api-health-fix-1",
+    "echo DONE"
   ]
 }
