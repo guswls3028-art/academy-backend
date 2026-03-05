@@ -62,10 +62,14 @@ function Assert-SSOTFrontR2Required {
     if (-not $script:FrontR2StaticBucket -or $script:FrontR2StaticBucket.Trim() -eq "") { [void]$missing.Add("front.r2StaticBucket") }
     if (-not $script:R2Bucket -or $script:R2Bucket.Trim() -eq "") { [void]$missing.Add("r2.bucket") }
     if (-not $script:R2PublicBaseUrl -or $script:R2PublicBaseUrl.Trim() -eq "") { [void]$missing.Add("r2.publicBaseUrl") }
-    if (-not $script:FrontCorsAllowedOrigins -or $script:FrontCorsAllowedOrigins.Count -eq 0) { [void]$missing.Add("front.cors.allowedOrigins (최소 1개)") }
     if ($missing.Count -gt 0) {
-        $msg = "SSOT 필수값 공란. params.yaml에서 다음을 채운 뒤 재실행: " + ($missing -join ", ")
+        $msg = "SSOT 필수값 공란. params.yaml에서 다음을 채운 뒤 재실행: " + ($missing -join ", ") + ". (front.cors.allowedOrigins는 CORS 사용 시 PHASE 4에서 채우면 됨)"
         throw "Preflight FAIL (DeployFront): $msg"
+    }
+    if (-not $script:FrontCorsAllowedOrigins -or $script:FrontCorsAllowedOrigins.Count -eq 0) {
+        $co = $script:FrontCorsAllowedOrigins
+        if ($co -is [string] -and $co -eq "[]") { }
+        else { Write-Host "  [DeployFront] front.cors.allowedOrigins 비어 있음. CORS 검증 시 params에 origin 추가 권장." -ForegroundColor Yellow }
     }
     Write-Ok "SSOT front/r2 필수값 확인됨"
 }
