@@ -86,6 +86,8 @@
 |------|------|
 | **NO-GO** | FAIL 항목 해결 후 재검증 필요. |
 
+- **FAIL 원인 요약:** SSOT api.healthPath가 `/healthz`로 변경되었으나, 현재 API 인스턴스에 배포된 이미지(api-health-fix-1)에는 `/healthz` 라우트가 없음. 빌드 서버(academy-build-arm64)가 terminated 상태라 api-health-fix-2 이미지 미빌드. TG는 이미 `/healthz`로 수정 완료. 빌드 서버 기동 후 academy-api 이미지 빌드·ECR 푸시·배포·검증 재실행 시 GATE 통과 예상.
+
 - **FAIL 1건 이상** → **NO-GO**. 재검증 후 재실행.
 - **WARNING만** → **CONDITIONAL GO**. 영향도·완화책·추적 계획 확인 후 배포 여부 결정.
 - **PASS만** → **GO**.
