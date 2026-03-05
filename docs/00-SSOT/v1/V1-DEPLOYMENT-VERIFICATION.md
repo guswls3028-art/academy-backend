@@ -236,4 +236,36 @@ V1이 standard/long 2-tier·timeout·stuck(heartbeat_age)·R2 checkpoint·관측
 
 ---
 
+## 10. 프론트 배포 + R2 + CDN 엔드투엔드 검증 (V1.1)
+
+### 10.1 프론트 배포 후 체크리스트
+
+| # | 시나리오 | 확인 방법 | 자동/반자동 |
+|---|----------|-----------|-------------|
+| 1 | 새 버전 반영(캐시 정책 포함) | 배포 후 app 도메인 접속, 해시된 asset URL 200, index no-cache 또는 짧은 TTL 확인 | 반자동: curl + 헤더 확인 |
+| 2 | API 호출 정상(CORS/쿠키/CSRF) | app에서 로그인·API 요청 시 200, CORS 오류 없음, credentials 포함 요청 성공 | 수동 또는 E2E |
+| 3 | R2 정적 자산/미디어 접근(CDN 캐싱) | VITE_MEDIA_CDN_BASE 경로로 이미지/영상 재생, CDN Cache-Control 헤더 확인 | 반자동: curl -I |
+
+### 10.2 백엔드 검증
+
+| # | 시나리오 | 확인 방법 |
+|---|----------|-----------|
+| 1 | API 헬스/핵심 기능 smoke | `curl -s -o /dev/null -w "%{http_code}" https://api.<domain>/health` → 200 |
+| 2 | SQS 작업 enqueue/consume | 메시지 발송 후 워커 로그에서 처리 완료 확인 |
+| 3 | Video 3시간 1건 완주 + staging→READY + CDN 재생 | §7.1·§7.2. SUCCEEDED → READY, HLS URL을 CDN 경유로 재생 |
+
+### 10.3 장애 모의
+
+| # | 시나리오 | 확인 방법 |
+|---|----------|-----------|
+| 1 | 워커 강제 종료 후 메시지 재처리(중복 방지) | 워커 1대 kill → visibility 만료 후 동일 메시지 재노출 → 멱등성 키로 중복 처리 방지 확인. DLQ 적재 없음. |
+| 2 | R2 업로드 실패 유도 후 재시도/복구(재인코딩 최소화) | 업로드 중 네트워크 단절 또는 part 실패 → checkpoint 복구 후 업로드만 재시도, 인코딩 재수행 최소화 (§7.3) |
+
+### 10.4 Evidence/Drift 갱신
+
+- 배포 완료 후: `pwsh scripts/v1/check-v1-infra.ps1` 실행 → `docs/00-SSOT/v1/reports/drift.latest.md`, `audit.latest.md` 갱신.
+- PR/커밋 시 삭제 전 검증 로그·근거 문서: `V1.1-INVENTORY-AND-LEGACY-REMOVAL-PLAN.md` §2 참고.
+
+---
+
 **문서 끝.**
