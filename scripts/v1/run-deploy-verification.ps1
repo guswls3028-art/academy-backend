@@ -370,6 +370,65 @@ try {
     }
 } catch { }
 
+# --- 8b. 정합성·프론트 연결 보고서 (consistency.latest.md, front-connection.latest.md) ---
+$buildRunningCount = if ($ev.buildState -eq "running") { 1 } else { 0 }
+$apiConsensusOk = ($ev.apiAsgMin -eq 1 -and $ev.apiAsgDesired -eq 1)
+$aiConsensusOk = ($ev.asgAiMin -eq 1 -and $ev.asgAiDesired -eq 1)
+$msgConsensusOk = ($ev.asgMessagingMin -eq 1 -and $ev.asgMessagingDesired -eq 1)
+$eipNote = if ($eipCountTotal -gt 0) { "EIP $eipCountTotal개 (미연결 $eipCountUnassociated). Solapi 고정 IP 취소로 NAT/EIP 불필요·비용 검토 권장." } else { "EIP 없음 (합의 반영)" }
+$buildNote = if ($buildRunningCount -gt 0) { "전환중 (running $buildRunningCount대). 최종 목표: 빌드 서버 0대." } else { "목표 달성 (0대)" }
+
+$consistencySb = [System.Text.StringBuilder]::new()
+[void]$consistencySb.AppendLine("# SSOT ↔ 실제 인프라 ↔ 합의사항 정합성")
+[void]$consistencySb.AppendLine("")
+[void]$consistencySb.AppendLine("**Generated:** $(Get-Date -Format 'o')")
+[void]$consistencySb.AppendLine("**SSOT:** docs/00-SSOT/v1/params.yaml (prod)")
+[void]$consistencySb.AppendLine("")
+[void]$consistencySb.AppendLine("## 합의사항 체크리스트")
+[void]$consistencySb.AppendLine("| 항목 | 기대 | 실제 | 결과 |")
+[void]$consistencySb.AppendLine("|------|------|------|------|")
+[void]$consistencySb.AppendLine("| API ASG min/desired | 1/1 | $($ev.apiAsgMin)/$($ev.apiAsgDesired) | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| AI ASG min/desired | 1/1 | $($ev.asgAiMin)/$($ev.asgAiDesired) | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| Messaging ASG min/desired | 1/1 | $($ev.asgMessagingMin)/$($ev.asgMessagingDesired) | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| Solapi 고정 IP(NAT/EIP) | 취소(불필요) | $eipNote | $(if ($eipCountTotal -eq 0) { 'PASS' } else { 'WARNING' }) |")
+[void]$consistencySb.AppendLine("| 빌드 서버 | 최종 0대 목표 | $buildNote | $(if ($buildRunningCount -eq 0) { 'PASS' } else { '전환중' }) |")
+[void]$consistencySb.AppendLine("")
+[void]$consistencySb.AppendLine("## SSOT vs Actual (일부)")
+[void]$consistencySb.AppendLine("| 항목 | SSOT(기대) | Actual | 일치 |")
+[void]$consistencySb.AppendLine("|------|-----------|--------|------|")
+[void]$consistencySb.AppendLine("| Messaging SQS VisibilityTimeout(초) | $($script:MessagingVisibilityTimeoutSeconds) | $msgVisibilityActual | $(if ([string]$msgVisibilityActual -eq [string]$script:MessagingVisibilityTimeoutSeconds) { 'Yes' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| AI SQS VisibilityTimeout(초) | $($script:AiVisibilityTimeoutSeconds) | $aiVisibilityActual | $(if ([string]$aiVisibilityActual -eq [string]$script:AiVisibilityTimeoutSeconds) { 'Yes' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("")
+[void]$consistencySb.AppendLine("**Drift 상세:** [drift.latest.md](./drift.latest.md). 이 PHASE는 read-only이며 차이는 Fix needed로만 기록.")
+Save-ConsistencyReport -MarkdownContent $consistencySb.ToString()
+
+$frontConnSb = [System.Text.StringBuilder]::new()
+[void]$frontConnSb.AppendLine("# Front V1 인프라 기준 연결 검증")
+[void]$frontConnSb.AppendLine("")
+[void]$frontConnSb.AppendLine("**Generated:** $(Get-Date -Format 'o')")
+[void]$frontConnSb.AppendLine("")
+[void]$frontConnSb.AppendLine("## SSOT front.* / r2.* 확인")
+[void]$frontConnSb.AppendLine("| 항목 | 값 | 비고 |")
+[void]$frontConnSb.AppendLine("|------|-----|------|")
+[void]$frontConnSb.AppendLine("| front.domains.app | $($script:FrontDomainApp) | $(if ($script:FrontDomainApp) { '설정됨' } else { '비어있음(경고)' }) |")
+[void]$frontConnSb.AppendLine("| front.domains.api | $($script:FrontDomainApi) | $(if ($script:FrontDomainApi) { '설정됨' } else { '비어있음(경고)' }) |")
+[void]$frontConnSb.AppendLine("| r2.publicBaseUrl | $($script:R2PublicBaseUrl) | $(if ($script:R2PublicBaseUrl) { '설정됨' } else { '미설정/선택' }) |")
+[void]$frontConnSb.AppendLine("| front.r2StaticBucket/prefix | $($script:FrontR2StaticBucket) / $($script:FrontR2StaticPrefix) | |")
+[void]$frontConnSb.AppendLine("| CORS allowedOrigins | $(if ($script:FrontCorsAllowedOrigins -and $script:FrontCorsAllowedOrigins.Count -gt 0) { $script:FrontCorsAllowedOrigins -join ', ' } else { '(비어있음)' }) | $corsStaticStatus |")
+[void]$frontConnSb.AppendLine("")
+[void]$frontConnSb.AppendLine("## 연결 검증 결과")
+[void]$frontConnSb.AppendLine("| 항목 | 결과 | 근거 |")
+[void]$frontConnSb.AppendLine("|------|------|------|")
+[void]$frontConnSb.AppendLine("| app 도메인 200 | $(if ($frontAppStatusCode -eq 200) { 'PASS' } else { "FAIL/WARNING ($frontAppStatusCode)" }) | $(if ($frontAppUrl) { "URL: $frontAppUrl/" } else { 'URL 미설정' }) |")
+[void]$frontConnSb.AppendLine("| API 공개 /health | $apiPublicHealthStatus | $(if ($apiPublicUrl) { $apiPublicUrl } else { 'API_PUBLIC_URL/front.domains.api 미설정' }) |")
+[void]$frontConnSb.AppendLine("| index.html Cache-Control | $(if ($frontIndexCacheControl -match 'max-age\s*=\s*0|no-cache') { 'no-cache 계열' } else { $frontIndexCacheControl }) | |")
+[void]$frontConnSb.AppendLine("| 해시 자산 Cache-Control | $(if ($frontAssetCacheControl -match '31536000') { '1년' } else { $frontAssetCacheControl }) | $(if ($frontAssetSampleUrl) { "샘플: $frontAssetSampleUrl" } else { '-' }) |")
+[void]$frontConnSb.AppendLine("| CORS 정적 검사 | $corsStaticStatus | $corsStaticDetail |")
+[void]$frontConnSb.AppendLine("| R2 버킷 | $r2Status | wrangler r2 bucket list |")
+[void]$frontConnSb.AppendLine("")
+[void]$frontConnSb.AppendLine("**배포 후 purge:** SSOT front.purgeOnDeploy 반영 여부는 배포 파이프라인에서 확인.")
+Save-FrontConnectionReport -MarkdownContent $frontConnSb.ToString()
+
 # --- 9. 보고서 생성 (PASS/WARNING/FAIL + 근거, GO/NO-GO) ---
 $s1Infra = "PASS"
 if ($apiHealthStatus -ne "OK") { $s1Infra = "FAIL" }
