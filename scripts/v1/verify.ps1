@@ -1,7 +1,7 @@
 # ==============================================================================
-# Academy v4 — 새 PC 5단계 검증 자동화.
+# Academy v1 — 새 PC 5단계 검증 자동화.
 # 1) bootstrap  2) deploy -Plan  3) deploy -PruneLegacy  4) deploy 재실행(No-op)  5) Evidence 위치 안내
-# 로그: logs/v4/YYYYMMDD-HHMMSS-verify.log
+# 로그: logs/v1/YYYYMMDD-HHMMSS-verify.log
 # ==============================================================================
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
