@@ -139,6 +139,15 @@
 - **scripts/v1/resources/api.ps1**  
   - IamInstanceProfile 형식 {Name=...} 로 수정  
 
+### 4.1 2026-03-05 배포 스크립트 변경
+
+- **core/aws.ps1:** `AWS_PROFILE` 설정 시 모든 aws 호출에 `--profile` 주입.
+- **core/bootstrap.ps1:** `/academy/workers/env` 없을 때 `.env`에서 읽어 SSM 생성(`Invoke-BootstrapWorkersEnv`).
+- **core/preflight.ps1:** SSM 확인을 `Invoke-AwsJson`으로 통일.
+- **resources/ssm.ps1:** `Confirm-SSMEnv`를 `Invoke-AwsJson` 사용으로 변경.
+- **resources/jobdef.ps1:** `register-job-definition`을 `Invoke-Aws` 사용으로 변경.
+- **resources/build.ps1:** Spot 실패 시 온디맨드 폴백.
+
 ---
 
 ## 5. 권장 후속 작업
