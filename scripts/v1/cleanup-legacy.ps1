@@ -190,7 +190,7 @@ if ($doBuild) {
 }
 
 # 4) Legacy EC2 terminate (유지 ASG/Build/Batch CE 제외)
-if (-not $EIPOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only) { $doEC2 = $true } else { $doEC2 = $EC2Only }
+if (-not $EIPOnly -and -not $VolumesOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only -and -not $ASGOnly) { $doEC2 = $true } else { $doEC2 = $EC2Only }
 if ($doEC2 -and $VpcId) {
     $usedIds = Get-UsedInstanceIds
     $allRes = Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=vpc-id,Values=$VpcId", "Name=instance-state-name,Values=running,pending,stopped", "--region", $R, "--output", "json")
@@ -210,8 +210,67 @@ if ($doEC2 -and $VpcId) {
             if (-not $DryRun) {
                 try {
                     Invoke-Aws @("ec2", "terminate-instances", "--instance-ids", $o.InstanceId, "--region", $R) -ErrorMessage "terminate-instances" | Out-Null
+                    [void]$runEC2Terminated.Add([PSCustomObject]@{ InstanceId = $o.InstanceId; Name = $o.Name })
                     Write-Host "      Terminate 요청됨." -ForegroundColor Green
-                } catch { Write-Warning "      Failed: $_" }
+                } catch { Write-Warning "      Failed: $_"; [void]$runErrors.Add("EC2 $($o.InstanceId): $_") }
+            }
+        }
+    }
+}
+
+# 5) Orphan EBS volumes (State=available) delete
+if (-not $EIPOnly -and -not $VolumesOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only -and -not $ASGOnly) { $doVol = $true } else { $doVol = $VolumesOnly }
+if ($doVol) {
+    $volRes = Invoke-AwsJson @("ec2", "describe-volumes", "--filters", "Name=status,Values=available", "--region", $R, "--output", "json")
+    $toDel = @($volRes.Volumes | Where-Object { $_ })
+    if (-not $toDel -or $toDel.Count -eq 0) { Write-Host "  EBS: available 볼륨 없음." -ForegroundColor Green }
+    else {
+        Write-Host "  EBS: $($toDel.Count) 개 available → delete" -ForegroundColor $(if ($DryRun) { "Yellow" } else { "Red" })
+        foreach ($v in $toDel) {
+            Write-Host "    - $($v.VolumeId) $($v.Size)GiB" -ForegroundColor Gray
+            if (-not $DryRun) {
+                try {
+                    Invoke-Aws @("ec2", "delete-volume", "--volume-id", $v.VolumeId, "--region", $R) -ErrorMessage "delete-volume" | Out-Null
+                    [void]$runVolumesDeleted.Add([PSCustomObject]@{ VolumeId = $v.VolumeId; Size = $v.Size })
+                    Write-Host "      Deleted." -ForegroundColor Green
+                } catch { Write-Warning "      Failed: $_"; [void]$runErrors.Add("Volume $($v.VolumeId): $_") }
+            }
+        }
+    }
+}
+
+# 6) Legacy ASG inventory (+ optional remove: desired=0 then delete)
+if (-not $EIPOnly -and -not $VolumesOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only -and -not $ASGOnly) { $doASG = $true } else { $doASG = $ASGOnly }
+if ($doASG) {
+    $asgAll = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--region", $R, "--output", "json")
+    $legacyASGs = @($asgAll.AutoScalingGroups | Where-Object {
+        $_.AutoScalingGroupName -notin $KeepASG -and $_.AutoScalingGroupName -notlike "${BatchOpsASGPrefix}*" -and $_.AutoScalingGroupName -notlike "*academy-v1-video*"
+    })
+    if ($legacyASGs.Count -eq 0) { Write-Host "  ASG: Legacy 후보 없음 (SSOT 3개 + Batch만 존재)." -ForegroundColor Green }
+    else {
+        Write-Host "  ASG: $($legacyASGs.Count) 개 Legacy 후보" -ForegroundColor Yellow
+        foreach ($a in $legacyASGs) {
+            Write-Host "    - $($a.AutoScalingGroupName) min=$($a.MinSize) desired=$($a.DesiredCapacity) max=$($a.MaxSize)" -ForegroundColor Gray
+        }
+        if ($RemoveLegacyASG -and -not $DryRun) {
+            foreach ($a in $legacyASGs) {
+                $name = $a.AutoScalingGroupName
+                try {
+                    Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $name, "--min-size", "0", "--max-size", "0", "--desired-capacity", "0", "--region", $R) -ErrorMessage "update-asg" | Out-Null
+                    Write-Host "    $name → desired=0 요청됨. 인스턴스 종료 대기 후 delete-asg 필요." -ForegroundColor Yellow
+                    $wait = 0
+                    while ($wait -lt 300) {
+                        Start-Sleep -Seconds 15
+                        $wait += 15
+                        $desc = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $name, "--region", $R, "--output", "json")
+                        $instCount = ($desc.AutoScalingGroups[0].Instances | Where-Object { $_.LifecycleState -eq "InService" }).Count
+                        if ($instCount -eq 0) { break }
+                        Write-Host "      $name InService=$instCount (${wait}s)" -ForegroundColor Gray
+                    }
+                    Invoke-Aws @("autoscaling", "delete-auto-scaling-group", "--auto-scaling-group-name", $name, "--force-delete", "--region", $R) -ErrorMessage "delete-asg" | Out-Null
+                    [void]$runASGRemoved.Add([PSCustomObject]@{ ASGName = $name })
+                    Write-Host "      $name deleted." -ForegroundColor Green
+                } catch { Write-Warning "      $name failed: $_"; [void]$runErrors.Add("ASG $name : $_") }
             }
         }
     }
