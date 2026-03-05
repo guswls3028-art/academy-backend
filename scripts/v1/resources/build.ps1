@@ -13,7 +13,7 @@ function Get-BuildInstanceByTag {
 }
 
 function New-BuildInstance {
-    # Create instance in stopped state allowed (no need to run).
+    # Spot 인스턴스로 빌드 서버 기동 (비용 절감). 실패 시 온디맨드 폴백 가능하나 기본 Spot.
     $runArgs = @("ec2", "run-instances",
         "--image-id", $script:BuildAmiId,
         "--instance-type", $script:BuildInstanceType,
@@ -21,6 +21,7 @@ function New-BuildInstance {
         "--subnet-id", $script:BuildSubnetId,
         "--security-group-ids", $script:BuildSecurityGroupId,
         "--tag-specifications", "ResourceType=instance,Tags=[{Key=Name,Value=$($script:BuildTagValue)}]",
+        "--instance-market-options", "MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}",
         "--region", $script:Region, "--output", "json")
     $run = Invoke-AwsJson $runArgs
     if (-not $run -or -not $run.Instances -or $run.Instances.Count -eq 0) { throw "run-instances returned no instance for build" }
