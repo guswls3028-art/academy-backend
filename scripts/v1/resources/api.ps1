@@ -82,7 +82,16 @@ function Ensure-API-LaunchTemplate {
     $currentAmi = $script:ApiAmiId
     $currentType = $script:ApiInstanceType
     $currentProfile = $script:ApiInstanceProfile
-    $currentUserData = if ($script:ApiUserData) { [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($script:ApiUserData)) } else { "" }
+    $userDataRaw = $script:ApiUserData
+    if (-not $userDataRaw -or $userDataRaw.Trim() -eq "") {
+        $apiUri = Get-LatestApiImageUri
+        if ($apiUri) {
+            $userDataRaw = Get-ApiLaunchTemplateUserData -ApiImageUri $apiUri -Region $script:Region -SsmApiEnvParam $script:SsmApiEnv
+        } else {
+            Write-Warn "No API image in ECR ($($script:EcrApiRepo)); Launch Template UserData left empty. Push academy-api image and re-run deploy."
+        }
+    }
+    $currentUserData = if ($userDataRaw) { [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($userDataRaw)) } else { "" }
 
     $tagSpec = "TagSpecifications=[{ResourceType=instance,Tags=[{Key=$($script:ApiInstanceTagKey),Value=$($script:ApiInstanceTagValue)}]}]"
     $baseData = "ImageId=$currentAmi,InstanceType=$currentType,SecurityGroupIds=$currentSg,IamInstanceProfile={Name=$currentProfile},$tagSpec"
