@@ -64,7 +64,8 @@ try {
     # 3) deploy -PruneLegacy
     $null = Run-Step "3) deploy.ps1 -PruneLegacy" {
         Push-Location $RepoRoot
-        & (Join-Path $ScriptRoot "deploy.ps1") -PruneLegacy 2>&1 | ForEach-Object { Write-Log $_ }
+        $args = @("-PruneLegacy"); if ($AwsProfile) { $args += "-AwsProfile", $AwsProfile }
+        & (Join-Path $ScriptRoot "deploy.ps1") @args 2>&1 | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "ExitCode $LASTEXITCODE" }
         Pop-Location
     } "PruneLegacy failed. Check log."
@@ -73,7 +74,8 @@ try {
     # 4) deploy 재실행 → No-op
     $step4 = Run-Step "4) deploy.ps1 (rerun, expect No-op)" {
         Push-Location $RepoRoot
-        $out = & (Join-Path $ScriptRoot "deploy.ps1") 2>&1 | Out-String
+        $args = @(); if ($AwsProfile) { $args = @("-AwsProfile", $AwsProfile) }
+        $out = & (Join-Path $ScriptRoot "deploy.ps1") @args 2>&1 | Out-String
         if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "ExitCode $LASTEXITCODE" }
         Pop-Location
         $out
