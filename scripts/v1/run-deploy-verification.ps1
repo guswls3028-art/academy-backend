@@ -320,6 +320,7 @@ if ($apiPublicUrl) {
 [void]$sb.AppendLine("| AI/Messaging ASG | $($ev.asgAiDesired)/$($ev.asgMessagingDesired) | reports/audit.latest.md (asgAi*, asgMessaging*) |")
 [void]$sb.AppendLine("| SQS queue 연결·DLQ | Messaging depth $msgQueueDepth DLQ $msgDlqDepth / AI depth $aiQueueDepth DLQ $aiDlqDepth | SQS Console 또는 get-queue-attributes |")
 [void]$sb.AppendLine("| Video Batch CE/Queue/JobDef | CE $($ev.batchVideoCeStatus) Queue $($ev.videoQueueState) JobDef rev $($ev.videoJobDefRevision) | reports/audit.latest.md, Batch Console |")
+[void]$sb.AppendLine("| Video Ops CE/Queue, EventBridge | Ops CE $($ev.opsCeStatus) Ops Queue $($ev.opsQueueState) Reconcile $($ev.eventBridgeReconcileState) ScanStuck $($ev.eventBridgeScanStuckState) | reports/audit.latest.md, rca.video.latest.md |")
 [void]$sb.AppendLine("| RDS 연결 가능 | $rdsStatus | RDS describe-db-instances (연결 테스트는 앱/psql 수동) |")
 [void]$sb.AppendLine("| Redis 연결 가능 | $redisStatus | ElastiCache describe-replication-groups |")
 [void]$sb.AppendLine("| **섹션 1 종합** | **$s1Infra** | |")
