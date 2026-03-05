@@ -23,7 +23,7 @@ services:
     instance_type: t4g.medium
     scaling:
       min: 1
-      max: 10
+      max: 2
     connects_to:
       - rds
       - redis
@@ -120,7 +120,7 @@ eventing:
 deployment:
 
   method: powershell_scripts
-  entrypoint: scripts/v4/deploy.ps1
+  entrypoint: scripts/v1/deploy.ps1
 
 ci_cd:
 

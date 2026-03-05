@@ -30,7 +30,8 @@ alwaysApply: true
 - **최대 동시성:** max concurrency = 10
 - **리전:** ap-northeast-2
 - **인프라 방식:** script infra (PowerShell + AWS CLI)
-- **SSOT:** docs/00-SSOT/v4 (SSOT v4)
+- **SSOT:** docs/00-SSOT/v1 (풀셋팅 v1)
+- **API ASG max:** 2 고정
 
 **Canonical topology (서비스·큐·스토리지 연결):**  
 `.cursor/knowledge/infra_topology.yaml` — 아키텍처 결정·인프라 생성 전 반드시 참조. 이 파일에 없는 서비스는 도입 금지.
