@@ -207,6 +207,10 @@ function Load-SSOT {
     $script:DynamoLockTtlAttribute = if ($p["dynamodb"]["lockTableTtlAttribute"]) { $p["dynamodb"]["lockTableTtlAttribute"] } else { "ttl" }
     $script:DynamoUploadCheckpointTableName = if ($p["dynamodb"]["uploadCheckpointTableName"]) { $p["dynamodb"]["uploadCheckpointTableName"] } else { "academy-v1-video-upload-checkpoints" }
 
+    # videoBatch.observability.logRetentionDays (nested key; fallback from raw)
+    $script:VideoBatchLogRetentionDays = 30
+    if ($raw -match 'logRetentionDays:\s*(\d+)') { $script:VideoBatchLogRetentionDays = [int]$matches[1] }
+
     $script:RdsDbIdentifier = $p["rds"]["dbIdentifier"]
     if (-not $script:RdsDbIdentifier) { $script:RdsDbIdentifier = Get-ParamFromRaw $raw "dbIdentifier" }
     $script:RdsDbSubnetGroupName = $p["rds"]["dbSubnetGroupName"]
