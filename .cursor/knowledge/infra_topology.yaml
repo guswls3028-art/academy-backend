@@ -1,0 +1,151 @@
+# Academy — Cursor knowledge: single source topology
+# Used by rules/agents/prompts. Do not introduce services not listed here.
+version: 1
+
+project:
+  name: academy
+  region: ap-northeast-2
+  architecture: mixed
+  reliability: medium
+  operator: solo-dev
+
+limits:
+  max_concurrency: 10
+
+services:
+
+  api:
+    type: compute
+    platform: ec2_asg
+    instance_type: t4g.medium
+    scaling:
+      min: 1
+      max: 10
+    connects_to:
+      - rds
+      - redis
+      - messaging_queue
+      - ai_queue
+
+  messaging_worker:
+    type: compute
+    platform: ec2_asg
+    instance_type: t4g.medium
+    scaling:
+      min: 1
+      max: 10
+    consumes:
+      - messaging_queue
+    external_services:
+      - solapi_sms
+      - solapi_alimtalk
+
+  ai_worker:
+    type: compute
+    platform: ec2_asg
+    instance_type: t4g.medium
+    scaling:
+      min: 1
+      max: 10
+    consumes:
+      - ai_queue
+
+  video_batch:
+    type: compute
+    platform: aws_batch
+    instance_type: c6g.large
+    max_vcpus: 10
+    consumes:
+      - video_queue
+    produces:
+      - hls_video
+    uploads_to:
+      - cloudflare_r2
+
+queues:
+
+  messaging_queue:
+    type: sqs
+
+  ai_queue:
+    type: sqs
+
+  video_queue:
+    type: sqs
+
+storage:
+
+  cloudflare_r2:
+    type: object_storage
+    provider: cloudflare
+
+cdn:
+
+  cloudflare_cdn:
+    provider: cloudflare
+    serves:
+      - hls_video
+
+databases:
+
+  rds:
+    engine: postgres
+    version: 15
+    instance_type: db.t4g.medium
+    multi_az: false
+
+  redis:
+    engine: redis
+    version: 7
+    instance_type: cache.t4g.small
+    replication: true
+
+locks:
+
+  video_job_lock:
+    type: dynamodb
+    usage: video_processing_deduplication
+
+eventing:
+
+  eventbridge:
+    uses:
+      - batch_reconcile
+      - scan_stuck_jobs
+      - network_probe
+
+deployment:
+
+  method: powershell_scripts
+  entrypoint: scripts/v4/deploy.ps1
+
+ci_cd:
+
+  provider: github_actions
+  workflows:
+    - build-and-push-ecr.yml
+    - build-and-push-ecr-nocache.yml
+    - video_batch_deploy.yml
+
+external_services:
+
+  solapi_sms:
+    provider: solapi
+
+  solapi_alimtalk:
+    provider: solapi
+
+architecture_flow:
+
+  - client -> api
+  - api -> rds
+  - api -> redis
+  - api -> messaging_queue
+  - api -> ai_queue
+
+  - messaging_queue -> messaging_worker
+  - ai_queue -> ai_worker
+
+  - video_queue -> video_batch
+  - video_batch -> cloudflare_r2
+  - cloudflare_r2 -> cloudflare_cdn
