@@ -60,6 +60,14 @@ function Ensure-Build {
     Write-Step "Ensure Build ($($script:BuildTagValue))"
     if ($script:PlanMode) { Write-Ok "Ensure-Build skipped (Plan)"; return }
 
+    # Ensure-Network 이후 채워진 서브넷/SG 사용 (params는 비어 있을 수 있음)
+    if (-not $script:BuildSubnetId -and $script:PrivateSubnets -and $script:PrivateSubnets.Count -gt 0) { $script:BuildSubnetId = $script:PrivateSubnets[0] }
+    if (-not $script:BuildSubnetId -and $script:PublicSubnets -and $script:PublicSubnets.Count -gt 0) { $script:BuildSubnetId = $script:PublicSubnets[0] }
+    if (-not $script:BuildSecurityGroupId) { $script:BuildSecurityGroupId = $script:SecurityGroupApp }
+    if (-not $script:BuildSecurityGroupId) { $script:BuildSecurityGroupId = $script:BatchSecurityGroupId }
+    if (-not $script:BuildSubnetId) { throw "Build subnet not set. Ensure-Network must run first and provide PrivateSubnets or PublicSubnets." }
+    if (-not $script:BuildSecurityGroupId) { throw "Build security group not set. Ensure-Network must provide sg-app or sg-batch." }
+
     # Describe: find instance by tag
     $inst = Get-BuildInstanceByTag
     $needCreate = $false
