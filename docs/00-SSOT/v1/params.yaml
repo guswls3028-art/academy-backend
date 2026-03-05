@@ -56,8 +56,9 @@ ecr:
 # Gunicorn/ALB 타임아웃 60s 내 권장(동영상/AI는 비동기 전용).
 api:
   amiId: ami-0885e191a9bcf28b0
-# API SG: network.securityGroupApp와 동일 값으로 명시 (LT/health 일관성). 비어 있으면 코드에서 securityGroupApp fallback.
+  instanceProfile: academy-ec2-role
   securityGroupId: "sg-088fa3315c12754d0"
+  instanceType: t4g.medium
   userData: ""
   asgName: academy-v1-api-asg
   asgLaunchTemplateName: academy-v1-api-lt
