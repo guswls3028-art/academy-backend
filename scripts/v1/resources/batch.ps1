@@ -43,6 +43,8 @@ function New-OpsCE {
     $content = $content -replace "PLACEHOLDER_INSTANCE_PROFILE_ARN", $iam.InstanceProfileArn
     $content = $content -replace "PLACEHOLDER_SECURITY_GROUP_ID", $script:BatchSecurityGroupId
     $content = $content -replace "PLACEHOLDER_SUBNETS", $subnetArr
+    $content = $content -replace "PLACEHOLDER_INSTANCE_TYPE", $script:OpsCEInstanceType
+    $content = $content -replace "PLACEHOLDER_MAX_VCPUS", $script:OpsCEMaxvCpus.ToString()
     $tmp = [System.IO.Path]::GetTempFileName()
     [System.IO.File]::WriteAllText($tmp, $content, $utf8NoBom)
     try {
