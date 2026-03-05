@@ -4,13 +4,15 @@
 
 ---
 
-## 인프라 SSOT v4 (정식)
+## 인프라 SSOT v1 (정식 — 풀셋팅)
 
 | 용도 | 경로 |
 |------|------|
-| **정식 문서** | [docs/00-SSOT/v4/SSOT.md](docs/00-SSOT/v4/SSOT.md) |
-| **정식 배포** | [scripts/v4/deploy.ps1](scripts/v4/deploy.ps1) |
-| **검증(5단계)** | [scripts/v4/verify.ps1](scripts/v4/verify.ps1) |
+| **정식 문서** | [docs/00-SSOT/v1/SSOT.md](docs/00-SSOT/v1/SSOT.md) |
+| **정식 배포** | [scripts/v1/deploy.ps1](scripts/v1/deploy.ps1) |
+| **검증(5단계)** | [scripts/v1/verify.ps1](scripts/v1/verify.ps1) |
+
+**API ASG max:** 2 고정. 모든 리소스 네이밍: `academy-v1-*`.
 
 ---
 
