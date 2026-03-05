@@ -82,8 +82,9 @@ try {
     # 4) deploy 재실행 → No-op
     $step4 = Run-Step "4) deploy.ps1 (rerun, expect No-op)" {
         Push-Location $RepoRoot
-        $args = @("-Env", "prod"); if ($AwsProfile) { $args += "-AwsProfile", $AwsProfile }
-        $out = & (Join-Path $ScriptRoot "deploy.ps1") @args 2>&1 | Out-String
+        $deployArgs = @{ Env = "prod" }
+        if ($AwsProfile) { $deployArgs["AwsProfile"] = $AwsProfile }
+        $out = & (Join-Path $ScriptRoot "deploy.ps1") @deployArgs 2>&1 | Out-String
         if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "ExitCode $LASTEXITCODE" }
         Pop-Location
         $out
