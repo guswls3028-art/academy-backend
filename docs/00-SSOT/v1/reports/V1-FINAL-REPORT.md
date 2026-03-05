@@ -9,7 +9,7 @@
 | 최종 상태 | FAIL |
 | GO/NO-GO | **NO-GO** |
 
-FAIL 항목 해결 후 재검증 필요.
+FAIL 항목 해결 후 재검증 필요. ECR 빌드/푸시는 OIDC 전용 `v1-build-and-push-latest.yml`로 통일됨. CI로 latest 푸시 후 deploy·검증 재실행 시 GATE 통과 예상.
 
 ## 상세 보고서
 - [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트·SQS·Video·관측·GO/NO-GO 상세
