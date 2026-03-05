@@ -133,7 +133,11 @@ function Ensure-API-Instance {
     }
     if (-not $instanceId) { throw "No API ASG instance after ${maxWait}s" }
 
-    Wait-SSMOnline -InstanceId $instanceId -Reg $script:Region -TimeoutSec 300
+    if ($script:SkipApiSSMWait) {
+        Write-Warn "Skip API SSM wait (-SkipApiSSMWait). Instance $instanceId may not be in SSM yet."
+    } else {
+        Wait-SSMOnline -InstanceId $instanceId -Reg $script:Region -TimeoutSec 300
+    }
     if ($script:ApiBaseUrl) {
         try {
             Wait-ApiHealth200 -ApiBaseUrl $script:ApiBaseUrl -TimeoutSec 300

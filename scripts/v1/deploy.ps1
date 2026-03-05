@@ -76,6 +76,7 @@ switch ($true) { { $EcrRepoUri } { $script:EcrRepoUri = $EcrRepoUri } default { 
 
 $null = Load-SSOT -Env $Env
 $script:RelaxedValidation = $RelaxedValidation
+$script:SkipApiSSMWait = $SkipApiSSMWait
 if ($EcrRepoUri) { $script:EcrRepoUri = $EcrRepoUri } else { $script:EcrRepoUri = "" }
 
 # Bootstrap (원테이크): SSM password, SQS, RDS engineVersion, ECR URI 자동 준비. Plan이면 스킵.
