@@ -64,10 +64,14 @@ function Load-SSOT {
     $script:SgBatchName = if ($n["sgBatchName"]) { $n["sgBatchName"] } else { "academy-v1-sg-batch" }
     $script:SgDataName = if ($n["sgDataName"]) { $n["sgDataName"] } else { "academy-v1-sg-data" }
     $script:PublicSubnets = @()
-    if ($p["networkPublicSubnets"] -and $p["networkPublicSubnets"]["_list"]) { $script:PublicSubnets = @($p["networkPublicSubnets"]["_list"]) }
-    elseif ($n["_list"]) { $script:PublicSubnets = @($n["_list"]) }
+    switch ($true) {
+        { $p["networkPublicSubnets"] -and $p["networkPublicSubnets"]["_list"] } { $script:PublicSubnets = @($p["networkPublicSubnets"]["_list"]) }
+        { $n["_list"] } { $script:PublicSubnets = @($n["_list"]) }
+    }
     $script:PrivateSubnets = @()
-    if ($p["networkPrivateSubnets"] -and $p["networkPrivateSubnets"]["_list"]) { $script:PrivateSubnets = @($p["networkPrivateSubnets"]["_list"]) }
+    switch ($true) {
+        { $p["networkPrivateSubnets"] -and $p["networkPrivateSubnets"]["_list"] } { $script:PrivateSubnets = @($p["networkPrivateSubnets"]["_list"]) }
+    }
     $script:NatEnabled = ($n["natEnabled"] -eq "true")
     $script:AlbEnabled = ($n["albEnabled"] -eq "true")
     $script:NatGatewayId = if ($n["natGatewayId"]) { $n["natGatewayId"] } else { "" }
