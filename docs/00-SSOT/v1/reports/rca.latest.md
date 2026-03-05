@@ -164,3 +164,19 @@ Cloud-init v. 22.2.2 finished at Thu, 05 Mar 2026 19:58:19 +0000.
 
 **확정 RCA (한 문장):**  
 UserData 실행 시 `aws ecr get-login-password`가 **api.ecr.ap-northeast-2.amazonaws.com** 에 대해 **Connect timeout**으로 실패하여, `set -e`로 스크립트가 중단되고 docker pull/run이 실행되지 않음. 인스턴스는 Public 서브넷·퍼블릭 IP·NAT 존재·IAM ECR 권한 모두 갖춤이므로, **cloud-init 초기 구간의 일시적 네트워크/IMDS 미준비** 또는 **일시적 ECR 연결 지연** 가능성 있음. 대응: UserData에 (1) 네트워크/IMDS 준비 대기, (2) ECR 로그인·풀 재시도, (3) 모든 실패 구간에서 academy-api-userdata.log 기록을 추가.
+
+---
+
+## 9) 조치 내역 (PHASE 2)
+
+### 9.1 수정 사항 (deploy.ps1 호출 스크립트만 — resources/api.ps1)
+
+- **UserData 보강 (api.ps1 Get-ApiLaunchTemplateUserData):**
+  1. **IMDS/네트워크 대기:** `curl -sf --connect-timeout 2 http://169.254.169.254/latest/meta-data/instance-id` 성공할 때까지 최대 10회×3초 대기.
+  2. **ECR 로그인·풀 재시도:** `aws ecr get-login-password | docker login` 및 `docker pull` 실패 시 최대 5회 재시도, 회당 15초 대기.
+  3. **실패 로깅:** `/var/log/academy-api-userdata.log` 생성 후, ECR 재시도 메시지·최종 실패·docker run 실패 시 `log "..."` 및 stderr 리다이렉트로 기록.
+
+### 9.2 재배포
+
+- 명령: `pwsh -File scripts/v1/run-with-env.ps1 -- pwsh -File scripts/v1/deploy.ps1 -Env prod`
+- LT UserData 변경으로 drift 발생 → 새 LT 버전 생성 → API ASG instance refresh 예상.
