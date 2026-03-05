@@ -222,7 +222,8 @@ if ($doEC2 -and $VpcId) {
 if (-not $EIPOnly -and -not $VolumesOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only -and -not $ASGOnly) { $doVol = $true } else { $doVol = $VolumesOnly }
 if ($doVol) {
     $volRes = Invoke-AwsJson @("ec2", "describe-volumes", "--filters", "Name=status,Values=available", "--region", $R, "--output", "json")
-    $toDel = @($volRes.Volumes | Where-Object { $_ })
+    $toDel = @()
+    if ($volRes -and $volRes.Volumes) { $toDel = @($volRes.Volumes) }
     if (-not $toDel -or $toDel.Count -eq 0) { Write-Host "  EBS: available 볼륨 없음." -ForegroundColor Green }
     else {
         Write-Host "  EBS: $($toDel.Count) 개 available → delete" -ForegroundColor $(if ($DryRun) { "Yellow" } else { "Red" })
