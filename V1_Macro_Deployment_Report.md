@@ -1,5 +1,23 @@
 # V1 배포 아키텍처 및 표준화 보고서 (Macro Deployment Report)
 
+**최종 갱신일:** 2026-03-06  
+**기준:** V1 SSOT (`docs/00-SSOT/v1/`)  
+**배포 진입점:** `scripts/v1/deploy.ps1` · **상세 플랜:** `docs/00-SSOT/v1/V1-DEPLOYMENT-PLAN.md`
+
+---
+
+## 0. 문서 정보 및 V1 기준
+
+- **본 보고서:** 프로젝트 배포 환경에 대한 **총괄(거시) 보고서**이며, 모든 배포·인프라는 **V1 SSOT** 기준으로 운영된다.
+- **실시간 상태:** 배포 후 Evidence·Drift는 `docs/00-SSOT/v1/reports/` 에서 확인한다.  
+  - `audit.latest.md` — Batch CE/Queue, ASG, API, Build, SSM 등 Evidence  
+  - `drift.latest.md` — SSOT 대비 실제 리소스 Drift  
+  - `DEPLOY-TIMING-CHECKLIST.md` — 배포 지연/타임아웃 점검
+- **배포 소요 시간:** Netprobe·콜드스타트 포함 **전체 25~30분** 여유 권장. (단계별 예상 시간은 `reports/DEPLOY-TIMING-CHECKLIST.md` 참고.)
+- **Cursor/배포 룰:** `.cursor/rules/07_deployment_orchestrator.mdc` — 배포 시 참조.
+
+---
+
 ## 1. V1 아키텍처 청사진 (Executive Summary)
 현재 도입된 V1 아키텍처는 거시적으로 **"코드 푸시(GitHub) ➔ 빌드 및 이미지 레지스트리(AWS ECR) ➔ 오케스트레이션 및 파이프라인(AWS Batch/ASG) ➔ 전역 클라이언트 전송(Cloudflare R2/CDN)"** 으로 이어지는 구조를 띱니다.
 
