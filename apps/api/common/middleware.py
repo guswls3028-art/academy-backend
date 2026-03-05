@@ -2,6 +2,7 @@
 # 뷰에서 미처리 예외 발생 시 500 JSON 반환.
 # process_exception 응답은 CorsMiddleware를 거치지 않으므로 여기서 CORS 헤더 추가.
 # CorsResponseFixMiddleware: 모든 응답(5xx 포함)에 CORS 헤더가 빠졌을 때 보강.
+# HealthCheckHostMiddleware: ALB/인스턴스 헬스체크가 Host: private IP 로 오면 ALLOWED_HOSTS 400 방지.
 from __future__ import annotations
 
 import logging
@@ -10,6 +11,23 @@ from django.conf import settings
 from django.http import JsonResponse
 
 logger = logging.getLogger(__name__)
+
+HEALTH_CHECK_PATHS = ("/health", "/health/")
+
+
+class HealthCheckHostMiddleware:
+    """
+    ALB target health check 시 Host 가 인스턴스 private IP 이면 ALLOWED_HOSTS 에 없어 400 발생.
+    /health 요청만 Host 를 127.0.0.1 로 덮어 통과 (prod 에 127.0.0.1 포함).
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.path in HEALTH_CHECK_PATHS:
+            request.META["HTTP_HOST"] = "127.0.0.1"
+        return self.get_response(request)
 
 
 def _add_cors_headers_to_response(request, response):
