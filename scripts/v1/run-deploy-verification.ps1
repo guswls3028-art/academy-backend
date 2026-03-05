@@ -202,6 +202,25 @@ try {
     if ($jobs -and $jobs.jobSummaryList) { $batchActiveJobs = $jobs.jobSummaryList.Count }
 } catch { }
 
+# --- 5b. Video E2E 근거 (VIDEO_E2E_TEST_JOB_ID 설정 시 자동 수집) ---
+$videoE2EEvidence = ""
+$e2eJobId = $env:VIDEO_E2E_TEST_JOB_ID
+if ($e2eJobId -and $e2eJobId.Trim() -ne "") {
+    try {
+        $jobDesc = Invoke-AwsJson @("batch", "describe-jobs", "--jobs", $e2eJobId.Trim(), "--region", $R, "--output", "json")
+        if ($jobDesc -and $jobDesc.jobs -and $jobDesc.jobs.Count -gt 0) {
+            $j = $jobDesc.jobs[0]
+            $videoE2EEvidence = "jobId=$($j.jobId) status=$($j.status) statusReason=$($j.statusReason) createdAt=$($j.createdAt) stoppedAt=$($j.stoppedAt) containerExitCode=$($j.container.exitCode)"
+            if ($j.status -eq "SUCCEEDED") { $videoE2EEvidence += " (E2E 완주 근거)" }
+            else { Add-Finding -Severity "WARNING" -Area "Video" -Message "VIDEO_E2E_TEST_JOB_ID=$e2eJobId status=$($j.status). SUCCEEDED이면 보고서에 근거로 기록됨." }
+        } else {
+            $videoE2EEvidence = "jobId=$e2eJobId (describe-jobs 결과 없음)"
+        }
+    } catch {
+        $videoE2EEvidence = "jobId=$e2eJobId (조회 실패: $($_.Exception.Message))"
+    }
+}
+
 # --- 6. R2 / CDN (선택: wrangler) ---
 $r2Status = "not checked"
 $cdnStatus = "not checked"
