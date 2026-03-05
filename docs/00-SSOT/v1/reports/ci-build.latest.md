@@ -1,16 +1,15 @@
-# V1 CI Build — latest 이미지 푸시 증거
+# V1 CI Build — latest 이미지 푸시 증거 (OIDC)
 
 **Generated:** (CI에서 채움)  
 **SSOT:** docs/00-SSOT/v1/params.yaml  
-**Region:** ap-northeast-2
+**Region:** ap-northeast-2  
+**gitSha:** -  
+**shortSha:** -
 
-## academy-api
-
-| 항목 | 값 |
-|------|-----|
-| repo | academy-api |
-| tag | latest |
-| imageDigest | (CI push 후 describe-images로 채움) |
-| gitSha | - |
-| shortSha | - |
-| buildTime | - |
+| repo | tag | imageDigest |
+|------|-----|-------------|
+| academy-base | latest | (CI push 후 채움) |
+| academy-api | latest | (CI push 후 채움) |
+| academy-video-worker | latest | (CI push 후 채움) |
+| academy-messaging-worker | latest | (CI push 후 채움) |
+| academy-ai-worker-cpu | latest | (CI push 후 채움) |
