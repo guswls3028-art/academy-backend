@@ -10,6 +10,7 @@
 |------|------|
 | [v4/SSOT.md](v4/SSOT.md) | **진입 문서** — 리소스 이름·규칙·원칙 |
 | [v4/params.yaml](v4/params.yaml) | 환경별 파라미터 (스크립트 단일 입력) |
+| [v4/INFRA-AND-SPECS.md](v4/INFRA-AND-SPECS.md) | **인프라·스펙 한눈에 보기** — API/빌드/AI/Messaging ASG, Video Batch |
 | [v4/state-contract.md](v4/state-contract.md) | 상태 계약·Wait·삭제 순서 |
 | [v4/runbook.md](v4/runbook.md) | 배포·검증·장애·롤백 절차 |
 | [v4/evidence.schema.md](v4/evidence.schema.md) | Evidence 테이블 스키마 |
