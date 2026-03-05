@@ -5,11 +5,11 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-03-06T06:57:36.0297422+09:00 |
+| 검증 시각 | 2026-03-06T07:13:57.8746828+09:00 |
 | 최종 상태 | FAIL |
 | GO/NO-GO | **NO-GO** |
 
-FAIL 항목 해결 후 재검증 필요. 현재 FAIL 원인: SSOT api.healthPath=/healthz이나 배포 중인 API 이미지에 /healthz 미포함(api-health-fix-2 미빌드, 빌드 서버 terminated). TG는 /healthz로 변경 완료. 빌드 서버 기동 후 빌드·푸시·배포·검증 재실행 시 GATE 통과 예상.
+FAIL 항목 해결 후 재검증 필요.
 
 ## 상세 보고서
 - [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트·SQS·Video·관측·GO/NO-GO 상세
