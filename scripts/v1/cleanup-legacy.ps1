@@ -138,7 +138,7 @@ if ($doEIP) {
 }
 
 # 2) Unused SG delete (ENI 0개, SSOT keep 아님)
-if (-not $EIPOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only) { $doSG = $true } else { $doSG = $SGOnly }
+if (-not $EIPOnly -and -not $VolumesOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only -and -not $ASGOnly) { $doSG = $true } else { $doSG = $SGOnly }
 if ($doSG -and $VpcId) {
     $sgRes = Invoke-AwsJson @("ec2", "describe-security-groups", "--filters", "Name=vpc-id,Values=$VpcId", "--region", $R, "--output", "json")
     $toDelete = [System.Collections.ArrayList]::new()
@@ -156,15 +156,16 @@ if ($doSG -and $VpcId) {
             if (-not $DryRun) {
                 try {
                     Invoke-Aws @("ec2", "delete-security-group", "--group-id", $sg.GroupId, "--region", $R) -ErrorMessage "delete-security-group" | Out-Null
+                    [void]$runSGsDeleted.Add([PSCustomObject]@{ GroupId = $sg.GroupId; GroupName = $sg.GroupName })
                     Write-Host "      Deleted." -ForegroundColor Green
-                } catch { Write-Warning "      Failed: $_" }
+                } catch { Write-Warning "      Failed: $_"; [void]$runErrors.Add("SG $($sg.GroupId): $_") }
             }
         }
     }
 }
 
 # 3) Build server stop (academy-build-arm64)
-if (-not $EIPOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only) { $doBuild = $true } else { $doBuild = $BuildStopOnly }
+if (-not $EIPOnly -and -not $VolumesOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only -and -not $ASGOnly) { $doBuild = $true } else { $doBuild = $BuildStopOnly }
 if ($doBuild) {
     $buildRes = Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=tag:$BuildTagKey,Values=$BuildTagValue", "Name=instance-state-name,Values=running", "--region", $R, "--output", "json")
     $running = @()
@@ -180,8 +181,9 @@ if ($doBuild) {
             if (-not $DryRun) {
                 try {
                     Invoke-Aws @("ec2", "stop-instances", "--instance-ids", $i.InstanceId, "--region", $R) -ErrorMessage "stop-instances" | Out-Null
+                    [void]$runBuildStopped.Add([PSCustomObject]@{ InstanceId = $i.InstanceId; Name = $name })
                     Write-Host "      Stop 요청됨." -ForegroundColor Green
-                } catch { Write-Warning "      Failed: $_" }
+                } catch { Write-Warning "      Failed: $_"; [void]$runErrors.Add("Build $($i.InstanceId): $_") }
             }
         }
     }
