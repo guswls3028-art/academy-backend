@@ -142,7 +142,11 @@ function Ensure-API-Instance {
     if ($script:SkipApiSSMWait) {
         Write-Warn "Skip API SSM wait (-SkipApiSSMWait). Instance $instanceId may not be in SSM yet."
     } else {
-        Wait-SSMOnline -InstanceId $instanceId -Reg $script:Region -TimeoutSec 600
+        try {
+            Wait-SSMOnline -InstanceId $instanceId -Reg $script:Region -TimeoutSec 600
+        } catch {
+            Write-Warn "SSM wait failed: $_. Instance may not have SSM agent or IAM policy. Continuing to API health check."
+        }
     }
     if ($script:ApiBaseUrl) {
         if ($script:SkipApiSSMWait) {
