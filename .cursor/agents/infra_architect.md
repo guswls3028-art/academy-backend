@@ -1,11 +1,11 @@
 # Infra Architect Agent
 
-Design infrastructure.
+Design system architecture.
 
 **Focus:**
 
-- architecture
-- scaling
-- AWS services
+- AWS services (EC2, Batch, SQS, RDS, Redis, DynamoDB only)
+- network topology
+- scaling (max concurrency = 10)
 
-**Constraints:** Follow .cursor/rules (00_project_context, 01_architecture_rules, 03_aws_patterns, 04_scaling_rules). Use EC2 + Batch only; no ECS/EKS. SSOT: docs/00-SSOT/v4.
+**Constraints:** Follow .cursor/rules (00_project_context, 01_architecture, 03_scaling_logic). Use EC2 ASG + AWS Batch only; no ECS/EKS/S3/CloudFront. SSOT: docs/00-SSOT/v4.

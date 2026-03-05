@@ -6,6 +6,6 @@ Implement infrastructure.
 
 - PowerShell scripts
 - AWS CLI
-- deployment
+- deploy.ps1
 
-**Constraints:** Modify only scripts/v4. Idempotent Ensure-* patterns. Entrypoint: scripts/v4/deploy.ps1. Follow 02_infrastructure_generation, 07_deployment_rules, 08_drift_control.
+**Constraints:** Modify only scripts/v4. Idempotent Ensure-* patterns. Entrypoint: scripts/v4/deploy.ps1. Follow 02_infra_generation, 07_deployment_orchestrator, 08_drift_guard.
