@@ -32,8 +32,7 @@ function Ensure-TargetGroup {
     if ($r -and $r.TargetGroups -and $r.TargetGroups.Count -gt 0) {
         $script:ApiTargetGroupArn = $r.TargetGroups[0].TargetGroupArn
         $tgArn = $script:ApiTargetGroupArn
-        $attrs = Invoke-AwsJson @("elbv2", "describe-target-group-attributes", "--target-group-arn", $tgArn, "--region", $script:Region, "--output", "json")
-        $currentPath = ($attrs.Attributes | Where-Object { $_.Key -eq "health_check.path" } | Select-Object -First 1).Value
+        $currentPath = $r.TargetGroups[0].HealthCheckPath
         $wantedPath = $script:ApiHealthPath.TrimStart('/')
         if ($currentPath -and $currentPath.TrimStart('/') -ne $wantedPath) {
             Invoke-Aws @("elbv2", "modify-target-group-attributes", "--target-group-arn", $tgArn, "--attributes", "Key=health_check.path,Value=/$wantedPath", "--region", $script:Region) -ErrorMessage "modify TG health_check.path" | Out-Null
