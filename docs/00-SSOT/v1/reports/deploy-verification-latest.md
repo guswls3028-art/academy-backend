@@ -99,5 +99,5 @@
 ## 최종 상태
 **FAIL**
 
-**연관 보고서:** audit.latest.md, drift.latest.md (동시 갱신됨).
+**연관 보고서:** audit.latest.md, drift.latest.md, rca.latest.md (동시 갱신됨).
 
