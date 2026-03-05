@@ -59,6 +59,12 @@ function Ensure-EventBridgeRules {
         Write-Host "  Creating rule $($script:EventBridgeScanStuckRule)" -ForegroundColor Yellow
         $script:ChangesMade = $true
         Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeScanStuckRule, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--region", $script:Region) | Out-Null
+    } else {
+        if ($rule2.State -ne "ENABLED") {
+            Write-Host "  Enabling rule $($script:EventBridgeScanStuckRule) (was $($rule2.State))" -ForegroundColor Yellow
+            $script:ChangesMade = $true
+            Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeScanStuckRule, "--schedule-expression", "rate(5 minutes)", "--state", "ENABLED", "--region", $script:Region) | Out-Null
+        }
     }
     $targetsObj2 = $scanStuckJson | ConvertFrom-Json
     $targetsInput2 = @{ Rule = $script:EventBridgeScanStuckRule; Targets = @($targetsObj2) } | ConvertTo-Json -Depth 15 -Compress
