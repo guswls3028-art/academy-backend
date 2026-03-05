@@ -17,8 +17,11 @@ function Get-MessagingLaunchTemplateDefaultVersion {
 function Ensure-MessagingLaunchTemplate {
     $sg = $script:SecurityGroupApp
     if (-not $sg) { $sg = $script:BatchSecurityGroupId }
+    $tagValue = $script:MessagingInstanceTagValue
+    if (-not $tagValue) { $tagValue = "academy-v1-messaging-worker" }
     $data = "ImageId=$($script:MessagingAmiId),InstanceType=$($script:MessagingInstanceType)"
     if ($sg) { $data += ",SecurityGroupIds=$sg" }
+    $data += ",TagSpecifications=[{ResourceType=instance,Tags=[{Key=Name,Value=$tagValue}]}]"
     $lt = Get-MessagingLaunchTemplate
     if (-not $lt) {
         $create = Invoke-AwsJson @("ec2", "create-launch-template",
@@ -39,7 +42,12 @@ function Ensure-MessagingLaunchTemplate {
     $currentType = if ($verData.PSObject.Properties['InstanceType']) { $verData.InstanceType } else { $null }
     $currentSg = $null
     if ($verData.PSObject.Properties['SecurityGroupIds'] -and $verData.SecurityGroupIds -and $verData.SecurityGroupIds.Count -gt 0) { $currentSg = $verData.SecurityGroupIds[0] }
-    if ($currentAmi -ne $script:MessagingAmiId -or $currentType -ne $script:MessagingInstanceType -or $currentSg -ne $sg) {
+    $currentTag = $null
+    if ($verData.PSObject.Properties['TagSpecifications'] -and $verData.TagSpecifications) {
+        $instTag = $verData.TagSpecifications | Where-Object { $_.ResourceType -eq "instance" } | Select-Object -First 1
+        if ($instTag -and $instTag.Tags) { $nameTag = $instTag.Tags | Where-Object { $_.Key -eq "Name" } | Select-Object -First 1; if ($nameTag) { $currentTag = $nameTag.Value } }
+    }
+    if ($currentAmi -ne $script:MessagingAmiId -or $currentType -ne $script:MessagingInstanceType -or $currentSg -ne $sg -or $currentTag -ne $tagValue) {
         $newVer = Invoke-AwsJson @("ec2", "create-launch-template-version",
             "--launch-template-id", $ltId,
             "--version-description", "SSOT v1 drift",
