@@ -51,7 +51,7 @@ Write-Host "OK: Minimal describe permission" -ForegroundColor Green
 # params.yaml
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\v4\params.yaml"
+$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\archive\v4\params.yaml"
 if (-not (Test-Path $ParamsPath)) {
     Write-Host "FAIL: params.yaml not found at $ParamsPath" -ForegroundColor Red
     exit 1

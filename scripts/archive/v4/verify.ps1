@@ -52,7 +52,7 @@ try {
         Pop-Location
         $planOut
     } "deploy -Plan failed. Check drift/params."
-    $results += [PSCustomObject]@{ Step = "2) deploy -Plan"; Result = "OK"; Detail = "Reports: docs/00-SSOT/v4/reports/" }
+    $results += [PSCustomObject]@{ Step = "2) deploy -Plan"; Result = "OK"; Detail = "Reports: docs/00-SSOT/archive/v4/reports/" }
 
     # 3) deploy -PruneLegacy
     $null = Run-Step "3) deploy.ps1 -PruneLegacy" {

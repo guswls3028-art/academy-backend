@@ -2,7 +2,7 @@
 $ErrorActionPreference = "Stop"
 $ReportsScriptDir = $PSScriptRoot
 $ReportsRepoRoot = (Resolve-Path (Join-Path $ReportsScriptDir "..\..\..")).Path
-$ReportsBase = Join-Path $ReportsRepoRoot "docs\00-SSOT\v4\reports"
+$ReportsBase = Join-Path $ReportsRepoRoot "docs\00-SSOT\archive\v4\reports"
 $ReportsHistory = Join-Path $ReportsBase "history"
 
 function Get-ReportsDir {
