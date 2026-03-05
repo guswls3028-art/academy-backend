@@ -80,7 +80,7 @@ Batch 컨테이너 시작
 | Retry 판단 | Django scan_stuck_video_jobs |
 | Retry 실행 | submit_batch_job |
 | 중복 실행 방지 | READY idempotency guard |
-| Batch retry | 비활성화 (retryStrategy.attempts=1, SSOT v1.1 §3) |
+| Batch retry | 비활성화 (retryStrategy.attempts=1, SSOT V1 §3) |
 
 ## delete_r2 (R2 비동기 삭제)
 
