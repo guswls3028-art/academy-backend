@@ -2,6 +2,56 @@
 # deploy.ps1에서 Preflight 직후·Ensure 직전에 호출. params.yaml은 수정하지 않음.
 $ErrorActionPreference = "Stop"
 
+function Invoke-BootstrapWorkersEnv {
+    if (-not $script:SsmWorkersEnv -or $script:SsmWorkersEnv.Trim() -eq "") { return }
+    if ($script:PlanMode) { Write-Ok "Bootstrap workers env skipped (Plan)"; return }
+
+    $existing = Invoke-AwsJson @("ssm", "get-parameter", "--name", $script:SsmWorkersEnv, "--region", $script:Region, "--output", "json")
+    if ($existing -and $existing.Parameter -and $existing.Parameter.Name) {
+        Write-Ok "SSM workers env already set: $($script:SsmWorkersEnv)"
+        return
+    }
+
+    $repoRoot = (Get-Item $ScriptRoot).Parent.Parent.FullName
+    $envPath = Join-Path $repoRoot ".env"
+    if (-not (Test-Path -LiteralPath $envPath)) {
+        Write-Warn "SSM $($script:SsmWorkersEnv) missing and .env not found at $envPath. Create .env and re-run, or run scripts/archive/infra/ssm_bootstrap_video_worker.ps1 -Region $($script:Region) -Overwrite."
+        return
+    }
+
+    $requiredKeys = @("AWS_DEFAULT_REGION", "DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_PORT", "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_ENDPOINT", "R2_VIDEO_BUCKET", "API_BASE_URL", "INTERNAL_WORKER_TOKEN", "REDIS_HOST", "REDIS_PORT")
+    $envHash = @{}
+    $content = [System.IO.File]::ReadAllText($envPath, [System.Text.UTF8Encoding]::new($false))
+    if ($content.Length -ge 1 -and $content[0] -eq [char]0xFEFF) { $content = $content.Substring(1) }
+    foreach ($line in ($content -split "`r?`n")) {
+        $line = $line.Trim()
+        if ($line -match '^\s*#' -or $line -eq '') { continue }
+        if ($line -match '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+            $key = $matches[1]; $val = $matches[2].Trim()
+            if ($val -match '^["''](.*)["'']$') { $val = $matches[1] }
+            $envHash[$key] = $val
+        }
+    }
+    if (-not $envHash["AWS_DEFAULT_REGION"] -and $envHash["AWS_REGION"]) { $envHash["AWS_DEFAULT_REGION"] = $envHash["AWS_REGION"] }
+    if (-not $envHash["DB_PORT"]) { $envHash["DB_PORT"] = "5432" }
+    if (-not $envHash["REDIS_PORT"]) { $envHash["REDIS_PORT"] = "6379" }
+    $envHash["DJANGO_SETTINGS_MODULE"] = "apps.api.config.settings.worker"
+    $missing = @($requiredKeys | Where-Object { -not $envHash[$_] -or [string]$envHash[$_] -eq "" })
+    if ($missing.Count -gt 0) {
+        Write-Warn "SSM $($script:SsmWorkersEnv) missing; .env missing keys: $($missing -join ', '). Run ssm_bootstrap_video_worker.ps1 or fix .env."
+        return
+    }
+
+    $obj = [ordered]@{}
+    foreach ($k in @($requiredKeys) + "DJANGO_SETTINGS_MODULE") { $obj[$k] = $envHash[$k] }
+    $json = $obj | ConvertTo-Json -Compress -Depth 10
+    $jsonBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $valueBase64 = [Convert]::ToBase64String($jsonBytes)
+    Invoke-Aws @("ssm", "put-parameter", "--name", $script:SsmWorkersEnv, "--type", "SecureString", "--value", $valueBase64, "--overwrite", "--region", $script:Region) -ErrorMessage "put-parameter workers env" | Out-Null
+    Write-Ok "SSM workers env created from .env: $($script:SsmWorkersEnv)"
+    $script:ChangesMade = $true
+}
+
 function New-SecureRdsPassword {
     $len = Get-Random -Minimum 20 -Maximum 33
     $chars = [char[]]"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{}|;:,.<>?"
@@ -229,6 +279,7 @@ function Invoke-Bootstrap {
     $script:SkipRedis = $SkipRedis
     $script:SkipBuild = $SkipBuild
 
+    Invoke-BootstrapWorkersEnv
     Invoke-BootstrapSsmRdsPassword
     Invoke-BootstrapSqs
     Invoke-BootstrapRdsEngineVersion
