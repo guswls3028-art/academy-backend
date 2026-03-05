@@ -224,5 +224,5 @@ ALB health check Host가 private IP → ALLOWED_HOSTS 거부 → 400.
 ### 11.3 수정
 HealthCheckHostMiddleware, healthz 뷰/라우트/BYPASS 추가. SSOT api.healthPath=/healthz. alb.ps1에서 TG 존재 시 describe-target-groups로 HealthCheckPath 조회 후 다르면 **modify-target-group --health-check-path** 호출. TG academy-v1-api-tg를 수동으로 /healthz 적용 완료.
 
-### 11.3 상태
+### 11.4 상태
 api-health-fix-2는 빌드 서버(academy-build-arm64) terminated으로 미빌드. 검증 FAIL(0/3 healthy). 빌드 서버 기동 후 빌드·푸시·배포·검증 재실행.
