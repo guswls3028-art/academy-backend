@@ -39,7 +39,14 @@
 - **Cloudflare 제어**: Workflow에서 Cloudflare API Token과 Wrangler를 활용해 CDN 캐시 갱신 및 R2 통제를 스크립트화하였습니다.
 - **내부 워커 보안**: API 서버와 Video/AI/Messaging 워커 간 통신은 `INTERNAL_WORKER_TOKEN`을 통해 애플리케이션 레벨의 인증을 확보하고, RDS/Redis 패스워드는 SSM Parameter Store를 통해 암호화 주입(`SecureString`)됩니다.
 
-## 4. 거시적 취약점 및 Action Items (핵심 과제 3가지)
+## 4. 현재 V1 배포 상태 요약 (Evidence 기준)
+
+- **리소스 네이밍:** 모든 운영 인프라는 **academy-v1-** 접두사 기준으로 통일된다. (API ASG·ALB·Batch CE/Queue·EventBridge·DynamoDB·SSM·ECR 등)
+- **Evidence:** 배포 완료 시 `docs/00-SSOT/v1/reports/audit.latest.md`에 Batch CE/Queue 상태, ASG desired/min/max, API·Build·SSM 등이 기록된다.
+- **Drift:** SSOT와 실제 차이는 `docs/00-SSOT/v1/reports/drift.latest.md`에서 확인 가능하다. 배포 전 Plan으로 Drift 표를 확인하고 필요 시 `deploy.ps1 -Env prod`로 수렴한다.
+- **실행 권장:** Cursor/자동화에서는 `deploy.ps1 -AwsProfile default` 사용. 프로젝트 루트 `.env`는 스크립트가 자동 로드한다.
+
+## 5. 거시적 취약점 및 Action Items (핵심 과제 3가지)
 현재 아키텍처의 철학(SSOT)과 확장성은 훌륭하나, 아키텍처 설계상 병목이 될 수 있는 **V2 도약을 위한 3대 핵심 갈아엎기 과제**를 제시합니다.
 
 ### 🔴 Action Item 1: Cloudflare 무효화(Purge) 방식의 위험성 제거
@@ -56,7 +63,7 @@
 
 ---
 
-## 5. 참조 문서 (V1 기준)
+## 6. 참조 문서 (V1 기준)
 
 | 용도 | 문서 |
 |------|------|
