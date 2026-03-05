@@ -183,6 +183,9 @@ eventBridge:
   reconcileRuleName: academy-v1-reconcile-video-jobs
   scanStuckRuleName: academy-v1-video-scan-stuck-rate
   roleName: academy-v1-eventbridge-batch-video-role
+  # 운영 자동 복구: 규칙은 ENABLED 유지. 배포 시 DISABLED면 ENABLED로 재설정 (resources/eventbridge.ps1).
+  reconcileState: ENABLED
+  scanStuckState: ENABLED
 
 dynamodb:
   lockTableName: academy-v1-video-job-lock
