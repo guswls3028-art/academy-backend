@@ -1,0 +1,17 @@
+{
+  "commands": [
+    "set -e",
+    "export AWS_DEFAULT_REGION=ap-northeast-2",
+    "cd /opt/academy 2>/dev/null || cd $HOME/academy 2>/dev/null || { echo REPO_PATH_NOT_FOUND; exit 1 }",
+    "git fetch origin 2>/dev/null || true",
+    "git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || true",
+    "TAG=$(git rev-parse --short HEAD 2>/dev/null || echo build-$(date +%Y%m%d-%H%M%S))",
+    "echo BUILD_TAG=$TAG",
+    "aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com",
+    "docker build -f docker/Dockerfile.base -t academy-base:latest . 2>&1 || true",
+    "docker build --platform linux/arm64 -f docker/api/Dockerfile -t academy-api:$TAG . 2>&1",
+    "docker tag academy-api:$TAG 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:$TAG",
+    "docker push 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:$TAG 2>&1",
+    "echo PUSHED_TAG=$TAG"
+  ]
+}
