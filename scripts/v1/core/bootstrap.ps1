@@ -134,7 +134,7 @@ function Invoke-BootstrapSqs {
                 $body = @{ QueueUrl = $url; Attributes = @{ VisibilityTimeout = $visibility.ToString(); RedrivePolicy = $redrive } } | ConvertTo-Json -Compress -Depth 5
                 $tmp = [System.IO.Path]::GetTempFileName()
                 try {
-                $tmpPath = (Resolve-Path $tmp).Path.Replace('\', '/')
+                $tmpPath = $tmp.Replace('\', '/')
                 Invoke-Aws @("sqs", "set-queue-attributes", "--cli-input-json", "file:///$tmpPath", "--region", $script:Region) -ErrorMessage "set-queue-attributes $qName" | Out-Null
                 } finally { Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue }
                 Write-Host "  SQS attributes set: $qName VisibilityTimeout=$visibility RedrivePolicy->DLQ" -ForegroundColor Yellow
