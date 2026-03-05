@@ -53,7 +53,7 @@ ecr:
 
 # API: max=2 고정 (solo dev, medium reliability)
 api:
-  amiId: ami-0c55b159cbfafe1f0
+  amiId: ami-0885e191a9bcf28b0
   instanceProfile: academy-api-instance-profile
   securityGroupId: ""
   instanceType: t4g.medium
