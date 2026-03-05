@@ -19,8 +19,9 @@ function Set-ECRLifecyclePolicy {
     try {
         $tmpFile = [System.IO.Path]::GetTempFileName()
         [System.IO.File]::WriteAllText($tmpFile, $policyJson, [System.Text.UTF8Encoding]::new($false))
-        $pathArg = "file://$($tmpFile -replace '\\','/')"
-        if ($pathArg -match '^file://[A-Za-z]:') { $pathArg = "file:///$($tmpFile -replace '\\','/')" }
+        $pathForUri = $tmpFile -replace '\\','/'
+        if ($pathForUri -match '^[A-Za-z]:') { $pathForUri = "/$pathForUri" }
+        $pathArg = "file://$pathForUri"
         Invoke-Aws @("ecr", "put-lifecycle-policy", "--repository-name", $RepositoryName, "--lifecycle-policy-text", $pathArg, "--region", $script:Region) -ErrorMessage "put-lifecycle-policy $RepositoryName" | Out-Null
         Write-Ok "ECR lifecycle policy applied: $RepositoryName"
     } catch {
