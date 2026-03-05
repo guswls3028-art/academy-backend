@@ -15,19 +15,17 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
-def submit_batch_job(video_job_id: str) -> tuple[Optional[str], Optional[str]]:
+def submit_batch_job(video_job_id: str, duration_seconds: int | None = None) -> tuple[Optional[str], Optional[str]]:
     """
     VideoTranscodeJob에 대해 AWS Batch Job 제출.
+    duration_seconds >= VIDEO_LONG_DURATION_THRESHOLD_SECONDS 이면 long 큐/JobDef 사용.
 
     Args:
         video_job_id: VideoTranscodeJob.id (UUID 문자열)
+        duration_seconds: 비디오 길이(초). None이면 standard 큐 사용.
 
     Returns:
         (aws_job_id, None) 성공 시. (None, error_message) 실패 시.
-        호출부에서 job.aws_batch_job_id 저장 또는 job.error_code/error_message 저장에 사용.
-
-    Raises:
-        ImproperlyConfigured: VIDEO_BATCH_JOB_QUEUE 또는 VIDEO_BATCH_JOB_DEFINITION 미설정 시
     """
     from django.core.exceptions import ImproperlyConfigured
 
@@ -36,12 +34,19 @@ def submit_batch_job(video_job_id: str) -> tuple[Optional[str], Optional[str]]:
     if not getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", None):
         raise ImproperlyConfigured("VIDEO_BATCH_JOB_DEFINITION is missing")
 
+    long_threshold = int(getattr(settings, "VIDEO_LONG_DURATION_THRESHOLD_SECONDS", 10800))
+    use_long = duration_seconds is not None and duration_seconds >= long_threshold
+    if use_long:
+        queue_name = getattr(settings, "VIDEO_BATCH_JOB_QUEUE_LONG", "academy-v1-video-batch-long-queue")
+        job_def_name = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION_LONG", "academy-v1-video-batch-long-jobdef")
+    else:
+        queue_name = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
+        job_def_name = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
+
     import boto3
     from botocore.exceptions import ClientError
 
     region = getattr(settings, "AWS_REGION", None) or getattr(settings, "AWS_DEFAULT_REGION", "ap-northeast-2")
-    queue_name = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-video-batch-queue")
-    job_def_name = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", "academy-video-batch-jobdef")
 
     # Ref::job_id 치환이 깨져도 env로 전달되도록 containerOverrides 사용 (관측/디버깅 강화)
     container_overrides = {
