@@ -124,7 +124,7 @@ function Invoke-BootstrapSqs {
             $attrs = (Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $url, "--attribute-names", "All", "--region", $script:Region, "--output", "json")).Attributes
             $needsUpdate = $false
             $currentVis = if ($attrs.VisibilityTimeout) { [int]$attrs.VisibilityTimeout } else { 30 }
-            if ($currentVis -lt $visibility) { $needsUpdate = $true }
+            if ($currentVis -ne $visibility) { $needsUpdate = $true }
             $currentRedrive = $attrs.RedrivePolicy
             if (-not $currentRedrive -or $currentRedrive -notmatch "deadLetterTargetArn") {
                 $needsUpdate = $true
