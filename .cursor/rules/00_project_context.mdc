@@ -6,6 +6,9 @@ alwaysApply: true
 
 # Project: Academy — 확정 아키텍처
 
+**AI(Cursor Agent) 권한:**  
+본 리포지토리 내 **모든 문서·코드에 대해 AI는 열람·수정 권한**이 있다. 배포·인프라·비용·문서 변경 시 **.cursor/rules/ 에 있는 해당 룰을 적재적소에 항시 확인**한다(예: 배포 시 `07_deployment_orchestrator.mdc`, 비용·ECR 시 `04_cost_engine.mdc`, 아키텍처 시 `01_architecture.mdc`).
+
 **Architecture Type:** Mixed
 
 ## 확정된 아키텍처
