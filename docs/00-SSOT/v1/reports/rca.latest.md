@@ -102,3 +102,65 @@
 - **Target health 변화:** SG 적용 후 기존 인스턴스는 Target.Timeout → instance refresh로 신규 2대(i-007504ce07a1b7c4a, i-0a5fef2a26e7c5132) 등록. 해당 2대는 **Target.FailedHealthChecks / Health checks failed** (Timeout 아님). 즉 ALB→EC2:8000 연결은 성공했으나 /health가 200이 아님.
 - **SSM 신규 인스턴스(i-007504ce07a1b7c4a):** docker ps -a 빈 결과, curl 127.0.0.1:8000/health 실패. **컨테이너 미기동 상태 유지.**
 - **결론:** SG 수정으로 네트워크 차단은 해소됨. 게이트 A 미달 원인은 **academy-api 컨테이너가 인스턴스에서 기동하지 않음**(이미지/ENV/DB 연결 등). 인스턴스 내 `/var/log/cloud-init-output.log`, `/var/log/academy-api-userdata.log` 확인 및 이미지 빌드/실행 조건 점검 필요.
+
+---
+
+## 8) PHASE 1 상세 — 컨테이너 미기동 원인 확정 (2026-03-06)
+
+### 8.1 SSM 수집 결과 (인스턴스 2대)
+
+**대상:** i-007504ce07a1b7c4a, i-0a5fef2a26e7c5132 (academy-v1-api-asg)
+
+#### i-007504ce07a1b7c4a
+- **cloud-init-output.log (tail 200):** Cloud-init 정상, Docker 설치·기동 완료. 이후 UserData 스크립트 출력 없음(로그가 Docker 설치에서 끝남).
+- **/var/log/academy-api-userdata.log:** FILE_NOT_FOUND
+- **docker ps -a:** (빈 결과)
+- **docker images | head:** (빈 결과)
+- **ss -lntp | grep 8000:** (없음)
+- **systemctl status docker:** active (running)
+
+#### i-0a5fef2a26e7c5132 — **핵심 증거**
+- **cloud-init-output.log** 말단에 다음 **원문**:
+```
+Connect timeout on endpoint URL: "https://api.ecr.ap-northeast-2.amazonaws.com/"
+Error: Cannot perform an interactive login from a non TTY device
+2026-03-05 19:58:19,244 - cc_scripts_user.py[WARNING]: Failed to run module scripts-user (scripts in /var/lib/cloud/instance/scripts)
+2026-03-05 19:58:19,247 - util.py[WARNING]: Running module scripts-user ... failed
+Cloud-init v. 22.2.2 finished at Thu, 05 Mar 2026 19:58:19 +0000.
+```
+- **academy-api-userdata.log:** FILE_NOT_FOUND (실패 시점이 ECR 로그인 단계라 docker run 실패 로그 미기록)
+- **docker ps -a / docker images:** 빈 결과
+- **8000 리스닝 / docker.service:** 동일
+
+### 8.2 ECR·IAM 점검
+
+| 항목 | 결과 |
+|------|------|
+| ECR academy-api 이미지 | 존재. describe-images 다수 태그(이미지 사이즈 44528~384899355 bytes 등). lastRecordedPullTime 있음. |
+| academy-ec2-role | AmazonEC2ContainerRegistryReadOnly, AmazonSSMManagedInstanceCore 부착 → ecr:GetAuthorizationToken, ecr:BatchGetImage 등 충족 |
+| API ASG 서브넷 | subnet-07a8427d3306ce910(public-a), subnet-0548571ac21b3bbf3(public-b) — **Public 서브넷** 사용 |
+| 인스턴스 퍼블릭 IP | i-007504ce07a1b7c4a: 3.34.96.99, i-0a5fef2a26e7c5132: 54.180.87.183 |
+| NAT Gateway | nat-0c3ac9b2cdf785520 state=available |
+| Private RT | academy-v1-private-rt에 0.0.0.0/0 → NAT 존재 |
+
+### 8.3 UserData에서 실행하는 명령 (resources/api.ps1)
+
+1. `set -e`; `export AWS_REGION="$Region"`
+2. Docker 설치(dnf/yum) → `systemctl start docker` / `enable docker`
+3. **`aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $ecrHost`** ← 여기서 실패 시 스크립트 종료
+4. `docker pull $ApiImageUri`
+5. SSM `/academy/api/env` 있으면 `/opt/api.env` 생성 후 `docker run -d ... --env-file /opt/api.env ... $ApiImageUri`
+
+실패 시 `docker run` 단계에서만 `/var/log/academy-api-userdata.log` 기록. **ECR 로그인/풀 실패 시에는 로그 파일이 생성되지 않음.**
+
+### 8.4 실패 유형 분류 및 확정 RCA
+
+| 유형 | 설명 | 본 사례 |
+|------|------|--------|
+| A) 이미지 태그 없음 | ECR에 태그 없음/불일치 | 아님 — ECR에 이미지 다수 존재 |
+| B) ECR pull/로그인 실패 | 권한/네트워크/타임아웃 | **해당. Connect timeout to api.ecr.ap-northeast-2.amazonaws.com** |
+| C) 필수 ENV 누락 | SSM 미로드 등 | 미확정(ECR 단계에서 중단되어 미도달) |
+| D) 앱 프로세스 크래시 | DB/마이그레이션 등 | 미도달 |
+
+**확정 RCA (한 문장):**  
+UserData 실행 시 `aws ecr get-login-password`가 **api.ecr.ap-northeast-2.amazonaws.com** 에 대해 **Connect timeout**으로 실패하여, `set -e`로 스크립트가 중단되고 docker pull/run이 실행되지 않음. 인스턴스는 Public 서브넷·퍼블릭 IP·NAT 존재·IAM ECR 권한 모두 갖춤이므로, **cloud-init 초기 구간의 일시적 네트워크/IMDS 미준비** 또는 **일시적 ECR 연결 지연** 가능성 있음. 대응: UserData에 (1) 네트워크/IMDS 준비 대기, (2) ECR 로그인·풀 재시도, (3) 모든 실패 구간에서 academy-api-userdata.log 기록을 추가.
