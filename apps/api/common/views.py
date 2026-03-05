@@ -31,3 +31,11 @@ def health_check(request):
             "database": "disconnected",
             "error": str(e),
         }, status=503)
+
+
+def healthz(request):
+    """
+    ALB/로드밸런서용 라이브니스. DB 검사 없이 항상 200.
+    TG health check를 이 경로로 두면 DB 장애 시에도 인스턴스가 healthy 유지.
+    """
+    return JsonResponse({"status": "ok", "service": "academy-api"}, status=200)
