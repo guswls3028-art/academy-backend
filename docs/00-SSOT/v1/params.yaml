@@ -207,23 +207,18 @@ observability:
   logRetentionDays: 30
   alarmEvaluationPeriods: 2
   alarmPeriodSeconds: 300
-  api:
-    alb5xxThreshold: 10
-    targetUnhealthyThreshold: 1
-  sqs:
-    queueDepthThreshold: 100
-    dlqDepthThreshold: 5
-  batch:
-    queueDepthThreshold: 50
-    failedJobsThreshold: 5
-    stuckDetectedEnabled: true
-  rds:
-    cpuThresholdPercent: 80
-    freeStorageGbThreshold: 5
-    connectionsThreshold: 90
-  redis:
-    cpuThresholdPercent: 75
-    evictionsThreshold: 100
+  apiAlb5xxThreshold: 10
+  apiTargetUnhealthyThreshold: 1
+  sqsQueueDepthThreshold: 100
+  sqsDlqDepthThreshold: 5
+  batchQueueDepthThreshold: 50
+  batchFailedJobsThreshold: 5
+  batchStuckDetectedEnabled: true
+  rdsCpuThresholdPercent: 80
+  rdsFreeStorageGbThreshold: 5
+  rdsConnectionsThreshold: 90
+  redisCpuThresholdPercent: 75
+  redisEvictionsThreshold: 100
 
 redis:
   replicationGroupId: academy-v1-redis
