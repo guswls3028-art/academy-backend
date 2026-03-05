@@ -293,6 +293,9 @@ $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("| API ASG min/desired/max | $($ev.apiAsgDesired)/$($ev.apiAsgMin)/$($ev.apiAsgMax) | reports/audit.latest.md (apiAsg*) |")
 [void]$sb.AppendLine("| ALB target health | $targetHealthyCount / $targetTotalCount healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |")
 [void]$sb.AppendLine("| /health 200 | $apiHealthStatus $apiHealthResponseTime | curl 위 URL 또는 ALB DNS 직접 호출 |")
+if ($apiPublicUrl) {
+    [void]$sb.AppendLine("| API 공개 URL(도메인) /health | $apiPublicHealthStatus | API_PUBLIC_URL 또는 front.domains.api: $apiPublicUrl |")
+}
 [void]$sb.AppendLine("| AI/Messaging ASG | $($ev.asgAiDesired)/$($ev.asgMessagingDesired) | reports/audit.latest.md (asgAi*, asgMessaging*) |")
 [void]$sb.AppendLine("| SQS queue 연결·DLQ | Messaging depth $msgQueueDepth DLQ $msgDlqDepth / AI depth $aiQueueDepth DLQ $aiDlqDepth | SQS Console 또는 get-queue-attributes |")
 [void]$sb.AppendLine("| Video Batch CE/Queue/JobDef | CE $($ev.batchVideoCeStatus) Queue $($ev.videoQueueState) JobDef rev $($ev.videoJobDefRevision) | reports/audit.latest.md, Batch Console |")
