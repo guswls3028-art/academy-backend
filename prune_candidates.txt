@@ -1,0 +1,8 @@
+  .env loaded (75 vars) from C:\academy\.env
+
+=== DEPLOY v1 (prod) ===
+MODE: Plan (no AWS changes)
+MODE: Bootstrap ON (one-take)
+MODE: StrictValidation ON
+
+[Preflight]

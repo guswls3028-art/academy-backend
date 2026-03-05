@@ -28,9 +28,9 @@
 ## 2. 인프라 철학 및 SSOT(Single Source of Truth) 검증
 본 프로젝트는 심각한 파편화를 방지하기 위해 엄격한 **SSOT(단일 진실 공급원) 철학**을 강제하고 있습니다.
 
-- **SSOT 검증 성공적 구현**: `docs/00-SSOT/v1/params.yaml`을 유일한 인프라 구성 데이터 소스로 사용하고 있으며, 모든 스크립트는 이 파일만을 참조하여 인프라를 프로비저닝(`Ensure`)합니다.
+- **SSOT 검증·구성 데이터:** `docs/00-SSOT/v1/params.yaml`을 유일한 인프라 구성 데이터 소스로 사용하며, 모든 스크립트는 이 파일만 참조하여 인프라를 프로비저닝(Ensure)합니다. 사람용 요약은 `docs/00-SSOT/v1/SSOT.md`.
 - **레거시 실행 원천 차단(Guard)**: GitHub Actions 파이프라인 내부(`guard-no-legacy-scripts`)와 배포 스크립트 내부에서 레거시 스크립트(`scripts/infra/*`) 실행을 Denylist 기반으로 원천 차단하여 v1 시스템 우회를 금지하고 있습니다.
-- **Drift 대응 인프라 정리**: `-PruneLegacy` 옵션을 통해 SSOT 명세에 존재하지 않는 인프라는 추적하여 제거함으로써 구성 드리프트(Configuration Drift) 문제를 깔끔하게 통제하고 있습니다.
+- **Drift 대응·인프라 정리:** `-PruneLegacy` 옵션으로 SSOT 명세에 없는 리소스를 추적·제거하여 구성 드리프트를 통제합니다. 실시간 Drift는 `docs/00-SSOT/v1/reports/drift.latest.md` 참고.
 
 ## 3. 보안 및 인증 통합 수준 (Global Permission)
 전역적인 권한 관리가 현대적인 클라우드 네이티브 방식으로 잘 구성되어 있습니다.
