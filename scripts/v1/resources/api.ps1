@@ -307,4 +307,11 @@ function Confirm-APIHealth {
 function Ensure-API {
     Ensure-API-ASG
     Ensure-API-Instance
+    if (-not $script:PlanMode -and $script:ApiContainerName) {
+        try {
+            Invoke-CollectRuntimeImagesReport
+        } catch {
+            Write-Warn "Runtime images report skipped: $_"
+        }
+    }
 }
