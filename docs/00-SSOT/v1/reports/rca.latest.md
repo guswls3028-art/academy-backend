@@ -218,7 +218,10 @@ UserData 실행 시 `aws ecr get-login-password`가 **api.ecr.ap-northeast-2.ama
 ### 11.1 원인
 ALB health check Host가 private IP → ALLOWED_HOSTS 거부 → 400.
 
-### 11.2 수정
+### 11.2 원칙 (ALB health check)
+**ALB health check는 DB/외부 의존성 체크를 하면 안 됨. 200만 반환하는 /healthz로 고정.** 503이 나오면 즉시 SSOT api.healthPath를 /healthz로 두고, 앱에서 /healthz는 DB 검사 없이 200만 반환하도록 유지. /health는 readiness·관측용(503 가능).
+
+### 11.3 수정
 HealthCheckHostMiddleware, healthz 뷰/라우트/BYPASS 추가. SSOT api.healthPath=/healthz. alb.ps1에서 TG 존재 시 describe-target-groups로 HealthCheckPath 조회 후 다르면 **modify-target-group --health-check-path** 호출. TG academy-v1-api-tg를 수동으로 /healthz 적용 완료.
 
 ### 11.3 상태
