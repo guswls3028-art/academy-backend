@@ -130,7 +130,8 @@ function Invoke-BootstrapSqs {
             }
             if ($needsUpdate) {
                 $redrive = '{"deadLetterTargetArn":"' + $dlqArn + '","maxReceiveCount":"' + $maxReceiveCount + '"}'
-                Invoke-Aws @("sqs", "set-queue-attributes", "--queue-url", $url, "--attributes", "VisibilityTimeout=$visibility", "RedrivePolicy=$redrive", "--region", $script:Region) -ErrorMessage "set-queue-attributes $qName" | Out-Null
+                $redriveArg = 'RedrivePolicy="' + ($redrive.Replace('"', '\"')) + '"'
+                Invoke-Aws @("sqs", "set-queue-attributes", "--queue-url", $url, "--attributes", "VisibilityTimeout=$visibility", $redriveArg, "--region", $script:Region) -ErrorMessage "set-queue-attributes $qName" | Out-Null
                 Write-Host "  SQS attributes set: $qName VisibilityTimeout=$visibility RedrivePolicy->DLQ" -ForegroundColor Yellow
                 $script:ChangesMade = $true
             }
