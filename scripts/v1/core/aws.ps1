@@ -1,4 +1,5 @@
 # AWS CLI wrapper. No Start-Process; & aws @ArgsArray to preserve quoting.
+# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 # When AWS_PROFILE is set, --profile is injected so subprocess uses the same credentials.
 # In Plan mode: read-only (describe/get/list) run normally; mutating commands are skipped and return $null / no throw.
 
