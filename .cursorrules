@@ -8,6 +8,7 @@
 ---
 
 ## 2. AWS 관련 규칙
+- **AWS 루트 키 사용:** AWS 인증은 루트 계정 액세스 키(루트 키)를 사용한다. IAM 사용자/역할 키가 아닌, 루트 키를 `.env`에 두고 에이전트가 환경변수로 넣어 사용한다.
 - **인증:** AWS 명령어 실행 시 반드시 `--profile default`를 붙이거나, 환경 변수 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`를 정리한 뒤 프로파일을 사용할 것.
 - **배포:** V1 인프라는 `scripts/v1/deploy.ps1` 및 `docs/00-SSOT/v1/` 기준. Cursor에서 배포/인프라 조회 시 `-AwsProfile default` 사용 권장.
 - **스토리지:** AWS 쪽에서는 S3 도입·사용 금지. 오브젝트 스토리지는 Cloudflare R2만 사용.
