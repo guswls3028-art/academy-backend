@@ -13,6 +13,8 @@ FAIL 항목 해결 후 재검증 필요. ECR 빌드/푸시는 OIDC 전용 `v1-bu
 
 ## 상세 보고서
 - [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트·SQS·Video·관측·GO/NO-GO 상세
+- [ci-build.latest.md](./ci-build.latest.md) — CI 푸시 digest (OIDC 빌드)
+- [runtime-images.latest.md](./runtime-images.latest.md) — API 인스턴스 실제 실행 이미지 digest
 - [audit.latest.md](./audit.latest.md) — 리소스·지표 스냅샷
 - [drift.latest.md](./drift.latest.md) — SSOT 대비 drift
 
