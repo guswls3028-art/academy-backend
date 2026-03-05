@@ -2,6 +2,8 @@
 
 Implement infrastructure.
 
+**Reference before implementing:** `.cursor/knowledge/infra_topology.yaml` (canonical topology — deployment.entrypoint, services, queues). Ensure scripts/v4 and params align with it.
+
 **Focus:**
 
 - PowerShell scripts
