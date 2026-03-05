@@ -1,0 +1,16 @@
+---
+description: Mandatory repo scan before any architecture change.
+globs: 
+alwaysApply: true
+---
+
+# Repo Scan Required
+
+Before making architectural decisions Cursor must:
+
+1. Scan the entire repository
+2. Read SSOT documents (docs/00-SSOT/v4)
+3. Read scripts/v4
+4. Read GitHub workflows (.github/workflows)
+
+**No architecture change before repository scan.**

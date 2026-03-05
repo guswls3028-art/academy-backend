@@ -1,0 +1,18 @@
+---
+description: Deployment entrypoint and CI.
+globs: 
+alwaysApply: false
+---
+
+# Deployment Rules
+
+Deployment must support: **one-take deployment**
+
+**Primary entrypoint:** scripts/v4/deploy.ps1
+
+**CI:** GitHub Actions
+
+Workflows may trigger:
+
+- ECR build
+- deploy.ps1
