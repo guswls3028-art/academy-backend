@@ -14,7 +14,9 @@ function Set-ECRLifecyclePolicy {
     $policyPath = Get-ECRLifecyclePolicyPath
     if (-not $policyPath) { Write-Warn "ECR lifecycle policy file not found; skip apply for $RepositoryName"; return }
     if ($script:PlanMode) { return }
-    $pathArg = "file://$($policyPath -replace '\\','/')"
+    $pathForUri = $policyPath -replace '\\','/'
+    if ($pathForUri -match '^[A-Za-z]:') { $pathForUri = "/$pathForUri" }
+    $pathArg = "file://$pathForUri"
     try {
         Invoke-Aws @("ecr", "put-lifecycle-policy", "--repository-name", $RepositoryName, "--lifecycle-policy-text", $pathArg, "--region", $script:Region) -ErrorMessage "put-lifecycle-policy $RepositoryName" | Out-Null
         Write-Ok "ECR lifecycle policy applied: $RepositoryName"
