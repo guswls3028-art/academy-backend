@@ -648,7 +648,7 @@ Write-Host "  최종 상태: $finalStatus" -ForegroundColor $(if ($finalStatus -
 Write-Host "  GO/NO-GO: $goNoGo" -ForegroundColor Cyan
 Write-Host "  보고서: docs/00-SSOT/v1/reports/deploy-verification-latest.md" -ForegroundColor Cyan
 Write-Host "  V1 최종: docs/00-SSOT/v1/reports/V1-FINAL-REPORT.md" -ForegroundColor Cyan
-Write-Host "  audit.latest.md, drift.latest.md 갱신됨." -ForegroundColor Gray
+Write-Host "  audit.latest.md, drift.latest.md, consistency.latest.md, front-connection.latest.md 갱신됨." -ForegroundColor Gray
 if ($findings.Count -gt 0) {
     Write-Host "  발견 사항: $($findings.Count)건" -ForegroundColor Yellow
     $findings | ForEach-Object { Write-Host "    [$($_.Severity)] $($_.Area): $($_.Message)" -ForegroundColor Gray }
