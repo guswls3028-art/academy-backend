@@ -75,32 +75,30 @@ jobs:
         run: |
           DIGEST=$(aws ecr describe-images --repository-name academy-api --image-ids imageTag=latest --region ${{ env.AWS_REGION }} --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          echo "imageDigest=$DIGEST" >> $GITHUB_ENV
           BUILD_TIME=$(date -Iseconds)
           echo "buildTime=$BUILD_TIME" >> $GITHUB_OUTPUT
           SHA="${{ github.sha }}"
           SHORT_SHA="${SHA:0:7}"
           REPORTS_DIR="docs/00-SSOT/v1/reports"
           mkdir -p "$REPORTS_DIR"
-          cat > "$REPORTS_DIR/ci-build.latest.md" << EOF
-          # V1 CI Build — latest 이미지 푸시 증거
-
-          **Generated:** $BUILD_TIME  
-          **SSOT:** docs/00-SSOT/v1/params.yaml  
-          **Region:** ${{ env.AWS_REGION }}
-
-          ## academy-api
-
-          | 항목 | 값 |
-          |------|-----|
-          | repo | academy-api |
-          | tag | latest |
-          | imageDigest | $DIGEST |
-          | gitSha | $SHA |
-          | shortSha | $SHORT_SHA |
-          | buildTime | $BUILD_TIME |
-
-          EOF
+          {
+            echo "# V1 CI Build — latest 이미지 푸시 증거"
+            echo ""
+            echo "**Generated:** $BUILD_TIME"
+            echo "**SSOT:** docs/00-SSOT/v1/params.yaml"
+            echo "**Region:** ${{ env.AWS_REGION }}"
+            echo ""
+            echo "## academy-api"
+            echo ""
+            echo "| 항목 | 값 |"
+            echo "|------|-----|"
+            echo "| repo | academy-api |"
+            echo "| tag | latest |"
+            echo "| imageDigest | $DIGEST |"
+            echo "| gitSha | $SHA |"
+            echo "| shortSha | $SHORT_SHA |"
+            echo "| buildTime | $BUILD_TIME |"
+          } > "$REPORTS_DIR/ci-build.latest.md"
           echo "Report written to $REPORTS_DIR/ci-build.latest.md"
 
       - name: Summary
