@@ -13,9 +13,9 @@
 |------|----------|------------|----------------|----------------------|-------------|
 | **역할** | Django API (Gunicorn) | Docker 이미지 빌드·ECR 푸시 | AI 작업(SQS) | SMS/알림톡(SQS) | 영상 인코딩(FFmpeg HLS) |
 | **유형** | ALB + ASG | EC2 1대 (태그 기반) | ASG | ASG | Batch CE + Job Queue |
-| **인스턴스** | t4g.medium | t4g.medium | t4g.medium | t4g.medium | c6g.large |
-| **스케일** | **min=1, max=2** | 1대 고정 | min=1, max=10 | min=1, max=10 | minvCpus=0, maxvCpus=10 |
-| **리소스 이름** | academy-v1-api-asg | academy-build-arm64 | academy-v1-ai-worker-asg | academy-v1-messaging-worker-asg | academy-v1-video-batch-ce |
+| **인스턴스** | t4g.medium | t4g.medium | t4g.medium | t4g.medium | c6g.xlarge (standard/long) |
+| **스케일** | **min=1, max=2** | 1대 고정 | min=1, max=10 | min=1, max=10 | standard: max40 / long: max80 vCPU |
+| **리소스 이름** | academy-v1-api-asg | academy-build-arm64 | academy-v1-ai-worker-asg | academy-v1-messaging-worker-asg | academy-v1-video-batch-ce, academy-v1-video-batch-long-ce |
 
 ---
 
