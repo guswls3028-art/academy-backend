@@ -289,21 +289,25 @@ if ($frontAppUrl) {
         $frontIndexCacheControl = $_.Exception.Message
         Add-Finding -Severity "WARNING" -Area "Front" -Message "프론트 URL 접속 실패: $frontAppUrl — $_"
     }
-    # CORS 정적 검사: allowedOrigins에 app 도메인 포함 여부
-    $appOrigin = "https://$($script:FrontDomainApp.Trim())".TrimEnd('/')
-    if (-not $script:FrontCorsAllowedOrigins -or $script:FrontCorsAllowedOrigins.Count -eq 0) {
-        $corsStaticStatus = "WARNING"
-        $corsStaticDetail = "front.cors.allowedOrigins 비어 있음. CORS 사용 시 params에 app 도메인 추가 권장."
-        Add-Finding -Severity "WARNING" -Area "Front" -Message $corsStaticDetail
-    } else {
-        $found = $false
-        foreach ($o in $script:FrontCorsAllowedOrigins) {
-            $oo = if ($o -is [string]) { $o.Trim().TrimEnd('/') } else { "" }
-            if ($oo -eq $appOrigin -or $oo -eq "https://$($script:FrontDomainApp.Trim())") { $found = $true; break }
+    # CORS 정적 검사: allowedOrigins에 app 도메인 포함 여부 (SSOT에 app 도메인 있을 때만)
+    $corsStaticStatus = "not checked"
+    $corsStaticDetail = ""
+    if ($script:FrontDomainApp -and $script:FrontDomainApp.Trim() -ne "") {
+        $appOrigin = "https://$($script:FrontDomainApp.Trim())".TrimEnd('/')
+        if (-not $script:FrontCorsAllowedOrigins -or $script:FrontCorsAllowedOrigins.Count -eq 0) {
+            $corsStaticStatus = "WARNING"
+            $corsStaticDetail = "front.cors.allowedOrigins 비어 있음. CORS 사용 시 params에 app 도메인 추가 권장."
+            Add-Finding -Severity "WARNING" -Area "Front" -Message $corsStaticDetail
+        } else {
+            $found = $false
+            foreach ($o in $script:FrontCorsAllowedOrigins) {
+                $oo = if ($o -is [string]) { $o.Trim().TrimEnd('/') } else { "" }
+                if ($oo -eq $appOrigin -or $oo -eq "https://$($script:FrontDomainApp.Trim())") { $found = $true; break }
+            }
+            $corsStaticStatus = if ($found) { "OK" } else { "WARNING" }
+            $corsStaticDetail = if ($found) { "app 도메인 포함됨" } else { "allowedOrigins에 $appOrigin 없음" }
+            if (-not $found) { Add-Finding -Severity "WARNING" -Area "Front" -Message $corsStaticDetail }
         }
-        $corsStaticStatus = if ($found) { "OK" } else { "WARNING" }
-        $corsStaticDetail = if ($found) { "app 도메인 포함됨" } else { "allowedOrigins에 $appOrigin 없음" }
-        if (-not $found) { Add-Finding -Severity "WARNING" -Area "Front" -Message $corsStaticDetail }
     }
 }
 
