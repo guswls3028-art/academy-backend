@@ -61,7 +61,7 @@ api:
   asgName: academy-v1-api-asg
   asgLaunchTemplateName: academy-v1-api-lt
   asgMinSize: 1
-  asgMaxSize: 1
+  asgMaxSize: 3
   asgDesiredCapacity: 1
   containerName: academy-api
   albName: academy-v1-api-alb
@@ -121,7 +121,7 @@ videoBatch:
   workerJobDefName: academy-v1-video-batch-jobdef
   minvCpus: 0
   maxvCpus: 10
-  instanceType: c6g.large
+  instanceType: c6g.xlarge
   opsComputeEnvironmentName: academy-v1-video-ops-ce
   opsQueueName: academy-v1-video-ops-queue
   # Ops: t4g.medium 1대만, min 0 → 워커(video batch) 없을 땐 Ops 인스턴스도 0대. (Batch가 ap-northeast-2에서 t4g 미지원이면 m6g.medium 사용)
