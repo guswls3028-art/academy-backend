@@ -217,4 +217,4 @@ finally {
 if (-not $script:ChangesMade) {
     Write-Host "Idempotent: No changes required." -ForegroundColor Green
 }
-Write-Host "=== DEPLOY v4 COMPLETE ===`n" -ForegroundColor Green
+Write-Host "=== DEPLOY v1 COMPLETE ===`n" -ForegroundColor Green
