@@ -1,0 +1,85 @@
+---
+description: SSOT·스크립트 폴더 구조 — 정식은 v1만, 나머지는 아카이브/레거시. 수정·배포 시 v1만 사용.
+globs: docs/00-SSOT/**/*, scripts/**/*, docs/README.md, scripts/README.md
+alwaysApply: true
+---
+
+# SSOT·스크립트 폴더 구조 (V1 정식, 아카이브/레거시 분리)
+
+## 원칙
+
+- **정식(캐노니컬):** V1만 사용한다. 모든 인프라 문서·배포·검증은 **docs/00-SSOT/v1** 와 **scripts/v1** 만 기준으로 한다.
+- **아카이브/레거시:** V1을 제외한 모든 문서·스크립트는 **archive** 아래에만 둔다. 참고·체킹용이며, **실행·배포·수정 대상이 아니다.**
+
+---
+
+## 문서 (docs/)
+
+### 정식 — 수정·참조 대상
+
+| 경로 | 용도 |
+|------|------|
+| **docs/00-SSOT/v1/** | SSOT 문서. SSOT.md, params.yaml, INFRA-AND-SPECS.md, SPEC-CONFIRMED-V1.md, reports/ |
+| **docs/00-SSOT/README.md** | 00-SSOT 인덱스 — v1 링크·아카이브 안내 |
+| **docs/README.md** | 문서 인덱스 — 정식은 v1만 안내 |
+
+- 인프라 스펙·이름·파라미터는 **docs/00-SSOT/v1/** 및 **docs/00-SSOT/v1/params.yaml** 만 기준으로 한다.
+- Cursor가 인프라 관련 문서를 읽거나 수정할 때는 **docs/00-SSOT/v1/** 만 사용한다.
+
+### 아카이브 — 참고용만 (수정·배포에 사용 금지)
+
+| 경로 | 설명 |
+|------|------|
+| **docs/00-SSOT/archive/** | 구버전 문서 한곳 모음 |
+| **docs/00-SSOT/archive/v4/** | 이전 SSOT v4 문서·params·runbook·reports |
+| **docs/00-SSOT/archive/v3/** | v3 문서·증명 (state-contract, RESOURCE-INVENTORY 등) |
+| **docs/00-SSOT/archive/legacy_reports/** | 과거 풀스택/드리프트/검증 리포트 |
+| **docs/00-SSOT/archive/README.md** | 아카이브 인덱스 — 유지보수·체킹 시 구버전 구성을 여기서만 파악 |
+
+- **규칙:** 아카이브 내 파일을 수정하거나 배포/실행 기준으로 사용하지 않는다. 참고·비교용으로만 읽는다.
+
+---
+
+## 스크립트 (scripts/)
+
+### 정식 — 수정·실행 대상
+
+| 경로 | 용도 |
+|------|------|
+| **scripts/v1/deploy.ps1** | 배포 진입점 (bootstrap → deploy -Plan 등) |
+| **scripts/v1/verify.ps1** | 5단계 검증 자동화 |
+| **scripts/v1/bootstrap.ps1** | 새 PC 준비 |
+| **scripts/v1/** (core/, resources/, templates/) | 배포·검증에 사용하는 모든 스크립트 |
+
+- 배포·검증은 **scripts/v1/** 만 사용한다. 네이밍: 모든 리소스 `academy-v1-*`.
+- Cursor가 인프라 스크립트를 수정할 때는 **scripts/v1/** 만 변경한다.
+
+### 아카이브 — 참고용만 (실행 금지)
+
+| 경로 | 설명 |
+|------|------|
+| **scripts/archive/** | V1 제외 레거시 스크립트 전부 |
+| **scripts/archive/v4/** | 구 SSOT v4 배포·검증 스크립트 (v1로 대체됨) |
+| **scripts/archive/infra/** | 구 인프라 스크립트 (v1/templates에 반영됨) |
+| **scripts/archive/legacy/** | 구 scripts 루트 .ps1/.py/.sh 등 |
+| **scripts/archive/redeploy/** | 구 redeploy 관련 |
+| **scripts/archive/scripts_v3/** | 구 scripts_v3 풀스택 (v1로 대체됨) |
+| **scripts/archive/README.md** | 아카이브 스크립트 인덱스 |
+
+- **규칙:** scripts/archive/ 아래 스크립트는 **실행하지 않는다.** deploy 시 호출 스택에 archive가 있으면 guard가 실패한다.
+- 구버전 스크립트를 참고·비교할 때만 **scripts/archive/** 를 읽는다.
+
+---
+
+## 유지보수·체킹 시
+
+- **정식 작업:** **docs/00-SSOT/v1/** 와 **scripts/v1/** 만 보면 된다.
+- **구버전 확인:** **docs/00-SSOT/archive/** 와 **scripts/archive/** 만 보면 v4·v3·레거시 구성을 한눈에 파악할 수 있다.
+- **CI/배포:** `.github/workflows` 는 **scripts/v1/deploy.ps1** 만 사용한다. archive 경로는 트리거/실행 대상이 아니다.
+
+---
+
+## 요약
+
+- **캐노니컬:** `docs/00-SSOT/v1/`, `scripts/v1/` — 여기만 수정·실행·참조.
+- **아카이브:** `docs/00-SSOT/archive/`, `scripts/archive/` — 참고용 읽기만, 수정/실행 금지.
