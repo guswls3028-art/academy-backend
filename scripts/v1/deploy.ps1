@@ -196,6 +196,7 @@ try {
     Confirm-SSMEnv
     Ensure-ECRRepos
     Ensure-DynamoLockTable
+    Ensure-DynamoUploadCheckpointTable
     Ensure-ASGMessaging
     Ensure-ASGAi
     Ensure-VideoCE

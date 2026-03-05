@@ -102,3 +102,40 @@ function Ensure-DynamoLockTable {
     }
 }
 
+function Ensure-DynamoUploadCheckpointTable {
+    if (-not $script:DynamoUploadCheckpointTableName -or $script:PlanMode) { return }
+    Write-Step "Ensure DynamoDB upload checkpoint table $($script:DynamoUploadCheckpointTableName)"
+    $tableName = $script:DynamoUploadCheckpointTableName
+    $table = $null
+    try {
+        $desc = Invoke-AwsJson @("dynamodb", "describe-table", "--table-name", $tableName, "--region", $script:Region, "--output", "json")
+        if ($desc -and $desc.Table) { $table = $desc.Table }
+    } catch {
+        if ($_.Exception.Message -notmatch "ResourceNotFoundException|Requested resource not found") { throw }
+    }
+    if (-not $table) {
+        Write-Host "  Creating DynamoDB table $tableName (upload checkpoint)" -ForegroundColor Yellow
+        $createArgs = @(
+            "dynamodb", "create-table",
+            "--table-name", $tableName,
+            "--attribute-definitions", "AttributeName=uploadId,AttributeType=S", "AttributeName=partNumber,AttributeType=N",
+            "--key-schema", "AttributeName=uploadId,KeyType=HASH", "AttributeName=partNumber,KeyType=RANGE",
+            "--billing-mode", "PAY_PER_REQUEST",
+            "--tags", "Key=Project,Value=academy", "Key=ManagedBy,Value=ssot-v1",
+            "--region", $script:Region, "--output", "json"
+        )
+        $create = Invoke-AwsJson $createArgs
+        if (-not $create -or -not $create.TableDescription) { throw "create-table failed for $tableName" }
+        $script:ChangesMade = $true
+        $elapsed = 0
+        while ($elapsed -lt 600) {
+            $desc = Invoke-AwsJson @("dynamodb", "describe-table", "--table-name", $tableName, "--region", $script:Region, "--output", "json")
+            if ($desc -and $desc.Table -and $desc.Table.TableStatus -eq "ACTIVE") { Write-Ok "DynamoDB upload checkpoint table $tableName ACTIVE"; return }
+            Start-Sleep -Seconds 10
+            $elapsed += 10
+        }
+        throw "DynamoDB table $tableName did not reach ACTIVE in 600s."
+    }
+    Write-Ok "DynamoDB upload checkpoint table $tableName exists"
+}
+
