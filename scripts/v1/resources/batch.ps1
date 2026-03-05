@@ -1,4 +1,4 @@
-# Batch: Video/Ops CE and Queue Ensure. Uses v4/templates/batch. INVALID -> delete+wait+recreate+wait.
+# Batch: Video/Ops CE and Queue Ensure. Uses v1/templates/batch. INVALID -> delete+wait+recreate+wait.
 $ErrorActionPreference = "Stop"
 $V4Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $BatchPath = Join-Path $V4Root "templates\batch"

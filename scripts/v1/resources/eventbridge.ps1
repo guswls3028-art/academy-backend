@@ -1,4 +1,4 @@
-# EventBridge: rule + targets Ensure. Uses v4/templates/eventbridge and iam.
+# EventBridge: rule + targets Ensure. Uses v1/templates/eventbridge and iam.
 $ErrorActionPreference = "Stop"
 $V4Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $EventBridgePath = Join-Path $V4Root "templates\eventbridge"

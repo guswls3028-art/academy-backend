@@ -1,4 +1,4 @@
-# IAM: Batch roles + instance profile. Uses v4/templates/iam.
+# IAM: Batch roles + instance profile. Uses v1/templates/iam.
 $ErrorActionPreference = "Stop"
 $IamDir = $PSScriptRoot
 $V4Root = (Resolve-Path (Join-Path $IamDir "..")).Path
