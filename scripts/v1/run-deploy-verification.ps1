@@ -310,8 +310,12 @@ if ($frontAppUrl) {
 # --- 7. 프론트/API Smoke (선택: env) ---
 $frontStatus = "not checked"
 $apiSmokeStatus = "not checked"
-$frontUrl = $env:FRONT_APP_URL
-if ($frontUrl) {
+if ($frontAppStatusCode -eq 200) { $frontStatus = "OK" }
+elseif ($frontAppStatusCode -match "^\d+$") { $frontStatus = "HTTP $frontAppStatusCode" }
+elseif ($frontAppStatusCode -eq "error") { $frontStatus = "unreachable" }
+$frontUrl = $frontAppUrl
+if (-not $frontUrl -and $env:FRONT_APP_URL) {
+    $frontUrl = $env:FRONT_APP_URL
     try {
         $fr = Invoke-WebRequest -Uri $frontUrl -UseBasicParsing -TimeoutSec 15
         $frontStatus = if ($fr.StatusCode -eq 200) { "OK" } else { "HTTP $($fr.StatusCode)" }
