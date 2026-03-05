@@ -182,12 +182,14 @@
 
 | SSOT v1 리소스 | 현재 AWS 상태 |
 |----------------|----------------|
-| academy-v1-api-asg, academy-v1-api-alb | ASG/ALB 없음. EC2 1대만 수동 운영 |
+| academy-v1-api-asg, academy-v1-api-alb | deploy.ps1 Ensure 완료 시 생성·유지. ALB DNS → v1-api.hakwonplus.com CNAME 권장. |
 | academy-v1-db | academy-db로 존재 (이름만 상이) |
-| academy-v1-redis | SG만 존재, ElastiCache 미조회 |
-| academy-v1-video-job-lock (DynamoDB) | 테이블 없음 |
-| academy-v1-* Batch/EventBridge | academy-video-* 이름으로 일부 존재, CE 1개 INVALID |
-| v1 네이밍 (academy-v1-*) | 실제는 academy-* 또는 academy-v4-* 혼용 |
+| academy-v1-redis | ElastiCache academy-v1-redis 사용 |
+| academy-v1-video-job-lock (DynamoDB) | Ensure 시 생성 |
+| academy-v1-* Batch/EventBridge/JobDef | Ensure 시 academy-v1-* 네이밍으로 생성·갱신 |
+| Build | Name=academy-build-arm64, Spot 우선·실패 시 온디맨드 폴백(scripts/v1/resources/build.ps1) |
+
+*본 보고서는 배포 전 스냅샷 기준일 수 있음. 최신 상태는 `aws` CLI·콘솔 또는 Evidence/Drift 리포트 참고.*
 
 ---
 
