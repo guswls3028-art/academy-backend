@@ -81,15 +81,21 @@ function Ensure-RDSSecurityGroup {
     }
     $newSgs = @($sgIds + $script:SecurityGroupData | Select-Object -Unique)
     Write-Host "  Updating RDS SGs to include sg-data $($script:SecurityGroupData)" -ForegroundColor Yellow
-    Invoke-Aws @(
-        "rds", "modify-db-instance",
-        "--db-instance-identifier", $script:RdsDbIdentifier,
-        "--vpc-security-group-ids"
-    ) + $newSgs + @(
-        "--apply-immediately",
-        "--region", $script:Region
-    ) -ErrorMessage "modify RDS SGs" | Out-Null
-    $script:ChangesMade = $true
+    try {
+        Invoke-Aws @(
+            "rds", "modify-db-instance",
+            "--db-instance-identifier", $script:RdsDbIdentifier,
+            "--vpc-security-group-ids"
+        ) + $newSgs + @(
+            "--apply-immediately",
+            "--region", $script:Region
+        ) -ErrorMessage "modify RDS SGs" | Out-Null
+        $script:ChangesMade = $true
+    } catch {
+        if ($_.Exception.Message -match "No modifications were requested|InvalidParameterCombination") {
+            Write-Ok "RDS SGs unchanged (already include sg-data or same set)"
+        } else { throw }
+    }
 }
 
 function Confirm-RDSState {
