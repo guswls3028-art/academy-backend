@@ -131,6 +131,12 @@ function Ensure-RouteTables { param([string]$IgwId, [string]$NatAllocId)
         $publicRt = $c.RouteTable
         Invoke-Aws @("ec2", "create-route", "--route-table-id", $publicRt.RouteTableId, "--destination-cidr-block", "0.0.0.0/0", "--gateway-id", $IgwId, "--region", $script:Region) -ErrorMessage "public route" | Out-Null
         foreach ($subId in $script:PublicSubnets) {
+            if ($subId -notmatch '^subnet-') { continue }
+            $assoc = Invoke-AwsJson @("ec2", "describe-route-tables", "--filters", "Name=association.subnet-id,Values=$subId", "--region", $script:Region, "--output", "json")
+            $assocId = $assoc.RouteTables | ForEach-Object { $_.Associations } | Where-Object { $_.SubnetId -eq $subId -and $_.Main -eq $false } | Select-Object -ExpandProperty RouteTableAssociationId -First 1
+            if ($assocId) {
+                Invoke-Aws @("ec2", "disassociate-route-table", "--association-id", $assocId, "--region", $script:Region) -ErrorMessage "disassociate-public" 2>$null | Out-Null
+            }
             Invoke-Aws @("ec2", "associate-route-table", "--route-table-id", $publicRt.RouteTableId, "--subnet-id", $subId, "--region", $script:Region) -ErrorMessage "associate-public" | Out-Null
         }
         Write-Ok "Public RT created, 0.0.0.0/0 -> IGW"
@@ -141,6 +147,12 @@ function Ensure-RouteTables { param([string]$IgwId, [string]$NatAllocId)
         $privateRt = $c.RouteTable
         Invoke-Aws @("ec2", "create-route", "--route-table-id", $privateRt.RouteTableId, "--destination-cidr-block", "0.0.0.0/0", "--nat-gateway-id", $script:NatGatewayId, "--region", $script:Region) -ErrorMessage "private route" | Out-Null
         foreach ($subId in $script:PrivateSubnets) {
+            if ($subId -notmatch '^subnet-') { continue }
+            $assoc = Invoke-AwsJson @("ec2", "describe-route-tables", "--filters", "Name=association.subnet-id,Values=$subId", "--region", $script:Region, "--output", "json")
+            $assocId = $assoc.RouteTables | ForEach-Object { $_.Associations } | Where-Object { $_.SubnetId -eq $subId -and $_.Main -eq $false } | Select-Object -ExpandProperty RouteTableAssociationId -First 1
+            if ($assocId) {
+                Invoke-Aws @("ec2", "disassociate-route-table", "--association-id", $assocId, "--region", $script:Region) -ErrorMessage "disassociate-private" 2>$null | Out-Null
+            }
             Invoke-Aws @("ec2", "associate-route-table", "--route-table-id", $privateRt.RouteTableId, "--subnet-id", $subId, "--region", $script:Region) -ErrorMessage "associate-private" | Out-Null
         }
         Write-Ok "Private RT created, 0.0.0.0/0 -> NAT"
