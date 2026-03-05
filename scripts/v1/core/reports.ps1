@@ -67,3 +67,15 @@ function Save-VerifyReport {
     Set-Content -Path $historyPath -Value $content -Encoding UTF8 -Force
     Write-Host "  Verify report: $latestPath" -ForegroundColor DarkGray
 }
+
+function Save-DeployVerificationReport {
+    param([string]$MarkdownContent)
+    $dir = Get-ReportsDir
+    $historyDir = Get-ReportsHistoryDir
+    $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+    $latestPath = Join-Path $dir "deploy-verification-latest.md"
+    Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
+    $historyPath = Join-Path $historyDir "${ts}-deploy-verification.md"
+    Set-Content -Path $historyPath -Value $MarkdownContent -Encoding UTF8 -Force
+    Write-Host "  Deploy verification report: $latestPath" -ForegroundColor DarkGray
+}
