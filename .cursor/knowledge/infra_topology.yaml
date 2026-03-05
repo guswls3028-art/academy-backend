@@ -1,5 +1,8 @@
-# Academy — Cursor knowledge: single source topology
-# Used by rules/agents/prompts. Do not introduce services not listed here.
+# Academy — Canonical infrastructure topology
+# Path: .cursor/knowledge/infra_topology.yaml
+# Referenced by: .cursor/rules (00_project_context, 99_repo_scan_required, 01_architecture, 02_infra_generation),
+#                .cursor/agents/infra_architect.md, .cursor/prompts/generate_infra.md, .cursor/knowledge/README.md
+# Do not introduce services or connections not defined in this file.
 version: 1
 
 project:
