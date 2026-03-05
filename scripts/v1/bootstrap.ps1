@@ -1,6 +1,6 @@
 # ==============================================================================
 # Academy v1 — 새 PC 준비. aws cli, pwsh, 인증, region·권한 확인.
-# .env 자동 로드 — AWS 권한 수동 설정 불필요.
+# 인증: 스크립트는 .env를 로드하지 않음. Cursor가 .env를 환경변수로 설정한 뒤 실행한다.
 # Usage: pwsh scripts/v1/bootstrap.ps1
 # ==============================================================================
 $ErrorActionPreference = "Stop"
@@ -29,11 +29,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "OK: $($awsVersion | Out-String | Select-Object -First 1)" -ForegroundColor Green
 
-# .env 로드 후 AWS 자격 증명 검증
+# AWS 자격 증명 검증 (이미 호출자가 설정한 환경변수 사용)
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
 . (Join-Path $ScriptRoot "core\env.ps1")
-Load-EnvFile -RepoRoot $RepoRoot | Out-Null
 try {
     $idObj = Assert-AwsCredentials -RepoRoot $RepoRoot
 } catch {
