@@ -124,7 +124,8 @@ function Ensure-API-LaunchTemplate {
     if (-not $userDataRaw -or $userDataRaw.Trim() -eq "") {
         $apiUri = Get-LatestApiImageUri
         if ($apiUri) {
-            $userDataRaw = Get-ApiLaunchTemplateUserData -ApiImageUri $apiUri -Region $script:Region -SsmApiEnvParam $script:SsmApiEnv
+            $deploymentId = Get-Date -Format "o"
+            $userDataRaw = Get-ApiLaunchTemplateUserData -ApiImageUri $apiUri -Region $script:Region -SsmApiEnvParam $script:SsmApiEnv -DeploymentId $deploymentId
         } else {
             Write-Warn "No API image in ECR ($($script:EcrApiRepo)); Launch Template UserData left empty. Push academy-api image and re-run deploy."
         }
