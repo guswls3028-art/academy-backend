@@ -1,6 +1,59 @@
 # API: ALB + ASG (Step D). EIP 제거. Private subnet + sg-app, health /health.
 $ErrorActionPreference = "Stop"
 
+# EC2 부팅 시 Docker 설치 → ECR Pull → Django 컨테이너 8000 포트 실행. API_IMAGE_URI 등은 런타임 치환.
+function Get-ApiLaunchTemplateUserData {
+    param([string]$ApiImageUri, [string]$Region, [string]$SsmApiEnvParam)
+    if (-not $ApiImageUri -or -not $Region) { return "" }
+    $ecrHost = $ApiImageUri.Split("/")[0]
+    $script = @"
+#!/bin/bash
+set -e
+export AWS_REGION="$Region"
+# 1) Docker 설치 및 기동 (Amazon Linux 2 / AL2023)
+if command -v dnf &>/dev/null; then
+  dnf install -y docker
+else
+  yum install -y docker
+fi
+systemctl start docker
+systemctl enable docker
+# 2) ECR 로그인 및 이미지 Pull
+aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $ecrHost
+docker pull $ApiImageUri
+# 3) API env (SSM, 선택) → env 파일로 저장
+API_ENV_FILE=""
+if [ -n "$SsmApiEnvParam" ]; then
+  ENV_JSON="$(aws ssm get-parameter --name "$SsmApiEnvParam" --with-decryption --query Parameter.Value --output text --region $Region 2>/dev/null)" || true
+  if [ -n "`$ENV_JSON" ]; then
+    mkdir -p /opt
+    echo "`$ENV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); [print(k+'='+str(v)) for k,v in d.items()]" 2>/dev/null > /opt/api.env || true
+    [ -s /opt/api.env ] && API_ENV_FILE="--env-file /opt/api.env"
+  fi
+fi
+# 4) Django 컨테이너 8000 포트로 실행
+docker run -d --restart unless-stopped -p 8000:8000 `$API_ENV_FILE $ApiImageUri
+"@
+    return $script.Trim()
+}
+
+# ECR academy-api 리포지터리에서 최신 이미지 태그( latest 제외) 1개 반환.
+function Get-LatestApiImageUri {
+    $repo = $script:EcrApiRepo
+    if (-not $repo) { return $null }
+    $list = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $repo, "--region", $script:Region, "--output", "json") 2>$null
+    if (-not $list -or -not $list.imageDetails -or $list.imageDetails.Count -eq 0) { return $null }
+    $nonLatest = @($list.imageDetails | Where-Object { $_.imageTags -and ($_.imageTags | Where-Object { $_ -ne "latest" }) } | ForEach-Object {
+        $tag = ($_.imageTags | Where-Object { $_ -ne "latest" } | Select-Object -First 1)
+        if ($tag) { [PSCustomObject]@{ Tag = $tag; Pushed = $_.imagePushedAt } }
+    } | Where-Object { $_ })
+    if (-not $nonLatest) { return $null }
+    $latest = $nonLatest | Sort-Object { $_.Pushed } -Descending | Select-Object -First 1
+    $acc = $script:AccountId
+    $reg = $script:Region
+    return "${acc}.dkr.ecr.${reg}.amazonaws.com/${repo}:$($latest.Tag)"
+}
+
 function Get-APIASGInstanceIds {
     $r = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $script:ApiASGName, "--region", $script:Region, "--output", "json")
     if (-not $r -or -not $r.AutoScalingGroups -or $r.AutoScalingGroups.Count -eq 0) { return @() }
