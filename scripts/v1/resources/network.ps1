@@ -1,0 +1,254 @@
+# Network: 2-tier VPC Ensure (Step C). Create if missing; converge routes and SG rules.
+# VPC 10.0.0.0/16, Public 2 + Private 2, IGW, NAT 1, RTs, SG (app/batch/data).
+$ErrorActionPreference = "Stop"
+
+function Get-FirstTwoAzs {
+    $r = Invoke-AwsJson @("ec2", "describe-availability-zones", "--region", $script:Region, "--output", "json")
+    $zones = @($r.AvailabilityZones | Where-Object { $_.State -eq "available" } | Select-Object -First 2 | ForEach-Object { $_.ZoneName })
+    if (-not $zones -or $zones.Count -lt 2) { throw "Need at least 2 AZs in $($script:Region)" }
+    return $zones
+}
+
+function Get-VpcByTagOrId {
+    if ($script:VpcId) {
+        $v = Invoke-AwsJson @("ec2", "describe-vpcs", "--vpc-ids", $script:VpcId, "--region", $script:Region, "--output", "json")
+        if ($v -and $v.Vpcs -and $v.Vpcs.Count -gt 0) { return $v.Vpcs[0] }
+    }
+    $r = Invoke-AwsJson @("ec2", "describe-vpcs", "--filters", "Name=tag:Name,Values=$($script:VpcName)", "Name=tag:Project,Values=academy", "--region", $script:Region, "--output", "json")
+    if ($r -and $r.Vpcs -and $r.Vpcs.Count -gt 0) { return $r.Vpcs[0] }
+    return $null
+}
+
+function Ensure-Vpc {
+    $vpc = Get-VpcByTagOrId
+    if ($vpc) {
+        $script:VpcId = $vpc.VpcId
+        Write-Ok "VPC $($script:VpcId) exists"
+        return
+    }
+    if ($script:PlanMode) { Write-Ok "VPC would be created"; return }
+    $create = Invoke-AwsJson @("ec2", "create-vpc", "--cidr-block", $script:VpcCidr, "--tag-specifications", "ResourceType=vpc,Tags=[{Key=Name,Value=$($script:VpcName)},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+    $script:VpcId = $create.Vpc.VpcId
+    Invoke-Aws @("ec2", "modify-vpc-attribute", "--vpc-id", $script:VpcId, "--enable-dns-hostnames", "--region", $script:Region) -ErrorMessage "enable-dns-hostnames" | Out-Null
+    Invoke-Aws @("ec2", "modify-vpc-attribute", "--vpc-id", $script:VpcId, "--enable-dns-support", "--region", $script:Region) -ErrorMessage "enable-dns-support" | Out-Null
+    Write-Ok "VPC $($script:VpcId) created"
+    $script:ChangesMade = $true
+}
+
+function Get-SubnetsByNames { param([string[]]$Names)
+    $r = Invoke-AwsJson @("ec2", "describe-subnets", "--filters", "Name=vpc-id,Values=$($script:VpcId)", "--region", $script:Region, "--output", "json")
+    $subnets = @($r.Subnets | Where-Object { $_.Tags | Where-Object { $_.Key -eq "Name" -and $Names -contains $_.Value } })
+    return $subnets
+}
+
+function Ensure-Subnets {
+    param([string[]]$Azs)
+    $pub1 = "academy-v4-public-a"; $pub2 = "academy-v4-public-b"; $prv1 = "academy-v4-private-a"; $prv2 = "academy-v4-private-b"
+    $existing = Get-SubnetsByNames -Names @($pub1,$pub2,$prv1,$prv2)
+    $byName = @{}
+    foreach ($s in $existing) {
+        $name = ($s.Tags | Where-Object { $_.Key -eq "Name" } | Select-Object -First 1).Value
+        if ($name) { $byName[$name] = $s }
+    }
+    $publicIds = @(); $privateIds = @()
+    foreach ($i in 0..1) {
+        $name = @($pub1,$pub2)[$i]; $cidr = @($script:PublicSubnetCidr1, $script:PublicSubnetCidr2)[$i]; $az = $Azs[$i]
+        if ($byName[$name]) {
+            $publicIds += $byName[$name].SubnetId
+            continue
+        }
+        if ($script:PlanMode) { $publicIds += "(would create $name)"; continue }
+        $c = Invoke-AwsJson @("ec2", "create-subnet", "--vpc-id", $script:VpcId, "--cidr-block", $cidr, "--availability-zone", $az, "--tag-specifications", "ResourceType=subnet,Tags=[{Key=Name,Value=$name},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+        $publicIds += $c.Subnet.SubnetId
+        Invoke-Aws @("ec2", "modify-subnet-attribute", "--subnet-id", $c.Subnet.SubnetId, "--map-public-ip-on-launch", "--region", $script:Region) -ErrorMessage "map-public-ip" | Out-Null
+        $script:ChangesMade = $true
+    }
+    foreach ($i in 0..1) {
+        $name = @($prv1,$prv2)[$i]; $cidr = @($script:PrivateSubnetCidr1, $script:PrivateSubnetCidr2)[$i]; $az = $Azs[$i]
+        if ($byName[$name]) {
+            $privateIds += $byName[$name].SubnetId
+            continue
+        }
+        if ($script:PlanMode) { $privateIds += "(would create $name)"; continue }
+        $c = Invoke-AwsJson @("ec2", "create-subnet", "--vpc-id", $script:VpcId, "--cidr-block", $cidr, "--availability-zone", $az, "--tag-specifications", "ResourceType=subnet,Tags=[{Key=Name,Value=$name},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+        $privateIds += $c.Subnet.SubnetId
+        $script:ChangesMade = $true
+    }
+    $script:PublicSubnets = @($publicIds | Where-Object { $_ -match '^subnet-' })
+    $script:PrivateSubnets = @($privateIds | Where-Object { $_ -match '^subnet-' })
+    if ($script:PublicSubnets.Count -gt 0) { Write-Ok "Public subnets: $($script:PublicSubnets -join ', ')" }
+    if ($script:PrivateSubnets.Count -gt 0) { Write-Ok "Private subnets: $($script:PrivateSubnets -join ', ')" }
+}
+
+function Ensure-InternetGateway {
+    $r = Invoke-AwsJson @("ec2", "describe-internet-gateways", "--filters", "Name=attachment.vpc-id,Values=$($script:VpcId)", "--region", $script:Region, "--output", "json")
+    if ($r -and $r.InternetGateways -and $r.InternetGateways.Count -gt 0) {
+        Write-Ok "IGW attached"
+        return $r.InternetGateways[0].InternetGatewayId
+    }
+    if ($script:PlanMode) { return "igw-plan" }
+    $c = Invoke-AwsJson @("ec2", "create-internet-gateway", "--tag-specifications", "ResourceType=internet-gateway,Tags=[{Key=Name,Value=academy-v4-igw},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+    $igwId = $c.InternetGateway.InternetGatewayId
+    Invoke-Aws @("ec2", "attach-internet-gateway", "--vpc-id", $script:VpcId, "--internet-gateway-id", $igwId, "--region", $script:Region) -ErrorMessage "attach-igw" | Out-Null
+    Write-Ok "IGW $igwId created and attached"
+    $script:ChangesMade = $true
+    return $igwId
+}
+
+function Ensure-NatGateway {
+    $r = Invoke-AwsJson @("ec2", "describe-nat-gateways", "--filter", "Name=vpc-id,Values=$($script:VpcId)", "Name=state,Values=available", "--region", $script:Region, "--output", "json")
+    if ($r -and $r.NatGateways -and $r.NatGateways.Count -gt 0) {
+        $script:NatGatewayId = $r.NatGateways[0].NatGatewayId
+        Write-Ok "NAT Gateway $($script:NatGatewayId) available"
+        return $r.NatGateways[0].NatGatewayAddresses[0].AllocationId
+    }
+    if ($script:PlanMode) { return "eipalloc-plan" }
+    $eip = Invoke-AwsJson @("ec2", "allocate-address", "--domain", "vpc", "--tag-specifications", "ResourceType=elastic-ip,Tags=[{Key=Name,Value=academy-v4-nat-eip},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+    $allocId = $eip.AllocationId
+    $pubSubnetId = $script:PublicSubnets[0]
+    $nat = Invoke-AwsJson @("ec2", "create-nat-gateway", "--subnet-id", $pubSubnetId, "--allocation-id", $allocId, "--tag-specifications", "ResourceType=natgateway,Tags=[{Key=Name,Value=academy-v4-nat},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+    $script:NatGatewayId = $nat.NatGateway.NatGatewayId
+    Write-Ok "NAT Gateway $($script:NatGatewayId) created; waiting available..."
+    $elapsed = 0
+    while ($elapsed -lt 300) {
+        $d = Invoke-AwsJson @("ec2", "describe-nat-gateways", "--nat-gateway-ids", $script:NatGatewayId, "--region", $script:Region, "--output", "json")
+        $state = $d.NatGateways[0].State
+        if ($state -eq "available") { Write-Ok "NAT available"; break }
+        Start-Sleep -Seconds 15; $elapsed += 15
+    }
+    if ($state -ne "available") { throw "NAT Gateway did not become available in time" }
+    $script:ChangesMade = $true
+    return $allocId
+}
+
+function Ensure-RouteTables { param([string]$IgwId, [string]$NatAllocId)
+    $r = Invoke-AwsJson @("ec2", "describe-route-tables", "--filters", "Name=vpc-id,Values=$($script:VpcId)", "--region", $script:Region, "--output", "json")
+    $rts = @($r.RouteTables)
+    $publicRt = $rts | Where-Object { $_.Tags | Where-Object { $_.Key -eq "Name" -and $_.Value -eq "academy-v4-public-rt" } } | Select-Object -First 1
+    $privateRt = $rts | Where-Object { $_.Tags | Where-Object { $_.Key -eq "Name" -and $_.Value -eq "academy-v4-private-rt" } } | Select-Object -First 1
+    if (-not $publicRt -and -not $script:PlanMode) {
+        $c = Invoke-AwsJson @("ec2", "create-route-table", "--vpc-id", $script:VpcId, "--tag-specifications", "ResourceType=route-table,Tags=[{Key=Name,Value=academy-v4-public-rt},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+        $publicRt = $c.RouteTable
+        Invoke-Aws @("ec2", "create-route", "--route-table-id", $publicRt.RouteTableId, "--destination-cidr-block", "0.0.0.0/0", "--gateway-id", $IgwId, "--region", $script:Region) -ErrorMessage "public route" | Out-Null
+        foreach ($subId in $script:PublicSubnets) {
+            Invoke-Aws @("ec2", "associate-route-table", "--route-table-id", $publicRt.RouteTableId, "--subnet-id", $subId, "--region", $script:Region) -ErrorMessage "associate-public" | Out-Null
+        }
+        Write-Ok "Public RT created, 0.0.0.0/0 -> IGW"
+        $script:ChangesMade = $true
+    } elseif ($publicRt) { Write-Ok "Public RT exists" }
+    if (-not $privateRt -and -not $script:PlanMode -and $script:NatGatewayId) {
+        $c = Invoke-AwsJson @("ec2", "create-route-table", "--vpc-id", $script:VpcId, "--tag-specifications", "ResourceType=route-table,Tags=[{Key=Name,Value=academy-v4-private-rt},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+        $privateRt = $c.RouteTable
+        Invoke-Aws @("ec2", "create-route", "--route-table-id", $privateRt.RouteTableId, "--destination-cidr-block", "0.0.0.0/0", "--nat-gateway-id", $script:NatGatewayId, "--region", $script:Region) -ErrorMessage "private route" | Out-Null
+        foreach ($subId in $script:PrivateSubnets) {
+            Invoke-Aws @("ec2", "associate-route-table", "--route-table-id", $privateRt.RouteTableId, "--subnet-id", $subId, "--region", $script:Region) -ErrorMessage "associate-private" | Out-Null
+        }
+        Write-Ok "Private RT created, 0.0.0.0/0 -> NAT"
+        $script:ChangesMade = $true
+    } elseif ($privateRt) { Write-Ok "Private RT exists" }
+}
+
+function Ensure-SecurityGroups {
+    $r = Invoke-AwsJson @("ec2", "describe-security-groups", "--filters", "Name=vpc-id,Values=$($script:VpcId)", "--region", $script:Region, "--output", "json")
+    $byName = @{}
+    foreach ($sg in $r.SecurityGroups) {
+        if ($sg.GroupName) { $byName[$sg.GroupName] = $sg }
+    }
+
+    # 0.0.0.0/0 ALL egress가 이미 있으면 authorize 호출 스킵 (Duplicate 방지, 완전 멱등)
+    function Test-SgHasDefaultEgress {
+        param([string]$GroupId)
+        if (-not $GroupId) { return $false }
+        $d = Invoke-AwsJson @("ec2", "describe-security-groups", "--group-ids", $GroupId, "--region", $script:Region, "--output", "json")
+        if (-not $d -or -not $d.SecurityGroups -or $d.SecurityGroups.Count -eq 0) { return $false }
+        $egress = $d.SecurityGroups[0].IpPermissionsEgress
+        if (-not $egress) { return $false }
+        foreach ($perm in $egress) {
+            $proto = $perm.IpProtocol
+            if ($proto -ne "all" -and $proto -ne "-1") { continue }
+            $ranges = $perm.IpRanges
+            if (-not $ranges) { continue }
+            foreach ($ir in $ranges) {
+                if ($ir.CidrIp -eq "0.0.0.0/0") { return $true }
+            }
+        }
+        return $false
+    }
+
+    # sg-app: inbound 80,443 from 0.0.0.0/0 (ALB in public will hit this); outbound 0.0.0.0/0
+    if (-not $byName[$script:SgAppName] -and -not $script:PlanMode) {
+        $c = Invoke-AwsJson @("ec2", "create-security-group", "--group-name", $script:SgAppName, "--description", "Academy app (API, workers)", "--vpc-id", $script:VpcId, "--tag-specifications", "ResourceType=security-group,Tags=[{Key=Name,Value=$($script:SgAppName)},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+        $script:SecurityGroupApp = $c.GroupId
+        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupApp, "--protocol", "tcp", "--port", "80", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "sg-app 80" | Out-Null
+        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupApp, "--protocol", "tcp", "--port", "443", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "sg-app 443" | Out-Null
+        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupApp, "--protocol", "tcp", "--port", "8000", "--cidr", "10.0.0.0/16", "--region", $script:Region) -ErrorMessage "sg-app 8000" | Out-Null
+        if (-not (Test-SgHasDefaultEgress -GroupId $script:SecurityGroupApp)) {
+            Invoke-Aws @("ec2", "authorize-security-group-egress", "--group-id", $script:SecurityGroupApp, "--protocol", "all", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "sg-app egress" | Out-Null
+        }
+        Write-Ok "SG $script:SgAppName created"
+        $script:ChangesMade = $true
+    } else {
+        $script:SecurityGroupApp = $byName[$script:SgAppName].GroupId
+    }
+    # sg-batch: outbound 0.0.0.0/0
+    if (-not $byName[$script:SgBatchName] -and -not $script:PlanMode) {
+        $c = Invoke-AwsJson @("ec2", "create-security-group", "--group-name", $script:SgBatchName, "--description", "Academy Batch CE", "--vpc-id", $script:VpcId, "--tag-specifications", "ResourceType=security-group,Tags=[{Key=Name,Value=$($script:SgBatchName)},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+        $script:BatchSecurityGroupId = $c.GroupId
+        if (-not (Test-SgHasDefaultEgress -GroupId $script:BatchSecurityGroupId)) {
+            Invoke-Aws @("ec2", "authorize-security-group-egress", "--group-id", $script:BatchSecurityGroupId, "--protocol", "all", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "sg-batch egress" | Out-Null
+        }
+        Write-Ok "SG $script:SgBatchName created"
+        $script:ChangesMade = $true
+    } else {
+        $script:BatchSecurityGroupId = $byName[$script:SgBatchName].GroupId
+    }
+    # sg-data: inbound from sg-app, sg-batch (e.g. 5432, 6379); outbound minimal
+    if (-not $byName[$script:SgDataName] -and -not $script:PlanMode) {
+        $c = Invoke-AwsJson @("ec2", "create-security-group", "--group-name", $script:SgDataName, "--description", "Academy data (RDS/Redis)", "--vpc-id", $script:VpcId, "--tag-specifications", "ResourceType=security-group,Tags=[{Key=Name,Value=$($script:SgDataName)},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+        $script:SecurityGroupData = $c.GroupId
+        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupData, "--protocol", "tcp", "--port", "5432", "--source-group", $script:SecurityGroupApp, "--region", $script:Region) -ErrorMessage "sg-data 5432 app" | Out-Null
+        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupData, "--protocol", "tcp", "--port", "5432", "--source-group", $script:BatchSecurityGroupId, "--region", $script:Region) -ErrorMessage "sg-data 5432 batch" | Out-Null
+        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupData, "--protocol", "tcp", "--port", "6379", "--source-group", $script:SecurityGroupApp, "--region", $script:Region) -ErrorMessage "sg-data 6379 app" | Out-Null
+        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupData, "--protocol", "tcp", "--port", "6379", "--source-group", $script:BatchSecurityGroupId, "--region", $script:Region) -ErrorMessage "sg-data 6379 batch" | Out-Null
+        if (-not (Test-SgHasDefaultEgress -GroupId $script:SecurityGroupData)) {
+            Invoke-Aws @("ec2", "authorize-security-group-egress", "--group-id", $script:SecurityGroupData, "--protocol", "all", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "sg-data egress" | Out-Null
+        }
+        Write-Ok "SG $script:SgDataName created"
+        $script:ChangesMade = $true
+    } else {
+        $script:SecurityGroupData = $byName[$script:SgDataName].GroupId
+    }
+}
+
+function Ensure-Network {
+    Write-Step "Ensure Network (2-tier VPC, NAT, SG)"
+    if ($script:PlanMode) {
+        Write-Ok "Network Ensure skipped (Plan)"
+        return
+    }
+    Ensure-Vpc
+    $azs = Get-FirstTwoAzs
+    Ensure-Subnets -Azs $azs
+    $igwId = Ensure-InternetGateway
+    $natAllocId = $null
+    if ($script:NatEnabled) {
+        $natAllocId = Ensure-NatGateway
+    }
+    Ensure-RouteTables -IgwId $igwId -NatAllocId $natAllocId
+    Ensure-SecurityGroups
+    Write-Ok "Network ready: VpcId=$($script:VpcId) PublicSubnets=$($script:PublicSubnets -join ',') PrivateSubnets=$($script:PrivateSubnets -join ',')"
+}
+
+# Legacy: now no-op when Ensure-Network has run; keep for callers that expect these names.
+function Ensure-NetworkVpc {
+    if ($script:VpcId) {
+        $vpc = Invoke-AwsJson @("ec2", "describe-vpcs", "--vpc-ids", $script:VpcId, "--region", $script:Region, "--output", "json")
+        if ($vpc -and $vpc.Vpcs -and $vpc.Vpcs.Count -gt 0) { Write-Ok "VPC $($script:VpcId)" }
+    }
+}
+
+function Confirm-SubnetsMatchSSOT {
+    if ($script:PublicSubnets.Count -gt 0 -or $script:PrivateSubnets.Count -gt 0) {
+        Write-Ok "Subnets set (Public: $($script:PublicSubnets.Count) Private: $($script:PrivateSubnets.Count))"
+    }
+}
