@@ -80,7 +80,7 @@ build:
   instanceProfile: academy-build-instance-profile
   subnetId: ""
   securityGroupId: ""
-  instanceType: c6g.large
+  instanceType: t4g.medium
 
 # min=1 max=10 desired=1, scale-in protection ON, SQS backlog step scaling
 messagingWorker:
@@ -103,7 +103,7 @@ aiWorker:
   asgName: academy-v4-ai-worker-asg
   launchTemplateName: academy-v4-ai-worker-lt
   amiId: ami-0c55b159cbfafe1f0
-  instanceType: c6g.large
+  instanceType: t4g.medium
   minSize: 1
   maxSize: 10
   desiredCapacity: 1
