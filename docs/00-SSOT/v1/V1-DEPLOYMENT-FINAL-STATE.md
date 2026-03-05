@@ -1,5 +1,8 @@
 # V1 배포 최종 상태 (Post-Deploy)
 
+**AI·Cursor 룰:** 본 문서를 포함한 리포지토리 내 **모든 문서·코드에 대해 AI(Cursor Agent)는 열람·수정 권한**이 있다. 배포·인프라 변경 시 **.cursor/rules/** 내 해당 룰을 **적재적소에 항시 확인**한다.  
+**배포 원칙:** 모든 배포·재배포는 **빌드 서버 경유**. **비용 최적화:** ECR 라이프사이클 정책이 Ensure-ECRRepos 시 자동 적용된다.
+
 **배포 일시:** 2026-03-05  
 **기준:** SSOT v1 (`docs/00-SSOT/v1/SSOT.md`, `params.yaml`)  
 **실행:** `scripts/v1/deploy.ps1` (Phase 0~2)
