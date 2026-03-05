@@ -264,6 +264,9 @@ function Load-SSOT {
     $script:SSOT_Redis = @($script:RedisReplicationGroupId)
     $script:SSOT_ECR = @($script:EcrApiRepo, $script:VideoWorkerRepo, $script:EcrMessagingRepo, $script:EcrAiRepo)
     $script:SSOT_SSM = @($script:SsmApiEnv, $script:SsmWorkersEnv)
+    if ($script:RdsMasterPasswordSsmParam -and $script:RdsMasterPasswordSsmParam.Trim() -ne "" -and $script:RdsMasterPasswordSsmParam -notin $script:SSOT_SSM) {
+        $script:SSOT_SSM = @($script:SsmApiEnv, $script:SsmWorkersEnv, $script:RdsMasterPasswordSsmParam)
+    }
     $script:SSOT_EIP = @()
     if ($script:ApiAllocationId) { $script:SSOT_EIP = @($script:ApiAllocationId) }
     $script:SSOT_IAMRoles = @(
