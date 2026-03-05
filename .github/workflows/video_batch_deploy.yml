@@ -1,5 +1,5 @@
 # ==============================================================================
-# Video Batch deploy — SSOT v4. Build video-worker, push ECR, run scripts/v4/deploy.ps1 only.
+# Video Batch deploy — SSOT v1. Build video-worker, push ECR, run scripts/v1/deploy.ps1 only.
 # Legacy: scripts/infra/*.ps1 실행/호출 금지 (denylist 가드).
 # ==============================================================================
 
@@ -11,7 +11,7 @@ on:
     branches: [main]
     paths:
       - "docker/video-worker/**"
-      - "scripts/v4/**"
+      - "scripts/v1/**"
       - "scripts_v3/**"
       - "scripts/infra/batch/**"
       - "scripts/infra/eventbridge/**"
@@ -38,7 +38,7 @@ jobs:
           for f in .github/workflows/*.yml .github/workflows/*.yaml; do
             [ -f "$f" ] || continue
             if grep -E 'run:.*scripts/infra|pwsh.*scripts/infra|-File.*scripts/infra' "$f"; then
-              echo "::error::Legacy script execution detected in $f. Use scripts/v4/deploy.ps1 only."
+              echo "::error::Legacy script execution detected in $f. Use scripts/v1/deploy.ps1 only."
               exit 1
             fi
             if grep -E 'pwsh.*deploy\.ps1|-File.*deploy\.ps1' "$f" | grep -v 'scripts/v4/deploy.ps1'; then
