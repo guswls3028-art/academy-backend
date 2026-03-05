@@ -19,6 +19,6 @@
 
 **Region:** ap-northeast-2  
 **Account:** single account  
-**SSOT:** docs/00-SSOT/v4
+**SSOT:** docs/00-SSOT/v1
 
 **Canonical topology (서비스·큐·연결 정의):** `.cursor/knowledge/infra_topology.yaml` — 인스턴스 타입, 스케일 한계, connects_to/consumes/produces, architecture_flow 등은 이 파일 기준.

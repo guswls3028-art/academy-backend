@@ -18,4 +18,4 @@
 
 - Queue backlog high → check worker ASG health → increase capacity (within max) or fix health checks
 - Batch stuck → check Batch CE/job definition and RDS/Redis connectivity
-- Scale only via scripts/v4 and params.yaml; Ensure-* idempotent
+- Scale only via scripts/v1 and params.yaml; Ensure-* idempotent

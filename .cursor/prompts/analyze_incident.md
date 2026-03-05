@@ -9,6 +9,6 @@ Use this prompt to analyze a production incident.
 3. Read 06_incident_analysis, knowledge/incident_playbook.md.
 4. Common incidents: queue backlog, worker crash, batch stuck, DB connection exhaustion.
 5. Pattern: SQS queue growing → check worker ASG health → recommend scaling or health check fix.
-6. If drift: recommend script fix (scripts/v4), not manual changes.
+6. If drift: recommend script fix (scripts/v1), not manual changes.
 
 **Output:** Root cause hypothesis, evidence, recommended actions (script or scaling within SSOT).

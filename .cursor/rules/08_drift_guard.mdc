@@ -1,6 +1,6 @@
 ---
 description: Drift prevention. SSOT match; script fix only.
-globs: scripts/v4/**/*
+globs: scripts/v1/**/*
 alwaysApply: false
 ---
 

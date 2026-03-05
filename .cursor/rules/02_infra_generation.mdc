@@ -1,6 +1,6 @@
 ---
 description: AI infrastructure auto-design. PowerShell + AWS CLI only.
-globs: scripts/v4/**/*
+globs: scripts/v1/**/*
 alwaysApply: false
 ---
 
