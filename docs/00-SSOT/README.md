@@ -24,9 +24,10 @@
 
 ## 아카이브 (참고용, 실행/배포에 사용하지 않음)
 
-- **v4/** — 이전 SSOT v4. 풀셋팅 v1 전환 후 참고용.
-- **v3_archive/** — v3 문서·증명
-- **legacy_reports_archive/** — 과거 리포트
+- **[archive/](archive/)** — 구버전 문서 한곳 모음
+  - **archive/v4/** — 이전 SSOT v4
+  - **archive/v3/** — v3 문서·증명
+  - **archive/legacy_reports/** — 과거 리포트
 
 ---
 
