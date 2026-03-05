@@ -104,10 +104,9 @@
 
 ## PHASE V4 — 최소 재현 테스트 (수동 트리거)
 
-- **방법:** ops queue에 netprobe(reconcile/scanStuck) job 수동 제출.
-  - `aws batch submit-job --job-name netprobe-manual --job-queue academy-v1-video-ops-queue --job-definition academy-v1-video-ops-netprobe:13 --region ap-northeast-2`
-- **확인:** list-jobs로 RUNNING → SUCCEEDED 전환, describe-jobs statusReason, CloudWatch Logs(awslogs) 수집 후 보고서에 첨부.
-- **(미실행)** 본 문서 작성 시점에서는 수동 제출 미실행. 필요 시 위 명령 실행 후 결과를 본 섹션에 추가.
+- **실행:** `aws batch submit-job --job-name netprobe-manual-1 --job-queue academy-v1-video-ops-queue --job-definition academy-v1-video-ops-netprobe:13 --region ap-northeast-2`
+- **결과:** jobId=bd13daba-d97c-4c5b-b4ab-36a09422afbf 제출 성공. 약 30초 후 describe-jobs: status=RUNNABLE (컨테이너 미시작). 이후 RUNNING → SUCCEEDED 전환 여부는 describe-jobs/CloudWatch Logs로 확인 가능.
+- **해석:** Ops queue에 job 제출 가능, EventBridge가 아닌 수동 제출로 동일 queue 사용. EventBridge 규칙이 주기적으로 reconcile/scanStuck을 같은 queue에 제출하므로, 규칙 트리거 시에도 Batch에 job이 들어감을 의미함.
 
 ---
 
