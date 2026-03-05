@@ -21,10 +21,10 @@ systemctl enable docker
 # 2) ECR 로그인 및 이미지 Pull
 aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $ecrHost
 docker pull $ApiImageUri
-# 3) API env (SSM, 선택) → env 파일로 저장
+# 3) API env (SSM, 선택) -> env 파일로 저장
 API_ENV_FILE=""
 if [ -n "$SsmApiEnvParam" ]; then
-  ENV_JSON="$(aws ssm get-parameter --name "$SsmApiEnvParam" --with-decryption --query Parameter.Value --output text --region $Region 2>/dev/null)" || true
+  ENV_JSON="`$(aws ssm get-parameter --name "$SsmApiEnvParam" --with-decryption --query Parameter.Value --output text --region $Region 2>/dev/null)" || true
   if [ -n "`$ENV_JSON" ]; then
     mkdir -p /opt
     echo "`$ENV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); [print(k+'='+str(v)) for k,v in d.items()]" 2>/dev/null > /opt/api.env || true
