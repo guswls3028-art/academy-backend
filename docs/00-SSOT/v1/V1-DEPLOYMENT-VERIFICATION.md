@@ -193,4 +193,32 @@ V1이 standard/long 2-tier·timeout·stuck(heartbeat_age)·R2 checkpoint·관측
 
 ---
 
+## 8. 최종 배포 안정성 보강 체크리스트
+
+### 8.1 Video 1건당 Batch Job 1개 보장
+
+| 항목 | 구현 |
+|------|------|
+| **Idempotent submit** | `create_job_and_submit_batch`에서 DDB lock(video_id) 선점 실패 시 기존 active job 반환 |
+| **DDB Lock** | 테이블 `academy-v1-video-job-lock`, PK=videoId(S), TTL 속성=ttl. params `dynamodb.lockTtlSeconds`: 43200(12h, long 기준) |
+| **Heartbeat lease 연장** | Batch 워커 `_heartbeat_loop`에서 `job_heartbeat` 후 `video_job_lock.extend(video_id)` 호출 |
+| **Release** | `job_complete`(READY), `job_mark_dead` / `job_mark_dead_if_active` 시 `video_job_lock.release(video_id)` |
+
+### 8.2 유령데이터 방지
+
+| 항목 | 구현 |
+|------|------|
+| **API 재생/목록** | 재생은 `playback_mixin._check_access`에서 `video.status == READY`만 허용. 목록은 `video_filter_by_session_ready`로 READY만 노출 |
+| **DB 상태전이** | `job_complete`: 업로드+검증 완료 후 같은 트랜잭션 내에서 마지막에 READY 조건부 업데이트 (select_for_update로 직렬화) |
+
+### 8.3 SQS 워커 (AI / Messaging)
+
+| 항목 | 구현 |
+|------|------|
+| **DLQ** | Bootstrap에서 `academy-v1-messaging-queue-dlq`, `academy-v1-ai-queue-dlq` 생성 후 메인 큐에 RedrivePolicy(maxReceiveCount=5) 연결 |
+| **VisibilityTimeout** | Messaging 900초, AI 3600초 (처리 최악 시간보다 크게). Bootstrap create-queue / set-queue-attributes 반영 |
+| **SIGTERM graceful** | Messaging: `_handle_signal`에서 `_shutdown=True`, in-flight 메시지 delete 안 함 → visibility 만료 후 재노출로 안전 재처리. AI: 동일 패턴 + visibility 연장 스레드 정리 |
+
+---
+
 **문서 끝.**
