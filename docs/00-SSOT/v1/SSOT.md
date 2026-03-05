@@ -45,6 +45,10 @@
 - 동영상 1개 = Batch Job 1개 제출. 사용자 동영상 5개 업로드 → Job 5개 제출 → 워커 최대 5대 기동, 각 1개 처리 후 종료.  
 - **1 워커가 2개 이상 작업 처리 금지** — Job 정의상 1 Job = 1 컨테이너 = 1 동영상만 처리. N개 업로드 시 반드시 Job N개로 제출할 것.
 
+**Video Ops (reconcile / scanstuck / netprobe)**  
+- Ops CE: **minvCpus 0, maxvCpus 2** (인스턴스 1대만). 인스턴스 타입: **m6g.medium** (Batch가 ap-northeast-2에서 t4g 미지원이라 동일 2vCPU ARM인 m6g.medium 사용).  
+- **워커(video batch) 안 떠 있으면 Ops도 떠 있으면 안 됨** — Ops CE min 0이라 작업 없으면 인스턴스 0대. Ops Job은 EventBridge 스케줄 시에만 제출되며, 그때만 1대 기동.
+
 ---
 
 ## 3. 배포 순서
