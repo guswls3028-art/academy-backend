@@ -44,7 +44,7 @@ function Get-ParamFromRaw {
 
 function Load-SSOT {
     param([string]$Env = "prod")
-    function Coerce-Int { param($val, $default = 0) if ($val -ne $null -and $val -ne "") { [int]$val } else { [int]$default } }
+    function Coerce-Int { param($val, $default = 0); if ($val -ne $null -and $val -ne "") { [int]$val } else { [int]$default } }
     $p = Get-ParamsYaml
     $raw = Get-Content $ParamsPath -Raw
 
