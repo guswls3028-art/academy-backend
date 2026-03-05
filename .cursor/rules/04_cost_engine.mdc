@@ -18,7 +18,16 @@ alwaysApply: false
 - Use ARM instances when possible.
 - Avoid: m5, c5, large instance fleets
 
+**ECR 비용 최적화 (필수):**
+
+- **불필요한 이미지를 남기지 않는다.**  
+- 배포 스크립트에서 ECR 저장소별 **라이프사이클 정책**을 적용한다.  
+- 정책 예시: `docs/00-SSOT/v1/scripts/ecr-lifecycle-policy.json` — tagged(v1-, bootstrap-) 최신 20개만 유지, untagged 1일 후 만료.  
+- 배포·재배포 시 Ensure-ECRRepos 이후 라이프사이클 정책 적용 로직을 수행한다.
+
 **Cursor auto-actions:**
 
 - Detect idle ASG → recommend downsizing (respect min = 1)
 - Detect oversized instances → recommend right-sizing to t4g.medium / c6g.large
+
+**작업 시:** 비용·이미지 정리·ECR 관련 변경 시 본 룰과 `07_deployment_orchestrator.mdc`를 적재적소에 확인할 것.
