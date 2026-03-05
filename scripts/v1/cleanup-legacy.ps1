@@ -116,7 +116,7 @@ Write-Host "  Region: $R  VpcId: $VpcId" -ForegroundColor Gray
 if ($DryRun) { Write-Host "  모드: DryRun — 변경 없음. 실제 적용 시 -Execute 사용." -ForegroundColor Yellow }
 
 # 1) Orphan EIP release
-if (-not $EIPOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only) { $doEIP = $true } else { $doEIP = $EIPOnly }
+if (-not $EIPOnly -and -not $VolumesOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only -and -not $ASGOnly) { $doEIP = $true } else { $doEIP = $EIPOnly }
 if ($doEIP) {
     $natAlloc = Get-NatAllocationId
     $addrs = Invoke-AwsJson @("ec2", "describe-addresses", "--region", $R, "--output", "json")
@@ -129,8 +129,9 @@ if ($doEIP) {
             if (-not $DryRun) {
                 try {
                     Invoke-Aws @("ec2", "release-address", "--allocation-id", $a.AllocationId, "--region", $R) -ErrorMessage "release-address" | Out-Null
+                    [void]$runEIPReleased.Add([PSCustomObject]@{ AllocationId = $a.AllocationId; PublicIp = $a.PublicIp })
                     Write-Host "      Released." -ForegroundColor Green
-                } catch { Write-Warning "      Failed: $_" }
+                } catch { Write-Warning "      Failed: $_"; [void]$runErrors.Add("EIP $($a.AllocationId): $_") }
             }
         }
     }
