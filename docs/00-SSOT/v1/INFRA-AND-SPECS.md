@@ -70,7 +70,7 @@
 | **할당** | Spot 혼합 (BEST_FIT_PROGRESSIVE) | On-Demand (BEST_FIT) |
 | Ops CE/Queue | academy-v1-video-ops-ce, academy-v1-video-ops-queue | (동일) |
 | EventBridge | academy-v1-reconcile-video-jobs, academy-v1-video-scan-stuck-rate | (동일) |
-| DynamoDB Lock | academy-v1-video-job-lock | (동일) |
+| DynamoDB Lock | academy-v1-video-job-lock (PK=videoId, TTL 12h, heartbeat 연장) | (동일) |
 | DynamoDB Checkpoint | academy-v1-video-upload-checkpoints (R2 multipart resume) | (동일) |
 
 ---
