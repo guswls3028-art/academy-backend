@@ -187,6 +187,7 @@ try {
     }
 
     $script:BatchIam = Ensure-BatchIAM
+    Ensure-EC2InstanceProfileSSM
     Ensure-Network
     Ensure-NetworkVpc
     Confirm-SubnetsMatchSSOT

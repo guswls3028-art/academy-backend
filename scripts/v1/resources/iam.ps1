@@ -82,3 +82,26 @@ function Ensure-BatchIAM {
         ExecutionRoleArn = $executionRoleArn
     }
 }
+
+# API/Build EC2 인스턴스가 SSM에 등록되도록 instance profile 역할에 AmazonSSMManagedInstanceCore 부여
+function Ensure-EC2InstanceProfileSSM {
+    if ($script:PlanMode) { return }
+    $profileName = $script:ApiInstanceProfile
+    if (-not $profileName) { $profileName = $script:BuildInstanceProfile }
+    if (-not $profileName) { return }
+    $ip = Invoke-AwsJson @("iam", "get-instance-profile", "--instance-profile-name", $profileName, "--output", "json")
+    if (-not $ip -or -not $ip.InstanceProfile -or -not $ip.InstanceProfile.Roles -or $ip.InstanceProfile.Roles.Count -eq 0) {
+        Write-Warn "Instance profile $profileName not found; SSM policy not attached."
+        return
+    }
+    $roleName = $ip.InstanceProfile.Roles[0].RoleName
+    $policies = Invoke-AwsJson @("iam", "list-attached-role-policies", "--role-name", $roleName, "--output", "json")
+    $hasSsm = $policies.AttachedPolicies | Where-Object { $_.PolicyArn -eq "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" }
+    if ($hasSsm) {
+        Write-Ok "EC2 role $roleName already has AmazonSSMManagedInstanceCore"
+        return
+    }
+    Invoke-Aws @("iam", "attach-role-policy", "--role-name", $roleName, "--policy-arn", "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore") -ErrorMessage "attach SSM to EC2 role" | Out-Null
+    Write-Ok "Attached AmazonSSMManagedInstanceCore to $roleName (SSM agent can register)"
+    $script:ChangesMade = $true
+}
