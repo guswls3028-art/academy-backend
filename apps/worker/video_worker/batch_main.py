@@ -68,8 +68,12 @@ def _handle_term(signum: int, frame: object) -> None:
     sys.exit(1)
 
 
-def _heartbeat_loop(job_id: str) -> None:
-    """RUNNING job의 last_heartbeat_at을 주기 갱신 (scan_stuck 동작용)."""
+def _heartbeat_loop(job_id: str, video_id: int) -> None:
+    """RUNNING job의 last_heartbeat_at 갱신 + DDB lock lease 연장 (1 video 1 job 보장)."""
+    from apps.support.video.services.video_job_lock import extend as lock_extend
+    from django.conf import settings
+    lock_ttl = int(getattr(settings, "VIDEO_JOB_LOCK_TTL_SECONDS", 43200))
+
     while not _heartbeat_stop.is_set():
         if _heartbeat_stop.wait(timeout=VIDEO_JOB_HEARTBEAT_SECONDS):
             break
@@ -77,6 +81,7 @@ def _heartbeat_loop(job_id: str) -> None:
             break
         try:
             job_heartbeat(job_id, lease_seconds=VIDEO_JOB_HEARTBEAT_SECONDS * 2)
+            lock_extend(video_id, ttl_seconds=lock_ttl)
         except Exception as e:
             logger.debug("heartbeat failed: %s", e)
 
@@ -179,7 +184,7 @@ def main() -> int:
         aws_batch_job_id=aws_batch_job_id,
     )
 
-    heartbeat_thread = threading.Thread(target=_heartbeat_loop, args=(job_id,), daemon=True)
+    heartbeat_thread = threading.Thread(target=_heartbeat_loop, args=(job_id, int(job_obj.video_id)), daemon=True)
     heartbeat_thread.start()
 
     try:
