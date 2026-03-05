@@ -177,6 +177,7 @@ eventBridge:
 dynamodb:
   lockTableName: academy-v1-video-job-lock
   lockTableTtlAttribute: ttl
+  lockTtlSeconds: 43200
   uploadCheckpointTableName: academy-v1-video-upload-checkpoints
 
 rds:
