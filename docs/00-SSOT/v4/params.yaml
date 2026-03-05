@@ -1,6 +1,6 @@
 # Academy SSOT v4 — Final Design v1.0. 기계용 단일소스. scripts/v4 전용.
 # 계약: state-contract.md, 설계: ARCHITECTURE.md
-# VPC Endpoint 미사용. ARM64(c6g.large) 고정. ECR immutable tag 필수.
+# VPC Endpoint 미사용. ARM64 (API/빌드/워커: t4g.medium, Video Batch: c6g.large). ECR immutable tag 필수.
 
 global:
   env: prod
