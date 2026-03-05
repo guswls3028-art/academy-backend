@@ -67,9 +67,8 @@ function Load-SSOT {
     if ($p["networkPublicSubnets"] -and $p["networkPublicSubnets"]["_list"]) { $script:PublicSubnets = @($p["networkPublicSubnets"]["_list"]) }
     elseif ($n["_list"]) { $script:PublicSubnets = @($n["_list"]) }
     $script:PrivateSubnets = @()
-    elseif ($n["_list"]) { $script:PublicSubnets = @($n["_list"]) }
-    $script:PrivateSubnets = @()
     if ($p["networkPrivateSubnets"] -and $p["networkPrivateSubnets"]["_list"]) { $script:PrivateSubnets = @($p["networkPrivateSubnets"]["_list"]) }
+    elseif ($n["_list"]) { $script:PrivateSubnets = @($n["_list"]) }
     $script:NatEnabled = ($n["natEnabled"] -eq "true")
     $script:AlbEnabled = ($n["albEnabled"] -eq "true")
     $script:NatGatewayId = if ($n["natGatewayId"]) { $n["natGatewayId"] } else { "" }
