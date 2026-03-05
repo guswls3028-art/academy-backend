@@ -124,6 +124,9 @@ videoBatch:
   instanceType: c6g.large
   opsComputeEnvironmentName: academy-v1-video-ops-ce
   opsQueueName: academy-v1-video-ops-queue
+  # Ops: t4g.medium 1대만, min 0 → 워커(video batch) 없을 땐 Ops 인스턴스도 0대
+  opsInstanceType: t4g.medium
+  opsMaxvCpus: 2
   opsJobDefs:
     reconcile: academy-v1-video-ops-reconcile
     scanstuck: academy-v1-video-ops-scanstuck
