@@ -92,18 +92,51 @@ function Invoke-BootstrapSqs {
     $msgName = if ($script:MessagingSqsQueueName -and $script:MessagingSqsQueueName.Trim() -ne "") { $script:MessagingSqsQueueName.Trim() } else { $defaultMsg }
     $aiName = if ($script:AiSqsQueueName -and $script:AiSqsQueueName.Trim() -ne "") { $script:AiSqsQueueName.Trim() } else { $defaultAi }
 
+    $msgDlq = "${msgName}-dlq"
+    $aiDlq = "${aiName}-dlq"
+    $msgVisibility = 900
+    $aiVisibility = 3600
+    $maxReceiveCount = 5
+
     foreach ($qName in @($msgName, $aiName)) {
         $url = $null
         $get = Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $qName, "--region", $script:Region, "--output", "json")
         if ($get -and $get.QueueUrl) { $url = $get.QueueUrl }
+        $dlqName = if ($qName -eq $msgName) { $msgDlq } else { $aiDlq }
+        $visibility = if ($qName -eq $msgName) { $msgVisibility } else { $aiVisibility }
+
+        if (-not (Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $dlqName, "--region", $script:Region, "--output", "json") -ErrorAction SilentlyContinue).QueueUrl) {
+            Invoke-AwsJson @("sqs", "create-queue", "--queue-name", $dlqName, "--region", $script:Region, "--output", "json") | Out-Null
+            Write-Host "  SQS DLQ created: $dlqName" -ForegroundColor Green
+            $script:ChangesMade = $true
+        }
+        $dlqUrl = (Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $dlqName, "--region", $script:Region, "--output", "json")).QueueUrl
+        $dlqArn = (Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $dlqUrl, "--attribute-names", "QueueArn", "--region", $script:Region, "--output", "json")).Attributes.QueueArn
+
         if (-not $url) {
-            Invoke-AwsJson @("sqs", "create-queue", "--queue-name", $qName, "--region", $script:Region, "--output", "json") | Out-Null
+            $redrive = "{\`"deadLetterTargetArn\`":\`"$dlqArn\`",\`"maxReceiveCount\`":\`"$maxReceiveCount\`"}"
+            Invoke-AwsJson @("sqs", "create-queue", "--queue-name", $qName, "--attributes", "VisibilityTimeout=$visibility", "MessageRetentionPeriod=1209600", "RedrivePolicy=$redrive", "--region", $script:Region, "--output", "json") | Out-Null
             $get = Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $qName, "--region", $script:Region, "--output", "json")
             if ($get -and $get.QueueUrl) { $url = $get.QueueUrl; $script:ChangesMade = $true }
+        } else {
+            $attrs = (Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $url, "--attribute-names", "All", "--region", $script:Region, "--output", "json")).Attributes
+            $needsUpdate = $false
+            $currentVis = if ($attrs.VisibilityTimeout) { [int]$attrs.VisibilityTimeout } else { 30 }
+            if ($currentVis -lt $visibility) { $needsUpdate = $true }
+            $currentRedrive = $attrs.RedrivePolicy
+            if (-not $currentRedrive -or $currentRedrive -notmatch "deadLetterTargetArn") {
+                $needsUpdate = $true
+            }
+            if ($needsUpdate) {
+                $redrive = "{\`"deadLetterTargetArn\`":\`"$dlqArn\`",\`"maxReceiveCount\`":\`"$maxReceiveCount\`"}"
+                Invoke-Aws @("sqs", "set-queue-attributes", "--queue-url", $url, "--attributes", "VisibilityTimeout=$visibility", "RedrivePolicy=$redrive", "--region", $script:Region) -ErrorMessage "set-queue-attributes $qName" | Out-Null
+                Write-Host "  SQS attributes set: $qName VisibilityTimeout=$visibility RedrivePolicy->DLQ" -ForegroundColor Yellow
+                $script:ChangesMade = $true
+            }
         }
         if ($url) {
-            if ($qName -eq $msgName) { $script:MessagingSqsQueueName = $qName; $script:MessagingSqsQueueUrl = $url; Write-Ok "SQS Messaging: $qName -> $url" }
-            else { $script:AiSqsQueueName = $qName; $script:AiSqsQueueUrl = $url; Write-Ok "SQS AI: $qName -> $url" }
+            if ($qName -eq $msgName) { $script:MessagingSqsQueueName = $qName; $script:MessagingSqsQueueUrl = $url; Write-Ok "SQS Messaging: $qName -> $url (DLQ=$dlqName, VisibilityTimeout=${visibility}s)" }
+            else { $script:AiSqsQueueName = $qName; $script:AiSqsQueueUrl = $url; Write-Ok "SQS AI: $qName -> $url (DLQ=$dlqName, VisibilityTimeout=${visibility}s)" }
         }
     }
 }
