@@ -1,5 +1,5 @@
-# Academy SSOT v1.1 — 풀셋팅 단일소스. scripts/v1 전용.
-# V1.1 마스터 설계: 1인 개발·운영(장애 대응 10~60분), 1k~1.5k 사용자·동시 50~300 버스트.
+# Academy SSOT v1 — 풀셋팅 단일소스. scripts/v1 전용.
+# 1인 개발·운영(장애 대응 10~60분), 1k~1.5k 사용자·동시 50~300 버스트.
 # API ASG min/desired/max = 2/2/4 (최소 HA). ARM64. ECR immutable tag 필수. S3 미사용·R2만.
 
 global:
