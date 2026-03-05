@@ -1,5 +1,5 @@
-# .env 는 스크립트에서 로드하지 않음. Cursor(에이전트)가 루트 .env를 열람해 환경변수로 설정한 뒤 스크립트를 실행한다.
-# 이 파일은 Assert-AwsCredentials 등 공통 함수만 제공. Load-EnvFile 은 사용하지 않음.
+# .env 는 스크립트에서 로드하지 않음. AWS·Cloudflare(클플) 인증은 Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다.
+# Cursor(에이전트)가 루트 .env를 열람해 환경변수로 설정한 뒤 스크립트를 실행한다. 이 파일은 Assert-AwsCredentials 등 공통 함수만 제공. Load-EnvFile 은 사용하지 않음.
 $ErrorActionPreference = "Stop"
 $script:EnvLoaded = $false
 
