@@ -32,6 +32,7 @@ function New-VideoCE {
     } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
 }
 
+# Ops CE: Private Subnet 사용 시 해당 서브넷의 라우트 테이블에 0.0.0.0/0 -> NAT Gateway 가 있어야 ECR/CloudWatch 아웃바운드 가능. Ensure-Network 에서 Private RT 생성 시 NAT 경로 설정함.
 function New-OpsCE {
     $iam = $script:BatchIam
     $subnets = @($script:PrivateSubnets | Where-Object { $_ })
