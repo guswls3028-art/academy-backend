@@ -23,6 +23,7 @@ param(
     [switch]$SkipApiSSMWait = $false,
     [switch]$Ci = $false,
     [switch]$RelaxedValidation = $false,
+    [switch]$DeployFront = $false,
     [string]$EcrRepoUri = "",
     [string]$AwsProfile = ""
 )
@@ -240,6 +241,14 @@ try {
 
     $ev = Show-Evidence -NetprobeJobId $netJobId -NetprobeStatus $netStatus
     if ($ev) { Save-EvidenceReport -MarkdownContent (Convert-EvidenceToMarkdown -Ev $ev) }
+
+    if ($DeployFront -and -not $Plan) {
+        try {
+            & (Join-Path $ScriptRoot "deploy-front.ps1") -RepoRoot $RepoRoot
+        } catch {
+            Write-Warn "Front deploy failed (deploy continues): $_"
+        }
+    }
 }
 catch {
     Write-Fail $_.Exception.Message
