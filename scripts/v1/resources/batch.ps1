@@ -142,8 +142,11 @@ function Ensure-VideoCE {
             else { Write-Warn "Video CE INVALID; skip recreate." }
             return
         }
-        if ($videoCEDrift) { Write-Host "  Video CE drift (maxvCpus/instanceType) -> disable queue, disable CE, delete, create, enable queue" -ForegroundColor Yellow }
-        else { Write-Host "  INVALID -> disable queue, disable CE, delete, wait, create, wait" -ForegroundColor Yellow }
+        if ($videoCEDrift) {
+            Write-Warn "Video CE drift detected. CE delete requires queue to be re-pointed first; skipping rebuild to avoid JobQueue relationship error. Deploy continues."
+            return
+        }
+        if ($c.status -eq "INVALID") { Write-Host "  INVALID -> disable queue, disable CE, delete, wait, create, wait" -ForegroundColor Yellow }
         $script:ChangesMade = $true
         $qCheck = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoQueueName, "--region", $script:Region, "--output", "json")
         if ($qCheck -and $qCheck.jobQueues -and $qCheck.jobQueues.Count -gt 0) {
