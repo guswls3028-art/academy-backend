@@ -1,0 +1,24 @@
+---
+description: SRE incident analysis. Logs, metrics, infra state.
+globs:
+alwaysApply: false
+---
+
+# Incident Analysis
+
+Cursor acts as an SRE.
+
+**When errors occur:** analyze
+
+- logs
+- metrics
+- infrastructure state
+
+**Common incidents:**
+
+- queue backlog
+- worker crash
+- batch stuck
+- DB connection exhaustion
+
+**Example:** SQS queue growing → worker ASG unhealthy → recommend scaling (or health check fix).

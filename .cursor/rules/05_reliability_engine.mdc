@@ -1,0 +1,18 @@
+---
+description: Reliability level medium. Multi-AZ; minSize=1.
+globs:
+alwaysApply: false
+---
+
+# Reliability Engine
+
+**Reliability level:** medium
+
+**Constraints:**
+
+- API ASG minSize = 1
+- Multi AZ networking required
+- Redis replication group
+- RDS single instance allowed
+
+No architecture change that lowers reliability below medium without explicit user approval.

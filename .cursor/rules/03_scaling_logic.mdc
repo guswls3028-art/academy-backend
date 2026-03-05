@@ -1,0 +1,24 @@
+---
+description: Scaling signals and limits. max concurrency = 10.
+globs:
+alwaysApply: false
+---
+
+# Scaling Logic
+
+**Scaling signals:**
+
+- SQS queue depth
+- CPU utilization
+- job backlog
+
+**Scaling limits:**
+
+- max concurrency = 10
+
+**Rules:**
+
+- **Worker ASG:** min = 1, max = 10
+- **Batch CE:** maxvCpus = 10
+
+Cursor behavior: when "Queue backlog high" → recommend increase ASG capacity (within max = 10).

@@ -1,0 +1,24 @@
+---
+description: Cost strategy. t4g.medium / c6g.large; balanced.
+globs:
+alwaysApply: false
+---
+
+# Cost Engine
+
+**Cost strategy:** balanced
+
+**Preferred instances:**
+
+- **t4g.medium** — API, Messaging, AI workers
+- **c6g.large** — Video batch (heavy compute)
+
+**Rules:**
+
+- Use ARM instances when possible.
+- Avoid: m5, c5, large instance fleets
+
+**Cursor auto-actions:**
+
+- Detect idle ASG → recommend downsizing (respect min = 1)
+- Detect oversized instances → recommend right-sizing to t4g.medium / c6g.large
