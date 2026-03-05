@@ -276,7 +276,8 @@ foreach ($s in $unusedSGs) {
 [void]$planSb.AppendLine("pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/cleanup-legacy.ps1 -Execute   # 실제 적용")
 [void]$planSb.AppendLine("```")
 [void]$planSb.AppendLine("")
-[void]$planSb.AppendLine("정리 전 반드시 본 보고서 및 aws-resource-inventory.latest.md 확인.")
+$planFooter = "정리 전 반드시 본 보고서 및 aws-resource-inventory.latest.md 확인."
+[void]$planSb.AppendLine($planFooter)
 Set-Content -Path $planPath -Value $planSb.ToString() -Encoding UTF8 -Force
 Write-Host "  정리 계획: $planPath" -ForegroundColor Green
 Write-Host "`n=== 완료 ===`n" -ForegroundColor Cyan
