@@ -676,6 +676,7 @@ def job_heartbeat(job_id, lease_seconds: int = 3600) -> bool:
 def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> tuple[bool, str]:
     """
     Job SUCCEEDED + Video READY commit. Transactional.
+    업로드+검증 완료 후 마지막에 READY 조건부 업데이트 (같은 트랜잭션 내에서 job state·hls_path 반영 후 status=READY).
     Idempotent: 이미 SUCCEEDED+READY이면 True 반환 (중복 실행 시 안전).
     """
     from django.db import transaction
