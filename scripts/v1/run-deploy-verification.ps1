@@ -190,6 +190,22 @@ if ($aiDlqUrl) {
 if ([int]$msgDlqDepth -gt 0) { Add-Finding -Severity "WARNING" -Area "SQS" -Message "Messaging DLQ messages: $msgDlqDepth" }
 if ([int]$aiDlqDepth -gt 0) { Add-Finding -Severity "WARNING" -Area "SQS" -Message "AI DLQ messages: $aiDlqDepth" }
 
+# --- 4b. SQS VisibilityTimeout (SSOT vs Actual, 정합성용) ---
+$msgVisibilityActual = "n/a"
+$aiVisibilityActual = "n/a"
+if ($script:MessagingSqsQueueUrl) {
+    try {
+        $va = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $script:MessagingSqsQueueUrl, "--attribute-names", "VisibilityTimeout", "--region", $R, "--output", "json")
+        if ($va -and $va.Attributes -and $va.Attributes.VisibilityTimeout) { $msgVisibilityActual = $va.Attributes.VisibilityTimeout }
+    } catch { }
+}
+if ($script:AiSqsQueueUrl) {
+    try {
+        $vb = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $script:AiSqsQueueUrl, "--attribute-names", "VisibilityTimeout", "--region", $R, "--output", "json")
+        if ($vb -and $vb.Attributes -and $vb.Attributes.VisibilityTimeout) { $aiVisibilityActual = $vb.Attributes.VisibilityTimeout }
+    } catch { }
+}
+
 # --- 5. 리소스 수 (EC2, Batch 노드) ---
 $ec2Count = 0
 try {
@@ -200,6 +216,17 @@ $batchActiveJobs = "n/a"
 try {
     $jobs = Invoke-AwsJson @("batch", "list-jobs", "--job-queue", $script:VideoQueueName, "--job-status", "RUNNING", "--region", $R, "--output", "json")
     if ($jobs -and $jobs.jobSummaryList) { $batchActiveJobs = $jobs.jobSummaryList.Count }
+} catch { }
+
+# --- 5a. EIP 개수 (Solapi 고정 IP 취소 → NAT/EIP 잔여 시 비용/불필요 리소스 보고용) ---
+$eipCountTotal = 0
+$eipCountUnassociated = 0
+try {
+    $addrs = Invoke-AwsJson @("ec2", "describe-addresses", "--region", $R, "--output", "json")
+    if ($addrs -and $addrs.Addresses) {
+        $eipCountTotal = $addrs.Addresses.Count
+        $eipCountUnassociated = @($addrs.Addresses | Where-Object { -not $_.InstanceId -and -not $_.NetworkInterfaceId }).Count
+    }
 } catch { }
 
 # --- 5b. Video E2E 근거 (VIDEO_E2E_TEST_JOB_ID 설정 시 자동 수집) ---
