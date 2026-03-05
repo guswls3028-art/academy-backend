@@ -1,5 +1,5 @@
 # AWS 루트 권한 및 Cloudflare 권한 확인 전용.
-# .env에서 AWS_*, CLOUDFLARE_* 만 로드 후 get-caller-identity / wrangler whoami 실행.
+# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 본 스크립트는 .env에서 AWS_*, CLOUDFLARE_* 로드 후 get-caller-identity / wrangler whoami 실행.
 # 배포 플로우에서는 사용하지 않음. 에이전트가 권한 체크할 때만 실행.
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot

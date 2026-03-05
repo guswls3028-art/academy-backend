@@ -1,6 +1,6 @@
 # 미사용 EC2 리소스 정리 — academy v1에서 쓰는 것만 남기고 나머지 제거.
-# 사용: 호출 전에 .env를 환경변수로 설정한 뒤 실행 (Cursor가 설정). -DryRun (기본) 시 삭제 없이 후보만 출력.
-# 실제 삭제: -Execute
+# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 호출 전에 에이전트가 .env를 환경변수로 설정한 뒤 실행.
+# 사용: -DryRun (기본) 시 삭제 없이 후보만 출력. 실제 삭제: -Execute
 param(
     [switch]$DryRun,
     [switch]$Execute,
