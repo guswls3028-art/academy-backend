@@ -61,19 +61,24 @@
 ## 실행 시 인증
 
 - AWS/Cloudflare: Cursor 룰(.cursor/rules) 준수. 에이전트가 루트 `.env`를 열어 환경변수로 설정한 뒤 실행.
-- 예: `pwsh -File scripts/v1/run-with-env.ps1 pwsh -File scripts/v1/deploy.ps1 -Env prod` (주의: `--` 구분자 없이, 첫 번째 인자부터 하위 명령·인자로 전달)
-- 예: `pwsh -File scripts/v1/run-deploy-verification.ps1 -AwsProfile default`
+- **표준(권장):** `--` 구분자 사용. `run-with-env.ps1`은 `--`가 있어도 없어도 동작한다.
+  ```powershell
+  pwsh -File scripts/v1/run-with-env.ps1 -- pwsh -File scripts/v1/deploy.ps1 -Env prod
+  ```
+  ```powershell
+  pwsh -File scripts/v1/run-with-env.ps1 -- pwsh -File scripts/v1/run-deploy-verification.ps1 -AwsProfile default
+  ```
 
 ## PHASE 1 로컬 실행 체크리스트 (치명 이슈 해결)
 
 배포·검증은 에이전트 터미널이 아닌 **로컬 터미널**에서 아래 순서로 실행할 것을 권장한다.
 
-1. **배포 (LT drift + Ops CE Recreate + EventBridge ENABLED)**  
-   프로젝트 루트에서 `.env`에 AWS/Cloudflare 키가 있다면:
+1. **배포 (LT drift + Ops CE Recreate + EventBridge)**  
+   `.env`에 AWS/Cloudflare 키가 있다면 (표준):
    ```powershell
-   pwsh -File scripts/v1/run-with-env.ps1 pwsh -File scripts/v1/deploy.ps1 -Env prod
+   pwsh -File scripts/v1/run-with-env.ps1 -- pwsh -File scripts/v1/deploy.ps1 -Env prod
    ```
-   또는 이미 환경변수에 인증이 있다면:
+   또는 환경변수/프로파일만 사용 시:
    ```powershell
    pwsh -File scripts/v1/deploy.ps1 -Env prod -AwsProfile default
    ```
