@@ -2,3 +2,12 @@
 Log: C:\academy\logs\v1\20260306-011815-verify.log
 
 --- 1) bootstrap.ps1 ---
+
+--- 2) deploy.ps1 -Plan ---
+FAIL: deploy -Plan failed. Check drift/params.
+Command/Error: Cannot validate argument on parameter 'Env'. The argument "-Env" does not belong to the set "prod,staging,dev" specified by the ValidateSet attribute. Supply an argument that is in the set and then try the command again.
+Log file: C:\academy\logs\v1\20260306-011815-verify.log
+
+=== VERIFY STOPPED ===
+Failure: Cannot validate argument on parameter 'Env'. The argument "-Env" does not belong to the set "prod,staging,dev" specified by the ValidateSet attribute. Supply an argument that is in the set and then try the command again.
+Log: C:\academy\logs\v1\20260306-011815-verify.log
