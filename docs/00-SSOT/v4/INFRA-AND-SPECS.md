@@ -32,6 +32,7 @@
 | **헬스 경로** | /health |
 | **ASG** | academy-v4-api-asg |
 | **Launch Template** | academy-v4-api-lt |
+| **인스턴스 타입** | t4g.medium |
 | **인스턴스 태그** | Name=academy-v4-api |
 | **AMI** | params.api.amiId (예: ami-0c55b159cbfafe1f0) |
 | **Instance Profile** | academy-api-instance-profile |
@@ -100,7 +101,7 @@
 | **Compute Environment** | academy-v4-video-batch-ce |
 | **Video Job Queue** | academy-v4-video-batch-queue |
 | **Worker Job Definition** | academy-v4-video-batch-jobdef |
-| **인스턴스 타입** | t4g.medium |
+| **인스턴스 타입** | c6g.large |
 | **minvCpus / maxvCpus** | 0 / 10 |
 | **Ops CE** | academy-v4-video-ops-ce |
 | **Ops Queue** | academy-v4-video-ops-queue |

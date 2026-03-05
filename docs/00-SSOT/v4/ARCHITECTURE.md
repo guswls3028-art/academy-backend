@@ -47,7 +47,7 @@
 - **ALB:** Public 서브넷, Internet-facing
 - **Target Group:** academy-api-tg, /health 헬스체크
 - **ASG:** min=1, max=2, desired=1. **desired는 덮어쓰지 않고 min/max 클램프만 적용**
-- **인스턴스:** Private 서브넷, sg-app, c6g.large (ARM64)
+- **인스턴스:** Private 서브넷, sg-app, t4g.medium (ARM64)
 - **EIP:** 사용하지 않음. 접근은 ALB DNS로만
 
 ### 2.2 Messaging / AI 워커 ASG
