@@ -1,5 +1,6 @@
 # Usage: pwsh scripts/v1/deploy.ps1 [-Env prod] [-Plan] [-Bootstrap] ...
 # 원테이크: Bootstrap 기본 ON. SSM/SQS/RDS engineVersion/ECR 자동 준비 후 Ensure. 사용자 사전 작업 없음.
+# Cursor 등 새 프로세스에서 실행 시: -AwsProfile <이름> 으로 프로파일 지정 (해당 프로세스에 env 인증이 없을 때).
 # ==============================================================================
 [CmdletBinding()]
 param(
@@ -19,11 +20,19 @@ param(
     [switch]$SkipNetprobe = $false,
     [switch]$Ci = $false,
     [switch]$RelaxedValidation = $false,
-    [string]$EcrRepoUri = ""
+    [string]$EcrRepoUri = "",
+    [string]$AwsProfile = ""
 )
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 $ScriptRoot = $PSScriptRoot
+
+# Cursor/다른 프로세스에서 실행 시: 이 프로세스에는 env 인증이 없을 수 있음. -AwsProfile 이면 AWS CLI가 해당 프로파일 사용.
+if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
+    $env:AWS_PROFILE = $AwsProfile.Trim()
+    if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" }
+    Write-Host "Using AWS_PROFILE: $($env:AWS_PROFILE) (region: $($env:AWS_DEFAULT_REGION))" -ForegroundColor Cyan
+}
 
 $script:PlanMode = $Plan
 $script:AllowRebuild = -not $Plan -and (-not $ForceRecreateAll -or $true)
