@@ -113,4 +113,12 @@ function Ensure-EC2InstanceProfileSSM {
     } else {
         Write-Ok "EC2 role $roleName already has AmazonEC2ContainerRegistryReadOnly"
     }
+    $hasEcrPush = $policies.AttachedPolicies | Where-Object { $_.PolicyArn -eq "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser" }
+    if (-not $hasEcrPush) {
+        Invoke-Aws @("iam", "attach-role-policy", "--role-name", $roleName, "--policy-arn", "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser") -ErrorMessage "attach ECR PowerUser to EC2 role" | Out-Null
+        Write-Ok "Attached AmazonEC2ContainerRegistryPowerUser to $roleName (Build can push ECR images)"
+        $script:ChangesMade = $true
+    } else {
+        Write-Ok "EC2 role $roleName already has AmazonEC2ContainerRegistryPowerUser"
+    }
 }
