@@ -98,6 +98,41 @@ function Ensure-RDSSecurityGroup {
     }
 }
 
+function Ensure-RdsObservability {
+    param($DbInstance)
+    if ($script:PlanMode) { return }
+    if (-not $script:RdsDbIdentifier) { return }
+    if (-not $DbInstance) {
+        try {
+            $r = Invoke-AwsJson @("rds", "describe-db-instances", "--db-instance-identifier", $script:RdsDbIdentifier, "--region", $script:Region, "--output", "json")
+            if (-not $r -or -not $r.DBInstances -or $r.DBInstances.Count -eq 0) { return }
+            $DbInstance = $r.DBInstances[0]
+        } catch { return }
+    }
+    $modify = $false
+    $args = @("rds", "modify-db-instance", "--db-instance-identifier", $script:RdsDbIdentifier, "--region", $script:Region)
+    if ($script:RdsPerformanceInsightsEnabled -and -not $DbInstance.PerformanceInsightsEnabled) {
+        $retention = if ($script:RdsPerformanceInsightsRetentionDays -gt 0) { $script:RdsPerformanceInsightsRetentionDays } else { 7 }
+        $args += "--enable-performance-insights", "--performance-insights-retention-period", $retention.ToString()
+        $modify = $true
+    }
+    if ($script:RdsMultiAz -and -not $DbInstance.MultiAZ) {
+        $args += "--multi-az"
+        $modify = $true
+    }
+    if ($modify) {
+        $args += "--apply-immediately"
+        try {
+            Invoke-Aws $args -ErrorMessage "modify-db-instance observability" | Out-Null
+            Write-Ok "RDS $($script:RdsDbIdentifier) PI/MultiAZ updated per SSOT"
+            $script:ChangesMade = $true
+        } catch {
+            if ($_.Exception.Message -match "No modifications were requested") { Write-Ok "RDS observability unchanged" }
+            else { Write-Host "  RDS observability modify: $($_.Exception.Message)" -ForegroundColor Yellow }
+        }
+    }
+}
+
 function Confirm-RDSState {
     Write-Step "Ensure RDS $($script:RdsDbIdentifier)"
     if ($script:PlanMode) {
