@@ -48,8 +48,8 @@ function Register-JobDefFromJson { param([string]$JsonPath, [string]$Name)
     $tmp = [System.IO.Path]::GetTempFileName()
     [System.IO.File]::WriteAllText($tmp, $content, $utf8NoBom)
     try {
-        $raw = & aws batch register-job-definition --cli-input-json "file://$($tmp -replace '\\','/')" --region $script:Region --output json 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "register-job-definition failed: $raw" }
+        $fileArg = "file://$($tmp -replace '\\','/')"
+        $raw = Invoke-Aws @("batch", "register-job-definition", "--cli-input-json", $fileArg, "--region", $script:Region, "--output", "json") -ErrorMessage "register-job-definition"
         $obj = ($raw | Out-String).Trim() | ConvertFrom-Json
         return $obj.jobDefinitionArn
     } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
