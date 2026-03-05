@@ -57,7 +57,7 @@ try {
     $planOut = $null
     $null = Run-Step "2) deploy.ps1 -Plan" {
         Push-Location $RepoRoot
-        $args = @("-Plan"); if ($AwsProfile) { $args += "-AwsProfile", $AwsProfile }
+        $args = @("-Env", "prod", "-Plan"); if ($AwsProfile) { $args += "-AwsProfile", $AwsProfile }
         $planOut = & (Join-Path $ScriptRoot "deploy.ps1") @args 2>&1
         $planOut | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "ExitCode $LASTEXITCODE" }
