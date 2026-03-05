@@ -45,3 +45,13 @@ MODE: StrictValidation ON
 === END DRIFT ===
 
   Drift report: C:\academy\docs\00-SSOT\v1\reports\drift.latest.md
+
+=== DELETE CANDIDATE (non-SSOT) ===
+| ResourceType | Identifier |
+| IAM Role | academy-ec2-role |
+| IAM Role | academy-v1-eventbridge-batch-video-role |
+=== END DELETE CANDIDATE ===
+
+
+=== PLAN COMPLETE (no changes) ===
+
