@@ -37,7 +37,7 @@ docker run -d --restart unless-stopped -p 8000:8000 `$API_ENV_FILE $ApiImageUri
     return $script.Trim()
 }
 
-# ECR academy-api 리포지터리에서 최신 이미지 태그( latest 제외) 1개 반환.
+# ECR academy-api 리포지터리에서 최신 이미지 태그 1개 반환. (latest 제외 우선, 없으면 latest 사용)
 function Get-LatestApiImageUri {
     $repo = $script:EcrApiRepo
     if (-not $repo) { return $null }
@@ -47,11 +47,18 @@ function Get-LatestApiImageUri {
         $tag = ($_.imageTags | Where-Object { $_ -ne "latest" } | Select-Object -First 1)
         if ($tag) { [PSCustomObject]@{ Tag = $tag; Pushed = $_.imagePushedAt } }
     } | Where-Object { $_ })
-    if (-not $nonLatest) { return $null }
-    $latest = $nonLatest | Sort-Object { $_.Pushed } -Descending | Select-Object -First 1
+    $tagToUse = $null
+    if ($nonLatest.Count -gt 0) {
+        $latest = $nonLatest | Sort-Object { $_.Pushed } -Descending | Select-Object -First 1
+        $tagToUse = $latest.Tag
+    } else {
+        $withLatest = $list.imageDetails | Where-Object { $_.imageTags -and ($_.imageTags -contains "latest") } | Select-Object -First 1
+        if ($withLatest) { $tagToUse = "latest" }
+    }
+    if (-not $tagToUse) { return $null }
     $acc = $script:AccountId
     $reg = $script:Region
-    return "${acc}.dkr.ecr.${reg}.amazonaws.com/${repo}:$($latest.Tag)"
+    return "${acc}.dkr.ecr.${reg}.amazonaws.com/${repo}:$tagToUse"
 }
 
 function Get-APIASGInstanceIds {
