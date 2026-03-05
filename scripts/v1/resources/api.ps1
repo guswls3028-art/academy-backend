@@ -100,6 +100,7 @@ function Get-APIASGInstanceIds {
 }
 
 # 배포 후 API 인스턴스에서 실제 실행 중인 이미지 digest 수집 → runtime-images.latest.md 기록.
+# ci-build.latest.md가 있으면 academy-api digest와 비교하여 불일치 시 보고서에 명시.
 function Invoke-CollectRuntimeImagesReport {
     $ids = @(Get-APIASGInstanceIds)
     if (-not $ids -or $ids.Count -eq 0) { return }
@@ -136,12 +137,32 @@ function Invoke-CollectRuntimeImagesReport {
         } catch { }
         [void]$rows.Add([PSCustomObject]@{ InstanceId = $instId; Image = $imageId; RepoDigests = $repoDigests })
     }
+    $ciDigest = $null
+    $ciPath = Join-Path $script:ReportsRepoRoot "docs\00-SSOT\v1\reports\ci-build.latest.md"
+    if ($script:ReportsRepoRoot -and (Test-Path $ciPath)) {
+        $ciContent = Get-Content -Path $ciPath -Raw -ErrorAction SilentlyContinue
+        if ($ciContent -match '\|\s*academy-api\s*\|\s*latest\s*\|\s*(sha256:[a-fA-F0-9]+)\s*\|') {
+            $ciDigest = $matches[1].Trim()
+        }
+    }
+    $anyMatch = $false
+    if ($ciDigest) {
+        foreach ($r in $rows) {
+            if ($r.RepoDigests -and $r.RepoDigests -match [regex]::Escape($ciDigest)) { $anyMatch = $true; break }
+        }
+    }
     $sb = [System.Text.StringBuilder]::new()
     [void]$sb.AppendLine("# V1 Runtime Images — API 인스턴스 실제 실행 이미지")
     [void]$sb.AppendLine("")
     [void]$sb.AppendLine("**Generated:** $generated")
     [void]$sb.AppendLine("**SSOT:** docs/00-SSOT/v1/params.yaml")
     [void]$sb.AppendLine("")
+    if ($null -ne $ciDigest -and -not $anyMatch) {
+        [void]$sb.AppendLine("### CI vs Runtime")
+        [void]$sb.AppendLine("**MISMATCH** — CI digest(academy-api:latest)와 런타임 RepoDigests가 일치하지 않음. 배포/갱신 실패 가능.")
+        [void]$sb.AppendLine("- CI digest (ci-build.latest.md): `$ciDigest`")
+        [void]$sb.AppendLine("")
+    }
     [void]$sb.AppendLine("| InstanceId | Image | RepoDigests |")
     [void]$sb.AppendLine("|------------|-------|-------------|")
     foreach ($r in $rows) {
