@@ -22,12 +22,13 @@
 | **core/preflight.ps1** | SSM `/academy/workers/env` 존재 확인을 raw `aws ssm get-parameter` → `Invoke-AwsJson`으로 변경해 프로파일 적용. |
 | **resources/ssm.ps1** | `Confirm-SSMEnv`에서 raw `aws` 호출 제거, `Invoke-AwsJson`으로 get-parameter 호출. |
 
-### JobDef·Build
+### JobDef·Build·ECR
 
 | 파일 | 변경 |
 |------|------|
 | **resources/jobdef.ps1** | `Register-JobDefFromJson`에서 `& aws batch register-job-definition ...` 제거, `Invoke-Aws`로 동일 인자 호출해 프로파일 적용. |
 | **resources/build.ps1** | `New-BuildInstance`: Spot `run-instances` 후 인스턴스 0개면 온디맨드 `run-instances` 재시도(폴백). |
+| **resources/ecr.ps1** | `Ensure-ECRRepos` 후 SSOT ECR 저장소별로 라이프사이클 정책 자동 적용(`Set-ECRLifecyclePolicy`). 정책 파일: `docs/00-SSOT/v1/scripts/ecr-lifecycle-policy.json`. 불필요 이미지 미보관(비용 최적화). |
 
 ---
 
