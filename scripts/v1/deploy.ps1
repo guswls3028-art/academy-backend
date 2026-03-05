@@ -155,6 +155,48 @@ try {
     Ensure-Network
     Ensure-NetworkVpc
     Confirm-SubnetsMatchSSOT
+
+    # Bootstrap (원테이크): Ensure-Network 이후 실행하여 빌드 서버 Ensure 시 서브넷 사용 가능.
+    if ($Bootstrap -and -not $Plan) {
+        Invoke-Bootstrap -Bootstrap:$true -SkipSqs:$SkipSqs -SkipRds:$SkipRds -SkipRedis:$SkipRedis -SkipBuild:$SkipBuild
+    }
+    if ($script:EcrRepoUriResolved) { $script:EcrRepoUri = $script:EcrRepoUriResolved }
+
+    # Strict Gate (Bootstrap 이후 평가)
+    $strictCheck = -not $Plan -and $StrictValidation -and -not $script:RelaxedValidation
+    switch ($true) {
+        { $strictCheck -and $script:EcrImmutableTagRequired -and (-not $script:EcrRepoUri -or $script:EcrRepoUri.Trim() -eq "") } {
+            Write-Fail "Strict: EcrRepoUri not set. Bootstrap could not resolve image. Pass -EcrRepoUri or ensure build/ECR available."
+            throw "Strict: EcrRepoUri required."
+        }
+        { $script:EcrRepoUri -and ($script:EcrRepoUri -match ':latest\s*$') } {
+            Write-Fail ":latest tag is prohibited. Use an immutable tag."
+            throw "EcrRepoUri must not contain :latest."
+        }
+        { $strictCheck -and [string]::IsNullOrWhiteSpace($script:MessagingSqsQueueUrl) -and [string]::IsNullOrWhiteSpace($script:MessagingSqsQueueName) } {
+            Write-Fail "Strict: messagingWorker SQS not set. Bootstrap could not create/find queue."
+            throw "Strict: set messagingWorker.sqsQueueUrl or sqsQueueName, or allow Bootstrap to create."
+        }
+        { $strictCheck -and [string]::IsNullOrWhiteSpace($script:AiSqsQueueUrl) -and [string]::IsNullOrWhiteSpace($script:AiSqsQueueName) } {
+            Write-Fail "Strict: aiWorker SQS not set. Bootstrap could not create/find queue."
+            throw "Strict: set aiWorker.sqsQueueUrl or sqsQueueName, or allow Bootstrap to create."
+        }
+        { $strictCheck -and $script:RdsDbIdentifier -and [string]::IsNullOrWhiteSpace($script:RdsMasterPasswordSsmParam) } {
+            Write-Fail "Strict: rds.masterPasswordSsmParam not set. Bootstrap could not create SSM password."
+            throw "Strict: set rds.masterPasswordSsmParam in params.yaml."
+        }
+        { $strictCheck -and $script:RdsDbIdentifier -and $script:RdsMasterPasswordSsmParam } {
+            $rdsParam = Invoke-AwsJson @("ssm", "get-parameter", "--name", $script:RdsMasterPasswordSsmParam, "--with-decryption", "--region", $script:Region, "--output", "json")
+            $badParam = -not $rdsParam -or -not $rdsParam.Parameter -or -not $rdsParam.Parameter.Value
+            switch ($badParam) {
+                $true {
+                    Write-Fail "Strict: RDS master password SSM parameter not found: $($script:RdsMasterPasswordSsmParam)"
+                    throw "Strict: create SSM SecureString or run with Bootstrap."
+                }
+            }
+        }
+    }
+
     Confirm-RDSState
     Confirm-RedisState
     Confirm-SSMEnv
