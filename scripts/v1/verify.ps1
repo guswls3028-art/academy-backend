@@ -17,8 +17,6 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
     $env:AWS_PROFILE = $AwsProfile.Trim()
     if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" }
 }
-$ScriptRoot = $PSScriptRoot
-$RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
 $LogDir = Join-Path $RepoRoot "logs\v1"
 $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $LogFile = Join-Path $LogDir "$Timestamp-verify.log"
