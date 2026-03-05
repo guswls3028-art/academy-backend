@@ -61,19 +61,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (OIDC only)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_VIDEO_BATCH }}
-          aws-region: ${{ env.AWS_REGION }}
-        continue-on-error: true
-
-      - name: Configure AWS credentials (fallback keys)
-        if: failure()
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -110,19 +101,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y powershell
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (OIDC only)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_VIDEO_BATCH }}
-          aws-region: ${{ env.AWS_REGION }}
-        continue-on-error: true
-
-      - name: Configure AWS credentials (fallback keys)
-        if: failure()
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: One-Take Deploy (SSOT v1)
