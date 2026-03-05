@@ -9,13 +9,14 @@ $ScriptRoot = $PSScriptRoot
 $null = Load-SSOT -Env "prod"
 
 param(
-    [switch]$DryRun = $true,
-    [switch]$Execute = $false,
-    [switch]$EIPOnly = $false,
-    [switch]$InstancesOnly = $false,
-    [switch]$RemoveUnusedSGs = $false
+    [switch]$DryRun,
+    [switch]$Execute,
+    [switch]$EIPOnly,
+    [switch]$InstancesOnly,
+    [switch]$RemoveUnusedSGs
 )
-# -Execute 이면 실제 삭제
+# 기본: DryRun. -Execute 이면 실제 삭제
+if (-not $PSBoundParameters.ContainsKey('DryRun')) { $DryRun = $true }
 if ($Execute) { $DryRun = $false }
 
 $R = $script:Region
