@@ -68,6 +68,7 @@ _current_receipt_handle: Optional[str] = None
 
 
 def _handle_signal(sig, frame):
+    """SIGTERM/SIGINT: graceful shutdown. In-flight 메시지는 delete하지 않음 → visibility 만료 후 재노출되어 안전 재처리."""
     global _shutdown, _current_receipt_handle
     logger.info(
         "Received signal, initiating graceful shutdown... | current_job=%s",
