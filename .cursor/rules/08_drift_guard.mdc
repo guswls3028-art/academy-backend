@@ -6,9 +6,10 @@ alwaysApply: false
 
 # Drift Guard
 
-Infrastructure must match **SSOT.**
+Infrastructure must match **SSOT** and **canonical topology.**
 
-**SSOT location:** docs/00-SSOT/v4
+**SSOT:** docs/00-SSOT/v4  
+**Canonical topology:** `.cursor/knowledge/infra_topology.yaml` — 서비스·큐·연결 정의. drift = 이 파일 또는 SSOT와 불일치.
 
 **If drift detected:**
 
