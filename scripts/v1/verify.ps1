@@ -6,7 +6,7 @@
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-$LogDir = Join-Path $RepoRoot "logs\v4"
+$LogDir = Join-Path $RepoRoot "logs\v1"
 $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $LogFile = Join-Path $LogDir "$Timestamp-verify.log"
 
@@ -31,7 +31,7 @@ function Run-Step {
 
 $results = @()
 try {
-    Write-Log "=== Verify v4 started $Timestamp ==="
+    Write-Log "=== Verify v1 started $Timestamp ==="
     Write-Log "Log: $LogFile"
 
     # 1) Bootstrap
@@ -52,7 +52,7 @@ try {
         Pop-Location
         $planOut
     } "deploy -Plan failed. Check drift/params."
-    $results += [PSCustomObject]@{ Step = "2) deploy -Plan"; Result = "OK"; Detail = "Reports: docs/00-SSOT/v4/reports/" }
+    $results += [PSCustomObject]@{ Step = "2) deploy -Plan"; Result = "OK"; Detail = "Reports: docs/00-SSOT/v1/reports/" }
 
     # 3) deploy -PruneLegacy
     $null = Run-Step "3) deploy.ps1 -PruneLegacy" {
@@ -79,7 +79,7 @@ try {
     $results += [PSCustomObject]@{ Step = "4) deploy (No-op)"; Result = if ($noOp) { "OK" } else { "CHECK" }; Detail = if ($noOp) { "No-op confirmed" } else { "See log" } }
 
     # 5) Evidence 위치
-    $results += [PSCustomObject]@{ Step = "5) Evidence"; Result = "-"; Detail = "docs/00-SSOT/v4/reports/, deploy stdout" }
+    $results += [PSCustomObject]@{ Step = "5) Evidence"; Result = "-"; Detail = "docs/00-SSOT/v1/reports/, deploy stdout" }
 }
 catch {
     Write-Log "`n=== VERIFY STOPPED ==="
@@ -89,7 +89,7 @@ catch {
     exit 1
 }
 
-Write-Log "`n=== Verify v4 result table ==="
+Write-Log "`n=== Verify v1 result table ==="
 $results | Format-Table -AutoSize
 Write-Log "`nLog: $LogFile"
 
@@ -133,4 +133,4 @@ try {
     Write-Log "  Could not write verify.latest.md: $_"
 }
 
-Write-Log "=== Verify v4 done ===`n"
+Write-Log "=== Verify v1 done ===`n"

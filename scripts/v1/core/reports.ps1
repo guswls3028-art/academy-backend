@@ -1,4 +1,4 @@
-# Persist drift/evidence/audit to docs/00-SSOT/v4/reports/ and history/.
+# Persist drift/evidence/audit to docs/00-SSOT/v1/reports/ and history/.
 $ErrorActionPreference = "Stop"
 $ReportsScriptDir = $PSScriptRoot
 $ReportsRepoRoot = (Resolve-Path (Join-Path $ReportsScriptDir "..\..\..")).Path
