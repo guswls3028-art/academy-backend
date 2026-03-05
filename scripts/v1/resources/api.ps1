@@ -99,6 +99,57 @@ function Get-APIASGInstanceIds {
     return @($instances)
 }
 
+# 배포 후 API 인스턴스에서 실제 실행 중인 이미지 digest 수집 → runtime-images.latest.md 기록.
+function Invoke-CollectRuntimeImagesReport {
+    $ids = @(Get-APIASGInstanceIds)
+    if (-not $ids -or $ids.Count -eq 0) { return }
+    $containerName = if ($script:ApiContainerName) { $script:ApiContainerName } else { "academy-api" }
+    $cmd1 = "docker inspect $containerName --format '{{.Id}}' 2>/dev/null || echo NONE"
+    $cmd2 = "docker inspect $containerName --format '{{json .RepoDigests}}' 2>/dev/null || echo []"
+    $params = @{ commands = @($cmd1, $cmd2) }
+    $paramsJson = $params | ConvertTo-Json -Compress
+    $rows = [System.Collections.ArrayList]::new()
+    $generated = Get-Date -Format "o"
+    foreach ($instId in $ids) {
+        $imageId = "N/A"
+        $repoDigests = "[]"
+        try {
+            $sendOut = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instId, "--document-name", "AWS-RunShellScript", "--parameters", $paramsJson, "--region", $script:Region, "--output", "json") 2>$null
+            $cmdId = $sendOut.Command.CommandId
+            if (-not $cmdId) { continue }
+            $wait = 0
+            while ($wait -lt 30) {
+                Start-Sleep -Seconds 2
+                $wait += 2
+                $inv = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instId, "--region", $script:Region, "--output", "json") 2>$null
+                if ($inv.Status -eq "Success") {
+                    $out = $inv.StandardOutputContent
+                    if ($out) {
+                        $lines = $out.Trim() -split "`n"
+                        if ($lines.Count -ge 1) { $imageId = $lines[0].Trim() }
+                        if ($lines.Count -ge 2) { $repoDigests = $lines[1].Trim() }
+                    }
+                    break
+                }
+                if ($inv.Status -eq "Failed" -or $inv.Status -eq "Cancelled") { break }
+            }
+        } catch { }
+        [void]$rows.Add([PSCustomObject]@{ InstanceId = $instId; Image = $imageId; RepoDigests = $repoDigests })
+    }
+    $sb = [System.Text.StringBuilder]::new()
+    [void]$sb.AppendLine("# V1 Runtime Images — API 인스턴스 실제 실행 이미지")
+    [void]$sb.AppendLine("")
+    [void]$sb.AppendLine("**Generated:** $generated")
+    [void]$sb.AppendLine("**SSOT:** docs/00-SSOT/v1/params.yaml")
+    [void]$sb.AppendLine("")
+    [void]$sb.AppendLine("| InstanceId | Image | RepoDigests |")
+    [void]$sb.AppendLine("|------------|-------|-------------|")
+    foreach ($r in $rows) {
+        [void]$sb.AppendLine("| $($r.InstanceId) | $($r.Image) | $($r.RepoDigests) |")
+    }
+    Save-RuntimeImagesReport -MarkdownContent $sb.ToString()
+}
+
 function Test-APIHealth200 {
     param([string]$BaseUrl)
     $url = if ($BaseUrl) { $BaseUrl.TrimEnd('/') } else { $script:ApiBaseUrl }
