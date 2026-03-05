@@ -190,12 +190,28 @@ function Ensure-API-ASG {
         $script:ChangesMade = $true
     }
     if ($ltResult.Updated) {
-        $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
-        $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInstanceRefreshInstanceWarmup } else { 300 }
-        $prefs = "{`"MinHealthyPercentage`":$minHealthy,`"InstanceWarmup`":$warmup}"
-        Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh API ASG failed" | Out-Null
-        Write-Ok "ASG $($script:ApiASGName) instance-refresh started (MinHealthyPercentage=$minHealthy, InstanceWarmup=${warmup}s)"
-        $script:ChangesMade = $true
+        $refreshes = Invoke-AwsJson @("autoscaling", "describe-instance-refreshes", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region, "--output", "json") 2>$null
+        $inProgress = $refreshes.InstanceRefreshes | Where-Object { $_.Status -eq "InProgress" } | Select-Object -First 1
+        if ($inProgress) {
+            Write-Host "  Instance Refresh already in progress (started $($inProgress.StartTime)); waiting for completion (max 600s)..." -ForegroundColor Yellow
+            $wait = 0
+            while ($wait -lt 600) {
+                Start-Sleep -Seconds 30
+                $wait += 30
+                $r2 = Invoke-AwsJson @("autoscaling", "describe-instance-refreshes", "--auto-scaling-group-name", $script:ApiASGName, "--instance-refresh-ids", $inProgress.InstanceRefreshId, "--region", $script:Region, "--output", "json") 2>$null
+                $status = $r2.InstanceRefreshes | Select-Object -First 1 | ForEach-Object { $_.Status }
+                if ($status -ne "InProgress" -and $status -ne "Pending") { Write-Ok "Instance Refresh $status"; break }
+                Write-Host "  Instance Refresh status=$status (${wait}s)" -ForegroundColor Gray
+            }
+            $script:ChangesMade = $true
+        } else {
+            $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
+            $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInstanceRefreshInstanceWarmup } else { 300 }
+            $prefs = "{`"MinHealthyPercentage`":$minHealthy,`"InstanceWarmup`":$warmup}"
+            Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh API ASG failed" | Out-Null
+            Write-Ok "ASG $($script:ApiASGName) instance-refresh started (MinHealthyPercentage=$minHealthy, InstanceWarmup=${warmup}s)"
+            $script:ChangesMade = $true
+        }
     }
     if (-not $capacityDrift -and -not $ltResult.Updated) {
         Write-Ok "ASG $($script:ApiASGName) idempotent"
