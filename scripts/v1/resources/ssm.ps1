@@ -1,4 +1,4 @@
-# SSM: Validate parameters exist. No overwrite in v4 (manual/separate sync).
+# SSM: Validate parameters exist. No overwrite in v1 (manual/separate sync).
 function Confirm-SSMEnv {
     Write-Step "Validate SSM env"
     if ($script:PlanMode) { Write-Ok "SSM check skipped (Plan)"; return }

@@ -4,7 +4,7 @@
 # ==============================================================================
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
-Write-Host "`n=== Bootstrap v4 ===" -ForegroundColor Cyan
+Write-Host "`n=== Bootstrap v1 ===" -ForegroundColor Cyan
 
 # PowerShell 5+ required
 $psVersion = $PSVersionTable.PSVersion.Major
@@ -51,7 +51,7 @@ Write-Host "OK: Minimal describe permission" -ForegroundColor Green
 # params.yaml
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\v4\params.yaml"
+$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\v1\params.yaml"
 if (-not (Test-Path $ParamsPath)) {
     Write-Host "FAIL: params.yaml not found at $ParamsPath" -ForegroundColor Red
     exit 1
