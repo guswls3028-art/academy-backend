@@ -41,12 +41,12 @@ jobs:
               echo "::error::Legacy script execution detected in $f. Use scripts/v1/deploy.ps1 only."
               exit 1
             fi
-            if grep -E 'pwsh.*deploy\.ps1|-File.*deploy\.ps1' "$f" | grep -v 'scripts/v4/deploy.ps1'; then
-              echo "::error::Deploy must use scripts/v4/deploy.ps1 only. Found root or other deploy.ps1 in $f."
+            if grep -E 'pwsh.*deploy\.ps1|-File.*deploy\.ps1' "$f" | grep -v 'scripts/v1/deploy.ps1'; then
+              echo "::error::Deploy must use scripts/v1/deploy.ps1 only. Found root or other deploy.ps1 in $f."
               exit 1
             fi
           done
-          echo "Guard OK: only scripts/v4/deploy.ps1 used for deploy; no scripts/infra"
+          echo "Guard OK: only scripts/v1/deploy.ps1 used for deploy; no scripts/infra"
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -125,5 +125,5 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: One-Take Deploy (SSOT v4)
-        run: pwsh -File scripts/v4/deploy.ps1 -Env prod -Ci -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"
+      - name: One-Take Deploy (SSOT v1)
+        run: pwsh -File scripts/v1/deploy.ps1 -Env prod -Ci -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"
