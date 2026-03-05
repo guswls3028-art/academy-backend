@@ -12,8 +12,8 @@ function Get-DesiredJobDefSpec { param([string]$TemplatePath)
         if ($script:EcrImmutableTagRequired) { throw "EcrRepoUri required (ecr.immutableTagRequired is true). Pass -EcrRepoUri <image:tag>." }
         $ecr = "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($script:VideoWorkerRepo):latest"
     }
-    if ($ecr -match ':latest\s*$') {
-        throw ":latest tag is prohibited for JobDef. Pass -EcrRepoUri with an immutable tag (e.g. commit SHA)."
+    if ($ecr -match ':latest\s*$' -and -not $script:EcrUseLatestTag) {
+        throw ":latest tag is prohibited for JobDef when useLatestTag is false. Pass -EcrRepoUri with an immutable tag or set ecr.useLatestTag."
     }
     $content = $content -replace "PLACEHOLDER_ECR_URI", $ecr
     $content = $content -replace "PLACEHOLDER_JOB_ROLE_ARN", $script:BatchIam.JobRoleArn
@@ -39,8 +39,8 @@ function Register-JobDefFromJson { param([string]$JsonPath, [string]$Name)
         if ($script:EcrImmutableTagRequired) { throw "EcrRepoUri required (ecr.immutableTagRequired is true). Pass -EcrRepoUri <image:tag>." }
         $ecr = "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($script:VideoWorkerRepo):latest"
     }
-    if ($ecr -match ':latest\s*$') {
-        throw ":latest tag is prohibited for JobDef. Pass -EcrRepoUri with an immutable tag (e.g. commit SHA)."
+    if ($ecr -match ':latest\s*$' -and -not $script:EcrUseLatestTag) {
+        throw ":latest tag is prohibited for JobDef when useLatestTag is false. Pass -EcrRepoUri with an immutable tag or set ecr.useLatestTag."
     }
     $content = $content -replace "PLACEHOLDER_ECR_URI", $ecr
     $content = $content -replace "PLACEHOLDER_JOB_ROLE_ARN", $script:BatchIam.JobRoleArn
