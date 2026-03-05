@@ -18,6 +18,12 @@ $null = Load-SSOT -Env "prod"
 if (-not $PSBoundParameters.ContainsKey('DryRun')) { $DryRun = $true }
 if ($Execute) { $DryRun = $false }
 
+# .env 자동 로드 및 AWS 자격 증명 검증
+. (Join-Path $ScriptRoot "core\env.ps1")
+$RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
+Load-EnvFile -RepoRoot $RepoRoot | Out-Null
+$null = Assert-AwsCredentials -RepoRoot $RepoRoot
+
 $R = $script:Region
 $VpcId = $script:VpcId
 if (-not $VpcId) { Write-Error "VpcId not set (params.yaml network.vpcId)" }
