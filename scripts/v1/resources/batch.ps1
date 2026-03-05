@@ -227,6 +227,66 @@ function Ensure-VideoQueue {
     } else { Write-Ok "Video Queue state=$($qu.state)" }
 }
 
+function Ensure-VideoLongCE {
+    if (-not $script:VideoLongCEName -or $script:PlanMode) { return }
+    Write-Step "Ensure Video Long CE $($script:VideoLongCEName)"
+    $ce = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:VideoLongCEName, "--region", $script:Region, "--output", "json")
+    if (-not $ce -or -not $ce.computeEnvironments -or $ce.computeEnvironments.Count -eq 0) {
+        if (-not $script:AllowRebuild) { Write-Warn "Video Long CE not found; skip create."; return }
+        Write-Host "  Creating Video Long CE (On-Demand)" -ForegroundColor Yellow
+        New-VideoLongCE
+        $script:ChangesMade = $true
+        Wait-CEValidEnabled -CEName $script:VideoLongCEName -Reg $script:Region
+        return
+    }
+    $c = $ce.computeEnvironments[0]
+    if ($c.status -eq "INVALID") {
+        if (-not $script:AllowRebuild) { Write-Warn "Video Long CE INVALID; skip recreate."; return }
+        Write-Host "  INVALID -> disable queue, disable CE, delete, wait, create, wait" -ForegroundColor Yellow
+        $script:ChangesMade = $true
+        $qCheck = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoLongQueueName, "--region", $script:Region, "--output", "json")
+        if ($qCheck -and $qCheck.jobQueues -and $qCheck.jobQueues.Count -gt 0) {
+            Invoke-Aws @("batch", "update-job-queue", "--job-queue", $script:VideoLongQueueName, "--state", "DISABLED", "--region", $script:Region) 2>$null | Out-Null
+            $wait = 0; while ($wait -lt 90) { Start-Sleep -Seconds 5; $wait += 5; $q = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoLongQueueName, "--region", $script:Region, "--output", "json"); if ($q -and $q.jobQueues -and $q.jobQueues[0].state -eq "DISABLED") { break } }
+        }
+        Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $script:VideoLongCEName, "--state", "DISABLED", "--region", $script:Region) | Out-Null
+        $wait = 0; while ($wait -lt 120) { Start-Sleep -Seconds 5; $wait += 5; $ce2 = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:VideoLongCEName, "--region", $script:Region, "--output", "json"); if ($ce2 -and $ce2.computeEnvironments -and $ce2.computeEnvironments[0].state -eq "DISABLED") { break } }
+        Invoke-Aws @("batch", "delete-compute-environment", "--compute-environment", $script:VideoLongCEName, "--region", $script:Region) | Out-Null
+        Wait-CEDeleted -CEName $script:VideoLongCEName -Reg $script:Region
+        New-VideoLongCE
+        Wait-CEValidEnabled -CEName $script:VideoLongCEName -Reg $script:Region
+        $ceArn = Get-CEArn -Name $script:VideoLongCEName
+        $qAfter = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoLongQueueName, "--region", $script:Region, "--output", "json")
+        if ($qAfter -and $qAfter.jobQueues -and $qAfter.jobQueues.Count -gt 0) { Set-JobQueueEnabled -QueueName $script:VideoLongQueueName -CeArn $ceArn -Region $script:Region }
+        return
+    }
+    if ($c.state -eq "DISABLED") {
+        Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $script:VideoLongCEName, "--state", "ENABLED", "--region", $script:Region) | Out-Null
+        $script:ChangesMade = $true
+        Wait-CEValidEnabled -CEName $script:VideoLongCEName -Reg $script:Region
+    } else { Write-Ok "Video Long CE status=$($c.status) state=$($c.state)" }
+}
+
+function Ensure-VideoLongQueue {
+    if (-not $script:VideoLongQueueName -or $script:PlanMode) { return }
+    Write-Step "Ensure Video Long Queue $($script:VideoLongQueueName)"
+    $q = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoLongQueueName, "--region", $script:Region, "--output", "json")
+    if (-not $q -or -not $q.jobQueues -or $q.jobQueues.Count -eq 0) {
+        if (-not $script:AllowRebuild) { return }
+        $ceArn = Get-CEArn -Name $script:VideoLongCEName
+        if (-not $ceArn) { throw "Video Long CE not found" }
+        New-VideoLongQueue -CeArn $ceArn
+        $script:ChangesMade = $true
+        Write-Ok "Video Long Queue created"
+        return
+    }
+    $qu = $q.jobQueues[0]
+    if ($qu.state -eq "DISABLED") {
+        $ceArn = Get-CEArn -Name $script:VideoLongCEName
+        if ($ceArn) { Set-JobQueueEnabled -QueueName $script:VideoLongQueueName -CeArn $ceArn -Region $script:Region; $script:ChangesMade = $true }
+    } else { Write-Ok "Video Long Queue state=$($qu.state)" }
+}
+
 function Ensure-OpsQueue {
     if ($script:PlanMode) { return }
     Write-Step "Ensure Ops Queue $($script:OpsQueueName)"
