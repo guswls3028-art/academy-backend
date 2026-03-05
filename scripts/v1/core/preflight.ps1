@@ -30,10 +30,8 @@ function Invoke-PreflightCheck {
     }
 
     # 4) SSM / ECR 등 기타 기본 의존성 확인
-    $ssm = Invoke-AwsJson @("ssm", "get-parameter", "--name", $script:SsmWorkersEnv, "--region", $script:Region, "--query", "Parameter.Name", "--output", "json")
-    $ssmName = $null
-    if ($ssm -and $ssm.Parameter) { $ssmName = $ssm.Parameter.Name }
-    if (-not $ssmName) {
+    $ssm = Invoke-AwsJson @("ssm", "get-parameter", "--name", $script:SsmWorkersEnv, "--region", $script:Region, "--output", "json")
+    if (-not $ssm -or -not $ssm.Parameter -or -not $ssm.Parameter.Name) {
         throw "Preflight FAIL: SSM $($script:SsmWorkersEnv) missing or no permission"
     }
     Write-Ok "SSM $($script:SsmWorkersEnv)"
