@@ -1,0 +1,125 @@
+# ==============================================================================
+# academy-* 이미지 latest 빌드/푸시 (당분간 latest 전략). V1 SSOT 기준.
+# 트리거: main push, workflow_dispatch. push 후 digest·sha를 ci-build.latest.md에 기록.
+# AWS 인증: OIDC(role assume) 우선, 불가 시 secrets AWS_ACCESS_KEY_ID/SECRET 사용.
+# ==============================================================================
+
+name: Build and Push latest
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REGISTRY: 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials (OIDC or secrets)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_TO_ASSUME }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repo academy-base
+        run: aws ecr describe-repositories --repository-names academy-base --region ${{ env.AWS_REGION }} 2>/dev/null || aws ecr create-repository --repository-name academy-base --region ${{ env.AWS_REGION }}
+
+      - name: Build and push base (arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.base
+          platforms: linux/arm64
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/academy-base:latest
+          cache-from: type=gha,scope=base
+          cache-to: type=gha,mode=max,scope=base
+
+      - name: Build and push API (arm64)
+        id: build-api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/api/Dockerfile
+          build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
+          platforms: linux/arm64
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/academy-api:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Get API image digest and write report
+        id: digest
+        run: |
+          DIGEST=$(aws ecr describe-images --repository-name academy-api --image-ids imageTag=latest --region ${{ env.AWS_REGION }} --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          echo "imageDigest=$DIGEST" >> $GITHUB_ENV
+          BUILD_TIME=$(date -Iseconds)
+          echo "buildTime=$BUILD_TIME" >> $GITHUB_OUTPUT
+          SHA="${{ github.sha }}"
+          SHORT_SHA="${SHA:0:7}"
+          REPORTS_DIR="docs/00-SSOT/v1/reports"
+          mkdir -p "$REPORTS_DIR"
+          cat > "$REPORTS_DIR/ci-build.latest.md" << EOF
+          # V1 CI Build — latest 이미지 푸시 증거
+
+          **Generated:** $BUILD_TIME  
+          **SSOT:** docs/00-SSOT/v1/params.yaml  
+          **Region:** ${{ env.AWS_REGION }}
+
+          ## academy-api
+
+          | 항목 | 값 |
+          |------|-----|
+          | repo | academy-api |
+          | tag | latest |
+          | imageDigest | $DIGEST |
+          | gitSha | $SHA |
+          | shortSha | $SHORT_SHA |
+          | buildTime | $BUILD_TIME |
+
+          EOF
+          echo "Report written to $REPORTS_DIR/ci-build.latest.md"
+
+      - name: Summary
+        run: |
+          echo "## Build and Push latest" >> $GITHUB_STEP_SUMMARY
+          echo "| repo | tag | imageDigest | git sha | build time |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-----|-------------|---------|------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| academy-api | latest | ${{ steps.digest.outputs.digest }} | ${{ github.sha }} | ${{ steps.digest.outputs.buildTime }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit and push ci-build.latest.md
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/00-SSOT/v1/reports/ci-build.latest.md
+          if git diff --staged --quiet; then
+            echo "No change to ci-build.latest.md"
+          else
+            git commit -m "chore(ci): update ci-build.latest.md (academy-api:latest digest)"
+            git push
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
