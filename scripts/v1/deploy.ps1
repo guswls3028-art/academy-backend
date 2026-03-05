@@ -29,6 +29,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
+Write-Host "LanguageMode: $($ExecutionContext.SessionState.LanguageMode)" -ForegroundColor Yellow
 $ScriptRoot = $PSScriptRoot
 
 # 인증: AWS·Cloudflare(클플) 인증은 Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않음.
