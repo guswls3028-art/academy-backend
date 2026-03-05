@@ -96,7 +96,7 @@ def create_job_and_submit_batch(video: Video) -> Optional["VideoTranscodeJob"]:
             video.current_job_id = job.id
             video.save(update_fields=["current_job_id", "updated_at"])
 
-            aws_job_id, submit_error = submit_batch_job(str(job.id))
+            aws_job_id, submit_error = submit_batch_job(str(job.id), duration_seconds=video.duration if video.duration else None)
             if aws_job_id:
                 job.aws_batch_job_id = aws_job_id
                 job.save(update_fields=["aws_batch_job_id", "updated_at"])
