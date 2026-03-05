@@ -55,10 +55,11 @@
 
 ### 3.3 AWS 자격 증명
 
-- `aws sts get-caller-identity --profile default` 로 확인.
+- **.env 자동 로드:** `deploy.ps1`, `verify.ps1`, `bootstrap.ps1`, `cleanup-unused-ec2.ps1`, `aws-diagnose.ps1` 는 실행 시 **프로젝트 루트의 .env를 자동 로드**합니다. 동일 세션에서 수동으로 `.env`를 로드할 필요 없습니다.
+- `.env` 형식: `AWS_ACCESS_KEY_ID=...`, `AWS_SECRET_ACCESS_KEY=...`, `AWS_DEFAULT_REGION=ap-northeast-2` (한 줄에 하나씩, `KEY=value`).
+- 자격 증명이 없거나 만료되면 **Preflight 단계에서 한글 오류 메시지**로 안내합니다.
+- 프로파일 사용 시: `deploy.ps1 -AwsProfile default` 등으로 실행.
 - Cursor/자동화에서는 `deploy.ps1 -AwsProfile default` 사용 권장.
-- **토큰 만료 시:** `UnrecognizedClientException` / `AuthFailure` 발생. 자격증명 갱신 후 **같은 셸**에서 `deploy.ps1` 재실행.
-- 스크립트 내부: `scripts/v1/core/aws.ps1`에서 `AWS_PROFILE`이 설정되면 모든 `aws` 호출에 `--profile`을 자동 주입(2026-03-05 반영).
 
 ### 3.4 빌드 서버 (Spot + 온디맨드 폴백)
 
