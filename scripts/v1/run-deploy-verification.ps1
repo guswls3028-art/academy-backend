@@ -375,7 +375,7 @@ $buildRunningCount = if ($ev.buildState -eq "running") { 1 } else { 0 }
 $apiConsensusOk = ($ev.apiAsgMin -eq 1 -and $ev.apiAsgDesired -eq 1)
 $aiConsensusOk = ($ev.asgAiMin -eq 1 -and $ev.asgAiDesired -eq 1)
 $msgConsensusOk = ($ev.asgMessagingMin -eq 1 -and $ev.asgMessagingDesired -eq 1)
-$eipNote = if ($eipCountTotal -gt 0) { "EIP $eipCountTotal개 (미연결 $eipCountUnassociated). Solapi 고정 IP 취소로 NAT/EIP 불필요·비용 검토 권장." } else { "EIP 없음 (합의 반영)" }
+$eipNote = if ($eipCountTotal -gt 0) { "EIP $eipCountTotal 개 (미연결 $eipCountUnassociated). Solapi 고정 IP 취소로 NAT/EIP 불필요·비용 검토 권장." } else { "EIP 없음 (합의 반영)" }
 $buildNote = if ($buildRunningCount -gt 0) { "전환중 (running $buildRunningCount대). 최종 목표: 빌드 서버 0대." } else { "목표 달성 (0대)" }
 
 $consistencySb = [System.Text.StringBuilder]::new()
