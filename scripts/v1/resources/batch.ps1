@@ -136,9 +136,18 @@ function Ensure-OpsCE {
         return
     }
     $c = $ce.computeEnvironments[0]
-    if ($c.status -eq "INVALID") {
-        if (-not $script:AllowRebuild) { Write-Warn "Ops CE INVALID; skip recreate."; return }
-        Write-Host "  INVALID -> disable queue, disable CE, delete, wait, create, wait" -ForegroundColor Yellow
+    $res = $c.computeResources
+    $currentType = if ($res -and $res.instanceTypes -and $res.instanceTypes.Count -gt 0) { $res.instanceTypes[0] } else { $null }
+    $currentMax = if ($res -and $res.maxvCpus) { [int]$res.maxvCpus } else { 0 }
+    $opsTypeDrift = ($currentType -ne $script:OpsCEInstanceType) -or ($currentMax -ne $script:OpsCEMaxvCpus)
+    if ($c.status -eq "INVALID" -or $opsTypeDrift) {
+        if (-not $script:AllowRebuild) {
+            if ($opsTypeDrift) { Write-Warn "Ops CE instance type drift (current $currentType max=$currentMax, want $($script:OpsCEInstanceType) max=$($script:OpsCEMaxvCpus)); run with -AllowRebuild to recreate." }
+            else { Write-Warn "Ops CE INVALID; skip recreate." }
+            return
+        }
+        if ($opsTypeDrift) { Write-Host "  Ops CE instance type drift -> disable queue, disable CE, delete, create (t4g.medium), enable queue" -ForegroundColor Yellow }
+        else { Write-Host "  INVALID -> disable queue, disable CE, delete, wait, create, wait" -ForegroundColor Yellow }
         $script:ChangesMade = $true
         $qCheck = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:OpsQueueName, "--region", $script:Region, "--output", "json")
         if ($qCheck -and $qCheck.jobQueues -and $qCheck.jobQueues.Count -gt 0) {
