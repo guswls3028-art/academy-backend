@@ -268,4 +268,55 @@ V1이 standard/long 2-tier·timeout·stuck(heartbeat_age)·R2 checkpoint·관측
 
 ---
 
+## 11. 배포 검증 자동화 (run-deploy-verification.ps1)
+
+### 11.1 목적
+
+V1 인프라 배포 완료 후 시스템 전체를 검증하고, Evidence를 수집하여 **최종 배포 검증 보고서**를 생성한다. 리소스 변경 없이 읽기 전용 검증만 수행한다.
+
+### 11.2 실행 방법
+
+```powershell
+# 프로젝트 루트에서 .env 로드 후 (run-with-env 권장)
+pwsh scripts/v1/run-deploy-verification.ps1
+
+# AWS 프로파일 지정
+pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default
+```
+
+### 11.3 검증 항목 (자동 수집)
+
+| # | 영역 | 내용 |
+|---|------|------|
+| 1 | Drift / Evidence | SSOT 대비 Drift, Evidence 스냅샷 → audit.latest.md, drift.latest.md 갱신 |
+| 2 | API | ASG desired/min/max, ALB target health, /health 응답·응답시간(<2s 기준) |
+| 3 | RDS / Redis | describe 상태(available 등) |
+| 4 | SQS | 메인 큐 depth, DLQ depth (Messaging/AI) |
+| 5 | 리소스 수 | EC2(running), Batch RUNNING job 수 |
+| 6 | R2 / CDN | wrangler r2 bucket list (선택), 프론트 URL (FRONT_APP_URL env 시) |
+| 7 | 관측 | CloudWatch 알람 개수(academy/v1) |
+
+### 11.4 산출물
+
+| 파일 | 설명 |
+|------|------|
+| **docs/00-SSOT/v1/reports/deploy-verification-latest.md** | 최종 배포 검증 보고서 (배포 정보, 인프라 상태, 기능 테스트, 비용 요약, 리스크, 최종 상태 PASS/WARNING/FAIL) |
+| **docs/00-SSOT/v1/reports/audit.latest.md** | Evidence 스냅샷 갱신 |
+| **docs/00-SSOT/v1/reports/drift.latest.md** | SSOT vs 실제 Drift 갱신 |
+| **reports/history/*-deploy-verification.md** | 검증 보고서 타임스탬프 보관 |
+
+### 11.5 완료 조건
+
+다음이 모두 만족되면 배포 검증 **PASS**로 간주한다.
+
+- API 정상: /health 200, target healthy ≥ 1
+- Drift 없음(또는 허용된 항목만)
+- DB/Redis 상태 available
+- DLQ 메시지 0 (또는 WARNING으로 기록 후 운영 확인)
+- 보고서 생성 완료 (deploy-verification-latest.md)
+
+수동 보완 권장: 프론트 접속, SQS enqueue/consume, Video pipeline 샘플 1건, 장애 모의(워커 종료·Batch retry)는 운영자가 필요 시 §9·§10 시나리오로 수행.
+
+---
+
 **문서 끝.**
