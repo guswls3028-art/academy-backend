@@ -16,7 +16,7 @@ $cmdId = ($out | ConvertFrom-Json).Command.CommandId
 Write-Host "CommandId: $cmdId"
 Write-Host "Waiting for command to complete..."
 $done = $false
-for ($i = 0; $i -lt 60; $i++) {
+for ($i = 0; $i -lt 90; $i++) {
     $status = aws ssm get-command-invocation --command-id $cmdId --instance-id $instanceId --region $region --output json 2>&1 | ConvertFrom-Json
     $st = $status.Status
     Write-Host "  Status: $st"
