@@ -99,6 +99,25 @@ if ($script:ApiAlbName) {
     } catch { Add-Finding -Severity "WARNING" -Area "API" -Message "ALB/Target 조회 실패: $($_.Exception.Message)" }
 }
 
+# --- 2b. API 공개 URL(도메인/HTTPS) /health — API_PUBLIC_URL 또는 front.domains.api 기반
+$apiPublicHealthStatus = "not checked"
+$apiPublicUrl = $env:API_PUBLIC_URL
+if (-not $apiPublicUrl -and $script:FrontDomainApi -and $script:FrontDomainApi.Trim() -ne "") {
+    $apiPublicUrl = "https://$($script:FrontDomainApi.Trim())"
+}
+if ($apiPublicUrl) {
+    $apiPublicUrl = $apiPublicUrl.TrimEnd('/')
+    $publicHealthUrl = "$apiPublicUrl/$($script:ApiHealthPath.TrimStart('/'))"
+    try {
+        $phr = Invoke-WebRequest -Uri $publicHealthUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        $apiPublicHealthStatus = if ($phr.StatusCode -eq 200) { "OK" } else { "HTTP $($phr.StatusCode)" }
+        if ($phr.StatusCode -ne 200) { Add-Finding -Severity "WARNING" -Area "API" -Message "API_PUBLIC_URL/도메인 /health returned $($phr.StatusCode)" }
+    } catch {
+        $apiPublicHealthStatus = "unreachable"
+        Add-Finding -Severity "WARNING" -Area "API" -Message "API 공개 URL /health unreachable: $publicHealthUrl — $($_.Exception.Message)"
+    }
+}
+
 # --- 3. RDS / Redis 상태 ---
 $rdsStatus = "not checked"
 $redisStatus = "not checked"
