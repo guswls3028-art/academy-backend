@@ -257,7 +257,7 @@ function Invoke-BuildServerBuild {
             }
         }
         throw "Build server SSM command did not complete within ${waitSec}s."
-    }
+    } finally { }
 }
 
 function Invoke-BootstrapEcrUri {
