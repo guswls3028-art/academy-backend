@@ -6,7 +6,7 @@
 **기준 문서:** `docs/00-SSOT/v1/SSOT.md`, `params.yaml`, `INFRA-AND-SPECS.md`  
 **배포 스크립트:** `scripts/v1/deploy.ps1`  
 **현재 인프라:** `docs/00-SSOT/v1/AWS-INFRA-REPORT.md`  
-**작성일:** 2026-03-05
+**작성일:** 2026-03-05 · **V1.1 갱신:** 2026-03-06
 
 ---
 
@@ -22,7 +22,7 @@
 
 | 구분 | 현재 (기존) | V1 목표 |
 |------|-------------|---------|
-| **API** | EC2 1대 (academy-api, 수동) | academy-v1-api-asg + academy-v1-api-alb + academy-v1-api-tg |
+| **API** | EC2 1대 (academy-api, 수동) | academy-v1-api-asg + ALB + TG. **V1.1:** min/desired/max 2/2/4, 롤링 MinHealthyPercentage=100 |
 | **Build** | EC2 1대 (academy-build-arm64, stopped) | 태그 academy-build-arm64, v1 서브넷/SG |
 | **Batch CE** | academy-video-batch-ce-final, academy-video-ops-ce (1개 INVALID) | academy-v1-video-batch-ce, academy-v1-video-ops-ce |
 | **Batch Queue** | academy-video-batch-queue, academy-video-ops-queue | academy-v1-video-batch-queue, academy-v1-video-ops-queue |
