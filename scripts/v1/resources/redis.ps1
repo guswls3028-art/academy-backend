@@ -55,15 +55,21 @@ function Ensure-RedisSecurityGroup {
     }
     $newSgs = @($sgIds + $script:SecurityGroupData | Select-Object -Unique)
     Write-Host "  Updating Redis SGs to include sg-data $($script:SecurityGroupData)" -ForegroundColor Yellow
-    Invoke-Aws @(
-        "elasticache", "modify-replication-group",
-        "--replication-group-id", $script:RedisReplicationGroupId,
-        "--security-group-ids"
-    ) + $newSgs + @(
-        "--apply-immediately",
-        "--region", $script:Region
-    ) -ErrorMessage "modify Redis SGs" | Out-Null
-    $script:ChangesMade = $true
+    try {
+        Invoke-Aws @(
+            "elasticache", "modify-replication-group",
+            "--replication-group-id", $script:RedisReplicationGroupId,
+            "--security-group-ids"
+        ) + $newSgs + @(
+            "--apply-immediately",
+            "--region", $script:Region
+        ) -ErrorMessage "modify Redis SGs" | Out-Null
+        $script:ChangesMade = $true
+    } catch {
+        if ($_.Exception.Message -match "No modifications were requested|InvalidParameterCombination") {
+            Write-Ok "Redis SGs unchanged (already include sg-data or same set)"
+        } else { throw }
+    }
 }
 
 function Confirm-RedisState {
