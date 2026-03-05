@@ -14,4 +14,6 @@ Before making architectural decisions Cursor must:
 4. Read scripts/v1
 5. Read GitHub workflows (.github/workflows)
 
+Use only **docs/00-SSOT/v1** and **scripts/v1** for implementation. **docs/00-SSOT/archive** and **scripts/archive** are reference-only; do not modify or run them (00_ssot_v1_archive_structure.mdc).
+
 **No architecture change before repository scan.** Do not introduce services or connections not defined in infra_topology.yaml.
