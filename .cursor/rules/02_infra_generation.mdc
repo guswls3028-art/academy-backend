@@ -36,3 +36,5 @@ Do NOT introduce: ECS, EKS, AWS S3, AWS CloudFront.
 - Must follow **SSOT:** docs/00-SSOT/v4
 - Scripts must be **idempotent**, **safe to re-run**
 - Cursor must modify scripts in: **scripts/v4**
+
+**Canonical topology:** Before designing or changing infrastructure, read `.cursor/knowledge/infra_topology.yaml`. Services, queues, storage, and flows must match that file; do not add components not listed there.

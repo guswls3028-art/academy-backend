@@ -31,3 +31,5 @@ Cursor acts as a DevOps architect.
 - EKS
 - AWS S3
 - AWS CloudFront
+
+**Canonical topology:** See `.cursor/knowledge/infra_topology.yaml` for services, queues, storage, and architecture_flow. All design must match that file.
