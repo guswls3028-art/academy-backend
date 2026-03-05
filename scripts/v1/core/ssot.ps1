@@ -130,6 +130,7 @@ function Load-SSOT {
 
     $script:MessagingASGName = $p["messagingWorker"]["asgName"]
     $script:MessagingLaunchTemplateName = $p["messagingWorker"]["launchTemplateName"]
+    $script:MessagingInstanceTagValue = if ($p["messagingWorker"]["instanceTagValue"]) { $p["messagingWorker"]["instanceTagValue"] } else { "academy-v1-messaging-worker" }
     $script:MessagingAmiId = $p["messagingWorker"]["amiId"]
     $script:MessagingInstanceType = if ($p["messagingWorker"]["instanceType"]) { $p["messagingWorker"]["instanceType"] } else { "t4g.medium" }
     $script:MessagingMinSize = Coerce-Int $p["messagingWorker"]["minSize"] 1
@@ -144,6 +145,7 @@ function Load-SSOT {
     $script:MessagingSqsQueueName = if ($p["messagingWorker"]["sqsQueueName"]) { $p["messagingWorker"]["sqsQueueName"] } else { "" }
     $script:AiASGName = $p["aiWorker"]["asgName"]
     $script:AiLaunchTemplateName = $p["aiWorker"]["launchTemplateName"]
+    $script:AiInstanceTagValue = if ($p["aiWorker"]["instanceTagValue"]) { $p["aiWorker"]["instanceTagValue"] } else { "academy-v1-ai-worker" }
     $script:AiAmiId = $p["aiWorker"]["amiId"]
     $script:AiInstanceType = if ($p["aiWorker"]["instanceType"]) { $p["aiWorker"]["instanceType"] } else { "t4g.medium" }
     $script:AiMinSize = Coerce-Int $p["aiWorker"]["minSize"] 1
