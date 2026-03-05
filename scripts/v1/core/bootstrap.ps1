@@ -37,8 +37,8 @@ function Invoke-BootstrapSqs {
     if ($script:SkipSqs) { return }
     if ($script:PlanMode) { Write-Ok "Bootstrap SQS skipped (Plan)"; return }
 
-    $defaultMsg = "academy-v4-messaging-queue"
-    $defaultAi = "academy-v4-ai-queue"
+    $defaultMsg = "academy-v1-messaging-queue"
+    $defaultAi = "academy-v1-ai-queue"
     $msgName = if ($script:MessagingSqsQueueName -and $script:MessagingSqsQueueName.Trim() -ne "") { $script:MessagingSqsQueueName.Trim() } else { $defaultMsg }
     $aiName = if ($script:AiSqsQueueName -and $script:AiSqsQueueName.Trim() -ne "") { $script:AiSqsQueueName.Trim() } else { $defaultAi }
 

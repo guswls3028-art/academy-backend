@@ -43,7 +43,7 @@ function Get-SubnetsByNames { param([string[]]$Names)
 
 function Ensure-Subnets {
     param([string[]]$Azs)
-    $pub1 = "academy-v4-public-a"; $pub2 = "academy-v4-public-b"; $prv1 = "academy-v4-private-a"; $prv2 = "academy-v4-private-b"
+    $pub1 = "academy-v1-public-a"; $pub2 = "academy-v1-public-b"; $prv1 = "academy-v1-private-a"; $prv2 = "academy-v1-private-b"
     $existing = Get-SubnetsByNames -Names @($pub1,$pub2,$prv1,$prv2)
     $byName = @{}
     foreach ($s in $existing) {
@@ -87,7 +87,7 @@ function Ensure-InternetGateway {
         return $r.InternetGateways[0].InternetGatewayId
     }
     if ($script:PlanMode) { return "igw-plan" }
-    $c = Invoke-AwsJson @("ec2", "create-internet-gateway", "--tag-specifications", "ResourceType=internet-gateway,Tags=[{Key=Name,Value=academy-v4-igw},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+    $c = Invoke-AwsJson @("ec2", "create-internet-gateway", "--tag-specifications", "ResourceType=internet-gateway,Tags=[{Key=Name,Value=academy-v1-igw},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
     $igwId = $c.InternetGateway.InternetGatewayId
     Invoke-Aws @("ec2", "attach-internet-gateway", "--vpc-id", $script:VpcId, "--internet-gateway-id", $igwId, "--region", $script:Region) -ErrorMessage "attach-igw" | Out-Null
     Write-Ok "IGW $igwId created and attached"
@@ -103,10 +103,10 @@ function Ensure-NatGateway {
         return $r.NatGateways[0].NatGatewayAddresses[0].AllocationId
     }
     if ($script:PlanMode) { return "eipalloc-plan" }
-    $eip = Invoke-AwsJson @("ec2", "allocate-address", "--domain", "vpc", "--tag-specifications", "ResourceType=elastic-ip,Tags=[{Key=Name,Value=academy-v4-nat-eip},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+    $eip = Invoke-AwsJson @("ec2", "allocate-address", "--domain", "vpc", "--tag-specifications", "ResourceType=elastic-ip,Tags=[{Key=Name,Value=academy-v1-nat-eip},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
     $allocId = $eip.AllocationId
     $pubSubnetId = $script:PublicSubnets[0]
-    $nat = Invoke-AwsJson @("ec2", "create-nat-gateway", "--subnet-id", $pubSubnetId, "--allocation-id", $allocId, "--tag-specifications", "ResourceType=natgateway,Tags=[{Key=Name,Value=academy-v4-nat},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+    $nat = Invoke-AwsJson @("ec2", "create-nat-gateway", "--subnet-id", $pubSubnetId, "--allocation-id", $allocId, "--tag-specifications", "ResourceType=natgateway,Tags=[{Key=Name,Value=academy-v1-nat},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
     $script:NatGatewayId = $nat.NatGateway.NatGatewayId
     Write-Ok "NAT Gateway $($script:NatGatewayId) created; waiting available..."
     $elapsed = 0
@@ -124,10 +124,10 @@ function Ensure-NatGateway {
 function Ensure-RouteTables { param([string]$IgwId, [string]$NatAllocId)
     $r = Invoke-AwsJson @("ec2", "describe-route-tables", "--filters", "Name=vpc-id,Values=$($script:VpcId)", "--region", $script:Region, "--output", "json")
     $rts = @($r.RouteTables)
-    $publicRt = $rts | Where-Object { $_.Tags | Where-Object { $_.Key -eq "Name" -and $_.Value -eq "academy-v4-public-rt" } } | Select-Object -First 1
-    $privateRt = $rts | Where-Object { $_.Tags | Where-Object { $_.Key -eq "Name" -and $_.Value -eq "academy-v4-private-rt" } } | Select-Object -First 1
+    $publicRt = $rts | Where-Object { $_.Tags | Where-Object { $_.Key -eq "Name" -and $_.Value -eq "academy-v1-public-rt" } } | Select-Object -First 1
+    $privateRt = $rts | Where-Object { $_.Tags | Where-Object { $_.Key -eq "Name" -and $_.Value -eq "academy-v1-private-rt" } } | Select-Object -First 1
     if (-not $publicRt -and -not $script:PlanMode) {
-        $c = Invoke-AwsJson @("ec2", "create-route-table", "--vpc-id", $script:VpcId, "--tag-specifications", "ResourceType=route-table,Tags=[{Key=Name,Value=academy-v4-public-rt},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+        $c = Invoke-AwsJson @("ec2", "create-route-table", "--vpc-id", $script:VpcId, "--tag-specifications", "ResourceType=route-table,Tags=[{Key=Name,Value=academy-v1-public-rt},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
         $publicRt = $c.RouteTable
         Invoke-Aws @("ec2", "create-route", "--route-table-id", $publicRt.RouteTableId, "--destination-cidr-block", "0.0.0.0/0", "--gateway-id", $IgwId, "--region", $script:Region) -ErrorMessage "public route" | Out-Null
         foreach ($subId in $script:PublicSubnets) {
@@ -137,7 +137,7 @@ function Ensure-RouteTables { param([string]$IgwId, [string]$NatAllocId)
         $script:ChangesMade = $true
     } elseif ($publicRt) { Write-Ok "Public RT exists" }
     if (-not $privateRt -and -not $script:PlanMode -and $script:NatGatewayId) {
-        $c = Invoke-AwsJson @("ec2", "create-route-table", "--vpc-id", $script:VpcId, "--tag-specifications", "ResourceType=route-table,Tags=[{Key=Name,Value=academy-v4-private-rt},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
+        $c = Invoke-AwsJson @("ec2", "create-route-table", "--vpc-id", $script:VpcId, "--tag-specifications", "ResourceType=route-table,Tags=[{Key=Name,Value=academy-v1-private-rt},{Key=Project,Value=academy}]", "--region", $script:Region, "--output", "json")
         $privateRt = $c.RouteTable
         Invoke-Aws @("ec2", "create-route", "--route-table-id", $privateRt.RouteTableId, "--destination-cidr-block", "0.0.0.0/0", "--nat-gateway-id", $script:NatGatewayId, "--region", $script:Region) -ErrorMessage "private route" | Out-Null
         foreach ($subId in $script:PrivateSubnets) {
