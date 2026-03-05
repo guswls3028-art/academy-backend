@@ -21,8 +21,12 @@ foreach ($line in (Get-Content -Path $envPath -Encoding UTF8 -ErrorAction Silent
     }
 }
 $allArgs = @($args)
+# Optional leading "--" (e.g. pwsh -File run-with-env.ps1 -- pwsh -File deploy.ps1)
+if ($allArgs.Count -gt 0 -and $allArgs[0] -eq "--") {
+    $allArgs = $allArgs[1..($allArgs.Count - 1)]
+}
 if ($allArgs.Count -eq 0) {
-    Write-Error "Usage: pwsh -File run-with-env.ps1 -- <command> [args...]"
+    Write-Error "Usage: pwsh -File run-with-env.ps1 [--] <command> [args...]"
     exit 1
 }
 $cmd = $allArgs[0]
