@@ -142,7 +142,7 @@ function Ensure-API-Instance {
     if ($script:SkipApiSSMWait) {
         Write-Warn "Skip API SSM wait (-SkipApiSSMWait). Instance $instanceId may not be in SSM yet."
     } else {
-        Wait-SSMOnline -InstanceId $instanceId -Reg $script:Region -TimeoutSec 300
+        Wait-SSMOnline -InstanceId $instanceId -Reg $script:Region -TimeoutSec 600
     }
     if ($script:ApiBaseUrl) {
         if ($script:SkipApiSSMWait) {
