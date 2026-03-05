@@ -12,7 +12,7 @@ from django.http import JsonResponse
 
 logger = logging.getLogger(__name__)
 
-HEALTH_CHECK_PATHS = ("/health", "/health/")
+HEALTH_CHECK_PATHS = ("/health", "/health/", "/healthz", "/healthz/")
 
 
 class HealthCheckHostMiddleware:

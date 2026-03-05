@@ -70,7 +70,7 @@ api:
   containerName: academy-api
   albName: academy-v1-api-alb
   targetGroupName: academy-v1-api-tg
-  healthPath: /health
+  healthPath: /healthz
   instanceTagKey: Name
   instanceTagValue: academy-v1-api
   apiBaseUrl: ""
