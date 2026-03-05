@@ -309,9 +309,10 @@ function Ensure-ECR-VpcEndpoints {
     $existingDkr = Invoke-AwsJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "Name=service-name,Values=$ecrDkrSvc", "--region", $region, "--output", "json") 2>$null
     if (-not $existingDkr -or -not $existingDkr.VpcEndpoints -or $existingDkr.VpcEndpoints.Count -eq 0) {
         if (-not $script:PlanMode) {
-            $subIds = ($script:PublicSubnets + $script:PrivateSubnets) | Where-Object { $_ -match '^subnet-' } | Select-Object -First 2
-            if ($subIds.Count -lt 1) { return }
-            Invoke-Aws @("ec2", "create-vpc-endpoint", "--vpc-id", $vpcId, "--vpc-endpoint-type", "Interface", "--service-name", $ecrDkrSvc, "--subnet-ids", $subIds, "--security-group-ids", $vpceSgId, "--private-dns-enabled", "--region", $region) -ErrorMessage "create-vpc-endpoint ecr.dkr" | Out-Null
+            $subIdsDkr = @($script:PublicSubnets + $script:PrivateSubnets) | Where-Object { $_ -match '^subnet-' } | Select-Object -First 2
+            if ($subIdsDkr.Count -lt 1) { return }
+            $argsEcrDkr = @("ec2", "create-vpc-endpoint", "--vpc-id", $vpcId, "--vpc-endpoint-type", "Interface", "--service-name", $ecrDkrSvc, "--subnet-ids") + @($subIdsDkr) + @("--security-group-ids", $vpceSgId, "--private-dns-enabled", "--region", $region)
+            Invoke-Aws $argsEcrDkr -ErrorMessage "create-vpc-endpoint ecr.dkr" | Out-Null
             Write-Ok "VPC endpoint $ecrDkrSvc created"
             $script:ChangesMade = $true
         }
