@@ -218,9 +218,15 @@ try {
     $netJobId = ""
     $netStatus = ""
     if (-not $SkipNetprobe) {
-        $net = Invoke-Netprobe -TimeoutSec 1200 -RunnableFailSec 300
-        $netJobId = $net.jobId
-        $netStatus = $net.status
+        try {
+            $net = Invoke-Netprobe -TimeoutSec 1200 -RunnableFailSec 300
+            $netJobId = $net.jobId
+            $netStatus = $net.status
+        } catch {
+            Write-Warn "Netprobe failed (deploy continues): $_"
+            if ($_.Exception.Message -match "jobId=([a-f0-9-]+)") { $netJobId = $matches[1] }
+            $netStatus = "failed"
+        }
     } else {
         Write-Warn "Netprobe skipped (-SkipNetprobe)"
     }
