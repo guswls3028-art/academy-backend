@@ -15,6 +15,8 @@ param(
     [switch]$InstancesOnly = $false,
     [switch]$RemoveUnusedSGs = $false
 )
+# -Execute 이면 실제 삭제
+if ($Execute) { $DryRun = $false }
 
 $R = $script:Region
 $VpcId = $script:VpcId
@@ -51,7 +53,7 @@ function Get-UsedInstanceIds {
             foreach ($i in $rev.Instances) { [void]$used.Add($i.InstanceId) }
         }
     }
-    return @($used)
+    return [string[]]@($used)
 }
 
 function Get-NatAllocationId {
@@ -68,7 +70,7 @@ function Remove-UnusedEIPs {
     $toRelease = [System.Collections.ArrayList]::new()
     foreach ($a in $addrs.Addresses) {
         $allocId = $a.AllocationId
-        if ($allocId -eq $natAlloc) { continue }
+        if ($natAlloc -and $allocId -eq $natAlloc) { continue }
         if ($a.AssociationId) { continue }
         [void]$toRelease.Add($a)
     }
