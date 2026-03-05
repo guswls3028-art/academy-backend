@@ -3,7 +3,7 @@
 $ErrorActionPreference = "Stop"
 
 function Wait-CEDeleted {
-    param([string]$CEName, [string]$Reg, [int]$TimeoutSec = 300)
+    param([string]$CEName, [string]$Reg, [int]$TimeoutSec = 1800)
     $elapsed = 0
     while ($elapsed -lt $TimeoutSec) {
         $r = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $CEName, "--region", $Reg, "--output", "json")
@@ -15,7 +15,8 @@ function Wait-CEDeleted {
         Start-Sleep -Seconds 10
         $elapsed += 10
     }
-    throw "Timeout waiting for CE $CEName to be deleted (${TimeoutSec}s)"
+    $min = [math]::Floor($TimeoutSec / 60)
+    throw "Timeout (${min}min) waiting for CE $CEName to be deleted. 다음 액션: AWS Batch 콘솔에서 해당 CE 상태·의존 Job Queue 비활성화 여부 확인 후 수동 삭제 또는 재시도."
 }
 
 function Wait-EventBridgeRuleDeleted {
