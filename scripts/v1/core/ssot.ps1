@@ -241,6 +241,24 @@ function Load-SSOT {
     $script:RedisNodeType = if ($p["redis"]["nodeType"]) { $p["redis"]["nodeType"] } else { "cache.t4g.small" }
     $script:RedisEngineVersion = if ($p["redis"]["engineVersion"]) { $p["redis"]["engineVersion"] } else { "" }
 
+    $script:R2Bucket = if ($p["r2"]) { $p["r2"]["bucket"] } else { "" }
+    $script:R2PublicBaseUrl = if ($p["r2"]) { $p["r2"]["publicBaseUrl"] } else { "" }
+    $script:FrontDomainApp = ""
+    $script:FrontDomainApi = ""
+    $script:FrontCorsAllowedOrigins = @()
+    $script:FrontR2StaticBucket = ""
+    if ($p["front"]) {
+        if ($p["front"]["domains"]) {
+            $script:FrontDomainApp = if ($p["front"]["domains"]["app"]) { $p["front"]["domains"]["app"] } else { "" }
+            $script:FrontDomainApi = if ($p["front"]["domains"]["api"]) { $p["front"]["domains"]["api"] } else { "" }
+        }
+        $script:FrontR2StaticBucket = if ($p["front"]["r2StaticBucket"]) { $p["front"]["r2StaticBucket"] } else { "" }
+        if ($p["front"]["cors"] -and $p["front"]["cors"]["_list"]) { $script:FrontCorsAllowedOrigins = @($p["front"]["cors"]["_list"]) }
+        elseif ($p["front"]["cors"] -and $p["front"]["cors"]["allowedOrigins"]) { $script:FrontCorsAllowedOrigins = @($p["front"]["cors"]["allowedOrigins"]) }
+    }
+    $script:MessagingDlqSuffix = if ($p["messagingWorker"]["dlqSuffix"]) { $p["messagingWorker"]["dlqSuffix"] } else { "-dlq" }
+    $script:AiDlqSuffix = if ($p["aiWorker"]["dlqSuffix"]) { $p["aiWorker"]["dlqSuffix"] } else { "-dlq" }
+
     $obs = $p["observability"]
     if (-not $obs) { $obs = @{} }
     $script:ObservabilityLogRetentionDays = Coerce-Int $obs["logRetentionDays"] 30
