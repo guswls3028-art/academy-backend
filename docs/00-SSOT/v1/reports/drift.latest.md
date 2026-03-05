@@ -1,0 +1,16 @@
+# Drift — SSOT vs actual
+**Generated:** 2026-03-05T17:51:08.9523305+09:00
+
+| ResourceType | Name | Expected | Actual | Action |
+|--------------|------|----------|--------|--------|
+| Batch CE | academy-v1-video-batch-ce | exists | missing | Create |
+| Batch CE | academy-v1-video-ops-ce | exists | missing | Create |
+| Batch Queue | academy-v1-video-batch-queue | exists | missing | Create |
+| Batch Queue | academy-v1-video-ops-queue | exists | missing | Create |
+| EventBridge | academy-v1-reconcile-video-jobs | exists | missing | Create |
+| EventBridge | academy-v1-video-scan-stuck-rate | exists | missing | Create |
+| ASG | academy-v1-api-asg | exists | missing | Create |
+| ASG | academy-v1-messaging-worker-asg | exists | missing | Create |
+| ASG | academy-v1-ai-worker-asg | exists | missing | Create |
+| API LT | academy-v1-api-lt | exists | missing | Create |
+
