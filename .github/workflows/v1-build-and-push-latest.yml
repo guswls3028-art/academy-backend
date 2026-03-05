@@ -133,7 +133,8 @@ jobs:
           for repo in academy-base academy-api academy-video-worker academy-messaging-worker academy-ai-worker-cpu; do
             DIGEST=$(aws ecr describe-images --repository-name "$repo" --image-ids imageTag=latest --region ${{ env.AWS_REGION }} --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "N/A")
             echo "| $repo | latest | $DIGEST |" >> "$REPORTS_DIR/ci-build.latest.md"
-            echo "${repo}=${DIGEST}" >> $GITHUB_OUTPUT
+            outname=$(echo "$repo" | tr '-' '_')
+            echo "${outname}=${DIGEST}" >> $GITHUB_OUTPUT
           done
 
           echo "buildTime=$BUILD_TIME" >> $GITHUB_OUTPUT
@@ -141,14 +142,7 @@ jobs:
       - name: Workflow summary
         run: |
           echo "## V1 Build and Push latest (OIDC)" >> $GITHUB_STEP_SUMMARY
-          echo "| repo | tag | imageDigest |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-----|-------------|" >> $GITHUB_STEP_SUMMARY
-          for repo in academy-base academy-api academy-video-worker academy-messaging-worker academy-ai-worker-cpu; do
-            D=$(echo "${{ steps.digests.outputs.academy-base }}" "${{ steps.digests.outputs.academy-api }}" "${{ steps.digests.outputs.academy-video-worker }}" "${{ steps.digests.outputs.academy-messaging-worker }}" "${{ steps.digests.outputs.academy-ai-worker-cpu }}" | tr ' ' '\n' | grep -E "^${repo}=" | cut -d= -f2)
-            echo "| $repo | latest | $D |" >> $GITHUB_STEP_SUMMARY
-          done
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**gitSha:** ${{ github.sha }} | **buildTime:** ${{ steps.digests.outputs.buildTime }}" >> $GITHUB_STEP_SUMMARY
+          cat docs/00-SSOT/v1/reports/ci-build.latest.md >> $GITHUB_STEP_SUMMARY
 
       - name: Upload ci-build.latest.md artifact
         uses: actions/upload-artifact@v4
