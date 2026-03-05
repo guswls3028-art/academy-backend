@@ -98,12 +98,19 @@ function Get-EvidenceSnapshot {
     } else {
         $ev["sqsScalingEnforced"] = "yes"
     }
+    $evidenceElapsed = [math]::Round(((Get-Date) - $evidenceStart).TotalSeconds, 1)
+    if ($evidenceElapsed -gt 30) {
+        Write-Host "  [Evidence] Get-EvidenceSnapshot took ${evidenceElapsed}s" -ForegroundColor Yellow
+    }
     return $ev
 }
 
 function Show-Evidence {
     param([string]$NetprobeJobId = "", [string]$NetprobeStatus = "")
+    $stepStart = Get-Date
     $ev = Get-EvidenceSnapshot -NetprobeJobId $NetprobeJobId -NetprobeStatus $NetprobeStatus
+    $stepElapsed = [math]::Round(((Get-Date) - $stepStart).TotalSeconds, 1)
+    Write-Host "  [Evidence] total step ${stepElapsed}s" -ForegroundColor Gray
     Write-Host "`n=== EVIDENCE ===" -ForegroundColor Cyan
     $ev.GetEnumerator() | ForEach-Object { Write-Host "  $($_.Key): $($_.Value)" -ForegroundColor Gray }
     Write-Host "=== END EVIDENCE ===`n" -ForegroundColor Cyan
