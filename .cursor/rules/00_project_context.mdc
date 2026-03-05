@@ -32,6 +32,9 @@ alwaysApply: true
 - **인프라 방식:** script infra (PowerShell + AWS CLI)
 - **SSOT:** docs/00-SSOT/v4 (SSOT v4)
 
+**Canonical topology (서비스·큐·스토리지 연결):**  
+`.cursor/knowledge/infra_topology.yaml` — 아키텍처 결정·인프라 생성 전 반드시 참조. 이 파일에 없는 서비스는 도입 금지.
+
 ## 데이터 플로우
 
 **API:** Client → ALB → API (EC2 ASG) → RDS PostgreSQL
