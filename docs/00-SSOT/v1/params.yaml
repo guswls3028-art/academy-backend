@@ -57,7 +57,7 @@ ecr:
 api:
   amiId: ami-0885e191a9bcf28b0
   instanceProfile: academy-ec2-role
-  securityGroupId: "sg-088fa3315c12754d0"
+  securityGroupId: "sg-088fa3315c12754d0"  # network.securityGroupApp와 동일. LT/health 일관성.
   instanceType: t4g.medium
   userData: ""
   asgName: academy-v1-api-asg
