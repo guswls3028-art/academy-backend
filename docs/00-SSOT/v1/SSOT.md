@@ -13,7 +13,7 @@
 | # | 컴포넌트 | 형태 | 리소스 이름 |
 |---|----------|------|-------------|
 | 1 | API | EC2 ASG + ALB | academy-v1-api-asg, academy-v1-api-alb |
-| 2 | Build | EC2 Tag `academy-build-arm64` | 이미지 빌드·ECR 푸시 |
+| 2 | Build | EC2 Tag `academy-build-arm64` | Spot 우선, 실패 시 온디맨드. 이미지 빌드·ECR 푸시 |
 | 3 | Video Worker | AWS Batch | academy-v1-video-batch-ce, academy-v1-video-batch-queue |
 | 4 | Ops Batch | Batch Ops CE/Queue + EventBridge | academy-v1-video-ops-*, academy-v1-reconcile-video-jobs, academy-v1-video-scan-stuck-rate |
 | 5 | AI Worker | ASG | academy-v1-ai-worker-asg, academy-v1-ai-queue |
@@ -80,3 +80,4 @@ pwsh scripts/v1/deploy.ps1 -Env prod
 - **기계 SSOT:** `docs/00-SSOT/v1/params.yaml`
 - **스펙 한눈에:** `docs/00-SSOT/v1/INFRA-AND-SPECS.md`
 - **계약:** `state-contract.md`, **운영:** `runbook.md`
+- **배포·검증·최종 보고:** `V1-DEPLOYMENT-PLAN.md`, `V1-DEPLOYMENT-VERIFICATION.md`, `V1-FINAL-REPORT.md`
