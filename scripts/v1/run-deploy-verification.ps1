@@ -416,10 +416,19 @@ if ($apiPublicUrl) {
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("| 항목 | 결과 | 근거 |")
 [void]$sb.AppendLine("|------|------|------|")
-[void]$sb.AppendLine("| 프론트 URL 접속 | $frontStatus | FRONT_APP_URL env 설정 시 자동 검사 |")
-[void]$sb.AppendLine("| 정적 자산(JS/CSS) 로딩 | 수동 검증 권장 | 브라우저 개발자도구 Network 탭 |")
-[void]$sb.AppendLine("| CDN 캐시 정책 | 수동 검증 권장 | Cache-Control 헤더, 배포 시 purge 전략 (params front.*) |")
+[void]$sb.AppendLine("| 프론트 URL 접속 | $frontStatus | " + $(if ($frontAppUrl) { "URL: $frontAppUrl/ 응답코드: $frontAppStatusCode" } else { "FRONT_APP_URL 또는 SSOT front.domains.app 설정 시 검사" }) + " |")
+if ($frontAppUrl -and $frontIndexCacheControl -ne "") {
+    [void]$sb.AppendLine("| index.html Cache-Control | " + $(if ($frontIndexCacheControl -match "max-age\s*=\s*0|no-cache") { "PASS (no-cache 계열)" } else { "WARNING/수동 확인" }) + " | $frontIndexCacheControl |")
+}
+if ($frontAssetSampleUrl -ne "") {
+    [void]$sb.AppendLine("| 해시 자산(JS/CSS) Cache-Control | " + $(if ($frontAssetCacheControl -match "31536000") { "PASS (1년)" } else { "WARNING/수동 확인" }) + " | 샘플: $frontAssetSampleUrl → $frontAssetCacheControl |")
+}
+[void]$sb.AppendLine("| 정적 자산(JS/CSS) 로딩 | " + $(if ($frontAssetSampleUrl) { "자동 검사 완료" } else { "수동 검증 권장" }) + " | " + $(if ($frontAssetSampleUrl) { "위 해시 자산 요청 근거" } else { "브라우저 개발자도구 Network 탭" }) + " |")
+[void]$sb.AppendLine("| CDN 캐시 정책 | " + $(if ($frontIndexCacheControl -ne "" -or $frontAssetCacheControl -ne "") { "근거 위 참조" } else { "수동 검증 권장" }) + " | Cache-Control 헤더, 배포 시 purge: SSOT front.purgeOnDeploy |")
 [void]$sb.AppendLine("| 프론트→API(CORS/쿠키/CSRF) | 수동 검증 권장 | 동일 도메인/credentials 요청 |")
+if ($corsStaticStatus -ne "not checked") {
+    [void]$sb.AppendLine("| CORS allowedOrigins 정적 검사 | $corsStaticStatus | $corsStaticDetail |")
+}
 [void]$sb.AppendLine("| R2 버킷 접근 | $r2Status | wrangler r2 bucket list |")
 [void]$sb.AppendLine("| **섹션 3 종합** | **$s3Front** | |")
 [void]$sb.AppendLine("")
