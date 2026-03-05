@@ -10,6 +10,7 @@ function Get-RepoRoot {
 
 function Load-EnvFile {
     param([string]$RepoRoot = (Get-RepoRoot))
+    if ($script:EnvLoaded) { return }
     $envPath = Join-Path $RepoRoot ".env"
     if (-not (Test-Path $envPath)) { return }
     $count = 0
@@ -24,6 +25,7 @@ function Load-EnvFile {
             $count++
         }
     }
+    $script:EnvLoaded = $true
     if ($count -gt 0) {
         Write-Host "  .env loaded ($count vars) from $envPath" -ForegroundColor DarkGray
     }
