@@ -156,16 +156,18 @@ if ($script:AiSqsQueueName -and $script:AiDlqSuffix) {
     } catch { }
 }
 if (-not $aiDlqUrl) { $aiDlqUrl = $script:AiSqsQueueUrl -replace '/academy-v1-ai-queue$', '/academy-v1-ai-queue-dlq' }
-try {
-    $dlqA = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $msgDlqUrl, "--attribute-names", "ApproximateNumberOfMessages", "--region", $R, "--output", "json")
-    $msgDlqDepth = $dlqA.Attributes.ApproximateNumberOfMessages
-} catch { $msgDlqDepth = "n/a" }
-try {
-    $dlqB = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $aiDlqUrl, "--attribute-names", "ApproximateNumberOfMessages", "--region", $R, "--output", "json")
-    $aiDlqDepth = $dlqB.Attributes.ApproximateNumberOfMessages
-} catch { $aiDlqDepth = "n/a" }
-if (-not $msgDlqUrl) { $msgDlqDepth = "n/a" }
-if (-not $aiDlqUrl) { $aiDlqDepth = "n/a" }
+if ($msgDlqUrl) {
+    try {
+        $dlqA = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $msgDlqUrl, "--attribute-names", "ApproximateNumberOfMessages", "--region", $R, "--output", "json")
+        $msgDlqDepth = $dlqA.Attributes.ApproximateNumberOfMessages
+    } catch { $msgDlqDepth = "n/a" }
+} else { $msgDlqDepth = "n/a" }
+if ($aiDlqUrl) {
+    try {
+        $dlqB = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $aiDlqUrl, "--attribute-names", "ApproximateNumberOfMessages", "--region", $R, "--output", "json")
+        $aiDlqDepth = $dlqB.Attributes.ApproximateNumberOfMessages
+    } catch { $aiDlqDepth = "n/a" }
+} else { $aiDlqDepth = "n/a" }
 if ([int]$msgDlqDepth -gt 0) { Add-Finding -Severity "WARNING" -Area "SQS" -Message "Messaging DLQ messages: $msgDlqDepth" }
 if ([int]$aiDlqDepth -gt 0) { Add-Finding -Severity "WARNING" -Area "SQS" -Message "AI DLQ messages: $aiDlqDepth" }
 
