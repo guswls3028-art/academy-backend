@@ -2,12 +2,6 @@
 # 사용: .env 로드 후 동일 세션에서 실행. -DryRun (기본) 시 삭제 없이 후보만 출력.
 # 실제 삭제: -Execute
 # 필요: AWS CLI 인증(동일 세션에서 .env의 AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION 설정)
-$ErrorActionPreference = "Stop"
-$ScriptRoot = $PSScriptRoot
-. (Join-Path $ScriptRoot "core\ssot.ps1")
-. (Join-Path $ScriptRoot "core\aws.ps1")
-$null = Load-SSOT -Env "prod"
-
 param(
     [switch]$DryRun,
     [switch]$Execute,
@@ -15,6 +9,11 @@ param(
     [switch]$InstancesOnly,
     [switch]$RemoveUnusedSGs
 )
+$ErrorActionPreference = "Stop"
+$ScriptRoot = $PSScriptRoot
+. (Join-Path $ScriptRoot "core\ssot.ps1")
+. (Join-Path $ScriptRoot "core\aws.ps1")
+$null = Load-SSOT -Env "prod"
 # 기본: DryRun. -Execute 이면 실제 삭제
 if (-not $PSBoundParameters.ContainsKey('DryRun')) { $DryRun = $true }
 if ($Execute) { $DryRun = $false }
