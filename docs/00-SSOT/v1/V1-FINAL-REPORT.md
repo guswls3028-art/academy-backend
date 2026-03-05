@@ -3,9 +3,9 @@
 **AI·Cursor 룰:** 본 문서를 포함한 리포지토리 내 **모든 문서·코드에 대해 AI(Cursor Agent)는 열람·수정 권한**이 있다. 배포·인프라·비용 작업 시 **.cursor/rules/** 내 해당 룰을 **적재적소에 항시 확인**한다.  
 **배포 원칙:** 모든 배포·재배포는 **빌드 서버 경유**이며, `-SkipBuild`는 예외 상황에만 사용한다. **비용 최적화:** ECR 라이프사이클 정책이 배포 시 자동 적용되어 불필요한 이미지를 남기지 않는다.
 
-**기준일:** 2026-03-05  
-**기준:** V1 SSOT (`docs/00-SSOT/v1/SSOT.md`, `params.yaml`)  
-**실제 배포:** `deploy.ps1` 실행 완료(JobDef·EventBridge·ALB·ASG·Batch·SSM 등 Ensure 완료). 빌드 서버 기동은 유효한 AWS 자격증명 환경에서 실행 시 Spot → 온디맨드 폴백으로 동작.
+**기준일:** 2026-03-06  
+**기준:** V1.1 SSOT (`docs/00-SSOT/v1/params.yaml`)  
+**변경:** API ASG 2/2/4(최소 HA), 롤링 배포 MinHealthyPercentage=100, RDS Performance Insights 7일, Observability SSOT, SQS DLQ/Visibility SSOT. 상세: `V1.1-OPERATIONS-GUIDE.md`.
 
 ---
 

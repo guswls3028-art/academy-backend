@@ -1,9 +1,9 @@
-# 인프라 및 스펙 한눈에 보기 (v1)
+# 인프라 및 스펙 한눈에 보기 (v1.1)
 
 **SSOT:** `docs/00-SSOT/v1/params.yaml`  
 **배포:** `scripts/v1/deploy.ps1`  
 **리전:** ap-northeast-2 · **계정:** 809466760795  
-**API ASG max:** 2 고정
+**V1.1:** API 2/2/4 최소 HA, 롤링 배포 무중단, RDS PI, Observability SSOT.
 
 ---
 
@@ -28,7 +28,7 @@
 | Target Group | academy-v1-api-tg |
 | Launch Template | academy-v1-api-lt |
 | 인스턴스 타입 | t4g.medium |
-| **min / max** | **1 / 2** (고정) |
+| **min / max** | **2 / 4** (V1.1 최소 HA) |
 
 ---
 
