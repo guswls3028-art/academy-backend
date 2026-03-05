@@ -1,9 +1,9 @@
-# 인프라 및 스펙 한눈에 보기 (v1.1)
+# 인프라 및 스펙 한눈에 보기 (V1)
 
 **SSOT:** `docs/00-SSOT/v1/params.yaml`  
 **배포:** `scripts/v1/deploy.ps1`  
 **리전:** ap-northeast-2 · **계정:** 809466760795  
-**V1.1:** API 2/2/4 최소 HA, 롤링 배포 무중단, RDS PI, Observability SSOT.
+**V1:** API 2/2/4 최소 HA, 롤링 배포 무중단, RDS PI, Observability SSOT. 첫 배포는 V1 기준만 사용.
 
 ---
 

@@ -100,7 +100,7 @@
 | 항목 | 스펙 |
 |------|------|
 | VPC | vpc-0831a2484f9b114c2 (172.30.0.0/16), academy-v1-* 네이밍 |
-| RDS | academy-db (PostgreSQL 15.16, db.t4g.medium, 20GB). V1.1: Performance Insights 7일, Multi-AZ toggle. master SSM: /academy/rds/master_password |
+| RDS | academy-db (PostgreSQL 15.16, db.t4g.medium, 20GB). V1: Performance Insights 7일, Multi-AZ toggle. master SSM: /academy/rds/master_password |
 | Observability | 로그 retention 30일. 알람 threshold SSOT(observability.*). API 5xx/Target Unhealthy, SQS/Batch/RDS/Redis (평가 5~15분) |
 | Redis | academy-v1-redis (cache.t4g.small, 7.1), academy-v1-redis-subnets |
 | SSM(워커 env) | /academy/workers/env |
@@ -113,4 +113,4 @@
 - **Evidence/Drift:** `docs/00-SSOT/v1/reports/audit.latest.md`, `drift.latest.md`
 - **배포 룰:** `.cursor/rules/07_deployment_orchestrator.mdc` · **인증:** `.cursor/rules/08_deployment_env_credentials.mdc` (에이전트 .env 직접 사용)
 - **상세 플랜·검증:** `V1-DEPLOYMENT-PLAN.md`, `V1-DEPLOYMENT-VERIFICATION.md`, `V1-FINAL-REPORT.md`, `INFRA-AND-SPECS.md`
-- **V1.1 운영:** `V1.1-OPERATIONS-GUIDE.md` (변경 이유, 기본값, 확장 경로, 검증 시나리오)
+- **V1 운영:** `V1-OPERATIONS-GUIDE.md` (설계 요약, 기본값, 확장 경로, 검증 시나리오)
