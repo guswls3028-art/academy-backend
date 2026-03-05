@@ -1,1 +1,1 @@
-{"jobQueueName":"academy-video-ops-queue","state":"ENABLED","priority":1,"computeEnvironmentOrder":[{"order":1,"computeEnvironment":"PLACEHOLDER_COMPUTE_ENV_NAME"}]}
+{"jobQueueName":"academy-v1-video-ops-queue","state":"ENABLED","priority":1,"computeEnvironmentOrder":[{"order":1,"computeEnvironment":"PLACEHOLDER_COMPUTE_ENV_NAME"}]}
