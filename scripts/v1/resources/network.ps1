@@ -319,8 +319,9 @@ function Ensure-ECR-VpcEndpoints {
     # S3 gateway endpoint (ECR image layers)
     $existingS3 = Invoke-AwsJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "Name=service-name,Values=$s3Svc", "--region", $region, "--output", "json") 2>$null
     if (-not $existingS3 -or -not $existingS3.VpcEndpoints -or $existingS3.VpcEndpoints.Count -eq 0) {
-        if (-not $script:PlanMode -and $rtIds -and $rtIds[0] -ne "") {
-            Invoke-Aws @("ec2", "create-vpc-endpoint", "--vpc-id", $vpcId, "--vpc-endpoint-type", "Gateway", "--service-name", $s3Svc, "--route-table-ids", $rtIds, "--region", $region) -ErrorMessage "create-vpc-endpoint s3" | Out-Null
+        if (-not $script:PlanMode -and $rtIds.Count -gt 0) {
+            $argsS3 = @("ec2", "create-vpc-endpoint", "--vpc-id", $vpcId, "--vpc-endpoint-type", "Gateway", "--service-name", $s3Svc, "--route-table-ids") + @($rtIds)
+            Invoke-Aws $argsS3 -ErrorMessage "create-vpc-endpoint s3" | Out-Null
             Write-Ok "VPC endpoint $s3Svc (gateway) created"
             $script:ChangesMade = $true
         }
