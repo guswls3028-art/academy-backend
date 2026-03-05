@@ -164,6 +164,8 @@ try {
     $dlqB = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $aiDlqUrl, "--attribute-names", "ApproximateNumberOfMessages", "--region", $R, "--output", "json")
     $aiDlqDepth = $dlqB.Attributes.ApproximateNumberOfMessages
 } catch { $aiDlqDepth = "n/a" }
+if (-not $msgDlqUrl) { $msgDlqDepth = "n/a" }
+if (-not $aiDlqUrl) { $aiDlqDepth = "n/a" }
 if ([int]$msgDlqDepth -gt 0) { Add-Finding -Severity "WARNING" -Area "SQS" -Message "Messaging DLQ messages: $msgDlqDepth" }
 if ([int]$aiDlqDepth -gt 0) { Add-Finding -Severity "WARNING" -Area "SQS" -Message "AI DLQ messages: $aiDlqDepth" }
 
