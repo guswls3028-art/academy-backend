@@ -1,11 +1,9 @@
 # AWS credential/region diagnostic — run in the same environment as deploy.ps1 (e.g. Cursor Run Command).
-# .env 자동 로드 후 환경 출력.
+# 스크립트는 .env를 로드하지 않음. 호출 전에 에이전트가 .env를 환경변수로 설정한 뒤 실행한다.
 # Usage: pwsh scripts/v1/aws-diagnose.ps1
 $ErrorActionPreference = "Continue"
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-. (Join-Path $ScriptRoot "core\env.ps1")
-Load-EnvFile -RepoRoot $RepoRoot | Out-Null
 
 $R = "ap-northeast-2"
 if ($env:AWS_DEFAULT_REGION) { $R = $env:AWS_DEFAULT_REGION }

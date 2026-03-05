@@ -2,16 +2,12 @@
 # Academy v1 — 새 PC 5단계 검증 자동화.
 # 1) bootstrap  2) deploy -Plan  3) deploy -PruneLegacy  4) deploy 재실행(No-op)  5) Evidence 위치 안내
 # 로그: logs/v1/YYYYMMDD-HHMMSS-verify.log
-# .env 자동 로드 — AWS 권한 수동 설정 불필요.
+# 인증: 스크립트는 .env를 로드하지 않음. Cursor가 루트 .env를 환경변수로 설정한 뒤 실행한다.
 # ==============================================================================
 param([string]$AwsProfile = "")
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-
-# .env 자동 로드 (자식 프로세스 deploy/bootstrap 에도 상속됨)
-. (Join-Path $ScriptRoot "core\env.ps1")
-Load-EnvFile -RepoRoot $RepoRoot | Out-Null
 
 if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
     $env:AWS_PROFILE = $AwsProfile.Trim()
