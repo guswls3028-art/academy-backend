@@ -14,14 +14,19 @@ function Set-ECRLifecyclePolicy {
     $policyPath = Get-ECRLifecyclePolicyPath
     if (-not $policyPath) { Write-Warn "ECR lifecycle policy file not found; skip apply for $RepositoryName"; return }
     if ($script:PlanMode) { return }
-    $pathForUri = $policyPath -replace '\\','/'
-    if ($pathForUri -match '^[A-Za-z]:') { $pathForUri = "/$pathForUri" }
-    $pathArg = "file://$pathForUri"
+    $policyJson = Get-Content -LiteralPath $policyPath -Raw -Encoding UTF8
+    if (-not $policyJson -or $policyJson.Trim() -eq '') { Write-Warn "ECR lifecycle policy empty; skip $RepositoryName"; return }
     try {
+        $tmpFile = [System.IO.Path]::GetTempFileName()
+        [System.IO.File]::WriteAllText($tmpFile, $policyJson, [System.Text.UTF8Encoding]::new($false))
+        $pathArg = "file://$($tmpFile -replace '\\','/')"
+        if ($pathArg -match '^file://[A-Za-z]:') { $pathArg = "file:///$($tmpFile -replace '\\','/')" }
         Invoke-Aws @("ecr", "put-lifecycle-policy", "--repository-name", $RepositoryName, "--lifecycle-policy-text", $pathArg, "--region", $script:Region) -ErrorMessage "put-lifecycle-policy $RepositoryName" | Out-Null
         Write-Ok "ECR lifecycle policy applied: $RepositoryName"
     } catch {
         Write-Warn "ECR lifecycle policy apply failed for $RepositoryName : $_"
+    } finally {
+        if ($tmpFile -and (Test-Path -LiteralPath $tmpFile)) { Remove-Item -LiteralPath $tmpFile -Force -ErrorAction SilentlyContinue }
     }
 }
 
