@@ -194,7 +194,8 @@ foreach ($r in $ebLines) { [void]$sb.AppendLine("| $($r.Rule) | $($r.State) | $(
 [void]$sb.AppendLine("## Security Groups (VPC)")
 [void]$sb.AppendLine("| GroupId | GroupName | ENI count |")
 [void]$sb.AppendLine("|---------|-----------|----------|")
-foreach ($g in ($sgLines | Sort-Object -Property EniCount -Descending, GroupName)) {
+$sortedSg = $sgLines | Sort-Object -Property @{ Expression = { $_.EniCount }; Descending = $true }, @{ Expression = { $_.GroupName }; Descending = $false }
+foreach ($g in $sortedSg) {
     [void]$sb.AppendLine("| $($g.GroupId) | $($g.GroupName) | $($g.EniCount) |")
 }
 
