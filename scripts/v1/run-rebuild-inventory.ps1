@@ -19,7 +19,16 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
 $null = Load-SSOT -Env prod
 $script:PlanMode = $true  # read-only 보장
 $R = $script:Region
+if (-not $R -or $R.Trim() -eq "") {
+    $R = if ($env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION } else { "ap-northeast-2" }
+}
 $VpcId = $script:VpcId
+if (-not $VpcId -or $VpcId.Trim() -eq "") {
+    try {
+        $raw = Get-Content (Join-Path $RepoRoot "docs/00-SSOT/v1/params.yaml") -Raw
+        if ($raw -match 'vpcId:\s*\"(vpc-[a-zA-Z0-9]+)\"') { $VpcId = $matches[1] }
+    } catch { }
+}
 
 function SafeJson { param([string[]]$args)
     $r = Invoke-AwsJson $args
