@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 REGION = getattr(settings, "AWS_DEFAULT_REGION", None) or __import__("os").environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
 OLDER_THAN_MINUTES_DEFAULT = 5
-VIDEO_BATCH_JOB_QUEUE = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-video-batch-queue")
+VIDEO_BATCH_JOB_QUEUE = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
 RECONCILE_LOCK_KEY = "video:reconcile:lock"
 RECONCILE_LOCK_TTL_SECONDS = 600
 NOT_FOUND_COUNT_KEY_PREFIX = "video:reconcile:not_found:"

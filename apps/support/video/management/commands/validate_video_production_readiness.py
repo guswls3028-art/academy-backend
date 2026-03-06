@@ -14,9 +14,9 @@ from django.conf import settings
 from django.db import connection
 
 REGION = getattr(settings, "AWS_DEFAULT_REGION", None) or __import__("os").environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
-QUEUE_NAME = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-video-batch-queue")
-JOB_DEF_NAME = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", "academy-video-batch-jobdef")
-CE_NAME = getattr(settings, "VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-video-batch-ce-v3")
+QUEUE_NAME = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
+JOB_DEF_NAME = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
+CE_NAME = getattr(settings, "VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce")
 RECONCILE_RULE = "academy-reconcile-video-jobs"
 SCAN_STUCK_RULE = "academy-video-scan-stuck-rate"
 SSM_PARAM = "/academy/workers/env"
