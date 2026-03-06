@@ -125,8 +125,7 @@ function Ensure-EC2InstanceProfileSSM {
     $policyApiVideo = Join-Path $TemplatesPath "policy_api_video_upload.json"
     if (Test-Path $policyApiVideo) {
         $inlineName = "academy-api-video-upload"
-        Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyApiVideo -replace '\\','/')") -ErrorMessage "put API video upload policy" 2>$null | Out-Null
+        Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyApiVideo -replace '\\','/')") -ErrorMessage "put API video upload policy" | Out-Null
         Write-Ok "Ensured inline policy $inlineName on $roleName (Batch+DynamoDB for upload_complete)"
-        $script:ChangesMade = $true
     }
 }
