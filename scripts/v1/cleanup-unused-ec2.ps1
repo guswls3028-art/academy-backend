@@ -34,8 +34,6 @@ $KeepASGNames = @(
 )
 # Batch Ops CE가 만드는 ASG (이름이 academy-v1-video-ops-ce-asg- 로 시작)
 $BatchOpsASGPrefix = "academy-v1-video-ops-ce-asg-"
-$BuildTagKey = $script:BuildTagKey
-$BuildTagValue = $script:BuildTagValue
 
 function Get-UsedInstanceIds {
     $used = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -50,13 +48,7 @@ function Get-UsedInstanceIds {
             }
         }
     }
-    $tagFilter = "Name=tag:$BuildTagKey,Values=$BuildTagValue"
-    $res = Invoke-AwsJson @("ec2", "describe-instances", "--filters", $tagFilter, "Name=instance-state-name,Values=running,pending,stopped", "--region", $R, "--output", "json")
-    if ($res -and $res.Reservations) {
-        foreach ($rev in $res.Reservations) {
-            foreach ($i in $rev.Instances) { [void]$used.Add($i.InstanceId) }
-        }
-    }
+    # Build server DEPRECATED: GitHub Actions only (no build EC2)
     return [string[]]@($used)
 }
 
@@ -79,7 +71,7 @@ function Remove-UnusedEIPs {
         [void]$toRelease.Add($a)
     }
     if ($toRelease.Count -eq 0) {
-        Write-Host "  EIP: no unused addresses to release (NAT EIP kept)." -ForegroundColor Green
+        Write-Host "  EIP: no unused addresses to release." -ForegroundColor Green
         return
     }
     Write-Host "  EIP: $($toRelease.Count) unused (will release unless DryRun)" -ForegroundColor Yellow
@@ -111,7 +103,7 @@ function Remove-OrphanInstances {
         Write-Host "  Instances: no orphan instances in VPC $VpcId" -ForegroundColor Green
         return
     }
-    Write-Host "  Instances: $($toTerminate.Count) orphan(s) (not in v1 ASGs / build tag)" -ForegroundColor Yellow
+    Write-Host "  Instances: $($toTerminate.Count) orphan(s) (not in v1 ASGs)" -ForegroundColor Yellow
     foreach ($i in $toTerminate) {
         $name = ($i.Tags | Where-Object { $_.Key -eq "Name" } | Select-Object -First 1).Value
         Write-Host "    - $($i.InstanceId) $($i.State.Name) Name=$name" -ForegroundColor Gray
