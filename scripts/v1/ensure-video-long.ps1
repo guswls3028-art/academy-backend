@@ -21,8 +21,10 @@ if ($AwsProfile) { $env:AWS_PROFILE = $AwsProfile; if (-not $env:AWS_DEFAULT_REG
 $null = Load-SSOT -Env "prod"
 $script:BatchIam = Ensure-BatchIAM
 if (-not $script:BatchSecurityGroupId) {
-    $ce = aws batch describe-compute-environments --compute-environments academy-v1-video-batch-ce --region $script:Region --query "computeEnvironments[0].computeResources.securityGroupIds[0]" --output text 2>$null
-    if ($ce) { $script:BatchSecurityGroupId = $ce.Trim() }
+    $ce = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", "academy-v1-video-batch-ce", "--region", $script:Region, "--output", "json") 2>$null
+    if ($ce -and $ce.computeEnvironments -and $ce.computeEnvironments[0].computeResources.securityGroupIds[0]) {
+        $script:BatchSecurityGroupId = $ce.computeEnvironments[0].computeResources.securityGroupIds[0]
+    }
 }
 if (-not $script:BatchSecurityGroupId) { throw "BatchSecurityGroupId required. Ensure network/sg-batch exists." }
 
