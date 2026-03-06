@@ -7,7 +7,7 @@
 param([string]$AwsProfile = "")
 
 $ErrorActionPreference = "Stop"
-. (Join-Path $PSScriptRoot "..\core\env.ps1")
+. (Join-Path $PSScriptRoot "core\env.ps1")
 if ($AwsProfile) { $env:AWS_PROFILE = $AwsProfile; if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" } }
 
 . (Join-Path $PSScriptRoot "core\ssot.ps1")
