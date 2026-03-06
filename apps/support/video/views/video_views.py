@@ -368,12 +368,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         try:
             return self._upload_complete_impl(video)
         except Exception as e:
-            import traceback
             logger.exception(
-                "VIDEO_UPLOAD_COMPLETE_ERROR | video_id=%s | %s | traceback=%s",
+                "VIDEO_UPLOAD_COMPLETE_ERROR | video_id=%s | type=%s | %s",
                 getattr(video, "id", None),
+                type(e).__name__,
                 e,
-                traceback.format_exc(),
             )
             return Response(
                 {"detail": "업로드 완료 처리 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."},
