@@ -267,6 +267,53 @@ try {
             Write-Warn "Front deploy failed (deploy continues): $_"
         }
     }
+
+    # After-deploy verification (MinimalDeploy: ALB targets, Workers, Batch CE/Queue)
+    if (-not $Plan) {
+        $verifyOk = $true
+        $R = $script:Region
+        Write-Host "`n=== After-Deploy Verification ===" -ForegroundColor Cyan
+        try {
+            $asgAll = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--region", $R, "--output", "json")
+            $asgNames = @($script:AiASGName, $script:MessagingASGName, $script:ApiASGName) | Where-Object { $_ }
+            foreach ($name in $asgNames) {
+                $a = $asgAll.AutoScalingGroups | Where-Object { $_.AutoScalingGroupName -eq $name } | Select-Object -First 1
+                if ($a) {
+                    $desired = $a.DesiredCapacity; $running = ($a.Instances | Where-Object { $_.LifecycleState -eq "InService" }).Count
+                    Write-Host "  ASG $name : desired=$desired inService=$running" -ForegroundColor $(if ($running -ge 1) { "Green" } else { "Yellow" })
+                    if ($running -lt 1 -and $desired -ge 1) { $verifyOk = $false }
+                }
+            }
+            $tg = Invoke-AwsJson @("elbv2", "describe-target-groups", "--names", $script:ApiTargetGroupName, "--region", $R, "--output", "json") 2>$null
+            if ($tg -and $tg.TargetGroups -and $tg.TargetGroups.Count -gt 0) {
+                $th = Invoke-AwsJson @("elbv2", "describe-target-health", "--target-group-arn", $tg.TargetGroups[0].TargetGroupArn, "--region", $R, "--output", "json") 2>$null
+                $healthy = @($th.TargetHealthDescriptions | Where-Object { $_.TargetHealth.State -eq "healthy" }).Count
+                $total = if ($th.TargetHealthDescriptions) { $th.TargetHealthDescriptions.Count } else { 0 }
+                Write-Host "  ALB target health : $healthy / $total healthy" -ForegroundColor $(if ($healthy -ge 1) { "Green" } else { "Yellow" })
+                if ($healthy -lt 1 -and $total -gt 0) { $verifyOk = $false }
+            }
+            $ce = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:VideoCEName, "--region", $R, "--output", "json") 2>$null
+            if ($ce -and $ce.computeEnvironments -and $ce.computeEnvironments.Count -gt 0) {
+                $ceStatus = $ce.computeEnvironments[0].status; $ceState = $ce.computeEnvironments[0].state
+                Write-Host "  Batch Video CE : status=$ceStatus state=$ceState" -ForegroundColor $(if ($ceStatus -eq "VALID") { "Green" } else { "Yellow" })
+                if ($ceStatus -ne "VALID") { $verifyOk = $false }
+            }
+            $q = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoQueueName, "--region", $R, "--output", "json") 2>$null
+            if ($q -and $q.jobQueues -and $q.jobQueues.Count -gt 0) {
+                $qState = $q.jobQueues[0].state
+                Write-Host "  Batch Video Queue : state=$qState" -ForegroundColor $(if ($qState -eq "ENABLED") { "Green" } else { "Yellow" })
+                if ($qState -ne "ENABLED") { $verifyOk = $false }
+            }
+        } catch {
+            Write-Warn "Verification error: $_"
+            $verifyOk = $false
+        }
+        if ($verifyOk) {
+            Write-Host "`nDEPLOY_SUCCESS" -ForegroundColor Green
+        } else {
+            Write-Host "`nDEPLOY_SUCCESS (verification warnings - check ASG/ALB/Batch above)" -ForegroundColor Yellow
+        }
+    }
 }
 catch {
     Write-Fail $_.Exception.Message
