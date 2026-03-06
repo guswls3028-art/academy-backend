@@ -78,7 +78,8 @@ api:
   healthPath: /healthz
   instanceTagKey: Name
   instanceTagValue: academy-v1-api
-  apiBaseUrl: ""
+  # 배포된 ALB URL. api.hakwonplus.com이 ALB를 가리키면 해당 도메인 사용.
+  apiBaseUrl: "http://academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com"
 
 messagingWorker:
   asgName: academy-v1-messaging-worker-asg
@@ -236,8 +237,8 @@ r2:
 # 도메인/라우팅: app.<domain> → CDN → R2(static), api.<domain> → ALB(또는 Cloudflare proxy 정책 명시).
 front:
   domains:
-    app: ""          # 예: app.hakwonplus.com
-    api: ""          # 예: api.hakwonplus.com
+    app: ""          # 예: app.hakwonplus.com, academy-frontend-26b.pages.dev
+    api: "http://academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com"  # 현재 배포된 ALB. Cloudflare proxy 시 https://api.hakwonplus.com 사용
   cors:
     allowedOrigins: []  # [ "https://app.hakwonplus.com" ] — 와일드카드 금지
     credentials: true   # 쿠키 인증 사용 시 true
