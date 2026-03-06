@@ -194,13 +194,15 @@ function Ensure-OpsCE {
             else { Write-Warn "Ops CE INVALID; skip recreate." }
             return
         }
-        if ($opsTypeDrift) { Write-Host "  Ops CE instance type drift -> disable queue, disable CE, delete, create ($($script:OpsCEInstanceType)), enable queue" -ForegroundColor Yellow }
-        else { Write-Host "  INVALID -> disable queue, disable CE, delete, wait, create, wait" -ForegroundColor Yellow }
+        if ($opsTypeDrift) { Write-Host "  Ops CE instance type drift -> disable queue, delete queue, disable CE, delete, create ($($script:OpsCEInstanceType)), create queue" -ForegroundColor Yellow }
+        else { Write-Host "  INVALID -> disable queue, delete queue, disable CE, delete, wait, create, create queue" -ForegroundColor Yellow }
         $script:ChangesMade = $true
         $qCheck = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:OpsQueueName, "--region", $script:Region, "--output", "json")
         if ($qCheck -and $qCheck.jobQueues -and $qCheck.jobQueues.Count -gt 0) {
-            Invoke-Aws @("batch", "update-job-queue", "--job-queue", $script:OpsQueueName, "--state", "DISABLED", "--region", $script:Region) 2>$null | Out-Null
+            Invoke-Aws @("batch", "update-job-queue", "--job-queue", $script:OpsQueueName, "--state", "DISABLED", "--region", $script:Region) -ErrorMessage "disable Ops queue" | Out-Null
             $wait = 0; while ($wait -lt 90) { Start-Sleep -Seconds 5; $wait += 5; $q = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:OpsQueueName, "--region", $script:Region, "--output", "json"); if ($q -and $q.jobQueues -and $q.jobQueues[0].state -eq "DISABLED") { break } }
+            Invoke-Aws @("batch", "delete-job-queue", "--job-queue", $script:OpsQueueName, "--region", $script:Region) -ErrorMessage "delete Ops queue (required before CE delete)" | Out-Null
+            $wait = 0; while ($wait -lt 60) { Start-Sleep -Seconds 5; $wait += 5; $dq = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:OpsQueueName, "--region", $script:Region, "--output", "json"); if (-not $dq -or -not $dq.jobQueues -or $dq.jobQueues.Count -eq 0) { break } }
         }
         Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $script:OpsCEName, "--state", "DISABLED", "--region", $script:Region) | Out-Null
         $wait = 0; while ($wait -lt 120) { Start-Sleep -Seconds 5; $wait += 5; $ce2 = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:OpsCEName, "--region", $script:Region, "--output", "json"); if ($ce2 -and $ce2.computeEnvironments -and $ce2.computeEnvironments[0].state -eq "DISABLED") { break } }
