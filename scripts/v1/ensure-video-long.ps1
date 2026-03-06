@@ -39,6 +39,7 @@ $script:VideoLongMaxvCpus = 80
 $script:VideoLongInstanceType = "c6g.xlarge"
 $script:PlanMode = $false
 $script:AllowRebuild = $true
+$script:EcrUseLatestTag = $true
 
 Write-Host "=== Ensure Video Long (3시간+ 영상용) ===" -ForegroundColor Cyan
 Ensure-VideoLongCE
