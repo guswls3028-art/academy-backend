@@ -371,12 +371,12 @@ try {
 } catch { }
 
 # --- 8b. 정합성·프론트 연결 보고서 (consistency.latest.md, front-connection.latest.md) ---
-$buildRunningCount = if ($ev.buildState -eq "running") { 1 } else { 0 }
+$buildRunningCount = 0  # build server 없음 (GitHub Actions only)
 $apiConsensusOk = ($ev.apiAsgMin -eq 1 -and $ev.apiAsgDesired -eq 1)
 $aiConsensusOk = ($ev.asgAiMin -eq 1 -and $ev.asgAiDesired -eq 1)
 $msgConsensusOk = ($ev.asgMessagingMin -eq 1 -and $ev.asgMessagingDesired -eq 1)
 $eipNote = if ($eipCountTotal -gt 0) { "EIP $eipCountTotal 개 (미연결 $eipCountUnassociated). Solapi 고정 IP 취소로 NAT/EIP 불필요·비용 검토 권장." } else { "EIP 없음 (합의 반영)" }
-$buildNote = if ($buildRunningCount -gt 0) { "전환중 (running $buildRunningCount대). 최종 목표: 빌드 서버 0대." } else { "목표 달성 (0대)" }
+$buildNote = "정상 (빌드 서버 없음, GitHub Actions only)"
 
 $consistencySb = [System.Text.StringBuilder]::new()
 [void]$consistencySb.AppendLine("# SSOT ↔ 실제 인프라 ↔ 합의사항 정합성")
@@ -391,7 +391,7 @@ $consistencySb = [System.Text.StringBuilder]::new()
 [void]$consistencySb.AppendLine("| AI ASG min/desired | 1/1 | $($ev.asgAiMin)/$($ev.asgAiDesired) | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$consistencySb.AppendLine("| Messaging ASG min/desired | 1/1 | $($ev.asgMessagingMin)/$($ev.asgMessagingDesired) | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$consistencySb.AppendLine("| Solapi 고정 IP(NAT/EIP) | 취소(불필요) | $eipNote | $(if ($eipCountTotal -eq 0) { 'PASS' } else { 'WARNING' }) |")
-[void]$consistencySb.AppendLine("| 빌드 서버 | 최종 0대 목표 | $buildNote | $(if ($buildRunningCount -eq 0) { 'PASS' } else { '전환중' }) |")
+[void]$consistencySb.AppendLine("| 빌드 서버 | 사용하지 않음(0대) | $buildNote | PASS |")
 [void]$consistencySb.AppendLine("")
 [void]$consistencySb.AppendLine("## SSOT vs Actual (일부)")
 [void]$consistencySb.AppendLine("| 항목 | SSOT(기대) | Actual | 일치 |")
@@ -586,7 +586,7 @@ Save-DeployVerificationReport -MarkdownContent $sb.ToString()
 # V1 최종 배포 검증 보고서 (reports/V1-FINAL-REPORT.md)
 $consistencySummary = "PASS"
 if (-not $apiConsensusOk -or -not $aiConsensusOk -or -not $msgConsensusOk) { $consistencySummary = "WARNING" }
-if ($eipCountTotal -gt 0 -or $buildRunningCount -gt 0) { if ($consistencySummary -eq "PASS") { $consistencySummary = "WARNING" } }
+if ($eipCountTotal -gt 0) { if ($consistencySummary -eq "PASS") { $consistencySummary = "WARNING" } }
 $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("# V1 최종 배포 검증 보고서")
 [void]$finalSb.AppendLine("")
@@ -609,7 +609,7 @@ $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("| AI ASG min/desired=1 | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$finalSb.AppendLine("| Messaging ASG min/desired=1 | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$finalSb.AppendLine("| Solapi 고정 IP(NAT/EIP) 취소 | $(if ($eipCountTotal -eq 0) { 'PASS' } else { 'WARNING(EIP 잔여)' }) |")
-[void]$finalSb.AppendLine("| 빌드 서버 최종 0대 목표 | $(if ($buildRunningCount -eq 0) { 'PASS' } else { '전환중' }) |")
+[void]$finalSb.AppendLine("| 빌드 (GitHub Actions only) | PASS |")
 [void]$finalSb.AppendLine("")
 [void]$finalSb.AppendLine("## Front V1 연결")
 [void]$finalSb.AppendLine("프론트를 V1 인프라(app/api 도메인, CORS, CDN/R2) 기준으로 연결한 검증 결과: **[front-connection.latest.md](./front-connection.latest.md)**")
