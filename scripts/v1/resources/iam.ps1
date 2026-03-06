@@ -121,4 +121,12 @@ function Ensure-EC2InstanceProfileSSM {
     } else {
         Write-Ok "EC2 role $roleName already has AmazonEC2ContainerRegistryPowerUser"
     }
+    # API upload_complete: Batch SubmitJob + DynamoDB video job lock
+    $policyApiVideo = Join-Path $TemplatesPath "policy_api_video_upload.json"
+    if (Test-Path $policyApiVideo) {
+        $inlineName = "academy-api-video-upload"
+        Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyApiVideo -replace '\\','/')") -ErrorMessage "put API video upload policy" 2>$null | Out-Null
+        Write-Ok "Ensured inline policy $inlineName on $roleName (Batch+DynamoDB for upload_complete)"
+        $script:ChangesMade = $true
+    }
 }
