@@ -299,7 +299,8 @@ function Ensure-ECR-VpcEndpoints {
     }
     $rtIds = @($rtIds | Where-Object { $_ -and $_ -match '^rtb-' })
 
-    # ECR API interface endpoint
+    # ECR API interface endpoint (skip when SkipEcrVpcEndpoints - instances use public internet)
+    if ($script:SkipEcrVpcEndpoints) { Write-Ok "ECR VPC endpoints skipped (MinimalDeploy)" } else {
     $existing = Invoke-AwsJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "Name=service-name,Values=$ecrApiSvc", "--region", $region, "--output", "json") 2>$null
     if (-not $existing -or -not $existing.VpcEndpoints -or $existing.VpcEndpoints.Count -eq 0) {
         if (-not $script:PlanMode) {
@@ -333,8 +334,10 @@ function Ensure-ECR-VpcEndpoints {
             }
         }
     }
+    }
 
     # ECR DKR interface endpoint
+    if (-not $script:SkipEcrVpcEndpoints) {
     $existingDkr = Invoke-AwsJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "Name=service-name,Values=$ecrDkrSvc", "--region", $region, "--output", "json") 2>$null
     if (-not $existingDkr -or -not $existingDkr.VpcEndpoints -or $existingDkr.VpcEndpoints.Count -eq 0) {
         if (-not $script:PlanMode) {
@@ -367,6 +370,7 @@ function Ensure-ECR-VpcEndpoints {
                 }
             }
         }
+    }
     }
 
     # S3 gateway endpoint (ECR image layers)
