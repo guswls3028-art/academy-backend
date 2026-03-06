@@ -240,8 +240,7 @@ front:
     app: ""          # 예: app.hakwonplus.com, academy-frontend-26b.pages.dev
     api: ""  # alb.ps1/ALB DNS 사용. Cloudflare proxy 시 https://api.hakwonplus.com
   cors:
-    # 백엔드 prod.py CORS_ALLOWED_ORIGINS와 동기화. *.pages.dev는 REGEX로 처리.
-    allowedOrigins: ["https://academy-frontend.pages.dev", "https://academy-frontend-26b.pages.dev", "http://localhost:5174", "http://localhost:4173"]
+    allowedOrigins: []  # [ "https://app.hakwonplus.com" ] — 와일드카드 금지
     credentials: true   # 쿠키 인증 사용 시 true
   deployStrategy: "versioned"  # versioned | atomic
   buildOutputDir: "dist"       # Vite 등 빌드 산출물 디렉터리(프론트 repo 기준)
