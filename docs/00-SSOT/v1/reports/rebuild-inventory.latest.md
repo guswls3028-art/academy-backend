@@ -1,6 +1,6 @@
 # V1 Stateless Compute 재구축 — 인벤토리 (스냅샷)
 
-**Generated:** 2026-03-06T15:42:42.5384965+09:00  
+**Generated:** 2026-03-06T15:45:38.8679257+09:00  
 **리전:**   
 **SSOT:** docs/00-SSOT/v1/params.yaml
 
