@@ -121,7 +121,7 @@ class VideoProgressView(APIView):
                     cached_status = {"status": "PROCESSING"}
                     if video.session and video.session.lecture:
                         tenant = video.session.lecture.tenant
-                elif video.status == "READY" and video.hls_path:
+                elif video.status == getattr(video.Status, "READY", "READY") and video.hls_path:
                     cached_status = {
                         "status": "READY",
                         "hls_path": video.hls_path,
@@ -129,7 +129,7 @@ class VideoProgressView(APIView):
                     }
                     if video.session and video.session.lecture:
                         tenant = video.session.lecture.tenant
-                elif video.status == "FAILED":
+                elif str(video.status) == "FAILED":
                     cached_status = {
                         "status": "FAILED",
                         "error_reason": getattr(video, "error_reason", "") or "",
