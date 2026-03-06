@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 HEARTBEAT_STALE_MINUTES = 5
 REGION = getattr(settings, "AWS_DEFAULT_REGION", None) or __import__("os").environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
-VIDEO_BATCH_JOB_QUEUE = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-video-batch-queue")
+VIDEO_BATCH_JOB_QUEUE = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
 RECONCILE_RULE_NAME = "academy-reconcile-video-jobs"
 SCAN_STUCK_RULE_NAME = "academy-video-scan-stuck-rate"
 
