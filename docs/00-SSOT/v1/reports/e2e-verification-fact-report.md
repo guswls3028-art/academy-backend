@@ -146,3 +146,13 @@
 | 업로드 E2E | 인증 필요 — 수동 | ⏳ |
 | 비디오 API | 인증 필요 — 수동 | ⏳ |
 | 브라우저 에러 | 수동 DevTools | ⏳ |
+
+---
+
+## 12. 적용된 수정 (2026-03-06)
+
+| 수정 | 실행 | 결과 |
+|------|------|------|
+| API ASG instance refresh | `aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg ...` | InstanceRefreshId: `9b876d82-b666-4c78-a13e-5c3fc817cfc4` |
+
+- **검증:** refresh 완료 후(약 5~10분) `Invoke-CollectRuntimeImagesReport` 또는 수동으로 인스턴스 digest 확인.
