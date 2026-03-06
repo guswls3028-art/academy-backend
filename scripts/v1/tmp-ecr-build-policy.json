@@ -1,0 +1,39 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload"
+      ],
+      "Resource": "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:CreateRepository",
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:ListImages"
+      ],
+      "Resource": [
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-base",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-api",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-video-worker",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-messaging-worker",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-ai-worker-cpu"
+      ]
+    }
+  ]
+}
