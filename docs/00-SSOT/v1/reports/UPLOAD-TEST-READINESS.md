@@ -63,6 +63,10 @@ curl -s -o NUL -w "%{http_code}" https://api.hakwonplus.com/healthz
 
 # program (테넌트 도메인)
 curl -s "https://api.hakwonplus.com/api/v1/core/program/" -H "X-Tenant-Code: hakwonplus"
+
+# upload/complete API 직접 호출 (VideoId, JWT 필요)
+pwsh scripts/v1/test-upload-complete.ps1 -VideoId 187 -Token "Bearer <JWT>"
+# JWT: hakwonplus.com 로그인 후 DevTools > Application > Local Storage > access
 ```
 
 ---
