@@ -15,7 +15,7 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
 }
 
 . (Join-Path $ScriptRoot "core\ssot.ps1")
-. (Join-Path $ScriptRoot "core\aws.ps1")
+$null = $null
 $null = Load-SSOT -Env prod
 $script:PlanMode = $true  # read-only 보장
 $R = $script:Region
@@ -30,15 +30,26 @@ if (-not $VpcId -or $VpcId.Trim() -eq "") {
     } catch { }
 }
 
-function SafeJson { param([string[]]$args)
-    $r = Invoke-AwsJson $args
-    return $r
+function AwsJson {
+    param([string[]]$ArgsArray)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = & aws @ArgsArray 2>&1
+    $exit = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($exit -ne 0) { return $null }
+    if (-not $out) { return $null }
+    try {
+        $str = ($out | Out-String).Trim()
+        if (-not $str) { return $null }
+        return $str | ConvertFrom-Json
+    } catch { return $null }
 }
 
 $generated = Get-Date -Format "o"
 
 # EC2 running (tag 의존 제거: ASG 소속 + Name prefix로 필터)
-$inst = SafeJson @("ec2","describe-instances","--filters","Name=instance-state-name,Values=running","--region",$R,"--output","json")
+$inst = AwsJson @("ec2","describe-instances","--filters","Name=instance-state-name,Values=running","--region",$R,"--output","json")
 $instances = @()
 if ($inst -and $inst.Reservations) {
     foreach ($rev in $inst.Reservations) {
@@ -56,7 +67,7 @@ if ($inst -and $inst.Reservations) {
 }
 
 # ASG (v1 관련)
-$asg = SafeJson @("autoscaling","describe-auto-scaling-groups","--region",$R,"--output","json")
+$asg = AwsJson @("autoscaling","describe-auto-scaling-groups","--region",$R,"--output","json")
 $asgs = @()
 $asgInstanceIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 if ($asg -and $asg.AutoScalingGroups) {
@@ -79,18 +90,18 @@ if ($asg -and $asg.AutoScalingGroups) {
 # ALB/TG
 $alb = $null
 if ($script:ApiAlbName) {
-    $alb = SafeJson @("elbv2","describe-load-balancers","--names",$script:ApiAlbName,"--region",$R,"--output","json")
+    $alb = AwsJson @("elbv2","describe-load-balancers","--names",$script:ApiAlbName,"--region",$R,"--output","json")
 }
 $tg = $null
 $healthy = 0
 $total = 0
 $healthPath = ""
 if ($script:ApiTargetGroupName) {
-    $tg = SafeJson @("elbv2","describe-target-groups","--names",$script:ApiTargetGroupName,"--region",$R,"--output","json")
+    $tg = AwsJson @("elbv2","describe-target-groups","--names",$script:ApiTargetGroupName,"--region",$R,"--output","json")
     if ($tg -and $tg.TargetGroups -and $tg.TargetGroups.Count -gt 0) {
         $healthPath = $tg.TargetGroups[0].HealthCheckPath
         $tgArn = $tg.TargetGroups[0].TargetGroupArn
-        $th = SafeJson @("elbv2","describe-target-health","--target-group-arn",$tgArn,"--region",$R,"--output","json")
+        $th = AwsJson @("elbv2","describe-target-health","--target-group-arn",$tgArn,"--region",$R,"--output","json")
         if ($th -and $th.TargetHealthDescriptions) {
             $total = $th.TargetHealthDescriptions.Count
             $healthy = @($th.TargetHealthDescriptions | Where-Object { $_.TargetHealth.State -eq "healthy" }).Count
@@ -101,7 +112,7 @@ if ($script:ApiTargetGroupName) {
 # Batch CE/Queue/JobDef (names from SSOT arrays)
 $batchLines = [System.Collections.ArrayList]::new()
 foreach ($ceName in @($script:SSOT_CE | Where-Object { $_ })) {
-    $ce = SafeJson @("batch","describe-compute-environments","--compute-environments",$ceName,"--region",$R,"--output","json")
+    $ce = AwsJson @("batch","describe-compute-environments","--compute-environments",$ceName,"--region",$R,"--output","json")
     $status = "not found"
     $state = ""
     if ($ce -and $ce.computeEnvironments -and $ce.computeEnvironments.Count -gt 0) {
@@ -111,13 +122,13 @@ foreach ($ceName in @($script:SSOT_CE | Where-Object { $_ })) {
     [void]$batchLines.Add([PSCustomObject]@{ Type="CE"; Name=$ceName; StatusState=("$status/$state"); Notes="" })
 }
 foreach ($qName in @($script:SSOT_Queue | Where-Object { $_ })) {
-    $q = SafeJson @("batch","describe-job-queues","--job-queues",$qName,"--region",$R,"--output","json")
+    $q = AwsJson @("batch","describe-job-queues","--job-queues",$qName,"--region",$R,"--output","json")
     $state = "not found"
     if ($q -and $q.jobQueues -and $q.jobQueues.Count -gt 0) { $state = $q.jobQueues[0].state }
     [void]$batchLines.Add([PSCustomObject]@{ Type="Queue"; Name=$qName; StatusState=$state; Notes="" })
 }
 foreach ($jdName in @($script:SSOT_JobDef | Where-Object { $_ })) {
-    $jd = SafeJson @("batch","describe-job-definitions","--job-definition-name",$jdName,"--status","ACTIVE","--region",$R,"--output","json")
+    $jd = AwsJson @("batch","describe-job-definitions","--job-definition-name",$jdName,"--status","ACTIVE","--region",$R,"--output","json")
     $rev = ""
     if ($jd -and $jd.jobDefinitions -and $jd.jobDefinitions.Count -gt 0) {
         $rev = ($jd.jobDefinitions | Sort-Object -Property revision -Descending | Select-Object -First 1).revision
@@ -128,17 +139,17 @@ foreach ($jdName in @($script:SSOT_JobDef | Where-Object { $_ })) {
 # EventBridge
 $ebLines = [System.Collections.ArrayList]::new()
 foreach ($ruleName in @($script:SSOT_EventBridgeRule | Where-Object { $_ })) {
-    $r = SafeJson @("events","describe-rule","--name",$ruleName,"--region",$R,"--output","json")
+    $r = AwsJson @("events","describe-rule","--name",$ruleName,"--region",$R,"--output","json")
     $state = if ($r) { $r.State } else { "not found" }
-    $targets = SafeJson @("events","list-targets-by-rule","--rule",$ruleName,"--region",$R,"--output","json")
+    $targets = AwsJson @("events","list-targets-by-rule","--rule",$ruleName,"--region",$R,"--output","json")
     $tCount = if ($targets -and $targets.Targets) { $targets.Targets.Count } else { 0 }
     [void]$ebLines.Add([PSCustomObject]@{ Rule=$ruleName; State=$state; Targets=$tCount })
 }
 
 # NAT/EIP
-$nat = SafeJson @("ec2","describe-nat-gateways","--filter","Name=vpc-id,Values=$VpcId","--region",$R,"--output","json")
+$nat = AwsJson @("ec2","describe-nat-gateways","--filter","Name=vpc-id,Values=$VpcId","--region",$R,"--output","json")
 $natCount = if ($nat -and $nat.NatGateways) { @($nat.NatGateways | Where-Object { $_.State -ne "deleted" }).Count } else { 0 }
-$addrs = SafeJson @("ec2","describe-addresses","--region",$R,"--output","json")
+$addrs = AwsJson @("ec2","describe-addresses","--region",$R,"--output","json")
 $eipTotal = if ($addrs -and $addrs.Addresses) { $addrs.Addresses.Count } else { 0 }
 $eipServiceManaged = if ($addrs -and $addrs.Addresses) { @($addrs.Addresses | Where-Object { $_.ServiceManaged }).Count } else { 0 }
 $eipUserManaged = if ($addrs -and $addrs.Addresses) { @($addrs.Addresses | Where-Object { -not $_.ServiceManaged }).Count } else { 0 }
@@ -147,10 +158,10 @@ $eipUserOrphan = if ($addrs -and $addrs.Addresses) { @($addrs.Addresses | Where-
 # SG (VPC) + ENI count
 $sgLines = [System.Collections.ArrayList]::new()
 if ($VpcId) {
-    $sg = SafeJson @("ec2","describe-security-groups","--filters","Name=vpc-id,Values=$VpcId","--region",$R,"--output","json")
+    $sg = AwsJson @("ec2","describe-security-groups","--filters","Name=vpc-id,Values=$VpcId","--region",$R,"--output","json")
     if ($sg -and $sg.SecurityGroups) {
         foreach ($g in $sg.SecurityGroups) {
-            $eni = SafeJson @("ec2","describe-network-interfaces","--filters","Name=group-id,Values=$($g.GroupId)","--region",$R,"--output","json")
+            $eni = AwsJson @("ec2","describe-network-interfaces","--filters","Name=group-id,Values=$($g.GroupId)","--region",$R,"--output","json")
             $eniCount = if ($eni -and $eni.NetworkInterfaces) { $eni.NetworkInterfaces.Count } else { 0 }
             [void]$sgLines.Add([PSCustomObject]@{ GroupId=$g.GroupId; GroupName=$g.GroupName; EniCount=$eniCount })
         }
