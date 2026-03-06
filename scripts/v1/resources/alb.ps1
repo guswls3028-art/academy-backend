@@ -2,6 +2,39 @@
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
 
+function Ensure-ALBSecurityGroup {
+    if ($script:PlanMode -or -not $script:ApiAlbArn) { return }
+    $lb = Invoke-AwsJson @("elbv2", "describe-load-balancers", "--load-balancer-arns", $script:ApiAlbArn, "--region", $script:Region, "--output", "json")
+    if (-not $lb.LoadBalancers -or $lb.LoadBalancers.Count -eq 0) { return }
+    $sgIds = $lb.LoadBalancers[0].SecurityGroups
+    if (-not $sgIds -or $sgIds.Count -eq 0) { return }
+    foreach ($sgId in $sgIds) {
+        $desc = Invoke-AwsJson @("ec2", "describe-security-groups", "--group-ids", $sgId, "--region", $script:Region, "--output", "json")
+        if (-not $desc.SecurityGroups -or $desc.SecurityGroups.Count -eq 0) { continue }
+        $perms = $desc.SecurityGroups[0].IpPermissions
+        $has80 = $false
+        $has443 = $false
+        foreach ($p in $perms) {
+            if ($p.FromPort -eq 80 -and $p.ToPort -eq 80) {
+                foreach ($ip in @($p.IpRanges)) { if ($ip.CidrIp -eq "0.0.0.0/0") { $has80 = $true; break } }
+            }
+            if ($p.FromPort -eq 443 -and $p.ToPort -eq 443) {
+                foreach ($ip in @($p.IpRanges)) { if ($ip.CidrIp -eq "0.0.0.0/0") { $has443 = $true; break } }
+            }
+        }
+        if (-not $has80) {
+            Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $sgId, "--protocol", "tcp", "--port", "80", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "ALB SG 80" | Out-Null
+            Write-Ok "ALB SG $sgId: added 80 from 0.0.0.0/0"
+            $script:ChangesMade = $true
+        }
+        if (-not $has443) {
+            Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $sgId, "--protocol", "tcp", "--port", "443", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "ALB SG 443" | Out-Null
+            Write-Ok "ALB SG $sgId: added 443 from 0.0.0.0/0"
+            $script:ChangesMade = $true
+        }
+    }
+}
+
 function Ensure-ALB {
     if ($script:PlanMode) { return }
     if (-not $script:ApiAlbName) { return }
@@ -13,6 +46,7 @@ function Ensure-ALB {
         $script:ApiAlbArn = $r.LoadBalancers[0].LoadBalancerArn
         $script:ApiBaseUrl = "http://$($r.LoadBalancers[0].DNSName)"
         Write-Ok "ALB exists $($script:ApiAlbArn)"
+        Ensure-ALBSecurityGroup
         return
     }
     $subnetIds = @($subnets)
