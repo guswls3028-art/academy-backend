@@ -77,7 +77,7 @@ function Load-SSOT {
     $script:AlbEnabled = ($n["albEnabled"] -eq "true")
     $script:NatGatewayId = if ($n["natGatewayId"]) { $n["natGatewayId"] } else { "" }
     $script:SecurityGroupApp = if ($n["securityGroupApp"]) { $n["securityGroupApp"] } else { "" }
-    $script:BatchSecurityGroupId = if ($n["securityGroupBatch"]) { $n["securityGroupBatch"] } else { "sg-011ed1d9eb4a65b8f" }
+    $script:BatchSecurityGroupId = if ($n["securityGroupBatch"]) { $n["securityGroupBatch"] } else { "" }
     $script:SecurityGroupData = if ($n["securityGroupData"]) { $n["securityGroupData"] } else { "" }
     if ($raw -match 'batch:\s*(sg-[a-zA-Z0-9]+)') { $script:BatchSecurityGroupId = $matches[1] }
 
