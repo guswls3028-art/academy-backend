@@ -14,7 +14,7 @@
 |------|----------------|
 | **RDS (PostgreSQL)** | 1개 인스턴스 (`academy-db`) |
 | **DynamoDB** | 테이블 없음 |
-| **EC2** | 2개 (API 1 running, Build 1 stopped) |
+| **EC2** | (과거 스냅샷 기준) API/워커/배치 등 변동 가능. **빌드 서버는 사용하지 않음(GitHub Actions only)** |
 | **AWS Batch** | CE 2개, Job Queue 2개 (1개 CE INVALID) |
 | **ECR** | 4개 리포지토리 |
 | **Lambda** | 2개 함수 |
@@ -74,20 +74,9 @@
 | **IAM 프로파일** | academy-ec2-role |
 | **키 페어** | backend-api-key |
 
-### 4.2 academy-build-arm64 (중지됨)
+### 4.2 Build 서버
 
-| 항목 | 값 |
-|------|-----|
-| **인스턴스 ID** | i-0133290c3502844ab |
-| **이름** | academy-build-arm64 |
-| **타입** | t4g.medium (ARM) |
-| **상태** | stopped |
-| **AZ** | ap-northeast-2a |
-| **프라이빗 IP** | 172.30.0.184 (퍼블릭 IP 없음) |
-| **VPC** | vpc-0831a2484f9b114c2 |
-| **보안 그룹** | academy-worker-sg (sg-02692600fbf8e26f7) |
-| **IAM 프로파일** | academy-ec2-role |
-| **중지 사유** | User initiated (2026-02-28 17:16:48 GMT) |
+- **사용하지 않음(0대).** 빌드/푸시는 GitHub Actions(OIDC)로 수행한다.
 
 ---
 
