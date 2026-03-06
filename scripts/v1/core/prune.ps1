@@ -222,8 +222,8 @@ function Invoke-PurgeAndRecreate {
     Write-Host "`n=== PURGE (SSOT scope) ===" -ForegroundColor Yellow
     # 1) EventBridge: disable + remove targets (put-rule requires ScheduleExpression)
     $scheduleMap = @{
-        "academy-v1-reconcile-video-jobs" = "rate(15 minutes)"
-        "academy-v1-video-scan-stuck-rate" = "rate(5 minutes)"
+        "academy-v1-reconcile-video-jobs" = "rate(30 minutes)"
+        "academy-v1-video-scan-stuck-rate" = "rate(30 minutes)"
     }
     foreach ($ruleName in $script:SSOT_EventBridgeRule) {
         Write-Host "  [Purge] EventBridge: $ruleName" -ForegroundColor Yellow

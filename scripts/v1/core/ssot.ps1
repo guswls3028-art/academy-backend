@@ -210,6 +210,8 @@ function Load-SSOT {
     $script:EventBridgeReconcileRule = $p["eventBridge"]["reconcileRuleName"]
     $script:EventBridgeScanStuckRule = $p["eventBridge"]["scanStuckRuleName"]
     $script:EventBridgeRoleName = $p["eventBridge"]["roleName"]
+    $script:EventBridgeReconcileSchedule = if ($p["eventBridge"]["reconcileSchedule"]) { $p["eventBridge"]["reconcileSchedule"] } else { "rate(15 minutes)" }
+    $script:EventBridgeScanStuckSchedule = if ($p["eventBridge"]["scanStuckSchedule"]) { $p["eventBridge"]["scanStuckSchedule"] } else { "rate(5 minutes)" }
     $script:EventBridgeReconcileState = if ($p["eventBridge"]["reconcileState"]) { $p["eventBridge"]["reconcileState"] } else { "ENABLED" }
     $script:EventBridgeScanStuckState = if ($p["eventBridge"]["scanStuckState"]) { $p["eventBridge"]["scanStuckState"] } else { "ENABLED" }
 
