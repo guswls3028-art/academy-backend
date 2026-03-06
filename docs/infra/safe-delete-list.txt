@@ -1,0 +1,10 @@
+# Safe Delete List (Wave 1 — EXECUTED)
+
+eni-0cba52698eb339acb
+sg-0f8d581baa7bc39c9
+sg-0051cc8f79c04b058
+sg-02692600fbf8e26f7
+academy-reconcile-video-jobs
+academy-video-scan-stuck-rate
+academy-worker-autoscale-rate
+academy-worker-queue-depth-rate

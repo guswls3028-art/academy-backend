@@ -1,0 +1,48 @@
+{
+    "Rules": [
+        {
+            "Name": "academy-reconcile-video-jobs",
+            "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-reconcile-video-jobs",
+            "State": "DISABLED",
+            "Description": "Trigger reconcile_batch_video_jobs via Batch SubmitJob (single-flight)",
+            "ScheduleExpression": "rate(15 minutes)",
+            "EventBusName": "default"
+        },
+        {
+            "Name": "academy-v1-reconcile-video-jobs",
+            "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-v1-reconcile-video-jobs",
+            "State": "ENABLED",
+            "ScheduleExpression": "rate(15 minutes)",
+            "EventBusName": "default"
+        },
+        {
+            "Name": "academy-v1-video-scan-stuck-rate",
+            "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-v1-video-scan-stuck-rate",
+            "State": "ENABLED",
+            "ScheduleExpression": "rate(5 minutes)",
+            "EventBusName": "default"
+        },
+        {
+            "Name": "academy-video-scan-stuck-rate",
+            "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-video-scan-stuck-rate",
+            "State": "DISABLED",
+            "Description": "Trigger scan_stuck_video_jobs via Batch SubmitJob",
+            "ScheduleExpression": "rate(5 minutes)",
+            "EventBusName": "default"
+        },
+        {
+            "Name": "academy-worker-autoscale-rate",
+            "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-worker-autoscale-rate",
+            "State": "DISABLED",
+            "ScheduleExpression": "rate(1 minute)",
+            "EventBusName": "default"
+        },
+        {
+            "Name": "academy-worker-queue-depth-rate",
+            "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-worker-queue-depth-rate",
+            "State": "DISABLED",
+            "ScheduleExpression": "rate(1 minute)",
+            "EventBusName": "default"
+        }
+    ]
+}

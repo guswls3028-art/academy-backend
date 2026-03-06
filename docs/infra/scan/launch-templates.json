@@ -1,0 +1,70 @@
+{
+    "LaunchTemplates": [
+        {
+            "LaunchTemplateId": "lt-0afa0758a59af9454",
+            "LaunchTemplateName": "Batch-lt-0435c052-144a-34c5-92a0-9f84117cb153",
+            "CreateTime": "2026-03-06T09:09:17+00:00",
+            "CreatedBy": "arn:aws:sts::809466760795:assumed-role/academy-batch-service-role/aws-batch",
+            "DefaultVersionNumber": 1,
+            "LatestVersionNumber": 1,
+            "Operator": {
+                "Managed": false
+            }
+        },
+        {
+            "LaunchTemplateId": "lt-07205484847c0d061",
+            "LaunchTemplateName": "academy-v1-ai-worker-lt",
+            "CreateTime": "2026-03-05T09:22:01+00:00",
+            "CreatedBy": "arn:aws:iam::809466760795:user/admin97",
+            "DefaultVersionNumber": 2,
+            "LatestVersionNumber": 2,
+            "Operator": {
+                "Managed": false
+            }
+        },
+        {
+            "LaunchTemplateId": "lt-0ba9cc50ab9fe1b10",
+            "LaunchTemplateName": "academy-v1-api-lt",
+            "CreateTime": "2026-03-05T09:27:48+00:00",
+            "CreatedBy": "arn:aws:iam::809466760795:user/admin97",
+            "DefaultVersionNumber": 19,
+            "LatestVersionNumber": 19,
+            "Operator": {
+                "Managed": false
+            }
+        },
+        {
+            "LaunchTemplateId": "lt-01899b13deeb47979",
+            "LaunchTemplateName": "Batch-lt-08d5e4c7-e9bc-391b-b018-918e11e79a03",
+            "CreateTime": "2026-03-06T09:02:58+00:00",
+            "CreatedBy": "arn:aws:sts::809466760795:assumed-role/academy-batch-service-role/aws-batch",
+            "DefaultVersionNumber": 1,
+            "LatestVersionNumber": 1,
+            "Operator": {
+                "Managed": false
+            }
+        },
+        {
+            "LaunchTemplateId": "lt-0dab70932706e8b9c",
+            "LaunchTemplateName": "academy-v1-messaging-worker-lt",
+            "CreateTime": "2026-03-05T09:13:58+00:00",
+            "CreatedBy": "arn:aws:iam::809466760795:user/admin97",
+            "DefaultVersionNumber": 3,
+            "LatestVersionNumber": 3,
+            "Operator": {
+                "Managed": false
+            }
+        },
+        {
+            "LaunchTemplateId": "lt-0fa394065a7d42fe9",
+            "LaunchTemplateName": "Batch-lt-3b6e6d88-aff9-3c6c-ad4e-be33f94acaac",
+            "CreateTime": "2026-03-06T09:03:19+00:00",
+            "CreatedBy": "arn:aws:sts::809466760795:assumed-role/academy-batch-service-role/aws-batch",
+            "DefaultVersionNumber": 1,
+            "LatestVersionNumber": 1,
+            "Operator": {
+                "Managed": false
+            }
+        }
+    ]
+}

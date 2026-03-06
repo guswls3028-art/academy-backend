@@ -1,0 +1,12 @@
+# Blocked Delete List (Wave 1)
+
+(None — all identified waste was deleted)
+
+# Previously Blocked (resolved by revoking SG references)
+# sg-0051cc8f79c04b058 (academy-api-sg)
+#   BLOCKED_BY: academy-rds, academy-redis-sg, academy-lambda-internal-sg had rules referencing it
+#   RESOLUTION: Revoked those rules, then deleted
+#
+# sg-02692600fbf8e26f7 (academy-worker-sg)
+#   BLOCKED_BY: academy-rds, academy-redis-sg, academy-lambda-internal-sg had rules referencing it
+#   RESOLUTION: Revoked those rules, then deleted

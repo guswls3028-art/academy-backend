@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and fill values
+# Existing VPC from scripts/v1 (academy-v1-vpc)
+
+vpc_id = "vpc-0831a2484f9b114c2"
+
+public_subnet_ids = [
+  "subnet-07a8427d3306ce910",
+  "subnet-0548571ac21b3bbf3"
+]
+
+private_subnet_ids = [
+  "subnet-09231ed7ecf59cfa4",
+  "subnet-049e711f41fdff71b"
+]
+
+environment   = "prod"
+naming_prefix = "academy-v1"

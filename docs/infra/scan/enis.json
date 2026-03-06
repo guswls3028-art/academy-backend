@@ -1,0 +1,1877 @@
+{
+    "NetworkInterfaces": [
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0d7b14ea2830c3186",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2c",
+            "Description": "VPC Endpoint Interface vpce-048f655243f4c3ce6",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0a:81:bc:52:0b:c7",
+            "NetworkInterfaceId": "eni-093b2694b76e0ede0",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-2-80.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.2.80",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-2-80.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.2.80"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-0548571ac21b3bbf3",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az3"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-066e187f66547b6c1",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2c",
+            "Description": "VPC Endpoint Interface vpce-0d8d3ea9b91368cae",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0a:84:be:8d:66:a9",
+            "NetworkInterfaceId": "eni-0e591b0ba1720a968",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-2-72.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.2.72",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-2-72.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.2.72"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-0548571ac21b3bbf3",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az3"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-056fc66a477485f3c",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2c",
+            "Description": "VPC Endpoint Interface vpce-02112079b9f53f62f",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0a:6b:30:ba:b3:af",
+            "NetworkInterfaceId": "eni-09faf9534c4c1a0c5",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-2-161.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.2.161",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-2-161.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.2.161"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-0548571ac21b3bbf3",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az3"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-014d55d5bc4243ad4",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2c",
+            "Description": "VPC Endpoint Interface vpce-079f608543b5bf812",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0a:52:dd:da:14:35",
+            "NetworkInterfaceId": "eni-0a7424075cb6c6a0c",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-2-69.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.2.69",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-2-69.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.2.69"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-0548571ac21b3bbf3",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az3"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0c1676b177f7edd3c",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2c",
+            "Description": "VPC Endpoint Interface vpce-01909f79e1cffd102",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0a:63:ac:ef:02:d9",
+            "NetworkInterfaceId": "eni-061a0594a37dff8fb",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-2-92.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.2.92",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-2-92.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.2.92"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-0548571ac21b3bbf3",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az3"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-04788dcd143602795",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2c",
+            "Description": "VPC Endpoint Interface vpce-0615c8e1395828539",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0a:d9:e5:90:61:8f",
+            "NetworkInterfaceId": "eni-0b9823f28e5c68b55",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-2-164.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.2.164",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-2-164.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.2.164"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-0548571ac21b3bbf3",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az3"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0061757b8258bc3ec",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2c",
+            "Description": "VPC Endpoint Interface vpce-02732201cdeb556dd",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0a:7e:57:de:55:21",
+            "NetworkInterfaceId": "eni-094e69ef27a4b237a",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-2-108.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.2.108",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-2-108.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.2.108"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-0548571ac21b3bbf3",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az3"
+        },
+        {
+            "Association": {
+                "AllocationId": "eipalloc-005028ec477ae0819",
+                "AssociationId": "eipassoc-04d5b7de4fce4e59d",
+                "IpOwnerId": "809466760795",
+                "PublicDnsName": "ec2-3-37-217-75.ap-northeast-2.compute.amazonaws.com",
+                "PublicIp": "3.37.217.75"
+            },
+            "Attachment": {
+                "AttachTime": "2026-03-05T09:50:37+00:00",
+                "AttachmentId": "eni-attach-040c65881a0c2f383",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "NetworkCardIndex": 0,
+                "InstanceOwnerId": "amazon-elb",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2c",
+            "Description": "ELB app/academy-v1-api-alb/1b0fd6984429d3bf",
+            "Groups": [
+                {
+                    "GroupId": "sg-0405c1afe368b4e6b",
+                    "GroupName": "default"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "0a:f3:32:ae:da:99",
+            "NetworkInterfaceId": "eni-024af6379e0fd0899",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-2-8.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-3-37-217-75.ap-northeast-2.compute.amazonaws.com",
+            "PublicIpDnsNameOptions": {
+                "DnsHostnameType": "public-ipv4-dns-name",
+                "PublicIpv4DnsName": "ec2-3-37-217-75.ap-northeast-2.compute.amazonaws.com"
+            },
+            "PrivateIpAddress": "172.30.2.8",
+            "PrivateIpAddresses": [
+                {
+                    "Association": {
+                        "AllocationId": "eipalloc-005028ec477ae0819",
+                        "AssociationId": "eipassoc-04d5b7de4fce4e59d",
+                        "IpOwnerId": "809466760795",
+                        "PublicDnsName": "ec2-3-37-217-75.ap-northeast-2.compute.amazonaws.com",
+                        "PublicIp": "3.37.217.75"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-2-8.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.2.8"
+                }
+            ],
+            "RequesterId": "amazon-elb",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-0548571ac21b3bbf3",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az3"
+        },
+        {
+            "Association": {
+                "IpOwnerId": "amazon",
+                "PublicDnsName": "ec2-43-203-166-55.ap-northeast-2.compute.amazonaws.com",
+                "PublicIp": "43.203.166.55"
+            },
+            "Attachment": {
+                "AttachTime": "2026-03-06T09:09:23+00:00",
+                "AttachmentId": "eni-attach-0fb6a2d9637372b0a",
+                "DeleteOnTermination": true,
+                "DeviceIndex": 0,
+                "NetworkCardIndex": 0,
+                "InstanceId": "i-0fab4214533707c93",
+                "InstanceOwnerId": "809466760795",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2d",
+            "Description": "",
+            "Groups": [
+                {
+                    "GroupId": "sg-0ba6fc12209bec7de",
+                    "GroupName": "academy-v1-sg-batch"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "0e:87:43:4f:4b:39",
+            "NetworkInterfaceId": "eni-07e34bee99024cd60",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-3-188.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-43-203-166-55.ap-northeast-2.compute.amazonaws.com",
+            "PublicIpDnsNameOptions": {
+                "DnsHostnameType": "public-ipv4-dns-name",
+                "PublicIpv4DnsName": "ec2-43-203-166-55.ap-northeast-2.compute.amazonaws.com"
+            },
+            "PrivateIpAddress": "172.30.3.188",
+            "PrivateIpAddresses": [
+                {
+                    "Association": {
+                        "IpOwnerId": "amazon",
+                        "PublicDnsName": "ec2-43-203-166-55.ap-northeast-2.compute.amazonaws.com",
+                        "PublicIp": "43.203.166.55"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-3-188.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.3.188"
+                }
+            ],
+            "RequesterManaged": false,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-049e711f41fdff71b",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az4"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-034b297f292dd260f",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2d",
+            "Description": "VPC Endpoint Interface vpce-0615c8e1395828539",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0e:69:45:2e:bf:57",
+            "NetworkInterfaceId": "eni-0dc7ab43b37760129",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-3-126.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.3.126",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-3-126.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.3.126"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-049e711f41fdff71b",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az4"
+        },
+        {
+            "AvailabilityZone": "ap-northeast-2d",
+            "Description": "AWS Lambda VPC ENI-academy-worker-queue-depth-metric",
+            "Groups": [
+                {
+                    "GroupId": "sg-0944a30cabd0c022e",
+                    "GroupName": "academy-lambda-endpoint-sg"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "0e:69:d6:dd:17:63",
+            "NetworkInterfaceId": "eni-0cba52698eb339acb",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-3-236.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.3.236",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-3-236.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.3.236"
+                }
+            ],
+            "RequesterId": "AROA3Y572RZN2QGMCQB6T:251931893616",
+            "RequesterManaged": false,
+            "SourceDestCheck": true,
+            "Status": "available",
+            "SubnetId": "subnet-049e711f41fdff71b",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az4"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-09cc3970ce8c4b5a5",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2d",
+            "Description": "VPC Endpoint Interface vpce-079f608543b5bf812",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0e:44:81:b0:3b:a1",
+            "NetworkInterfaceId": "eni-021aa53ad7e6bcc4d",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-3-140.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.3.140",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-3-140.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.3.140"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-049e711f41fdff71b",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az4"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-074c7cbe619173260",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2d",
+            "Description": "VPC Endpoint Interface vpce-0dd30c5bc1d31bd81",
+            "Groups": [
+                {
+                    "GroupId": "sg-0ff11f1b511861447",
+                    "GroupName": "academy-lambda-internal-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0e:e8:8b:e5:cf:3b",
+            "NetworkInterfaceId": "eni-0069cb23c4aa50700",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-3-206.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.3.206",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-3-206.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.3.206"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-049e711f41fdff71b",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az4"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0f56fdb06912ef155",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2d",
+            "Description": "VPC Endpoint Interface vpce-04fd95b8f2bd1911b",
+            "Groups": [
+                {
+                    "GroupId": "sg-0caaa6c43e12758e6",
+                    "GroupName": "academy-lambda-video-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0e:1c:a3:d0:ef:3f",
+            "NetworkInterfaceId": "eni-0faca4ed356b4baee",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-3-130.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.3.130",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-3-130.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.3.130"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-049e711f41fdff71b",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az4"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0b32b2b6e994bd8b0",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2d",
+            "Description": "VPC Endpoint Interface vpce-0d8d3ea9b91368cae",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0e:8c:06:f1:8f:ef",
+            "NetworkInterfaceId": "eni-0ef61318e27e53509",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-3-123.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.3.123",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-3-123.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.3.123"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-049e711f41fdff71b",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az4"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0efc763d62036ed55",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2d",
+            "Description": "VPC Endpoint Interface vpce-01909f79e1cffd102",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "0e:cb:0d:47:f7:df",
+            "NetworkInterfaceId": "eni-0c86512c790a92a60",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-3-4.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.3.4",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-3-4.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.3.4"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-049e711f41fdff71b",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az4"
+        },
+        {
+            "Attachment": {
+                "AttachTime": "2026-03-05T09:08:45+00:00",
+                "AttachmentId": "eni-attach-0cffae1ca706dfd3e",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "NetworkCardIndex": 0,
+                "InstanceOwnerId": "583392526190",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2d",
+            "Description": "ElastiCache academy-v1-redis-001",
+            "Groups": [
+                {
+                    "GroupId": "sg-0f04876abb91d1606",
+                    "GroupName": "academy-v1-sg-data"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "0e:8e:fb:cd:ff:e3",
+            "NetworkInterfaceId": "eni-0960fdb8c5e8c0d4a",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-3-194.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.3.194",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-3-194.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.3.194"
+                }
+            ],
+            "RequesterId": "583392526190",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-049e711f41fdff71b",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az4"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-014fab6199508f523",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2b",
+            "Description": "VPC Endpoint Interface vpce-048f655243f4c3ce6",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "06:cc:52:8c:16:f3",
+            "NetworkInterfaceId": "eni-01ba83d08441a7462",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-1-112.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.1.112",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-112.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.112"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az2"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0b152042663be2e2b",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2b",
+            "Description": "VPC Endpoint Interface vpce-02112079b9f53f62f",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "06:1a:71:74:f0:9f",
+            "NetworkInterfaceId": "eni-08eb689e87bb26770",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-1-20.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.1.20",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-20.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.20"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az2"
+        },
+        {
+            "Association": {
+                "IpOwnerId": "amazon",
+                "PublicDnsName": "ec2-43-203-99-186.ap-northeast-2.compute.amazonaws.com",
+                "PublicIp": "43.203.99.186"
+            },
+            "Attachment": {
+                "AttachTime": "2026-03-06T06:37:42+00:00",
+                "AttachmentId": "eni-attach-0c562eb66a3f76bed",
+                "DeleteOnTermination": true,
+                "DeviceIndex": 0,
+                "NetworkCardIndex": 0,
+                "InstanceId": "i-0c11e7127e7ea03f8",
+                "InstanceOwnerId": "809466760795",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2b",
+            "Description": "",
+            "Groups": [
+                {
+                    "GroupId": "sg-088fa3315c12754d0",
+                    "GroupName": "academy-v1-sg-app"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "06:2b:0f:94:f5:cf",
+            "NetworkInterfaceId": "eni-0b7324e904e44a198",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-1-99.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-43-203-99-186.ap-northeast-2.compute.amazonaws.com",
+            "PublicIpDnsNameOptions": {
+                "DnsHostnameType": "public-ipv4-dns-name",
+                "PublicIpv4DnsName": "ec2-43-203-99-186.ap-northeast-2.compute.amazonaws.com"
+            },
+            "PrivateIpAddress": "172.30.1.99",
+            "PrivateIpAddresses": [
+                {
+                    "Association": {
+                        "IpOwnerId": "amazon",
+                        "PublicDnsName": "ec2-43-203-99-186.ap-northeast-2.compute.amazonaws.com",
+                        "PublicIp": "43.203.99.186"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-99.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.99"
+                }
+            ],
+            "RequesterManaged": false,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az2"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-00b3ee534acfd3267",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2b",
+            "Description": "VPC Endpoint Interface vpce-0615c8e1395828539",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "06:50:ac:74:cb:3f",
+            "NetworkInterfaceId": "eni-0cd8a562d44677a18",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-1-83.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.1.83",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-83.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.83"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az2"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-046c36e4a202266b1",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2b",
+            "Description": "VPC Endpoint Interface vpce-02732201cdeb556dd",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "06:65:23:b8:10:1d",
+            "NetworkInterfaceId": "eni-001ba5475aa16f7d3",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-1-166.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.1.166",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-166.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.166"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az2"
+        },
+        {
+            "Association": {
+                "AllocationId": "eipalloc-02bcb9e54f8f9cca3",
+                "AssociationId": "eipassoc-0e330c41df3a67367",
+                "IpOwnerId": "809466760795",
+                "PublicDnsName": "ec2-54-180-207-91.ap-northeast-2.compute.amazonaws.com",
+                "PublicIp": "54.180.207.91"
+            },
+            "Attachment": {
+                "AttachTime": "2026-02-18T09:22:47+00:00",
+                "AttachmentId": "eni-attach-07255728ce4e84a94",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "NetworkCardIndex": 0,
+                "InstanceOwnerId": "amazon-rds",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2b",
+            "Description": "RDSNetworkInterface",
+            "Groups": [
+                {
+                    "GroupId": "sg-06cfb1f23372e2597",
+                    "GroupName": "academy-rds"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "06:6d:43:29:42:55",
+            "NetworkInterfaceId": "eni-0df8bc849b5d7af1f",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-1-44.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-54-180-207-91.ap-northeast-2.compute.amazonaws.com",
+            "PublicIpDnsNameOptions": {
+                "DnsHostnameType": "public-ipv4-dns-name",
+                "PublicIpv4DnsName": "ec2-54-180-207-91.ap-northeast-2.compute.amazonaws.com"
+            },
+            "PrivateIpAddress": "172.30.1.44",
+            "PrivateIpAddresses": [
+                {
+                    "Association": {
+                        "AllocationId": "eipalloc-02bcb9e54f8f9cca3",
+                        "AssociationId": "eipassoc-0e330c41df3a67367",
+                        "IpOwnerId": "809466760795",
+                        "PublicDnsName": "ec2-54-180-207-91.ap-northeast-2.compute.amazonaws.com",
+                        "PublicIp": "54.180.207.91"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-44.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.44"
+                }
+            ],
+            "RequesterId": "amazon-rds",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az2"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0e1dbf672406aca1f",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2b",
+            "Description": "VPC Endpoint Interface vpce-0d8d3ea9b91368cae",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "06:53:84:b5:e6:a7",
+            "NetworkInterfaceId": "eni-00264c942b4c02880",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-1-74.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.1.74",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-74.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.74"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az2"
+        },
+        {
+            "Association": {
+                "IpOwnerId": "amazon",
+                "PublicDnsName": "ec2-54-181-1-24.ap-northeast-2.compute.amazonaws.com",
+                "PublicIp": "54.181.1.24"
+            },
+            "Attachment": {
+                "AttachTime": "2026-03-06T09:06:28+00:00",
+                "AttachmentId": "eni-attach-06346140227edda08",
+                "DeleteOnTermination": true,
+                "DeviceIndex": 0,
+                "NetworkCardIndex": 0,
+                "InstanceId": "i-0d3aaca239fd1637e",
+                "InstanceOwnerId": "809466760795",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2b",
+            "Description": "",
+            "Groups": [
+                {
+                    "GroupId": "sg-088fa3315c12754d0",
+                    "GroupName": "academy-v1-sg-app"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "06:3b:dd:aa:b5:21",
+            "NetworkInterfaceId": "eni-02364086df16dee7d",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-1-31.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-54-181-1-24.ap-northeast-2.compute.amazonaws.com",
+            "PublicIpDnsNameOptions": {
+                "DnsHostnameType": "public-ipv4-dns-name",
+                "PublicIpv4DnsName": "ec2-54-181-1-24.ap-northeast-2.compute.amazonaws.com"
+            },
+            "PrivateIpAddress": "172.30.1.31",
+            "PrivateIpAddresses": [
+                {
+                    "Association": {
+                        "IpOwnerId": "amazon",
+                        "PublicDnsName": "ec2-54-181-1-24.ap-northeast-2.compute.amazonaws.com",
+                        "PublicIp": "54.181.1.24"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-31.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.31"
+                }
+            ],
+            "RequesterManaged": false,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az2"
+        },
+        {
+            "Association": {
+                "IpOwnerId": "amazon",
+                "PublicDnsName": "ec2-13-125-203-237.ap-northeast-2.compute.amazonaws.com",
+                "PublicIp": "13.125.203.237"
+            },
+            "Attachment": {
+                "AttachTime": "2026-03-06T09:13:31+00:00",
+                "AttachmentId": "eni-attach-021202bdba6fbeaa9",
+                "DeleteOnTermination": true,
+                "DeviceIndex": 0,
+                "NetworkCardIndex": 0,
+                "InstanceId": "i-05581a935171c6bd1",
+                "InstanceOwnerId": "809466760795",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2b",
+            "Description": "",
+            "Groups": [
+                {
+                    "GroupId": "sg-0ba6fc12209bec7de",
+                    "GroupName": "academy-v1-sg-batch"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "06:10:c8:de:83:d7",
+            "NetworkInterfaceId": "eni-06e727499818a7e15",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-1-247.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-13-125-203-237.ap-northeast-2.compute.amazonaws.com",
+            "PublicIpDnsNameOptions": {
+                "DnsHostnameType": "public-ipv4-dns-name",
+                "PublicIpv4DnsName": "ec2-13-125-203-237.ap-northeast-2.compute.amazonaws.com"
+            },
+            "PrivateIpAddress": "172.30.1.247",
+            "PrivateIpAddresses": [
+                {
+                    "Association": {
+                        "IpOwnerId": "amazon",
+                        "PublicDnsName": "ec2-13-125-203-237.ap-northeast-2.compute.amazonaws.com",
+                        "PublicIp": "13.125.203.237"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-247.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.247"
+                }
+            ],
+            "RequesterManaged": false,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az2"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-051cb4a8c78210602",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2b",
+            "Description": "VPC Endpoint Interface vpce-01909f79e1cffd102",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "06:d8:45:16:31:bb",
+            "NetworkInterfaceId": "eni-02f6b314c15221c10",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-1-158.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.1.158",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-158.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.158"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az2"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-09e1a1acf065993cb",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2b",
+            "Description": "VPC Endpoint Interface vpce-079f608543b5bf812",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "06:ce:b0:e4:40:59",
+            "NetworkInterfaceId": "eni-015d5c1d818d62b0a",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-1-97.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.1.97",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-97.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.97"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az2"
+        },
+        {
+            "Attachment": {
+                "AttachTime": "2026-02-18T01:14:08+00:00",
+                "AttachmentId": "eni-attach-01a5b7b414a1e3c0f",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "NetworkCardIndex": 0,
+                "InstanceOwnerId": "583392526190",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "ElastiCache academy-redis-001",
+            "Groups": [
+                {
+                    "GroupId": "sg-0f4069135b6215cad",
+                    "GroupName": "academy-redis-sg"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:24:32:c6:e3:53",
+            "NetworkInterfaceId": "eni-014a72f015eaac383",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-0-242.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.0.242",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-242.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.242"
+                }
+            ],
+            "RequesterId": "583392526190",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-04d402651cac7f859",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "VPC Endpoint Interface vpce-02732201cdeb556dd",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:c9:93:ad:9b:25",
+            "NetworkInterfaceId": "eni-0515cdfabd10ee871",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-0-87.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.0.87",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-87.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.87"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-016cafa4d15537776",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "VPC Endpoint Interface vpce-079f608543b5bf812",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:23:63:6c:2c:29",
+            "NetworkInterfaceId": "eni-0fa9aa97cd90c4d30",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-0-132.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.0.132",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-132.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.132"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-04c237d6256e5bd8a",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "VPC Endpoint Interface vpce-02112079b9f53f62f",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:ad:d3:10:f2:ed",
+            "NetworkInterfaceId": "eni-0c92e3a169e6fd853",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-0-210.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.0.210",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-210.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.210"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0f39f9fbff08f706c",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "VPC Endpoint Interface vpce-0615c8e1395828539",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:fe:52:0e:d8:f3",
+            "NetworkInterfaceId": "eni-0f160132d3e316a98",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-0-60.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.0.60",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-60.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.60"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0b7f78e00ba481283",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "VPC Endpoint Interface vpce-01909f79e1cffd102",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:5d:4a:88:b9:65",
+            "NetworkInterfaceId": "eni-0f39c7cac79452fcf",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-0-177.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.0.177",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-177.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.177"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0e438b795c6cee31c",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "VPC Endpoint Interface vpce-0d385038c84d47b49",
+            "Groups": [
+                {
+                    "GroupId": "sg-007bba3b7c40fe9c6",
+                    "GroupName": "academy-lambda-metric-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:18:2e:8c:59:ff",
+            "NetworkInterfaceId": "eni-00aa8f8dec7262386",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-10-1-1-87.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "10.1.1.87",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-10-1-1-87.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "10.1.1.87"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-0759ef4e7f3817e6d",
+            "TagSet": [],
+            "VpcId": "vpc-009e3ea6265c7a203",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        },
+        {
+            "Association": {
+                "IpOwnerId": "amazon",
+                "PublicDnsName": "ec2-3-36-95-243.ap-northeast-2.compute.amazonaws.com",
+                "PublicIp": "3.36.95.243"
+            },
+            "Attachment": {
+                "AttachTime": "2026-03-06T06:33:54+00:00",
+                "AttachmentId": "eni-attach-06ac7f743ba7fafeb",
+                "DeleteOnTermination": true,
+                "DeviceIndex": 0,
+                "NetworkCardIndex": 0,
+                "InstanceId": "i-0851018cae061ea8d",
+                "InstanceOwnerId": "809466760795",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "",
+            "Groups": [
+                {
+                    "GroupId": "sg-088fa3315c12754d0",
+                    "GroupName": "academy-v1-sg-app"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:47:42:1e:2d:83",
+            "NetworkInterfaceId": "eni-025d66a8e0abb1763",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-0-125.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-3-36-95-243.ap-northeast-2.compute.amazonaws.com",
+            "PublicIpDnsNameOptions": {
+                "DnsHostnameType": "public-ipv4-dns-name",
+                "PublicIpv4DnsName": "ec2-3-36-95-243.ap-northeast-2.compute.amazonaws.com"
+            },
+            "PrivateIpAddress": "172.30.0.125",
+            "PrivateIpAddresses": [
+                {
+                    "Association": {
+                        "IpOwnerId": "amazon",
+                        "PublicDnsName": "ec2-3-36-95-243.ap-northeast-2.compute.amazonaws.com",
+                        "PublicIp": "3.36.95.243"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-125.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.125"
+                }
+            ],
+            "RequesterManaged": false,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        },
+        {
+            "Association": {
+                "IpOwnerId": "amazon",
+                "PublicDnsName": "ec2-3-35-136-68.ap-northeast-2.compute.amazonaws.com",
+                "PublicIp": "3.35.136.68"
+            },
+            "Attachment": {
+                "AttachTime": "2026-03-06T06:33:53+00:00",
+                "AttachmentId": "eni-attach-0d38f860d2cac1138",
+                "DeleteOnTermination": true,
+                "DeviceIndex": 0,
+                "NetworkCardIndex": 0,
+                "InstanceId": "i-0b47a6fce4975ec91",
+                "InstanceOwnerId": "809466760795",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "",
+            "Groups": [
+                {
+                    "GroupId": "sg-088fa3315c12754d0",
+                    "GroupName": "academy-v1-sg-app"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:d9:18:8e:16:f7",
+            "NetworkInterfaceId": "eni-00630f4206837a84d",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-0-144.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-3-35-136-68.ap-northeast-2.compute.amazonaws.com",
+            "PublicIpDnsNameOptions": {
+                "DnsHostnameType": "public-ipv4-dns-name",
+                "PublicIpv4DnsName": "ec2-3-35-136-68.ap-northeast-2.compute.amazonaws.com"
+            },
+            "PrivateIpAddress": "172.30.0.144",
+            "PrivateIpAddresses": [
+                {
+                    "Association": {
+                        "IpOwnerId": "amazon",
+                        "PublicDnsName": "ec2-3-35-136-68.ap-northeast-2.compute.amazonaws.com",
+                        "PublicIp": "3.35.136.68"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-144.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.144"
+                }
+            ],
+            "RequesterManaged": false,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-0c6e01c523b8e8b25",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "VPC Endpoint Interface vpce-048f655243f4c3ce6",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:66:d3:87:b8:f7",
+            "NetworkInterfaceId": "eni-08db6d4d3ec00f123",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-0-103.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.0.103",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-103.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.103"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        },
+        {
+            "Association": {
+                "AllocationId": "eipalloc-0cf9f6d0e100d6787",
+                "AssociationId": "eipassoc-090d318237815043c",
+                "IpOwnerId": "809466760795",
+                "PublicDnsName": "ec2-54-180-111-188.ap-northeast-2.compute.amazonaws.com",
+                "PublicIp": "54.180.111.188"
+            },
+            "Attachment": {
+                "AttachTime": "2026-03-05T09:24:38+00:00",
+                "AttachmentId": "eni-attach-0825f256a1054fc2a",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "NetworkCardIndex": 0,
+                "InstanceOwnerId": "amazon-elb",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "ELB app/academy-v1-api-alb/1b0fd6984429d3bf",
+            "Groups": [
+                {
+                    "GroupId": "sg-0405c1afe368b4e6b",
+                    "GroupName": "default"
+                }
+            ],
+            "InterfaceType": "interface",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:19:ab:ac:b7:d1",
+            "NetworkInterfaceId": "eni-012e263be5b1c0c9c",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-0-185.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-54-180-111-188.ap-northeast-2.compute.amazonaws.com",
+            "PublicIpDnsNameOptions": {
+                "DnsHostnameType": "public-ipv4-dns-name",
+                "PublicIpv4DnsName": "ec2-54-180-111-188.ap-northeast-2.compute.amazonaws.com"
+            },
+            "PrivateIpAddress": "172.30.0.185",
+            "PrivateIpAddresses": [
+                {
+                    "Association": {
+                        "AllocationId": "eipalloc-0cf9f6d0e100d6787",
+                        "AssociationId": "eipassoc-090d318237815043c",
+                        "IpOwnerId": "809466760795",
+                        "PublicDnsName": "ec2-54-180-111-188.ap-northeast-2.compute.amazonaws.com",
+                        "PublicIp": "54.180.111.188"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-185.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.185"
+                }
+            ],
+            "RequesterId": "amazon-elb",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        },
+        {
+            "Attachment": {
+                "AttachmentId": "ela-attach-05d36e11361be5b4f",
+                "DeleteOnTermination": false,
+                "DeviceIndex": 1,
+                "InstanceOwnerId": "amazon-aws",
+                "Status": "attached"
+            },
+            "AvailabilityZone": "ap-northeast-2a",
+            "Description": "VPC Endpoint Interface vpce-0d8d3ea9b91368cae",
+            "Groups": [
+                {
+                    "GroupId": "sg-011ed1d9eb4a65b8f",
+                    "GroupName": "academy-video-batch-sg"
+                }
+            ],
+            "InterfaceType": "vpc_endpoint",
+            "Ipv6Addresses": [],
+            "MacAddress": "02:e9:ca:2a:75:bf",
+            "NetworkInterfaceId": "eni-0a153e2b0d1290fd5",
+            "OwnerId": "809466760795",
+            "PrivateDnsName": "ip-172-30-0-232.ap-northeast-2.compute.internal",
+            "PublicDnsName": "",
+            "PrivateIpAddress": "172.30.0.232",
+            "PrivateIpAddresses": [
+                {
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-232.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.232"
+                }
+            ],
+            "RequesterId": "727180483921",
+            "RequesterManaged": true,
+            "SourceDestCheck": true,
+            "Status": "in-use",
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "TagSet": [],
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "Operator": {
+                "Managed": false
+            },
+            "AvailabilityZoneId": "apne2-az1"
+        }
+    ]
+}

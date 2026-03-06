@@ -49,7 +49,7 @@ function Get-DeleteCandidates {
     $cand["EventBridge Rule"] = $All["EventBridge Rule"] | Where-Object { $_ -notin $script:SSOT_EventBridgeRule }
     $cand["IAM Role"] = $All["IAM Role"] | Where-Object { 
         $_ -notin $script:SSOT_IAMRoles -and 
-        $_ -notin @("academy-ec2-role", "academy-v1-eventbridge-batch-video-role")
+        $_ -notin @("academy-ec2-role", "academy-v1-eventbridge-batch-video-role", "academy-gha-ecr-build")
     }
     $cand["ASG"] = $All["ASG"] | Where-Object {
         $_ -notin $script:SSOT_ASG -and $_ -notlike "*academy-video-batch-ce-final*" -and $_ -notlike "*academy-video-ops-ce*"
@@ -220,7 +220,11 @@ function Invoke-PurgeAndRecreate {
     param([switch]$IncludePruneLegacy = $false)
     $R = $script:Region
     Write-Host "`n=== PURGE (SSOT scope) ===" -ForegroundColor Yellow
-    # 1) EventBridge: disable + remove targets
+    # 1) EventBridge: disable + remove targets (put-rule requires ScheduleExpression)
+    $scheduleMap = @{
+        "academy-v1-reconcile-video-jobs" = "rate(15 minutes)"
+        "academy-v1-video-scan-stuck-rate" = "rate(5 minutes)"
+    }
     foreach ($ruleName in $script:SSOT_EventBridgeRule) {
         Write-Host "  [Purge] EventBridge: $ruleName" -ForegroundColor Yellow
         try {
@@ -230,7 +234,8 @@ function Invoke-PurgeAndRecreate {
                 $args = @("events", "remove-targets", "--rule", $ruleName, "--ids") + [string[]]$ids + @("--region", $R)
                 Invoke-Aws $args -ErrorMessage "remove-targets $ruleName" 2>$null | Out-Null
             }
-            Invoke-Aws @("events", "put-rule", "--name", $ruleName, "--state", "DISABLED", "--region", $R) -ErrorMessage "disable rule $ruleName" 2>$null | Out-Null
+            $sched = if ($scheduleMap[$ruleName]) { $scheduleMap[$ruleName] } else { "rate(15 minutes)" }
+            Invoke-Aws @("events", "put-rule", "--name", $ruleName, "--schedule-expression", $sched, "--state", "DISABLED", "--region", $R) -ErrorMessage "disable rule $ruleName" 2>$null | Out-Null
         }
         catch { Write-Warn "    $_" }
     }

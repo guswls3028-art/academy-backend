@@ -1,0 +1,40 @@
+{
+    "jobQueues": [
+        {
+            "jobQueueName": "academy-v1-video-batch-queue",
+            "jobQueueArn": "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-batch-queue",
+            "state": "ENABLED",
+            "status": "VALID",
+            "statusReason": "JobQueue Healthy",
+            "priority": 1,
+            "computeEnvironmentOrder": [
+                {
+                    "order": 1,
+                    "computeEnvironment": "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-v1-video-batch-ce"
+                }
+            ],
+            "serviceEnvironmentOrder": [],
+            "jobQueueType": "ECS",
+            "tags": {},
+            "jobStateTimeLimitActions": []
+        },
+        {
+            "jobQueueName": "academy-v1-video-ops-queue",
+            "jobQueueArn": "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-ops-queue",
+            "state": "ENABLED",
+            "status": "VALID",
+            "statusReason": "JobQueue Healthy",
+            "priority": 1,
+            "computeEnvironmentOrder": [
+                {
+                    "order": 1,
+                    "computeEnvironment": "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-v1-video-ops-ce"
+                }
+            ],
+            "serviceEnvironmentOrder": [],
+            "jobQueueType": "ECS",
+            "tags": {},
+            "jobStateTimeLimitActions": []
+        }
+    ]
+}

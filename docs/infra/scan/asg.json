@@ -1,0 +1,280 @@
+{
+    "AutoScalingGroups": [
+        {
+            "AutoScalingGroupName": "academy-v1-ai-worker-asg",
+            "AutoScalingGroupARN": "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:882e3a73-3562-414d-8f9a-fb6fd2e7ee44:autoScalingGroupName/academy-v1-ai-worker-asg",
+            "LaunchTemplate": {
+                "LaunchTemplateId": "lt-07205484847c0d061",
+                "LaunchTemplateName": "academy-v1-ai-worker-lt",
+                "Version": "$Latest"
+            },
+            "MinSize": 1,
+            "MaxSize": 5,
+            "DesiredCapacity": 1,
+            "DefaultCooldown": 300,
+            "AvailabilityZones": [
+                "ap-northeast-2a",
+                "ap-northeast-2c"
+            ],
+            "LoadBalancerNames": [],
+            "TargetGroupARNs": [],
+            "HealthCheckType": "EC2",
+            "HealthCheckGracePeriod": 0,
+            "Instances": [
+                {
+                    "InstanceId": "i-0851018cae061ea8d",
+                    "InstanceType": "t4g.medium",
+                    "AvailabilityZone": "ap-northeast-2a",
+                    "LifecycleState": "InService",
+                    "HealthStatus": "Healthy",
+                    "LaunchTemplate": {
+                        "LaunchTemplateId": "lt-07205484847c0d061",
+                        "LaunchTemplateName": "academy-v1-ai-worker-lt",
+                        "Version": "2"
+                    },
+                    "ProtectedFromScaleIn": true
+                }
+            ],
+            "CreatedTime": "2026-03-05T09:22:04.733000+00:00",
+            "SuspendedProcesses": [],
+            "VPCZoneIdentifier": "subnet-07a8427d3306ce910,subnet-0548571ac21b3bbf3",
+            "EnabledMetrics": [],
+            "Tags": [],
+            "TerminationPolicies": [
+                "Default"
+            ],
+            "NewInstancesProtectedFromScaleIn": true,
+            "ServiceLinkedRoleARN": "arn:aws:iam::809466760795:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling",
+            "TrafficSources": [],
+            "AvailabilityZoneDistribution": {
+                "CapacityDistributionStrategy": "balanced-best-effort"
+            },
+            "CapacityReservationSpecification": {
+                "CapacityReservationPreference": "default"
+            },
+            "InstanceLifecyclePolicy": {
+                "RetentionTriggers": {
+                    "TerminateHookAbandon": "terminate"
+                }
+            }
+        },
+        {
+            "AutoScalingGroupName": "academy-v1-api-asg",
+            "AutoScalingGroupARN": "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:358f33ce-a5cf-4978-9d93-59520d34bec4:autoScalingGroupName/academy-v1-api-asg",
+            "LaunchTemplate": {
+                "LaunchTemplateId": "lt-0ba9cc50ab9fe1b10",
+                "LaunchTemplateName": "academy-v1-api-lt",
+                "Version": "$Latest"
+            },
+            "MinSize": 1,
+            "MaxSize": 2,
+            "DesiredCapacity": 1,
+            "DefaultCooldown": 300,
+            "AvailabilityZones": [
+                "ap-northeast-2b",
+                "ap-northeast-2d"
+            ],
+            "LoadBalancerNames": [],
+            "TargetGroupARNs": [
+                "arn:aws:elasticloadbalancing:ap-northeast-2:809466760795:targetgroup/academy-v1-api-tg/bb2c965190169007"
+            ],
+            "HealthCheckType": "EC2",
+            "HealthCheckGracePeriod": 0,
+            "Instances": [
+                {
+                    "InstanceId": "i-0d3aaca239fd1637e",
+                    "InstanceType": "t4g.medium",
+                    "AvailabilityZone": "ap-northeast-2b",
+                    "LifecycleState": "InService",
+                    "HealthStatus": "Healthy",
+                    "LaunchTemplate": {
+                        "LaunchTemplateId": "lt-0ba9cc50ab9fe1b10",
+                        "LaunchTemplateName": "academy-v1-api-lt",
+                        "Version": "19"
+                    },
+                    "ProtectedFromScaleIn": false
+                }
+            ],
+            "CreatedTime": "2026-03-06T09:04:19.571000+00:00",
+            "SuspendedProcesses": [],
+            "VPCZoneIdentifier": "subnet-049e711f41fdff71b,subnet-09231ed7ecf59cfa4",
+            "EnabledMetrics": [],
+            "Tags": [],
+            "TerminationPolicies": [
+                "Default"
+            ],
+            "NewInstancesProtectedFromScaleIn": false,
+            "ServiceLinkedRoleARN": "arn:aws:iam::809466760795:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling",
+            "TrafficSources": [
+                {
+                    "Identifier": "arn:aws:elasticloadbalancing:ap-northeast-2:809466760795:targetgroup/academy-v1-api-tg/bb2c965190169007",
+                    "Type": "elbv2"
+                }
+            ],
+            "AvailabilityZoneDistribution": {
+                "CapacityDistributionStrategy": "balanced-best-effort"
+            },
+            "CapacityReservationSpecification": {
+                "CapacityReservationPreference": "default"
+            },
+            "InstanceLifecyclePolicy": {
+                "RetentionTriggers": {
+                    "TerminateHookAbandon": "terminate"
+                }
+            }
+        },
+        {
+            "AutoScalingGroupName": "academy-v1-messaging-worker-asg",
+            "AutoScalingGroupARN": "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:3db89ecd-7578-47e8-8356-c3623e1cd531:autoScalingGroupName/academy-v1-messaging-worker-asg",
+            "LaunchTemplate": {
+                "LaunchTemplateId": "lt-0dab70932706e8b9c",
+                "LaunchTemplateName": "academy-v1-messaging-worker-lt",
+                "Version": "$Latest"
+            },
+            "MinSize": 1,
+            "MaxSize": 3,
+            "DesiredCapacity": 1,
+            "DefaultCooldown": 300,
+            "AvailabilityZones": [
+                "ap-northeast-2a",
+                "ap-northeast-2c"
+            ],
+            "LoadBalancerNames": [],
+            "TargetGroupARNs": [],
+            "HealthCheckType": "EC2",
+            "HealthCheckGracePeriod": 0,
+            "Instances": [
+                {
+                    "InstanceId": "i-0b47a6fce4975ec91",
+                    "InstanceType": "t4g.medium",
+                    "AvailabilityZone": "ap-northeast-2a",
+                    "LifecycleState": "InService",
+                    "HealthStatus": "Healthy",
+                    "LaunchTemplate": {
+                        "LaunchTemplateId": "lt-0dab70932706e8b9c",
+                        "LaunchTemplateName": "academy-v1-messaging-worker-lt",
+                        "Version": "3"
+                    },
+                    "ProtectedFromScaleIn": true
+                }
+            ],
+            "CreatedTime": "2026-03-05T09:16:49.774000+00:00",
+            "SuspendedProcesses": [],
+            "VPCZoneIdentifier": "subnet-07a8427d3306ce910,subnet-0548571ac21b3bbf3",
+            "EnabledMetrics": [],
+            "Tags": [],
+            "TerminationPolicies": [
+                "Default"
+            ],
+            "NewInstancesProtectedFromScaleIn": true,
+            "ServiceLinkedRoleARN": "arn:aws:iam::809466760795:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling",
+            "TrafficSources": [],
+            "AvailabilityZoneDistribution": {
+                "CapacityDistributionStrategy": "balanced-best-effort"
+            },
+            "CapacityReservationSpecification": {
+                "CapacityReservationPreference": "default"
+            },
+            "InstanceLifecyclePolicy": {
+                "RetentionTriggers": {
+                    "TerminateHookAbandon": "terminate"
+                }
+            }
+        },
+        {
+            "AutoScalingGroupName": "academy-v1-video-ops-ce-asg-823f2525-3a00-318c-85cf-2ccfc033c170",
+            "AutoScalingGroupARN": "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:d6bbe731-75bd-40f3-9da7-1938959b648e:autoScalingGroupName/academy-v1-video-ops-ce-asg-823f2525-3a00-318c-85cf-2ccfc033c170",
+            "MixedInstancesPolicy": {
+                "LaunchTemplate": {
+                    "LaunchTemplateSpecification": {
+                        "LaunchTemplateId": "lt-0afa0758a59af9454",
+                        "LaunchTemplateName": "Batch-lt-0435c052-144a-34c5-92a0-9f84117cb153",
+                        "Version": "1"
+                    },
+                    "Overrides": [
+                        {
+                            "InstanceType": "m6g.medium",
+                            "WeightedCapacity": "1"
+                        }
+                    ]
+                },
+                "InstancesDistribution": {
+                    "OnDemandAllocationStrategy": "prioritized",
+                    "OnDemandBaseCapacity": 0,
+                    "OnDemandPercentageAboveBaseCapacity": 100,
+                    "SpotAllocationStrategy": "lowest-price",
+                    "SpotInstancePools": 2
+                }
+            },
+            "MinSize": 0,
+            "MaxSize": 2,
+            "DesiredCapacity": 2,
+            "DefaultCooldown": 300,
+            "AvailabilityZones": [
+                "ap-northeast-2b",
+                "ap-northeast-2d"
+            ],
+            "LoadBalancerNames": [],
+            "TargetGroupARNs": [],
+            "HealthCheckType": "EC2",
+            "HealthCheckGracePeriod": 0,
+            "Instances": [
+                {
+                    "InstanceId": "i-05581a935171c6bd1",
+                    "InstanceType": "m6g.medium",
+                    "AvailabilityZone": "ap-northeast-2b",
+                    "LifecycleState": "InService",
+                    "HealthStatus": "Healthy",
+                    "LaunchTemplate": {
+                        "LaunchTemplateId": "lt-0afa0758a59af9454",
+                        "LaunchTemplateName": "Batch-lt-0435c052-144a-34c5-92a0-9f84117cb153",
+                        "Version": "1"
+                    },
+                    "ProtectedFromScaleIn": true,
+                    "WeightedCapacity": "1"
+                },
+                {
+                    "InstanceId": "i-0fab4214533707c93",
+                    "InstanceType": "m6g.medium",
+                    "AvailabilityZone": "ap-northeast-2d",
+                    "LifecycleState": "InService",
+                    "HealthStatus": "Healthy",
+                    "LaunchTemplate": {
+                        "LaunchTemplateId": "lt-0afa0758a59af9454",
+                        "LaunchTemplateName": "Batch-lt-0435c052-144a-34c5-92a0-9f84117cb153",
+                        "Version": "1"
+                    },
+                    "ProtectedFromScaleIn": true,
+                    "WeightedCapacity": "1"
+                }
+            ],
+            "CreatedTime": "2026-03-06T09:09:18.644000+00:00",
+            "SuspendedProcesses": [
+                {
+                    "ProcessName": "AZRebalance",
+                    "SuspensionReason": "User suspended at 2026-03-06T09:09:18Z"
+                }
+            ],
+            "VPCZoneIdentifier": "subnet-049e711f41fdff71b,subnet-09231ed7ecf59cfa4",
+            "EnabledMetrics": [],
+            "Tags": [],
+            "TerminationPolicies": [
+                "Default"
+            ],
+            "NewInstancesProtectedFromScaleIn": true,
+            "ServiceLinkedRoleARN": "arn:aws:iam::809466760795:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling",
+            "TrafficSources": [],
+            "AvailabilityZoneDistribution": {
+                "CapacityDistributionStrategy": "balanced-best-effort"
+            },
+            "CapacityReservationSpecification": {
+                "CapacityReservationPreference": "default"
+            },
+            "InstanceLifecyclePolicy": {
+                "RetentionTriggers": {
+                    "TerminateHookAbandon": "terminate"
+                }
+            }
+        }
+    ]
+}

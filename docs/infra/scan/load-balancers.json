@@ -1,0 +1,34 @@
+{
+    "LoadBalancers": [
+        {
+            "LoadBalancerArn": "arn:aws:elasticloadbalancing:ap-northeast-2:809466760795:loadbalancer/app/academy-v1-api-alb/1b0fd6984429d3bf",
+            "DNSName": "academy-v1-api-alb-1317506512.ap-northeast-2.elb.amazonaws.com",
+            "CanonicalHostedZoneId": "ZWKZPGTI48KDX",
+            "CreatedTime": "2026-03-05T09:23:25.080000+00:00",
+            "LoadBalancerName": "academy-v1-api-alb",
+            "Scheme": "internet-facing",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "State": {
+                "Code": "active"
+            },
+            "Type": "application",
+            "AvailabilityZones": [
+                {
+                    "ZoneName": "ap-northeast-2c",
+                    "SubnetId": "subnet-0548571ac21b3bbf3",
+                    "LoadBalancerAddresses": []
+                },
+                {
+                    "ZoneName": "ap-northeast-2a",
+                    "SubnetId": "subnet-07a8427d3306ce910",
+                    "LoadBalancerAddresses": []
+                }
+            ],
+            "SecurityGroups": [
+                "sg-0405c1afe368b4e6b"
+            ],
+            "IpAddressType": "ipv4",
+            "EnablePrefixForIpv6SourceNat": "off"
+        }
+    ]
+}

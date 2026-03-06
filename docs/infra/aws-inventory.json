@@ -1,0 +1,3449 @@
+{
+  "timestamp": "2026-03-06T18:33:28.4139698+09:00",
+  "eventBridgeRules": {
+    "Rules": [
+      {
+        "Name": "academy-reconcile-video-jobs",
+        "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-reconcile-video-jobs",
+        "State": "DISABLED",
+        "Description": "Trigger reconcile_batch_video_jobs via Batch SubmitJob (single-flight)",
+        "ScheduleExpression": "rate(15 minutes)",
+        "EventBusName": "default"
+      },
+      {
+        "Name": "academy-v1-reconcile-video-jobs",
+        "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-v1-reconcile-video-jobs",
+        "State": "ENABLED",
+        "ScheduleExpression": "rate(15 minutes)",
+        "EventBusName": "default"
+      },
+      {
+        "Name": "academy-v1-video-scan-stuck-rate",
+        "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-v1-video-scan-stuck-rate",
+        "State": "ENABLED",
+        "ScheduleExpression": "rate(5 minutes)",
+        "EventBusName": "default"
+      },
+      {
+        "Name": "academy-video-scan-stuck-rate",
+        "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-video-scan-stuck-rate",
+        "State": "DISABLED",
+        "Description": "Trigger scan_stuck_video_jobs via Batch SubmitJob",
+        "ScheduleExpression": "rate(5 minutes)",
+        "EventBusName": "default"
+      },
+      {
+        "Name": "academy-worker-autoscale-rate",
+        "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-worker-autoscale-rate",
+        "State": "DISABLED",
+        "ScheduleExpression": "rate(1 minute)",
+        "EventBusName": "default"
+      },
+      {
+        "Name": "academy-worker-queue-depth-rate",
+        "Arn": "arn:aws:events:ap-northeast-2:809466760795:rule/academy-worker-queue-depth-rate",
+        "State": "DISABLED",
+        "ScheduleExpression": "rate(1 minute)",
+        "EventBusName": "default"
+      }
+    ]
+  },
+  "batchCE": {
+    "computeEnvironments": [
+      {
+        "computeEnvironmentName": "academy-v1-video-batch-ce",
+        "computeEnvironmentArn": "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-v1-video-batch-ce",
+        "ecsClusterArn": "arn:aws:ecs:ap-northeast-2:809466760795:cluster/academy-v1-video-batch-ce_Batch_003beca2-34b3-3fbd-97f6-570a2e2e34a4",
+        "tags": {},
+        "type": "MANAGED",
+        "state": "ENABLED",
+        "status": "VALID",
+        "statusReason": "ComputeEnvironment Healthy",
+        "computeResources": {
+          "type": "EC2",
+          "allocationStrategy": "BEST_FIT_PROGRESSIVE",
+          "minvCpus": 0,
+          "maxvCpus": 40,
+          "desiredvCpus": 0,
+          "instanceTypes": [
+            "c6g.xlarge"
+          ],
+          "subnets": [
+            "subnet-09231ed7ecf59cfa4",
+            "subnet-049e711f41fdff71b"
+          ],
+          "securityGroupIds": [
+            "sg-0ba6fc12209bec7de"
+          ],
+          "instanceRole": "arn:aws:iam::809466760795:instance-profile/academy-batch-ecs-instance-profile",
+          "tags": {},
+          "ec2Configuration": [
+            {
+              "imageType": "ECS_AL2023"
+            }
+          ]
+        },
+        "serviceRole": "arn:aws:iam::809466760795:role/academy-batch-service-role",
+        "containerOrchestrationType": "ECS",
+        "uuid": "a63b70f6-a1bb-3e59-bbd5-aa1b6cb2acc4"
+      },
+      {
+        "computeEnvironmentName": "academy-v1-video-ops-ce",
+        "computeEnvironmentArn": "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-v1-video-ops-ce",
+        "ecsClusterArn": "arn:aws:ecs:ap-northeast-2:809466760795:cluster/academy-v1-video-ops-ce_Batch_675e593a-6035-3719-b4d0-0fbdf521f103",
+        "tags": {},
+        "type": "MANAGED",
+        "state": "ENABLED",
+        "status": "VALID",
+        "statusReason": "ComputeEnvironment Healthy",
+        "computeResources": {
+          "type": "EC2",
+          "allocationStrategy": "BEST_FIT_PROGRESSIVE",
+          "minvCpus": 0,
+          "maxvCpus": 2,
+          "desiredvCpus": 2,
+          "instanceTypes": [
+            "m6g.medium"
+          ],
+          "subnets": [
+            "subnet-09231ed7ecf59cfa4",
+            "subnet-049e711f41fdff71b"
+          ],
+          "securityGroupIds": [
+            "sg-0ba6fc12209bec7de"
+          ],
+          "instanceRole": "arn:aws:iam::809466760795:instance-profile/academy-batch-ecs-instance-profile",
+          "tags": {},
+          "ec2Configuration": [
+            {
+              "imageType": "ECS_AL2023"
+            }
+          ]
+        },
+        "serviceRole": "arn:aws:iam::809466760795:role/academy-batch-service-role",
+        "containerOrchestrationType": "ECS",
+        "uuid": "52efbbb4-d1e0-355f-a04a-04225056ffad"
+      }
+    ]
+  },
+  "launchTemplates": {
+    "LaunchTemplates": [
+      {
+        "LaunchTemplateId": "lt-0afa0758a59af9454",
+        "LaunchTemplateName": "Batch-lt-0435c052-144a-34c5-92a0-9f84117cb153",
+        "CreateTime": "2026-03-06T18:09:17+09:00",
+        "CreatedBy": "arn:aws:sts::809466760795:assumed-role/academy-batch-service-role/aws-batch",
+        "DefaultVersionNumber": 1,
+        "LatestVersionNumber": 1,
+        "Operator": {
+          "Managed": false
+        }
+      },
+      {
+        "LaunchTemplateId": "lt-07205484847c0d061",
+        "LaunchTemplateName": "academy-v1-ai-worker-lt",
+        "CreateTime": "2026-03-05T18:22:01+09:00",
+        "CreatedBy": "arn:aws:iam::809466760795:user/admin97",
+        "DefaultVersionNumber": 2,
+        "LatestVersionNumber": 2,
+        "Operator": {
+          "Managed": false
+        }
+      },
+      {
+        "LaunchTemplateId": "lt-0ba9cc50ab9fe1b10",
+        "LaunchTemplateName": "academy-v1-api-lt",
+        "CreateTime": "2026-03-05T18:27:48+09:00",
+        "CreatedBy": "arn:aws:iam::809466760795:user/admin97",
+        "DefaultVersionNumber": 19,
+        "LatestVersionNumber": 19,
+        "Operator": {
+          "Managed": false
+        }
+      },
+      {
+        "LaunchTemplateId": "lt-01899b13deeb47979",
+        "LaunchTemplateName": "Batch-lt-08d5e4c7-e9bc-391b-b018-918e11e79a03",
+        "CreateTime": "2026-03-06T18:02:58+09:00",
+        "CreatedBy": "arn:aws:sts::809466760795:assumed-role/academy-batch-service-role/aws-batch",
+        "DefaultVersionNumber": 1,
+        "LatestVersionNumber": 1,
+        "Operator": {
+          "Managed": false
+        }
+      },
+      {
+        "LaunchTemplateId": "lt-0dab70932706e8b9c",
+        "LaunchTemplateName": "academy-v1-messaging-worker-lt",
+        "CreateTime": "2026-03-05T18:13:58+09:00",
+        "CreatedBy": "arn:aws:iam::809466760795:user/admin97",
+        "DefaultVersionNumber": 3,
+        "LatestVersionNumber": 3,
+        "Operator": {
+          "Managed": false
+        }
+      },
+      {
+        "LaunchTemplateId": "lt-0fa394065a7d42fe9",
+        "LaunchTemplateName": "Batch-lt-3b6e6d88-aff9-3c6c-ad4e-be33f94acaac",
+        "CreateTime": "2026-03-06T18:03:19+09:00",
+        "CreatedBy": "arn:aws:sts::809466760795:assumed-role/academy-batch-service-role/aws-batch",
+        "DefaultVersionNumber": 1,
+        "LatestVersionNumber": 1,
+        "Operator": {
+          "Managed": false
+        }
+      }
+    ]
+  },
+  "batchQueues": {
+    "jobQueues": [
+      {
+        "jobQueueName": "academy-v1-video-batch-queue",
+        "jobQueueArn": "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-batch-queue",
+        "state": "ENABLED",
+        "status": "VALID",
+        "statusReason": "JobQueue Healthy",
+        "priority": 1,
+        "computeEnvironmentOrder": [
+          {
+            "order": 1,
+            "computeEnvironment": "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-v1-video-batch-ce"
+          }
+        ],
+        "serviceEnvironmentOrder": [],
+        "jobQueueType": "ECS",
+        "tags": {},
+        "jobStateTimeLimitActions": []
+      },
+      {
+        "jobQueueName": "academy-v1-video-ops-queue",
+        "jobQueueArn": "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-ops-queue",
+        "state": "ENABLED",
+        "status": "VALID",
+        "statusReason": "JobQueue Healthy",
+        "priority": 1,
+        "computeEnvironmentOrder": [
+          {
+            "order": 1,
+            "computeEnvironment": "arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-v1-video-ops-ce"
+          }
+        ],
+        "serviceEnvironmentOrder": [],
+        "jobQueueType": "ECS",
+        "tags": {},
+        "jobStateTimeLimitActions": []
+      }
+    ]
+  },
+  "securityGroups": {
+    "SecurityGroups": [
+      {
+        "GroupId": "sg-06cfb1f23372e2597",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "academy-rds"
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-06cfb1f23372e2597",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-rds",
+        "Description": "Created by RDS management console",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0051cc8f79c04b058"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-02692600fbf8e26f7"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-011ed1d9eb4a65b8f"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-088fa3315c12754d0"
+              }
+            ],
+            "IpRanges": [
+              {
+                "CidrIp": "222.107.38.38/32"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-0405c1afe368b4e6b",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0405c1afe368b4e6b",
+        "OwnerId": "809466760795",
+        "GroupName": "default",
+        "Description": "default VPC security group",
+        "IpPermissions": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0405c1afe368b4e6b"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-011ed1d9eb4a65b8f",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-011ed1d9eb4a65b8f",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-video-batch-sg",
+        "Description": "Batch compute (API VPC)",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "172.30.0.0/16"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-0a573d3e9cf51265d",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-00fb37f7f4bc98385",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0a573d3e9cf51265d",
+        "OwnerId": "809466760795",
+        "GroupName": "default",
+        "Description": "default VPC security group",
+        "IpPermissions": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0a573d3e9cf51265d"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-0f8d581baa7bc39c9",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "academy-v1-vpce-sg"
+          },
+          {
+            "Key": "Project",
+            "Value": "academy"
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0f8d581baa7bc39c9",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-v1-vpce-sg",
+        "Description": "VPC endpoints (ECR etc.)",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "172.30.0.0/16"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-0280fb93e16a9afd8",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-0b89e02241aae4b0e",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0280fb93e16a9afd8",
+        "OwnerId": "809466760795",
+        "GroupName": "launch-wizard-3",
+        "Description": "launch-wizard-3 created 2025-12-26T04:55:02.851Z",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8000,
+            "ToPort": 8000,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0bcb33ce553123e02"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-06ee0b63bfa3a00f4"
+              }
+            ],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "222.107.38.38/32"
+              },
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 6379,
+            "ToPort": 6379,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-06ee0b63bfa3a00f4"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0bcb33ce553123e02"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-0bcb33ce553123e02",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-0b89e02241aae4b0e",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0bcb33ce553123e02",
+        "OwnerId": "809466760795",
+        "GroupName": "launch-wizard-5",
+        "Description": "launch-wizard-5 created 2025-12-31T13:27:35.666Z",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8000,
+            "ToPort": 8000,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0280fb93e16a9afd8"
+              }
+            ],
+            "IpRanges": [
+              {
+                "CidrIp": "222.107.38.38/32"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "222.107.38.38/32"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 6379,
+            "ToPort": 6379,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0280fb93e16a9afd8"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-0ba6fc12209bec7de",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "academy"
+          },
+          {
+            "Key": "Name",
+            "Value": "academy-v1-sg-batch"
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0ba6fc12209bec7de",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-v1-sg-batch",
+        "Description": "Academy Batch CE",
+        "IpPermissions": []
+      },
+      {
+        "GroupId": "sg-061700a84decdc148",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-0b89e02241aae4b0e",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-061700a84decdc148",
+        "OwnerId": "809466760795",
+        "GroupName": "default",
+        "Description": "default VPC security group",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-06ee0b63bfa3a00f4"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0280fb93e16a9afd8"
+              }
+            ],
+            "IpRanges": [
+              {
+                "CidrIp": "222.107.38.38/32"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-0051cc8f79c04b058",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "academy-api-sg"
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0051cc8f79c04b058",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-api-sg",
+        "Description": "academy-api-sg",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8000,
+            "ToPort": 8000,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-02692600fbf8e26f7"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0051cc8f79c04b058"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0caaa6c43e12758e6"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0ff11f1b511861447"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0944a30cabd0c022e"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-011ed1d9eb4a65b8f"
+              }
+            ],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              },
+              {
+                "CidrIp": "172.30.0.0/16"
+              },
+              {
+                "CidrIp": "10.1.0.0/16"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "222.107.38.38/32"
+              },
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-02692600fbf8e26f7"
+              }
+            ],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-06ee0b63bfa3a00f4",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-0b89e02241aae4b0e",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-06ee0b63bfa3a00f4",
+        "OwnerId": "809466760795",
+        "GroupName": "launch-wizard-2",
+        "Description": "launch-wizard-2 created 2025-12-22T15:33:43.047Z",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8000,
+            "ToPort": 8000,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "222.107.38.38/32"
+              },
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 6379,
+            "ToPort": 6379,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0280fb93e16a9afd8"
+              }
+            ],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-0944a30cabd0c022e",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0944a30cabd0c022e",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-lambda-endpoint-sg",
+        "Description": "lambda-to-endpoint",
+        "IpPermissions": []
+      },
+      {
+        "GroupId": "sg-02692600fbf8e26f7",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "222.107.38.38/32"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "academy-worker-sg"
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-02692600fbf8e26f7",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-worker-sg",
+        "Description": "academy-worker-sg",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "222.107.38.38/32"
+              },
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-0f4069135b6215cad",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0f4069135b6215cad",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-redis-sg",
+        "Description": "ElastiCache Redis - allow 6379 from API/Worker",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 6379,
+            "ToPort": 6379,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-02692600fbf8e26f7"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0051cc8f79c04b058"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-011ed1d9eb4a65b8f"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-051767741a1dad2a8",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "academy-v4-sg-data"
+          },
+          {
+            "Key": "Project",
+            "Value": "academy"
+          }
+        ],
+        "VpcId": "vpc-00fb37f7f4bc98385",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-051767741a1dad2a8",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-v4-sg-data",
+        "Description": "Academy data (RDS/Redis)",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-029587bac3bccb784"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0d0b80fc6c9d5d575"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 6379,
+            "ToPort": 6379,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-029587bac3bccb784"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0d0b80fc6c9d5d575"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-088fa3315c12754d0",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "academy-v1-sg-app"
+          },
+          {
+            "Key": "Project",
+            "Value": "academy"
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-088fa3315c12754d0",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-v1-sg-app",
+        "Description": "Academy app (API, workers)",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8000,
+            "ToPort": 8000,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "10.0.0.0/16"
+              },
+              {
+                "CidrIp": "172.30.0.0/16"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-02f18e775a41753e0",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-009e3ea6265c7a203",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-02f18e775a41753e0",
+        "OwnerId": "809466760795",
+        "GroupName": "default",
+        "Description": "default VPC security group",
+        "IpPermissions": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-02f18e775a41753e0"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-007bba3b7c40fe9c6",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-009e3ea6265c7a203",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-007bba3b7c40fe9c6",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-lambda-metric-sg",
+        "Description": "Lambda queue-depth + CloudWatch endpoint",
+        "IpPermissions": []
+      },
+      {
+        "GroupId": "sg-0d0b80fc6c9d5d575",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "academy"
+          },
+          {
+            "Key": "Name",
+            "Value": "academy-v4-sg-batch"
+          }
+        ],
+        "VpcId": "vpc-00fb37f7f4bc98385",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0d0b80fc6c9d5d575",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-v4-sg-batch",
+        "Description": "Academy Batch CE",
+        "IpPermissions": []
+      },
+      {
+        "GroupId": "sg-0ff11f1b511861447",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0ff11f1b511861447",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-lambda-internal-sg",
+        "Description": "Lambda to academy-api internal http",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0944a30cabd0c022e"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0051cc8f79c04b058"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-02692600fbf8e26f7"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-0caaa6c43e12758e6",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0caaa6c43e12758e6",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-lambda-video-sg",
+        "Description": "Lambda to API access",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0caaa6c43e12758e6"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0ff11f1b511861447"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0944a30cabd0c022e"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-0f04876abb91d1606",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "academy"
+          },
+          {
+            "Key": "Name",
+            "Value": "academy-v1-sg-data"
+          }
+        ],
+        "VpcId": "vpc-0831a2484f9b114c2",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-0f04876abb91d1606",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-v1-sg-data",
+        "Description": "Academy data (RDS/Redis)",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-088fa3315c12754d0"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0ba6fc12209bec7de"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 6379,
+            "ToPort": 6379,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-088fa3315c12754d0"
+              },
+              {
+                "UserId": "809466760795",
+                "GroupId": "sg-0ba6fc12209bec7de"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      },
+      {
+        "GroupId": "sg-029587bac3bccb784",
+        "IpPermissionsEgress": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "academy-v4-sg-app"
+          },
+          {
+            "Key": "Project",
+            "Value": "academy"
+          }
+        ],
+        "VpcId": "vpc-00fb37f7f4bc98385",
+        "SecurityGroupArn": "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-029587bac3bccb784",
+        "OwnerId": "809466760795",
+        "GroupName": "academy-v4-sg-app",
+        "Description": "Academy app (API, workers)",
+        "IpPermissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8000,
+            "ToPort": 8000,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "10.0.0.0/16"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      }
+    ]
+  },
+  "eips": {
+    "Addresses": [
+      {
+        "AllocationId": "eipalloc-005028ec477ae0819",
+        "AssociationId": "eipassoc-04d5b7de4fce4e59d",
+        "Domain": "vpc",
+        "NetworkInterfaceId": "eni-024af6379e0fd0899",
+        "NetworkInterfaceOwnerId": "809466760795",
+        "PrivateIpAddress": "172.30.2.8",
+        "PublicIpv4Pool": "amazon",
+        "NetworkBorderGroup": "ap-northeast-2",
+        "ServiceManaged": "alb",
+        "PublicIp": "3.37.217.75"
+      },
+      {
+        "AllocationId": "eipalloc-0cf9f6d0e100d6787",
+        "AssociationId": "eipassoc-090d318237815043c",
+        "Domain": "vpc",
+        "NetworkInterfaceId": "eni-012e263be5b1c0c9c",
+        "NetworkInterfaceOwnerId": "809466760795",
+        "PrivateIpAddress": "172.30.0.185",
+        "PublicIpv4Pool": "amazon",
+        "NetworkBorderGroup": "ap-northeast-2",
+        "ServiceManaged": "alb",
+        "PublicIp": "54.180.111.188"
+      },
+      {
+        "AllocationId": "eipalloc-02bcb9e54f8f9cca3",
+        "AssociationId": "eipassoc-0e330c41df3a67367",
+        "Domain": "vpc",
+        "NetworkInterfaceId": "eni-0df8bc849b5d7af1f",
+        "NetworkInterfaceOwnerId": "809466760795",
+        "PrivateIpAddress": "172.30.1.44",
+        "PublicIpv4Pool": "amazon",
+        "NetworkBorderGroup": "ap-northeast-2",
+        "ServiceManaged": "rds",
+        "PublicIp": "54.180.207.91"
+      }
+    ]
+  },
+  "asg": {
+    "AutoScalingGroups": [
+      {
+        "AutoScalingGroupName": "academy-v1-ai-worker-asg",
+        "AutoScalingGroupARN": "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:882e3a73-3562-414d-8f9a-fb6fd2e7ee44:autoScalingGroupName/academy-v1-ai-worker-asg",
+        "LaunchTemplate": {
+          "LaunchTemplateId": "lt-07205484847c0d061",
+          "LaunchTemplateName": "academy-v1-ai-worker-lt",
+          "Version": "$Latest"
+        },
+        "MinSize": 1,
+        "MaxSize": 5,
+        "DesiredCapacity": 1,
+        "DefaultCooldown": 300,
+        "AvailabilityZones": [
+          "ap-northeast-2a",
+          "ap-northeast-2c"
+        ],
+        "LoadBalancerNames": [],
+        "TargetGroupARNs": [],
+        "HealthCheckType": "EC2",
+        "HealthCheckGracePeriod": 0,
+        "Instances": [
+          {
+            "InstanceId": "i-0851018cae061ea8d",
+            "InstanceType": "t4g.medium",
+            "AvailabilityZone": "ap-northeast-2a",
+            "LifecycleState": "InService",
+            "HealthStatus": "Healthy",
+            "LaunchTemplate": {
+              "LaunchTemplateId": "lt-07205484847c0d061",
+              "LaunchTemplateName": "academy-v1-ai-worker-lt",
+              "Version": "2"
+            },
+            "ProtectedFromScaleIn": true
+          }
+        ],
+        "CreatedTime": "2026-03-05T18:22:04.733+09:00",
+        "SuspendedProcesses": [],
+        "VPCZoneIdentifier": "subnet-07a8427d3306ce910,subnet-0548571ac21b3bbf3",
+        "EnabledMetrics": [],
+        "Tags": [],
+        "TerminationPolicies": [
+          "Default"
+        ],
+        "NewInstancesProtectedFromScaleIn": true,
+        "ServiceLinkedRoleARN": "arn:aws:iam::809466760795:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling",
+        "TrafficSources": [],
+        "AvailabilityZoneDistribution": {
+          "CapacityDistributionStrategy": "balanced-best-effort"
+        },
+        "CapacityReservationSpecification": {
+          "CapacityReservationPreference": "default"
+        },
+        "InstanceLifecyclePolicy": {
+          "RetentionTriggers": {
+            "TerminateHookAbandon": "terminate"
+          }
+        }
+      },
+      {
+        "AutoScalingGroupName": "academy-v1-api-asg",
+        "AutoScalingGroupARN": "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:358f33ce-a5cf-4978-9d93-59520d34bec4:autoScalingGroupName/academy-v1-api-asg",
+        "LaunchTemplate": {
+          "LaunchTemplateId": "lt-0ba9cc50ab9fe1b10",
+          "LaunchTemplateName": "academy-v1-api-lt",
+          "Version": "$Latest"
+        },
+        "MinSize": 1,
+        "MaxSize": 2,
+        "DesiredCapacity": 1,
+        "DefaultCooldown": 300,
+        "AvailabilityZones": [
+          "ap-northeast-2b",
+          "ap-northeast-2d"
+        ],
+        "LoadBalancerNames": [],
+        "TargetGroupARNs": [
+          "arn:aws:elasticloadbalancing:ap-northeast-2:809466760795:targetgroup/academy-v1-api-tg/bb2c965190169007"
+        ],
+        "HealthCheckType": "EC2",
+        "HealthCheckGracePeriod": 0,
+        "Instances": [
+          {
+            "InstanceId": "i-0d3aaca239fd1637e",
+            "InstanceType": "t4g.medium",
+            "AvailabilityZone": "ap-northeast-2b",
+            "LifecycleState": "InService",
+            "HealthStatus": "Healthy",
+            "LaunchTemplate": {
+              "LaunchTemplateId": "lt-0ba9cc50ab9fe1b10",
+              "LaunchTemplateName": "academy-v1-api-lt",
+              "Version": "19"
+            },
+            "ProtectedFromScaleIn": false
+          }
+        ],
+        "CreatedTime": "2026-03-06T18:04:19.571+09:00",
+        "SuspendedProcesses": [],
+        "VPCZoneIdentifier": "subnet-049e711f41fdff71b,subnet-09231ed7ecf59cfa4",
+        "EnabledMetrics": [],
+        "Tags": [],
+        "TerminationPolicies": [
+          "Default"
+        ],
+        "NewInstancesProtectedFromScaleIn": false,
+        "ServiceLinkedRoleARN": "arn:aws:iam::809466760795:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling",
+        "TrafficSources": [
+          {
+            "Identifier": "arn:aws:elasticloadbalancing:ap-northeast-2:809466760795:targetgroup/academy-v1-api-tg/bb2c965190169007",
+            "Type": "elbv2"
+          }
+        ],
+        "AvailabilityZoneDistribution": {
+          "CapacityDistributionStrategy": "balanced-best-effort"
+        },
+        "CapacityReservationSpecification": {
+          "CapacityReservationPreference": "default"
+        },
+        "InstanceLifecyclePolicy": {
+          "RetentionTriggers": {
+            "TerminateHookAbandon": "terminate"
+          }
+        }
+      },
+      {
+        "AutoScalingGroupName": "academy-v1-messaging-worker-asg",
+        "AutoScalingGroupARN": "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:3db89ecd-7578-47e8-8356-c3623e1cd531:autoScalingGroupName/academy-v1-messaging-worker-asg",
+        "LaunchTemplate": {
+          "LaunchTemplateId": "lt-0dab70932706e8b9c",
+          "LaunchTemplateName": "academy-v1-messaging-worker-lt",
+          "Version": "$Latest"
+        },
+        "MinSize": 1,
+        "MaxSize": 3,
+        "DesiredCapacity": 1,
+        "DefaultCooldown": 300,
+        "AvailabilityZones": [
+          "ap-northeast-2a",
+          "ap-northeast-2c"
+        ],
+        "LoadBalancerNames": [],
+        "TargetGroupARNs": [],
+        "HealthCheckType": "EC2",
+        "HealthCheckGracePeriod": 0,
+        "Instances": [
+          {
+            "InstanceId": "i-0b47a6fce4975ec91",
+            "InstanceType": "t4g.medium",
+            "AvailabilityZone": "ap-northeast-2a",
+            "LifecycleState": "InService",
+            "HealthStatus": "Healthy",
+            "LaunchTemplate": {
+              "LaunchTemplateId": "lt-0dab70932706e8b9c",
+              "LaunchTemplateName": "academy-v1-messaging-worker-lt",
+              "Version": "3"
+            },
+            "ProtectedFromScaleIn": true
+          }
+        ],
+        "CreatedTime": "2026-03-05T18:16:49.774+09:00",
+        "SuspendedProcesses": [],
+        "VPCZoneIdentifier": "subnet-07a8427d3306ce910,subnet-0548571ac21b3bbf3",
+        "EnabledMetrics": [],
+        "Tags": [],
+        "TerminationPolicies": [
+          "Default"
+        ],
+        "NewInstancesProtectedFromScaleIn": true,
+        "ServiceLinkedRoleARN": "arn:aws:iam::809466760795:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling",
+        "TrafficSources": [],
+        "AvailabilityZoneDistribution": {
+          "CapacityDistributionStrategy": "balanced-best-effort"
+        },
+        "CapacityReservationSpecification": {
+          "CapacityReservationPreference": "default"
+        },
+        "InstanceLifecyclePolicy": {
+          "RetentionTriggers": {
+            "TerminateHookAbandon": "terminate"
+          }
+        }
+      },
+      {
+        "AutoScalingGroupName": "academy-v1-video-ops-ce-asg-823f2525-3a00-318c-85cf-2ccfc033c170",
+        "AutoScalingGroupARN": "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:d6bbe731-75bd-40f3-9da7-1938959b648e:autoScalingGroupName/academy-v1-video-ops-ce-asg-823f2525-3a00-318c-85cf-2ccfc033c170",
+        "MixedInstancesPolicy": {
+          "LaunchTemplate": {
+            "LaunchTemplateSpecification": {
+              "LaunchTemplateId": "lt-0afa0758a59af9454",
+              "LaunchTemplateName": "Batch-lt-0435c052-144a-34c5-92a0-9f84117cb153",
+              "Version": "1"
+            },
+            "Overrides": [
+              {
+                "InstanceType": "m6g.medium",
+                "WeightedCapacity": "1"
+              }
+            ]
+          },
+          "InstancesDistribution": {
+            "OnDemandAllocationStrategy": "prioritized",
+            "OnDemandBaseCapacity": 0,
+            "OnDemandPercentageAboveBaseCapacity": 100,
+            "SpotAllocationStrategy": "lowest-price",
+            "SpotInstancePools": 2
+          }
+        },
+        "MinSize": 0,
+        "MaxSize": 2,
+        "DesiredCapacity": 2,
+        "DefaultCooldown": 300,
+        "AvailabilityZones": [
+          "ap-northeast-2b",
+          "ap-northeast-2d"
+        ],
+        "LoadBalancerNames": [],
+        "TargetGroupARNs": [],
+        "HealthCheckType": "EC2",
+        "HealthCheckGracePeriod": 0,
+        "Instances": [
+          {
+            "InstanceId": "i-05581a935171c6bd1",
+            "InstanceType": "m6g.medium",
+            "AvailabilityZone": "ap-northeast-2b",
+            "LifecycleState": "InService",
+            "HealthStatus": "Healthy",
+            "LaunchTemplate": {
+              "LaunchTemplateId": "lt-0afa0758a59af9454",
+              "LaunchTemplateName": "Batch-lt-0435c052-144a-34c5-92a0-9f84117cb153",
+              "Version": "1"
+            },
+            "ProtectedFromScaleIn": true,
+            "WeightedCapacity": "1"
+          },
+          {
+            "InstanceId": "i-0fab4214533707c93",
+            "InstanceType": "m6g.medium",
+            "AvailabilityZone": "ap-northeast-2d",
+            "LifecycleState": "InService",
+            "HealthStatus": "Healthy",
+            "LaunchTemplate": {
+              "LaunchTemplateId": "lt-0afa0758a59af9454",
+              "LaunchTemplateName": "Batch-lt-0435c052-144a-34c5-92a0-9f84117cb153",
+              "Version": "1"
+            },
+            "ProtectedFromScaleIn": true,
+            "WeightedCapacity": "1"
+          }
+        ],
+        "CreatedTime": "2026-03-06T18:09:18.644+09:00",
+        "SuspendedProcesses": [
+          {
+            "ProcessName": "AZRebalance",
+            "SuspensionReason": "User suspended at 2026-03-06T09:09:18Z"
+          }
+        ],
+        "VPCZoneIdentifier": "subnet-049e711f41fdff71b,subnet-09231ed7ecf59cfa4",
+        "EnabledMetrics": [],
+        "Tags": [],
+        "TerminationPolicies": [
+          "Default"
+        ],
+        "NewInstancesProtectedFromScaleIn": true,
+        "ServiceLinkedRoleARN": "arn:aws:iam::809466760795:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling",
+        "TrafficSources": [],
+        "AvailabilityZoneDistribution": {
+          "CapacityDistributionStrategy": "balanced-best-effort"
+        },
+        "CapacityReservationSpecification": {
+          "CapacityReservationPreference": "default"
+        },
+        "InstanceLifecyclePolicy": {
+          "RetentionTriggers": {
+            "TerminateHookAbandon": "terminate"
+          }
+        }
+      }
+    ]
+  },
+  "ec2": {
+    "Reservations": [
+      {
+        "ReservationId": "r-09aa175217ebe7e38",
+        "OwnerId": "809466760795",
+        "RequesterId": "154997438628",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [],
+            "ClientToken": "fleet-cd9da197-faa4-ec2f-a698-8908b7c38713-0",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "NetworkInterfaces": [],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [],
+            "StateReason": {
+              "Code": "Client.UserInitiatedShutdown",
+              "Message": "Client.UserInitiatedShutdown: User initiated shutdown"
+            },
+            "Tags": [
+              {
+                "Key": "aws:ec2launchtemplate:version",
+                "Value": "1"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:id",
+                "Value": "lt-017ef46dab75a8c00"
+              },
+              {
+                "Key": "aws:autoscaling:groupName",
+                "Value": "academy-v1-video-ops-ce-asg-823f2525-3a00-318c-85cf-2ccfc033c170"
+              },
+              {
+                "Key": "aws:ec2:fleet-id",
+                "Value": "fleet-cd9da197-faa4-ec2f-a698-8908b7c38713"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 1,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "pending",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T15:40:08+09:00",
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-067cad09d91e1fecb",
+            "ImageId": "ami-03d8f5845b3facccd",
+            "State": {
+              "Code": 48,
+              "Name": "terminated"
+            },
+            "PrivateDnsName": "",
+            "PublicDnsName": "",
+            "StateTransitionReason": "User initiated (2026-03-06 08:52:25 GMT)",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "m6g.medium",
+            "LaunchTime": "2026-03-06T15:40:08+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az4",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2d"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            }
+          }
+        ]
+      },
+      {
+        "ReservationId": "r-040c3bd26c507a94d",
+        "OwnerId": "809466760795",
+        "RequesterId": "154997438628",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [
+              {
+                "DeviceName": "/dev/xvda",
+                "Ebs": {
+                  "AttachTime": "2026-03-06T18:09:24+09:00",
+                  "DeleteOnTermination": true,
+                  "Status": "attached",
+                  "VolumeId": "vol-0b9e051269366423e",
+                  "EbsCardIndex": 0
+                }
+              }
+            ],
+            "ClientToken": "fleet-f99d170c-6f84-66be-0418-8588d06ccfac-0",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "IamInstanceProfile": {
+              "Arn": "arn:aws:iam::809466760795:instance-profile/academy-batch-ecs-instance-profile",
+              "Id": "AIPA3Y572RZNZXIJKHZLJ"
+            },
+            "NetworkInterfaces": [
+              {
+                "Association": {
+                  "IpOwnerId": "amazon",
+                  "PublicDnsName": "ec2-43-203-166-55.ap-northeast-2.compute.amazonaws.com",
+                  "PublicIp": "43.203.166.55"
+                },
+                "Attachment": {
+                  "AttachTime": "2026-03-06T18:09:23+09:00",
+                  "AttachmentId": "eni-attach-0fb6a2d9637372b0a",
+                  "DeleteOnTermination": true,
+                  "DeviceIndex": 0,
+                  "Status": "attached",
+                  "NetworkCardIndex": 0
+                },
+                "Description": "",
+                "Groups": [
+                  {
+                    "GroupId": "sg-0ba6fc12209bec7de",
+                    "GroupName": "academy-v1-sg-batch"
+                  }
+                ],
+                "Ipv6Addresses": [],
+                "MacAddress": "0e:87:43:4f:4b:39",
+                "NetworkInterfaceId": "eni-07e34bee99024cd60",
+                "OwnerId": "809466760795",
+                "PrivateDnsName": "ip-172-30-3-188.ap-northeast-2.compute.internal",
+                "PrivateIpAddress": "172.30.3.188",
+                "PrivateIpAddresses": [
+                  {
+                    "Association": {
+                      "IpOwnerId": "amazon",
+                      "PublicDnsName": "ec2-43-203-166-55.ap-northeast-2.compute.amazonaws.com",
+                      "PublicIp": "43.203.166.55"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-3-188.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.3.188"
+                  }
+                ],
+                "SourceDestCheck": true,
+                "Status": "in-use",
+                "SubnetId": "subnet-049e711f41fdff71b",
+                "VpcId": "vpc-0831a2484f9b114c2",
+                "InterfaceType": "interface",
+                "Operator": {
+                  "Managed": false
+                }
+              }
+            ],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [
+              {
+                "GroupId": "sg-0ba6fc12209bec7de",
+                "GroupName": "academy-v1-sg-batch"
+              }
+            ],
+            "SourceDestCheck": true,
+            "Tags": [
+              {
+                "Key": "aws:autoscaling:groupName",
+                "Value": "academy-v1-video-ops-ce-asg-823f2525-3a00-318c-85cf-2ccfc033c170"
+              },
+              {
+                "Key": "aws:ec2:fleet-id",
+                "Value": "fleet-f99d170c-6f84-66be-0418-8588d06ccfac"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:version",
+                "Value": "1"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:id",
+                "Value": "lt-0afa0758a59af9454"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 1,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "applied",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T18:09:23+09:00",
+            "PrivateDnsNameOptions": {
+              "HostnameType": "ip-name",
+              "EnableResourceNameDnsARecord": false,
+              "EnableResourceNameDnsAAAARecord": false
+            },
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-0fab4214533707c93",
+            "ImageId": "ami-06589f7037b0a7e32",
+            "State": {
+              "Code": 16,
+              "Name": "running"
+            },
+            "PrivateDnsName": "ip-172-30-3-188.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-43-203-166-55.ap-northeast-2.compute.amazonaws.com",
+            "StateTransitionReason": "",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "m6g.medium",
+            "LaunchTime": "2026-03-06T18:09:23+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az4",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2d"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            },
+            "SubnetId": "subnet-049e711f41fdff71b",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "PrivateIpAddress": "172.30.3.188",
+            "PublicIpAddress": "43.203.166.55"
+          }
+        ]
+      },
+      {
+        "ReservationId": "r-023a166f7684bb25f",
+        "OwnerId": "809466760795",
+        "RequesterId": "154997438628",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [],
+            "ClientToken": "fleet-c7bda39d-d804-e6a5-0eba-2b2a7aa62e52-0",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "NetworkInterfaces": [],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [],
+            "StateReason": {
+              "Code": "Client.UserInitiatedShutdown",
+              "Message": "Client.UserInitiatedShutdown: User initiated shutdown"
+            },
+            "Tags": [
+              {
+                "Key": "aws:ec2launchtemplate:version",
+                "Value": "1"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:id",
+                "Value": "lt-017ef46dab75a8c00"
+              },
+              {
+                "Key": "aws:autoscaling:groupName",
+                "Value": "academy-v1-video-ops-ce-asg-823f2525-3a00-318c-85cf-2ccfc033c170"
+              },
+              {
+                "Key": "aws:ec2:fleet-id",
+                "Value": "fleet-c7bda39d-d804-e6a5-0eba-2b2a7aa62e52"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 1,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "pending",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T15:38:03+09:00",
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-0c5780e816193f988",
+            "ImageId": "ami-03d8f5845b3facccd",
+            "State": {
+              "Code": 48,
+              "Name": "terminated"
+            },
+            "PrivateDnsName": "",
+            "PublicDnsName": "",
+            "StateTransitionReason": "User initiated (2026-03-06 08:52:25 GMT)",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "m6g.medium",
+            "LaunchTime": "2026-03-06T15:38:03+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az2",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2b"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            }
+          }
+        ]
+      },
+      {
+        "ReservationId": "r-0ef8d68e8911a811d",
+        "OwnerId": "809466760795",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [
+              {
+                "DeviceName": "/dev/xvda",
+                "Ebs": {
+                  "AttachTime": "2026-03-06T15:37:43+09:00",
+                  "DeleteOnTermination": true,
+                  "Status": "attached",
+                  "VolumeId": "vol-0415dacaf3cf4ac86",
+                  "EbsCardIndex": 0
+                }
+              }
+            ],
+            "ClientToken": "fcd284fb-e4ba-44a8-bf31-48332fc61cfe",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "IamInstanceProfile": {
+              "Arn": "arn:aws:iam::809466760795:instance-profile/academy-ec2-role",
+              "Id": "AIPA3Y572RZNQDBTRV633"
+            },
+            "NetworkInterfaces": [
+              {
+                "Association": {
+                  "IpOwnerId": "amazon",
+                  "PublicDnsName": "ec2-43-203-99-186.ap-northeast-2.compute.amazonaws.com",
+                  "PublicIp": "43.203.99.186"
+                },
+                "Attachment": {
+                  "AttachTime": "2026-03-06T15:37:42+09:00",
+                  "AttachmentId": "eni-attach-0c562eb66a3f76bed",
+                  "DeleteOnTermination": true,
+                  "DeviceIndex": 0,
+                  "Status": "attached",
+                  "NetworkCardIndex": 0
+                },
+                "Description": "",
+                "Groups": [
+                  {
+                    "GroupId": "sg-088fa3315c12754d0",
+                    "GroupName": "academy-v1-sg-app"
+                  }
+                ],
+                "Ipv6Addresses": [],
+                "MacAddress": "06:2b:0f:94:f5:cf",
+                "NetworkInterfaceId": "eni-0b7324e904e44a198",
+                "OwnerId": "809466760795",
+                "PrivateDnsName": "ip-172-30-1-99.ap-northeast-2.compute.internal",
+                "PrivateIpAddress": "172.30.1.99",
+                "PrivateIpAddresses": [
+                  {
+                    "Association": {
+                      "IpOwnerId": "amazon",
+                      "PublicDnsName": "ec2-43-203-99-186.ap-northeast-2.compute.amazonaws.com",
+                      "PublicIp": "43.203.99.186"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-99.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.99"
+                  }
+                ],
+                "SourceDestCheck": true,
+                "Status": "in-use",
+                "SubnetId": "subnet-09231ed7ecf59cfa4",
+                "VpcId": "vpc-0831a2484f9b114c2",
+                "InterfaceType": "interface",
+                "Operator": {
+                  "Managed": false
+                }
+              }
+            ],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [
+              {
+                "GroupId": "sg-088fa3315c12754d0",
+                "GroupName": "academy-v1-sg-app"
+              }
+            ],
+            "SourceDestCheck": true,
+            "Tags": [
+              {
+                "Key": "Name",
+                "Value": "academy-build-arm64"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 2,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "applied",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T15:37:42+09:00",
+            "PrivateDnsNameOptions": {
+              "HostnameType": "ip-name",
+              "EnableResourceNameDnsARecord": false,
+              "EnableResourceNameDnsAAAARecord": false
+            },
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-0c11e7127e7ea03f8",
+            "ImageId": "ami-0885e191a9bcf28b0",
+            "State": {
+              "Code": 16,
+              "Name": "running"
+            },
+            "PrivateDnsName": "ip-172-30-1-99.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-43-203-99-186.ap-northeast-2.compute.amazonaws.com",
+            "StateTransitionReason": "",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "t4g.medium",
+            "LaunchTime": "2026-03-06T15:37:42+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az2",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2b"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            },
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "PrivateIpAddress": "172.30.1.99",
+            "PublicIpAddress": "43.203.99.186"
+          }
+        ]
+      },
+      {
+        "ReservationId": "r-0bcda1a42482fbceb",
+        "OwnerId": "809466760795",
+        "RequesterId": "154997438628",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [
+              {
+                "DeviceName": "/dev/xvda",
+                "Ebs": {
+                  "AttachTime": "2026-03-06T18:13:31+09:00",
+                  "DeleteOnTermination": true,
+                  "Status": "attached",
+                  "VolumeId": "vol-023ff43bcb966b462",
+                  "EbsCardIndex": 0
+                }
+              }
+            ],
+            "ClientToken": "fleet-e5352bb7-5a0e-ee0d-24b2-012a38706889-0",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "IamInstanceProfile": {
+              "Arn": "arn:aws:iam::809466760795:instance-profile/academy-batch-ecs-instance-profile",
+              "Id": "AIPA3Y572RZNZXIJKHZLJ"
+            },
+            "NetworkInterfaces": [
+              {
+                "Association": {
+                  "IpOwnerId": "amazon",
+                  "PublicDnsName": "ec2-13-125-203-237.ap-northeast-2.compute.amazonaws.com",
+                  "PublicIp": "13.125.203.237"
+                },
+                "Attachment": {
+                  "AttachTime": "2026-03-06T18:13:31+09:00",
+                  "AttachmentId": "eni-attach-021202bdba6fbeaa9",
+                  "DeleteOnTermination": true,
+                  "DeviceIndex": 0,
+                  "Status": "attached",
+                  "NetworkCardIndex": 0
+                },
+                "Description": "",
+                "Groups": [
+                  {
+                    "GroupId": "sg-0ba6fc12209bec7de",
+                    "GroupName": "academy-v1-sg-batch"
+                  }
+                ],
+                "Ipv6Addresses": [],
+                "MacAddress": "06:10:c8:de:83:d7",
+                "NetworkInterfaceId": "eni-06e727499818a7e15",
+                "OwnerId": "809466760795",
+                "PrivateDnsName": "ip-172-30-1-247.ap-northeast-2.compute.internal",
+                "PrivateIpAddress": "172.30.1.247",
+                "PrivateIpAddresses": [
+                  {
+                    "Association": {
+                      "IpOwnerId": "amazon",
+                      "PublicDnsName": "ec2-13-125-203-237.ap-northeast-2.compute.amazonaws.com",
+                      "PublicIp": "13.125.203.237"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-247.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.247"
+                  }
+                ],
+                "SourceDestCheck": true,
+                "Status": "in-use",
+                "SubnetId": "subnet-09231ed7ecf59cfa4",
+                "VpcId": "vpc-0831a2484f9b114c2",
+                "InterfaceType": "interface",
+                "Operator": {
+                  "Managed": false
+                }
+              }
+            ],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [
+              {
+                "GroupId": "sg-0ba6fc12209bec7de",
+                "GroupName": "academy-v1-sg-batch"
+              }
+            ],
+            "SourceDestCheck": true,
+            "Tags": [
+              {
+                "Key": "aws:ec2launchtemplate:version",
+                "Value": "1"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:id",
+                "Value": "lt-0afa0758a59af9454"
+              },
+              {
+                "Key": "aws:ec2:fleet-id",
+                "Value": "fleet-e5352bb7-5a0e-ee0d-24b2-012a38706889"
+              },
+              {
+                "Key": "aws:autoscaling:groupName",
+                "Value": "academy-v1-video-ops-ce-asg-823f2525-3a00-318c-85cf-2ccfc033c170"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 1,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "applied",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T18:13:31+09:00",
+            "PrivateDnsNameOptions": {
+              "HostnameType": "ip-name",
+              "EnableResourceNameDnsARecord": false,
+              "EnableResourceNameDnsAAAARecord": false
+            },
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-05581a935171c6bd1",
+            "ImageId": "ami-06589f7037b0a7e32",
+            "State": {
+              "Code": 16,
+              "Name": "running"
+            },
+            "PrivateDnsName": "ip-172-30-1-247.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-13-125-203-237.ap-northeast-2.compute.amazonaws.com",
+            "StateTransitionReason": "",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "m6g.medium",
+            "LaunchTime": "2026-03-06T18:13:31+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az2",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2b"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            },
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "PrivateIpAddress": "172.30.1.247",
+            "PublicIpAddress": "13.125.203.237"
+          }
+        ]
+      },
+      {
+        "ReservationId": "r-00e5e3b1fc508d70f",
+        "OwnerId": "809466760795",
+        "RequesterId": "722737459838",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [
+              {
+                "DeviceName": "/dev/xvda",
+                "Ebs": {
+                  "AttachTime": "2026-03-06T18:06:28+09:00",
+                  "DeleteOnTermination": true,
+                  "Status": "attached",
+                  "VolumeId": "vol-083ac96dd7602bb82",
+                  "EbsCardIndex": 0
+                }
+              }
+            ],
+            "ClientToken": "26b67309-97c6-c6e1-5aa8-04e5ceb9ebae",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "IamInstanceProfile": {
+              "Arn": "arn:aws:iam::809466760795:instance-profile/academy-ec2-role",
+              "Id": "AIPA3Y572RZNQDBTRV633"
+            },
+            "NetworkInterfaces": [
+              {
+                "Association": {
+                  "IpOwnerId": "amazon",
+                  "PublicDnsName": "ec2-54-181-1-24.ap-northeast-2.compute.amazonaws.com",
+                  "PublicIp": "54.181.1.24"
+                },
+                "Attachment": {
+                  "AttachTime": "2026-03-06T18:06:28+09:00",
+                  "AttachmentId": "eni-attach-06346140227edda08",
+                  "DeleteOnTermination": true,
+                  "DeviceIndex": 0,
+                  "Status": "attached",
+                  "NetworkCardIndex": 0
+                },
+                "Description": "",
+                "Groups": [
+                  {
+                    "GroupId": "sg-088fa3315c12754d0",
+                    "GroupName": "academy-v1-sg-app"
+                  }
+                ],
+                "Ipv6Addresses": [],
+                "MacAddress": "06:3b:dd:aa:b5:21",
+                "NetworkInterfaceId": "eni-02364086df16dee7d",
+                "OwnerId": "809466760795",
+                "PrivateDnsName": "ip-172-30-1-31.ap-northeast-2.compute.internal",
+                "PrivateIpAddress": "172.30.1.31",
+                "PrivateIpAddresses": [
+                  {
+                    "Association": {
+                      "IpOwnerId": "amazon",
+                      "PublicDnsName": "ec2-54-181-1-24.ap-northeast-2.compute.amazonaws.com",
+                      "PublicIp": "54.181.1.24"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-1-31.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.1.31"
+                  }
+                ],
+                "SourceDestCheck": true,
+                "Status": "in-use",
+                "SubnetId": "subnet-09231ed7ecf59cfa4",
+                "VpcId": "vpc-0831a2484f9b114c2",
+                "InterfaceType": "interface",
+                "Operator": {
+                  "Managed": false
+                }
+              }
+            ],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [
+              {
+                "GroupId": "sg-088fa3315c12754d0",
+                "GroupName": "academy-v1-sg-app"
+              }
+            ],
+            "SourceDestCheck": true,
+            "Tags": [
+              {
+                "Key": "Name",
+                "Value": "academy-v1-api"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:id",
+                "Value": "lt-0ba9cc50ab9fe1b10"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:version",
+                "Value": "19"
+              },
+              {
+                "Key": "aws:autoscaling:groupName",
+                "Value": "academy-v1-api-asg"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 2,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "applied",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T18:06:28+09:00",
+            "PrivateDnsNameOptions": {
+              "HostnameType": "ip-name",
+              "EnableResourceNameDnsARecord": false,
+              "EnableResourceNameDnsAAAARecord": false
+            },
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-0d3aaca239fd1637e",
+            "ImageId": "ami-0885e191a9bcf28b0",
+            "State": {
+              "Code": 16,
+              "Name": "running"
+            },
+            "PrivateDnsName": "ip-172-30-1-31.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-54-181-1-24.ap-northeast-2.compute.amazonaws.com",
+            "StateTransitionReason": "",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "t4g.medium",
+            "LaunchTime": "2026-03-06T18:06:28+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az2",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2b"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            },
+            "SubnetId": "subnet-09231ed7ecf59cfa4",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "PrivateIpAddress": "172.30.1.31",
+            "PublicIpAddress": "54.181.1.24"
+          }
+        ]
+      },
+      {
+        "ReservationId": "r-08d5db400246ce79f",
+        "OwnerId": "809466760795",
+        "RequesterId": "722737459838",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [],
+            "ClientToken": "64f67309-9022-a730-3b99-f21a86bc158e",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "NetworkInterfaces": [],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [],
+            "StateReason": {
+              "Code": "Client.UserInitiatedShutdown",
+              "Message": "Client.UserInitiatedShutdown: User initiated shutdown"
+            },
+            "Tags": [
+              {
+                "Key": "aws:autoscaling:groupName",
+                "Value": "academy-v1-api-asg"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:id",
+                "Value": "lt-0ba9cc50ab9fe1b10"
+              },
+              {
+                "Key": "Name",
+                "Value": "academy-v1-api"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:version",
+                "Value": "18"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 2,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "pending",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T18:04:22+09:00",
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-06b1d9b52935fd387",
+            "ImageId": "ami-0885e191a9bcf28b0",
+            "State": {
+              "Code": 48,
+              "Name": "terminated"
+            },
+            "PrivateDnsName": "",
+            "PublicDnsName": "",
+            "StateTransitionReason": "User initiated (2026-03-06 09:11:28 GMT)",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "t4g.medium",
+            "LaunchTime": "2026-03-06T18:04:22+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az2",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2b"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            }
+          }
+        ]
+      },
+      {
+        "ReservationId": "r-0d8cb12248ae4b3eb",
+        "OwnerId": "809466760795",
+        "RequesterId": "722737459838",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [
+              {
+                "DeviceName": "/dev/xvda",
+                "Ebs": {
+                  "AttachTime": "2026-03-06T15:33:55+09:00",
+                  "DeleteOnTermination": true,
+                  "Status": "attached",
+                  "VolumeId": "vol-05337117186ab3e3d",
+                  "EbsCardIndex": 0
+                }
+              }
+            ],
+            "ClientToken": "e7567307-6918-dc6e-4bbc-d28103030d97",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "NetworkInterfaces": [
+              {
+                "Association": {
+                  "IpOwnerId": "amazon",
+                  "PublicDnsName": "ec2-3-36-95-243.ap-northeast-2.compute.amazonaws.com",
+                  "PublicIp": "3.36.95.243"
+                },
+                "Attachment": {
+                  "AttachTime": "2026-03-06T15:33:54+09:00",
+                  "AttachmentId": "eni-attach-06ac7f743ba7fafeb",
+                  "DeleteOnTermination": true,
+                  "DeviceIndex": 0,
+                  "Status": "attached",
+                  "NetworkCardIndex": 0
+                },
+                "Description": "",
+                "Groups": [
+                  {
+                    "GroupId": "sg-088fa3315c12754d0",
+                    "GroupName": "academy-v1-sg-app"
+                  }
+                ],
+                "Ipv6Addresses": [],
+                "MacAddress": "02:47:42:1e:2d:83",
+                "NetworkInterfaceId": "eni-025d66a8e0abb1763",
+                "OwnerId": "809466760795",
+                "PrivateDnsName": "ip-172-30-0-125.ap-northeast-2.compute.internal",
+                "PrivateIpAddress": "172.30.0.125",
+                "PrivateIpAddresses": [
+                  {
+                    "Association": {
+                      "IpOwnerId": "amazon",
+                      "PublicDnsName": "ec2-3-36-95-243.ap-northeast-2.compute.amazonaws.com",
+                      "PublicIp": "3.36.95.243"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-125.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.125"
+                  }
+                ],
+                "SourceDestCheck": true,
+                "Status": "in-use",
+                "SubnetId": "subnet-07a8427d3306ce910",
+                "VpcId": "vpc-0831a2484f9b114c2",
+                "InterfaceType": "interface",
+                "Operator": {
+                  "Managed": false
+                }
+              }
+            ],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [
+              {
+                "GroupId": "sg-088fa3315c12754d0",
+                "GroupName": "academy-v1-sg-app"
+              }
+            ],
+            "SourceDestCheck": true,
+            "Tags": [
+              {
+                "Key": "aws:ec2launchtemplate:id",
+                "Value": "lt-07205484847c0d061"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:version",
+                "Value": "2"
+              },
+              {
+                "Key": "Name",
+                "Value": "academy-v1-ai-worker"
+              },
+              {
+                "Key": "aws:autoscaling:groupName",
+                "Value": "academy-v1-ai-worker-asg"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 2,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "applied",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T15:33:54+09:00",
+            "PrivateDnsNameOptions": {
+              "HostnameType": "ip-name",
+              "EnableResourceNameDnsARecord": false,
+              "EnableResourceNameDnsAAAARecord": false
+            },
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-0851018cae061ea8d",
+            "ImageId": "ami-0885e191a9bcf28b0",
+            "State": {
+              "Code": 16,
+              "Name": "running"
+            },
+            "PrivateDnsName": "ip-172-30-0-125.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-3-36-95-243.ap-northeast-2.compute.amazonaws.com",
+            "StateTransitionReason": "",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "t4g.medium",
+            "LaunchTime": "2026-03-06T15:33:54+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az1",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2a"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            },
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "PrivateIpAddress": "172.30.0.125",
+            "PublicIpAddress": "3.36.95.243"
+          }
+        ]
+      },
+      {
+        "ReservationId": "r-0caaa3bcf9fdbb1d2",
+        "OwnerId": "809466760795",
+        "RequesterId": "722737459838",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [
+              {
+                "DeviceName": "/dev/xvda",
+                "Ebs": {
+                  "AttachTime": "2026-03-06T15:33:54+09:00",
+                  "DeleteOnTermination": true,
+                  "Status": "attached",
+                  "VolumeId": "vol-069bb53dd3144bdb0",
+                  "EbsCardIndex": 0
+                }
+              }
+            ],
+            "ClientToken": "85067307-6905-e014-9861-539e6ff9c1f0",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "NetworkInterfaces": [
+              {
+                "Association": {
+                  "IpOwnerId": "amazon",
+                  "PublicDnsName": "ec2-3-35-136-68.ap-northeast-2.compute.amazonaws.com",
+                  "PublicIp": "3.35.136.68"
+                },
+                "Attachment": {
+                  "AttachTime": "2026-03-06T15:33:53+09:00",
+                  "AttachmentId": "eni-attach-0d38f860d2cac1138",
+                  "DeleteOnTermination": true,
+                  "DeviceIndex": 0,
+                  "Status": "attached",
+                  "NetworkCardIndex": 0
+                },
+                "Description": "",
+                "Groups": [
+                  {
+                    "GroupId": "sg-088fa3315c12754d0",
+                    "GroupName": "academy-v1-sg-app"
+                  }
+                ],
+                "Ipv6Addresses": [],
+                "MacAddress": "02:d9:18:8e:16:f7",
+                "NetworkInterfaceId": "eni-00630f4206837a84d",
+                "OwnerId": "809466760795",
+                "PrivateDnsName": "ip-172-30-0-144.ap-northeast-2.compute.internal",
+                "PrivateIpAddress": "172.30.0.144",
+                "PrivateIpAddresses": [
+                  {
+                    "Association": {
+                      "IpOwnerId": "amazon",
+                      "PublicDnsName": "ec2-3-35-136-68.ap-northeast-2.compute.amazonaws.com",
+                      "PublicIp": "3.35.136.68"
+                    },
+                    "Primary": true,
+                    "PrivateDnsName": "ip-172-30-0-144.ap-northeast-2.compute.internal",
+                    "PrivateIpAddress": "172.30.0.144"
+                  }
+                ],
+                "SourceDestCheck": true,
+                "Status": "in-use",
+                "SubnetId": "subnet-07a8427d3306ce910",
+                "VpcId": "vpc-0831a2484f9b114c2",
+                "InterfaceType": "interface",
+                "Operator": {
+                  "Managed": false
+                }
+              }
+            ],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [
+              {
+                "GroupId": "sg-088fa3315c12754d0",
+                "GroupName": "academy-v1-sg-app"
+              }
+            ],
+            "SourceDestCheck": true,
+            "Tags": [
+              {
+                "Key": "aws:ec2launchtemplate:version",
+                "Value": "3"
+              },
+              {
+                "Key": "Name",
+                "Value": "academy-v1-messaging-worker"
+              },
+              {
+                "Key": "aws:autoscaling:groupName",
+                "Value": "academy-v1-messaging-worker-asg"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:id",
+                "Value": "lt-0dab70932706e8b9c"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 2,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "applied",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T15:33:53+09:00",
+            "PrivateDnsNameOptions": {
+              "HostnameType": "ip-name",
+              "EnableResourceNameDnsARecord": false,
+              "EnableResourceNameDnsAAAARecord": false
+            },
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-0b47a6fce4975ec91",
+            "ImageId": "ami-0885e191a9bcf28b0",
+            "State": {
+              "Code": 16,
+              "Name": "running"
+            },
+            "PrivateDnsName": "ip-172-30-0-144.ap-northeast-2.compute.internal",
+            "PublicDnsName": "ec2-3-35-136-68.ap-northeast-2.compute.amazonaws.com",
+            "StateTransitionReason": "",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "t4g.medium",
+            "LaunchTime": "2026-03-06T15:33:53+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az1",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2a"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            },
+            "SubnetId": "subnet-07a8427d3306ce910",
+            "VpcId": "vpc-0831a2484f9b114c2",
+            "PrivateIpAddress": "172.30.0.144",
+            "PublicIpAddress": "3.35.136.68"
+          }
+        ]
+      },
+      {
+        "ReservationId": "r-06fbec5e0693eafc0",
+        "OwnerId": "809466760795",
+        "RequesterId": "722737459838",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [],
+            "ClientToken": "f7467308-c573-0da0-1955-db3962966004",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "NetworkInterfaces": [],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [],
+            "StateReason": {
+              "Code": "Client.UserInitiatedShutdown",
+              "Message": "Client.UserInitiatedShutdown: User initiated shutdown"
+            },
+            "Tags": [
+              {
+                "Key": "aws:autoscaling:groupName",
+                "Value": "academy-v1-api-asg"
+              },
+              {
+                "Key": "Name",
+                "Value": "academy-v1-api"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:id",
+                "Value": "lt-0ba9cc50ab9fe1b10"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:version",
+                "Value": "16"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 2,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "pending",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T17:09:02+09:00",
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-0fbb224e2ed66f115",
+            "ImageId": "ami-0885e191a9bcf28b0",
+            "State": {
+              "Code": 48,
+              "Name": "terminated"
+            },
+            "PrivateDnsName": "",
+            "PublicDnsName": "",
+            "StateTransitionReason": "User initiated (2026-03-06 08:26:37 GMT)",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "t4g.medium",
+            "LaunchTime": "2026-03-06T17:09:02+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az1",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2a"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            }
+          }
+        ]
+      },
+      {
+        "ReservationId": "r-03372f54603e7f880",
+        "OwnerId": "809466760795",
+        "RequesterId": "722737459838",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [],
+            "ClientToken": "8f967308-f38f-7542-1e4f-e766fd1c2746",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "NetworkInterfaces": [],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [],
+            "StateReason": {
+              "Code": "Client.UserInitiatedShutdown",
+              "Message": "Client.UserInitiatedShutdown: User initiated shutdown"
+            },
+            "Tags": [
+              {
+                "Key": "aws:autoscaling:groupName",
+                "Value": "academy-v1-api-asg"
+              },
+              {
+                "Key": "Name",
+                "Value": "academy-v1-api"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:id",
+                "Value": "lt-0ba9cc50ab9fe1b10"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:version",
+                "Value": "16"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 2,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "pending",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T17:21:37+09:00",
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-019c2c99b692c8fbc",
+            "ImageId": "ami-0885e191a9bcf28b0",
+            "State": {
+              "Code": 48,
+              "Name": "terminated"
+            },
+            "PrivateDnsName": "",
+            "PublicDnsName": "",
+            "StateTransitionReason": "User initiated (2026-03-06 08:53:29 GMT)",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "t4g.medium",
+            "LaunchTime": "2026-03-06T17:21:37+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az1",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2a"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            }
+          }
+        ]
+      },
+      {
+        "ReservationId": "r-0fdcaac656701efc2",
+        "OwnerId": "809466760795",
+        "RequesterId": "722737459838",
+        "Groups": [],
+        "Instances": [
+          {
+            "Architecture": "arm64",
+            "BlockDeviceMappings": [],
+            "ClientToken": "9e467309-55ea-c97f-1918-4b6628ca36ad",
+            "EbsOptimized": false,
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "NetworkInterfaces": [],
+            "RootDeviceName": "/dev/xvda",
+            "RootDeviceType": "ebs",
+            "SecurityGroups": [],
+            "StateReason": {
+              "Code": "Client.UserInitiatedShutdown",
+              "Message": "Client.UserInitiatedShutdown: User initiated shutdown"
+            },
+            "Tags": [
+              {
+                "Key": "aws:ec2launchtemplate:version",
+                "Value": "17"
+              },
+              {
+                "Key": "aws:autoscaling:groupName",
+                "Value": "academy-v1-api-asg"
+              },
+              {
+                "Key": "Name",
+                "Value": "academy-v1-api"
+              },
+              {
+                "Key": "aws:ec2launchtemplate:id",
+                "Value": "lt-0ba9cc50ab9fe1b10"
+              }
+            ],
+            "VirtualizationType": "hvm",
+            "CpuOptions": {
+              "CoreCount": 2,
+              "ThreadsPerCore": 1
+            },
+            "CapacityReservationSpecification": {
+              "CapacityReservationPreference": "open"
+            },
+            "HibernationOptions": {
+              "Configured": false
+            },
+            "MetadataOptions": {
+              "State": "pending",
+              "HttpTokens": "required",
+              "HttpPutResponseHopLimit": 2,
+              "HttpEndpoint": "enabled",
+              "HttpProtocolIpv6": "disabled",
+              "InstanceMetadataTags": "disabled"
+            },
+            "EnclaveOptions": {
+              "Enabled": false
+            },
+            "BootMode": "uefi",
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "UsageOperationUpdateTime": "2026-03-06T17:48:29+09:00",
+            "MaintenanceOptions": {
+              "AutoRecovery": "default",
+              "RebootMigration": "default"
+            },
+            "CurrentInstanceBootMode": "uefi",
+            "NetworkPerformanceOptions": {
+              "BandwidthWeighting": "default"
+            },
+            "Operator": {
+              "Managed": false
+            },
+            "InstanceId": "i-0fe5beb0b6914ea56",
+            "ImageId": "ami-0885e191a9bcf28b0",
+            "State": {
+              "Code": 48,
+              "Name": "terminated"
+            },
+            "PrivateDnsName": "",
+            "PublicDnsName": "",
+            "StateTransitionReason": "User initiated (2026-03-06 09:00:17 GMT)",
+            "AmiLaunchIndex": 0,
+            "ProductCodes": [],
+            "InstanceType": "t4g.medium",
+            "LaunchTime": "2026-03-06T17:48:29+09:00",
+            "Placement": {
+              "AvailabilityZoneId": "apne2-az1",
+              "GroupName": "",
+              "Tenancy": "default",
+              "AvailabilityZone": "ap-northeast-2a"
+            },
+            "Monitoring": {
+              "State": "disabled"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "region": "ap-northeast-2"
+}
