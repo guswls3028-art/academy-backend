@@ -3,10 +3,11 @@
 from typing import Tuple
 from django.conf import settings
 import boto3
+from botocore.client import Config
 from botocore.exceptions import ClientError
 
 # ---------------------------------------------------------------------
-# S3 Client (Cloudflare R2)
+# S3 Client (Cloudflare R2) — presign.py와 동일 설정 (path-style, s3v4)
 # ---------------------------------------------------------------------
 
 _s3 = boto3.client(
@@ -15,6 +16,10 @@ _s3 = boto3.client(
     endpoint_url=settings.R2_ENDPOINT,
     aws_access_key_id=settings.R2_ACCESS_KEY,
     aws_secret_access_key=settings.R2_SECRET_KEY,
+    config=Config(
+        signature_version="s3v4",
+        s3={"addressing_style": "path"},
+    ),
 )
 
 # ---------------------------------------------------------------------
