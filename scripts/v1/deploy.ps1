@@ -1,6 +1,7 @@
 # Usage: pwsh scripts/v1/deploy.ps1 [-Env prod] [-Plan] [-Bootstrap] ...
 # 원테이크: Bootstrap 기본 ON. SSM/SQS/RDS engineVersion/ECR 자동 준비 후 Ensure. 사용자 사전 작업 없음.
-# 배포 원칙: 모든 배포·재배포는 빌드 서버 경유(-SkipBuild는 예외 상황에만). 비용 최적화: ECR Ensure 시 라이프사이클 정책 자동 적용(불필요 이미지 미보관).
+# 배포 원칙: 빌드 서버는 사용하지 않는다(0대). 이미지 빌드·ECR 푸시는 GitHub Actions(OIDC)만 사용한다.
+# deploy.ps1는 이미 ECR에 올라간 이미지를 pull하여 배포/refresh만 수행한다. (즉 -SkipBuild가 기본 흐름)
 # 전체 실행 시간: API health 대기(최대 300s) + Netprobe( cold start 시 최대 600s) + Evidence(수십 초) 등으로 20~25분 넘을 수 있음. CI/터미널 타임아웃은 30분 이상 권장 (docs/00-SSOT/v1/reports/DEPLOY-TIMING-CHECKLIST.md 참고).
 # Cursor 등 새 프로세스에서 실행 시: -AwsProfile <이름> 으로 프로파일 지정 (해당 프로세스에 env 인증이 없을 때).
 # ==============================================================================
@@ -11,7 +12,7 @@ param(
     [switch]$Plan = $false,
     [switch]$Bootstrap = $true,
     [switch]$StrictValidation = $true,
-    [switch]$SkipBuild = $false,
+    [switch]$SkipBuild = $true,
     [switch]$SkipSqs = $false,
     [switch]$SkipRds = $false,
     [switch]$SkipRedis = $false,
@@ -220,9 +221,9 @@ try {
     Ensure-ALBStack
     Ensure-API
     if (-not $SkipBuild) {
-        Ensure-Build
+        Write-Warn "Build step is deprecated in v1 (GitHub Actions OIDC only). Skipping build on this machine."
     } else {
-        Write-Warn "Build skipped (-SkipBuild). ECR image already provided."
+        Write-Ok "Build skipped (GitHub Actions OIDC only)"
     }
 
     $netJobId = ""
