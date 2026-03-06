@@ -28,8 +28,8 @@ function SafeJson { param([string[]]$args)
 
 $generated = Get-Date -Format "o"
 
-# EC2 running (Project=academy)
-$inst = SafeJson @("ec2","describe-instances","--filters","Name=instance-state-name,Values=running","Name=tag:Project,Values=academy","--region",$R,"--output","json")
+# EC2 running (tag 의존 제거: ASG 소속 + Name prefix로 필터)
+$inst = SafeJson @("ec2","describe-instances","--filters","Name=instance-state-name,Values=running","--region",$R,"--output","json")
 $instances = @()
 if ($inst -and $inst.Reservations) {
     foreach ($rev in $inst.Reservations) {
@@ -49,6 +49,7 @@ if ($inst -and $inst.Reservations) {
 # ASG (v1 관련)
 $asg = SafeJson @("autoscaling","describe-auto-scaling-groups","--region",$R,"--output","json")
 $asgs = @()
+$asgInstanceIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 if ($asg -and $asg.AutoScalingGroups) {
     foreach ($a in $asg.AutoScalingGroups) {
         if ($a.AutoScalingGroupName -like "academy-v1-*") {
@@ -58,6 +59,9 @@ if ($asg -and $asg.AutoScalingGroups) {
                 Desired = $a.DesiredCapacity
                 Max     = $a.MaxSize
                 Subnets = $a.VPCZoneIdentifier
+            }
+            foreach ($inst2 in @($a.Instances)) {
+                if ($inst2 -and $inst2.InstanceId) { [void]$asgInstanceIds.Add([string]$inst2.InstanceId) }
             }
         }
     }
@@ -126,7 +130,10 @@ foreach ($ruleName in @($script:SSOT_EventBridgeRule | Where-Object { $_ })) {
 $nat = SafeJson @("ec2","describe-nat-gateways","--filter","Name=vpc-id,Values=$VpcId","--region",$R,"--output","json")
 $natCount = if ($nat -and $nat.NatGateways) { @($nat.NatGateways | Where-Object { $_.State -ne "deleted" }).Count } else { 0 }
 $addrs = SafeJson @("ec2","describe-addresses","--region",$R,"--output","json")
-$eipCount = if ($addrs -and $addrs.Addresses) { $addrs.Addresses.Count } else { 0 }
+$eipTotal = if ($addrs -and $addrs.Addresses) { $addrs.Addresses.Count } else { 0 }
+$eipServiceManaged = if ($addrs -and $addrs.Addresses) { @($addrs.Addresses | Where-Object { $_.ServiceManaged }).Count } else { 0 }
+$eipUserManaged = if ($addrs -and $addrs.Addresses) { @($addrs.Addresses | Where-Object { -not $_.ServiceManaged }).Count } else { 0 }
+$eipUserOrphan = if ($addrs -and $addrs.Addresses) { @($addrs.Addresses | Where-Object { (-not $_.ServiceManaged) -and (-not $_.AssociationId) }).Count } else { 0 }
 
 # SG (VPC) + ENI count
 $sgLines = [System.Collections.ArrayList]::new()
@@ -152,8 +159,12 @@ $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("## EC2 running (Project=academy)")
 [void]$sb.AppendLine("| InstanceId | Name | SubnetId | PublicIp | PrivateIp |")
 [void]$sb.AppendLine("|------------|------|----------|----------|-----------|")
-if ($instances.Count -eq 0) { [void]$sb.AppendLine("| (none) | - | - | - | - |") }
-else { foreach ($i in $instances) { [void]$sb.AppendLine("| $($i.InstanceId) | $($i.Name) | $($i.SubnetId) | $($i.PublicIp) | $($i.PrivateIp) |") } }
+# 표시 기준: (1) Name이 academy-v1-* 이거나 (2) academy-v1 ASG 소속인 인스턴스
+$filteredInstances = @($instances | Where-Object {
+    (($_.Name -is [string]) -and $_.Name -like "academy-v1-*") -or $asgInstanceIds.Contains([string]$_.InstanceId)
+})
+if ($filteredInstances.Count -eq 0) { [void]$sb.AppendLine("| (none) | - | - | - | - |") }
+else { foreach ($i in $filteredInstances) { [void]$sb.AppendLine("| $($i.InstanceId) | $($i.Name) | $($i.SubnetId) | $($i.PublicIp) | $($i.PrivateIp) |") } }
 [void]$sb.AppendLine("")
 
 [void]$sb.AppendLine("## ASG (academy-v1-*)")
@@ -187,7 +198,10 @@ foreach ($r in $ebLines) { [void]$sb.AppendLine("| $($r.Rule) | $($r.State) | $(
 [void]$sb.AppendLine("| Item | Value | Notes |")
 [void]$sb.AppendLine("|------|-------|------|")
 [void]$sb.AppendLine("| NAT gateways (non-deleted) | $natCount | network.natEnabled=false 목표 |")
-[void]$sb.AppendLine("| EIP total (all) | $eipCount | 사용자 관리 EIP=0 목표 (AWS 서비스 관리 주소는 예외 가능) |")
+[void]$sb.AppendLine("| EIP total (all) | $eipTotal | 참고 |")
+[void]$sb.AppendLine("| EIP service-managed (alb/rds 등) | $eipServiceManaged | AWS 서비스 관리 (보통 직접 release 불가) |")
+[void]$sb.AppendLine("| EIP user-managed | $eipUserManaged | **목표=0** |")
+[void]$sb.AppendLine("| EIP user-managed orphan | $eipUserOrphan | orphan이면 즉시 release 후보 |")
 [void]$sb.AppendLine("| Security groups (VPC) | $($sgLines.Count) | 목표 ≤ 8 |")
 [void]$sb.AppendLine("")
 
