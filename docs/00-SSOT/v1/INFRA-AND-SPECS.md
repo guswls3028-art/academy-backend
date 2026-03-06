@@ -9,13 +9,13 @@
 
 ## 1. 컴포넌트 요약
 
-| 구분 | API 서버 | 빌드 서버 | AI Worker ASG | Messaging Worker ASG | Video Batch |
+| 구분 | API 서버 | 빌드 | AI Worker ASG | Messaging Worker ASG | Video Batch |
 |------|----------|------------|----------------|----------------------|-------------|
-| **역할** | Django API (Gunicorn) | Docker 이미지 빌드·ECR 푸시 | AI 작업(SQS) | SMS/알림톡(SQS) | 영상 인코딩(FFmpeg HLS) |
-| **유형** | ALB + ASG | EC2 1대 (태그 기반) | ASG | ASG | Batch CE + Job Queue |
-| **인스턴스** | t4g.medium | t4g.medium | t4g.medium | t4g.medium | c6g.xlarge (standard/long) |
-| **스케일** | **min=2, desired=2, max=4** (V1) | 1대 고정 | min=1, max=10 | min=1, max=10 | standard: max40 / long: max80 vCPU |
-| **리소스 이름** | academy-v1-api-asg | academy-build-arm64 | academy-v1-ai-worker-asg | academy-v1-messaging-worker-asg | academy-v1-video-batch-ce, academy-v1-video-batch-long-ce |
+| **역할** | Django API (Gunicorn) | GitHub Actions(OIDC) 빌드·ECR 푸시 | AI 작업(SQS) | SMS/알림톡(SQS) | 영상 인코딩(FFmpeg HLS) |
+| **유형** | ALB + ASG | CI (EC2 빌드 서버 없음) | ASG | ASG | Batch CE + Job Queue |
+| **인스턴스** | t4g.medium | - | t4g.medium | t4g.medium | c6g.xlarge (standard/long) |
+| **스케일** | **min=1, desired=1, max=2** (V1) | - | min=1, max=5 | min=1, max=3 | standard: max40 / long: max80 vCPU |
+| **리소스 이름** | academy-v1-api-asg | - | academy-v1-ai-worker-asg | academy-v1-messaging-worker-asg | academy-v1-video-batch-ce, academy-v1-video-batch-long-ce |
 
 ---
 
