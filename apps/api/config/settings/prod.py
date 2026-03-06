@@ -36,6 +36,8 @@ ALLOWED_HOSTS = [
     "127.0.0.1",
     "172.30.3.142",
     ".ap-northeast-2.compute.internal",
+    # ALB 직접 접근 (Cloudflare proxy 미설정 시 검증용)
+    ".ap-northeast-2.elb.amazonaws.com",
 ]
 
 # ==================================================
@@ -58,6 +60,8 @@ CORS_ALLOWED_ORIGINS = [
     "https://dev-web.hakwonplus.com",
     # 로컬 개발용 (프론트엔드 localhost:5174에서 배포된 API 서버 사용)
     "http://localhost:5174",
+    # Cloudflare Pages *.pages.dev (프로젝트별 서브도메인)
+    "https://academy-frontend-26b.pages.dev",
 ]
 
 try:
