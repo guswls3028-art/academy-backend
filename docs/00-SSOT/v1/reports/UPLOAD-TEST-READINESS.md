@@ -1,0 +1,73 @@
+# 영상 업로드 테스트 준비 완료 체크리스트
+
+**생성일:** 2026-03-06  
+**목적:** 프론트엔드에서 실제 영상 업로드 테스트 전 인프라·파이프라인 검증 완료 확인
+
+---
+
+## 1. 인프라 검증 (완료)
+
+| 항목 | 상태 | 비고 |
+|------|------|------|
+| API healthz | ✅ 200 | https://api.hakwonplus.com/healthz |
+| /core/program | ✅ 200 | X-Tenant-Code: hakwonplus |
+| ALB target health | ✅ 1/1 healthy | academy-v1-api-tg |
+| Batch Queue | ✅ ENABLED, VALID | academy-v1-video-batch-queue |
+| Batch JobDef | ✅ rev 20 | academy-v1-video-batch-jobdef |
+| DynamoDB lock table | ✅ ACTIVE | academy-v1-video-job-lock |
+| API EC2 IAM | ✅ Batch+DynamoDB | academy-api-video-upload 정책 |
+| SSM API env | ✅ v1 | VIDEO_BATCH_JOB_QUEUE/DEFINITION = academy-v1-* |
+
+---
+
+## 2. 파이프라인 (CI)
+
+| 항목 | 상태 |
+|------|------|
+| V1 Build and Push (OIDC) | 실행 중/완료 시 [Actions](https://github.com/guswls3028-art/academy-backend/actions) 확인 |
+
+---
+
+## 3. 프론트 업로드 테스트 절차
+
+### 사전 조건
+- hakwonplus.com 관리자 계정 로그인
+- 강의 > 차시 > 영상 페이지 접근 권한
+
+### 테스트 URL
+```
+https://hakwonplus.com/admin/lectures/{강의ID}/sessions/{차시ID}/videos
+```
+
+### 테스트 단계
+1. **로그인**: https://hakwonplus.com 에서 관리자 로그인
+2. **영상 페이지 이동**: 강의 → 해당 강의 → 차시 → 영상 탭
+3. **영상 추가**: "영상 추가" 버튼 클릭
+4. **파일 선택**: MP4 파일 선택 (권장: 10MB 이하 샘플로 먼저)
+5. **업로드 대기**: R2 presigned PUT으로 청크 업로드 → 완료 시 `upload/complete` API 자동 호출
+6. **결과 확인**:
+   - 성공: "업로드 완료" → Batch Job 제출 → 인코딩 진행
+   - 실패: "업로드 완료 처리 중 오류" 또는 "비디오 작업 등록 실패" → API 로그 확인
+
+### 실패 시 확인
+- 브라우저 Network 탭: `POST .../upload/complete/` 응답 코드/본문
+- 503 시: API 인스턴스 `docker logs academy-api` 에서 `VIDEO_UPLOAD_COMPLETE_ERROR` 검색
+
+---
+
+## 4. 검증 명령 (로컬)
+
+```powershell
+# API health
+curl -s -o NUL -w "%{http_code}" https://api.hakwonplus.com/healthz
+
+# program (테넌트 도메인)
+curl -s "https://api.hakwonplus.com/api/v1/core/program/" -H "X-Tenant-Code: hakwonplus"
+```
+
+---
+
+## 5. 배포 검증 리포트
+
+- **deploy-verification-latest.md**: `pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default`
+- **V1-FINAL-REPORT.md**: 동일 실행 시 갱신
