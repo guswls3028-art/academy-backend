@@ -39,6 +39,10 @@ ALLOWED_HOSTS = [
     # ALB 직접 접근 (Cloudflare proxy 미설정 시 검증용)
     ".ap-northeast-2.elb.amazonaws.com",
 ]
+# SSM env에서 추가 Host 허용 (쉼표 구분). 이미지 재빌드 없이 ALB 등 추가 가능.
+_allowed_extra = os.environ.get("ALLOWED_HOSTS_EXTRA", "").strip()
+if _allowed_extra:
+    ALLOWED_HOSTS = list(ALLOWED_HOSTS) + [h.strip() for h in _allowed_extra.split(",") if h.strip()]
 
 # ==================================================
 # CORS
