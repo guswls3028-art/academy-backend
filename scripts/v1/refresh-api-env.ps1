@@ -27,7 +27,6 @@ $containerName = "academy-api"
 
 # SSM에서 env 가져와서 /opt/api.env 갱신 후 컨테이너 재시작 (타깃 인스턴스에서 실행)
 $script = @"
-set -e
 export AWS_REGION='$region'
 ENV_JSON=`$(aws ssm get-parameter --name '$ssmParam' --with-decryption --query Parameter.Value --output text --region $region 2>/dev/null) || true
 if [ -n "`$ENV_JSON" ]; then
