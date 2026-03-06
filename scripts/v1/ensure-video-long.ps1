@@ -15,9 +15,11 @@ if ($AwsProfile) { $env:AWS_PROFILE = $AwsProfile; if (-not $env:AWS_DEFAULT_REG
 . (Join-Path $PSScriptRoot "core\logging.ps1")
 . (Join-Path $PSScriptRoot "core\aws.ps1")
 . (Join-Path $PSScriptRoot "core\wait.ps1")
+. (Join-Path $PSScriptRoot "resources\iam.ps1")
 . (Join-Path $PSScriptRoot "resources\batch.ps1")
 . (Join-Path $PSScriptRoot "resources\jobdef.ps1")
 $null = Load-SSOT -Env "prod"
+$script:BatchIam = Ensure-BatchIAM
 
 # params.yaml videoBatch.long 중첩 미지원 → 명시 설정
 $script:VideoLongCEName = "academy-v1-video-batch-long-ce"
