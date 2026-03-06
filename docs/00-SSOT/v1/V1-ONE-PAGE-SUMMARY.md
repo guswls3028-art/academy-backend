@@ -36,7 +36,7 @@
 | 항목 | 스펙 |
 |------|------|
 | **역할** | Docker 이미지 빌드·ECR 푸시 (배포 시 경유, 로컬 빌드 없음) |
-| 식별 | 태그 Name=academy-build-arm64 (EC2 1대) |
+| 빌드 | GitHub Actions(OIDC) only (빌드 서버 0대) |
 | 인스턴스 타입 | t4g.medium |
 | AMI | ami-0885e191a9bcf28b0 |
 | Instance Profile | academy-ec2-role |
