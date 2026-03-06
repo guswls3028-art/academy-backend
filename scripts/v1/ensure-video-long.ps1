@@ -20,10 +20,12 @@ if ($AwsProfile) { $env:AWS_PROFILE = $AwsProfile; if (-not $env:AWS_DEFAULT_REG
 . (Join-Path $PSScriptRoot "resources\jobdef.ps1")
 $null = Load-SSOT -Env "prod"
 $script:BatchIam = Ensure-BatchIAM
-if (-not $script:BatchSecurityGroupId) {
-    $ce = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", "academy-v1-video-batch-ce", "--region", $script:Region, "--output", "json") 2>$null
-    if ($ce -and $ce.computeEnvironments -and $ce.computeEnvironments[0].computeResources.securityGroupIds[0]) {
-        $script:BatchSecurityGroupId = $ce.computeEnvironments[0].computeResources.securityGroupIds[0]
+$refCe = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", "academy-v1-video-batch-ce", "--region", $script:Region, "--output", "json") 2>$null
+if ($refCe -and $refCe.computeEnvironments) {
+    $res = $refCe.computeEnvironments[0].computeResources
+    if (-not $script:BatchSecurityGroupId -and $res.securityGroupIds[0]) { $script:BatchSecurityGroupId = $res.securityGroupIds[0] }
+    if ((-not $script:PrivateSubnets -or $script:PrivateSubnets.Count -eq 0) -and $res.subnets) {
+        $script:PrivateSubnets = @($res.subnets)
     }
 }
 if (-not $script:BatchSecurityGroupId) { throw "BatchSecurityGroupId required. Ensure network/sg-batch exists." }
