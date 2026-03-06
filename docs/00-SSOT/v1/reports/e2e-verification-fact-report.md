@@ -9,7 +9,7 @@
 
 | 항목 | 값 |
 |------|-----|
-| ECR academy-api:latest digest | `sha256:c10ddf1be2e5fd72d62c569dcafe2fa253a117a551a96ea6140d65ad63be1764` |
+| ECR academy-api:latest digest | `sha256:c10ddf1be2e5fd72d62c569dcafe2fa253a117a551a96ea6140d65ad63be1764` (푸시: 2026-03-06 17:22) |
 | 인스턴스 실행 중 digest (대화 요약 기준) | `sha256:89470ae00f6a29bd303538553d1ca3a83a7eb3473b9767ec8b44b545fd70334c` |
 | **결론** | **불일치** — 인스턴스는 ECR latest와 다른 구버전 이미지 사용 중 |
 
@@ -20,8 +20,8 @@
 | 항목 | 상태 |
 |------|------|
 | prod.py 변경 (ALB hostname, CORS regex 등) | 코드에 반영됨 |
-| CI 빌드(OIDC) | 실패 — 새 이미지 ECR 푸시 안 됨 |
-| **결론** | **실행 중 이미지에는 prod.py 변경 미포함** |
+| ECR latest | 2026-03-06 17:22 푸시됨 (prod.py 포함 여부는 빌드 시점에 따름) |
+| **결론** | **인스턴스가 구버전 이미지 사용** — instance refresh로 ECR latest 반영 필요 |
 
 ---
 
