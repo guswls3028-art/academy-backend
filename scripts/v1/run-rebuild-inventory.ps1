@@ -23,6 +23,12 @@ if (-not $R -or $R.Trim() -eq "") {
     $R = if ($env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION } else { "ap-northeast-2" }
 }
 $R = $R.Trim()
+if (-not $R) {
+    try {
+        $raw2 = Get-Content (Join-Path $RepoRoot "docs/00-SSOT/v1/params.yaml") -Raw
+        if ($raw2 -match '(?m)^\s*region:\s*([a-z0-9-]+)\s*$') { $R = $matches[1].Trim() }
+    } catch { }
+}
 if (-not $R) { $R = "ap-northeast-2" }
 $VpcId = $script:VpcId
 if (-not $VpcId -or $VpcId.Trim() -eq "") {
