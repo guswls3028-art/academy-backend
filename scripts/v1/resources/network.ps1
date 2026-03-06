@@ -273,18 +273,21 @@ function Ensure-ECR-VpcEndpoints {
     $ecrDkrSvc = "$svcPrefix.ecr.dkr"
     $s3Svc = "$svcPrefix.s3"
 
-    # SG for interface endpoints: allow 443 from VPC
-    $sgName = "academy-v1-vpce-sg"
-    $r = Invoke-AwsJson @("ec2", "describe-security-groups", "--filters", "Name=vpc-id,Values=$vpcId", "Name=group-name,Values=$sgName", "--region", $region, "--output", "json")
-    $vpceSg = $r.SecurityGroups | Where-Object { $_.GroupName -eq $sgName } | Select-Object -First 1
-    if (-not $vpceSg -and -not $script:PlanMode) {
-        $c = Invoke-AwsJson @("ec2", "create-security-group", "--group-name", $sgName, "--description", "VPC endpoints (ECR etc.)", "--vpc-id", $vpcId, "--tag-specifications", "ResourceType=security-group,Tags=[{Key=Name,Value=$sgName},{Key=Project,Value=academy}]", "--region", $region, "--output", "json")
-        $vpceSgId = $c.GroupId
-        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $vpceSgId, "--protocol", "tcp", "--port", "443", "--cidr", $vpcCidr, "--region", $region) -ErrorMessage "vpce-sg 443" | Out-Null
-        Write-Ok "SG $sgName created for VPC endpoints"
-        $script:ChangesMade = $true
-    } else {
-        $vpceSgId = $vpceSg.GroupId
+    # SG for interface endpoints (ECR only; skip when SkipEcrVpcEndpoints to avoid orphan)
+    $vpceSgId = $null
+    if (-not $script:SkipEcrVpcEndpoints) {
+        $sgName = "academy-v1-vpce-sg"
+        $r = Invoke-AwsJson @("ec2", "describe-security-groups", "--filters", "Name=vpc-id,Values=$vpcId", "Name=group-name,Values=$sgName", "--region", $region, "--output", "json")
+        $vpceSg = $r.SecurityGroups | Where-Object { $_.GroupName -eq $sgName } | Select-Object -First 1
+        if (-not $vpceSg -and -not $script:PlanMode) {
+            $c = Invoke-AwsJson @("ec2", "create-security-group", "--group-name", $sgName, "--description", "VPC endpoints (ECR etc.)", "--vpc-id", $vpcId, "--tag-specifications", "ResourceType=security-group,Tags=[{Key=Name,Value=$sgName},{Key=Project,Value=academy}]", "--region", $region, "--output", "json")
+            $vpceSgId = $c.GroupId
+            Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $vpceSgId, "--protocol", "tcp", "--port", "443", "--cidr", $vpcCidr, "--region", $region) -ErrorMessage "vpce-sg 443" | Out-Null
+            Write-Ok "SG $sgName created for VPC endpoints"
+            $script:ChangesMade = $true
+        } else {
+            $vpceSgId = $vpceSg.GroupId
+        }
     }
 
     # Route table IDs used by API subnets (public + private) for S3 gateway endpoint
