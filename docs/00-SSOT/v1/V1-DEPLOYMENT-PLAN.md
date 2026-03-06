@@ -244,4 +244,4 @@ pwsh scripts/v1/deploy.ps1 -Env prod -EcrRepoUri "809466760795.dkr.ecr.ap-northe
 - **현재 인프라:** `docs/00-SSOT/v1/AWS-INFRA-REPORT.md`
 - **배포 스크립트:** `scripts/v1/deploy.ps1`, `scripts/v1/core/prune.ps1`
 - **검증:** `scripts/v1/verify.ps1` (Bootstrap → Plan → PruneLegacy → deploy 순서 점검)
-- **최종 보고·스크립트 변경:** `docs/00-SSOT/v1/V1-FINAL-REPORT.md` (자격증명·Bootstrap workers env·aws.ps1 프로파일 주입·빌드 Spot 폴백 등)
+- **최종 보고·스크립트 변경:** `docs/00-SSOT/v1/V1-FINAL-REPORT.md` (자격증명·Bootstrap workers env·aws.ps1 프로파일 주입 등)
