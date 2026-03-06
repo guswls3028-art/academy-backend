@@ -5,7 +5,7 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-03-06T16:11:50.8764689+09:00 |
+| 검증 시각 | 2026-03-06T17:16:57.8921591+09:00 |
 | 최종 상태 | FAIL |
 | SSOT↔Actual 정합성 | **WARNING** |
 | GO/NO-GO | **NO-GO** |
@@ -33,9 +33,8 @@ FAIL 항목 해결 후 재검증 필요.
 ## 남은 WARNING 및 후속 작업
 - Drift 1건 이상 시: SSOT 반영 또는 합의된 예외 문서화 후 drift.latest.md 갱신.
 - EIP/NAT 잔여: Solapi 고정 IP 요구 취소에 따라 제거 검토(비용·불필요 리소스).
-- [WARNING] Drift: SSOT와 불일치 2건: ASG/academy-v1-messaging-worker-asg, API LT/academy-v1-api-lt
+- [WARNING] Drift: SSOT와 불일치 1건: API LT/academy-v1-api-lt
 - [FAIL] API: /health unreachable: The request was canceled due to the configured HttpClient.Timeout of 10 seconds elapsing.
-- [FAIL] API: ALB target healthy 0 / 1
 
 ## 상세 보고서
 - [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트/R2/CDN·SQS·Video·관측·GO/NO-GO 상세
