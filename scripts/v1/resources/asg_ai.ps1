@@ -201,8 +201,9 @@ function Ensure-ASGAi {
     if ($script:PlanMode) { Write-Ok "ASG AI check skipped (Plan)"; return }
 
     $ltResult = Ensure-AiLaunchTemplate
-    $subnets = @($script:PrivateSubnets | Where-Object { $_ })
-    if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @($script:PublicSubnets | Where-Object { $_ }) }
+    # natEnabled=false: use public subnets for internet (no NAT); else private first
+    $subnets = if (-not $script:NatEnabled) { @($script:PublicSubnets | Where-Object { $_ }) } else { @($script:PrivateSubnets | Where-Object { $_ }) }
+    if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @(($script:PrivateSubnets + $script:PublicSubnets) | Where-Object { $_ }) }
     $vpcZone = ($subnets -join ",")
     if (-not $vpcZone) { throw "PublicSubnets or PrivateSubnets empty; cannot create ASG" }
 

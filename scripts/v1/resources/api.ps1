@@ -249,8 +249,9 @@ function Ensure-API-ASG {
     if ($script:PlanMode) { Write-Ok "Ensure-API-ASG skipped (Plan)"; return }
 
     $ltResult = Ensure-API-LaunchTemplate
-    $subnets = @($script:PrivateSubnets | Where-Object { $_ })
-    if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @($script:PublicSubnets | Where-Object { $_ }) }
+    # natEnabled=false: use public subnets for internet (no NAT); else private first
+    $subnets = if (-not $script:NatEnabled) { @($script:PublicSubnets | Where-Object { $_ }) } else { @($script:PrivateSubnets | Where-Object { $_ }) }
+    if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @(($script:PrivateSubnets + $script:PublicSubnets) | Where-Object { $_ }) }
     $vpcZone = ($subnets -join ",")
     if (-not $vpcZone) { throw "PublicSubnets or PrivateSubnets empty" }
 
