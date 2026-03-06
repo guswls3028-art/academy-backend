@@ -149,7 +149,7 @@
 - **core/preflight.ps1:** SSM 확인을 `Invoke-AwsJson`으로 통일.
 - **resources/ssm.ps1:** `Confirm-SSMEnv`를 `Invoke-AwsJson` 사용으로 변경.
 - **resources/jobdef.ps1:** `register-job-definition`을 `Invoke-Aws` 사용으로 변경.
-- **resources/build.ps1:** Spot 실패 시 온디맨드 폴백.
+- (삭제됨) build 서버 스크립트는 제거되었으며, GitHub Actions만 사용한다.
 
 ---
 
