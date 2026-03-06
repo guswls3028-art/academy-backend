@@ -288,9 +288,9 @@ function Ensure-API-ASG {
         Write-Ok "ASG $($script:ApiASGName) capacity updated"
         $script:ChangesMade = $true
     }
-    if ($ltResult.Updated) {
+    if ($ltResult.Updated -and -not $subnetDrift) {
         $refreshes = Invoke-AwsJson @("autoscaling", "describe-instance-refreshes", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region, "--output", "json") 2>$null
-        $inProgress = $refreshes.InstanceRefreshes | Where-Object { $_.Status -eq "InProgress" } | Select-Object -First 1
+        $inProgress = $refreshes.InstanceRefreshes | Where-Object { $_.Status -eq "InProgress" -or $_.Status -eq "Pending" } | Select-Object -First 1
         if ($inProgress) {
             Write-Host "  Instance Refresh already in progress (started $($inProgress.StartTime)); waiting for completion (max 600s)..." -ForegroundColor Yellow
             $wait = 0
