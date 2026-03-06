@@ -126,9 +126,11 @@ if ($instRes -and $instRes.Reservations) {
     }
 }
 
-$sgRes = Invoke-AwsJson @("ec2", "describe-security-groups", "--filters", "Name=vpc-id,Values=$VpcId", "--region", $R, "--output", "json")
 $sgCount = 0
 $sgRows = [System.Collections.ArrayList]::new()
+if ($VpcId) {
+    $sgRes = Invoke-AwsJson @("ec2", "describe-security-groups", "--filters", "Name=vpc-id,Values=$VpcId", "--region", $R, "--output", "json")
+}
 if ($VpcId -and $sgRes -and $sgRes.SecurityGroups) {
     $sgCount = $sgRes.SecurityGroups.Count
     foreach ($sg in $sgRes.SecurityGroups) { [void]$sgRows.Add([PSCustomObject]@{ GroupId = $sg.GroupId; GroupName = $sg.GroupName }) }
