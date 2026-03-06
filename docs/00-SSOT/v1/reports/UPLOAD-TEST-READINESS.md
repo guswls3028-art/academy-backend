@@ -75,3 +75,17 @@ pwsh scripts/v1/test-upload-complete.ps1 -VideoId 187 -Token "Bearer <JWT>"
 
 - **deploy-verification-latest.md**: `pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default`
 - **V1-FINAL-REPORT.md**: 동일 실행 시 갱신
+
+---
+
+## 6. 프론트 업로드 테스트 준비 완료 체크
+
+| # | 항목 | 상태 |
+|---|------|------|
+| 1 | 인프라 검증 (API, Batch, DynamoDB, IAM) | ✅ |
+| 2 | CI 파이프라인 (V1 Build and Push) | 실행 후 [Actions](https://github.com/guswls3028-art/academy-backend/actions)에서 완료 확인 |
+| 3 | ECR 이미지 (academy-api, academy-video-worker) | CI 완료 시 최신 푸시 |
+| 4 | API Instance Refresh (선택) | 새 이미지 반영 시 `deploy.ps1 -Phase InstanceRefresh` |
+| 5 | 프론트 업로드 테스트 | 위 §3 절차대로 hakwonplus.com에서 수행 |
+
+**다음 단계:** CI 완료 → (선택) Instance Refresh → hakwonplus.com 관리자 로그인 → 강의/차시/영상 페이지에서 MP4 업로드
