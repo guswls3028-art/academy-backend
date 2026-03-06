@@ -169,3 +169,58 @@
    - Impossible cases → clear message, require delete/re-upload.
 4. **Frontend:** Retry only when backend can act. PENDING without file_key → no retry button.
 5. **No indefinite stuck:** Reconcile + scan-stuck remain. No new control plane.
+
+---
+
+## E. FILES CHANGED
+
+| File | Change |
+|------|--------|
+| `academyfront/src/features/videos/constants/videoProcessing.ts` | Added `canShowRetryButton(video)` — retry only when backend can act; PENDING requires file_key |
+| `academyfront/src/features/lectures/components/SessionVideosTab.tsx` | Use `canShowRetryButton` instead of `isRetryAllowedByStatus` |
+| `academyfront/src/features/videos/pages/VideoExplorerPage.tsx` | Use `canShowRetryButton` instead of `isRetryAllowedByStatus` |
+| `academyfront/src/features/videos/pages/VideoDetailPage.tsx` | Use `canShowRetryButton` instead of `isRetryAllowedByStatus` |
+| `academy/apps/support/video/services/batch_submit.py` | Added `BATCH_SUBMIT_ROUTE` log (duration, threshold, use_long) for debuggability |
+
+## F. EXACT LOGIC CHANGED
+
+1. **canShowRetryButton:** PENDING → retry only if `file_key` exists and non-empty. Other statuses unchanged.
+2. **batch_submit:** Log routing decision (duration_sec, threshold, use_long) before queue selection.
+
+## G. INFRA / SSM / BATCH CHANGES
+
+None. All verified present: Long CE/Queue/JobDef, SSM VIDEO_BATCH_*_LONG, VIDEO_TENANT_MAX_CONCURRENT=6.
+
+## H. VERIFIED RETRY RULES
+
+| State | file_key | Retry button | Backend action |
+|-------|----------|--------------|----------------|
+| PENDING | yes | ✅ | _upload_complete_impl |
+| PENDING | no | ❌ | — |
+| UPLOADED | — | ✅ | create_job_and_submit_batch |
+| PROCESSING | — | ✅ | job cleanup + create_job_and_submit_batch |
+| FAILED | — | ✅ | job cleanup + create_job_and_submit_batch |
+| READY | — | ❌ (not in RETRY_ALLOWED) | — |
+
+## I. VERIFIED LONG-VIDEO ROUTING RULE
+
+- `duration_seconds >= 10800` → long queue + long JobDef.
+- `duration_seconds` from `video.duration` at submit time.
+- If `None` or `0` → standard queue.
+
+## J. VERIFICATION STEPS (manual)
+
+1. **Long routing:** Upload 3h video → check CloudWatch logs for `BATCH_SUBMIT_ROUTE | use_long=true`.
+2. **Retry PENDING+file_key:** For stuck PENDING with file_key, click retry → should re-run upload-complete.
+3. **Retry PENDING no file_key:** Retry button should not appear.
+4. **Retry FAILED:** Click retry → new job submitted.
+5. **Short video:** Still works (standard queue).
+
+## K. FINAL STATUS
+
+**MINIMAL_VIDEO_STABILITY_IMPROVED**
+
+- Retry button aligned with backend eligibility.
+- PENDING without file_key no longer shows retry.
+- Routing log added for long-video debugging.
+- No new infra. Philosophy preserved.
