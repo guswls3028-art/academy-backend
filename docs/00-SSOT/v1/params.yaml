@@ -21,7 +21,8 @@ network:
   publicSubnetCidr2: "172.30.2.0/24"
   privateSubnetCidr1: "172.30.1.0/24"
   privateSubnetCidr2: "172.30.3.0/24"
-  natEnabled: true
+  # V1 운영 단순화: NAT 미사용(0). Private subnet은 데이터(RDS/Redis) 전용.
+  natEnabled: false
   albEnabled: true
   natGatewayId: ""
   securityGroupApp: "sg-088fa3315c12754d0"
@@ -94,7 +95,8 @@ messagingWorker:
   amiId: ami-0885e191a9bcf28b0
   instanceType: t4g.medium
   minSize: 1
-  maxSize: 10
+  # 운영 단순화: 메시징 워커 스케일 상한 축소
+  maxSize: 3
   desiredCapacity: 1
   scaleInProtection: true
   scalingPolicyScaleOutCooldown: 300
