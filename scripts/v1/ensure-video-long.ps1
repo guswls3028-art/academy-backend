@@ -12,6 +12,7 @@ $ErrorActionPreference = "Stop"
 if ($AwsProfile) { $env:AWS_PROFILE = $AwsProfile; if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" } }
 
 . (Join-Path $PSScriptRoot "core\ssot.ps1")
+. (Join-Path $PSScriptRoot "core\logging.ps1")
 . (Join-Path $PSScriptRoot "core\aws.ps1")
 . (Join-Path $PSScriptRoot "core\wait.ps1")
 . (Join-Path $PSScriptRoot "resources\batch.ps1")
