@@ -48,7 +48,7 @@
 | | academy-v1-video-upload-checkpoints | dynamodb.uploadCheckpointTableName | |
 | **RDS** | academy-db | rds.dbIdentifier | 기존 식별자 유지 |
 | **Redis** | academy-v1-redis | redis.replicationGroupId | |
-| **IAM** | academy-ec2-role | api/build instanceProfile | |
+| **IAM** | academy-ec2-role | api/worker instanceProfile | |
 | | academy-v1-eventbridge-batch-video-role | eventBridge.roleName | |
 | | academy-batch-* (Batch 관련 역할 4종) | SSOT_IAMRoles | |
 
@@ -85,7 +85,7 @@
 | | EventBridge | v1 아닌 규칙명 | v1 규칙으로 대체 | 타깃 제거 후 삭제 | 1) remove-targets 2) delete-rule | put-rule + put-targets |
 | | ASG | academy-v1 아닌 academy-* ASG | 단일 EC2(academy-api) 등 구 구성 | 인스턴스 0으로 스케일 후 삭제 | PruneLegacy 5번째 | 수동 ASG 재생성 |
 | **(3) 핵심·교체 완료 후** | Lambda | academy-worker-queue-depth-metric, academy-worker-autoscale | v1 SSOT에 Lambda 없음. SQS 스케일은 ASG 정책으로 | 없음 | 수동 delete-function | Lambda 재배포 |
-| | EC2 | academy-api, academy-build-arm64(구) | API는 ASG로, Build는 태그 academy-build-arm64로 재생성 | 없음 | 수동 종료 | AMI/스냅샷에서 복구 |
+| | EC2 | (레거시) academy-api 등 | API는 ASG로 통합, **빌드 서버는 사용하지 않음** | 없음 | 수동 종료 | AMI/스냅샷에서 복구 |
 
 **주의:** `/academy/rds/master_password`는 SSOT 보호 목록에 포함되어 PruneLegacy 시 삭제 대상에서 제외된다(scripts/v1/core/ssot.ps1).
 
@@ -118,7 +118,7 @@ pwsh scripts/v1/deploy.ps1 -PruneLegacy -AwsProfile default
 | **ECR** | lifecycle: 최신 20개 유지(v1-, bootstrap- 태그), untagged 1일 만료. 전체 repo에 동일 정책. | `docs/00-SSOT/v1/scripts/ecr-lifecycle-policy.json` — Ensure-ECRRepos에서 일괄 적용됨. immutable tag 필수(params ecr.immutableTagRequired). |
 | **SSM** | /academy/api/env, /academy/workers/env 구조 일관화. 필수 키: workers 쪽 DB_*, R2_*, API_BASE_URL, INTERNAL_WORKER_TOKEN, REDIS_* 등. | Bootstrap이 workers env를 .env에서 채움. SSM 삭제 후보에서 /academy/rds/master_password 제외(ssot.ps1). |
 | **로그/알람** | retention 30일. 알람 최소세트(API 5xx, Target Unhealthy, SQS depth/DLQ, Batch backlog/failed/stuck, RDS/Redis). 평가 5~15분, 노이즈 최소화. | params observability.*. CloudWatch 알람 생성은 스크립트 또는 수동 가이드(V1-DEPLOYMENT-VERIFICATION.md). |
-| **배포 재현성** | 빌드 서버 재생성 시 /opt/academy 또는 $HOME/academy 클론 후 빌드/푸시 재현. | bootstrap.ps1 Invoke-BuildServerBuild에서 `$buildPath = /opt/academy || $HOME/academy`. params build.repoPath(선택) 추가 가능. |
+| **배포 재현성** | GitHub Actions 워크플로로 빌드/푸시 재현. | `.github/workflows/v1-build-and-push-latest.yml` |
 | **보안 최소선** | SG 인바운드 최소화, IAM 최소 권한(R2/SSM read 범위 점검), SSH 대신 SSM Session Manager. | params network.securityGroupApp 등. 문서에 "SSH 의존 최소화, SSM 우선" 명시. |
 
 ---
