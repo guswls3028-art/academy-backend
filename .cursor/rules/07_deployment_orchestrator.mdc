@@ -11,15 +11,16 @@ alwaysApply: false
 Do **not** use scripts/archive for deploy or CI; only scripts/v1. Archive is reference-only (00_ssot_v1_archive_structure.mdc).
 
 **배포·재배포 원칙:**  
-- **모든 배포 및 재배포는 빌드 서버를 경유한다.**  
-- 이미지 빌드·ECR 푸시는 로컬이 아닌 **빌드용 서버(Spot 우선, 실패 시 온디맨드)**에서 수행한다.  
-- `-SkipBuild`는 예외 상황(이미지만 반영, 긴급 롤백 등)에만 사용하고, 정상 배포 플로우에서는 사용하지 않는다.
+- **빌드 서버는 사용하지 않는다(0대).**  
+- 이미지 빌드·ECR 푸시는 **GitHub Actions(OIDC)만 사용**한다. (로컬/EC2 빌드 금지)  
+- `deploy.ps1`는 **이미 ECR에 올라간 이미지**를 pull하여 배포/refresh만 수행한다.  
+- `-SkipBuild`는 더 이상 “예외”가 아니라 기본 흐름이다(빌드 서버가 없기 때문).  
 
 **Deployment flow:**
 
-1. Build image **(on build server)**
+1. Build image **(GitHub Actions OIDC)**
 2. Push ECR
-3. Run deploy.ps1
+3. Run deploy.ps1 (pull + instance refresh)
 4. ECR lifecycle policy 적용(비용 최적화, 불필요 이미지 미보관)
 5. Verify infrastructure
 
