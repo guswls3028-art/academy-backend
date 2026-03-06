@@ -124,18 +124,15 @@ function Load-SSOT {
     $script:ApiInstanceRefreshMinHealthyPercentage = Coerce-Int $p["api"]["instanceRefreshMinHealthyPercentage"] 100
     $script:ApiInstanceRefreshInstanceWarmup = Coerce-Int $p["api"]["instanceRefreshInstanceWarmup"] 300
 
-    $script:BuildTagKey = $p["build"]["instanceTagKey"] = $p["build"]["instanceTagKey"]
-    $script:BuildTagValue = $p["build"]["instanceTagValue"]
-    $script:BuildAmiId = $p["build"]["amiId"]
-    $script:BuildInstanceProfile = $p["build"]["instanceProfile"]
-    $script:BuildSubnetId = $p["build"]["subnetId"]
-    $script:BuildSecurityGroupId = $p["build"]["securityGroupId"]
-    $script:BuildInstanceType = if ($p["build"]["instanceType"]) { $p["build"]["instanceType"] } else { "t4g.medium" }
-    if (-not $script:BuildSubnetId -and $script:PrivateSubnets -and $script:PrivateSubnets.Count -gt 0) { $script:BuildSubnetId = $script:PrivateSubnets[0] }
-    if (-not $script:BuildSubnetId -and $script:PublicSubnets -and $script:PublicSubnets.Count -gt 0) { $script:BuildSubnetId = $script:PublicSubnets[0] }
-    if (-not $script:BuildSecurityGroupId) { $script:BuildSecurityGroupId = $script:SecurityGroupApp }
-    if (-not $script:BuildSecurityGroupId) { $script:BuildSecurityGroupId = $script:BatchSecurityGroupId }
-    $script:BuildRepoPath = if ($p["build"]["repoPath"]) { $p["build"]["repoPath"] } else { "" }
+    # Build server DEPRECATED: 빌드는 GitHub Actions에서만 수행한다.
+    $script:BuildTagKey = ""
+    $script:BuildTagValue = ""
+    $script:BuildAmiId = ""
+    $script:BuildInstanceProfile = ""
+    $script:BuildSubnetId = ""
+    $script:BuildSecurityGroupId = ""
+    $script:BuildInstanceType = ""
+    $script:BuildRepoPath = ""
 
     $script:MessagingASGName = $p["messagingWorker"]["asgName"]
     $script:MessagingLaunchTemplateName = $p["messagingWorker"]["launchTemplateName"]
