@@ -154,3 +154,18 @@
 2. **PENDING without file_key:** Retry returns 400 "업로드가 완료되지 않았습니다." Frontend shows retry for all PENDING (including no file_key). User gets error on click.
 3. **PENDING+file_key but R2 object missing:** Retry runs _upload_complete_impl → head_object fails → 503 or 409. No explicit "delete and re-upload" message.
 4. **create_job_and_submit_batch returns None:** Video stays UPLOADED with no active job. Retry would create new job. If tenant limit exceeded, retry also returns None → ValidationError "비디오 작업 등록 실패."
+
+---
+
+## D. MINIMAL STABILITY TARGET
+
+1. **Standard path:** Short/normal videos (duration < 10800s or unknown).
+2. **Long path:** Videos with duration ≥ 10800s.
+3. **Retry supports:**
+   - PENDING + file_key + raw exists → re-run upload-complete.
+   - PENDING + file_key + raw missing → clear "delete and re-upload" message.
+   - PENDING + no file_key → clear "upload first" message; hide retry button.
+   - FAILED/UPLOADED/PROCESSING → re-submit if safe.
+   - Impossible cases → clear message, require delete/re-upload.
+4. **Frontend:** Retry only when backend can act. PENDING without file_key → no retry button.
+5. **No indefinite stuck:** Reconcile + scan-stuck remain. No new control plane.
