@@ -118,7 +118,16 @@
 - cdn.hakwonplus.com이 정상 동작하면 SSM `CDN_HLS_BASE_URL`를 `https://cdn.hakwonplus.com`으로 변경
 - API가 cdn 도메인 기반 절대 URL을 반환하도록 통일
 
-### 10.4 실제 사용자 플로우 검증 (수동)
+### 10.4 API 이미지 강제 갱신 (instance refresh)
+
+- LT UserData는 `:latest`를 사용하므로 LT diff가 없으면 instance refresh가 자동 실행되지 않음.
+- **수동 실행:**
+  ```powershell
+  aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg --region ap-northeast-2 --profile default
+  ```
+- **전제:** CI 빌드 복구 후 ECR에 새 이미지가 푸시되어 있어야 함.
+
+### 10.5 실제 사용자 플로우 검증 (수동)
 
 - 로그인 → 비디오 목록 → 썸네일 로드 → 업로드 → 재생
 - 브라우저 DevTools Network/Console에서 실패 요청·에러 수집
