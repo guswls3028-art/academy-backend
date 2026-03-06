@@ -32,7 +32,10 @@ class TenantMiddleware:
         clear_current_tenant()
         request.tenant = None  # type: ignore[attr-defined]
 
-        if request.path in BYPASS_PATHS:
+        # Health 계열은 어떤 경우에도 tenant resolve 금지 (DB 의존성/Host strictness 회피)
+        path = (getattr(request, "path", "") or "/").strip() or "/"
+        norm = path.rstrip("/") or "/"
+        if path in BYPASS_PATHS or norm in ("/health", "/healthz", "/readyz"):
             try:
                 return self.get_response(request)
             finally:
