@@ -229,6 +229,14 @@ function Ensure-ASGMessaging {
         return
     }
 
+    $currentZones = ($asg.VpcZoneIdentifier -split "," | ForEach-Object { $_.Trim() }) -join ","
+    $subnetDrift = ($currentZones -ne $vpcZone)
+    if ($subnetDrift) {
+        Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:MessagingASGName, "--vpc-zone-identifier", $vpcZone, "--region", $script:Region) -ErrorMessage "update-asg vpc-zone-identifier" | Out-Null
+        Write-Ok "ASG $($script:MessagingASGName) vpc-zone-identifier updated"
+        $script:ChangesMade = $true
+        Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:MessagingASGName, "--region", $script:Region) -ErrorMessage "start-instance-refresh" | Out-Null
+    }
     $capacityDrift = ($asg.MinSize -ne $script:MessagingMinSize) -or ($asg.MaxSize -ne $script:MessagingMaxSize)
     $clampedDesired = [Math]::Max($script:MessagingMinSize, [Math]::Min($script:MessagingMaxSize, $asg.DesiredCapacity))
     if ($capacityDrift -or $asg.DesiredCapacity -ne $clampedDesired) {
