@@ -22,6 +22,8 @@ $R = $script:Region
 if (-not $R -or $R.Trim() -eq "") {
     $R = if ($env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION } else { "ap-northeast-2" }
 }
+$R = $R.Trim()
+if (-not $R) { $R = "ap-northeast-2" }
 $VpcId = $script:VpcId
 if (-not $VpcId -or $VpcId.Trim() -eq "") {
     try {
