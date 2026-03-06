@@ -36,6 +36,10 @@ def submit_batch_job(video_job_id: str, duration_seconds: int | None = None) -> 
 
     long_threshold = int(getattr(settings, "VIDEO_LONG_DURATION_THRESHOLD_SECONDS", 10800))
     use_long = duration_seconds is not None and duration_seconds >= long_threshold
+    logger.info(
+        "BATCH_SUBMIT_ROUTE | job_id=%s | duration_sec=%s | threshold=%s | use_long=%s",
+        video_job_id, duration_seconds, long_threshold, use_long,
+    )
     if use_long:
         queue_name = getattr(settings, "VIDEO_BATCH_JOB_QUEUE_LONG", "academy-v1-video-batch-long-queue")
         job_def_name = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION_LONG", "academy-v1-video-batch-long-jobdef")
