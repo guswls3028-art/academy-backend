@@ -247,6 +247,24 @@ function Ensure-SecurityGroups {
         $script:ChangesMade = $true
     } else {
         $script:SecurityGroupData = $byName[$script:SgDataName].GroupId
+        # 기존 sg-data에 sg-app/sg-batch에서 5432,6379 허용 규칙 보장 (인프라 리셋 후 재배포 시)
+        if (-not $script:PlanMode -and $script:SecurityGroupApp -and $script:BatchSecurityGroupId) {
+            $desc = Invoke-AwsJson @("ec2", "describe-security-groups", "--group-ids", $script:SecurityGroupData, "--region", $script:Region, "--output", "json")
+            $perms = $desc.SecurityGroups[0].IpPermissions
+            $has5432App = $perms | Where-Object { $_.FromPort -eq 5432 } | ForEach-Object { $_.UserIdGroupPairs } | Where-Object { $_.GroupId -eq $script:SecurityGroupApp }
+            $has5432Batch = $perms | Where-Object { $_.FromPort -eq 5432 } | ForEach-Object { $_.UserIdGroupPairs } | Where-Object { $_.GroupId -eq $script:BatchSecurityGroupId }
+            $has6379App = $perms | Where-Object { $_.FromPort -eq 6379 } | ForEach-Object { $_.UserIdGroupPairs } | Where-Object { $_.GroupId -eq $script:SecurityGroupApp }
+            $has6379Batch = $perms | Where-Object { $_.FromPort -eq 6379 } | ForEach-Object { $_.UserIdGroupPairs } | Where-Object { $_.GroupId -eq $script:BatchSecurityGroupId }
+            foreach ($pair in @(@{port=5432;sg=$script:SecurityGroupApp;has=$has5432App}, @{port=5432;sg=$script:BatchSecurityGroupId;has=$has5432Batch}, @{port=6379;sg=$script:SecurityGroupApp;has=$has6379App}, @{port=6379;sg=$script:BatchSecurityGroupId;has=$has6379Batch})) {
+                if (-not $pair.has -or $pair.has.Count -eq 0) {
+                    try {
+                        Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $script:SecurityGroupData, "--protocol", "tcp", "--port", $pair.port, "--source-group", $pair.sg, "--region", $script:Region) -ErrorMessage "sg-data $($pair.port) from $($pair.sg)" | Out-Null
+                        Write-Ok "SG $script:SgDataName: added $($pair.port) from $($pair.sg)"
+                        $script:ChangesMade = $true
+                    } catch { if ($_.Exception.Message -notmatch "Duplicate") { throw } }
+                }
+            }
+        }
     }
 }
 
