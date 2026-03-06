@@ -531,6 +531,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         if not getattr(video.session.lecture, "tenant", None):
             raise ValidationError("강의의 프로그램(테넌트) 정보가 없어 재처리할 수 없습니다.")
 
+        # PENDING + file_key: upload-complete may have failed (network/timeout); retry = re-run upload-complete
+        if video.status == Video.Status.PENDING:
+            if video.file_key:
+                return self._upload_complete_impl(video)
+            raise ValidationError("업로드가 완료되지 않았습니다. 파일을 먼저 업로드해 주세요.")
+
         try:
             STALE_QUEUED_THRESHOLD = getattr(
                 settings, "VIDEO_RETRY_STALE_QUEUED_HOURS", 1
