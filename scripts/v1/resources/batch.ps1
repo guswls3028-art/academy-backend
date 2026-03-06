@@ -194,7 +194,7 @@ function Ensure-OpsCE {
             else { Write-Warn "Ops CE INVALID; skip recreate." }
             return
         }
-        if ($opsTypeDrift) { Write-Host "  Ops CE instance type drift -> disable queue, disable CE, delete, create (t4g.medium), enable queue" -ForegroundColor Yellow }
+        if ($opsTypeDrift) { Write-Host "  Ops CE instance type drift -> disable queue, disable CE, delete, create ($($script:OpsCEInstanceType)), enable queue" -ForegroundColor Yellow }
         else { Write-Host "  INVALID -> disable queue, disable CE, delete, wait, create, wait" -ForegroundColor Yellow }
         $script:ChangesMade = $true
         $qCheck = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:OpsQueueName, "--region", $script:Region, "--output", "json")

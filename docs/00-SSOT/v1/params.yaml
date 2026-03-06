@@ -168,10 +168,10 @@ videoBatch:
     failedJobsAlarmThreshold: 5
     stuckDetectedAlarmEnabled: true
     logRetentionDays: 30
-  # Ops (기존)
+  # Ops: lightweight hourly recovery. 1 instance max (maxvCpus=2), scale to 0 when idle.
   opsComputeEnvironmentName: academy-v1-video-ops-ce
   opsQueueName: academy-v1-video-ops-queue
-  opsInstanceType: m6g.medium
+  opsInstanceType: t4g.medium
   opsMaxvCpus: 2
   opsJobDefs:
     reconcile: academy-v1-video-ops-reconcile
