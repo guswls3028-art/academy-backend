@@ -623,7 +623,7 @@ $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("## 남은 WARNING 및 후속 작업")
 [void]$finalSb.AppendLine("- Drift 1건 이상 시: SSOT 반영 또는 합의된 예외 문서화 후 drift.latest.md 갱신.")
 if ($eipCountTotal -gt 0) { [void]$finalSb.AppendLine("- EIP/NAT 잔여: Solapi 고정 IP 요구 취소에 따라 제거 검토(비용·불필요 리소스).") }
-if ($buildRunningCount -gt 0) { [void]$finalSb.AppendLine("- 빌드 서버: GitHub Actions 전환 완료 후 0대로 정리.") }
+if ($buildRunningCount -gt 0) { [void]$finalSb.AppendLine("- 빌드 서버: 현재 정책상 사용하지 않음(0대가 정상). 남아있다면 정리 대상.") }
 if ($findings.Count -gt 0) {
     foreach ($f in $findings) { [void]$finalSb.AppendLine("- [$($f.Severity)] $($f.Area): $($f.Message)") }
 } else {
