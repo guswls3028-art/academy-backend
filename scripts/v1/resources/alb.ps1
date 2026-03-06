@@ -24,12 +24,12 @@ function Ensure-ALBSecurityGroup {
         }
         if (-not $has80) {
             Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $sgId, "--protocol", "tcp", "--port", "80", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "ALB SG 80" | Out-Null
-            Write-Ok "ALB SG $sgId: added 80 from 0.0.0.0/0"
+            Write-Ok "ALB SG $($sgId): added 80 from 0.0.0.0/0"
             $script:ChangesMade = $true
         }
         if (-not $has443) {
             Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $sgId, "--protocol", "tcp", "--port", "443", "--cidr", "0.0.0.0/0", "--region", $script:Region) -ErrorMessage "ALB SG 443" | Out-Null
-            Write-Ok "ALB SG $sgId: added 443 from 0.0.0.0/0"
+            Write-Ok "ALB SG $($sgId): added 443 from 0.0.0.0/0"
             $script:ChangesMade = $true
         }
     }
