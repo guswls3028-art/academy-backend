@@ -20,4 +20,5 @@ $prefs = "{`"MinHealthyPercentage`":$minHealthy,`"InstanceWarmup`":$warmup}"
 
 Write-Host "API ASG Instance Refresh 시작: $($script:ApiASGName)" -ForegroundColor Cyan
 Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh"
-Write-Host "완료까지 5~10분 소요. healthz 확인: $($script:ApiBaseUrl)/healthz" -ForegroundColor Green
+$healthUrl = if ($script:ApiBaseUrl) { "$($script:ApiBaseUrl.TrimEnd('/'))/healthz" } else { "https://api.hakwonplus.com/healthz" }
+Write-Host "완료까지 5~10분 소요. healthz 확인: $healthUrl" -ForegroundColor Green
