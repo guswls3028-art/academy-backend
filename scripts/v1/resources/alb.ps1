@@ -56,6 +56,7 @@ function Ensure-ALB {
     $script:ApiBaseUrl = "http://$($create.LoadBalancers[0].DNSName)"
     Write-Ok "ALB created $script:ApiAlbArn"
     $script:ChangesMade = $true
+    Ensure-ALBSecurityGroup
 }
 
 function Ensure-TargetGroup {
