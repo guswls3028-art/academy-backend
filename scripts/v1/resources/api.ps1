@@ -270,6 +270,14 @@ function Ensure-API-ASG {
     }
 
     $capacityDrift = ($asg.MinSize -ne $script:ApiASGMinSize) -or ($asg.MaxSize -ne $script:ApiASGMaxSize) -or ($asg.DesiredCapacity -ne $script:ApiASGDesiredCapacity)
+    $currentZones = ($asg.VpcZoneIdentifier -split "," | ForEach-Object { $_.Trim() }) -join ","
+    $wantedZones = $vpcZone
+    $subnetDrift = ($currentZones -ne $wantedZones)
+    if ($subnetDrift) {
+        Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--vpc-zone-identifier", $wantedZones, "--region", $script:Region) -ErrorMessage "update-asg vpc-zone-identifier" | Out-Null
+        Write-Ok "ASG $($script:ApiASGName) vpc-zone-identifier updated (public subnets for natEnabled=false)"
+        $script:ChangesMade = $true
+    }
     if ($capacityDrift) {
         Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--min-size", $script:ApiASGMinSize.ToString(), "--max-size", $script:ApiASGMaxSize.ToString(), "--desired-capacity", $script:ApiASGDesiredCapacity.ToString(), "--region", $script:Region) -ErrorMessage "update-auto-scaling-group API ASG failed" | Out-Null
         Write-Ok "ASG $($script:ApiASGName) capacity updated"
