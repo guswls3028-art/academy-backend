@@ -1,5 +1,5 @@
 # V1 Legacy 리소스 정리 — SSOT에 없는 리소스만 대상. 삭제 전 reports 기록 필수.
-# 기능: orphan EIP release, orphan EBS volume delete, unused SG delete, build server stop, legacy EC2 terminate, legacy ASG inventory/remove.
+# 기능: orphan EIP release, orphan EBS volume delete, unused SG delete, legacy EC2 terminate, legacy ASG inventory/remove.
 # 실행 결과: docs/00-SSOT/v1/reports/cleanup-run.latest.md, resource-cleanup.latest.md 갱신.
 param(
     [switch]$DryRun = $true,
@@ -8,7 +8,6 @@ param(
     [switch]$EIPOnly,
     [switch]$VolumesOnly,
     [switch]$SGOnly,
-    [switch]$BuildStopOnly,
     [switch]$EC2Only,
     [switch]$ASGOnly,
     [switch]$RemoveLegacyASG
@@ -26,7 +25,6 @@ $ResourceCleanupPath = Join-Path $ReportsDir "resource-cleanup.latest.md"
 $runEIPReleased = [System.Collections.ArrayList]::new()
 $runVolumesDeleted = [System.Collections.ArrayList]::new()
 $runSGsDeleted = [System.Collections.ArrayList]::new()
-$runBuildStopped = [System.Collections.ArrayList]::new()
 $runEC2Terminated = [System.Collections.ArrayList]::new()
 $runASGRemoved = [System.Collections.ArrayList]::new()
 $runErrors = [System.Collections.ArrayList]::new()
@@ -63,8 +61,6 @@ if (-not $DryRun -and $Execute) {
 $KeepASG = @($script:ApiASGName, $script:MessagingASGName, $script:AiASGName)
 $KeepBatchCE = @($script:VideoCEName, $script:VideoLongCEName, $script:OpsCEName) | Where-Object { $_ -and $_.Trim() -ne "" }
 $BatchOpsASGPrefix = "academy-v1-video-ops-ce-asg-"
-$BuildTagKey = $script:BuildTagKey
-$BuildTagValue = $script:BuildTagValue
 $KeepSGNames = @("academy-v1-sg-app", "academy-v1-sg-batch", "academy-v1-sg-data", "default")
 $KeepSGIds = @($script:SecurityGroupApp, $script:BatchSecurityGroupId, $script:SecurityGroupData) | Where-Object { $_ -and $_.Trim() -ne "" }
 
@@ -104,10 +100,7 @@ function Get-UsedInstanceIds {
             }
         }
     }
-    $buildRes = Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=tag:$BuildTagKey,Values=$BuildTagValue", "Name=instance-state-name,Values=running,pending,stopped", "--region", $R, "--output", "json")
-    if ($buildRes -and $buildRes.Reservations) {
-        foreach ($rev in $buildRes.Reservations) { foreach ($i in $rev.Instances) { [void]$used.Add($i.InstanceId) } }
-    }
+    # Build server DEPRECATED: GitHub Actions only (no build EC2)
     return [string[]]@($used)
 }
 
@@ -164,32 +157,7 @@ if ($doSG -and $VpcId) {
     }
 }
 
-# 3) Build server stop (academy-build-arm64)
-if (-not $EIPOnly -and -not $VolumesOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only -and -not $ASGOnly) { $doBuild = $true } else { $doBuild = $BuildStopOnly }
-if ($doBuild) {
-    $buildRes = Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=tag:$BuildTagKey,Values=$BuildTagValue", "Name=instance-state-name,Values=running", "--region", $R, "--output", "json")
-    $running = @()
-    if ($buildRes -and $buildRes.Reservations) {
-        foreach ($rev in $buildRes.Reservations) { foreach ($i in $rev.Instances) { if ($i.State.Name -eq "running") { $running += $i } } }
-    }
-    if ($running.Count -eq 0) { Write-Host "  Build 서버: 실행 중인 인스턴스 없음." -ForegroundColor Green }
-    else {
-        Write-Host "  Build 서버: $($running.Count) 개 → stop" -ForegroundColor $(if ($DryRun) { "Yellow" } else { "Red" })
-        foreach ($i in $running) {
-            $name = ($i.Tags | Where-Object { $_.Key -eq "Name" } | Select-Object -First 1).Value
-            Write-Host "    - $($i.InstanceId) ($name)" -ForegroundColor Gray
-            if (-not $DryRun) {
-                try {
-                    Invoke-Aws @("ec2", "stop-instances", "--instance-ids", $i.InstanceId, "--region", $R) -ErrorMessage "stop-instances" | Out-Null
-                    [void]$runBuildStopped.Add([PSCustomObject]@{ InstanceId = $i.InstanceId; Name = $name })
-                    Write-Host "      Stop 요청됨." -ForegroundColor Green
-                } catch { Write-Warning "      Failed: $_"; [void]$runErrors.Add("Build $($i.InstanceId): $_") }
-            }
-        }
-    }
-}
-
-# 4) Legacy EC2 terminate (유지 ASG/Build/Batch CE 제외)
+# 3) Legacy EC2 terminate (유지 ASG/Batch CE 제외)
 if (-not $EIPOnly -and -not $VolumesOnly -and -not $SGOnly -and -not $BuildStopOnly -and -not $EC2Only -and -not $ASGOnly) { $doEC2 = $true } else { $doEC2 = $EC2Only }
 if ($doEC2 -and $VpcId) {
     $usedIds = Get-UsedInstanceIds
@@ -290,7 +258,6 @@ $sbRun = [System.Text.StringBuilder]::new()
 [void]$sbRun.AppendLine("| EIP released | $($runEIPReleased.Count) |")
 [void]$sbRun.AppendLine("| EBS volumes deleted | $($runVolumesDeleted.Count) |")
 [void]$sbRun.AppendLine("| SGs deleted | $($runSGsDeleted.Count) |")
-[void]$sbRun.AppendLine("| Build stopped | $($runBuildStopped.Count) |")
 [void]$sbRun.AppendLine("| EC2 terminated | $($runEC2Terminated.Count) |")
 [void]$sbRun.AppendLine("| ASGs removed | $($runASGRemoved.Count) |")
 [void]$sbRun.AppendLine("| Errors | $($runErrors.Count) |")
