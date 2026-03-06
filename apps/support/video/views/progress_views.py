@@ -1,8 +1,7 @@
 # apps/support/video/views/progress_views.py
 
-# DO NOT ADD DB ACCESS HERE (PROGRESS ENDPOINT)
-# This module serves GET /media/videos/{id}/progress/ from Redis only.
-# On Redis miss return {"state": "UNKNOWN"} without querying Video/VideoTranscodeJob.
+# Progress endpoint: Redis-first. On Redis miss return {"state": "UNKNOWN"}.
+# Fallback: tenant mismatch 시 Video tenant로 Redis 재조회 (1회 DB query).
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
