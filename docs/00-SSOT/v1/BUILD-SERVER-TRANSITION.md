@@ -1,11 +1,11 @@
-# V1 Build 서버 전환 계획
+# V1 Build 서버 제거 완료 (GitHub Actions only)
 
 **SSOT:** docs/00-SSOT/v1/params.yaml  
 **명칭:** V1 통일
 
 ---
 
-## 현재 상태 (당분간 latest 전략)
+## 현재 상태 (latest 전략 + GitHub Actions only)
 
 - **이미지 태그:** academy-* 모두 `latest` 사용 (params.yaml `ecr.useLatestTag: true`).
 - **빌드/푸시:** GitHub Actions **OIDC 전용** `.github/workflows/v1-build-and-push-latest.yml` (main push / workflow_dispatch). Access Key 워크플로우 폐기. `secrets.AWS_ROLE_ARN_FOR_ECR_BUILD` 사용. ARM64, 5개 이미지 latest 푸시 후 digest를 `docs/00-SSOT/v1/reports/ci-build.latest.md`에 기록.
@@ -14,11 +14,10 @@
 
 ---
 
-## Build 서버(academy-build-arm64) 제거 조건
+## Build 서버(academy-build-arm64)
 
-1. **CI로 latest 빌드/푸시 + 배포 성공을 2회 확인** (수동 또는 자동 배포 후 GATE-A 통과 2회).
-2. 이후 build 서버 인스턴스 **Stop** (즉시 비용 절감). 필요 시 동일 AMI/역할로 재기동 가능.
-3. SSOT `build.*` 설정은 전환기간 동안만 참조; CI 전환 완료 후에는 사용하지 않음.
+- **사용하지 않음(0대).**
+- SSOT에 `build.*`는 더 이상 존재하지 않으며, 빌드 서버를 트리거하는 스크립트도 제거되었다.
 
 ---
 
