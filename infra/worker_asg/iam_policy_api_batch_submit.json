@@ -10,8 +10,8 @@
         "batch:DescribeJobs"
       ],
       "Resource": [
-        "arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-video-batch-jobdef",
-        "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-video-batch-queue",
+        "arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-v1-video-batch-jobdef",
+        "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-batch-queue",
         "arn:aws:batch:ap-northeast-2:809466760795:job/*"
       ]
     }
