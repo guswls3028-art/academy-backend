@@ -18,7 +18,11 @@ HEALTH_CHECK_PATHS = ("/health", "/health/", "/healthz", "/healthz/", "/readyz",
 class HealthCheckHostMiddleware:
     """
     ALB target health check 시 Host 가 인스턴스 private IP 이면 ALLOWED_HOSTS 에 없어 400 발생.
-    /health 요청만 Host 를 127.0.0.1 로 덮어 통과 (prod 에 127.0.0.1 포함).
+    Health check 경로는 Host 를 127.0.0.1 로 덮어 통과 (prod 에 127.0.0.1 포함).
+
+    주의:
+    - settings 에서 USE_X_FORWARDED_HOST=True 인 경우, Django 는 HTTP_X_FORWARDED_HOST 를 우선한다.
+      따라서 HTTP_HOST 만 바꾸면 CommonMiddleware 단계에서 DisallowedHost(400)가 계속 발생할 수 있다.
     """
 
     def __init__(self, get_response):
@@ -26,7 +30,9 @@ class HealthCheckHostMiddleware:
 
     def __call__(self, request):
         if request.path in HEALTH_CHECK_PATHS:
+            # Django host validation(CommonMiddleware 등) 우회: forwarded-host 포함 정규화
             request.META["HTTP_HOST"] = "127.0.0.1"
+            request.META["HTTP_X_FORWARDED_HOST"] = "127.0.0.1"
         return self.get_response(request)
 
 
