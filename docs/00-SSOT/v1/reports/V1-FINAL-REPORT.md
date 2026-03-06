@@ -101,6 +101,7 @@
 | GO/NO-GO | **NO-GO** |
 
 ## 상세 보고서
+- [resource-cleanup.latest.md](./resource-cleanup.latest.md) — 리소스 정리 후 재검증 결과 (instances/SG/EIP/ASG)
 - [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트/R2/CDN·SQS·Video·관측
 - [consistency.latest.md](./consistency.latest.md) — SSOT↔실제↔합의사항 정합성
 - [front-connection.latest.md](./front-connection.latest.md) — Front V1 연결 검증·근거
