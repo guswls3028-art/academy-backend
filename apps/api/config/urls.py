@@ -6,7 +6,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from rest_framework_simplejwt.views import TokenRefreshView
-from apps.api.common.views import health_check, healthz
+from apps.api.common.views import health_check, healthz, readyz
 from apps.api.common.auth_jwt import TenantAwareTokenObtainPairView
 
 urlpatterns = [
@@ -15,6 +15,7 @@ urlpatterns = [
     # =========================
     path("health", health_check, name="health_check"),
     path("healthz", healthz, name="healthz"),
+    path("readyz", readyz, name="readyz"),
     
     # =========================
     # Admin
