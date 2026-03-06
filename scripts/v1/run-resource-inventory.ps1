@@ -41,8 +41,6 @@ $KeepSGIds = @(
     $script:BatchSecurityGroupId,
     $script:SecurityGroupData
 ) | Where-Object { $_ -and $_.Trim() -ne "" }
-$BuildTagKey = $script:BuildTagKey
-$BuildTagValue = $script:BuildTagValue
 $BatchOpsASGPrefix = "academy-v1-video-ops-ce-asg-"
 $BatchStandardASGPrefix = "academy-v1-video-batch-ce"  # Batch managed ASG name may contain this
 
@@ -163,18 +161,12 @@ if ($ceRes -and $ceRes.computeEnvironments) {
         }
     }
 }
-$buildRes = Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=tag:$BuildTagKey,Values=$BuildTagValue", "Name=instance-state-name,Values=running,pending,stopped", "--region", $R, "--output", "json")
-if ($buildRes -and $buildRes.Reservations) {
-    foreach ($rev in $buildRes.Reservations) { foreach ($i in $rev.Instances) { [void]$usedInstanceIds.Add($i.InstanceId) } }
-}
+# Build server DEPRECATED: GitHub Actions only (no build EC2)
 
 # 정리 대상 식별
 $orphanEIPs = @($eipList | Where-Object { $_.SSOT -eq "LEGACY_CANDIDATE" -and -not $_.AssociationId })
 $unusedSGs = @($sgList | Where-Object { $_.SSOT -eq "LEGACY_CANDIDATE" -and $_.ENICount -eq 0 })
 $buildInstances = @()
-foreach ($rev in (Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=tag:$BuildTagKey,Values=$BuildTagValue", "--region", $R, "--output", "json")).Reservations) {
-    foreach ($i in $rev.Instances) { $buildInstances += $i }
-}
 $orphanEC2 = [System.Collections.ArrayList]::new()
 foreach ($rev in (Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=vpc-id,Values=$VpcId", "Name=instance-state-name,Values=running,pending,stopped", "--region", $R, "--output", "json")).Reservations) {
     foreach ($i in $rev.Instances) {
@@ -197,7 +189,7 @@ $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("| InstanceId | State | Name | SSOT |")
 [void]$sb.AppendLine("|------------|-------|------|------|")
 foreach ($e in $ec2List) {
-    $ssot = if ($usedInstanceIds.Contains($e.InstanceId)) { "KEEP" } elseif ($e.Name -eq $BuildTagValue) { "KEEP (build, stop only)" } else { "LEGACY_CANDIDATE" }
+    $ssot = if ($usedInstanceIds.Contains($e.InstanceId)) { "KEEP" } else { "LEGACY_CANDIDATE" }
     [void]$sb.AppendLine("| $($e.InstanceId) | $($e.State) | $($e.Name) | $ssot |")
 }
 [void]$sb.AppendLine("")
@@ -256,13 +248,8 @@ $planSb = [System.Text.StringBuilder]::new()
 foreach ($e in $orphanEIPs) {
     [void]$planSb.AppendLine("| EIP $($e.AllocationId) ($($e.PublicIp)) | release | unassociated | LEGACY_CANDIDATE | ~\$3.65/mo |")
 }
-# Build server
-foreach ($b in $buildInstances) {
-    $name = ($b.Tags | Where-Object { $_.Key -eq "Name" } | Select-Object -First 1).Value
-    [void]$planSb.AppendLine("| EC2 $($b.InstanceId) ($name) | stop | Build server, start only when needed | KEEP(stop) | Instance cost when stopped |")
-}
-# Orphan EC2 (excluding build - build is stop only)
-$orphanForTerminate = @($orphanEC2 | Where-Object { $_.Name -ne $BuildTagValue })
+# Orphan EC2 (terminate candidates)
+$orphanForTerminate = @($orphanEC2)
 foreach ($o in $orphanForTerminate) {
     [void]$planSb.AppendLine("| EC2 $($o.InstanceId) ($($o.Name)) | terminate | not in keep ASGs | LEGACY_CANDIDATE | instance+storage |")
 }
