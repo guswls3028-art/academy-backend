@@ -69,7 +69,8 @@ ec2Configuration: ECS_AL2023
 - **m6g.medium:** 2 vCPUs, 4 GiB. maxvCpus=2 → effectively 1 instance.
 - **Ops jobs:** reconcile 1 vCPU / 2048 MiB, scanstuck 1 vCPU / 2048 MiB. Both can run on one m6g.medium (or t4g.medium).
 - **t4g.small:** 2 vCPUs, 2 GiB. Each job needs 2048 MiB; ECS overhead may cause OOM. **Not recommended.**
-- **t4g.medium:** 2 vCPUs, 4 GiB. Smallest ARM type already used in stack (api, messaging, ai). Compatible, cost-effective.
+- **t4g.medium:** Not supported by ECS_AL2023 in ap-northeast-2 (Batch create-compute-environment rejects it).
+- **m6g.medium:** 2 vCPUs, 4 GiB. Smallest supported ARM for ECS_AL2023. **Use this.**
 
 ---
 
@@ -77,8 +78,8 @@ ec2Configuration: ECS_AL2023
 
 | Layer | Change |
 |-------|--------|
-| SSOT | opsInstanceType: m6g.medium → t4g.medium; opsMaxvCpus: 2 (keep) |
-| Deploy | No script changes; batch.ps1 already uses SSOT. Ensure-OpsCE drift will trigger recreate with -AllowRebuild |
-| AWS | Ops CE: delete + recreate with t4g.medium, maxvCpus=2. EventBridge already rate(1 hour) — no change |
+| SSOT | opsInstanceType: m6g.medium (keep); opsMaxvCpus: 2 (keep); EventBridge rate(1 hour) (already set) |
+| Deploy | batch.ps1: add queue delete before CE delete (CE cannot be deleted while queue references it) |
+| AWS | Ops CE/Queue: recreated after drift. EventBridge already rate(1 hour) — no change |
 
-**Rationale:** t4g.medium is burstable, cheaper than m6g.medium, and matches the smallest ARM type in the stack. maxvCpus=2 limits to one instance. minvCpus=0 unchanged.
+**Rationale:** m6g.medium is the smallest ECS_AL2023-compatible ARM instance. maxvCpus=2 limits to one instance. minvCpus=0 unchanged.

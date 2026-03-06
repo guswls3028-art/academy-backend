@@ -168,10 +168,10 @@ videoBatch:
     failedJobsAlarmThreshold: 5
     stuckDetectedAlarmEnabled: true
     logRetentionDays: 30
-  # Ops: lightweight hourly recovery. 1 instance max (maxvCpus=2), scale to 0 when idle.
+  # Ops: lightweight hourly recovery. 1 instance max (maxvCpus=2), scale to 0 when idle. t4g not supported by ECS_AL2023.
   opsComputeEnvironmentName: academy-v1-video-ops-ce
   opsQueueName: academy-v1-video-ops-queue
-  opsInstanceType: t4g.medium
+  opsInstanceType: m6g.medium
   opsMaxvCpus: 2
   opsJobDefs:
     reconcile: academy-v1-video-ops-reconcile
