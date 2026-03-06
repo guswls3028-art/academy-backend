@@ -9,7 +9,7 @@ from apps.core.tenant.exceptions import TenantResolutionError
 
 
 # 테넌트 해석 없이 통과시키는 경로 (ALB/컨테이너 health check용)
-BYPASS_PATHS = {"/health", "/health/", "/healthz", "/healthz/"}
+BYPASS_PATHS = {"/health", "/health/", "/healthz", "/healthz/", "/readyz", "/readyz/"}
 
 
 class TenantMiddleware:
