@@ -90,7 +90,7 @@ aws ecr put-lifecycle-policy --repository-name academy-video-worker --lifecycle-
 
 - Video Batch CE: min 0, max 10 — 작업 없을 때 비용 없음.
 - Video Ops CE: min 0, max 2 vCPU (m6g.medium).
-- Build: Spot 우선 → 온디맨드 폴백으로 비용 절감.
+- Build: GitHub Actions(OIDC) only.
 - S3: 미사용. R2만 사용.
 
 ---
@@ -119,7 +119,7 @@ aws ecr put-lifecycle-policy --repository-name academy-video-worker --lifecycle-
 | **scripts/v1/core/preflight.ps1** | SSM 확인을 raw `aws` → `Invoke-AwsJson`으로 변경해 프로파일 적용. |
 | **scripts/v1/resources/ssm.ps1** | `Confirm-SSMEnv`에서 raw `aws` → `Invoke-AwsJson` 사용. |
 | **scripts/v1/resources/jobdef.ps1** | `Register-JobDefFromJson`에서 raw `aws batch register-job-definition` → `Invoke-Aws` 사용. |
-| **scripts/v1/resources/build.ps1** | Spot `run-instances` 실패 시 인스턴스 0개면 온디맨드로 재시도. |
+| (삭제됨) build 서버 스크립트 | GitHub Actions only로 전환 완료. |
 | **scripts/v1/resources/ecr.ps1** | Ensure-ECRRepos 후 저장소별 ECR 라이프사이클 정책 자동 적용(불필요 이미지 미보관, 비용 최적화). |
 
 ---
