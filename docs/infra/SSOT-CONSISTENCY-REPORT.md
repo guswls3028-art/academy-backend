@@ -141,4 +141,4 @@
 | 컴퓨트 | ❌ 없음 | 배포로 전부 생성 |
 | 의존성 | ✅ 정합 | SSM, ECR 존재 |
 
-**결론:** 현재 AWS 상태는 SSOT와 정합되어 있으며, `deploy.ps1` 실행 시 필요한 리소스가 순서대로 생성·연결될 구조이다. ECR 이미지와 RDS master password SSM만 확인하면 배포 가능.
+**결론:** 현재 AWS 상태는 SSOT와 정합되어 있으며, `deploy.ps1` 실행 시 필요한 리소스가 순서대로 생성·연결될 구조이다. ECR 이미지(academy-api:latest 등)와 RDS master password SSM이 확인되었으므로 배포 가능.
