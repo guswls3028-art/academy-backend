@@ -61,11 +61,11 @@
 - 프로파일 사용 시: `deploy.ps1 -AwsProfile default` 등으로 실행.
 - Cursor/자동화에서는 `deploy.ps1 -AwsProfile default` 사용 권장.
 
-### 3.4 빌드 서버 (Spot + 온디맨드 폴백)
+### 3.4 빌드/푸시 (GitHub Actions only)
 
-- **경로:** `scripts/v1/resources/build.ps1`
-- **동작:** 빌드 인스턴스가 없을 때 `run-instances`를 먼저 **Spot**으로 요청. 인스턴스가 0개면 **온디맨드**로 재시도.
-- 빌드 시 로컬이 아닌 **빌드용 서버**에서 Docker 빌드·ECR 푸시 수행. 도커 파일은 최적화된 상태에 맞춰 사용.
+- **정책:** 빌드 서버(EC2) 사용하지 않음(0대).
+- **빌드/푸시:** GitHub Actions(OIDC)로 `academy-*` 이미지 빌드 후 ECR 푸시.
+- **배포:** `deploy.ps1`는 ECR의 이미지를 pull/refresh만 수행한다.
 
 ### 3.5 다운타임 허용 범위
 
@@ -100,14 +100,14 @@ pwsh scripts/v1/deploy.ps1 -PruneLegacy -AwsProfile default
 ```
 
 - **동작:** EventBridge 타깃 제거 → 규칙 삭제 → Batch Queue 비활성화·삭제 → Batch CE 비활성화·삭제 → JobDef deregister → ASG(이름이 v1이 아닌 것) 삭제 → ECS 클러스터 삭제 → IAM 역할 정리 → ECR/SSM/EIP 등 후보 삭제.
-- **주의:** 현재 API는 ASG가 아니라 단일 EC2이므로 PruneLegacy에서 ASG 삭제 대상에 안 걸림. EC2 2대(academy-api, academy-build-arm64)는 **수동 정리** 필요.
+- **주의:** 레거시 단일 EC2(예: academy-api)가 남아있다면 v1 ASG 전환 이후 수동 정리 필요.
 
 ### 4.2 수동 정리 (스크립트 미처리)
 
 | 순서 | 대상 | 조치 |
 |------|------|------|
 | 1 | **EC2 academy-api** (i-0c8ae616abf345fd1) | 필요 시 스냅샷/백업 후 **EIP 해제 → 인스턴스 종료**. v1 배포 후 ALB 뒤 새 API 인스턴스로 대체. |
-| 2 | **EC2 academy-build-arm64** (i-0133290c3502844ab) | 이미 stopped. v1 Build는 새 서브넷/SG로 태그만 academy-build-arm64 사용하므로 **종료**해도 됨. |
+| 2 | (레거시) 불필요 EC2 | 빌드 서버는 정책상 사용하지 않음. 남아있다면 **종료/삭제**. |
 | 3 | **Lambda 2개** (academy-worker-queue-depth-metric, academy-worker-autoscale) | v1 SSOT에 Lambda 없음. 유지할지 **수동 삭제**할지 결정 후 `aws lambda delete-function --function-name <이름> --profile default` |
 | 4 | **기존 VPC/서브넷/SG** | v1이 **새 VPC(academy-v1-vpc)** 를 만들면 기존 vpc-0831a2484f9b114c2 등은 나중에 수동 삭제 가능. RDS/ElastiCache가 기존 VPC에 있으면 삭제 시 주의. |
 
@@ -127,10 +127,9 @@ pwsh scripts/v1/deploy.ps1 -PurgeAndRecreate -AwsProfile default
 **목적:** v1에서 쓰는 EC2 리소스만 남기고, 미사용 EIP·고아 인스턴스·미사용 보안 그룹을 정리.
 
 **유지 대상**
-- **EIP:** NAT Gateway에 연결된 1개만 (academy-v1-nat-eip)
+- **EIP:** 미연결 EIP만 release 후보. (NAT/EIP=0 정책이면 NAT 연동 EIP도 제거 대상)
 - **인스턴스:** 다음에 속한 것만 유지  
-  - ASG: `academy-v1-api-asg`, `academy-v1-messaging-worker-asg`, `academy-v1-ai-worker-asg`, `academy-v1-video-ops-ce-asg-*`  
-  - 태그 `Name=academy-build-arm64`
+  - ASG: `academy-v1-api-asg`, `academy-v1-messaging-worker-asg`, `academy-v1-ai-worker-asg`, `academy-v1-video-ops-ce-asg-*`
 - **보안 그룹:** `academy-v1-sg-app`, `academy-v1-sg-batch`, `academy-v1-sg-data`, default, 및 ENI가 붙어 있는 SG
 
 **실행 (동일 PowerShell 세션에서 .env 로드 후):**
