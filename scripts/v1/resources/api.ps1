@@ -260,7 +260,9 @@ function Ensure-API-ASG {
 
     if (-not $asg) {
         $ltSpec = "LaunchTemplateId=$($ltResult.LtId),Version=`$Latest"
-        Invoke-Aws @("autoscaling", "create-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--launch-template", $ltSpec, "--min-size", $script:ApiASGMinSize.ToString(), "--max-size", $script:ApiASGMaxSize.ToString(), "--desired-capacity", $script:ApiASGDesiredCapacity.ToString(), "--vpc-zone-identifier", $vpcZone, "--region", $script:Region) -ErrorMessage "create-auto-scaling-group API ASG failed" | Out-Null
+        $createArgs = @("autoscaling", "create-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--launch-template", $ltSpec, "--min-size", $script:ApiASGMinSize.ToString(), "--max-size", $script:ApiASGMaxSize.ToString(), "--desired-capacity", $script:ApiASGDesiredCapacity.ToString(), "--vpc-zone-identifier", $vpcZone, "--region", $script:Region)
+        if ($script:ApiTargetGroupArn) { $createArgs += "--target-group-arns"; $createArgs += $script:ApiTargetGroupArn }
+        Invoke-Aws $createArgs -ErrorMessage "create-auto-scaling-group API ASG failed" | Out-Null
         Write-Ok "ASG $($script:ApiASGName) created"
         $script:ChangesMade = $true
         return
