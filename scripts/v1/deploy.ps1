@@ -217,16 +217,18 @@ try {
     Ensure-ASGAi
     Ensure-VideoCE
     if ($script:VideoLongCEName) { Ensure-VideoLongCE }
-    Ensure-OpsCE
+    if (-not $script:MinimalDeploy) { Ensure-OpsCE }
     Ensure-VideoQueue
     if ($script:VideoLongQueueName) { Ensure-VideoLongQueue }
-    Ensure-OpsQueue
+    if (-not $script:MinimalDeploy) { Ensure-OpsQueue }
     Ensure-VideoJobDef
     if ($script:VideoLongJobDefName) { Ensure-VideoLongJobDef }
-    Ensure-OpsJobDefReconcile
-    Ensure-OpsJobDefScanStuck
-    Ensure-OpsJobDefNetprobe
-    Ensure-EventBridgeRules
+    if (-not $script:MinimalDeploy) {
+        Ensure-OpsJobDefReconcile
+        Ensure-OpsJobDefScanStuck
+        Ensure-OpsJobDefNetprobe
+        Ensure-EventBridgeRules
+    }
     Ensure-VideoBatchLogRetention
     Ensure-ALBStack
     Ensure-API
