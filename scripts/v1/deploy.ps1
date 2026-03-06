@@ -93,9 +93,8 @@ if ($MinimalDeploy) {
     $script:VideoLongJobDefName = $null
     $script:OpsCEName = $null
     $script:OpsQueueName = $null
-    if (-not $PSBoundParameters.ContainsKey("SkipApiSSMWait")) { $script:SkipApiSSMWait = $true }
 }
-$script:SkipApiSSMWait = $SkipApiSSMWait
+$script:SkipApiSSMWait = if ($MinimalDeploy -and -not $PSBoundParameters.ContainsKey("SkipApiSSMWait")) { $true } else { $SkipApiSSMWait }
 if ($EcrRepoUri) { $script:EcrRepoUri = $EcrRepoUri } else { $script:EcrRepoUri = "" }
 
 # Bootstrap는 Ensure-Network 이후 try 블록 내에서 실행 (빌드 서버 Ensure 시 서브넷 필요).
