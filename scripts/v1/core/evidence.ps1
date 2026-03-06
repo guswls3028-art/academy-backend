@@ -7,9 +7,9 @@ function Get-EvidenceSnapshot {
     $R = $script:Region
     $evidenceStart = Get-Date
     $ceV = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:VideoCEName, "--region", $R, "--output", "json")
-    $ceO = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:OpsCEName, "--region", $R, "--output", "json")
+    $ceO = $null; if ($script:OpsCEName) { $ceO = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:OpsCEName, "--region", $R, "--output", "json") }
     $qV = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoQueueName, "--region", $R, "--output", "json")
-    $qO = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:OpsQueueName, "--region", $R, "--output", "json")
+    $qO = $null; if ($script:OpsQueueName) { $qO = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:OpsQueueName, "--region", $R, "--output", "json") }
 
     function Get-LatestJobDef { param([string]$Name)
         $list = Invoke-AwsJson @("batch", "describe-job-definitions", "--job-definition-name", $Name, "--status", "ACTIVE", "--region", $R, "--output", "json")
@@ -51,10 +51,11 @@ function Get-EvidenceSnapshot {
     }
     $jd = Get-LatestJobDef -Name $script:VideoJobDefName
     if ($jd) { $ev["videoJobDefRevision"] = $jd.revision; $ev["videoJobDefVcpus"] = $jd.containerProperties.vcpus; $ev["videoJobDefMemory"] = $jd.containerProperties.memory }
-    $ruleR = Invoke-AwsJson @("events", "describe-rule", "--name", $script:EventBridgeReconcileRule, "--region", $R, "--output", "json")
-    $ruleS = Invoke-AwsJson @("events", "describe-rule", "--name", $script:EventBridgeScanStuckRule, "--region", $R, "--output", "json")
-    $ev["eventBridgeReconcileState"] = if ($ruleR) { $ruleR.State } else { "not found" }
-    $ev["eventBridgeScanStuckState"] = if ($ruleS) { $ruleS.State } else { "not found" }
+    $ruleR = $null; $ruleS = $null
+    if ($script:EventBridgeReconcileRule) { $ruleR = Invoke-AwsJson @("events", "describe-rule", "--name", $script:EventBridgeReconcileRule, "--region", $R, "--output", "json") }
+    if ($script:EventBridgeScanStuckRule) { $ruleS = Invoke-AwsJson @("events", "describe-rule", "--name", $script:EventBridgeScanStuckRule, "--region", $R, "--output", "json") }
+    $ev["eventBridgeReconcileState"] = if ($ruleR) { $ruleR.State } else { "skipped" }
+    $ev["eventBridgeScanStuckState"] = if ($ruleS) { $ruleS.State } else { "skipped" }
     $ev["netprobeJobId"] = $NetprobeJobId
     $ev["netprobeStatus"] = $NetprobeStatus
     $asgM = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $script:MessagingASGName, "--region", $R, "--output", "json")

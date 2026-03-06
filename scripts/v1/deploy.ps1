@@ -214,8 +214,8 @@ try {
     Ensure-ECRRepos
     Ensure-DynamoLockTable
     Ensure-DynamoUploadCheckpointTable
-    Ensure-ASGMessaging
     Ensure-ASGAi
+    Ensure-ASGMessaging
     Ensure-VideoCE
     if ($script:VideoLongCEName) { Ensure-VideoLongCE }
     if (-not $script:MinimalDeploy) { Ensure-OpsCE }
