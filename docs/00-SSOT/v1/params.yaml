@@ -79,15 +79,6 @@ api:
   instanceTagValue: academy-v1-api
   apiBaseUrl: ""
 
-build:
-  instanceTagKey: Name
-  instanceTagValue: academy-build-arm64
-  amiId: ami-0885e191a9bcf28b0
-  instanceProfile: academy-ec2-role
-  subnetId: ""
-  securityGroupId: ""
-  instanceType: t4g.medium
-
 messagingWorker:
   asgName: academy-v1-messaging-worker-asg
   launchTemplateName: academy-v1-messaging-worker-lt
