@@ -12,6 +12,7 @@ if ($AwsProfile) { $env:AWS_PROFILE = $AwsProfile; if (-not $env:AWS_DEFAULT_REG
 
 . (Join-Path $PSScriptRoot "core\ssot.ps1")
 . (Join-Path $PSScriptRoot "core\aws.ps1")
+. (Join-Path $PSScriptRoot "resources\api.ps1")
 $null = Load-SSOT -Env "prod"
 
 $ids = @(Get-APIASGInstanceIds)
