@@ -277,6 +277,11 @@ function Ensure-API-ASG {
         Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--vpc-zone-identifier", $wantedZones, "--region", $script:Region) -ErrorMessage "update-asg vpc-zone-identifier" | Out-Null
         Write-Ok "ASG $($script:ApiASGName) vpc-zone-identifier updated (public subnets for natEnabled=false)"
         $script:ChangesMade = $true
+        $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
+        $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInstanceRefreshInstanceWarmup } else { 300 }
+        $prefs = "{`"MinHealthyPercentage`":$minHealthy,`"InstanceWarmup`":$warmup}"
+        Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh (subnet drift)" | Out-Null
+        Write-Ok "ASG instance-refresh started (new instances in public subnets)"
     }
     if ($capacityDrift) {
         Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--min-size", $script:ApiASGMinSize.ToString(), "--max-size", $script:ApiASGMaxSize.ToString(), "--desired-capacity", $script:ApiASGDesiredCapacity.ToString(), "--region", $script:Region) -ErrorMessage "update-auto-scaling-group API ASG failed" | Out-Null

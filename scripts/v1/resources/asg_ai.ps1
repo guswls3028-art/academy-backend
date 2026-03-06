@@ -229,6 +229,14 @@ function Ensure-ASGAi {
         return
     }
 
+    $currentZones = ($asg.VpcZoneIdentifier -split "," | ForEach-Object { $_.Trim() }) -join ","
+    $subnetDrift = ($currentZones -ne $vpcZone)
+    if ($subnetDrift) {
+        Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:AiASGName, "--vpc-zone-identifier", $vpcZone, "--region", $script:Region) -ErrorMessage "update-asg vpc-zone-identifier" | Out-Null
+        Write-Ok "ASG $($script:AiASGName) vpc-zone-identifier updated"
+        $script:ChangesMade = $true
+        Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:AiASGName, "--region", $script:Region) -ErrorMessage "start-instance-refresh" | Out-Null
+    }
     $capacityDrift = ($asg.MinSize -ne $script:AiMinSize) -or ($asg.MaxSize -ne $script:AiMaxSize)
     $clampedDesired = [Math]::Max($script:AiMinSize, [Math]::Min($script:AiMaxSize, $asg.DesiredCapacity))
     if ($capacityDrift -or $asg.DesiredCapacity -ne $clampedDesired) {
