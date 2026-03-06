@@ -27,13 +27,7 @@
         "ecr:DescribeImages",
         "ecr:ListImages"
       ],
-      "Resource": [
-        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-base",
-        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-api",
-        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-video-worker",
-        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-messaging-worker",
-        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-ai-worker-cpu"
-      ]
+      "Resource": "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-*"
     }
   ]
 }
