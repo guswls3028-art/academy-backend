@@ -106,7 +106,7 @@
 
 ### 2.11 Build
 
-- 태그: Name=academy-build-arm64 (별도 EC2는 현재 없음, 필요 시 수동 기동 또는 deploy 시 -SkipBuild 해제 후 빌드 서버 사용)
+- 빌드: GitHub Actions(OIDC) only. 빌드 서버(academy-build-arm64) 사용하지 않음(0대).
 
 ### 2.12 SSM
 
@@ -160,7 +160,7 @@
    - 타깃 그룹에서 i-0a55166b45a6c08cb healthy 전이면, SSM agent·보안 그룹(8000 포트)·앱 기동 상태 점검.
 
 2. **Build EC2**  
-   - 이미지 빌드·ECR 푸시가 필요하면 academy-build-arm64 태그의 EC2를 수동 기동하거나, deploy.ps1에서 -SkipBuild 없이 실행해 빌드 플로우 수행.
+   - 이미지 빌드·ECR 푸시는 GitHub Actions로만 수행한다.
 
 3. **Netprobe**  
    - `deploy.ps1` 실행 시 -SkipNetprobe 없이 한 번 실행해 Batch netprobe Job 성공 여부 확인.
