@@ -182,6 +182,9 @@ eventBridge:
   reconcileRuleName: academy-v1-reconcile-video-jobs
   scanStuckRuleName: academy-v1-video-scan-stuck-rate
   roleName: academy-v1-eventbridge-batch-video-role
+  # 30분 주기: ops CE 스케일다운 가능 (5/15분이면 거의 항상 job 있어 desiredvCpus 유지됨)
+  reconcileSchedule: "rate(30 minutes)"
+  scanStuckSchedule: "rate(30 minutes)"
   # 운영 자동 복구: 규칙은 ENABLED 유지. 배포 시 DISABLED면 ENABLED로 재설정 (resources/eventbridge.ps1).
   reconcileState: ENABLED
   scanStuckState: ENABLED
