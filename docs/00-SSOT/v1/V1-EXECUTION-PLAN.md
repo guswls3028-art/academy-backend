@@ -75,7 +75,7 @@
 
 - **추적:** 배포 후 `runtime-images.latest.md`에 API 인스턴스별 RepoDigests 기록. `ci-build.latest.md`의 academy-api digest와 불일치 시 보고서에 "CI vs Runtime: MISMATCH (배포/갱신 실패 가능)" 명시.
 
-- **Build 서버:** OIDC CI로 빌드/푸시 2회 성공 확인 후 build 서버(academy-build-arm64) Stop/terminate. `docs/00-SSOT/v1/BUILD-SERVER-TRANSITION.md` 참고.
+- **Build 서버:** 사용하지 않음(0대). 빌드/푸시는 GitHub Actions(OIDC)만 사용.
 
 ---
 
