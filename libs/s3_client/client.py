@@ -21,7 +21,6 @@ _s3 = boto3.client(
         s3={"addressing_style": "path"},
         connect_timeout=30,
         read_timeout=60,
-        retries={"max_attempts": 3, "mode": "standard"},
     ),
 )
 
