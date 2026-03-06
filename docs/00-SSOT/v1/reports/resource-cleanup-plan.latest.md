@@ -1,17 +1,14 @@
 # V1 리소스 정리 계획 (비용 절감)
 
-**Region:** ap-northeast-2 **Generated:** 2026-03-06T07:34:52.4205737+09:00 **Rule:** No delete of SSOT-listed resources.
+**리전:** ap-northeast-2 **생성:** 2026-03-06T19:23:50.5340786+09:00 **전제:** SSOT 명시 리소스 삭제 금지.
 
-## Cleanup targets
+## 삭제/정리 대상
 
-| Target | Action | Reason | SSOT | Cost saving |
+| 대상 | 삭제/동작 | 삭제 이유 | SSOT 매칭 | 예상 비용 절감 |
 |------|------------|-----------|------------|-----------------|
-| EC2 i-07f6f245de7026361 (academy-build-arm64) | stop | Build server, start only when needed | KEEP(stop) | Instance cost when stopped |
-| SG sg-0051cc8f79c04b058 (academy-api-sg) | delete | no ENI attached | LEGACY_CANDIDATE | cleanup |
-| SG sg-02692600fbf8e26f7 (academy-worker-sg) | delete | no ENI attached | LEGACY_CANDIDATE | cleanup |
-| SG sg-00d2fb147d61f5cd8 (academy-v1-vpce-sg) | delete | no ENI attached | LEGACY_CANDIDATE | cleanup |
+| SG sg-0118032c04257cf27 (academy-v1-vpce-sg) | delete | no ENI attached | LEGACY_CANDIDATE | cleanup |
 
-## Run
+## 실행 방법
 ```powershell
 pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/cleanup-legacy.ps1   # DryRun 기본
 pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/cleanup-legacy.ps1 -Execute   # 실제 적용
