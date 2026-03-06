@@ -19,6 +19,9 @@ _s3 = boto3.client(
     config=Config(
         signature_version="s3v4",
         s3={"addressing_style": "path"},
+        connect_timeout=30,
+        read_timeout=60,
+        retries={"max_attempts": 3, "mode": "standard"},
     ),
 )
 
