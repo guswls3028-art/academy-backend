@@ -70,7 +70,6 @@ switch ($true) { { $EcrRepoUri } { $script:EcrRepoUri = $EcrRepoUri } default { 
 . (Join-Path $ScriptRoot "resources\ecr.ps1")
 . (Join-Path $ScriptRoot "resources\alb.ps1")
 . (Join-Path $ScriptRoot "resources\api.ps1")
-. (Join-Path $ScriptRoot "resources\build.ps1")
 . (Join-Path $ScriptRoot "resources\rds.ps1")
 . (Join-Path $ScriptRoot "resources\redis.ps1")
 . (Join-Path $ScriptRoot "resources\asg_ai.ps1")
