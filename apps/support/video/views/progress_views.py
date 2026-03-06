@@ -89,7 +89,25 @@ class VideoProgressView(APIView):
             return _default_progress_response(video_id)
 
         if cached_status is None:
-            # DO NOT ADD DB ACCESS HERE (PROGRESS ENDPOINT)
+            # Fallback: request.tenant과 Video tenant 불일치 시 (중앙 API 등) Video tenant로 재조회
+            try:
+                from ..models import Video
+
+                video = (
+                    Video.objects.filter(pk=video_id)
+                    .select_related("session__lecture__tenant")
+                    .first()
+                )
+                if video and video.session and video.session.lecture:
+                    alt_tenant = video.session.lecture.tenant
+                    if alt_tenant and alt_tenant.id != tenant.id:
+                        cached_status = get_video_status_from_redis(alt_tenant.id, video_id)
+                        if cached_status is not None:
+                            tenant = alt_tenant
+            except Exception:
+                pass
+
+        if cached_status is None:
             emit_progress_layer_metrics(progress_requests=1, redis_miss=1, db_hit=0)
             return _unknown_state_response(video_id)
 
