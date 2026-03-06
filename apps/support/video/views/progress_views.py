@@ -89,7 +89,8 @@ class VideoProgressView(APIView):
             return _default_progress_response(video_id)
 
         if cached_status is None:
-            # Fallback: request.tenant과 Video tenant 불일치 시 (중앙 API 등) Video tenant로 재조회
+            # Fallback 1: request.tenant과 Video tenant 불일치 시 (중앙 API 등) Video tenant로 재조회
+            video = None
             try:
                 from ..models import Video
 
@@ -104,6 +105,37 @@ class VideoProgressView(APIView):
                         cached_status = get_video_status_from_redis(alt_tenant.id, video_id)
                         if cached_status is not None:
                             tenant = alt_tenant
+            except Exception:
+                pass
+
+        if cached_status is None and video is not None:
+            # Fallback 2: Redis 미사용 시(워커 Redis 미연결 등) DB에서 RUNNING/READY 여부 확인
+            try:
+                from ..models import VideoTranscodeJob
+
+                running = VideoTranscodeJob.objects.filter(
+                    video_id=video_id,
+                    state=VideoTranscodeJob.State.RUNNING,
+                ).exists()
+                if running:
+                    cached_status = {"status": "PROCESSING"}
+                    if video.session and video.session.lecture:
+                        tenant = video.session.lecture.tenant
+                elif video.status == "READY" and video.hls_path:
+                    cached_status = {
+                        "status": "READY",
+                        "hls_path": video.hls_path,
+                        "duration": video.duration,
+                    }
+                    if video.session and video.session.lecture:
+                        tenant = video.session.lecture.tenant
+                elif video.status == "FAILED":
+                    cached_status = {
+                        "status": "FAILED",
+                        "error_reason": getattr(video, "error_reason", "") or "",
+                    }
+                    if video.session and video.session.lecture:
+                        tenant = video.session.lecture.tenant
             except Exception:
                 pass
 
