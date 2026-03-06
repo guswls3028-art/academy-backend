@@ -89,3 +89,25 @@ pwsh scripts/v1/test-upload-complete.ps1 -VideoId 187 -Token "Bearer <JWT>"
 | 5 | 프론트 업로드 테스트 | 위 §3 절차대로 hakwonplus.com에서 수행 |
 
 **다음 단계:** CI 완료 → (선택) Instance Refresh → hakwonplus.com 관리자 로그인 → 강의/차시/영상 페이지에서 MP4 업로드
+
+---
+
+## 7. "대기 중" / 인스턴스 안 뜸 트러블슈팅
+
+| 증상 | 원인 | 조치 |
+|------|------|------|
+| 영상 "대기 중" 멈춤 | upload/complete 미호출 또는 503 | 브라우저 Network 탭에서 `POST .../upload/complete/` 응답 확인 |
+| Batch 인스턴스 안 뜸 | Job 미제출 또는 CE 스케일 지연 | `aws batch list-jobs --job-queue academy-v1-video-batch-queue` 로 Job 존재 여부 확인 |
+| API env 구버전 | 인스턴스 부팅 시점 SSM 사용 | `pwsh scripts/v1/start-api-instance-refresh.ps1` 실행 후 5~10분 대기 |
+
+**연결 검증:**
+```powershell
+# 1) API health
+curl -s -o NUL -w "%{http_code}" https://api.hakwonplus.com/healthz
+
+# 2) SSM env (VIDEO_BATCH 확인)
+aws ssm get-parameter --name "/academy/api/env" --query "Parameter.Value" --output text | Select-String VIDEO_BATCH
+
+# 3) Batch Job 제출 테스트 (VideoId, JWT 필요)
+pwsh scripts/v1/test-upload-complete.ps1 -VideoId <ID> -Token "Bearer <JWT>"
+```
