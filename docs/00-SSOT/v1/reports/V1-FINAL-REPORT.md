@@ -2,6 +2,14 @@
 
 **명칭:** V1 통일. **SSOT:** docs/00-SSOT/v1/params.yaml. **배포:** scripts/v1/deploy.ps1. **리전:** ap-northeast-2.
 
+## 리소스 정리 진행 상황 (최근 실행)
+- **API ASG:** 1/1/2 반영 완료 (run-resource-cleanup.ps1 -Execute + deploy.ps1).
+- **SG:** academy-v1-vpce-sg 삭제 완료. academy-api-sg·academy-worker-sg는 DependencyViolation으로 유지.
+- **EIP:** 4개 모두 ALB(2)·NAT(1)·RDS(1) 연동 중이라 해제하지 않음 (Association 없을 때만 Release 규칙).
+- **진짜 문제(미해결):** API /health unreachable, TG healthy 0/2. TG 헬스체크는 `/healthz`:8000으로 설정됨. 타깃이 200을 반환하지 않음 → **인스턴스에서 컨테이너 기동·8000 포트·CloudWatch/SSM 로그 확인 필요.**
+
+---
+
 ## 요약
 | 항목 | 값 |
 |------|-----|
