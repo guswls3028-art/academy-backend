@@ -107,6 +107,7 @@ if ($RelaxedValidation) { Write-Host "MODE: RelaxedValidation (SQS scaling failu
 if ($DeployFront) { Write-Host "MODE: DeployFront ON (build → R2 → purge → verify)" -ForegroundColor Cyan }
 if ($PruneLegacy -and -not $Plan) { Write-Host "MODE: PruneLegacy" -ForegroundColor Yellow }
 if ($PurgeAndRecreate) { Write-Host "MODE: PurgeAndRecreate" -ForegroundColor Yellow }
+if ($MinimalDeploy) { Write-Host "MODE: MinimalDeploy (Video Long, Ops, EventBridge skipped)" -ForegroundColor Cyan }
 if ($DryRun) { Write-Host "MODE: DryRun (no changes)" -ForegroundColor Yellow }
 
 try {
