@@ -17,7 +17,7 @@
 | # | 컴포넌트 | 형태 | 리소스 이름 |
 |---|----------|------|-------------|
 | 1 | API | EC2 ASG + ALB | academy-v1-api-asg, academy-v1-api-alb |
-| 2 | Build | EC2 Tag `academy-build-arm64` | Spot 우선, 실패 시 온디맨드. 이미지 빌드·ECR 푸시 |
+| 2 | Build | GitHub Actions(OIDC) only | 빌드 서버 0대. 이미지 빌드·ECR 푸시는 CI로만 수행 |
 | 3 | Video Worker | AWS Batch | academy-v1-video-batch-ce, academy-v1-video-batch-queue |
 | 4 | Ops Batch | Batch Ops CE/Queue + EventBridge | academy-v1-video-ops-*, academy-v1-reconcile-video-jobs, academy-v1-video-scan-stuck-rate |
 | 5 | AI Worker | ASG | academy-v1-ai-worker-asg, academy-v1-ai-queue |
