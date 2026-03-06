@@ -25,7 +25,8 @@ network:
   natEnabled: false
   albEnabled: true
   natGatewayId: ""
-  securityGroupApp: "sg-088fa3315c12754d0"
+  # 비워두면 Ensure-Network가 academy-v1-sg-app/batch/data를 이름으로 찾거나 생성함. (인프라 리셋 후 재배포 시 필수)
+  securityGroupApp: ""
   securityGroupBatch: ""
   securityGroupData: ""
   vpcName: academy-v1-vpc
