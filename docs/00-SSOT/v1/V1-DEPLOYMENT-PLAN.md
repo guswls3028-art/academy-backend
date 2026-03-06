@@ -23,7 +23,7 @@
 | 구분 | 현재 (기존) | V1 목표 |
 |------|-------------|---------|
 | **API** | EC2 1대 (academy-api, 수동) | academy-v1-api-asg + ALB + TG. **V1:** min/desired/max 2/2/4, 롤링 MinHealthyPercentage=100 |
-| **Build** | EC2 1대 (academy-build-arm64, stopped) | 태그 academy-build-arm64, v1 서브넷/SG |
+| **Build** | GitHub Actions(OIDC) only | 빌드 서버 0대. ECR push 후 deploy.ps1로 배포 |
 | **Batch CE** | academy-video-batch-ce-final, academy-video-ops-ce (1개 INVALID) | academy-v1-video-batch-ce, academy-v1-video-ops-ce |
 | **Batch Queue** | academy-video-batch-queue, academy-video-ops-queue | academy-v1-video-batch-queue, academy-v1-video-ops-queue |
 | **RDS** | academy-db (기존) | academy-v1-db (신규 생성 또는 기존 DB 활용 정책 필요) |
@@ -215,7 +215,7 @@ pwsh scripts/v1/deploy.ps1 -Env prod -EcrRepoUri "809466760795.dkr.ecr.ap-northe
 | 2 | RDS 정책 결정 (신규 academy-v1-db vs 기존 academy-db) | 사람 | ☐ |
 | 3 | `deploy.ps1 -Plan -PruneLegacy` 실행하여 삭제 후보 확인 | 사람/스크립트 | ☐ |
 | 4 | `deploy.ps1 -PruneLegacy` 실행 (레거시 삭제) | 스크립트 | ☐ |
-| 5 | EC2 academy-api, academy-build-arm64 종료/삭제 (필요 시) | 수동 | ☐ |
+| 5 | (레거시) 불필요 EC2 종료/삭제 | 수동 | ☐ |
 | 6 | Lambda 유지/삭제 결정 및 필요 시 삭제 | 수동 | ☐ |
 | 7 | (선택) PurgeAndRecreate 실행 | 스크립트 | ☐ |
 | 8 | `deploy.ps1 -Env prod` 실행 (V1 전체 Ensure) | 스크립트 | ☐ |
