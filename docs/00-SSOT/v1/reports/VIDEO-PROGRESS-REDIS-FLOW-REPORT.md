@@ -112,7 +112,16 @@ aws ssm get-parameter --name /academy/workers/env --with-decryption --query "Par
 
 ---
 
-## 6. 권장 조치
+## 6. API Fallback (2025-03 적용)
+
+Redis miss 시 다음 fallback 적용 (`progress_views.py`):
+
+1. **Tenant fallback:** request.tenant ≠ Video tenant 시 (중앙 API 등) Video의 tenant로 Redis 재조회.
+2. **DB fallback:** Redis 미연결 시 VideoTranscodeJob RUNNING → PROCESSING 반환, Video READY/FAILED → 해당 상태 반환.
+
+→ 워커가 Redis에 쓰지 못해도 DB 기준으로 "인코딩 중" 표시 가능 (진행률은 0%로 표시).
+
+## 7. 권장 조치
 
 1. **SSM workers env 확인:** REDIS_HOST, REDIS_PORT 존재 여부.
 2. **Batch 로그 확인:** Redis 연결/record_progress 관련 로그.
