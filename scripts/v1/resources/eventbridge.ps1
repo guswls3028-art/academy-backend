@@ -61,7 +61,7 @@ function Ensure-EventBridgeRules {
         Write-Host "  Creating rule $($script:EventBridgeScanStuckRule)" -ForegroundColor Yellow
         $script:ChangesMade = $true
         $state2 = if ($script:EventBridgeScanStuckState -eq "DISABLED") { "DISABLED" } else { "ENABLED" }
-        Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeScanStuckRule, "--schedule-expression", "rate(5 minutes)", "--state", $state2, "--region", $script:Region) | Out-Null
+        Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeScanStuckRule, "--schedule-expression", $script:EventBridgeScanStuckSchedule, "--state", $state2, "--region", $script:Region) | Out-Null
     } else {
         $desiredState2 = if ($script:EventBridgeScanStuckState -eq "DISABLED") { "DISABLED" } else { "ENABLED" }
         if ($rule2.State -ne $desiredState2) {
