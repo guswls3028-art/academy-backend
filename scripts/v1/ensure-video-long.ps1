@@ -20,6 +20,11 @@ if ($AwsProfile) { $env:AWS_PROFILE = $AwsProfile; if (-not $env:AWS_DEFAULT_REG
 . (Join-Path $PSScriptRoot "resources\jobdef.ps1")
 $null = Load-SSOT -Env "prod"
 $script:BatchIam = Ensure-BatchIAM
+if (-not $script:BatchSecurityGroupId) {
+    $ce = aws batch describe-compute-environments --compute-environments academy-v1-video-batch-ce --region $script:Region --query "computeEnvironments[0].computeResources.securityGroupIds[0]" --output text 2>$null
+    if ($ce) { $script:BatchSecurityGroupId = $ce.Trim() }
+}
+if (-not $script:BatchSecurityGroupId) { throw "BatchSecurityGroupId required. Ensure network/sg-batch exists." }
 
 # params.yaml videoBatch.long 중첩 미지원 → 명시 설정
 $script:VideoLongCEName = "academy-v1-video-batch-long-ce"
