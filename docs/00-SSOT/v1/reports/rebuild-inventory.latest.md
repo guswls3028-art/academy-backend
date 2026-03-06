@@ -1,6 +1,6 @@
 # V1 Stateless Compute 재구축 — 인벤토리 (스냅샷)
 
-**Generated:** 2026-03-06T15:40:58.9160461+09:00  
+**Generated:** 2026-03-06T15:42:42.5384965+09:00  
 **리전:**   
 **SSOT:** docs/00-SSOT/v1/params.yaml
 
@@ -41,7 +41,10 @@
 | Item | Value | Notes |
 |------|-------|------|
 | NAT gateways (non-deleted) | 0 | network.natEnabled=false 목표 |
-| EIP total (all) | 0 | 사용자 관리 EIP=0 목표 (AWS 서비스 관리 주소는 예외 가능) |
+| EIP total (all) | 0 | 참고 |
+| EIP service-managed (alb/rds 등) | 0 | AWS 서비스 관리 (보통 직접 release 불가) |
+| EIP user-managed | 0 | **목표=0** |
+| EIP user-managed orphan | 0 | orphan이면 즉시 release 후보 |
 | Security groups (VPC) | 0 | 목표 ≤ 8 |
 
 ## Security Groups (VPC)
