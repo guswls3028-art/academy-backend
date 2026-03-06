@@ -46,6 +46,10 @@ ALLOWED_HOSTS = [
 
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
+# Cloudflare Pages *.pages.dev (프로젝트별 서브도메인)
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://[a-z0-9-]+\.pages\.dev$",
+]
 
 CORS_ALLOWED_ORIGINS = [
     "https://hakwonplus.com",
@@ -60,8 +64,6 @@ CORS_ALLOWED_ORIGINS = [
     "https://dev-web.hakwonplus.com",
     # 로컬 개발용 (프론트엔드 localhost:5174에서 배포된 API 서버 사용)
     "http://localhost:5174",
-    # Cloudflare Pages *.pages.dev (프로젝트별 서브도메인)
-    "https://academy-frontend-26b.pages.dev",
 ]
 
 try:
