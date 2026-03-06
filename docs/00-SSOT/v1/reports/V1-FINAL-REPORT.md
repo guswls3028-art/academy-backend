@@ -34,6 +34,81 @@
 
 ---
 
+## 인프라 상태 평가 (현재)
+
+**구조 자체는 거의 정상에 가깝다.**
+
+### 정상
+| 항목 | 상태 |
+|------|------|
+| AI worker | 1대 |
+| Messaging worker | 1대 |
+| Batch / EventBridge | 정상 |
+| RDS / Redis | 정상 |
+| Build 서버 | 없음 (목표 달성) |
+
+### 수정 필요
+| 항목 | 현재 | 목표 |
+|------|------|------|
+| **API 서버** | **2대** | **1대** |
+
+**실행 중 인스턴스 (4대):** academy-v1-api ×2, academy-v1-ai-worker ×1, academy-v1-messaging-worker ×1.  
+**합의된 V1 운영:** API 1 + AI 1 + Messaging 1 = **총 3대.**
+
+### 왜 API가 2개인가
+- **academy-v1-api-asg** 현재: Min=2, Desired=2, Max=4  
+- **SSOT 목표:** Min=1, Desired=1, Max=2  
+- ASG가 2대 유지 중이므로, **API 1대로 줄이면 끝.**
+
+### 해결 방법 (정석 — 콘솔 직접 조작 금지)
+1. **params.yaml** 에 이미 반영되어 있으면 생략. 없으면:
+   ```yaml
+   api:
+     asgMinSize: 1
+     asgDesiredCapacity: 1
+     asgMaxSize: 2
+   ```
+2. **배포 실행:** `pwsh scripts/v1/deploy.ps1 -Env prod`  
+   → instance refresh 로 API 1대만 유지된다.
+
+### 절대 하지 말 것
+- **API 인스턴스를 콘솔/CLI로 직접 terminate 하지 말 것.**  
+  ASG가 즉시 새 인스턴스를 띄운다. 반드시 **SSOT + deploy.ps1** 로 ASG를 1/1/2 로 바꾼 뒤 instance refresh 하라.
+
+### 정리 후 목표 상태·비용
+| 항목 | 목표 |
+|------|------|
+| EC2 running | 3 (api 1, ai 1, messaging 1) |
+| ALB | 1 |
+| ASG | 3 (+ Batch ops 임시) |
+| Security Groups | ≈ 6 |
+| Elastic IP | 0 |
+| Volumes | 3~4 |
+
+**비용:** 현재 4대 ≈ $120/월 → 정리 후 3대 ≈ $90/월.
+
+### 다음 단계 (순서 고정)
+1. **EIP 삭제** (4개 → 0)
+2. **SG 정리** (Referenced by 없음 → 삭제, 23 → 6~8)
+3. **API ASG 1대로 축소** (SSOT 반영 후 `deploy.ps1` 실행)
+4. **deploy-verification 재실행** (`run-deploy-verification.ps1`)
+5. **API /health·TG 문제 해결** (아래 “진짜 문제” 참고)
+
+---
+
+## 🔥 진짜 문제 (배포 FAIL의 실제 원인)
+
+**리소스 개수가 아니라 아래 두 가지가 해결되지 않으면 배포는 계속 FAIL이다.**
+
+| 항목 | 현재 | 필요 |
+|------|------|------|
+| **API /health** | **unreachable** | **200 응답** |
+| **TG target health** | **0/2 healthy** | **healthy ≥ 1** |
+
+이것을 해결하지 않으면 drift·ASG 숫자만 맞춰도 검증 스크립트는 NO-GO를 유지한다. 원인 후보: ALB→EC2 헬스체크 실패(경로/포트/SG), API 앱 미기동, Launch Template(SG) 오설정 등. [deploy-verification-latest.md](./deploy-verification-latest.md), [rca.latest.md](./rca.latest.md) 참고.
+
+---
+
 ## 현재 상태: V1는 아직 최종 완료가 아니다
 
 최종 검증·제출 조건을 충족하지 못한 상태이며, 아래 실패 원인 해결 후 PHASE 1→2→3→4 순서로 진행해야 한다.
