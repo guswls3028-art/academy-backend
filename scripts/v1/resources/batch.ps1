@@ -223,8 +223,8 @@ function Ensure-OpsCE {
         New-OpsCE
         Wait-CEValidEnabled -CEName $script:OpsCEName -Reg $script:Region
         $ceArn = Get-CEArn -Name $script:OpsCEName
-        $qAfter = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:OpsQueueName, "--region", $script:Region, "--output", "json")
-        if ($qAfter -and $qAfter.jobQueues -and $qAfter.jobQueues.Count -gt 0) { Set-JobQueueEnabled -QueueName $script:OpsQueueName -CeArn $ceArn -Region $script:Region }
+        New-OpsQueue -CeArn $ceArn
+        Write-Ok "Ops CE and queue recreated"
         return
     }
     if ($c.state -eq "DISABLED") {
