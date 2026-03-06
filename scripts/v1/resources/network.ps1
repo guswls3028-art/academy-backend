@@ -158,7 +158,23 @@ function Ensure-RouteTables { param([string]$IgwId, [string]$NatAllocId)
         }
         Write-Ok "Private RT created, 0.0.0.0/0 -> NAT"
         $script:ChangesMade = $true
-    } elseif ($privateRt) { Write-Ok "Private RT exists" }
+    } elseif ($privateRt) {
+        Write-Ok "Private RT exists"
+        # natEnabled=false: private subnets need internet for ECR/SSM; add 0.0.0.0/0 -> IGW if missing
+        if (-not $script:PlanMode -and -not $script:NatEnabled -and $IgwId) {
+            $hasDefault = $false
+            foreach ($route in $privateRt.Routes) {
+                if ($route.DestinationCidrBlock -eq "0.0.0.0/0" -and ($route.GatewayId -or $route.NatGatewayId)) { $hasDefault = $true; break }
+            }
+            if (-not $hasDefault) {
+                try {
+                    Invoke-Aws @("ec2", "create-route", "--route-table-id", $privateRt.RouteTableId, "--destination-cidr-block", "0.0.0.0/0", "--gateway-id", $IgwId, "--region", $script:Region) -ErrorMessage "private RT 0.0.0.0/0 -> IGW" 2>$null | Out-Null
+                    Write-Ok "Private RT: added 0.0.0.0/0 -> IGW (natEnabled=false)"
+                    $script:ChangesMade = $true
+                } catch { if ($_.Exception.Message -notmatch "RouteAlreadyExists") { throw } }
+            }
+        }
+    }
 }
 
 function Ensure-SecurityGroups {
