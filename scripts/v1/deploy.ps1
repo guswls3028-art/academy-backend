@@ -21,6 +21,7 @@ param(
     [switch]$DryRun = $false,
     [switch]$ForceRecreateAll = $false,
     [switch]$SkipNetprobe = $false,
+    [switch]$MinimalDeploy = $false,
     [switch]$SkipApiSSMWait = $false,
     [switch]$Ci = $false,
     [switch]$RelaxedValidation = $false,
@@ -84,6 +85,15 @@ switch ($true) { { $EcrRepoUri } { $script:EcrRepoUri = $EcrRepoUri } default { 
 
 $null = Load-SSOT -Env $Env
 $script:RelaxedValidation = $RelaxedValidation
+$script:MinimalDeploy = $MinimalDeploy
+if ($MinimalDeploy) {
+    $script:SkipEcrVpcEndpoints = $true
+    $script:VideoLongCEName = $null
+    $script:VideoLongQueueName = $null
+    $script:VideoLongJobDefName = $null
+    $script:OpsCEName = $null
+    $script:OpsQueueName = $null
+}
 $script:SkipApiSSMWait = $SkipApiSSMWait
 if ($EcrRepoUri) { $script:EcrRepoUri = $EcrRepoUri } else { $script:EcrRepoUri = "" }
 
