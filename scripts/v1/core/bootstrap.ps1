@@ -303,9 +303,7 @@ function Invoke-BootstrapEcrUri {
         $script:EcrRepoUri = $uri
         return
     }
-    Write-Host "  ECR image not found; triggering build server..." -ForegroundColor Yellow
-    Invoke-BuildServerBuild -Tag $tag -Uri $uri
-    Write-Ok "ECR URI resolved after build: $uri"
+    throw "ECR image not found: $uri. 빌드는 GitHub Actions로만 수행한다(빌드 서버 미사용). 먼저 CI로 이미지 push 후 재배포/재부트스트랩 하라."
 }
 
 function Invoke-Bootstrap {
