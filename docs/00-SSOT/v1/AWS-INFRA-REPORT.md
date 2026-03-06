@@ -178,7 +178,7 @@
 | academy-v1-redis | ElastiCache academy-v1-redis 사용 |
 | academy-v1-video-job-lock (DynamoDB) | Ensure 시 생성 |
 | academy-v1-* Batch/EventBridge/JobDef | Ensure 시 academy-v1-* 네이밍으로 생성·갱신 |
-| Build | Name=academy-build-arm64, Spot 우선·실패 시 온디맨드 폴백(scripts/v1/resources/build.ps1) |
+| Build | **사용하지 않음(0대). GitHub Actions(OIDC)만 사용.** |
 
 *본 보고서는 배포 전 스냅샷 기준일 수 있음. 최신 상태는 `aws` CLI·콘솔 또는 Evidence/Drift 리포트 참고.*
 
