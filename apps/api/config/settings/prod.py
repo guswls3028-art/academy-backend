@@ -64,6 +64,8 @@ CORS_ALLOWED_ORIGINS = [
     "https://dev-web.hakwonplus.com",
     # 로컬 개발용 (프론트엔드 localhost:5174에서 배포된 API 서버 사용)
     "http://localhost:5174",
+    # Vite preview 기본 포트
+    "http://localhost:4173",
 ]
 
 try:
