@@ -93,6 +93,7 @@ if ($MinimalDeploy) {
     $script:VideoLongJobDefName = $null
     $script:OpsCEName = $null
     $script:OpsQueueName = $null
+    if (-not $PSBoundParameters.ContainsKey("SkipApiSSMWait")) { $script:SkipApiSSMWait = $true }
 }
 $script:SkipApiSSMWait = $SkipApiSSMWait
 if ($EcrRepoUri) { $script:EcrRepoUri = $EcrRepoUri } else { $script:EcrRepoUri = "" }
