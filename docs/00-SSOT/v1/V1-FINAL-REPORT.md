@@ -1,7 +1,7 @@
 # V1 최종 보고서 (실제 배포 완료 기준)
 
 **AI·Cursor 룰:** 본 문서를 포함한 리포지토리 내 **모든 문서·코드에 대해 AI(Cursor Agent)는 열람·수정 권한**이 있다. 배포·인프라·비용 작업 시 **.cursor/rules/** 내 해당 룰을 **적재적소에 항시 확인**한다.  
-**배포 원칙:** 모든 배포·재배포는 **빌드 서버 경유**이며, `-SkipBuild`는 예외 상황에만 사용한다. **비용 최적화:** ECR 라이프사이클 정책이 배포 시 자동 적용되어 불필요한 이미지를 남기지 않는다.
+**배포 원칙:** 빌드 서버는 사용하지 않는다(0대). 이미지 빌드·ECR 푸시는 **GitHub Actions(OIDC)만 사용**한다. `deploy.ps1`는 ECR에서 pull/refresh만 수행한다. **비용 최적화:** ECR 라이프사이클 정책이 배포 시 자동 적용되어 불필요한 이미지를 남기지 않는다.
 
 **기준일:** 2026-03-06  
 **기준:** V1 SSOT (`docs/00-SSOT/v1/params.yaml`)  
@@ -13,8 +13,8 @@
 
 | # | 항목 | 상태 | 비고 |
 |---|------|------|------|
-| 1 | 빌드 서버 Spot + 온디맨드 폴백 | ✅ 반영 | `build.ps1`: Spot 요청 실패 시 `run-instances`(온디맨드) 재시도 |
-| 2 | 빌드 서버 경유 ECR 푸시·배포 | ⚠️ 자격증명 환경에서 실행 | 아래 2절. **유효한 AWS 프로파일** 있는 셸에서 `deploy.ps1`(또는 -SkipBuild + -EcrRepoUri) 실행 필요 |
+| 1 | GitHub Actions(OIDC) 빌드·푸시 | ✅ 기본 | `.github/workflows/v1-build-and-push-latest.yml` |
+| 2 | ECR pull·배포(instance refresh) | ⚠️ 자격증명 환경에서 실행 | 아래 2절. **유효한 AWS 프로파일** 있는 셸에서 `deploy.ps1` 실행 필요 |
 | 3 | API·AI·Messaging·Video 워커 파이프라인 | ✅ 인프라·스크립트 완료 | ASG·Batch·SQS·ALB·JobDef·EventBridge Ensure 완료. 검증은 3절 |
 | 4 | 프론트(hakwonplus.com) 연결·정상 | ✅ 도메인·가이드 | v1-api.hakwonplus.com → ALB. 프론트 VITE_API_BASE_URL 또는 DNS 설정 후 사용(4절) |
 | 5 | 불필요 이미지·비용 최적화 | ✅ 정책·문서 | ECR 라이프사이클 정책 예시·적용 방법(5절) |
@@ -22,13 +22,12 @@
 
 ---
 
-## 2. 빌드 서버(Spot) + ECR 푸시 및 배포
+## 2. GitHub Actions 빌드 + ECR 푸시 + 배포
 
-### 2.1 빌드 서버 동작
+### 2.1 빌드/푸시
 
-- **파일:** `scripts/v1/resources/build.ps1`
-- **동작:** `New-BuildInstance`에서 먼저 **Spot** `run-instances` 실행. 인스턴스가 0개면 **온디맨드**로 재시도.
-- **전제:** 빌드 인스턴스에 `/opt/academy` 또는 `$HOME/academy`에 academy 리포지토리 클론 필요(최초 1회 수동 또는 시딩).
+- **정책:** 빌드 서버(EC2) 미사용.
+- **워크플로:** `.github/workflows/v1-build-and-push-latest.yml` (OIDC: `secrets.AWS_ROLE_ARN_FOR_ECR_BUILD`)
 
 ### 2.2 배포 실행 (유효한 자격증명이 있는 동일 셸에서)
 
@@ -41,7 +40,7 @@ cd C:\academy
 $uri = "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-video-worker:v1-20260305-1918"
 pwsh scripts/v1/deploy.ps1 -Env prod -SkipBuild -EcrRepoUri $uri -AwsProfile default -SkipNetprobe
 
-# 옵션 B — 빌드 서버에서 빌드 후 ECR 푸시 포함 (Spot → 온디맨드 폴백)
+# 빌드는 GitHub Actions에서 완료되어 있어야 한다.
 pwsh scripts/v1/deploy.ps1 -Env prod -AwsProfile default -SkipNetprobe
 ```
 
