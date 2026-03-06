@@ -1,0 +1,45 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BatchSubmitVideoJob",
+      "Effect": "Allow",
+      "Action": [
+        "batch:SubmitJob",
+        "batch:TerminateJob",
+        "batch:DescribeJobs",
+        "batch:DescribeJobQueues",
+        "batch:DescribeJobDefinitions"
+      ],
+      "Resource": [
+        "arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-v1-video-batch-jobdef","arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-v1-video-batch-long-jobdef")
+        "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-batch-queue",
+        "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-batch-long-queue",
+        "arn:aws:batch:ap-northeast-2:809466760795:job/*"
+      ]
+    },
+    {
+      "Sid": "BatchPassRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "batch.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "DynamoDBVideoJobLock",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:ConditionCheckItem"
+      ],
+      "Resource": "arn:aws:dynamodb:ap-northeast-2:809466760795:table/academy-v1-video-job-lock"
+    }
+  ]
+}
