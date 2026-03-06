@@ -24,35 +24,28 @@ $ssmParam = $script:SsmApiEnv
 $region = $script:Region
 $containerName = "academy-api"
 
-# SSM에서 env 가져와서 /opt/api.env 갱신 후 컨테이너 재시작
+# SSM에서 env 가져와서 /opt/api.env 갱신 후 컨테이너 재시작 (타깃 인스턴스에서 실행)
 $script = @"
 set -e
 export AWS_REGION='$region'
-ENV_JSON='$(aws ssm get-parameter --name "$ssmParam" --with-decryption --query Parameter.Value --output text --region $region 2>/dev/null)' || true
-if [ -n "$ENV_JSON" ]; then
-  echo "$ENV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); [print(k+'='+str(v)) for k,v in d.items()]" 2>/dev/null > /opt/api.env || true
+ENV_JSON=`$(aws ssm get-parameter --name '$ssmParam' --with-decryption --query Parameter.Value --output text --region $region 2>/dev/null) || true
+if [ -n "`$ENV_JSON" ]; then
+  echo "`$ENV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); [print(k+'='+str(v)) for k,v in d.items()]" 2>/dev/null > /opt/api.env || true
   if [ -s /opt/api.env ]; then
     echo "VIDEO_BATCH from api.env:"; grep VIDEO_BATCH /opt/api.env || true
+    API_IMG=`$(docker inspect $containerName --format '{{.Config.Image}}' 2>/dev/null) || true
+    if [ -z "`$API_IMG" ]; then
+      API_IMG=809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest
+    fi
     docker stop $containerName 2>/dev/null || true
     docker rm $containerName 2>/dev/null || true
-    API_IMG='$(docker images -q academy-api 2>/dev/null | head -1)'
-    if [ -z "$API_IMG" ]; then
-      API_IMG='$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep academy-api | head -1)'
-    fi
-    if [ -z "$API_IMG" ]; then
-      API_IMG='809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest'
-    fi
-    docker run -d --restart unless-stopped --name $containerName -p 8000:8000 --env-file /opt/api.env $API_IMG 2>&1 || echo "docker run failed"
+    docker run -d --restart unless-stopped --name $containerName -p 8000:8000 --env-file /opt/api.env `$API_IMG 2>&1 || echo "docker run failed"
     echo "Container restarted."
   fi
 else
   echo "SSM fetch failed"
 fi
 "@
-
-# JSON 이스케이프 (PowerShell에서 SSM 값에 따옴표 포함 시)
-$script = $script -replace '"', '\"'
-$script = $script -replace "`n", "\\n"
 
 $params = @{ commands = @($script) }
 $paramsJson = $params | ConvertTo-Json -Compress
