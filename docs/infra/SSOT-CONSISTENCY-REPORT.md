@@ -64,7 +64,7 @@
 |------|------|------|--------|
 | SSM /academy/workers/env | 필수 | 존재 | ✅ |
 | SSM /academy/api/env | 필수 | 존재 | ✅ |
-| SSM /academy/rds/master_password | RDS용 | (미확인, Bootstrap에서 생성) | ⚠️ |
+| SSM /academy/rds/master_password | RDS용 | 존재 | ✅ |
 | ECR academy-api | 필수 | 존재 | ✅ |
 | ECR academy-ai-worker-cpu | 필수 | 존재 | ✅ |
 | ECR academy-messaging-worker | 필수 | 존재 | ✅ |
