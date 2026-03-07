@@ -12,6 +12,7 @@ from .exams.views import (
 from .results.views import (
     MyExamResultView,
     MyExamResultItemsView,
+    MyGradesSummaryView,
 )
 from .profile.views import StudentProfileView
 
