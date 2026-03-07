@@ -133,7 +133,7 @@ class VerifySenderView(APIView):
         if not api_key or not api_secret:
             return Response(
                 {"verified": False, "message": "솔라피 API가 설정되지 않았습니다."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                status=status.HTTP_200_OK,
             )
 
         try:
@@ -142,14 +142,14 @@ class VerifySenderView(APIView):
         except ValueError as e:
             return Response(
                 {"verified": False, "message": str(e)},
-                status=status.HTTP_502_BAD_GATEWAY,
+                status=status.HTTP_200_OK,
             )
         except Exception as e:
             import logging
             logging.getLogger(__name__).exception("verify_sender unexpected error")
             return Response(
                 {"verified": False, "message": f"인증 확인 중 오류: {str(e)}"},
-                status=status.HTTP_502_BAD_GATEWAY,
+                status=status.HTTP_200_OK,
             )
 
 
