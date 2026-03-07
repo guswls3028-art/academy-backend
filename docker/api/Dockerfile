@@ -35,11 +35,12 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 EXPOSE 8000
 
 # Gevent worker로 실행 (50명 원장 확장 대비)
+# 컨테이너 기동 시 migrate 실행 후 gunicorn 기동 (배포 시 마이그레이션 자동 적용)
 # 환경 변수로 오버라이드 가능:
 # - GUNICORN_WORKERS: 워커 수 (기본값: 4)
 # - GUNICORN_WORKER_CONNECTIONS: 연결 수 (기본값: 1000)
 CMD ["sh", "-c", \
-    "gunicorn \
+    "python manage.py migrate --noinput && exec gunicorn \
     --bind 0.0.0.0:8000 \
     --workers ${GUNICORN_WORKERS:-4} \
     --worker-class gevent \
