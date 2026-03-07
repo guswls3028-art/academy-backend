@@ -39,6 +39,20 @@ if (-not $ids -or $ids.Count -eq 0) {
 $region = $script:Region
 $repoPath = $RepoPath.TrimEnd('/')
 
+# 레포 없을 때 클론하는 인라인 스크립트 (On/Deploy 시 -RepoUrl 있으면 사용)
+$ensureRepoScript = @"
+set -e
+REPO_PATH='$repoPath'
+REPO_URL='$($RepoUrl -replace "'", "'\\''")'
+if [ -n "$REPO_URL" ] && [ ! -d "$REPO_PATH/.git" ]; then
+  echo 'Cloning repo...'
+  mkdir -p "$(dirname "$REPO_PATH")"
+  git clone --depth 1 "$REPO_URL" "$REPO_PATH"
+  chown -R ec2-user:ec2-user "$REPO_PATH" 2>/dev/null || true
+  echo 'Clone done.'
+fi
+"@
+
 function Invoke-RemoteCommand {
     param([string]$Command, [string]$Label)
     $params = @{ commands = @($Command) }
