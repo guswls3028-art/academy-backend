@@ -108,8 +108,28 @@ class PostViewSet(viewsets.ModelViewSet):
         reply = serializer.save(post=post)
         return Response(PostReplySerializer(reply).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=["patch", "delete"], url_path=r"replies/(?P<reply_id>[^/.]+)")
+    def reply_detail(self, request, pk=None, reply_id=None):
+        """PATCH/DELETE /posts/:id/replies/:reply_id/ — 답변 수정/삭제."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        post = get_post_by_id(tenant, int(pk))
+        if not post:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            reply = PostReply.objects.get(post=post, id=int(reply_id), tenant=tenant)
+        except (PostReply.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-class AdminPostViewSet(viewsets.ModelViewSet):
+        if request.method == "DELETE":
+            reply.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        # PATCH
+        serializer = PostReplySerializer(reply, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
     """Admin list with filters. block_type_id, lecture_id, page, page_size."""
     serializer_class = PostEntitySerializer
 
