@@ -45,6 +45,7 @@ class HomeworkScoreBlockSerializer(serializers.Serializer):
 
 class SessionScoreRowSerializer(serializers.Serializer):
     enrollment_id = serializers.IntegerField()
+    student_id = serializers.IntegerField(allow_null=True)
     student_name = serializers.CharField(allow_blank=True)
 
     exams = ExamScoreBlockSerializer(many=True)

@@ -200,11 +200,15 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         enrollment_map = {
             int(e.id): e
-            for e in Enrollment.objects.filter(id__in=enrollment_ids)
+            for e in Enrollment.objects.filter(id__in=enrollment_ids).select_related("student")
         }
 
         student_name_map = {
             eid: _safe_student_name(enrollment_map.get(eid))
+            for eid in enrollment_ids
+        }
+        student_id_map = {
+            eid: getattr(enrollment_map.get(eid), "student_id", None)
             for eid in enrollment_ids
         }
 
