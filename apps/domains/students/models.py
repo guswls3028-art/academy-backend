@@ -104,6 +104,10 @@ class Student(TimestampModel):
     high_school_class = models.CharField(max_length=100, null=True, blank=True)
     major = models.CharField(max_length=50, null=True, blank=True)
     middle_school = models.CharField(max_length=100, null=True, blank=True)
+    origin_middle_school = models.CharField(
+        max_length=100, null=True, blank=True,
+        help_text="출신중학교 (고등학생 선택 입력)",
+    )
 
     memo = models.TextField(null=True, blank=True)
     address = models.CharField(max_length=255, null=True, blank=True, help_text="주소 (선택)")
