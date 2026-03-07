@@ -514,6 +514,10 @@ class ClinicSettingsView(APIView):
             tenant.clinic_use_daily_random = bool(request.data["use_daily_random"])
             tenant.save(update_fields=["clinic_use_daily_random"])
 
+        if "auto_approve_booking" in request.data:
+            tenant.clinic_auto_approve_booking = bool(request.data["auto_approve_booking"])
+            tenant.save(update_fields=["clinic_auto_approve_booking"])
+
         colors = request.data.get("colors")
         if colors is not None:
             if not isinstance(colors, list) or len(colors) != 3:
@@ -533,10 +537,12 @@ class ClinicSettingsView(APIView):
             tenant.save(update_fields=["clinic_idcard_colors"])
 
         use_daily_random = getattr(tenant, "clinic_use_daily_random", False)
+        auto_approve_booking = getattr(tenant, "clinic_auto_approve_booking", False)
         saved = getattr(tenant, "clinic_idcard_colors", None) or ["#ef4444", "#3b82f6", "#22c55e"]
         return Response({
             "colors": get_effective_clinic_colors(tenant),
             "use_daily_random": use_daily_random,
+            "auto_approve_booking": auto_approve_booking,
             "saved_colors": saved[:3],
         })
 
