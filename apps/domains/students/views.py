@@ -273,7 +273,7 @@ class StudentViewSet(ModelViewSet):
         OrderingFilter,
     ]
     filterset_class = StudentFilter
-    search_fields = ["ps_number", "omr_code", "name", "high_school", "major", "phone"]
+    search_fields = ["ps_number", "omr_code", "name", "high_school", "major", "phone", "parent_phone"]
     ordering_fields = [
         "id",
         "created_at",
