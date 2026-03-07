@@ -789,10 +789,16 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     # ==================================================
     @action(
         detail=False,
-        methods=["get"],
+        methods=["get", "post"],
         url_path="folders",
     )
-    def list_folders(self, request):
+    def folders(self, request):
+        """GET: 폴더 목록 조회. POST: 폴더 생성. (동일 url_path에 메서드별 분기)"""
+        if request.method == "GET":
+            return self._list_folders_impl(request)
+        return self._create_folder_impl(request)
+
+    def _list_folders_impl(self, request):
         """전체공개영상 세션의 폴더 목록 조회."""
         session_id = request.query_params.get("session_id")
         if not session_id:
@@ -807,27 +813,22 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 {"detail": "Session not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        
+
         folders = VideoFolder.objects.filter(session=session).order_by("order", "name")
         return Response(VideoFolderSerializer(folders, many=True).data)
 
-    @action(
-        detail=False,
-        methods=["post"],
-        url_path="folders",
-    )
-    def create_folder(self, request):
+    def _create_folder_impl(self, request):
         """전체공개영상 세션에 폴더 생성."""
         session_id = request.data.get("session_id")
         name = request.data.get("name")
         parent_id = request.data.get("parent_id")  # null이면 루트 폴더
-        
+
         if not session_id or not name:
             return Response(
                 {"detail": "session_id and name required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         try:
             session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
         except Session.DoesNotExist:
@@ -835,7 +836,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 {"detail": "Session not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        
+
         parent = None
         if parent_id:
             try:
@@ -845,21 +846,21 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     {"detail": "Parent folder not found"},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-        
+
         # 같은 이름의 폴더가 이미 있는지 확인
         if VideoFolder.objects.filter(session=session, parent=parent, name=name).exists():
             return Response(
                 {"detail": "Folder with this name already exists"},
                 status=status.HTTP_409_CONFLICT,
             )
-        
+
         folder = VideoFolder.objects.create(
             session=session,
             parent=parent,
             name=name,
             order=VideoFolder.objects.filter(session=session, parent=parent).count(),
         )
-        
+
         return Response(VideoFolderSerializer(folder).data, status=status.HTTP_201_CREATED)
 
     @action(
