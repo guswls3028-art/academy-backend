@@ -5,8 +5,15 @@
 
 $ErrorActionPreference = "Continue"
 
-$AcademyRoot = "C:\academy"
-$FrontRoot  = "C:\academyfront"
+# 스크립트 위치 기준 경로 (바탕화면 바로가기에서도 동작)
+$AcademyRoot = $PSScriptRoot
+$FrontRoot   = Join-Path (Split-Path $PSScriptRoot -Parent) "academyfront"
+
+if (-not (Test-Path $FrontRoot)) {
+  Write-Host "프론트 폴더를 찾을 수 없습니다: $FrontRoot" -ForegroundColor Red
+  Read-Host 'Press Enter to close'
+  exit 1
+}
 
 $cmdBackend = "Set-Location '$AcademyRoot'; & '$AcademyRoot\venv\Scripts\Activate.ps1'; python manage.py runserver 0.0.0.0:8000; Read-Host `"Backend ended - Press Enter to close`""
 $cmdFront   = "pnpm dev -- --host 0.0.0.0 --port 5174; Read-Host `"Frontend ended - Press Enter to close`""
