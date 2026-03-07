@@ -51,11 +51,12 @@ if (-not $ids -or $ids.Count -eq 0) {
 $region = $script:Region
 $repoPath = $RepoPath.TrimEnd('/')
 
-# 레포 없을 때 클론하는 인라인 스크립트 (On/Deploy 시 -RepoUrl 있으면 사용)
-$ensureRepoScript = @"
+# SSM 전달 시 멀티라인/따옴표 이스케이프 문제 회피: 스크립트를 base64로 인코딩 후 원격에서 디코딩 실행
+$repoUrlEscaped = $RepoUrl -replace "'", "'\''"
+$remoteScript = @"
 set -e
 REPO_PATH='$repoPath'
-REPO_URL='$($RepoUrl -replace "'", "'\''")'
+REPO_URL='$repoUrlEscaped'
 if [ -n "`$REPO_URL" ] && [ ! -d "`$REPO_PATH/.git" ]; then
   echo 'Cloning repo...'
   mkdir -p "`$(dirname "`$REPO_PATH")"
@@ -63,11 +64,16 @@ if [ -n "`$REPO_URL" ] && [ ! -d "`$REPO_PATH/.git" ]; then
   chown -R ec2-user:ec2-user "`$REPO_PATH" 2>/dev/null || true
   echo 'Clone done.'
 fi
+cd "`$REPO_PATH" && git fetch origin main && git reset --hard origin/main
 "@
+# Unix LF만 사용 (CRLF 시 원격 sh에서 set -e 등 파싱 오류)
+$remoteScript = $remoteScript -replace "`r`n", "`n" -replace "`r", "`n"
+$scriptB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript))
+$ensureAndFetchCmd = "echo $scriptB64 | base64 -d | bash"
 
 function Invoke-RemoteCommand {
-    param([string]$Command, [string]$Label)
-    $params = @{ commands = @($Command) }
+    param([string[]]$Commands, [string]$Label)
+    $params = @{ commands = $Commands }
     $paramsJson = $params | ConvertTo-Json -Compress
     Write-Host "$Label (인스턴스: $($ids -join ', '))..." -ForegroundColor Cyan
     foreach ($instId in $ids) {
