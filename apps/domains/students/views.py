@@ -1062,6 +1062,7 @@ class RegistrationRequestViewSet(ModelViewSet):
                 grade=reg.grade,
                 gender=reg.gender or None,
                 memo=reg.memo or None,
+                address=reg.address or None,
             )
             TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
             reg.status = StudentRegistrationRequest.APPROVED
