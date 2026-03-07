@@ -993,6 +993,7 @@ class RegistrationRequestViewSet(ModelViewSet):
             grade=data.get("grade"),
             gender=(data.get("gender") or "") or None,
             memo=(data.get("memo") or "") or None,
+            address=(data.get("address") or "").strip() or None,
         )
         out = RegistrationRequestListSerializer(req, context={"request": request})
         return Response(out.data, status=201)

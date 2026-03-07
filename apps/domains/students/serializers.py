@@ -308,6 +308,7 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
     grade = serializers.IntegerField(required=False, allow_null=True)
     gender = serializers.CharField(required=False, allow_blank=True, default="", max_length=1)
     memo = serializers.CharField(required=False, allow_blank=True, default="")
+    address = serializers.CharField(required=False, allow_blank=True, default="", max_length=255)
 
     def validate_parent_phone(self, value):
         v = _normalize_phone(value)
