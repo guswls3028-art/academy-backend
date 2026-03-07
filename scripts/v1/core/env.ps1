@@ -38,10 +38,14 @@ function Assert-AwsCredentials {
     $region = $env:AWS_DEFAULT_REGION
     if (-not $region) { $region = $env:AWS_REGION }
     if (-not $region) { $region = "ap-northeast-2" }
+    $profileArgs = @()
+    if ($env:AWS_PROFILE -and $env:AWS_PROFILE.Trim() -ne "") {
+        $profileArgs = @("--profile", $env:AWS_PROFILE.Trim())
+    }
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $out = & aws sts get-caller-identity --output json --region $region 2>&1
+        $out = & aws sts get-caller-identity --output json --region $region @profileArgs 2>&1
         $exit = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $prev
