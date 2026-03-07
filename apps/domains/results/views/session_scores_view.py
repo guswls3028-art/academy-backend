@@ -376,6 +376,7 @@ class SessionScoresView(APIView):
             rows.append(
                 {
                     "enrollment_id": eid,
+                    "student_id": student_id_map.get(eid),
                     "student_name": student_name_map.get(eid, "-"),
                     "exams": exams_payload,
                     "homeworks": homeworks_payload,
