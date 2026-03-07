@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from django.shortcuts import get_object_or_404
-
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -42,8 +40,13 @@ class AnswerKeyViewSet(ModelViewSet):
         except (TypeError, ValueError):
             raise ValidationError({"exam": "must be integer"})
 
-        exam = get_object_or_404(Exam, id=eid)
-        template = resolve_template_exam(exam)
+        exam = Exam.objects.filter(id=eid).first()
+        if not exam:
+            return qs.none()
+        try:
+            template = resolve_template_exam(exam)
+        except (ValidationError, Exception):
+            return qs.none()
         return qs.filter(exam=template)
 
     def perform_create(self, serializer):
@@ -62,6 +65,4 @@ class AnswerKeyViewSet(ModelViewSet):
 
     def perform_destroy(self, instance):
         if instance.exam.exam_type != Exam.ExamType.TEMPLATE:
-            raise PermissionDenied("AnswerKey can be deleted only for template exams.")
-        assert_template_editable(instance.exam)
-        return super().perform_destroy(instance)
+            raise PermissionDenied("An
