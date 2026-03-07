@@ -143,11 +143,16 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "partial_update",
         "destroy",
         "public_session",
-        "folders",
         "delete_folder",
     }
+    # folders: GET=학생 허용(목록), POST=스태프만(생성)
+    FOLDERS_STAFF_METHODS = {"post", "put", "patch", "delete"}
 
     def get_permissions(self):
+        if self.action == "folders":
+            if getattr(self.request, "method", "").upper() in ("GET", "HEAD"):
+                return [IsAuthenticated()]
+            return [IsAuthenticated(), TenantResolvedAndStaff()]
         if self.action in self.STAFF_ACTIONS:
             return [IsAuthenticated(), TenantResolvedAndStaff()]
         return [IsAuthenticated()]
