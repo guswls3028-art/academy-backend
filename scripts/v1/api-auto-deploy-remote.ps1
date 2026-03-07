@@ -87,11 +87,15 @@ function Invoke-RemoteCommand {
 
 switch ($Action) {
     "On" {
-        $cmd = "cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/auto_deploy_cron_on.sh"
+        if ($RepoUrl) {
+            $cmd = $ensureRepoScript + "cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/auto_deploy_cron_on.sh"
+        } else {
+            $cmd = "test -d $repoPath || { echo 'ERROR: No repo at $repoPath. Use -RepoUrl <git-url> to clone first.'; exit 1; }; cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/auto_deploy_cron_on.sh"
+        }
         Invoke-RemoteCommand -Command $cmd -Label "자동 배포 ON (2분마다 git 기준 배포 + 구이미지 제거)"
     }
     "Off" {
-        $cmd = "cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/auto_deploy_cron_off.sh"
+        $cmd = "test -d $repoPath || { echo 'No repo at $repoPath (skip).'; exit 0; }; cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/auto_deploy_cron_off.sh"
         Invoke-RemoteCommand -Command $cmd -Label "자동 배포 OFF"
     }
     "Status" {
@@ -99,7 +103,11 @@ switch ($Action) {
         Invoke-RemoteCommand -Command $cmd -Label "crontab 상태"
     }
     "Deploy" {
-        $cmd = "cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/deploy_api_on_server.sh"
+        if ($RepoUrl) {
+            $cmd = $ensureRepoScript + "cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/deploy_api_on_server.sh"
+        } else {
+            $cmd = "test -d $repoPath || { echo 'ERROR: No repo at $repoPath. Use -RepoUrl <git-url> to clone first.'; exit 1; }; cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/deploy_api_on_server.sh"
+        }
         Invoke-RemoteCommand -Command $cmd -Label "수동 배포 1회 (git pull + build + 구이미지 제거 + 재시작)"
     }
 }
