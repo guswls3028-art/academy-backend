@@ -1,5 +1,6 @@
 # PATH: apps/domains/clinic/views.py
 
+from django.db import IntegrityError
 from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import viewsets, status
@@ -87,16 +88,34 @@ class SessionViewSet(viewsets.ModelViewSet):
         """
         ✅ created_by 자동 기록 (운영/감사 기준)
         ✅ 멀티테넌트: tenant 없으면 400 (RDS→Aurora 격리 준비)
+        ✅ 동일 날짜/시간/장소 중복 생성 시 400 (UniqueConstraint)
         """
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             raise serializers.ValidationError(
                 {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
             )
-        serializer.save(
-            tenant=tenant,
-            created_by=self.request.user,
-        )
+        try:
+            serializer.save(
+                tenant=tenant,
+                created_by=self.request.user,
+            )
+        except IntegrityError as e:
+            if "uniq_clinic_session_per_tenant_time_location" in str(e):
+                raise serializers.ValidationError(
+                    {"non_field_errors": "같은 날짜·시간·장소의 클리닉이 이미 있습니다. 다른 시간 또는 장소를 선택해주세요."}
+                )
+            raise
+
+    def retrieve(self, request, *args, **kwargs):
+        """단일 세션 조회 시 직렬화 오류 방지 (annotate 필드 누락 등)."""
+        try:
+            return super().retrieve(request, *args, **kwargs)
+        except Exception as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @action(detail=True, methods=["post"])
     def send_reminder(self, request, pk=None):
