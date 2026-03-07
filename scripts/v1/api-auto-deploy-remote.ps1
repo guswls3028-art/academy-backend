@@ -69,6 +69,7 @@ if [ -n "`$REPO_URL" ] && [ ! -d "`$REPO_PATH/.git" ]; then
   chown -R ec2-user:ec2-user "`$REPO_PATH" 2>/dev/null || true
   echo 'Clone done.'
 fi
+git config --global --add safe.directory "`$REPO_PATH" 2>/dev/null || true
 cd "`$REPO_PATH" && git fetch origin main && git reset --hard origin/main
 "@
     $remoteScript = $remoteScript -replace "`r`n", "`n" -replace "`r", "`n"
