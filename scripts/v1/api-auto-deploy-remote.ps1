@@ -59,6 +59,7 @@ if ($Action -eq "On" -or $Action -eq "Deploy") {
 set -e
 REPO_PATH='$repoPath'
 REPO_URL='$repoUrlEscaped'
+command -v git >/dev/null 2>&1 || (yum install -y git 2>/dev/null || dnf install -y git 2>/dev/null || true)
 if [ -n "`$REPO_URL" ] && [ ! -d "`$REPO_PATH/.git" ]; then
   echo 'Cloning repo...'
   mkdir -p "`$(dirname "`$REPO_PATH")"
