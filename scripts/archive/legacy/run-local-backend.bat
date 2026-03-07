@@ -47,8 +47,9 @@ if errorlevel 1 (
 )
 
 echo.
-echo Database connection: Direct RDS (public access enabled)
-echo No SSH tunnel needed.
+echo Database: from .env / .env.local (DB_HOST)
+echo If connection times out: docs\02-OPERATIONS\local-dev-db.md
+echo.
 
 echo.
 echo Starting Django server...
