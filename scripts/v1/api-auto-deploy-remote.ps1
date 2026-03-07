@@ -43,12 +43,12 @@ $repoPath = $RepoPath.TrimEnd('/')
 $ensureRepoScript = @"
 set -e
 REPO_PATH='$repoPath'
-REPO_URL='$($RepoUrl -replace "'", "'\\''")'
-if [ -n "$REPO_URL" ] && [ ! -d "$REPO_PATH/.git" ]; then
+REPO_URL='$($RepoUrl -replace "'", "'\''")'
+if [ -n "`$REPO_URL" ] && [ ! -d "`$REPO_PATH/.git" ]; then
   echo 'Cloning repo...'
-  mkdir -p "$(dirname "$REPO_PATH")"
-  git clone --depth 1 "$REPO_URL" "$REPO_PATH"
-  chown -R ec2-user:ec2-user "$REPO_PATH" 2>/dev/null || true
+  mkdir -p "`$(dirname "`$REPO_PATH")"
+  git clone --depth 1 "`$REPO_URL" "`$REPO_PATH"
+  chown -R ec2-user:ec2-user "`$REPO_PATH" 2>/dev/null || true
   echo 'Clone done.'
 fi
 "@
