@@ -34,7 +34,6 @@ $frontendJob = Start-Job -Name Frontend -ScriptBlock {
   param($root)
   Set-Location $root
   pnpm dev -- --host 0.0.0.0 --port 5174 2>&1
-  if ($LASTEXITCODE -ne 0) { npm run dev -- --host 0.0.0.0 --port 5174 2>&1 }
 } -ArgumentList $FrontRoot
 
 # 터널 Job (cloudflared 없으면 스킵)
