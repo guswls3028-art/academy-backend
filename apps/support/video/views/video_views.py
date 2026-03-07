@@ -143,8 +143,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "partial_update",
         "destroy",
         "public_session",
-        "list_folders",
-        "create_folder",
+        "folders",
         "delete_folder",
     }
 
