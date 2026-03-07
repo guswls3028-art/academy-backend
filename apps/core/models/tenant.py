@@ -49,6 +49,11 @@ class Tenant(models.Model):
         blank=True,
         help_text="클리닉 패스카드 배경 그라데이션 색상 3개 (예: [\"#ef4444\", \"#3b82f6\", \"#22c55e\"])",
     )
+    # 매일 날짜별로 임의의 3가지 색상 자동 부여 (True 시 저장 색상 대신 사용)
+    clinic_use_daily_random = models.BooleanField(
+        default=False,
+        help_text="매일 자동 3색 사용 시 True",
+    )
 
     class Meta:
         app_label = "core"
