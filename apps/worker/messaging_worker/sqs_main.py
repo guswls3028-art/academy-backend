@@ -430,12 +430,24 @@ def main() -> int:
                             else:
                                 if deducted:
                                     rollback_credits(int(tenant_id), base_price)
+                                raw_reason = result.get("reason", "send_failed")[:500]
+                                # 솔라피 IP 미허용 등으로 실패 시 발송 내역 비고에 안내 문구 추가
+                                if any(
+                                    x in (raw_reason or "").lower()
+                                    for x in ("forbidden", "허용되지 않은 ip", "unauthorized ip", "unauthorized)")
+                                ):
+                                    failure_reason = (
+                                        "솔라피 IP 미등록: SOLAPI 콘솔(console.solapi.com)에서 "
+                                        "설정 > 허용 IP에 이 서버의 나가는 IP를 추가해 주세요. "
+                                    ) + (raw_reason or "")[:400]
+                                else:
+                                    failure_reason = raw_reason
                                 create_notification_log(
                                     tenant_id=int(tenant_id),
                                     success=False,
                                     amount_deducted=Decimal("0"),
                                     recipient_summary=to[:4] + "****",
-                                    failure_reason=result.get("reason", "send_failed")[:500],
+                                    failure_reason=failure_reason[:500],
                                 )
                         except Exception as e:
                             logger.exception("NotificationLog/rollback failed: %s", e)
