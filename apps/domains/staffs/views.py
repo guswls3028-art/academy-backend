@@ -203,31 +203,46 @@ class StaffViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="me", permission_classes=[IsAuthenticated])
     def me(self, request):
+        import logging
+        logger = logging.getLogger(__name__)
         tenant = getattr(request, "tenant", None)
-        from academy.adapters.db.django import repositories_core as core_repo
-        is_owner = bool(
-            tenant
-            and request.user.is_authenticated
-            and core_repo.membership_exists_staff(tenant=tenant, user=request.user, staff_roles=("owner",))
-        )
-        # DB에 원장 없을 때 대표 표시용: 슈퍼유저/스태프/오너 모두 원장 행에 이름·전화 노출
-        is_de_facto_owner = is_owner or is_effective_staff(request.user, tenant)
-        owner_display_name = None
-        owner_phone = None
-        if is_de_facto_owner and request.user:
-            owner_display_name = (getattr(request.user, "name", None) or "").strip() or getattr(request.user, "username", "") or "원장"
-            owner_phone = (getattr(request.user, "phone", None) or "").strip() or None
-        return Response(
-            {
-                "is_authenticated": True,
-                "is_superuser": bool(request.user.is_superuser),
-                "is_staff": bool(request.user.is_staff),
-                "is_payroll_manager": can_manage_payroll(request.user, tenant),
-                "is_owner": is_owner,
-                "owner_display_name": owner_display_name,
-                "owner_phone": owner_phone,
-            }
-        )
+        try:
+            from academy.adapters.db.django import repositories_core as core_repo
+            is_owner = bool(
+                tenant
+                and request.user.is_authenticated
+                and core_repo.membership_exists_staff(tenant=tenant, user=request.user, staff_roles=("owner",))
+            )
+            is_de_facto_owner = is_owner or is_effective_staff(request.user, tenant)
+            owner_display_name = None
+            owner_phone = None
+            if is_de_facto_owner and request.user:
+                owner_display_name = (getattr(request.user, "name", None) or "").strip() or getattr(request.user, "username", "") or "원장"
+                owner_phone = (getattr(request.user, "phone", None) or "").strip() or None
+            return Response(
+                {
+                    "is_authenticated": True,
+                    "is_superuser": bool(request.user.is_superuser),
+                    "is_staff": bool(request.user.is_staff),
+                    "is_payroll_manager": can_manage_payroll(request.user, tenant),
+                    "is_owner": is_owner,
+                    "owner_display_name": owner_display_name,
+                    "owner_phone": owner_phone,
+                }
+            )
+        except Exception as e:
+            logger.warning("staffs/me error: %s", e, exc_info=True)
+            return Response(
+                {
+                    "is_authenticated": True,
+                    "is_superuser": bool(getattr(request.user, "is_superuser", False)),
+                    "is_staff": bool(getattr(request.user, "is_staff", False)),
+                    "is_payroll_manager": False,
+                    "is_owner": False,
+                    "owner_display_name": None,
+                    "owner_phone": None,
+                }
+            )
 
     # ===========================
     # 실시간 근무 (Staff 기준)
