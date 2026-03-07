@@ -171,6 +171,24 @@ class SessionViewSet(viewsets.ModelViewSet):
 
         return Response(data)
 
+    @action(detail=False, methods=["get"])
+    def locations(self, request):
+        """
+        GET /clinic/sessions/locations/
+        - 클리닉 생성 시 장소 불러오기용: 사용된 장소(룸) 목록
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response([])
+        qs = (
+            Session.objects
+            .filter(tenant=tenant)
+            .values_list("location", flat=True)
+            .distinct()
+            .order_by("location")
+        )
+        return Response([x for x in qs if x])
+
 
 # ============================================================
 # Participant
