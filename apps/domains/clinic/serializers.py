@@ -9,6 +9,10 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
     # (선택) 운영 페이지에서 잔여 좌석 계산하려면 participant_count 내려주면 편함
     participant_count = serializers.IntegerField(read_only=True)
 
+    # ✅ tenant, created_by는 서버에서 request 기준으로 설정 (생성 시 클라이언트 제출 불필요)
+    tenant = serializers.PrimaryKeyRelatedField(read_only=True)
+    created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+
     # ✅ 파생 필드: 종료 시간 (저장 X)
     end_time = serializers.SerializerMethodField()
 
