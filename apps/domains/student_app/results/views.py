@@ -74,7 +74,7 @@ class MyGradesSummaryView(APIView):
             return Response({"exams": [], "homeworks": []})
 
         # 시험 결과: Result (target_type=exam) → Exam 제목, 합격선, 세션/강의명
-        results = (
+        results = list(
             Result.objects.filter(
                 enrollment_id__in=enrollment_ids,
                 target_type="exam",
