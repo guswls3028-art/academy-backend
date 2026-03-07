@@ -994,6 +994,7 @@ class RegistrationRequestViewSet(ModelViewSet):
             gender=(data.get("gender") or "") or None,
             memo=(data.get("memo") or "") or None,
             address=(data.get("address") or "").strip() or None,
+            origin_middle_school=(data.get("origin_middle_school") or "").strip() or None,
         )
         out = RegistrationRequestListSerializer(req, context={"request": request})
         return Response(out.data, status=201)
@@ -1063,6 +1064,7 @@ class RegistrationRequestViewSet(ModelViewSet):
                 gender=reg.gender or None,
                 memo=reg.memo or None,
                 address=reg.address or None,
+                origin_middle_school=reg.origin_middle_school or None,
             )
             TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
             reg.status = StudentRegistrationRequest.APPROVED
