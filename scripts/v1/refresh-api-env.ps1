@@ -23,29 +23,16 @@ if (-not $ids -or $ids.Count -eq 0) {
 
 $ssmParam = $script:SsmApiEnv
 $region = $script:Region
-$containerName = "academy-api"
-
-# SSM에서 env 가져와서 /opt/api.env 갱신 후 컨테이너 재시작 (타깃 인스턴스에서 실행)
-$script = @"
-export AWS_REGION='$region'
-ENV_JSON=`$(aws ssm get-parameter --name '$ssmParam' --with-decryption --query Parameter.Value --output text --region $region 2>/dev/null) || true
-if [ -n "`$ENV_JSON" ]; then
-  echo "`$ENV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); [print(k+'='+str(v)) for k,v in d.items()]" 2>/dev/null > /opt/api.env || true
-  if [ -s /opt/api.env ]; then
-    echo "VIDEO_BATCH from api.env:"; grep VIDEO_BATCH /opt/api.env || true
-    API_IMG=`$(docker inspect $containerName --format '{{.Config.Image}}' 2>/dev/null) || true
-    if [ -z "`$API_IMG" ]; then
-      API_IMG=809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest
-    fi
-    docker stop $containerName 2>/dev/null || true
-    docker rm $containerName 2>/dev/null || true
-    docker run -d --restart unless-stopped --name $containerName -p 8000:8000 --env-file /opt/api.env `$API_IMG 2>&1 || echo "docker run failed"
-    echo "Container restarted."
-  fi
-else
-  echo "SSM fetch failed"
-fi
-"@
+$inlinePath = Join-Path $PSScriptRoot "inline\refresh-api-env.sh"
+if (-not (Test-Path $inlinePath)) {
+    Write-Host "Inline script not found: $inlinePath" -ForegroundColor Red
+    exit 1
+}
+# base64로 인코딩 후 원격에서 디코딩 실행 (escaping 이슈 회피)
+$scriptContent = [System.IO.File]::ReadAllText($inlinePath) -replace "`r`n", "`n" -replace "`r", "`n"
+$scriptContent = $scriptContent -replace 'SSM_PARAM="\$\{1:-/academy/api/env\}"', "SSM_PARAM=`"$ssmParam`"" -replace 'REGION="\$\{2:-ap-northeast-2\}"', "REGION=`"$region`""
+$scriptB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($scriptContent))
+$script = "echo $scriptB64 | base64 -d | bash"
 
 $params = @{ commands = @($script) }
 $paramsJson = $params | ConvertTo-Json -Compress
