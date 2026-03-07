@@ -17,11 +17,15 @@ class HomeworkPolicyViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
-        qs = HomeworkPolicy.objects.select_related("session").filter(tenant=tenant)
+        qs_base = HomeworkPolicy.objects.select_related("session").filter(tenant=tenant)
+
+        # Detail action (retrieve, partial_update 등): pk로 조회 가능하도록 전체 queryset 반환
+        if self.kwargs.get("pk"):
+            return qs_base
 
         session_id = self.request.query_params.get("session")
         if not session_id:
-            return qs.none()
+            return qs_base.none()
 
         obj, _ = HomeworkPolicy.objects.get_or_create(
             tenant=tenant,
@@ -33,8 +37,7 @@ class HomeworkPolicyViewSet(viewsets.ModelViewSet):
                 "clinic_on_fail": True,
             },
         )
-
-        return qs.filter(id=obj.id)
+        return qs_base.filter(id=obj.id)
 
     def partial_update(self, request, *args, **kwargs):
         obj = self.get_object()
