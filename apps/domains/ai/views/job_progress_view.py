@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.domains.ai.redis_status_cache import get_job_status_from_redis, cache_job_status
+from apps.domains.ai.redis_status_cache import get_job_status_from_redis
 from academy.adapters.db.django.repositories_ai import get_job_model_for_status
 from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
 
