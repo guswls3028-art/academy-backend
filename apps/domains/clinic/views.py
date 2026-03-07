@@ -219,7 +219,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         source = serializer.validated_data.get("source")
         requested_status = serializer.validated_data.get("status")
 
-        # 학생이 직접 신청하는 경우: student 자동 설정
+        # 학생이 직접 신청하는 경우: student 자동 설정 + 반드시 기존 세션만 허용
         from apps.domains.student_app.permissions import get_request_student
         request_student = get_request_student(request)
         if request_student:
@@ -231,6 +231,32 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 )
             student = request_student
             source = SessionParticipant.Source.STUDENT_REQUEST
+            # 학생 신청은 기존에 강사가 만든 클리닉(세션)만 선택 가능
+            if not session:
+                return Response(
+                    {"detail": "등록 가능한 클리닉을 선택해주세요. 해당 날짜에 열린 클리닉만 신청할 수 있습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # 정원 체크: booked + pending 인원이 max_participants 이상이면 신청 불가
+            from django.db.models import Count
+            from django.db.models import Q
+            session_with_count = Session.objects.filter(pk=session.pk).annotate(
+                booked_total=Count(
+                    "participants",
+                    filter=Q(
+                        participants__status__in=[
+                            SessionParticipant.Status.BOOKED,
+                            SessionParticipant.Status.PENDING,
+                        ]
+                    ),
+                ),
+            ).first()
+            if session_with_count and session.max_participants is not None:
+                if session_with_count.booked_total >= session.max_participants:
+                    return Response(
+                        {"detail": "해당 클리닉은 정원이 마감되었습니다."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
             # 학생 신청은 기본적으로 pending 상태
             if not requested_status or requested_status == SessionParticipant.Status.BOOKED:
                 requested_status = SessionParticipant.Status.PENDING
