@@ -72,6 +72,8 @@ def get_active_sender_numbers(api_key: str, api_secret: str) -> list[str]:
             raw_list = raw_list.get("list") or raw_list.get("numbers") or []
     else:
         logger.warning("Solapi sender list unexpected root type: %s", type(data).__name__)
+
+    if not isinstance(raw_list, list):
         raw_list = []
 
     for item in raw_list:
