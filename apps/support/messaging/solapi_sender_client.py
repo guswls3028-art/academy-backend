@@ -67,9 +67,15 @@ def get_active_sender_numbers(api_key: str, api_secret: str) -> list[str]:
         raw_list = data
     elif isinstance(data, dict):
         raw_list = data.get("list") or data.get("numbers") or data.get("data") or []
-        # data.data 형태(래퍼 내 리스트)일 수 있음
+        # 래퍼 내 중첩 객체(예: data.data.senderIds) 처리
         if isinstance(raw_list, dict):
-            raw_list = raw_list.get("list") or raw_list.get("numbers") or []
+            raw_list = (
+                raw_list.get("list")
+                or raw_list.get("numbers")
+                or raw_list.get("senderIds")
+                or raw_list.get("items")
+                or []
+            )
     else:
         logger.warning("Solapi sender list unexpected root type: %s", type(data).__name__)
 
