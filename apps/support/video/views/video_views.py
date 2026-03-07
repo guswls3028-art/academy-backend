@@ -146,8 +146,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "delete_folder",
     }
     # folders: GET=학생 허용(목록), POST=스태프만(생성)
-    FOLDERS_STAFF_METHODS = {"post", "put", "patch", "delete"}
-
     def get_permissions(self):
         if self.action == "folders":
             if getattr(self.request, "method", "").upper() in ("GET", "HEAD"):
