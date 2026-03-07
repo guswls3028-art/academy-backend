@@ -51,3 +51,6 @@ class SessionScoreRowSerializer(serializers.Serializer):
     homeworks = HomeworkScoreBlockSerializer(many=True)
 
     updated_at = serializers.DateTimeField(allow_null=True)
+
+    # 클리닉 대상이면서 클리닉 예약이 없을 때 이름 셀 노란 배경 표시용
+    name_highlight_clinic_no_reservation = serializers.BooleanField(default=False)

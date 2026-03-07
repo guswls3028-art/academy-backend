@@ -181,6 +181,21 @@ class SessionScoresView(APIView):
         )
 
         # -------------------------------------------------
+        # 3b) 클리닉 예약 있음(enrollment별 PENDING/BOOKED 1건 이상)
+        # -------------------------------------------------
+        enrollment_ids_with_clinic_booking: Set[int] = set(
+            SessionParticipant.objects.filter(
+                enrollment_id__in=enrollment_ids,
+                status__in=[
+                    SessionParticipant.Status.PENDING,
+                    SessionParticipant.Status.BOOKED,
+                ],
+            )
+            .values_list("enrollment_id", flat=True)
+            .distinct()
+        )
+
+        # -------------------------------------------------
         # 4) Enrollment → student_name
         # -------------------------------------------------
         enrollment_map = {
@@ -349,6 +364,11 @@ class SessionScoresView(APIView):
                 if d
             )
 
+            # 클리닉 대상이면서 예약 없음 → 이름 셀 노란 강조용
+            name_highlight_clinic_no_reservation = (
+                clinic_required and eid not in enrollment_ids_with_clinic_booking
+            )
+
             rows.append(
                 {
                     "enrollment_id": eid,
@@ -356,6 +376,7 @@ class SessionScoresView(APIView):
                     "exams": exams_payload,
                     "homeworks": homeworks_payload,
                     "updated_at": updated_at or timezone.now(),
+                    "name_highlight_clinic_no_reservation": name_highlight_clinic_no_reservation,
                 }
             )
 
