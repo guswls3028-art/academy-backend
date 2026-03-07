@@ -202,6 +202,20 @@ class DjangoAIJobRepository:
         job.locked_at = None
         job.lease_expires_at = None
         job.save(update_fields=["status", "error_message", "last_error", "locked_by", "locked_at", "lease_expires_at", "updated_at"])
+        # ✅ 실패 시 Redis에 최종 상태 기록 (진행 상황 위젯 폴링용)
+        try:
+            from apps.domains.ai.redis_status_cache import cache_job_status
+            cache_job_status(
+                tenant_id=str(job.tenant_id or ""),
+                job_id=job.job_id,
+                status=final_str,
+                job_type=job.job_type,
+                error_message=err,
+                ttl=None,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to cache FAILED in Redis: %s", e)
         return True
 
     def get_job_model_for_status(self, job_id: str, tenant_id: str, job_type: Optional[str] = None):
