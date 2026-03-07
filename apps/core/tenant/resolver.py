@@ -76,9 +76,9 @@ def _resolve_tenant_from_host(host: str) -> Optional[Tenant]:
 
 def _resolve_tenant_from_header(request) -> Optional[Tenant]:
     """
-    중앙 API(api.hakwonplus.com 등)로 요청이 올 때,
+    중앙 API(api.hakwonplus.com 등) 또는 로컬(localhost)로 요청이 올 때,
     프론트가 보낸 X-Tenant-Code 로 테넌트 결정.
-    (SPA가 tchul.com에서 열리지만 API는 api.hakwonplus.com으로 가는 경우)
+    (SPA가 tchul.com에서 열리지만 API는 api.hakwonplus.com으로 가는 경우, 또는 로컬에서 로그인·/me 동일 테넌트 보장)
     """
     allowed_hosts = getattr(
         settings,
