@@ -45,7 +45,10 @@ def get_active_sender_numbers(api_key: str, api_secret: str) -> list[str]:
     if resp.status_code != 200:
         try:
             err = resp.json()
-            msg = err.get("errorMessage") or err.get("message") or resp.text
+            if isinstance(err, dict):
+                msg = err.get("errorMessage") or err.get("message") or resp.text
+            else:
+                msg = resp.text or str(err)
         except Exception:
             msg = resp.text
         logger.warning("Solapi sender list failed status=%s body=%s", resp.status_code, msg)
@@ -58,10 +61,18 @@ def get_active_sender_numbers(api_key: str, api_secret: str) -> list[str]:
         raise ValueError("솔라피 응답 형식 오류") from e
     numbers: list[str] = []
 
-    # 응답 형식 유연 처리: list, list[].phoneNumber, list[].number 등
-    raw_list = data.get("list") or data.get("numbers") or data.get("data") or []
+    # 응답 형식 정합성: dict면 .get() 사용, list면 그대로, 그 외는 빈 목록 (스펙 유연 대응)
+    raw_list: list = []
     if isinstance(data, list):
         raw_list = data
+    elif isinstance(data, dict):
+        raw_list = data.get("list") or data.get("numbers") or data.get("data") or []
+        # data.data 형태(래퍼 내 리스트)일 수 있음
+        if isinstance(raw_list, dict):
+            raw_list = raw_list.get("list") or raw_list.get("numbers") or []
+    else:
+        logger.warning("Solapi sender list unexpected root type: %s", type(data).__name__)
+        raw_list = []
 
     for item in raw_list:
         if isinstance(item, str):
