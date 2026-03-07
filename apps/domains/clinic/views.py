@@ -7,6 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework import serializers
 
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -85,9 +86,15 @@ class SessionViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """
         ✅ created_by 자동 기록 (운영/감사 기준)
+        ✅ 멀티테넌트: tenant 없으면 400 (RDS→Aurora 격리 준비)
         """
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
+            )
         serializer.save(
-            tenant=getattr(self.request, "tenant", None),
+            tenant=tenant,
             created_by=self.request.user,
         )
 
