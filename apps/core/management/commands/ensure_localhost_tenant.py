@@ -59,7 +59,8 @@ class Command(BaseCommand):
                 if domain.tenant_id != tenant.id:
                     domain.tenant = tenant
                     domain.is_active = True
-                    domain.save()
+                    domain.is_primary = False  # 테넌트당 primary 1개 제약 준수
+                    domain.save(update_fields=["tenant", "tenant_id", "is_active", "is_primary"])
                     self.stdout.write(self.style.WARNING(f"Updated TenantDomain: {host} -> {tenant.code}"))
                 else:
                     self.stdout.write(f"Already exists: {host} -> {tenant.code}")
