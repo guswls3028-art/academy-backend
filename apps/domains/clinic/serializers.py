@@ -39,14 +39,16 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
         return (dt + timedelta(minutes=obj.duration_minutes)).time()
 
     def get_available_slots(self, obj):
-        if obj.max_participants is None or obj.participant_count is None:
+        cnt = getattr(obj, "participant_count", None)
+        if obj.max_participants is None or cnt is None:
             return None
-        return max(obj.max_participants - obj.participant_count, 0)
+        return max(obj.max_participants - cnt, 0)
 
     def get_is_full(self, obj):
-        if obj.max_participants is None or obj.participant_count is None:
+        cnt = getattr(obj, "participant_count", None)
+        if obj.max_participants is None or cnt is None:
             return False
-        return obj.participant_count >= obj.max_participants
+        return cnt >= obj.max_participants
 
     def get_status_summary(self, obj):
         return {
