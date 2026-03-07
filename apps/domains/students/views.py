@@ -3,6 +3,7 @@
 import uuid
 
 from django.db import transaction, connection
+from django.db.models import Q
 from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -10,23 +11,24 @@ from django.contrib.auth import get_user_model
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.views import APIView
 
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-from apps.core.permissions import IsStudent, TenantResolvedAndStaff
+from apps.core.permissions import IsStudent, TenantResolvedAndStaff, TenantResolved
 from apps.core.models import TenantMembership
 
 from apps.domains.parents.services import ensure_parent_for_student
-from apps.support.messaging.services import send_welcome_messages, get_site_url
+from apps.support.messaging.services import send_welcome_messages, get_site_url, send_sms
 from apps.domains.ai.gateway import dispatch_job
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 
 from academy.adapters.db.django import repositories_students as student_repo
-from .models import Student, Tag, StudentTag
+from .models import Student, Tag, StudentTag, StudentRegistrationRequest
 from .filters import StudentFilter
 from .services import normalize_school_from_name
 from apps.domains.enrollment.models import Enrollment
@@ -37,6 +39,8 @@ from .serializers import (
     TagSerializer,
     AddTagSerializer,
     StudentBulkCreateSerializer,
+    RegistrationRequestCreateSerializer,
+    RegistrationRequestListSerializer,
 )
 
 
@@ -925,3 +929,224 @@ class StudentViewSet(ModelViewSet):
             context={"request": request},
         )
         return Response(serializer.data)
+
+
+# ======================================================
+# 학생 가입 신청 (로그인 전 회원가입 → 선생 승인)
+# ======================================================
+
+
+class RegistrationRequestViewSet(ModelViewSet):
+    """
+    - create: AllowAny + TenantResolved (학생이 로그인 페이지에서 신청)
+    - list / retrieve / approve: TenantResolvedAndStaff (선생이 가입신청 목록/승인)
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    serializer_class = RegistrationRequestListSerializer
+    pagination_class = StudentListPagination
+
+    def get_queryset(self):
+        return StudentRegistrationRequest.objects.filter(
+            tenant=self.request.tenant
+        ).select_related("tenant", "student").order_by("-created_at")
+
+    def filter_queryset(self, queryset):
+        if self.action == "list":
+            status = self.request.query_params.get("status")
+            if status in (StudentRegistrationRequest.PENDING, StudentRegistrationRequest.APPROVED, StudentRegistrationRequest.REJECTED):
+                queryset = queryset.filter(status=status)
+        return queryset
+
+    def get_authenticators(self):
+        # create는 비로그인 요청 허용 → JWT 검사 생략 (만료 토큰 시 401 방지)
+        if self.action == "create":
+            return []
+        return super().get_authenticators()
+
+    def get_permissions(self):
+        if self.action == "create":
+            return [AllowAny(), TenantResolved()]
+        return [IsAuthenticated(), TenantResolvedAndStaff()]
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return RegistrationRequestCreateSerializer
+        return RegistrationRequestListSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data.copy()
+        password = data.pop("initial_password")
+        req = StudentRegistrationRequest.objects.create(
+            tenant=request.tenant,
+            status=StudentRegistrationRequest.PENDING,
+            initial_password=password,
+            name=data.get("name", ""),
+            parent_phone=data.get("parent_phone", ""),
+            phone=data.get("phone"),
+            school_type=data.get("school_type", "HIGH"),
+            high_school=(data.get("high_school") or "") or None,
+            middle_school=(data.get("middle_school") or "") or None,
+            high_school_class=(data.get("high_school_class") or "") or None,
+            major=(data.get("major") or "") or None,
+            grade=data.get("grade"),
+            gender=(data.get("gender") or "") or None,
+            memo=(data.get("memo") or "") or None,
+        )
+        out = RegistrationRequestListSerializer(req, context={"request": request})
+        return Response(out.data, status=201)
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        """승인 시 Student + User + TenantMembership 생성 후 status=approved."""
+        reg = self.get_object()
+        if reg.status != StudentRegistrationRequest.PENDING:
+            return Response(
+                {"detail": "이미 처리된 신청입니다."},
+                status=400,
+            )
+        tenant = request.tenant
+        password = reg.initial_password
+        name = reg.name
+        parent_phone = reg.parent_phone
+        phone = reg.phone
+
+        try:
+            ps_number = _generate_unique_ps_number(tenant=tenant)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+
+        if phone and len(str(phone)) >= 8:
+            omr_code = str(phone)[-8:]
+        elif parent_phone and len(parent_phone) >= 8:
+            omr_code = parent_phone[-8:]
+        else:
+            omr_code = (parent_phone or "00000000")[-8:]
+
+        with transaction.atomic():
+            parent = None
+            if parent_phone:
+                parent = ensure_parent_for_student(
+                    tenant=tenant,
+                    parent_phone=parent_phone,
+                    student_name=name,
+                    parent_password=password,
+                )
+            User = get_user_model()
+            user = student_repo.user_create_user(
+                username=ps_number,
+                tenant=tenant,
+                phone=phone or "",
+                name=name,
+            )
+            user.set_password(password)
+            user.save()
+
+            student = student_repo.student_create(
+                tenant=tenant,
+                user=user,
+                parent=parent,
+                name=name,
+                parent_phone=parent_phone,
+                phone=phone,
+                ps_number=ps_number,
+                omr_code=omr_code,
+                uses_identifier=not (phone and phone.strip()),
+                school_type=reg.school_type,
+                high_school=reg.high_school or None,
+                middle_school=reg.middle_school or None,
+                high_school_class=reg.high_school_class or None,
+                major=reg.major or None,
+                grade=reg.grade,
+                gender=reg.gender or None,
+                memo=reg.memo or None,
+            )
+            TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
+            reg.status = StudentRegistrationRequest.APPROVED
+            reg.student = student
+            reg.save(update_fields=["status", "student", "updated_at"])
+
+        out = StudentDetailSerializer(student, context={"request": request})
+        return Response(out.data, status=200)
+
+
+def _pw_reset_cache_key(tenant_id, phone: str) -> str:
+    return f"pw_reset:{tenant_id}:{phone}"
+
+
+class StudentPasswordFindRequestView(APIView):
+    """POST: name, phone → 학생 조회 후 6자리 인증번호 SMS 발송, 캐시 저장."""
+    permission_classes = [AllowAny, TenantResolved]
+
+    def get_authenticators(self):
+        return []  # 비로그인 요청 허용, 만료 JWT 시 401 방지
+
+    def post(self, request):
+        from django.core.cache import cache
+        name = (request.data.get("name") or "").strip()
+        phone = (request.data.get("phone") or "").replace(" ", "").replace("-", "").replace(".", "")
+        if not name or not phone or len(phone) != 11 or not phone.startswith("010"):
+            return Response(
+                {"detail": "이름과 학생 전화번호(010XXXXXXXX 11자리)를 입력해 주세요."},
+                status=400,
+            )
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant를 확인할 수 없습니다."}, status=400)
+
+        student = Student.objects.filter(
+            tenant=tenant,
+            deleted_at__isnull=True,
+            name=name,
+        ).filter(
+            Q(phone=phone) | Q(parent_phone=phone)
+        ).select_related("user").first()
+        if not student or not getattr(student, "user", None):
+            return Response(
+                {"detail": "해당 이름과 전화번호로 등록된 학생이 없습니다."},
+                status=404,
+            )
+        import random
+        code = "".join([str(random.randint(0, 9)) for _ in range(6)])
+        key = _pw_reset_cache_key(tenant.id, phone)
+        cache.set(key, {"user_id": student.user_id, "code": code}, timeout=600)
+        send_sms(phone, f"[학원] 비밀번호 찾기 인증번호: {code} (10분 내 입력)")
+        return Response({"message": "인증번호가 발송되었습니다."}, status=200)
+
+
+class StudentPasswordFindVerifyView(APIView):
+    """POST: phone, code, new_password → 인증번호 확인 후 비밀번호 변경."""
+    permission_classes = [AllowAny, TenantResolved]
+
+    def get_authenticators(self):
+        return []  # 비로그인 요청 허용, 만료 JWT 시 401 방지
+
+    def post(self, request):
+        from django.core.cache import cache
+        phone = (request.data.get("phone") or "").replace(" ", "").replace("-", "").replace(".", "")
+        code = (request.data.get("code") or "").strip()
+        new_password = (request.data.get("new_password") or "").strip()
+        if not phone or len(phone) != 11 or not code or len(code) != 6 or len(new_password) < 4:
+            return Response(
+                {"detail": "전화번호, 6자리 인증번호, 새 비밀번호(4자 이상)를 입력해 주세요."},
+                status=400,
+            )
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant를 확인할 수 없습니다."}, status=400)
+        key = _pw_reset_cache_key(tenant.id, phone)
+        payload = cache.get(key)
+        if not payload or payload.get("code") != code:
+            return Response({"detail": "인증번호가 일치하지 않거나 만료되었습니다."}, status=400)
+        user_id = payload.get("user_id")
+        if not user_id:
+            return Response({"detail": "잘못된 요청입니다."}, status=400)
+        User = get_user_model()
+        user = User.objects.filter(pk=user_id, tenant=tenant).first()
+        if not user:
+            return Response({"detail": "사용자를 찾을 수 없습니다."}, status=404)
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+        cache.delete(key)
+        return Response({"message": "비밀번호가 변경되었습니다."}, status=200)

@@ -43,8 +43,25 @@ function Invoke-BootstrapWorkersEnv {
         return
     }
 
+    # SQS 큐 이름: params SSOT — API/워커가 동일 큐 사용 (메시징·AI)
+    if (-not $envHash["MESSAGING_SQS_QUEUE_NAME"] -and $script:MessagingSqsQueueName) {
+        $envHash["MESSAGING_SQS_QUEUE_NAME"] = $script:MessagingSqsQueueName.Trim()
+    }
+    if (-not $envHash["AI_SQS_QUEUE_NAME_BASIC"] -and $script:AiSqsQueueName) {
+        $envHash["AI_SQS_QUEUE_NAME_BASIC"] = $script:AiSqsQueueName.Trim()
+    }
+    if (-not $envHash["AI_SQS_QUEUE_NAME_LITE"] -and $script:AiSqsQueueName) {
+        $envHash["AI_SQS_QUEUE_NAME_LITE"] = $script:AiSqsQueueName.Trim()
+    }
+    if (-not $envHash["AI_SQS_QUEUE_NAME_PREMIUM"] -and $script:AiSqsQueueName) {
+        $envHash["AI_SQS_QUEUE_NAME_PREMIUM"] = $script:AiSqsQueueName.Trim()
+    }
+
     $obj = [ordered]@{}
-    foreach ($k in @($requiredKeys) + "DJANGO_SETTINGS_MODULE") { $obj[$k] = $envHash[$k] }
+    $allKeys = @($requiredKeys) + "DJANGO_SETTINGS_MODULE" + @("MESSAGING_SQS_QUEUE_NAME", "AI_SQS_QUEUE_NAME_BASIC", "AI_SQS_QUEUE_NAME_LITE", "AI_SQS_QUEUE_NAME_PREMIUM", "R2_EXCEL_BUCKET")
+    foreach ($k in $allKeys) {
+        if ($envHash[$k] -ne $null -and [string]$envHash[$k] -ne "") { $obj[$k] = $envHash[$k] }
+    }
     $json = $obj | ConvertTo-Json -Compress -Depth 10
     $jsonBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
     $valueBase64 = [Convert]::ToBase64String($jsonBytes)

@@ -3,7 +3,7 @@
 from rest_framework import serializers
 
 from apps.domains.enrollment.models import Enrollment
-from apps.domains.students.models import Student, Tag
+from apps.domains.students.models import Student, Tag, StudentRegistrationRequest
 from apps.domains.students.ps_number import _generate_unique_ps_number
 
 
@@ -279,3 +279,61 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"ps_number": "이미 사용 중인 PS 번호입니다."})
 
         return attrs
+
+
+# ========== 학생 가입 신청 (로그인 전 회원가입) ==========
+
+
+def _normalize_phone(value):
+    if not value:
+        return ""
+    return str(value).strip().replace(" ", "").replace("-", "").replace(".", "")
+
+
+class RegistrationRequestCreateSerializer(serializers.Serializer):
+    """학생이 로그인 페이지에서 제출하는 가입 신청 (필수 필드만)"""
+
+    name = serializers.CharField(max_length=50, trim_whitespace=True)
+    initial_password = serializers.CharField(min_length=4, max_length=128, write_only=True)
+    parent_phone = serializers.CharField(max_length=20)
+    phone = serializers.CharField(max_length=20, required=False, allow_blank=True, default="")
+    school_type = serializers.ChoiceField(
+        choices=[("HIGH", "고등"), ("MIDDLE", "중등")],
+        default="HIGH",
+    )
+    high_school = serializers.CharField(required=False, allow_blank=True, default="")
+    middle_school = serializers.CharField(required=False, allow_blank=True, default="")
+    high_school_class = serializers.CharField(required=False, allow_blank=True, default="")
+    major = serializers.CharField(required=False, allow_blank=True, default="")
+    grade = serializers.IntegerField(required=False, allow_null=True)
+    gender = serializers.CharField(required=False, allow_blank=True, default="", max_length=1)
+    memo = serializers.CharField(required=False, allow_blank=True, default="")
+
+    def validate_parent_phone(self, value):
+        v = _normalize_phone(value)
+        if not v or len(v) != 11 or not v.startswith("010"):
+            raise serializers.ValidationError("학부모 전화번호는 010XXXXXXXX 11자리여야 합니다.")
+        return v
+
+    def validate_phone(self, value):
+        if not value or not str(value).strip():
+            return None
+        v = _normalize_phone(value)
+        if v and (len(v) != 11 or not v.startswith("010")):
+            raise serializers.ValidationError("전화번호는 010XXXXXXXX 11자리여야 합니다.")
+        return v if v else None
+
+    def validate(self, attrs):
+        attrs["parent_phone"] = _normalize_phone(attrs["parent_phone"])
+        attrs["phone"] = attrs.get("phone") or None
+        if attrs.get("phone"):
+            attrs["phone"] = _normalize_phone(attrs["phone"]) or None
+        return attrs
+
+
+class RegistrationRequestListSerializer(serializers.ModelSerializer):
+    """스태프용 가입 신청 목록/상세 (initial_password 제외)"""
+
+    class Meta:
+        model = StudentRegistrationRequest
+        exclude = ("initial_password",)

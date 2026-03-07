@@ -52,24 +52,54 @@ function Ensure-RedisSecurityGroup {
     if (-not $sgIds) { $sgIds = @() }
     if ($sgIds -contains $script:SecurityGroupData) {
         Write-Ok "Redis SGs already include sg-data $($script:SecurityGroupData)"
-        return
+    } else {
+        $newSgs = @($sgIds + $script:SecurityGroupData | Select-Object -Unique)
+        Write-Host "  Updating Redis SGs to include sg-data $($script:SecurityGroupData)" -ForegroundColor Yellow
+        try {
+            Invoke-Aws @(
+                "elasticache", "modify-replication-group",
+                "--replication-group-id", $script:RedisReplicationGroupId,
+                "--security-group-ids"
+            ) + $newSgs + @(
+                "--apply-immediately",
+                "--region", $script:Region
+            ) -ErrorMessage "modify Redis SGs" | Out-Null
+            $script:ChangesMade = $true
+        } catch {
+            if ($_.Exception.Message -match "No modifications were requested|InvalidParameterCombination") {
+                Write-Ok "Redis SGs unchanged (already include sg-data or same set)"
+            } else { throw }
+        }
     }
-    $newSgs = @($sgIds + $script:SecurityGroupData | Select-Object -Unique)
-    Write-Host "  Updating Redis SGs to include sg-data $($script:SecurityGroupData)" -ForegroundColor Yellow
-    try {
-        Invoke-Aws @(
-            "elasticache", "modify-replication-group",
-            "--replication-group-id", $script:RedisReplicationGroupId,
-            "--security-group-ids"
-        ) + $newSgs + @(
-            "--apply-immediately",
-            "--region", $script:Region
-        ) -ErrorMessage "modify Redis SGs" | Out-Null
-        $script:ChangesMade = $true
-    } catch {
-        if ($_.Exception.Message -match "No modifications were requested|InvalidParameterCombination") {
-            Write-Ok "Redis SGs unchanged (already include sg-data or same set)"
-        } else { throw }
+    # Redis SG(s)에 Batch SG, App SG 6379 인바운드 보장 (프로그래스바: 워커 기록, API 조회)
+    Ensure-RedisSg6379FromWorkersAndApi -SgIds $sgIds
+}
+
+function Ensure-RedisSg6379FromWorkersAndApi {
+    param([string[]]$SgIds)
+    if ($script:PlanMode -or -not $SgIds) { return }
+    $sourceSgs = @()
+    if ($script:BatchSecurityGroupId) { $sourceSgs += $script:BatchSecurityGroupId }
+    if ($script:SecurityGroupApp) { $sourceSgs += $script:SecurityGroupApp }
+    if ($sourceSgs.Count -eq 0) { return }
+    foreach ($sgId in $SgIds) {
+        if (-not $sgId -or $sgId -notmatch '^sg-') { continue }
+        $desc = Invoke-AwsJson @("ec2", "describe-security-groups", "--group-ids", $sgId, "--region", $script:Region, "--output", "json") 2>$null
+        if (-not $desc -or -not $desc.SecurityGroups -or $desc.SecurityGroups.Count -eq 0) { continue }
+        $existingRefs = @()
+        foreach ($perm in $desc.SecurityGroups[0].IpPermissions) {
+            if ($perm.FromPort -eq 6379 -and $perm.ToPort -eq 6379) {
+                foreach ($ref in $perm.UserIdGroupPairs) { $existingRefs += $ref.GroupId }
+            }
+        }
+        foreach ($srcSg in $sourceSgs) {
+            if ($existingRefs -contains $srcSg) { continue }
+            try {
+                Invoke-Aws @("ec2", "authorize-security-group-ingress", "--group-id", $sgId, "--protocol", "tcp", "--port", "6379", "--source-group", $srcSg, "--region", $script:Region) -ErrorMessage "Redis SG $sgId 6379 from $srcSg" | Out-Null
+                Write-Ok "Redis SG ${sgId}: added 6379 from $srcSg"
+                $script:ChangesMade = $true
+            } catch { if ($_.Exception.Message -notmatch "Duplicate|InvalidPermission.Duplicate") { throw } }
+        }
     }
 }
 

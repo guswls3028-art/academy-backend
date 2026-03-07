@@ -52,7 +52,7 @@ function Get-DeleteCandidates {
         $_ -notin @("academy-ec2-role", "academy-v1-eventbridge-batch-video-role", "academy-gha-ecr-build")
     }
     $cand["ASG"] = $All["ASG"] | Where-Object {
-        $_ -notin $script:SSOT_ASG -and $_ -notlike "*academy-video-batch-ce-final*" -and $_ -notlike "*academy-video-ops-ce*"
+        $_ -notin $script:SSOT_ASG -and $_ -notlike "*academy-video-batch-ce-final*" -and $_ -notlike "*academy-v1-video-ops-ce*" -and $_ -notlike "*academy-v1-video-batch-ce*"
     }
     $cand["ECS Cluster"] = $All["ECS Cluster"] | Where-Object {
         $name = $_
@@ -234,7 +234,7 @@ function Invoke-PurgeAndRecreate {
                 $args = @("events", "remove-targets", "--rule", $ruleName, "--ids") + [string[]]$ids + @("--region", $R)
                 Invoke-Aws $args -ErrorMessage "remove-targets $ruleName" 2>$null | Out-Null
             }
-            $sched = if ($scheduleMap[$ruleName]) { $scheduleMap[$ruleName] } else { "rate(15 minutes)" }
+            $sched = if ($scheduleMap[$ruleName]) { $scheduleMap[$ruleName] } else { "rate(1 hour)" }
             Invoke-Aws @("events", "put-rule", "--name", $ruleName, "--schedule-expression", $sched, "--state", "DISABLED", "--region", $R) -ErrorMessage "disable rule $ruleName" 2>$null | Out-Null
         }
         catch { Write-Warn "    $_" }

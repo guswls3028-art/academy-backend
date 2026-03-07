@@ -41,8 +41,10 @@ function Ensure-EventBridgeRules {
         Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeReconcileRule, "--schedule-expression", $script:EventBridgeReconcileSchedule, "--state", $state, "--region", $script:Region) | Out-Null
     } else {
         $desiredState = if ($script:EventBridgeReconcileState -eq "DISABLED") { "DISABLED" } else { "ENABLED" }
-        if ($rule.State -ne $desiredState) {
-            Write-Host "  Setting rule $($script:EventBridgeReconcileRule) to $desiredState (was $($rule.State), SSOT: reconcileState)" -ForegroundColor Yellow
+        $scheduleDrift = ($rule.ScheduleExpression -ne $script:EventBridgeReconcileSchedule)
+        if ($rule.State -ne $desiredState -or $scheduleDrift) {
+            if ($scheduleDrift) { Write-Host "  Reconcile rule schedule drift: $($rule.ScheduleExpression) -> $($script:EventBridgeReconcileSchedule)" -ForegroundColor Yellow }
+            if ($rule.State -ne $desiredState) { Write-Host "  Setting rule $($script:EventBridgeReconcileRule) to $desiredState (was $($rule.State))" -ForegroundColor Yellow }
             $script:ChangesMade = $true
             Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeReconcileRule, "--schedule-expression", $script:EventBridgeReconcileSchedule, "--state", $desiredState, "--region", $script:Region) | Out-Null
         }
@@ -64,8 +66,10 @@ function Ensure-EventBridgeRules {
         Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeScanStuckRule, "--schedule-expression", $script:EventBridgeScanStuckSchedule, "--state", $state2, "--region", $script:Region) | Out-Null
     } else {
         $desiredState2 = if ($script:EventBridgeScanStuckState -eq "DISABLED") { "DISABLED" } else { "ENABLED" }
-        if ($rule2.State -ne $desiredState2) {
-            Write-Host "  Setting rule $($script:EventBridgeScanStuckRule) to $desiredState2 (was $($rule2.State), SSOT: scanStuckState)" -ForegroundColor Yellow
+        $scheduleDrift2 = ($rule2.ScheduleExpression -ne $script:EventBridgeScanStuckSchedule)
+        if ($rule2.State -ne $desiredState2 -or $scheduleDrift2) {
+            if ($scheduleDrift2) { Write-Host "  Scan-stuck rule schedule drift: $($rule2.ScheduleExpression) -> $($script:EventBridgeScanStuckSchedule)" -ForegroundColor Yellow }
+            if ($rule2.State -ne $desiredState2) { Write-Host "  Setting rule $($script:EventBridgeScanStuckRule) to $desiredState2 (was $($rule2.State))" -ForegroundColor Yellow }
             $script:ChangesMade = $true
             Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeScanStuckRule, "--schedule-expression", $script:EventBridgeScanStuckSchedule, "--state", $desiredState2, "--region", $script:Region) | Out-Null
         }

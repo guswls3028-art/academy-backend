@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "WorkersSQSReceive",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:ChangeMessageVisibility",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+      ],
+      "Resource": [
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-messaging-queue",
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-ai-queue"
+      ]
+    }
+  ]
+}

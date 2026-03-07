@@ -128,4 +128,18 @@ function Ensure-EC2InstanceProfileSSM {
         Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyApiVideo -replace '\\','/')") -ErrorMessage "put API video upload policy" | Out-Null
         Write-Ok "Ensured inline policy $inlineName on $roleName (Batch+DynamoDB for upload_complete)"
     }
+    # Messaging/AI 워커: SQS ReceiveMessage, DeleteMessage, ChangeMessageVisibility
+    $policyWorkersSqs = Join-Path $TemplatesPath "policy_workers_sqs.json"
+    if (Test-Path $policyWorkersSqs) {
+        $inlineName = "academy-workers-sqs"
+        Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyWorkersSqs -replace '\\','/')") -ErrorMessage "put workers SQS policy" | Out-Null
+        Write-Ok "Ensured inline policy $inlineName on $roleName (Messaging/AI SQS consume)"
+    }
+    # 워커 UserData: 부팅 시 aws ssm get-parameter로 /academy/workers/env 조회
+    $policyEc2Ssm = Join-Path $TemplatesPath "policy_ec2_ssm_get_parameters.json"
+    if (Test-Path $policyEc2Ssm) {
+        $inlineName = "academy-ec2-ssm-get-parameters"
+        Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyEc2Ssm -replace '\\','/')") -ErrorMessage "put EC2 SSM GetParameter policy" | Out-Null
+        Write-Ok "Ensured inline policy $inlineName on $roleName (UserData SSM /academy/*)"
+    }
 }

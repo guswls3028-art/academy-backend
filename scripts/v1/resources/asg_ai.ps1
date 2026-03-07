@@ -20,9 +20,19 @@ function Ensure-AiLaunchTemplate {
     if (-not $sg) { $sg = $script:BatchSecurityGroupId }
     $tagValue = $script:AiInstanceTagValue
     if (-not $tagValue) { $tagValue = "academy-v1-ai-worker" }
-    $data = "ImageId=$($script:AiAmiId),InstanceType=$($script:AiInstanceType)"
+    $profile = if ($script:ApiInstanceProfile) { $script:ApiInstanceProfile } else { "academy-ec2-role" }
+    $userDataB64 = ""
+    if (-not $script:PlanMode) {
+        $imgUri = Get-LatestWorkerImageUri -RepoName $script:EcrAiRepo
+        if ($imgUri) {
+            $userDataRaw = Get-WorkerLaunchTemplateUserData -ImageUri $imgUri -Region $script:Region -SsmParam $script:SsmWorkersEnv -ContainerName "academy-ai-worker-cpu"
+            if ($userDataRaw) { $userDataB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($userDataRaw)) }
+        }
+    }
+    $data = "ImageId=$($script:AiAmiId),InstanceType=$($script:AiInstanceType),IamInstanceProfile={Name=$profile}"
     if ($sg) { $data += ",SecurityGroupIds=$sg" }
     $data += ",TagSpecifications=[{ResourceType=instance,Tags=[{Key=Name,Value=$tagValue}]}]"
+    if ($userDataB64) { $data += ",UserData=$userDataB64" }
     $lt = Get-AiLaunchTemplate
     if (-not $lt) {
         $create = Invoke-AwsJson @("ec2", "create-launch-template",
@@ -43,12 +53,15 @@ function Ensure-AiLaunchTemplate {
     $currentType = if ($verData.PSObject.Properties['InstanceType']) { $verData.InstanceType } else { $null }
     $currentSg = $null
     if ($verData.PSObject.Properties['SecurityGroupIds'] -and $verData.SecurityGroupIds -and $verData.SecurityGroupIds.Count -gt 0) { $currentSg = $verData.SecurityGroupIds[0] }
+    $currentProfile = $null
+    if ($verData.PSObject.Properties['IamInstanceProfile'] -and $verData.IamInstanceProfile) { $currentProfile = $verData.IamInstanceProfile.Name }
     $currentTag = $null
     if ($verData.PSObject.Properties['TagSpecifications'] -and $verData.TagSpecifications) {
         $instTag = $verData.TagSpecifications | Where-Object { $_.ResourceType -eq "instance" } | Select-Object -First 1
         if ($instTag -and $instTag.Tags) { $nameTag = $instTag.Tags | Where-Object { $_.Key -eq "Name" } | Select-Object -First 1; if ($nameTag) { $currentTag = $nameTag.Value } }
     }
-    if ($currentAmi -ne $script:AiAmiId -or $currentType -ne $script:AiInstanceType -or $currentSg -ne $sg -or $currentTag -ne $tagValue) {
+    $currentUserData = if ($verData.PSObject.Properties['UserData']) { $verData.UserData } else { "" }
+    if ($currentAmi -ne $script:AiAmiId -or $currentType -ne $script:AiInstanceType -or $currentSg -ne $sg -or $currentProfile -ne $profile -or $currentTag -ne $tagValue -or $currentUserData -ne $userDataB64) {
         $newVer = Invoke-AwsJson @("ec2", "create-launch-template-version",
             "--launch-template-id", $ltId,
             "--version-description", "SSOT v1 drift",
@@ -257,8 +270,14 @@ function Ensure-ASGAi {
     }
 
     if ($ltResult.Updated) {
-        Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:AiASGName, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed" | Out-Null
-        Write-Ok "ASG $($script:AiASGName) instance-refresh started (LT drift)"
+        try {
+            Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:AiASGName, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed" | Out-Null
+            Write-Ok "ASG $($script:AiASGName) instance-refresh started (LT drift)"
+        } catch {
+            if ($_.Exception.Message -match "InstanceRefreshInProgress") {
+                Write-Warn "ASG $($script:AiASGName) instance-refresh already in progress; LT updated. New instances will use new LT."
+            } else { throw }
+        }
         $script:ChangesMade = $true
     }
 

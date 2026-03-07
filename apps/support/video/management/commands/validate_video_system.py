@@ -28,8 +28,10 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_STALE_MINUTES = 5
 REGION = getattr(settings, "AWS_DEFAULT_REGION", None) or __import__("os").environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
 VIDEO_BATCH_JOB_QUEUE = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
-RECONCILE_RULE_NAME = "academy-reconcile-video-jobs"
-SCAN_STUCK_RULE_NAME = "academy-video-scan-stuck-rate"
+RECONCILE_RULE_NAME = getattr(settings, "VIDEO_RECONCILE_RULE_NAME", "academy-v1-reconcile-video-jobs")
+SCAN_STUCK_RULE_NAME = getattr(settings, "VIDEO_SCAN_STUCK_RULE_NAME", "academy-v1-video-scan-stuck-rate")
+OPS_JOB_DEF_RECONCILE = getattr(settings, "VIDEO_OPS_JOB_DEF_RECONCILE", "academy-v1-video-ops-reconcile")
+OPS_JOB_DEF_SCANSTUCK = getattr(settings, "VIDEO_OPS_JOB_DEF_SCANSTUCK", "academy-v1-video-ops-scanstuck")
 
 
 class Command(BaseCommand):
@@ -77,7 +79,7 @@ class Command(BaseCommand):
                         else:
                             jd = (t.get("BatchParameters") or {}).get("JobDefinition") or ""
                             jd_base = jd.split(":")[0] if jd else ""
-                            expected_jd = "academy-video-ops-reconcile" if rule_name == RECONCILE_RULE_NAME else "academy-video-ops-scanstuck"
+                            expected_jd = OPS_JOB_DEF_RECONCILE if rule_name == RECONCILE_RULE_NAME else OPS_JOB_DEF_SCANSTUCK
                             if jd_base != expected_jd:
                                 errors.append(f"EventBridge rule {rule_name} target JobDefinition={jd_base} (expected {expected_jd})")
                                 self.stdout.write(self.style.ERROR(f"ERROR: EventBridge rule {rule_name} target JobDefinition mismatch (got {jd_base})"))

@@ -43,7 +43,7 @@ class VideoDeleteTerminateTest(TestCase):
         job_id_str = str(job.id)
 
         with patch("apps.support.video.services.batch_control.terminate_batch_job") as mock_terminate:
-            with patch("apps.support.video.views.video_views.enqueue_delete_r2"):
+            with patch("apps.infrastructure.storage.r2.delete_object_r2_video"), patch("apps.infrastructure.storage.r2.delete_prefix_r2_video"):
                 view = VideoViewSet()
                 view.perform_destroy(self.video)
 
@@ -65,7 +65,7 @@ class VideoDeleteTerminateTest(TestCase):
         self.video.save(update_fields=["current_job_id"])
 
         with patch("apps.support.video.services.batch_control.terminate_batch_job") as mock_terminate:
-            with patch("apps.support.video.views.video_views.enqueue_delete_r2"):
+            with patch("apps.infrastructure.storage.r2.delete_object_r2_video"), patch("apps.infrastructure.storage.r2.delete_prefix_r2_video"):
                 view = VideoViewSet()
                 view.perform_destroy(self.video)
 
@@ -82,7 +82,7 @@ class VideoDeleteTerminateTest(TestCase):
         self.video.save(update_fields=["current_job_id"])
 
         with patch("apps.support.video.services.batch_control.terminate_batch_job") as mock_terminate:
-            with patch("apps.support.video.views.video_views.enqueue_delete_r2"):
+            with patch("apps.infrastructure.storage.r2.delete_object_r2_video"), patch("apps.infrastructure.storage.r2.delete_prefix_r2_video"):
                 view = VideoViewSet()
                 view.perform_destroy(self.video)
 
@@ -101,7 +101,7 @@ class VideoDeleteTerminateTest(TestCase):
 
         with patch("apps.support.video.services.batch_control.terminate_batch_job") as mock_terminate:
             mock_terminate.side_effect = Exception("network error")
-            with patch("apps.support.video.views.video_views.enqueue_delete_r2"):
+            with patch("apps.infrastructure.storage.r2.delete_object_r2_video"), patch("apps.infrastructure.storage.r2.delete_prefix_r2_video"):
                 view = VideoViewSet()
                 view.perform_destroy(self.video)
 

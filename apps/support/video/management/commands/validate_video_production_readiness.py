@@ -17,8 +17,9 @@ REGION = getattr(settings, "AWS_DEFAULT_REGION", None) or __import__("os").envir
 QUEUE_NAME = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
 JOB_DEF_NAME = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
 CE_NAME = getattr(settings, "VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce")
-RECONCILE_RULE = "academy-reconcile-video-jobs"
-SCAN_STUCK_RULE = "academy-video-scan-stuck-rate"
+RECONCILE_RULE = getattr(settings, "VIDEO_RECONCILE_RULE_NAME", "academy-v1-reconcile-video-jobs")
+SCAN_STUCK_RULE = getattr(settings, "VIDEO_SCAN_STUCK_RULE_NAME", "academy-v1-video-scan-stuck-rate")
+OPS_JOB_DEFS = list(getattr(settings, "VIDEO_OPS_JOB_DEFS", ("academy-v1-video-ops-reconcile", "academy-v1-video-ops-scanstuck")))
 SSM_PARAM = "/academy/workers/env"
 ALARM_NAMES = [
     "academy-video-DeadJobs",
@@ -74,7 +75,6 @@ class Command(BaseCommand):
                 failures.append(f"Job definition check: {e}")
 
         # Ops job definitions ACTIVE (reconcile, scanstuck)
-        OPS_JOB_DEFS = ["academy-video-ops-reconcile", "academy-video-ops-scanstuck"]
         if batch:
             for od in OPS_JOB_DEFS:
                 try:

@@ -47,7 +47,6 @@ from ..models import (
 )
 from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSerializer
 from ..services.video_encoding import create_job_and_submit_batch
-from ..services.delete_r2_queue import enqueue_delete_r2
 from .playback_mixin import VideoPlaybackMixin
 
 # 로거 설정
@@ -160,8 +159,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
     def perform_destroy(self, instance):
         """
-        영상 삭제: 진행 중 Job에 대해 AWS Batch Terminate 호출 → Job DEAD 처리 → DB 삭제 → R2 정리는 SQS로 워커 위임.
-        Terminate 실패해도 삭제 요청은 성공. Worker는 job 없으면(삭제된 영상) 메시지 consume 후 스킵.
+        영상 삭제: 진행 중 Job에 대해 AWS Batch Terminate 호출 → Job DEAD 처리 → DB 삭제 → R2 동기 삭제.
+        Terminate 실패해도 삭제 요청은 성공. R2(raw+HLS)는 동기 삭제로 확실히 정리.
         """
         video = video_repo.get_video_by_pk_with_relations(instance.pk)
         tenant_id = None
@@ -203,16 +202,18 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             except Exception as e:
                 logger.warning("Video delete: job DEAD mark failed video_id=%s: %s", video_id, e)
         super().perform_destroy(instance)
-        if tenant_id is not None and hls_prefix:
+        # R2 동기 삭제 (SQS/Lambda 없이 확실한 정리)
+        if file_key or hls_prefix:
             try:
-                enqueue_delete_r2(
-                    tenant_id=tenant_id,
-                    video_id=video_id,
-                    file_key=file_key,
-                    hls_prefix=hls_prefix,
-                )
+                from apps.infrastructure.storage.r2 import delete_object_r2_video, delete_prefix_r2_video
+                if file_key:
+                    delete_object_r2_video(key=file_key)
+                    logger.info("Video delete: R2 raw deleted video_id=%s key=%s", video_id, file_key[:80])
+                if hls_prefix:
+                    n = delete_prefix_r2_video(prefix=hls_prefix)
+                    logger.info("Video delete: R2 HLS deleted video_id=%s prefix=%s count=%s", video_id, hls_prefix, n)
             except Exception as e:
-                logger.warning("R2 delete job enqueue failed video_id=%s: %s", video_id, e)
+                logger.warning("R2 delete failed video_id=%s: %s", video_id, e)
 
     # ==================================================
     # upload/init

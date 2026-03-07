@@ -57,25 +57,36 @@ try {
     }
 } catch { Write-Warning "  $_" }
 
-# 2) Orphan Security Groups (0 ENI attached)
-$orphanSgs = @(
-    @{ Id = "sg-0f8d581baa7bc39c9"; Name = "academy-v1-vpce-sg" },
-    @{ Id = "sg-0051cc8f79c04b058"; Name = "academy-api-sg" },
-    @{ Id = "sg-02692600fbf8e26f7"; Name = "academy-worker-sg" }
-)
+# 2) Orphan Security Groups (0 ENI, SSOT 외 legacy 이름)
+$keepSgNames = @("academy-v1-sg-app", "academy-v1-sg-batch", "academy-v1-sg-data", "default", "academy-rds", "academy-redis-sg")
+$legacySgNames = @("academy-api-sg", "academy-worker-sg")
+$vpcId = "vpc-0831a2484f9b114c2"
+$allSgs = (Invoke-AwsJson @("ec2", "describe-security-groups", "--filters", "Name=vpc-id,Values=$vpcId", "--region", $R)).SecurityGroups
+$orphanSgs = @()
+foreach ($sg in $allSgs) {
+    if ($sg.GroupName -in $keepSgNames) { continue }
+    if ($sg.GroupName -in $legacySgNames) {
+        $eniRes = Invoke-AwsJson @("ec2", "describe-network-interfaces", "--region", $R, "--filters", "Name=group-id,Values=$($sg.GroupId)")
+        $eniCount = if ($eniRes -and $eniRes.NetworkInterfaces) { $eniRes.NetworkInterfaces.Count } else { 0 }
+        if ($eniCount -eq 0) { $orphanSgs += @{ Id = $sg.GroupId; Name = $sg.GroupName } }
+    }
+}
+# academy-v1-vpce-sg: 0 ENI인 경우만 (중복/미사용). 4 ENI 있으면 스킵
+$vpceSg = $allSgs | Where-Object { $_.GroupName -eq "academy-v1-vpce-sg" } | Select-Object -First 1
+if ($vpceSg) {
+    $vpceEniRes = Invoke-AwsJson @("ec2", "describe-network-interfaces", "--region", $R, "--filters", "Name=group-id,Values=$($vpceSg.GroupId)")
+    $vpceEni = if ($vpceEniRes -and $vpceEniRes.NetworkInterfaces) { $vpceEniRes.NetworkInterfaces.Count } else { 0 }
+    if ($vpceEni -eq 0) { $orphanSgs += @{ Id = $vpceSg.GroupId; Name = $vpceSg.GroupName } }
+}
 
 Write-Host "`n[2] Orphan Security Groups (0 ENI)" -ForegroundColor Cyan
+if ($orphanSgs.Count -eq 0) { Write-Host "  None found" -ForegroundColor DarkGray }
 foreach ($sg in $orphanSgs) {
     try {
-        $count = (Invoke-AwsJson @("ec2", "describe-network-interfaces", "--region", $R, "--filters", "Name=group-id,Values=$($sg.Id)")).NetworkInterfaces.Count
-        if ($count -eq 0) {
-            Write-Host "  $($sg.Name) ($($sg.Id)) - 0 ENI" -ForegroundColor Gray
-            if ($doApply) {
-                Invoke-Aws @("ec2", "delete-security-group", "--group-id", $sg.Id, "--region", $R)
-                Write-Host "    Deleted: $($sg.Name)" -ForegroundColor Green
-            }
-        } else {
-            Write-Host "  $($sg.Name) - SKIP ($count ENI attached)" -ForegroundColor Yellow
+        Write-Host "  $($sg.Name) ($($sg.Id)) - 0 ENI" -ForegroundColor Gray
+        if ($doApply) {
+            Invoke-Aws @("ec2", "delete-security-group", "--group-id", $sg.Id, "--region", $R)
+            Write-Host "    Deleted: $($sg.Name)" -ForegroundColor Green
         }
     } catch { Write-Warning "  $($sg.Name): $_" }
 }

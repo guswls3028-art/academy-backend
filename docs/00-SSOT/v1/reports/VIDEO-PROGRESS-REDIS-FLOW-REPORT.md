@@ -79,6 +79,7 @@ aws ssm get-parameter --name /academy/workers/env --with-decryption --query "Par
 - API도 `get_redis_client()` 사용 (REDIS_HOST from settings).
 - API와 Batch worker가 **동일 Redis 인스턴스**를 가리켜야 progress 조회 가능.
 - API env: `/academy/api/env` 또는 EC2 `/opt/api.env`에 REDIS_HOST 포함.
+- **Redis SG:** academy-redis-sg에 **Batch SG + App SG** 6379 인바운드 필수 (IaC: redis.ps1 Ensure-RedisSg6379FromWorkersAndApi).
 
 ### 4.4 타이밍 (Cold Start)
 
@@ -124,6 +125,19 @@ Redis miss 시 다음 fallback 적용 (`progress_views.py`):
 ## 7. 권장 조치
 
 1. **SSM workers env 확인:** REDIS_HOST, REDIS_PORT 존재 여부.
-2. **Batch 로그 확인:** Redis 연결/record_progress 관련 로그.
-3. **API Redis 연결 확인:** API 서버에서 Redis ping 가능 여부.
-4. **네트워크 검증:** Batch CE → ElastiCache 6379 연결 테스트.
+2. **Redis SG 확인:** academy-redis-sg에 Batch SG, App SG 6379 인바운드.
+3. **Batch 로그 확인:** CloudWatch `/aws/batch/academy-video-worker` → `"Redis connected"`.
+4. **API 재시작:** SG 변경 후 API 컨테이너 재시작 필수 (Redis 클라이언트는 연결 실패 시 프로세스 수명 동안 재시도 안 함).
+   - `pwsh scripts/v1/restart-api.ps1 -AwsProfile default`
+5. **검증:** 영상 업로드 → 인코딩 중 프로그래스바 증가 확인.
+
+---
+
+## 8. 검증 체크리스트 (2025-03 적용)
+
+| 항목 | 확인 방법 |
+|------|-----------|
+| Redis SG Batch | `aws ec2 describe-security-groups --group-ids sg-0f4069135b6215cad --query "SecurityGroups[0].IpPermissions"` → Batch SG 6379 |
+| Redis SG App | 위와 동일 → App SG 6379 |
+| API 재시작 | SSM Run Command `docker restart academy-api` 또는 `restart-api.ps1` |
+| 배포 검증 | `pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default` |

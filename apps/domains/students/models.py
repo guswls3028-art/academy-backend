@@ -201,3 +201,57 @@ class StudentTag(models.Model):
 
     def __str__(self):
         return f"{self.student.name} - {self.tag.name}"
+
+
+class StudentRegistrationRequest(TimestampModel):
+    """
+    학생 회원가입 신청 (로그인 페이지 셀프 등록).
+    선생이 승인하면 Student + User + TenantMembership 생성 후 status=approved.
+    """
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    STATUS_CHOICES = [(PENDING, "대기"), (APPROVED, "승인됨"), (REJECTED, "거절")]
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="student_registration_requests",
+        db_index=True,
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=PENDING,
+        db_index=True,
+    )
+
+    name = models.CharField(max_length=50)
+    initial_password = models.CharField(max_length=128)  # 저장 후 승인 시 사용
+    parent_phone = models.CharField(max_length=20)
+    phone = models.CharField(max_length=20, null=True, blank=True)
+
+    school_type = models.CharField(max_length=10, default="HIGH")
+    high_school = models.CharField(max_length=100, null=True, blank=True)
+    middle_school = models.CharField(max_length=100, null=True, blank=True)
+    high_school_class = models.CharField(max_length=100, null=True, blank=True)
+    major = models.CharField(max_length=50, null=True, blank=True)
+    grade = models.PositiveSmallIntegerField(null=True, blank=True)
+    gender = models.CharField(max_length=1, null=True, blank=True)
+    memo = models.TextField(null=True, blank=True)
+
+    # 승인 시 생성된 학생 (승인 후에만 설정)
+    student = models.OneToOneField(
+        Student,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="registration_request",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["tenant", "status"])]
+
+    def __str__(self):
+        return f"{self.name} ({self.get_status_display()})"

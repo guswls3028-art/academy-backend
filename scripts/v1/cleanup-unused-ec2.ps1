@@ -32,8 +32,9 @@ $KeepASGNames = @(
     $script:MessagingASGName,
     $script:AiASGName
 )
-# Batch Ops CE가 만드는 ASG (이름이 academy-v1-video-ops-ce-asg- 로 시작)
+# Batch CE가 만드는 ASG (academy-v1-video-ops-ce-asg-*, academy-v1-video-batch-ce-asg-*)
 $BatchOpsASGPrefix = "academy-v1-video-ops-ce-asg-"
+$BatchVideoASGPrefix = "academy-v1-video-batch-ce-asg-"
 
 function Get-UsedInstanceIds {
     $used = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -41,7 +42,7 @@ function Get-UsedInstanceIds {
     if ($asgList -and $asgList.AutoScalingGroups) {
         foreach ($asg in $asgList.AutoScalingGroups) {
             $name = $asg.AutoScalingGroupName
-            $keep = ($name -in $KeepASGNames) -or ($name -like "${BatchOpsASGPrefix}*")
+            $keep = ($name -in $KeepASGNames) -or ($name -like "${BatchOpsASGPrefix}*") -or ($name -like "${BatchVideoASGPrefix}*")
             if (-not $keep) { continue }
             foreach ($inst in $asg.Instances) {
                 [void]$used.Add($inst.InstanceId)

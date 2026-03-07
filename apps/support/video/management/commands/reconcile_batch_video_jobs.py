@@ -7,7 +7,7 @@ Batch → DB 정합성 복구 (reconcile). Production-grade: Single-flight, cons
 - RUNNING 상태를 RETRY_WAIT로 덮어쓰지 않음. SUCCEEDED 상태는 절대 변경하지 않음.
 - READY 전이는 worker(job_complete)만 수행. Reconcile은 READY를 만들지 않음 (stuck detection only).
 
-Run via EventBridge → academy-video-ops-queue (rate 5 minutes).
+Run via EventBridge → academy-v1-video-ops-queue (rate 1 hour).
 
 옵션:
   --dry-run: DB 변경 없이 로그만

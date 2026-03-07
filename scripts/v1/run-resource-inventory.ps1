@@ -42,7 +42,7 @@ $KeepSGIds = @(
     $script:SecurityGroupData
 ) | Where-Object { $_ -and $_.Trim() -ne "" }
 $BatchOpsASGPrefix = "academy-v1-video-ops-ce-asg-"
-$BatchStandardASGPrefix = "academy-v1-video-batch-ce"  # Batch managed ASG name may contain this
+$BatchVideoASGPrefix = "academy-v1-video-batch-ce-asg-"
 
 Write-Host ""
 Write-Host ('=== V1 AWS Resource Inventory (region ' + $R + ') ===') -ForegroundColor Cyan
@@ -65,7 +65,7 @@ $asgList = @()
 $asgRes = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--region", $R, "--output", "json")
 if ($asgRes -and $asgRes.AutoScalingGroups) {
     foreach ($a in $asgRes.AutoScalingGroups) {
-        $match = $a.AutoScalingGroupName -in $KeepASG -or $a.AutoScalingGroupName -like "${BatchOpsASGPrefix}*"
+        $match = $a.AutoScalingGroupName -in $KeepASG -or $a.AutoScalingGroupName -like "${BatchOpsASGPrefix}*" -or $a.AutoScalingGroupName -like "${BatchVideoASGPrefix}*"
         $asgList += [PSCustomObject]@{ Name = $a.AutoScalingGroupName; Desired = $a.DesiredCapacity; Min = $a.MinSize; Max = $a.MaxSize; SSOT = $(if ($match) { "KEEP" } else { "LEGACY_CANDIDATE" }) }
     }
 }
