@@ -47,7 +47,7 @@ class AnswerKeyViewSet(ModelViewSet):
             return qs.none()
         try:
             template = resolve_template_exam(exam)
-        except (ValidationError, Exception):
+        except (Http404, ValidationError):
             return qs.none()
         return qs.filter(exam=template)
 
