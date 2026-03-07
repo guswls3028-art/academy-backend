@@ -57,6 +57,17 @@ class TenantMiddleware:
             if host:
                 payload["host"] = host.split(":")[0].strip().lower()
             return JsonResponse(payload, status=e.http_status)
+        except Exception as e:
+            logger.exception("Tenant resolution unexpected error: %s", e)
+            host = getattr(request, "META", {}).get("HTTP_HOST", "")
+            payload = {
+                "detail": "tenant resolution failed",
+                "code": "server_error",
+                "message": str(e),
+            }
+            if host:
+                payload["host"] = host.split(":")[0].strip().lower()
+            return JsonResponse(payload, status=500)
 
         try:
             if tenant is not None:
