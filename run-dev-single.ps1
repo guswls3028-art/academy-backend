@@ -1,40 +1,67 @@
 # ===============================
-# HakwonPlus DEV - Single Terminal
+# HakwonPlus DEV - Single Terminal (Academy Local Dev)
 # ===============================
-# 백엔드 + 프론트 + 터널을 한 터미널에서 Job으로 실행 (출력은 섞여서 나옴)
+# 백엔드 + 프론트(+ 터널) 한 터미널에서 Job으로 실행
 
 $ErrorActionPreference = "Continue"
 
-$AcademyRoot = "C:\academy"
-$FrontRoot  = "C:\academyfront"
+# 스크립트 위치 기준 경로 (바탕화면 바로가기에서도 동작)
+$AcademyRoot = $PSScriptRoot
+$FrontRoot   = Join-Path (Split-Path $PSScriptRoot -Parent) "academyfront"
 
-# 백엔드 Job (stderr -> stdout 합쳐서 RemoteException/NativeCommandError 방지)
+if (-not (Test-Path $FrontRoot)) {
+  Write-Host "프론트 폴더를 찾을 수 없습니다: $FrontRoot" -ForegroundColor Red
+  Read-Host 'Press Enter to close'
+  exit 1
+}
+
+$Host.UI.RawUI.WindowTitle = "Academy Local Dev (Backend + Frontend)"
+
+# 백엔드: venv python 직접 사용 (Job 내에서 Activate 불안정 방지)
+$pythonExe = Join-Path $AcademyRoot "venv\Scripts\python.exe"
+if (-not (Test-Path $pythonExe)) { $pythonExe = "python" }
+
+# 백엔드 Job
 $backendJob = Start-Job -Name Backend -ScriptBlock {
-  Set-Location $using:AcademyRoot
-  & "$using:AcademyRoot\venv\Scripts\Activate.ps1"
-  python manage.py runserver 0.0.0.0:8000 2>&1
-}
+  param($root, $py)
+  Set-Location $root
+  if ($py -ne "python") { & $py manage.py runserver 0.0.0.0:8000 2>&1 }
+  else { python manage.py runserver 0.0.0.0:8000 2>&1 }
+} -ArgumentList $AcademyRoot, $pythonExe
 
-# 프론트엔드 Job (다른 워킹디렉터리)
+# 프론트엔드 Job
 $frontendJob = Start-Job -Name Frontend -ScriptBlock {
-  Set-Location $using:FrontRoot
+  param($root)
+  Set-Location $root
   pnpm dev -- --host 0.0.0.0 --port 5174 2>&1
+  if ($LASTEXITCODE -ne 0) { npm run dev -- --host 0.0.0.0 --port 5174 2>&1 }
+} -ArgumentList $FrontRoot
+
+# 터널 Job (cloudflared 없으면 스킵)
+$tunnelJob = $null
+if (Get-Command cloudflared -ErrorAction SilentlyContinue) {
+  $tunnelJob = Start-Job -Name Tunnel -ScriptBlock { cloudflared tunnel run dev-pc 2>&1 }
 }
 
-# 터널 Job
-$tunnelJob = Start-Job -Name Tunnel -ScriptBlock {
-  cloudflared tunnel run dev-pc 2>&1
-}
-
-Write-Host 'DEV started in one terminal (Backend + Frontend + Tunnel). Output mixed below. Ctrl+C to stop all.' -ForegroundColor Green
+Write-Host '========================================' -ForegroundColor Cyan
+Write-Host '  Academy Local Dev (Backend + Frontend)' -ForegroundColor Cyan
+Write-Host '========================================' -ForegroundColor Cyan
 Write-Host ''
+Write-Host 'Backend:  http://localhost:8000' -ForegroundColor Yellow
+Write-Host 'Frontend: http://localhost:5174  (9999: /login/9999)' -ForegroundColor Yellow
+Write-Host ''
+Write-Host 'Ctrl+C 로 모두 종료' -ForegroundColor Gray
+Write-Host ''
+
+$jobs = @($backendJob, $frontendJob)
+if ($tunnelJob) { $jobs += $tunnelJob }
 
 try {
   while ($true) {
-    foreach ($job in @($backendJob, $frontendJob, $tunnelJob)) {
-      $out = Receive-Job -Job $job
+    foreach ($job in $jobs) {
+      $out = Receive-Job -Job $job -ErrorAction SilentlyContinue
       if ($out) {
-        $tag = switch ($job.Name) { Backend { 'B' } Frontend { 'F' } Tunnel { 'T' } }
+        $tag = switch ($job.Name) { Backend { 'B' } Frontend { 'F' } Tunnel { 'T' } default { '?' } }
         foreach ($line in ($out -split "`n")) {
           if ($line.Trim() -ne '') { Write-Host "[$tag] $line" }
         }
@@ -43,14 +70,14 @@ try {
         Write-Host "[$($job.Name)] Job failed." -ForegroundColor Red
       }
     }
-    $running = @($backendJob, $frontendJob, $tunnelJob) | Where-Object { $_.State -eq 'Running' }
+    $running = $jobs | Where-Object { $_.State -eq 'Running' }
     if ($running.Count -eq 0) { break }
     Start-Sleep -Milliseconds 500
   }
 }
 finally {
-  Stop-Job -Job $backendJob, $frontendJob, $tunnelJob -ErrorAction SilentlyContinue
-  Remove-Job -Job $backendJob, $frontendJob, $tunnelJob -Force -ErrorAction SilentlyContinue
+  Stop-Job -Job $jobs -ErrorAction SilentlyContinue
+  Remove-Job -Job $jobs -Force -ErrorAction SilentlyContinue
   Write-Host 'All jobs stopped.' -ForegroundColor Yellow
 }
 
