@@ -105,20 +105,18 @@ function Invoke-RemoteCommand {
 
 switch ($Action) {
     "On" {
-        $cmd = $ensureRepoScript + "cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/auto_deploy_cron_on.sh"
-        Invoke-RemoteCommand -Command $cmd -Label "자동 배포 ON (2분마다 git 기준 배포 + 구이미지 제거)"
+        Invoke-RemoteCommand -Commands @($ensureAndFetchCmd, "cd $repoPath && bash scripts/auto_deploy_cron_on.sh") -Label "자동 배포 ON (2분마다 git 기준 배포 + 구이미지 제거)"
     }
     "Off" {
         $cmd = "test -d $repoPath || { echo 'No repo at $repoPath (skip).'; exit 0; }; cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/auto_deploy_cron_off.sh"
-        Invoke-RemoteCommand -Command $cmd -Label "자동 배포 OFF"
+        Invoke-RemoteCommand -Commands @($cmd) -Label "자동 배포 OFF"
     }
     "Status" {
         $cmd = "crontab -l 2>/dev/null || echo 'No crontab'"
-        Invoke-RemoteCommand -Command $cmd -Label "crontab 상태"
+        Invoke-RemoteCommand -Commands @($cmd) -Label "crontab 상태"
     }
     "Deploy" {
-        $cmd = $ensureRepoScript + "cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/deploy_api_on_server.sh"
-        Invoke-RemoteCommand -Command $cmd -Label "수동 배포 1회 (git pull + build + 구이미지 제거 + 재시작)"
+        Invoke-RemoteCommand -Commands @($ensureAndFetchCmd, "cd $repoPath && bash scripts/deploy_api_on_server.sh") -Label "수동 배포 1회 (git pull + build + 구이미지 제거 + 재시작)"
     }
 }
 
