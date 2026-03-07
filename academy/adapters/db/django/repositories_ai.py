@@ -163,6 +163,20 @@ class DjangoAIJobRepository:
             if res.payload != result_payload:
                 res.payload = result_payload
                 res.save(update_fields=["payload"])
+        # ✅ 완료 시 Redis에 DONE 기록 (진행 상황 위젯 폴링용)
+        try:
+            from apps.domains.ai.redis_status_cache import cache_job_status
+            cache_job_status(
+                tenant_id=str(job.tenant_id or ""),
+                job_id=job.job_id,
+                status="DONE",
+                job_type=job.job_type,
+                result=result_payload,
+                ttl=None,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to cache DONE in Redis: %s", e)
         return True
 
     def mark_failed(
