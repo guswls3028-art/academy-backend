@@ -2,9 +2,9 @@
 # API 서버 자동 배포 원격 제어 (SSM Send-Command)
 # ==============================================================================
 # API ASG 인스턴스에서 2분마다 git 기준 자동 배포 cron ON/OFF/상태 확인/수동 배포 1회
-# 레포가 없으면: -RepoUrl 로 한 번 클론 후 자동배포 ON 가능.
+# RepoUrl 미지정 시 로컬 academy 리포의 git remote origin 사용 → 레포 없으면 자동 클론 후 진행.
 # 사용:
-#   pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action On -RepoUrl https://github.com/OWNER/academy.git -AwsProfile default
+#   pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action On   -AwsProfile default
 #   pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Off  -AwsProfile default
 #   pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Status -AwsProfile default
 #   pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Deploy -AwsProfile default
@@ -29,6 +29,18 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
 . (Join-Path $PSScriptRoot "core\aws.ps1")
 . (Join-Path $PSScriptRoot "resources\api.ps1")
 $null = Load-SSOT -Env "prod"
+
+# RepoUrl 미지정 시 로컬 academy 리포 origin URL 사용 (On/Deploy 시 레포 없으면 클론에 사용)
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+if (-not $RepoUrl -and ($Action -eq "On" -or $Action -eq "Deploy")) {
+    try {
+        $origin = & git -C $repoRoot remote get-url origin 2>$null
+        if ($origin -and $origin.Trim()) { $RepoUrl = $origin.Trim() }
+    } catch { }
+}
+if (-not $RepoUrl -and ($Action -eq "On" -or $Action -eq "Deploy")) {
+    $RepoUrl = "https://github.com/guswls3028-art/academy-backend.git"
+}
 
 $ids = @(Get-APIASGInstanceIds)
 if (-not $ids -or $ids.Count -eq 0) {
