@@ -51,9 +51,11 @@ if (-not $ids -or $ids.Count -eq 0) {
 $region = $script:Region
 $repoPath = $RepoPath.TrimEnd('/')
 
-# SSM 전달 시 멀티라인/따옴표 이스케이프 문제 회피: 스크립트를 base64로 인코딩 후 원격에서 디코딩 실행
-$repoUrlEscaped = $RepoUrl -replace "'", "'\''"
-$remoteScript = @"
+# On/Deploy: SSM 전달 시 멀티라인/따옴표 이스케이프 문제 회피 → 스크립트를 base64로 인코딩 후 원격에서 디코딩 실행
+$ensureAndFetchCmd = $null
+if ($Action -eq "On" -or $Action -eq "Deploy") {
+    $repoUrlEscaped = $RepoUrl -replace "'", "'\''"
+    $remoteScript = @"
 set -e
 REPO_PATH='$repoPath'
 REPO_URL='$repoUrlEscaped'
@@ -66,10 +68,10 @@ if [ -n "`$REPO_URL" ] && [ ! -d "`$REPO_PATH/.git" ]; then
 fi
 cd "`$REPO_PATH" && git fetch origin main && git reset --hard origin/main
 "@
-# Unix LF만 사용 (CRLF 시 원격 sh에서 set -e 등 파싱 오류)
-$remoteScript = $remoteScript -replace "`r`n", "`n" -replace "`r", "`n"
-$scriptB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript))
-$ensureAndFetchCmd = "echo $scriptB64 | base64 -d | bash"
+    $remoteScript = $remoteScript -replace "`r`n", "`n" -replace "`r", "`n"
+    $scriptB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript))
+    $ensureAndFetchCmd = "echo $scriptB64 | base64 -d | bash"
+}
 
 function Invoke-RemoteCommand {
     param([string[]]$Commands, [string]$Label)
