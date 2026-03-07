@@ -86,7 +86,7 @@ class SessionViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """
-        ✅ created_by 자동 기록 (운영/감사 기준)
+        ✅ created_by 자동 기록 (운영/감사 기준). 미인증 시 None
         ✅ 멀티테넌트: tenant 없으면 400 (RDS→Aurora 격리 준비)
         ✅ 동일 날짜/시간/장소 중복 생성 시 400 (UniqueConstraint)
         """
@@ -95,10 +95,11 @@ class SessionViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError(
                 {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
             )
+        created_by = self.request.user if self.request.user.is_authenticated else None
         try:
             serializer.save(
                 tenant=tenant,
-                created_by=self.request.user,
+                created_by=created_by,
             )
         except IntegrityError as e:
             if "uniq_clinic_session_per_tenant_time_location" in str(e):
