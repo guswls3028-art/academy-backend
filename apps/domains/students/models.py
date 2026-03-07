@@ -241,6 +241,10 @@ class StudentRegistrationRequest(TimestampModel):
     gender = models.CharField(max_length=1, null=True, blank=True)
     memo = models.TextField(null=True, blank=True)
     address = models.CharField(max_length=255, null=True, blank=True, help_text="주소 (선택)")
+    origin_middle_school = models.CharField(
+        max_length=100, null=True, blank=True,
+        help_text="출신중학교 (고등학생 선택 입력)",
+    )
 
     # 승인 시 생성된 학생 (승인 후에만 설정)
     student = models.OneToOneField(
