@@ -56,6 +56,14 @@ TENANT_DEFAULT_CODE = None
 TENANT_STRICT = None
 TENANT_ALLOW_INACTIVE = None
 
+# Host가 여기 포함될 때만 X-Tenant-Code 헤더로 테넌트 결정 (그 외는 Host → TenantDomain만).
+# 로컬 개발: localhost/127.0.0.1 추가 시 로그인과 /core/me/가 동일 테넌트로 동작 (403 방지).
+TENANT_HEADER_CODE_ALLOWED_HOSTS = (
+    "api.hakwonplus.com",
+    "localhost",
+    "127.0.0.1",
+)
+
 # ==================================================
 # INTERNAL / WORKER (TENANT-FREE ZONE) 🔒
 # - 아래 경로는 TenantMiddleware 를 반드시 bypass 해야 함.
