@@ -51,6 +51,15 @@ class PostViewSet(viewsets.ModelViewSet):
             qs = qs.filter(created_by=request_student)
         return qs
 
+    def list(self, request, *args, **kwargs):
+        # 학생 "내 질문" 목록: node_id 없이 호출 시 페이지네이션 없이 전체 반환 (학생 앱에서 한 번에 조회)
+        request_student = get_request_student(request)
+        if request_student is not None and request.query_params.get("node_id") in (None, ""):
+            qs = self.filter_queryset(self.get_queryset())
+            serializer = self.get_serializer(qs, many=True)
+            return Response(serializer.data)
+        return super().list(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
