@@ -47,6 +47,7 @@ from apps.domains.results.serializers.session_scores import SessionScoreRowSeria
 
 from apps.domains.lectures.models import Session
 from apps.domains.progress.models import ClinicLink
+from apps.domains.clinic.models import SessionParticipant
 
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.homework_results.models import Homework
