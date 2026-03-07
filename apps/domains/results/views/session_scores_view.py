@@ -8,6 +8,10 @@ GET /api/v1/results/admin/sessions/<session_id>/scores/
 - 성적 탭 메인 테이블에서 학생별 시험/과제 요약 + 편집 상태 표시
 - results + homework_results + progress 데이터를 "조합"만 한다.
 
+✅ 삭제된 학생(유령 학생) 제외
+- student.deleted_at IS NOT NULL 인 학생은 수강/성적 목록에서 제외 (Enrollment 필터).
+- 수강·출결·클리닉 파이프라인과 동일 정합성 유지.
+
 🚫 금지
 - 점수 계산/정책 생성
 - homework percent / cutline 계산
