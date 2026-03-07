@@ -14,6 +14,7 @@ from apps.domains.students.models import Student
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Session as LectureSession
 from apps.domains.progress.models import ClinicLink
+from apps.domains.clinic.color_utils import get_effective_clinic_colors
 
 
 class StudentClinicIdcardView(APIView):
