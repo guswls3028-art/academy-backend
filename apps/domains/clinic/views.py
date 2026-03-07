@@ -287,6 +287,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             # 학생 신청은 기본적으로 pending 상태
             if not requested_status or requested_status == SessionParticipant.Status.BOOKED:
                 requested_status = SessionParticipant.Status.PENDING
+            # 자동 승인 설정 시 바로 booked로 저장
+            if getattr(tenant, "clinic_auto_approve_booking", False):
+                requested_status = SessionParticipant.Status.BOOKED
 
         if not student:
             return Response(
@@ -487,6 +490,7 @@ class ClinicSettingsView(APIView):
             return Response({"detail": "tenant가 필요합니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         use_daily_random = getattr(tenant, "clinic_use_daily_random", False)
+        auto_approve_booking = getattr(tenant, "clinic_auto_approve_booking", False)
         saved = getattr(tenant, "clinic_idcard_colors", None)
         if not saved or not isinstance(saved, list) or len(saved) < 3:
             saved = ["#ef4444", "#3b82f6", "#22c55e"]
@@ -496,6 +500,7 @@ class ClinicSettingsView(APIView):
         return Response({
             "colors": colors[:3],
             "use_daily_random": use_daily_random,
+            "auto_approve_booking": auto_approve_booking,
             "saved_colors": saved[:3],
         })
 
