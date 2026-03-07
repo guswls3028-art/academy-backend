@@ -1,12 +1,15 @@
 # PATH: apps/core/middleware/tenant.py
 from __future__ import annotations
 
+import logging
+
 from django.http import JsonResponse
 
 from apps.core.tenant.context import set_current_tenant, clear_current_tenant
 from apps.core.tenant.resolver import resolve_tenant_from_request
 from apps.core.tenant.exceptions import TenantResolutionError
 
+logger = logging.getLogger(__name__)
 
 # 테넌트 해석 없이 통과시키는 경로 (ALB/컨테이너 health check용)
 BYPASS_PATHS = {"/health", "/health/", "/healthz", "/healthz/", "/readyz", "/readyz/"}
