@@ -60,10 +60,12 @@ set -e
 REPO_PATH='$repoPath'
 REPO_URL='$repoUrlEscaped'
 command -v git >/dev/null 2>&1 || (yum install -y git 2>/dev/null || dnf install -y git 2>/dev/null || true)
+command -v crontab >/dev/null 2>&1 || (yum install -y cronie 2>/dev/null && systemctl start crond 2>/dev/null; dnf install -y cronie 2>/dev/null && systemctl start crond 2>/dev/null; true)
 if [ -n "`$REPO_URL" ] && [ ! -d "`$REPO_PATH/.git" ]; then
   echo 'Cloning repo...'
   mkdir -p "`$(dirname "`$REPO_PATH")"
   git clone --depth 1 -b main "`$REPO_URL" "`$REPO_PATH"
+  git config --global --add safe.directory "`$REPO_PATH"
   chown -R ec2-user:ec2-user "`$REPO_PATH" 2>/dev/null || true
   echo 'Clone done.'
 fi
