@@ -3,6 +3,8 @@
 **생성일:** 2026-03-07  
 **범위:** API 서버, AI 워커, Messaging 워커, Video Batch, Video Ops, 문서·스크립트
 
+> **도메인별 API 경로 정합성:** 엔드포인트 ↔ 프론트 호출 매칭 검사는 별도 문서 참고 → [DOMAIN-API-CONSISTENCY-REPORT.md](./DOMAIN-API-CONSISTENCY-REPORT.md)
+
 ## 1. 수행한 정합성 조치
 
 ### 1.1 SSOT (params.yaml) ↔ 스크립트 파서
