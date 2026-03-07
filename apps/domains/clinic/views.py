@@ -164,6 +164,7 @@ class SessionViewSet(viewsets.ModelViewSet):
                 "participant_count": s.participant_count,
                 "booked_count": s.booked_count,
                 "no_show_count": s.no_show_count,
+                "max_participants": getattr(s, "max_participants", None),
             }
             for s in qs
         ]
