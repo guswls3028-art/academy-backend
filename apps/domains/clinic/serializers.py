@@ -6,8 +6,8 @@ from .models import Session, SessionParticipant, Test, Submission
 
 
 class ClinicSessionSerializer(serializers.ModelSerializer):
-    # (선택) 운영 페이지에서 잔여 좌석 계산하려면 participant_count 내려주면 편함
-    participant_count = serializers.IntegerField(read_only=True)
+    # (선택) 운영 페이지에서 잔여 좌석 계산. create 직후 인스턴스에는 annotate 없음 → getattr로 0 처리
+    participant_count = serializers.SerializerMethodField()
 
     # ✅ tenant, created_by는 서버에서 request 기준으로 설정 (생성 시 클라이언트 제출 불필요)
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)
@@ -28,6 +28,9 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Session
         fields = "__all__"
+
+    def get_participant_count(self, obj: Session):
+        return getattr(obj, "participant_count", 0)
 
     def get_end_time(self, obj: Session):
         if not obj.start_time or not obj.duration_minutes:
