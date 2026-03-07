@@ -44,7 +44,12 @@ class PostViewSet(viewsets.ModelViewSet):
             node_id = None
         if node_id is not None:
             return get_posts_for_node(tenant, node_id, include_inherited=True)
-        return get_all_posts_for_tenant(tenant)
+        qs = get_all_posts_for_tenant(tenant)
+        # 학생 요청 시 node_id 없으면 본인 작성 글만 반환 (학생 앱 "내 질문" 목록)
+        request_student = get_request_student(self.request)
+        if request_student is not None:
+            qs = qs.filter(created_by=request_student)
+        return qs
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
