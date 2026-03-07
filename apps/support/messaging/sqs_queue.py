@@ -34,8 +34,9 @@ class MessagingSQSQueue:
     }
     """
 
-    QUEUE_NAME = "academy-messaging-jobs"
-    DLQ_NAME = "academy-messaging-jobs-dlq"
+    # V1 SSOT: academy-v1-messaging-queue
+    QUEUE_NAME = "academy-v1-messaging-queue"
+    DLQ_NAME = "academy-v1-messaging-queue-dlq"
 
     def __init__(self):
         self.queue_client = get_queue_client()

@@ -48,12 +48,13 @@ class AISQSQueue:
     }
     """
 
-    QUEUE_NAME_LITE = "academy-ai-jobs-lite"
-    QUEUE_NAME_BASIC = "academy-ai-jobs-basic"
-    QUEUE_NAME_PREMIUM = "academy-ai-jobs-premium"
-    DLQ_NAME_LITE = "academy-ai-jobs-lite-dlq"
-    DLQ_NAME_BASIC = "academy-ai-jobs-basic-dlq"
-    DLQ_NAME_PREMIUM = "academy-ai-jobs-premium-dlq"
+    # V1 SSOT: 단일 큐 academy-v1-ai-queue (tier 무관)
+    QUEUE_NAME_LITE = "academy-v1-ai-queue"
+    QUEUE_NAME_BASIC = "academy-v1-ai-queue"
+    QUEUE_NAME_PREMIUM = "academy-v1-ai-queue"
+    DLQ_NAME_LITE = "academy-v1-ai-queue-dlq"
+    DLQ_NAME_BASIC = "academy-v1-ai-queue-dlq"
+    DLQ_NAME_PREMIUM = "academy-v1-ai-queue-dlq"
     
     MAX_RECEIVE_COUNT = 3  # DLQ로 전송 전 최대 재시도 횟수
     

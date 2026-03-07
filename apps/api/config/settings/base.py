@@ -349,11 +349,21 @@ SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
 # delete_r2 전용 SQS (Encoding = Batch ONLY)
 VIDEO_SQS_QUEUE_DELETE_R2 = os.getenv("VIDEO_SQS_QUEUE_DELETE_R2", "academy-video-delete-r2")
 
-# AWS Batch Video Encoding (SSOT: DB VideoTranscodeJob). 2-tier: standard / long (3h+).
+# AWS Batch Video Encoding (SSOT: docs/00-SSOT/v1/params.yaml). 2-tier: standard / long (3h+).
 VIDEO_BATCH_JOB_QUEUE = os.getenv("VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
 VIDEO_BATCH_JOB_DEFINITION = os.getenv("VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
 VIDEO_BATCH_JOB_QUEUE_LONG = os.getenv("VIDEO_BATCH_JOB_QUEUE_LONG", "academy-v1-video-batch-long-queue")
 VIDEO_BATCH_JOB_DEFINITION_LONG = os.getenv("VIDEO_BATCH_JOB_DEFINITION_LONG", "academy-v1-video-batch-long-jobdef")
+VIDEO_BATCH_COMPUTE_ENV_NAME = os.getenv("VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce")
+# EventBridge + Ops JobDef (reconcile, scanstuck)
+VIDEO_RECONCILE_RULE_NAME = os.getenv("VIDEO_RECONCILE_RULE_NAME", "academy-v1-reconcile-video-jobs")
+VIDEO_SCAN_STUCK_RULE_NAME = os.getenv("VIDEO_SCAN_STUCK_RULE_NAME", "academy-v1-video-scan-stuck-rate")
+VIDEO_OPS_JOB_DEF_RECONCILE = os.getenv("VIDEO_OPS_JOB_DEF_RECONCILE", "academy-v1-video-ops-reconcile")
+VIDEO_OPS_JOB_DEF_SCANSTUCK = os.getenv("VIDEO_OPS_JOB_DEF_SCANSTUCK", "academy-v1-video-ops-scanstuck")
+VIDEO_OPS_JOB_DEFS = (
+    os.getenv("VIDEO_OPS_JOB_DEF_RECONCILE", "academy-v1-video-ops-reconcile"),
+    os.getenv("VIDEO_OPS_JOB_DEF_SCANSTUCK", "academy-v1-video-ops-scanstuck"),
+)
 # 3시간(10800초) 이상이면 long 큐 사용
 VIDEO_LONG_DURATION_THRESHOLD_SECONDS = int(os.getenv("VIDEO_LONG_DURATION_THRESHOLD_SECONDS", "10800"))
 # Stuck 판정: heartbeat_age 기반. standard 20분, long 45분
@@ -378,11 +388,11 @@ VIDEO_TENANT_MAX_CONCURRENT = int(os.getenv("VIDEO_TENANT_MAX_CONCURRENT", "2"))
 VIDEO_GLOBAL_MAX_CONCURRENT = int(os.getenv("VIDEO_GLOBAL_MAX_CONCURRENT", "20"))
 VIDEO_MAX_JOBS_PER_VIDEO = int(os.getenv("VIDEO_MAX_JOBS_PER_VIDEO", "10"))
 VIDEO_CLOUDWATCH_NAMESPACE = os.getenv("VIDEO_CLOUDWATCH_NAMESPACE", "Academy/Video")
-AI_SQS_QUEUE_NAME_LITE = os.getenv("AI_SQS_QUEUE_NAME_LITE", "academy-ai-jobs-lite")
-AI_SQS_QUEUE_NAME_BASIC = os.getenv("AI_SQS_QUEUE_NAME_BASIC", "academy-ai-jobs-basic")
-AI_SQS_QUEUE_NAME_PREMIUM = os.getenv("AI_SQS_QUEUE_NAME_PREMIUM", "academy-ai-jobs-premium")
-# 메시지 발송 SQS 큐 (워커가 소비)
-MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-messaging-jobs")
+AI_SQS_QUEUE_NAME_LITE = os.getenv("AI_SQS_QUEUE_NAME_LITE", "academy-v1-ai-queue")
+AI_SQS_QUEUE_NAME_BASIC = os.getenv("AI_SQS_QUEUE_NAME_BASIC", "academy-v1-ai-queue")
+AI_SQS_QUEUE_NAME_PREMIUM = os.getenv("AI_SQS_QUEUE_NAME_PREMIUM", "academy-v1-ai-queue")
+# 메시지 발송 SQS 큐 (워커가 소비). SSOT: academy-v1-messaging-queue
+MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-v1-messaging-queue")
 
 # ==================================================
 # INTERNAL WORKER

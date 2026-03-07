@@ -32,13 +32,23 @@ class Config:
     SOLAPI_KAKAO_TEMPLATE_ID: str
 
 
+def _require_solapi(name: str) -> str:
+    """SOLAPI_MOCK=true면 placeholder 허용 (실제 발송 없음)."""
+    v = os.environ.get(name, "").strip()
+    if v:
+        return v
+    if os.environ.get("SOLAPI_MOCK", "").lower() in ("true", "1", "yes"):
+        return "mock"
+    raise RuntimeError(f"Missing required env: {name}")
+
+
 def load_config() -> Config:
     try:
         return Config(
-            SOLAPI_API_KEY=_require("SOLAPI_API_KEY"),
-            SOLAPI_API_SECRET=_require("SOLAPI_API_SECRET"),
-            SOLAPI_SENDER=_require("SOLAPI_SENDER"),
-            MESSAGING_SQS_QUEUE_NAME=os.environ.get("MESSAGING_SQS_QUEUE_NAME", "academy-messaging-jobs"),
+            SOLAPI_API_KEY=_require_solapi("SOLAPI_API_KEY"),
+            SOLAPI_API_SECRET=_require_solapi("SOLAPI_API_SECRET"),
+            SOLAPI_SENDER=_require_solapi("SOLAPI_SENDER"),
+            MESSAGING_SQS_QUEUE_NAME=os.environ.get("MESSAGING_SQS_QUEUE_NAME", "academy-v1-messaging-queue"),
             AWS_REGION=os.environ.get("AWS_REGION", "ap-northeast-2"),
             SQS_WAIT_TIME_SECONDS=int(os.environ.get("MESSAGING_SQS_WAIT_SECONDS", "20")),
             # 알림톡: 미설정이면 SMS만 사용 (빈 문자열 허용)

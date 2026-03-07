@@ -192,9 +192,9 @@ function Load-SSOT {
         $script:VideoStuckHeartbeatAgeLongMinutes = Coerce-Int $(if ($vb["stuckHeartbeatAgeLongMinutes"]) { $vb["stuckHeartbeatAgeLongMinutes"] } elseif ($vbl["stuckHeartbeatAgeMinutes"]) { $vbl["stuckHeartbeatAgeMinutes"] } else { 45 }) 45
         $script:VideoLongUseSpot = ($vbl["useSpot"] -eq $true -or $vbl["useSpot"] -eq "true")
     } else {
-        $script:VideoLongCEName = $null
-        $script:VideoLongQueueName = $null
-        $script:VideoLongJobDefName = $null
+        $script:VideoLongCEName = if ($vb["longComputeEnvironmentName"]) { $vb["longComputeEnvironmentName"] } else { $null }
+        $script:VideoLongQueueName = if ($vb["longQueueName"]) { $vb["longQueueName"] } else { $null }
+        $script:VideoLongJobDefName = if ($vb["longWorkerJobDefName"]) { $vb["longWorkerJobDefName"] } else { $null }
     }
     $script:OpsCEName = $p["videoBatch"]["opsComputeEnvironmentName"]
     $script:OpsQueueName = $p["videoBatch"]["opsQueueName"]
@@ -253,9 +253,12 @@ function Load-SSOT {
     $script:FrontR2StaticPrefix = "static/front"
     $script:FrontPurgeOnDeploy = $false
     if ($p["front"]) {
+        # flat 키 우선 (2-level 파서에서 domains.app/api 미파싱 대비)
+        if ($p["front"]["domainsApi"] -and $p["front"]["domainsApi"].Trim() -ne "") { $script:FrontDomainApi = $p["front"]["domainsApi"].Trim() }
+        if ($p["front"]["domainsApp"] -and $p["front"]["domainsApp"].Trim() -ne "") { $script:FrontDomainApp = $p["front"]["domainsApp"].Trim() }
         if ($p["front"]["domains"]) {
-            $script:FrontDomainApp = if ($p["front"]["domains"]["app"]) { $p["front"]["domains"]["app"] } else { "" }
-            $script:FrontDomainApi = if ($p["front"]["domains"]["api"]) { $p["front"]["domains"]["api"] } else { "" }
+            if (-not $script:FrontDomainApp -and $p["front"]["domains"]["app"]) { $script:FrontDomainApp = $p["front"]["domains"]["app"] }
+            if (-not $script:FrontDomainApi -and $p["front"]["domains"]["api"]) { $script:FrontDomainApi = $p["front"]["domains"]["api"] }
         }
         $script:FrontR2StaticBucket = if ($p["front"]["r2StaticBucket"]) { $p["front"]["r2StaticBucket"] } else { "" }
         $script:FrontR2StaticPrefix = if ($p["front"]["r2StaticPrefix"]) { $p["front"]["r2StaticPrefix"] } else { "static/front" }

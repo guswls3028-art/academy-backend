@@ -150,6 +150,9 @@ videoBatch:
     stuckHeartbeatAgeMinutes: 45
     allocationStrategy: BEST_FIT
     useSpot: false
+  longComputeEnvironmentName: academy-v1-video-batch-long-ce
+  longQueueName: academy-v1-video-batch-long-queue
+  longWorkerJobDefName: academy-v1-video-batch-long-jobdef
   # Job timeout / stuck / retry (3시간 영상 기준)
   jobTimeoutStandardSeconds: 21600
   jobTimeoutLongSeconds: 43200
@@ -168,7 +171,7 @@ videoBatch:
     failedJobsAlarmThreshold: 5
     stuckDetectedAlarmEnabled: true
     logRetentionDays: 30
-  # Ops: lightweight hourly recovery. 1 instance max (maxvCpus=2), scale to 0 when idle. t4g not supported by ECS_AL2023.
+  # Ops: lightweight hourly recovery. 1 instance max (maxvCpus=2), scale to 0 when idle. ECS_AL2023: t4g 미지원 → m6g.medium.
   opsComputeEnvironmentName: academy-v1-video-ops-ce
   opsQueueName: academy-v1-video-ops-queue
   opsInstanceType: m6g.medium
@@ -242,6 +245,8 @@ front:
   domains:
     app: ""          # 예: app.hakwonplus.com, academy-frontend-26b.pages.dev
     api: "https://api.hakwonplus.com"  # Cloudflare CNAME → ALB
+  domainsApp: ""      # SSOT 스크립트용 flat 키 (domains.app과 동일)
+  domainsApi: "https://api.hakwonplus.com"  # SSOT 스크립트용 flat 키 (domains.api과 동일)
   cors:
     allowedOrigins: []  # [ "https://app.hakwonplus.com" ] — 와일드카드 금지
     credentials: true   # 쿠키 인증 사용 시 true

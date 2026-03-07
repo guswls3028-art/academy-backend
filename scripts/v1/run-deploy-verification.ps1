@@ -103,7 +103,9 @@ if ($script:ApiAlbName) {
 $apiPublicHealthStatus = "not checked"
 $apiPublicUrl = $env:API_PUBLIC_URL
 if (-not $apiPublicUrl -and $script:FrontDomainApi -and $script:FrontDomainApi.Trim() -ne "") {
-    $apiPublicUrl = "https://$($script:FrontDomainApi.Trim())"
+    $dom = $script:FrontDomainApi.Trim()
+    if ($dom -notmatch '^https?://') { $dom = "https://$dom" }
+    $apiPublicUrl = $dom
 }
 if ($apiPublicUrl) {
     $apiPublicUrl = $apiPublicUrl.TrimEnd('/')
