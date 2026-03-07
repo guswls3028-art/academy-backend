@@ -130,6 +130,9 @@ class PostViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class AdminPostViewSet(viewsets.GenericViewSet):
     """Admin list with filters. block_type_id, lecture_id, page, page_size."""
     serializer_class = PostEntitySerializer
 
