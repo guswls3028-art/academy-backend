@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from django.http import Http404
+
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -65,4 +67,6 @@ class AnswerKeyViewSet(ModelViewSet):
 
     def perform_destroy(self, instance):
         if instance.exam.exam_type != Exam.ExamType.TEMPLATE:
-            raise PermissionDenied("An
+            raise PermissionDenied("AnswerKey can be deleted only for template exams.")
+        assert_template_editable(instance.exam)
+        return super().perform_destroy(instance)
