@@ -2,6 +2,7 @@
 # API 서버 자동 배포 원격 제어 (SSM Send-Command)
 # ==============================================================================
 # API ASG 인스턴스에서 2분마다 git 기준 자동 배포 cron ON/OFF/상태 확인/수동 배포 1회
+# 전제: 인스턴스에 academy 레포가 $RepoPath(기본 /home/ec2-user/academy)에 있어야 함.
 # 사용:
 #   pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action On   -AwsProfile default
 #   pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Off  -AwsProfile default
