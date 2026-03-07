@@ -2,9 +2,10 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "WorkersSQSReceive",
+      "Sid": "SQSQueueAccess",
       "Effect": "Allow",
       "Action": [
+        "sqs:SendMessage",
         "sqs:ReceiveMessage",
         "sqs:DeleteMessage",
         "sqs:ChangeMessageVisibility",
