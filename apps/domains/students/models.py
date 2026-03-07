@@ -106,6 +106,7 @@ class Student(TimestampModel):
     middle_school = models.CharField(max_length=100, null=True, blank=True)
 
     memo = models.TextField(null=True, blank=True)
+    address = models.CharField(max_length=255, null=True, blank=True, help_text="주소 (선택)")
     is_managed = models.BooleanField(default=True)
 
     # 학생이 학생앱에서만 설정 (관리자 편집 불가)
@@ -239,6 +240,7 @@ class StudentRegistrationRequest(TimestampModel):
     grade = models.PositiveSmallIntegerField(null=True, blank=True)
     gender = models.CharField(max_length=1, null=True, blank=True)
     memo = models.TextField(null=True, blank=True)
+    address = models.CharField(max_length=255, null=True, blank=True, help_text="주소 (선택)")
 
     # 승인 시 생성된 학생 (승인 후에만 설정)
     student = models.OneToOneField(
