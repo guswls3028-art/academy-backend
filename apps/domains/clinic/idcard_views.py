@@ -29,10 +29,8 @@ class StudentClinicIdcardView(APIView):
         student = getattr(user, "student_profile", None)
         tenant = getattr(request, "tenant", None)
         
-        # 패스카드 배경 색상 (위조 방지용, 선생님이 날마다 변경 가능)
-        colors = getattr(tenant, "clinic_idcard_colors", None) if tenant else None
-        if not colors or not isinstance(colors, list) or len(colors) < 3:
-            colors = ["#ef4444", "#3b82f6", "#22c55e"]
+        # 패스카드 배경 색상 (매일 자동 3색 또는 저장값)
+        colors = get_effective_clinic_colors(tenant) if tenant else ["#ef4444", "#3b82f6", "#22c55e"]
         
         if not student or not isinstance(student, Student):
             return Response({
