@@ -45,3 +45,4 @@
 
 ## 5. 공통
 - AWS 작업과 Cloudflare 작업이 한 PR/한 대화에 섞일 경우, 섹션 2와 섹션 3을 구분하여 각각의 규칙을 적용한다.
+- **프론트엔드(academyfront) UI**: 모든 색상·버튼·뱃지·상태는 전역 디자인 시스템을 따른다. 선생 앱은 Admin 디자인 시스템(`src/styles/design-system/`), 학생 앱은 학생 디자인 시스템(`src/student/...`). academyfront의 `.cursor/rules/design-system-global.mdc` 참고.
