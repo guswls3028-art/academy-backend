@@ -29,11 +29,18 @@ class PostMappingSerializer(serializers.ModelSerializer):
 class PostReplySerializer(serializers.ModelSerializer):
     """QnA 답변 조회/생성. question 필드는 프론트 Answer 타입 호환용(post_id)."""
     question = serializers.IntegerField(source="post_id", read_only=True)
+    created_by_display = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = PostReply
-        fields = ["id", "post", "question", "content", "created_by", "created_at"]
+        fields = ["id", "post", "question", "content", "created_by", "created_by_display", "created_at"]
         read_only_fields = ["post", "created_by", "created_at"]
+
+    def get_created_by_display(self, obj):
+        if not getattr(obj, "created_by_id", None):
+            return None
+        created_by = getattr(obj, "created_by", None)
+        return getattr(created_by, "name", None) if created_by else None
 
     def create(self, validated_data):
         post = validated_data.pop("post")
@@ -49,9 +56,16 @@ class PostEntitySerializer(serializers.ModelSerializer):
     mappings = PostMappingSerializer(many=True, read_only=True)
     block_type_label = serializers.CharField(source="block_type.label", read_only=True)
     replies_count = serializers.SerializerMethodField(read_only=True)
+    created_by_display = serializers.SerializerMethodField(read_only=True)
 
     def get_replies_count(self, obj):
         return getattr(obj, "replies_count", 0) if hasattr(obj, "replies_count") else 0
+
+    def get_created_by_display(self, obj):
+        if not getattr(obj, "created_by_id", None):
+            return None
+        created_by = getattr(obj, "created_by", None)
+        return getattr(created_by, "name", None) if created_by else None
 
     class Meta:
         model = PostEntity
@@ -63,6 +77,7 @@ class PostEntitySerializer(serializers.ModelSerializer):
             "title",
             "content",
             "created_by",
+            "created_by_display",
             "created_at",
             "replies_count",
             "mappings",
