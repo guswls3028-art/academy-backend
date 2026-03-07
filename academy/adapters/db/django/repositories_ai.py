@@ -139,6 +139,19 @@ class DjangoAIJobRepository:
         job.lease_expires_at = lease_expires_at
         job.last_heartbeat_at = now
         job.save(update_fields=["status", "locked_by", "locked_at", "lease_expires_at", "last_heartbeat_at", "updated_at"])
+        # ✅ Redis에 RUNNING 기록 (진행 상황 위젯에서 진행률 표시용)
+        try:
+            from apps.domains.ai.redis_status_cache import cache_job_status
+            cache_job_status(
+                tenant_id=str(job.tenant_id or ""),
+                job_id=job.job_id,
+                status="RUNNING",
+                job_type=job.job_type,
+                ttl=21600,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to cache RUNNING in Redis: %s", e)
         return True
 
     def mark_done(self, job_id: str, now: datetime, result_payload: Optional[dict] = None) -> bool:
