@@ -54,6 +54,11 @@ class Tenant(models.Model):
         default=False,
         help_text="매일 자동 3색 사용 시 True",
     )
+    # 예약 신청 시 자동 승인 (학생 신청이 pending 대신 booked로 저장)
+    clinic_auto_approve_booking = models.BooleanField(
+        default=False,
+        help_text="True면 학생 예약 신청을 자동 승인(booked)합니다.",
+    )
 
     class Meta:
         app_label = "core"
