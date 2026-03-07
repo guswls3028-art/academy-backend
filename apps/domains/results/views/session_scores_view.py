@@ -105,25 +105,37 @@ class SessionScoresView(APIView):
                 exam_id__in=exam_ids
             ).values_list("enrollment_id", flat=True)
 
-            enrollment_qs = Enrollment.objects.filter(
-                Q(id__in=hw_enrollment_ids_qs)
-                | Q(id__in=ex_enrollment_ids_qs)
-            ).distinct()
+            enrollment_qs = (
+                Enrollment.objects.filter(
+                    Q(id__in=hw_enrollment_ids_qs)
+                    | Q(id__in=ex_enrollment_ids_qs)
+                )
+                .filter(student__deleted_at__isnull=True)
+                .distinct()
+            )
         else:
-            enrollment_qs = Enrollment.objects.filter(
-                id__in=hw_enrollment_ids_qs
-            ).distinct()
+            enrollment_qs = (
+                Enrollment.objects.filter(id__in=hw_enrollment_ids_qs)
+                .filter(student__deleted_at__isnull=True)
+                .distinct()
+            )
 
         enrollment_ids = list(enrollment_qs.values_list("id", flat=True))
 
-        # 시험/과제 연결 전: 세션 수강생(SessionEnrollment) 폴백으로 테이블에 학생 노출
+        # 시험/과제 연결 전: 세션 수강생(SessionEnrollment) 폴백 — 삭제된 학생 제외
         if not enrollment_ids:
             session_enrollment_ids = list(
                 SessionEnrollment.objects.filter(session=session)
                 .values_list("enrollment_id", flat=True)
                 .distinct()
             )
-            enrollment_ids = session_enrollment_ids
+            enrollment_ids = list(
+                Enrollment.objects.filter(
+                    id__in=session_enrollment_ids
+                )
+                .filter(student__deleted_at__isnull=True)
+                .values_list("id", flat=True)
+            )
 
         # -------------------------------------------------
         # 2) Meta (프론트 계약)
