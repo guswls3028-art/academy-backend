@@ -56,6 +56,8 @@ class TenantMiddleware:
             host = getattr(request, "META", {}).get("HTTP_HOST", "")
             if host:
                 payload["host"] = host.split(":")[0].strip().lower()
+            if e.code == "tenant_invalid" and payload.get("host") in ("localhost", "127.0.0.1"):
+                payload["hint"] = "Run: python manage.py ensure_localhost_tenant"
             return JsonResponse(payload, status=e.http_status)
         except Exception as e:
             logger.exception("Tenant resolution unexpected error: %s", e)
