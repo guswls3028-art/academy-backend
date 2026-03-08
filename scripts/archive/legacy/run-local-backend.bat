@@ -8,9 +8,9 @@ echo   Academy Backend - Local Development
 echo ========================================
 echo.
 
-cd /d C:\academy
+cd /d "%~dp0..\..\.."
 if errorlevel 1 (
-    echo ERROR: Cannot change to C:\academy directory
+    echo ERROR: Cannot change to backend directory
     pause
     exit /b 1
 )
