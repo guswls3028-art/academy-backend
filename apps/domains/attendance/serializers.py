@@ -20,6 +20,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
     phone = serializers.CharField(
         source="enrollment.student.phone",
         read_only=True,
+        allow_null=True,
     )
     lecture_title = serializers.CharField(
         source="session.lecture.title",

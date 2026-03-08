@@ -5,18 +5,24 @@ from apps.domains.students.models import Student
 
 
 class StudentShortSerializer(serializers.ModelSerializer):
+    """강의/수강 맥락에서 노출하는 학생 최소 정보. Student 모델 스펙과 정합성 유지."""
+
     class Meta:
         model = Student
         fields = [
             "id",
             "name",
             "grade",
+            "school_type",
             "high_school",
+            "middle_school",
             "high_school_class",
             "major",
+            "origin_middle_school",
             "phone",
             "parent_phone",
         ]
+        extra_kwargs = {"phone": {"allow_null": True}}
 
 
 class EnrollmentSerializer(serializers.ModelSerializer):
