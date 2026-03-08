@@ -7,6 +7,14 @@
 
 ---
 
+## 실제 조회 결과 (배포 환경 직접 접근)
+
+- **TenantDomain**: `api.hakwonplus.com` → hakwonplus, active=True **존재함**. (403 tenant 원인 아님)
+- **QnA orphan**: DB 조회 시 `created_by_id=null`인 QnA **0건**.
+- **적용 수정**: 백엔드에서 QnA인데 created_by 없으면 400 `profile_required` 반환; 프론트에서 해당 시 프로필 재조회·재시도 및 서버 메시지 표시.
+
+---
+
 ## 1. 배포에서만 실패할 수 있는 원인 (코드/설계 기준)
 
 ### (1) 403 "tenant required"
