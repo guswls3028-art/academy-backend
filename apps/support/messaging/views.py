@@ -31,6 +31,7 @@ from apps.support.messaging.serializers import (
     AutoSendConfigUpdateSerializer,
 )
 from apps.support.messaging.solapi_sender_client import verify_sender_number
+from apps.support.messaging.policy import can_send_sms, resolve_kakao_channel
 
 
 class MessagingInfoView(APIView):
@@ -43,6 +44,10 @@ class MessagingInfoView(APIView):
         data = serializer.data
         data["credit_balance"] = str(data["credit_balance"])
         data["base_price"] = str(data["base_price"])
+        # 정책 SSOT 기반: 발송 허용·채널 출처 (API 응답만 사용, 프론트에서 재계산 금지)
+        data["sms_allowed"] = can_send_sms(tenant.id)
+        channel = resolve_kakao_channel(tenant.id)
+        data["channel_source"] = "system_default" if channel.get("use_default", True) else "tenant_override"
         return Response(data)
 
     def patch(self, request):
@@ -64,6 +69,9 @@ class MessagingInfoView(APIView):
         data = serializer.data
         data["credit_balance"] = str(data["credit_balance"])
         data["base_price"] = str(data["base_price"])
+        data["sms_allowed"] = can_send_sms(tenant.id)
+        channel = resolve_kakao_channel(tenant.id)
+        data["channel_source"] = "system_default" if channel.get("use_default", True) else "tenant_override"
         return Response(data)
 
 
