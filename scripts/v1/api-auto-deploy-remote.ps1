@@ -88,6 +88,7 @@ function Invoke-RemoteCommand {
             $cmdId = $sendOut.Command.CommandId
             if (-not $cmdId) { Write-Host "  $instId : send-command failed" -ForegroundColor Red; continue }
             $wait = 0
+# Deploy/On 시 SSM 명령 대기 시간: docker build 등으로 최대 10분
             $maxWait = if ($Label -match "Deploy|배포") { 600 } else { 120 }
             while ($wait -lt $maxWait) {
                 Start-Sleep -Seconds 3
