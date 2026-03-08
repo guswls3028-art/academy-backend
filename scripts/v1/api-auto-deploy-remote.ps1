@@ -88,7 +88,7 @@ function Invoke-RemoteCommand {
             $cmdId = $sendOut.Command.CommandId
             if (-not $cmdId) { Write-Host "  $instId : send-command failed" -ForegroundColor Red; continue }
             $wait = 0
-# Deploy/On 시 SSM 명령 대기 시간: docker build 등으로 최대 10분
+# Deploy 시 SSM 명령 대기: ECR pull + 재시작만 있으므로 최대 10분
             $maxWait = if ($Label -match "Deploy|배포") { 600 } else { 120 }
             while ($wait -lt $maxWait) {
                 Start-Sleep -Seconds 3
@@ -113,7 +113,7 @@ function Invoke-RemoteCommand {
 
 switch ($Action) {
     "On" {
-        Invoke-RemoteCommand -Commands @($ensureAndFetchCmd, "cd $repoPath && bash scripts/auto_deploy_cron_on.sh") -Label "자동 배포 ON (2분마다 git 기준 배포 + 구이미지 제거)"
+        Invoke-RemoteCommand -Commands @($ensureAndFetchCmd, "cd $repoPath && bash scripts/auto_deploy_cron_on.sh") -Label "자동 배포 ON (2분마다 main 변경 시 ECR pull + /opt/api.env 재시작)"
     }
     "Off" {
         $cmd = "test -d $repoPath || { echo 'No repo at $repoPath (skip).'; exit 0; }; cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/auto_deploy_cron_off.sh"
@@ -124,7 +124,7 @@ switch ($Action) {
         Invoke-RemoteCommand -Commands @($cmd) -Label "crontab 상태"
     }
     "Deploy" {
-        Invoke-RemoteCommand -Commands @($ensureAndFetchCmd, "cd $repoPath && bash scripts/deploy_api_on_server.sh") -Label "수동 배포 1회 (git pull + build + 구이미지 제거 + 재시작)"
+        Invoke-RemoteCommand -Commands @($ensureAndFetchCmd, "cd $repoPath && bash scripts/deploy_api_on_server.sh") -Label "수동 배포 1회 (ECR pull + /opt/api.env + 재시작, 빌드 없음)"
     }
 }
 
