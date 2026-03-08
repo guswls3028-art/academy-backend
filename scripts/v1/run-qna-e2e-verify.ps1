@@ -27,7 +27,7 @@ $hostHdr = if ($albDns) { "api.hakwonplus.com" } else { "" }
 # 서버 env: Launch Template userdata가 SSM /academy/api/env → /opt/api.env 에 씀 (docs DEPLOY-API-ON-SERVER-FIX-REPORT)
 $envFile = "/opt/api.env"
 $ecrImg = "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest"
-$bashCmd = "/usr/bin/docker run --rm -e API_BASE_URL=$apiBase -e API_HOST_HEADER=$hostHdr --env-file $envFile $ecrImg python manage.py verify_qna_e2e 2>&1"
+$bashCmd = "source /etc/profile 2>/dev/null; export PATH=/usr/local/bin:/usr/bin:`$PATH; docker run --rm -e API_BASE_URL=$apiBase -e API_HOST_HEADER=$hostHdr --env-file $envFile $ecrImg python manage.py verify_qna_e2e 2>&1"
 $params = @{ commands = @($bashCmd) } | ConvertTo-Json -Compress
 $send = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $ids[0], "--document-name", "AWS-RunShellScript", "--parameters", $params, "--region", $script:Region, "--output", "json")
 $cid = $send.Command.CommandId
