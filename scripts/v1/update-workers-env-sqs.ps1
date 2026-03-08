@@ -50,7 +50,7 @@ if ($apiParam) {
                 try { $apiStr = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($apiVal)) } catch { }
             }
             $apiObj = $apiStr | ConvertFrom-Json
-            foreach ($k in @("SOLAPI_API_KEY", "SOLAPI_API_SECRET", "SOLAPI_SENDER", "SOLAPI_KAKAO_PF_ID", "SOLAPI_KAKAO_TEMPLATE_ID", "OWNER_TENANT_ID", "TEST_TENANT_ID")) {
+            foreach ($k in @("SOLAPI_API_KEY", "SOLAPI_API_SECRET", "SOLAPI_SENDER", "SOLAPI_KAKAO_PF_ID", "SOLAPI_KAKAO_TEMPLATE_ID", "OWNER_TENANT_ID", "TEST_TENANT_ID", "MESSAGING_TEST_RECIPIENT_WHITELIST")) {
                 if ($apiObj.PSObject.Properties[$k] -and [string]$apiObj.$k -ne "") {
                     $obj | Add-Member -NotePropertyName $k -NotePropertyValue $apiObj.$k -Force
                 }
