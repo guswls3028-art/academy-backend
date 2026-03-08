@@ -12,16 +12,10 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") { $env:AWS_PROFILE = $AwsProfile
 $null = Load-SSOT -Env "prod"
 $ids = @(Get-APIASGInstanceIds)
 if (-not $ids -or $ids.Count -eq 0) { Write-Host "No API instance"; exit 1 }
-# 서버에서 사용하는 env 파일 (run-api-management-remote와 동일)
+# 서버에서 사용하는 env 파일; ECR 이미지로 검증 (실행 중 API 컨테이너와 동일 이미지일 것)
 $envFile = "/home/ec2-user/.env"
-# 이미지에 스크립트가 없을 수 있으므로, docker exec으로 실행 중인 컨테이너에서 실행 시도 (동일 env로 토큰 유효)
-$bashCmd = @"
-if docker exec academy-api test -f /app/scripts/verify_qna_e2e.py 2>/dev/null; then
-  docker exec -e API_BASE_URL=https://api.hakwonplus.com academy-api python scripts/verify_qna_e2e.py 2>&1
-else
-  docker run --rm -e API_BASE_URL=https://api.hakwonplus.com --env-file $envFile academy-api:latest python scripts/verify_qna_e2e.py 2>&1
-fi
-"@
+$ecrImg = "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest"
+$bashCmd = "docker run --rm -e API_BASE_URL=https://api.hakwonplus.com --env-file $envFile $ecrImg python scripts/verify_qna_e2e.py 2>&1"
 $params = @{ commands = @($bashCmd) } | ConvertTo-Json -Compress
 $send = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $ids[0], "--document-name", "AWS-RunShellScript", "--parameters", $params, "--region", $script:Region, "--output", "json")
 $cid = $send.Command.CommandId
