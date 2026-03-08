@@ -7,11 +7,16 @@
 
 ---
 
-## 실제 조회 결과 (배포 환경 직접 접근)
+## 실제 원인 (배포 서버 조회 기준)
 
-- **TenantDomain**: `api.hakwonplus.com` → hakwonplus, active=True **존재함**. (403 tenant 원인 아님)
-- **QnA orphan**: DB 조회 시 `created_by_id=null`인 QnA **0건**.
-- **적용 수정**: 백엔드에서 QnA인데 created_by 없으면 400 `profile_required` 반환; 프론트에서 해당 시 프로필 재조회·재시도 및 서버 메시지 표시.
+- **질문 2건(id 11, 12)은 DB에 정상 저장됨**: `tenant_id=1`, `created_by_id=455`, `block_type` QnA.
+- **"내 질문" 목록이 비는 이유**: `GET /api/v1/community/posts/` 호출 시 **테넌트 해석 실패**로 404가 나고, 프론트 `fetchMyQnaQuestions`가 404를 catch해 `return []`로 빈 목록을 보여줌.
+- **테넌트가 실패하는 이유**: ALB 뒤에서 Django가 받는 `request.get_host()`가 **api.hakwonplus.com이 아니라 ALB 내부 호스트명**(예: `academy-v1-api-alb-xxx.elb.amazonaws.com`)일 수 있음. 해당 Host는 `TenantDomain`에 없어서 `Tenant not found for host` 404 발생. POST 시에는 같은 요청이라도 프록시/타이밍에 따라 Host가 다를 수 있음.
+
+## 적용한 수정 (resolver)
+
+- **`apps/core/tenant/resolver.py`**: Host에 해당하는 `TenantDomain`이 없을 때(ALB 내부 Host 등)에도 **`X-Tenant-Code` 헤더가 있으면 그 코드로 테넌트 해석**하도록 fallback 추가.
+- 배포 환경에서 학생 앱이 `X-Tenant-Code: hakwonplus`를 보내면, Host가 ALB명이어도 tenant 1로 해석되어 목록 API가 정상 응답하고, 등록한 질문 2건이 목록에 나옴.
 
 ---
 
