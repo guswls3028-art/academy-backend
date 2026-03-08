@@ -56,6 +56,7 @@ def send_sms(
     to: str,
     text: str,
     sender: Optional[str] = None,
+    tenant_id: Optional[int] = None,
 ) -> dict:
     """
     SMS/LMS 즉시 발송 (Solapi).
@@ -64,10 +65,20 @@ def send_sms(
         to: 수신 번호 (01012345678)
         text: 본문
         sender: 발신 번호 (미지정 시 SOLAPI_SENDER 사용)
+        tenant_id: 요청 tenant. 지정 시 해당 tenant가 SMS 허용(내 테넌트)인지 검사.
 
     Returns:
         dict: {"status": "ok"|"error"|"skipped", "group_id"?, "reason"?}
     """
+    if tenant_id is not None:
+        from apps.support.messaging.policy import can_send_sms
+        if not can_send_sms(tenant_id):
+            logger.warning(
+                "send_sms blocked by policy: tenant_id=%s is not owner tenant (SMS allowed only for owner)",
+                tenant_id,
+            )
+            return {"status": "error", "reason": "sms_allowed_only_for_owner_tenant"}
+
     client = get_solapi_client()
     if not client:
         logger.info("send_sms skipped: Solapi not configured")
@@ -126,6 +137,26 @@ def enqueue_sms(
         bool: enqueue 성공 여부
     """
     from apps.support.messaging.sqs_queue import MessagingSQSQueue
+    from apps.support.messaging.policy import can_send_sms, MessagingPolicyError
+
+    mode = (message_mode or "").strip().lower() or None
+    if not mode:
+        mode = "both" if use_alimtalk_first else "sms"
+    if mode not in ("sms", "alimtalk", "both"):
+        mode = "sms"
+
+    # SMS 또는 both(알림톡 실패 시 SMS 폴백)인 경우, 내 테넌트에서만 허용
+    if mode in ("sms", "both"):
+        if not can_send_sms(tenant_id):
+            logger.warning(
+                "enqueue_sms blocked by policy: tenant_id=%s cannot send SMS (allowed only for owner tenant)",
+                tenant_id,
+            )
+            raise MessagingPolicyError(
+                "문자(SMS) 발송은 내 테넌트에서만 가능합니다.",
+                reason="sms_allowed_only_for_owner_tenant",
+            )
+
     queue = MessagingSQSQueue()
     return queue.enqueue(
         tenant_id=tenant_id,

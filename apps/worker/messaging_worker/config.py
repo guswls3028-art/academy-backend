@@ -30,6 +30,8 @@ class Config:
     # 알림톡 (카카오) — 템플릿 ENV로 관리, 코드 수정 없이 교체 가능
     SOLAPI_KAKAO_PF_ID: str
     SOLAPI_KAKAO_TEMPLATE_ID: str
+    # SMS 허용 tenant (내 테넌트). 해당 tenant에서만 문자 발송 가능.
+    OWNER_TENANT_ID: int
 
 
 def _require_solapi(name: str) -> str:
@@ -51,10 +53,12 @@ def load_config() -> Config:
             MESSAGING_SQS_QUEUE_NAME=os.environ.get("MESSAGING_SQS_QUEUE_NAME", "academy-v1-messaging-queue"),
             AWS_REGION=os.environ.get("AWS_REGION", "ap-northeast-2"),
             SQS_WAIT_TIME_SECONDS=int(os.environ.get("MESSAGING_SQS_WAIT_SECONDS", "20")),
-            # 알림톡: 미설정이면 SMS만 사용 (빈 문자열 허용)
-            SOLAPI_KAKAO_PF_ID=os.environ.get("SOLAPI_KAKAO_PF_ID", "").strip(),
-            SOLAPI_KAKAO_TEMPLATE_ID=os.environ.get("SOLAPI_KAKAO_TEMPLATE_ID", "").strip(),
-        )
+    # 알림톡: 미설정이면 SMS만 사용 (빈 문자열 허용)
+    SOLAPI_KAKAO_PF_ID=os.environ.get("SOLAPI_KAKAO_PF_ID", "").strip(),
+    SOLAPI_KAKAO_TEMPLATE_ID=os.environ.get("SOLAPI_KAKAO_TEMPLATE_ID", "").strip(),
+    # SMS 허용 tenant (내 테넌트). 1번만 문자 발송 가능.
+    OWNER_TENANT_ID=int(os.environ.get("OWNER_TENANT_ID", "1")),
+)
     except Exception as e:
         import logging
         logging.basicConfig(level=logging.INFO)
