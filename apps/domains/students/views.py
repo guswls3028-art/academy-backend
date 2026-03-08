@@ -940,6 +940,104 @@ class StudentViewSet(ModelViewSet):
 # ======================================================
 
 
+def _approve_registration_request(request, reg):
+    """
+    가입 신청 1건 승인 처리. 성공 시 None 반환, 실패 시 Response 반환.
+    호출 후 reg.student 가 설정됨.
+    """
+    from apps.core.models.user import user_internal_username
+
+    tenant = request.tenant
+    password = reg.initial_password
+    name = reg.name
+    parent_phone = reg.parent_phone
+    phone = reg.phone
+
+    try:
+        ps_number = _generate_unique_ps_number(tenant=tenant)
+    except ValueError as e:
+        return Response({"detail": str(e)}, status=400)
+
+    requested_username = (reg.username or "").strip()
+    if requested_username:
+        internal = user_internal_username(tenant, requested_username)
+        if get_user_model().objects.filter(username=internal).exists():
+            requested_username = None
+    if not requested_username:
+        requested_username = ps_number
+
+    if phone and len(str(phone)) >= 8:
+        omr_code = str(phone)[-8:]
+    elif parent_phone and len(parent_phone) >= 8:
+        omr_code = parent_phone[-8:]
+    else:
+        omr_code = (parent_phone or "00000000")[-8:]
+
+    try:
+        with transaction.atomic():
+            parent = None
+            if parent_phone:
+                parent = ensure_parent_for_student(
+                    tenant=tenant,
+                    parent_phone=parent_phone,
+                    student_name=name,
+                    parent_password=password,
+                )
+            User = get_user_model()
+            user = student_repo.user_create_user(
+                username=requested_username,
+                tenant=tenant,
+                phone=phone or "",
+                name=name,
+            )
+            user.set_password(password)
+            user.save()
+
+            student = student_repo.student_create(
+                tenant=tenant,
+                user=user,
+                parent=parent,
+                name=name,
+                parent_phone=parent_phone,
+                phone=phone,
+                ps_number=ps_number,
+                omr_code=omr_code,
+                uses_identifier=not (phone and phone.strip()),
+                school_type=reg.school_type,
+                high_school=reg.high_school or None,
+                middle_school=reg.middle_school or None,
+                high_school_class=reg.high_school_class or None,
+                major=reg.major or None,
+                grade=reg.grade,
+                gender=reg.gender or None,
+                memo=reg.memo or None,
+                address=reg.address or None,
+                origin_middle_school=reg.origin_middle_school or None,
+            )
+            TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
+            reg.status = StudentRegistrationRequest.APPROVED
+            reg.student = student
+            reg.save(update_fields=["status", "student", "updated_at"])
+
+        send_registration_approved_messages(
+            tenant_id=tenant.id,
+            site_url=get_site_url(request) or "",
+            student_name=name,
+            student_phone=(phone or "") if phone else "",
+            student_id=requested_username,
+            student_password=password,
+            parent_phone=parent_phone or "",
+            parent_password=password,
+        )
+        return None
+    except Exception as e:
+        logger.exception("_approve_registration_request error: %s", e)
+        return Response(
+            {"detail": str(e) if settings.DEBUG else "승인 처리 중 오류가 발생했습니다."},
+            status=500,
+        )
+
+
 class RegistrationRequestViewSet(ModelViewSet):
     """
     - create: AllowAny + TenantResolved (학생이 로그인 페이지에서 신청)
@@ -1037,6 +1135,16 @@ class RegistrationRequestViewSet(ModelViewSet):
                 status=500,
             )
 
+        # 자동 승인 설정 시 즉시 승인 처리
+        if getattr(request.tenant, "student_registration_auto_approve", False):
+            err = _approve_registration_request(request, req)
+            if err is not None:
+                return err
+            return Response(
+                StudentDetailSerializer(req.student, context={"request": request}).data,
+                status=200,
+            )
+
         try:
             out = RegistrationRequestListSerializer(req, context={"request": request})
             return Response(out.data, status=201)
@@ -1118,92 +1226,10 @@ class RegistrationRequestViewSet(ModelViewSet):
                 {"detail": "이미 처리된 신청입니다."},
                 status=400,
             )
-        tenant = request.tenant
-        password = reg.initial_password
-        name = reg.name
-        parent_phone = reg.parent_phone
-        phone = reg.phone
-
-        try:
-            ps_number = _generate_unique_ps_number(tenant=tenant)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=400)
-
-        # 희망 아이디가 있으면 중복 검사 후 사용, 없으면 ps_number
-        from apps.core.models.user import user_internal_username
-        requested_username = (reg.username or "").strip()
-        if requested_username:
-            internal = user_internal_username(tenant, requested_username)
-            if get_user_model().objects.filter(username=internal).exists():
-                requested_username = None
-        if not requested_username:
-            requested_username = ps_number
-
-        if phone and len(str(phone)) >= 8:
-            omr_code = str(phone)[-8:]
-        elif parent_phone and len(parent_phone) >= 8:
-            omr_code = parent_phone[-8:]
-        else:
-            omr_code = (parent_phone or "00000000")[-8:]
-
-        with transaction.atomic():
-            parent = None
-            if parent_phone:
-                parent = ensure_parent_for_student(
-                    tenant=tenant,
-                    parent_phone=parent_phone,
-                    student_name=name,
-                    parent_password=password,
-                )
-            User = get_user_model()
-            user = student_repo.user_create_user(
-                username=requested_username,
-                tenant=tenant,
-                phone=phone or "",
-                name=name,
-            )
-            user.set_password(password)
-            user.save()
-
-            student = student_repo.student_create(
-                tenant=tenant,
-                user=user,
-                parent=parent,
-                name=name,
-                parent_phone=parent_phone,
-                phone=phone,
-                ps_number=ps_number,
-                omr_code=omr_code,
-                uses_identifier=not (phone and phone.strip()),
-                school_type=reg.school_type,
-                high_school=reg.high_school or None,
-                middle_school=reg.middle_school or None,
-                high_school_class=reg.high_school_class or None,
-                major=reg.major or None,
-                grade=reg.grade,
-                gender=reg.gender or None,
-                memo=reg.memo or None,
-                address=reg.address or None,
-                origin_middle_school=reg.origin_middle_school or None,
-            )
-            TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
-            reg.status = StudentRegistrationRequest.APPROVED
-            reg.student = student
-            reg.save(update_fields=["status", "student", "updated_at"])
-
-        # 가입 승인 알림톡/SMS (트리거 설정 시에만)
-        send_registration_approved_messages(
-            tenant_id=tenant.id,
-            site_url=get_site_url(request) or "",
-            student_name=name,
-            student_phone=(phone or "") if phone else "",
-            student_id=requested_username,
-            student_password=password,
-            parent_phone=parent_phone or "",
-            parent_password=password,
-        )
-
-        out = StudentDetailSerializer(student, context={"request": request})
+        err = _approve_registration_request(request, reg)
+        if err is not None:
+            return err
+        out = StudentDetailSerializer(reg.student, context={"request": request})
         return Response(out.data, status=200)
 
 
