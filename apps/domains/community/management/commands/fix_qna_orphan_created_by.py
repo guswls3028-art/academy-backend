@@ -80,11 +80,19 @@ class Command(BaseCommand):
                 updated += len(posts)
             else:
                 skipped += len(posts)
+                students_objs = list(
+                    Student.objects.filter(tenant_id=tenant_id, deleted_at__isnull=True).values("id", "name")[:20]
+                )
                 self.stdout.write(
                     self.style.WARNING(
                         f"tenant_id={tenant_id}: 활성 학생 수={len(students)}명 → 자동 할당 생략 (post_ids={[p.id for p in posts]})"
                     )
                 )
+                if students_objs:
+                    self.stdout.write(
+                        "  해당 테넌트 학생(일부): " + ", ".join(f"id={s['id']} name={s['name']!r}" for s in students_objs)
+                    )
+                    self.stdout.write("  → 지정 할당: python manage.py fix_qna_orphan_created_by --student-id=<학생id>")
 
         if dry_run:
             self.stdout.write(self.style.NOTICE(f"[dry-run] 자동 할당 가능: {updated}건, 생략: {skipped}건"))
