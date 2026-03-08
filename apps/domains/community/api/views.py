@@ -79,6 +79,18 @@ class PostViewSet(viewsets.ModelViewSet):
             created_by = request_student
         elif created_by is None and getattr(request.user, "student_profile", None):
             created_by = request.user.student_profile
+        # QnA는 작성자(created_by) 필수. 프로필 로드 전 제출 시 null 저장 방지(배포에서 "질문 등록 안 됨" 원인).
+        block_type = serializer.validated_data.get("block_type")
+        if block_type is not None:
+            code = getattr(block_type, "code", None) or ""
+            if str(code).strip().lower() == "qna" and created_by is None:
+                return Response(
+                    {
+                        "detail": "프로필을 불러온 후 다시 시도해 주세요.",
+                        "code": "profile_required",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         data = {
             "block_type": serializer.validated_data["block_type"],
             "title": serializer.validated_data["title"],
