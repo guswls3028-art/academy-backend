@@ -2,6 +2,9 @@
 # API 서버 안에서: SSM /academy/api/env → .env, git pull → build → 재시작
 # 사용: cd /home/ec2-user/academy && bash scripts/deploy_api_on_server.sh
 #
+# SSM /academy/api/env 는 JSON(또는 base64 인코딩 JSON) 형식입니다.
+# refresh-api-env.sh, api.ps1 Launch Template userdata와 동일하게 JSON 파싱 후 KEY=value 줄로 .env 생성.
+#
 # 매 배포 시 academy-api:latest 로 다시 빌드하면, 이전 이미지는 태그가 빠져
 # dangling(<none>:<none>)으로 쌓임. 정리하지 않으면 디스크 100%로 No space left 발생.
 
@@ -12,11 +15,41 @@ REGION="${AWS_REGION:-ap-northeast-2}"
 SSM_API_ENV="/academy/api/env"
 
 # 1) Fetch API env from SSM (SSOT for API server)
-if aws ssm get-parameter --name "$SSM_API_ENV" --with-decryption --query Parameter.Value --output text --region "$REGION" 2>/dev/null | sed 's/\t/\n/g' | grep -v '^$' > "$ENV_FILE"; then
-  echo "OK. SSM $SSM_API_ENV -> $ENV_FILE"
-else
+#    형식: JSON 또는 base64(JSON). update-api-env-sqs.ps1 / api.ps1 userdata / refresh-api-env.sh 와 동일.
+RAW_VALUE=$(aws ssm get-parameter --name "$SSM_API_ENV" --with-decryption --query Parameter.Value --output text --region "$REGION" 2>/dev/null) || true
+if [ -z "$RAW_VALUE" ]; then
   echo "ERROR: Failed to get SSM $SSM_API_ENV. Create parameter or check IAM." >&2
   exit 1
+fi
+
+# JSON 문자열 확보: 먼저 raw를 JSON으로 파싱 시도, 실패 시 base64 디코드 후 재시도
+write_env_from_json() {
+  printf '%s' "$1" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    for k, v in d.items():
+        if v is not None:
+            print(k + '=' + str(v))
+except (json.JSONDecodeError, Exception):
+    sys.exit(1)
+" 2>/dev/null
+}
+if write_env_from_json "$RAW_VALUE" > "$ENV_FILE" && [ -s "$ENV_FILE" ]; then
+  echo "OK. SSM $SSM_API_ENV (JSON) -> $ENV_FILE"
+else
+  DECODED=$(echo "$RAW_VALUE" | base64 -d 2>/dev/null) || true
+  if [ -n "$DECODED" ] && write_env_from_json "$DECODED" > "$ENV_FILE" && [ -s "$ENV_FILE" ]; then
+    echo "OK. SSM $SSM_API_ENV (base64 JSON) -> $ENV_FILE"
+  else
+    # 레거시: plain KEY=value 줄 형태일 경우 그대로 사용
+    echo "$RAW_VALUE" | sed 's/\t/\n/g' | grep -v '^$' > "$ENV_FILE"
+    if [ ! -s "$ENV_FILE" ]; then
+      echo "ERROR: SSM value is not valid JSON and produced empty .env. Ensure /academy/api/env is JSON (or base64 JSON)." >&2
+      exit 1
+    fi
+    echo "OK. SSM $SSM_API_ENV (plain) -> $ENV_FILE"
+  fi
 fi
 
 # 2) Guard: required env for upload_complete / API (apps/api/config/settings/base.py)
@@ -32,6 +65,7 @@ for k in $REQUIRED_KEYS; do
 done
 if [ -n "$MISSING" ]; then
   echo "ERROR: Required env missing in $ENV_FILE: $MISSING" >&2
+  echo "  Fix: ensure SSM $SSM_API_ENV contains these keys (JSON object). See docs/00-SSOT/v1/V1-OPERATIONS-GUIDE.md" >&2
   exit 1
 fi
 
