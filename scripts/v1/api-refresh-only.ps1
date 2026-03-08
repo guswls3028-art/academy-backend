@@ -23,5 +23,13 @@ $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInsta
 $prefs = "{`"MinHealthyPercentage`":$minHealthy,`"InstanceWarmup`":$warmup}"
 
 Write-Host "Starting API ASG instance refresh: $($script:ApiASGName) (MinHealthy=$minHealthy%, Warmup=${warmup}s)" -ForegroundColor Cyan
-Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed"
-Write-Host "API ASG instance refresh started. New instances will pull academy-api:latest." -ForegroundColor Green
+try {
+    Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed"
+    Write-Host "API ASG instance refresh started. New instances will pull academy-api:latest." -ForegroundColor Green
+} catch {
+    if ($_.Exception.Message -match "InstanceRefreshInProgress") {
+        Write-Host "Instance refresh already in progress (idempotent). No new refresh started." -ForegroundColor Green
+        exit 0
+    }
+    throw
+}
