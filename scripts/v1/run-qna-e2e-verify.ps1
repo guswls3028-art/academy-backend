@@ -1,5 +1,5 @@
-# 배포 API에서 질문 등록·목록 E2E 검증 (학생 455 JWT로 https://api.hakwonplus.com 호출).
-# 전제: API 인스턴스에 academy-api 이미지가 있고 scripts/verify_qna_e2e.py 포함된 버전이 배포되어 있음.
+# 배포 API에서 질문 등록·목록 E2E 검증 (학생 455 JWT 사용).
+# ALB 내부 URL로 호출(공개 URL은 Cloudflare에서 403 가능). X-Tenant-Code로 테넌트 해석.
 # 사용: pwsh -File scripts/v1/run-qna-e2e-verify.ps1 [-AwsProfile default]
 param([string]$AwsProfile = "default")
 $ErrorActionPreference = "Stop"
