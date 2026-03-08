@@ -987,6 +987,18 @@ class RegistrationRequestViewSet(ModelViewSet):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data.copy()
         password = data.pop("initial_password")
+        # grade: model은 PositiveSmallIntegerField(null=True) → int 또는 None만 허용
+        raw_grade = data.get("grade")
+        if raw_grade is not None and raw_grade != "":
+            try:
+                grade = int(raw_grade)
+                if grade < 0 or grade > 32767:
+                    grade = None
+            except (TypeError, ValueError):
+                grade = None
+        else:
+            grade = None
+
         try:
             req = StudentRegistrationRequest.objects.create(
                 tenant=request.tenant,
@@ -1001,8 +1013,8 @@ class RegistrationRequestViewSet(ModelViewSet):
                 middle_school=(data.get("middle_school") or "") or None,
                 high_school_class=(data.get("high_school_class") or "") or None,
                 major=(data.get("major") or "") or None,
-                grade=data.get("grade"),
-                gender=(data.get("gender") or "") or None,
+                grade=grade,
+                gender=(data.get("gender") or "").strip() or None,
                 memo=(data.get("memo") or "") or None,
                 address=(data.get("address") or "").strip() or None,
                 origin_middle_school=(data.get("origin_middle_school") or "").strip() or None,
@@ -1023,8 +1035,19 @@ class RegistrationRequestViewSet(ModelViewSet):
                 },
                 status=500,
             )
-        out = RegistrationRequestListSerializer(req, context={"request": request})
-        return Response(out.data, status=201)
+
+        try:
+            out = RegistrationRequestListSerializer(req, context={"request": request})
+            return Response(out.data, status=201)
+        except Exception as e:
+            logger.exception("RegistrationRequest response serialize error: %s", e)
+            return Response(
+                {
+                    "detail": "가입 신청이 저장되었으나 응답 생성 중 오류가 발생했습니다.",
+                    "error": str(e),
+                },
+                status=500,
+            )
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
