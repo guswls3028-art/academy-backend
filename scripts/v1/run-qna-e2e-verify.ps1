@@ -10,7 +10,14 @@ Set-Location $RepoRoot
 . (Join-Path $PSScriptRoot "resources\api.ps1")
 if ($AwsProfile -and $AwsProfile.Trim() -ne "") { $env:AWS_PROFILE = $AwsProfile.Trim() }
 $null = Load-SSOT -Env "prod"
-$ids = @(Get-APIASGInstanceIds)
+$asg = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $script:ApiASGName, "--region", $script:Region, "--output", "json")
+$ids = @()
+if ($asg -and $asg.AutoScalingGroups -and $asg.AutoScalingGroups.Count -gt 0) {
+    $instances = $asg.AutoScalingGroups[0].Instances
+    $inService = @($instances | Where-Object { $_.LifecycleState -eq "InService" } | ForEach-Object { $_.InstanceId })
+    $pending = @($instances | Where-Object { $_.LifecycleState -eq "Pending" } | ForEach-Object { $_.InstanceId })
+    $ids = @($inService + $pending)
+}
 if (-not $ids -or $ids.Count -eq 0) { Write-Host "No API instance"; exit 1 }
 # ALB 내부 URL로 호출 후 Host 헤더로 테넌트 해석 (Cloudflare 403 회피)
 $albDns = ""
