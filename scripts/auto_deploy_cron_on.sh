@@ -1,9 +1,10 @@
 #!/bin/bash
-# EC2 API 서버에서: git 레포 기준 자동 배포 cron 등록 (ON) — 2분마다 origin/main 변경 감지 시 배포
-# 사용: bash scripts/auto_deploy_cron_on.sh
-# 원격 제어: pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action On -AwsProfile default
-
+# EC2 API 서버에서: git 레포 기준 자동 배포 cron 등록 (ON) — DISABLED IN PRODUCTION.
+# Rapid deploy is disabled in production. Use CI/CD formal deploy only.
 set -e
+echo "Rapid deploy is disabled in production. Use CI/CD formal deploy." >&2
+exit 1
+
 REPO_DIR="${REPO_DIR:-/home/ec2-user/academy}"
 LOG_FILE="${LOG_FILE:-/home/ec2-user/auto_deploy.log}"
 LOCK_FILE="${LOCK_FILE:-/tmp/academy_deploy.lock}"

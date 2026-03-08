@@ -1,14 +1,8 @@
 # ==============================================================================
 # Rapid Deploy 원격 제어 (API 서버만, ASG instance refresh 없음)
 # ==============================================================================
-# API ASG 인스턴스에서 2분마다 main 변경 감지 → ECR pull + API 컨테이너만 재시작.
-# Formal 배포(deploy.ps1)와 분리: 개발 중 빠른 반영용. tenant 격리/환경은 동일(SSM → /opt/api.env).
-#
-# 사용:
-#   Rapid Deploy ON:  pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action On   -AwsProfile default
-#   Rapid Deploy OFF: pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Off  -AwsProfile default
-#   상태 확인:        pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Status -AwsProfile default
-#   수동 1회 배포:    pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Deploy -AwsProfile default
+# DISABLED IN PRODUCTION: Rapid deploy is disabled. Use CI/CD formal deploy only.
+# (GitHub Actions → ECR push → API ASG instance refresh)
 # ==============================================================================
 [CmdletBinding()]
 param(
@@ -18,6 +12,9 @@ param(
     [string]$RepoUrl = "",
     [string]$AwsProfile = ""
 )
+
+Write-Error "Rapid deploy is disabled in production. Use CI/CD formal deploy (GitHub Actions → ECR push → ASG instance refresh)."
+exit 1
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "core\env.ps1")
