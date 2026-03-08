@@ -804,6 +804,43 @@ class StudentViewSet(ModelViewSet):
                 with connection.cursor() as cursor:
                     # Enrollment를 참조하는 테이블들을 먼저 삭제 (존재하는 테이블만)
                     sub = "SELECT id FROM enrollment_enrollment WHERE student_id IN %s"
+                    params = [tuple(student_ids)]
+
+                    # 1) results: result_item -> result / exam_attempt / fact / wrong_note_pdf (enrollment_id)
+                    #    exam_result -> submission (submission_id IN ... enrollment_id IN sub)
+                    for tbl, where_sql, where_params in [
+                        (
+                            "results_result_item",
+                            f"result_id IN (SELECT id FROM results_result WHERE enrollment_id IN ({sub}))",
+                            params,
+                        ),
+                        ("results_result", f"enrollment_id IN ({sub})", params),
+                        ("results_exam_attempt", f"enrollment_id IN ({sub})", params),
+                        ("results_fact", f"enrollment_id IN ({sub})", params),
+                        ("results_wrong_note_pdf", f"enrollment_id IN ({sub})", params),
+                        (
+                            "results_exam_result",
+                            f"submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN ({sub}))",
+                            params,
+                        ),
+                        (
+                            "submissions_submissionanswer",
+                            f"submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN ({sub}))",
+                            params,
+                        ),
+                        ("submissions_submission", f"enrollment_id IN ({sub})", params),
+                        ("homework_results_homeworkscore", f"enrollment_id IN ({sub})", params),
+                        ("homework_assignment", f"enrollment_id IN ({sub})", params),
+                        ("homework_enrollment", f"enrollment_id IN ({sub})", params),
+                    ]:
+                        cursor.execute(
+                            "SELECT 1 FROM information_schema.tables "
+                            "WHERE table_schema = %s AND table_name = %s",
+                            ["public", tbl],
+                        )
+                        if cursor.fetchone():
+                            cursor.execute(f"DELETE FROM {tbl} WHERE {where_sql}", where_params)
+
                     enrollment_child_tables = [
                         "attendance_attendance",
                         "enrollment_sessionenrollment",
@@ -816,7 +853,6 @@ class StudentViewSet(ModelViewSet):
                         "progress_cliniclink",
                         "progress_risklog",
                     ]
-                    params = [tuple(student_ids)]
                     for tbl in enrollment_child_tables:
                         cursor.execute(
                             "SELECT 1 FROM information_schema.tables "
