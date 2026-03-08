@@ -809,7 +809,7 @@ class StudentViewSet(ModelViewSet):
                         "enrollment_sessionenrollment",
                         "video_videopermission",
                         "video_videoprogress",
-                        "video_playbacksession",
+                        "video_videoplaysession",
                         "video_videoplaybackevent",
                         "progress_sessionprogress",
                         "progress_lectureprogress",
