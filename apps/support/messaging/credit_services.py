@@ -61,7 +61,8 @@ def rollback_credits(tenant_id: int, amount: str | Decimal) -> Decimal:
 
 
 def get_tenant_messaging_info(tenant_id: int) -> Optional[dict]:
-    """워커/API용: 테넌트 메시징 정보 (잔액, PFID, 발신번호, 활성화, 단가)"""
+    """워커/API용: 테넌트 메시징 정보 (잔액, PFID, 발신번호, 단가).
+    messaging_is_active는 표시용 반환만 하며, 발송 차단 정책에는 미사용(policy.can_send_sms 등 기준)."""
     t = Tenant.objects.filter(pk=tenant_id).values(
         "kakao_pfid", "credit_balance", "messaging_is_active", "messaging_base_price",
         "messaging_sender",

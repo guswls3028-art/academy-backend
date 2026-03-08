@@ -11,6 +11,7 @@ class MessagingInfoSerializer(serializers.ModelSerializer):
     credit_balance = serializers.DecimalField(
         max_digits=12, decimal_places=0, read_only=True
     )
+    # 표시용. 현재 발송 차단 정책에는 미사용(정책은 policy.can_send_sms / resolve_kakao_channel 기준).
     is_active = serializers.BooleanField(source="messaging_is_active", read_only=True)
     base_price = serializers.DecimalField(
         source="messaging_base_price", max_digits=10, decimal_places=2, read_only=True
