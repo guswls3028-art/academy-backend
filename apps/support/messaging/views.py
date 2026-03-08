@@ -371,14 +371,6 @@ class SendMessageView(APIView):
 
         enqueued = 0
         skipped_no_phone = 0
-        skipped_whitelist = 0
-        # 테스트용 수신번호 화이트리스트 (설정 시 해당 번호로만 발송, 그 외는 스킵하여 실제 학생 발송 방지)
-        test_whitelist = None
-        from django.conf import settings as django_settings
-        _whitelist_str = getattr(django_settings, "MESSAGING_TEST_RECIPIENT_WHITELIST", None) or ""
-        if isinstance(_whitelist_str, str) and _whitelist_str.strip():
-            test_whitelist = {p.strip().replace("-", "") for p in _whitelist_str.strip().split(",") if p.strip()}
-
         for s in students:
             phone = None
             if send_to == "student":
@@ -387,9 +379,6 @@ class SendMessageView(APIView):
                 phone = (s.parent_phone or "").replace("-", "").strip()
             if not phone or len(phone) < 10:
                 skipped_no_phone += 1
-                continue
-            if test_whitelist is not None and phone not in test_whitelist:
-                skipped_whitelist += 1
                 continue
             name = (s.name or "").strip()
             name_2 = name[:2] if len(name) >= 2 else name
@@ -435,7 +424,6 @@ class SendMessageView(APIView):
             "detail": f"발송 예정 {enqueued}건입니다.",
             "enqueued": enqueued,
             "skipped_no_phone": skipped_no_phone,
-            "skipped_whitelist": skipped_whitelist,
         }, status=status.HTTP_200_OK)
 
 
