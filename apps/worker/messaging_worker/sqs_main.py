@@ -313,7 +313,7 @@ def main() -> int:
 
                     _current_receipt_handle = receipt_handle
 
-                    to = str(data.get("to", ""))
+                    to = str(data.get("to", "")).replace("-", "").strip()
                     text = str(data.get("text", ""))
                     sender = (data.get("sender") or "").strip()
                     message_mode = (data.get("message_mode") or "").strip().lower()
@@ -323,6 +323,22 @@ def main() -> int:
                         message_mode = "sms"
                     alimtalk_replacements = data.get("alimtalk_replacements") or []
                     template_id_msg = data.get("template_id") or ""
+
+                    # 테스트용 수신번호 화이트리스트: 설정 시 해당 번호로만 실제 발송 (그 외는 스킵·삭제)
+                    _whitelist_env = (os.environ.get("MESSAGING_TEST_RECIPIENT_WHITELIST") or "").strip()
+                    if _whitelist_env:
+                        _wl_set = {p.strip().replace("-", "") for p in _whitelist_env.split(",") if p.strip()}
+                        if _wl_set and to not in _wl_set:
+                            logger.info(
+                                "skip send: to=%s**** not in MESSAGING_TEST_RECIPIENT_WHITELIST (message deleted)",
+                                to[:4] if len(to) >= 4 else "****",
+                            )
+                            queue_client.delete_message(
+                                queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                                receipt_handle=receipt_handle,
+                            )
+                            _current_receipt_handle = None
+                            continue
 
                     # 테넌트별 잔액·PFID·발신번호·단가 (Django 있을 때만)
                     info = None

@@ -147,6 +147,15 @@ def enqueue_sms(
         logger.info("enqueue_sms skipped: tenant_id=%s is test tenant (messaging disabled)", tenant_id)
         return False
 
+    # 테스트용 수신번호 화이트리스트: 설정 시 해당 번호로만 enqueue (그 외 스킵)
+    to_normalized = (to or "").replace("-", "").strip()
+    _whitelist_str = getattr(settings, "MESSAGING_TEST_RECIPIENT_WHITELIST", None) or ""
+    if isinstance(_whitelist_str, str) and _whitelist_str.strip():
+        whitelist = {p.strip().replace("-", "") for p in _whitelist_str.strip().split(",") if p.strip()}
+        if whitelist and to_normalized not in whitelist:
+            logger.info("enqueue_sms skipped: to=%s not in MESSAGING_TEST_RECIPIENT_WHITELIST", to_normalized[:4] + "****")
+            return False
+
     mode = (message_mode or "").strip().lower() or None
     if not mode:
         mode = "both" if use_alimtalk_first else "sms"
