@@ -349,18 +349,22 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
             "initial_password": "비밀번호",
             "parent_phone": "학부모 연락처",
             "phone": "휴대전화",
-            "high_school": "고등학교명",
-            "middle_school": "중학교명",
             "high_school_class": "반",
             "grade": "학년",
             "gender": "성별",
             "address": "주소",
-            "origin_middle_school": "출신중학교",
         }
+        school_type = attrs.get("school_type") or "HIGH"
+        if school_type == "HIGH":
+            signup_required["high_school"] = "고등학교명"
+            signup_required["origin_middle_school"] = "출신중학교"
+        else:
+            signup_required["middle_school"] = "중학교명"
+
         for key, label in signup_required.items():
             val = attrs.get(key)
             if key == "grade":
-                if val is None or (isinstance(val, str) and val.strip() == ""):
+                if val is None or (isinstance(val, str) and str(val).strip() == ""):
                     raise serializers.ValidationError({key: f"{label}을(를) 입력해 주세요."})
             elif isinstance(val, str):
                 if not val.strip():

@@ -454,6 +454,7 @@ class AutoSendConfigView(APIView):
                     "template_solapi_status": "",
                     "enabled": False,
                     "message_mode": "sms",
+                    "minutes_before": None,
                     "created_at": None,
                     "updated_at": None,
                 })

@@ -121,6 +121,7 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
             "template_solapi_status",
             "enabled",
             "message_mode",
+            "minutes_before",
             "created_at",
             "updated_at",
         ]
@@ -135,3 +136,4 @@ class AutoSendConfigUpdateSerializer(serializers.Serializer):
         choices=[("sms", "SMS만"), ("alimtalk", "알림톡만"), ("both", "알림톡→SMS폴백")],
         required=False,
     )
+    minutes_before = serializers.IntegerField(required=False, allow_null=True, min_value=0)
