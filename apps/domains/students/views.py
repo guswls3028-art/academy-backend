@@ -1050,6 +1050,65 @@ class RegistrationRequestViewSet(ModelViewSet):
                 status=500,
             )
 
+    @action(detail=False, methods=["post"], url_path="bulk_approve")
+    def bulk_approve(self, request):
+        """
+        선택한 가입 신청 일괄 승인.
+        POST body: { "ids": [1, 2, 3, ...] }
+        응답: { "approved": int, "failed": [ {"id": int, "detail": str}, ... ] }
+        """
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, (list, tuple)):
+            return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
+        ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
+        if not ids:
+            return Response({"detail": "승인할 ID가 없습니다."}, status=400)
+
+        tenant = request.tenant
+        approved_count = 0
+        failed = []
+
+        for rid in ids:
+            reg = StudentRegistrationRequest.objects.filter(
+                tenant=tenant,
+                id=rid,
+            ).first()
+            if not reg:
+                failed.append({"id": rid, "detail": "신청을 찾을 수 없습니다."})
+                continue
+            if reg.status != StudentRegistrationRequest.PENDING:
+                failed.append({"id": rid, "detail": "이미 처리된 신청입니다."})
+                continue
+            err_response = _approve_registration_request(request, reg)
+            if err_response is not None:
+                failed.append({"id": rid, "detail": err_response.data.get("detail", "승인 실패")})
+            else:
+                approved_count += 1
+
+        return Response({"approved": approved_count, "failed": failed}, status=200)
+
+    @action(detail=False, methods=["get", "patch"], url_path="settings")
+    def registration_settings(self, request):
+        """
+        가입 신청 설정 조회/수정 (자동 승인).
+        GET → { "auto_approve": bool }
+        PATCH body: { "auto_approve": bool } → 200 동일 형식
+        """
+        tenant = request.tenant
+        if request.method == "GET":
+            return Response({
+                "auto_approve": getattr(tenant, "student_registration_auto_approve", False),
+            })
+        if request.method == "PATCH":
+            auto_approve = request.data.get("auto_approve")
+            if auto_approve is not None:
+                tenant.student_registration_auto_approve = bool(auto_approve)
+                tenant.save(update_fields=["student_registration_auto_approve"])
+            return Response({
+                "auto_approve": getattr(tenant, "student_registration_auto_approve", False),
+            })
+        return Response({"detail": "Method not allowed."}, status=405)
+
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
         """승인 시 Student + User + TenantMembership 생성 후 status=approved."""
