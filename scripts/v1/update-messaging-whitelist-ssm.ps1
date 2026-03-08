@@ -1,9 +1,8 @@
 # ==============================================================================
-# SSM /academy/api/env, /academy/workers/env 에 MESSAGING_TEST_RECIPIENT_WHITELIST=01034137466 설정
+# SSM /academy/api/env, /academy/workers/env 에 MESSAGING_TEST_RECIPIENT_WHITELIST 제거 (빈 문자열 설정)
 # ==============================================================================
-# 테스트용 수신번호 화이트리스트를 01034137466만 허용하도록 API·워커 env에 반영.
-# 사용: pwsh scripts/v1/update-messaging-whitelist-ssm.ps1 [-AwsProfile default]
-# 적용: API는 refresh-api-env.ps1 실행 또는 instance-refresh, 워커는 instance-refresh 후 적용됨.
+# 테스트용 화이트리스트를 비활성화(빈 값)하여 모든 수신번호로 발송 가능하게 함.
+# 사용: pwsh scripts/v1/clear-messaging-whitelist-ssm.ps1 [-AwsProfile default]
 # ==============================================================================
 param([string]$AwsProfile = "")
 
@@ -15,7 +14,7 @@ if ($AwsProfile) { $env:AWS_PROFILE = $AwsProfile; if (-not $env:AWS_DEFAULT_REG
 . (Join-Path $PSScriptRoot "core\aws.ps1")
 $null = Load-SSOT -Env "prod"
 
-$whitelistValue = "01034137466"
+$whitelistValue = ""
 
 function Set-WhitelistInParam {
     param([string]$ParamName, [string]$Description)
@@ -43,11 +42,11 @@ function Set-WhitelistInParam {
         $newValue = [Convert]::ToBase64String($newBytes)
     }
     Invoke-Aws @("ssm", "put-parameter", "--name", $ParamName, "--type", "SecureString", "--value", $newValue, "--overwrite", "--region", $script:Region) -ErrorMessage "put-parameter $ParamName" | Out-Null
-    Write-Host "  $ParamName -> MESSAGING_TEST_RECIPIENT_WHITELIST=$whitelistValue" -ForegroundColor Green
+    Write-Host "  $ParamName -> MESSAGING_TEST_RECIPIENT_WHITELIST cleared" -ForegroundColor Green
     return $true
 }
 
-Write-Host "Setting MESSAGING_TEST_RECIPIENT_WHITELIST=$whitelistValue in SSM..." -ForegroundColor Cyan
+Write-Host "Clearing MESSAGING_TEST_RECIPIENT_WHITELIST in SSM (production messaging)..." -ForegroundColor Cyan
 $apiOk = Set-WhitelistInParam -ParamName $script:SsmApiEnv -Description "SSM API env"
 $workersOk = Set-WhitelistInParam -ParamName $script:SsmWorkersEnv -Description "SSM Workers env"
 if ($apiOk -or $workersOk) {
