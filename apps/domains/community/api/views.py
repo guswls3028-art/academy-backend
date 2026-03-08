@@ -77,6 +77,8 @@ class PostViewSet(viewsets.ModelViewSet):
         created_by = serializer.validated_data.get("created_by")
         if request_student is not None:
             created_by = request_student
+        elif created_by is None and getattr(request.user, "student_profile", None):
+            created_by = request.user.student_profile
         data = {
             "block_type": serializer.validated_data["block_type"],
             "title": serializer.validated_data["title"],
