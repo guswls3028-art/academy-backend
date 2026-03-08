@@ -394,6 +394,12 @@ def main() -> int:
                                 "SMS blocked by policy: tenant_id=%s is not owner tenant (allowed only for OWNER_TENANT_ID=%s)",
                                 tenant_id, cfg.OWNER_TENANT_ID,
                             )
+                            if deducted:
+                                try:
+                                    from apps.support.messaging.credit_services import rollback_credits
+                                    rollback_credits(int(tenant_id), base_price)
+                                except Exception as e:
+                                    logger.warning("rollback_credits failed: %s", e)
                             if os.environ.get("DJANGO_SETTINGS_MODULE"):
                                 try:
                                     from decimal import Decimal
