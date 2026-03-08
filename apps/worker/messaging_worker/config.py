@@ -32,6 +32,8 @@ class Config:
     SOLAPI_KAKAO_TEMPLATE_ID: str
     # SMS 허용 tenant (내 테넌트). 해당 tenant에서만 문자 발송 가능.
     OWNER_TENANT_ID: int
+    # 로컬 기능 테스트용 tenant. 이 tenant의 메시지는 발송·차감 없이 스킵.
+    TEST_TENANT_ID: int
 
 
 def _require_solapi(name: str) -> str:
@@ -58,6 +60,7 @@ def load_config() -> Config:
     SOLAPI_KAKAO_TEMPLATE_ID=os.environ.get("SOLAPI_KAKAO_TEMPLATE_ID", "").strip(),
     # SMS 허용 tenant (내 테넌트). 1번만 문자 발송 가능.
     OWNER_TENANT_ID=int(os.environ.get("OWNER_TENANT_ID", "1")),
+    TEST_TENANT_ID=int(os.environ.get("TEST_TENANT_ID", "9999")),
 )
     except Exception as e:
         import logging

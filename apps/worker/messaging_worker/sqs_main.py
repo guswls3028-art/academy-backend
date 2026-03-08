@@ -279,6 +279,18 @@ def main() -> int:
                         )
                         continue
 
+                    # 로컬 기능 테스트용 tenant(9999): 발송·차감 없이 스킵, 메시지 삭제 후 진행
+                    if tenant_id is not None and int(tenant_id) == cfg.TEST_TENANT_ID:
+                        logger.info(
+                            "Message skipped: tenant_id=%s is test tenant (messaging disabled)",
+                            tenant_id,
+                        )
+                        queue_client.delete_message(
+                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                            receipt_handle=receipt_handle,
+                        )
+                        continue
+
                     # 예약 취소 Double Check: 발송 직전 한 번 더 확인
                     reservation_id = data.get("reservation_id")
                     tenant_id_str = str(tenant_id) if tenant_id else None
