@@ -22,7 +22,7 @@ if (-not $ids -or $ids.Count -eq 0) {
 }
 
 $region = $script:Region
-$script = "sudo /usr/bin/docker exec academy-api python manage.py messaging_create_student_and_send_verify --tenant=1 --parent-phone=01034137466 2>&1"
+$script = "docker exec academy-api python manage.py messaging_create_student_and_send_verify --tenant=1 --parent-phone=01034137466 2>&1"
 $params = @{ commands = @($script) }
 $paramsJson = $params | ConvertTo-Json -Compress
 
