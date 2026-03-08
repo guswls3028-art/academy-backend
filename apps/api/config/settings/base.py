@@ -358,7 +358,7 @@ SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
 OWNER_TENANT_ID = int(os.getenv("OWNER_TENANT_ID", "1"))
 # 로컬 기능 테스트용 tenant. 이 tenant에서는 알림톡·문자 발송 없이 기능만 동작.
 TEST_TENANT_ID = int(os.getenv("TEST_TENANT_ID", "9999"))
-# 테스트용 수신번호 화이트리스트. 설정 시 해당 번호로만 발송(그 외 스킵). 쉼표 구분 예: "01034137466,01035023313"
+# 테스트용 수신번호 화이트리스트. 설정 시 해당 번호로만 발송(그 외 스킵). 쉼표 구분 예: "01034137466"
 MESSAGING_TEST_RECIPIENT_WHITELIST = (os.getenv("MESSAGING_TEST_RECIPIENT_WHITELIST", "") or "").strip()
 
 # delete_r2 전용 SQS (Encoding = Batch ONLY)
