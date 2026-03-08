@@ -879,11 +879,17 @@ class StudentViewSet(ModelViewSet):
                         "DELETE FROM students_studenttag WHERE student_id IN %s",
                         [tuple(student_ids)],
                     )
-                    logger.info("bulk_permanent_delete UPDATE students_studentregistrationrequest (unlink)")
                     cursor.execute(
-                        "UPDATE students_studentregistrationrequest SET student_id = NULL WHERE student_id IN %s",
-                        [tuple(student_ids)],
+                        "SELECT 1 FROM information_schema.tables "
+                        "WHERE table_schema = %s AND table_name = %s",
+                        ["public", "students_studentregistrationrequest"],
                     )
+                    if cursor.fetchone():
+                        logger.info("bulk_permanent_delete UPDATE students_studentregistrationrequest (unlink)")
+                        cursor.execute(
+                            "UPDATE students_studentregistrationrequest SET student_id = NULL WHERE student_id IN %s",
+                            [tuple(student_ids)],
+                        )
                     for tbl in ["clinic_sessionparticipant", "clinic_submission"]:
                         cursor.execute(
                             "SELECT 1 FROM information_schema.tables "
@@ -929,8 +935,11 @@ class StudentViewSet(ModelViewSet):
                 "bulk_permanent_delete failed: %s (student_ids=%s)",
                 e, student_ids,
             )
+            detail = str(e)
+            if settings.DEBUG:
+                detail += "\n" + traceback.format_exc()
             return Response(
-                {"detail": f"영구 삭제 중 오류: {str(e)}"},
+                {"detail": f"영구 삭제 중 오류: {detail}"},
                 status=500,
             )
         return Response({"deleted": deleted}, status=200)
