@@ -233,6 +233,7 @@ def send_welcome_messages(
         return {"status": "skip", "enqueued": 0}
 
     from apps.support.messaging.selectors import get_auto_send_config
+    from apps.support.messaging.policy import MessagingPolicyError
 
     tenant_id = getattr(created_students[0], "tenant_id", None)
     if not tenant_id:
@@ -283,14 +284,18 @@ def send_welcome_messages(
                     {"key": "student_id", "value": ps_number},
                     {"key": "student_password", "value": student_password},
                 ]
-            ok = enqueue_sms(
-                tenant_id=tenant_id,
-                to=phone,
-                text=text,
-                message_mode=config.message_mode,
-                template_id=template_id_solapi,
-                alimtalk_replacements=alimtalk_replacements,
-            )
+            try:
+                ok = enqueue_sms(
+                    tenant_id=tenant_id,
+                    to=phone,
+                    text=text,
+                    message_mode=config.message_mode,
+                    template_id=template_id_solapi,
+                    alimtalk_replacements=alimtalk_replacements,
+                )
+            except MessagingPolicyError:
+                logger.info("send_welcome student SMS skipped (policy: tenant_id=%s)", tenant_id)
+                ok = False
             if ok:
                 sent += 1
 
@@ -321,14 +326,18 @@ def send_welcome_messages(
                     {"key": "parent_password", "value": pwd},
                     {"key": "parent_id", "value": parent_phone},
                 ]
-            ok = enqueue_sms(
-                tenant_id=tenant_id,
-                to=parent_phone,
-                text=text,
-                message_mode=config.message_mode,
-                template_id=template_id_solapi,
-                alimtalk_replacements=alimtalk_replacements,
-            )
+            try:
+                ok = enqueue_sms(
+                    tenant_id=tenant_id,
+                    to=parent_phone,
+                    text=text,
+                    message_mode=config.message_mode,
+                    template_id=template_id_solapi,
+                    alimtalk_replacements=alimtalk_replacements,
+                )
+            except MessagingPolicyError:
+                logger.info("send_welcome parent SMS skipped (policy: tenant_id=%s)", tenant_id)
+                ok = False
             if ok:
                 sent += 1
 
@@ -361,6 +370,7 @@ def send_registration_approved_messages(
     설정이 없거나 비활성화면 발송하지 않음.
     """
     from apps.support.messaging.selectors import get_auto_send_config
+    from apps.support.messaging.policy import MessagingPolicyError
 
     sent = 0
     student_phone = (student_phone or "").replace("-", "").strip()
@@ -397,15 +407,18 @@ def send_registration_approved_messages(
                 {"key": "site_link", "value": site_url},
                 {"key": "change_password_notice", "value": notice},
             ]
-        if enqueue_sms(
-            tenant_id=tenant_id,
-            to=student_phone,
-            text=text,
-            message_mode=config_student.message_mode,
-            template_id=template_id_solapi,
-            alimtalk_replacements=alimtalk_replacements,
-        ):
-            sent += 1
+        try:
+            if enqueue_sms(
+                tenant_id=tenant_id,
+                to=student_phone,
+                text=text,
+                message_mode=config_student.message_mode,
+                template_id=template_id_solapi,
+                alimtalk_replacements=alimtalk_replacements,
+            ):
+                sent += 1
+        except MessagingPolicyError:
+            logger.info("send_registration_approved student skipped (policy: tenant_id=%s)", tenant_id)
 
     # 학부모용 (학부모 로그인 ID = 전화번호로 통일하여 안내)
     config_parent = get_auto_send_config(tenant_id, "registration_approved_parent")
