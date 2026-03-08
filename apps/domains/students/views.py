@@ -1232,6 +1232,40 @@ class RegistrationRequestViewSet(ModelViewSet):
         out = StudentDetailSerializer(reg.student, context={"request": request})
         return Response(out.data, status=200)
 
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        """가입 신청 거절 → status=rejected."""
+        reg = self.get_object()
+        if reg.status != StudentRegistrationRequest.PENDING:
+            return Response(
+                {"detail": "이미 처리된 신청입니다."},
+                status=400,
+            )
+        reg.status = StudentRegistrationRequest.REJECTED
+        reg.save(update_fields=["status", "updated_at"])
+        return Response({"status": "rejected", "id": reg.id}, status=200)
+
+    @action(detail=False, methods=["post"], url_path="bulk_reject")
+    def bulk_reject(self, request):
+        """
+        선택한 가입 신청 일괄 거절.
+        POST body: { "ids": [1, 2, 3, ...] }
+        """
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, (list, tuple)):
+            return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
+        ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
+        if not ids:
+            return Response({"detail": "거절할 ID가 없습니다."}, status=400)
+
+        tenant = request.tenant
+        updated = StudentRegistrationRequest.objects.filter(
+            tenant=tenant,
+            id__in=ids,
+            status=StudentRegistrationRequest.PENDING,
+        ).update(status=StudentRegistrationRequest.REJECTED)
+        return Response({"rejected": updated}, status=200)
+
 
 def _pw_reset_cache_key(tenant_id, phone: str) -> str:
     return f"pw_reset:{tenant_id}:{phone}"
