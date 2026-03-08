@@ -955,7 +955,8 @@ class RegistrationRequestViewSet(ModelViewSet):
         ).select_related("tenant", "student").order_by("-created_at")
 
     def filter_queryset(self, queryset):
-        if self.action == "list":
+        action = getattr(self, "action", None)
+        if action == "list":
             status = self.request.query_params.get("status")
             if status in (StudentRegistrationRequest.PENDING, StudentRegistrationRequest.APPROVED, StudentRegistrationRequest.REJECTED):
                 queryset = queryset.filter(status=status)
@@ -963,17 +964,17 @@ class RegistrationRequestViewSet(ModelViewSet):
 
     def get_authenticators(self):
         # create는 비로그인 요청 허용 → JWT 검사 생략 (만료 토큰 시 401 방지)
-        if self.action == "create":
+        if getattr(self, "action", None) == "create":
             return []
         return super().get_authenticators()
 
     def get_permissions(self):
-        if self.action == "create":
+        if getattr(self, "action", None) == "create":
             return [AllowAny(), TenantResolved()]
         return [IsAuthenticated(), TenantResolvedAndStaff()]
 
     def get_serializer_class(self):
-        if self.action == "create":
+        if getattr(self, "action", None) == "create":
             return RegistrationRequestCreateSerializer
         return RegistrationRequestListSerializer
 
