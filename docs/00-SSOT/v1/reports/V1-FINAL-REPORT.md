@@ -5,20 +5,20 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-03-08T19:52:18.1342794+09:00 |
-| 최종 상태 | PASS |
+| 검증 시각 | 2026-03-09T08:34:08.4399009+09:00 |
+| 최종 상태 | WARNING |
 | SSOT↔Actual 정합성 | **WARNING** |
-| GO/NO-GO | **GO** |
+| GO/NO-GO | **CONDITIONAL GO** |
 
-
+WARNING 영향도·완화책·추적 계획 확인 후 배포 판단. 상세: 아래 리스크 섹션 및 deploy-verification-latest.md.
 
 ## 합의사항 체크
 | 항목 | 결과 |
 |------|------|
-| API ASG min/desired=1 | Fix needed |
-| AI ASG min/desired=1 | Fix needed |
-| Messaging ASG min/desired=1 | Fix needed |
-| Solapi 고정 IP(NAT/EIP) 취소 | PASS |
+| API ASG min/desired=1 | PASS |
+| AI ASG min/desired=1 | PASS |
+| Messaging ASG min/desired=1 | PASS |
+| Solapi 고정 IP(NAT/EIP) 취소 | WARNING(EIP 잔여) |
 | 빌드 (GitHub Actions only) | PASS |
 
 ## Front V1 연결
@@ -32,9 +32,8 @@
 
 ## 남은 WARNING 및 후속 작업
 - Drift 1건 이상 시: SSOT 반영 또는 합의된 예외 문서화 후 drift.latest.md 갱신.
-- [WARNING] Drift: SSOT와 불일치 12건: Batch CE/academy-v1-video-batch-ce, Batch CE/academy-v1-video-batch-long-ce, Batch CE/academy-v1-video-ops-ce, Batch Queue/academy-v1-video-batch-queue, Batch Queue/academy-v1-video-batch-long-queue, Batch Queue/academy-v1-video-ops-queue, EventBridge/academy-v1-reconcile-video-jobs, EventBridge/academy-v1-video-scan-stuck-rate, ASG/academy-v1-api-asg, ASG/academy-v1-messaging-worker-asg, ASG/academy-v1-ai-worker-asg, API LT/academy-v1-api-lt
-- [WARNING] DB: RDS not found
-- [WARNING] Cache: Redis not found
+- EIP/NAT 잔여: Solapi 고정 IP 요구 취소에 따라 제거 검토(비용·불필요 리소스).
+- [WARNING] Drift: SSOT와 불일치 1건: API LT/academy-v1-api-lt
 
 ## 상세 보고서
 - [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트/R2/CDN·SQS·Video·관측·GO/NO-GO 상세
