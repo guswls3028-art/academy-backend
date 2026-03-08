@@ -3,11 +3,12 @@
 # -RunOnce: 1회만 실행 후 종료 (테스트 또는 수동 1회용).
 # 없으면 30분마다 무한 반복. 중지하려면 Ctrl+C.
 # 실행 시 .env 기반 인증 필요: pwsh -File scripts/v1/run-with-env.ps1 -- pwsh scripts/v1/api-refresh-every-30min.ps1
-$ErrorActionPreference = "Stop"
 param(
-    [string]$AwsProfile = "",
-    [switch]$RunOnce = $false
+    [string]$AwsProfile,
+    [switch]$RunOnce
 )
+
+$ErrorActionPreference = "Stop"
 
 $ScriptRoot = $PSScriptRoot
 $RefreshScript = Join-Path $ScriptRoot "api-refresh-only.ps1"
