@@ -324,6 +324,7 @@ def main() -> int:
                                 rollback_credits,
                             )
                             from apps.support.messaging.models import NotificationLog
+                            from apps.support.messaging.policy import resolve_kakao_channel
                             from apps.core.models import Tenant
                             info = get_tenant_messaging_info(int(tenant_id))
                             if info:
@@ -331,13 +332,16 @@ def main() -> int:
                                 pf_id_tenant = (info["kakao_pfid"] or "").strip()
                                 if not sender and info.get("sender"):
                                     sender = (info["sender"] or "").strip()
+                            # 알림톡 채널: resolver로 통일 (tenant 연동 채널 → 시스템 기본)
+                            channel = resolve_kakao_channel(int(tenant_id))
+                            pf_id_tenant = (channel.get("pf_id") or "").strip()
                         except Exception as e:
-                            logger.warning("get_tenant_messaging_info failed: %s", e)
+                            logger.warning("get_tenant_messaging_info/resolve_kakao_channel failed: %s", e)
 
                     # 발신번호: payload > 테넌트 > 전역 env
                     sender = (sender or "").strip() or cfg.SOLAPI_SENDER
 
-                    # 알림톡 사용 시: 테넌트 PFID 또는 워커 기본 PFID
+                    # 알림톡 사용 시: resolver 결과 또는 워커 기본 PFID
                     pf_id = pf_id_tenant or cfg.SOLAPI_KAKAO_PF_ID
                     template_id = (template_id_msg or "").strip() or cfg.SOLAPI_KAKAO_TEMPLATE_ID
 
@@ -384,6 +388,31 @@ def main() -> int:
                     _record_progress(job_id, "sending", 70, step_index=3, step_percent=0, tenant_id=tenant_id_str)
                     result = None
                     if message_mode == "sms":
+                        # SMS는 내 테넌트(OWNER_TENANT_ID)에서만 허용
+                        if tenant_id is not None and int(tenant_id) != cfg.OWNER_TENANT_ID:
+                            logger.warning(
+                                "SMS blocked by policy: tenant_id=%s is not owner tenant (allowed only for OWNER_TENANT_ID=%s)",
+                                tenant_id, cfg.OWNER_TENANT_ID,
+                            )
+                            if os.environ.get("DJANGO_SETTINGS_MODULE"):
+                                try:
+                                    from decimal import Decimal
+                                    from academy.adapters.db.django.repositories_messaging import create_notification_log
+                                    create_notification_log(
+                                        tenant_id=int(tenant_id),
+                                        success=False,
+                                        amount_deducted=Decimal("0"),
+                                        recipient_summary=to[:4] + "****",
+                                        failure_reason="sms_not_allowed_for_tenant",
+                                    )
+                                except Exception as e:
+                                    logger.warning("create_notification_log failed: %s", e)
+                            queue_client.delete_message(
+                                queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                                receipt_handle=receipt_handle,
+                            )
+                            _current_receipt_handle = None
+                            continue
                         result = send_one_sms(cfg, to=to, text=text, sender=sender)
                     elif message_mode == "alimtalk":
                         if pf_id and template_id:
@@ -405,12 +434,27 @@ def main() -> int:
                         )
                         if result.get("status") != "ok":
                             logger.info("alimtalk failed, fallback to SMS")
-                            result = send_one_sms(cfg, to=to, text=text, sender=sender)
+                            # SMS 폴백 시에도 내 테넌트에서만 허용
+                            if tenant_id is not None and int(tenant_id) == cfg.OWNER_TENANT_ID:
+                                result = send_one_sms(cfg, to=to, text=text, sender=sender)
+                            else:
+                                logger.warning(
+                                    "SMS fallback skipped by policy: tenant_id=%s (SMS allowed only for owner)",
+                                    tenant_id,
+                                )
                     else:
                         # alimtalk/both인데 pf_id·template_id 없으면 SMS로 대체
                         if message_mode in ("alimtalk", "both") and (not pf_id or not template_id):
                             logger.warning("alimtalk requested but pf_id/template_id missing, sending SMS")
-                        result = send_one_sms(cfg, to=to, text=text, sender=sender)
+                        # SMS 대체 시 내 테넌트에서만 허용
+                        if tenant_id is not None and int(tenant_id) != cfg.OWNER_TENANT_ID:
+                            logger.warning(
+                                "SMS fallback blocked by policy: tenant_id=%s (allowed only for owner)",
+                                tenant_id,
+                            )
+                            result = {"status": "error", "reason": "sms_not_allowed_for_tenant"}
+                        else:
+                            result = send_one_sms(cfg, to=to, text=text, sender=sender)
                     _record_progress(job_id, "sending", 90, step_index=3, step_percent=100, tenant_id=tenant_id_str)
 
                     # 성공 시 로그, 실패 시 롤백 + 로그
