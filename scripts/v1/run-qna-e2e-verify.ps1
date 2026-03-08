@@ -12,8 +12,8 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") { $env:AWS_PROFILE = $AwsProfile
 $null = Load-SSOT -Env "prod"
 $ids = @(Get-APIASGInstanceIds)
 if (-not $ids -or $ids.Count -eq 0) { Write-Host "No API instance"; exit 1 }
-# 서버에서 사용하는 env 파일; ECR 이미지로 manage.py verify_qna_e2e 실행 (동일 JWT 서명 키)
-$envFile = "/home/ec2-user/.env"
+# 서버 env: Launch Template userdata가 SSM /academy/api/env → /opt/api.env 에 씀 (docs DEPLOY-API-ON-SERVER-FIX-REPORT)
+$envFile = "/opt/api.env"
 $ecrImg = "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest"
 $bashCmd = "/usr/bin/docker run --rm -e API_BASE_URL=https://api.hakwonplus.com --env-file $envFile $ecrImg python manage.py verify_qna_e2e 2>&1"
 $params = @{ commands = @($bashCmd) } | ConvertTo-Json -Compress
