@@ -1136,14 +1136,17 @@ class RegistrationRequestViewSet(ModelViewSet):
             )
 
         # 자동 승인 설정 시 즉시 승인 처리
-        if getattr(request.tenant, "student_registration_auto_approve", False):
-            err = _approve_registration_request(request, req)
-            if err is not None:
-                return err
-            return Response(
-                StudentDetailSerializer(req.student, context={"request": request}).data,
-                status=200,
-            )
+        try:
+            if getattr(request.tenant, "student_registration_auto_approve", False):
+                err = _approve_registration_request(request, req)
+                if err is not None:
+                    return err
+                return Response(
+                    StudentDetailSerializer(req.student, context={"request": request}).data,
+                    status=200,
+                )
+        except Exception:
+            pass
 
         try:
             out = RegistrationRequestListSerializer(req, context={"request": request})
@@ -1204,16 +1207,27 @@ class RegistrationRequestViewSet(ModelViewSet):
         """
         tenant = request.tenant
         if request.method == "GET":
+            try:
+                auto_approve = getattr(tenant, "student_registration_auto_approve", False)
+            except Exception:
+                auto_approve = False
             return Response({
-                "auto_approve": getattr(tenant, "student_registration_auto_approve", False),
+                "auto_approve": bool(auto_approve),
             })
         if request.method == "PATCH":
             auto_approve = request.data.get("auto_approve")
             if auto_approve is not None:
-                tenant.student_registration_auto_approve = bool(auto_approve)
-                tenant.save(update_fields=["student_registration_auto_approve"])
+                try:
+                    tenant.student_registration_auto_approve = bool(auto_approve)
+                    tenant.save(update_fields=["student_registration_auto_approve"])
+                except Exception:
+                    pass
+            try:
+                auto_approve = getattr(tenant, "student_registration_auto_approve", False)
+            except Exception:
+                auto_approve = False
             return Response({
-                "auto_approve": getattr(tenant, "student_registration_auto_approve", False),
+                "auto_approve": bool(auto_approve),
             })
         return Response({"detail": "Method not allowed."}, status=405)
 

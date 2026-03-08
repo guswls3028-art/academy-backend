@@ -50,5 +50,11 @@ docker build -f docker/api/Dockerfile -t academy-api:latest .
 docker image prune -f
 
 (docker stop academy-api 2>/dev/null; docker rm academy-api 2>/dev/null; true)
+
+# 마이그레이션 실행 (새 컬럼/테이블 반영 — 미실행 시 registration_requests 등 500 방지)
+echo "Running migrations..."
+docker run --rm --env-file "$ENV_FILE" academy-api:latest python manage.py migrate --noinput
+echo "Migrations OK."
+
 docker run -d --name academy-api --restart unless-stopped --env-file "$ENV_FILE" -p 8000:8000 academy-api:latest
 echo "OK — API 재시작 완료"
