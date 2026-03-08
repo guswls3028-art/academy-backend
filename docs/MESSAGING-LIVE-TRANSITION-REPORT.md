@@ -17,7 +17,8 @@
 - **큐/워커 경로:** `MESSAGING_SQS_QUEUE_NAME=academy-v1-messaging-queue`, 큐 URL 존재 확인. 워커 ASG가 해당 큐 구독.
 - **enqueue:** SQS `send-message` 1건 성공. MessageId `e23ff78d-a405-4d90-94b5-a1b66426b7e8`.
 - **worker consume:** 발송 후 약 25초 내 큐 `ApproximateNumberOfMessages=0`, `ApproximateNumberOfMessagesNotVisible=0` 확인 → 메시지 1건 소비·삭제됨.
-- **Solapi 콘솔·수신:** 원격에서 Solapi 대시보드 접근 및 수신 단말 확인은 미수행. 운영자가 [console.solapi.com](https://console.solapi.com)에서 발신 01031217466 / 수신 01034137466 / 해당 시각 발송 이력 및 수신 번호 01034137466 도착 여부를 확인하면 됨.
+- **Solapi 콘솔·수신:** 원격에서 Solapi 대시보드 접근 및 수신 단말 확인은 미수행. 운영자가 [console.solapi.com](https://console.solapi.com)에서 발신 01031217466 / 수신 01034137466 / 해당 시각 발송 이력 및 수신 번호 01034137466 도착 여부를 확인하면 됨.  
+  **→ (추가) 수신자 확인 결과: 문자 수신 성공.**
 
 ---
 
@@ -53,9 +54,9 @@
 - **worker consume:** 성공 (큐 메시지 0으로 소비·삭제 확인).  
 - **worker가 mock이 아닌 실제 provider 사용:** 코드·SSM·인스턴스 기동 시점 기준 **실제 provider 사용으로 판단**. (원격 워커 stdout/CloudWatch 미확인.)  
 - **Solapi 콘솔에 해당 발송 이력 존재:** 운영자 확인 필요.  
-- **수신 단말(01034137466) 도착:** 운영자 확인 필요.
+- **수신 단말(01034137466) 도착:** **확인됨(수신 성공).**
 
-**종합:** enqueue·consume까지는 성공. Solapi 콘솔 이력 및 수신 여부는 운영자가 확인 후 최종 판정.
+**종합:** enqueue·consume·실제 Solapi 사용·수신까지 성공. 문자 기능이 실제 운영(live) 모드로 정상 동작함.
 
 ---
 
