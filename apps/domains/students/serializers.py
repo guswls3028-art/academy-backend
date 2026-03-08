@@ -298,25 +298,26 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
         max_length=50,
         required=False,
         allow_blank=True,
+        allow_null=True,
         default="",
         trim_whitespace=True,
     )
     initial_password = serializers.CharField(min_length=4, max_length=128, write_only=True)
     parent_phone = serializers.CharField(max_length=20)
-    phone = serializers.CharField(max_length=20, required=False, allow_blank=True, default="")
+    phone = serializers.CharField(max_length=20, required=False, allow_blank=True, allow_null=True, default="")
     school_type = serializers.ChoiceField(
         choices=[("HIGH", "고등"), ("MIDDLE", "중등")],
         default="HIGH",
     )
-    high_school = serializers.CharField(required=False, allow_blank=True, default="")
-    middle_school = serializers.CharField(required=False, allow_blank=True, default="")
-    high_school_class = serializers.CharField(required=False, allow_blank=True, default="")
-    major = serializers.CharField(required=False, allow_blank=True, default="")
+    high_school = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
+    middle_school = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
+    high_school_class = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
+    major = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
     grade = serializers.IntegerField(required=False, allow_null=True)
-    gender = serializers.CharField(required=False, allow_blank=True, default="", max_length=1)
-    memo = serializers.CharField(required=False, allow_blank=True, default="")
-    address = serializers.CharField(required=False, allow_blank=True, default="", max_length=255)
-    origin_middle_school = serializers.CharField(required=False, allow_blank=True, default="", max_length=100)
+    gender = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="", max_length=1)
+    memo = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
+    address = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="", max_length=255)
+    origin_middle_school = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="", max_length=100)
 
     def validate_parent_phone(self, value):
         v = _normalize_phone(value)
@@ -325,9 +326,9 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
         return v
 
     def validate_phone(self, value):
-        if not value or not str(value).strip():
+        if value is None or (isinstance(value, str) and not value.strip()):
             return None
-        v = _normalize_phone(value)
+        v = _normalize_phone(str(value))
         if v and (len(v) != 11 or not v.startswith("010")):
             raise serializers.ValidationError("전화번호는 010XXXXXXXX 11자리여야 합니다.")
         return v if v else None
@@ -337,6 +338,10 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
         attrs["phone"] = attrs.get("phone") or None
         if attrs.get("phone"):
             attrs["phone"] = _normalize_phone(attrs["phone"]) or None
+        # null → 빈 문자열로 통일 (모델은 null 허용이지만 저장 시 빈 문자열도 허용)
+        for key in ("username", "high_school", "middle_school", "high_school_class", "major", "gender", "memo", "address", "origin_middle_school"):
+            if attrs.get(key) is None:
+                attrs[key] = ""
         return attrs
 
 
