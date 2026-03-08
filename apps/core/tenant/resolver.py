@@ -124,12 +124,22 @@ def resolve_tenant_from_request(request) -> Optional[Tenant]:
     if tenant:
         return tenant
 
-    # 3) Host에 해당하는 TenantDomain이 없을 때(ALB 내부명 등) X-Tenant-Code로 테넌트 결정
-    raw = (request.META.get("HTTP_X_TENANT_CODE") or "").strip()
-    if raw:
-        tenant = core_repo.tenant_get_by_code(raw)
-        if tenant:
-            return tenant
+    # 3) Host가 TenantDomain에 없을 때(ALB 내부 등) X-Tenant-Code로 테넌트 결정 — 허용 Host 또는 ALB 내부 Host일 때만 (cross-tenant 보안).
+    allowed_hosts = getattr(
+        settings,
+        "TENANT_HEADER_CODE_ALLOWED_HOSTS",
+        ("api.hakwonplus.com",),
+    )
+    host_lower = host  # already normalized
+    allowed = host_lower in allowed_hosts or (
+        isinstance(host_lower, str) and host_lower.endswith(".elb.amazonaws.com")
+    )
+    if allowed:
+        raw = (request.META.get("HTTP_X_TENANT_CODE") or "").strip()
+        if raw:
+            tenant = core_repo.tenant_get_by_code(raw)
+            if tenant:
+                return tenant
 
     if bypass:
         return None

@@ -298,7 +298,7 @@ def main() -> int:
                         _record_progress(job_id, "checking", 10, step_index=1, step_percent=100, tenant_id=tenant_id_str)
                         try:
                             from apps.support.messaging.services import is_reservation_cancelled
-                            if is_reservation_cancelled(int(reservation_id)):
+                            if is_reservation_cancelled(int(reservation_id), tenant_id=tenant_id):
                                 logger.info("reservation_id=%s cancelled, skip send", reservation_id)
                                 queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
