@@ -16,6 +16,8 @@ class Tenant(models.Model):
     owner_name = models.CharField(max_length=100, blank=True)
     phone = models.CharField(max_length=50, blank=True)
     address = models.CharField(max_length=255, blank=True)
+    # 본부 전화번호 (실장님 전화받는 곳). 학생앱 "본부 진입게이트"에 노출
+    headquarters_phone = models.CharField(max_length=50, blank=True)
 
     logo = models.ImageField(
         upload_to="academy/logo/",

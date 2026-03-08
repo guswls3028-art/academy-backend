@@ -477,6 +477,12 @@ class AutoSendConfigView(APIView):
             message_mode = (item.get("message_mode") or "sms").strip().lower()
             if message_mode not in ("sms", "alimtalk", "both"):
                 message_mode = "sms"
+            minutes_before = item.get("minutes_before")
+            if minutes_before is not None:
+                try:
+                    minutes_before = max(0, int(minutes_before)) if minutes_before != "" else None
+                except (TypeError, ValueError):
+                    minutes_before = None
 
             config, _ = AutoSendConfig.objects.get_or_create(
                 tenant=tenant,
@@ -492,6 +498,7 @@ class AutoSendConfigView(APIView):
                 config.template = None
             config.enabled = enabled
             config.message_mode = message_mode
+            config.minutes_before = minutes_before
             config.save()
 
         configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")

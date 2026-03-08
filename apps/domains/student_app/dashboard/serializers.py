@@ -19,3 +19,4 @@ class StudentDashboardSerializer(serializers.Serializer):
     notices = DashboardNoticeSerializer(many=True)
     today_sessions = DashboardSessionSerializer(many=True)
     badges = serializers.DictField(required=False)
+    tenant_info = serializers.DictField(required=False)
