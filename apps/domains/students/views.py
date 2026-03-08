@@ -1,6 +1,7 @@
 # PATH: apps/domains/students/views.py
 
 import logging
+import traceback
 import uuid
 
 from django.db import transaction, connection, IntegrityError
