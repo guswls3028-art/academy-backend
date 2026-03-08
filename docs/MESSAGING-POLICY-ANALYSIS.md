@@ -144,3 +144,27 @@
 - (선택) 관리자 설정 화면에서 “기본 채널 사용 / 자체 채널 사용” 문구 반영 (기존 kakao_pfid 유무로 구분 가능).
 - (선택) “자체 채널 강제” 플래그 및 해당 시 필수값 비어있으면 정책 에러 처리.
 - (선택) OWNER_TENANT_ID를 SSOT 문서/파라미터에 명시.
+
+---
+
+## 6. 주요 정책 코드 (반영 후)
+
+- **policy.py**: `get_owner_tenant_id()`, `can_send_sms(tenant_id)`, `resolve_kakao_channel(tenant_id)`, `MessagingPolicyError`
+- **services.py**: `send_sms(..., tenant_id=None)` 시 can_send_sms 검사; `enqueue_sms`에서 mode가 sms/both일 때 실패 시 `MessagingPolicyError` raise; send_welcome / send_registration_approved는 try/except로 스킵 처리
+- **워커**: SMS 발송 직전 tenant_id != OWNER_TENANT_ID면 차단·rollback·실패 로그; both 폴백 시에도 owner만 SMS; 알림톡 pf_id는 resolve_kakao_channel 사용
+
+---
+
+## 7. Tenant별 동작 요약
+
+| 구분 | SMS | 알림톡 |
+|------|-----|--------|
+| Tenant 1 (내 테넌트) | 허용 | kakao_pfid 없으면 기본 채널, 있으면 해당 채널 |
+| 일반 tenant | 차단 (403/에러 반환, 워커에서 실패 기록) | 허용, 기본 채널 |
+| 자체 채널 연동 tenant | 차단 | 해당 채널 사용 |
+
+---
+
+## 8. 배포 시 참고
+
+- 워커 env에 `OWNER_TENANT_ID` 설정 (기본 1). SSM/배포 스크립트에 반영 권장.

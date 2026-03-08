@@ -19,6 +19,16 @@ def get_owner_tenant_id() -> int:
     return getattr(settings, "OWNER_TENANT_ID", 1)
 
 
+def get_test_tenant_id() -> int:
+    """로컬 기능 테스트용 tenant ID. 이 tenant에서는 알림톡·문자 발송 없이 기능만 동작."""
+    return getattr(settings, "TEST_TENANT_ID", 9999)
+
+
+def is_messaging_disabled(tenant_id: int) -> bool:
+    """해당 tenant가 메시징(알림톡·문자) 비활성화(테스트용)인지. True면 발송하지 않고 스킵."""
+    return int(tenant_id) == get_test_tenant_id()
+
+
 def can_send_sms(tenant_id: int) -> bool:
     """해당 tenant가 문자(SMS/LMS) 발송을 허용하는지 여부."""
     return int(tenant_id) == get_owner_tenant_id()

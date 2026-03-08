@@ -356,6 +356,8 @@ SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
 
 # SMS 허용 tenant (내 테넌트). 해당 tenant에서만 문자(SMS/LMS) 발송 가능.
 OWNER_TENANT_ID = int(os.getenv("OWNER_TENANT_ID", "1"))
+# 로컬 기능 테스트용 tenant. 이 tenant에서는 알림톡·문자 발송 없이 기능만 동작.
+TEST_TENANT_ID = int(os.getenv("TEST_TENANT_ID", "9999"))
 
 # delete_r2 전용 SQS (Encoding = Batch ONLY)
 VIDEO_SQS_QUEUE_DELETE_R2 = os.getenv("VIDEO_SQS_QUEUE_DELETE_R2", "academy-video-delete-r2")
