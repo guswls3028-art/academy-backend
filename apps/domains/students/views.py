@@ -921,6 +921,41 @@ class StudentViewSet(ModelViewSet):
                         [tuple(student_ids)],
                     )
                     if user_ids:
+                        # submissions_submission.user_id → accounts_user. enrollment 외 제출도 있을 수 있으므로 user_id 기준 정리.
+                        cursor.execute(
+                            "SELECT 1 FROM information_schema.tables "
+                            "WHERE table_schema = %s AND table_name = %s",
+                            ["public", "submissions_submission"],
+                        )
+                        if cursor.fetchone():
+                            sub_ids_sql = "SELECT id FROM submissions_submission WHERE user_id IN %s"
+                            cursor.execute(
+                                "SELECT 1 FROM information_schema.tables "
+                                "WHERE table_schema = %s AND table_name = %s",
+                                ["public", "results_exam_result"],
+                            )
+                            if cursor.fetchone():
+                                logger.info("bulk_permanent_delete DELETE results_exam_result (by user submissions)")
+                                cursor.execute(
+                                    f"DELETE FROM results_exam_result WHERE submission_id IN ({sub_ids_sql})",
+                                    [tuple(user_ids)],
+                                )
+                            cursor.execute(
+                                "SELECT 1 FROM information_schema.tables "
+                                "WHERE table_schema = %s AND table_name = %s",
+                                ["public", "submissions_submissionanswer"],
+                            )
+                            if cursor.fetchone():
+                                logger.info("bulk_permanent_delete DELETE submissions_submissionanswer (by user)")
+                                cursor.execute(
+                                    f"DELETE FROM submissions_submissionanswer WHERE submission_id IN ({sub_ids_sql})",
+                                    [tuple(user_ids)],
+                                )
+                            logger.info("bulk_permanent_delete DELETE submissions_submission (by user_id)")
+                            cursor.execute(
+                                "DELETE FROM submissions_submission WHERE user_id IN %s",
+                                [tuple(user_ids)],
+                            )
                         for tbl in ["core_attendance", "core_expense"]:
                             cursor.execute(
                                 "SELECT 1 FROM information_schema.tables "

@@ -79,3 +79,40 @@
 
 - **학교 입력:** 엑셀/일괄 입력은 단일 필드 `school` 사용 → `normalize_school_from_name(school, school_type)` → high_school/middle_school 저장. (`apps/domains/students/services/school.py`)
 - **리포지토리:** `academy/adapters/db/django/repositories_students.py` — student_create(tenant, **kwargs)는 모델 필드 그대로 전달.
+
+---
+
+## 7. 학생 영구 삭제 시 FK 처리 (bulk_permanent_delete)
+
+학생이 접근 가능한 모든 기능에서 Student 또는 해당 User를 참조하는 테이블을 삭제 시 선행 처리. **새 테이블/모델 추가 시 이 목록에 반드시 반영할 것.**
+
+### Student 참조 (student_id / created_by_id)
+
+| 테이블 | 처리 |
+|--------|------|
+| enrollment_enrollment | DELETE WHERE student_id IN %s (앞서 enrollment 자식 삭제 후) |
+| students_studenttag | DELETE WHERE student_id IN %s |
+| students_studentregistrationrequest | UPDATE SET student_id = NULL WHERE student_id IN %s |
+| clinic_sessionparticipant | DELETE WHERE student_id IN %s |
+| clinic_submission | DELETE WHERE student_id IN %s |
+| community_postentity | UPDATE SET created_by_id = NULL WHERE created_by_id IN %s |
+| community_postreply | UPDATE SET created_by_id = NULL WHERE created_by_id IN %s |
+| students_student | DELETE WHERE id IN %s (위 모두 처리 후) |
+
+### Enrollment 참조 (enrollment_id) — student 삭제 시 해당 enrollment 함께 삭제되므로 선행 삭제
+
+results_*, submissions_*, homework_*, attendance_attendance, enrollment_sessionenrollment, video_*, progress_* 등은 `enrollment_id IN (SELECT id FROM enrollment_enrollment WHERE student_id IN %s)` 기준으로 삭제.
+
+### User 참조 (user_id, 학생 계정 삭제 시)
+
+| 테이블 | 처리 |
+|--------|------|
+| results_exam_result (submission 기준) | submission_id IN (SELECT id FROM submissions_submission WHERE user_id IN %s) 삭제 |
+| submissions_submissionanswer | 위와 동일 subquery 기준 삭제 |
+| submissions_submission | DELETE WHERE user_id IN %s (enrollment 기준 삭제 후 남은 건) |
+| core_attendance | DELETE WHERE user_id IN %s |
+| core_expense | DELETE WHERE user_id IN %s |
+| core_tenantmembership | DELETE WHERE user_id IN %s |
+| accounts_user | DELETE WHERE id IN %s |
+
+코드 위치: `apps/domains/students/views.py` — `StudentViewSet.bulk_permanent_delete`.
