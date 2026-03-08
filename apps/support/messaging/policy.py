@@ -31,6 +31,8 @@ def is_messaging_disabled(tenant_id: int) -> bool:
 
 def can_send_sms(tenant_id: int) -> bool:
     """해당 tenant가 문자(SMS/LMS) 발송을 허용하는지 여부."""
+    if is_messaging_disabled(tenant_id):
+        return False
     return int(tenant_id) == get_owner_tenant_id()
 
 
@@ -46,11 +48,10 @@ def resolve_kakao_channel(tenant_id: int) -> dict:
     알림톡 발송 시 사용할 카카오 채널(PF ID) 결정.
 
     우선순위: (1) tenant 연동 채널(kakao_pfid) (2) 시스템 기본 채널(settings.SOLAPI_KAKAO_PF_ID).
-
-    Returns:
-        {"pf_id": str, "use_default": bool}
-        - use_default: True면 tenant 자체 채널 미사용, 시스템 기본 채널 사용 중.
+    테스트 tenant(9999)에서는 발송 스킵을 위해 pf_id 빈 문자열 반환.
     """
+    if is_messaging_disabled(tenant_id):
+        return {"pf_id": "", "use_default": True}
     pf_id_tenant = ""
     if tenant_id is not None:
         try:

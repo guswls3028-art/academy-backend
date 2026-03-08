@@ -71,7 +71,10 @@ def send_sms(
         dict: {"status": "ok"|"error"|"skipped", "group_id"?, "reason"?}
     """
     if tenant_id is not None:
-        from apps.support.messaging.policy import can_send_sms
+        from apps.support.messaging.policy import can_send_sms, is_messaging_disabled
+        if is_messaging_disabled(tenant_id):
+            logger.info("send_sms skipped: tenant_id=%s is test tenant (messaging disabled)", tenant_id)
+            return {"status": "skipped", "reason": "messaging_disabled_for_test_tenant"}
         if not can_send_sms(tenant_id):
             logger.warning(
                 "send_sms blocked by policy: tenant_id=%s is not owner tenant (SMS allowed only for owner)",
@@ -137,7 +140,12 @@ def enqueue_sms(
         bool: enqueue 성공 여부
     """
     from apps.support.messaging.sqs_queue import MessagingSQSQueue
-    from apps.support.messaging.policy import can_send_sms, MessagingPolicyError
+    from apps.support.messaging.policy import can_send_sms, MessagingPolicyError, is_messaging_disabled
+
+    # 로컬 테스트용 tenant(9999): 알림톡·문자 없이 기능만 동작 (발송 스킵)
+    if is_messaging_disabled(tenant_id):
+        logger.info("enqueue_sms skipped: tenant_id=%s is test tenant (messaging disabled)", tenant_id)
+        return False
 
     mode = (message_mode or "").strip().lower() or None
     if not mode:
