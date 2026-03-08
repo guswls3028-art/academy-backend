@@ -974,29 +974,45 @@ class RegistrationRequestViewSet(ModelViewSet):
         return RegistrationRequestListSerializer
 
     def create(self, request, *args, **kwargs):
+        if not getattr(request, "tenant", None):
+            return Response(
+                {"detail": "테넌트를 확인할 수 없습니다. 로그인 URL(테넌트 코드 포함)로 접속했는지 확인해 주세요."},
+                status=403,
+            )
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data.copy()
         password = data.pop("initial_password")
-        req = StudentRegistrationRequest.objects.create(
-            tenant=request.tenant,
-            status=StudentRegistrationRequest.PENDING,
-            initial_password=password,
-            name=data.get("name", ""),
-            username=(data.get("username") or "").strip() or "",
-            parent_phone=data.get("parent_phone", ""),
-            phone=data.get("phone"),
-            school_type=data.get("school_type", "HIGH"),
-            high_school=(data.get("high_school") or "") or None,
-            middle_school=(data.get("middle_school") or "") or None,
-            high_school_class=(data.get("high_school_class") or "") or None,
-            major=(data.get("major") or "") or None,
-            grade=data.get("grade"),
-            gender=(data.get("gender") or "") or None,
-            memo=(data.get("memo") or "") or None,
-            address=(data.get("address") or "").strip() or None,
-            origin_middle_school=(data.get("origin_middle_school") or "").strip() or None,
-        )
+        try:
+            req = StudentRegistrationRequest.objects.create(
+                tenant=request.tenant,
+                status=StudentRegistrationRequest.PENDING,
+                initial_password=password,
+                name=data.get("name", ""),
+                username=(data.get("username") or "").strip() or "",
+                parent_phone=data.get("parent_phone", ""),
+                phone=data.get("phone"),
+                school_type=data.get("school_type", "HIGH"),
+                high_school=(data.get("high_school") or "") or None,
+                middle_school=(data.get("middle_school") or "") or None,
+                high_school_class=(data.get("high_school_class") or "") or None,
+                major=(data.get("major") or "") or None,
+                grade=data.get("grade"),
+                gender=(data.get("gender") or "") or None,
+                memo=(data.get("memo") or "") or None,
+                address=(data.get("address") or "").strip() or None,
+                origin_middle_school=(data.get("origin_middle_school") or "").strip() or None,
+            )
+        except Exception as e:
+            import traceback
+            return Response(
+                {
+                    "detail": "가입 신청 저장 중 오류가 발생했습니다.",
+                    "error": str(e),
+                    "traceback": traceback.format_exc() if settings.DEBUG else None,
+                },
+                status=500,
+            )
         out = RegistrationRequestListSerializer(req, context={"request": request})
         return Response(out.data, status=201)
 
