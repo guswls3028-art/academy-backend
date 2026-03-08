@@ -12,10 +12,10 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") { $env:AWS_PROFILE = $AwsProfile
 $null = Load-SSOT -Env "prod"
 $ids = @(Get-APIASGInstanceIds)
 if (-not $ids -or $ids.Count -eq 0) { Write-Host "No API instance"; exit 1 }
-# 서버에서 사용하는 env 파일; ECR 이미지로 검증 (실행 중 API 컨테이너와 동일 이미지일 것)
+# 서버에서 사용하는 env 파일; ECR 이미지로 manage.py verify_qna_e2e 실행 (동일 JWT 서명 키)
 $envFile = "/home/ec2-user/.env"
 $ecrImg = "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest"
-$bashCmd = "docker run --rm -e API_BASE_URL=https://api.hakwonplus.com --env-file $envFile $ecrImg python scripts/verify_qna_e2e.py 2>&1"
+$bashCmd = "docker run --rm -e API_BASE_URL=https://api.hakwonplus.com --env-file $envFile $ecrImg python manage.py verify_qna_e2e 2>&1"
 $params = @{ commands = @($bashCmd) } | ConvertTo-Json -Compress
 $send = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $ids[0], "--document-name", "AWS-RunShellScript", "--parameters", $params, "--region", $script:Region, "--output", "json")
 $cid = $send.Command.CommandId
