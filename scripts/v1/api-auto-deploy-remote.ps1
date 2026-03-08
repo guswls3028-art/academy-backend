@@ -88,7 +88,8 @@ function Invoke-RemoteCommand {
             $cmdId = $sendOut.Command.CommandId
             if (-not $cmdId) { Write-Host "  $instId : send-command failed" -ForegroundColor Red; continue }
             $wait = 0
-            while ($wait -lt 120) {
+            $maxWait = if ($Label -match "Deploy|배포") { 600 } else { 120 }
+            while ($wait -lt $maxWait) {
                 Start-Sleep -Seconds 3
                 $wait += 3
                 $inv = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instId, "--region", $region, "--output", "json") 2>$null
