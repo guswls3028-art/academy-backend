@@ -94,6 +94,8 @@ class AutoSendConfig(models.Model):
     """
     class Trigger(models.TextChoices):
         STUDENT_SIGNUP = "student_signup", "가입 완료"
+        REGISTRATION_APPROVED_STUDENT = "registration_approved_student", "가입 승인(학생)"
+        REGISTRATION_APPROVED_PARENT = "registration_approved_parent", "가입 승인(학부모)"
         CLINIC_REMINDER = "clinic_reminder", "클리닉 알림"
         CLINIC_RESERVATION_CREATED = "clinic_reservation_created", "클리닉 예약 생성"
         CLINIC_RESERVATION_CHANGED = "clinic_reservation_changed", "클리닉 예약 변경"

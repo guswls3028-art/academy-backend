@@ -23,7 +23,7 @@ from apps.core.permissions import IsStudent, TenantResolvedAndStaff, TenantResol
 from apps.core.models import TenantMembership
 
 from apps.domains.parents.services import ensure_parent_for_student
-from apps.support.messaging.services import send_welcome_messages, get_site_url, send_sms
+from apps.support.messaging.services import send_welcome_messages, get_site_url, send_sms, send_registration_approved_messages
 from apps.domains.ai.gateway import dispatch_job
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 
@@ -1097,6 +1097,18 @@ class RegistrationRequestViewSet(ModelViewSet):
             reg.status = StudentRegistrationRequest.APPROVED
             reg.student = student
             reg.save(update_fields=["status", "student", "updated_at"])
+
+        # 가입 승인 알림톡/SMS (트리거 설정 시에만)
+        send_registration_approved_messages(
+            tenant_id=tenant.id,
+            site_url=get_site_url(request) or "",
+            student_name=name,
+            student_phone=(phone or "") if phone else "",
+            student_id=requested_username,
+            student_password=password,
+            parent_phone=parent_phone or "",
+            parent_password=password,
+        )
 
         out = StudentDetailSerializer(student, context={"request": request})
         return Response(out.data, status=200)

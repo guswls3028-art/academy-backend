@@ -302,3 +302,124 @@ def send_welcome_messages(
                 sent += 1
 
     return {"status": "enqueued", "enqueued": sent}
+
+
+# 가입 승인 알림톡용 플레이스홀더
+REGISTRATION_APPROVED_NOTICE = "접속해서 ID·비밀번호를 변경할 수 있습니다."
+
+
+def send_registration_approved_messages(
+    *,
+    tenant_id: int,
+    site_url: str,
+    student_name: str,
+    student_phone: str,
+    student_id: str,
+    student_password: str,
+    parent_phone: str,
+    parent_password: str,
+) -> dict:
+    """
+    가입 신청 승인 시 학생·학부모에게 알림톡/SMS 발송.
+
+    - 학생용: 트리거 registration_approved_student 템플릿 사용
+      플레이스홀더: #{student_name}, #{student_id}, #{student_password}, #{site_link}, #{change_password_notice}
+    - 학부모용: 트리거 registration_approved_parent 템플릿 사용
+      플레이스홀더: #{parent_id}, #{parent_password}, #{student_name}, #{student_id}, #{student_password}, #{site_link}, #{change_password_notice}
+
+    설정이 없거나 비활성화면 발송하지 않음.
+    """
+    from apps.support.messaging.selectors import get_auto_send_config
+
+    sent = 0
+    student_phone = (student_phone or "").replace("-", "").strip()
+    parent_phone = (parent_phone or "").replace("-", "").strip()
+    site_url = (site_url or "").strip()
+    notice = REGISTRATION_APPROVED_NOTICE
+
+    # 학생용
+    config_student = get_auto_send_config(tenant_id, "registration_approved_student")
+    if config_student and config_student.template and student_phone and len(student_phone) >= 10:
+        t = config_student.template
+        body = (t.body or "").strip()
+        subject = (t.subject or "").strip()
+        solapi_id = (t.solapi_template_id or "").strip()
+        use_alimtalk = config_student.message_mode in ("alimtalk", "both") and solapi_id and getattr(t, "solapi_status", None) == "APPROVED"
+
+        text = (
+            body.replace("#{student_name}", student_name or "")
+            .replace("#{student_id}", student_id or "")
+            .replace("#{student_password}", student_password or "")
+            .replace("#{site_link}", site_url)
+            .replace("#{change_password_notice}", notice)
+        )
+        if subject:
+            text = subject + "\n" + text
+        alimtalk_replacements = None
+        template_id_solapi = None
+        if use_alimtalk:
+            template_id_solapi = solapi_id
+            alimtalk_replacements = [
+                {"key": "student_name", "value": student_name or ""},
+                {"key": "student_id", "value": student_id or ""},
+                {"key": "student_password", "value": student_password or ""},
+                {"key": "site_link", "value": site_url},
+                {"key": "change_password_notice", "value": notice},
+            ]
+        if enqueue_sms(
+            tenant_id=tenant_id,
+            to=student_phone,
+            text=text,
+            message_mode=config_student.message_mode,
+            template_id=template_id_solapi,
+            alimtalk_replacements=alimtalk_replacements,
+        ):
+            sent += 1
+
+    # 학부모용 (학부모 로그인 ID = 전화번호로 통일하여 안내)
+    config_parent = get_auto_send_config(tenant_id, "registration_approved_parent")
+    if config_parent and config_parent.template and parent_phone and len(parent_phone) >= 10:
+        t = config_parent.template
+        body = (t.body or "").strip()
+        subject = (t.subject or "").strip()
+        solapi_id = (t.solapi_template_id or "").strip()
+        use_alimtalk = config_parent.message_mode in ("alimtalk", "both") and solapi_id and getattr(t, "solapi_status", None) == "APPROVED"
+
+        parent_id_display = parent_phone  # 로그인 ID로 전화번호 안내
+        text = (
+            body.replace("#{parent_id}", parent_id_display)
+            .replace("#{parent_password}", parent_password or "")
+            .replace("#{student_name}", student_name or "")
+            .replace("#{student_id}", student_id or "")
+            .replace("#{student_password}", student_password or "")
+            .replace("#{site_link}", site_url)
+            .replace("#{change_password_notice}", notice)
+        )
+        if subject:
+            text = subject + "\n" + text
+        alimtalk_replacements = None
+        template_id_solapi = None
+        if use_alimtalk:
+            template_id_solapi = solapi_id
+            alimtalk_replacements = [
+                {"key": "parent_id", "value": parent_id_display},
+                {"key": "parent_password", "value": parent_password or ""},
+                {"key": "student_name", "value": student_name or ""},
+                {"key": "student_id", "value": student_id or ""},
+                {"key": "student_password", "value": student_password or ""},
+                {"key": "site_link", "value": site_url},
+                {"key": "change_password_notice", "value": notice},
+            ]
+        if enqueue_sms(
+            tenant_id=tenant_id,
+            to=parent_phone,
+            text=text,
+            message_mode=config_parent.message_mode,
+            template_id=template_id_solapi,
+            alimtalk_replacements=alimtalk_replacements,
+        ):
+            sent += 1
+
+    if sent:
+        return {"status": "enqueued", "enqueued": sent}
+    return {"status": "skip", "enqueued": 0}
