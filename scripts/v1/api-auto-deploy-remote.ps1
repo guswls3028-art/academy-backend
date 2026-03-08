@@ -1,13 +1,14 @@
 # ==============================================================================
-# API 서버 자동 배포 원격 제어 (SSM Send-Command)
+# Rapid Deploy 원격 제어 (API 서버만, ASG instance refresh 없음)
 # ==============================================================================
-# API ASG 인스턴스에서 2분마다 git 기준 자동 배포 cron ON/OFF/상태 확인/수동 배포 1회
-# RepoUrl 미지정 시 로컬 academy 리포의 git remote origin 사용 → 레포 없으면 자동 클론 후 진행.
+# API ASG 인스턴스에서 2분마다 main 변경 감지 → ECR pull + API 컨테이너만 재시작.
+# Formal 배포(deploy.ps1)와 분리: 개발 중 빠른 반영용. tenant 격리/환경은 동일(SSM → /opt/api.env).
+#
 # 사용:
-#   pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action On   -AwsProfile default
-#   pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Off  -AwsProfile default
-#   pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Status -AwsProfile default
-#   pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Deploy -AwsProfile default
+#   Rapid Deploy ON:  pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action On   -AwsProfile default
+#   Rapid Deploy OFF: pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Off  -AwsProfile default
+#   상태 확인:        pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Status -AwsProfile default
+#   수동 1회 배포:    pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Deploy -AwsProfile default
 # ==============================================================================
 [CmdletBinding()]
 param(
@@ -88,12 +89,14 @@ function Invoke-RemoteCommand {
             $cmdId = $sendOut.Command.CommandId
             if (-not $cmdId) { Write-Host "  $instId : send-command failed" -ForegroundColor Red; continue }
             $wait = 0
-# Deploy 시 SSM 명령 대기: ECR pull + 재시작만 있으므로 최대 10분
-            $maxWait = if ($Label -match "Deploy|배포") { 600 } else { 120 }
+            # On: git clone/fetch 가능성 있으므로 최대 5분. Deploy: ECR pull+재시작 최대 10분. 나머지 2분.
+            $maxWait = if ($Label -match "Deploy|배포") { 600 } elseif ($Action -eq "On") { 300 } else { 120 }
             while ($wait -lt $maxWait) {
                 Start-Sleep -Seconds 3
                 $wait += 3
-                $inv = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instId, "--region", $region, "--output", "json") 2>$null
+                $inv = $null
+                try { $inv = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instId, "--region", $region, "--output", "json") 2>$null } catch { }
+                if (-not $inv -or -not $inv.Status) { continue }
                 if ($inv.Status -eq "Success") {
                     Write-Host "  $instId : OK" -ForegroundColor Green
                     if ($inv.StandardOutputContent) { Write-Host $inv.StandardOutputContent -ForegroundColor Gray }
@@ -105,6 +108,9 @@ function Invoke-RemoteCommand {
                     break
                 }
             }
+            if ($wait -ge $maxWait) {
+                Write-Host "  $instId : Timeout (최대 ${maxWait}초). 서버에서 직접 확인: /home/ec2-user/auto_deploy.log 또는 SSM Session Manager" -ForegroundColor Yellow
+            }
         } catch {
             Write-Host "  $instId : $_" -ForegroundColor Red
         }
@@ -113,22 +119,23 @@ function Invoke-RemoteCommand {
 
 switch ($Action) {
     "On" {
-        Invoke-RemoteCommand -Commands @($ensureAndFetchCmd, "cd $repoPath && bash scripts/auto_deploy_cron_on.sh") -Label "자동 배포 ON (2분마다 main 변경 시 ECR pull + /opt/api.env 재시작)"
+        Invoke-RemoteCommand -Commands @($ensureAndFetchCmd, "cd $repoPath && bash scripts/auto_deploy_cron_on.sh") -Label "Rapid Deploy ON (2분마다 main 변경 시 ECR pull + API 컨테이너만 재시작)"
     }
     "Off" {
         $cmd = "test -d $repoPath || { echo 'No repo at $repoPath (skip).'; exit 0; }; cd $repoPath && git fetch origin main && git reset --hard origin/main && bash scripts/auto_deploy_cron_off.sh"
-        Invoke-RemoteCommand -Commands @($cmd) -Label "자동 배포 OFF"
+        Invoke-RemoteCommand -Commands @($cmd) -Label "Rapid Deploy OFF"
     }
     "Status" {
-        $cmd = "crontab -l 2>/dev/null || echo 'No crontab'"
-        Invoke-RemoteCommand -Commands @($cmd) -Label "crontab 상태"
+        $cmd = "crontab -l 2>/dev/null || echo 'No crontab'; echo '---'; cat /home/ec2-user/.academy-rapid-deploy-last 2>/dev/null || echo '(no last deploy info)'"
+        Invoke-RemoteCommand -Commands @($cmd) -Label "Rapid Deploy 상태 (crontab + 마지막 배포 정보)"
     }
     "Deploy" {
-        Invoke-RemoteCommand -Commands @($ensureAndFetchCmd, "cd $repoPath && bash scripts/deploy_api_on_server.sh") -Label "수동 배포 1회 (ECR pull + /opt/api.env + 재시작, 빌드 없음)"
+        Invoke-RemoteCommand -Commands @($ensureAndFetchCmd, "cd $repoPath && bash scripts/deploy_api_on_server.sh") -Label "수동 배포 1회 (ECR pull + /opt/api.env + 재시작)"
     }
 }
 
-Write-Host "`n요약:" -ForegroundColor Cyan
-Write-Host "  수동 배포(서버에서): cd $repoPath && bash scripts/deploy_api_on_server.sh" -ForegroundColor Gray
-Write-Host "  자동 배포 ON (서버에서):  cd $repoPath && bash scripts/auto_deploy_cron_on.sh" -ForegroundColor Gray
-Write-Host "  자동 배포 OFF (서버에서): cd $repoPath && bash scripts/auto_deploy_cron_off.sh" -ForegroundColor Gray
+Write-Host "`nRapid Deploy 요약:" -ForegroundColor Cyan
+Write-Host "  ON:  2분마다 main 변경 시 API 컨테이너만 pull/restart (ASG refresh 없음)" -ForegroundColor Gray
+Write-Host "  OFF: 자동 반영 중단. 수동만 가능." -ForegroundColor Gray
+Write-Host "  서버 로그: /home/ec2-user/auto_deploy.log" -ForegroundColor Gray
+Write-Host "  최근 반영: 서버에서 cat /home/ec2-user/.academy-rapid-deploy-last" -ForegroundColor Gray

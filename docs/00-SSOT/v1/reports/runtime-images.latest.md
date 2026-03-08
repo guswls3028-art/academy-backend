@@ -1,9 +1,9 @@
 # V1 Runtime Images — API 인스턴스 실제 실행 이미지
 
-**Generated:** 2026-03-09T03:22:51.1964168+09:00
+**Generated:** 2026-03-09T04:25:27.4812571+09:00
 **SSOT:** docs/00-SSOT/v1/params.yaml
 
 | InstanceId | Image | RepoDigests |
 |------------|-------|-------------|
-| i-046d9c1f5abfb821a | 4ef54fb3f0ccf5daed7ba8c1c11c4ba111e2589ae65792b144e1751213c98f06 |  |
+| i-0b007fab7c0528a7b | 6cd01a67d602be77b812e8ed4ec4c1fb29618f64c233616d006364109fa69c1a |  |
 

@@ -854,6 +854,15 @@ class StudentViewSet(ModelViewSet):
                         [tuple(student_ids)],
                     )
                     if user_ids:
+                        # User를 참조하는 테이블 먼저 삭제 (FK 제약 방지)
+                        cursor.execute(
+                            "DELETE FROM core_attendance WHERE user_id IN %s",
+                            [tuple(user_ids)],
+                        )
+                        cursor.execute(
+                            "DELETE FROM core_expense WHERE user_id IN %s",
+                            [tuple(user_ids)],
+                        )
                         cursor.execute(
                             "DELETE FROM core_tenantmembership WHERE user_id IN %s",
                             [tuple(user_ids)],

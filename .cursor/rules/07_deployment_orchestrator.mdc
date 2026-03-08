@@ -1,12 +1,17 @@
 ---
-description: Deploy entrypoint and flow. deploy.ps1 + ECR + verify.
+description: Deploy entrypoint and flow. Formal Deploy vs Rapid Deploy. deploy.ps1 + ECR + verify.
 globs:
 alwaysApply: false
 ---
 
 # Deployment Orchestrator
 
-**Primary deploy entry:** scripts/v1/deploy.ps1
+**배포는 두 방식으로 구분.** 상세·비교표: `docs/02-OPERATIONS/DEPLOYMENT-MODES.md`.
+
+- **Formal Deploy (정식 배포):** 안정·인프라 반영·릴리즈용. 진입점 `scripts/v1/deploy.ps1`. main push 시 CI가 ECR 푸시 후 **deploy-api-refresh**로 API ASG instance refresh 수행.
+- **Rapid Deploy (빠른 개발 반영):** 개발 중 API만 빠르게 반영. 진입점 `scripts/v1/api-auto-deploy-remote.ps1` (On/Off/Status/Deploy). 2분마다 main 변경 시 API 컨테이너만 pull/restart. **작업 종료 시 Off 필수.**
+
+**Primary deploy entry (Formal):** scripts/v1/deploy.ps1
 
 Do **not** use scripts/archive for deploy or CI; only scripts/v1. Archive is reference-only (00_ssot_v1_archive_structure.mdc).
 
@@ -16,16 +21,18 @@ Do **not** use scripts/archive for deploy or CI; only scripts/v1. Archive is ref
 - `deploy.ps1`는 **이미 ECR에 올라간 이미지**를 pull하여 배포/refresh만 수행한다.  
 - `-SkipBuild`는 더 이상 “예외”가 아니라 기본 흐름이다(빌드 서버가 없기 때문).  
 
-**Deployment flow:**
+**Deployment flow (Formal):**
 
 1. Build image **(GitHub Actions OIDC)**
 2. Push ECR
-3. Run deploy.ps1 (pull + instance refresh)
+3. Run deploy.ps1 (pull + instance refresh) **또는** CI deploy-api-refresh
 4. ECR lifecycle policy 적용(비용 최적화, 불필요 이미지 미보관)
 5. Verify infrastructure
 
-**CI:** GitHub Actions. Workflows may trigger ECR build and/or deploy.ps1.
+**Rapid Deploy:** `api-auto-deploy-remote.ps1 -Action On` 후 main push 시 서버 cron이 2분 이내 deploy_api_on_server.sh 실행. 작업 종료 시 `-Action Off`.
+
+**CI:** GitHub Actions. main push → build-and-push → deploy-api-refresh (Formal 경로).
 
 Deployment must support **one-take deployment**.
 
-**작업 시:** 배포·인프라 변경을 다룰 때 본 룰과 `04_cost_engine.mdc`를 적재적소에 확인할 것.
+**작업 시:** 배포·인프라 변경을 다룰 때 본 룰과 `04_cost_engine.mdc`, `09_multitenant_isolation.mdc`를 적재적소에 확인할 것.

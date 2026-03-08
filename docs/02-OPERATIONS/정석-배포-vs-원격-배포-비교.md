@@ -1,22 +1,24 @@
-# 정석 배포 vs 원격(레거시) 배포 비교
+# Formal Deploy vs Rapid Deploy 비교
 
-**작성일:** 2026-03-09
+**작성일:** 2026-03-09  
+**2트랙 개요·비교표:** [DEPLOYMENT-MODES.md](DEPLOYMENT-MODES.md)
 
 ---
 
-## 1. 결론: **트리거만 다름, 결과물은 동일**
+## 1. 결론: **트리거·반영 범위만 다름, env·이미지 소스는 동일**
 
-| 구분 | 정석 배포 | 원격 배포 (리팩토링 후) |
-|------|-----------|-------------------------|
-| **진입점** | `pwsh scripts/v1/deploy.ps1` | `api-auto-deploy-remote.ps1 -Action Deploy` 또는 **On** 시 2분마다 cron |
+| 구분 | Formal Deploy | Rapid Deploy |
+|------|---------------|--------------|
+| **진입점** | `pwsh scripts/v1/deploy.ps1` 또는 main push 시 CI의 **deploy-api-refresh** | `api-auto-deploy-remote.ps1 -Action On` 시 2분마다 cron, 또는 `-Action Deploy` 1회 |
 | **이미지** | **ECR** pull | **ECR** pull (동일) |
 | **env 파일** | SSM → **/opt/api.env** | SSM → **/opt/api.env** (동일) |
-| **빌드** | 없음 (CI/로컬에서 push) | **없음** (서버에서 빌드 제거) |
-| **트리거** | deploy.ps1 → instance refresh | cron 2분마다 main 변경 시 또는 수동 Deploy |
+| **빌드** | 없음 (CI만) | **없음** (서버에서 빌드 없음) |
+| **트리거** | deploy.ps1 → instance refresh / CI push → deploy-api-refresh | cron 2분마다 main 변경 시 또는 수동 Deploy |
+| **반영 범위** | API LT, ASG, 새 인스턴스 기동 | **기존 인스턴스**에서 API 컨테이너만 재시작 |
 
 ---
 
-## 2. 정석 배포 흐름 (deploy.ps1)
+## 2. Formal Deploy 흐름 (deploy.ps1 / CI)
 
 1. `scripts/v1/deploy.ps1` 실행 (이미지 빌드 없음, `-SkipBuild` 기본).
 2. SSM `/academy/api/env` 갱신, Launch Template UserData 갱신 (SSM → `/opt/api.env`, ECR 이미지 URI로 `docker pull` + `docker run --env-file /opt/api.env`).
@@ -28,7 +30,7 @@
 
 ---
 
-## 3. 원격 배포 흐름 (api-auto-deploy-remote.ps1) — 정석과 동일 결과
+## 3. Rapid Deploy 흐름 (api-auto-deploy-remote.ps1) — 결과물(env·이미지)은 Formal과 동일
 
 1. **Action Status:** SSM으로 해당 인스턴스에 `crontab -l` 실행 → crontab 상태만 확인.
 2. **Action Off:** SSM으로 `git fetch` + `git reset --hard origin/main` 후 `scripts/auto_deploy_cron_off.sh` 실행 → crontab에서 deploy 관련 라인 제거.
@@ -46,21 +48,22 @@
 
 ---
 
-## 4. 차이 요약 (리팩토링 후)
+## 4. 차이 요약
 
-| 항목 | 정석 | 원격 |
+| 항목 | Formal | Rapid |
 |------|------|------|
 | env 경로 | `/opt/api.env` | `/opt/api.env` (동일) |
 | 이미지 | ECR pull | ECR pull (동일) |
-| 트리거 | deploy.ps1 → instance refresh | cron 2분마다 main 변경 시 또는 수동 Deploy |
+| 트리거 | deploy.ps1 또는 CI → instance refresh | cron 2분마다 main 변경 시 또는 수동 Deploy |
+| 반영 범위 | LT·ASG·새 인스턴스 | 기존 인스턴스에서 컨테이너만 |
 
-**결과물(이미지·env·실행 방식)은 동일.** 트리거만 다름 (instance refresh vs cron/수동).
+**결과물(이미지·env·실행 방식)은 동일.** 트리거와 반영 범위만 다름.
 
 ---
 
-## 5. 원격 스크립트 동작 확인 (리팩토링 후)
+## 5. Rapid Deploy 스크립트 동작 확인
 
-- **Status:** crontab 상태 조회.
+- **Status:** crontab + 마지막 배포 정보 조회.
 - **Off:** cron 제거.
 - **Deploy:** SSM으로 repo 갱신 후 `deploy_api_on_server.sh` 1회 실행. **빌드 없음** → ECR pull + 재시작만으로 **수 분 이내** 완료.
 - **On:** 2분마다 main 변경 시 `git reset --hard origin/main` 후 `deploy_api_on_server.sh` 실행 (최신 스크립트 사용).
@@ -69,5 +72,5 @@
 
 ## 6. 권장 사항
 
-- **일상 배포:** 정석(`deploy.ps1`) 또는 원격 자동배포(On) 둘 다 **동일한 결과**(ECR + /opt/api.env). 코드 수정 후 편의에 따라 원격 On → 수정 반영 후 Off 로 사용 가능.
-- **원격 On:** 2분마다 main 변경 시 자동으로 ECR pull + /opt/api.env 갱신 + 재시작. 정석과 동일한 이미지·env 사용.
+- **인프라·안정 반영:** Formal Deploy (`deploy.ps1` 또는 main push로 CI deploy-api-refresh). [FORMAL-DEPLOY.md](FORMAL-DEPLOY.md)
+- **개발 중 빠른 반영:** Rapid Deploy ON → 수정 반영 후 **작업 종료 시 OFF**. [RAPID-DEPLOY.md](RAPID-DEPLOY.md), [Rapid-Deploy-사용법.md](Rapid-Deploy-사용법.md)

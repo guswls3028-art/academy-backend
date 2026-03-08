@@ -38,7 +38,10 @@
 - 원인 조사 → 수정 → 배포 → 검증까지 한 흐름으로 완료한다.
 - **후속 작업 넘기지 않음:** 배포·인프라 수정 시 SSM 갱신, instance-refresh, API/워커 재시작 등 필요한 후속 작업을 사용자에게 넘기지 말고 에이전트가 직접 완료한다.
 - **코드 수정 시 Git 푸시 + 배포 반영 필수:** 코드를 수정하면 반드시 `git add` → `git commit` → `git push` 후 배포까지 수행한다. academy/academyfront 등 워크스페이스 내 각 리포에 변경이 있으면 해당 리포마다 수행한다.
-  - **백엔드(academy):** 푸시 후 `scripts/v1/deploy.ps1` 실행으로 배포 반영.
+  - **백엔드(academy) 배포 방식:**  
+    - **Formal Deploy (정식 반영):** 푸시 후 `scripts/v1/deploy.ps1` 실행. 또는 main push만 해도 CI가 ECR 푸시 후 API ASG instance refresh 수행.  
+    - **Rapid Deploy (개발 중 빠른 반영):** `pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action On` 후 push하면 서버가 2분 이내 API 컨테이너만 반영. **작업 종료 시 반드시** `-Action Off`.  
+    - 인프라/Launch Template/SSM 변경이 있으면 Formal Deploy 사용. 상세: `docs/02-OPERATIONS/DEPLOYMENT-MODES.md`.
   - **프론트(academyfront):** 푸시만 하면 CI/자동 배포로 바로 반영되므로 별도 배포 스크립트 실행 없이 git push만 수행한다.
 
 ---
@@ -63,4 +66,5 @@
 - 모든 데이터 접근·조회·생성·수정·집계·알림·파이프라인은 **현재 테넌트** 기준으로만 허용. 다른 테넌트 데이터 섞임·노출은 심각한 결함.
 - **절대 금지:** tenant fallback, default tenant, host 보정, tenant 추정, tenant 없는 query, cross-tenant 조회 가능성, tenant 필터 누락.
 - 테넌트 격리 영향 변경 시 영향 범위 명시. 테넌트 해석(host, X-Tenant-Code, middleware, resolver, JWT) 변경 시 E2E/원격 검증 필수.
+- **배포:** Formal Deploy / Rapid Deploy 모두 env는 SSM→/opt/api.env만 사용. **Rapid Deploy 중에도 tenant isolation 완화 금지.** tenant resolver, auth, middleware, worker, deployment 관련 수정 후 배포 검증 필수. 작업 종료 시 auto push·Rapid Deploy ON 방치 금지.
 - 상세: `.cursor/rules/09_multitenant_isolation.mdc` 참고.

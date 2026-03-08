@@ -1,5 +1,6 @@
 #!/bin/bash
 # API 서버에서: 정석 배포와 동일 — SSM → /opt/api.env, ECR pull, 재시작 (빌드 없음).
+# Rapid Deploy 전용: 컨테이너만 교체(ASG instance refresh 없음).
 # 사용: bash scripts/deploy_api_on_server.sh
 # 호출: api-auto-deploy-remote.ps1 -Action Deploy, 또는 cron(2분마다 main 변경 시).
 # 정석 배포(api.ps1 UserData)와 동일한 결과: /opt/api.env + ECR 이미지.
@@ -11,6 +12,9 @@ API_ENV_FILE="/opt/api.env"
 # 정석 배포와 동일 (params.yaml ecr.apiRepo + accountId, region)
 ECR_URI="${ECR_API_IMAGE_URI:-809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest}"
 ECR_HOST="${ECR_URI%%/*}"
+# Rapid Deploy: 마지막 배포 정보 기록 (최근 반영 버전 확인용)
+LAST_DEPLOY_FILE="${LAST_DEPLOY_FILE:-/home/ec2-user/.academy-rapid-deploy-last}"
+HEALTH_URL="${HEALTH_URL:-http://localhost:8000/healthz}"
 
 # 1) SSM → env 파일 (정석과 동일: /opt/api.env)
 RAW_VALUE=$(aws ssm get-parameter --name "$SSM_API_ENV" --with-decryption --query Parameter.Value --output text --region "$REGION" 2>/dev/null) || true
@@ -85,5 +89,21 @@ docker rm academy-api 2>/dev/null || true
 docker run -d --restart unless-stopped --name academy-api -p 8000:8000 --env-file "$API_ENV_FILE" "$ECR_URI"
 echo "OK — API 재시작 완료 (ECR 이미지 + $API_ENV_FILE)"
 
-# 5) 미사용 이미지 정리 (디스크 여유)
+# 5) 최소 health check (선택): 재시작 후 /healthz 200 확인
+sleep 3
+if curl -sf --max-time 10 "$HEALTH_URL" >/dev/null 2>&1; then
+  echo "OK — health check $HEALTH_URL 200"
+else
+  echo "WARN — health check $HEALTH_URL 실패 또는 타임아웃 (컨테이너는 기동됨, 로그 확인 권장)" >&2
+fi
+
+# 6) 마지막 배포 정보 기록 (최근 반영 버전 확인용)
+IMG_ID=$(docker inspect academy-api --format '{{.Id}}' 2>/dev/null || echo "unknown")
+TS=$(date -Iseconds)
+echo "deployed_at=$TS" > "$LAST_DEPLOY_FILE"
+echo "image=$ECR_URI" >> "$LAST_DEPLOY_FILE"
+echo "container_id=$IMG_ID" >> "$LAST_DEPLOY_FILE"
+echo "OK — last deploy info written to $LAST_DEPLOY_FILE"
+
+# 7) 미사용 이미지 정리 (디스크 여유)
 docker image prune -f

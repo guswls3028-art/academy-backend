@@ -56,7 +56,8 @@ alwaysApply: false
 
 ## 6. 배포 안정성·E2E 검증 기준
 
-- **스크립트:** `scripts/v1/deploy.ps1`, `run-api-management-remote.ps1`, `run-qna-e2e-verify.ps1`. ECR 반영, instance refresh, LT, userdata, SSM, env 파일, docker 실행. 배포 후 **실제 API 호출**로 검증.
+- **스크립트:** `scripts/v1/deploy.ps1` (Formal), `scripts/v1/api-auto-deploy-remote.ps1` (Rapid Deploy On/Off/Deploy), `run-api-management-remote.ps1`, `run-qna-e2e-verify.ps1`. ECR 반영, instance refresh, LT, userdata, SSM, env 파일, docker 실행. 배포 후 **실제 API 호출**로 검증.
+- **Formal vs Rapid:** 어떤 배포 경로를 쓰든 env는 SSM→/opt/api.env만 사용. **Rapid Deploy 중에도 tenant isolation 완화 금지.** tenant resolver·auth·middleware·worker·deployment 관련 수정 후 배포 검증 필수.
 - **E2E:** 실제 배포 서버에서 실행, 동일 env·동일 JWT 서명 키·실제 API 호출. 예: QnA POST → GET → 데이터 존재 확인. Cloudflare/ALB/Host 차이 반영.
 
 ## 7. 작업 절차 (순서 준수)
@@ -68,7 +69,8 @@ alwaysApply: false
 - 테넌트 해석: `apps/core/tenant/resolver.py`, `apps/core/middleware/tenant.py`
 - JWT·테넌트: `apps/api/common/auth_jwt.py` (X-Tenant-Code / tenant_code)
 - 학생/선생 tenant 사용: `apps/domains/students/views.py`, `apps/domains/staffs/views.py`, `apps/domains/community/api/views.py`
-- 정석 배포: `scripts/v1/deploy.ps1`, `scripts/v1/resources/api.ps1` (SSM → /opt/api.env, ECR 이미지)
+- **Formal 배포:** `scripts/v1/deploy.ps1`, `scripts/v1/resources/api.ps1` (SSM → /opt/api.env, ECR 이미지). CI: `.github/workflows/v1-build-and-push-latest.yml` deploy-api-refresh.
+- **Rapid Deploy:** `scripts/v1/api-auto-deploy-remote.ps1`, `scripts/deploy_api_on_server.sh`, `scripts/auto_deploy_cron_on.sh`. env 동일(SSM→/opt/api.env). Rapid 중에도 tenant 격리 완화 금지.
 - 원격 검증: `scripts/v1/run-qna-e2e-verify.ps1` (ALB URL + /opt/api.env), `scripts/v1/run-api-management-remote.ps1`
 
 ## 9. 재발 방지

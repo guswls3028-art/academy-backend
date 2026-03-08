@@ -2,6 +2,7 @@
 # V1 ECR build/push — OIDC 전용. Access Key 미사용.
 # Backend repo: guswls3028-art/academy-backend. SSOT: docs/00-SSOT/v1/params.yaml.
 # 5개 이미지 linux/arm64 latest 빌드·푸시 후 digest를 ci-build.latest.md에 기록.
+# 보강: API 이미지 푸시 후 API ASG instance refresh로 push=서버 반영 완성.
 # ==============================================================================
 
 name: V1 Build and Push latest (OIDC)
@@ -163,3 +164,30 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # push = 서버 반영: ECR 푸시 후 API ASG instance refresh.
+  # 역할(AWS_ROLE_ARN_FOR_ECR_BUILD)에 autoscaling:StartInstanceRefresh 등 필요. 없으면 이 job 실패 → 권한 추가.
+  deploy-api-refresh:
+    name: API ASG instance refresh
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    env:
+      AWS_REGION: ap-northeast-2
+      API_ASG_NAME: academy-v1-api-asg
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start API ASG instance refresh
+        run: |
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'
+
+      - name: Summary
+        run: |
+          echo "API ASG instance refresh started. New instances will pull academy-api:latest (see docs/02-OPERATIONS/CI-CD-분석-및-보강안.md)."
