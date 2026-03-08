@@ -983,6 +983,7 @@ class RegistrationRequestViewSet(ModelViewSet):
             status=StudentRegistrationRequest.PENDING,
             initial_password=password,
             name=data.get("name", ""),
+            username=(data.get("username") or "").strip() or "",
             parent_phone=data.get("parent_phone", ""),
             phone=data.get("phone"),
             school_type=data.get("school_type", "HIGH"),
@@ -1019,6 +1020,16 @@ class RegistrationRequestViewSet(ModelViewSet):
         except ValueError as e:
             return Response({"detail": str(e)}, status=400)
 
+        # 희망 아이디가 있으면 중복 검사 후 사용, 없으면 ps_number
+        from apps.core.models.user import user_internal_username
+        requested_username = (reg.username or "").strip()
+        if requested_username:
+            internal = user_internal_username(tenant, requested_username)
+            if get_user_model().objects.filter(username=internal).exists():
+                requested_username = None
+        if not requested_username:
+            requested_username = ps_number
+
         if phone and len(str(phone)) >= 8:
             omr_code = str(phone)[-8:]
         elif parent_phone and len(parent_phone) >= 8:
@@ -1037,7 +1048,7 @@ class RegistrationRequestViewSet(ModelViewSet):
                 )
             User = get_user_model()
             user = student_repo.user_create_user(
-                username=ps_number,
+                username=requested_username,
                 tenant=tenant,
                 phone=phone or "",
                 name=name,

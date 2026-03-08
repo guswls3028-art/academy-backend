@@ -294,6 +294,13 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
     """학생이 로그인 페이지에서 제출하는 가입 신청 (필수 필드만)"""
 
     name = serializers.CharField(max_length=50, trim_whitespace=True)
+    username = serializers.CharField(
+        max_length=50,
+        required=False,
+        allow_blank=True,
+        default="",
+        trim_whitespace=True,
+    )
     initial_password = serializers.CharField(min_length=4, max_length=128, write_only=True)
     parent_phone = serializers.CharField(max_length=20)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True, default="")
