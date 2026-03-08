@@ -1,28 +1,24 @@
 #!/bin/bash
-# API 서버 안에서: SSM /academy/api/env → .env, git pull → build → 재시작
-# 사용: cd /home/ec2-user/academy && bash scripts/deploy_api_on_server.sh
-#
-# SSM /academy/api/env 는 JSON(또는 base64 인코딩 JSON) 형식입니다.
-# refresh-api-env.sh, api.ps1 Launch Template userdata와 동일하게 JSON 파싱 후 KEY=value 줄로 .env 생성.
-#
-# 매 배포 시 academy-api:latest 로 다시 빌드하면, 이전 이미지는 태그가 빠져
-# dangling(<none>:<none>)으로 쌓임. 정리하지 않으면 디스크 100%로 No space left 발생.
+# API 서버에서: 정석 배포와 동일 — SSM → /opt/api.env, ECR pull, 재시작 (빌드 없음).
+# 사용: bash scripts/deploy_api_on_server.sh
+# 호출: api-auto-deploy-remote.ps1 -Action Deploy, 또는 cron(2분마다 main 변경 시).
+# 정석 배포(api.ps1 UserData)와 동일한 결과: /opt/api.env + ECR 이미지.
 
 set -e
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-ENV_FILE="${ENV_FILE:-/home/ec2-user/.env}"
 REGION="${AWS_REGION:-ap-northeast-2}"
 SSM_API_ENV="/academy/api/env"
+API_ENV_FILE="/opt/api.env"
+# 정석 배포와 동일 (params.yaml ecr.apiRepo + accountId, region)
+ECR_URI="${ECR_API_IMAGE_URI:-809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest}"
+ECR_HOST="${ECR_URI%%/*}"
 
-# 1) Fetch API env from SSM (SSOT for API server)
-#    형식: JSON 또는 base64(JSON). update-api-env-sqs.ps1 / api.ps1 userdata / refresh-api-env.sh 와 동일.
+# 1) SSM → env 파일 (정석과 동일: /opt/api.env)
 RAW_VALUE=$(aws ssm get-parameter --name "$SSM_API_ENV" --with-decryption --query Parameter.Value --output text --region "$REGION" 2>/dev/null) || true
 if [ -z "$RAW_VALUE" ]; then
   echo "ERROR: Failed to get SSM $SSM_API_ENV. Create parameter or check IAM." >&2
   exit 1
 fi
 
-# JSON 문자열 확보: 먼저 raw를 JSON으로 파싱 시도, 실패 시 base64 디코드 후 재시도
 write_env_from_json() {
   printf '%s' "$1" | python3 -c "
 import sys, json
@@ -35,60 +31,59 @@ except (json.JSONDecodeError, Exception):
     sys.exit(1)
 " 2>/dev/null
 }
-if write_env_from_json "$RAW_VALUE" > "$ENV_FILE" && [ -s "$ENV_FILE" ]; then
-  echo "OK. SSM $SSM_API_ENV (JSON) -> $ENV_FILE"
+
+TMP_ENV=$(mktemp)
+trap 'rm -f "$TMP_ENV"' EXIT
+
+if write_env_from_json "$RAW_VALUE" > "$TMP_ENV" && [ -s "$TMP_ENV" ]; then
+  : # OK
 else
   DECODED=$(echo "$RAW_VALUE" | base64 -d 2>/dev/null) || true
-  if [ -n "$DECODED" ] && write_env_from_json "$DECODED" > "$ENV_FILE" && [ -s "$ENV_FILE" ]; then
-    echo "OK. SSM $SSM_API_ENV (base64 JSON) -> $ENV_FILE"
+  if [ -n "$DECODED" ] && write_env_from_json "$DECODED" > "$TMP_ENV" && [ -s "$TMP_ENV" ]; then
+    : # OK
   else
-    # 레거시: plain KEY=value 줄 형태일 경우 그대로 사용
-    echo "$RAW_VALUE" | sed 's/\t/\n/g' | grep -v '^$' > "$ENV_FILE"
-    if [ ! -s "$ENV_FILE" ]; then
-      echo "ERROR: SSM value is not valid JSON and produced empty .env. Ensure /academy/api/env is JSON (or base64 JSON)." >&2
+    echo "$RAW_VALUE" | sed 's/\t/\n/g' | grep -v '^$' > "$TMP_ENV"
+    if [ ! -s "$TMP_ENV" ]; then
+      echo "ERROR: SSM value is not valid JSON and produced empty .env." >&2
       exit 1
     fi
-    echo "OK. SSM $SSM_API_ENV (plain) -> $ENV_FILE"
   fi
 fi
 
-# 2) Guard: required env for upload_complete / API (apps/api/config/settings/base.py)
-# DB_NAME/DB_USER required for Django DATABASES; without them settings.DATABASES has null -> 500
+# /opt/api.env 에 기록 (정석 배포와 동일 경로). root 또는 sudo 필요
+if [ -w /opt ] 2>/dev/null; then
+  mkdir -p /opt
+  cp "$TMP_ENV" "$API_ENV_FILE"
+else
+  sudo mkdir -p /opt
+  sudo cp "$TMP_ENV" "$API_ENV_FILE"
+fi
+echo "OK. SSM $SSM_API_ENV -> $API_ENV_FILE"
+
+# 2) 필수 키 검사
 REQUIRED_KEYS="DB_HOST DB_NAME DB_USER R2_ACCESS_KEY R2_SECRET_KEY R2_ENDPOINT REDIS_HOST"
 MISSING=""
 for k in $REQUIRED_KEYS; do
-  line=$(grep -E "^${k}=" "$ENV_FILE" 2>/dev/null | head -1)
+  line=$(grep -E "^${k}=" "$API_ENV_FILE" 2>/dev/null | head -1)
   val="${line#*=}"
   if [ -z "$val" ]; then
     MISSING="${MISSING}${k} "
   fi
 done
 if [ -n "$MISSING" ]; then
-  echo "ERROR: Required env missing in $ENV_FILE: $MISSING" >&2
-  echo "  Fix: ensure SSM $SSM_API_ENV contains these keys (JSON object). See docs/00-SSOT/v1/V1-OPERATIONS-GUIDE.md" >&2
+  echo "ERROR: Required env missing in $API_ENV_FILE: $MISSING" >&2
   exit 1
 fi
 
-cd "$REPO_DIR"
-git fetch origin
-git reset --hard origin/main
-git pull origin main
+# 3) ECR 로그인 및 pull (정석과 동일 이미지)
+aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ECR_HOST"
+docker pull "$ECR_URI"
 
-# 사용 안 하는(태그 없는) 이미지 삭제 — 현재 사용 중인 academy-api:latest / academy-base:latest 는 유지
+# 4) 기존 컨테이너 정리 후 재시작 (정석 UserData와 동일)
+docker stop academy-api 2>/dev/null || true
+docker rm academy-api 2>/dev/null || true
+docker run -d --restart unless-stopped --name academy-api -p 8000:8000 --env-file "$API_ENV_FILE" "$ECR_URI"
+echo "OK — API 재시작 완료 (ECR 이미지 + $API_ENV_FILE)"
+
+# 5) 미사용 이미지 정리 (디스크 여유)
 docker image prune -f
-
-docker build -f docker/Dockerfile.base -t academy-base:latest .
-docker build -f docker/api/Dockerfile -t academy-api:latest .
-
-# 빌드 후 다시 한 번 dangling 정리 (multi-stage 등으로 생긴 중간 이미지)
-docker image prune -f
-
-(docker stop academy-api 2>/dev/null; docker rm academy-api 2>/dev/null; true)
-
-# 마이그레이션 실행 (새 컬럼/테이블 반영 — 미실행 시 registration_requests 등 500 방지)
-echo "Running migrations..."
-docker run --rm --env-file "$ENV_FILE" academy-api:latest python manage.py migrate --noinput
-echo "Migrations OK."
-
-docker run -d --name academy-api --restart unless-stopped --env-file "$ENV_FILE" -p 8000:8000 academy-api:latest
-echo "OK — API 재시작 완료"
