@@ -14,6 +14,23 @@
 3. **nginx**: `docker/nginx/default.conf`, `infra/nginx/academy-api.conf`에 **502/503/504 시 CORS 헤더 추가** 적용. nginx가 502를 반환할 때(upstream 연결 실패·타임아웃 등) `Access-Control-Allow-Origin: $http_origin` 등을 붙여 브라우저가 "CORS policy" 대신 502 응답을 받도록 함.  
    → **ALB가 타깃에 연결조차 못 해서 ALB가 502를 반환하는 경우**는 nginx를 거치지 않으므로, 아래 인프라 점검으로 해결해야 함.
 
+## 실제 점검 결과 (2026-03-09)
+
+루트 키로 AWS 인프라 접근 후 확인한 내용.
+
+| 항목 | 결과 |
+|------|------|
+| ALB | academy-v1-api-alb active, DNS 정상 |
+| ALB SG | sg-0405c1afe368b4e6b |
+| 타깃 그룹 | academy-v1-api-tg, HealthCheckPath=/healthz, Port 8000 |
+| 타깃 헬스 | **healthy** (i-06419d8dbee091e3c) |
+| API 인스턴스 SG | sg-03cf8c8f38f477687 (academy-v1-sg-app), 8000 허용 172.30.0.0/16 |
+| GET https://api.hakwonplus.com/healthz | **200** |
+| GET /api/v1/core/me/ (Origin: https://tchul.com) | **401** + access-control-allow-origin: https://tchul.com |
+| OPTIONS /api/v1/core/me/ (preflight) | **200** + CORS 헤더 정상 |
+
+**결론:** 현재 구간에서는 타깃 정상·CORS 정상. 502 재발 시 nginx 502 CORS 설정 배포 후에는 502 응답에도 CORS가 붙음.
+
 ---
 
 ## 1. 502 = 인프라 점검 (정책·서브넷·ALB) — **먼저 할 것**
