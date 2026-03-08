@@ -59,6 +59,11 @@ class Tenant(models.Model):
         default=False,
         help_text="True면 학생 예약 신청을 자동 승인(booked)합니다.",
     )
+    # 학생 가입 신청(회원가입) 자동 승인 — True면 신청 즉시 Student 생성·승인
+    student_registration_auto_approve = models.BooleanField(
+        default=False,
+        help_text="True면 학생 가입 신청을 즉시 자동 승인합니다.",
+    )
 
     class Meta:
         app_label = "core"
