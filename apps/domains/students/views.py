@@ -799,6 +799,10 @@ class StudentViewSet(ModelViewSet):
         student_ids = [s.id for s in to_delete]
         user_ids = [s.user_id for s in to_delete if s.user_id]
         deleted = 0
+        logger.info(
+            "bulk_permanent_delete start tenant_id=%s student_ids=%s user_ids=%s",
+            getattr(tenant, "id", None), student_ids, user_ids,
+        )
         try:
             with transaction.atomic():
                 with connection.cursor() as cursor:
@@ -806,8 +810,7 @@ class StudentViewSet(ModelViewSet):
                     sub = "SELECT id FROM enrollment_enrollment WHERE student_id IN %s"
                     params = [tuple(student_ids)]
 
-                    # 1) results: result_item -> result / exam_attempt / fact / wrong_note_pdf (enrollment_id)
-                    #    exam_result -> submission (submission_id IN ... enrollment_id IN sub)
+                    # 1) results / submissions / homework (enrollment_id)
                     for tbl, where_sql, where_params in [
                         (
                             "results_result_item",
@@ -839,6 +842,7 @@ class StudentViewSet(ModelViewSet):
                             ["public", tbl],
                         )
                         if cursor.fetchone():
+                            logger.info("bulk_permanent_delete DELETE %s", tbl)
                             cursor.execute(f"DELETE FROM {tbl} WHERE {where_sql}", where_params)
 
                     enrollment_child_tables = [
@@ -860,42 +864,44 @@ class StudentViewSet(ModelViewSet):
                             ["public", tbl],
                         )
                         if cursor.fetchone():
+                            logger.info("bulk_permanent_delete DELETE %s", tbl)
                             cursor.execute(
                                 f"DELETE FROM {tbl} WHERE enrollment_id IN ({sub})",
                                 params,
                             )
+                    logger.info("bulk_permanent_delete DELETE enrollment_enrollment")
                     cursor.execute(
                         "DELETE FROM enrollment_enrollment WHERE student_id IN %s",
                         [tuple(student_ids)],
                     )
+                    logger.info("bulk_permanent_delete DELETE students_studenttag")
                     cursor.execute(
                         "DELETE FROM students_studenttag WHERE student_id IN %s",
                         [tuple(student_ids)],
                     )
-                    # 회원가입신청이 해당 학생을 참조하면 FK 제약으로 삭제 불가 → 선행 해제
+                    logger.info("bulk_permanent_delete UPDATE students_studentregistrationrequest (unlink)")
                     cursor.execute(
                         "UPDATE students_studentregistrationrequest SET student_id = NULL WHERE student_id IN %s",
                         [tuple(student_ids)],
                     )
-                    # Student를 참조하는 테이블 삭제 (FK 제약 방지)
-                    student_child_tables = ["clinic_sessionparticipant", "clinic_submission"]
-                    for tbl in student_child_tables:
+                    for tbl in ["clinic_sessionparticipant", "clinic_submission"]:
                         cursor.execute(
                             "SELECT 1 FROM information_schema.tables "
                             "WHERE table_schema = %s AND table_name = %s",
                             ["public", tbl],
                         )
                         if cursor.fetchone():
+                            logger.info("bulk_permanent_delete DELETE %s", tbl)
                             cursor.execute(
                                 f"DELETE FROM {tbl} WHERE student_id IN %s",
                                 [tuple(student_ids)],
                             )
+                    logger.info("bulk_permanent_delete DELETE students_student")
                     cursor.execute(
                         "DELETE FROM students_student WHERE id IN %s",
                         [tuple(student_ids)],
                     )
                     if user_ids:
-                        # User를 참조하는 테이블 먼저 삭제 (FK 제약 방지). 테이블 없으면 스킵.
                         for tbl in ["core_attendance", "core_expense"]:
                             cursor.execute(
                                 "SELECT 1 FROM information_schema.tables "
@@ -903,10 +909,12 @@ class StudentViewSet(ModelViewSet):
                                 ["public", tbl],
                             )
                             if cursor.fetchone():
+                                logger.info("bulk_permanent_delete DELETE %s", tbl)
                                 cursor.execute(
                                     f"DELETE FROM {tbl} WHERE user_id IN %s",
                                     [tuple(user_ids)],
                                 )
+                        logger.info("bulk_permanent_delete DELETE core_tenantmembership, accounts_user")
                         cursor.execute(
                             "DELETE FROM core_tenantmembership WHERE user_id IN %s",
                             [tuple(user_ids)],
@@ -917,8 +925,10 @@ class StudentViewSet(ModelViewSet):
                         )
                     deleted = len(to_delete)
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).exception("bulk_permanent_delete failed")
+            logger.exception(
+                "bulk_permanent_delete failed: %s (student_ids=%s)",
+                e, student_ids,
+            )
             return Response(
                 {"detail": f"영구 삭제 중 오류: {str(e)}"},
                 status=500,
