@@ -46,30 +46,28 @@
 
 ---
 
-## 4. 차이 요약
+## 4. 차이 요약 (리팩토링 후)
 
-| 항목 | 정석 | 원격(레거시) |
-|------|------|--------------|
-| env 경로 | `/opt/api.env` | `/home/ec2-user/.env` |
-| 이미지 | ECR pull (동일 이미지 공유) | 서버에서 빌드 (academy-api:latest) |
-| 인스턴스에 Git | 없음 | 있음 (/home/ec2-user/academy) |
-| 배포 트리거 | deploy.ps1 → instance refresh | cron 2분마다 또는 수동 Deploy |
+| 항목 | 정석 | 원격 |
+|------|------|------|
+| env 경로 | `/opt/api.env` | `/opt/api.env` (동일) |
+| 이미지 | ECR pull | ECR pull (동일) |
+| 트리거 | deploy.ps1 → instance refresh | cron 2분마다 main 변경 시 또는 수동 Deploy |
 
-**같은 배포가 아니며**, 정석은 ECR+UserData+instance refresh, 레거시는 Git+서버 빌드+env 파일 경로(.env) 사용.
+**결과물(이미지·env·실행 방식)은 동일.** 트리거만 다름 (instance refresh vs cron/수동).
 
 ---
 
-## 5. 원격 스크립트 동작 확인 (실제 실행 결과)
+## 5. 원격 스크립트 동작 확인 (리팩토링 후)
 
-- **Status:** 실행됨. 인스턴스 `i-0b007fab7c0528a7b` 에서 crontab 상태 조회 성공.
-- **Off:** 실행됨. 이후 Status 시 `No crontab` 확인됨 (cron 제거 정상).
-- **On:** 실행함 (git fetch + cron 등록). 완료까지 대기 시간 발생 가능.
-- **Deploy:** 수동 1회 배포. 서버에서 `deploy_api_on_server.sh` 실행 시 **git pull + docker build 2회 + migrate + docker run** 으로 **10~20분** 소요될 수 있음. 필요 시 `pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Deploy -AwsProfile default` 로 직접 실행 권장.
+- **Status:** crontab 상태 조회.
+- **Off:** cron 제거.
+- **Deploy:** SSM으로 repo 갱신 후 `deploy_api_on_server.sh` 1회 실행. **빌드 없음** → ECR pull + 재시작만으로 **수 분 이내** 완료.
+- **On:** 2분마다 main 변경 시 `git reset --hard origin/main` 후 `deploy_api_on_server.sh` 실행 (최신 스크립트 사용).
 
 ---
 
 ## 6. 권장 사항
 
-- **일상 배포:** 정석 배포만 사용 (`deploy.ps1`). ECR에 이미지 push 후 deploy.ps1 실행.
-- **원격 스크립트:** 레거시/긴급 수동 배포용. On 시 2분마다 main 변경 시 서버 빌드가 돌아가므로, 정석 배포를 쓰면 **Off** 로 두고 필요할 때만 **Deploy** 1회 실행하는 것을 권장.
-- **env 경로 통일:** 레거시에서도 `/opt/api.env`를 쓰려면 `deploy_api_on_server.sh` 의 `ENV_FILE` 기본값을 `/opt/api.env`로 변경하고, SSM으로 쓰는 로직을 UserData와 동일하게 두면 정석과 동일 경로 사용 가능 (선택).
+- **일상 배포:** 정석(`deploy.ps1`) 또는 원격 자동배포(On) 둘 다 **동일한 결과**(ECR + /opt/api.env). 코드 수정 후 편의에 따라 원격 On → 수정 반영 후 Off 로 사용 가능.
+- **원격 On:** 2분마다 main 변경 시 자동으로 ECR pull + /opt/api.env 갱신 + 재시작. 정석과 동일한 이미지·env 사용.
