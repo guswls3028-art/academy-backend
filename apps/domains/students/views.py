@@ -1,8 +1,9 @@
 # PATH: apps/domains/students/views.py
 
+import logging
 import uuid
 
-from django.db import transaction, connection
+from django.db import transaction, connection, IntegrityError
 from django.db.models import Q
 from django.utils import timezone
 from django.conf import settings
@@ -42,6 +43,8 @@ from .serializers import (
     RegistrationRequestCreateSerializer,
     RegistrationRequestListSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ======================================================
@@ -1003,8 +1006,14 @@ class RegistrationRequestViewSet(ModelViewSet):
                 address=(data.get("address") or "").strip() or None,
                 origin_middle_school=(data.get("origin_middle_school") or "").strip() or None,
             )
+        except IntegrityError as e:
+            logger.warning("RegistrationRequest create IntegrityError: %s", e)
+            return Response(
+                {"detail": "저장 중 제약 조건 오류가 발생했습니다. 입력값(이름·전화번호 등)을 확인해 주세요.", "error": str(e)},
+                status=400,
+            )
         except Exception as e:
-            import traceback
+            logger.exception("RegistrationRequest create error: %s", e)
             return Response(
                 {
                     "detail": "가입 신청 저장 중 오류가 발생했습니다.",
