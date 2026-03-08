@@ -342,6 +342,32 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
         for key in ("username", "high_school", "middle_school", "high_school_class", "major", "gender", "memo", "address", "origin_middle_school"):
             if attrs.get(key) is None:
                 attrs[key] = ""
+
+        # 회원가입 시 모든 필드 필수 입력 (계열 제외) — Limglish 등 운영 요구
+        signup_required = {
+            "name": "이름",
+            "initial_password": "비밀번호",
+            "parent_phone": "학부모 연락처",
+            "phone": "휴대전화",
+            "high_school": "고등학교명",
+            "middle_school": "중학교명",
+            "high_school_class": "반",
+            "grade": "학년",
+            "gender": "성별",
+            "address": "주소",
+            "origin_middle_school": "출신중학교",
+        }
+        for key, label in signup_required.items():
+            val = attrs.get(key)
+            if key == "grade":
+                if val is None or (isinstance(val, str) and val.strip() == ""):
+                    raise serializers.ValidationError({key: f"{label}을(를) 입력해 주세요."})
+            elif isinstance(val, str):
+                if not val.strip():
+                    raise serializers.ValidationError({key: f"{label}을(를) 입력해 주세요."})
+            elif val is None:
+                raise serializers.ValidationError({key: f"{label}을(를) 입력해 주세요."})
+
         return attrs
 
 

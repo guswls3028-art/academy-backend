@@ -2,10 +2,17 @@
 
 ## 현상
 
-- 브라우저: `Access to XMLHttpRequest at 'https://api.hakwonplus.com/...' from origin 'https://hakwonplus.com' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`
+- 브라우저: `Access to XMLHttpRequest at 'https://api.hakwonplus.com/...' from origin 'https://tchul.com' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`
 - 일부 요청에 `502 (Bad Gateway)` 동시 표시.
 
-**502가 나오면 CORS 에러로 보이지만, 원인은 인프라(정책/서브넷/ALB)인 경우가 많음.** 아래 인프라 점검을 먼저 실행하자.
+**502가 나오면 CORS 에러로 보이지만, 원인은 인프라(정책/서브넷/ALB)이거나 upstream 비정상인 경우가 많음.**
+
+## 코드베이스에서 한 일
+
+1. **CORS 설정**: `prod.py`·`base.py`에 `https://tchul.com`, `https://www.tchul.com` 이미 포함됨. 추가 수정 없음.
+2. **Django**: `CorsResponseFixMiddleware`가 5xx 등 모든 Django 응답에 CORS 보강. 502가 **Django까지 도달한 뒤** 나가는 경우는 없음(502는 보통 프록시/ALB에서 반환).
+3. **nginx**: `docker/nginx/default.conf`, `infra/nginx/academy-api.conf`에 **502/503/504 시 CORS 헤더 추가** 적용. nginx가 502를 반환할 때(upstream 연결 실패·타임아웃 등) `Access-Control-Allow-Origin: $http_origin` 등을 붙여 브라우저가 "CORS policy" 대신 502 응답을 받도록 함.  
+   → **ALB가 타깃에 연결조차 못 해서 ALB가 502를 반환하는 경우**는 nginx를 거치지 않으므로, 아래 인프라 점검으로 해결해야 함.
 
 ---
 
