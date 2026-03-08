@@ -811,6 +811,10 @@ class StudentViewSet(ModelViewSet):
                         "video_videoprogress",
                         "video_playbacksession",
                         "video_videoplaybackevent",
+                        "progress_sessionprogress",
+                        "progress_lectureprogress",
+                        "progress_cliniclink",
+                        "progress_risklog",
                     ]
                     params = [tuple(student_ids)]
                     for tbl in enrollment_child_tables:
@@ -832,6 +836,19 @@ class StudentViewSet(ModelViewSet):
                         "DELETE FROM students_studenttag WHERE student_id IN %s",
                         [tuple(student_ids)],
                     )
+                    # Student를 참조하는 테이블 삭제 (FK 제약 방지)
+                    student_child_tables = ["clinic_sessionparticipant", "clinic_submission"]
+                    for tbl in student_child_tables:
+                        cursor.execute(
+                            "SELECT 1 FROM information_schema.tables "
+                            "WHERE table_schema = %s AND table_name = %s",
+                            ["public", tbl],
+                        )
+                        if cursor.fetchone():
+                            cursor.execute(
+                                f"DELETE FROM {tbl} WHERE student_id IN %s",
+                                [tuple(student_ids)],
+                            )
                     cursor.execute(
                         "DELETE FROM students_student WHERE id IN %s",
                         [tuple(student_ids)],
