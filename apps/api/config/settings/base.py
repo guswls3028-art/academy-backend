@@ -354,6 +354,9 @@ SOLAPI_SENDER = os.getenv("SOLAPI_SENDER", "")  # 발신 번호 (예: 0101234567
 SOLAPI_KAKAO_PF_ID = os.getenv("SOLAPI_KAKAO_PF_ID", "")
 SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
 
+# SMS 허용 tenant (내 테넌트). 해당 tenant에서만 문자(SMS/LMS) 발송 가능.
+OWNER_TENANT_ID = int(os.getenv("OWNER_TENANT_ID", "1"))
+
 # delete_r2 전용 SQS (Encoding = Batch ONLY)
 VIDEO_SQS_QUEUE_DELETE_R2 = os.getenv("VIDEO_SQS_QUEUE_DELETE_R2", "academy-video-delete-r2")
 
