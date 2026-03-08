@@ -34,11 +34,36 @@ alwaysApply: false
 ## 3. 금지·필수 사항
 
 - **tenant context 없는 query 금지:** 도메인 모델 조회/수정 시 `request.tenant` 또는 명시적 `tenant` 인자로 범위 제한. `Model.objects.filter(pk=id)` 단독 사용 시 테넌트 소속 여부가 선행 조회로 보장되는지 확인할 것.
-- **cross-tenant 가능성 있는 fallback 금지:** "편의"를 위한 fallback이 다른 테넌트 데이터를 노출하거나 사용할 수 있으면 안 됨. Fallback은 **명시적 안전성** 우선.
+- **tenant fallback / default tenant / host 보정 / tenant 추정 금지.** tenant를 식별할 수 없으면 **즉시 실패**시킨다.
+- **cross-tenant 가능성 있는 fallback 금지.** 다른 테넌트 데이터 노출·조회 가능성은 절대 허용하지 않는다.
 - **tenant resolver 변경 시:** 반드시 **E2E/원격 검증** 포함. `run-qna-e2e-verify.ps1` 등 실제 배포 환경(ALB 내부 URL, Host, X-Tenant-Code) 기준 검증.
-- **배포 스크립트 변경 시:** 원격 검증까지 포함. env 파일 경로(SSM → /opt/api.env vs /home/ec2-user/.env), 이미지 URI, 실행 경로가 실제 서버 구조와 일치하는지 확인할 것.
+- **배포 스크립트 변경 시:** 원격 검증까지 포함. env 파일 경로(SSM → /opt/api.env), 이미지 URI, 실행 경로가 실제 서버 구조와 일치하는지 확인할 것.
 
-## 4. 핵심 참조 파일
+## 4. 멀티테넌트 검증 기준 (항상 확인할 영역)
+
+**A. tenant resolve** — host 기반 resolve, middleware, resolver, request context binding, JWT 이후 tenant binding.
+
+**B. tenant isolation** — 모든 query에 tenant filter 존재 여부; service/repository/queryset; list/detail/create/update/delete; background job, cron, messaging, notification, async pipeline.
+
+**C. cross-tenant 가능성** — 공용 데이터인지, tenant filter 누락 여부, fallback 존재 여부, tenant 불일치 시 처리(반드시 실패).
+
+**D. 학생앱 ↔ 선생앱 파이프라인** — QnA, sessions, clinic, grades, attendance, notifications, dashboard, video, community 등 동일 파이프라인 사용 시 tenant isolation 보장 여부.
+
+## 5. DB 격리 기준
+
+- tenant relation, FK 구조, unique/composite unique, tenant index, tenant 없는 테이블 존재 여부, shared entity 안전성.
+- "우연히 동작"이 아니라 **구조적으로** tenant isolation이 보장되는지 판단. Aurora 전환 고려.
+
+## 6. 배포 안정성·E2E 검증 기준
+
+- **스크립트:** `scripts/v1/deploy.ps1`, `run-api-management-remote.ps1`, `run-qna-e2e-verify.ps1`. ECR 반영, instance refresh, LT, userdata, SSM, env 파일, docker 실행. 배포 후 **실제 API 호출**로 검증.
+- **E2E:** 실제 배포 서버에서 실행, 동일 env·동일 JWT 서명 키·실제 API 호출. 예: QnA POST → GET → 데이터 존재 확인. Cloudflare/ALB/Host 차이 반영.
+
+## 7. 작업 절차 (순서 준수)
+
+1. 프로젝트 구조 분석 2. 멀티테넌트 격리 검증 3. 배포 흐름 검증 4. 문제 지점 식별 5. 분석 보고서 제출 6. 승인 후 수정 7. 수정 후 실제 검증 8. 문서 및 규칙 보강. 문서(`docs/*`)와 코드 불일치 시 최신 상태로 수정.
+
+## 8. 핵심 참조 파일
 
 - 테넌트 해석: `apps/core/tenant/resolver.py`, `apps/core/middleware/tenant.py`
 - JWT·테넌트: `apps/api/common/auth_jwt.py` (X-Tenant-Code / tenant_code)
@@ -46,7 +71,7 @@ alwaysApply: false
 - 정석 배포: `scripts/v1/deploy.ps1`, `scripts/v1/resources/api.ps1` (SSM → /opt/api.env, ECR 이미지)
 - 원격 검증: `scripts/v1/run-qna-e2e-verify.ps1` (ALB URL + /opt/api.env), `scripts/v1/run-api-management-remote.ps1`
 
-## 5. 재발 방지
+## 9. 재발 방지
 
 - QnA/커뮤니티·알림·영상 진행률 등 **테넌트 경계가 있는 API** 추가/수정 시: list/detail/create/update에서 **tenant 출처(request.tenant vs 엔티티 tenant)** 와 **cross-tenant 조회 가능성**을 반드시 검토할 것.
 - 배포 후 검증 스크립트는 **공개 URL / ALB 내부 URL / Host 헤더 / X-Tenant-Code** 등 실제 운영 조건 차이를 반영해야 함. 단순 성공 로그가 아니라 **실제 서버 반영 여부·실행된 이미지·환경 파일·호출 경로**를 근거로 확인할 것.

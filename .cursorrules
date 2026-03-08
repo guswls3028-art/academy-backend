@@ -59,6 +59,8 @@
 ---
 
 ## 7. 멀티테넌트 격리 (필수 준수)
-- 모든 데이터 접근·조회·생성·수정·집계·알림·파이프라인은 **현재 테넌트** 기준으로만 허용. 다른 테넌트 데이터 섞임·노출은 심각한 결함으로 간주.
+- **최상위 원칙:** 테넌트 격리는 선택이 아니라 절대 규칙. 정상 동작보다 격리 우선. **장애 발생 > 데이터 혼합 방지.** tenant를 식별할 수 없으면 즉시 실패시킨다.
+- 모든 데이터 접근·조회·생성·수정·집계·알림·파이프라인은 **현재 테넌트** 기준으로만 허용. 다른 테넌트 데이터 섞임·노출은 심각한 결함.
+- **절대 금지:** tenant fallback, default tenant, host 보정, tenant 추정, tenant 없는 query, cross-tenant 조회 가능성, tenant 필터 누락.
 - 테넌트 격리 영향 변경 시 영향 범위 명시. 테넌트 해석(host, X-Tenant-Code, middleware, resolver, JWT) 변경 시 E2E/원격 검증 필수.
-- tenant context 없는 도메인 쿼리 금지; cross-tenant fallback 금지. 상세: `.cursor/rules/09_multitenant_isolation.mdc` 참고.
+- 상세: `.cursor/rules/09_multitenant_isolation.mdc` 참고.
