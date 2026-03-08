@@ -902,6 +902,19 @@ class StudentViewSet(ModelViewSet):
                                 f"DELETE FROM {tbl} WHERE student_id IN %s",
                                 [tuple(student_ids)],
                             )
+                    # 커뮤니티(QnA 등)가 해당 학생을 created_by로 참조 → FK 해제 (SET_NULL과 동일)
+                    for tbl in ["community_postentity", "community_postreply"]:
+                        cursor.execute(
+                            "SELECT 1 FROM information_schema.tables "
+                            "WHERE table_schema = %s AND table_name = %s",
+                            ["public", tbl],
+                        )
+                        if cursor.fetchone():
+                            logger.info("bulk_permanent_delete UPDATE %s (unlink created_by)", tbl)
+                            cursor.execute(
+                                f"UPDATE {tbl} SET created_by_id = NULL WHERE created_by_id IN %s",
+                                [tuple(student_ids)],
+                            )
                     logger.info("bulk_permanent_delete DELETE students_student")
                     cursor.execute(
                         "DELETE FROM students_student WHERE id IN %s",
