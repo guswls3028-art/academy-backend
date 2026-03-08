@@ -872,6 +872,11 @@ class StudentViewSet(ModelViewSet):
                         "DELETE FROM students_studenttag WHERE student_id IN %s",
                         [tuple(student_ids)],
                     )
+                    # 회원가입신청이 해당 학생을 참조하면 FK 제약으로 삭제 불가 → 선행 해제
+                    cursor.execute(
+                        "UPDATE students_studentregistrationrequest SET student_id = NULL WHERE student_id IN %s",
+                        [tuple(student_ids)],
+                    )
                     # Student를 참조하는 테이블 삭제 (FK 제약 방지)
                     student_child_tables = ["clinic_sessionparticipant", "clinic_submission"]
                     for tbl in student_child_tables:
