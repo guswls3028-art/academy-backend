@@ -339,8 +339,8 @@ class SendMessageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        body_base = raw_body
-        subject_base = raw_subject
+        body_base = (raw_body or "").strip()
+        subject_base = (raw_subject or "").strip()
         t = None
         solapi_template_id = ""
         if template_id:
@@ -350,8 +350,11 @@ class SendMessageView(APIView):
                     {"detail": "템플릿을 찾을 수 없습니다."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            body_base = (t.body or "").strip()
-            subject_base = (t.subject or "").strip()
+            # 템플릿 본문/제목은 직접 입력이 비어 있을 때만 사용 (모달에서 템플릿 불러온 뒤 수정한 내용 반영)
+            if not body_base:
+                body_base = (t.body or "").strip()
+            if not subject_base:
+                subject_base = (t.subject or "").strip()
             solapi_template_id = (t.solapi_template_id or "").strip()
 
         if message_mode in ("alimtalk", "both") and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
@@ -368,6 +371,14 @@ class SendMessageView(APIView):
 
         enqueued = 0
         skipped_no_phone = 0
+        skipped_whitelist = 0
+        # 테스트용 수신번호 화이트리스트 (설정 시 해당 번호로만 발송, 그 외는 스킵하여 실제 학생 발송 방지)
+        test_whitelist = None
+        from django.conf import settings as django_settings
+        _whitelist_str = getattr(django_settings, "MESSAGING_TEST_RECIPIENT_WHITELIST", None) or ""
+        if isinstance(_whitelist_str, str) and _whitelist_str.strip():
+            test_whitelist = {p.strip().replace("-", "") for p in _whitelist_str.strip().split(",") if p.strip()}
+
         for s in students:
             phone = None
             if send_to == "student":
@@ -376,6 +387,9 @@ class SendMessageView(APIView):
                 phone = (s.parent_phone or "").replace("-", "").strip()
             if not phone or len(phone) < 10:
                 skipped_no_phone += 1
+                continue
+            if test_whitelist is not None and phone not in test_whitelist:
+                skipped_whitelist += 1
                 continue
             name = (s.name or "").strip()
             name_2 = name[:2] if len(name) >= 2 else name
@@ -404,6 +418,7 @@ class SendMessageView(APIView):
                     tenant_id=tenant.id,
                     to=phone,
                     text=text,
+                    sender=sender,
                     message_mode=message_mode,
                     template_id=template_id_solapi,
                     alimtalk_replacements=alimtalk_replacements,
@@ -420,6 +435,7 @@ class SendMessageView(APIView):
             "detail": f"발송 예정 {enqueued}건입니다.",
             "enqueued": enqueued,
             "skipped_no_phone": skipped_no_phone,
+            "skipped_whitelist": skipped_whitelist,
         }, status=status.HTTP_200_OK)
 
 
