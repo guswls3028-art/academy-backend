@@ -22,10 +22,17 @@ class Command(BaseCommand):
             default=os.environ.get("API_BASE_URL", "https://api.hakwonplus.com"),
             help="API base URL",
         )
+        parser.add_argument(
+            "--host",
+            type=str,
+            default=os.environ.get("API_HOST_HEADER", ""),
+            help="Host header (e.g. api.hakwonplus.com when base is ALB URL)",
+        )
         parser.add_argument("--student-id", type=int, default=455, help="학생 ID")
 
     def handle(self, *args, **options):
         base = (options["base"] or "").rstrip("/") or "https://api.hakwonplus.com"
+        host_header = (options.get("host") or os.environ.get("API_HOST_HEADER") or "").strip()
         student_id = options["student_id"]
         student = Student.objects.filter(id=student_id).select_related("user").first()
         if not student or not getattr(student, "user_id", None):
@@ -39,6 +46,8 @@ class Command(BaseCommand):
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        if host_header:
+            headers["Host"] = host_header
 
         def get_list():
             req = urllib.request.Request(
