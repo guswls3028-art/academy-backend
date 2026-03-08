@@ -495,6 +495,43 @@ class TenantDetailView(APIView):
         return self.get(request, tenant_id)
 
 
+class TenantInfoView(APIView):
+    """
+    GET/PATCH /api/v1/core/tenant-info/
+    현재 요청의 테넌트(소속 학원) 정보. GET=스태프 이상, PATCH=owner만.
+    학생앱 "본부 진입게이트"에 노출되는 본부 전화번호 등 설정.
+    """
+    def get_permissions(self):
+        if self.request.method == "PATCH":
+            return [IsAuthenticated(), TenantResolvedAndOwner()]
+        return [IsAuthenticated(), TenantResolvedAndStaff()]
+
+    def get(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant not resolved."}, status=403)
+        return Response({
+            "name": (tenant.name or "").strip(),
+            "phone": (tenant.phone or "").strip(),
+            "headquarters_phone": (getattr(tenant, "headquarters_phone", None) or "").strip(),
+        })
+
+    def patch(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant not resolved."}, status=403)
+        update_fields = []
+        if "phone" in request.data:
+            tenant.phone = (request.data.get("phone") or "").strip()[:50]
+            update_fields.append("phone")
+        if "headquarters_phone" in request.data:
+            tenant.headquarters_phone = (request.data.get("headquarters_phone") or "").strip()[:50]
+            update_fields.append("headquarters_phone")
+        if update_fields:
+            tenant.save(update_fields=update_fields)
+        return self.get(request)
+
+
 class TenantCreateView(APIView):
     """
     POST /api/v1/core/tenants/
