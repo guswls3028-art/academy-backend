@@ -7,7 +7,7 @@ $ErrorActionPreference = "Continue"
 
 # 스크립트 위치 기준 경로 (바탕화면 바로가기에서도 동작)
 $AcademyRoot = $PSScriptRoot
-$FrontRoot   = Join-Path (Split-Path $PSScriptRoot -Parent) "academyfront"
+$FrontRoot   = Join-Path (Split-Path $PSScriptRoot -Parent) "frontend"
 
 if (-not (Test-Path $FrontRoot)) {
   Write-Host "프론트 폴더를 찾을 수 없습니다: $FrontRoot" -ForegroundColor Red
