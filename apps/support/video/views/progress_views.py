@@ -1,7 +1,7 @@
 # apps/support/video/views/progress_views.py
 
 # Progress endpoint: Redis-first. On Redis miss return {"state": "UNKNOWN"}.
-# Fallback: tenant mismatch 시 Video tenant로 Redis 재조회 (1회 DB query).
+# Tenant 격리: request.tenant 소속 Video만 조회. 다른 테넌트 진행률 노출 금지.
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
@@ -89,22 +89,22 @@ class VideoProgressView(APIView):
             return _default_progress_response(video_id)
 
         if cached_status is None:
-            # Fallback 1: request.tenant과 Video tenant 불일치 시 (중앙 API 등) Video tenant로 재조회
+            # request.tenant 소속 Video만 조회. 다른 테넌트 영상 진행률 노출 금지(tenant 격리).
             video = None
             try:
                 from ..models import Video
 
                 video = (
-                    Video.objects.filter(pk=video_id)
+                    Video.objects.filter(
+                        session__lecture__tenant=tenant,
+                        pk=video_id,
+                    )
                     .select_related("session__lecture__tenant")
                     .first()
                 )
-                if video and video.session and video.session.lecture:
-                    alt_tenant = video.session.lecture.tenant
-                    if alt_tenant and alt_tenant.id != tenant.id:
-                        cached_status = get_video_status_from_redis(alt_tenant.id, video_id)
-                        if cached_status is not None:
-                            tenant = alt_tenant
+                if video:
+                    # 동일 테넌트 내에서만 Redis/DB fallback 허용
+                    cached_status = get_video_status_from_redis(tenant.id, video_id)
             except Exception:
                 pass
 
