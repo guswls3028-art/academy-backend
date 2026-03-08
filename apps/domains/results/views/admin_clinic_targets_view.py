@@ -30,5 +30,8 @@ class AdminClinicTargetsView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request):
-        rows = ClinicTargetService.list_admin_targets()
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response([], status=200)
+        rows = ClinicTargetService.list_admin_targets(tenant=tenant)
         return Response(AdminClinicTargetSerializer(rows, many=True).data)
