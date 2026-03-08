@@ -1,11 +1,10 @@
 #!/bin/bash
 # API 서버에서: 정석 배포와 동일 — SSM → /opt/api.env, ECR pull, 재시작 (빌드 없음).
-# Rapid Deploy 전용: 컨테이너만 교체(ASG instance refresh 없음).
-# 사용: bash scripts/deploy_api_on_server.sh
-# 호출: api-auto-deploy-remote.ps1 -Action Deploy, 또는 cron(2분마다 main 변경 시).
-# 정석 배포(api.ps1 UserData)와 동일한 결과: /opt/api.env + ECR 이미지.
-
+# DISABLED IN PRODUCTION: In-place container replace is disabled. Use CI/CD formal deploy only.
 set -e
+echo "Rapid deploy is disabled in production. Use CI/CD formal deploy (GitHub Actions → ECR push → ASG instance refresh)." >&2
+exit 1
+
 REGION="${AWS_REGION:-ap-northeast-2}"
 SSM_API_ENV="/academy/api/env"
 API_ENV_FILE="/opt/api.env"

@@ -55,7 +55,7 @@ No other git-based auto deploy watchers found (e.g. hot_deploy_watch.sh does not
 ### 2. Scripts that remain allowed
 - **scripts/v1/deploy.ps1** — Formal deploy (Ensure-*, instance refresh). Not modified.
 - **CI workflow** (v1-build-and-push-latest.yml) — ECR push + API ASG instance refresh. Not modified.
-- **deploy_api_on_server.sh** — Not given a guard (per user list); cron removal and the three guards above prevent it from being triggered via cron or SSM. Optional: add guard to this script too for defense in depth (manual run on server would also exit). Plan: add guard to deploy_api_on_server.sh as well so the only deploy path is formal.
+- **deploy_api_on_server.sh** — Add guard at top: same message, exit 1. Prevents in-place container replace even if run manually on server.
 
 ### 3. How cron auto deploy will be disabled
 - **On API instance(s):** SSM RunCommand to run: remove crontab entries containing `deploy_api_on_server.sh` or `auto_deploy_cron_on.sh`. Confirm with `crontab -l` afterward.
