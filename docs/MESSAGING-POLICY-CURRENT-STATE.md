@@ -89,12 +89,10 @@
 - **Worker**  
   - `apps/worker/messaging_worker/config.py`: `OWNER_TENANT_ID=int(os.environ.get("OWNER_TENANT_ID", "1"))`,  
     `SOLAPI_KAKAO_PF_ID=os.environ.get("SOLAPI_KAKAO_PF_ID", "").strip()` 등.
-- **배포**  
-  - `scripts/v1/update-workers-env-sqs.ps1`: API SSM에서 워커 SSM으로 **SOLAPI_*** 만 복사함.  
-    **OWNER_TENANT_ID, TEST_TENANT_ID는 복사하지 않음.**  
-  - 따라서 워커는 SSM에 OWNER_TENANT_ID가 없으면 **항상 기본값 1** 사용.  
-  - API SSM에만 OWNER_TENANT_ID=2 등으로 넣어 두면 API는 2, 워커는 1로 동작할 수 있음.  
-→ **코드상 해석 방식은 동일하나, 배포 스크립트가 워커에 OWNER_TENANT_ID/TEST_TENANT_ID를 넣지 않아 불일치 위험 있음.**
+  - **배포**  
+  - `scripts/v1/update-workers-env-sqs.ps1`: API SSM에서 워커 SSM으로 **SOLAPI_*** 및 **OWNER_TENANT_ID**, **TEST_TENANT_ID** 를 복사함.  
+  - 워커 SSM에 OWNER_TENANT_ID/TEST_TENANT_ID가 없으면 워커는 기본값(1, 9999)만 사용하므로 API와 정책 불일치가 발생할 수 있음.  
+  - **API와 워커는 동일한 OWNER_TENANT_ID / TEST_TENANT_ID 를 사용해야 함.** 스크립트 실행 후 워커 인스턴스 재시작 필요.
 
 ---
 
