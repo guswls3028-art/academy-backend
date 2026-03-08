@@ -1154,7 +1154,17 @@ class StudentPasswordFindRequestView(APIView):
         code = "".join([str(random.randint(0, 9)) for _ in range(6)])
         key = _pw_reset_cache_key(tenant.id, phone)
         cache.set(key, {"user_id": student.user_id, "code": code}, timeout=600)
-        send_sms(phone, f"[학원] 비밀번호 찾기 인증번호: {code} (10분 내 입력)")
+        result = send_sms(phone, f"[학원] 비밀번호 찾기 인증번호: {code} (10분 내 입력)", tenant_id=tenant.id)
+        if result.get("status") == "error" and result.get("reason") == "sms_allowed_only_for_owner_tenant":
+            return Response(
+                {"detail": "문자 발송은 해당 학원에서 사용할 수 없습니다. 관리자에게 문의해 주세요."},
+                status=403,
+            )
+        if result.get("status") != "ok":
+            return Response(
+                {"detail": result.get("reason", "인증번호 발송에 실패했습니다.")},
+                status=503,
+            )
         return Response({"message": "인증번호가 발송되었습니다."}, status=200)
 
 

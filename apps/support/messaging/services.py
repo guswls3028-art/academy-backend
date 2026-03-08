@@ -454,15 +454,18 @@ def send_registration_approved_messages(
                 {"key": "site_link", "value": site_url},
                 {"key": "change_password_notice", "value": notice},
             ]
-        if enqueue_sms(
-            tenant_id=tenant_id,
-            to=parent_phone,
-            text=text,
-            message_mode=config_parent.message_mode,
-            template_id=template_id_solapi,
-            alimtalk_replacements=alimtalk_replacements,
-        ):
-            sent += 1
+        try:
+            if enqueue_sms(
+                tenant_id=tenant_id,
+                to=parent_phone,
+                text=text,
+                message_mode=config_parent.message_mode,
+                template_id=template_id_solapi,
+                alimtalk_replacements=alimtalk_replacements,
+            ):
+                sent += 1
+        except MessagingPolicyError:
+            logger.info("send_registration_approved parent skipped (policy: tenant_id=%s)", tenant_id)
 
     if sent:
         return {"status": "enqueued", "enqueued": sent}

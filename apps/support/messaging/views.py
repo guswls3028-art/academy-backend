@@ -318,6 +318,7 @@ class SendMessageView(APIView):
 
         from apps.domains.students.models import Student
         from apps.support.messaging.services import enqueue_sms, get_site_url
+        from apps.support.messaging.policy import MessagingPolicyError
 
         students = list(
             Student.objects.filter(tenant=tenant, id__in=student_ids, deleted_at__isnull=True).only(
@@ -390,14 +391,20 @@ class SendMessageView(APIView):
                     {"key": "site_link", "value": site_url},
                 ]
 
-            ok = enqueue_sms(
-                tenant_id=tenant.id,
-                to=phone,
-                text=text,
-                message_mode=message_mode,
-                template_id=template_id_solapi,
-                alimtalk_replacements=alimtalk_replacements,
-            )
+            try:
+                ok = enqueue_sms(
+                    tenant_id=tenant.id,
+                    to=phone,
+                    text=text,
+                    message_mode=message_mode,
+                    template_id=template_id_solapi,
+                    alimtalk_replacements=alimtalk_replacements,
+                )
+            except MessagingPolicyError as e:
+                return Response(
+                    {"detail": str(e) or "문자(SMS) 발송은 내 테넌트에서만 가능합니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             if ok:
                 enqueued += 1
 
