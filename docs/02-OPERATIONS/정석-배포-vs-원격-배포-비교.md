@@ -4,16 +4,15 @@
 
 ---
 
-## 1. 결론: **같은 배포가 아님**
+## 1. 결론: **트리거만 다름, 결과물은 동일**
 
-| 구분 | 정석 배포 | 원격(레거시) 배포 |
-|------|-----------|-------------------|
-| **진입점** | `pwsh scripts/v1/deploy.ps1 -AwsProfile default` | `pwsh scripts/v1/api-auto-deploy-remote.ps1 -Action Deploy` (또는 On/Off/Status) |
-| **이미지 출처** | **ECR** (로컬/CI에서 push한 이미지) | **서버에서 docker build** (Git 레포 기준) |
-| **env 파일** | SSM → **/opt/api.env** (Launch Template UserData) | SSM → **/home/ec2-user/.env** (deploy_api_on_server.sh) |
-| **Git 레포** | 인스턴스에 **없음** (부팅 시 UserData만 실행) | 인스턴스에 **필요** (/home/ec2-user/academy) |
-| **빌드 위치** | 로컬 또는 **GitHub Actions** (빌드 서버 0대) | **EC2 API 인스턴스에서** 빌드 |
-| **반영 시점** | deploy.ps1 실행 → LT 갱신 → **instance refresh** → 새 인스턴스 부팅 시 최신 UserData·이미지 | On 시 **2분마다 cron** 또는 수동 Deploy 시 **deploy_api_on_server.sh** 1회 실행 |
+| 구분 | 정석 배포 | 원격 배포 (리팩토링 후) |
+|------|-----------|-------------------------|
+| **진입점** | `pwsh scripts/v1/deploy.ps1` | `api-auto-deploy-remote.ps1 -Action Deploy` 또는 **On** 시 2분마다 cron |
+| **이미지** | **ECR** pull | **ECR** pull (동일) |
+| **env 파일** | SSM → **/opt/api.env** | SSM → **/opt/api.env** (동일) |
+| **빌드** | 없음 (CI/로컬에서 push) | **없음** (서버에서 빌드 제거) |
+| **트리거** | deploy.ps1 → instance refresh | cron 2분마다 main 변경 시 또는 수동 Deploy |
 
 ---
 
@@ -29,23 +28,19 @@
 
 ---
 
-## 3. 원격(레거시) 배포 흐름 (api-auto-deploy-remote.ps1)
+## 3. 원격 배포 흐름 (api-auto-deploy-remote.ps1) — 정석과 동일 결과
 
 1. **Action Status:** SSM으로 해당 인스턴스에 `crontab -l` 실행 → crontab 상태만 확인.
 2. **Action Off:** SSM으로 `git fetch` + `git reset --hard origin/main` 후 `scripts/auto_deploy_cron_off.sh` 실행 → crontab에서 deploy 관련 라인 제거.
 3. **Action On:** SSM으로 (레포 없으면 clone) `git fetch` + `git reset --hard origin/main` 후 `scripts/auto_deploy_cron_on.sh` 실행 → 2분마다 main 변경 시 `deploy_api_on_server.sh` 실행하는 cron 등록.
 4. **Action Deploy:** SSM으로 동일하게 repo 준비 후 `scripts/deploy_api_on_server.sh` **1회** 실행.
 
-**deploy_api_on_server.sh (서버 내부):**
+**deploy_api_on_server.sh (리팩토링 후 — 정석과 동일):**
 
-- SSM `/academy/api/env` 조회 → **/home/ec2-user/.env** 에 저장 (기본값 `ENV_FILE`).
-- `cd /home/ec2-user/academy`, `git pull origin main`.
+- SSM `/academy/api/env` 조회 → **/opt/api.env** 에 저장 (정석 UserData와 동일 경로).
+- **docker pull** ECR 이미지 (`809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest`). **서버 빌드 없음.**
+- `docker stop/rm academy-api`, `docker run -d --restart unless-stopped --name academy-api -p 8000:8000 --env-file /opt/api.env <ECR_URI>`.
 - `docker image prune -f`.
-- **docker build** `-f docker/Dockerfile.base` → academy-base:latest.
-- **docker build** `-f docker/api/Dockerfile` → academy-api:latest.
-- `docker image prune -f`.
-- `docker stop/rm academy-api`, `docker run --rm --env-file "$ENV_FILE" academy-api:latest python manage.py migrate`.
-- `docker run -d --name academy-api --env-file "$ENV_FILE" -p 8000:8000 academy-api:latest`.
 
 **관련 파일:** `scripts/v1/api-auto-deploy-remote.ps1`, `scripts/deploy_api_on_server.sh`, `scripts/auto_deploy_cron_on.sh`, `scripts/auto_deploy_cron_off.sh`.
 

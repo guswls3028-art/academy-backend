@@ -8,8 +8,8 @@ REPO_DIR="${REPO_DIR:-/home/ec2-user/academy}"
 LOG_FILE="${LOG_FILE:-/home/ec2-user/auto_deploy.log}"
 LOCK_FILE="${LOCK_FILE:-/tmp/academy_deploy.lock}"
 
-# 2분마다 실행: origin/main 변경 시에만 deploy_api_on_server.sh 실행 (구이미지 제거 포함)
-CRON_LINE="*/2 * * * * flock -n $LOCK_FILE bash -c 'cd $REPO_DIR && git fetch origin main && LOCAL=\$(git rev-parse HEAD) && REMOTE=\$(git rev-parse origin/main) && if [ \"\$LOCAL\" != \"\$REMOTE\" ]; then echo \"[\$(date -Iseconds)] Deploying...\" && bash scripts/deploy_api_on_server.sh; fi' >> $LOG_FILE 2>&1"
+# 2분마다 실행: origin/main 변경 시에만 deploy_api_on_server.sh 실행 (정석 배포와 동일: ECR + /opt/api.env)
+CRON_LINE="*/2 * * * * flock -n $LOCK_FILE bash -c 'cd $REPO_DIR && git fetch origin main && LOCAL=\$(git rev-parse HEAD) && REMOTE=\$(git rev-parse origin/main) && if [ \"\$LOCAL\" != \"\$REMOTE\" ]; then echo \"[\$(date -Iseconds)] Deploying...\" && git reset --hard origin/main && bash scripts/deploy_api_on_server.sh; fi' >> $LOG_FILE 2>&1"
 
 if ! crontab -l 2>/dev/null | grep -q "deploy_api_on_server.sh"; then
   (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
