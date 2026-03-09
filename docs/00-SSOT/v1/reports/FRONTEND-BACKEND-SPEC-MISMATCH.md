@@ -133,15 +133,25 @@
 
 ---
 
-## 3. 즉시 수정 권장 (프론트)
+## 3. 즉시 수정 권장 (프론트) — 적용 완료
 
 1. **제출 단건 조회 (폴링)**  
    - 파일: `frontend/src/features/scores/api/pollingSubmission.ts`  
-   - 변경: `GET /submissions/${submissionId}/` → `GET /submissions/submissions/${submissionId}/`
+   - 변경: `GET /submissions/${submissionId}/` → `GET /submissions/submissions/${submissionId}/` ✅
 
 2. **시험별 제출 목록 (materials)**  
    - 파일: `frontend/src/features/materials/sheets/components/submissions/submissions.api.ts`  
-   - 변경: `GET /submissions/exams/${examId}/` → `GET /submissions/submissions/exams/${examId}/`
+   - 변경: `GET /submissions/exams/${examId}/` → `GET /submissions/submissions/exams/${examId}/` ✅  
+   - 동일 파일: `uploadOmrBatchApi` → `POST /submissions/submissions/exams/${examId}/omr/batch/` ✅
+
+3. **OMR 배치 업로드 (AdminOmrBatchUploadBox)**  
+   - `POST /submissions/exams/...` → `POST /submissions/submissions/exams/.../omr/batch/` ✅
+
+4. **OMR 단건 업로드 (exams AdminOmrUploadSection)**  
+   - `POST /submissions/exams/.../omr/` → `POST /submissions/submissions/exams/.../omr/` ✅
+
+5. **OMR 업로드 후보 경로 (submissions AdminOmrUploadSection)**  
+   - 후보 배열 맨 앞에 `/submissions/submissions/exams/:id/omr/`, `.../omr/batch/` 추가 ✅
 
 이렇게 하면 현재 백엔드 URL 구조와 맞아서 404가 사라진다. 이후 백엔드에서 prefix를 정리하면 프론트는 한 번만 경로를 다시 맞추면 된다.
 
