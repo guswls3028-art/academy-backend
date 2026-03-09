@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 
 from apps.core.models import Attendance, Expense, TenantMembership, Program
 from academy.adapters.db.django import repositories_core as core_repo
+from apps.infrastructure.storage import r2 as r2_storage
 
 User = get_user_model()
 
@@ -116,6 +117,18 @@ class ProgramPublicSerializer(serializers.ModelSerializer):
     def get_tenantCode(self, obj: Program) -> str:
         tenant = getattr(obj, "tenant", None)
         return getattr(tenant, "code", "") or ""
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        cfg = dict(instance.ui_config or {})
+        resolved = r2_storage.resolve_admin_logo_url(
+            logo_key=cfg.get("logo_key"),
+            logo_url=cfg.get("logo_url"),
+        )
+        if resolved is not None:
+            cfg["logo_url"] = resolved
+        data["ui_config"] = cfg
+        return data
 
 
 class ProgramUpdateSerializer(serializers.ModelSerializer):

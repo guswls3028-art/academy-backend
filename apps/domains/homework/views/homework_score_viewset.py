@@ -26,8 +26,11 @@ Quick Patch (MVP):
 
 from __future__ import annotations
 
+import logging
+
 from django.conf import settings
 from django.db import transaction
+from django.db import IntegrityError
 from django.db.models import QuerySet
 from django.http import Http404
 from django.shortcuts import get_object_or_404
@@ -68,6 +71,9 @@ from apps.domains.homework.utils.homework_policy import (
 # =====================================================
 # helpers
 # =====================================================
+logger = logging.getLogger(__name__)
+
+
 def _safe_user_id(request) -> int | None:
     return getattr(getattr(request, "user", None), "id", None)
 

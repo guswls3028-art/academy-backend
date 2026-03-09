@@ -283,6 +283,24 @@ def get_admin_object_public_url(*, key: str) -> str | None:
     return f"{base}/{key}" if key else base
 
 
+def resolve_admin_logo_url(*, logo_key: str | None = None, logo_url: str | None = None) -> str | None:
+    """
+    Admin 버킷 로고용 조회 URL. 공개 도메인이 비디오 버킷과 겹쳐 404 나는 경우를 피하기 위해
+    항상 presigned URL을 반환. logo_key 우선, 없으면 logo_url에서 tenant-logos/ 경로 추출 후 presign.
+    """
+    if logo_key:
+        return generate_presigned_get_url_admin(key=logo_key, expires_in=86400 * 7)
+    if not logo_url:
+        return None
+    base = (getattr(settings, "R2_ADMIN_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
+    if not base or not logo_url.startswith(base + "/"):
+        return logo_url
+    key = logo_url[len(base) + 1 :].split("?")[0]
+    if not key.startswith("tenant-logos/"):
+        return logo_url
+    return generate_presigned_get_url_admin(key=key, expires_in=86400 * 7)
+
+
 def generate_presigned_get_url_admin(
     *,
     key: str,
