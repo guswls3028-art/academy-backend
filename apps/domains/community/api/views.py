@@ -26,9 +26,37 @@ from apps.domains.community.models import PostTemplate, PostReply, BlockType
 from apps.domains.student_app.permissions import get_request_student
 
 
+def _get_tenant_from_request(request):
+    """request.tenant 또는 학생 소속 tenant 반환."""
+    tenant = getattr(request, "tenant", None)
+    if not tenant:
+        request_student = get_request_student(request)
+        if request_student and getattr(request_student, "tenant", None):
+            tenant = request_student.tenant
+    return tenant
+
+
 class PostViewSet(viewsets.ModelViewSet):
     """Post CRUD. tenant from request. list: ?node_id= or admin list."""
     serializer_class = PostEntitySerializer
+
+    def retrieve(self, request, *args, **kwargs):
+        """단건 조회: 학생은 (1) 공지(block_type code=notice) 또는 (2) 본인 작성 글만 허용."""
+        tenant = _get_tenant_from_request(request)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        pk = int(kwargs.get("pk", 0))
+        post = get_post_by_id(tenant, pk)
+        if not post:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        request_student = get_request_student(request)
+        if request_student is not None:
+            is_notice = getattr(post.block_type, "code", None) and str(post.block_type.code).strip().lower() == "notice"
+            is_own = getattr(post, "created_by_id", None) == request_student.id
+            if not is_notice and not is_own:
+                return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = self.get_serializer(post)
+        return Response(serializer.data)
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
