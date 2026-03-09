@@ -23,6 +23,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.core.permissions import IsStudent, TenantResolvedAndStaff, TenantResolved
 from apps.core.models import TenantMembership
+from apps.core.models.user import user_display_username
 
 from apps.domains.parents.services import ensure_parent_for_student
 from apps.support.messaging.services import send_welcome_messages, get_site_url, send_sms, send_registration_approved_messages
@@ -1512,3 +1513,131 @@ class StudentPasswordFindVerifyView(APIView):
         user.save(update_fields=["password"])
         cache.delete(key)
         return Response({"message": "비밀번호가 변경되었습니다."}, status=200)
+
+
+def _normalize_phone_for_reset(value):
+    """전화번호 정규화 (하이픈 제거, 11자리)."""
+    s = (value or "").replace(" ", "").replace("-", "").replace(".", "").strip()
+    return s if len(s) == 11 and s.startswith("010") else ""
+
+
+def _generate_temp_password(length=10):
+    """임시 비밀번호 생성 (영문+숫자)."""
+    import random
+    import string
+    chars = string.ascii_letters + string.digits
+    return "".join(random.choice(chars) for _ in range(length))
+
+
+class StudentPasswordResetSendView(APIView):
+    """
+    POST: 학생 또는 학부모 비밀번호 재설정 — 이름+학생번호 또는 이름+학부모번호로 조회 후
+    임시 비밀번호 생성·저장하고 알림톡(SMS)으로 발송.
+    """
+    permission_classes = [AllowAny, TenantResolved]
+
+    def get_authenticators(self):
+        return []
+
+    def post(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant를 확인할 수 없습니다."}, status=400)
+
+        target = (request.data.get("target") or "").strip().lower()
+        student_name = (request.data.get("student_name") or "").strip()
+        student_ps_number = (request.data.get("student_ps_number") or "").strip()
+        parent_phone = _normalize_phone_for_reset(request.data.get("parent_phone") or "")
+
+        if target not in ("student", "parent"):
+            return Response({"detail": "대상을 선택해 주세요. (학생 / 학부모)"}, status=400)
+        if not student_name:
+            return Response({"detail": "학생 이름을 입력해 주세요."}, status=400)
+
+        if target == "student":
+            if not student_ps_number:
+                return Response({"detail": "학생 번호를 입력해 주세요."}, status=400)
+            student = (
+                student_repo.student_filter_tenant_ps_number(tenant, student_ps_number)
+                .filter(name__iexact=student_name)
+                .select_related("user")
+                .first()
+            )
+            if not student or not getattr(student, "user", None):
+                return Response(
+                    {"detail": "해당 이름과 학생 번호로 등록된 학생이 없습니다."},
+                    status=404,
+                )
+            send_to = (student.phone or "").replace(" ", "").replace("-", "").strip()
+            if not send_to or len(send_to) != 11:
+                send_to = (student.parent_phone or "").replace(" ", "").replace("-", "").strip()
+            if not send_to or len(send_to) != 11:
+                return Response(
+                    {"detail": "등록된 휴대번호가 없어 발송할 수 없습니다. 학원에 문의해 주세요."},
+                    status=400,
+                )
+            user = student.user
+            display_name = student.name
+            display_username = student.ps_number or user_display_username(user)
+        else:
+            if not parent_phone:
+                return Response({"detail": "학부모 전화번호를 010 11자리로 입력해 주세요."}, status=400)
+            student = student_repo.student_filter_tenant_name_parent_phone_active(
+                tenant, student_name, parent_phone
+            )
+            if not student:
+                return Response(
+                    {"detail": "해당 학생 이름과 학부모 전화번호로 등록된 정보가 없습니다."},
+                    status=404,
+                )
+            from apps.domains.parents.models import Parent
+            parent = Parent.objects.filter(tenant=tenant, phone=parent_phone).first()
+            if not parent or not getattr(parent, "user", None):
+                return Response(
+                    {"detail": "학부모 계정을 찾을 수 없습니다. 학원에 문의해 주세요."},
+                    status=404,
+                )
+            user = parent.user
+            send_to = parent_phone
+            display_name = parent.name or f"{student.name} 학부모"
+            display_username = parent_phone
+
+        temp_password = _generate_temp_password()
+        user.set_password(temp_password)
+        user.save(update_fields=["password"])
+
+        notice = "로그인 후 설정에서 비밀번호를 변경하실 수 있습니다."
+        if target == "student":
+            text = (
+                f"[학원] 비밀번호 찾기\n"
+                f"이름: {display_name}\n"
+                f"아이디: {display_username}\n"
+                f"임시 비밀번호: {temp_password}\n"
+                f"{notice}"
+            )
+        else:
+            text = (
+                f"[학원] 비밀번호 찾기\n"
+                f"이름: {display_name}\n"
+                f"아이디(학부모 전화번호): {display_username}\n"
+                f"임시 비밀번호: {temp_password}\n"
+                f"{notice}"
+            )
+
+        result = send_sms(send_to, text, tenant_id=tenant.id)
+        if result.get("status") == "skipped" and result.get("reason") == "messaging_disabled_for_test_tenant":
+            return Response(
+                {"message": "임시 비밀번호가 발송되었습니다. (테스트 환경에서는 실제 발송이 생략됩니다.)"},
+                status=200,
+            )
+        if result.get("status") == "error" and result.get("reason") == "sms_allowed_only_for_owner_tenant":
+            return Response(
+                {"detail": "문자 발송은 해당 학원에서 사용할 수 없습니다. 관리자에게 문의해 주세요."},
+                status=403,
+            )
+        if result.get("status") != "ok":
+            return Response(
+                {"detail": result.get("reason", "임시 비밀번호 발송에 실패했습니다.")},
+                status=503,
+            )
+        return Response({"message": "임시 비밀번호가 발송되었습니다. 문자를 확인해 주세요."}, status=200)
