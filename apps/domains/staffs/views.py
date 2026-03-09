@@ -268,6 +268,8 @@ class StaffViewSet(viewsets.ModelViewSet):
                     )
                 payload["staff_id"] = owner_staff.id
                 payload["default_work_type_id"] = first_wt.id
+
+            return Response(payload)
         except Exception as e:
             logger.warning("staffs/me error: %s", e, exc_info=True)
             return Response(
