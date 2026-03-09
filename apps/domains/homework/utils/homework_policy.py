@@ -78,18 +78,34 @@ def calc_homework_passed_and_clinic(
     - clinic_required: bool
     - percent: Optional[int] (rounded percent, COUNT 모드일 때는 None)
     """
-    policy, _ = HomeworkPolicy.objects.get_or_create(
-        session=session,
-        defaults={
-            "cutline_percent": 80,
-            "round_unit_percent": 5,
-            "clinic_enabled": True,
-            "clinic_on_fail": True,
-        },
-    )
-
-    mode = getattr(policy, "cutline_mode", None) or "PERCENT"
-    cutline_value = int(getattr(policy, "cutline_value", 0) or policy.cutline_percent or 80)
+    # HomeworkPolicy는 tenant+session 단위 단일 진실 (tenant 필수)
+    tenant = getattr(getattr(session, "lecture", None), "tenant", None)
+    if tenant is None:
+        # tenant 컨텍스트가 없으면 안전하게 기본값으로 처리 (500 방지)
+        mode = "PERCENT"
+        cutline_value = 80
+        round_unit = 5
+        clinic_enabled = True
+        clinic_on_fail = True
+        policy = None
+    else:
+        policy, _ = HomeworkPolicy.objects.get_or_create(
+            tenant=tenant,
+            session=session,
+            defaults={
+                "cutline_percent": 80,
+                "cutline_mode": "PERCENT",
+                "cutline_value": 80,
+                "round_unit_percent": 5,
+                "clinic_enabled": True,
+                "clinic_on_fail": True,
+            },
+        )
+        mode = getattr(policy, "cutline_mode", None) or "PERCENT"
+        cutline_value = int(getattr(policy, "cutline_value", 0) or policy.cutline_percent or 80)
+        round_unit = int(getattr(policy, "round_unit_percent", 5) or 5)
+        clinic_enabled = bool(getattr(policy, "clinic_enabled", True))
+        clinic_on_fail = bool(getattr(policy, "clinic_on_fail", True))
 
     if mode == "COUNT":
         # 문항 수 기준: score >= cutline_value 이면 합격 (score는 정답 수/점수로 해석)
@@ -97,20 +113,20 @@ def calc_homework_passed_and_clinic(
             return False, False, None
         passed = bool(float(score) >= cutline_value)
         clinic_required = bool(
-            policy.clinic_enabled and policy.clinic_on_fail and (not passed)
+            clinic_enabled and clinic_on_fail and (not passed)
         )
         percent = calc_homework_percent(score=score, max_score=max_score)
-        rounded = _round_percent(percent, policy.round_unit_percent) if percent is not None else None
+        rounded = _round_percent(percent, round_unit) if percent is not None else None
         return passed, clinic_required, rounded
     else:
         # 퍼센트 기준 (기존 로직)
         percent = calc_homework_percent(score=score, max_score=max_score)
         if percent is None:
             return False, False, None
-        rounded = _round_percent(percent, policy.round_unit_percent)
-        threshold = int(cutline_value if cutline_value else policy.cutline_percent or 0)
+        rounded = _round_percent(percent, round_unit)
+        threshold = int(cutline_value if cutline_value else (getattr(policy, "cutline_percent", 80) if policy else 80))
         passed = bool(rounded >= threshold)
         clinic_required = bool(
-            policy.clinic_enabled and policy.clinic_on_fail and (not passed)
+            clinic_enabled and clinic_on_fail and (not passed)
         )
         return passed, clinic_required, rounded
