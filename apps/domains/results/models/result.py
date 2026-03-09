@@ -33,6 +33,10 @@ class Result(BaseModel):
     total_score = models.FloatField(default=0.0)
     max_score = models.FloatField(default=0.0)
 
+    # 객관식 점수 (성적 탭 표시/편집용). 주관식 = total_score - objective_score = sum(ResultItem)
+    # 항상 total_score = objective_score + sum(ResultItem) 로 유지
+    objective_score = models.FloatField(default=0.0)
+
     submitted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
