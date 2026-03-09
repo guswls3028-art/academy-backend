@@ -15,6 +15,7 @@ from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
+from apps.domains.exams.models import ExamQuestion
 
 # ✅ 단일 진실: session 매핑 + progress 트리거
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
@@ -93,7 +94,7 @@ class AdminExamItemScoreView(APIView):
             )
 
         # -------------------------------------------------
-        # 3️⃣ ResultItem (문항 스냅샷)
+        # 3️⃣ ResultItem (문항 스냅샷) — 없으면 생성(주관식 수동 입력용)
         # -------------------------------------------------
         item = (
             ResultItem.objects
@@ -102,17 +103,37 @@ class AdminExamItemScoreView(APIView):
             .first()
         )
         if not item:
-            raise NotFound({"detail": "result item not found", "code": "NOT_FOUND"})
-
-        # 점수 상한 방어
-        max_score = float(item.max_score or 0.0)
-        if new_score < 0 or new_score > max_score:
-            raise ValidationError(
-                {
-                    "detail": f"score must be between 0 and {max_score}",
-                    "code": "INVALID",
-                }
+            exam_question = ExamQuestion.objects.filter(id=question_id).first()
+            if not exam_question:
+                raise NotFound({"detail": "question not found", "code": "NOT_FOUND"})
+            max_score = float(getattr(exam_question, "score", 0) or 0.0)
+            if new_score < 0 or new_score > max_score:
+                raise ValidationError(
+                    {
+                        "detail": f"score must be between 0 and {max_score}",
+                        "code": "INVALID",
+                    }
+                )
+            item = ResultItem.objects.create(
+                result=result,
+                question_id=question_id,
+                answer="",
+                is_correct=bool(new_score >= max_score),
+                score=float(new_score),
+                max_score=max_score,
+                source="manual",
             )
+            item_created = True
+        else:
+            item_created = False
+            max_score = float(item.max_score or 0.0)
+            if new_score < 0 or new_score > max_score:
+                raise ValidationError(
+                    {
+                        "detail": f"score must be between 0 and {max_score}",
+                        "code": "INVALID",
+                    }
+                )
 
         # -------------------------------------------------
         # 4️⃣ ResultFact (append-only 로그)
@@ -137,12 +158,13 @@ class AdminExamItemScoreView(APIView):
         )
 
         # -------------------------------------------------
-        # 5️⃣ ResultItem 업데이트
+        # 5️⃣ ResultItem 업데이트 (기존 건만; 신규 생성 건은 이미 score 반영됨)
         # -------------------------------------------------
-        item.score = float(new_score)
-        item.is_correct = bool(new_score >= max_score)
-        item.source = "manual"
-        item.save(update_fields=["score", "is_correct", "source"])
+        if not item_created:
+            item.score = float(new_score)
+            item.is_correct = bool(new_score >= max_score)
+            item.source = "manual"
+            item.save(update_fields=["score", "is_correct", "source"])
 
         # -------------------------------------------------
         # 6️⃣ total_score 재계산 (total = objective_score + sum(items))
