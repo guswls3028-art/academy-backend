@@ -95,6 +95,8 @@
 - **조치**: F12 → Network에서 실패한 요청을 클릭해 **Status가 502/504/500인지** 확인. 502면 위 "1. 502 = 인프라 점검"대로 ALB·타깃·SG 확인. 500이면 API 로그에서 해당 경로 스택 트레이스 확인.
 - **배포**: `infra/nginx/academy-api.conf`의 502 시 CORS 보강이 **실제 API 서버(EC2)에 반영**돼 있어야 함. 수정 후 `sudo nginx -t && sudo systemctl reload nginx` (또는 해당 서버의 배포 절차) 실행.
 
+## 4. 502 해결 후
+
 - API가 정상 응답하면 Django가 CORS 헤더를 붙이므로 CORS 에러 사라짐.
 - 새 프론트 도메인 추가 시: `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` 모두 반영 (docs/REFERENCE.md).
 
