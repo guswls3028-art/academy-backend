@@ -76,9 +76,10 @@ class AdminSessionExamsView(APIView):
             {
                 "exam_id": int(exam.id),
                 "title": exam.title or "",
-                "exam_type": exam.exam_type,          # ✅ 프론트 필터/표시용
-                "open_at": _dt(exam.open_at),         # ✅ string | null
-                "close_at": _dt(exam.close_at),       # ✅ string | null
+                "exam_type": exam.exam_type,
+                "status": getattr(exam, "status", "DRAFT"),  # 과제와 동일: DRAFT/OPEN/CLOSED
+                "open_at": _dt(exam.open_at),
+                "close_at": _dt(exam.close_at),
                 "allow_retake": bool(exam.allow_retake),
                 "max_attempts": int(exam.max_attempts),
             }
