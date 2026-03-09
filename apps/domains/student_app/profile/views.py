@@ -22,6 +22,9 @@ def _profile_response(request, student):
         "ps_number": getattr(student, "ps_number", "") or "",
         "username": user_display_username(student.user) if student.user_id else "",
         "parent_phone": getattr(student, "parent_phone", "") or "",
+        "phone": (student.phone or "").strip(),
+        "gender": (student.gender or "").strip() or None,
+        "address": (student.address or "").strip() or None,
     })
 
 
@@ -80,6 +83,27 @@ class StudentProfileView(APIView):
                     return Response({"detail": "이미 사용 중인 아이디입니다."}, status=400)
                 student.user.username = internal
                 student.user.save(update_fields=["username"])
+
+        # 학생 본인 수정 가능 필드 (선생앱 학생 스펙과 동일)
+        update_fields = []
+        if "phone" in data:
+            raw = (data.get("phone") or "").strip().replace("-", "").replace(" ", "")
+            student.phone = raw[:20] if raw else None
+            update_fields.append("phone")
+        if "parent_phone" in data:
+            raw = (data.get("parent_phone") or "").strip().replace("-", "").replace(" ", "")
+            if raw:
+                student.parent_phone = raw[:20]
+                update_fields.append("parent_phone")
+        if "gender" in data:
+            g = (data.get("gender") or "").strip().upper()[:1]
+            student.gender = g if g in ("M", "F") else None
+            update_fields.append("gender")
+        if "address" in data:
+            student.address = (data.get("address") or "").strip()[:255] or None
+            update_fields.append("address")
+        if update_fields:
+            student.save(update_fields=update_fields)
 
         current_password = data.get("current_password")
         new_password = data.get("new_password")
