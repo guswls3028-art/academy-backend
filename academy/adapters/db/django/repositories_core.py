@@ -198,3 +198,12 @@ def membership_ensure_active(tenant, user, role: str) -> Any:
 def parent_get_by_user(user) -> Optional[Any]:
     from apps.domains.parents.models import Parent
     return Parent.objects.filter(user=user).first()
+
+
+def parent_get_by_tenant_phone(tenant, phone: str) -> Optional[Any]:
+    """테넌트 + 전화번호로 학부모 조회. 로그인 ID=학부모 전화번호용."""
+    from apps.domains.parents.models import Parent
+    raw = (phone or "").strip().replace("-", "").replace(" ", "")
+    if not raw:
+        return None
+    return Parent.objects.filter(tenant=tenant, phone=raw).select_related("user").first()

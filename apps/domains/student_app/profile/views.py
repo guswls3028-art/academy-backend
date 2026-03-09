@@ -5,17 +5,17 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from apps.core.models.user import user_display_username, user_internal_username
-from apps.domains.student_app.permissions import IsStudent, get_request_student
+from apps.domains.student_app.permissions import IsStudent, IsStudentOrParent, get_request_student
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
 
-def _profile_response(request, student):
+def _profile_response(request, student, *, is_parent_read_only=False, parent_display_name=None):
     url = None
     if student.profile_photo:
         url = request.build_absolute_uri(student.profile_photo.url)
-    return Response({
+    payload = {
         "id": student.id,
         "name": student.name,
         "profile_photo_url": url,
@@ -25,26 +25,44 @@ def _profile_response(request, student):
         "phone": (student.phone or "").strip(),
         "gender": (student.gender or "").strip() or None,
         "address": (student.address or "").strip() or None,
-    })
+        "school_type": getattr(student, "school_type", "HIGH") or "HIGH",
+        "high_school": (getattr(student, "high_school", None) or "").strip() or None,
+        "middle_school": (getattr(student, "middle_school", None) or "").strip() or None,
+        "origin_middle_school": (getattr(student, "origin_middle_school", None) or "").strip() or None,
+        "grade": getattr(student, "grade", None),
+        "high_school_class": (getattr(student, "high_school_class", None) or "").strip() or None,
+        "major": (getattr(student, "major", None) or "").strip() or None,
+        "memo": (getattr(student, "memo", None) or "").strip() or None,
+    }
+    if is_parent_read_only:
+        payload["isParentReadOnly"] = True
+        payload["displayName"] = parent_display_name or "학생 학부모님"
+    return Response(payload)
 
 
 class StudentProfileView(APIView):
     """
     GET/PATCH /api/student-app/me/
-    - 학생만 접근 가능 (본인 프로필)
-    - GET: 프로필 정보 (id, name, profile_photo_url, ps_number, username, parent_phone)
-    - PATCH: profile_photo(multipart) 또는 JSON(name, username, current_password, new_password)
+    - 학생 또는 학부모 접근 (학부모는 연결된 학생 프로필 읽기 전용)
+    - GET: 프로필 정보. 학부모일 때 isParentReadOnly, displayName("{이름} 학생 학부모님") 추가
+    - PATCH: 학생만 가능. 학부모는 403
     """
-    permission_classes = [IsAuthenticated, IsStudent]
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
         student = get_request_student(request)
         if not student:
             return Response({"detail": "학생 프로필이 없습니다."}, status=404)
+        is_parent = getattr(request.user, "parent_profile", None) is not None
+        if is_parent:
+            display_name = f"{student.name} 학생 학부모님" if student.name else "학생 학부모님"
+            return _profile_response(request, student, is_parent_read_only=True, parent_display_name=display_name)
         return _profile_response(request, student)
 
     def patch(self, request):
+        if getattr(request.user, "parent_profile", None) is not None:
+            return Response({"detail": "학부모는 프로필을 수정할 수 없습니다."}, status=403)
         student = get_request_student(request)
         if not student:
             return Response({"detail": "학생 프로필이 없습니다."}, status=404)
@@ -102,6 +120,41 @@ class StudentProfileView(APIView):
         if "address" in data:
             student.address = (data.get("address") or "").strip()[:255] or None
             update_fields.append("address")
+        # 회원가입 모달과 동일한 학교·추가 정보 필드
+        if "school_type" in data:
+            st = (data.get("school_type") or "").strip().upper()
+            if st in ("HIGH", "MIDDLE"):
+                student.school_type = st
+                update_fields.append("school_type")
+        if "high_school" in data:
+            student.high_school = (data.get("high_school") or "").strip()[:100] or None
+            update_fields.append("high_school")
+        if "middle_school" in data:
+            student.middle_school = (data.get("middle_school") or "").strip()[:100] or None
+            update_fields.append("middle_school")
+        if "origin_middle_school" in data:
+            student.origin_middle_school = (data.get("origin_middle_school") or "").strip()[:100] or None
+            update_fields.append("origin_middle_school")
+        if "grade" in data:
+            raw = data.get("grade")
+            if raw is not None and raw != "":
+                try:
+                    g = int(raw)
+                    student.grade = g if 1 <= g <= 3 else None
+                except (TypeError, ValueError):
+                    student.grade = None
+            else:
+                student.grade = None
+            update_fields.append("grade")
+        if "high_school_class" in data:
+            student.high_school_class = (data.get("high_school_class") or "").strip()[:100] or None
+            update_fields.append("high_school_class")
+        if "major" in data:
+            student.major = (data.get("major") or "").strip()[:50] or None
+            update_fields.append("major")
+        if "memo" in data:
+            student.memo = (data.get("memo") or "").strip() or None
+            update_fields.append("memo")
         if update_fields:
             student.save(update_fields=update_fields)
 

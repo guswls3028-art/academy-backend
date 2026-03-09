@@ -41,6 +41,7 @@ def ensure_parent_for_student(
                     username=parent_username,
                     phone=parent_phone,
                     name=f"{student_name} 학부모",
+                    tenant=tenant,
                 )
                 user.set_password(parent_password)
                 user.save()
@@ -61,6 +62,7 @@ def ensure_parent_for_student(
             username=parent_username,
             phone=parent_phone,
             name=f"{student_name} 학부모",
+            tenant=tenant,
         )
         user.set_password(parent_password)
         user.save()

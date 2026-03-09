@@ -34,6 +34,11 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
             )
 
         user = core_repo.user_get_by_tenant_username(tenant, username)
+        # 학부모: ID = 학부모 전화번호. username이 전화번호일 때 Parent로 조회 후 해당 User로 인증
+        if not user:
+            parent = core_repo.parent_get_by_tenant_phone(tenant, username)
+            if parent and parent.user_id:
+                user = parent.user
         if not user or not user.check_password(password):
             raise serializers.ValidationError(
                 {"detail": "로그인 아이디 또는 비밀번호가 올바르지 않습니다."},
