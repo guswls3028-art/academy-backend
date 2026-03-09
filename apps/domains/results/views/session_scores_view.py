@@ -161,12 +161,44 @@ class SessionScoresView(APIView):
             Homework.objects.filter(session=session).order_by("id")
         )
 
+        # 시험별 문항(주관식 점수 입력용): template → Sheet → ExamQuestion
+        template_by_exam: Dict[int, Any] = {}
+        for ex in exams:
+            try:
+                template_by_exam[int(ex.id)] = resolve_template_exam(ex)
+            except Exception:
+                template_by_exam[int(ex.id)] = ex
+        template_ids = list({int(t.id) for t in template_by_exam.values()})
+        sheets = list(Sheet.objects.filter(exam_id__in=template_ids))
+        sheet_by_template = {int(s.exam_id): s for s in sheets}
+        all_questions = list(
+            ExamQuestion.objects.filter(
+                sheet_id__in=[s.id for s in sheets]
+            ).order_by("sheet_id", "number")
+        )
+        questions_by_sheet: Dict[int, List[Dict[str, Any]]] = {}
+        for q in all_questions:
+            questions_by_sheet.setdefault(q.sheet_id, []).append({
+                "question_id": q.id,
+                "number": q.number,
+                "max_score": float(q.score or 0.0),
+            })
+        exam_questions_map: Dict[int, List[Dict[str, Any]]] = {}
+        for ex in exams:
+            template = template_by_exam.get(int(ex.id))
+            sheet = sheet_by_template.get(int(template.id)) if template else None
+            if not sheet:
+                exam_questions_map[int(ex.id)] = []
+            else:
+                exam_questions_map[int(ex.id)] = questions_by_sheet.get(sheet.id, [])
+
         meta = {
             "exams": [
                 {
                     "exam_id": int(ex.id),
                     "title": str(getattr(ex, "title", "")),
                     "pass_score": float(getattr(ex, "pass_score", 0.0) or 0.0),
+                    "questions": exam_questions_map.get(int(ex.id), []),
                 }
                 for ex in exams
             ],
@@ -237,7 +269,7 @@ class SessionScoresView(APIView):
             hw_map.setdefault(int(hs.enrollment_id), {})[int(hs.homework_id)] = hs
 
         # -------------------------------------------------
-        # 6) Exam Result map
+        # 6) Exam Result map (문항별 점수용 items prefetch)
         # -------------------------------------------------
         result_map: Dict[int, Dict[int, Result]] = {}
         for exid in exam_ids:
@@ -247,6 +279,7 @@ class SessionScoresView(APIView):
                     target_id=int(exid),
                 )
                 .filter(enrollment_id__in=enrollment_ids)
+                .prefetch_related("items")
             )
             result_map[int(exid)] = {int(r.enrollment_id): r for r in rs}
 
@@ -322,12 +355,22 @@ class SessionScoresView(APIView):
                 if updated_at:
                     exam_updated_ats.append(updated_at)
 
+                items_payload: List[Dict[str, Any]] = []
+                if r is not None and hasattr(r, "items"):
+                    for ri in r.items.all():
+                        items_payload.append({
+                            "question_id": ri.question_id,
+                            "score": float(ri.score or 0.0),
+                            "max_score": float(ri.max_score or 0.0),
+                        })
+
                 exams_payload.append(
                     {
                         "exam_id": exid,
                         "title": exam_title_map.get(exid, ""),
                         "pass_score": exam_pass_score_map.get(exid, 0.0),
                         "block": block,
+                        "items": items_payload,
                     }
                 )
 

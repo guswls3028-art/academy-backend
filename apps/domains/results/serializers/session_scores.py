@@ -35,6 +35,14 @@ class ExamScoreBlockSerializer(serializers.Serializer):
 
     block = ScoreBlockSerializer()
 
+    # 주관식 점수 입력 모드용 문항별 점수 (ResultItem)
+    items = serializers.ListField(
+        child=serializers.DictField(),
+        allow_empty=True,
+        required=False,
+        default=list,
+    )
+
 
 class HomeworkScoreBlockSerializer(serializers.Serializer):
     homework_id = serializers.IntegerField()
