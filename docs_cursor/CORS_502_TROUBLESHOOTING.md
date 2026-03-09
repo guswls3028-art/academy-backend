@@ -89,7 +89,11 @@
 2. **CORS 설정 변경 불필요**  
    - 502 구간 해소하면 CORS 에러는 사라짐.
 
-## 4. 502 해결 후
+## tchul.com / storage 등 특정 경로에서만 CORS가 뜨는 경우
+
+- **같은 API(api.hakwonplus.com)라도** 특정 엔드포인트(예: `/api/v1/messages/templates/`, `/api/v1/storage/`)만 502/500을 반환하면, 그 요청만 "CORS policy"로 보임.
+- **조치**: F12 → Network에서 실패한 요청을 클릭해 **Status가 502/504/500인지** 확인. 502면 위 "1. 502 = 인프라 점검"대로 ALB·타깃·SG 확인. 500이면 API 로그에서 해당 경로 스택 트레이스 확인.
+- **배포**: `infra/nginx/academy-api.conf`의 502 시 CORS 보강이 **실제 API 서버(EC2)에 반영**돼 있어야 함. 수정 후 `sudo nginx -t && sudo systemctl reload nginx` (또는 해당 서버의 배포 절차) 실행.
 
 - API가 정상 응답하면 Django가 CORS 헤더를 붙이므로 CORS 에러 사라짐.
 - 새 프론트 도메인 추가 시: `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` 모두 반영 (docs/REFERENCE.md).
