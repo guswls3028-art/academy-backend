@@ -537,6 +537,9 @@ class TenantInfoView(APIView):
         if "headquarters_phone" in request.data:
             tenant.headquarters_phone = (request.data.get("headquarters_phone") or "").strip()[:50]
             update_fields.append("headquarters_phone")
+        if "name" in request.data:
+            tenant.name = (request.data.get("name") or "").strip()[:255]
+            update_fields.append("name")
         if update_fields:
             tenant.save(update_fields=update_fields)
         return self.get(request)
