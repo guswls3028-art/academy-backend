@@ -122,7 +122,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     Video 관리 + 통계 + 학생 목록
     """
 
-    queryset = video_repo.get_video_queryset_with_relations()
     serializer_class = VideoSerializer
 
     parser_classes = [JSONParser]
@@ -132,6 +131,15 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         CsrfExemptSessionAuthentication,
     ]
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            from apps.support.video.models import Video
+            return Video.objects.none()
+        return video_repo.get_video_queryset_with_relations().filter(
+            session__lecture__tenant=tenant
+        )
 
     # 테넌트 스태프(owner/admin/staff/teacher)만 허용 — Django is_staff 없어도 오너·원장 업로드 가능
     STAFF_ACTIONS = {
@@ -872,8 +880,17 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     )
     def delete_folder(self, request, folder_id=None):
         """전체공개영상 폴더 삭제."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "Tenant required"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         try:
-            folder = VideoFolder.objects.get(id=folder_id)
+            folder = VideoFolder.objects.select_related("session__lecture").get(
+                id=folder_id,
+                session__lecture__tenant=tenant,
+            )
         except VideoFolder.DoesNotExist:
             return Response(
                 {"detail": "Folder not found"},

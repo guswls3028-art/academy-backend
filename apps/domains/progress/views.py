@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 
+from apps.core.permissions import TenantResolvedAndMember
 from .models import ProgressPolicy, SessionProgress, LectureProgress, ClinicLink, RiskLog
 from .serializers import (
     ProgressPolicySerializer,
@@ -22,9 +23,8 @@ from .filters import (
 
 
 class ProgressPolicyViewSet(ModelViewSet):
-    queryset = ProgressPolicy.objects.select_related("lecture").all()
     serializer_class = ProgressPolicySerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ProgressPolicyFilter
@@ -32,11 +32,16 @@ class ProgressPolicyViewSet(ModelViewSet):
     ordering_fields = ["id", "created_at", "updated_at"]
     ordering = ["-id"]
 
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return ProgressPolicy.objects.none()
+        return ProgressPolicy.objects.filter(lecture__tenant=tenant).select_related("lecture")
+
 
 class SessionProgressViewSet(ModelViewSet):
-    queryset = SessionProgress.objects.select_related("session", "session__lecture").all()
     serializer_class = SessionProgressSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SessionProgressFilter
@@ -44,11 +49,16 @@ class SessionProgressViewSet(ModelViewSet):
     ordering_fields = ["id", "created_at", "updated_at", "calculated_at", "completed"]
     ordering = ["-updated_at", "-id"]
 
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return SessionProgress.objects.none()
+        return SessionProgress.objects.filter(session__lecture__tenant=tenant).select_related("session", "session__lecture")
+
 
 class LectureProgressViewSet(ModelViewSet):
-    queryset = LectureProgress.objects.select_related("lecture", "last_session").all()
     serializer_class = LectureProgressSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = LectureProgressFilter
@@ -56,11 +66,16 @@ class LectureProgressViewSet(ModelViewSet):
     ordering_fields = ["id", "created_at", "updated_at", "risk_level", "completed_sessions"]
     ordering = ["-updated_at", "-id"]
 
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return LectureProgress.objects.none()
+        return LectureProgress.objects.filter(lecture__tenant=tenant).select_related("lecture", "last_session")
+
 
 class ClinicLinkViewSet(ModelViewSet):
-    queryset = ClinicLink.objects.select_related("session", "session__lecture").all()
     serializer_class = ClinicLinkSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ClinicLinkFilter
@@ -68,14 +83,25 @@ class ClinicLinkViewSet(ModelViewSet):
     ordering_fields = ["id", "created_at", "updated_at", "approved", "is_auto"]
     ordering = ["-created_at", "-id"]
 
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return ClinicLink.objects.none()
+        return ClinicLink.objects.filter(session__lecture__tenant=tenant).select_related("session", "session__lecture")
+
 
 class RiskLogViewSet(ModelViewSet):
-    queryset = RiskLog.objects.select_related("session").all()
     serializer_class = RiskLogSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = RiskLogFilter
     search_fields = ["enrollment_id", "reason"]
     ordering_fields = ["id", "created_at", "updated_at", "risk_level", "rule"]
     ordering = ["-created_at", "-id"]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return RiskLog.objects.none()
+        return RiskLog.objects.filter(session__lecture__tenant=tenant).select_related("session")
