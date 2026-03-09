@@ -7,10 +7,15 @@ SessionScores Serializer (Score Tab)
 - 도메인 로직/판정/정책 계산을 하지 않는다.
 - View에서 만들어준 dict를 그대로 validate/serialize만 수행한다.
 
+✅ 시험 점수 정합성 (백엔드 유지)
+- score(합산) = objective_score + subjective_score (subjective_score = sum(ResultItem))
+- passed = (score >= pass_score), 서버에서만 계산하여 내려줌.
+
 ✅ 프론트 계약
 - score === null 은 "미산출/미응시/처리중" 의미
 - is_locked / lock_reason 은 입력 비활성화 + tooltip 용도
 """
+
 
 from __future__ import annotations
 
