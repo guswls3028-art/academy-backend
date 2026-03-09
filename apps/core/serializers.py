@@ -11,6 +11,7 @@ User = get_user_model()
 class UserSerializer(serializers.ModelSerializer):
     tenantRole = serializers.SerializerMethodField()
     linkedStudentId = serializers.SerializerMethodField()
+    linkedStudentName = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -23,6 +24,7 @@ class UserSerializer(serializers.ModelSerializer):
             "is_superuser",
             "tenantRole",
             "linkedStudentId",
+            "linkedStudentName",
         ]
 
     def get_tenantRole(self, user):
@@ -51,6 +53,24 @@ class UserSerializer(serializers.ModelSerializer):
                 return None
             first_student = parent.students.filter(deleted_at__isnull=True).first()
             return first_student.id if first_student else None
+        except Exception:
+            return None
+
+    def get_linkedStudentName(self, user):
+        """학부모일 때 연결된 첫 학생 이름. 표시용 '{name} 학생 학부모님'"""
+        try:
+            request = self.context.get("request")
+            tenant = getattr(request, "tenant", None)
+            if not tenant:
+                return None
+            membership = core_repo.membership_get(tenant=tenant, user=user, is_active=True)
+            if not membership or membership.role != "parent":
+                return None
+            parent = core_repo.parent_get_by_user(user)
+            if not parent:
+                return None
+            first_student = parent.students.filter(deleted_at__isnull=True).first()
+            return (first_student.name or "").strip() if first_student else None
         except Exception:
             return None
 
