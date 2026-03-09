@@ -293,10 +293,9 @@ class MessageTemplateSubmitReviewView(APIView):
 
 class SendMessageView(APIView):
     """
-    POST: 선택 학생(들)에게 메시지 발송 (SQS enqueue → 워커가 Solapi 발송).
-    - student_ids: 학생 ID 목록
-    - send_to: "student" | "parent"
-    - template_id 있으면 해당 템플릿 본문 사용, 없으면 raw_body 사용 (raw_subject 선택)
+    POST: 선택 학생(들) 또는 직원(들)에게 메시지 발송 (SQS enqueue → 워커가 Solapi 발송).
+    - student_ids + send_to "student"|"parent": 학생/학부모 전화로 발송
+    - staff_ids + send_to "staff": 직원 전화로 발송
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
@@ -305,7 +304,6 @@ class SendMessageView(APIView):
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
         tenant = request.tenant
-        student_ids = data["student_ids"]
         send_to = data["send_to"]
         message_mode = (data.get("message_mode") or "sms").strip().lower()
         if message_mode not in ("sms", "alimtalk", "both"):
@@ -324,9 +322,18 @@ class SendMessageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from apps.domains.students.models import Student
         from apps.support.messaging.services import enqueue_sms, get_site_url
         from apps.support.messaging.policy import MessagingPolicyError
+
+        if send_to == "staff":
+            return self._send_to_staff(
+                request, tenant, data, sender, message_mode,
+                template_id, raw_body, raw_subject,
+            )
+
+        # 학생/학부모 수신
+        student_ids = data.get("student_ids") or []
+        from apps.domains.students.models import Student
 
         students = list(
             Student.objects.filter(tenant=tenant, id__in=student_ids, deleted_at__isnull=True).only(
@@ -350,7 +357,6 @@ class SendMessageView(APIView):
                     {"detail": "템플릿을 찾을 수 없습니다."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            # 템플릿 본문/제목은 직접 입력이 비어 있을 때만 사용 (모달에서 템플릿 불러온 뒤 수정한 내용 반영)
             if not body_base:
                 body_base = (t.body or "").strip()
             if not subject_base:
@@ -377,6 +383,102 @@ class SendMessageView(APIView):
                 phone = (s.phone or "").replace("-", "").strip()
             else:
                 phone = (s.parent_phone or "").replace("-", "").strip()
+            if not phone or len(phone) < 10:
+                skipped_no_phone += 1
+                continue
+            name = (s.name or "").strip()
+            name_2 = name[:2] if len(name) >= 2 else name
+            name_3 = name[:3] if len(name) >= 3 else name
+            site_url = get_site_url(request) or ""
+            text = (
+                body_base.replace("#{student_name_2}", name_2)
+                .replace("#{student_name_3}", name_3)
+                .replace("#{site_link}", site_url)
+            )
+            if subject_base:
+                text = subject_base + "\n" + text
+
+            alimtalk_replacements = None
+            template_id_solapi = None
+            if message_mode in ("alimtalk", "both") and solapi_template_id:
+                template_id_solapi = solapi_template_id
+                alimtalk_replacements = [
+                    {"key": "student_name_2", "value": name_2},
+                    {"key": "student_name_3", "value": name_3},
+                    {"key": "site_link", "value": site_url},
+                ]
+
+            try:
+                ok = enqueue_sms(
+                    tenant_id=tenant.id,
+                    to=phone,
+                    text=text,
+                    sender=sender,
+                    message_mode=message_mode,
+                    template_id=template_id_solapi,
+                    alimtalk_replacements=alimtalk_replacements,
+                )
+            except MessagingPolicyError as e:
+                return Response(
+                    {"detail": str(e) or "문자(SMS) 발송은 내 테넌트에서만 가능합니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if ok:
+                enqueued += 1
+
+        return Response({
+            "detail": f"발송 예정 {enqueued}건입니다.",
+            "enqueued": enqueued,
+            "skipped_no_phone": skipped_no_phone,
+        }, status=status.HTTP_200_OK)
+
+    def _send_to_staff(
+        self, request, tenant, data, sender, message_mode,
+        template_id, raw_body, raw_subject,
+    ):
+        from apps.domains.staffs.models import Staff
+        staff_ids = data.get("staff_ids") or []
+        staffs = list(
+            Staff.objects.filter(tenant=tenant, id__in=staff_ids).only("id", "name", "phone")
+        )
+        if not staffs:
+            return Response(
+                {"detail": "선택한 직원을 찾을 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        body_base = (raw_body or "").strip()
+        subject_base = (raw_subject or "").strip()
+        t = None
+        solapi_template_id = ""
+        if template_id:
+            t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
+            if t:
+                if not body_base:
+                    body_base = (t.body or "").strip()
+                if not subject_base:
+                    subject_base = (t.subject or "").strip()
+                solapi_template_id = (t.solapi_template_id or "").strip()
+
+        if message_mode in ("alimtalk", "both") and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
+            return Response(
+                {"detail": "알림톡/폴백 모드는 검수 승인된 템플릿이 필요합니다. 템플릿을 선택하거나 SMS만 모드로 발송하세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not body_base:
+            return Response(
+                {"detail": "발송할 본문이 비어 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from apps.support.messaging.services import enqueue_sms, get_site_url
+        from apps.support.messaging.policy import MessagingPolicyError
+
+        enqueued = 0
+        skipped_no_phone = 0
+        for s in staffs:
+            phone = (s.phone or "").replace("-", "").strip()
             if not phone or len(phone) < 10:
                 skipped_no_phone += 1
                 continue
