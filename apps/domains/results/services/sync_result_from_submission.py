@@ -96,6 +96,7 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
 
     result.total_score = total
     result.max_score = max_total
+    result.objective_score = 0.0  # 동기화 시에는 전부 문항합(주관식)으로 간주
     result.submitted_at = timezone.now()
-    result.save(update_fields=["total_score", "max_score", "submitted_at", "updated_at"])
+    result.save(update_fields=["total_score", "max_score", "objective_score", "submitted_at", "updated_at"])
     return result
