@@ -29,6 +29,7 @@ from __future__ import annotations
 from django.conf import settings
 from django.db import transaction
 from django.db.models import QuerySet
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 
 from rest_framework.viewsets import ModelViewSet
@@ -289,80 +290,90 @@ class HomeworkScoreViewSet(ModelViewSet):
         - raw/max: score=32, max_score=64
         - 미제출: meta_status="NOT_SUBMITTED", score=null
         """
-        serializer = HomeworkQuickPatchSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer = HomeworkQuickPatchSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
 
-        homework_id = serializer.validated_data["homework_id"]
-        enrollment_id = serializer.validated_data["enrollment_id"]
-        score = serializer.validated_data.get("score")
-        max_score = serializer.validated_data.get("max_score")
-        meta_status = serializer.validated_data.get("meta_status")
+            homework_id = serializer.validated_data["homework_id"]
+            enrollment_id = serializer.validated_data["enrollment_id"]
+            score = serializer.validated_data.get("score")
+            max_score = serializer.validated_data.get("max_score")
+            meta_status = serializer.validated_data.get("meta_status")
 
-        # ✅ 단일 진실: homework → session (DoesNotExist → 404)
-        homework = get_object_or_404(
-            Homework.objects.select_related("session"),
-            id=homework_id,
-        )
-        session = homework.session
-
-        with transaction.atomic():
-            obj = (
-                HomeworkScore.objects.select_for_update()
-                .filter(
-                    homework_id=homework_id,
-                    enrollment_id=enrollment_id,
-                )
-                .select_related("session", "homework")
-                .first()
+            # ✅ 단일 진실: homework → session (DoesNotExist → 404)
+            homework = get_object_or_404(
+                Homework.objects.select_related("session"),
+                id=homework_id,
             )
+            session = homework.session
 
-            if obj and obj.is_locked:
-                return _locked_response(obj)
-
-            if not obj:
-                obj = HomeworkScore.objects.create(
-                    homework=homework,
-                    session=session,
-                    enrollment_id=enrollment_id,
-                    score=None,
-                    max_score=None,
-                    updated_by_user_id=_safe_user_id(request),
+            with transaction.atomic():
+                obj = (
+                    HomeworkScore.objects.select_for_update()
+                    .filter(
+                        homework_id=homework_id,
+                        enrollment_id=enrollment_id,
+                    )
+                    .select_related("session", "homework")
+                    .first()
                 )
 
-            if meta_status == HomeworkScore.MetaStatus.NOT_SUBMITTED:
-                obj.meta = {"status": HomeworkScore.MetaStatus.NOT_SUBMITTED}
-                obj.score = None
-                obj.max_score = None
-                obj.updated_by_user_id = _safe_user_id(request)
-                passed, clinic_required, _ = calc_homework_passed_and_clinic(
-                    session=obj.session,
-                    score=None,
-                    max_score=None,
-                )
-                obj.passed = bool(passed)
-                obj.clinic_required = bool(clinic_required)
-                obj.save(update_fields=["meta", "score", "max_score", "passed", "clinic_required", "updated_by_user_id", "updated_at"])
-            else:
-                obj = _apply_score_and_policy(
-                    obj=obj,
-                    score=score,
-                    max_score=max_score,
-                    request=request,
-                    save_fields=[
-                        "score",
-                        "max_score",
-                        "passed",
-                        "clinic_required",
-                        "updated_by_user_id",
-                    ],
-                )
-                if obj.meta and isinstance(obj.meta, dict) and obj.meta.get("status") == HomeworkScore.MetaStatus.NOT_SUBMITTED:
-                    obj.meta = {k: v for k, v in obj.meta.items() if k != "status"}
-                    if not obj.meta:
-                        obj.meta = None
-                    obj.save(update_fields=["meta", "updated_at"])
+                if obj and obj.is_locked:
+                    return _locked_response(obj)
 
-        return Response(
-            HomeworkScoreSerializer(obj).data,
-            status=drf_status.HTTP_200_OK,
-        )
+                if not obj:
+                    obj = HomeworkScore.objects.create(
+                        homework=homework,
+                        session=session,
+                        enrollment_id=enrollment_id,
+                        score=None,
+                        max_score=None,
+                        updated_by_user_id=_safe_user_id(request),
+                    )
+
+                if meta_status == HomeworkScore.MetaStatus.NOT_SUBMITTED:
+                    obj.meta = {"status": HomeworkScore.MetaStatus.NOT_SUBMITTED}
+                    obj.score = None
+                    obj.max_score = None
+                    obj.updated_by_user_id = _safe_user_id(request)
+                    passed, clinic_required, _ = calc_homework_passed_and_clinic(
+                        session=obj.session,
+                        score=None,
+                        max_score=None,
+                    )
+                    obj.passed = bool(passed)
+                    obj.clinic_required = bool(clinic_required)
+                    obj.save(update_fields=["meta", "score", "max_score", "passed", "clinic_required", "updated_by_user_id", "updated_at"])
+                else:
+                    obj = _apply_score_and_policy(
+                        obj=obj,
+                        score=score,
+                        max_score=max_score,
+                        request=request,
+                        save_fields=[
+                            "score",
+                            "max_score",
+                            "passed",
+                            "clinic_required",
+                            "updated_by_user_id",
+                        ],
+                    )
+                    if obj.meta and isinstance(obj.meta, dict) and obj.meta.get("status") == HomeworkScore.MetaStatus.NOT_SUBMITTED:
+                        obj.meta = {k: v for k, v in obj.meta.items() if k != "status"}
+                        if not obj.meta:
+                            obj.meta = None
+                        obj.save(update_fields=["meta", "updated_at"])
+
+            return Response(
+                HomeworkScoreSerializer(obj).data,
+                status=drf_status.HTTP_200_OK,
+            )
+        except Http404:
+            raise
+        except Exception as e:
+            if getattr(settings, "DEBUG", False):
+                return Response(
+                    {"detail": str(e), "type": type(e).__name__},
+                    status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            raise
