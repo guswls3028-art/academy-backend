@@ -25,6 +25,11 @@ class Exam(BaseModel):
         TEMPLATE = "template", "Template"
         REGULAR = "regular", "Regular"
 
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "초안"
+        OPEN = "OPEN", "진행중"
+        CLOSED = "CLOSED", "마감"
+
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     subject = models.CharField(max_length=100, blank=True, default="")
@@ -35,6 +40,14 @@ class Exam(BaseModel):
         default=ExamType.REGULAR,
     )
     is_active = models.BooleanField(default=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        db_index=True,
+        help_text="과제와 동일: 생성=DRAFT, 진행하기=OPEN, 마감=CLOSED. 사용자에는 설정 중/진행 중/마감으로만 노출.",
+    )
 
     # ===============================
     # 🔥 Session : Exam = N:M

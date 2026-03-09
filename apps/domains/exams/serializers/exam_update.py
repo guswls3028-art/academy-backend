@@ -18,6 +18,7 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
             "title",
             "description",
             "is_active",
+            "status",
             "allow_retake",
             "max_attempts",
             "pass_score",
