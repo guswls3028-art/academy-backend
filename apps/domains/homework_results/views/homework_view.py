@@ -53,13 +53,16 @@ class HomeworkViewSet(ModelViewSet):
 
         return qs
 
-    def perform_create(self, serializer):
-        data = self.request.data
+    def create(self, request, *args, **kwargs):
+        """템플릿 불러오기 시 serializer 검증 없이 생성."""
+        data = request.data
         template_id = data.get("template_homework_id") or data.get("template_homework")
         session_id = data.get("session_id")
         if not session_id:
-            raise ValidationError({"session_id": "필수입니다."})
-
+            return status.Response(
+                {"session_id": "필수입니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if template_id:
             try:
                 template = Homework.objects.get(
@@ -67,12 +70,18 @@ class HomeworkViewSet(ModelViewSet):
                     homework_type=Homework.HomeworkType.TEMPLATE,
                 )
             except (ValueError, TypeError, Homework.DoesNotExist):
-                raise ValidationError({"template_homework_id": "유효한 과제 템플릿이 아닙니다."})
-            tenant = getattr(self.request, "tenant", None)
+                return status.Response(
+                    {"template_homework_id": "유효한 과제 템플릿이 아닙니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            tenant = getattr(request, "tenant", None)
             if tenant and not template.derived_homeworks.filter(session__lecture__tenant=tenant).exists():
                 from apps.domains.homework_results.views.homework_template_with_usage import template_visible_to_tenant
                 if not template_visible_to_tenant(template, tenant):
-                    raise ValidationError({"template_homework_id": "해당 템플릿에 접근할 수 없습니다."})
+                    return status.Response(
+                        {"template_homework_id": "해당 템플릿에 접근할 수 없습니다."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
             title = (data.get("title") or "").strip() or template.title
             instance = Homework.objects.create(
                 homework_type=Homework.HomeworkType.REGULAR,
@@ -81,10 +90,19 @@ class HomeworkViewSet(ModelViewSet):
                 title=title,
                 status=Homework.Status.DRAFT,
             )
-            serializer.instance = instance
-        else:
-            serializer.save(
-                homework_type=Homework.HomeworkType.REGULAR,
-                session_id=int(session_id),
-                title=(data.get("title") or "").strip() or "제목 없음",
+            return status.Response(
+                HomeworkSerializer(instance).data,
+                status=status.HTTP_201_CREATED,
             )
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        data = self.request.data
+        session_id = data.get("session_id")
+        if not session_id:
+            raise ValidationError({"session_id": "필수입니다."})
+        serializer.save(
+            homework_type=Homework.HomeworkType.REGULAR,
+            session_id=int(session_id),
+            title=(data.get("title") or "").strip() or "제목 없음",
+        )
