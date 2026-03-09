@@ -15,6 +15,7 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import OrderingFilter
 from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
 
 from django.db.models import QuerySet
 
@@ -59,7 +60,7 @@ class HomeworkViewSet(ModelViewSet):
         template_id = data.get("template_homework_id") or data.get("template_homework")
         session_id = data.get("session_id")
         if not session_id:
-            return status.Response(
+            return Response(
                 {"session_id": "필수입니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -70,7 +71,7 @@ class HomeworkViewSet(ModelViewSet):
                     homework_type=Homework.HomeworkType.TEMPLATE,
                 )
             except (ValueError, TypeError, Homework.DoesNotExist):
-                return status.Response(
+                return Response(
                     {"template_homework_id": "유효한 과제 템플릿이 아닙니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
@@ -78,7 +79,7 @@ class HomeworkViewSet(ModelViewSet):
             if tenant and not template.derived_homeworks.filter(session__lecture__tenant=tenant).exists():
                 from apps.domains.homework_results.views.homework_template_with_usage import template_visible_to_tenant
                 if not template_visible_to_tenant(template, tenant):
-                    return status.Response(
+                    return Response(
                         {"template_homework_id": "해당 템플릿에 접근할 수 없습니다."},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
@@ -90,7 +91,7 @@ class HomeworkViewSet(ModelViewSet):
                 title=title,
                 status=Homework.Status.DRAFT,
             )
-            return status.Response(
+            return Response(
                 HomeworkSerializer(instance).data,
                 status=status.HTTP_201_CREATED,
             )
