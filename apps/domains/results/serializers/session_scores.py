@@ -73,5 +73,5 @@ class SessionScoreRowSerializer(serializers.Serializer):
 
     updated_at = serializers.DateTimeField(allow_null=True)
 
-    # 클리닉 대상이면서 클리닉 예약이 없을 때 이름 셀 노란 배경 표시용
-    name_highlight_clinic_no_reservation = serializers.BooleanField(default=False)
+    # 클리닉 대상이면서 해당 주차 클리닉 미수강 시 이름만 노란 형광펜 하이라이트(수강 완료 시 제거)
+    name_highlight_clinic_target = serializers.BooleanField(default=False)

@@ -225,7 +225,19 @@ class SessionScoresView(APIView):
         )
 
         # -------------------------------------------------
-        # 3b) 클리닉 예약 있음(enrollment별 PENDING/BOOKED 1건 이상)
+        # 3b) 클리닉 수강 완료(enrollment별 ATTENDED 1건 이상) → 하이라이트 제거
+        # -------------------------------------------------
+        enrollment_ids_clinic_attended: Set[int] = set(
+            SessionParticipant.objects.filter(
+                enrollment_id__in=enrollment_ids,
+                status=SessionParticipant.Status.ATTENDED,
+            )
+            .values_list("enrollment_id", flat=True)
+            .distinct()
+        )
+
+        # -------------------------------------------------
+        # 3c) 클리닉 예약 있음(enrollment별 PENDING/BOOKED 1건 이상)
         # -------------------------------------------------
         enrollment_ids_with_clinic_booking: Set[int] = set(
             SessionParticipant.objects.filter(
@@ -432,9 +444,10 @@ class SessionScoresView(APIView):
                 if d
             )
 
-            # 클리닉 대상이면서 예약 없음 → 이름 셀 노란 강조용
-            name_highlight_clinic_no_reservation = (
-                clinic_required and eid not in enrollment_ids_with_clinic_booking
+            # 클리닉 대상이면서 해당 주차 클리닉 미수강 → 이름만 노란 형광펜 하이라이트(백엔드 단일 진실)
+            # 수강 완료(ATTENDED) 시 하이라이트 제거
+            name_highlight_clinic_target = (
+                clinic_required and eid not in enrollment_ids_clinic_attended
             )
 
             rows.append(
@@ -445,7 +458,7 @@ class SessionScoresView(APIView):
                     "exams": exams_payload,
                     "homeworks": homeworks_payload,
                     "updated_at": updated_at or timezone.now(),
-                    "name_highlight_clinic_no_reservation": name_highlight_clinic_no_reservation,
+                    "name_highlight_clinic_target": name_highlight_clinic_target,
                 }
             )
 
