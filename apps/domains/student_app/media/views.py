@@ -602,6 +602,27 @@ class StudentVideoProgressView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
+        # 학부모: 영상 시청은 가능하나 진행률 기록 저장 안 함 (읽기 전용)
+        if getattr(request.user, "parent_profile", None) is not None:
+            progress_value = request.data.get("progress", None)
+            completed = request.data.get("completed", False)
+            try:
+                p = float(progress_value) if progress_value is not None else 0.0
+                if p > 1:
+                    p = p / 100.0
+                p = max(0.0, min(1.0, p))
+            except (TypeError, ValueError):
+                p = 0.0
+            return Response({
+                "id": 0,
+                "video_id": video_id,
+                "enrollment_id": enrollment_id or 0,
+                "progress": p,
+                "progress_percent": round(p * 100, 1),
+                "completed": bool(completed),
+                "last_position": int(request.data.get("last_position") or 0),
+            }, status=status.HTTP_200_OK)
+
         # 전체공개영상: 수강등록 없이 시청 가능. VideoProgress는 (video, enrollment) 필수라 DB 저장 불가.
         # 동일 응답 형태로 200 반환해 프론트 스펙 유지 (DB 미저장)
         is_public_lecture = (
