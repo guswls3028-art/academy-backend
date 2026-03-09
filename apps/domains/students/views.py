@@ -259,6 +259,9 @@ class StudentViewSet(ModelViewSet):
         if student.ps_number and not student.ps_number.startswith("_del_"):
             student.ps_number = f"_del_{student.id}_{student.ps_number}"
             update_fields.append("ps_number")
+        if student.parent_id is not None:
+            student.parent_id = None
+            update_fields.append("parent")
         student.save(update_fields=update_fields)
         if student.user:
             student.user.is_active = False
@@ -728,6 +731,9 @@ class StudentViewSet(ModelViewSet):
                 if student.ps_number and not student.ps_number.startswith("_del_"):
                     student.ps_number = f"_del_{student.id}_{student.ps_number}"
                     update_fields.append("ps_number")
+                if student.parent_id is not None:
+                    student.parent_id = None
+                    update_fields.append("parent")
                 student.save(update_fields=update_fields)
                 if student.user:
                     student.user.is_active = False

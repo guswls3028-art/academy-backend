@@ -41,13 +41,21 @@ def get_request_student(request):
     """
     요청자에 해당하는 Student 반환
     - 학생: user.student_profile
-    - 학부모: 연결된 첫 번째 학생 (parent.students.first())
+    - 학부모: X-Student-Id 헤더가 있으면 해당 자녀(삭제 제외 목록 내), 없으면 연결된 첫 번째 학생
     """
     user = request.user
     if hasattr(user, "student_profile") and user.student_profile:
         return user.student_profile
     from apps.domains.parents.models import Parent
     parent = getattr(user, "parent_profile", None)
-    if parent:
-        return parent.students.filter(deleted_at__isnull=True).first()
-    return None
+    if not parent:
+        return None
+    active_students = parent.students.filter(deleted_at__isnull=True)
+    header_id = request.META.get("HTTP_X_STUDENT_ID")
+    if header_id:
+        try:
+            sid = int(header_id)
+            return active_students.filter(id=sid).first()
+        except (TypeError, ValueError):
+            pass
+    return active_students.first()
