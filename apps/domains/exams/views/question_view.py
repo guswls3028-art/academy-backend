@@ -4,6 +4,7 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import ExamQuestion, Exam
 from apps.domains.exams.serializers.question import QuestionSerializer
 from apps.domains.exams.services.template_resolver import assert_template_editable
@@ -12,21 +13,20 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 
 
 class QuestionViewSet(ModelViewSet):
-    """
-    ExamQuestion API (봉인)
-
-    - list/retrieve: 로그인만
-    - update/partial_update/destroy: Teacher/Admin + template exam만
-    - template이 regular에 의해 사용 중이면 구조 변경 금지
-    """
-
-    queryset = ExamQuestion.objects.select_related("sheet", "sheet__exam")
     serializer_class = QuestionSerializer
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
-            return [IsAuthenticated()]
+            return [IsAuthenticated(), TenantResolvedAndMember()]
         return [IsAuthenticated(), IsTeacherOrAdmin()]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return ExamQuestion.objects.none()
+        return ExamQuestion.objects.filter(
+            sheet__exam__sessions__lecture__tenant=tenant
+        ).select_related("sheet", "sheet__exam").distinct()
 
     def _assert_template_editable(self, obj: ExamQuestion):
         if obj.sheet.exam.exam_type != Exam.ExamType.TEMPLATE:

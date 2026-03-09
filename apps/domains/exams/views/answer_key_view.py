@@ -6,6 +6,7 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import AnswerKey, Exam
 from apps.domains.exams.serializers.answer_key import AnswerKeySerializer
 from apps.domains.exams.services.template_resolver import resolve_template_exam, assert_template_editable
@@ -14,25 +15,21 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 
 
 class AnswerKeyViewSet(ModelViewSet):
-    """
-    AnswerKey API (봉인)
-
-    - list/retrieve: 로그인만
-      - ?exam=<id> 로 regular 접근 시 template로 resolve해서 단일진실 조회
-    - create/update/destroy: Teacher/Admin + template only
-    - template이 regular에 의해 사용 중이면 정답 변경 금지(운영 사고 차단)
-    """
-
-    queryset = AnswerKey.objects.select_related("exam")
     serializer_class = AnswerKeySerializer
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
-            return [IsAuthenticated()]
+            return [IsAuthenticated(), TenantResolvedAndMember()]
         return [IsAuthenticated(), IsTeacherOrAdmin()]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return AnswerKey.objects.none()
+        qs = AnswerKey.objects.filter(
+            exam__sessions__lecture__tenant=tenant
+        ).select_related("exam").distinct()
+
         exam_id = self.request.query_params.get("exam")
         if not exam_id:
             return qs

@@ -88,7 +88,17 @@ class SessionScoresView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request, session_id: int):
-        session = get_object_or_404(Session, id=int(session_id))
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "Tenant required"},
+                status=403,
+            )
+        session = get_object_or_404(
+            Session,
+            id=int(session_id),
+            lecture__tenant=tenant,
+        )
 
         # -------------------------------------------------
         # 0) Exams

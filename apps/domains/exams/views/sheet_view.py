@@ -4,6 +4,7 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Sheet, Exam
 from apps.domains.exams.serializers.sheet import SheetSerializer
 from apps.domains.exams.services.template_resolver import assert_template_editable
@@ -12,15 +13,22 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 
 
 class SheetViewSet(ModelViewSet):
-    queryset = Sheet.objects.select_related("exam")
     serializer_class = SheetSerializer
 
     def get_permissions(self):
         # 조회는 로그인만
         if self.action in {"list", "retrieve"}:
-            return [IsAuthenticated()]
+            return [IsAuthenticated(), TenantResolvedAndMember()]
         # 생성/수정/삭제는 Teacher/Admin
         return [IsAuthenticated(), IsTeacherOrAdmin()]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return Sheet.objects.none()
+        return Sheet.objects.filter(
+            exam__sessions__lecture__tenant=tenant
+        ).select_related("exam").distinct()
 
     def _assert_exam_is_template(self, exam_id: int) -> Exam:
         try:
