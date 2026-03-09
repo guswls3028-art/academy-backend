@@ -11,6 +11,8 @@ class HomeworkSerializer(serializers.ModelSerializer):
         model = Homework
         fields = [
             "id",
+            "homework_type",
+            "template_homework",
             "session",
             "title",
             "status",
