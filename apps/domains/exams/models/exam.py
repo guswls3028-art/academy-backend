@@ -87,11 +87,7 @@ class Exam(BaseModel):
                 name="exams_exam_template_has_no_template_exam",
                 check=~Q(exam_type="template") | Q(template_exam__isnull=True),
             ),
-            # regular은 template_exam이 반드시 필요
-            models.CheckConstraint(
-                name="exams_exam_regular_requires_template_exam",
-                check=~Q(exam_type="regular") | Q(template_exam__isnull=False),
-            ),
+            # regular은 template_exam 선택 사항 (생성 시 미지정 가능, 시험 설정에서 나중에 지정)
         ]
 
     def __str__(self) -> str:
@@ -102,11 +98,13 @@ class Exam(BaseModel):
         """
         ✅ 단일 진실 resolver
         - template이면 자기 자신
-        - regular이면 template_exam
+        - regular이면 template_exam 또는 없으면 자기 자신(설정 전)
         """
         if self.exam_type == self.ExamType.TEMPLATE:
             return int(self.id)
-        return int(self.template_exam_id)
+        if self.template_exam_id:
+            return int(self.template_exam_id)
+        return int(self.id)
 
     def assert_template(self):
         if self.exam_type != self.ExamType.TEMPLATE:

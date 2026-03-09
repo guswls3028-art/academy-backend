@@ -5,11 +5,8 @@ from apps.domains.exams.models import Exam
 class ExamUpdateSerializer(serializers.ModelSerializer):
     """
     수정 전용 serializer
-
-    핵심 봉인:
-    - exam_type 변경 ❌
-    - template_exam 변경 ❌
-    - subject 변경 ❌
+    - exam_type, subject 직접 변경 ❌
+    - template_exam_id: regular 시험에서 시험 설정으로 템플릿 지정 가능 (한 번만)
     """
 
     class Meta:
@@ -19,6 +16,8 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
             "description",
             "is_active",
             "status",
+            "template_exam_id",
+            "subject",
             "allow_retake",
             "max_attempts",
             "pass_score",
@@ -30,8 +29,17 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
         exam: Exam = self.instance
 
         if exam.exam_type == Exam.ExamType.TEMPLATE:
-            # 템플릿은 구조/정책 정의까지만 허용
-            # (의미상 open/close가 있어도, 실제 동작은 regular에서만)
             return attrs
+
+        tid = attrs.get("template_exam_id")
+        if tid is not None:
+            try:
+                t = Exam.objects.get(id=int(tid))
+            except (TypeError, ValueError, Exam.DoesNotExist):
+                raise serializers.ValidationError({"template_exam_id": "invalid"})
+            if t.exam_type != Exam.ExamType.TEMPLATE:
+                raise serializers.ValidationError({"template_exam_id": "must be template exam"})
+            attrs["template_exam"] = t
+            attrs["subject"] = t.subject
 
         return attrs

@@ -72,13 +72,14 @@ class ExamViewSet(ModelViewSet):
     # Immutable 필드 방어
     # ================================
     def _reject_immutable_fields_on_update(self, request):
-        forbidden = {"exam_type", "subject", "template_exam", "template_exam_id"}
+        forbidden = {"exam_type", "subject"}
         incoming = set(request.data.keys())
         bad = sorted(list(incoming & forbidden))
         if bad:
             raise ValidationError(
                 {"detail": f"Immutable fields in update are forbidden: {bad}"}
             )
+        # template_exam_id는 regular 생성 시 미지정 가능 → 시험 설정에서 한 번 지정 허용
 
     # ================================
     # CREATE 로직
@@ -109,21 +110,21 @@ class ExamViewSet(ModelViewSet):
         # REGULAR CREATE
         # =========================
         template_exam_id = self.request.data.get("template_exam_id")
-        if not template_exam_id:
-            raise ValidationError({"template_exam_id": "required"})
+        template_exam = None
+        subject = ""
 
-        try:
-            template_exam_id = int(template_exam_id)
-        except (TypeError, ValueError):
-            raise ValidationError({"template_exam_id": "must be integer"})
-
-        try:
-            template_exam = Exam.objects.get(id=template_exam_id)
-        except Exam.DoesNotExist:
-            raise ValidationError({"template_exam_id": "invalid"})
-
-        if template_exam.exam_type != Exam.ExamType.TEMPLATE:
-            raise ValidationError({"template_exam_id": "must be template exam"})
+        if template_exam_id:
+            try:
+                template_exam_id = int(template_exam_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"template_exam_id": "must be integer"})
+            try:
+                template_exam = Exam.objects.get(id=template_exam_id)
+            except Exam.DoesNotExist:
+                raise ValidationError({"template_exam_id": "invalid"})
+            if template_exam.exam_type != Exam.ExamType.TEMPLATE:
+                raise ValidationError({"template_exam_id": "must be template exam"})
+            subject = template_exam.subject
 
         session_id = self.request.data.get("session_id")
         if not session_id:
@@ -145,7 +146,7 @@ class ExamViewSet(ModelViewSet):
 
         exam = serializer.save(
             exam_type=Exam.ExamType.REGULAR,
-            subject=template_exam.subject,
+            subject=subject,
             template_exam=template_exam,
         )
 
