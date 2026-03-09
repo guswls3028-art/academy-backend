@@ -26,8 +26,10 @@ Quick Patch (MVP):
 
 from __future__ import annotations
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import QuerySet
+from django.shortcuts import get_object_or_404
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
@@ -296,8 +298,11 @@ class HomeworkScoreViewSet(ModelViewSet):
         max_score = serializer.validated_data.get("max_score")
         meta_status = serializer.validated_data.get("meta_status")
 
-        # ✅ 단일 진실: homework → session
-        homework = Homework.objects.select_related("session").get(id=homework_id)
+        # ✅ 단일 진실: homework → session (DoesNotExist → 404)
+        homework = get_object_or_404(
+            Homework.objects.select_related("session"),
+            id=homework_id,
+        )
         session = homework.session
 
         with transaction.atomic():
