@@ -30,6 +30,8 @@ class LectureViewSet(ModelViewSet):
     def get_queryset(self):
         """
         🔐 tenant 단일 진실
+        강의 목록(list)에서는 시스템용 "전체공개영상" 강의를 제외하여 강의 관리 화면에 노출되지 않도록 함.
+        (해당 강의는 영상 탭/학생 앱에서 public-session API 호출 시 get_or_create 되며, 상세/링크는 retrieve로 접근 가능해야 함)
         """
         tenant = getattr(self.request, "tenant", None)
         if tenant is None:
@@ -37,7 +39,10 @@ class LectureViewSet(ModelViewSet):
                 "테넌트 컨텍스트가 없습니다. 로컬에서는 python manage.py ensure_localhost_tenant 실행 후 접속하거나, "
                 "X-Tenant-Code 헤더를 설정하세요."
             )
-        return enroll_repo.lecture_filter_tenant(tenant)
+        qs = enroll_repo.lecture_filter_tenant(tenant)
+        if self.action == "list":
+            qs = qs.exclude(title="전체공개영상")
+        return qs
 
     def perform_create(self, serializer):
         """
