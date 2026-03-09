@@ -304,15 +304,13 @@ class SessionScoresView(APIView):
                         int(r.attempt_id), ""
                     )
                     locked = attempt_status.lower() == "grading"
+                    pass_score = exam_pass_score_map.get(exid, 0.0)
+                    passed = bool(float(r.total_score or 0.0) >= float(pass_score))
 
                     block = {
                         "score": float(r.total_score or 0.0),
                         "max_score": float(r.max_score or 0.0),
-                        "passed": (
-                            bool(r.passed)
-                            if r.passed is not None
-                            else None
-                        ),
+                        "passed": passed,
                         "clinic_required": clinic_required,
                         "is_locked": locked,
                         "lock_reason": "GRADING" if locked else None,

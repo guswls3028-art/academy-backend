@@ -12,14 +12,15 @@ from apps.domains.results.serializers.admin_exam_result_row import (
 )
 
 from apps.domains.lectures.models import Session
-from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
 from apps.domains.exams.models import Exam
+from apps.domains.enrollment.models import Enrollment
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.domains.results.views.session_scores_view import _safe_student_name
 
 
 class AdminExamResultsView(ListAPIView):
@@ -76,34 +77,22 @@ class AdminExamResultsView(ListAPIView):
         results = page
 
         # -------------------------------------------------
+        # enrollment_id → student_name (Enrollment 단일 진실)
+        # -------------------------------------------------
+        enrollment_ids_page = [int(r.enrollment_id) for r in results]
+        enrollment_map = {
+            int(e.id): e
+            for e in Enrollment.objects.filter(id__in=enrollment_ids_page).select_related("student")
+        }
+        student_name_map = {
+            eid: _safe_student_name(enrollment_map.get(eid))
+            for eid in enrollment_ids_page
+        }
+
+        # -------------------------------------------------
         # Session 찾기 (clinic 판단용)
         # -------------------------------------------------
         session = get_primary_session_for_exam(exam_id)
-
-        # -------------------------------------------------
-        # Student 조회 (원본 로직 유지)
-        # -------------------------------------------------
-        student_map = {}
-        try:
-            from apps.domains.progress.models import SessionProgress
-
-            if session:
-                progress_rows = SessionProgress.objects.filter(session=session)
-            else:
-                progress_rows = SessionProgress.objects.none()
-
-            student_ids = set()
-            for sp in progress_rows:
-                sid = getattr(sp, "student_id", None) or getattr(sp, "user_id", None)
-                if sid:
-                    student_ids.add(int(sid))
-
-            student_map = {
-                s.id: s
-                for s in Student.objects.filter(id__in=list(student_ids))
-            }
-        except Exception:
-            student_map = {}
 
         # -------------------------------------------------
         # enrollment_id → 최신 attempt/submission 맵 (exam 전체 기준)
@@ -164,12 +153,7 @@ class AdminExamResultsView(ListAPIView):
         rows = []
         for r in results:
             enrollment_id = int(r.enrollment_id)
-
-            student_name = "-"
-            try:
-                student_name = "-"
-            except Exception:
-                student_name = "-"
+            student_name = student_name_map.get(enrollment_id, "-")
 
             latest = latest_map.get(enrollment_id, {})
             submission_id = latest.get("submission_id")
