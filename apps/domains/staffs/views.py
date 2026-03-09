@@ -219,17 +219,26 @@ class StaffViewSet(viewsets.ModelViewSet):
             if is_de_facto_owner and request.user:
                 owner_display_name = (getattr(request.user, "name", None) or "").strip() or getattr(request.user, "username", "") or "원장"
                 owner_phone = (getattr(request.user, "phone", None) or "").strip() or None
-            return Response(
-                {
-                    "is_authenticated": True,
-                    "is_superuser": bool(request.user.is_superuser),
-                    "is_staff": bool(request.user.is_staff),
-                    "is_payroll_manager": can_manage_payroll(request.user, tenant),
-                    "is_owner": is_owner,
-                    "owner_display_name": owner_display_name,
-                    "owner_phone": owner_phone,
-                }
-            )
+
+            payload = {
+                "is_authenticated": True,
+                "is_superuser": bool(request.user.is_superuser),
+                "is_staff": bool(request.user.is_staff),
+                "is_payroll_manager": can_manage_payroll(request.user, tenant),
+                "is_owner": is_owner,
+                "owner_display_name": owner_display_name,
+                "owner_phone": owner_phone,
+            }
+
+            # 직원(Staff)으로 로그인한 경우: 출근/퇴근용 staff_id, default_work_type_id
+            staff_profile = getattr(request.user, "staff_profile", None)
+            if staff_profile and tenant and getattr(staff_profile, "tenant_id", None) == tenant.id:
+                payload["staff_id"] = staff_profile.id
+                first_swt = staff_profile.staff_work_types.order_by("id").first()
+                if first_swt:
+                    payload["default_work_type_id"] = first_swt.work_type_id
+
+            return Response(payload)
         except Exception as e:
             logger.warning("staffs/me error: %s", e, exc_info=True)
             return Response(
@@ -266,6 +275,7 @@ class StaffViewSet(viewsets.ModelViewSet):
             return Response({
                 "status": "BREAK",
                 "work_record_id": record.id,
+                "date": record.date.isoformat(),
                 "started_at": record.start_time,
                 "break_started_at": record.current_break_started_at,
             })
@@ -273,6 +283,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         return Response({
             "status": "WORKING",
             "work_record_id": record.id,
+            "date": record.date.isoformat(),
             "started_at": record.start_time,
             "break_minutes": record.break_minutes,
         })
