@@ -87,7 +87,23 @@
 
 ---
 
-## 7. 관련 문서
+## 7. IAM 역할 및 주요 권한
+
+| 역할 | 사용 주체 | 주요 권한 |
+|------|-----------|-----------|
+| `academy-video-batch-job-role` | Batch 컨테이너(video worker) | SSM GetParameter, ECR pull, CloudWatch Logs, CloudWatch PutMetric, Batch(SubmitJob/TerminateJob/DescribeJobs), **DynamoDB(PutItem/DeleteItem/GetItem/UpdateItem/ConditionCheckItem** on job-lock + upload-checkpoints) |
+| `academy-ec2-role` (API EC2) | API EC2 인스턴스 | SSM(등록), ECR pull, Batch SubmitJob(upload_complete용), **DynamoDB(video-job-lock lock_acquire)** |
+| `academy-batch-service-role` | AWS Batch 서비스 | AWSBatchServiceRole |
+| `academy-batch-ecs-instance-role` | Batch EC2 인스턴스 | AmazonEC2ContainerServiceforEC2Role |
+| `academy-batch-ecs-task-execution-role` | ECS Task 실행 | AmazonECSTaskExecutionRolePolicy |
+| `academy-eventbridge-batch-video-role` | EventBridge | Batch SubmitJob (ops queue) |
+
+> **중요:** `academy-video-batch-job-role`에 DynamoDB 권한이 없으면 job 완료 후 `lock_release()`가 AccessDeniedException → stale lock → 다음 upload_complete 503.
+> 인프라 재설치 시 반드시 `scripts/v1/templates/iam/policy_video_job_role.json` 기준으로 inline policy 적용할 것 (`scripts/v1/resources/iam.ps1`의 `Ensure-BatchIAM`이 자동 적용).
+
+---
+
+## 8. 관련 문서
 
 - **params.yaml:** `docs/00-SSOT/v1/params.yaml`
 - **SSOT:** `docs/00-SSOT/v1/SSOT.md`
