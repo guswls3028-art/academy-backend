@@ -76,16 +76,25 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
 
 
 class SendMessageRequestSerializer(serializers.Serializer):
-    """메시지 발송 요청: 수신자(학생 ID) + 직접 입력 본문 또는 템플릿 ID"""
+    """메시지 발송 요청: 수신자(학생 ID 또는 직원 ID) + 직접 입력 본문 또는 템플릿 ID"""
     student_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
-        allow_empty=False,
-        help_text="수신 대상 학생 ID 목록",
+        allow_empty=True,
+        required=False,
+        default=list,
+        help_text="수신 대상 학생 ID 목록 (send_to가 student/parent일 때 사용)",
+    )
+    staff_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=True,
+        required=False,
+        default=list,
+        help_text="수신 대상 직원 ID 목록 (send_to가 staff일 때 사용)",
     )
     send_to = serializers.ChoiceField(
-        choices=[("student", "학생"), ("parent", "학부모")],
+        choices=[("student", "학생"), ("parent", "학부모"), ("staff", "직원")],
         default="parent",
-        help_text="학생 번호로 보낼지 학부모 번호로 보낼지",
+        help_text="학생/학부모/직원 번호로 보낼지",
     )
     message_mode = serializers.ChoiceField(
         choices=[("sms", "SMS만"), ("alimtalk", "알림톡만"), ("both", "알림톡→SMS폴백")],
@@ -98,6 +107,19 @@ class SendMessageRequestSerializer(serializers.Serializer):
     raw_subject = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate(self, attrs):
+        send_to = attrs.get("send_to") or "parent"
+        student_ids = attrs.get("student_ids") or []
+        staff_ids = attrs.get("staff_ids") or []
+        if send_to == "staff":
+            if not staff_ids:
+                raise serializers.ValidationError(
+                    {"staff_ids": "직원 수신 시 최소 1명의 직원을 선택해 주세요."}
+                )
+        else:
+            if not student_ids:
+                raise serializers.ValidationError(
+                    {"student_ids": "학생/학부모 수신 시 최소 1명의 학생을 선택해 주세요."}
+                )
         if not attrs.get("template_id") and not (attrs.get("raw_body") or "").strip():
             raise serializers.ValidationError(
                 {"raw_body": "직접 입력 본문을 넣거나 템플릿을 선택해 주세요."}
