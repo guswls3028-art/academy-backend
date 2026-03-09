@@ -253,6 +253,21 @@ class StaffViewSet(viewsets.ModelViewSet):
                 }
             )
 
+    @action(detail=False, methods=["get"], url_path="currently-working")
+    def currently_working(self, request):
+        """현재 근무 중인 직원 목록 (end_time 이 null 인 WorkRecord 가 있는 직원)."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response([])
+        staff_ids = (
+            WorkRecord.objects
+            .filter(tenant=tenant, end_time__isnull=True)
+            .values_list("staff_id", flat=True)
+            .distinct()
+        )
+        staffs = Staff.objects.filter(id__in=staff_ids).values("id", "name")
+        return Response([{"staff_id": s["id"], "staff_name": s["name"]} for s in staffs])
+
     # ===========================
     # 실시간 근무 (Staff 기준)
     # ===========================
