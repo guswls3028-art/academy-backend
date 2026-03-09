@@ -78,3 +78,20 @@
 - `academyfront/src/features/submissions/api/adminSubmissionsApi.ts` — 제출 목록 경로를 `/submissions/submissions/exams/...` 로 변경, SSOT 주석 추가
 
 정합성 검사 후 문서와 일치 여부를 반영했으며, 위 알려진 격차는 백엔드 확장 시 경로만 맞추면 됨.
+
+---
+
+## 7. 2026-03-09 정합성 보강 (백엔드 구조적 수정)
+
+| 구분 | 내용 | 수정 |
+|------|------|------|
+| **submissions** | 프론트 `POST /submissions/submissions/admin/omr-upload/` 호출에 대응하는 백엔드 액션 없음 | `SubmissionViewSet`에 `@action(detail=False, url_path="admin/omr-upload")` 추가. form-data: enrollment_id, target_id, file → 제출 생성·R2 업로드·dispatch |
+| **assets/omr** | 프론트 `GET /api/v1/assets/omr/objective/meta/?question_count=10\|20\|30` 호출에 대응하는 라우트 없음 | `ObjectiveOMRMetaView` 추가, `build_objective_template_meta()` 구현(OmrObjectiveMetaV1 형식, mm 단위 roi). `assets/omr/urls.py`에 `objective/meta/` 경로 추가 |
+| **results score-summary** | 백엔드 응답은 flat(participant_count, avg_score, …), 프론트는 total/offline/online 그룹 기대 | 백엔드 SSOT 유지. `sessionScoreSummary.ts`에서 응답을 total/offline/online 형태로 매핑하는 어댑터 적용 |
+
+**수정된 파일 (2026-03-09)**  
+- `backend/apps/domains/submissions/views/submission_view.py` — admin_omr_upload 액션 추가  
+- `backend/apps/domains/assets/omr/services/meta_generator.py` — build_objective_template_meta 구현  
+- `backend/apps/domains/assets/omr/views/omr_list_views.py` — ObjectiveOMRMetaView 추가  
+- `backend/apps/domains/assets/omr/urls.py` — objective/meta/ 경로 추가  
+- `frontend/src/features/sessions/api/sessionScoreSummary.ts` — 백엔드 flat 응답 → total/offline/online 매핑
