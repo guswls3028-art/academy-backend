@@ -18,13 +18,14 @@ from rest_framework.filters import OrderingFilter
 
 from django.db.models import QuerySet
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework_results.serializers.homework import HomeworkSerializer
 
 class HomeworkViewSet(ModelViewSet):
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember, IsTeacherOrAdmin]
     serializer_class = HomeworkSerializer
 
     filter_backends = [OrderingFilter]
@@ -32,7 +33,12 @@ class HomeworkViewSet(ModelViewSet):
     ordering = ["-updated_at", "-id"]
 
     def get_queryset(self) -> QuerySet[Homework]:
-        qs = Homework.objects.select_related("session", "session__lecture")
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return Homework.objects.none()
+        qs = Homework.objects.filter(
+            session__lecture__tenant=tenant
+        ).select_related("session", "session__lecture")
 
         # ✅ 프론트가 session_id로 필터링
         session_id = self.request.query_params.get("session_id")

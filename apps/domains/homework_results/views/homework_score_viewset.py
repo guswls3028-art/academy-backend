@@ -267,12 +267,6 @@ class HomeworkScoreViewSet(ModelViewSet):
     HomeworkScore 관리 ViewSet
     """
 
-    queryset: QuerySet[HomeworkScore] = HomeworkScore.objects.select_related(
-        "session",
-        "session__lecture",
-        "homework",
-    ).all()
-
     serializer_class = HomeworkScoreSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
@@ -299,6 +293,18 @@ class HomeworkScoreViewSet(ModelViewSet):
         "passed",
     ]
     ordering = ["-updated_at", "-id"]
+
+    def get_queryset(self) -> QuerySet[HomeworkScore]:
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return HomeworkScore.objects.none()
+        return HomeworkScore.objects.filter(
+            session__lecture__tenant=tenant
+        ).select_related(
+            "session",
+            "session__lecture",
+            "homework",
+        )
 
     # =================================================
     # PATCH /homework/scores/{id}/
