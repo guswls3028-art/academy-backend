@@ -1,3 +1,10 @@
+# PATH: apps/domains/results/views/admin_exam_objective_score_view.py
+"""
+PATCH /results/admin/exams/{exam_id}/enrollments/{enrollment_id}/objective/
+
+객관식 점수만 입력. total_score = objective_score + sum(ResultItem) 로 동기화.
+"""
+
 from __future__ import annotations
 
 from django.db import transaction
@@ -11,26 +18,13 @@ from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
-
 from apps.domains.exams.models import Exam
-
 from apps.domains.submissions.models import Submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 from django.db.models import Max
 
 
-class AdminExamTotalScoreView(APIView):
-    """
-    PATCH /results/admin/exams/{exam_id}/enrollments/{enrollment_id}/score/
-
-    ✅ 목적
-    - 성적 탭에서 시험 "합산 점수"를 직접 입력 (Result.total_score override)
-
-    ⚠️ 주의
-    - ResultItem 합과 total_score가 불일치할 수 있다.
-      (문항별 채점 모드와 합산 입력 모드가 동시에 사용될 수 있으므로, 모드 선택은 프론트 UX로 제어)
-    """
-
+class AdminExamObjectiveScoreView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     @transaction.atomic
@@ -42,19 +36,19 @@ class AdminExamTotalScoreView(APIView):
             raise ValidationError({"detail": "score is required", "code": "INVALID"})
 
         try:
-            new_score = float(request.data.get("score"))
+            new_objective = float(request.data.get("score"))
         except Exception:
             raise ValidationError({"detail": "score must be number", "code": "INVALID"})
 
-        if new_score < 0:
+        if new_objective < 0:
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})
 
-        # 성적 탭 입력은 0~100 고정 (요구사항)
         max_score = 100.0
+        if new_objective > max_score:
+            raise ValidationError(
+                {"detail": f"score must be between 0 and {max_score}", "code": "INVALID"}
+            )
 
-        # -------------------------------------------------
-        # 1️⃣ Result (대표 스냅샷)
-        # -------------------------------------------------
         result = (
             Result.objects
             .select_for_update()
@@ -66,7 +60,6 @@ class AdminExamTotalScoreView(APIView):
             .first()
         )
         if not result or not result.attempt_id:
-            # 과제 quick patch처럼 "없으면 생성" (수동 입력용 attempt/result 생성)
             qs = (
                 ExamAttempt.objects
                 .select_for_update()
@@ -97,38 +90,26 @@ class AdminExamTotalScoreView(APIView):
             else:
                 result.attempt_id = int(attempt.id)
                 result.max_score = float(max_score)
-                result.save(update_fields=["attempt_id", "max_score", "updated_at"])
+                result.objective_score = 0.0
+                result.save(update_fields=["attempt_id", "max_score", "objective_score", "updated_at"])
 
-        # -------------------------------------------------
-        # 2️⃣ Attempt LOCK 상태 확인
-        # -------------------------------------------------
         attempt = ExamAttempt.objects.filter(id=int(result.attempt_id)).first()
         if not attempt:
             raise NotFound({"detail": "attempt not found", "code": "NOT_FOUND"})
-
         if attempt.status == "grading":
             return Response(
                 {"detail": "attempt is grading", "code": "LOCKED"},
                 status=drf_status.HTTP_409_CONFLICT,
             )
 
-        # -------------------------------------------------
-        # 3️⃣ 점수 범위 검증
-        # -------------------------------------------------
-        effective_max = float(max_score)
-        if new_score > float(effective_max):
-            raise ValidationError(
-                {"detail": f"score must be between 0 and {effective_max}", "code": "INVALID"}
-            )
-
-        # -------------------------------------------------
-        # 4️⃣ ResultFact (append-only 로그)
-        # -------------------------------------------------
+        subjective_sum = sum(
+            float(x.score or 0.0)
+            for x in ResultItem.objects.filter(result=result)
+        )
+        new_total = new_objective + subjective_sum
         exam = Exam.objects.filter(id=exam_id).first()
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
-        # submission은 있을 수도/없을 수도 있음 (오프라인 입력 허용)
-        # Submission 모델에는 session_id 없음 → exam+enrollment 기준으로 최신 제출 조회
         submission_id = 0
         submission = (
             Submission.objects
@@ -149,36 +130,24 @@ class AdminExamTotalScoreView(APIView):
             enrollment_id=enrollment_id,
             submission_id=submission_id,
             attempt_id=int(result.attempt_id),
-            question_id=0,  # total override marker
+            question_id=0,
             answer="",
-            is_correct=bool(float(new_score) >= float(pass_score)),
-            score=float(new_score),
-            max_score=float(effective_max),
-            source="manual_total",
+            is_correct=bool(float(new_total) >= float(pass_score)),
+            score=float(new_total),
+            max_score=float(result.max_score or max_score),
+            source="manual_objective",
             meta={
-                "manual_total": True,
+                "manual_objective": True,
+                "objective_score": new_objective,
                 "edited_at": timezone.now().isoformat(),
             },
         )
 
-        # -------------------------------------------------
-        # 5️⃣ Result 업데이트 (합산 입력 시 objective_score 동기화: total = objective + sum(items))
-        # -------------------------------------------------
-        subjective_sum = sum(
-            float(x.score or 0.0)
-            for x in ResultItem.objects.filter(result=result)
-        )
-        new_objective = float(new_score) - subjective_sum
-        if new_objective < 0:
-            new_objective = 0.0
-        result.total_score = float(new_score)
-        result.objective_score = new_objective
-        result.max_score = float(max_score)
-        result.save(update_fields=["total_score", "objective_score", "max_score", "updated_at"])
+        result.objective_score = float(new_objective)
+        result.total_score = float(new_total)
+        result.max_score = float(result.max_score or max_score)
+        result.save(update_fields=["objective_score", "total_score", "max_score", "updated_at"])
 
-        # -------------------------------------------------
-        # 6️⃣ progress pipeline (best-effort)
-        # -------------------------------------------------
         if submission_id:
             def _dispatch():
                 dispatch_progress_pipeline(int(submission_id))
@@ -189,10 +158,9 @@ class AdminExamTotalScoreView(APIView):
                 "ok": True,
                 "exam_id": exam_id,
                 "enrollment_id": enrollment_id,
+                "objective_score": float(result.objective_score or 0.0),
                 "total_score": float(result.total_score or 0.0),
                 "max_score": float(result.max_score or 0.0),
-                "progress": {"dispatched": bool(submission_id), "reason": None if submission_id else "NO_SUBMISSION"},
             },
             status=drf_status.HTTP_200_OK,
         )
-

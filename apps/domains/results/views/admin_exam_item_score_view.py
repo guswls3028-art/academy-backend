@@ -145,11 +145,12 @@ class AdminExamItemScoreView(APIView):
         item.save(update_fields=["score", "is_correct", "source"])
 
         # -------------------------------------------------
-        # 6️⃣ total_score 재계산
+        # 6️⃣ total_score 재계산 (total = objective_score + sum(items))
         # -------------------------------------------------
         agg = ResultItem.objects.filter(result=result)
-
-        total_score = sum(float(x.score or 0.0) for x in agg)
+        subjective_sum = sum(float(x.score or 0.0) for x in agg)
+        objective = float(getattr(result, "objective_score", 0.0) or 0.0)
+        total_score = objective + subjective_sum
         max_total = sum(float(x.max_score or 0.0) for x in agg)
 
         result.total_score = float(total_score)
