@@ -32,6 +32,8 @@ class HomeworkPolicyViewSet(viewsets.ModelViewSet):
             session_id=int(session_id),
             defaults={
                 "cutline_percent": 80,
+                "cutline_mode": "PERCENT",
+                "cutline_value": 80,
                 "round_unit_percent": 5,
                 "clinic_enabled": True,
                 "clinic_on_fail": True,

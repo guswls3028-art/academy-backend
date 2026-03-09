@@ -76,7 +76,7 @@ def calc_homework_passed_and_clinic(
     반환:
     - passed: bool
     - clinic_required: bool
-    - percent: Optional[int] (rounded percent)
+    - percent: Optional[int] (rounded percent, COUNT 모드일 때는 None)
     """
     policy, _ = HomeworkPolicy.objects.get_or_create(
         session=session,
@@ -88,15 +88,29 @@ def calc_homework_passed_and_clinic(
         },
     )
 
-    percent = calc_homework_percent(score=score, max_score=max_score)
-    if percent is None:
-        return False, False, None
+    mode = getattr(policy, "cutline_mode", None) or "PERCENT"
+    cutline_value = int(getattr(policy, "cutline_value", 0) or policy.cutline_percent or 80)
 
-    rounded = _round_percent(percent, policy.round_unit_percent)
-    passed = bool(rounded >= int(policy.cutline_percent or 0))
-
-    clinic_required = bool(
-        policy.clinic_enabled and policy.clinic_on_fail and (not passed)
-    )
-
-    return passed, clinic_required, rounded
+    if mode == "COUNT":
+        # 문항 수 기준: score >= cutline_value 이면 합격 (score는 정답 수/점수로 해석)
+        if score is None:
+            return False, False, None
+        passed = bool(float(score) >= cutline_value)
+        clinic_required = bool(
+            policy.clinic_enabled and policy.clinic_on_fail and (not passed)
+        )
+        percent = calc_homework_percent(score=score, max_score=max_score)
+        rounded = _round_percent(percent, policy.round_unit_percent) if percent is not None else None
+        return passed, clinic_required, rounded
+    else:
+        # 퍼센트 기준 (기존 로직)
+        percent = calc_homework_percent(score=score, max_score=max_score)
+        if percent is None:
+            return False, False, None
+        rounded = _round_percent(percent, policy.round_unit_percent)
+        threshold = int(cutline_value if cutline_value else policy.cutline_percent or 0)
+        passed = bool(rounded >= threshold)
+        clinic_required = bool(
+            policy.clinic_enabled and policy.clinic_on_fail and (not passed)
+        )
+        return passed, clinic_required, rounded

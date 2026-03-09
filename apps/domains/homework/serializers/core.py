@@ -27,6 +27,8 @@ class HomeworkPolicySerializer(serializers.ModelSerializer):
             "id",
             "session",
             "cutline_percent",
+            "cutline_mode",
+            "cutline_value",
             "round_unit_percent",
             "clinic_enabled",
             "clinic_on_fail",
@@ -46,6 +48,8 @@ class HomeworkPolicyPatchSerializer(serializers.ModelSerializer):
         model = HomeworkPolicy
         fields = [
             "cutline_percent",
+            "cutline_mode",
+            "cutline_value",
             "round_unit_percent",
             "clinic_enabled",
             "clinic_on_fail",
