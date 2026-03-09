@@ -33,6 +33,56 @@ class SubmissionViewSet(ModelViewSet):
             return SubmissionCreateSerializer
         return SubmissionSerializer
 
+    @action(detail=False, methods=["post"], url_path="admin/omr-upload")
+    def admin_omr_upload(self, request):
+        """
+        POST /api/v1/submissions/submissions/admin/omr-upload/
+        form-data: enrollment_id, target_id (exam_id), file
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant required"}, status=403)
+
+        enrollment_id = request.data.get("enrollment_id")
+        target_id = request.data.get("target_id")
+        file_obj = request.FILES.get("file")
+
+        if not target_id:
+            return Response({"detail": "target_id (exam_id) required"}, status=400)
+        if not file_obj:
+            return Response({"detail": "file required"}, status=400)
+
+        try:
+            exam_id = int(target_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "target_id must be an integer"}, status=400)
+
+        payload = {}
+        if request.data.get("sheet_id"):
+            try:
+                payload["sheet_id"] = int(request.data.get("sheet_id"))
+            except (TypeError, ValueError):
+                pass
+
+        ser = SubmissionCreateSerializer(
+            data={
+                "enrollment_id": int(enrollment_id) if enrollment_id else None,
+                "target_type": Submission.TargetType.EXAM,
+                "target_id": exam_id,
+                "source": Submission.Source.OMR_SCAN,
+                "payload": payload or None,
+                "file": file_obj,
+            }
+        )
+        ser.is_valid(raise_exception=True)
+        submission = ser.save(user=request.user, tenant=tenant)
+        dispatch_submission(submission)
+
+        return Response(
+            {"submission_id": submission.id, "status": submission.status},
+            status=201,
+        )
+
     def perform_create(self, serializer):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
