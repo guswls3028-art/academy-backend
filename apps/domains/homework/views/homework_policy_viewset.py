@@ -9,6 +9,7 @@ from apps.domains.homework.serializers import (
     HomeworkPolicySerializer,
     HomeworkPolicyPatchSerializer,
 )
+from apps.domains.lectures.models import Session
 
 
 class HomeworkPolicyViewSet(viewsets.ModelViewSet):
@@ -27,9 +28,23 @@ class HomeworkPolicyViewSet(viewsets.ModelViewSet):
         if not session_id:
             return qs_base.none()
 
+        # tenant 미설정 시 get_or_create 시 500 방지
+        if not tenant:
+            return qs_base.none()
+
+        try:
+            sid = int(session_id)
+        except (TypeError, ValueError):
+            return qs_base.none()
+
+        # session 존재 및 해당 tenant 소유 여부 검증 (500/잘못된 정책 생성 방지)
+        session = Session.objects.filter(id=sid).select_related("lecture").first()
+        if not session or getattr(session.lecture, "tenant_id", None) != tenant.id:
+            return qs_base.none()
+
         obj, _ = HomeworkPolicy.objects.get_or_create(
             tenant=tenant,
-            session_id=int(session_id),
+            session_id=sid,
             defaults={
                 "cutline_percent": 80,
                 "cutline_mode": "PERCENT",
