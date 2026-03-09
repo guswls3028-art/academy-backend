@@ -286,18 +286,23 @@ class StaffViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="currently-working")
     def currently_working(self, request):
-        """현재 근무 중인 직원 목록 (end_time 이 null 인 WorkRecord 가 있는 직원)."""
+        """현재 근무 중인 직원 목록 (end_time 이 null 인 WorkRecord 가 있는 직원). 직급(role) 포함."""
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response([])
+        from academy.adapters.db.django import repositories_teachers as teacher_repo
         staff_ids = (
             WorkRecord.objects
             .filter(tenant=tenant, end_time__isnull=True)
             .values_list("staff_id", flat=True)
             .distinct()
         )
-        staffs = Staff.objects.filter(id__in=staff_ids).values("id", "name")
-        return Response([{"staff_id": s["id"], "staff_name": s["name"]} for s in staffs])
+        staffs = Staff.objects.filter(id__in=staff_ids).only("id", "name", "phone", "tenant_id")
+        out = []
+        for s in staffs:
+            role = "TEACHER" if teacher_repo.teacher_exists_tenant_name_phone(tenant, s.name, s.phone or "") else "ASSISTANT"
+            out.append({"staff_id": s.id, "staff_name": s.name, "role": role})
+        return Response(out)
 
     # ===========================
     # 실시간 근무 (Staff 기준)
@@ -323,6 +328,7 @@ class StaffViewSet(viewsets.ModelViewSet):
                 "work_record_id": record.id,
                 "date": record.date.isoformat(),
                 "started_at": record.start_time,
+                "break_minutes": record.break_minutes,
                 "break_started_at": record.current_break_started_at,
             })
 
@@ -337,7 +343,7 @@ class StaffViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="work-records/start-work")
     def start_work(self, request, pk=None):
         staff = self.get_object()
-        now = timezone.now()
+        now = timezone.localtime(timezone.now())
 
         if is_month_locked(staff, now.date()):
             raise ValidationError("마감된 월입니다.")
@@ -648,7 +654,7 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         if record.current_break_started_at:
             raise ValidationError("이미 휴게 중입니다.")
 
-        record.current_break_started_at = timezone.now()
+        record.current_break_started_at = timezone.localtime(timezone.now())
         record.save(update_fields=["current_break_started_at"])
 
         return Response({"status": "BREAK_STARTED"})
@@ -663,7 +669,7 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         if not record.current_break_started_at:
             raise ValidationError("휴게 중이 아닙니다.")
 
-        now = timezone.now()
+        now = timezone.localtime(timezone.now())
         delta = now - record.current_break_started_at
         record.break_minutes += int(delta.total_seconds() / 60)
         record.current_break_started_at = None
@@ -682,12 +688,12 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
             raise ValidationError("이미 종료된 근무입니다.")
 
         if record.current_break_started_at:
-            now = timezone.now()
+            now = timezone.localtime(timezone.now())
             delta = now - record.current_break_started_at
             record.break_minutes += int(delta.total_seconds() / 60)
             record.current_break_started_at = None
 
-        record.end_time = timezone.now().time()
+        record.end_time = timezone.localtime(timezone.now()).time()
         record.save()
 
         return Response(WorkRecordSerializer(record).data)
