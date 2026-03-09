@@ -4,6 +4,8 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from django.db import IntegrityError, transaction
+
 from apps.domains.homework.models import HomeworkPolicy
 from apps.domains.homework.serializers import (
     HomeworkPolicySerializer,
@@ -38,22 +40,28 @@ class HomeworkPolicyViewSet(viewsets.ModelViewSet):
             return qs_base.none()
 
         # session 존재 및 해당 tenant 소유 여부 검증 (500/잘못된 정책 생성 방지)
-        session = Session.objects.filter(id=sid).select_related("lecture").first()
-        if not session or getattr(session.lecture, "tenant_id", None) != tenant.id:
+        if not Session.objects.filter(id=sid, lecture__tenant=tenant).exists():
             return qs_base.none()
 
-        obj, _ = HomeworkPolicy.objects.get_or_create(
-            tenant=tenant,
-            session_id=sid,
-            defaults={
-                "cutline_percent": 80,
-                "cutline_mode": "PERCENT",
-                "cutline_value": 80,
-                "round_unit_percent": 5,
-                "clinic_enabled": True,
-                "clinic_on_fail": True,
-            },
-        )
+        try:
+            with transaction.atomic():
+                obj, _ = HomeworkPolicy.objects.get_or_create(
+                    tenant=tenant,
+                    session_id=sid,
+                    defaults={
+                        "cutline_percent": 80,
+                        "cutline_mode": "PERCENT",
+                        "cutline_value": 80,
+                        "round_unit_percent": 5,
+                        "clinic_enabled": True,
+                        "clinic_on_fail": True,
+                    },
+                )
+        except IntegrityError:
+            # 레이스 컨디션 등으로 create가 실패하면, 이미 만들어진 row를 재조회
+            obj = HomeworkPolicy.objects.filter(tenant=tenant, session_id=sid).first()
+            if not obj:
+                return qs_base.none()
         return qs_base.filter(id=obj.id)
 
     def partial_update(self, request, *args, **kwargs):
