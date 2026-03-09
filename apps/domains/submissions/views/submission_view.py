@@ -89,7 +89,7 @@ class SubmissionViewSet(ModelViewSet):
             SubmissionAnswer.objects.update_or_create(
                 submission=submission,
                 exam_question_id=int(eqid),
-                defaults={"answer": ans},
+                defaults={"answer": ans, "tenant": submission.tenant},
             )
             updated += 1
 

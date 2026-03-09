@@ -5,13 +5,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.serializers.submission import SubmissionCreateSerializer
 from apps.domains.submissions.services.dispatcher import dispatch_submission
 
 
 class ExamOMRBatchUploadView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def post(self, request, exam_id: int):
         """
@@ -19,6 +20,10 @@ class ExamOMRBatchUploadView(APIView):
           - files: File[]  (반복)
           - (optional) sheet_id: number  (payload로 전달)
         """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant required"}, status=403)
+
         files = request.FILES.getlist("files") or []
         if not files:
             # 일부 클라이언트는 file 단일 키를 쓰기도 함
@@ -52,7 +57,7 @@ class ExamOMRBatchUploadView(APIView):
                 }
             )
             ser.is_valid(raise_exception=True)
-            sub = ser.save(user=request.user)
+            sub = ser.save(user=request.user, tenant=tenant)
             dispatch_submission(sub)
             created_ids.append(int(sub.id))
 

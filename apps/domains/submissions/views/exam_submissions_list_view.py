@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.submissions.models import Submission
 
 
@@ -78,12 +79,19 @@ def _resolve_score_for_submission(submission_id: int) -> Optional[float]:
 
 
 class ExamSubmissionsListView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request, exam_id: int):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response([], status=200)
         qs = (
             Submission.objects
-            .filter(target_type=Submission.TargetType.EXAM, target_id=int(exam_id))
+            .filter(
+                tenant=tenant,
+                target_type=Submission.TargetType.EXAM,
+                target_id=int(exam_id),
+            )
             .order_by("-id")[:200]
         )
 
