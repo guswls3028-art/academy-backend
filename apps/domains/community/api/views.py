@@ -71,7 +71,10 @@ class PostViewSet(viewsets.ModelViewSet):
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         qs = get_notice_posts_for_tenant(tenant)
-        page_size = min(int(request.query_params.get("page_size") or 50), 200)
+        try:
+            page_size = min(int(request.query_params.get("page_size") or 50), 200)
+        except (TypeError, ValueError):
+            page_size = 50
         try:
             page = max(1, int(request.query_params.get("page") or 1))
         except (TypeError, ValueError):
