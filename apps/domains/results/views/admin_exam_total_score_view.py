@@ -162,19 +162,11 @@ class AdminExamTotalScoreView(APIView):
         )
 
         # -------------------------------------------------
-        # 5️⃣ Result 업데이트 (합산 입력 시 objective_score 동기화: total = objective + sum(items))
+        # 5️⃣ Result 업데이트 (합산 입력 시 total만 변경, objective_score 유지)
         # -------------------------------------------------
-        subjective_sum = sum(
-            float(x.score or 0.0)
-            for x in ResultItem.objects.filter(result=result)
-        )
-        new_objective = float(new_score) - subjective_sum
-        if new_objective < 0:
-            new_objective = 0.0
         result.total_score = float(new_score)
-        result.objective_score = new_objective
         result.max_score = float(max_score)
-        result.save(update_fields=["total_score", "objective_score", "max_score", "updated_at"])
+        result.save(update_fields=["total_score", "max_score", "updated_at"])
 
         # -------------------------------------------------
         # 6️⃣ progress pipeline (best-effort)
