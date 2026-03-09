@@ -10,10 +10,10 @@ $BackendShortcut.WorkingDirectory = "C:\academy"
 $BackendShortcut.Description = "Local Backend Server"
 $BackendShortcut.Save()
 
-# Frontend shortcut
+# Frontend shortcut (프로젝트 경로: C:\academy\frontend)
 $FrontendShortcut = $WshShell.CreateShortcut("$Desktop\Academy Frontend.lnk")
-$FrontendShortcut.TargetPath = "C:\academyfront\scripts\run-local-frontend.bat"
-$FrontendShortcut.WorkingDirectory = "C:\academyfront"
+$FrontendShortcut.TargetPath = "C:\academy\frontend\scripts\run-local-frontend.bat"
+$FrontendShortcut.WorkingDirectory = "C:\academy\frontend"
 $FrontendShortcut.Description = "Local Frontend Server"
 $FrontendShortcut.Save()
 
