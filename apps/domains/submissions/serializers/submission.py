@@ -75,8 +75,11 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         upload_file = validated_data.pop("file", None)
-
-        submission = Submission.objects.create(**validated_data)
+        tenant = validated_data.pop("tenant", None)
+        user = validated_data.pop("user", None)
+        if not tenant or not user:
+            raise serializers.ValidationError("tenant and user are required.")
+        submission = Submission.objects.create(tenant=tenant, user=user, **validated_data)
 
         if upload_file:
             ext = (upload_file.name or "").split(".")[-1] if "." in (upload_file.name or "") else "bin"

@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.submissions.serializers.submission import (
     SubmissionSerializer,
@@ -19,8 +20,13 @@ from apps.domains.results.services.grading_service import grade_submission
 
 
 class SubmissionViewSet(ModelViewSet):
-    queryset = Submission.objects.all().order_by("-id")
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return Submission.objects.none()
+        return Submission.objects.filter(tenant=tenant).order_by("-id")
 
     def get_serializer_class(self):
         if self.action in ("create", "admin_omr_upload"):
@@ -28,7 +34,10 @@ class SubmissionViewSet(ModelViewSet):
         return SubmissionSerializer
 
     def perform_create(self, serializer):
-        submission = serializer.save(user=self.request.user)
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return
+        submission = serializer.save(user=self.request.user, tenant=tenant)
         dispatch_submission(submission)
 
     @action(detail=True, methods=["post"])
