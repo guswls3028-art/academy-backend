@@ -4,6 +4,10 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.exams.models import ExamAsset
+from apps.domains.assets.omr.services.meta_generator import (
+    build_objective_template_meta,
+    ALLOWED_QUESTION_COUNTS,
+)
 
 
 class ObjectiveOMRTemplateListView(APIView):
@@ -32,3 +36,27 @@ class ObjectiveOMRTemplateListView(APIView):
             )
 
         return Response(items, status=200)
+
+
+class ObjectiveOMRMetaView(APIView):
+    """
+    GET /api/v1/assets/omr/objective/meta/?question_count=10|20|30
+    OmrObjectiveMetaV1 형식 반환 (mm 단위 roi).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qc_raw = request.query_params.get("question_count")
+        if qc_raw is None:
+            return Response({"question_count": "required"}, status=400)
+        try:
+            question_count = int(str(qc_raw).strip())
+        except (TypeError, ValueError):
+            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+        if question_count not in ALLOWED_QUESTION_COUNTS:
+            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+        try:
+            meta = build_objective_template_meta(question_count=question_count)
+        except ValueError:
+            return Response({"question_count": "must be one of 10, 20, 30"}, status=400)
+        return Response(meta, status=200)

@@ -1,23 +1,36 @@
 # apps/domains/assets/omr/services/meta_generator.py
 """
-TEMP STUB — SSOT ALIGN
+Objective OMR template meta (SSOT).
 
-- submissions 도메인이 기대하는 인터페이스만 유지한다.
-- 실제 meta 생성 책임은 현재 외부 파이프라인/워커 영역이다.
-- 이 함수는 존재 보장용이며, 호출되면 명시적으로 실패시킨다.
+- GET /api/v1/assets/omr/objective/meta/?question_count=10|20|30 에서 사용.
+- 좌표는 mm 단위 (A4 landscape 297x210 기준).
 """
+
+ALLOWED_QUESTION_COUNTS = (10, 20, 30)
+
 
 def build_objective_template_meta(*, question_count: int, **kwargs):
     """
-    Stub for legacy compatibility.
-
-    Args:
-        question_count (int): number of questions (expected 10|20|30)
-
-    Raises:
-        NotImplementedError: always
+    question_count(10|20|30)에 맞는 템플릿 meta 반환.
+    OmrObjectiveMetaV1 형식: version, units, question_count, questions[].roi (mm).
     """
-    raise NotImplementedError(
-        "build_objective_template_meta is not implemented. "
-        "Objective OMR meta is generated outside assets domain."
-    )
+    if question_count not in ALLOWED_QUESTION_COUNTS:
+        raise ValueError("question_count must be one of 10, 20, 30")
+
+    # A4 landscape 297x210mm, 우측 정렬 버블 영역 가정 (대략 x=200, 세로 간격 12mm)
+    questions = []
+    for i in range(1, question_count + 1):
+        y_mm = 30 + (i - 1) * 12
+        questions.append({
+            "question_number": i,
+            "axis": "y",
+            "roi": {"x": 200, "y": y_mm, "w": 8, "h": 8},
+            "choices": [{"value": str(j)} for j in range(1, 6)],
+        })
+
+    return {
+        "version": "objective_v1",
+        "units": "mm",
+        "question_count": question_count,
+        "questions": questions,
+    }
