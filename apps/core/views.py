@@ -1,7 +1,7 @@
 # PATH: apps/core/views.py
 import logging
 from datetime import datetime
-from django.db import transaction
+from django.db import transaction, connection
 from django.db.models import Sum
 from django.conf import settings
 
@@ -536,18 +536,47 @@ class MaintenanceModeView(APIView):
         enabled = bool((request.data or {}).get("enabled"))
 
         exempt_codes = ("hakwonplus", "9999")
-        programs = Program.objects.select_for_update().select_related("tenant").all()
-        for program in programs:
-            flags = dict(getattr(program, "feature_flags", None) or {})
-            if program.tenant and program.tenant.code in exempt_codes:
-                flags.pop("maintenance_mode", None)
+        program_table = Program._meta.db_table
+        tenant_table = Tenant._meta.db_table
+
+        with connection.cursor() as cursor:
+            if enabled:
+                # 1) exempt tenant는 항상 OFF 강제
+                cursor.execute(
+                    f"""
+                    UPDATE {program_table} p
+                    SET feature_flags = COALESCE(p.feature_flags, '{{}}'::jsonb) - 'maintenance_mode'
+                    FROM {tenant_table} t
+                    WHERE p.tenant_id = t.id
+                      AND t.code = ANY(%s)
+                    """,
+                    [list(exempt_codes)],
+                )
+
+                # 2) 나머지 테넌트만 ON
+                cursor.execute(
+                    f"""
+                    UPDATE {program_table} p
+                    SET feature_flags = jsonb_set(
+                        COALESCE(p.feature_flags, '{{}}'::jsonb),
+                        '{{maintenance_mode}}',
+                        'true'::jsonb,
+                        true
+                    )
+                    FROM {tenant_table} t
+                    WHERE p.tenant_id = t.id
+                      AND NOT (t.code = ANY(%s))
+                    """,
+                    [list(exempt_codes)],
+                )
             else:
-                if enabled:
-                    flags["maintenance_mode"] = True
-                else:
-                    flags.pop("maintenance_mode", None)
-            program.feature_flags = flags
-            program.save(update_fields=["feature_flags"])
+                # OFF: 전체에서 키 제거 (exempt 포함)
+                cursor.execute(
+                    f"""
+                    UPDATE {program_table}
+                    SET feature_flags = COALESCE(feature_flags, '{{}}'::jsonb) - 'maintenance_mode'
+                    """
+                )
 
         return self.get(request)
 
