@@ -231,14 +231,43 @@ class StaffViewSet(viewsets.ModelViewSet):
             }
 
             # 직원(Staff)으로 로그인한 경우: 출근/퇴근용 staff_id, default_work_type_id
+            # 오너여도 동일하게 출퇴근 기록 가능하도록: 오너인데 Staff가 없으면 해당 테넌트에 Staff 생성 후 연결
             staff_profile = getattr(request.user, "staff_profile", None)
             if staff_profile and tenant and getattr(staff_profile, "tenant_id", None) == tenant.id:
                 payload["staff_id"] = staff_profile.id
                 first_swt = staff_profile.staff_work_types.order_by("id").first()
                 if first_swt:
                     payload["default_work_type_id"] = first_swt.work_type_id
-
-            return Response(payload)
+            elif is_de_facto_owner and tenant and request.user:
+                from apps.domains.staffs.models import Staff, StaffWorkType, WorkType
+                owner_staff = Staff.objects.filter(tenant=tenant, user=request.user).first()
+                if not owner_staff:
+                    owner_name = (getattr(request.user, "name", None) or "").strip() or getattr(request.user, "username", "") or "원장"
+                    owner_phone = (getattr(request.user, "phone", None) or "").strip() or ""
+                    owner_staff = Staff.objects.create(
+                        tenant=tenant,
+                        user=request.user,
+                        name=owner_name,
+                        phone=owner_phone or "",
+                        is_manager=True,
+                    )
+                first_wt = WorkType.objects.filter(tenant=tenant, is_active=True).order_by("id").first()
+                if not first_wt:
+                    first_wt = WorkType.objects.create(
+                        tenant=tenant,
+                        name="기본",
+                        base_hourly_wage=0,
+                        is_active=True,
+                    )
+                if not owner_staff.staff_work_types.exists():
+                    StaffWorkType.objects.get_or_create(
+                        tenant=tenant,
+                        staff=owner_staff,
+                        work_type=first_wt,
+                        defaults={"hourly_wage": None},
+                    )
+                payload["staff_id"] = owner_staff.id
+                payload["default_work_type_id"] = first_wt.id
         except Exception as e:
             logger.warning("staffs/me error: %s", e, exc_info=True)
             return Response(
