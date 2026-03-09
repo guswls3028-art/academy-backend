@@ -505,6 +505,47 @@ class TenantDetailView(APIView):
         return self.get(request, tenant_id)
 
 
+# --------------------------------------------------
+# Maintenance Mode (global flag) — dev_app 전용
+# --------------------------------------------------
+
+class MaintenanceModeView(APIView):
+    """
+    GET/PATCH /api/v1/core/maintenance-mode/
+
+    - dev_app(owner) 전용: 전체 테넌트 Program.feature_flags["maintenance_mode"] ON/OFF
+    - tenant 격리를 깨지 않도록, 응답은 aggregate(count)만 반환
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
+
+    def get(self, request):
+        total = Program.objects.count()
+        enabled_count = Program.objects.filter(feature_flags__maintenance_mode=True).count()
+        enabled_for_all = bool(total and enabled_count == total)
+        return Response({
+            "enabled_for_all": enabled_for_all,
+            "enabled_count": enabled_count,
+            "total": total,
+        })
+
+    @transaction.atomic
+    def patch(self, request):
+        enabled = bool((request.data or {}).get("enabled"))
+
+        programs = Program.objects.select_for_update().all()
+        for program in programs:
+            flags = dict(getattr(program, "feature_flags", None) or {})
+            if enabled:
+                flags["maintenance_mode"] = True
+            else:
+                flags.pop("maintenance_mode", None)
+            program.feature_flags = flags
+            program.save(update_fields=["feature_flags"])
+
+        return self.get(request)
+
+
 class TenantInfoView(APIView):
     """
     GET/PATCH /api/v1/core/tenant-info/

@@ -17,6 +17,7 @@ from apps.domains.exams.views.template_validation_view import TemplateValidation
 
 from apps.domains.exams.views.regular_from_template_view import RegularExamFromTemplateView
 from apps.domains.exams.views.save_as_template_view import SaveAsTemplateView
+from apps.domains.exams.views.template_with_usage_list_view import TemplateWithUsageListView
 from apps.domains.exams.views.exam_questions_by_exam_view import ExamQuestionsByExamView
 from apps.domains.exams.views.exam_question_init_view import ExamQuestionInitView
 from apps.domains.exams.views.question_auto_view import SheetAutoQuestionsView
@@ -35,6 +36,8 @@ urlpatterns = [
     # Bulk template (원테이크) — /exams/bulk-template/ 먼저 매칭
     # =========================
     path("bulk-template/", BulkTemplateCreateView.as_view()),
+    # 템플릿 목록(+사용중인 강의) — router보다 먼저 매칭
+    path("templates/with-usage/", TemplateWithUsageListView.as_view()),
 
     # =========================
     # Core
