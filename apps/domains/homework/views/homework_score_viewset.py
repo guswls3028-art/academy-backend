@@ -285,14 +285,16 @@ class HomeworkScoreViewSet(ModelViewSet):
 
         - % 입력: score=85, max_score 생략 (percent 직접 입력)
         - raw/max: score=32, max_score=64
+        - 미제출: meta_status="NOT_SUBMITTED", score=null
         """
         serializer = HomeworkQuickPatchSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         homework_id = serializer.validated_data["homework_id"]
         enrollment_id = serializer.validated_data["enrollment_id"]
-        score = serializer.validated_data["score"]
+        score = serializer.validated_data.get("score")
         max_score = serializer.validated_data.get("max_score")
+        meta_status = serializer.validated_data.get("meta_status")
 
         # ✅ 단일 진실: homework → session
         homework = Homework.objects.select_related("session").get(id=homework_id)
@@ -322,19 +324,38 @@ class HomeworkScoreViewSet(ModelViewSet):
                     updated_by_user_id=_safe_user_id(request),
                 )
 
-            obj = _apply_score_and_policy(
-                obj=obj,
-                score=score,
-                max_score=max_score,
-                request=request,
-                save_fields=[
-                    "score",
-                    "max_score",
-                    "passed",
-                    "clinic_required",
-                    "updated_by_user_id",
-                ],
-            )
+            if meta_status == HomeworkScore.MetaStatus.NOT_SUBMITTED:
+                obj.meta = {"status": HomeworkScore.MetaStatus.NOT_SUBMITTED}
+                obj.score = None
+                obj.max_score = None
+                obj.updated_by_user_id = _safe_user_id(request)
+                passed, clinic_required, _ = calc_homework_passed_and_clinic(
+                    session=obj.session,
+                    score=None,
+                    max_score=None,
+                )
+                obj.passed = bool(passed)
+                obj.clinic_required = bool(clinic_required)
+                obj.save(update_fields=["meta", "score", "max_score", "passed", "clinic_required", "updated_by_user_id", "updated_at"])
+            else:
+                obj = _apply_score_and_policy(
+                    obj=obj,
+                    score=score,
+                    max_score=max_score,
+                    request=request,
+                    save_fields=[
+                        "score",
+                        "max_score",
+                        "passed",
+                        "clinic_required",
+                        "updated_by_user_id",
+                    ],
+                )
+                if obj.meta and isinstance(obj.meta, dict) and obj.meta.get("status") == HomeworkScore.MetaStatus.NOT_SUBMITTED:
+                    obj.meta = {k: v for k, v in obj.meta.items() if k != "status"}
+                    if not obj.meta:
+                        obj.meta = None
+                    obj.save(update_fields=["meta", "updated_at"])
 
         return Response(
             HomeworkScoreSerializer(obj).data,
