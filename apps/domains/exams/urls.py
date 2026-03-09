@@ -26,10 +26,12 @@ from apps.domains.exams.views.student_exam_view import StudentAvailableExamListV
 from apps.domains.exams.views.bulk_template_create_view import BulkTemplateCreateView
 
 router = DefaultRouter()
-router.register(r"", ExamViewSet, basename="exams")
+# 서브 리소스(answer-keys, sheets, questions)를 빈 prefix("")보다 먼저 등록해야 함.
+# 그렇지 않으면 GET/POST /exams/answer-keys/ 가 ExamViewSet detail(pk="answer-keys")로 매칭되어 POST 405 발생.
+router.register(r"answer-keys", AnswerKeyViewSet, basename="answer-keys")
 router.register(r"sheets", SheetViewSet, basename="exam-sheets")
 router.register(r"questions", QuestionViewSet, basename="exam-questions")
-router.register(r"answer-keys", AnswerKeyViewSet, basename="answer-keys")
+router.register(r"", ExamViewSet, basename="exams")
 
 urlpatterns = [
     # =========================
