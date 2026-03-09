@@ -95,14 +95,17 @@ class HomeworkQuickPatchSerializer(serializers.Serializer):
     지원 입력:
     - percent 입력: score=85, max_score 생략 (None)
     - raw 입력: score=18, max_score=20
-
-    해석 규칙 (backend 단일 진실):
-    - max_score == None → score를 percent 값으로 간주
-    - max_score != None → score/max_score*100 으로 percent 계산
+    - 미제출: meta_status="NOT_SUBMITTED", score=null
     """
 
     homework_id = serializers.IntegerField()
     enrollment_id = serializers.IntegerField()
 
-    score = serializers.FloatField()
+    score = serializers.FloatField(allow_null=True)
     max_score = serializers.FloatField(required=False, allow_null=True)
+
+    meta_status = serializers.ChoiceField(
+        choices=[HomeworkScore.MetaStatus.NOT_SUBMITTED],
+        allow_null=True,
+        required=False,
+    )
