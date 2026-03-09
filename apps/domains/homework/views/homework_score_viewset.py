@@ -328,14 +328,28 @@ class HomeworkScoreViewSet(ModelViewSet):
                     return _locked_response(obj)
 
                 if not obj:
-                    obj = HomeworkScore.objects.create(
-                        homework=homework,
-                        session=session,
-                        enrollment_id=enrollment_id,
-                        score=None,
-                        max_score=None,
-                        updated_by_user_id=_safe_user_id(request),
-                    )
+                    try:
+                        obj = HomeworkScore.objects.create(
+                            homework=homework,
+                            session=session,
+                            enrollment_id=enrollment_id,
+                            score=None,
+                            max_score=None,
+                            updated_by_user_id=_safe_user_id(request),
+                        )
+                    except IntegrityError:
+                        obj = (
+                            HomeworkScore.objects.filter(
+                                homework_id=homework_id,
+                                enrollment_id=enrollment_id,
+                            )
+                            .select_related("session", "homework")
+                            .first()
+                        )
+                        if not obj:
+                            raise
+                        if obj.is_locked:
+                            return _locked_response(obj)
 
                 if meta_status == HomeworkScore.MetaStatus.NOT_SUBMITTED:
                     obj.meta = {"status": HomeworkScore.MetaStatus.NOT_SUBMITTED}
@@ -377,6 +391,7 @@ class HomeworkScoreViewSet(ModelViewSet):
         except Http404:
             raise
         except Exception as e:
+            logger.exception("quick_patch failed: %s", e)
             if getattr(settings, "DEBUG", False):
                 return Response(
                     {"detail": str(e), "type": type(e).__name__},
