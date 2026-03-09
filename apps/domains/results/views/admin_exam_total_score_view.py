@@ -17,6 +17,7 @@ from apps.domains.exams.models import Exam
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.submissions.models import Submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
+from django.db.models import Max
 
 
 class AdminExamTotalScoreView(APIView):
@@ -49,16 +50,8 @@ class AdminExamTotalScoreView(APIView):
         if new_score < 0:
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})
 
-        max_score = None
-        if "max_score" in request.data:
-            raw_max = request.data.get("max_score", None)
-            if raw_max is not None:
-                try:
-                    max_score = float(raw_max)
-                except Exception:
-                    raise ValidationError({"detail": "max_score must be number", "code": "INVALID"})
-                if max_score < 0:
-                    raise ValidationError({"detail": "max_score must be >= 0", "code": "INVALID"})
+        # 성적 탭 입력은 0~100 고정 (요구사항)
+        max_score = 100.0
 
         # -------------------------------------------------
         # 1️⃣ Result (대표 스냅샷)
@@ -73,11 +66,38 @@ class AdminExamTotalScoreView(APIView):
             )
             .first()
         )
-        if not result:
-            raise NotFound({"detail": "result not found", "code": "NOT_FOUND"})
-
-        if not result.attempt_id:
-            raise ValidationError({"detail": "representative attempt not set", "code": "INVALID"})
+        if not result or not result.attempt_id:
+            # 과제 quick patch처럼 "없으면 생성" (수동 입력용 attempt/result 생성)
+            qs = (
+                ExamAttempt.objects
+                .select_for_update()
+                .filter(exam_id=exam_id, enrollment_id=enrollment_id)
+            )
+            last = qs.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
+            next_index = int(last) + 1
+            qs.filter(is_representative=True).update(is_representative=False)
+            attempt = ExamAttempt.objects.create(
+                exam_id=exam_id,
+                enrollment_id=enrollment_id,
+                submission_id=0,
+                attempt_index=next_index,
+                is_retake=(last > 0),
+                is_representative=True,
+                status="done",
+            )
+            if not result:
+                result = Result.objects.create(
+                    target_type="exam",
+                    target_id=exam_id,
+                    enrollment_id=enrollment_id,
+                    attempt_id=int(attempt.id),
+                    total_score=0.0,
+                    max_score=float(max_score),
+                )
+            else:
+                result.attempt_id = int(attempt.id)
+                result.max_score = float(max_score)
+                result.save(update_fields=["attempt_id", "max_score", "updated_at"])
 
         # -------------------------------------------------
         # 2️⃣ Attempt LOCK 상태 확인
@@ -95,8 +115,8 @@ class AdminExamTotalScoreView(APIView):
         # -------------------------------------------------
         # 3️⃣ 점수 범위 검증
         # -------------------------------------------------
-        effective_max = max_score if max_score is not None else float(result.max_score or 0.0)
-        if effective_max and new_score > float(effective_max):
+        effective_max = float(max_score)
+        if new_score > float(effective_max):
             raise ValidationError(
                 {"detail": f"score must be between 0 and {effective_max}", "code": "INVALID"}
             )
@@ -130,7 +150,7 @@ class AdminExamTotalScoreView(APIView):
             answer="",
             is_correct=bool(float(new_score) >= float(pass_score)),
             score=float(new_score),
-            max_score=float(effective_max or 0.0),
+            max_score=float(effective_max),
             source="manual_total",
             meta={
                 "manual_total": True,
@@ -142,11 +162,8 @@ class AdminExamTotalScoreView(APIView):
         # 5️⃣ Result 업데이트
         # -------------------------------------------------
         result.total_score = float(new_score)
-        if max_score is not None:
-            result.max_score = float(max_score)
-            result.save(update_fields=["total_score", "max_score", "updated_at"])
-        else:
-            result.save(update_fields=["total_score", "updated_at"])
+        result.max_score = float(max_score)
+        result.save(update_fields=["total_score", "max_score", "updated_at"])
 
         # -------------------------------------------------
         # 6️⃣ progress pipeline (best-effort)
