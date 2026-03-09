@@ -30,6 +30,21 @@ class HomeworkPolicy(TimestampModel):
     cutline_percent = models.PositiveSmallIntegerField(default=80)
     round_unit_percent = models.PositiveSmallIntegerField(default=5)
 
+    # ✅ 과제 커트라인: 퍼센트(%) 또는 문항 수(COUNT) 기준
+    class CutlineMode(models.TextChoices):
+        PERCENT = "PERCENT", "퍼센트 (%)"
+        COUNT = "COUNT", "문항 수"
+
+    cutline_mode = models.CharField(
+        max_length=10,
+        choices=CutlineMode.choices,
+        default=CutlineMode.PERCENT,
+    )
+    cutline_value = models.PositiveSmallIntegerField(
+        default=80,
+        help_text="PERCENT: 0-100 퍼센트, COUNT: 최소 정답 문항 수(점수)",
+    )
+
     clinic_enabled = models.BooleanField(default=True)
     clinic_on_fail = models.BooleanField(default=True)
 
