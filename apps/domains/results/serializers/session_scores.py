@@ -31,6 +31,9 @@ class ScoreBlockSerializer(serializers.Serializer):
     is_locked = serializers.BooleanField()
     lock_reason = serializers.CharField(allow_null=True, allow_blank=True)
 
+    # 과제만: 미제출 등 meta.status (NOT_SUBMITTED)
+    meta = serializers.DictField(allow_null=True, required=False, default=None)
+
 
 class ExamScoreBlockSerializer(serializers.Serializer):
     exam_id = serializers.IntegerField()
