@@ -70,17 +70,19 @@ class HomeworkViewSet(ModelViewSet):
                 raise ValidationError({"template_homework_id": "유효한 과제 템플릿이 아닙니다."})
             tenant = getattr(self.request, "tenant", None)
             if tenant:
-                from apps.domains.homework_results.views.homework_template_with_usage import template_visible_to_tenant
-                if not template_visible_to_tenant(template, tenant):
-                    raise ValidationError({"template_homework_id": "해당 템플릿에 접근할 수 없습니다."})
+                if not template.derived_homeworks.filter(session__lecture__tenant=tenant).exists():
+                    from apps.domains.homework_results.views.homework_template_with_usage import template_visible_to_tenant
+                    if not template_visible_to_tenant(template, tenant):
+                        raise ValidationError({"template_homework_id": "해당 템플릿에 접근할 수 없습니다."})
             title = (data.get("title") or "").strip() or template.title
-            serializer.save(
+            instance = Homework.objects.create(
                 homework_type=Homework.HomeworkType.REGULAR,
                 session_id=int(session_id),
                 template_homework=template,
                 title=title,
                 status=Homework.Status.DRAFT,
             )
+            serializer.instance = instance
         else:
             serializer.save(
                 homework_type=Homework.HomeworkType.REGULAR,
