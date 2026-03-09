@@ -40,7 +40,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.results.models import Result, ResultItem, ExamAttempt
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.serializers.session_scores import SessionScoreRowSerializer
@@ -54,7 +54,9 @@ from apps.domains.homework_results.models import Homework
 from apps.domains.homework.models import HomeworkAssignment
 
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.exams.models import ExamEnrollment
+from apps.domains.exams.models import ExamEnrollment, ExamQuestion
+from apps.domains.exams.models.sheet import Sheet
+from apps.domains.exams.services.template_resolver import resolve_template_exam
 
 
 def _safe_student_name(enrollment: Optional[Enrollment]) -> str:
