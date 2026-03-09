@@ -57,13 +57,23 @@ class PostEntitySerializer(serializers.ModelSerializer):
     block_type_label = serializers.CharField(source="block_type.label", read_only=True)
     replies_count = serializers.SerializerMethodField(read_only=True)
     created_by_display = serializers.SerializerMethodField(read_only=True)
+    created_by_deleted = serializers.SerializerMethodField(read_only=True)
 
     def get_replies_count(self, obj):
         return getattr(obj, "replies_count", 0) if hasattr(obj, "replies_count") else 0
 
+    def _is_created_by_deleted(self, obj):
+        created_by = getattr(obj, "created_by", None)
+        if created_by is None:
+            return True
+        return bool(getattr(created_by, "deleted_at", None))
+
+    def get_created_by_deleted(self, obj):
+        return self._is_created_by_deleted(obj)
+
     def get_created_by_display(self, obj):
-        if not getattr(obj, "created_by_id", None):
-            return None
+        if self._is_created_by_deleted(obj):
+            return "삭제된 학생입니다."
         created_by = getattr(obj, "created_by", None)
         return getattr(created_by, "name", None) if created_by else None
 
@@ -78,6 +88,7 @@ class PostEntitySerializer(serializers.ModelSerializer):
             "content",
             "created_by",
             "created_by_display",
+            "created_by_deleted",
             "created_at",
             "replies_count",
             "mappings",
