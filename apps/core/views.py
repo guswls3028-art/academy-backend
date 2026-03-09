@@ -338,13 +338,33 @@ class JobProgressView(APIView):
 
 
 def _tenant_branding_dto(program):
-    """Program.ui_config → TenantBrandingDto 형태."""
+    """Program.ui_config → TenantBrandingDto 형태. 로고는 presigned URL로 반환해 R2 공개 도메인 404 방지."""
+    from django.conf import settings
+    from apps.infrastructure.storage import r2 as r2_storage
+
     cfg = getattr(program, "ui_config", None) or {}
+    logo_url = cfg.get("logo_url") or None
+
+    # Admin 버킷 객체는 공개 URL이 비디오 버킷과 겹쳐 404 나는 경우가 있음. 항상 presigned로 응답.
+    logo_key = cfg.get("logo_key")
+    if logo_key:
+        logo_url = r2_storage.generate_presigned_get_url_admin(
+            key=logo_key, expires_in=86400 * 7
+        )
+    elif logo_url:
+        base = (getattr(settings, "R2_ADMIN_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
+        if base and logo_url.startswith(base + "/"):
+            key = logo_url[len(base) + 1 :].split("?")[0]
+            if key.startswith("tenant-logos/"):
+                logo_url = r2_storage.generate_presigned_get_url_admin(
+                    key=key, expires_in=86400 * 7
+                )
+
     return {
         "tenantId": program.tenant_id,
         "loginTitle": cfg.get("login_title") or "",
         "loginSubtitle": cfg.get("login_subtitle") or "",
-        "logoUrl": cfg.get("logo_url") or None,
+        "logoUrl": logo_url,
         "windowTitle": cfg.get("window_title") or "",
         "displayName": program.display_name,
     }
@@ -380,6 +400,8 @@ class TenantBrandingView(APIView):
             cfg["login_subtitle"] = request.data.get("loginSubtitle")
         if "logoUrl" in request.data:
             cfg["logo_url"] = request.data.get("logoUrl") or None
+            if "logo_key" in cfg:
+                del cfg["logo_key"]
         if "windowTitle" in request.data:
             cfg["window_title"] = request.data.get("windowTitle") or None
         if "displayName" in request.data:
