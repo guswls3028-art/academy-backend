@@ -332,6 +332,8 @@ class SessionScoresView(APIView):
                         "clinic_required": clinic_required,
                         "is_locked": False,
                         "lock_reason": None,
+                        "objective_score": None,
+                        "subjective_score": None,
                     }
                     updated_at = None
                 else:
@@ -341,6 +343,11 @@ class SessionScoresView(APIView):
                     locked = attempt_status.lower() == "grading"
                     pass_score = exam_pass_score_map.get(exid, 0.0)
                     passed = bool(float(r.total_score or 0.0) >= float(pass_score))
+                    subjective_sum = sum(
+                        float(ri.score or 0.0)
+                        for ri in (r.items.all() if hasattr(r, "items") else [])
+                    )
+                    objective_val = float(getattr(r, "objective_score", 0.0) or 0.0)
 
                     block = {
                         "score": float(r.total_score or 0.0),
@@ -349,6 +356,8 @@ class SessionScoresView(APIView):
                         "clinic_required": clinic_required,
                         "is_locked": locked,
                         "lock_reason": "GRADING" if locked else None,
+                        "objective_score": objective_val,
+                        "subjective_score": subjective_sum,
                     }
                     updated_at = r.updated_at
 

@@ -10,6 +10,7 @@ from apps.domains.results.views.admin_exam_summary_view import AdminExamSummaryV
 from apps.domains.results.views.admin_exam_result_detail_view import AdminExamResultDetailView
 from apps.domains.results.views.admin_exam_item_score_view import AdminExamItemScoreView
 from apps.domains.results.views.admin_exam_total_score_view import AdminExamTotalScoreView
+from apps.domains.results.views.admin_exam_objective_score_view import AdminExamObjectiveScoreView
 from apps.domains.results.views.admin_representative_attempt_view import AdminRepresentativeAttemptView
 from apps.domains.results.views.admin_exam_attempts_view import AdminExamAttemptsView
 
@@ -54,6 +55,11 @@ urlpatterns = [
         "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/score/",
         AdminExamTotalScoreView.as_view(),
         name="admin-exam-total-score",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/objective/",
+        AdminExamObjectiveScoreView.as_view(),
+        name="admin-exam-objective-score",
     ),
     path(
         "admin/exams/<int:exam_id>/representative-attempt/",

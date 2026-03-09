@@ -21,6 +21,10 @@ class ScoreBlockSerializer(serializers.Serializer):
     score = serializers.FloatField(allow_null=True)
     max_score = serializers.FloatField(allow_null=True)
 
+    # 객관식/주관식 (시험만). 합산 = score = objective + subjective
+    objective_score = serializers.FloatField(allow_null=True, required=False, default=None)
+    subjective_score = serializers.FloatField(allow_null=True, required=False, default=None)
+
     passed = serializers.BooleanField(allow_null=True)
     clinic_required = serializers.BooleanField()
 
