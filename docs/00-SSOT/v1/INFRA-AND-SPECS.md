@@ -3,7 +3,7 @@
 **SSOT:** `docs/00-SSOT/v1/params.yaml`  
 **배포:** `scripts/v1/deploy.ps1`  
 **리전:** ap-northeast-2 · **계정:** 809466760795  
-**V1:** API 2/2/4 최소 HA, 롤링 배포 무중단, RDS PI, Observability SSOT. 첫 배포는 V1 기준만 사용.
+**V1:** API min=1/desired=1/max=2 (런칭 전 비용 절감), 롤링 배포 무중단, RDS PI, Observability SSOT. 첫 배포는 V1 기준만 사용.
 
 ---
 
@@ -14,7 +14,7 @@
 | **역할** | Django API (Gunicorn) | GitHub Actions(OIDC) 빌드·ECR 푸시 | AI 작업(SQS) | SMS/알림톡(SQS) | 영상 인코딩(FFmpeg HLS) |
 | **유형** | ALB + ASG | CI (EC2 빌드 서버 없음) | ASG | ASG | Batch CE + Job Queue |
 | **인스턴스** | t4g.medium | - | t4g.medium | t4g.medium | c6g.xlarge (standard/long) |
-| **스케일** | **min=1, desired=1, max=2** (V1) | - | min=1, max=5 | min=1, max=3 | standard: max40 / long: max80 vCPU |
+| **스케일** | **min=1, desired=1, max=2** (V1 비용 절감) | - | min=1, max=5 | min=1, max=3 | standard: max40 vCPU / long: max80 vCPU |
 | **리소스 이름** | academy-v1-api-asg | - | academy-v1-ai-worker-asg | academy-v1-messaging-worker-asg | academy-v1-video-batch-ce, academy-v1-video-batch-long-ce |
 
 ---
@@ -28,8 +28,7 @@
 | Target Group | academy-v1-api-tg |
 | Launch Template | academy-v1-api-lt |
 | 인스턴스 타입 | t4g.medium |
-| **min / max** | **2 / 4** (V1 최소 HA) |
-| desired | 2 |
+| **min / desired / max** | **1 / 1 / 2** (V1 비용 절감, params.yaml 기준) |
 | 롤링 배포 | MinHealthyPercentage=100, InstanceWarmup=300s |
 
 ---
@@ -42,7 +41,7 @@
 | 큐 | academy-v1-messaging-queue |
 | DLQ | academy-v1-messaging-queue-dlq (Bootstrap 연동) |
 | VisibilityTimeout | 900초 (처리 최악 시간보다 크게) |
-| 인스턴스 | t4g.medium, min=1 max=10 |
+| 인스턴스 | t4g.medium, min=1 max=3 |
 
 ---
 
@@ -53,8 +52,8 @@
 | ASG | academy-v1-ai-worker-asg |
 | 큐 | academy-v1-ai-queue |
 | DLQ | academy-v1-ai-queue-dlq (Bootstrap 연동) |
-| VisibilityTimeout | 3600초 (inference 최대 60분 대비) |
-| 인스턴스 | t4g.medium, min=1 max=10 |
+| VisibilityTimeout | 1800초 (엑셀 worst-case 30분, in-flight 유실 방지) |
+| 인스턴스 | t4g.medium, min=1 max=5 |
 
 ---
 

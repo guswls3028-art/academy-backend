@@ -35,12 +35,12 @@
 | VPC/네트워크 | academy-v1-vpc, academy-v1-sg-app, academy-v1-sg-batch, academy-v1-sg-data |
 | API | academy-v1-api-asg, academy-v1-api-lt, academy-v1-api-alb, academy-v1-api-tg |
 | ASG | academy-v1-messaging-worker-asg, academy-v1-ai-worker-asg |
-| Batch CE/Queue | academy-v1-video-batch-ce, academy-v1-video-ops-ce, academy-v1-video-batch-queue, academy-v1-video-ops-queue |
-| JobDef | academy-v1-video-batch-jobdef, academy-v1-video-ops-reconcile, scanstuck, netprobe |
+| Batch CE/Queue | academy-v1-video-batch-ce, academy-v1-video-batch-long-ce, academy-v1-video-ops-ce, academy-v1-video-batch-queue, academy-v1-video-batch-long-queue, academy-v1-video-ops-queue |
+| JobDef | academy-v1-video-batch-jobdef, academy-v1-video-batch-long-jobdef, academy-v1-video-ops-reconcile, scanstuck, netprobe |
 | EventBridge | academy-v1-reconcile-video-jobs, academy-v1-video-scan-stuck-rate |
 | RDS | academy-v1-db |
 | Redis | academy-v1-redis |
-| DynamoDB | academy-v1-video-job-lock |
+| DynamoDB | academy-v1-video-job-lock, academy-v1-video-upload-checkpoints |
 | SSM | /academy/api/env, /academy/workers/env |
 | ECR | academy-api, academy-video-worker, academy-messaging-worker, academy-ai-worker-cpu |
 
