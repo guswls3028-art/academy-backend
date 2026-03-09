@@ -392,9 +392,14 @@ class HomeworkScoreViewSet(ModelViewSet):
             raise
         except Exception as e:
             logger.exception("quick_patch failed: %s", e)
+            # DEBUG일 때만 응답 본문에 오류 노출 (Network 탭에서 확인 가능)
             if getattr(settings, "DEBUG", False):
                 return Response(
-                    {"detail": str(e), "type": type(e).__name__},
+                    {
+                        "detail": str(e),
+                        "type": type(e).__name__,
+                        "hint": "백엔드 콘솔에 전체 traceback이 출력됩니다. DEBUG=True로 실행 중인지 확인하세요.",
+                    },
                     status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
             raise
