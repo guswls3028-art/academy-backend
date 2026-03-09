@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from django.db import transaction
 from django.db.models import Sum
+from django.conf import settings
 
 from rest_framework.views import APIView
 from rest_framework import viewsets
@@ -62,8 +63,11 @@ class MeView(APIView):
             return Response(serializer.data)
         except Exception as e:
             logger.exception("MeView get failed: %s", e)
+            payload = {"detail": "서버 오류가 발생했습니다."}
+            if getattr(settings, "DEBUG", False):
+                payload["error"] = str(e)
             return Response(
-                {"detail": "서버 오류가 발생했습니다."},
+                payload,
                 status=500,
             )
 
@@ -97,8 +101,11 @@ class ProgramView(APIView):
             program = core_repo.program_get_by_tenant(tenant)
         except Exception as e:
             logger.exception("ProgramView get program_get_by_tenant failed: %s", e)
+            payload = {"detail": "서버 오류가 발생했습니다."}
+            if getattr(settings, "DEBUG", False):
+                payload["error"] = str(e)
             return Response(
-                {"detail": "서버 오류가 발생했습니다."},
+                payload,
                 status=500,
             )
         if program is None:
@@ -117,8 +124,11 @@ class ProgramView(APIView):
             return Response(data)
         except Exception as e:
             logger.exception("ProgramView get serialize failed: %s", e)
+            payload = {"detail": "서버 오류가 발생했습니다."}
+            if getattr(settings, "DEBUG", False):
+                payload["error"] = str(e)
             return Response(
-                {"detail": "서버 오류가 발생했습니다."},
+                payload,
                 status=500,
             )
 
