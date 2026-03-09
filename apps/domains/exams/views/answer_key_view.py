@@ -9,7 +9,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import AnswerKey, Exam
 from apps.domains.exams.serializers.answer_key import AnswerKeySerializer
-from apps.domains.exams.services.template_resolver import resolve_template_exam
+from apps.domains.exams.services.template_resolver import resolve_template_exam, assert_template_editable
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
@@ -50,17 +50,21 @@ class AnswerKeyViewSet(ModelViewSet):
 
     def perform_create(self, serializer):
         exam: Exam = serializer.validated_data["exam"]
-        if exam.exam_type != Exam.ExamType.TEMPLATE:
-            raise PermissionDenied("AnswerKey can be created only for template exams.")
-        serializer.save()
+        owner = resolve_template_exam(exam)
+
+        # regular이 template을 참조 중이면 template에서 편집해야 함
+        if exam.exam_type == Exam.ExamType.REGULAR and exam.template_exam_id is not None:
+            raise PermissionDenied("This regular exam uses a template; edit answer key on the template exam.")
+
+        # template 또는 (template 미지정 regular)만 편집 가능
+        assert_template_editable(owner)
+        serializer.save(exam=owner)
 
     def perform_update(self, serializer):
         obj: AnswerKey = self.get_object()
-        if obj.exam.exam_type != Exam.ExamType.TEMPLATE:
-            raise PermissionDenied("AnswerKey can be updated only for template exams.")
+        assert_template_editable(obj.exam)
         serializer.save()
 
     def perform_destroy(self, instance):
-        if instance.exam.exam_type != Exam.ExamType.TEMPLATE:
-            raise PermissionDenied("AnswerKey can be deleted only for template exams.")
+        assert_template_editable(instance.exam)
         return super().perform_destroy(instance)

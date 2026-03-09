@@ -18,6 +18,7 @@ from apps.domains.exams.views.template_validation_view import TemplateValidation
 from apps.domains.exams.views.regular_from_template_view import RegularExamFromTemplateView
 from apps.domains.exams.views.save_as_template_view import SaveAsTemplateView
 from apps.domains.exams.views.exam_questions_by_exam_view import ExamQuestionsByExamView
+from apps.domains.exams.views.exam_question_init_view import ExamQuestionInitView
 from apps.domains.exams.views.question_auto_view import SheetAutoQuestionsView
 from apps.domains.exams.views.exam_enrollment_view import ExamEnrollmentManageView
 from apps.domains.exams.views.student_exam_view import StudentAvailableExamListView
@@ -64,6 +65,7 @@ urlpatterns = [
     # Questions
     # =========================
     path("<int:exam_id>/questions/", ExamQuestionsByExamView.as_view()),
+    path("<int:exam_id>/questions/init/", ExamQuestionInitView.as_view()),
     path("sheets/<int:sheet_id>/auto-questions/", SheetAutoQuestionsView.as_view()),
 
     # =========================
