@@ -31,7 +31,13 @@ class LectureViewSet(ModelViewSet):
         """
         🔐 tenant 단일 진실
         """
-        return enroll_repo.lecture_filter_tenant(self.request.tenant)
+        tenant = getattr(self.request, "tenant", None)
+        if tenant is None:
+            raise PermissionDenied(
+                "테넌트 컨텍스트가 없습니다. 로컬에서는 python manage.py ensure_localhost_tenant 실행 후 접속하거나, "
+                "X-Tenant-Code 헤더를 설정하세요."
+            )
+        return enroll_repo.lecture_filter_tenant(tenant)
 
     def perform_create(self, serializer):
         """
