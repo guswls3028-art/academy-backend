@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.homework_results.models import Homework
 
 
@@ -26,7 +27,7 @@ class HomeworkTemplateWithUsageListView(APIView):
 
     과제 불러오기 UI용 템플릿 목록 + 사용 중인 강의(used_lectures).
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request):
         tenant = getattr(request, "tenant", None)

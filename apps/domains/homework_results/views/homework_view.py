@@ -20,8 +20,9 @@ from rest_framework.response import Response
 from django.db.models import QuerySet
 
 from apps.core.permissions import TenantResolvedAndMember
+
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.lectures.models import Session
 
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework_results.serializers.homework import HomeworkSerializer
