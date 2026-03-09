@@ -14,7 +14,6 @@ from apps.domains.results.models import Result, ResultFact, ExamAttempt
 
 from apps.domains.exams.models import Exam
 
-from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.submissions.models import Submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 from django.db.models import Max
@@ -128,17 +127,20 @@ class AdminExamTotalScoreView(APIView):
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
         # submission은 있을 수도/없을 수도 있음 (오프라인 입력 허용)
+        # Submission 모델에는 session_id 없음 → exam+enrollment 기준으로 최신 제출 조회
         submission_id = 0
-        session = get_primary_session_for_exam(exam_id)
-        if session:
-            submission = (
-                Submission.objects
-                .filter(enrollment_id=enrollment_id, session_id=int(session.id))
-                .order_by("-id")
-                .first()
+        submission = (
+            Submission.objects
+            .filter(
+                enrollment_id=enrollment_id,
+                target_type=Submission.TargetType.EXAM,
+                target_id=exam_id,
             )
-            if submission:
-                submission_id = int(submission.id)
+            .order_by("-id")
+            .first()
+        )
+        if submission:
+            submission_id = int(submission.id)
 
         ResultFact.objects.create(
             target_type="exam",
