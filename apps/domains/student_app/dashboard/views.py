@@ -39,10 +39,17 @@ class StudentDashboardView(APIView):
             "tenant_info": None,
         }
         if tenant:
+            academies = getattr(tenant, "academies", None) or []
+            if not academies:
+                academies = [{
+                    "name": (getattr(tenant, "name", None) or "").strip(),
+                    "phone": (getattr(tenant, "headquarters_phone", None) or "").strip(),
+                }]
             data["tenant_info"] = {
                 "name": (getattr(tenant, "name", None) or "").strip(),
                 "phone": (getattr(tenant, "phone", None) or "").strip(),
                 "headquarters_phone": (getattr(tenant, "headquarters_phone", None) or "").strip(),
+                "academies": academies,
             }
             # 공지: Community 공지 최대 5건
             notice_qs = get_notice_posts_for_tenant(tenant)[:5]

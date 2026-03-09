@@ -605,10 +605,18 @@ class TenantInfoView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Tenant not resolved."}, status=403)
+        academies = getattr(tenant, "academies", None) or []
+        if not academies:
+            # 기존 단일 학원 정보 호환
+            academies = [{
+                "name": (tenant.name or "").strip(),
+                "phone": (getattr(tenant, "headquarters_phone", None) or "").strip(),
+            }]
         return Response({
             "name": (tenant.name or "").strip(),
             "phone": (tenant.phone or "").strip(),
             "headquarters_phone": (getattr(tenant, "headquarters_phone", None) or "").strip(),
+            "academies": academies,
         })
 
     def patch(self, request):
@@ -625,6 +633,25 @@ class TenantInfoView(APIView):
         if "name" in request.data:
             tenant.name = (request.data.get("name") or "").strip()[:255]
             update_fields.append("name")
+        if "academies" in request.data:
+            raw = request.data.get("academies")
+            if isinstance(raw, list):
+                cleaned = []
+                for item in raw:
+                    if isinstance(item, dict):
+                        name = (item.get("name") or "").strip()[:255]
+                        phone = (item.get("phone") or "").strip()[:50]
+                        cleaned.append({"name": name, "phone": phone})
+                tenant.academies = cleaned
+                update_fields.append("academies")
+                # 첫 항목을 name/headquarters_phone에 동기화(기존 사용처 호환)
+                if cleaned:
+                    tenant.name = cleaned[0].get("name", "")[:255]
+                    tenant.headquarters_phone = cleaned[0].get("phone", "")[:50]
+                    if "name" not in request.data:
+                        update_fields.append("name")
+                    if "headquarters_phone" not in request.data:
+                        update_fields.append("headquarters_phone")
         if update_fields:
             tenant.save(update_fields=update_fields)
         return self.get(request)
