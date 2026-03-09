@@ -424,12 +424,13 @@ class TenantBrandingUploadLogoView(APIView):
             content_type=file.content_type or "image/png",
         )
 
-        logo_url = r2_storage.get_admin_object_public_url(key=key)
-        if not logo_url:
-            logo_url = r2_storage.generate_presigned_get_url_admin(key=key, expires_in=86400 * 7)
+        # Admin 버킷은 공개 도메인이 비디오 버킷과 동일하게 설정된 경우가 많아 404 발생.
+        # 항상 presigned URL 사용 (버킷별 공개 도메인 의존 제거).
+        logo_url = r2_storage.generate_presigned_get_url_admin(key=key, expires_in=86400 * 7)
 
         cfg = dict(program.ui_config or {})
         cfg["logo_url"] = logo_url
+        cfg["logo_key"] = key
         program.ui_config = cfg
         program.save(update_fields=["ui_config"])
 
