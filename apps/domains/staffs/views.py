@@ -238,7 +238,7 @@ class StaffViewSet(viewsets.ModelViewSet):
                 first_swt = staff_profile.staff_work_types.order_by("id").first()
                 if first_swt:
                     payload["default_work_type_id"] = first_swt.work_type_id
-            elif is_de_facto_owner and tenant and request.user:
+            elif is_de_facto_owner and tenant and request.user and staff_profile is None:
                 from apps.domains.staffs.models import Staff, StaffWorkType, WorkType
                 owner_staff = Staff.objects.filter(tenant=tenant, user=request.user).first()
                 if not owner_staff:
