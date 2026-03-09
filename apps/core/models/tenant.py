@@ -19,6 +19,14 @@ class Tenant(models.Model):
     # 본부 전화번호 (실장님 전화받는 곳). 학생앱 "본부 진입게이트"에 노출
     headquarters_phone = models.CharField(max_length=50, blank=True)
 
+    # 소속 학원 목록 (선생 한 명이 여러 학원 소속). [{ "name": "학원명", "phone": "전화" }, ...]
+    # 비어 있으면 name + headquarters_phone 을 단일 항목으로 사용
+    academies = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='소속 학원 목록. 예: [{"name": "OO학원", "phone": "02-1234-5678"}]',
+    )
+
     logo = models.ImageField(
         upload_to="academy/logo/",
         null=True,
