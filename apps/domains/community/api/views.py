@@ -285,8 +285,9 @@ class PostTemplateViewSet(viewsets.ModelViewSet):
 
 
 class ScopeNodeViewSet(viewsets.ReadOnlyModelViewSet):
-    """ScopeNode list for tree. Filter by tenant (from request)."""
+    """ScopeNode list for tree. Filter by tenant (from request). Pagination disabled so frontend gets full list."""
     serializer_class = ScopeNodeMinimalSerializer
+    pagination_class = None
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
