@@ -73,5 +73,7 @@ class SessionScoreRowSerializer(serializers.Serializer):
 
     updated_at = serializers.DateTimeField(allow_null=True)
 
+    # 행 단위 클리닉 대상 여부(ClinicLink 기준). 판정 컬럼 "대상"|"합격" 표시용
+    clinic_required = serializers.BooleanField(default=False)
     # 클리닉 대상이면서 해당 주차 클리닉 미수강 시 이름만 노란 형광펜 하이라이트(수강 완료 시 제거)
     name_highlight_clinic_target = serializers.BooleanField(default=False)

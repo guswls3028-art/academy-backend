@@ -458,6 +458,7 @@ class SessionScoresView(APIView):
                     "exams": exams_payload,
                     "homeworks": homeworks_payload,
                     "updated_at": updated_at or timezone.now(),
+                    "clinic_required": clinic_required,
                     "name_highlight_clinic_target": name_highlight_clinic_target,
                 }
             )
