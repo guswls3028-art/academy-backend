@@ -8,9 +8,10 @@ Homework Entity (Runtime / Operational)
 - HomeworkPolicy(세션 1:1 정책)과는 별개로,
   실제 "과제"는 세션 내 여러 개가 존재할 수 있다.
 
-✅ 추가 (2026-01)
-- SessionScores 메타에서 사용할
-  "대표 과제 제목" 조회 헬퍼 제공
+✅ 템플릿 지원 (시험과 동일)
+- homework_type=template: 양식 전용 (세션 없음)
+- homework_type=regular: 운영 과제 (session 필수, template_homework 선택)
+- 다른 강의에서 동일 과제 불러오기·통계 합산 가능
 """
 
 from __future__ import annotations
@@ -23,19 +24,42 @@ from apps.domains.lectures.models import Session
 
 class Homework(TimestampModel):
     """
-    Session 단위 과제 엔티티
+    Session 단위 과제 엔티티 (또는 템플릿: session 없음)
     """
+
+    class HomeworkType(models.TextChoices):
+        TEMPLATE = "template", "템플릿"
+        REGULAR = "regular", "일반"
 
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "초안"
         OPEN = "OPEN", "진행중"
         CLOSED = "CLOSED", "마감"
 
+    homework_type = models.CharField(
+        max_length=20,
+        choices=HomeworkType.choices,
+        default=HomeworkType.REGULAR,
+        db_index=True,
+    )
+
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
         related_name="homeworks",
         db_index=True,
+        null=True,
+        blank=True,
+        help_text="일반(regular) 과제는 필수. 템플릿은 null.",
+    )
+
+    template_homework = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="derived_homeworks",
+        help_text="일반 과제가 참조하는 템플릿",
     )
 
     title = models.CharField(max_length=255)
@@ -57,7 +81,7 @@ class Homework(TimestampModel):
         ]
 
     def __str__(self) -> str:
-        return f"Homework(id={self.id}, session={self.session_id}, title={self.title})"
+        return f"Homework(id={self.id}, type={self.homework_type}, session={self.session_id}, title={self.title})"
 
     # =========================================================
     # ✅ 추가: SessionScores 메타용 대표 과제 제목 헬퍼
