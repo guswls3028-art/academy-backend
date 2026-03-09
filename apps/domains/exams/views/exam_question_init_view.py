@@ -6,12 +6,10 @@ from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.exceptions import PermissionDenied
 
 from apps.domains.exams.models import Exam, Sheet, ExamQuestion
 from apps.domains.exams.serializers.question import QuestionSerializer
 from apps.domains.exams.serializers.question_init import ExamQuestionInitSerializer
-from apps.domains.exams.services.template_resolver import resolve_template_exam, assert_template_editable
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
 
@@ -22,12 +20,7 @@ class ExamQuestionInitView(APIView):
     목적:
     - '문항선택하기'를 실제로 동작시키기 위한 최소 기능.
     - total_questions 만큼 1..N 문항을 생성/정리한다.
-      - 기존 점수(score)는 유지 (새로 생성되는 문항에만 default_score 적용)
-      - total_questions가 줄면 초과 문항 삭제
-
-    정책:
-    - template 시험 또는 (template 미지정 regular)만 구조 편집 가능
-    - regular이 template을 참조 중이면 template에서 구조를 편집해야 함
+    - 템플릿은 선택: 요청한 exam_id 시험에 직접 문항을 생성/수정한다.
     """
 
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
@@ -36,12 +29,7 @@ class ExamQuestionInitView(APIView):
     def post(self, request, exam_id: int):
         exam = get_object_or_404(Exam, id=int(exam_id))
 
-        # regular이 template을 참조 중이면 여기서는 생성 금지(템플릿에서 편집)
-        if exam.exam_type == Exam.ExamType.REGULAR and exam.template_exam_id is not None:
-            raise PermissionDenied("This regular exam uses a template; edit questions on the template exam.")
-
-        owner = resolve_template_exam(exam)
-        assert_template_editable(owner)
+        owner = exam
 
         s = ExamQuestionInitSerializer(data=request.data)
         s.is_valid(raise_exception=True)
