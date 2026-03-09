@@ -520,8 +520,10 @@ class MaintenanceModeView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
     def get(self, request):
-        total = Program.objects.count()
-        enabled_count = Program.objects.filter(feature_flags__maintenance_mode=True).count()
+        exempt_codes = ("hakwonplus", "9999")
+        qs = Program.objects.exclude(tenant__code__in=exempt_codes)
+        total = qs.count()
+        enabled_count = qs.filter(feature_flags__maintenance_mode=True).count()
         enabled_for_all = bool(total and enabled_count == total)
         return Response({
             "enabled_for_all": enabled_for_all,
@@ -533,13 +535,17 @@ class MaintenanceModeView(APIView):
     def patch(self, request):
         enabled = bool((request.data or {}).get("enabled"))
 
-        programs = Program.objects.select_for_update().all()
+        exempt_codes = ("hakwonplus", "9999")
+        programs = Program.objects.select_for_update().select_related("tenant").all()
         for program in programs:
             flags = dict(getattr(program, "feature_flags", None) or {})
-            if enabled:
-                flags["maintenance_mode"] = True
-            else:
+            if program.tenant and program.tenant.code in exempt_codes:
                 flags.pop("maintenance_mode", None)
+            else:
+                if enabled:
+                    flags["maintenance_mode"] = True
+                else:
+                    flags.pop("maintenance_mode", None)
             program.feature_flags = flags
             program.save(update_fields=["feature_flags"])
 
