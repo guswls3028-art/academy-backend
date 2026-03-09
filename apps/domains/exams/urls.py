@@ -16,6 +16,7 @@ from apps.domains.exams.views.template_status_view import TemplateStatusView
 from apps.domains.exams.views.template_validation_view import TemplateValidationView
 
 from apps.domains.exams.views.regular_from_template_view import RegularExamFromTemplateView
+from apps.domains.exams.views.save_as_template_view import SaveAsTemplateView
 from apps.domains.exams.views.exam_questions_by_exam_view import ExamQuestionsByExamView
 from apps.domains.exams.views.question_auto_view import SheetAutoQuestionsView
 from apps.domains.exams.views.exam_enrollment_view import ExamEnrollmentManageView
@@ -51,6 +52,7 @@ urlpatterns = [
     # Regular exam creation
     # =========================
     path("<int:exam_id>/spawn-regular/", RegularExamFromTemplateView.as_view()),
+    path("<int:exam_id>/save-as-template/", SaveAsTemplateView.as_view()),
 
     # =========================
     # Assets / OMR
