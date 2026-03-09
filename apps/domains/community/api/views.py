@@ -15,6 +15,7 @@ from apps.domains.community.selectors import (
     get_post_by_id,
     get_all_posts_for_tenant,
     get_empty_post_queryset,
+    get_notice_posts_for_tenant,
     get_block_types_for_tenant,
     get_empty_block_type_queryset,
     get_scope_nodes_for_tenant,
@@ -59,6 +60,26 @@ class PostViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(qs, many=True)
             return Response(serializer.data)
         return super().list(request, *args, **kwargs)
+
+    @action(detail=False, methods=["get"], url_path="notices")
+    def notices(self, request):
+        """GET /community/posts/notices/ — 학생앱·관리자 동일: block_type code=notice 인 공지 목록."""
+        tenant = getattr(request, "tenant", None)
+        request_student = get_request_student(request)
+        if not tenant and request_student and getattr(request_student, "tenant", None):
+            tenant = request_student.tenant
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        qs = get_notice_posts_for_tenant(tenant)
+        page_size = min(int(request.query_params.get("page_size") or 50), 200)
+        try:
+            page = max(1, int(request.query_params.get("page") or 1))
+        except (TypeError, ValueError):
+            page = 1
+        offset = (page - 1) * page_size
+        page_qs = qs[offset : offset + page_size]
+        serializer = self.get_serializer(page_qs, many=True)
+        return Response(serializer.data)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -211,14 +232,21 @@ class BlockTypeViewSet(viewsets.ModelViewSet):
         return get_block_types_for_tenant(tenant)
 
     def list(self, request, *args, **kwargs):
-        """목록 조회 시 tenant에 블록 유형이 없으면 기본 QnA 유형을 한 번만 생성 후 반환."""
+        """목록 조회 시 tenant에 블록 유형이 없으면 기본 QnA·공지 유형을 한 번만 생성 후 반환."""
         tenant = getattr(request, "tenant", None)
-        if tenant and not get_block_types_for_tenant(tenant).exists():
-            BlockType.objects.get_or_create(
-                tenant=tenant,
-                code="qna",
-                defaults={"label": "QnA", "order": 1},
-            )
+        if tenant:
+            qs = get_block_types_for_tenant(tenant)
+            if not qs.exists():
+                BlockType.objects.get_or_create(
+                    tenant=tenant,
+                    code="qna",
+                    defaults={"label": "QnA", "order": 1},
+                )
+                BlockType.objects.get_or_create(
+                    tenant=tenant,
+                    code="notice",
+                    defaults={"label": "공지", "order": 2},
+                )
         return super().list(request, *args, **kwargs)
 
     def perform_create(self, serializer):

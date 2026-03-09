@@ -124,3 +124,19 @@ def get_admin_post_list(
     total = qs.count()
     offset = (page - 1) * page_size
     return qs[offset : offset + page_size], total
+
+
+def get_notice_posts_for_tenant(tenant) -> QuerySet:
+    """테넌트의 공지 게시물 목록 (block_type code='notice'). 학생앱 공지 목록 및 관리자와 동일 데이터."""
+    return (
+        PostEntity.objects.filter(tenant=tenant, block_type__code__iexact="notice")
+        .annotate(replies_count=Count("replies"))
+        .select_related("block_type", "created_by")
+        .prefetch_related(
+            Prefetch(
+                "mappings",
+                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
+            )
+        )
+        .order_by("-created_at")
+    )
