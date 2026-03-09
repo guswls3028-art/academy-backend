@@ -166,9 +166,14 @@ class AdminExamItemScoreView(APIView):
                 status=drf_status.HTTP_409_CONFLICT,
             )
 
+        # Submission에는 session_id 없음 → exam+enrollment 기준 최신 제출 조회
         submission = (
             Submission.objects
-            .filter(enrollment_id=enrollment_id, session_id=int(session.id))
+            .filter(
+                enrollment_id=enrollment_id,
+                target_type=Submission.TargetType.EXAM,
+                target_id=exam_id,
+            )
             .order_by("-id")
             .first()
         )
