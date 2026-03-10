@@ -1,6 +1,6 @@
 # Front V1 인프라 기준 연결 검증
 
-**Generated:** 2026-03-11T06:18:37.2611204+09:00
+**Generated:** 2026-03-11T07:03:15.0253270+09:00
 
 ## SSOT front.* / r2.* 확인
 | 항목 | 값 | 비고 |
@@ -15,7 +15,7 @@
 | 항목 | 결과 | 근거 |
 |------|------|------|
 | app 도메인 200 | FAIL/WARNING () | URL 미설정 |
-| API 공개 /health | unreachable | https://api.hakwonplus.com |
+| API 공개 /health | OK | https://api.hakwonplus.com |
 | index.html Cache-Control |  | |
 | 해시 자산 Cache-Control |  | - |
 | CORS 정적 검사 | not checked |  |
