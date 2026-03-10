@@ -3,20 +3,22 @@
 **목적:** API 배포 후 "프로세스 재시작"이 아니라 **연결 참조 일치** 확인.  
 upload_complete 이후 API가 올바른 Batch Queue / Job Definition / Compute Environment / Redis를 바라보는지 검증.
 
+**AWS 프로필:** V1 배포·검증 시 **반드시 프로필 `default` 사용.** 사용자에게 프로필을 묻지 않는다.
+
 ---
 
 ## 확정을 위한 2단계 확인 (이 두 개만 확인하면 끝)
 
 **로컬에서 AWS 자격 증명이 있다면** 아래 스크립트로 한 번에 점검할 수 있음.  
-(**권한:** 문서/운영 가이드에 명시된 대로 `default` 프로필 사용.)
+**프로필은 반드시 `default`.** (스크립트 내부에서 `--profile default` 사용.)
 
 ```powershell
-# PowerShell (backend 폴더에서, --profile default 사용)
+# PowerShell (backend 폴더에서)
 pwsh -File scripts/v1/verify-video-batch-connection.ps1
 ```
 
 ```bash
-# Bash (backend 폴더에서, AWS_PROFILE=default 또는 --profile default)
+# Bash (backend 폴더에서)
 AWS_PROFILE=default bash scripts/v1/verify-video-batch-connection.sh
 ```
 

@@ -1,8 +1,9 @@
+# ==============================================================================
 # API ASG instance refresh only (정식 풀배포 중 API만). CI deploy-api-refresh와 동일 동작.
-# Usage: pwsh scripts/v1/api-refresh-only.ps1 [-AwsProfile default]
-# .env에서 AWS 키를 로드한 뒤 실행하거나, run-with-env.ps1로 감싸서 실행.
-[CmdletBinding()]
-param([string]$AwsProfile = "")
+# AWS 프로필: 반드시 default. (-AwsProfile default)
+# Usage: pwsh scripts/v1/api-refresh-only.ps1 -AwsProfile default
+# ==============================================================================
+param([string]$AwsProfile = "default")
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot

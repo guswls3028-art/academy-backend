@@ -1,10 +1,9 @@
 # ==============================================================================
 # API 인스턴스에 최신 SSM env 적용 후 컨테이너 재시작
-# ==============================================================================
-# 기존 인스턴스는 부팅 시에만 SSM을 읽음. SSM 갱신 후 컨테이너만 재시작하려면 이 스크립트 사용.
+# AWS 프로필: 반드시 default. (-AwsProfile default)
 # 사용: pwsh scripts/v1/refresh-api-env.ps1 -AwsProfile default
 # ==============================================================================
-param([string]$AwsProfile = "")
+param([string]$AwsProfile = "default")
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "core\env.ps1")
