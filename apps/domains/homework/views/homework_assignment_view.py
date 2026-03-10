@@ -52,7 +52,7 @@ class HomeworkAssignmentManageView(APIView):
                 tenant=tenant,
                 session_id=session_id,
             )
-            .select_related("enrollment", "enrollment__student")
+            .select_related("enrollment", "enrollment__student", "enrollment__lecture")
             .order_by("id")
         )
 
