@@ -4,7 +4,16 @@
 
 ---
 
-## 0. AWS 프로필 (필수)
+## 0. 이미지 빌드 = GitHub Actions만 (강조)
+
+**Docker 이미지 빌드·ECR 푸시는 반드시 GitHub Actions로만 수행한다.** 로컬 Docker 빌드·EC2에서의 빌드·수동 ECR 푸시는 사용하지 않는다.
+
+- **워크플로:** `backend/.github/workflows/v1-build-and-push-latest.yml` — main 푸시 시 academy-base, academy-api, academy-video-worker, academy-messaging-worker, academy-ai-worker-cpu 이미지 빌드·ECR 푸시 후 API ASG instance refresh 자동 실행.
+- **코드 반영:** 이미지에 코드를 반영하려면 main에 푸시하면 된다. CI가 빌드·푸시·리프레시까지 수행한다.
+
+---
+
+## 1. AWS 프로필 (필수)
 
 **V1 배포·검증·API 재배포 시 AWS 프로필은 반드시 `default`를 사용한다.** 프로필을 묻지 말고 항상 default로 실행한다.
 
