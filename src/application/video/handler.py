@@ -101,7 +101,8 @@ class ProcessVideoJobHandler:
                         from apps.support.video.models import Video
                         from apps.support.video.services.video_encoding import create_job_and_submit_batch
                         video = Video.objects.select_related("session__lecture").get(pk=video_id)
-                        if create_job_and_submit_batch(video):
+                        result = create_job_and_submit_batch(video)
+                        if result.job:
                             logger.info("CLAIM_FAILED_REQUEUE | video_id=%s re-submitted to Batch", video_id)
                     except Exception as e:
                         logger.warning("CLAIM_FAILED_REQUEUE | video_id=%s batch submit failed: %s", video_id, e)
