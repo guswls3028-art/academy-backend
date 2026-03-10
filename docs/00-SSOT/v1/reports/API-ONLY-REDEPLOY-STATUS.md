@@ -9,14 +9,21 @@
 
 | 항목 | 상태 |
 |------|------|
-| **Instance Refresh** | **InProgress** (50%) — 새 인스턴스 `i-0d4162d7f293c2e71` 워밍업 중 |
-| **ALB 타깃** | 1개 draining(구 인스턴스), 1개 unhealthy(신 인스턴스, 헬스체크 대기) |
-| **결론** | 리프레시 **진행 중**. 완료되면 새 인스턴스가 healthy로 전환되고, 구 인스턴스는 제거됨. |
+| **Instance Refresh** | **Successful** (완료) |
+| **ALB 타깃** | 1개 **unhealthy** (헬스체크 400으로 인해 미통과) |
+| **원인** | ALB 타깃 헬스체크가 타깃에 요청 시 **Host: private IP**(172.30.x.x)를 사용함. Django `ALLOWED_HOSTS`에 해당 IP가 없어 **400 Bad Request** 반환 → unhealthy. |
 
-**확실한 성공 조건:**  
-- `describe-instance-refreshes`에서 해당 Refresh의 `Status`가 **Successful**  
-- `describe-target-health`에서 **최소 1개 타깃이 healthy**  
-- `https://api.hakwonplus.com/healthz` 또는 ALB DNS `/healthz` → **HTTP 200**
+**적용한 수정(코드 반영 완료):**
+
+- **prod.py:** `ALLOWED_HOSTS`에 VPC 대역 `172.30.0.0/22`(172.30.0.x ~ 172.30.3.x) 추가.
+- **middleware.py:** `HealthCheckHostMiddleware`에서 헬스체크 경로 매칭 시 `request.path` 정규화(trailing slash 등) 적용.
+
+**수정이 반영된 이미지 배포 방법 (둘 중 하나):**
+
+1. **main 푸시** → GitHub Actions가 academy-api 이미지 빌드·ECR 푸시 후 API ASG instance refresh 자동 실행.
+2. **로컬:** Docker 기동 후 `docker build`·ECR 푸시 후 `pwsh -File scripts/v1/api-refresh-only.ps1 -AwsProfile default` 실행.
+
+(현재 환경에서는 Docker 데몬 미실행으로 로컬 빌드·푸시는 수행하지 못함.)
 
 ---
 
@@ -25,30 +32,33 @@
 | 컴포넌트 | 확인 결과 |
 |----------|-----------|
 | **SSM /academy/api/env** | VIDEO_BATCH_* 5개 v1 이름 일치 |
-| **SSM /academy/workers/env** | 존재, REDIS_HOST·SQS 큐 이름·VIDEO_BATCH_*·API_BASE_URL 등 필수 키 있음 |
+| **SSM /academy/workers/env** | 존재, REDIS_HOST·SQS·VIDEO_BATCH_*·API_BASE_URL 등 필수 키 있음 |
 | **Redis (academy-v1-redis)** | available |
-| **API ASG** | academy-v1-api-asg — desired 1, 인스턴스 2(리프레시 중) |
+| **API ASG** | academy-v1-api-asg — desired 1, 인스턴스 1 |
 | **Messaging Worker ASG** | academy-v1-messaging-worker-asg — desired 1, 인스턴스 1 |
 | **AI Worker ASG** | academy-v1-ai-worker-asg — desired 1, 인스턴스 1 |
 | **Batch 큐/JobDef/CE** | academy-v1-video-batch-queue, academy-v1-video-batch-jobdef, academy-v1-video-batch-ce 존재 |
 | **메시징 SQS** | academy-v1-messaging-queue — 메시지 0, 비가시 0 |
 | **DLQ** | Messaging DLQ 0, AI DLQ 0 (검증 보고서 기준 PASS) |
 
-**결론:** API를 제외한 모든 워커·인프라·연결 참조는 정상. API만 instance refresh 진행 중이라 일시적으로 ALB target 0 healthy.
+**결론:** API 타깃만 unhealthy(원인 수정 반영 완료, 이미지 재배포 대기). 그 외 워커·인프라·연결 참조는 모두 정상.
 
 ---
 
-## 3. 재확인 방법 (리프레시 완료 후)
+## 3. 최종 성공 확인 방법 (수정 반영 이미지 배포 후)
+
+1. 위 방법으로 수정 반영 이미지 배포(또는 main 푸시 후 CI 완료 대기).
+2. 아래 명령으로 재확인.
 
 ```powershell
-# 1) Instance refresh 완료 여부
-aws autoscaling describe-instance-refreshes --auto-scaling-group-name academy-v1-api-asg --instance-refresh-ids 28b31570-88d0-408e-842b-4499c6e1d25d --region ap-northeast-2 --profile default --query "InstanceRefreshes[0].Status" --output text
-
-# 2) API 타깃 헬스
+# 1) API 타깃 헬스 (1개 이상 healthy 기대)
 aws elbv2 describe-target-health --target-group-arn "arn:aws:elasticloadbalancing:ap-northeast-2:809466760795:targetgroup/academy-v1-api-tg/2c34b94ea3c33101" --region ap-northeast-2 --profile default --query "TargetHealthDescriptions[*].TargetHealth.State" --output text
+
+# 2) healthz 200 확인
+curl -s -o NUL -w "%{http_code}" https://api.hakwonplus.com/healthz
 
 # 3) 비디오/배치 연결 검증
 pwsh -File scripts/v1/verify-video-batch-connection.ps1
 ```
 
-리프레시가 **Successful**이고 타깃이 **1개 이상 healthy**이면 API만 재배포가 **확실히 성공**한 상태로 보면 됨.
+타깃이 **healthy**이고 **healthz가 200**이면 API만 재배포 및 워커 연결까지 **최종 성공**으로 보면 됨.
