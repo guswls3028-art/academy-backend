@@ -111,7 +111,11 @@ def can_access_staff_management(user, tenant=None) -> bool:
         return True
     if m.role == "teacher":
         profile = getattr(user, "staff_profile", None)
-        return profile is not None and getattr(profile, "is_manager", False)
+        return (
+            profile is not None
+            and getattr(profile, "tenant_id", None) == tenant.id
+            and getattr(profile, "is_manager", False)
+        )
     return False
 
 
