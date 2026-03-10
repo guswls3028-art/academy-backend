@@ -91,16 +91,34 @@ def _owner_display_for_tenant(tenant, request=None):
 # Permissions
 # ===========================
 
+def can_access_staff_management(user, tenant=None) -> bool:
+    """
+    직원관리 페이지 접근 권한(관리자 권한 on).
+    - owner, admin, staff 역할 → True
+    - teacher 역할 → Staff.is_manager 일 때만 True
+    - 비용·시급 등 민감 정보는 이 권한 있는 사람만 접근.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser or user.is_staff:
+        return True
+    if not tenant:
+        return False
+    m = core_repo.membership_get_full(tenant, user)
+    if not m or not m.is_active:
+        return False
+    if m.role in ("owner", "admin", "staff"):
+        return True
+    if m.role == "teacher":
+        profile = getattr(user, "staff_profile", None)
+        return profile is not None and getattr(profile, "is_manager", False)
+    return False
+
+
 class IsPayrollManager(BasePermission):
-    """급여/근무 관리 권한. 오너=슈퍼유저급 통과, 그 외 superuser/staff/직원 is_manager."""
+    """직원관리 페이지 접근 = 관리자 권한 on만. 비용·시급 등 민감 정보 보호."""
     def has_permission(self, request, view):
-        user = request.user
-        if not user or not user.is_authenticated:
-            return False
-        tenant = getattr(request, "tenant", None)
-        if is_effective_staff(user, tenant):
-            return True
-        return getattr(getattr(user, "staff_profile", None), "is_manager", False)
+        return can_access_staff_management(request.user, getattr(request, "tenant", None))
 
 # ===========================
 # Helpers
@@ -111,11 +129,8 @@ def is_month_locked(staff, date):
 
 
 def can_manage_payroll(user, tenant=None) -> bool:
-    if not user or not user.is_authenticated:
-        return False
-    if is_effective_staff(user, tenant):
-        return True
-    return getattr(getattr(user, "staff_profile", None), "is_manager", False)
+    """직원관리(관리자 권한) 접근 가능 여부. can_access_staff_management와 동일."""
+    return can_access_staff_management(user, tenant)
 
 
 def generate_payroll_snapshot(staff, year, month, user):
