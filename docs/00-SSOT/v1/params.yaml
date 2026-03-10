@@ -52,9 +52,9 @@ ecr:
   videoWorkerRepo: academy-video-worker
   messagingWorkerRepo: academy-messaging-worker
   aiWorkerRepo: academy-ai-worker-cpu
-  # CI(GitHub Actions)에서 항상 SHA 태그(-EcrRepoUri)로 deploy. :latest 금지.
-  useLatestTag: false
-  immutableTagRequired: true
+  # 이미지 빌드는 GitHub Actions만 사용. CI는 5개 이미지 모두 :latest 푸시. 풀배포(deploy.ps1)는 :latest 사용으로 정합.
+  useLatestTag: true
+  immutableTagRequired: false
 
 # API: V1. 런칭 전 비용 절감으로 min/desired=1, max=2. 롤링 배포 시 instance-refresh MinHealthyPercentage.
 # Gunicorn/ALB 타임아웃 60s 내 권장(동영상/AI는 비동기 전용).
