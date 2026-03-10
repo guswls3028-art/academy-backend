@@ -64,6 +64,7 @@ switch ($true) { { $EcrRepoUri } { $script:EcrRepoUri = $EcrRepoUri } default { 
 . (Join-Path $ScriptRoot "core\preflight.ps1")
 . (Join-Path $ScriptRoot "core\reports.ps1")
 . (Join-Path $ScriptRoot "core\bootstrap.ps1")
+. (Join-Path $ScriptRoot "core\sync_env.ps1")
 
 # Resources
 . (Join-Path $ScriptRoot "resources\network.ps1")
@@ -234,6 +235,10 @@ try {
     Ensure-VideoBatchLogRetention
     Ensure-ALBStack
     Ensure-API
+
+    # SSOT → runtime env: idempotent sync so API and Workers SSM always match params.yaml and Redis discovery.
+    Invoke-SyncEnvFromSSOT
+
     if (-not $SkipBuild) {
         Write-Warn "Build step is deprecated in v1 (GitHub Actions OIDC only). Skipping build on this machine."
     } else {
