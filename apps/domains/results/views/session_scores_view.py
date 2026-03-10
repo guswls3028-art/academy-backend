@@ -139,6 +139,22 @@ class SessionScoresView(APIView):
 
         enrollment_ids = list(enrollment_qs.values_list("id", flat=True))
 
+        # -------------------------------------------------
+        # 1b) 학생별 시험/과제 등록 여부 맵 (미등록 컬럼 비활성화용)
+        # -------------------------------------------------
+        exam_enrolled_set: Set[tuple[int, int]] = set()
+        if exam_ids:
+            for row in ExamEnrollment.objects.filter(
+                exam_id__in=exam_ids
+            ).values_list("enrollment_id", "exam_id"):
+                exam_enrolled_set.add((int(row[0]), int(row[1])))
+
+        hw_assigned_set: Set[tuple[int, int]] = set()
+        for row in HomeworkAssignment.objects.filter(
+            session=session
+        ).values_list("enrollment_id", "homework_id"):
+            hw_assigned_set.add((int(row[0]), int(row[1])))
+
         # 시험/과제 연결 전: 세션 수강생(SessionEnrollment) 폴백 — 삭제된 학생 제외
         if not enrollment_ids:
             session_enrollment_ids = list(
@@ -334,6 +350,10 @@ class SessionScoresView(APIView):
             exam_updated_ats = []
 
             for exid in exam_ids:
+                # 해당 시험에 미등록이면 스킵 (프론트에서 회색 비활성 셀)
+                if (eid, exid) not in exam_enrolled_set:
+                    continue
+
                 r = result_map.get(exid, {}).get(eid)
 
                 if r is None:
@@ -397,6 +417,10 @@ class SessionScoresView(APIView):
 
             homeworks_payload = []
             for hw in homeworks:
+                # 해당 과제에 미등록이면 스킵 (프론트에서 회색 비활성 셀)
+                if (eid, int(hw.id)) not in hw_assigned_set:
+                    continue
+
                 hs = hw_map.get(eid, {}).get(int(hw.id))
 
                 if hs is None:
@@ -434,15 +458,17 @@ class SessionScoresView(APIView):
                     }
                 )
 
-            updated_at = max(
-                d
-                for d in [
-                    *(exam_updated_ats or []),
-                    *(hs.updated_at for hs in hw_scores if hs.enrollment_id == eid),
-                    getattr(session, "updated_at", None),
-                ]
-                if d
-            )
+            hw_updated_ats = [
+                hs.updated_at
+                for hs in (hw_map.get(eid, {}).values())
+                if hs.updated_at
+            ]
+            all_timestamps = [
+                *(exam_updated_ats or []),
+                *hw_updated_ats,
+                getattr(session, "updated_at", None),
+            ]
+            updated_at = max((d for d in all_timestamps if d), default=None)
 
             # 클리닉 대상이면서 해당 주차 클리닉 미수강 → 이름만 노란 형광펜 하이라이트(백엔드 단일 진실)
             # 수강 완료(ATTENDED) 시 하이라이트 제거
