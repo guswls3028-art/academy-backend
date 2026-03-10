@@ -7,16 +7,17 @@ upload_complete 이후 API가 올바른 Batch Queue / Job Definition / Compute E
 
 ## 확정을 위한 2단계 확인 (이 두 개만 확인하면 끝)
 
-**로컬에서 AWS 자격 증명이 있다면** 아래 스크립트로 한 번에 점검할 수 있음:
+**로컬에서 AWS 자격 증명이 있다면** 아래 스크립트로 한 번에 점검할 수 있음.  
+(**권한:** 문서/운영 가이드에 명시된 대로 `default` 프로필 사용.)
 
 ```powershell
-# PowerShell (backend 폴더에서)
+# PowerShell (backend 폴더에서, --profile default 사용)
 pwsh -File scripts/v1/verify-video-batch-connection.ps1
 ```
 
 ```bash
-# Bash (backend 폴더에서, AWS_PROFILE 또는 AWS_* env 설정 후)
-bash scripts/v1/verify-video-batch-connection.sh
+# Bash (backend 폴더에서, AWS_PROFILE=default 또는 --profile default)
+AWS_PROFILE=default bash scripts/v1/verify-video-batch-connection.sh
 ```
 
 스크립트가 하는 일: (1) SSM `/academy/api/env`에서 VIDEO_BATCH_* 4개 값이 v1 이름과 일치하는지, (2) Batch 큐/JobDef/CE 존재 여부, (3) 해당 큐 최근 job 5건 표시.
