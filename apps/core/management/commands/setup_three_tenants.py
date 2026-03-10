@@ -1,11 +1,11 @@
 # PATH: apps/core/management/commands/setup_three_tenants.py
 """
-limglish.kr, tchul.com, ymath.co.kr 3개 도메인에 대응하는 테넌트·도메인·Program 셋업.
+limglish.kr, tchul.com, ymath.co.kr, sswe.co.kr 도메인에 대응하는 테넌트·도메인·Program 셋업.
 
-도메인은 이미 Cloudflare 등에 등록되어 있다고 가정.
-- 테넌트 get_or_create (code=tchul, limglish, ymath)
+도메인은 이미 Cloudflare/가비아 등에 등록되어 있다고 가정.
+- 테넌트 get_or_create (code=tchul, limglish, ymath, sswe)
 - 각 테넌트에 Program get_or_create
-- TenantDomain: tchul.com, www.tchul.com -> tchul / limglish.kr, www.limglish.kr -> limglish / ymath.co.kr, www.ymath.co.kr -> ymath
+- TenantDomain: tchul.com, www.tchul.com -> tchul / limglish.kr, www.limglish.kr -> limglish / ymath.co.kr, www.ymath.co.kr -> ymath / sswe.co.kr, www.sswe.co.kr -> sswe
 
 사용:
   python manage.py setup_three_tenants
@@ -34,11 +34,17 @@ TENANTS_CONFIG = [
         "hosts": ["ymath.co.kr", "www.ymath.co.kr"],
         "primary_host": "ymath.co.kr",
     },
+    {
+        "code": "sswe",
+        "name": "SSWE",
+        "hosts": ["sswe.co.kr", "www.sswe.co.kr"],
+        "primary_host": "sswe.co.kr",
+    },
 ]
 
 
 class Command(BaseCommand):
-    help = "Setup 3 tenants (tchul, limglish, ymath) and their domains (tchul.com, limglish.kr, ymath.co.kr)."
+    help = "Setup tenants (tchul, limglish, ymath, sswe) and their domains."
 
     def handle(self, *args, **options):
         for cfg in TENANTS_CONFIG:
@@ -105,5 +111,5 @@ class Command(BaseCommand):
                         self.stdout.write(f"  TenantDomain: {host} -> {tenant.code} (exists)")
 
         self.stdout.write(
-            self.style.SUCCESS("Done. limglish.kr, tchul.com, ymath.co.kr tenants and domains are set.")
+            self.style.SUCCESS("Done. limglish.kr, tchul.com, ymath.co.kr, sswe.co.kr tenants and domains are set.")
         )
