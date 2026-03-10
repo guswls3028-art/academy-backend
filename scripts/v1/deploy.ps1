@@ -241,6 +241,9 @@ try {
     # SSOT → runtime env: idempotent sync so API and Workers SSM always match params.yaml and Redis discovery.
     Invoke-SyncEnvFromSSOT
 
+    # Running API instances still have old /opt/api.env from boot; apply synced SSM and restart container so video/Batch refs take effect.
+    Invoke-RefreshApiEnvOnInstances
+
     if (-not $SkipBuild) {
         Write-Warn "Build step is deprecated in v1 (GitHub Actions OIDC only). Skipping build on this machine."
     } else {

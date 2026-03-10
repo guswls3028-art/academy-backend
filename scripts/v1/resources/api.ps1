@@ -99,6 +99,54 @@ function Get-APIASGInstanceIds {
     return @($instances)
 }
 
+# SSM에 갱신된 /academy/api/env를 기동 중인 API 인스턴스에 적용 후 컨테이너 재시작 (배포 후 Sync 반영용).
+function Invoke-RefreshApiEnvOnInstances {
+    if ($script:PlanMode) { return }
+    $ids = @(Get-APIASGInstanceIds)
+    if (-not $ids -or $ids.Count -eq 0) {
+        Write-Host "No API ASG instances to refresh env." -ForegroundColor Gray
+        return
+    }
+    $ssmParam = $script:SsmApiEnv
+    $region = $script:Region
+    $inlinePath = Join-Path (Join-Path $PSScriptRoot "..") "inline\refresh-api-env.sh"
+    if (-not (Test-Path -LiteralPath $inlinePath)) {
+        Write-Warn "Inline script not found: $inlinePath; run refresh-api-env.ps1 manually."
+        return
+    }
+    $scriptContent = [System.IO.File]::ReadAllText($inlinePath) -replace "`r`n", "`n" -replace "`r", "`n"
+    $scriptContent = $scriptContent -replace 'SSM_PARAM="\$\{1:-/academy/api/env\}"', "SSM_PARAM=`"$ssmParam`"" -replace 'REGION="\$\{2:-ap-northeast-2\}"', "REGION=`"$region`""
+    $scriptB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($scriptContent))
+    $script = "echo $scriptB64 | base64 -d | bash"
+    $params = @{ commands = @($script) }
+    $paramsJson = $params | ConvertTo-Json -Compress
+    Write-Host "Refreshing API env on $($ids.Count) instance(s) from SSM $ssmParam..." -ForegroundColor Cyan
+    foreach ($instId in $ids) {
+        try {
+            $sendOut = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instId, "--document-name", "AWS-RunShellScript", "--parameters", $paramsJson, "--region", $region, "--output", "json") 2>$null
+            $cmdId = $sendOut.Command.CommandId
+            if (-not $cmdId) { Write-Host "  $instId : send-command failed" -ForegroundColor Red; continue }
+            $wait = 0
+            while ($wait -lt 90) {
+                Start-Sleep -Seconds 3
+                $wait += 3
+                $inv = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instId, "--region", $region, "--output", "json") 2>$null
+                if ($inv.Status -eq "Success") {
+                    Write-Host "  $instId : env refreshed, container restarted" -ForegroundColor Green
+                    break
+                }
+                if ($inv.Status -eq "Failed" -or $inv.Status -eq "Cancelled") {
+                    Write-Host "  $instId : $($inv.Status)" -ForegroundColor Red
+                    if ($inv.StandardErrorContent) { Write-Host $inv.StandardErrorContent -ForegroundColor Gray }
+                    break
+                }
+            }
+        } catch {
+            Write-Host "  $instId : $_" -ForegroundColor Red
+        }
+    }
+}
+
 # 배포 후 API 인스턴스에서 실제 실행 중인 이미지 digest 수집 → runtime-images.latest.md 기록.
 # ci-build.latest.md가 있으면 academy-api digest와 비교하여 불일치 시 보고서에 명시.
 function Invoke-CollectRuntimeImagesReport {
