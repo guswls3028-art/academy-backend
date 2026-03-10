@@ -82,4 +82,35 @@ function Ensure-EventBridgeRules {
         Invoke-Aws @("events", "put-targets", "--cli-input-json", "file://$($tmpFile2 -replace '\\','/')", "--region", $script:Region) -ErrorMessage "put-targets scan_stuck"
     } finally { Remove-Item $tmpFile2 -Force -ErrorAction SilentlyContinue }
     Write-Ok "EventBridge $($script:EventBridgeScanStuckRule) targets updated"
+
+    # --- enqueue-uploaded-videos rule ---
+    $enqueueUploadedTargetPath = Join-Path $EventBridgePath "enqueue_uploaded_to_batch_target.json"
+    if (Test-Path $enqueueUploadedTargetPath) {
+        $enqueueUploadedJson = (Get-Content $enqueueUploadedTargetPath -Raw) -replace "PLACEHOLDER_JOB_QUEUE_ARN", $JobQueueArn -replace "PLACEHOLDER_EVENTBRIDGE_BATCH_ROLE_ARN", $EventsRoleArn
+        $rule3Exists = $false
+        try { $rule3 = Invoke-AwsJson @("events", "describe-rule", "--name", $script:EventBridgeEnqueueUploadedRule, "--region", $script:Region, "--output", "json"); $rule3Exists = ($null -ne $rule3) } catch { }
+        if (-not $rule3Exists) {
+            Write-Host "  Creating rule $($script:EventBridgeEnqueueUploadedRule)" -ForegroundColor Yellow
+            $script:ChangesMade = $true
+            $state3 = if ($script:EventBridgeEnqueueUploadedState -eq "DISABLED") { "DISABLED" } else { "ENABLED" }
+            Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeEnqueueUploadedRule, "--schedule-expression", $script:EventBridgeEnqueueUploadedSchedule, "--state", $state3, "--region", $script:Region) | Out-Null
+        } else {
+            $desiredState3 = if ($script:EventBridgeEnqueueUploadedState -eq "DISABLED") { "DISABLED" } else { "ENABLED" }
+            $scheduleDrift3 = ($rule3.ScheduleExpression -ne $script:EventBridgeEnqueueUploadedSchedule)
+            if ($rule3.State -ne $desiredState3 -or $scheduleDrift3) {
+                if ($scheduleDrift3) { Write-Host "  Enqueue-uploaded rule schedule drift: $($rule3.ScheduleExpression) -> $($script:EventBridgeEnqueueUploadedSchedule)" -ForegroundColor Yellow }
+                if ($rule3.State -ne $desiredState3) { Write-Host "  Setting rule $($script:EventBridgeEnqueueUploadedRule) to $desiredState3 (was $($rule3.State))" -ForegroundColor Yellow }
+                $script:ChangesMade = $true
+                Invoke-Aws @("events", "put-rule", "--name", $script:EventBridgeEnqueueUploadedRule, "--schedule-expression", $script:EventBridgeEnqueueUploadedSchedule, "--state", $desiredState3, "--region", $script:Region) | Out-Null
+            }
+        }
+        $targetsObj3 = $enqueueUploadedJson | ConvertFrom-Json
+        $targetsInput3 = @{ Rule = $script:EventBridgeEnqueueUploadedRule; Targets = @($targetsObj3) } | ConvertTo-Json -Depth 15 -Compress
+        $tmpFile3 = [System.IO.Path]::GetTempFileName()
+        try {
+            [System.IO.File]::WriteAllText($tmpFile3, $targetsInput3, [System.Text.UTF8Encoding]::new($false))
+            Invoke-Aws @("events", "put-targets", "--cli-input-json", "file://$($tmpFile3 -replace '\\','/')", "--region", $script:Region) -ErrorMessage "put-targets enqueue_uploaded"
+        } finally { Remove-Item $tmpFile3 -Force -ErrorAction SilentlyContinue }
+        Write-Ok "EventBridge $($script:EventBridgeEnqueueUploadedRule) targets updated"
+    }
 }
