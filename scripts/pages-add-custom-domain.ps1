@@ -1,0 +1,77 @@
+# Pages 프로젝트 academy-frontend에 커스텀 도메인 추가 (다른 테넌트와 동일 방식, 1014 방지)
+# 사용: .\scripts\pages-add-custom-domain.ps1 -Domain "newdomain.co.kr"
+# zone에 수동 CNAME 넣지 말고 이 스크립트만 사용할 것.
+
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$Domain
+)
+
+$Domain = $Domain.Trim().ToLower()
+if (-not $Domain) { Write-Host "Usage: .\pages-add-custom-domain.ps1 -Domain newdomain.co.kr"; exit 1 }
+
+$ErrorActionPreference = 'Stop'
+$envFile = Join-Path $PSScriptRoot '..\.env'
+if (-not (Test-Path $envFile)) { Write-Host "backend\.env not found."; exit 1 }
+Get-Content $envFile | ForEach-Object {
+    if ($_ -match '^CLOUDFLARE_(EMAIL|API_KEY|ACCOUNT_ID)=(.+)$') {
+        [System.Environment]::SetEnvironmentVariable("CLOUDFLARE_$($matches[1])", $matches[2].Trim(), 'Process')
+    }
+}
+$email     = $env:CLOUDFLARE_EMAIL
+$key       = $env:CLOUDFLARE_API_KEY
+$accountId = $env:CLOUDFLARE_ACCOUNT_ID
+if (-not $email -or -not $key -or -not $accountId) { Write-Host "CLOUDFLARE_EMAIL, API_KEY, ACCOUNT_ID required."; exit 1 }
+
+$headers = @{
+    'X-Auth-Email' = $email
+    'X-Auth-Key'   = $key
+    'Content-Type' = 'application/json'
+}
+
+# --- 1) 해당 zone에서 @ / apex / www CNAME 삭제 (1014 방지) ---
+$list = Invoke-RestMethod -Uri "https://api.cloudflare.com/client/v4/zones?name=$Domain" -Headers $headers -Method Get
+if (-not $list.success -or $list.result.Count -eq 0) {
+    Write-Host "Zone $Domain not found. Run add-cloudflare-zone.ps1 -Domain $Domain first."
+    exit 1
+}
+$zoneId = $list.result[0].id
+$dnsUri = "https://api.cloudflare.com/client/v4/zones/$zoneId/dns_records"
+$recs   = Invoke-RestMethod -Uri $dnsUri -Headers $headers -Method Get
+foreach ($r in $recs.result) {
+    if (($r.type -eq 'CNAME') -and (($r.name -eq '@' -or $r.name -eq $Domain -or $r.name -eq 'www'))) {
+        $delUri = "$dnsUri/$($r.id)"
+        try {
+            Invoke-RestMethod -Uri $delUri -Headers $headers -Method Delete | Out-Null
+            Write-Host "Deleted DNS: $($r.type) $($r.name) -> $($r.content)"
+        } catch { Write-Host "Delete $($r.name) failed: $_" }
+    }
+}
+
+# --- 2) Pages: academy-frontend에 커스텀 도메인 추가 ---
+$projectName = 'academy-frontend'
+$base = "https://api.cloudflare.com/client/v4/accounts/$accountId/pages/projects/$projectName"
+$wwwDomain = if ($Domain.StartsWith('www.')) { $Domain } else { "www.$Domain" }
+foreach ($d in @($Domain, $wwwDomain)) {
+    $body = @{ name = $d } | ConvertTo-Json
+    try {
+        $res = Invoke-RestMethod -Uri "$base/domains" -Headers $headers -Method Post -Body $body
+        if ($res.success) {
+            Write-Host "Pages custom domain added: $d"
+        } else {
+            Write-Host "Pages add $d failed: $($res.errors | ConvertTo-Json -Compress)"
+        }
+    } catch {
+        $ex = $_.Exception
+        if ($ex.Response) {
+            $stream = $ex.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($stream)
+            $reader.BaseStream.Position = 0
+            $errBody = $reader.ReadToEnd()
+            Write-Host "Pages API error for $d : $errBody"
+        } else {
+            Write-Host "Pages API error for $d : $ex"
+        }
+    }
+}
+Write-Host "Done. Confirm in Workers & Pages > academy-frontend > Custom domains."
