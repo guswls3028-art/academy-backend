@@ -8,7 +8,7 @@ function Sync-ApiEnvFromSSOT {
     <#
     .SYNOPSIS
         Merges SSOT-derived keys (SQS, VIDEO_BATCH_*, REDIS_HOST, REDIS_PORT) into SSM /academy/api/env.
-        If parameter does not exist, creates it with SSOT+Redis only (DB/R2 etc. must be added elsewhere).
+        If parameter does not exist, creates it from SSOT+Redis; if workers env exists, uses it as base so API gets DB/R2 etc.
         Idempotent: multiple runs produce the same env state.
     #>
     if ($script:PlanMode) { Write-Ok "Sync API env skipped (Plan)"; return }
@@ -27,14 +27,28 @@ function Sync-ApiEnvFromSSOT {
         if ($_.Exception.Message -notmatch "ParameterNotFound|InvalidParameter") { throw }
     }
 
-    $jsonStr = $valueRaw
+    $obj = $null
     if ($valueRaw) {
+        $jsonStr = $valueRaw
         if ($isBase64) {
             try { $jsonStr = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($valueRaw)) } catch { $jsonStr = $valueRaw }
         }
         $obj = $jsonStr | ConvertFrom-Json
     } else {
-        $obj = [PSCustomObject]@{}
+        # API env missing: use workers env as base if present (so API gets DB/R2/secrets), then SSOT+Redis will overwrite where applicable.
+        if ($script:SsmWorkersEnv) {
+            try {
+                $w = Invoke-AwsJson @("ssm", "get-parameter", "--name", $script:SsmWorkersEnv, "--with-decryption", "--region", $script:Region, "--output", "json")
+                if ($w -and $w.Parameter -and $w.Parameter.Value) {
+                    $wRaw = $w.Parameter.Value
+                    if ($wRaw -match '^[A-Za-z0-9+/]+=*$') {
+                        try { $wRaw = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($wRaw)) } catch { }
+                    }
+                    $obj = $wRaw | ConvertFrom-Json
+                }
+            } catch { }
+        }
+        if (-not $obj) { $obj = [PSCustomObject]@{} }
     }
 
     # SSOT: SQS

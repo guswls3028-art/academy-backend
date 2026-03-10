@@ -1,9 +1,11 @@
 # ==============================================================================
-# SSM /academy/api/env 에 SQS 큐 이름 + Video Batch(SSOT) 주입
+# SSM /academy/api/env 에 SQS 큐 이름 + Video Batch(SSOT) + Redis(선택) 주입
 # ==============================================================================
+# deploy.ps1 실행 시 인프라 Ensure 후 Invoke-SyncEnvFromSSOT 가 자동으로 API/Workers env를
+# SSOT와 Redis discovery 기준으로 동기화하므로, 정식 배포는 deploy.ps1만 반복 실행하면 됨.
+# 이 스크립트는 배포 없이 SSM만 갱신할 때(예: refresh-api-env 전에 수동 갱신) 사용.
 # - SQS: 메시징/AI job enqueue 시 사용하는 큐 이름 (params SSOT).
 # - Video Batch: upload_complete 후 submit_batch_job 가 바라보는 큐/JobDef/CE (params SSOT).
-#   재배포 후 API가 잘못된 큐를 참조하지 않도록 이 스크립트로 SSM을 갱신한 뒤 instance-refresh 또는 refresh-api-env 적용.
 # 사용: pwsh scripts/v1/update-api-env-sqs.ps1 [-AwsProfile default]
 # ==============================================================================
 param([string]$AwsProfile = "")

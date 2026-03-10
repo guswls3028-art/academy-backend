@@ -9,7 +9,7 @@ function Invoke-BootstrapWorkersEnv {
 
     $existing = Invoke-AwsJson @("ssm", "get-parameter", "--name", $script:SsmWorkersEnv, "--region", $script:Region, "--output", "json")
     if ($existing -and $existing.Parameter -and $existing.Parameter.Name) {
-        Write-Ok "SSM workers env already set: $($script:SsmWorkersEnv)"
+        Write-Ok "SSM workers env already set: $($script:SsmWorkersEnv) (Sync-WorkersEnvFromSSOT will overwrite SQS/Redis from SSOT)"
         return
     }
 
