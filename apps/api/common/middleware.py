@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 HEALTH_CHECK_PATHS = ("/health", "/health/", "/healthz", "/healthz/", "/readyz", "/readyz/")
 
 
+def _is_health_check_path(path: str) -> bool:
+    """ALB/헬스체크 경로 여부. trailing slash·정규화 포함."""
+    if not path:
+        return False
+    norm = path.rstrip("/") or "/"
+    return norm in ("/health", "/healthz", "/readyz") or path in HEALTH_CHECK_PATHS
+
+
 class HealthCheckHostMiddleware:
     """
     ALB target health check 시 Host 가 인스턴스 private IP 이면 ALLOWED_HOSTS 에 없어 400 발생.
@@ -29,7 +37,7 @@ class HealthCheckHostMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        if request.path in HEALTH_CHECK_PATHS:
+        if _is_health_check_path(request.path):
             # Django host validation(CommonMiddleware 등) 우회: forwarded-host 포함 정규화
             request.META["HTTP_HOST"] = "127.0.0.1"
             request.META["HTTP_X_FORWARDED_HOST"] = "127.0.0.1"
