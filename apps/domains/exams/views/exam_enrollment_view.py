@@ -78,11 +78,11 @@ class ExamEnrollmentManageView(APIView):
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1) 세션 등록 학생 목록
+        # 1) 세션 등록 학생 목록 (아바타·강의 딱지용 select_related)
         session_enrollments = (
             SessionEnrollment.objects
             .filter(session_id=session_id)
-            .select_related("enrollment")
+            .select_related("enrollment", "enrollment__student", "enrollment__lecture")
             .order_by("id")
         )
 
@@ -93,24 +93,46 @@ class ExamEnrollmentManageView(APIView):
             .values_list("enrollment_id", flat=True)
         )
 
-        # 3) UI row 구성
+        # 3) UI row 구성 (아바타·강의 딱지 포함)
         items: List[dict] = []
+        request_obj = request
         for se in session_enrollments:
             enrollment = getattr(se, "enrollment", None)
             student_name = ""
+            profile_photo_url = None
+            lecture_title = ""
+            lecture_color = ""
+            lecture_chip_label = ""
 
             if enrollment is not None:
                 student = getattr(enrollment, "student", None)
                 if student is not None:
                     student_name = str(getattr(student, "name", "") or "")
+                    if getattr(student, "profile_photo", None):
+                        try:
+                            profile_photo_url = request_obj.build_absolute_uri(
+                                student.profile_photo.url
+                            )
+                        except Exception:
+                            profile_photo_url = None
                 else:
                     student_name = str(getattr(enrollment, "student_name", "") or "")
+
+                lecture = getattr(enrollment, "lecture", None)
+                if lecture is not None:
+                    lecture_title = str(getattr(lecture, "title", "") or "")
+                    lecture_color = str(getattr(lecture, "color", "") or "") or "#3b82f6"
+                    lecture_chip_label = str(getattr(lecture, "chip_label", "") or "") or ""
 
             items.append(
                 {
                     "enrollment_id": int(se.enrollment_id),
                     "student_name": student_name,
                     "is_selected": int(se.enrollment_id) in selected_ids,
+                    "profile_photo_url": profile_photo_url,
+                    "lecture_title": lecture_title or None,
+                    "lecture_color": lecture_color or None,
+                    "lecture_chip_label": lecture_chip_label or None,
                 }
             )
 
