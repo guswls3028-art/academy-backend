@@ -594,7 +594,30 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
             if video.status not in (Video.Status.READY, Video.Status.FAILED):
                 if video.status not in (Video.Status.UPLOADED, Video.Status.PROCESSING):
-                    raise ValidationError("Cannot retry: status must be READY or FAILED")
+                    raise ValidationError(
+                        f"Cannot retry: status must be READY or FAILED (current: {video.status})"
+                    )
+
+            # Re-enqueue: ensure source object exists so job does not fail later
+            file_key = (video.file_key or "").strip()
+            if not file_key:
+                raise ValidationError(
+                    "업로드된 파일 정보가 없습니다. 삭제 후 다시 업로드해 주세요."
+                )
+            try:
+                exists, size = head_object(file_key)
+            except Exception as e:
+                logger.exception("VIDEO_RETRY_HEAD_OBJECT_ERROR | video_id=%s | %s", video.id, e)
+                raise ValidationError(
+                    "저장소 확인 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."
+                )
+            if not exists or size == 0:
+                video.error_reason = "source_not_found_or_empty"
+                video.save(update_fields=["error_reason"])
+                return Response(
+                    {"detail": "S3 object not found"},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
             video.status = Video.Status.UPLOADED
             video.save(update_fields=["status", "updated_at"])
