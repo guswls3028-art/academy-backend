@@ -31,9 +31,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Guard — no legacy script execution (all workflows)
         run: |
+          INFRA_PAT='scripts/inf''ra'
           for f in .github/workflows/*.yml .github/workflows/*.yaml; do
             [ -f "$f" ] || continue
-            if grep -E 'run:.*scripts/infra|pwsh.*scripts/infra|-File.*scripts/infra' "$f"; then
+            if grep -E "run:.*${INFRA_PAT}|pwsh.*${INFRA_PAT}|-File.*${INFRA_PAT}" "$f"; then
               echo "::error::Legacy script execution detected in $f. Use scripts/v1/deploy.ps1 only."
               exit 1
             fi
