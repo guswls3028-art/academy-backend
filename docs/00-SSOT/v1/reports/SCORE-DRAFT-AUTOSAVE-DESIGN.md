@@ -58,15 +58,46 @@
 
 ---
 
-## 5. Files changed (summary)
+## 6. Final commit flow
 
-- Backend: new model `ScoreEditDraft`, migration, new view + urls for score-draft GET/PUT/commit.
-- Frontend: `ScoresTable` ref + getPendingSnapshot/applyDraftPatch; `useScoreEditDraft` hook; draft API client; SessionScoresPanel/SessionScoresTab recovery modal + status strip + beforeunload; 편집 종료 calls commit API.
+- User clicks "편집 종료".
+- Frontend: `flushPendingChanges()` (existing: patch APIs for each pending cell, then invalidate sessionScores).
+- Frontend: `POST /results/admin/sessions/<id>/score-draft/commit/` (clear draft row).
+- Frontend: `setIsEditMode(false)`.
 
 ---
 
-## 6. Edge cases
+## 7. Edge cases
 
-- **Concurrent edit**: Optional: GET draft could return `editor_user_id`/`last_updated`; if different user or very old, show warning. Minimal: same user overwrites own draft.
-- **Autosave failure**: Show "임시저장 실패", retry on next threshold or manual "다시 시도". Optional: keep last patch in sessionStorage as backup.
-- **Restore then discard**: Discard = DELETE draft (or POST commit with discard flag) and reload scores.
+- **Concurrent edit**: Same user overwrites own draft on PUT. Other users have separate draft rows (session_id + editor_user_id). No conflict handling; optional future: return 409 if draft was updated by another user.
+- **Autosave failure**: Status "임시저장 실패", "다시 시도" button calls `performSave()` again. Pending remains in memory.
+- **Restore then discard**: Discard calls POST commit (deletes draft), then `setHasDraftToRestore(false)`. Table keeps showing server data (no patch applied).
+- **beforeunload**: Fires when dirty and (last autosave failed or last autosave > 40s ago). Browser shows standard leave-confirm.
+- **Autosave trigger**: Polling every 5s; if `getPendingSnapshot().length >= 12` or (length > 0 and elapsed since last save >= 40s), call PUT draft.
+
+---
+
+## 8. Limitations
+
+- 문항별 점수(ScoreInputCell)는 즉시 저장 유지; draft에는 합산/객관식/주관식/과제만 포함.
+- 동시 편집 경고(다른 사용자 편집 중) 미구현.
+- Draft payload는 프론트 PendingChange[] 형식 그대로 저장; 스키마 검증은 백엔드에서 최소만 수행.
+
+---
+
+## 9. Files changed
+
+**Backend**
+- `apps/domains/results/models/score_edit_draft.py` (new)
+- `apps/domains/results/models/__init__.py` (export ScoreEditDraft)
+- `apps/domains/results/migrations/0003_score_edit_draft.py` (new)
+- `apps/domains/results/views/score_draft_view.py` (new)
+- `apps/domains/results/urls.py` (score-draft, score-draft/commit)
+
+**Frontend**
+- `src/features/scores/api/scoreDraft.ts` (new)
+- `src/features/scores/components/ScoresTable.tsx` (getPendingSnapshot, applyDraftPatch, PendingChange from scoreDraft)
+- `src/features/scores/panels/SessionScoresPanel.tsx` (ref: getPendingSnapshot, applyDraftPatch)
+- `src/features/scores/hooks/useScoreEditDraft.ts` (new)
+- `src/features/sessions/components/SessionScoresTab.tsx` (draft hook, recovery modal, status, commit on exit)
+- `src/features/lectures/pages/scores/SessionScoresEntryPage.tsx` (draft hook, recovery modal, status, commit on exit)
