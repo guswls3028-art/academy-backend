@@ -1,6 +1,6 @@
 # ==============================================================================
 # Video Batch deploy — SSOT v1. Build video-worker, push ECR, run scripts/v1/deploy.ps1 only.
-# Legacy: scripts/infra/*.ps1 실행/호출 금지 (denylist 가드).
+# Legacy: scripts-infra/*.ps1 실행/호출 금지 (denylist 가드).
 # ==============================================================================
 
 name: Video Batch Deploy
