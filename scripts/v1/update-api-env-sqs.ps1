@@ -1,7 +1,9 @@
 # ==============================================================================
-# SSM /academy/api/env 에 SQS 큐 이름 주입 (params SSOT)
+# SSM /academy/api/env 에 SQS 큐 이름 + Video Batch(SSOT) 주입
 # ==============================================================================
-# API가 메시징/AI job enqueue 시 academy-v1-messaging-queue, academy-v1-ai-queue 사용.
+# - SQS: 메시징/AI job enqueue 시 사용하는 큐 이름 (params SSOT).
+# - Video Batch: upload_complete 후 submit_batch_job 가 바라보는 큐/JobDef/CE (params SSOT).
+#   재배포 후 API가 잘못된 큐를 참조하지 않도록 이 스크립트로 SSM을 갱신한 뒤 instance-refresh 또는 refresh-api-env 적용.
 # 사용: pwsh scripts/v1/update-api-env-sqs.ps1 [-AwsProfile default]
 # ==============================================================================
 param([string]$AwsProfile = "")
@@ -43,6 +45,15 @@ $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_BASIC" -NotePropertyValue
 $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_LITE" -NotePropertyValue $script:AiSqsQueueName -Force
 $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_PREMIUM" -NotePropertyValue $script:AiSqsQueueName -Force
 
+# Video Batch (params SSOT) — API가 submit_batch_job 시 참조하는 큐/JobDef/CE
+$obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_QUEUE" -NotePropertyValue $script:VideoQueueName -Force
+$obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_DEFINITION" -NotePropertyValue $script:VideoJobDefName -Force
+$obj | Add-Member -NotePropertyName "VIDEO_BATCH_COMPUTE_ENV_NAME" -NotePropertyValue $script:VideoCEName -Force
+if ($script:VideoLongQueueName) {
+    $obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_QUEUE_LONG" -NotePropertyValue $script:VideoLongQueueName -Force
+    $obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_DEFINITION_LONG" -NotePropertyValue $script:VideoLongJobDefName -Force
+}
+
 $newJson = $obj | ConvertTo-Json -Compress -Depth 10
 # API env 저장 형식 확인 (plain JSON vs base64)
 $newValue = $newJson
@@ -53,7 +64,13 @@ if ($valueRaw -match '^[A-Za-z0-9+/]+=*$') {
 
 Invoke-Aws @("ssm", "put-parameter", "--name", $paramName, "--type", "SecureString", "--value", $newValue, "--overwrite", "--region", $script:Region) -ErrorMessage "put-parameter api env" | Out-Null
 
-Write-Host "SSM $paramName updated with SQS queue names:" -ForegroundColor Green
-Write-Host "  MESSAGING_SQS_QUEUE_NAME=$($script:MessagingSqsQueueName)" -ForegroundColor Gray
-Write-Host "  AI_SQS_QUEUE_NAME_*= $($script:AiSqsQueueName)" -ForegroundColor Gray
+Write-Host "SSM $paramName updated:" -ForegroundColor Green
+Write-Host "  SQS: MESSAGING_SQS_QUEUE_NAME=$($script:MessagingSqsQueueName)" -ForegroundColor Gray
+Write-Host "  SQS: AI_SQS_QUEUE_NAME_*= $($script:AiSqsQueueName)" -ForegroundColor Gray
+Write-Host "  Video Batch: VIDEO_BATCH_JOB_QUEUE=$($script:VideoQueueName)" -ForegroundColor Gray
+Write-Host "  Video Batch: VIDEO_BATCH_JOB_DEFINITION=$($script:VideoJobDefName)" -ForegroundColor Gray
+if ($script:VideoLongQueueName) {
+    Write-Host "  Video Batch Long: VIDEO_BATCH_JOB_QUEUE_LONG=$($script:VideoLongQueueName)" -ForegroundColor Gray
+}
 Write-Host "`nAPI 인스턴스 refresh-api-env.ps1 실행 또는 instance-refresh 후 적용됨." -ForegroundColor Cyan
+Write-Host "연결 참조 대조: docs/00-SSOT/v1/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md" -ForegroundColor Cyan
