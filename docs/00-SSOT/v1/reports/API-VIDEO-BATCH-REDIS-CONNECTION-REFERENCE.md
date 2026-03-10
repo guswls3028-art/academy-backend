@@ -111,16 +111,18 @@ Django `apps/api/config/settings/base.py` 및 `apps/support/video/services/batch
 ## 3. API Prod Env 소스 (실제 동작)
 
 - **런타임 소스:** SSM Parameter Store `/academy/api/env` (JSON 또는 Base64 JSON).
-- **적용 경로:** EC2 UserData / Rapid Deploy → `aws ssm get-parameter` → `/opt/api.env` → `docker run --env-file /opt/api.env`.
+- **적용 경로:** EC2 UserData 부팅 시 `aws ssm get-parameter` → `/opt/api.env` → `docker run --env-file /opt/api.env`.  
+  **기동 중인 인스턴스**는 부팅 시점의 SSM만 갖고 있으므로, SSM을 나중에 갱신하면 **반드시** 아래 중 하나로 반영해야 함:
+  - **권장:** `scripts/v1/deploy.ps1` 실행. 배포 마지막에 `Invoke-SyncEnvFromSSOT`(SSM 갱신) 후 `Invoke-RefreshApiEnvOnInstances`(기동 중인 API 인스턴스에 SSM 재적용 + 컨테이너 재시작)가 자동 실행됨.
+  - **SSM만 수동 갱신한 경우:** `pwsh scripts/v1/refresh-api-env.ps1` 실행 후, API가 올바른 VIDEO_BATCH_* / REDIS_HOST 를 사용하는지 검증.
 - **갱신 스크립트:**
-  - `scripts/v1/update-api-env-sqs.ps1` — SQS 큐 이름 + **Video Batch(SSOT)** 주입.  
-    **과거에는 VIDEO_BATCH_* 를 주입하지 않아** SSM에 수동으로 넣었거나 예전 .env 기반 값이 들어간 상태일 수 있음.  
-    **현재는** 동일 스크립트가 params SSOT에서 `VIDEO_BATCH_JOB_QUEUE`, `VIDEO_BATCH_JOB_DEFINITION`, Long 큐/JobDef, `VIDEO_BATCH_COMPUTE_ENV_NAME` 을 읽어 `/academy/api/env`에 merge 함.
-  - REDIS_HOST 는 ElastiCache Primary Endpoint이므로 params에 호스트가 없어, 수동 설정 또는 별도 스크립트 유지.
+  - `scripts/v1/deploy.ps1` — 인프라 Ensure 후 `core/sync_env.ps1`의 `Invoke-SyncEnvFromSSOT`로 `/academy/api/env`에 SQS, Video Batch, Redis(자동 발견) merge. 이어서 `Invoke-RefreshApiEnvOnInstances`로 기동 중 API에 적용.
+  - `scripts/v1/update-api-env-sqs.ps1` — 배포 없이 SSM만 갱신할 때 사용. 실행 후 반드시 `refresh-api-env.ps1` 또는 instance-refresh로 API에 반영.
+  - REDIS_HOST 는 `Get-RedisPrimaryEndpoint`(params `redis.replicationGroupId` 기준)로 자동 조회 후 Sync 시 SSM에 넣음.
 
-**재배포 후 끊김 시나리오:**  
-SSM `/academy/api/env`에 `VIDEO_BATCH_JOB_QUEUE=academy-video-batch-queue`(v1 없음) 또는 값 자체가 비어 있으면, API는 Django 기본값 `academy-v1-video-batch-queue`를 쓰거나(env 없을 때), **잘못된 큐 이름**을 바라보게 됨.  
-AWS에 실제로 있는 큐는 `academy-v1-video-batch-queue`이므로, **이름이 불일치하면 Batch 제출 실패 또는 잘못된 큐로 제출됨.**
+**재배포 후 끊김 시나리오 (원인 및 해결):**  
+SSM만 갱신하고 **기동 중인 API 컨테이너를 재시작하지 않으면** API는 예전 `/opt/api.env`를 계속 사용함.  
+→ **해결:** `deploy.ps1` 한 번 실행( Sync + Refresh 포함 )하거나, SSM 수동 변경 후 `refresh-api-env.ps1` 실행.
 
 ---
 
@@ -183,11 +185,10 @@ aws elasticache describe-replication-groups --replication-group-id academy-v1-re
 
 ## 7. 수정 사항 요약
 
-- **스크립트:** `scripts/v1/update-api-env-sqs.ps1`를 확장해, SSOT에서 **VIDEO_BATCH_*** 를 읽어 `/academy/api/env`에 merge 하도록 추가함.  
-  → 재배포 후 한 번 실행하면 API가 항상 params.yaml과 동일한 큐/JobDef를 참조함.
-- **REDIS_HOST:** ElastiCache 주소는 params에 없으므로, 기존처럼 SSM에 수동 설정하거나, 별도 스크립트로 replication group에서 Primary Endpoint를 조회해 SSM에 넣는 방식 유지.
-
-이 문서와 스크립트 반영으로 **연결 참조 끊김**을 방지하고, 재배포 후에도 API가 올바른 Batch/Redis 대상을 바라보는지 위 체크리스트로 검증할 수 있음.
+- **deploy.ps1:** 인프라 Ensure 후 `Invoke-SyncEnvFromSSOT`(SSOT + Redis discovery → SSM) 실행, 이어서 `Invoke-RefreshApiEnvOnInstances`로 기동 중인 API 인스턴스에 갱신된 SSM 적용 및 컨테이너 재시작.  
+  → 재배포 시 **반드시** `deploy.ps1` 한 번 실행하면 SSOT와 런타임 env가 일치하고, 비디오 파이프라인이 올바른 Batch 큐/JobDef를 참조함.
+- **update-api-env-sqs.ps1:** 배포 없이 SSM만 갱신할 때 사용. 실행 후 `refresh-api-env.ps1`로 API에 반영 필요.
+- **REDIS_HOST:** Sync 시 `Get-RedisPrimaryEndpoint`로 ElastiCache Primary Endpoint 자동 조회 후 SSM에 주입.
 
 ---
 
