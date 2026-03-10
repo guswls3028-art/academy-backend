@@ -2,6 +2,31 @@
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
 
+function Get-RedisPrimaryEndpoint {
+    <#
+    .SYNOPSIS
+        Returns Primary Endpoint (Host, Port) for the SSOT replication group.
+        Used by sync_env.ps1 to inject REDIS_HOST/REDIS_PORT into API and Workers SSM env.
+    #>
+    if (-not $script:RedisReplicationGroupId) { return $null }
+    if ($script:SkipRedis) { return $null }
+    try {
+        $redis = Invoke-AwsJson @("elasticache", "describe-replication-groups", "--replication-group-id", $script:RedisReplicationGroupId, "--region", $script:Region, "--output", "json")
+        if (-not $redis -or -not $redis.ReplicationGroups -or $redis.ReplicationGroups.Count -eq 0) { return $null }
+        $rg = $redis.ReplicationGroups[0]
+        if ($rg.Status -ne "available") { return $null }
+        $ep = $rg.NodeGroups[0].PrimaryEndpoint
+        if (-not $ep -or -not $ep.Address) { return $null }
+        return [PSCustomObject]@{
+            Host = $ep.Address
+            Port = if ($ep.Port) { [int]$ep.Port } else { 6379 }
+        }
+    } catch {
+        if ($_.Exception.Message -match "ReplicationGroupNotFound|ParameterNotFound") { return $null }
+        throw
+    }
+}
+
 function Get-RedisSubnetGroupName {
     if (-not $script:RedisSubnetGroupName) {
         throw "redis.subnetGroupName is required in params.yaml for Redis subnet group."
