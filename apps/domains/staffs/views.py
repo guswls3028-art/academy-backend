@@ -42,6 +42,7 @@ from .serializers import (
     PayrollSnapshotSerializer,
 )
 from academy.adapters.db.django import repositories_staffs as staff_repo
+from academy.adapters.db.django import repositories_core as core_repo
 from .filters import StaffFilter, WorkRecordFilter, ExpenseRecordFilter
 from apps.domains.teachers.models import Teacher
 from apps.core.models import TenantMembership
@@ -284,24 +285,52 @@ class StaffViewSet(viewsets.ModelViewSet):
                 }
             )
 
+    def _staff_display_role(self, tenant, staff) -> str:
+        """직원관리 목록·헤더 근무자 아바타와 동일한 직급 판별: owner(대표) / TEACHER(강사) / ASSISTANT(조교)."""
+        if getattr(staff, "user_id", None) and getattr(staff, "user", None):
+            if core_repo.membership_exists_staff(tenant, staff.user, staff_roles=("owner",)):
+                return "owner"
+        from academy.adapters.db.django import repositories_teachers as teacher_repo
+        if teacher_repo.teacher_exists_tenant_name_phone(tenant, staff.name, staff.phone or ""):
+            return "TEACHER"
+        return "ASSISTANT"
+
     @action(detail=False, methods=["get"], url_path="currently-working")
     def currently_working(self, request):
-        """현재 근무 중인 직원 목록 (end_time 이 null 인 WorkRecord 가 있는 직원). 직급(role) 포함."""
+        """현재 근무 중인 직원 목록 (end_time 이 null 인 WorkRecord 가 있는 직원). 직급(role) + 근무 시작 시각·휴식 정보(드롭다운용)."""
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response([])
-        from academy.adapters.db.django import repositories_teachers as teacher_repo
-        staff_ids = (
+        records = (
             WorkRecord.objects
             .filter(tenant=tenant, end_time__isnull=True)
-            .values_list("staff_id", flat=True)
-            .distinct()
+            .select_related("staff")
+            .order_by("staff_id", "-date", "-start_time")
         )
-        staffs = Staff.objects.filter(id__in=staff_ids).only("id", "name", "phone", "tenant_id")
+        seen_staff = set()
+        record_by_staff = {}
+        for rec in records:
+            if rec.staff_id not in seen_staff:
+                seen_staff.add(rec.staff_id)
+                record_by_staff[rec.staff_id] = rec
+        staff_ids = list(record_by_staff.keys())
+        staffs = Staff.objects.filter(id__in=staff_ids).select_related("user").only("id", "name", "phone", "tenant_id", "user_id")
         out = []
         for s in staffs:
-            role = "TEACHER" if teacher_repo.teacher_exists_tenant_name_phone(tenant, s.name, s.phone or "") else "ASSISTANT"
-            out.append({"staff_id": s.id, "staff_name": s.name, "role": role})
+            try:
+                role = self._staff_display_role(tenant, s)
+            except Exception:
+                role = "ASSISTANT"
+            rec = record_by_staff.get(s.id)
+            item = {"staff_id": s.id, "staff_name": s.name, "role": role}
+            if rec:
+                item["date"] = rec.date.isoformat()
+                item["started_at"] = rec.start_time.strftime("%H:%M:%S") if hasattr(rec.start_time, "strftime") else str(rec.start_time)
+                item["break_minutes"] = getattr(rec, "break_minutes", 0) or 0
+                item["break_total_seconds"] = getattr(rec, "break_total_seconds", 0) or (item["break_minutes"] * 60)
+                if getattr(rec, "current_break_started_at", None):
+                    item["break_started_at"] = rec.current_break_started_at.isoformat()
+            out.append(item)
         return Response(out)
 
     # ===========================
@@ -322,22 +351,33 @@ class StaffViewSet(viewsets.ModelViewSet):
         if not record:
             return Response({"status": "OFF"})
 
+        # JSON 직렬화를 위해 time/datetime을 문자열로 변환
+        started_at_str = (
+            record.start_time.strftime("%H:%M:%S")
+            if hasattr(record.start_time, "strftime")
+            else str(record.start_time)
+        )
+
         if record.current_break_started_at:
+            break_sec = getattr(record, "break_total_seconds", 0) or (record.break_minutes * 60)
             return Response({
                 "status": "BREAK",
                 "work_record_id": record.id,
                 "date": record.date.isoformat(),
-                "started_at": record.start_time,
+                "started_at": started_at_str,
                 "break_minutes": record.break_minutes,
-                "break_started_at": record.current_break_started_at,
+                "break_total_seconds": break_sec,
+                "break_started_at": record.current_break_started_at.isoformat(),
             })
 
+        break_sec = getattr(record, "break_total_seconds", 0) or (record.break_minutes * 60)
         return Response({
             "status": "WORKING",
             "work_record_id": record.id,
             "date": record.date.isoformat(),
-            "started_at": record.start_time,
+            "started_at": started_at_str,
             "break_minutes": record.break_minutes,
+            "break_total_seconds": break_sec,
         })
 
     @action(detail=True, methods=["post"], url_path="work-records/start-work")
@@ -671,9 +711,11 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
 
         now = timezone.localtime(timezone.now())
         delta = now - record.current_break_started_at
-        record.break_minutes += int(delta.total_seconds() / 60)
+        delta_seconds = int(delta.total_seconds())
+        record.break_total_seconds = getattr(record, "break_total_seconds", 0) + delta_seconds
+        record.break_minutes = record.break_total_seconds // 60
         record.current_break_started_at = None
-        record.save(update_fields=["break_minutes", "current_break_started_at"])
+        record.save(update_fields=["break_minutes", "break_total_seconds", "current_break_started_at"])
 
         return Response({"status": "BREAK_ENDED"})
 
@@ -690,7 +732,9 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         if record.current_break_started_at:
             now = timezone.localtime(timezone.now())
             delta = now - record.current_break_started_at
-            record.break_minutes += int(delta.total_seconds() / 60)
+            delta_seconds = int(delta.total_seconds())
+            record.break_total_seconds = getattr(record, "break_total_seconds", 0) + delta_seconds
+            record.break_minutes = record.break_total_seconds // 60
             record.current_break_started_at = None
 
         record.end_time = timezone.localtime(timezone.now()).time()

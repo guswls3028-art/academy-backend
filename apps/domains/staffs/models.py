@@ -223,6 +223,8 @@ class WorkRecord(TimestampModel):
     start_time = models.TimeField()
     end_time = models.TimeField(null=True, blank=True)
     break_minutes = models.PositiveIntegerField(default=0)
+    """휴식 누적 초 단위 (실시간 시계·일시정지용). 급여는 break_minutes 사용."""
+    break_total_seconds = models.PositiveIntegerField(default=0)
 
     # ✅ 원본에 있었던 필드 복구
     current_break_started_at = models.DateTimeField(null=True, blank=True)
