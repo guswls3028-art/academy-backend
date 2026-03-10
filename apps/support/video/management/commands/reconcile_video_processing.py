@@ -89,9 +89,12 @@ class Command(BaseCommand):
                 self.stderr.write(f"WARNING: video {video.id} status={video.status} after reclaim")
                 continue
 
-            if create_job_and_submit_batch(video):
+            result = create_job_and_submit_batch(video)
+            if result.job:
                 enqueued += 1
                 self.stdout.write(self.style.SUCCESS(f"RE_ENQUEUED | video_id={video.id}"))
+            else:
+                self.stdout.write(f"ENQUEUE_SKIPPED | video_id={video.id} reason={result.reject_reason}")
 
         self.stdout.write(
             self.style.SUCCESS(f"Done: reclaimed={reclaimed} enqueued={enqueued}" + (" (dry-run)" if dry_run else ""))

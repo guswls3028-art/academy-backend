@@ -464,11 +464,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 "VIDEO_UPLOAD_TRACE | before enqueue (ffprobe_fail reason=%s duration=%s) | video_id=%s execution=2_BEFORE_ENQUEUE",
                 reason, duration, video_id,
             )
-            if not create_job_and_submit_batch(video):
-                logger.error("VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | reason=%s", video.id, reason)
-                return Response(
-                    {"detail": "비디오 작업 등록 실패. API 서버 AWS Batch 설정을 확인하세요."},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            result = create_job_and_submit_batch(video)
+            if not result.job:
+                logger.warning(
+                    "VIDEO_UPLOAD_ENQUEUE_DEFERRED | video_id=%s | reason=%s | reject=%s | "
+                    "video is UPLOADED; will be picked up by reconciliation or manual retry",
+                    video.id, reason, result.reject_reason,
                 )
             return Response(VideoSerializer(video).data)
 
@@ -485,15 +486,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 "VIDEO_UPLOAD_TRACE | before enqueue (duration<min branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
                 video.id, _tid, video.file_key or "",
             )
-            # Job 생성 + SQS enqueue (job_id 포함)
-            if not create_job_and_submit_batch(video):
-                logger.error(
-                    "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_submit_batch returned None (duration<min branch)",
-                    video.id,
-                )
-                return Response(
-                    {"detail": "비디오 작업 등록 실패. API 서버 AWS Batch 설정을 확인하세요."},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            result = create_job_and_submit_batch(video)
+            if not result.job:
+                logger.warning(
+                    "VIDEO_UPLOAD_ENQUEUE_DEFERRED | video_id=%s | reject=%s | "
+                    "video is UPLOADED; will be picked up by reconciliation or manual retry",
+                    video.id, result.reject_reason,
                 )
             return Response(VideoSerializer(video).data)
 
@@ -506,15 +504,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             "VIDEO_UPLOAD_TRACE | before enqueue (normal branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
             video.id, _tid, video.file_key or "",
         )
-        # Job 생성 + Batch 제출
-        if not create_job_and_submit_batch(video):
-            logger.error(
-                "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | create_job_and_submit_batch returned None (normal branch)",
-                video.id,
-            )
-            return Response(
-                {"detail": "비디오 작업 등록 실패. API 서버 AWS Batch 설정을 확인하세요."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        result = create_job_and_submit_batch(video)
+        if not result.job:
+            logger.warning(
+                "VIDEO_UPLOAD_ENQUEUE_DEFERRED | video_id=%s | reject=%s | "
+                "video is UPLOADED; will be picked up by reconciliation or manual retry",
+                video.id, result.reject_reason,
             )
         return Response(VideoSerializer(video).data)
 
@@ -622,19 +617,28 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.status = Video.Status.UPLOADED
             video.save(update_fields=["status", "updated_at"])
 
-            job = create_job_and_submit_batch(video)
-            if not job:
+            from apps.support.video.services.video_encoding import REASON_TENANT_LIMIT, REASON_GLOBAL_LIMIT
+            result = create_job_and_submit_batch(video)
+            if not result.job:
+                if result.reject_reason == REASON_TENANT_LIMIT:
+                    raise ValidationError(
+                        "현재 처리 중인 영상이 많아 대기열이 가득 찼습니다. 처리 완료 후 자동으로 시작되거나, 잠시 후 다시 시도해 주세요."
+                    )
+                if result.reject_reason == REASON_GLOBAL_LIMIT:
+                    raise ValidationError(
+                        "전체 처리 대기열이 가득 찼습니다. 잠시 후 다시 시도해 주세요."
+                    )
                 raise ValidationError(
                     "비디오 작업 등록 실패. API 서버 AWS Batch 설정을 확인하세요."
                 )
 
             logger.info(
                 "VIDEO_RETRY_ENQUEUED | job_id=%s | video_id=%s | tenant_id=%s",
-                job.id, video.id,
+                result.job.id, video.id,
                 getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None),
             )
             return Response(
-                {"detail": "Video reprocessing queued (Batch)", "job_id": str(job.id)},
+                {"detail": "Video reprocessing queued (Batch)", "job_id": str(result.job.id)},
                 status=status.HTTP_202_ACCEPTED,
             )
         except ValidationError:
