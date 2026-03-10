@@ -13,17 +13,10 @@
 | **ALB 타깃** | 1개 **unhealthy** (헬스체크 400으로 인해 미통과) |
 | **원인** | ALB 타깃 헬스체크가 타깃에 요청 시 **Host: private IP**(172.30.x.x)를 사용함. Django `ALLOWED_HOSTS`에 해당 IP가 없어 **400 Bad Request** 반환 → unhealthy. |
 
-**적용한 수정(코드 반영 완료):**
+**수정이 반영된 이미지 배포 방법:**
 
-- **prod.py:** `ALLOWED_HOSTS`에 VPC 대역 `172.30.0.0/22`(172.30.0.x ~ 172.30.3.x) 추가.
-- **middleware.py:** `HealthCheckHostMiddleware`에서 헬스체크 경로 매칭 시 `request.path` 정규화(trailing slash 등) 적용.
-
-**수정이 반영된 이미지 배포 방법 (둘 중 하나):**
-
-1. **main 푸시** → GitHub Actions가 academy-api 이미지 빌드·ECR 푸시 후 API ASG instance refresh 자동 실행.
-2. **로컬:** Docker 기동 후 `docker build`·ECR 푸시 후 `pwsh -File scripts/v1/api-refresh-only.ps1 -AwsProfile default` 실행.
-
-(현재 환경에서는 Docker 데몬 미실행으로 로컬 빌드·푸시는 수행하지 못함.)
+- **이미지 빌드·ECR 푸시는 GitHub Actions로만 수행한다.** (룰 `07_deployment_orchestrator.mdc`, Runbook §0.)
+- **방법:** 수정 반영 커밋을 **main에 푸시**하면 CI(`v1-build-and-push-latest.yml`)가 academy-api 이미지 빌드·ECR 푸시 후 API ASG instance refresh를 자동 실행한다. 리프레시 완료 후 타깃이 healthy·healthz 200이면 최종 완료.
 
 ---
 
