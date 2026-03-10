@@ -44,8 +44,15 @@ class MessageTemplate(models.Model):
     """
     class Category(models.TextChoices):
         DEFAULT = "default", "기본"
+        SIGNUP = "signup", "가입/등록"
+        ATTENDANCE = "attendance", "출결"
         LECTURE = "lecture", "강의"
+        EXAM = "exam", "시험"
+        ASSIGNMENT = "assignment", "과제"
+        GRADES = "grades", "성적"
         CLINIC = "clinic", "클리닉"
+        PAYMENT = "payment", "결제"
+        NOTICE = "notice", "운영공지"
 
     tenant = models.ForeignKey(
         "core.Tenant",
