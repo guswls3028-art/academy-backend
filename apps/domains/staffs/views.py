@@ -295,7 +295,7 @@ class StaffViewSet(viewsets.ModelViewSet):
             return "TEACHER"
         return "ASSISTANT"
 
-    @action(detail=False, methods=["get"], url_path="currently-working")
+    @action(detail=False, methods=["get"], url_path="currently-working", permission_classes=[IsAuthenticated])
     def currently_working(self, request):
         """현재 근무 중인 직원 목록 (end_time 이 null 인 WorkRecord 가 있는 직원). 직급(role) + 근무 시작 시각·휴식 정보(드롭다운용)."""
         tenant = getattr(request, "tenant", None)

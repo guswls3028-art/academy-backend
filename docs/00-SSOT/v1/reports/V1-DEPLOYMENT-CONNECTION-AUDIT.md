@@ -190,3 +190,20 @@ Redis (ElastiCache)
 - **최소 수정:** .env v1 통일, (선택) REDIS_HOST 자동 주입, 배포 후 `update-api-env-sqs.ps1` 실행 명시 또는 자동화.
 
 이 문서는 저장소와 설정 로직만 분석한 것이며, AWS 리소스 실제 존재 여부는 `verify-video-batch-connection.ps1` 등으로 별도 확인해야 함.
+
+---
+
+## 10. 리팩터 반영 (deploy.ps1 자동 동기화)
+
+**변경 요약:** SSOT → 인프라 → 런타임 env 일치를 위해 `deploy.ps1` 리팩터 적용됨.
+
+| 항목 | 내용 |
+|------|------|
+| **API env 동기화** | 인프라 Ensure 후 `Invoke-SyncEnvFromSSOT` 호출. `Sync-ApiEnvFromSSOT`가 `/academy/api/env`에 SQS, VIDEO_BATCH_*, REDIS_HOST/REDIS_PORT(Redis discovery) merge. 파라미터 없으면 workers env 기반으로 생성 후 SSOT+Redis 반영. |
+| **Workers env 동기화** | `Sync-WorkersEnvFromSSOT`가 `/academy/workers/env`에 SQS, REDIS_HOST/REDIS_PORT merge. Bootstrap이 만든 기존 값(DB/R2 등) 유지. |
+| **Redis 자동 발견** | `Get-RedisPrimaryEndpoint`(resources/redis.ps1)로 `redis.replicationGroupId`의 Primary Endpoint 조회 후 API/Workers env에 주입. `-SkipRedis` 시 discovery 생략. |
+| **Idempotent** | 동일 SSOT·동일 Redis 상태에서 여러 번 배포해도 SSM env가 동일한 내용으로 갱신됨. |
+| **관련 파일** | `scripts/v1/core/sync_env.ps1`, `scripts/v1/resources/redis.ps1`(Get-RedisPrimaryEndpoint), `scripts/v1/deploy.ps1`. |
+
+기존 `update-api-env-sqs.ps1`는 배포 없이 SSM만 갱신할 때만 사용. 정식 배포는 `deploy.ps1` 한 번 실행으로 SSOT와 env가 맞음.
+
