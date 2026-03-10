@@ -8,7 +8,8 @@
 
 **Docker 이미지 빌드·ECR 푸시는 반드시 GitHub Actions로만 수행한다.** 로컬 Docker 빌드·EC2에서의 빌드·수동 ECR 푸시는 사용하지 않는다.
 
-- **워크플로:** `backend/.github/workflows/v1-build-and-push-latest.yml` — main 푸시 시 academy-base, academy-api, academy-video-worker, academy-messaging-worker, academy-ai-worker-cpu 이미지 빌드·ECR 푸시 후 API ASG instance refresh 자동 실행.
+- **워크플로:** `backend/.github/workflows/v1-build-and-push-latest.yml` — main 푸시 시 academy-base, academy-api, academy-video-worker, academy-messaging-worker, academy-ai-worker-cpu 이미지 빌드·ECR **:latest** 푸시 후 API ASG instance refresh 자동 실행.
+- **정합:** SSOT `ecr.useLatestTag: true`로 풀배포(deploy.ps1)도 ECR **:latest** 사용. 이미지 빌드와 풀배포가 동일한 이미지 소스를 사용함. 상세: `docs/00-SSOT/v1/reports/INFRA-IMAGE-BUILD-DEPLOY-ALIGNMENT.md`.
 - **코드 반영:** 이미지에 코드를 반영하려면 main에 푸시하면 된다. CI가 빌드·푸시·리프레시까지 수행한다.
 
 ---

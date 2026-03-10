@@ -3,6 +3,8 @@
 **목적:** API 배포 후 "프로세스 재시작"이 아니라 **연결 참조 일치** 확인.  
 upload_complete 이후 API가 올바른 Batch Queue / Job Definition / Compute Environment / Redis를 바라보는지 검증.
 
+**인프라·이미지 정합:** 이미지 빌드(GitHub Actions)와 풀배포(deploy.ps1) 정합 및 최신 인프라 요약은 `docs/00-SSOT/v1/reports/INFRA-IMAGE-BUILD-DEPLOY-ALIGNMENT.md` 참고. SSOT는 `docs/00-SSOT/v1/params.yaml`.
+
 **AWS 프로필:** V1 배포·검증 시 **반드시 프로필 `default` 사용.** 사용자에게 프로필을 묻지 않는다.
 
 ---
