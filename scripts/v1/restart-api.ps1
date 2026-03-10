@@ -2,6 +2,8 @@
 # API 컨테이너 재시작 (Redis 연결 갱신 등)
 # ==============================================================================
 # Redis SG 변경 후 API가 새 연결을 시도하려면 컨테이너 재시작 필요.
+# 주의: 이 스크립트는 SSM을 다시 읽지 않음. /opt/api.env 는 부팅 시점 그대로.
+# env(VIDEO_BATCH_*, REDIS_HOST 등) 갱신이 필요하면 refresh-api-env.ps1 사용.
 # 사용: pwsh scripts/v1/restart-api.ps1 -AwsProfile default
 # ==============================================================================
 param([string]$AwsProfile = "")

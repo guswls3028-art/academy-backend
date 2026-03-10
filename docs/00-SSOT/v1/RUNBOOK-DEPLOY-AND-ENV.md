@@ -58,7 +58,26 @@ pwsh -File scripts/v1/verify-video-batch-connection.ps1
 
 ---
 
-## 5. 참고
+## 5. API만 재배포할 때 (풀배포 없이 API 서버만)
+
+**전제:** 이미 한 번이라도 `deploy.ps1`를 실행해 SSM(`/academy/api/env`)이 SSOT와 맞춰져 있는 상태.
+
+| 방법 | 스크립트 | 동작 | env 반영 |
+|------|----------|------|-----------|
+| **인스턴스 교체** | `api-refresh-only.ps1` 또는 `start-api-instance-refresh.ps1` | API ASG instance-refresh. 새 인스턴스가 뜨면 UserData가 **그 시점의 SSM**을 읽어 `/opt/api.env` 생성 후 컨테이너 실행. | ✅ 새 인스턴스 = 현재 SSM 사용. **문제없음.** |
+| **인스턴스 유지** | `refresh-api-env.ps1` | 기동 중 API 인스턴스에 SSM send-command로 **현재 SSM** 재조회 → `/opt/api.env` 갱신 → 컨테이너 재시작. | ✅ 현재 SSM 적용. **문제없음.** |
+| **재시작만** | `restart-api.ps1` | `docker restart academy-api` 만 수행. **SSM을 다시 읽지 않음.** | ❌ `/opt/api.env` 변경 없음. env 갱신이 목적이면 사용 금지. |
+
+**정리:** 지금처럼 SSM이 이미 Sync된 상태라면, **API만 재배포**는 아래만 사용하면 됨.
+
+- 새 이미지 반영·인스턴스 교체: `pwsh scripts/v1/api-refresh-only.ps1` 또는 `pwsh scripts/v1/start-api-instance-refresh.ps1`
+- 이미지는 그대로, SSM만 기동 중 API에 다시 적용: `pwsh scripts/v1/refresh-api-env.ps1`
+
+**주의:** params.yaml을 바꾼 뒤 **풀배포(deploy.ps1) 없이** API만 instance-refresh 하면, SSM이 갱신되지 않아 새 인스턴스도 **예전 SSM**을 읽음. 그 경우에는 먼저 `deploy.ps1`(또는 `update-api-env-sqs.ps1` 후 `refresh-api-env.ps1`)로 SSM을 맞춘 뒤 API 재배포.
+
+---
+
+## 6. 참고
 
 - **SSOT:** `docs/00-SSOT/v1/params.yaml`
 - **배포 스크립트:** `scripts/v1/` (deploy.ps1, sync_env.ps1, refresh-api-env.ps1)
