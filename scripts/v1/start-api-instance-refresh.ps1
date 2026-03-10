@@ -1,10 +1,9 @@
 # ==============================================================================
 # API ASG Instance Refresh 수동 실행
-# ==============================================================================
-# 새 인스턴스가 기동되면 UserData에서 최신 SSM env를 읽어 /opt/api.env 생성 후 컨테이너 실행.
+# AWS 프로필: 반드시 default. (-AwsProfile default)
 # 사용: pwsh scripts/v1/start-api-instance-refresh.ps1 -AwsProfile default
 # ==============================================================================
-param([string]$AwsProfile = "")
+param([string]$AwsProfile = "default")
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "core\env.ps1")

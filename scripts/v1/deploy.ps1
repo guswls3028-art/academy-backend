@@ -5,7 +5,7 @@
 # 배포 원칙: 빌드 서버는 사용하지 않는다(0대). 이미지 빌드·ECR 푸시는 GitHub Actions(OIDC)만 사용한다.
 # deploy.ps1는 이미 ECR에 올라간 이미지를 pull하여 배포/refresh만 수행한다. (즉 -SkipBuild가 기본 흐름)
 # 전체 실행 시간: API health 대기(최대 300s) + Netprobe( cold start 시 최대 600s) + Evidence(수십 초) 등으로 20~25분 넘을 수 있음. CI/터미널 타임아웃은 30분 이상 권장 (docs/00-SSOT/v1/reports/DEPLOY-TIMING-CHECKLIST.md 참고).
-# Cursor 등 새 프로세스에서 실행 시: -AwsProfile <이름> 으로 프로파일 지정 (해당 프로세스에 env 인증이 없을 때).
+# Cursor 등 실행 시: AWS 프로필은 반드시 default. -AwsProfile default (문서·Cursor 룰 07_aws_profile_default.mdc).
 # ==============================================================================
 [CmdletBinding()]
 param(
@@ -29,7 +29,7 @@ param(
     [switch]$RelaxedValidation = $false,
     [switch]$DeployFront = $false,
     [string]$EcrRepoUri = "",
-    [string]$AwsProfile = ""
+    [string]$AwsProfile = "default"
 )
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
@@ -40,7 +40,7 @@ $ScriptRoot = $PSScriptRoot
 . (Join-Path $ScriptRoot "core\env.ps1")
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
 
-# -AwsProfile 이 있으면 해당 프로파일 사용 (환경변수보다 우선)
+# -AwsProfile 기본값 default (문서·룰: 반드시 default 사용, 프로필 묻지 말 것)
 if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
     $env:AWS_PROFILE = $AwsProfile.Trim()
     if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" }

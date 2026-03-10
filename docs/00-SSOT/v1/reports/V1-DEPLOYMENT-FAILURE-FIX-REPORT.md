@@ -3,6 +3,8 @@
 **일시:** 2026-03-10  
 **범위:** V1 배포 인프라, API/Workers SSM env, 비디오 파이프라인 연결 참조.
 
+**실행 시 AWS 프로필:** V1 배포·검증·API 재배포 스크립트는 **반드시 프로필 `default` 사용.** 프로필을 묻지 않는다. (Cursor 룰 `07_aws_profile_default.mdc`, Runbook `RUNBOOK-DEPLOY-AND-ENV.md`.)
+
 ---
 
 ## 1. Actual V1 architecture discovered
