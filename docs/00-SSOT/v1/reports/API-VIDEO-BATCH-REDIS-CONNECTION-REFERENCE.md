@@ -191,6 +191,25 @@ aws elasticache describe-replication-groups --replication-group-id academy-v1-re
 
 ---
 
+## 8. 점검 결과 (실제 인프라, `--profile default`)
+
+**점검 일시:** 문서 최종 수정 시점 기준.  
+**방법:** `aws ... --region ap-northeast-2 --profile default`
+
+| 항목 | 결과 | 비고 |
+|------|------|------|
+| **SSM /academy/api/env** | ✅ 일치 | `VIDEO_BATCH_JOB_QUEUE`=academy-v1-video-batch-queue, `VIDEO_BATCH_JOB_DEFINITION`=academy-v1-video-batch-jobdef, Long 큐/JobDef 동일. `REDIS_HOST` 설정됨. |
+| **Batch Job Queues** | ✅ ENABLED | academy-v1-video-batch-queue, academy-v1-video-batch-long-queue, academy-v1-video-ops-queue |
+| **Batch Job Definitions (ACTIVE)** | ✅ 존재 | academy-v1-video-batch-jobdef, academy-v1-video-batch-long-jobdef, academy-v1-video-ops-* |
+| **Batch Compute Environments** | ✅ ENABLED | academy-v1-video-batch-ce, academy-v1-video-batch-long-ce, academy-v1-video-ops-ce |
+| **최근 Jobs (academy-v1-video-batch-queue)** | (없음) | list-jobs 최근 8건 빈 결과 — 최근 업로드/제출 이력 없음. 연결 참조는 정상. |
+
+**결론:** API env(SSM) ↔ Batch 리소스 이름이 v1 기준으로 일치함. 연결 상태 정상.  
+점검 스크립트는 `default` 프로필 사용(문서/운영 가이드와 동일).
+
+
+---
+
 ## 8. Bash/Git Bash 주의 (SSM send-command · ALB 경로)
 
 **SSM send-command `--parameters` JSON 이스케이프**

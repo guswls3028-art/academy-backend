@@ -1,17 +1,17 @@
 # ==============================================================================
 # API ↔ Video Batch 연결 상태 점검
 # ==============================================================================
-# AWS 자격 증명이 설정된 환경에서 실행.
+# AWS 자격 증명: default 프로필 사용 (문서/운영 가이드와 동일).
 # 사용: pwsh -File scripts/v1/verify-video-batch-connection.ps1
-#       또는 bash: bash scripts/v1/verify-video-batch-connection.sh
 # ==============================================================================
 
 $ErrorActionPreference = "Stop"
 $Region = "ap-northeast-2"
+$Profile = "default"
 
 Write-Host "`n=== 1) SSM /academy/api/env — VIDEO_BATCH_* 값 ===" -ForegroundColor Cyan
 try {
-    $raw = aws ssm get-parameter --name "/academy/api/env" --region $Region --with-decryption --query "Parameter.Value" --output text 2>&1
+    $raw = aws ssm get-parameter --name "/academy/api/env" --region $Region --profile $Profile --with-decryption --query "Parameter.Value" --output text 2>&1
     if ($LASTEXITCODE -ne 0) { throw $raw }
     $json = $raw
     if ($raw -match '^[A-Za-z0-9+/]+=*$') {
@@ -52,7 +52,7 @@ try {
 
 Write-Host "`n=== 2) AWS Batch Job Queues ===" -ForegroundColor Cyan
 try {
-    $q = aws batch describe-job-queues --region $Region --query "jobQueues[*].jobQueueName" --output text 2>&1
+    $q = aws batch describe-job-queues --region $Region --profile $Profile --query "jobQueues[*].jobQueueName" --output text 2>&1
     if ($LASTEXITCODE -ne 0) { throw $q }
     Write-Host "  $q" -ForegroundColor Gray
     $hasV1 = $q -match "academy-v1-video-batch-queue"
@@ -64,7 +64,7 @@ try {
 
 Write-Host "`n=== 3) AWS Batch Job Definitions (ACTIVE) ===" -ForegroundColor Cyan
 try {
-    $jd = aws batch describe-job-definitions --status ACTIVE --region $Region --query "jobDefinitions[*].jobDefinitionName" --output text 2>&1
+    $jd = aws batch describe-job-definitions --status ACTIVE --region $Region --profile $Profile --query "jobDefinitions[*].jobDefinitionName" --output text 2>&1
     if ($LASTEXITCODE -ne 0) { throw $jd }
     $jdList = $jd -split "\s+"
     $v1JobDef = $jdList | Where-Object { $_ -match "academy-v1-video-batch-jobdef" }
@@ -77,7 +77,7 @@ try {
 
 Write-Host "`n=== 4) AWS Batch Compute Environments ===" -ForegroundColor Cyan
 try {
-    $ce = aws batch describe-compute-environments --region $Region --query "computeEnvironments[*].computeEnvironmentName" --output text 2>&1
+    $ce = aws batch describe-compute-environments --region $Region --profile $Profile --query "computeEnvironments[*].computeEnvironmentName" --output text 2>&1
     if ($LASTEXITCODE -ne 0) { throw $ce }
     $hasCe = $ce -match "academy-v1-video-batch-ce"
     if ($hasCe) { Write-Host "  academy-v1-video-batch-ce 존재" -ForegroundColor Green }
@@ -89,7 +89,7 @@ try {
 
 Write-Host "`n=== 5) 최근 Batch Jobs (academy-v1-video-batch-queue) ===" -ForegroundColor Cyan
 try {
-    $jobs = aws batch list-jobs --job-queue academy-v1-video-batch-queue --region $Region --query "jobSummaryList[-5].{id:jobId,name:jobName,status:status,created:createdAt}" --output table 2>&1
+    $jobs = aws batch list-jobs --job-queue academy-v1-video-batch-queue --region $Region --profile $Profile --query "jobSummaryList[-5].{id:jobId,name:jobName,status:status,created:createdAt}" --output table 2>&1
     if ($LASTEXITCODE -ne 0) { Write-Host "  (큐 없거나 권한 없음)" -ForegroundColor Yellow; Write-Host "  $jobs" -ForegroundColor Gray }
     else { Write-Host $jobs -ForegroundColor Gray }
 } catch {
