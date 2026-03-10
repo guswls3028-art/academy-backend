@@ -12,10 +12,6 @@ on:
     paths:
       - "docker/video-worker/**"
       - "scripts/v1/**"
-      - "scripts_v3/**"
-      - "scripts/infra/batch/**"
-      - "scripts/infra/eventbridge/**"
-      - "scripts/infra/cloudwatch/**"
       - "docs/00-SSOT/**"
       - ".github/workflows/video_batch_deploy.yml"
 
@@ -110,16 +106,18 @@ jobs:
       - name: One-Take Deploy (SSOT v1)
         run: pwsh -File scripts/v1/deploy.ps1 -Env prod -Ci -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"
 
-      - name: Purge Cloudflare CDN Cache (Video Assets)
+      - name: Purge Cloudflare CDN Cache (Video HLS Playlists)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_KEY }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          npm install -g wrangler
-          # Purge everything in the video zone/bucket or specific URLs (Adjust as needed for SSOT)
-          wrangler r2 object delete academy-video/ --all || echo "Skipping full R2 delete, just a placeholder for Purge"
-          # NOTE: To purge CDN cache, typically Cloudflare API is used directly via curl if Wrangler doesn't support zone purge.
-          curl -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/purge_cache" \
-               -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_KEY }}" \
-               -H "Content-Type: application/json" \
-               --data '{"purge_everything":true}'
+          # Purge only HLS playlist files (.m3u8) from CDN cache — NOT R2 objects.
+          # R2 video objects must never be deleted here; only CDN cached responses are invalidated.
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "${{ secrets.CLOUDFLARE_ZONE_ID }}" ]; then
+            curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/purge_cache" \
+                 -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_KEY }}" \
+                 -H "Content-Type: application/json" \
+                 --data '{"files":[{"url":"*.m3u8","prefix":true}]}' \
+            || echo "CDN purge failed (non-fatal)"
+          else
+            echo "CLOUDFLARE_ZONE_ID or token not set; skipping CDN purge"
+          fi

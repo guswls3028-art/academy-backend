@@ -52,8 +52,8 @@ ecr:
   videoWorkerRepo: academy-video-worker
   messagingWorkerRepo: academy-messaging-worker
   aiWorkerRepo: academy-ai-worker-cpu
-  # 당분간 빠른 반복을 위해 latest 사용. CI 빌드/푸시 후 deploy에서 강제 pull·refresh.
-  useLatestTag: true
+  # CI(GitHub Actions)에서 항상 SHA 태그(-EcrRepoUri)로 deploy. :latest 금지.
+  useLatestTag: false
   immutableTagRequired: true
 
 # API: V1. 런칭 전 비용 절감으로 min/desired=1, max=2. 롤링 배포 시 instance-refresh MinHealthyPercentage.

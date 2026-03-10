@@ -3,8 +3,6 @@
     "type": "container",
     "containerProperties": {
         "image": "PLACEHOLDER_ECR_URI",
-        "vcpus": 2,
-        "memory": 4096,
         "command": [
             "python",
             "-m",
@@ -13,7 +11,10 @@
         ],
         "jobRoleArn": "PLACEHOLDER_JOB_ROLE_ARN",
         "executionRoleArn": "PLACEHOLDER_EXECUTION_ROLE_ARN",
-        "resourceRequirements": [],
+        "resourceRequirements": [
+            {"type": "VCPU", "value": "2"},
+            {"type": "MEMORY", "value": "4096"}
+        ],
         "logConfiguration": {
             "logDriver": "awslogs",
             "options": {

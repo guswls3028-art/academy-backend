@@ -5,6 +5,46 @@ $V4Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $BatchPath = Join-Path $V4Root "templates\batch"
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
+# Ensure EC2 Launch Template for Batch CE (root volume size + ARM64 settings).
+# Returns launch template name. Idempotent: creates if not exists, updates if root volume size changed.
+function Ensure-BatchLaunchTemplate { param([string]$TemplateName, [int]$RootVolumeSizeGb, [string]$Region)
+    $existing = Invoke-AwsJson @("ec2", "describe-launch-templates", "--filters", "Name=launch-template-name,Values=$TemplateName", "--region", $Region, "--output", "json") 2>$null
+    $ltData = [ordered]@{
+        BlockDeviceMappings = @(
+            [ordered]@{
+                DeviceName = "/dev/xvda"
+                Ebs = [ordered]@{ VolumeSize = $RootVolumeSizeGb; VolumeType = "gp3"; DeleteOnTermination = $true }
+            }
+        )
+    }
+    $ltJson = $ltData | ConvertTo-Json -Depth 10 -Compress
+    $tmp = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllText($tmp, $ltJson, $utf8NoBom)
+    try {
+        if (-not $existing -or -not $existing.LaunchTemplates -or $existing.LaunchTemplates.Count -eq 0) {
+            Write-Host "  Creating EC2 Launch Template: $TemplateName (root=${RootVolumeSizeGb}GB)" -ForegroundColor Yellow
+            Invoke-Aws @("ec2", "create-launch-template", "--launch-template-name", $TemplateName, "--launch-template-data", "file://$($tmp -replace '\\','/')", "--region", $Region) -ErrorMessage "create launch template $TemplateName" | Out-Null
+            $script:ChangesMade = $true
+        } else {
+            # Check current root volume size
+            $ltv = Invoke-AwsJson @("ec2", "describe-launch-template-versions", "--launch-template-name", $TemplateName, "--versions", "`$Latest", "--region", $Region, "--output", "json") 2>$null
+            $currentSize = 0
+            if ($ltv -and $ltv.LaunchTemplateVersions -and $ltv.LaunchTemplateVersions.Count -gt 0) {
+                $bdm = $ltv.LaunchTemplateVersions[0].LaunchTemplateData.BlockDeviceMappings
+                if ($bdm -and $bdm.Count -gt 0) { $currentSize = [int]$bdm[0].Ebs.VolumeSize }
+            }
+            if ($currentSize -ne $RootVolumeSizeGb) {
+                Write-Host "  Updating Launch Template: $TemplateName (current=${currentSize}GB -> desired=${RootVolumeSizeGb}GB)" -ForegroundColor Yellow
+                Invoke-Aws @("ec2", "create-launch-template-version", "--launch-template-name", $TemplateName, "--launch-template-data", "file://$($tmp -replace '\\','/')", "--region", $Region) -ErrorMessage "create launch template version $TemplateName" | Out-Null
+                $script:ChangesMade = $true
+            } else {
+                Write-Ok "Launch Template $TemplateName root=${currentSize}GB (no change)"
+            }
+        }
+    } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+    return $TemplateName
+}
+
 function Get-CEArn { param([string]$Name)
     $r = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $Name, "--region", $script:Region, "--output", "json")
     if (-not $r -or -not $r.computeEnvironments -or $r.computeEnvironments.Count -eq 0) { return $null }
@@ -16,6 +56,7 @@ function New-VideoCE {
     $subnets = @($script:PrivateSubnets | Where-Object { $_ })
     if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @($script:PublicSubnets | Where-Object { $_ }) }
     $subnetArr = ($subnets | ForEach-Object { "`"$_`"" }) -join ","
+    $ltName = Ensure-BatchLaunchTemplate -TemplateName "academy-v1-video-batch-lt" -RootVolumeSizeGb $script:VideoCERootVolumeSizeGb -Region $script:Region
     $path = Join-Path $BatchPath "video_compute_env.json"
     $content = [System.IO.File]::ReadAllText($path, $utf8NoBom)
     $content = $content -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $script:VideoCEName
@@ -26,6 +67,7 @@ function New-VideoCE {
     $content = $content -replace "PLACEHOLDER_MIN_VCPUS", $script:VideoCEMinvCpus
     $content = $content -replace "PLACEHOLDER_MAX_VCPUS", $script:VideoCEMaxvCpus
     $content = $content -replace "PLACEHOLDER_INSTANCE_TYPE", $script:VideoCEInstanceType
+    $content = $content -replace "PLACEHOLDER_LAUNCH_TEMPLATE_NAME", $ltName
     $tmp = [System.IO.Path]::GetTempFileName()
     [System.IO.File]::WriteAllText($tmp, $content, $utf8NoBom)
     try {
@@ -71,6 +113,7 @@ function New-VideoLongCE {
     $subnets = @($script:PrivateSubnets | Where-Object { $_ })
     if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @($script:PublicSubnets | Where-Object { $_ }) }
     $subnetArr = ($subnets | ForEach-Object { "`"$_`"" }) -join ","
+    $ltName = Ensure-BatchLaunchTemplate -TemplateName "academy-v1-video-batch-long-lt" -RootVolumeSizeGb $script:VideoLongRootVolumeSizeGb -Region $script:Region
     $path = Join-Path $BatchPath "video_compute_env_long.json"
     $content = [System.IO.File]::ReadAllText($path, $utf8NoBom)
     $content = $content -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $script:VideoLongCEName
@@ -81,6 +124,7 @@ function New-VideoLongCE {
     $content = $content -replace "PLACEHOLDER_MIN_VCPUS", $script:VideoLongMinvCpus
     $content = $content -replace "PLACEHOLDER_MAX_VCPUS", $script:VideoLongMaxvCpus
     $content = $content -replace "PLACEHOLDER_INSTANCE_TYPE", $script:VideoLongInstanceType
+    $content = $content -replace "PLACEHOLDER_LAUNCH_TEMPLATE_NAME", $ltName
     $tmp = [System.IO.Path]::GetTempFileName()
     [System.IO.File]::WriteAllText($tmp, $content, $utf8NoBom)
     try {
