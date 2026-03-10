@@ -22,7 +22,7 @@ $headers = @{
   "Content-Type" = "application/json"
 }
 
-# 1) 배포 목록 조회 후 전부 삭제 (한 번에 한 페이지만 오므로 반복)
+# 1) 배포 목록 조회(1페이지) 후 전부 삭제, 반복 until 빈 목록
 $totalDeleted = 0
 do {
   $listUrl = "$base/deployments"
@@ -43,9 +43,9 @@ do {
     try {
       Invoke-RestMethod -Uri $delUrl -Method Delete -Headers $headers | Out-Null
       $totalDeleted++
-      Write-Host "Deleted deployment: $id ($totalDeleted)"
+      if ($totalDeleted % 50 -eq 0) { Write-Host "Deleted $totalDeleted so far..." }
     } catch {
-      Write-Host "Skip or fail deployment $id : $_"
+      # 이미 삭제됐거나 없음 등은 스킵
     }
   }
 } while ($deployments.Count -gt 0)
