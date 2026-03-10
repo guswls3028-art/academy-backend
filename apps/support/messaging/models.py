@@ -89,17 +89,43 @@ class MessageTemplate(models.Model):
 
 class AutoSendConfig(models.Model):
     """
-    자동발송 설정 — 트리거별 사용할 템플릿.
-    특정 이벤트 발생 시 해당 템플릿으로 메시지 자동 발송.
+    자동발송 설정 — 이벤트(트리거)별 템플릿·발송 조건.
+    SSOT: backend/docs/AUTO-SEND-EVENT-SPEC.md
     """
     class Trigger(models.TextChoices):
+        # A. 가입/등록
         STUDENT_SIGNUP = "student_signup", "가입 완료"
         REGISTRATION_APPROVED_STUDENT = "registration_approved_student", "가입 승인(학생)"
         REGISTRATION_APPROVED_PARENT = "registration_approved_parent", "가입 승인(학부모)"
-        LECTURE_SESSION_REMINDER = "lecture_session_reminder", "강의 시작 알림"
-        CLINIC_REMINDER = "clinic_reminder", "클리닉 알림"
-        CLINIC_RESERVATION_CREATED = "clinic_reservation_created", "클리닉 예약 생성"
+        CLASS_ENROLLMENT_COMPLETE = "class_enrollment_complete", "반 등록 완료"
+        ENROLLMENT_EXPIRING_SOON = "enrollment_expiring_soon", "등록 만료 예정"
+        WITHDRAWAL_COMPLETE = "withdrawal_complete", "퇴원 처리 완료"
+        # B. 출결
+        LECTURE_SESSION_REMINDER = "lecture_session_reminder", "수업 시작 N분 전"
+        CHECK_IN_COMPLETE = "check_in_complete", "입실 완료"
+        ABSENT_OCCURRED = "absent_occurred", "결석 발생"
+        # C. 시험
+        EXAM_SCHEDULED_DAYS_BEFORE = "exam_scheduled_days_before", "시험 예정 N일 전"
+        EXAM_START_MINUTES_BEFORE = "exam_start_minutes_before", "시험 시작 N분 전"
+        EXAM_NOT_TAKEN = "exam_not_taken", "시험 미응시"
+        EXAM_SCORE_PUBLISHED = "exam_score_published", "성적 공개"
+        RETAKE_ASSIGNED = "retake_assigned", "재시험 대상 지정"
+        # D. 과제
+        ASSIGNMENT_REGISTERED = "assignment_registered", "과제 등록"
+        ASSIGNMENT_DUE_HOURS_BEFORE = "assignment_due_hours_before", "과제 마감 N시간 전"
+        ASSIGNMENT_NOT_SUBMITTED = "assignment_not_submitted", "과제 미제출"
+        # E. 성적/리포트
+        MONTHLY_REPORT_GENERATED = "monthly_report_generated", "월간 성적 리포트 발송"
+        # F. 클리닉/상담
+        CLINIC_REMINDER = "clinic_reminder", "클리닉 시작 N분 전"
+        CLINIC_RESERVATION_CREATED = "clinic_reservation_created", "클리닉 예약 완료"
         CLINIC_RESERVATION_CHANGED = "clinic_reservation_changed", "클리닉 예약 변경"
+        COUNSELING_RESERVATION_CREATED = "counseling_reservation_created", "상담 예약 완료"
+        # G. 결제
+        PAYMENT_COMPLETE = "payment_complete", "결제 완료"
+        PAYMENT_DUE_DAYS_BEFORE = "payment_due_days_before", "납부 예정일 N일 전"
+        # H. 운영공지
+        URGENT_NOTICE = "urgent_notice", "긴급 공지"
 
     tenant = models.ForeignKey(
         "core.Tenant",
