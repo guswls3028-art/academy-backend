@@ -90,3 +90,4 @@ function Ensure-VideoLongJobDef { if ($script:VideoLongJobDefName) { Ensure-JobD
 function Ensure-OpsJobDefReconcile { Ensure-JobDefOne -JobDefName $script:OpsJobDefReconcile -TemplateFileName "video_ops_job_definition_reconcile.json" | Out-Null }
 function Ensure-OpsJobDefScanStuck { Ensure-JobDefOne -JobDefName $script:OpsJobDefScanStuck -TemplateFileName "video_ops_job_definition_scanstuck.json" | Out-Null }
 function Ensure-OpsJobDefNetprobe { Ensure-JobDefOne -JobDefName $script:OpsJobDefNetprobe -TemplateFileName "video_ops_job_definition_netprobe.json" | Out-Null }
+function Ensure-OpsJobDefEnqueueUploaded { if ($script:OpsJobDefEnqueueUploaded) { Ensure-JobDefOne -JobDefName $script:OpsJobDefEnqueueUploaded -TemplateFileName "video_ops_job_definition_enqueue_uploaded.json" | Out-Null } }

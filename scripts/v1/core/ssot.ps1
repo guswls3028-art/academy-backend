@@ -206,6 +206,8 @@ function Load-SSOT {
     if ($raw -match 'reconcile:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefReconcile = $matches[1] }
     if ($raw -match 'scanstuck:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefScanStuck = $matches[1] }
     if ($raw -match 'netprobe:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefNetprobe = $matches[1] }
+    $script:OpsJobDefEnqueueUploaded = "academy-v1-video-ops-enqueue-uploaded"
+    if ($raw -match 'enqueueUploaded:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefEnqueueUploaded = $matches[1] }
 
     $script:EventBridgeReconcileRule = $p["eventBridge"]["reconcileRuleName"]
     $script:EventBridgeScanStuckRule = $p["eventBridge"]["scanStuckRuleName"]
@@ -214,6 +216,9 @@ function Load-SSOT {
     $script:EventBridgeScanStuckSchedule = if ($p["eventBridge"]["scanStuckSchedule"]) { $p["eventBridge"]["scanStuckSchedule"] } else { "rate(5 minutes)" }
     $script:EventBridgeReconcileState = if ($p["eventBridge"]["reconcileState"]) { $p["eventBridge"]["reconcileState"] } else { "ENABLED" }
     $script:EventBridgeScanStuckState = if ($p["eventBridge"]["scanStuckState"]) { $p["eventBridge"]["scanStuckState"] } else { "ENABLED" }
+    $script:EventBridgeEnqueueUploadedRule = if ($p["eventBridge"]["enqueueUploadedRuleName"]) { $p["eventBridge"]["enqueueUploadedRuleName"] } else { "academy-v1-enqueue-uploaded-videos" }
+    $script:EventBridgeEnqueueUploadedSchedule = if ($p["eventBridge"]["enqueueUploadedSchedule"]) { $p["eventBridge"]["enqueueUploadedSchedule"] } else { "rate(10 minutes)" }
+    $script:EventBridgeEnqueueUploadedState = if ($p["eventBridge"]["enqueueUploadedState"]) { $p["eventBridge"]["enqueueUploadedState"] } else { "ENABLED" }
 
     $script:DynamoLockTableName = if ($p["dynamodb"]["lockTableName"]) { $p["dynamodb"]["lockTableName"] } else { "video_job_lock" }
     $script:DynamoLockTtlAttribute = if ($p["dynamodb"]["lockTableTtlAttribute"]) { $p["dynamodb"]["lockTableTtlAttribute"] } else { "ttl" }
@@ -287,13 +292,13 @@ function Load-SSOT {
 
     $script:SSOT_CE = @($script:VideoCEName, $script:OpsCEName)
     $script:SSOT_Queue = @($script:VideoQueueName, $script:OpsQueueName)
-    $script:SSOT_JobDef = @($script:VideoJobDefName, $script:OpsJobDefReconcile, $script:OpsJobDefScanStuck, $script:OpsJobDefNetprobe)
+    $script:SSOT_JobDef = @($script:VideoJobDefName, $script:OpsJobDefReconcile, $script:OpsJobDefScanStuck, $script:OpsJobDefNetprobe, $script:OpsJobDefEnqueueUploaded)
     if ($script:VideoLongCEName) {
         $script:SSOT_CE = @($script:VideoCEName, $script:VideoLongCEName, $script:OpsCEName)
         $script:SSOT_Queue = @($script:VideoQueueName, $script:VideoLongQueueName, $script:OpsQueueName)
-        $script:SSOT_JobDef = @($script:VideoJobDefName, $script:VideoLongJobDefName, $script:OpsJobDefReconcile, $script:OpsJobDefScanStuck, $script:OpsJobDefNetprobe)
+        $script:SSOT_JobDef = @($script:VideoJobDefName, $script:VideoLongJobDefName, $script:OpsJobDefReconcile, $script:OpsJobDefScanStuck, $script:OpsJobDefNetprobe, $script:OpsJobDefEnqueueUploaded)
     }
-    $script:SSOT_EventBridgeRule = @($script:EventBridgeReconcileRule, $script:EventBridgeScanStuckRule)
+    $script:SSOT_EventBridgeRule = @($script:EventBridgeReconcileRule, $script:EventBridgeScanStuckRule, $script:EventBridgeEnqueueUploadedRule)
     $script:SSOT_ASG = @($script:ApiASGName, $script:MessagingASGName, $script:AiASGName)
     $script:SSOT_RDS = @($script:RdsDbIdentifier)
     $script:SSOT_Redis = @($script:RedisReplicationGroupId)
