@@ -22,12 +22,10 @@ $headers = @{
   "Content-Type" = "application/json"
 }
 
-# 1) 배포 목록 조회 (페이지네이션)
-$page = 1
-$perPage = 50
+# 1) 배포 목록 조회 후 전부 삭제 (한 번에 한 페이지만 오므로 반복)
 $totalDeleted = 0
 do {
-  $listUrl = "$base/deployments?page=$page&per_page=$perPage"
+  $listUrl = "$base/deployments"
   try {
     $res = Invoke-RestMethod -Uri $listUrl -Method Get -Headers $headers
   } catch {
@@ -50,8 +48,7 @@ do {
       Write-Host "Skip or fail deployment $id : $_"
     }
   }
-  $page++
-} while ($deployments.Count -eq $perPage)
+} while ($deployments.Count -gt 0)
 
 Write-Host "Total deployments deleted: $totalDeleted"
 
