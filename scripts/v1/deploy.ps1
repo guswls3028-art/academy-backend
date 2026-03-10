@@ -232,6 +232,7 @@ try {
         Ensure-OpsJobDefReconcile
         Ensure-OpsJobDefScanStuck
         Ensure-OpsJobDefNetprobe
+        Ensure-OpsJobDefEnqueueUploaded
         Ensure-EventBridgeRules
     }
     Ensure-VideoBatchLogRetention
