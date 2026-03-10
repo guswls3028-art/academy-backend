@@ -66,19 +66,44 @@ class HomeworkAssignmentManageView(APIView):
         )
 
         items: List[dict] = []
+        request_obj = request
         for se in session_enrollments:
-            enrollment = se.enrollment
-            student_name = (
-                enrollment.student.name
-                if enrollment and hasattr(enrollment, "student")
-                else ""
-            )
+            enrollment = getattr(se, "enrollment", None)
+            student_name = ""
+            profile_photo_url = None
+            lecture_title = ""
+            lecture_color = ""
+            lecture_chip_label = ""
+
+            if enrollment is not None:
+                student = getattr(enrollment, "student", None)
+                if student is not None:
+                    student_name = str(getattr(student, "name", "") or "")
+                    if getattr(student, "profile_photo", None):
+                        try:
+                            profile_photo_url = request_obj.build_absolute_uri(
+                                student.profile_photo.url
+                            )
+                        except Exception:
+                            profile_photo_url = None
+                else:
+                    student_name = ""
+
+                lecture = getattr(enrollment, "lecture", None)
+                if lecture is not None:
+                    lecture_title = str(getattr(lecture, "title", "") or "")
+                    lecture_color = str(getattr(lecture, "color", "") or "") or "#3b82f6"
+                    lecture_chip_label = str(getattr(lecture, "chip_label", "") or "") or ""
 
             items.append(
                 {
                     "enrollment_id": se.enrollment_id,
                     "student_name": student_name,
                     "is_selected": se.enrollment_id in selected_ids,
+                    "profile_photo_url": profile_photo_url,
+                    "lecture_title": lecture_title or None,
+                    "lecture_color": lecture_color or None,
+                    "lecture_chip_label": lecture_chip_label or None,
                 }
             )
 
