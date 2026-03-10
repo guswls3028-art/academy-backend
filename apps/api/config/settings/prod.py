@@ -23,6 +23,8 @@ CSRF_COOKIE_SECURE = True
 # ==================================================
 # ALLOWED HOSTS (Tenant == Host SSOT)
 # ==================================================
+# ALB 타깃 헬스체크는 Host: 타깃 private IP 로 요청함. 172.30.0.0/22 허용.
+_vpc_hosts = [f"172.30.{a}.{b}" for a in range(4) for b in range(256)]
 
 ALLOWED_HOSTS = [
     "api.hakwonplus.com",
@@ -34,7 +36,7 @@ ALLOWED_HOSTS = [
     # 로컬/EC2 내부 health check·ALB 타깃·Lambda backlog (Host: private IP)
     "localhost",
     "127.0.0.1",
-    "172.30.3.142",
+    *(_vpc_hosts),
     ".ap-northeast-2.compute.internal",
     # ALB 직접 접근 (Cloudflare proxy 미설정 시 검증용)
     ".ap-northeast-2.elb.amazonaws.com",
