@@ -12,6 +12,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: v1-build-and-push-latest
+  cancel-in-progress: true
+
 env:
   AWS_REGION: ap-northeast-2
   ECR_REGISTRY: 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com

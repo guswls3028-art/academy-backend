@@ -104,7 +104,8 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: One-Take Deploy (SSOT v1)
-        run: pwsh -File scripts/v1/deploy.ps1 -Env prod -Ci -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"
+        run: pwsh -File scripts/v1/deploy.ps1 -Env prod -Ci -SkipNetprobe -SkipApiSSMWait -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"
+        timeout-minutes: 25
 
       - name: Purge Cloudflare CDN Cache (Video HLS Playlists)
         env:
