@@ -13,6 +13,8 @@
 | **ALB 타깃** | 1개 **unhealthy** (헬스체크 400으로 인해 미통과) |
 | **원인** | ALB 타깃 헬스체크가 타깃에 요청 시 **Host: private IP**(172.30.x.x)를 사용함. Django `ALLOWED_HOSTS`에 해당 IP가 없어 **400 Bad Request** 반환 → unhealthy. |
 
+**적용한 수정(코드 반영 완료):** prod.py에 `ALLOWED_HOSTS` VPC 대역 172.30.0.0/22 추가. middleware.py에서 헬스체크 경로 정규화 적용.
+
 **수정이 반영된 이미지 배포 방법:**
 
 - **이미지 빌드·ECR 푸시는 GitHub Actions로만 수행한다.** (룰 `07_deployment_orchestrator.mdc`, Runbook §0.)
