@@ -19,6 +19,7 @@ from apps.domains.results.views.admin_session_exams_view import AdminSessionExam
 from apps.domains.results.views.admin_session_exams_summary_view import AdminSessionExamsSummaryView
 from apps.domains.results.views.session_score_summary_view import SessionScoreSummaryView
 from apps.domains.results.views.session_scores_view import SessionScoresView
+from apps.domains.results.views.score_draft_view import ScoreDraftView, ScoreDraftCommitView
 
 from apps.domains.results.views.admin_result_fact_view import AdminResultFactView
 
@@ -94,6 +95,8 @@ urlpatterns = [
         name="session-score-summary",
     ),
     path("admin/sessions/<int:session_id>/scores/", SessionScoresView.as_view(), name="admin-session-scores"),
+    path("admin/sessions/<int:session_id>/score-draft/", ScoreDraftView.as_view(), name="admin-session-score-draft"),
+    path("admin/sessions/<int:session_id>/score-draft/commit/", ScoreDraftCommitView.as_view(), name="admin-session-score-draft-commit"),
     path("admin/sessions/<int:session_id>/exams/", AdminSessionExamsView.as_view(), name="admin-session-exams"),
     path(
         "admin/sessions/<int:session_id>/exams/summary/",

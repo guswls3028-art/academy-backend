@@ -6,6 +6,7 @@ from .result_fact import ResultFact
 from .exam_attempt import ExamAttempt
 from .wrong_note_pdf import WrongNotePDF
 from .exam_result import ExamResult
+from .score_edit_draft import ScoreEditDraft
 
 # ❌ SubmissionAnswer 제거됨 (raw input은 submissions 도메인 책임)
 
@@ -16,4 +17,5 @@ __all__ = [
     "ExamAttempt",
     "WrongNotePDF",
     "ExamResult",
+    "ScoreEditDraft",
 ]
