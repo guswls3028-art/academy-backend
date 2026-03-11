@@ -1,7 +1,7 @@
-# V1.0.1 Deployment State
+# V1.0.1 Deployment State (Final)
 
 **Snapshot Date:** 2026-03-11
-**Status:** DEPLOYED & VERIFIED
+**Status:** DEPLOYED & VERIFIED (Final Image)
 
 ---
 
@@ -10,15 +10,13 @@
 ### Frontend
 - **Repo:** `guswls3028-art/academy-frontend`
 - **Branch:** `main`
-- **Commit:** `56bec96f` — `fix: V1.0.1 품질 감사 — alert→feedback 전환, 학습관리 탭 분리, UX 개선`
-- **Files:** 1,072
+- **Commit:** `5ce0233a` — `fix: --stu-radius 토큰 정의 + PlayerToast 자동닫힘 수정`
 - **Deploy method:** Cloudflare Pages (auto-deploy on push to main)
 
 ### Backend
 - **Repo:** `guswls3028-art/academy-backend`
 - **Branch:** `main`
-- **Commit:** `c033877b` — `fix: 메시징 템플릿·서비스·워커 정리 및 개선`
-- **Files:** 2,277
+- **Commit:** `334270bc` — `fix: 추가 테넌트 격리 + VideoProcessingComplete 보안 강화`
 - **Deploy method:** GitHub Actions → ECR → ASG Instance Refresh
 
 ---
@@ -33,7 +31,7 @@
 
 ### Frontend CDN
 - **Provider:** Cloudflare Pages
-- **Domains:** `hakwonplus.com`, `tchul.com`, + tenant subdomains
+- **Domains:** `hakwonplus.com`, `tchul.com`, `limglish.kr` + tenant subdomains
 - **Build:** Vite (React + TypeScript SPA)
 
 ### Workers
@@ -47,13 +45,14 @@
 
 ---
 
-## 3. Health Check Results (2026-03-11)
+## 3. Health Check Results (2026-03-11, Final)
 
 ```
 GET /healthz → 200
 GET /health  → 200 {"status":"healthy","service":"academy-api","database":"connected"}
 GET https://hakwonplus.com → 200
 GET https://tchul.com → 200
+GET https://limglish.kr → 200
 ```
 
 ---
@@ -64,6 +63,6 @@ GET https://tchul.com → 200
 |----|------|--------|-------|
 | 1 | hakwonplus | hakwonplus.com | common |
 | 2 | tchul | tchul.com | tchul |
-| 3 | limglish | (subdomain) | common |
-| 4 | ymath | (subdomain) | common |
+| 3 | limglish | limglish.kr | common |
+| 4 | ymath | (subdomain) | ymath |
 | 9999 | common | localhost dev | common |
