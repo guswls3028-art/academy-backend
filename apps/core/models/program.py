@@ -28,7 +28,7 @@ class Program(TimestampModel):
         PREMIUM = "premium", "Premium"
 
     PLAN_PRICES: dict[str, int] = {
-        Plan.LITE: 99_000,
+        Plan.LITE: 55_000,
         Plan.BASIC: 150_000,
         Plan.PREMIUM: 300_000,
     }
