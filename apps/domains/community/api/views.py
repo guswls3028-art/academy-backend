@@ -156,6 +156,7 @@ class PostViewSet(viewsets.ModelViewSet):
             "block_type": serializer.validated_data["block_type"],
             "title": serializer.validated_data["title"],
             "content": serializer.validated_data["content"],
+            "category_label": request.data.get("category_label"),
             "created_by": created_by,
         }
         svc = CommunityService(tenant)

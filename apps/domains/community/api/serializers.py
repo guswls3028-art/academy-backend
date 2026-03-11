@@ -94,6 +94,7 @@ class PostEntitySerializer(serializers.ModelSerializer):
             "block_type_label",
             "title",
             "content",
+            "category_label",
             "created_by",
             "created_by_display",
             "created_by_deleted",

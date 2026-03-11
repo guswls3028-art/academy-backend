@@ -20,6 +20,12 @@ class PostEntity(models.Model):
     )
     title = models.CharField(max_length=255)
     content = models.TextField()
+    category_label = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        help_text="학생이 선택한 카테고리 (수강 중인 강의명 등)",
+    )
     created_by = models.ForeignKey(
         Student,
         on_delete=models.SET_NULL,
