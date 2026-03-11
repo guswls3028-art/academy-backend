@@ -21,14 +21,42 @@ from apps.domains.lectures.models import Session
 from apps.domains.students.models import Student
 
 
+def _get_tenant_session(exam_id: int, tenant):
+    """시험에 연결된 세션을 tenant 격리하여 조회. 없으면 None."""
+    return (
+        Session.objects
+        .filter(exam__id=exam_id, lecture__tenant=tenant)
+        .select_related("lecture")
+        .first()
+    )
+
+
+_EMPTY_SUMMARY = lambda exam_id: {
+    "target_type": "exam",
+    "target_id": int(exam_id),
+    "participant_count": 0,
+    "avg_score": 0.0,
+    "min_score": 0.0,
+    "max_score": 0.0,
+    "pass_count": 0,
+    "fail_count": 0,
+    "pass_rate": 0.0,
+    "clinic_count": 0,
+}
+
+
 # ============================================================
 # 시험 요약 통계 (관리자)
 # ============================================================
-def get_exam_summary(*, exam_id: int) -> Dict[str, Any]:
+def get_exam_summary(*, exam_id: int, tenant) -> Dict[str, Any]:
     """
     관리자 시험 요약 통계
-    - Result + ProgressPolicy + clinic flag 기준
+    - tenant 격리: Session → lecture.tenant 기준
     """
+
+    session = _get_tenant_session(exam_id, tenant)
+    if not session:
+        return _EMPTY_SUMMARY(exam_id)
 
     qs = Result.objects.filter(
         target_type="exam",
@@ -42,21 +70,10 @@ def get_exam_summary(*, exam_id: int) -> Dict[str, Any]:
         max_score=Max("total_score"),
     )
 
-    # -----------------------------
-    # 커트라인 기준
-    # -----------------------------
-    session = (
-        Session.objects
-        .filter(exam__id=exam_id)
-        .select_related("lecture")
-        .first()
-    )
-
     policy = (
         ProgressPolicy.objects
         .filter(lecture=session.lecture)
         .first()
-        if session else None
     )
 
     pass_score = policy.exam_pass_score if policy else 0
@@ -77,7 +94,6 @@ def get_exam_summary(*, exam_id: int) -> Dict[str, Any]:
             clinic_required=True,
         )
         .count()
-        if session else 0
     )
 
     return {
@@ -101,10 +117,15 @@ def get_exam_summary(*, exam_id: int) -> Dict[str, Any]:
 # ============================================================
 # 문항별 통계
 # ============================================================
-def get_question_stats(*, exam_id: int) -> List[Dict[str, Any]]:
+def get_question_stats(*, exam_id: int, tenant) -> List[Dict[str, Any]]:
     """
     문항별 통계 (관리자/교사용)
+    - tenant 격리: Session → lecture.tenant 기준으로 exam 소속 검증
     """
+
+    session = _get_tenant_session(exam_id, tenant)
+    if not session:
+        return []
 
     items = (
         ResultItem.objects
@@ -160,14 +181,66 @@ def get_question_stats(*, exam_id: int) -> List[Dict[str, Any]]:
 
 
 # ============================================================
-# 관리자 성적 리스트 (신규)
+# 오답 TOP
 # ============================================================
-def get_exam_results(*, exam_id: int) -> List[Dict[str, Any]]:
+def get_top_wrong_questions(*, exam_id: int, tenant, limit: int = 5) -> List[Dict[str, Any]]:
+    """오답이 많은 문항 TOP N (tenant 격리)"""
+    session = _get_tenant_session(exam_id, tenant)
+    if not session:
+        return []
+
+    rows = get_question_stats(exam_id=exam_id, tenant=tenant)
+    rows.sort(key=lambda r: r["wrong_count"], reverse=True)
+    return rows[:limit]
+
+
+# ============================================================
+# 오답 분포
+# ============================================================
+def get_wrong_answer_distribution(
+    *, exam_id: int, question_id: int, tenant, limit: int = 5
+) -> Dict[str, Any]:
+    """특정 문항의 오답 분포 (tenant 격리)"""
+    session = _get_tenant_session(exam_id, tenant)
+    if not session:
+        return {"question_id": question_id, "distribution": []}
+
+    wrong_items = (
+        ResultItem.objects
+        .filter(
+            result__target_type="exam",
+            result__target_id=exam_id,
+            question_id=question_id,
+            is_correct=False,
+        )
+        .values_list("student_answer", flat=True)
+    )
+
+    counter = Counter(wrong_items)
+    top = counter.most_common(limit)
+
+    return {
+        "question_id": question_id,
+        "distribution": [
+            {"answer": ans or "", "count": cnt}
+            for ans, cnt in top
+        ],
+    }
+
+
+# ============================================================
+# 관리자 성적 리스트
+# ============================================================
+def get_exam_results(*, exam_id: int, tenant) -> List[Dict[str, Any]]:
     """
     관리자 성적 테이블용 API
-    - Submissions ❌
-    - Results + SessionProgress 기준
+    - tenant 격리: Session → lecture.tenant 기준
+    - Student.objects.all() → tenant 스코프로 제한
     """
+
+    session = _get_tenant_session(exam_id, tenant)
+    if not session:
+        return []
 
     results = (
         Result.objects
@@ -175,13 +248,6 @@ def get_exam_results(*, exam_id: int) -> List[Dict[str, Any]]:
             target_type="exam",
             target_id=exam_id,
         )
-        .select_related(None)
-    )
-
-    session = (
-        Session.objects
-        .filter(exam__id=exam_id)
-        .first()
     )
 
     progress_map = {
@@ -189,9 +255,10 @@ def get_exam_results(*, exam_id: int) -> List[Dict[str, Any]]:
         for sp in SessionProgress.objects.filter(session=session)
     }
 
+    # tenant 스코프 학생만 조회 (cross-tenant 방지)
     student_map = {
         s.id: s
-        for s in Student.objects.all()
+        for s in Student.objects.filter(tenant=tenant)
     }
 
     rows: List[Dict[str, Any]] = []

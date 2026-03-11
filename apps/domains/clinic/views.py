@@ -24,6 +24,7 @@ from .serializers import (
 from .filters import SessionFilter, SubmissionFilter, ParticipantFilter
 from .color_utils import get_effective_clinic_colors, get_daily_random_colors
 
+from apps.core.permissions import TenantResolvedAndStaff
 from apps.support.messaging.services import send_clinic_reminder_for_students
 from apps.domains.progress.models import ClinicLink
 
@@ -38,6 +39,7 @@ class SessionViewSet(viewsets.ModelViewSet):
     - 모든 participant 통계는 BACKEND 단일진실
     """
 
+    permission_classes = [IsAuthenticated]
     serializer_class = ClinicSessionSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SessionFilter
@@ -230,6 +232,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     - 운영 핵심 엔드포인트
     """
 
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ParticipantFilter
     search_fields = ["student__name", "session__location"]
@@ -497,6 +500,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 # Test
 # ============================================================
 class TestViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     serializer_class = ClinicTestSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ["title"]
@@ -588,6 +592,7 @@ class ClinicSettingsView(APIView):
 # Submission
 # ============================================================
 class SubmissionViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     serializer_class = ClinicSubmissionSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SubmissionFilter

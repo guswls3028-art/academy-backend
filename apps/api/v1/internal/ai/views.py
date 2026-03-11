@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 from django.conf import settings
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, BasePermission
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -17,18 +17,19 @@ from apps.domains.ai.services.status_resolver import status_for_exception
 from academy.adapters.db.django import repositories_ai as ai_repo
 
 
-def _require_worker_auth(request) -> Optional[Response]:
-    expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
-    if not expected:
-        return Response(
-            {"detail": "INTERNAL_WORKER_TOKEN not configured"},
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
+class IsInternalWorker(BasePermission):
+    """Validate X-Worker-Token header against INTERNAL_WORKER_TOKEN setting."""
 
-    token = request.headers.get("X-Worker-Token") or request.META.get("HTTP_X_WORKER_TOKEN") or ""
-    if str(token) != expected:
-        return Response({"detail": "Unauthorized worker"}, status=status.HTTP_401_UNAUTHORIZED)
-    return None
+    def has_permission(self, request, view):
+        expected = str(getattr(settings, "INTERNAL_WORKER_TOKEN", "") or "")
+        if not expected:
+            return False
+        token = (
+            request.headers.get("X-Worker-Token")
+            or request.META.get("HTTP_X_WORKER_TOKEN")
+            or ""
+        )
+        return str(token) == expected
 
 
 def _worker_id(request) -> str:
@@ -42,13 +43,9 @@ class InternalAIJobNextView(APIView):
       { "job": {...} } | { "job": null }
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsInternalWorker]
 
     def get(self, request):
-        auth = _require_worker_auth(request)
-        if auth:
-            return auth
-
         q = DBJobQueue()
         claimed = q.claim(worker_id=_worker_id(request))
         if not claimed:
@@ -79,13 +76,9 @@ class InternalAIJobResultView(APIView):
       }
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsInternalWorker]
 
     def post(self, request):
-        auth = _require_worker_auth(request)
-        if auth:
-            return auth
-
         data: Dict[str, Any] = request.data if isinstance(request.data, dict) else {}
 
         job_id = data.get("job_id")
