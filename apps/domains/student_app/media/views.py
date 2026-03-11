@@ -415,12 +415,21 @@ class StudentSessionVideoListView(APIView):
             enrollment_obj = None
         else:
             enrollment_obj = None
+            lecture_id_val = getattr(lecture, "id", None)
             if enrollment_id:
                 enrollment_obj, err = _get_enrollment_for_student(
-                    request, enrollment_id, lecture_id=getattr(lecture, "id", None)
+                    request, enrollment_id, lecture_id=lecture_id_val
                 )
                 if err:
                     return err
+            # enrollment_id 미전달/불일치 시 강의 기준 자동 매칭
+            if enrollment_obj is None and lecture_id_val:
+                from apps.domains.enrollment.models import Enrollment as _Enroll
+                _student = get_request_student(request)
+                if _student:
+                    enrollment_obj = _Enroll.objects.filter(
+                        student=_student, lecture_id=lecture_id_val, status="ACTIVE",
+                    ).first()
             if enrollment_obj is None and not _student_can_access_session(request, session):
                 detail = (
                     "전체공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."
@@ -523,17 +532,26 @@ class StudentVideoPlaybackView(APIView):
             lecture_tenant_id = getattr(video.session.lecture, "tenant_id", None)
             if not student or getattr(student, "tenant_id", None) != lecture_tenant_id:
                 raise PermissionDenied("전체공개 영상은 해당 학원 소속 학생만 시청할 수 있습니다.")
-        elif not enrollment_id:
-            # 일반 영상: 수강 정보 필요
-            raise PermissionDenied("이 영상을 시청하려면 수강 정보가 필요합니다.")
         else:
-            # 일반 영상: enrollment가 요청 학생 소유이며 이 영상 강의의 수강인지 검증 (IDOR 방지)
+            # 일반 영상: enrollment 자동 매칭 (enrollment_id 누락/불일치 시 강의 기준 자동 탐색)
+            from apps.domains.enrollment.models import Enrollment as _Enrollment
             lecture_id = getattr(video.session.lecture, "id", None) if video.session and video.session.lecture else None
-            enrollment_obj, err = _get_enrollment_for_student(request, enrollment_id, lecture_id=lecture_id)
-            if err:
-                return err
+
+            if enrollment_id:
+                enrollment_obj, err = _get_enrollment_for_student(request, enrollment_id, lecture_id=lecture_id)
+                if err:
+                    return err
+
+            # enrollment_id 미전달 또는 강의 불일치 시 자동 매칭
+            if not enrollment_obj and lecture_id:
+                _student = get_request_student(request)
+                if _student:
+                    enrollment_obj = _Enrollment.objects.filter(
+                        student=_student, lecture_id=lecture_id, status="ACTIVE",
+                    ).first()
+
             if not enrollment_obj:
-                raise PermissionDenied("해당 수강 정보로는 이 영상을 시청할 수 없습니다.")
+                raise PermissionDenied("이 영상을 시청하려면 해당 강의에 수강 등록이 필요합니다.")
 
         perm_obj = None
         if VideoPermission and enrollment_id:
@@ -893,12 +911,32 @@ class StudentVideoCommentListView(APIView):
 
         student = get_request_student(request)
 
+        def _get_comment_photo_url(author_student):
+            """댓글 작성자 프로필 사진 URL (R2 presigned → local fallback)"""
+            if not author_student:
+                return None
+            r2_key = getattr(author_student, "profile_photo_r2_key", None) or ""
+            if r2_key:
+                try:
+                    from django.conf import settings as _s
+                    from libs.s3_client.presign import create_presigned_get_url
+                    return create_presigned_get_url(r2_key, expires_in=3600, bucket=_s.R2_STORAGE_BUCKET)
+                except Exception:
+                    pass
+            if author_student.profile_photo:
+                try:
+                    return request.build_absolute_uri(author_student.profile_photo.url)
+                except Exception:
+                    pass
+            return None
+
         def _serialize_comment(c):
-            photo_url = None
-            if c.author_student and c.author_student.profile_photo:
-                photo_url = request.build_absolute_uri(c.author_student.profile_photo.url)
-            elif c.author_staff and hasattr(c.author_staff, "profile_photo") and c.author_staff.profile_photo:
-                photo_url = request.build_absolute_uri(c.author_staff.profile_photo.url)
+            photo_url = _get_comment_photo_url(c.author_student) if c.author_student else None
+            if not photo_url and c.author_staff and hasattr(c.author_staff, "profile_photo") and c.author_staff.profile_photo:
+                try:
+                    photo_url = request.build_absolute_uri(c.author_staff.profile_photo.url)
+                except Exception:
+                    pass
 
             is_mine = False
             if student and c.author_student_id == student.id:
@@ -966,9 +1004,22 @@ class StudentVideoCommentListView(APIView):
 
         Video.objects.filter(id=video_id).update(comment_count=F("comment_count") + 1)
 
+        # R2 presigned URL for profile photo (same logic as comment list)
         photo_url = None
-        if student and student.profile_photo:
-            photo_url = request.build_absolute_uri(student.profile_photo.url)
+        if student:
+            r2_key = getattr(student, "profile_photo_r2_key", None) or ""
+            if r2_key:
+                try:
+                    from django.conf import settings as _s
+                    from libs.s3_client.presign import create_presigned_get_url
+                    photo_url = create_presigned_get_url(r2_key, expires_in=3600, bucket=_s.R2_STORAGE_BUCKET)
+                except Exception:
+                    pass
+            if not photo_url and student.profile_photo:
+                try:
+                    photo_url = request.build_absolute_uri(student.profile_photo.url)
+                except Exception:
+                    pass
 
         return Response({
             "id": comment.id,
