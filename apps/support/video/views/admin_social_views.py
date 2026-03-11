@@ -5,6 +5,7 @@ Teachers can view/reply to student comments on videos.
 """
 
 from django.db.models import F
+from django.db.models.functions import Greatest
 from django.http import Http404
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -263,10 +264,7 @@ class AdminVideoCommentDetailView(APIView):
         comment.save(update_fields=["is_deleted", "updated_at"])
 
         Video.objects.filter(id=comment.video_id).update(
-            comment_count=F("comment_count") - 1
-        )
-        Video.objects.filter(id=comment.video_id, comment_count__lt=0).update(
-            comment_count=0
+            comment_count=Greatest(F("comment_count") - 1, 0)
         )
 
         return Response({"deleted": True})

@@ -20,14 +20,14 @@ def teacher_exists_tenant_name_phone(tenant, name, phone) -> bool:
     return Teacher.objects.filter(tenant=tenant, name=name, phone=phone or "").exists()
 
 
-def teacher_update_is_active_by_name_phone(name, phone, is_active: bool):
+def teacher_update_is_active_by_name_phone(tenant, name, phone, is_active: bool):
     from apps.domains.teachers.models import Teacher
-    return Teacher.objects.filter(name=name, phone=phone).update(is_active=is_active)
+    return Teacher.objects.filter(tenant=tenant, name=name, phone=phone).update(is_active=is_active)
 
 
-def teacher_delete_by_name_phone(name, phone):
+def teacher_delete_by_name_phone(tenant, name, phone):
     from apps.domains.teachers.models import Teacher
-    return Teacher.objects.filter(name=name, phone=phone).delete()
+    return Teacher.objects.filter(tenant=tenant, name=name, phone=phone).delete()
 
 
 def teacher_create(tenant, name, phone, is_active: bool = True):

@@ -20,13 +20,14 @@ from apps.domains.exams.services.template_resolver import resolve_template_exam
 from .serializers import StudentExamSerializer
 
 
-def _exam_queryset_for_user(user):
-    """Enrollment 기준: student.user 로 연결."""
+def _exam_queryset_for_user(user, tenant):
+    """Enrollment 기준: student.user + tenant 로 연결."""
     now = timezone.now()
     return (
         Exam.objects.filter(
             exam_type=Exam.ExamType.REGULAR,
             exam_enrollments__enrollment__student__user=user,
+            exam_enrollments__enrollment__tenant=tenant,
             is_active=True,
         )
         .filter(
@@ -62,7 +63,10 @@ class StudentExamListView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request):
-        qs = _exam_queryset_for_user(request.user)
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"items": []})
+        qs = _exam_queryset_for_user(request.user, tenant)
         items = [_serialize_exam(exam) for exam in qs]
         return Response({"items": items})
 
@@ -71,7 +75,13 @@ class StudentExamDetailView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request, pk):
-        qs = _exam_queryset_for_user(request.user).filter(id=pk)
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        qs = _exam_queryset_for_user(request.user, tenant).filter(id=pk)
         exam = qs.first()
         if not exam:
             return Response(
@@ -86,7 +96,13 @@ class StudentExamQuestionsView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request, pk):
-        qs = _exam_queryset_for_user(request.user).filter(id=pk)
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        qs = _exam_queryset_for_user(request.user, tenant).filter(id=pk)
         exam = qs.first()
         if not exam:
             return Response(
@@ -141,7 +157,13 @@ class StudentExamSubmitView(APIView):
 
     def post(self, request, pk):
         exam_id = int(pk)
-        qs = _exam_queryset_for_user(request.user).filter(id=exam_id)
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        qs = _exam_queryset_for_user(request.user, tenant).filter(id=exam_id)
         exam = qs.first()
         if not exam:
             return Response(
@@ -174,6 +196,19 @@ class StudentExamSubmitView(APIView):
             )
         from apps.domains.submissions.models import Submission
         from apps.domains.submissions.services.dispatcher import dispatch_submission
+
+        # 중복 제출 방지
+        existing = Submission.objects.filter(
+            user=request.user,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam_id,
+            status__in=["submitted", "dispatched", "extracting", "answers_ready", "grading", "done"],
+        ).exists()
+        if existing:
+            return Response(
+                {"detail": "이미 제출된 시험입니다."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         submission = Submission.objects.create(
             tenant=tenant,

@@ -244,7 +244,7 @@ class StudentRegistrationRequest(TimestampModel):
         default="",
         help_text="희망 로그인 아이디 (비어 있으면 승인 시 자동 부여)",
     )
-    initial_password = models.CharField(max_length=128)  # 저장 후 승인 시 사용
+    initial_password = models.CharField(max_length=256)  # 해시 저장 후 승인 시 User.password로 직접 이전
     parent_phone = models.CharField(max_length=20)
     phone = models.CharField(max_length=20, null=True, blank=True)
 

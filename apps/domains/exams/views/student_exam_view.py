@@ -24,12 +24,16 @@ class StudentAvailableExamListView(APIView):
 
     def get(self, request):
         user = request.user
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response([])
         now = timezone.now()
 
         qs = (
             Exam.objects.filter(
                 exam_type=Exam.ExamType.REGULAR,
                 exam_enrollments__enrollment__student__user=user,
+                exam_enrollments__enrollment__tenant=tenant,
                 is_active=True,
             )
             .filter(

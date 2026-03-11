@@ -1156,7 +1156,8 @@ def _approve_registration_request(request, reg):
                 phone=phone or "",
                 name=name,
             )
-            user.set_password(password)
+            # initial_password는 이미 해시됨 — 직접 대입
+            user.password = password
             user.save()
 
             student = student_repo.student_create(
@@ -1250,8 +1251,9 @@ class RegistrationRequestViewSet(ModelViewSet):
             )
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
+        from django.contrib.auth.hashers import make_password
         data = serializer.validated_data.copy()
-        password = data.pop("initial_password")
+        password = make_password(data.pop("initial_password"))
         # grade: model은 PositiveSmallIntegerField(null=True) → int 또는 None만 허용
         raw_grade = data.get("grade")
         if raw_grade is not None and raw_grade != "":

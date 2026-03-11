@@ -554,10 +554,10 @@ class StudentVideoPlaybackView(APIView):
                 raise PermissionDenied("이 영상을 시청하려면 해당 강의에 수강 등록이 필요합니다.")
 
         perm_obj = None
-        if VideoPermission and enrollment_id:
+        if VideoPermission and enrollment_obj:
             perm_obj = (
                 VideoPermission.objects
-                .filter(video_id=video.id, enrollment_id=enrollment_id)
+                .filter(video_id=video.id, enrollment_id=enrollment_obj.id)
                 .first()
             )
 

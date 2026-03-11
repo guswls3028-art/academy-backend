@@ -544,145 +544,155 @@ def main() -> int:
                         )
 
                     # message_mode: sms | alimtalk | both
-                    _record_progress(job_id, "sending", 70, step_index=3, step_percent=0, tenant_id=tenant_id_str)
-                    result = None
-                    if message_mode == "sms":
-                        # SMS는 내 테넌트(OWNER_TENANT_ID)에서만 허용
-                        if tenant_id is not None and int(tenant_id) != cfg.OWNER_TENANT_ID:
-                            logger.warning(
-                                "SMS blocked by policy: tenant_id=%s is not owner tenant (allowed only for OWNER_TENANT_ID=%s)",
-                                tenant_id, cfg.OWNER_TENANT_ID,
+                    try:
+                        _record_progress(job_id, "sending", 70, step_index=3, step_percent=0, tenant_id=tenant_id_str)
+                        result = None
+                        if message_mode == "sms":
+                            # SMS는 내 테넌트(OWNER_TENANT_ID)에서만 허용
+                            if tenant_id is not None and int(tenant_id) != cfg.OWNER_TENANT_ID:
+                                logger.warning(
+                                    "SMS blocked by policy: tenant_id=%s is not owner tenant (allowed only for OWNER_TENANT_ID=%s)",
+                                    tenant_id, cfg.OWNER_TENANT_ID,
+                                )
+                                if deducted:
+                                    try:
+                                        from apps.support.messaging.credit_services import rollback_credits
+                                        rollback_credits(int(tenant_id), base_price)
+                                    except Exception as e:
+                                        logger.warning("rollback_credits failed: %s", e)
+                                if os.environ.get("DJANGO_SETTINGS_MODULE"):
+                                    try:
+                                        from decimal import Decimal
+                                        from academy.adapters.db.django.repositories_messaging import create_notification_log
+                                        create_notification_log(
+                                            tenant_id=int(tenant_id),
+                                            success=False,
+                                            amount_deducted=Decimal("0"),
+                                            recipient_summary=to[:4] + "****",
+                                            failure_reason="sms_not_allowed_for_tenant",
+                                            message_body=text[:2000],
+                                            message_mode=message_mode,
+                                        )
+                                    except Exception as e:
+                                        logger.warning("create_notification_log failed: %s", e)
+                                queue_client.delete_message(
+                                    queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                                    receipt_handle=receipt_handle,
+                                )
+                                _current_receipt_handle = None
+                                continue
+                            result = _dispatch_sms(to, text, sender)
+                        elif message_mode == "alimtalk":
+                            if pf_id and template_id:
+                                result = _dispatch_alimtalk(
+                                    to, sender, pf_id, template_id,
+                                    alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
+                                )
+                                # 알림톡만: 폴백 없음
+                            else:
+                                result = {"status": "error", "reason": "alimtalk_requires_pf_id_and_template_id"}
+                        elif message_mode == "both" and pf_id and template_id:
+                            result = _dispatch_alimtalk(
+                                to, sender, pf_id, template_id,
+                                alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
                             )
-                            if deducted:
-                                try:
-                                    from apps.support.messaging.credit_services import rollback_credits
-                                    rollback_credits(int(tenant_id), base_price)
-                                except Exception as e:
-                                    logger.warning("rollback_credits failed: %s", e)
-                            if os.environ.get("DJANGO_SETTINGS_MODULE"):
-                                try:
-                                    from decimal import Decimal
-                                    from academy.adapters.db.django.repositories_messaging import create_notification_log
+                            if result.get("status") != "ok":
+                                logger.info("alimtalk failed, fallback to SMS (provider=%s)", tenant_provider)
+                                # SMS 폴백 시에도 내 테넌트에서만 허용
+                                if tenant_id is not None and int(tenant_id) == cfg.OWNER_TENANT_ID:
+                                    result = _dispatch_sms(to, text, sender)
+                                else:
+                                    logger.warning(
+                                        "SMS fallback skipped by policy: tenant_id=%s (SMS allowed only for owner)",
+                                        tenant_id,
+                                    )
+                        else:
+                            # alimtalk/both인데 pf_id·template_id 없으면 SMS로 대체
+                            if message_mode in ("alimtalk", "both") and (not pf_id or not template_id):
+                                logger.warning("alimtalk requested but pf_id/template_id missing, sending SMS")
+                            # SMS 대체 시 내 테넌트에서만 허용
+                            if tenant_id is not None and int(tenant_id) != cfg.OWNER_TENANT_ID:
+                                logger.warning(
+                                    "SMS fallback blocked by policy: tenant_id=%s (allowed only for owner)",
+                                    tenant_id,
+                                )
+                                result = {"status": "error", "reason": "sms_not_allowed_for_tenant"}
+                            else:
+                                result = _dispatch_sms(to, text, sender)
+                        _record_progress(job_id, "sending", 90, step_index=3, step_percent=100, tenant_id=tenant_id_str)
+
+                        # 성공 시 로그, 실패 시 롤백 + 로그
+                        if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE") and info:
+                            try:
+                                from decimal import Decimal
+                                from apps.support.messaging.credit_services import rollback_credits
+                                from academy.adapters.db.django.repositories_messaging import create_notification_log
+                                if result.get("status") == "ok":
+                                    create_notification_log(
+                                        tenant_id=int(tenant_id),
+                                        success=True,
+                                        amount_deducted=Decimal(str(base_price)),
+                                        recipient_summary=to[:4] + "****",
+                                        template_summary=template_id or "SMS",
+                                        message_body=text[:2000],
+                                        message_mode=message_mode,
+                                    )
+                                else:
+                                    if deducted:
+                                        rollback_credits(int(tenant_id), base_price)
+                                    raw_reason = result.get("reason", "send_failed")[:500]
+                                    # 솔라피 IP 미허용 등으로 실패 시 발송 내역 비고에 안내 문구 추가
+                                    if any(
+                                        x in (raw_reason or "").lower()
+                                        for x in ("forbidden", "허용되지 않은 ip", "unauthorized ip", "unauthorized)")
+                                    ):
+                                        failure_reason = (
+                                            "솔라피 IP 미등록: SOLAPI 콘솔(console.solapi.com)에서 "
+                                            "설정 > 허용 IP에 이 서버의 나가는 IP를 추가해 주세요. "
+                                        ) + (raw_reason or "")[:400]
+                                    else:
+                                        failure_reason = raw_reason
                                     create_notification_log(
                                         tenant_id=int(tenant_id),
                                         success=False,
                                         amount_deducted=Decimal("0"),
                                         recipient_summary=to[:4] + "****",
-                                        failure_reason="sms_not_allowed_for_tenant",
+                                        failure_reason=failure_reason[:500],
                                         message_body=text[:2000],
                                         message_mode=message_mode,
                                     )
-                                except Exception as e:
-                                    logger.warning("create_notification_log failed: %s", e)
+                            except Exception as e:
+                                logger.exception("NotificationLog/rollback failed: %s", e)
+                                if deducted and result.get("status") != "ok":
+                                    try:
+                                        rollback_credits(int(tenant_id), base_price)
+                                    except Exception:
+                                        pass
+
+                        if result.get("status") == "ok":
+                            _record_progress(job_id, "done", 100, step_index=4, step_percent=100, tenant_id=tenant_id_str)
                             queue_client.delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
                             )
-                            _current_receipt_handle = None
-                            continue
-                        result = _dispatch_sms(to, text, sender)
-                    elif message_mode == "alimtalk":
-                        if pf_id and template_id:
-                            result = _dispatch_alimtalk(
-                                to, sender, pf_id, template_id,
-                                alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
-                            )
-                            # 알림톡만: 폴백 없음
+                            consecutive_errors = 0
                         else:
-                            result = {"status": "error", "reason": "alimtalk_requires_pf_id_and_template_id"}
-                    elif message_mode == "both" and pf_id and template_id:
-                        result = _dispatch_alimtalk(
-                            to, sender, pf_id, template_id,
-                            alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
-                        )
-                        if result.get("status") != "ok":
-                            logger.info("alimtalk failed, fallback to SMS (provider=%s)", tenant_provider)
-                            # SMS 폴백 시에도 내 테넌트에서만 허용
-                            if tenant_id is not None and int(tenant_id) == cfg.OWNER_TENANT_ID:
-                                result = _dispatch_sms(to, text, sender)
-                            else:
-                                logger.warning(
-                                    "SMS fallback skipped by policy: tenant_id=%s (SMS allowed only for owner)",
-                                    tenant_id,
-                                )
-                    else:
-                        # alimtalk/both인데 pf_id·template_id 없으면 SMS로 대체
-                        if message_mode in ("alimtalk", "both") and (not pf_id or not template_id):
-                            logger.warning("alimtalk requested but pf_id/template_id missing, sending SMS")
-                        # SMS 대체 시 내 테넌트에서만 허용
-                        if tenant_id is not None and int(tenant_id) != cfg.OWNER_TENANT_ID:
-                            logger.warning(
-                                "SMS fallback blocked by policy: tenant_id=%s (allowed only for owner)",
-                                tenant_id,
-                            )
-                            result = {"status": "error", "reason": "sms_not_allowed_for_tenant"}
-                        else:
-                            result = _dispatch_sms(to, text, sender)
-                    _record_progress(job_id, "sending", 90, step_index=3, step_percent=100, tenant_id=tenant_id_str)
+                            logger.warning("send failed, message will retry: %s", result.get("reason"))
+                            consecutive_errors += 1
+                            if consecutive_errors >= max_consecutive_errors:
+                                logger.error("Too many consecutive errors (%s), exiting", consecutive_errors)
+                                return 1
 
-                    # 성공 시 로그, 실패 시 롤백 + 로그
-                    if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE") and info:
-                        try:
-                            from decimal import Decimal
-                            from apps.support.messaging.credit_services import rollback_credits
-                            from academy.adapters.db.django.repositories_messaging import create_notification_log
-                            if result.get("status") == "ok":
-                                create_notification_log(
-                                    tenant_id=int(tenant_id),
-                                    success=True,
-                                    amount_deducted=Decimal(str(base_price)),
-                                    recipient_summary=to[:4] + "****",
-                                    template_summary=template_id or "SMS",
-                                    message_body=text[:2000],
-                                    message_mode=message_mode,
-                                )
-                            else:
-                                if deducted:
-                                    rollback_credits(int(tenant_id), base_price)
-                                raw_reason = result.get("reason", "send_failed")[:500]
-                                # 솔라피 IP 미허용 등으로 실패 시 발송 내역 비고에 안내 문구 추가
-                                if any(
-                                    x in (raw_reason or "").lower()
-                                    for x in ("forbidden", "허용되지 않은 ip", "unauthorized ip", "unauthorized)")
-                                ):
-                                    failure_reason = (
-                                        "솔라피 IP 미등록: SOLAPI 콘솔(console.solapi.com)에서 "
-                                        "설정 > 허용 IP에 이 서버의 나가는 IP를 추가해 주세요. "
-                                    ) + (raw_reason or "")[:400]
-                                else:
-                                    failure_reason = raw_reason
-                                create_notification_log(
-                                    tenant_id=int(tenant_id),
-                                    success=False,
-                                    amount_deducted=Decimal("0"),
-                                    recipient_summary=to[:4] + "****",
-                                    failure_reason=failure_reason[:500],
-                                    message_body=text[:2000],
-                                    message_mode=message_mode,
-                                )
-                        except Exception as e:
-                            logger.exception("NotificationLog/rollback failed: %s", e)
-                            if deducted and result.get("status") != "ok":
-                                try:
-                                    rollback_credits(int(tenant_id), base_price)
-                                except Exception:
-                                    pass
-
-                    if result.get("status") == "ok":
-                        _record_progress(job_id, "done", 100, step_index=4, step_percent=100, tenant_id=tenant_id_str)
-                        queue_client.delete_message(
-                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
-                            receipt_handle=receipt_handle,
-                        )
-                        consecutive_errors = 0
-                    else:
-                        logger.warning("send failed, message will retry: %s", result.get("reason"))
-                        consecutive_errors += 1
-                        if consecutive_errors >= max_consecutive_errors:
-                            logger.error("Too many consecutive errors (%s), exiting", consecutive_errors)
-                            return 1
-
-                    _current_receipt_handle = None
+                        _current_receipt_handle = None
+                    except Exception:
+                        if deducted:
+                            try:
+                                from apps.support.messaging.credit_services import rollback_credits
+                                rollback_credits(int(tenant_id), base_price)
+                                logger.info("Rolled back credits for tenant_id=%s after send exception", tenant_id)
+                            except Exception as rb_err:
+                                logger.exception("rollback_credits failed after send exception: %s", rb_err)
+                        raise
 
                     if _shutdown:
                         logger.info("Graceful shutdown: exiting")

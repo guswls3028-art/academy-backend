@@ -378,7 +378,8 @@ class HomeworkScoreViewSet(ModelViewSet):
             submission = (
                 Submission.objects.filter(
                     enrollment_id=score_obj.enrollment_id,
-                    session_id=score_obj.session_id,
+                    target_type="homework",
+                    target_id=score_obj.homework_id,
                 )
                 .order_by("-id")
                 .first()

@@ -44,11 +44,13 @@ class PostReplySerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         post = validated_data.pop("post")
+        created_by = validated_data.pop("created_by", None)
+        tenant = validated_data.pop("tenant", None)
         return PostReply.objects.create(
             post=post,
-            tenant_id=post.tenant_id,
+            tenant_id=tenant.id if tenant else post.tenant_id,
             content=validated_data["content"],
-            created_by=validated_data.get("created_by"),
+            created_by=created_by,
         )
 
 

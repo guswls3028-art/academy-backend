@@ -70,22 +70,22 @@ class ExamGradingService:
                 answers_map[qid] = ans
 
         questions = list(sheet.questions.all())
-        total_q = len(questions)
 
-        if total_q == 0:
+        if not questions:
             return 0
 
-        correct = 0
+        total_score = 0
         for q in questions:
             qid = int(q.id)
+            q_score = float(getattr(q, "score", 0) or 0)
             if (
                 qid in key_map
                 and qid in answers_map
                 and answers_map[qid] == key_map[qid]
             ):
-                correct += 1
+                total_score += q_score
 
-        return int(round((correct / total_q) * 100))
+        return int(round(total_score))
 
     # ------------------------------------------------------------------
     # Public API

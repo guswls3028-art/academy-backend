@@ -15,10 +15,13 @@ from apps.domains.homework_results.models import Homework
 
 
 def template_visible_to_tenant(template: Homework, tenant) -> bool:
-    """해당 테넌트가 이 템플릿을 사용할 수 있는지. (미사용 템플릿도 허용)"""
+    """해당 테넌트가 이 템플릿을 사용할 수 있는지."""
     if template.homework_type != Homework.HomeworkType.TEMPLATE:
         return False
-    return True
+    # ✅ Tenant isolation: template must have at least one derived homework in this tenant
+    return template.derived_homeworks.filter(
+        session__lecture__tenant=tenant,
+    ).exists()
 
 
 class HomeworkTemplateWithUsageListView(APIView):

@@ -28,6 +28,7 @@ from apps.domains.community.selectors import (
 from apps.domains.community.services import CommunityService
 from apps.domains.community.models import PostTemplate, PostReply, BlockType, PostAttachment
 from apps.domains.student_app.permissions import get_request_student
+from apps.core.permissions import TenantResolvedAndStaff
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,22 @@ def _get_tenant_from_request(request):
 class PostViewSet(viewsets.ModelViewSet):
     """Post CRUD. tenant from request. list: ?node_id= or admin list."""
     serializer_class = PostEntitySerializer
+
+    def update(self, request, *args, **kwargs):
+        """학생은 본인 글만 수정 가능."""
+        instance = self.get_object()
+        request_student = get_request_student(request)
+        if request_student is not None and getattr(instance, "created_by_id", None) != request_student.id:
+            return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        """학생은 본인 글만 삭제 가능."""
+        instance = self.get_object()
+        request_student = get_request_student(request)
+        if request_student is not None and getattr(instance, "created_by_id", None) != request_student.id:
+            return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+        return super().destroy(request, *args, **kwargs)
 
     def retrieve(self, request, *args, **kwargs):
         """단건 조회: 학생은 (1) 공지(block_type code=notice) 또는 (2) 본인 작성 글만 허용."""
@@ -195,7 +212,14 @@ class PostViewSet(viewsets.ModelViewSet):
         # POST: 답변 등록 (content만 필수)
         serializer = PostReplySerializer(data=request.data, partial=False)
         serializer.is_valid(raise_exception=True)
-        reply = serializer.save(post=post)
+        # created_by: 학생이면 student, 아니면 staff에서 가져옴
+        created_by = None
+        request_student = get_request_student(request)
+        if request_student is not None:
+            created_by = request_student
+        elif hasattr(request.user, "staff"):
+            created_by = request.user.staff
+        reply = serializer.save(post=post, tenant=tenant, created_by=created_by)
         return Response(PostReplySerializer(reply).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="attachments")
@@ -294,6 +318,11 @@ class PostViewSet(viewsets.ModelViewSet):
         if not post:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        # 학생은 본인 글의 첨부파일만 삭제 가능
+        request_student = get_request_student(request)
+        if request_student is not None and post.created_by_id != request_student.id:
+            return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+
         try:
             att = PostAttachment.objects.get(id=int(att_id), post=post, tenant=tenant)
         except (PostAttachment.DoesNotExist, ValueError, TypeError):
@@ -320,6 +349,11 @@ class PostViewSet(viewsets.ModelViewSet):
             reply = PostReply.objects.get(post=post, id=int(reply_id), tenant=tenant)
         except (PostReply.DoesNotExist, ValueError, TypeError):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 학생은 본인 답변만 수정/삭제 가능
+        request_student = get_request_student(request)
+        if request_student is not None and reply.created_by_id != request_student.id:
+            return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
 
         if request.method == "DELETE":
             reply.delete()
@@ -374,6 +408,7 @@ class AdminPostViewSet(viewsets.GenericViewSet):
 class BlockTypeViewSet(viewsets.ModelViewSet):
     """블록 유형 CRUD. 커스텀 유형 생성/수정/삭제. tenant에 하나도 없으면 기본 QnA 유형 자동 생성."""
     serializer_class = BlockTypeSerializer
+    permission_classes = [TenantResolvedAndStaff]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
@@ -414,6 +449,7 @@ class BlockTypeViewSet(viewsets.ModelViewSet):
 class PostTemplateViewSet(viewsets.ModelViewSet):
     """글 양식 CRUD. 자주 쓰는 제목/본문/유형 저장·불러오기."""
     serializer_class = PostTemplateSerializer
+    permission_classes = [TenantResolvedAndStaff]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)

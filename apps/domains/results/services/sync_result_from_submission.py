@@ -99,4 +99,25 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     result.objective_score = 0.0  # 동기화 시에는 전부 문항합(주관식)으로 간주
     result.submitted_at = timezone.now()
     result.save(update_fields=["total_score", "max_score", "objective_score", "submitted_at", "updated_at"])
+
+    # ✅ Create ExamAttempt if not exists (ONLINE submissions)
+    from apps.domains.results.models import ExamAttempt
+
+    attempt, created = ExamAttempt.objects.get_or_create(
+        exam_id=int(exam.id),
+        enrollment_id=int(enrollment_id),
+        attempt_index=1,
+        defaults={
+            "submission_id": submission.id,
+            "is_representative": True,
+            "status": "done",
+        },
+    )
+    if not created:
+        attempt.is_representative = True
+        attempt.status = "done"
+        attempt.save(update_fields=["is_representative", "status", "updated_at"])
+    result.attempt_id = attempt.id
+    result.save(update_fields=["attempt_id", "updated_at"])
+
     return result

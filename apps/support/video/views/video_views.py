@@ -822,6 +822,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
     def _list_folders_impl(self, request):
         """전체공개영상 세션의 폴더 목록 조회."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "Tenant required"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         session_id = request.query_params.get("session_id")
         if not session_id:
             return Response(
@@ -835,12 +841,23 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 {"detail": "Session not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if session.lecture.tenant_id != tenant.id:
+            return Response(
+                {"detail": "Session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         folders = VideoFolder.objects.filter(session=session).order_by("order", "name")
         return Response(VideoFolderSerializer(folders, many=True).data)
 
     def _create_folder_impl(self, request):
         """전체공개영상 세션에 폴더 생성."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "Tenant required"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         session_id = request.data.get("session_id")
         name = request.data.get("name")
         parent_id = request.data.get("parent_id")  # null이면 루트 폴더
@@ -854,6 +871,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         try:
             session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
         except Session.DoesNotExist:
+            return Response(
+                {"detail": "Session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if session.lecture.tenant_id != tenant.id:
             return Response(
                 {"detail": "Session not found"},
                 status=status.HTTP_404_NOT_FOUND,

@@ -24,6 +24,12 @@ class ExamOMRSubmitView(APIView):
                 {"detail": "enrollment_id, sheet_id, file_key required"}, status=400
             )
 
+        # enrollment 테넌트 검증
+        from apps.domains.enrollment.models import Enrollment
+        enrollment = Enrollment.objects.filter(id=enrollment_id, tenant=tenant).first()
+        if not enrollment:
+            return Response({"detail": "해당 수강 정보를 찾을 수 없습니다."}, status=400)
+
         submission = Submission.objects.create(
             tenant=tenant,
             user=request.user,

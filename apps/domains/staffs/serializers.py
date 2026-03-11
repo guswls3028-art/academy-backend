@@ -284,7 +284,7 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
         staff = super().update(instance, validated_data)
 
         if is_active_before and staff.is_active is False:
-            teacher_repo.teacher_update_is_active_by_name_phone(staff.name, staff.phone or "", False)
+            teacher_repo.teacher_update_is_active_by_name_phone(staff.tenant, staff.name, staff.phone or "", False)
 
         return staff
 
@@ -294,7 +294,7 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
     def delete(self, instance):
         user = instance.user
 
-        teacher_repo.teacher_delete_by_name_phone(instance.name, instance.phone or "")
+        teacher_repo.teacher_delete_by_name_phone(instance.tenant, instance.name, instance.phone or "")
 
         # 🔥 Staff 삭제
         instance.delete()

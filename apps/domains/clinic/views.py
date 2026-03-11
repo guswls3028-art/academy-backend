@@ -1,6 +1,6 @@
 # PATH: apps/domains/clinic/views.py
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import viewsets, status
@@ -41,6 +41,11 @@ class SessionViewSet(viewsets.ModelViewSet):
 
     permission_classes = [IsAuthenticated]
     serializer_class = ClinicSessionSerializer
+
+    def get_permissions(self):
+        if self.action in ("create", "update", "partial_update", "destroy"):
+            return [IsAuthenticated(), TenantResolvedAndStaff()]
+        return [IsAuthenticated()]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SessionFilter
     search_fields = ["location"]
@@ -280,6 +285,13 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         source = serializer.validated_data.get("source")
         requested_status = serializer.validated_data.get("status")
 
+        # 지난 날짜 예약 차단
+        if session and session.date < timezone.localdate():
+            return Response(
+                {"detail": "지난 날짜의 클리닉은 예약할 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # 학생이 직접 신청하는 경우: student 자동 설정 + 반드시 기존 세션만 허용
         from apps.domains.student_app.permissions import get_request_student
         request_student = get_request_student(request)
@@ -304,26 +316,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     {"detail": "해당 클리닉은 다른 학년 대상입니다. 본인 학년의 클리닉만 신청할 수 있습니다."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            # 정원 체크: booked + pending 인원이 max_participants 이상이면 신청 불가
-            from django.db.models import Count
-            from django.db.models import Q
-            session_with_count = Session.objects.filter(pk=session.pk).annotate(
-                booked_total=Count(
-                    "participants",
-                    filter=Q(
-                        participants__status__in=[
-                            SessionParticipant.Status.BOOKED,
-                            SessionParticipant.Status.PENDING,
-                        ]
-                    ),
-                ),
-            ).first()
-            if session_with_count and session.max_participants is not None:
-                if session_with_count.booked_total >= session.max_participants:
-                    return Response(
-                        {"detail": "해당 클리닉은 정원이 마감되었습니다."},
-                        status=status.HTTP_409_CONFLICT,
-                    )
+            # 정원 체크는 아래 atomic 블록에서 select_for_update와 함께 수행
             # 학생 신청은 기본적으로 pending 상태
             if not requested_status or requested_status == SessionParticipant.Status.BOOKED:
                 requested_status = SessionParticipant.Status.PENDING
@@ -337,69 +330,89 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # 중복 체크: session이 있으면 session 기준, 없으면 requested_date/requested_start_time 기준
-        if session:
-            exists = SessionParticipant.objects.filter(
+        # ✅ atomic block: capacity check lock + duplicate check + save를 직렬화
+        with transaction.atomic():
+            # 세션 행 잠금 (학생 신청 시 capacity 재검증 + 중복/저장 직렬화)
+            if session and request_student:
+                _locked = Session.objects.select_for_update().get(pk=session.pk)
+                # 정원 재검증 (lock 획득 후)
+                if _locked.max_participants is not None:
+                    current_booked = SessionParticipant.objects.filter(
+                        session=_locked,
+                        status__in=[
+                            SessionParticipant.Status.BOOKED,
+                            SessionParticipant.Status.PENDING,
+                        ],
+                    ).count()
+                    if current_booked >= _locked.max_participants:
+                        return Response(
+                            {"detail": "해당 클리닉은 정원이 마감되었습니다."},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+
+            # 중복 체크: session이 있으면 session 기준, 없으면 requested_date/requested_start_time 기준
+            if session:
+                exists = SessionParticipant.objects.filter(
+                    tenant=tenant,
+                    session=session,
+                    student=student,
+                ).exists()
+                if exists:
+                    return Response(
+                        {"detail": "이미 해당 세션에 예약된 학생입니다."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+            elif requested_date and requested_start_time:
+                exists = SessionParticipant.objects.filter(
+                    tenant=tenant,
+                    session__isnull=True,
+                    requested_date=requested_date,
+                    requested_start_time=requested_start_time,
+                    student=student,
+                    status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
+                ).exists()
+                if exists:
+                    return Response(
+                        {"detail": "이미 해당 시간에 예약 신청이 있습니다."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+            # participant_role 결정
+            if source == SessionParticipant.Source.MANUAL:
+                participant_role = "manual"
+            elif source == SessionParticipant.Source.STUDENT_REQUEST:
+                participant_role = "manual"  # 학생 신청도 manual로 분류
+            else:
+                participant_role = "target"
+
+            # enrollment_id 자동 조회 (학생 신청 시)
+            if not enrollment_id and request_student:
+                from apps.domains.enrollment.models import Enrollment
+                enrollment = Enrollment.objects.filter(
+                    student=request_student,
+                    tenant=tenant,
+                    status="ACTIVE"
+                ).first()
+                if enrollment:
+                    enrollment_id = enrollment.id
+
+            obj = serializer.save(
                 tenant=tenant,
-                session=session,
                 student=student,
-            ).exists()
-            if exists:
-                return Response(
-                    {"detail": "이미 해당 세션에 예약된 학생입니다."},
-                    status=status.HTTP_409_CONFLICT,
-                )
-        elif requested_date and requested_start_time:
-            exists = SessionParticipant.objects.filter(
-                tenant=tenant,
-                session__isnull=True,
-                requested_date=requested_date,
-                requested_start_time=requested_start_time,
-                student=student,
-                status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
-            ).exists()
-            if exists:
-                return Response(
-                    {"detail": "이미 해당 시간에 예약 신청이 있습니다."},
-                    status=status.HTTP_409_CONFLICT,
-                )
-
-        # participant_role 결정
-        if source == SessionParticipant.Source.MANUAL:
-            participant_role = "manual"
-        elif source == SessionParticipant.Source.STUDENT_REQUEST:
-            participant_role = "manual"  # 학생 신청도 manual로 분류
-        else:
-            participant_role = "target"
-
-        # enrollment_id 자동 조회 (학생 신청 시)
-        if not enrollment_id and request_student:
-            from apps.domains.enrollment.models import Enrollment
-            enrollment = Enrollment.objects.filter(
-                student=request_student,
-                tenant=tenant,
-                status="ACTIVE"
-            ).first()
-            if enrollment:
-                enrollment_id = enrollment.id
-
-        obj = serializer.save(
-            tenant=tenant,
-            student=student,
-            source=source,
-            status=requested_status or SessionParticipant.Status.PENDING,
-            enrollment_id=enrollment_id,
-            participant_role=participant_role,
-        )
-
-        # enrollment_id가 있고 session이 있으면 ClinicLink 업데이트
-        if enrollment_id and session:
-            ClinicLink.objects.filter(
-                session=session,
+                source=source,
+                status=requested_status or SessionParticipant.Status.PENDING,
                 enrollment_id=enrollment_id,
-                is_auto=True,
-                resolved_at__isnull=True,
-            ).update(resolved_at=timezone.now())
+                participant_role=participant_role,
+            )
+
+            # enrollment_id가 있고 session이 있으면 ClinicLink 업데이트
+            if enrollment_id and session:
+                ClinicLink.objects.filter(
+                    session=session,
+                    enrollment_id=enrollment_id,
+                    is_auto=True,
+                    resolved_at__isnull=True,
+                ).update(resolved_at=timezone.now())
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
@@ -523,7 +536,7 @@ class ClinicSettingsView(APIView):
     GET/PATCH /clinic/settings/
     클리닉 설정 (패스카드 배경 색상 등)
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
         tenant = getattr(request, "tenant", None)
