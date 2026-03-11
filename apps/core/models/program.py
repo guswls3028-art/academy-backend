@@ -82,6 +82,10 @@ class Program(TimestampModel):
         # plan 변경 시 가격 자동 동기화
         if self.plan in self.PLAN_PRICES:
             self.monthly_price = self.PLAN_PRICES[self.plan]
+            # update_fields 에 monthly_price 자동 포함
+            uf = kwargs.get("update_fields")
+            if uf is not None and "monthly_price" not in uf:
+                kwargs["update_fields"] = list(uf) + ["monthly_price"]
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:

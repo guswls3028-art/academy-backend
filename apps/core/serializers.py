@@ -109,6 +109,7 @@ class ProgramPublicSerializer(serializers.ModelSerializer):
             "brand_key",
             "login_variant",
             "plan",
+            "monthly_price",
             "feature_flags",
             "ui_config",
             "is_active",
