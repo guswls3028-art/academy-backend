@@ -270,6 +270,10 @@ class StudentViewSet(ModelViewSet):
                 student.user.phone = None
                 user_update.append("phone")
             student.user.save(update_fields=user_update)
+        # ✅ 소프트 삭제 시 수강등록도 비활성화
+        Enrollment.objects.filter(
+            student=student, tenant=request.tenant
+        ).update(status="INACTIVE")
         return Response(status=204)
 
     # ------------------------------
@@ -616,6 +620,10 @@ class StudentViewSet(ModelViewSet):
                             student.user.is_active = True
                             student.user.save(update_fields=["is_active"])
                         TenantMembership.ensure_active(tenant=tenant, user=student.user, role="student")
+                        # ✅ 복원 시 수강등록도 재활성화
+                        Enrollment.objects.filter(
+                            student=student, tenant=tenant
+                        ).update(status="ACTIVE")
                     restored_count += 1
                     created_students.append(student)
                 else:
@@ -742,6 +750,10 @@ class StudentViewSet(ModelViewSet):
                         student.user.phone = None
                         user_update.append("phone")
                     student.user.save(update_fields=user_update)
+                # ✅ 소프트 삭제 시 수강등록도 비활성화
+                Enrollment.objects.filter(
+                    student=student, tenant=tenant
+                ).update(status="INACTIVE")
         return Response({"deleted": len(to_delete)}, status=200)
 
     @action(
@@ -779,6 +791,10 @@ class StudentViewSet(ModelViewSet):
                     TenantMembership.ensure_active(
                         tenant=tenant, user=student.user, role="student"
                     )
+                # ✅ 복원 시 수강등록도 재활성화
+                Enrollment.objects.filter(
+                    student=student, tenant=tenant
+                ).update(status="ACTIVE")
         return Response({"restored": len(to_restore)}, status=200)
 
     @action(

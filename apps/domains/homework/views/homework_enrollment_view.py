@@ -41,6 +41,7 @@ class HomeworkEnrollmentManageView(APIView):
                 tenant=tenant,
                 session_id=session_id,
             )
+            .filter(enrollment__student__deleted_at__isnull=True)
             .select_related("enrollment", "enrollment__student")
             .order_by("id")
         )
