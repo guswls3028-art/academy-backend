@@ -97,21 +97,22 @@ def run_cloudwatch_logs():
     return found_start, found_completed, None
 
 
-def run_lambda_config(name: str):
+def run_eventbridge_rule(rule_name: str):
     r = subprocess.run(
         [
-            "aws", "lambda", "get-function-configuration",
-            "--function-name", name, "--region", REGION,
-            "--query", "Environment.Variables", "--output", "json",
+            "aws", "events", "describe-rule",
+            "--name", rule_name, "--region", REGION,
+            "--query", "{State:State,ScheduleExpression:ScheduleExpression}",
+            "--output", "json",
         ],
         capture_output=True,
         text=True,
         timeout=10,
     )
     if r.returncode != 0:
-        return None, r.stderr
+        return None, r.stderr.strip()
     try:
-        return (json.loads(r.stdout) if r.stdout.strip() else {}), None
+        return json.loads(r.stdout), None
     except Exception as e:
         return None, str(e)
 
@@ -145,7 +146,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from apps.support.video.models import VideoTranscodeJob
 
-        db_ok = batch_ok = log_ok = stuck_ok = lambda_ok = iam_ok = False
+        db_ok = batch_ok = log_ok = stuck_ok = eb_ok = iam_ok = False
 
         # --- STEP 1 ---
         qs = VideoTranscodeJob.objects.order_by("-created_at")[:3]
