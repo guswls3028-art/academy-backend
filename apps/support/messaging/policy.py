@@ -67,6 +67,24 @@ def resolve_kakao_channel(tenant_id: int) -> dict:
     return {"pf_id": default_pf_id or "", "use_default": True}
 
 
+def get_tenant_provider(tenant_id: int) -> str:
+    """
+    테넌트의 메시징 공급자(solapi/ppurio) 반환.
+    DB 조회 실패 시 기본값 'solapi'.
+    """
+    try:
+        from apps.core.models import Tenant
+        provider = (
+            Tenant.objects.filter(pk=int(tenant_id))
+            .values_list("messaging_provider", flat=True)
+            .first()
+        )
+        return (provider or "solapi").strip().lower()
+    except Exception as e:
+        logger.warning("get_tenant_provider failed: %s", e)
+        return "solapi"
+
+
 def resolve_messaging_provider(tenant_id: int, message_type: str) -> dict:
     """
     발송 유형별 허용 여부 및 채널 정보를 한 곳에서 결정.
@@ -77,16 +95,18 @@ def resolve_messaging_provider(tenant_id: int, message_type: str) -> dict:
 
     Returns:
         - message_type == "sms":
-          {"allowed": bool, "reason": str | None}
+          {"allowed": bool, "reason": str | None, "provider": str}
         - message_type == "alimtalk":
-          {"allowed": True, "pf_id": str, "use_default": bool}
+          {"allowed": True, "pf_id": str, "use_default": bool, "provider": str}
     """
     tenant_id = int(tenant_id)
+    provider = get_tenant_provider(tenant_id)
     if message_type == "sms":
         allowed = can_send_sms(tenant_id)
         return {
             "allowed": allowed,
             "reason": None if allowed else "sms_allowed_only_for_owner_tenant",
+            "provider": provider,
         }
     if message_type == "alimtalk":
         channel = resolve_kakao_channel(tenant_id)
@@ -94,5 +114,6 @@ def resolve_messaging_provider(tenant_id: int, message_type: str) -> dict:
             "allowed": True,
             "pf_id": channel["pf_id"],
             "use_default": channel["use_default"],
+            "provider": provider,
         }
-    return {"allowed": False, "reason": "unknown_message_type"}
+    return {"allowed": False, "reason": "unknown_message_type", "provider": provider}

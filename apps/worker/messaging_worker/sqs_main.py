@@ -86,6 +86,35 @@ def _get_solapi_client(cfg):
     return SolapiMessageService(api_key=cfg.SOLAPI_API_KEY, api_secret=cfg.SOLAPI_API_SECRET)
 
 
+def send_one_alimtalk_ppurio(
+    to: str,
+    sender: str,
+    pf_id: str,
+    template_id: str,
+    replacements: Optional[list] = None,
+) -> dict:
+    """뿌리오 알림톡 1건 발송. Solapi send_one_alimtalk과 동일 인터페이스."""
+    try:
+        from apps.support.messaging.ppurio_client import send_ppurio_alimtalk
+        return send_ppurio_alimtalk(
+            to=to, sender=sender, pf_id=pf_id,
+            template_id=template_id, replacements=replacements,
+        )
+    except Exception as e:
+        logger.exception("ppurio alimtalk failed to=%s****", (to or "")[:4])
+        return {"status": "error", "reason": str(e)[:500]}
+
+
+def send_one_sms_ppurio(to: str, text: str, sender: str) -> dict:
+    """뿌리오 SMS/LMS 1건 발송. Solapi send_one_sms와 동일 인터페이스."""
+    try:
+        from apps.support.messaging.ppurio_client import send_ppurio_sms
+        return send_ppurio_sms(to=to, text=text, sender=sender)
+    except Exception as e:
+        logger.exception("ppurio sms failed to=%s****", (to or "")[:4])
+        return {"status": "error", "reason": str(e)[:500]}
+
+
 def send_one_alimtalk(
     cfg,
     to: str,
@@ -324,10 +353,11 @@ def main() -> int:
                     alimtalk_replacements = data.get("alimtalk_replacements") or []
                     template_id_msg = data.get("template_id") or ""
 
-                    # 테넌트별 잔액·PFID·발신번호·단가 (Django 있을 때만)
+                    # 테넌트별 잔액·PFID·발신번호·단가·공급자 (Django 있을 때만)
                     info = None
                     base_price = "0"
                     pf_id_tenant = ""
+                    tenant_provider = "solapi"  # 기본 공급자
                     if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
                         try:
                             from apps.support.messaging.credit_services import (
@@ -336,7 +366,7 @@ def main() -> int:
                                 rollback_credits,
                             )
                             from apps.support.messaging.models import NotificationLog
-                            from apps.support.messaging.policy import resolve_kakao_channel
+                            from apps.support.messaging.policy import resolve_kakao_channel, get_tenant_provider
                             from apps.core.models import Tenant
                             info = get_tenant_messaging_info(int(tenant_id))
                             if info:
@@ -347,6 +377,8 @@ def main() -> int:
                             # 알림톡 채널: resolver로 통일 (tenant 연동 채널 → 시스템 기본)
                             channel = resolve_kakao_channel(int(tenant_id))
                             pf_id_tenant = (channel.get("pf_id") or "").strip()
+                            # 공급자 결정
+                            tenant_provider = get_tenant_provider(int(tenant_id))
                         except Exception as e:
                             logger.warning("get_tenant_messaging_info/resolve_kakao_channel failed: %s", e)
 
