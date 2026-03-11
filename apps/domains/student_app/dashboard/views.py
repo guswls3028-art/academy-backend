@@ -39,16 +39,28 @@ class StudentDashboardView(APIView):
             "tenant_info": None,
         }
         if tenant:
+            hq_phone = (getattr(tenant, "headquarters_phone", None) or "").strip()
+            owner_phone = (getattr(tenant, "phone", None) or "").strip()
+            fallback_phone = hq_phone or owner_phone
             academies = getattr(tenant, "academies", None) or []
             if not academies:
                 academies = [{
                     "name": (getattr(tenant, "name", None) or "").strip(),
-                    "phone": (getattr(tenant, "headquarters_phone", None) or "").strip(),
+                    "phone": fallback_phone,
                 }]
+            else:
+                # academies JSON에 phone이 비어 있으면 본부/대표 번호로 보완
+                academies = [
+                    {
+                        "name": (a.get("name") or "").strip(),
+                        "phone": (a.get("phone") or "").strip() or fallback_phone,
+                    }
+                    for a in academies
+                ]
             data["tenant_info"] = {
                 "name": (getattr(tenant, "name", None) or "").strip(),
-                "phone": (getattr(tenant, "phone", None) or "").strip(),
-                "headquarters_phone": (getattr(tenant, "headquarters_phone", None) or "").strip(),
+                "phone": owner_phone,
+                "headquarters_phone": hq_phone,
                 "academies": academies,
             }
             # 공지: Community 공지 최대 5건
