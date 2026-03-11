@@ -4,6 +4,20 @@
 
 ---
 
+## 0. 프론트엔드 배포
+
+프론트엔드(`frontend/` 레포)는 백엔드와 완전히 독립된 배포 파이프라인을 가진다.
+
+| 항목 | 내용 |
+|------|------|
+| **트리거** | `git push origin main` (frontend 레포) |
+| **배포 대상** | Cloudflare Pages (자동 빌드·배포) |
+| **스크립트** | 불필요. `deploy-front.ps1`, `deploy.ps1 -DeployFront` 사용 금지. |
+
+> Formal/Rapid Deploy는 **백엔드 전용**이다. 프론트엔드 배포에 사용하지 않는다.
+
+---
+
 ## 1. 현재 실제 배포 구조
 
 - **이미지 빌드·ECR 푸시:** GitHub Actions만 수행 (`.github/workflows/v1-build-and-push-latest.yml`). 로컬/EC2 빌드 금지.
