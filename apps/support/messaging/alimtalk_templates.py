@@ -22,6 +22,7 @@ ALIMTALK_VAR_TIME = "시간"             # 시간 (예: 14:00)
 ALIMTALK_VAR_CLINIC_NAME = "클리닉명"   # 클리닉/상담명
 ALIMTALK_VAR_PLACE = "장소"            # 장소
 ALIMTALK_VAR_LINK = "사이트링크"        # 상세 링크 (선택)
+ALIMTALK_VAR_CLINIC_RESULT = "클리닉합불"  # 클리닉 결과 (합격/불합격)
 
 # 공통
 ALIMTALK_VAR_TITLE = "제목"            # 제목/안내 제목
@@ -35,6 +36,7 @@ ALIMTALK_TEMPLATE_VARIABLES = [
     ALIMTALK_VAR_CLINIC_NAME,
     ALIMTALK_VAR_PLACE,
     ALIMTALK_VAR_LINK,
+    ALIMTALK_VAR_CLINIC_RESULT,
     ALIMTALK_VAR_TITLE,
 ]
 
@@ -56,6 +58,7 @@ def build_replacements(context: Dict[str, Any]) -> list[dict]:
         "clinic_name": ALIMTALK_VAR_CLINIC_NAME,
         "place": ALIMTALK_VAR_PLACE,
         "link": ALIMTALK_VAR_LINK,
+        "clinic_result": ALIMTALK_VAR_CLINIC_RESULT,
         "title": ALIMTALK_VAR_TITLE,
     }
     out = []
