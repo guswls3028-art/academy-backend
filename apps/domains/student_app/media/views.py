@@ -912,7 +912,7 @@ class StudentVideoCommentListView(APIView):
         student = get_request_student(request)
 
         def _get_comment_photo_url(author_student):
-            """댓글 작성자 프로필 사진 URL (R2 presigned → local fallback)"""
+            """댓글 작성자 프로필 사진 URL (R2 presigned only, 로컬 fallback 제거)"""
             if not author_student:
                 return None
             r2_key = getattr(author_student, "profile_photo_r2_key", None) or ""
@@ -921,11 +921,6 @@ class StudentVideoCommentListView(APIView):
                     from django.conf import settings as _s
                     from libs.s3_client.presign import create_presigned_get_url
                     return create_presigned_get_url(r2_key, expires_in=3600, bucket=_s.R2_STORAGE_BUCKET)
-                except Exception:
-                    pass
-            if author_student.profile_photo:
-                try:
-                    return request.build_absolute_uri(author_student.profile_photo.url)
                 except Exception:
                     pass
             return None
@@ -1013,11 +1008,6 @@ class StudentVideoCommentListView(APIView):
                     from django.conf import settings as _s
                     from libs.s3_client.presign import create_presigned_get_url
                     photo_url = create_presigned_get_url(r2_key, expires_in=3600, bucket=_s.R2_STORAGE_BUCKET)
-                except Exception:
-                    pass
-            if not photo_url and student.profile_photo:
-                try:
-                    photo_url = request.build_absolute_uri(student.profile_photo.url)
                 except Exception:
                     pass
 

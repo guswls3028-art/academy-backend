@@ -53,11 +53,15 @@ def _get_staff(request):
 def _serialize_comment(c, request, staff=None):
     """Serialize a comment for admin response."""
     photo_url = None
-    if c.author_student and c.author_student.profile_photo:
-        try:
-            photo_url = request.build_absolute_uri(c.author_student.profile_photo.url)
-        except Exception:
-            pass
+    if c.author_student:
+        r2_key = getattr(c.author_student, "profile_photo_r2_key", None) or ""
+        if r2_key:
+            try:
+                from django.conf import settings as _s
+                from libs.s3_client.presign import create_presigned_get_url
+                photo_url = create_presigned_get_url(r2_key, expires_in=3600, bucket=_s.R2_STORAGE_BUCKET)
+            except Exception:
+                pass
     elif c.author_staff and hasattr(c.author_staff, "profile_photo") and c.author_staff.profile_photo:
         try:
             photo_url = request.build_absolute_uri(c.author_staff.profile_photo.url)

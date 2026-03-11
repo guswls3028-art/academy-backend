@@ -42,12 +42,16 @@ class StudentListSerializer(serializers.ModelSerializer):
         ref_name = "StudentList"
 
     def get_profile_photo_url(self, obj):
-        if not obj.profile_photo:
-            return None
-        request = self.context.get("request")
-        if request:
-            return request.build_absolute_uri(obj.profile_photo.url)
-        return obj.profile_photo.url
+        # R2 presigned URL 우선, 로컬 fallback 제거 (프로덕션 404 방지)
+        r2_key = getattr(obj, "profile_photo_r2_key", None) or ""
+        if r2_key:
+            try:
+                from django.conf import settings
+                from libs.s3_client.presign import create_presigned_get_url
+                return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
+            except Exception:
+                pass
+        return None
 
     def to_representation(self, obj):
         data = super().to_representation(obj)
@@ -81,12 +85,15 @@ class StudentDetailSerializer(serializers.ModelSerializer):
         ref_name = "StudentDetail"
 
     def get_profile_photo_url(self, obj):
-        if not obj.profile_photo:
-            return None
-        request = self.context.get("request")
-        if request:
-            return request.build_absolute_uri(obj.profile_photo.url)
-        return obj.profile_photo.url
+        r2_key = getattr(obj, "profile_photo_r2_key", None) or ""
+        if r2_key:
+            try:
+                from django.conf import settings
+                from libs.s3_client.presign import create_presigned_get_url
+                return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
+            except Exception:
+                pass
+        return None
 
     def to_representation(self, obj):
         data = super().to_representation(obj)

@@ -24,12 +24,8 @@ def _get_profile_photo_url(student):
             return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
         except Exception:
             logger.warning("Failed to generate presigned URL for profile photo r2_key=%s", r2_key)
-    # Fallback to local file (legacy)
-    if student.profile_photo:
-        try:
-            return student.profile_photo.url
-        except Exception:
-            pass
+    # 로컬 /media/ URL은 프로덕션에서 404 → 반환하지 않음.
+    # R2 키 없으면 None (프론트에서 이름 이니셜 표시).
     return None
 
 
