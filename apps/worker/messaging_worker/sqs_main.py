@@ -429,6 +429,7 @@ def main() -> int:
                     base_price = "0"
                     pf_id_tenant = ""
                     tenant_provider = "solapi"  # 기본 공급자
+                    own_creds = {}  # 테넌트 자체 연동 키
                     if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
                         try:
                             from apps.support.messaging.credit_services import (
@@ -504,7 +505,7 @@ def main() -> int:
                         continue
 
                     # 테넌트 자체 연동 키가 있으면 사용, 없으면 시스템 기본
-                    _own = own_creds if 'own_creds' in dir() else {}
+                    _own = own_creds
                     _own_ppurio_key = (_own.get("ppurio_api_key") or "").strip()
                     _own_ppurio_acct = (_own.get("ppurio_account") or "").strip()
                     _own_solapi_key = (_own.get("solapi_api_key") or "").strip()
