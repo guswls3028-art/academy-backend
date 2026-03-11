@@ -1,6 +1,17 @@
 # Deployment Truth Report (Executable Artifacts Only)
 
 **Scope:** Backend repo `C:\academy\backend`. Only scripts, workflows, Dockerfiles, compose files, and runtime config paths. No docs as source of truth.
+**최종 갱신:** 2026-03-11 (IAM 권한 적용, 프론트엔드 배포 정보 추가)
+
+---
+
+## 0. Frontend deploy path
+
+| Fact | Supporting artifact |
+|------|---------------------|
+| **Frontend는 별도 git repo** (`frontend/`)이며 백엔드 배포와 완전 독립. | 프로젝트 구조: `C:\academy\backend`, `C:\academy\frontend` 각각 별도 `.git` |
+| **배포 방식:** `git push origin main` → Cloudflare Pages 자동 빌드·배포. | Cloudflare Pages 설정 (콘솔) |
+| **사용 금지:** `deploy-front.ps1`, `deploy.ps1 -DeployFront` — params.yaml SSOT 값이 의도적으로 비어 있음. | `docs/00-SSOT/v1/params.yaml` |
 
 ---
 
@@ -18,7 +29,7 @@
 
 ### Assumptions
 
-- **Formal “full” deploy:** Running `deploy.ps1` locally (not in CI) is the only way to update Launch Template / UserData and then optionally trigger instance refresh. CI only runs build-and-push + deploy-api-refresh (no deploy.ps1).
+- **Formal “full” deploy:** Running `deploy.ps1` locally (not in CI) is the only way to update Launch Template / UserData and then optionally trigger instance refresh. CI runs build-and-push + deploy-api-refresh (ASG instance refresh, IAM 권한 적용 완료 2026-03-11).
 - **Rapid repo on server:** Scripts assume repo at `/home/ec2-user/academy` (RepoPath default in api-auto-deploy-remote.ps1). If missing, On/Deploy clones from RepoUrl (default academy-backend.git).
 
 ---
@@ -51,6 +62,7 @@
 | **Build order:** (1) academy-base (docker/Dockerfile.base), (2) academy-api (docker/api/Dockerfile, BASE_IMAGE=academy-base:latest), (3) academy-video-worker, (4) academy-messaging-worker, (5) academy-ai-worker-cpu. All context `.`, platforms linux/arm64, tag latest. | Same workflow file (Build and push steps) |
 | **ECR registry:** 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com. Repos: academy-base, academy-api, academy-video-worker, academy-messaging-worker, academy-ai-worker-cpu. Ensure step creates repo if missing. | Same workflow (env ECR_REGISTRY, Ensure ECR repos loop) |
 | **Auth:** OIDC only. `role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}`. No access key in workflow. | Same workflow (Configure AWS credentials step) |
+| **IAM 역할:** `academy-gha-ecr-build`. 인라인 정책 `EcrBuildPush`에 ECR 권한 + ASG instance refresh 권한 (`autoscaling:StartInstanceRefresh`, `DescribeInstanceRefreshes`, `DescribeAutoScalingGroups` on `academy-v1-api-asg`). 2026-03-11 적용. | IAM Console / `aws iam get-role-policy` |
 | **Dockerfile paths (backend root context):** Base: `docker/Dockerfile.base`. API: `docker/api/Dockerfile`. Video worker: `docker/video-worker/Dockerfile`. Messaging: `docker/messaging-worker/Dockerfile`. AI CPU: `docker/ai-worker-cpu/Dockerfile`. | Workflow file/docker/* paths; repo root = backend |
 | **deploy.ps1 does not build.** Default `-SkipBuild = $true`. Comment: “이미지 빌드·ECR 푸시는 GitHub Actions(OIDC)만”. | `backend/scripts/v1/deploy.ps1` (param SkipBuild = $true, comment) |
 | **docker-compose.yml:** Local dev only. Build context `.`, dockerfile paths e.g. docker/api/Dockerfile, env from `.env`. Not used in production deploy. | `backend/docker-compose.yml` |

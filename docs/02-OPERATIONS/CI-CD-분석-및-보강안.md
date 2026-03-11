@@ -70,9 +70,10 @@
 
 ## 3. ASG 기반 API 서버에 최신 이미지가 자동 반영되는지
 
-- **아니오.**  
-  - CI 워크플로우에는 **deploy.ps1 호출, instance refresh 트리거, SSM Deploy 호출**이 **전혀 없음.**  
-  - 따라서 **push만으로는** 기동 중인 API 인스턴스가 새 이미지를 pull하거나 재시작하지 않음.
+- **예. (2026-03-11 확인)**
+  - CI 워크플로우에 `deploy-api-refresh` job이 추가되어 (2026-03-09), 빌드·푸시 후 `aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg`를 실행한다.
+  - IAM 역할 `academy-gha-ecr-build`에 `autoscaling:StartInstanceRefresh`, `autoscaling:DescribeInstanceRefreshes`, `autoscaling:DescribeAutoScalingGroups` 권한이 추가되어 (2026-03-11), CI에서 정상 동작한다.
+  - 따라서 **main push → CI 빌드·푸시 → API ASG instance refresh → 서버 반영**이 완전 자동화되었다.
 
 ---
 
@@ -82,10 +83,10 @@
 |------|------|------|
 | 1. main push | ✅ | 개발자/GitHub |
 | 2. GitHub Actions 빌드·ECR 푸시 | ✅ | `v1-build-and-push-latest.yml` |
-| 3. **“배포” 트리거** | ❌ **끊김** | CI에 “ECR 푸시 후 배포” 단계 없음. deploy.ps1 호출 없음, refresh/SSM 호출 없음. |
-| 4. API 인스턴스가 새 이미지 사용 | ⚠️ 수동/조건부 | deploy.ps1 수동 실행 시 instance refresh로 반영, 또는 원격 자동배포 On + main 변경 시 2분마다 cron으로 반영. |
+| 3. **”배포” 트리거** | ✅ **자동** | CI `deploy-api-refresh` job이 ECR 푸시 후 API ASG instance refresh 실행 (2026-03-11 IAM 권한 적용 완료). |
+| 4. API 인스턴스가 새 이미지 사용 | ✅ 자동 | instance refresh로 새 인스턴스가 최신 ECR latest를 pull하여 실행. |
 
-**정리:** 끊기는 지점은 **“CI에서 ECR 푸시 이후, API 서버에 최신 이미지를 쓰게 만드는 단계가 없다는 것”** 이다.
+**정리:** ~~끊기는 지점은 “CI에서 ECR 푸시 이후, API 서버에 최신 이미지를 쓰게 만드는 단계가 없다는 것”이었다.~~ **해결 완료 (2026-03-11):** `deploy-api-refresh` job + IAM 권한 적용으로 push=서버 반영이 완전 자동화되었다.
 
 ---
 
@@ -144,7 +145,9 @@
 
 이렇게 하면 **main push → CI 빌드·푸시 → API ASG instance refresh**까지 자동으로 이어져, “push = 실제 서버 반영”이 성립한다.
 
-**반영 사항 (2026-03-09):** `.github/workflows/v1-build-and-push-latest.yml`에 `deploy-api-refresh` job을 추가함. 빌드·푸시 성공 후 같은 OIDC 역할(`AWS_ROLE_ARN_FOR_ECR_BUILD`)로 `aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg`를 실행한다. **해당 역할에 `autoscaling:StartInstanceRefresh`, `autoscaling:DescribeAutoScalingGroups` 권한이 없으면 이 job이 실패하므로**, IAM에서 해당 권한을 추가해야 한다.
+**반영 사항 (2026-03-09):** `.github/workflows/v1-build-and-push-latest.yml`에 `deploy-api-refresh` job을 추가함. 빌드·푸시 성공 후 같은 OIDC 역할(`AWS_ROLE_ARN_FOR_ECR_BUILD`)로 `aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg`를 실행한다.
+
+**IAM 권한 적용 완료 (2026-03-11):** `academy-gha-ecr-build` 역할의 `EcrBuildPush` 인라인 정책에 `ApiAsgInstanceRefresh` Statement를 추가하여 `autoscaling:StartInstanceRefresh`, `autoscaling:DescribeInstanceRefreshes`, `autoscaling:DescribeAutoScalingGroups` 권한을 `academy-v1-api-asg` 리소스에 한정하여 부여함. CI deploy-api-refresh job이 정상 동작 확인됨.
 
 ---
 

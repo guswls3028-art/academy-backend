@@ -1,6 +1,6 @@
 # V1 배포 아키텍처 및 표준화 보고서 (Macro Deployment Report)
 
-**최종 갱신일:** 2026-03-06  
+**최종 갱신일:** 2026-03-11  
 **기준:** V1 SSOT (`docs/00-SSOT/v1/`)  
 **배포 진입점:** `scripts/v1/deploy.ps1` · **상세 플랜:** `docs/00-SSOT/v1/V1-DEPLOYMENT-PLAN.md`
 
@@ -21,7 +21,8 @@
 ## 1. V1 아키텍처 청사진 (Executive Summary)
 현재 도입된 V1 아키텍처는 거시적으로 **"코드 푸시(GitHub) ➔ 빌드 및 이미지 레지스트리(AWS ECR) ➔ 오케스트레이션 및 파이프라인(AWS Batch/ASG) ➔ 전역 클라이언트 전송(Cloudflare R2/CDN)"** 으로 이어지는 구조를 띱니다.
 
-- **CI/CD 흐름**: `main` 브랜치 푸시 시 GitHub Actions가 트리거되며, 멀티 스테이지 빌드 최적화가 적용된 Docker 이미지(베이스/API/메시징/AI/비디오 워커)가 ARM64(Graviton) 아키텍처로 빌드되어 AWS ECR에 푸시됩니다.
+- **CI/CD 흐름**: `main` 브랜치 푸시 시 GitHub Actions가 트리거되며, 멀티 스테이지 빌드 최적화가 적용된 Docker 이미지(베이스/API/메시징/AI/비디오 워커)가 ARM64(Graviton) 아키텍처로 빌드되어 AWS ECR에 푸시됩니다. 이후 `deploy-api-refresh` job이 API ASG instance refresh를 자동 실행하여 **push=서버 반영**을 완성합니다 (IAM 권한 적용 완료 2026-03-11).
+- **프론트엔드 배포**: 프론트엔드(`frontend/` 별도 git repo)는 `git push origin main` → Cloudflare Pages 자동 빌드·배포. 백엔드와 완전 독립된 파이프라인이다.
 - **오케스트레이션**: `scripts/v1/deploy.ps1` 단일 진입점을 통해 모든 인프라 구성(ASG, ALB, Batch CE, EventBridge 등)이 절차적(Idempotent)으로 갱신되며, EC2, RDS, Redis 등의 백엔드 인프라가 배치를 주도합니다.
 - **Stateless 구조 및 에지 전송**: 내부 인프라는 철저히 상태를 가지지 않도록(Stateless) 설계되었으며, 모든 미디어 및 정적 파일은 Cloudflare R2에 저장되고 Cloudflare CDN을 통해 사용자에게 전파됩니다.
 
