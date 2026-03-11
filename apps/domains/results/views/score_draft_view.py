@@ -43,7 +43,7 @@ class ScoreDraftView(APIView):
             editor_user_id=request.user.id,
         ).first()
         if not draft:
-            return Response(status=404)
+            return Response({"changes": []})
         return Response({"changes": draft.payload or []})
 
     def put(self, request, session_id: int):

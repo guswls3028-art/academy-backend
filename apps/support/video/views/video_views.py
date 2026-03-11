@@ -169,17 +169,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
     def perform_destroy(self, instance):
         """
-        영상 삭제: 진행 중 Job에 대해 AWS Batch Terminate 호출 → Job DEAD 처리 → DB 삭제 → R2 동기 삭제.
-        Terminate 실패해도 삭제 요청은 성공. R2(raw+HLS)는 동기 삭제로 확실히 정리.
+        영상 소프트 삭제: 진행 중 Job에 대해 AWS Batch Terminate 호출 → Job DEAD 처리 → soft-delete.
+        R2 스토리지 정리는 6개월 보관 후 purge_deleted_videos 커맨드에서 수행.
+        Terminate 실패해도 삭제 요청은 성공.
         """
         video = video_repo.get_video_by_pk_with_relations(instance.pk)
-        tenant_id = None
         video_id = instance.id
-        file_key = (instance.file_key or "").strip()
-        hls_prefix = ""
-        if video and video.session and video.session.lecture:
-            tenant_id = video.session.lecture.tenant_id
-            hls_prefix = video_hls_prefix(tenant_id=tenant_id, video_id=video_id)
         if video and video.current_job_id:
             try:
                 from apps.support.video.models import VideoTranscodeJob
@@ -211,19 +206,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                         logger.info("Video delete: DEAD_SKIPPED_ALREADY_TERMINAL (rows=0) video_id=%s job_id=%s", video_id, cur.id)
             except Exception as e:
                 logger.warning("Video delete: job DEAD mark failed video_id=%s: %s", video_id, e)
-        super().perform_destroy(instance)
-        # R2 동기 삭제 (SQS/Lambda 없이 확실한 정리)
-        if file_key or hls_prefix:
-            try:
-                from apps.infrastructure.storage.r2 import delete_object_r2_video, delete_prefix_r2_video
-                if file_key:
-                    delete_object_r2_video(key=file_key)
-                    logger.info("Video delete: R2 raw deleted video_id=%s key=%s", video_id, file_key[:80])
-                if hls_prefix:
-                    n = delete_prefix_r2_video(prefix=hls_prefix)
-                    logger.info("Video delete: R2 HLS deleted video_id=%s prefix=%s count=%s", video_id, hls_prefix, n)
-            except Exception as e:
-                logger.warning("R2 delete failed video_id=%s: %s", video_id, e)
+        # Soft-delete: sets deleted_at, keeps row + R2 files for 6-month retention
+        instance.delete()
+        logger.info("Video soft-deleted: video_id=%s", video_id)
 
     # ==================================================
     # upload/init

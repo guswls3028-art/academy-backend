@@ -10,6 +10,22 @@ from apps.domains.enrollment.models import Enrollment
 
 
 # ========================================================
+# Soft-delete managers for Video
+# ========================================================
+
+class VideoManager(models.Manager):
+    """Default manager: excludes soft-deleted videos."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(deleted_at__isnull=True)
+
+
+class VideoAllManager(models.Manager):
+    """Manager that includes soft-deleted videos."""
+    pass
+
+
+# ========================================================
 # Access Mode (Video Access Policy)
 # ========================================================
 
@@ -37,6 +53,20 @@ class Video(TimestampModel):
         PROCESSING = "PROCESSING", "처리중"
         READY = "READY", "사용 가능"
         FAILED = "FAILED", "실패"
+
+    # --------------------------------------------------
+    # Soft-delete support (6-month retention)
+    # --------------------------------------------------
+    deleted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        default=None,
+        db_index=True,
+        help_text="Soft-delete timestamp. Non-null means the video is logically deleted.",
+    )
+
+    objects = VideoManager()
+    all_with_deleted = VideoAllManager()
 
     session = models.ForeignKey(
         Session,
@@ -149,6 +179,19 @@ class Video(TimestampModel):
 
     def __str__(self):
         return f"[{self.status}] {self.title}"
+
+    def delete(self, using=None, keep_parents=False):
+        """Soft-delete: set deleted_at instead of removing the row."""
+        self.deleted_at = timezone.now()
+        self.save(update_fields=["deleted_at", "updated_at"])
+
+    def hard_delete(self, using=None, keep_parents=False):
+        """Permanently remove the row from the database."""
+        super().delete(using=using, keep_parents=keep_parents)
+
+    @property
+    def is_deleted(self) -> bool:
+        return self.deleted_at is not None
 
     @property
     def source_type(self) -> str:

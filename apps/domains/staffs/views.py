@@ -262,25 +262,37 @@ class StaffViewSet(viewsets.ModelViewSet):
 
             # 직원(Staff)으로 로그인한 경우: 출근/퇴근용 staff_id, default_work_type_id
             # 오너여도 동일하게 출퇴근 기록 가능하도록: 오너인데 Staff가 없으면 해당 테넌트에 Staff 생성 후 연결
+            # staff_profile = OneToOneField reverse → 다른 테넌트 Staff일 수 있으므로 tenant_id 확인 필수
             staff_profile = getattr(request.user, "staff_profile", None)
-            if staff_profile and tenant and getattr(staff_profile, "tenant_id", None) == tenant.id:
-                payload["staff_id"] = staff_profile.id
-                first_swt = staff_profile.staff_work_types.order_by("id").first()
+            staff_in_tenant = (
+                staff_profile
+                if staff_profile and tenant and getattr(staff_profile, "tenant_id", None) == tenant.id
+                else None
+            )
+            if staff_in_tenant:
+                payload["staff_id"] = staff_in_tenant.id
+                first_swt = staff_in_tenant.staff_work_types.order_by("id").first()
                 if first_swt:
                     payload["default_work_type_id"] = first_swt.work_type_id
-            elif is_de_facto_owner and tenant and request.user and staff_profile is None:
+            elif is_de_facto_owner and tenant and request.user:
+                # staff_profile이 다른 테넌트에 있거나 없을 때: 현재 테넌트에서 Staff 조회/생성
                 from apps.domains.staffs.models import Staff, StaffWorkType, WorkType
                 owner_staff = Staff.objects.filter(tenant=tenant, user=request.user).first()
                 if not owner_staff:
+                    # user OneToOne이 이미 다른 테넌트 Staff에 연결된 경우 user=None으로 생성
+                    can_link_user = staff_profile is None
                     owner_name = (getattr(request.user, "name", None) or "").strip() or getattr(request.user, "username", "") or "원장"
                     owner_phone = (getattr(request.user, "phone", None) or "").strip() or ""
-                    owner_staff = Staff.objects.create(
-                        tenant=tenant,
-                        user=request.user,
-                        name=owner_name,
-                        phone=owner_phone or "",
-                        is_manager=True,
-                    )
+                    with transaction.atomic():
+                        owner_staff, _created = Staff.objects.get_or_create(
+                            tenant=tenant,
+                            name=owner_name,
+                            phone=owner_phone or "",
+                            defaults={
+                                "user": request.user if can_link_user else None,
+                                "is_manager": True,
+                            },
+                        )
                 first_wt = WorkType.objects.filter(tenant=tenant, is_active=True).order_by("id").first()
                 if not first_wt:
                     first_wt = WorkType.objects.create(

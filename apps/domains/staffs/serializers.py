@@ -120,6 +120,10 @@ class StaffListSerializer(serializers.ModelSerializer):
         return obj.profile_photo.url
 
     def get_role(self, obj):
+        # 오너(owner) 멤버십이 있는 Staff → "OWNER"
+        if getattr(obj, "user_id", None):
+            if core_repo.membership_exists_staff(obj.tenant, obj.user, staff_roles=("owner",)):
+                return "OWNER"
         if teacher_repo.teacher_exists_tenant_name_phone(obj.tenant, obj.name, obj.phone or ""):
             return "TEACHER"
         return "ASSISTANT"
@@ -171,6 +175,10 @@ class StaffDetailSerializer(serializers.ModelSerializer):
         return obj.profile_photo.url
 
     def get_role(self, obj):
+        # 오너(owner) 멤버십이 있는 Staff → "OWNER"
+        if getattr(obj, "user_id", None):
+            if core_repo.membership_exists_staff(obj.tenant, obj.user, staff_roles=("owner",)):
+                return "OWNER"
         if teacher_repo.teacher_exists_tenant_name_phone(obj.tenant, obj.name, obj.phone or ""):
             return "TEACHER"
         return "ASSISTANT"
