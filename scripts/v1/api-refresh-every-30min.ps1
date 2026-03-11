@@ -1,4 +1,4 @@
-# 30분 간격으로 API 서버만 정식 풀배포(instance refresh) 실행.
+﻿# 30분 간격으로 API 서버만 정식 풀배포(instance refresh) 실행.
 # Usage: pwsh scripts/v1/api-refresh-every-30min.ps1 [-AwsProfile default] [-RunOnce]
 # -RunOnce: 1회만 실행 후 종료 (테스트 또는 수동 1회용).
 # 없으면 30분마다 무한 반복. 중지하려면 Ctrl+C.

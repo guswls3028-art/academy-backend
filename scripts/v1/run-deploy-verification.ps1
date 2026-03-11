@@ -1,4 +1,4 @@
-# V1 배포 검증 자동화 — 인프라/기능/Evidence 수집 후 최종 보고서 생성.
+﻿# V1 배포 검증 자동화 — 인프라/기능/Evidence 수집 후 최종 보고서 생성.
 # 리소스 변경 없음. 검증만 수행. 결과: docs/00-SSOT/v1/reports/deploy-verification-latest.md, V1-FINAL-REPORT.md, audit.latest.md, drift.latest.md 갱신.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않는다.
 # 사용: pwsh -File scripts/v1/run-deploy-verification.ps1 [-AwsProfile default] (run-with-env 권장)

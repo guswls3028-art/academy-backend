@@ -1,4 +1,4 @@
-# .env를 현재 프로세스에 환경변수로 넣은 뒤, 인자로 받은 명령을 실행한다.
+﻿# .env를 현재 프로세스에 환경변수로 넣은 뒤, 인자로 받은 명령을 실행한다.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 본 스크립트는 .env를 읽어 자식 프로세스에 주입한다.
 # 용도: 에이전트가 배포/인프라 명령을 "환경변수로 인증"된 상태에서 실행할 수 있게 함.
 # 사용: pwsh -File scripts/v1/run-with-env.ps1 -- pwsh scripts/v1/deploy.ps1 -Env prod

@@ -1,4 +1,4 @@
-# cleanup-orphans.ps1 — Safely remove orphan AWS resources
+﻿# cleanup-orphans.ps1 — Safely remove orphan AWS resources
 # Region: ap-northeast-2
 # Run: pwsh scripts/v1/cleanup-orphans.ps1 [-DryRun] [-Execute]
 # AWS auth: Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION or use -AwsProfile

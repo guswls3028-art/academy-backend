@@ -1,4 +1,4 @@
-# Check /academy/workers/env for SOLAPI_MOCK and DEBUG (read-only).
+﻿# Check /academy/workers/env for SOLAPI_MOCK and DEBUG (read-only).
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "core\ssot.ps1")
 $null = Load-SSOT -Env "prod"

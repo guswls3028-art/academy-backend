@@ -1,4 +1,4 @@
-# SSOT → Runtime env sync. Idempotent: run after infrastructure Ensure; keeps API and Workers SSM in sync with params.yaml.
+﻿# SSOT → Runtime env sync. Idempotent: run after infrastructure Ensure; keeps API and Workers SSM in sync with params.yaml.
 # - API env: merge SQS, Video Batch, Redis (discovered from replication group) into /academy/api/env.
 # - Workers env: merge SQS, Redis into /academy/workers/env (preserves existing secrets from Bootstrap).
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용.

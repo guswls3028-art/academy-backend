@@ -1,4 +1,4 @@
-# Run Django management command on API server (production DB)
+﻿# Run Django management command on API server (production DB)
 # 정석 배포: SSM → /opt/api.env. env는 /opt/api.env 사용 (run-qna-e2e-verify, api.ps1 UserData와 동일).
 param([string]$Command = "")
 $ErrorActionPreference = "Stop"

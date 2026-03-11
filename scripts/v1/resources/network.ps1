@@ -1,4 +1,4 @@
-# Network: 2-tier VPC Ensure (Step C). Create if missing; converge routes and SG rules.
+﻿# Network: 2-tier VPC Ensure (Step C). Create if missing; converge routes and SG rules.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 # VPC 10.0.0.0/16, Public 2 + Private 2, IGW, NAT 1, RTs, SG (app/batch/data).
 $ErrorActionPreference = "Stop"

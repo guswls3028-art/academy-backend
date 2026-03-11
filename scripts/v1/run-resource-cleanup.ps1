@@ -1,4 +1,4 @@
-# V1 불필요 리소스 정리 — 돈 새는 리소스 우선. 배포 수정 전 실행 권장.
+﻿# V1 불필요 리소스 정리 — 돈 새는 리소스 우선. 배포 수정 전 실행 권장.
 # PHASE 1: EIP 전부 release (association 없음)
 # PHASE 2: ENI에 연결되지 않은 Security Group 삭제 (SSOT 유지 SG 제외)
 # PHASE 3: API ASG 축소 (min=1 desired=1 max=2)

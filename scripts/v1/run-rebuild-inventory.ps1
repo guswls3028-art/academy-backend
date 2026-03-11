@@ -1,4 +1,4 @@
-# V1 Stateless Compute 재구축 — 인벤토리 스냅샷 (read-only)
+﻿# V1 Stateless Compute 재구축 — 인벤토리 스냅샷 (read-only)
 # 결과: docs/00-SSOT/v1/reports/rebuild-inventory.latest.md 갱신
 param([string]$AwsProfile = "")
 $ErrorActionPreference = "Stop"

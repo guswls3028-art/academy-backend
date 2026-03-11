@@ -1,4 +1,4 @@
-# API ALB target healthy 될 때까지 폴링. 성공 시 exit 0. 사용: pwsh -File wait-api-target-healthy.ps1 [-MaxWaitSeconds 1200]
+﻿# API ALB target healthy 될 때까지 폴링. 성공 시 exit 0. 사용: pwsh -File wait-api-target-healthy.ps1 [-MaxWaitSeconds 1200]
 param([int]$MaxWaitSeconds = 1200)
 $ErrorActionPreference = "Stop"
 $env:AWS_PROFILE = "default"

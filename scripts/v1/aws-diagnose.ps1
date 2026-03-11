@@ -1,4 +1,4 @@
-# AWS credential/region diagnostic — run in the same environment as deploy.ps1 (e.g. Cursor Run Command).
+﻿# AWS credential/region diagnostic — run in the same environment as deploy.ps1 (e.g. Cursor Run Command).
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않음.
 # Usage: pwsh scripts/v1/aws-diagnose.ps1
 $ErrorActionPreference = "Continue"

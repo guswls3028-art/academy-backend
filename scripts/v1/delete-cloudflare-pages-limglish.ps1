@@ -1,4 +1,4 @@
-# Cloudflare Pages: limglish 프로젝트의 배포 전부 삭제 후 프로젝트 삭제
+﻿# Cloudflare Pages: limglish 프로젝트의 배포 전부 삭제 후 프로젝트 삭제
 # .env에서 읽어서 사용 (비밀 출력 금지)
 $ErrorActionPreference = "Stop"
 $envPath = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) ".env"

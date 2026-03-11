@@ -1,4 +1,4 @@
-# Cloudflare Pages: academy-frontend 프로젝트에서 최신 배포 1개만 남기고 나머지 삭제
+﻿# Cloudflare Pages: academy-frontend 프로젝트에서 최신 배포 1개만 남기고 나머지 삭제
 # .env에서 Cloudflare 인증 사용
 $ErrorActionPreference = "Stop"
 $envPath = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) ".env"

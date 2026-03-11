@@ -1,4 +1,4 @@
-# v1 SSOT vs 실제 인프라 일치 확인. Drift + Evidence 수집 후 보고서만 저장.
+﻿# v1 SSOT vs 실제 인프라 일치 확인. Drift + Evidence 수집 후 보고서만 저장.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않는다.
 # 사용: pwsh -File scripts/v1/check-v1-infra.ps1 (run-with-env로 감싸서 실행 권장)
 $ErrorActionPreference = "Stop"

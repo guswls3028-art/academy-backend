@@ -1,4 +1,4 @@
-# V1 Legacy 리소스 정리 — SSOT에 없는 리소스만 대상. 삭제 전 reports 기록 필수.
+﻿# V1 Legacy 리소스 정리 — SSOT에 없는 리소스만 대상. 삭제 전 reports 기록 필수.
 # 기능: orphan EIP release, orphan EBS volume delete, unused SG delete, legacy EC2 terminate, legacy ASG inventory/remove.
 # 실행 결과: docs/00-SSOT/v1/reports/cleanup-run.latest.md, resource-cleanup.latest.md 갱신.
 param(

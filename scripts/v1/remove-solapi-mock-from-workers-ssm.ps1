@@ -1,4 +1,4 @@
-# One-time script: Remove SOLAPI_MOCK from /academy/workers/env and put back.
+﻿# One-time script: Remove SOLAPI_MOCK from /academy/workers/env and put back.
 # Run: pwsh -File scripts/v1/remove-solapi-mock-from-workers-ssm.ps1
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "core\ssot.ps1")

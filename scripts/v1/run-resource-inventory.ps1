@@ -1,4 +1,4 @@
-# V1 AWS 리소스 인벤토리 수집 및 SSOT 비교 · 정리 계획 생성.
+﻿# V1 AWS 리소스 인벤토리 수집 및 SSOT 비교 · 정리 계획 생성.
 # 리전 ap-northeast-2, SSOT docs/00-SSOT/v1/params.yaml 기준.
 # 출력: aws-resource-inventory.latest.md, resource-cleanup-plan.latest.md
 # 사용: pwsh -File scripts/v1/run-resource-inventory.ps1 [-AwsProfile default] (run-with-env 권장)

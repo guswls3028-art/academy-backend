@@ -1,4 +1,4 @@
-# Wait for API instance refresh to complete. Usage: pwsh -File wait-api-refresh.ps1 [-RefreshId <id>]
+﻿# Wait for API instance refresh to complete. Usage: pwsh -File wait-api-refresh.ps1 [-RefreshId <id>]
 param([string]$RefreshId = "28b31570-88d0-408e-842b-4499c6e1d25d", [int]$MaxWaitSeconds = 900)
 $ErrorActionPreference = "Stop"
 $env:AWS_PROFILE = "default"

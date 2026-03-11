@@ -1,4 +1,4 @@
-# 배포 API에서 질문 등록·목록 E2E 검증 (학생 455 JWT 사용).
+﻿# 배포 API에서 질문 등록·목록 E2E 검증 (학생 455 JWT 사용).
 # ALB 내부 URL로 호출(공개 URL은 Cloudflare에서 403 가능). X-Tenant-Code로 테넌트 해석.
 # 사용: pwsh -File scripts/v1/run-qna-e2e-verify.ps1 [-AwsProfile default]
 param([string]$AwsProfile = "default")

@@ -1,4 +1,4 @@
-# Print SOLAPI_SENDER and MESSAGING_SQS_QUEUE_NAME from workers env (read-only).
+﻿# Print SOLAPI_SENDER and MESSAGING_SQS_QUEUE_NAME from workers env (read-only).
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "core\ssot.ps1")
 $null = Load-SSOT -Env "prod"
