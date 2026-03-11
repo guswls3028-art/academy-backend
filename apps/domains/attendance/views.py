@@ -5,6 +5,7 @@ from django.db import transaction
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter
+from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.response import Response
 from rest_framework import status
@@ -25,12 +26,20 @@ from apps.domains.ai.gateway import dispatch_job
 logger = logging.getLogger(__name__)
 
 
+class AttendanceListPagination(PageNumberPagination):
+    """출결 목록 — 학생 도메인과 동일하게 page_size 쿼리 허용, 총계 표기용 count 반환."""
+    page_size = 50
+    page_size_query_param = "page_size"
+    max_page_size = 500
+
+
 class AttendanceViewSet(ModelViewSet):
     """
     lectures/attendance
     """
 
     serializer_class = AttendanceSerializer
+    pagination_class = AttendanceListPagination
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_class = AttendanceFilter

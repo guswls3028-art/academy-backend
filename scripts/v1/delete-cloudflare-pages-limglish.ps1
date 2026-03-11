@@ -26,12 +26,24 @@ $headers = @{
 $totalDeleted = 0
 do {
   $listUrl = "$base/deployments"
-  try {
-    $res = Invoke-RestMethod -Uri $listUrl -Method Get -Headers $headers
-  } catch {
-    Write-Host "List deployments failed: $_"
-    exit 1
-  }
+  $retries = 0
+  do {
+    try {
+      $res = Invoke-RestMethod -Uri $listUrl -Method Get -Headers $headers
+      break
+    } catch {
+      $msg = $_.Exception.Message + (if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { "" })
+      if ($retries -lt 8) {
+        $retries++
+        Write-Host "List failed (throttle?), waiting 90s then retry $retries/8..."
+        Start-Sleep -Seconds 90
+      } else {
+        Write-Host "List deployments failed: $msg"
+        exit 1
+      }
+    }
+  } while ($true)
+
   if (-not $res.result) { break }
   $deployments = @($res.result)
   if ($deployments.Count -eq 0) { break }
@@ -44,8 +56,12 @@ do {
       Invoke-RestMethod -Uri $delUrl -Method Delete -Headers $headers | Out-Null
       $totalDeleted++
       if ($totalDeleted % 50 -eq 0) { Write-Host "Deleted $totalDeleted so far..." }
+      Start-Sleep -Milliseconds 150
     } catch {
-      # 이미 삭제됐거나 없음 등은 스킵
+      if ($_.Exception.Message -match "Rate limit|971|10429") {
+        Write-Host "Rate limited on delete, waiting 60s..."
+        Start-Sleep -Seconds 60
+      }
     }
   }
 } while ($deployments.Count -gt 0)
