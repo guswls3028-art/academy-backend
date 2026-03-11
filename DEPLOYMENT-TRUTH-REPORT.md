@@ -134,13 +134,10 @@
 
 | Artifact | Role |
 |----------|------|
-| `backend/.github/workflows/v1-build-and-push-latest.yml` | Build all 5 images (OIDC), push to ECR, then deploy-api-refresh (API ASG only) |
-| `backend/scripts/v1/deploy.ps1` | Formal deploy: SSOT load, Ensure API/workers/Batch/ALB/etc.; API LT UserData from api.ps1 |
+| `backend/.github/workflows/v1-build-and-push-latest.yml` | Build all 5 images (OIDC), push to ECR, then deploy-api-refresh (API ASG instance refresh) |
+| `backend/scripts/v1/deploy.ps1` | 수동 정식 배포: SSOT load, Ensure API/workers/Batch/ALB/etc.; API LT UserData from api.ps1 |
 | `backend/scripts/v1/resources/api.ps1` | API LT UserData (SSM→/opt/api.env, ECR pull, docker run), Ensure-API-ASG, instance refresh |
 | `backend/scripts/v1/resources/worker_userdata.ps1` | Worker LT UserData (SSM→/opt/workers.env, ECR pull, docker run) |
-| `backend/scripts/deploy_api_on_server.sh` | Rapid: SSM→/opt/api.env, ECR pull, stop/rm/run academy-api, healthz check, write last-deploy file |
-| `backend/scripts/auto_deploy_cron_on.sh` | Install cron `*/2 * * * *` + flock + git fetch + deploy_api_on_server.sh when main changes |
-| `backend/scripts/v1/api-auto-deploy-remote.ps1` | On/Off/Status/Deploy for Rapid via SSM Send-Command to API ASG instances |
 | `backend/docs/00-SSOT/v1/params.yaml` | SSOT: ssm.apiEnv, ssm.workersEnv, ecr repos, API/worker ASG names, health path, etc. |
 | `backend/docker/Dockerfile.base` | Base image (python:3.11-slim, deps; no app code) |
 | `backend/docker/api/Dockerfile` | API image FROM base; COPY app; gunicorn + migrate on start |
