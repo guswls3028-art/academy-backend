@@ -66,6 +66,7 @@ No other git-based auto deploy watchers found (e.g. hot_deploy_watch.sh does not
 
 ### 5. Guarantee single deploy path
 - **Only path:** GitHub Actions (push main) → build and push ECR → deploy-api-refresh job → `aws autoscaling start-instance-refresh` for academy-v1-api-asg. New/replaced instances get UserData that runs docker run academy-api once.
+- **IAM 권한 적용 완료 (2026-03-11):** `academy-gha-ecr-build` 역할에 `autoscaling:StartInstanceRefresh`, `DescribeInstanceRefreshes`, `DescribeAutoScalingGroups` 권한 추가. CI deploy-api-refresh job 정상 동작 확인.
 - **Removed:** Cron-based deploy, SSM rapid deploy (script exits), and re-enabling cron via scripts (guards).
 
 ---
