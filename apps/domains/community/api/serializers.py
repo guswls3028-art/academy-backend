@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps.domains.community.models import PostEntity, PostMapping, ScopeNode, BlockType, PostTemplate, PostReply
+from apps.domains.community.models import PostEntity, PostMapping, ScopeNode, BlockType, PostTemplate, PostReply, PostAttachment
 
 
 class ScopeNodeMinimalSerializer(serializers.ModelSerializer):
@@ -52,8 +52,16 @@ class PostReplySerializer(serializers.ModelSerializer):
         )
 
 
+class PostAttachmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PostAttachment
+        fields = ["id", "original_name", "size_bytes", "content_type", "created_at"]
+        read_only_fields = fields
+
+
 class PostEntitySerializer(serializers.ModelSerializer):
     mappings = PostMappingSerializer(many=True, read_only=True)
+    attachments = PostAttachmentSerializer(many=True, read_only=True)
     block_type_label = serializers.CharField(source="block_type.label", read_only=True)
     replies_count = serializers.SerializerMethodField(read_only=True)
     created_by_display = serializers.SerializerMethodField(read_only=True)
@@ -92,6 +100,7 @@ class PostEntitySerializer(serializers.ModelSerializer):
             "created_at",
             "replies_count",
             "mappings",
+            "attachments",
         ]
         read_only_fields = ["tenant"]
 

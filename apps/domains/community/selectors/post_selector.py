@@ -20,7 +20,8 @@ def get_post_by_id(tenant, post_id: int):
             Prefetch(
                 "mappings",
                 queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
-            )
+            ),
+            "attachments",
         )
         .first()
     )
@@ -36,7 +37,8 @@ def get_all_posts_for_tenant(tenant) -> QuerySet:
             Prefetch(
                 "mappings",
                 queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
-            )
+            ),
+            "attachments",
         )
         .order_by("-created_at")
     )
@@ -88,7 +90,8 @@ def get_posts_for_node(
             Prefetch(
                 "mappings",
                 queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
-            )
+            ),
+            "attachments",
         )
         .order_by("-created_at")
     )
@@ -111,7 +114,8 @@ def get_admin_post_list(
             Prefetch(
                 "mappings",
                 queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
-            )
+            ),
+            "attachments",
         )
         .order_by("-created_at")
         .distinct()
@@ -136,7 +140,8 @@ def get_notice_posts_for_tenant(tenant) -> QuerySet:
             Prefetch(
                 "mappings",
                 queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
-            )
+            ),
+            "attachments",
         )
         .order_by("-created_at")
     )

@@ -1,3 +1,6 @@
+import hashlib
+import logging
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -5,6 +8,7 @@ from rest_framework.response import Response
 from apps.domains.community.api.serializers import (
     PostEntitySerializer,
     PostReplySerializer,
+    PostAttachmentSerializer,
     BlockTypeSerializer,
     ScopeNodeMinimalSerializer,
     PostTemplateSerializer,
@@ -22,8 +26,13 @@ from apps.domains.community.selectors import (
     get_empty_scope_node_queryset,
 )
 from apps.domains.community.services import CommunityService
-from apps.domains.community.models import PostTemplate, PostReply, BlockType
+from apps.domains.community.models import PostTemplate, PostReply, BlockType, PostAttachment
 from apps.domains.student_app.permissions import get_request_student
+
+logger = logging.getLogger(__name__)
+
+MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024  # 50 MB per file
+MAX_ATTACHMENTS_PER_POST = 10
 
 
 def _get_tenant_from_request(request):
@@ -187,6 +196,115 @@ class PostViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         reply = serializer.save(post=post)
         return Response(PostReplySerializer(reply).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="attachments")
+    def upload_attachments(self, request, pk=None):
+        """POST /posts/:id/attachments/ — 첨부파일 업로드 (multipart)."""
+        tenant = _get_tenant_from_request(request)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        post = get_post_by_id(tenant, int(pk))
+        if not post:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 학생은 본인 글에만 첨부 가능
+        request_student = get_request_student(request)
+        if request_student is not None and post.created_by_id != request_student.id:
+            return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+
+        files = request.FILES.getlist("files")
+        if not files:
+            return Response({"detail": "파일이 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing_count = PostAttachment.objects.filter(post=post, tenant=tenant).count()
+        if existing_count + len(files) > MAX_ATTACHMENTS_PER_POST:
+            return Response(
+                {"detail": f"첨부파일은 최대 {MAX_ATTACHMENTS_PER_POST}개까지 가능합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+
+        created = []
+        for f in files:
+            if f.size > MAX_ATTACHMENT_SIZE:
+                return Response(
+                    {"detail": f"파일 '{f.name}'이(가) 50MB를 초과합니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            name_hash = hashlib.md5(f.name.encode()).hexdigest()[:8]
+            r2_key = f"tenants/{tenant.id}/community/posts/{post.id}/{name_hash}_{f.name}"
+
+            upload_fileobj_to_r2_storage(
+                fileobj=f,
+                key=r2_key,
+                content_type=f.content_type or "application/octet-stream",
+            )
+            att = PostAttachment.objects.create(
+                tenant=tenant,
+                post=post,
+                r2_key=r2_key,
+                original_name=f.name,
+                size_bytes=f.size,
+                content_type=f.content_type or "application/octet-stream",
+            )
+            created.append(att)
+            logger.info("PostAttachment created: post=%s, file=%s, key=%s", post.id, f.name, r2_key)
+
+        serializer = PostAttachmentSerializer(created, many=True)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get"], url_path=r"attachments/(?P<att_id>[^/.]+)/download")
+    def download_attachment(self, request, pk=None, att_id=None):
+        """GET /posts/:id/attachments/:att_id/download/ — presigned download URL 리다이렉트."""
+        tenant = _get_tenant_from_request(request)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        post = get_post_by_id(tenant, int(pk))
+        if not post:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 학생 접근 제어: 공지·자료실·게시판 글은 허용, 그 외는 본인 글만
+        request_student = get_request_student(request)
+        if request_student is not None:
+            bt_code = (getattr(post.block_type, "code", None) or "").strip().lower()
+            is_public = bt_code in ("notice", "materials", "board")
+            is_own = post.created_by_id == request_student.id
+            if not is_public and not is_own:
+                return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            att = PostAttachment.objects.get(id=int(att_id), post=post, tenant=tenant)
+        except (PostAttachment.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+        url = generate_presigned_get_url_storage(key=att.r2_key, expires_in=3600)
+        return Response({"url": url, "original_name": att.original_name})
+
+    @action(detail=True, methods=["delete"], url_path=r"attachments/(?P<att_id>[^/.]+)")
+    def delete_attachment(self, request, pk=None, att_id=None):
+        """DELETE /posts/:id/attachments/:att_id/ — 첨부파일 삭제."""
+        tenant = _get_tenant_from_request(request)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        post = get_post_by_id(tenant, int(pk))
+        if not post:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            att = PostAttachment.objects.get(id=int(att_id), post=post, tenant=tenant)
+        except (PostAttachment.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from apps.infrastructure.storage.r2 import delete_object_r2_storage
+        try:
+            delete_object_r2_storage(key=att.r2_key)
+        except Exception:
+            logger.warning("R2 delete failed for key=%s, removing DB record anyway", att.r2_key)
+        att.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["patch", "delete"], url_path=r"replies/(?P<reply_id>[^/.]+)")
     def reply_detail(self, request, pk=None, reply_id=None):
