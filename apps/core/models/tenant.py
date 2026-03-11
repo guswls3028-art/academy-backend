@@ -55,6 +55,24 @@ class Tenant(models.Model):
     credit_balance = models.DecimalField(
         max_digits=12, decimal_places=0, default=Decimal("0")
     )
+    # 직접 연동 모드: 학원이 본인 솔라피/뿌리오 계정을 사용할 때 저장
+    # 비어 있으면 플랫폼 기본(시스템 환경변수) 키 사용
+    own_solapi_api_key = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="학원 자체 솔라피 API Key (직접 연동 시)",
+    )
+    own_solapi_api_secret = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="학원 자체 솔라피 API Secret (직접 연동 시)",
+    )
+    own_ppurio_api_key = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="학원 자체 뿌리오 API Key (직접 연동 시)",
+    )
+    own_ppurio_account = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="학원 자체 뿌리오 Account ID (직접 연동 시)",
+    )
     # 알림톡 기능 활성화 여부
     messaging_is_active = models.BooleanField(default=False)
     # 건당 발송 단가 (원, 학원마다 다르게 책정 가능)
