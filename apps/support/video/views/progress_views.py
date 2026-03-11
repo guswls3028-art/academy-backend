@@ -10,6 +10,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 
+from apps.core.permissions import TenantResolvedAndStaff as _TenantResolvedAndStaff
+
 from django.utils import timezone
 from ..models import VideoProgress, VideoAccess, AccessMode
 from ..serializers import VideoProgressSerializer
@@ -186,11 +188,19 @@ class VideoProgressView(APIView):
 
 
 class VideoProgressViewSet(ModelViewSet):
-    queryset = video_repo.video_progress_all()
     serializer_class = VideoProgressSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["video", "enrollment"]
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, _TenantResolvedAndStaff]
+
+    def get_queryset(self):
+        from apps.core.permissions import TenantResolvedAndStaff  # noqa: avoid circular
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return video_repo.video_progress_all().none()
+        return video_repo.video_progress_all().filter(
+            video__session__lecture__tenant=tenant,
+        )
 
     def perform_update(self, serializer):
         vp = serializer.instance

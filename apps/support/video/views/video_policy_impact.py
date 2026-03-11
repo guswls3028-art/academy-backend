@@ -5,6 +5,8 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.core.permissions import TenantResolvedAndStaff
+
 from academy.adapters.db.django import repositories_video as video_repo
 from ..services.access_resolver import resolve_access_mode
 
@@ -15,7 +17,7 @@ class VideoPolicyImpactAPIView(APIView):
     특정 영상 정책이 학생들에게 어떤 영향을 주는지 미리 보기
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request, video_id: int):
         video = video_repo.video_get_by_id_with_relations(video_id)

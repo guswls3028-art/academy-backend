@@ -92,6 +92,8 @@ class StudentProfileView(APIView):
         if photo:
             if not (photo.content_type and photo.content_type.startswith("image/")):
                 return Response({"detail": "이미지 파일만 업로드할 수 있습니다."}, status=400)
+            if photo.size and photo.size > 10 * 1024 * 1024:  # 10MB
+                return Response({"detail": "프로필 사진은 10MB 이하만 업로드할 수 있습니다."}, status=400)
             # R2에 업로드
             try:
                 import uuid

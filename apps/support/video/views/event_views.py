@@ -14,6 +14,8 @@ from rest_framework.filters import SearchFilter
 
 from django_filters.rest_framework import DjangoFilterBackend
 
+from apps.core.permissions import TenantResolvedAndStaff as _TenantResolvedAndStaff
+
 from ..models import VideoPlaybackEvent
 from ..serializers import (
     VideoPlaybackEventListSerializer,
@@ -58,13 +60,8 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
     - export
     """
 
-    queryset = (
-        VideoPlaybackEvent.objects
-        .all()
-        .select_related("enrollment", "enrollment__student", "video")
-    )
     serializer_class = VideoPlaybackEventListSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, _TenantResolvedAndStaff]
 
     # ✅ 검색 + 필터 동시 지원
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -76,7 +73,12 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
     ]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        tenant = getattr(self.request, "tenant", None)
+        qs = (
+            VideoPlaybackEvent.objects
+            .filter(video__session__lecture__tenant=tenant)
+            .select_related("enrollment", "enrollment__student", "video")
+        ) if tenant else VideoPlaybackEvent.objects.none()
 
         video_id = self.request.query_params.get("video")
         if video_id:

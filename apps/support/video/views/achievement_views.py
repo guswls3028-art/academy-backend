@@ -4,16 +4,23 @@ from rest_framework.response import Response
 
 from django.db.models import Avg, Sum
 
+from apps.core.permissions import TenantResolvedAndStaff
+
 from academy.adapters.db.django import repositories_video as video_repo
 from ..models import VideoProgress
 
 
 class VideoAchievementView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request, video_id: int):
         video = video_repo.video_get_by_id_with_session(video_id)
         lecture = video.session.lecture
+
+        # Tenant isolation check
+        tenant = getattr(request, "tenant", None)
+        if tenant and getattr(lecture, "tenant_id", None) != tenant.id:
+            return Response({"detail": "접근 권한이 없습니다."}, status=403)
 
         online_attendance = video_repo.attendance_filter_session_status(video.session, "ONLINE")
         enrollment_ids = online_attendance.values_list("enrollment_id", flat=True)

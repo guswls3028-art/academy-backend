@@ -625,7 +625,9 @@ class StudentVideoPlaybackView(APIView):
         student = get_request_student(request)
         if student:
             from apps.support.video.models import VideoLike
-            is_liked = VideoLike.objects.filter(video_id=video_id, student=student, tenant_id=tenant.id).exists()
+            video_tenant_id = getattr(video.session.lecture, "tenant_id", None) if video.session and video.session.lecture else None
+            if video_tenant_id:
+                is_liked = VideoLike.objects.filter(video_id=video_id, student=student, tenant_id=video_tenant_id).exists()
 
         payload = {
             "video": {
@@ -837,9 +839,10 @@ class StudentVideoLikeView(APIView):
                 existing = VideoLike.objects.filter(video=video, student=student, tenant_id=tenant.id).first()
                 if existing:
                     existing.delete()
-                    Video.objects.filter(id=video_id).update(like_count=F("like_count") - 1)
-                    # 음수 방지
-                    Video.objects.filter(id=video_id, like_count__lt=0).update(like_count=0)
+                    from django.db.models.functions import Greatest
+                    Video.objects.filter(id=video_id).update(
+                        like_count=Greatest(F("like_count") - 1, 0)
+                    )
                     return Response({"liked": False, "like_count": max(0, video.like_count - 1)})
                 else:
                     VideoLike.objects.create(video=video, student=student, tenant_id=tenant.id)
@@ -1037,7 +1040,9 @@ class StudentVideoCommentDetailView(APIView):
         comment.is_deleted = True
         comment.save(update_fields=["is_deleted", "updated_at"])
 
-        Video.objects.filter(id=comment.video_id).update(comment_count=F("comment_count") - 1)
-        Video.objects.filter(id=comment.video_id, comment_count__lt=0).update(comment_count=0)
+        from django.db.models.functions import Greatest
+        Video.objects.filter(id=comment.video_id).update(
+            comment_count=Greatest(F("comment_count") - 1, 0)
+        )
 
         return Response({"deleted": True})

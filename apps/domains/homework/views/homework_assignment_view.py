@@ -10,6 +10,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
+from apps.core.permissions import TenantResolvedAndStaff
+
 from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework
@@ -20,7 +22,7 @@ from apps.domains.homework.serializers.homework_assignment_serializer import (
 
 
 class HomeworkAssignmentManageView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def _get_homework(self, request) -> Homework:
         hid = request.query_params.get("homework_id")

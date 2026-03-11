@@ -4,6 +4,9 @@ from django.db import models, transaction
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+from apps.core.permissions import TenantResolvedAndStaff
 
 from ..models import AccessMode
 from ..serializers import VideoAccessSerializer
@@ -12,8 +15,16 @@ from academy.adapters.db.django import repositories_video as video_repo
 
 class VideoPermissionViewSet(ModelViewSet):
     """Video access overrides (API: video-permissions for backward compat)."""
-    queryset = video_repo.video_access_all()
     serializer_class = VideoAccessSerializer
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            return video_repo.video_access_all().none()
+        return video_repo.video_access_all().filter(
+            video__session__lecture__tenant=tenant,
+        )
 
     @transaction.atomic
     @action(detail=False, methods=["post"])

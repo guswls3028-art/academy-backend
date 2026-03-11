@@ -4,6 +4,8 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from apps.core.permissions import TenantResolvedAndStaff
+
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -108,7 +110,7 @@ def _recalc_scores_for_policy_change(*, policy: HomeworkPolicy) -> int:
 
 
 class HomeworkPolicyViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     serializer_class = HomeworkPolicySerializer
 
     def get_queryset(self):

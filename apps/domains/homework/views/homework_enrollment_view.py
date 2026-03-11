@@ -10,6 +10,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
+from apps.core.permissions import TenantResolvedAndStaff
+
 from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.homework.models import HomeworkEnrollment
 from apps.domains.lectures.models import Session
@@ -20,7 +22,7 @@ from apps.domains.homework.serializers.homework_enrollment_serializer import (
 
 
 class HomeworkEnrollmentManageView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def _get_session_id_or_400(self, request) -> int:
         raw = request.query_params.get("session_id") or request.data.get("session_id")
