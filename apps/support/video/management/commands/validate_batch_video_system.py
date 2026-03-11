@@ -17,8 +17,12 @@ from django.core.management.base import BaseCommand
 
 REGION = os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
 LOG_GROUP = "/aws/batch/academy-video-worker"
-LAMBDA_QUEUE_DEPTH = "academy-worker-queue-depth-metric"
-LAMBDA_AUTOSCALE = "academy-worker-autoscale"
+# v1: Lambda 제거됨 — ASG scaling policy로 대체. EventBridge 규칙으로 ops 작업 실행.
+EVENTBRIDGE_RULES = [
+    "academy-v1-reconcile-video-jobs",
+    "academy-v1-video-scan-stuck-rate",
+    "academy-v1-enqueue-uploaded-videos",
+]
 VALID_STATES = {"QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "RETRY_WAIT", "DEAD", "CANCELLED"}
 SUCCESS_STATE = "SUCCEEDED"
 HEARTBEAT_MAX_MINUTES = 15
