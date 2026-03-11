@@ -125,8 +125,13 @@ All new features maintain strict tenant isolation:
 
 ## 8. Commits
 
-- **Backend**: `3f8f8a71` — feat: V1.0.2
-- **Frontend**: `474a1f1f` — feat: V1.0.2
+### Round 1 — Features
+- **Backend**: `3f8f8a71` — feat: V1.0.2 (subscription, video social, staff photo, docs)
+- **Frontend**: `474a1f1f` — feat: V1.0.2 (billing page, overlay, comments, like, profile photo)
+
+### Round 2 — Audit Fixes
+- **Backend**: `2e9fcf37` — fix: tenant isolation, race condition, N+1 query
+- **Frontend**: `adcf1be6` — fix: invalid date validation in BillingSettingsPage
 
 ---
 
