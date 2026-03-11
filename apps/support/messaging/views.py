@@ -115,10 +115,33 @@ class NotificationLogListView(APIView):
                 "recipient_summary": r.recipient_summary or "",
                 "template_summary": r.template_summary or "",
                 "failure_reason": r.failure_reason or "",
+                "message_body": r.message_body or "",
+                "message_mode": r.message_mode or "",
             }
             for r in qs
         ]
         return Response({"results": items, "count": count})
+
+
+class NotificationLogDetailView(APIView):
+    """GET: 발송 로그 단건 상세"""
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def get(self, request, pk):
+        log = NotificationLog.objects.filter(tenant=request.tenant, pk=pk).first()
+        if not log:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            "id": log.id,
+            "sent_at": log.sent_at,
+            "success": log.success,
+            "amount_deducted": log.amount_deducted,
+            "recipient_summary": log.recipient_summary or "",
+            "template_summary": log.template_summary or "",
+            "failure_reason": log.failure_reason or "",
+            "message_body": log.message_body or "",
+            "message_mode": log.message_mode or "",
+        })
 
 
 class VerifySenderView(APIView):

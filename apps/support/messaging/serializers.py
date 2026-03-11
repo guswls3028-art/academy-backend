@@ -50,6 +50,8 @@ class NotificationLogSerializer(serializers.Serializer):
     recipient_summary = serializers.CharField()
     template_summary = serializers.CharField()
     failure_reason = serializers.CharField()
+    message_body = serializers.CharField()
+    message_mode = serializers.CharField()
 
 
 class MessageTemplateSerializer(serializers.ModelSerializer):

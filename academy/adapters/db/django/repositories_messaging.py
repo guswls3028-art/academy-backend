@@ -13,6 +13,8 @@ def create_notification_log(
     recipient_summary: str,
     template_summary: str = "",
     failure_reason: str = "",
+    message_body: str = "",
+    message_mode: str = "",
 ) -> None:
     """
     NotificationLog 1건 생성. Worker에서 직접 ORM 접근 대신 이 함수만 사용.
@@ -26,4 +28,6 @@ def create_notification_log(
         recipient_summary=recipient_summary[:500] if recipient_summary else "",
         template_summary=template_summary[:255] if template_summary else "",
         failure_reason=failure_reason[:500] if failure_reason else "",
+        message_body=message_body[:2000] if message_body else "",
+        message_mode=message_mode[:20] if message_mode else "",
     )

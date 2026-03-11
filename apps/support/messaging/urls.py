@@ -7,6 +7,7 @@ urlpatterns = [
     path("verify-sender/", views.VerifySenderView.as_view(), name="messaging-verify-sender"),
     path("charge/", views.ChargeView.as_view(), name="messaging-charge"),
     path("log/", views.NotificationLogListView.as_view(), name="messaging-log"),
+    path("log/<int:pk>/", views.NotificationLogDetailView.as_view(), name="messaging-log-detail"),
     path("channel-check/", views.ChannelCheckView.as_view(), name="messaging-channel-check"),
     path("send/", views.SendMessageView.as_view(), name="messaging-send"),
     path("templates/", views.MessageTemplateListCreateView.as_view(), name="messaging-templates"),

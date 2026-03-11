@@ -27,6 +27,12 @@ class NotificationLog(models.Model):
     recipient_summary = models.CharField(max_length=500, blank=True, default="")
     template_summary = models.CharField(max_length=255, blank=True, default="")
     failure_reason = models.CharField(max_length=500, blank=True, default="")
+    message_body = models.TextField(blank=True, default="", help_text="실제 발송된 메시지 본문")
+    message_mode = models.CharField(
+        max_length=20, blank=True, default="",
+        choices=[("sms", "SMS"), ("alimtalk", "알림톡"), ("both", "알림톡→SMS")],
+        help_text="발송 방식",
+    )
 
     class Meta:
         app_label = "messaging"

@@ -378,6 +378,8 @@ def main() -> int:
                                     amount_deducted=Decimal("0"),
                                     recipient_summary=to[:4] + "****",
                                     failure_reason="insufficient_balance",
+                                    message_body=text[:2000],
+                                    message_mode=message_mode,
                                 )
                                 queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
