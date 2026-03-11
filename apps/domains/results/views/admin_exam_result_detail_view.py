@@ -52,7 +52,8 @@ class AdminExamResultDetailView(APIView):
         exam_id = int(exam_id)
         enrollment_id = int(enrollment_id)
 
-        exam = get_object_or_404(Exam, id=exam_id)
+        # ✅ tenant isolation: verify exam belongs to tenant
+        exam = get_object_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0)
 
         # -------------------------------------------------

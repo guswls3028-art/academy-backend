@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from django.db.models import Q
+
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -31,8 +33,14 @@ class SheetViewSet(ModelViewSet):
         ).select_related("exam").distinct()
 
     def _assert_exam_is_template(self, exam_id: int) -> Exam:
+        tenant = getattr(self.request, "tenant", None)
         try:
-            exam = Exam.objects.get(id=int(exam_id))
+            tenant_filter = Q(
+                sessions__lecture__tenant=tenant
+            ) | Q(
+                derived_exams__sessions__lecture__tenant=tenant
+            ) if tenant else Q()
+            exam = Exam.objects.filter(tenant_filter).distinct().get(id=int(exam_id))
         except Exam.DoesNotExist:
             raise ValidationError({"exam": "invalid exam id"})
 

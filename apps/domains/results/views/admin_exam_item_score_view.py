@@ -51,6 +51,11 @@ class AdminExamItemScoreView(APIView):
         enrollment_id = int(enrollment_id)
         question_id = int(question_id)
 
+        # ✅ tenant isolation: verify exam belongs to tenant
+        from apps.domains.exams.models import Exam
+        from django.shortcuts import get_object_or_404
+        get_object_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
+
         if "score" not in request.data:
             raise ValidationError({"detail": "score is required", "code": "INVALID"})
 

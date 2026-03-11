@@ -68,6 +68,16 @@ class AdminExamAttemptsView(APIView):
         exam_id = int(exam_id)
         enrollment_id = int(enrollment_id)
 
+        # ✅ tenant isolation: verify exam belongs to tenant
+        from apps.domains.exams.models import Exam
+        if not Exam.objects.filter(id=exam_id, sessions__lecture__tenant=request.tenant).exists():
+            raise ValidationError("Exam not found for this tenant.")
+
+        # ✅ tenant isolation: verify enrollment belongs to tenant
+        from apps.domains.enrollment.models import Enrollment
+        if not Enrollment.objects.filter(id=enrollment_id, tenant=request.tenant).exists():
+            raise ValidationError("Enrollment not found for this tenant.")
+
         # -------------------------------------------------
         # 1️⃣ Attempt 조회
         # -------------------------------------------------

@@ -105,6 +105,11 @@ class AdminRepresentativeAttemptView(APIView):
     def post(self, request, exam_id: int):
         exam_id = int(exam_id)
 
+        # ✅ tenant isolation: verify exam belongs to tenant
+        from apps.domains.exams.models import Exam
+        from django.shortcuts import get_object_or_404
+        get_object_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
+
         enrollment_id = request.data.get("enrollment_id")
         attempt_id = request.data.get("attempt_id")
 

@@ -115,8 +115,14 @@ class ExamResultAdminListView(ReadOnlyModelViewSet):
     serializer_class = ExamResultSerializer
 
     def get_queryset(self) -> QuerySet[ExamResult]:
-        # ✅ ExamResult 모델 스키마에 맞게 select_related 최소화
-        qs = ExamResult.objects.select_related("submission", "exam").all().order_by("-id")
+        # ✅ tenant isolation: scope to exams belonging to tenant
+        qs = (
+            ExamResult.objects
+            .select_related("submission", "exam")
+            .filter(exam__sessions__lecture__tenant=self.request.tenant)
+            .distinct()
+            .order_by("-id")
+        )
 
         exam_id = self.request.query_params.get("exam_id")
         if exam_id:
@@ -140,7 +146,14 @@ class MyExamResultListView(APIView):
 
     def get(self, request):
         user = request.user
-        qs = ExamResult.objects.select_related("exam", "submission").order_by("-id")
+        # ✅ tenant isolation: scope to exams belonging to tenant
+        qs = (
+            ExamResult.objects
+            .select_related("exam", "submission")
+            .filter(exam__sessions__lecture__tenant=request.tenant)
+            .distinct()
+            .order_by("-id")
+        )
 
         exam_id = request.query_params.get("exam_id")
         if exam_id:

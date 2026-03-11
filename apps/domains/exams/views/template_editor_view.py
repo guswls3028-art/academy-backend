@@ -1,6 +1,7 @@
 # PATH: apps/domains/exams/views/template_editor_view.py
 from __future__ import annotations
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from rest_framework.views import APIView
@@ -27,7 +28,14 @@ class TemplateEditorView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request, exam_id: int):
-        exam = get_object_or_404(Exam, id=int(exam_id))
+        tenant = request.tenant
+        exam = get_object_or_404(
+            Exam.objects.filter(
+                Q(sessions__lecture__tenant=tenant)
+                | Q(derived_exams__sessions__lecture__tenant=tenant)
+            ).distinct(),
+            id=int(exam_id),
+        )
 
         # 🔥 편집 진입 시 항상 최소 구조 보장
         init = TemplateBuilderService.ensure_initialized(exam)

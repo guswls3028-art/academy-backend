@@ -12,6 +12,14 @@ from apps.domains.results.serializers.question_stats import (
 )
 
 
+def _verify_exam_tenant(request, exam_id: int) -> None:
+    """✅ tenant isolation: verify exam belongs to request.tenant"""
+    from apps.domains.exams.models import Exam
+    from rest_framework.exceptions import NotFound
+    if not Exam.objects.filter(id=exam_id, sessions__lecture__tenant=request.tenant).exists():
+        raise NotFound("Exam not found for this tenant.")
+
+
 class AdminExamQuestionStatsView(APIView):
     """
     GET /api/v1/results/admin/exams/{exam_id}/questions/
@@ -24,6 +32,7 @@ class AdminExamQuestionStatsView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request, exam_id: int):
+        _verify_exam_tenant(request, int(exam_id))
         data = QuestionStatsService.per_question_stats(
             exam_id=int(exam_id),
         )
@@ -38,6 +47,7 @@ class ExamQuestionWrongDistributionView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request, exam_id: int, question_id: int):
+        _verify_exam_tenant(request, int(exam_id))
         dist = QuestionStatsService.wrong_choice_distribution(
             exam_id=int(exam_id),
             question_id=int(question_id),
@@ -58,6 +68,7 @@ class ExamTopWrongQuestionsView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request, exam_id: int):
+        _verify_exam_tenant(request, int(exam_id))
         n = int(request.query_params.get("n", 5))
         data = QuestionStatsService.top_n_wrong_questions(
             exam_id=int(exam_id),

@@ -64,7 +64,8 @@ class AdminSessionExamsView(APIView):
         )
 
     def get(self, request, session_id: int):
-        session = Session.objects.filter(id=int(session_id)).first()
+        # ✅ tenant isolation: verify session belongs to tenant
+        session = Session.objects.filter(id=int(session_id), lecture__tenant=request.tenant).first()
         if not session:
             return Response([])
 

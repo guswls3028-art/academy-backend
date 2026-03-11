@@ -1,6 +1,7 @@
 # PATH: apps/domains/exams/views/regular_from_template_view.py
 from __future__ import annotations
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from rest_framework.views import APIView
@@ -27,7 +28,15 @@ class RegularExamFromTemplateView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def post(self, request, exam_id: int):
-        template_exam = get_object_or_404(Exam, id=int(exam_id), exam_type=Exam.ExamType.TEMPLATE)
+        tenant = request.tenant
+        template_exam = get_object_or_404(
+            Exam.objects.filter(
+                Q(sessions__lecture__tenant=tenant)
+                | Q(derived_exams__sessions__lecture__tenant=tenant)
+            ).distinct(),
+            id=int(exam_id),
+            exam_type=Exam.ExamType.TEMPLATE,
+        )
 
         session_id = request.data.get("session_id")
         title = request.data.get("title")  # optional

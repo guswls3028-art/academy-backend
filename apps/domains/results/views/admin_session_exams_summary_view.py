@@ -32,7 +32,8 @@ class AdminSessionExamsSummaryView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request, session_id: int):
-        session = Session.objects.filter(id=int(session_id)).select_related("lecture").first()
+        # ✅ tenant isolation: verify session belongs to tenant
+        session = Session.objects.filter(id=int(session_id), lecture__tenant=request.tenant).select_related("lecture").first()
         if not session:
             return Response(
                 SessionExamsSummarySerializer({

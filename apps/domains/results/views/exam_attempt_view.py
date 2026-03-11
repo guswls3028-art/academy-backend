@@ -23,8 +23,16 @@ class ExamAttemptViewSet(ModelViewSet):
     시험 시도(Attempt) 관리 API (관리자/교사용)
     """
 
-    queryset = ExamAttempt.objects.all().order_by("-created_at")
     serializer_class = ExamAttemptSerializer
 
     # ✅ 보안 수정
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    def get_queryset(self):
+        # ✅ tenant isolation: ExamAttempt → exam → sessions → lecture → tenant
+        return (
+            ExamAttempt.objects
+            .filter(exam__sessions__lecture__tenant=self.request.tenant)
+            .distinct()
+            .order_by("-created_at")
+        )

@@ -25,6 +25,11 @@ class SessionScoreSummaryView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request, session_id: int):
+        # ✅ tenant isolation: verify session belongs to tenant
+        from apps.domains.lectures.models import Session
+        from django.shortcuts import get_object_or_404
+        get_object_or_404(Session, id=int(session_id), lecture__tenant=request.tenant)
+
         data = SessionScoreSummaryService.build(
             session_id=int(session_id)
         )

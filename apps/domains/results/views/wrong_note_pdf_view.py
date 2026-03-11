@@ -33,10 +33,14 @@ class WrongNotePDFCreateView(APIView):
     def _assert_enrollment_access(self, request, enrollment_id: int) -> None:
         user = request.user
 
+        # ✅ tenant isolation: always verify enrollment belongs to tenant
+        qs = Enrollment.objects.filter(id=int(enrollment_id), tenant=request.tenant)
+        if not qs.exists():
+            raise PermissionDenied("You cannot create PDF for this enrollment_id.")
+
         if is_teacher_user(user):
             return
 
-        qs = Enrollment.objects.filter(id=int(enrollment_id))
         if hasattr(Enrollment, "user_id"):
             qs = qs.filter(user_id=user.id)
         elif hasattr(Enrollment, "student_id"):

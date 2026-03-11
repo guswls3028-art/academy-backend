@@ -51,6 +51,11 @@ class AdminExamResultsView(ListAPIView):
         exam_id = self.kwargs.get("exam_id")
         if exam_id is None:
             return Result.objects.none()
+
+        # ✅ tenant isolation: verify exam belongs to tenant
+        if not Exam.objects.filter(id=int(exam_id), sessions__lecture__tenant=self.request.tenant).exists():
+            return Result.objects.none()
+
         return (
             latest_results_per_enrollment(
                 target_type="exam",

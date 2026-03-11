@@ -25,10 +25,18 @@ class AdminResultFactView(APIView):
         enrollment_id = request.query_params.get("enrollment_id")
         limit = int(request.query_params.get("limit", 100))
 
-        qs = ResultFact.objects.all().order_by("-id")
+        # ✅ tenant isolation: scope ResultFact to exams belonging to tenant
+        from apps.domains.exams.models import Exam
+        tenant_exam_ids = list(
+            Exam.objects.filter(sessions__lecture__tenant=request.tenant)
+            .values_list("id", flat=True).distinct()
+        )
+        qs = ResultFact.objects.filter(
+            target_type="exam", target_id__in=tenant_exam_ids
+        ).order_by("-id")
 
         if exam_id:
-            qs = qs.filter(target_type="exam", target_id=int(exam_id))
+            qs = qs.filter(target_id=int(exam_id))
         if enrollment_id:
             qs = qs.filter(enrollment_id=int(enrollment_id))
 

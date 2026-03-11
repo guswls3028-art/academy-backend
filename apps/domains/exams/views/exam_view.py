@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from django.db.models import Q
+
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError, PermissionDenied
@@ -118,8 +120,15 @@ class ExamViewSet(ModelViewSet):
                 template_exam_id = int(template_exam_id)
             except (TypeError, ValueError):
                 raise ValidationError({"template_exam_id": "must be integer"})
+
+            tenant = getattr(self.request, "tenant", None)
             try:
-                template_exam = Exam.objects.get(id=template_exam_id)
+                tenant_filter = Q(
+                    sessions__lecture__tenant=tenant
+                ) | Q(
+                    derived_exams__sessions__lecture__tenant=tenant
+                ) if tenant else Q()
+                template_exam = Exam.objects.filter(tenant_filter).distinct().get(id=template_exam_id)
             except Exam.DoesNotExist:
                 raise ValidationError({"template_exam_id": "invalid"})
             if template_exam.exam_type != Exam.ExamType.TEMPLATE:

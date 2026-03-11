@@ -24,7 +24,8 @@ class MyExamAttemptsView(APIView):
         user = request.user
 
         # enrollment 탐색 (방어)
-        qs = Enrollment.objects.all()
+        # ✅ tenant isolation: scope enrollment to tenant
+        qs = Enrollment.objects.filter(tenant=request.tenant)
         if hasattr(Enrollment, "user_id"):
             qs = qs.filter(user_id=user.id)
         elif hasattr(Enrollment, "student_id"):
