@@ -15,7 +15,7 @@
 | **트리거** | `push` to `main`, `workflow_dispatch` |
 | **역할** | 5개 이미지(academy-base, academy-api, academy-video-worker, academy-messaging-worker, academy-ai-worker-cpu) **linux/arm64** 빌드 후 ECR에 **`latest` 태그만** 푸시 |
 | **태그 전략** | **latest 전용**. SHA/커밋 태그 없음. (`tags: ${{ env.ECR_REGISTRY }}/academy-api:latest`) |
-| **이미지 반영 서버** | **없음**. 워크플로우에는 deploy.ps1 호출·instance refresh·SSM 배포 단계가 **전혀 없음**. |
+| **이미지 반영 서버** | **deploy-api-refresh** job이 빌드·푸시 후 API ASG instance refresh를 수행한다 (2026-03-09 추가, 2026-03-11 IAM 권한 적용 완료). |
 | **부가 동작** | 푸시 후 `docs/00-SSOT/v1/reports/ci-build.latest.md`에 digest 기록 후 해당 파일만 커밋·푸시 |
 
 ### 1.2 ECR 푸시 태그 전략
