@@ -1,7 +1,10 @@
 # PATH: apps/core/models/program.py
 from __future__ import annotations
 
+from datetime import date
+
 from django.db import models
+from django.utils import timezone
 
 from apps.core.models.base import TimestampModel
 from apps.core.models.tenant import Tenant
@@ -64,6 +67,38 @@ class Program(TimestampModel):
         help_text="월 요금(원). PLAN_PRICES 기준 자동 설정.",
     )
 
+    # ✅ 구독 관리
+    class SubscriptionStatus(models.TextChoices):
+        ACTIVE = "active", "활성"
+        EXPIRED = "expired", "만료"
+        GRACE = "grace", "유예기간"
+        CANCELLED = "cancelled", "해지"
+
+    subscription_status = models.CharField(
+        max_length=20,
+        choices=SubscriptionStatus.choices,
+        default=SubscriptionStatus.ACTIVE,
+        db_index=True,
+        help_text="구독 상태",
+    )
+    subscription_started_at = models.DateField(
+        null=True,
+        blank=True,
+        help_text="구독 시작일",
+    )
+    subscription_expires_at = models.DateField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="구독 만료일 (이 날까지 이용 가능)",
+    )
+    billing_email = models.EmailField(
+        max_length=254,
+        blank=True,
+        default="",
+        help_text="결제 관련 이메일 알림 수신",
+    )
+
     feature_flags = models.JSONField(default=dict, blank=True)
     ui_config = models.JSONField(default=dict, blank=True)
 
@@ -87,6 +122,23 @@ class Program(TimestampModel):
             if uf is not None and "monthly_price" not in uf:
                 kwargs["update_fields"] = list(uf) + ["monthly_price"]
         super().save(*args, **kwargs)
+
+    @property
+    def is_subscription_active(self) -> bool:
+        """구독이 유효한지 (활성 or 유예기간 + 만료일 미도래)"""
+        if self.subscription_status in (self.SubscriptionStatus.ACTIVE, self.SubscriptionStatus.GRACE):
+            if self.subscription_expires_at is None:
+                return True  # 만료일 미설정 = 무제한
+            return date.today() <= self.subscription_expires_at
+        return False
+
+    @property
+    def days_remaining(self) -> int | None:
+        """남은 이용일수 (만료일 없으면 None)"""
+        if self.subscription_expires_at is None:
+            return None
+        delta = (self.subscription_expires_at - date.today()).days
+        return max(0, delta)
 
     def __str__(self) -> str:
         return f"Program<{self.tenant.code}>:{self.display_name}"

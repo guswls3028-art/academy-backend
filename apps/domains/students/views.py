@@ -270,6 +270,9 @@ class StudentViewSet(ModelViewSet):
                 student.user.phone = None
                 user_update.append("phone")
             student.user.save(update_fields=user_update)
+            TenantMembership.objects.filter(
+                user=student.user, tenant=request.tenant
+            ).update(is_active=False)
         # ✅ 소프트 삭제 시 수강등록도 비활성화
         Enrollment.objects.filter(
             student=student, tenant=request.tenant
@@ -750,6 +753,9 @@ class StudentViewSet(ModelViewSet):
                         student.user.phone = None
                         user_update.append("phone")
                     student.user.save(update_fields=user_update)
+                    TenantMembership.objects.filter(
+                        user=student.user, tenant=tenant
+                    ).update(is_active=False)
                 # ✅ 소프트 삭제 시 수강등록도 비활성화
                 Enrollment.objects.filter(
                     student=student, tenant=tenant
@@ -873,7 +879,7 @@ class StudentViewSet(ModelViewSet):
                         "enrollment_sessionenrollment",
                         "video_videopermission",
                         "video_videoprogress",
-                        "video_videoplaysession",
+                        "video_videoplaybacksession",
                         "video_videoplaybackevent",
                         "progress_sessionprogress",
                         "progress_lectureprogress",

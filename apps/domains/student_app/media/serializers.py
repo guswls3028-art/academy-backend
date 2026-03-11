@@ -14,7 +14,14 @@ class StudentVideoListItemSerializer(serializers.Serializer):
     progress = serializers.FloatField(required=False, default=0)
     completed = serializers.BooleanField(required=False, default=False)
     updated_at = serializers.DateTimeField(required=False, allow_null=True)
+    created_at = serializers.DateTimeField(required=False, allow_null=True)
     order = serializers.IntegerField(required=False, default=0)
+
+    # 소셜 카운터
+    view_count = serializers.IntegerField(required=False, default=0)
+    like_count = serializers.IntegerField(required=False, default=0)
+    comment_count = serializers.IntegerField(required=False, default=0)
+    is_liked = serializers.BooleanField(required=False, default=False)
 
     # 정책(단일 진실)
     allow_skip = serializers.BooleanField()

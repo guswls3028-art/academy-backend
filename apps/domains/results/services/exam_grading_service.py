@@ -132,7 +132,7 @@ class ExamGradingService:
         result.save(update_fields=["total_score", "status", "updated_at"])
 
         try:
-            submission.status = "graded"
+            submission.status = "done"
             submission.save(update_fields=["status", "updated_at"])
         except Exception:
             pass

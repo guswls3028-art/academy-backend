@@ -480,7 +480,11 @@ class StudentSessionVideoListView(APIView):
                 "progress": progress_percent,  # 0-100
                 "completed": bool(progress_obj and progress_obj.completed) if progress_obj else False,
                 "updated_at": v.updated_at.isoformat() if hasattr(v, "updated_at") and v.updated_at else None,
+                "created_at": v.created_at.isoformat() if hasattr(v, "created_at") and v.created_at else None,
                 "order": getattr(v, "order", 0),
+                "view_count": getattr(v, "view_count", 0),
+                "like_count": getattr(v, "like_count", 0),
+                "comment_count": getattr(v, "comment_count", 0),
                 **_policy_from_video(v),
                 "effective_rule": _effective_rule(perm_obj),  # Legacy field
                 "access_mode": access_mode_value,  # New field
@@ -596,6 +600,10 @@ class StudentVideoPlaybackView(APIView):
         
         thumb = _build_thumbnail_url(video)
 
+        # 조회수 증가 (재생 시작 시)
+        from django.db.models import F as _F
+        Video.objects.filter(id=video_id).update(view_count=_F("view_count") + 1)
+
         # play_url 생성 (hls_url 우선, 없으면 mp4_url)
         play_url = hls_url or mp4_url
         
@@ -612,6 +620,13 @@ class StudentVideoPlaybackView(APIView):
             "grace_seconds": 3,
         }
 
+        # 좋아요 여부 확인
+        is_liked = False
+        student = get_request_student(request)
+        if student:
+            from apps.support.video.models import VideoLike
+            is_liked = VideoLike.objects.filter(video_id=video_id, student=student).exists()
+
         payload = {
             "video": {
                 "id": int(video.id),
@@ -620,6 +635,11 @@ class StudentVideoPlaybackView(APIView):
                 "status": str(getattr(video, "status", "READY")),
                 "thumbnail_url": thumb,
                 "duration": getattr(video, "duration", None),
+                "view_count": getattr(video, "view_count", 0),
+                "like_count": getattr(video, "like_count", 0),
+                "comment_count": getattr(video, "comment_count", 0),
+                "is_liked": is_liked,
+                "created_at": video.created_at.isoformat() if hasattr(video, "created_at") and video.created_at else None,
                 **_policy_from_video(video),
                 "effective_rule": rule,
                 "access_mode": access_mode_value,
@@ -775,3 +795,235 @@ class StudentVideoProgressView(APIView):
             "completed": progress_obj.completed,
             "last_position": progress_obj.last_position,
         }, status=status.HTTP_200_OK)
+
+
+# ========================================================
+# VideoLike (좋아요 토글)
+# ========================================================
+
+class StudentVideoLikeView(APIView):
+    """
+    POST /student/video/videos/{video_id}/like/
+    좋아요 토글 (있으면 삭제, 없으면 생성)
+    """
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def post(self, request, video_id: int):
+        from apps.support.video.models import Video, VideoLike
+        from django.db.models import F
+
+        student = get_request_student(request)
+        if not student:
+            return Response({"detail": "학생 정보가 필요합니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant 정보가 필요합니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            video = Video.objects.select_related("session__lecture").get(id=video_id)
+        except Video.DoesNotExist:
+            raise Http404
+
+        # 테넌트 격리 검증
+        video_tenant_id = getattr(video.session.lecture, "tenant_id", None) if video.session and video.session.lecture else None
+        if video_tenant_id != tenant.id:
+            raise PermissionDenied("접근 권한이 없습니다.")
+
+        existing = VideoLike.objects.filter(video=video, student=student).first()
+        if existing:
+            existing.delete()
+            Video.objects.filter(id=video_id).update(like_count=F("like_count") - 1)
+            # 음수 방지
+            Video.objects.filter(id=video_id, like_count__lt=0).update(like_count=0)
+            return Response({"liked": False, "like_count": max(0, video.like_count - 1)})
+        else:
+            VideoLike.objects.create(video=video, student=student, tenant_id=tenant.id)
+            Video.objects.filter(id=video_id).update(like_count=F("like_count") + 1)
+            return Response({"liked": True, "like_count": video.like_count + 1})
+
+
+# ========================================================
+# VideoComment (댓글 CRUD)
+# ========================================================
+
+class StudentVideoCommentListView(APIView):
+    """
+    GET  /student/video/videos/{video_id}/comments/  — 댓글 목록 (대댓글 포함)
+    POST /student/video/videos/{video_id}/comments/  — 댓글 작성
+    """
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request, video_id: int):
+        from apps.support.video.models import Video, VideoComment
+
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            video = Video.objects.select_related("session__lecture").get(id=video_id)
+        except Video.DoesNotExist:
+            raise Http404
+
+        video_tenant_id = getattr(video.session.lecture, "tenant_id", None) if video.session and video.session.lecture else None
+        if video_tenant_id != tenant.id:
+            raise PermissionDenied("접근 권한이 없습니다.")
+
+        # 최상위 댓글만 (parent=None), 대댓글은 prefetch
+        comments = (
+            VideoComment.objects
+            .filter(video=video, tenant_id=tenant.id, parent__isnull=True)
+            .select_related("author_student", "author_staff")
+            .prefetch_related("replies__author_student", "replies__author_staff")
+            .order_by("-created_at")[:100]
+        )
+
+        student = get_request_student(request)
+
+        def _serialize_comment(c):
+            photo_url = None
+            if c.author_student and c.author_student.profile_photo:
+                photo_url = request.build_absolute_uri(c.author_student.profile_photo.url)
+            elif c.author_staff and hasattr(c.author_staff, "profile_photo") and c.author_staff.profile_photo:
+                photo_url = request.build_absolute_uri(c.author_staff.profile_photo.url)
+
+            is_mine = False
+            if student and c.author_student_id == student.id:
+                is_mine = True
+
+            return {
+                "id": c.id,
+                "content": c.content if not c.is_deleted else "",
+                "author_type": c.author_type,
+                "author_name": c.author_name,
+                "author_photo_url": photo_url,
+                "is_edited": c.is_edited,
+                "is_deleted": c.is_deleted,
+                "is_mine": is_mine,
+                "created_at": c.created_at.isoformat(),
+                "reply_count": c.replies.count() if not c.is_deleted else 0,
+                "replies": [_serialize_comment(r) for r in c.replies.filter(is_deleted=False).order_by("created_at")[:20]],
+            }
+
+        data = [_serialize_comment(c) for c in comments]
+        return Response({"comments": data, "total": len(data)})
+
+    def post(self, request, video_id: int):
+        from apps.support.video.models import Video, VideoComment
+        from django.db.models import F
+
+        tenant = getattr(request, "tenant", None)
+        student = get_request_student(request)
+
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            video = Video.objects.select_related("session__lecture").get(id=video_id)
+        except Video.DoesNotExist:
+            raise Http404
+
+        video_tenant_id = getattr(video.session.lecture, "tenant_id", None) if video.session and video.session.lecture else None
+        if video_tenant_id != tenant.id:
+            raise PermissionDenied("접근 권한이 없습니다.")
+
+        content = str(request.data.get("content", "")).strip()
+        if not content:
+            return Response({"detail": "댓글 내용을 입력해 주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(content) > 2000:
+            return Response({"detail": "댓글은 2000자까지 입력할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        parent_id = request.data.get("parent_id")
+        parent = None
+        if parent_id:
+            parent = VideoComment.objects.filter(id=parent_id, video=video, tenant_id=tenant.id, parent__isnull=True).first()
+            if not parent:
+                return Response({"detail": "대댓글 대상을 찾을 수 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        comment = VideoComment.objects.create(
+            video=video,
+            tenant_id=tenant.id,
+            author_student=student,
+            parent=parent,
+            content=content,
+        )
+
+        Video.objects.filter(id=video_id).update(comment_count=F("comment_count") + 1)
+
+        photo_url = None
+        if student and student.profile_photo:
+            photo_url = request.build_absolute_uri(student.profile_photo.url)
+
+        return Response({
+            "id": comment.id,
+            "content": comment.content,
+            "author_type": "student",
+            "author_name": student.name if student else "",
+            "author_photo_url": photo_url,
+            "is_edited": False,
+            "is_deleted": False,
+            "is_mine": True,
+            "created_at": comment.created_at.isoformat(),
+            "reply_count": 0,
+            "replies": [],
+        }, status=status.HTTP_201_CREATED)
+
+
+class StudentVideoCommentDetailView(APIView):
+    """
+    PATCH  /student/video/comments/{comment_id}/  — 수정
+    DELETE /student/video/comments/{comment_id}/  — 삭제
+    """
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def patch(self, request, comment_id: int):
+        from apps.support.video.models import VideoComment
+
+        tenant = getattr(request, "tenant", None)
+        student = get_request_student(request)
+        if not tenant or not student:
+            return Response({"detail": "접근 권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            comment = VideoComment.objects.get(id=comment_id, tenant_id=tenant.id)
+        except VideoComment.DoesNotExist:
+            raise Http404
+
+        if comment.author_student_id != student.id:
+            raise PermissionDenied("본인 댓글만 수정할 수 있습니다.")
+
+        content = str(request.data.get("content", "")).strip()
+        if not content:
+            return Response({"detail": "댓글 내용을 입력해 주세요."}, status=status.HTTP_400_BAD_REQUEST)
+
+        comment.content = content
+        comment.is_edited = True
+        comment.save(update_fields=["content", "is_edited", "updated_at"])
+
+        return Response({"id": comment.id, "content": comment.content, "is_edited": True})
+
+    def delete(self, request, comment_id: int):
+        from apps.support.video.models import Video, VideoComment
+        from django.db.models import F
+
+        tenant = getattr(request, "tenant", None)
+        student = get_request_student(request)
+        if not tenant or not student:
+            return Response({"detail": "접근 권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            comment = VideoComment.objects.get(id=comment_id, tenant_id=tenant.id)
+        except VideoComment.DoesNotExist:
+            raise Http404
+
+        if comment.author_student_id != student.id:
+            raise PermissionDenied("본인 댓글만 삭제할 수 있습니다.")
+
+        comment.is_deleted = True
+        comment.save(update_fields=["is_deleted", "updated_at"])
+
+        Video.objects.filter(id=comment.video_id).update(comment_count=F("comment_count") - 1)
+        Video.objects.filter(id=comment.video_id, comment_count__lt=0).update(comment_count=0)
+
+        return Response({"deleted": True})

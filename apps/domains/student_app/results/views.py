@@ -31,7 +31,7 @@ class MyExamResultView(APIView):
 
     def get(self, request, exam_id):
         try:
-            data = get_my_exam_result_data(request, int(exam_id))
+            data = get_my_exam_result_data(request, int(exam_id), tenant=request.tenant)
         except Http404:
             return Response({"detail": "result not found"}, status=404)
         return Response(data)
@@ -47,7 +47,7 @@ class MyExamResultItemsView(APIView):
 
     def get(self, request, exam_id):
         try:
-            data = get_my_exam_result_data(request, int(exam_id))
+            data = get_my_exam_result_data(request, int(exam_id), tenant=request.tenant)
         except Http404:
             return Response({"detail": "result not found"}, status=404)
         return Response({"items": data.get("items") or []})

@@ -92,6 +92,7 @@ class StaffWorkTypeSerializer(serializers.ModelSerializer):
 class StaffListSerializer(serializers.ModelSerializer):
     staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
     role = serializers.SerializerMethodField()
+    profile_photo_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Staff
@@ -99,6 +100,7 @@ class StaffListSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "phone",
+            "profile_photo_url",
             "is_active",
             "is_manager",
             "pay_type",
@@ -109,6 +111,14 @@ class StaffListSerializer(serializers.ModelSerializer):
         ]
         ref_name = "StaffList"
 
+    def get_profile_photo_url(self, obj):
+        if not obj.profile_photo:
+            return None
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.profile_photo.url)
+        return obj.profile_photo.url
+
     def get_role(self, obj):
         if teacher_repo.teacher_exists_tenant_name_phone(obj.tenant, obj.name, obj.phone or ""):
             return "TEACHER"
@@ -118,6 +128,7 @@ class StaffListSerializer(serializers.ModelSerializer):
 class StaffDetailSerializer(serializers.ModelSerializer):
     staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
     role = serializers.SerializerMethodField()
+    profile_photo_url = serializers.SerializerMethodField()
 
     user_username = serializers.SerializerMethodField()
 
@@ -140,6 +151,7 @@ class StaffDetailSerializer(serializers.ModelSerializer):
             "user_is_staff",
             "name",
             "phone",
+            "profile_photo_url",
             "is_active",
             "is_manager",
             "pay_type",
@@ -149,6 +161,14 @@ class StaffDetailSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         ref_name = "StaffDetail"
+
+    def get_profile_photo_url(self, obj):
+        if not obj.profile_photo:
+            return None
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.profile_photo.url)
+        return obj.profile_photo.url
 
     def get_role(self, obj):
         if teacher_repo.teacher_exists_tenant_name_phone(obj.tenant, obj.name, obj.phone or ""):

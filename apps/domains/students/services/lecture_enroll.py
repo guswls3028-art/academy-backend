@@ -91,6 +91,19 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
             deleted_student.gender = (item.get("gender") or "").strip().upper()[:1] or None
             update_fields.append("gender")
         deleted_student.save(update_fields=update_fields)
+        # Reactivate user account
+        if deleted_student.user:
+            deleted_student.user.is_active = True
+            deleted_student.user.save(update_fields=["is_active"])
+        # Unmangle ps_number
+        if deleted_student.ps_number and deleted_student.ps_number.startswith("_del_"):
+            parts = deleted_student.ps_number.split("_", 3)  # ["", "del", "{id}", "{original}"]
+            if len(parts) >= 4:
+                deleted_student.ps_number = parts[3]
+                deleted_student.save(update_fields=["ps_number"])
+        # Reactivate enrollments
+        from apps.domains.enrollment.models import Enrollment
+        Enrollment.objects.filter(student=deleted_student, tenant=tenant).update(status="ACTIVE")
         TenantMembership.ensure_active(
             tenant=tenant,
             user=deleted_student.user,

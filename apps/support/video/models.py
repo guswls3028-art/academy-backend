@@ -67,6 +67,11 @@ class Video(TimestampModel):
     duration = models.PositiveIntegerField(null=True, blank=True)
     order = models.PositiveIntegerField(default=1)
 
+    # 조회수 / 좋아요 (denormalized counters)
+    view_count = models.PositiveIntegerField(default=0, help_text="재생 시작 횟수")
+    like_count = models.PositiveIntegerField(default=0, help_text="좋아요 수")
+    comment_count = models.PositiveIntegerField(default=0, help_text="댓글 수")
+
     # 썸네일은 Worker가 생성
     thumbnail = models.ImageField(
         upload_to="thumbnails/",
@@ -525,3 +530,113 @@ class VideoFolder(TimestampModel):
 
     def __str__(self):
         return f"{self.session.lecture.title if self.session else '?'} / {self.name}"
+
+
+# ========================================================
+# VideoLike (영상 좋아요)
+# ========================================================
+
+class VideoLike(models.Model):
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.CASCADE,
+        related_name="likes",
+    )
+    student = models.ForeignKey(
+        "students.Student",
+        on_delete=models.CASCADE,
+        related_name="video_likes",
+    )
+    tenant_id = models.PositiveIntegerField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["video", "student"],
+                name="unique_video_like",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["tenant_id", "video"]),
+        ]
+
+    def __str__(self):
+        return f"Like: {self.student_id} → {self.video_id}"
+
+
+# ========================================================
+# VideoComment (영상 댓글 · 대댓글)
+# ========================================================
+
+class VideoComment(models.Model):
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.CASCADE,
+        related_name="comments",
+    )
+    tenant_id = models.PositiveIntegerField(db_index=True)
+
+    # 작성자: 학생 또는 선생님 중 하나
+    author_student = models.ForeignKey(
+        "students.Student",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="video_comments",
+    )
+    author_staff = models.ForeignKey(
+        "staffs.Staff",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="video_comments",
+    )
+
+    # 대댓글 (1단계만)
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="replies",
+    )
+
+    content = models.TextField(max_length=2000)
+    is_edited = models.BooleanField(default=False)
+    is_deleted = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["video", "created_at"]),
+            models.Index(fields=["tenant_id", "video"]),
+            models.Index(fields=["parent"]),
+        ]
+
+    def __str__(self):
+        author = "student" if self.author_student_id else "staff"
+        return f"Comment #{self.id} ({author}) on video {self.video_id}"
+
+    @property
+    def author_type(self) -> str:
+        return "teacher" if self.author_staff_id else "student"
+
+    @property
+    def author_name(self) -> str:
+        if self.author_staff:
+            return self.author_staff.name
+        if self.author_student:
+            return self.author_student.name
+        return ""
+
+    @property
+    def author_photo_url(self):
+        if self.author_student and self.author_student.profile_photo:
+            return self.author_student.profile_photo.url
+        if self.author_staff and hasattr(self.author_staff, "profile_photo") and self.author_staff.profile_photo:
+            return self.author_staff.profile_photo.url
+        return None

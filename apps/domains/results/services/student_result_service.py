@@ -17,12 +17,15 @@ from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 
 
-def get_my_exam_result_data(request, exam_id: int) -> dict:
+def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     """
     현재 사용자의 시험 결과 스냅샷 + 재시험/클리닉 정책.
     enrollment/result 없으면 Http404.
+    tenant: 테넌트 격리를 위해 반드시 전달해야 함.
     """
     user = request.user
+    if tenant is None:
+        tenant = getattr(request, "tenant", None)
     exam_id = int(exam_id)
     exam = Exam.objects.filter(id=exam_id).first()
     if not exam:
@@ -33,6 +36,8 @@ def get_my_exam_result_data(request, exam_id: int) -> dict:
         exam_id=exam_id
     ).values_list("enrollment_id", flat=True)
     enrollment_qs = Enrollment.objects.filter(id__in=allowed_enrollment_ids)
+    if tenant is not None:
+        enrollment_qs = enrollment_qs.filter(tenant=tenant)
     if hasattr(Enrollment, "user_id"):
         enrollment_qs = enrollment_qs.filter(user_id=user.id)
     elif hasattr(Enrollment, "student_id"):

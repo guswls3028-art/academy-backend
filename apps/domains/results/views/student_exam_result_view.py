@@ -22,5 +22,5 @@ class MyExamResultView(APIView):
     permission_classes = [IsAuthenticated, IsStudent]
 
     def get(self, request, exam_id: int):
-        data = get_my_exam_result_data(request, int(exam_id))
+        data = get_my_exam_result_data(request, int(exam_id), tenant=request.tenant)
         return Response(data)

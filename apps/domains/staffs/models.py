@@ -93,6 +93,13 @@ class Staff(TimestampModel):
         help_text="정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
     )
 
+    profile_photo = models.ImageField(
+        upload_to="staff_profile/%Y/%m/",
+        null=True,
+        blank=True,
+        help_text="선생님 프로필 사진",
+    )
+
     is_active = models.BooleanField(default=True)
     is_manager = models.BooleanField(default=False)
 

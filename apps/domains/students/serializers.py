@@ -178,6 +178,7 @@ class StudentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Student
         exclude = ("tenant", "user")
+        read_only_fields = ("deleted_at", "profile_photo")
 
     def _require(self, attrs, key: str):
         v = attrs.get(key)

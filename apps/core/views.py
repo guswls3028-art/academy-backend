@@ -166,6 +166,48 @@ class ProgramView(APIView):
 
 
 # --------------------------------------------------
+# Subscription: /core/subscription/
+# --------------------------------------------------
+
+class SubscriptionView(APIView):
+    """
+    GET /api/v1/core/subscription/
+    현재 tenant의 구독 정보 반환. 로그인 전에도 접근 가능 (AllowAny + TenantResolved).
+    프론트에서 구독 상태 UI, 결제 탭, 만료 알림에 사용.
+    """
+
+    permission_classes = [AllowAny, TenantResolved]
+
+    @swagger_auto_schema(auto_schema=None)
+    def get(self, request):
+        tenant = getattr(request, "tenant", None)
+        if tenant is None:
+            return Response({"detail": "tenant must be resolved"}, status=400)
+
+        program = core_repo.program_get_by_tenant(tenant)
+        if program is None:
+            return Response(
+                {"detail": "program not initialized", "code": "program_missing"},
+                status=404,
+            )
+
+        return Response({
+            "plan": program.plan,
+            "plan_display": program.get_plan_display(),
+            "monthly_price": program.monthly_price,
+            "subscription_status": program.subscription_status,
+            "subscription_status_display": program.get_subscription_status_display(),
+            "subscription_started_at": str(program.subscription_started_at) if program.subscription_started_at else None,
+            "subscription_expires_at": str(program.subscription_expires_at) if program.subscription_expires_at else None,
+            "is_subscription_active": program.is_subscription_active,
+            "days_remaining": program.days_remaining,
+            "billing_email": program.billing_email or "",
+            "tenant_code": tenant.code,
+            "tenant_name": tenant.name or "",
+        })
+
+
+# --------------------------------------------------
 # Profile (Staff 영역)
 # --------------------------------------------------
 

@@ -76,6 +76,12 @@ class TenantMiddleware:
                 request.tenant = tenant  # type: ignore[attr-defined]
                 set_current_tenant(tenant)
 
+                # ── 구독 만료 체크 (로그인/공개 페이지는 허용) ──
+                if not _is_subscription_exempt_path(path):
+                    subscription_err = _check_subscription(tenant, request)
+                    if subscription_err is not None:
+                        return subscription_err
+
             response = self.get_response(request)
 
             if tenant is not None:
@@ -86,3 +92,56 @@ class TenantMiddleware:
         finally:
             # ✅ 어떤 예외/리턴 경로든 tenant 컨텍스트 종료
             clear_current_tenant()
+
+
+# ── 구독 만료 시 허용할 경로 (로그인, 인증, 헬스 등) ──
+_SUBSCRIPTION_EXEMPT_PREFIXES = (
+    "/api/v1/auth/",
+    "/api/v1/token/",
+    "/api/v1/students/registration",
+    "/api/v1/students/password",
+    "/api/v1/core/me",
+    "/api/v1/core/program",
+    "/api/v1/core/subscription",
+    "/admin/",
+    "/static/",
+    "/media/",
+)
+
+
+def _is_subscription_exempt_path(path: str) -> bool:
+    """구독 체크를 면제할 경로 (로그인, 프로필, 구독 정보 조회 등)"""
+    for prefix in _SUBSCRIPTION_EXEMPT_PREFIXES:
+        if path.startswith(prefix):
+            return True
+    return False
+
+
+def _check_subscription(tenant, request) -> JsonResponse | None:
+    """
+    구독 만료 검사.
+    - Program이 없으면 통과 (하위 호환)
+    - 만료 시 402 Payment Required 반환
+    """
+    try:
+        program = getattr(tenant, "program", None)
+        if program is None:
+            return None  # Program 없으면 통과
+
+        if program.is_subscription_active:
+            return None  # 구독 유효
+
+        # 만료 — 402 반환
+        return JsonResponse(
+            {
+                "detail": "구독이 만료되었습니다. 관리자에게 문의하거나 구독을 갱신해 주세요.",
+                "code": "subscription_expired",
+                "plan": program.plan,
+                "expires_at": str(program.subscription_expires_at) if program.subscription_expires_at else None,
+            },
+            status=402,
+        )
+    except Exception as e:
+        # 구독 체크 실패 시에는 통과 (서비스 가용성 우선)
+        logger.warning("Subscription check failed for tenant %s: %s", tenant.code, e)
+        return None
