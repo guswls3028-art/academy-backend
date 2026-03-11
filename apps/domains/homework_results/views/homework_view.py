@@ -26,6 +26,7 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework_results.serializers.homework import HomeworkSerializer
+from apps.domains.lectures.models import Session
 
 
 class HomeworkViewSet(ModelViewSet):
@@ -63,6 +64,12 @@ class HomeworkViewSet(ModelViewSet):
         if not session_id:
             return Response(
                 {"session_id": "필수입니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        tenant = getattr(request, "tenant", None)
+        if not Session.objects.filter(id=int(session_id), lecture__tenant=tenant).exists():
+            return Response(
+                {"detail": "해당 차시를 찾을 수 없습니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if template_id:
@@ -103,6 +110,9 @@ class HomeworkViewSet(ModelViewSet):
         session_id = data.get("session_id")
         if not session_id:
             raise ValidationError({"session_id": "필수입니다."})
+        tenant = getattr(self.request, "tenant", None)
+        if not Session.objects.filter(id=int(session_id), lecture__tenant=tenant).exists():
+            raise ValidationError({"detail": "해당 차시를 찾을 수 없습니다."})
         serializer.save(
             homework_type=Homework.HomeworkType.REGULAR,
             session_id=int(session_id),

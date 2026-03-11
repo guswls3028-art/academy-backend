@@ -12,6 +12,7 @@ from rest_framework import status
 
 from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.homework.models import HomeworkEnrollment
+from apps.domains.lectures.models import Session
 from apps.domains.homework.serializers.homework_enrollment_serializer import (
     HomeworkEnrollmentRowSerializer,
     HomeworkEnrollmentUpdateSerializer,
@@ -34,6 +35,9 @@ class HomeworkEnrollmentManageView(APIView):
             return Response({"detail": str(e)}, status=400)
 
         tenant = getattr(request, "tenant", None)
+
+        if not Session.objects.filter(id=session_id, lecture__tenant=tenant).exists():
+            return Response({"detail": "해당 차시를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         session_enrollments = (
             SessionEnrollment.objects
@@ -87,6 +91,9 @@ class HomeworkEnrollmentManageView(APIView):
             return Response({"detail": str(e)}, status=400)
 
         tenant = getattr(request, "tenant", None)
+
+        if not Session.objects.filter(id=session_id, lecture__tenant=tenant).exists():
+            return Response({"detail": "해당 차시를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         ser = HomeworkEnrollmentUpdateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)

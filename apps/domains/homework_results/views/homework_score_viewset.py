@@ -441,7 +441,9 @@ class HomeworkScoreViewSet(ModelViewSet):
         score = serializer.validated_data.get("score", None)
         max_score = serializer.validated_data.get("max_score", None)
 
-        homework = Homework.objects.select_related("session").get(id=homework_id)
+        homework = Homework.objects.select_related("session").get(
+            id=homework_id, session__lecture__tenant=self.request.tenant
+        )
         session = homework.session
 
         with transaction.atomic():
