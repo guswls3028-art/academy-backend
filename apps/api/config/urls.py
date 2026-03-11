@@ -50,10 +50,10 @@ urlpatterns = [
 ]
 
 # =========================
-# DEV ONLY: media static
+# Media static (profile photos, etc.)
 # =========================
-if settings.DEBUG:
-    urlpatterns += static(
-        settings.MEDIA_URL,
-        document_root=settings.MEDIA_ROOT,
-    )
+# 프로덕션에서도 /media/ 경로 서빙. S3 전환 시 제거 예정 (V1.1.0)
+urlpatterns += static(
+    settings.MEDIA_URL,
+    document_root=settings.MEDIA_ROOT,
+)

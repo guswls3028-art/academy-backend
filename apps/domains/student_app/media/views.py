@@ -1008,6 +1008,8 @@ class StudentVideoCommentDetailView(APIView):
         content = str(request.data.get("content", "")).strip()
         if not content:
             return Response({"detail": "댓글 내용을 입력해 주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(content) > 2000:
+            return Response({"detail": "댓글은 2000자까지 입력할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         comment.content = content
         comment.is_edited = True

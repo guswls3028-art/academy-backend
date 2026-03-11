@@ -193,15 +193,25 @@ class StaffViewSet(viewsets.ModelViewSet):
     search_fields = ["name", "phone"]
     ordering_fields = ["name", "created_at", "is_active"]
 
-    def get_queryset(self):
-        return staff_repo.staff_queryset_tenant(self.request.tenant)
-
     def get_serializer_class(self):
         if self.action == "list":
             return StaffListSerializer
         if self.action == "retrieve":
             return StaffDetailSerializer
         return StaffCreateUpdateSerializer
+
+    def get_queryset(self):
+        qs = staff_repo.staff_queryset_tenant(self.request.tenant)
+        # list 액션: 오너 Staff 제외 (owner 영역에서 별도 표시하므로 중복 방지)
+        if self.action == "list":
+            tenant = getattr(self.request, "tenant", None)
+            if tenant:
+                owner_user_id = TenantMembership.objects.filter(
+                    tenant=tenant, role="owner", is_active=True
+                ).values_list("user_id", flat=True).first()
+                if owner_user_id:
+                    qs = qs.exclude(user_id=owner_user_id)
+        return qs
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
