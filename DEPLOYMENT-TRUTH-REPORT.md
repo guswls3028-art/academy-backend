@@ -1,3 +1,5 @@
+> **참고:** 배포 **검증** 절차는 `docs/00-SSOT/v1/DEPLOY-VERIFICATION-SSOT.md` (V1.0.0)이 SSOT. 본 문서는 아티팩트 사실 기록으로 유효.
+
 # Deployment Truth Report (Executable Artifacts Only)
 
 **Scope:** Backend repo `C:\academy\backend`. Only scripts, workflows, Dockerfiles, compose files, and runtime config paths. No docs as source of truth.

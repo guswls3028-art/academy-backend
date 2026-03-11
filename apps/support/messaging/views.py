@@ -570,10 +570,10 @@ class AutoSendConfigView(APIView):
 
     def get(self, request):
         tenant = request.tenant
+        triggers = [c[0] for c in AutoSendConfig.Trigger.choices]
         configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
         by_trigger = {c.trigger: c for c in configs}
-        # 모든 트리거에 대해 config 반환 (없으면 기본값)
-        triggers = [c[0] for c in AutoSendConfig.Trigger.choices]
+
         result = []
         for trigger in triggers:
             c = by_trigger.get(trigger)
@@ -637,3 +637,88 @@ class AutoSendConfigView(APIView):
 
         configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
         return Response([AutoSendConfigSerializer(c).data for c in configs])
+
+
+class ProvisionDefaultTemplatesView(APIView):
+    """POST: 기본 템플릿 + 자동발송 config 일괄 생성/리셋.
+    - 기존 기본 템플릿(이름이 DEFAULT_TEMPLATES와 동일)은 최신 기본값으로 리셋
+    - 사용자가 새로 만든 템플릿은 그대로 유지
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def post(self, request):
+        from .default_templates import DEFAULT_TEMPLATES
+
+        tenant = request.tenant
+        existing_configs = {
+            c.trigger: c
+            for c in AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
+        }
+        default_names = {d["name"] for d in DEFAULT_TEMPLATES.values()}
+        created_templates = 0
+        created_configs = 0
+        reset_templates = 0
+        linked = 0
+
+        for trigger, defaults in DEFAULT_TEMPLATES.items():
+            tpl_name = defaults["name"]
+            tpl_category = defaults["category"]
+            tpl_subject = defaults.get("subject", "")
+            tpl_body = defaults["body"]
+
+            existing_tpl = MessageTemplate.objects.filter(
+                tenant=tenant, name=tpl_name,
+            ).first()
+
+            if existing_tpl:
+                # 기본 템플릿이면 본문·제목·카테고리를 최신 기본값으로 리셋
+                changed = False
+                if existing_tpl.category != tpl_category:
+                    existing_tpl.category = tpl_category
+                    changed = True
+                if existing_tpl.subject != tpl_subject:
+                    existing_tpl.subject = tpl_subject
+                    changed = True
+                if existing_tpl.body != tpl_body:
+                    existing_tpl.body = tpl_body
+                    changed = True
+                if changed:
+                    existing_tpl.save(update_fields=["category", "subject", "body", "updated_at"])
+                    reset_templates += 1
+                tpl = existing_tpl
+            else:
+                tpl = MessageTemplate.objects.create(
+                    tenant=tenant,
+                    name=tpl_name,
+                    category=tpl_category,
+                    subject=tpl_subject,
+                    body=tpl_body,
+                )
+                created_templates += 1
+
+            existing = existing_configs.get(trigger)
+            if existing:
+                if not existing.template_id:
+                    existing.template = tpl
+                    existing.save(update_fields=["template", "updated_at"])
+                    linked += 1
+            else:
+                AutoSendConfig.objects.create(
+                    tenant=tenant,
+                    trigger=trigger,
+                    template=tpl,
+                    enabled=True,
+                    message_mode="both",
+                    minutes_before=defaults.get("minutes_before"),
+                )
+                created_configs += 1
+
+        total_configs = AutoSendConfig.objects.filter(tenant=tenant).count()
+        return Response({
+            "created_templates": created_templates,
+            "created_configs": created_configs,
+            "reset_templates": reset_templates,
+            "linked": linked,
+            "total_templates": MessageTemplate.objects.filter(tenant=tenant).count(),
+            "total_configs": total_configs,
+        }, status=status.HTTP_200_OK)

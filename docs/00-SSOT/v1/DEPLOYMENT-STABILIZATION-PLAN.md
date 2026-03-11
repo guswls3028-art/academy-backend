@@ -1,4 +1,6 @@
-# Deployment stabilization plan
+> **⚠️ SUPERSEDED — 배포 검증 절차는 `DEPLOY-VERIFICATION-SSOT.md` (V1.0.0)이 SSOT. 본 문서는 이력 참조용.**
+
+# Deployment stabilization plan (DEPRECATED — verification moved to SSOT)
 
 ## Step 1 — Verified current infrastructure (facts)
 

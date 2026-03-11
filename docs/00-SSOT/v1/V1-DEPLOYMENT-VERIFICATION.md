@@ -1,4 +1,6 @@
-# V1 배포 검증 리포트
+> **⚠️ SUPERSEDED — 배포 검증 SSOT는 `DEPLOY-VERIFICATION-SSOT.md` (V1.0.0)으로 이관됨. 본 문서는 이력 참조용.**
+
+# V1 배포 검증 리포트 (DEPRECATED)
 
 **AI·Cursor 룰:** 본 문서를 포함한 리포지토리 내 **모든 문서·코드에 대해 AI(Cursor Agent)는 열람·수정 권한**이 있다. 검증·배포·인프라 작업 시 **.cursor/rules/** 내 해당 룰을 **적재적소에 항시 확인**한다.
 
