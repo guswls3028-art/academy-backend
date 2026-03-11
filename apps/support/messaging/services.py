@@ -374,9 +374,9 @@ def send_registration_approved_messages(
     가입 신청 승인 시 학생·학부모에게 알림톡/SMS 발송.
 
     - 학생용: 트리거 registration_approved_student 템플릿 사용
-      플레이스홀더: #{student_name}, #{student_id}, #{student_password}, #{site_link}, #{change_password_notice}
+      플레이스홀더: #{student_name}, #{student_id}, #{student_password}, #{site_link}, #{pw_notice}
     - 학부모용: 트리거 registration_approved_parent 템플릿 사용
-      플레이스홀더: #{parent_id}, #{parent_password}, #{student_name}, #{student_id}, #{student_password}, #{site_link}, #{change_password_notice}
+      플레이스홀더: #{parent_id}, #{parent_password}, #{student_name}, #{student_id}, #{student_password}, #{site_link}, #{pw_notice}
 
     설정이 없거나 비활성화면 발송하지 않음.
     """
@@ -403,7 +403,7 @@ def send_registration_approved_messages(
             .replace("#{student_id}", student_id or "")
             .replace("#{student_password}", student_password or "")
             .replace("#{site_link}", site_url)
-            .replace("#{change_password_notice}", notice)
+            .replace("#{pw_notice}", notice)
         )
         if subject:
             text = subject + "\n" + text
@@ -416,7 +416,7 @@ def send_registration_approved_messages(
                 {"key": "student_id", "value": student_id or ""},
                 {"key": "student_password", "value": student_password or ""},
                 {"key": "site_link", "value": site_url},
-                {"key": "change_password_notice", "value": notice},
+                {"key": "pw_notice", "value": notice},
             ]
         try:
             if enqueue_sms(
@@ -448,7 +448,7 @@ def send_registration_approved_messages(
             .replace("#{student_id}", student_id or "")
             .replace("#{student_password}", student_password or "")
             .replace("#{site_link}", site_url)
-            .replace("#{change_password_notice}", notice)
+            .replace("#{pw_notice}", notice)
         )
         if subject:
             text = subject + "\n" + text
@@ -463,7 +463,7 @@ def send_registration_approved_messages(
                 {"key": "student_id", "value": student_id or ""},
                 {"key": "student_password", "value": student_password or ""},
                 {"key": "site_link", "value": site_url},
-                {"key": "change_password_notice", "value": notice},
+                {"key": "pw_notice", "value": notice},
             ]
         try:
             if enqueue_sms(
