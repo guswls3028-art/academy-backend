@@ -348,7 +348,7 @@ class SendMessageView(APIView):
         if not sender:
             return Response(
                 {
-                    "detail": "발신번호가 등록되지 않았습니다. 설정 > 내 정보에서 발신번호를 등록·인증한 뒤 저장해 주세요.",
+                    "detail": "발신번호가 등록되지 않았습니다. 메시지 > 설정 탭에서 발신번호를 등록·저장한 뒤 발송해 주세요.",
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
