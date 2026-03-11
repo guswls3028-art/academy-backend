@@ -111,6 +111,6 @@ urlpatterns = [
 ]
 
 router = DefaultRouter()
-router.register("exam-attempts", ExamAttemptViewSet)
+router.register("exam-attempts", ExamAttemptViewSet, basename="exam-attempts")
 router.register("admin/clinic-bookings", AdminClinicBookingViewSet, basename="admin-clinic-bookings")
 urlpatterns += router.urls
