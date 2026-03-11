@@ -325,6 +325,21 @@ DEFAULT_TEMPLATES: dict[str, dict] = {
         ),
         "minutes_before": None,
     },
+    "clinic_result_notification": {
+        "category": "clinic",
+        "name": "[학원플러스] 클리닉 결과 안내",
+        "subject": "클리닉 결과를 안내드립니다",
+        "body": (
+            "#{학생이름2}학생님, 클리닉 결과를 안내드립니다.\n"
+            "\n"
+            "클리닉: #{클리닉명}\n"
+            "결과: #{클리닉합불}\n"
+            "\n"
+            "상세 내용은 앱에서 확인하실 수 있습니다.\n"
+            "#{사이트링크}"
+        ),
+        "minutes_before": None,
+    },
     "counseling_reservation_created": {
         "category": "clinic",
         "name": "[학원플러스] 상담 예약 완료",
