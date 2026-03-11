@@ -82,6 +82,7 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     status_changed_by_name = serializers.CharField(
         source="status_changed_by.username",
         read_only=True,
+        default=None,
     )
 
     class Meta:

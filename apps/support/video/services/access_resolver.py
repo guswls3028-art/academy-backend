@@ -49,7 +49,8 @@ def resolve_access_mode(
 
     progress = video_repo.video_progress_get(video, enrollment)
 
-    if progress and progress.completed:
+    # 90% 이상 시청 시 무제한(FREE_REVIEW) 자동 전환
+    if progress and (progress.completed or (progress.progress is not None and float(progress.progress) >= 0.9)):
         return AccessMode.FREE_REVIEW
 
     if perm and perm.proctored_completed_at is not None:

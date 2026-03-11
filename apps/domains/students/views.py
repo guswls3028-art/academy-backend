@@ -1608,7 +1608,24 @@ class StudentPasswordResetSendView(APIView):
             display_name = parent.name or f"{student.name} 학부모"
             display_username = parent_phone
 
-        temp_password = _generate_temp_password()
+        # ✅ 보안: 클라이언트 지정 비밀번호는 인증된 관리자/교사만 허용
+        # (이 엔드포인트는 AllowAny이므로 비인증 요청에서는 서버 생성만 사용)
+        client_temp_password = (request.data.get("temp_password") or "").strip()
+        is_staff_request = (
+            getattr(request, "user", None)
+            and request.user.is_authenticated
+            and hasattr(request, "tenant")
+            and TenantMembership.objects.filter(
+                user=request.user, tenant=request.tenant,
+                role__in=["owner", "admin", "teacher", "staff"],
+                is_active=True,
+            ).exists()
+        )
+        temp_password = (
+            client_temp_password
+            if client_temp_password and is_staff_request
+            else _generate_temp_password()
+        )
         user.set_password(temp_password)
         user.save(update_fields=["password"])
 

@@ -275,20 +275,26 @@ class StudentVideoMeView(APIView):
                 "enrollment_id": enrollment_by_lecture.get(lec.id),
             })
 
-        # 전체공개영상: 내용물이 있던 없던 항상 제공 (학생이면 다 볼 수 있음)
-        public_lecture = Lecture.objects.filter(
-            tenant=tenant, title="전체공개영상"
-        ).first()
-        public_data = None
-        if public_lecture:
-            public_session = public_lecture.sessions.filter(order=1).first()
-            if public_session:
-                public_data = {
-                    "session_id": public_session.id,
-                    "lecture_id": public_lecture.id,
-                }
-        # 전체공개영상이 없어도 항상 public 필드 제공 (null로)
-        # 프론트엔드에서 전체공개영상 선택지를 항상 표시할 수 있도록
+        # 전체공개영상: 없으면 자동 생성 — 학생이면 항상 볼 수 있어야 함
+        public_lecture, _ = Lecture.objects.get_or_create(
+            tenant=tenant,
+            title="전체공개영상",
+            defaults={
+                "name": "전체공개영상",
+                "subject": "공개",
+                "description": "프로그램에 등록된 모든 학생이 시청할 수 있는 영상입니다.",
+                "is_active": True,
+            },
+        )
+        public_session, _ = Session.objects.get_or_create(
+            lecture=public_lecture,
+            order=1,
+            defaults={"title": "전체공개영상", "date": None},
+        )
+        public_data = {
+            "session_id": public_session.id,
+            "lecture_id": public_lecture.id,
+        }
 
         return Response({
             "public": public_data,  # null이어도 항상 필드 제공
@@ -554,6 +560,14 @@ class StudentVideoPlaybackView(APIView):
             f"play_url={play_url[:100] if play_url else None}..."
         )
 
+        # PROCTORED_CLASS: 탐색 제한 + 배속 1x + 워터마크
+        is_proctored = access_mode_value == "PROCTORED_CLASS"
+        seek_policy = {
+            "mode": "bounded_forward" if is_proctored else "free",
+            "forward_limit": "max_watched" if is_proctored else None,
+            "grace_seconds": 3,
+        }
+
         payload = {
             "video": {
                 "id": int(video.id),
@@ -563,16 +577,27 @@ class StudentVideoPlaybackView(APIView):
                 "thumbnail_url": thumb,
                 "duration": getattr(video, "duration", None),
                 **_policy_from_video(video),
-                "effective_rule": rule,  # Legacy field
-                "access_mode": access_mode_value,  # New field
+                "effective_rule": rule,
+                "access_mode": access_mode_value,
             },
             "hls_url": hls_url,
             "mp4_url": mp4_url,
-            "play_url": play_url,  # ✅ 재생 URL 추가
+            "play_url": play_url,
             "policy": {
+                "access_mode": access_mode_value,
+                "monitoring_enabled": is_proctored,
+                "allow_seek": not is_proctored,
+                "seek": seek_policy,
+                "playback_rate": {
+                    "max": 1.0 if is_proctored else 16.0,
+                    "ui_control": True,
+                },
+                "watermark": {
+                    "enabled": is_proctored,
+                    "mode": "overlay",
+                },
                 **_policy_from_video(video),
-                "effective_rule": rule,  # Legacy field
-                "access_mode": access_mode_value,  # New field
+                "effective_rule": rule,
             },
         }
 
