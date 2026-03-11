@@ -92,6 +92,9 @@ def send_one_alimtalk_ppurio(
     pf_id: str,
     template_id: str,
     replacements: Optional[list] = None,
+    *,
+    api_key: str = "",
+    account: str = "",
 ) -> dict:
     """뿌리오 알림톡 1건 발송. Solapi send_one_alimtalk과 동일 인터페이스."""
     try:
@@ -99,19 +102,87 @@ def send_one_alimtalk_ppurio(
         return send_ppurio_alimtalk(
             to=to, sender=sender, pf_id=pf_id,
             template_id=template_id, replacements=replacements,
+            api_key=api_key, account=account,
         )
     except Exception as e:
         logger.exception("ppurio alimtalk failed to=%s****", (to or "")[:4])
         return {"status": "error", "reason": str(e)[:500]}
 
 
-def send_one_sms_ppurio(to: str, text: str, sender: str) -> dict:
+def send_one_sms_ppurio(
+    to: str, text: str, sender: str,
+    *, api_key: str = "", account: str = "",
+) -> dict:
     """뿌리오 SMS/LMS 1건 발송. Solapi send_one_sms와 동일 인터페이스."""
     try:
         from apps.support.messaging.ppurio_client import send_ppurio_sms
-        return send_ppurio_sms(to=to, text=text, sender=sender)
+        return send_ppurio_sms(to=to, text=text, sender=sender, api_key=api_key, account=account)
     except Exception as e:
         logger.exception("ppurio sms failed to=%s****", (to or "")[:4])
+        return {"status": "error", "reason": str(e)[:500]}
+
+
+def send_one_sms_own_solapi(
+    to: str, text: str, sender: str,
+    *, api_key: str, api_secret: str,
+) -> dict:
+    """테넌트 자체 솔라피 키로 SMS 1건 발송."""
+    try:
+        from solapi.model import RequestMessage
+        from solapi.model.message_type import MessageType
+        from solapi import SolapiMessageService
+    except ImportError as e:
+        return {"status": "error", "reason": "solapi_not_installed"}
+    client = SolapiMessageService(api_key=api_key, api_secret=api_secret)
+    sender = (sender or "").strip().replace("-", "")
+    to = (to or "").replace("-", "").strip()
+    text = (text or "").strip()
+    if not to or not text or not sender:
+        return {"status": "error", "reason": "to_text_sender_required"}
+    text_bytes = text.encode("utf-8")
+    if len(text_bytes) <= 90:
+        message = RequestMessage(from_=sender, to=to, text=text, type=MessageType.SMS)
+    else:
+        subject = (text[:20] + "…") if len(text) > 20 else text
+        message = RequestMessage(from_=sender, to=to, text=text, type=MessageType.LMS, subject=subject)
+    try:
+        response = client.send(message)
+        group_id = getattr(getattr(response, "group_info", None), "group_id", None)
+        logger.info("send_sms_own ok to=%s**** group_id=%s", to[:4], group_id)
+        return {"status": "ok", "group_id": group_id}
+    except Exception as e:
+        logger.warning("send_sms_own failed to=%s****: %s", to[:4], e)
+        return {"status": "error", "reason": str(e)[:500]}
+
+
+def send_one_alimtalk_own_solapi(
+    to: str, sender: str, pf_id: str, template_id: str,
+    replacements: Optional[list] = None,
+    *, api_key: str, api_secret: str,
+) -> dict:
+    """테넌트 자체 솔라피 키로 알림톡 1건 발송."""
+    try:
+        from solapi.model import RequestMessage
+        from solapi.model.kakao.kakao_option import KakaoOption
+        from solapi import SolapiMessageService
+    except ImportError:
+        return {"status": "error", "reason": "solapi_not_installed"}
+    client = SolapiMessageService(api_key=api_key, api_secret=api_secret)
+    to = (to or "").replace("-", "").strip()
+    if not to or not pf_id or not template_id:
+        return {"status": "error", "reason": "to_pf_template_required"}
+    try:
+        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id)
+        message = RequestMessage(from_=sender, to=to, kakao_options=kakao_option, replacements=replacements or None)
+        response = client.send(message)
+        group_id = getattr(getattr(response, "group_info", None), "group_id", None)
+        count = getattr(getattr(response, "group_info", None), "count", None)
+        if count is not None and getattr(count, "registered_success", 0) == 0:
+            return {"status": "error", "reason": "alimtalk_failed_or_rejected", "group_id": group_id}
+        logger.info("send_alimtalk_own ok to=%s**** group_id=%s", to[:4], group_id)
+        return {"status": "ok", "group_id": group_id}
+    except Exception as e:
+        logger.warning("alimtalk_own failed to=%s****: %s", to[:4], e)
         return {"status": "error", "reason": str(e)[:500]}
 
 
@@ -366,7 +437,7 @@ def main() -> int:
                                 rollback_credits,
                             )
                             from apps.support.messaging.models import NotificationLog
-                            from apps.support.messaging.policy import resolve_kakao_channel, get_tenant_provider
+                            from apps.support.messaging.policy import resolve_kakao_channel, get_tenant_provider, get_tenant_own_credentials
                             from apps.core.models import Tenant
                             info = get_tenant_messaging_info(int(tenant_id))
                             if info:
@@ -379,6 +450,8 @@ def main() -> int:
                             pf_id_tenant = (channel.get("pf_id") or "").strip()
                             # 공급자 결정
                             tenant_provider = get_tenant_provider(int(tenant_id))
+                            # 테넌트 자체 연동 키 (직접 연동 모드)
+                            own_creds = get_tenant_own_credentials(int(tenant_id))
                         except Exception as e:
                             logger.warning("get_tenant_messaging_info/resolve_kakao_channel failed: %s", e)
 
@@ -430,10 +503,25 @@ def main() -> int:
                         consecutive_errors += 1
                         continue
 
+                    # 테넌트 자체 연동 키가 있으면 사용, 없으면 시스템 기본
+                    _own = own_creds if 'own_creds' in dir() else {}
+                    _own_ppurio_key = (_own.get("ppurio_api_key") or "").strip()
+                    _own_ppurio_acct = (_own.get("ppurio_account") or "").strip()
+                    _own_solapi_key = (_own.get("solapi_api_key") or "").strip()
+                    _own_solapi_secret = (_own.get("solapi_api_secret") or "").strip()
+
                     # 공급자별 발송 함수 선택
                     def _dispatch_sms(to_, text_, sender_):
                         if tenant_provider == "ppurio":
-                            return send_one_sms_ppurio(to=to_, text=text_, sender=sender_)
+                            return send_one_sms_ppurio(
+                                to=to_, text=text_, sender=sender_,
+                                api_key=_own_ppurio_key, account=_own_ppurio_acct,
+                            )
+                        if _own_solapi_key and _own_solapi_secret:
+                            return send_one_sms_own_solapi(
+                                to=to_, text=text_, sender=sender_,
+                                api_key=_own_solapi_key, api_secret=_own_solapi_secret,
+                            )
                         return send_one_sms(cfg, to=to_, text=text_, sender=sender_)
 
                     def _dispatch_alimtalk(to_, sender_, pf_id_, template_id_, replacements_):
@@ -441,6 +529,13 @@ def main() -> int:
                             return send_one_alimtalk_ppurio(
                                 to=to_, sender=sender_, pf_id=pf_id_,
                                 template_id=template_id_, replacements=replacements_,
+                                api_key=_own_ppurio_key, account=_own_ppurio_acct,
+                            )
+                        if _own_solapi_key and _own_solapi_secret:
+                            return send_one_alimtalk_own_solapi(
+                                to=to_, sender=sender_, pf_id=pf_id_,
+                                template_id=template_id_, replacements=replacements_,
+                                api_key=_own_solapi_key, api_secret=_own_solapi_secret,
                             )
                         return send_one_alimtalk(
                             cfg, to=to_, sender=sender_, pf_id=pf_id_,

@@ -154,6 +154,10 @@ def send_ppurio_alimtalk(
     Returns: {"status": "ok"|"error", "msgkey"?, "reason"?}
     """
     creds = _get_ppurio_credentials()
+    # 테넌트 자체 키 우선
+    if api_key and account:
+        creds["api_key"] = api_key
+        creds["account"] = account
     if not creds["api_key"] or not creds["account"]:
         return {"status": "error", "reason": "ppurio_not_configured"}
 
