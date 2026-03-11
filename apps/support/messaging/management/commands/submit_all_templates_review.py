@@ -91,7 +91,7 @@ class Command(BaseCommand):
                 ok, errs = validate_template_variables(t.body, t.subject or "")
                 if not ok:
                     self.stdout.write(
-                        self.style.WARNING(f"    ✗ {t.name} — 변수 오류: {'; '.join(errs)}")
+                        self.style.WARNING(f"    [FAIL] {t.name} — 변수 오류: {'; '.join(errs)}")
                     )
                     skipped += 1
                     continue
@@ -121,19 +121,19 @@ class Command(BaseCommand):
                     t.solapi_status = "PENDING"
                     t.save(update_fields=["solapi_template_id", "solapi_status", "updated_at"])
                     self.stdout.write(
-                        self.style.SUCCESS(f"    ✓ {t.name} → {template_id}")
+                        self.style.SUCCESS(f"    [OK] {t.name} → {template_id}")
                     )
                     submitted += 1
                     # 솔라피 API rate limit 방지
                     time.sleep(0.5)
                 except ValueError as e:
                     self.stdout.write(
-                        self.style.ERROR(f"    ✗ {t.name} — {e}")
+                        self.style.ERROR(f"    [FAIL] {t.name} — {e}")
                     )
                     failed += 1
                 except Exception as e:
                     self.stdout.write(
-                        self.style.ERROR(f"    ✗ {t.name} — 예외: {e}")
+                        self.style.ERROR(f"    [FAIL] {t.name} — 예외: {e}")
                     )
                     failed += 1
 

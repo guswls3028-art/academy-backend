@@ -13,6 +13,8 @@ from apps.core.models import Tenant
 # --------------------------------------------------
 
 class Session(TimestampModel):
+    GRADE_CHOICES = [(1, "1학년"), (2, "2학년"), (3, "3학년")]
+
     tenant = models.ForeignKey(
         Tenant,
         on_delete=models.CASCADE,
@@ -20,6 +22,7 @@ class Session(TimestampModel):
         db_index=True,  # ✅ tenant_id 인덱스 추가
     )
 
+    title = models.CharField(max_length=255, blank=True, default="")
     date = models.DateField()
     start_time = models.TimeField()
 
@@ -27,6 +30,14 @@ class Session(TimestampModel):
 
     location = models.CharField(max_length=255)
     max_participants = models.PositiveIntegerField()
+
+    # ✅ 대상 학년: null이면 전체 학년 대상, 1/2/3이면 해당 학년만
+    target_grade = models.PositiveSmallIntegerField(
+        choices=GRADE_CHOICES,
+        null=True,
+        blank=True,
+        help_text="대상 학년. 비어있으면 전체 학년.",
+    )
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -38,14 +49,24 @@ class Session(TimestampModel):
 
     class Meta:
         constraints = [
+            # ✅ 학년 지정 세션: 같은 시간/장소/학년 중복 방지
+            models.UniqueConstraint(
+                fields=["tenant", "date", "start_time", "location", "target_grade"],
+                name="uniq_clinic_session_per_tenant_time_loc_grade",
+                condition=models.Q(target_grade__isnull=False),
+            ),
+            # ✅ 전체 학년 세션: 같은 시간/장소 중복 방지
             models.UniqueConstraint(
                 fields=["tenant", "date", "start_time", "location"],
                 name="uniq_clinic_session_per_tenant_time_location",
-            )
+                condition=models.Q(target_grade__isnull=True),
+            ),
         ]
 
     def __str__(self):
-        return f"{self.date} {self.start_time} @ {self.location}"
+        grade = f" ({self.get_target_grade_display()})" if self.target_grade else ""
+        title = f" {self.title}" if self.title else ""
+        return f"{self.date} {self.start_time}{title}{grade} @ {self.location}"
 
 
 # --------------------------------------------------

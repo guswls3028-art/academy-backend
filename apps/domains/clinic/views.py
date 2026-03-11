@@ -47,7 +47,7 @@ class SessionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
-        return (
+        qs = (
             Session.objects
             .filter(tenant=tenant)
             .annotate(
@@ -84,6 +84,14 @@ class SessionViewSet(viewsets.ModelViewSet):
             )
         )
 
+        # ✅ 학생 조회 시: 본인 학년에 해당하는 세션만 노출 (시스템 레벨 통제)
+        from apps.domains.student_app.permissions import get_request_student
+        student = get_request_student(self.request)
+        if student and student.grade:
+            qs = qs.filter(Q(target_grade__isnull=True) | Q(target_grade=student.grade))
+
+        return qs
+
     def perform_create(self, serializer):
         """
         ✅ created_by 자동 기록 (운영/감사 기준). 미인증 시 None
@@ -102,9 +110,10 @@ class SessionViewSet(viewsets.ModelViewSet):
                 created_by=created_by,
             )
         except IntegrityError as e:
-            if "uniq_clinic_session_per_tenant_time_location" in str(e):
+            err_str = str(e)
+            if "uniq_clinic_session_per_tenant_time_loc" in err_str:
                 raise serializers.ValidationError(
-                    {"non_field_errors": "같은 날짜·시간·장소의 클리닉이 이미 있습니다. 다른 시간 또는 장소를 선택해주세요."}
+                    {"non_field_errors": "같은 날짜·시간·장소·학년의 클리닉이 이미 있습니다. 다른 시간, 장소, 또는 학년을 선택해주세요."}
                 )
             raise
 
@@ -178,9 +187,11 @@ class SessionViewSet(viewsets.ModelViewSet):
         data = [
             {
                 "id": s.id,
+                "title": s.title or "",
                 "date": s.date,
                 "start_time": s.start_time,
                 "location": s.location,
+                "target_grade": s.target_grade,
                 "participant_count": s.participant_count,
                 "booked_count": s.booked_count,
                 "no_show_count": s.no_show_count,
@@ -283,6 +294,12 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 return Response(
                     {"detail": "등록 가능한 클리닉을 선택해주세요. 해당 날짜에 열린 클리닉만 신청할 수 있습니다."},
                     status=status.HTTP_400_BAD_REQUEST,
+                )
+            # ✅ 학년 제한 검증: 학생 학년과 세션 대상 학년이 불일치하면 거부
+            if session.target_grade and request_student.grade and session.target_grade != request_student.grade:
+                return Response(
+                    {"detail": "해당 클리닉은 다른 학년 대상입니다. 본인 학년의 클리닉만 신청할 수 있습니다."},
+                    status=status.HTTP_403_FORBIDDEN,
                 )
             # 정원 체크: booked + pending 인원이 max_participants 이상이면 신청 불가
             from django.db.models import Count
