@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import uuid
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from rest_framework.views import APIView
@@ -34,7 +35,15 @@ class GenerateOMRSheetAssetView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request, exam_id: int):
-        template_exam = get_object_or_404(Exam, id=int(exam_id), exam_type=Exam.ExamType.TEMPLATE)
+        tenant = request.tenant
+        template_exam = get_object_or_404(
+            Exam.objects.filter(
+                Q(sessions__lecture__tenant=tenant)
+                | Q(derived_exams__sessions__lecture__tenant=tenant)
+            ).distinct(),
+            id=int(exam_id),
+            exam_type=Exam.ExamType.TEMPLATE,
+        )
 
         # 봉인: 이미 regular로 사용 중이면 구조/자산 변경 금지
         assert_template_editable(template_exam)

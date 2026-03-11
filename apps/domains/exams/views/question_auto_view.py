@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from rest_framework.views import APIView
@@ -29,7 +30,14 @@ class SheetAutoQuestionsView(APIView):
         return [IsAuthenticated(), IsTeacherOrAdmin()]
 
     def post(self, request, sheet_id: int):
-        sheet = get_object_or_404(Sheet.objects.select_related("exam"), id=int(sheet_id))
+        tenant = request.tenant
+        sheet = get_object_or_404(
+            Sheet.objects.select_related("exam").filter(
+                Q(exam__sessions__lecture__tenant=tenant)
+                | Q(exam__derived_exams__sessions__lecture__tenant=tenant)
+            ).distinct(),
+            id=int(sheet_id),
+        )
         if sheet.exam.exam_type != Exam.ExamType.TEMPLATE:
             raise PermissionDenied("Auto-question is allowed only for template exams.")
 

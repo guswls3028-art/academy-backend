@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import List, Set
 
 from django.db import transaction
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from rest_framework.views import APIView
@@ -71,7 +72,14 @@ class ExamEnrollmentManageView(APIView):
         return session_id
 
     def get(self, request, exam_id: int):
-        exam = get_object_or_404(Exam, pk=exam_id)
+        tenant = request.tenant
+        exam = get_object_or_404(
+            Exam.objects.filter(
+                Q(sessions__lecture__tenant=tenant)
+                | Q(derived_exams__sessions__lecture__tenant=tenant)
+            ).distinct(),
+            pk=exam_id,
+        )
 
         try:
             session_id = self._get_session_id_or_400(request, exam)
@@ -146,7 +154,14 @@ class ExamEnrollmentManageView(APIView):
 
     @transaction.atomic
     def put(self, request, exam_id: int):
-        exam = get_object_or_404(Exam, pk=exam_id)
+        tenant = request.tenant
+        exam = get_object_or_404(
+            Exam.objects.filter(
+                Q(sessions__lecture__tenant=tenant)
+                | Q(derived_exams__sessions__lecture__tenant=tenant)
+            ).distinct(),
+            pk=exam_id,
+        )
 
         try:
             session_id = self._get_session_id_or_400(request, exam)

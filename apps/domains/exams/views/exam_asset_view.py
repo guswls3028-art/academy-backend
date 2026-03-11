@@ -3,6 +3,7 @@ from __future__ import annotations
 import mimetypes
 import uuid
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -33,14 +34,28 @@ class ExamAssetView(APIView):
         return [IsAuthenticated(), TenantResolvedAndStaff()]
 
     def get(self, request, exam_id: int):
-        exam = get_object_or_404(Exam, id=int(exam_id))
+        tenant = request.tenant
+        exam = get_object_or_404(
+            Exam.objects.filter(
+                Q(sessions__lecture__tenant=tenant)
+                | Q(derived_exams__sessions__lecture__tenant=tenant)
+            ).distinct(),
+            id=int(exam_id),
+        )
         template = resolve_template_exam(exam)
 
         qs = ExamAsset.objects.filter(exam=template).order_by("asset_type")
         return Response(ExamAssetSerializer(qs, many=True).data)
 
     def post(self, request, exam_id: int):
-        exam = get_object_or_404(Exam, id=int(exam_id))
+        tenant = request.tenant
+        exam = get_object_or_404(
+            Exam.objects.filter(
+                Q(sessions__lecture__tenant=tenant)
+                | Q(derived_exams__sessions__lecture__tenant=tenant)
+            ).distinct(),
+            id=int(exam_id),
+        )
         if exam.exam_type != Exam.ExamType.TEMPLATE:
             return Response({"detail": "Assets can be uploaded only to template exams."}, status=403)
 

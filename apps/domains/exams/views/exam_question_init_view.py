@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 
@@ -27,7 +28,14 @@ class ExamQuestionInitView(APIView):
 
     @transaction.atomic
     def post(self, request, exam_id: int):
-        exam = get_object_or_404(Exam, id=int(exam_id))
+        tenant = request.tenant
+        exam = get_object_or_404(
+            Exam.objects.filter(
+                Q(sessions__lecture__tenant=tenant)
+                | Q(derived_exams__sessions__lecture__tenant=tenant)
+            ).distinct(),
+            id=int(exam_id),
+        )
 
         owner = exam
 
