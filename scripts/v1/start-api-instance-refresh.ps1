@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # API ASG Instance Refresh 수동 실행
 # AWS 프로필: 반드시 default. (-AwsProfile default)
 # 사용: pwsh scripts/v1/start-api-instance-refresh.ps1 -AwsProfile default
@@ -15,7 +15,7 @@ $null = Load-SSOT -Env "prod"
 
 $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
 $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInstanceRefreshInstanceWarmup } else { 300 }
-$prefs = "{`"MinHealthyPercentage`":$minHealthy,`"InstanceWarmup`":$warmup}"
+$prefs = Convert-JsonArgToFileRef (@{MinHealthyPercentage=$minHealthy;InstanceWarmup=$warmup} | ConvertTo-Json -Compress)
 
 Write-Host "API ASG Instance Refresh 시작: $($script:ApiASGName)" -ForegroundColor Cyan
 Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh"

@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # API ASG instance refresh only (정식 풀배포 중 API만). CI deploy-api-refresh와 동일 동작.
 # AWS 프로필: 반드시 default. (-AwsProfile default)
 # Usage: pwsh scripts/v1/api-refresh-only.ps1 -AwsProfile default
@@ -21,7 +21,7 @@ $null = Load-SSOT -Env "prod"
 
 $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
 $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInstanceRefreshInstanceWarmup } else { 300 }
-$prefs = "{`"MinHealthyPercentage`":$minHealthy,`"InstanceWarmup`":$warmup}"
+$prefs = Convert-JsonArgToFileRef (@{MinHealthyPercentage=$minHealthy;InstanceWarmup=$warmup} | ConvertTo-Json -Compress)
 
 Write-Host "Starting API ASG instance refresh: $($script:ApiASGName) (MinHealthy=$minHealthy%, Warmup=${warmup}s)" -ForegroundColor Cyan
 try {

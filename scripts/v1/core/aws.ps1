@@ -1,4 +1,4 @@
-# AWS CLI wrapper. No Start-Process; & aws @ArgsArray to preserve quoting.
+﻿# AWS CLI wrapper. No Start-Process; & aws @ArgsArray to preserve quoting.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 # When AWS_PROFILE is set, --profile is injected so subprocess uses the same credentials.
 # In Plan mode: read-only (describe/get/list) run normally; mutating commands are skipped and return $null / no throw.
@@ -41,6 +41,30 @@ function Test-AwsArgsMutating {
         if ($verb -like "${m}*") { return $true }
     }
     return $false
+}
+
+function Convert-JsonArgToFileRef {
+    <#
+    .SYNOPSIS
+    JSON 문자열을 file:// 임시파일 참조로 변환.
+    Windows PowerShell에서 aws CLI splatting 시 JSON 큰따옴표가 소실되는 문제 해결.
+    사용: $prefs = Convert-JsonArgToFileRef $jsonString
+    반환: "file://C:\...\tmpXXXX.tmp"
+    호출자가 사용 후 tmpFile 삭제 필요 (또는 시스템이 정리).
+    #>
+    param([string]$JsonString)
+    if (-not $JsonString -or $JsonString -match '^file://') { return $JsonString }
+    $tmp = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllText($tmp, $JsonString, [System.Text.UTF8Encoding]::new($false))
+    return "file://$tmp"
+}
+
+function Remove-TempFiles {
+    param($TempFiles)
+    if (-not $TempFiles) { return }
+    foreach ($f in $TempFiles) {
+        Remove-Item $f -ErrorAction SilentlyContinue 2>$null
+    }
 }
 
 function Invoke-AwsJson {

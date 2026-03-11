@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # API 재배포 + 전체 워커 연결 검증 (SSOT V1.0.0)
 # API ASG instance refresh → 헬스체크 대기 → 워커 연결 전체 검증
 # Usage: pwsh scripts/v1/deploy-api-and-verify-workers.ps1 [-AwsProfile default] [-SkipRefresh]
@@ -180,7 +180,7 @@ if ($SkipRefresh) {
 } else {
     $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
     $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInstanceRefreshInstanceWarmup } else { 300 }
-    $prefs = "{`"MinHealthyPercentage`":$minHealthy,`"InstanceWarmup`":$warmup}"
+    $prefs = Convert-JsonArgToFileRef (@{MinHealthyPercentage=$minHealthy;InstanceWarmup=$warmup} | ConvertTo-Json -Compress)
 
     Write-Host "  Starting instance refresh: $($script:ApiASGName) (MinHealthy=$minHealthy%, Warmup=${warmup}s)" -ForegroundColor White
     try {
