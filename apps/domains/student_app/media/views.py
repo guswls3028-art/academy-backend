@@ -85,6 +85,52 @@ def _get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_i
     return enrollment, None
 
 
+def _build_thumbnail_url(video) -> Optional[str]:
+    """
+    VideoSerializer.get_thumbnail_url 과 동일 로직.
+    CDN_HLS_BASE_URL 기반 썸네일 URL 구성.
+    """
+    from django.conf import settings
+
+    cdn = getattr(settings, "CDN_HLS_BASE_URL", None)
+    if not cdn:
+        return None
+    cdn = cdn.rstrip("/")
+
+    def _norm(path: str) -> str:
+        path = path.lstrip("/")
+        if path.startswith("storage/media/"):
+            return path[len("storage/"):]
+        return path
+
+    def _ver() -> int:
+        try:
+            return int(video.updated_at.timestamp())
+        except Exception:
+            return 0
+
+    # 1) explicit thumbnail field
+    if video.thumbnail:
+        return f"{cdn}/{_norm(video.thumbnail.name)}?v={_ver()}"
+
+    # 2) READY → convention-based path
+    if getattr(video, "status", None) == video.Status.READY:
+        try:
+            session = getattr(video, "session", None)
+            lecture = getattr(session, "lecture", None) if session else None
+            tenant = getattr(lecture, "tenant", None) if lecture else None
+            if tenant is None:
+                return None
+            tenant_id = getattr(tenant, "id", None) or getattr(tenant, "pk", None)
+            from apps.core.r2_paths import video_hls_prefix
+            path = _norm(f"{video_hls_prefix(tenant_id=tenant_id, video_id=video.id)}/thumbnail.jpg")
+            return f"{cdn}/{path}?v={_ver()}"
+        except Exception:
+            return None
+
+    return None
+
+
 def _pick_urls(video, request=None) -> Tuple[Optional[str], Optional[str]]:
     """
     비디오 재생 URL 생성
@@ -409,7 +455,7 @@ class StudentSessionVideoListView(APIView):
                     .first()
                 )
 
-            thumb = getattr(v, "thumbnail_url", None) or getattr(v, "thumbnail", None)
+            thumb = _build_thumbnail_url(v)
 
             # Use SSOT access resolver
             from apps.support.video.services.access_resolver import resolve_access_mode
@@ -546,11 +592,7 @@ class StudentVideoPlaybackView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         
-        thumb = getattr(video, "thumbnail_url", None) or getattr(video, "thumbnail", None)
-        
-        # thumbnail_url이 없으면 thumbnail 필드에서 URL 생성
-        if not thumb and hasattr(video, "thumbnail") and video.thumbnail:
-            thumb = request.build_absolute_uri(video.thumbnail.url) if request else None
+        thumb = _build_thumbnail_url(video)
 
         # play_url 생성 (hls_url 우선, 없으면 mp4_url)
         play_url = hls_url or mp4_url
