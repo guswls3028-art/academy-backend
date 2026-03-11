@@ -21,16 +21,14 @@
 
 | Fact | Supporting artifact |
 |------|---------------------|
-| **Two paths.** (1) **Formal:** `scripts/v1/deploy.ps1` → Ensure-API (Launch Template + ASG). LT UserData: SSM → `/opt/api.env`, ECR pull, `docker run` academy-api:8000. (2) **Rapid:** `scripts/v1/api-auto-deploy-remote.ps1` -Action On → cron on instances runs `scripts/deploy_api_on_server.sh` when `origin/main` changes. | `backend/scripts/v1/resources/api.ps1` (Get-ApiLaunchTemplateUserData, Ensure-API-ASG), `backend/scripts/deploy_api_on_server.sh`, `backend/scripts/v1/api-auto-deploy-remote.ps1` |
-| **Formal trigger (API only):** CI job `deploy-api-refresh` runs `aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'`. No deploy.ps1 in CI; only instance refresh. | `backend/.github/workflows/v1-build-and-push-latest.yml` (deploy-api-refresh job) |
-| **Rapid trigger:** Cron on each API instance: `*/2 * * * *` (every 2 min) runs a flock-wrapped script that `git fetch origin main`, compares LOCAL vs REMOTE rev, and if different runs `bash scripts/deploy_api_on_server.sh`. | `backend/scripts/auto_deploy_cron_on.sh` (CRON_LINE) |
+| **Two paths.** (1) **CI 자동:** main push → GitHub Actions build-and-push → `deploy-api-refresh` job → API ASG instance refresh. (2) **수동 정식:** `scripts/v1/deploy.ps1` → Ensure-API (Launch Template + ASG). LT UserData: SSM → `/opt/api.env`, ECR pull, `docker run` academy-api:8000. | `backend/.github/workflows/v1-build-and-push-latest.yml`, `backend/scripts/v1/resources/api.ps1` |
+| **CI trigger (API only):** CI job `deploy-api-refresh` runs `aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'`. IAM 역할 `academy-gha-ecr-build`에 권한 적용 완료 (2026-03-11). | `backend/.github/workflows/v1-build-and-push-latest.yml` (deploy-api-refresh job) |
 | **API container name:** `academy-api`. Port 8000. Image from ECR (account 809466760795, repo academy-api, tag latest in scripts). | `backend/scripts/v1/resources/api.ps1` (docker run --name academy-api -p 8000:8000), `backend/scripts/deploy_api_on_server.sh` (docker stop/rm academy-api, docker run --name academy-api) |
 | **deploy.ps1 run context:** Must run from **backend repo root**. `$RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path` with ScriptRoot = scripts/v1. | `backend/scripts/v1/deploy.ps1` (line 38), `backend/scripts/v1/core/ssot.ps1` (params path) |
 
 ### Assumptions
 
-- **Formal “full” deploy:** Running `deploy.ps1` locally (not in CI) is the only way to update Launch Template / UserData and then optionally trigger instance refresh. CI runs build-and-push + deploy-api-refresh (ASG instance refresh, IAM 권한 적용 완료 2026-03-11).
-- **Rapid repo on server:** Scripts assume repo at `/home/ec2-user/academy` (RepoPath default in api-auto-deploy-remote.ps1). If missing, On/Deploy clones from RepoUrl (default academy-backend.git).
+- **수동 정식 배포:** Running `deploy.ps1` locally (not in CI) is the only way to update Launch Template / UserData and then optionally trigger instance refresh. CI runs build-and-push + deploy-api-refresh (ASG instance refresh, IAM 권한 적용 완료 2026-03-11).
 
 ---
 
@@ -99,33 +97,24 @@
 | Fact | Supporting artifact |
 |------|---------------------|
 | **No dedicated rollback script or job.** No file or workflow step named rollback/revert; no “previous version” or “last good” image tag in scripts. | Grep for rollback/revert in scripts; workflow and deploy.ps1 read |
-| **Formal (API):** Rollback = (1) make “previous” image the one used by new instances: e.g. re-push previous build as academy-api:latest and run instance refresh again, or (2) change SSOT to an immutable tag and run deploy.ps1 (not implemented in params today: useLatestTag true). No single command. | `backend/scripts/v1/resources/api.ps1` (Get-LatestApiImageUri uses latest or ECR latest-by-push-time), params ecr.useLatestTag |
-| **Rapid (API):** Rollback = turn Off, then on server `cd /home/ec2-user/academy && git checkout <old-sha> && bash scripts/deploy_api_on_server.sh` (or push revert and wait for cron). No scripted “rollback to previous”. | `backend/scripts/v1/api-auto-deploy-remote.ps1` (Off, Deploy), `backend/scripts/deploy_api_on_server.sh` |
-| **Workers:** Same as Formal API: LT/UserData point to ECR latest. Rollback = ensure previous image is latest in ECR (or change params + deploy.ps1) and trigger instance refresh. | `backend/scripts/v1/resources/worker_userdata.ps1` (Get-LatestWorkerImageUri), deploy.ps1 Ensure-ASG* |
+| **API:** Rollback = (1) `git revert` + push → CI가 새 이미지 빌드·푸시 + instance refresh, 또는 (2) 이전 이미지를 academy-api:latest로 re-push 후 수동 instance refresh. | `backend/scripts/v1/resources/api.ps1`, params ecr.useLatestTag |
+| **Workers:** Same as API: LT/UserData point to ECR latest. Rollback = ensure previous image is latest in ECR (or change params + deploy.ps1) and trigger instance refresh. | `backend/scripts/v1/resources/worker_userdata.ps1` (Get-LatestWorkerImageUri), deploy.ps1 Ensure-ASG* |
 
 ### Assumptions
 
-- **Operational rollback** is manual: re-push old image as latest + refresh, or git revert + Rapid redeploy. No automated “last known good” tag or snapshot.
+- **Operational rollback** is manual: git revert + push (CI auto-deploy), or re-push old image as latest + refresh. No automated “last known good” tag or snapshot.
 
 ---
 
-## 6. Risks for hot API deploy (Rapid)
+## 6. Risks
 
 ### Confirmed from code
 
 | Risk | Evidence |
 |------|----------|
-| **In-place replace, no blue-green.** Script does `docker stop academy-api`, `docker rm academy-api`, `docker run ... academy-api`. Brief downtime (seconds to tens of seconds) per instance. | `backend/scripts/deploy_api_on_server.sh` (steps 4–5) |
-| **Health check non-fatal.** After run, script curls `/healthz` with 10s timeout; on failure it only prints WARN and continues. ALB can mark target unhealthy; no automatic rollback or retry in script. | `backend/scripts/deploy_api_on_server.sh` (step 5: curl -sf ... \|\| echo WARN) |
-| **Single lock for cron.** Cron uses `flock -n $LOCK_FILE` so two cron runs do not overlap. Long-running deploy can block the next run until lock released. | `backend/scripts/auto_deploy_cron_on.sh` (CRON_LINE with flock -n) |
-| **No version pin.** deploy_api_on_server.sh uses ECR_URI default `809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest`. Every run pulls “latest” (could change between cron and actual pull). | `backend/scripts/deploy_api_on_server.sh` (ECR_URI) |
-| **SSM at run time.** Env is fetched when deploy_api_on_server.sh runs, so SSM changes take effect on next deploy. No stale env from boot. | Same script (SSM get-parameter then write /opt/api.env) |
-| **No Formal/Rapid conflict guard.** If Formal instance refresh is in progress and Rapid runs on same instance, both can run (refresh replaces instance; Rapid runs on current instance). No script-level coordination. | No shared lock or flag between deploy.ps1 and Rapid cron. |
-
-### Assumptions
-
-- **MinHealthyPercentage 100** (CI and deploy.ps1) means during Formal refresh one instance must stay healthy before the other is replaced; Rapid does not touch ASG, so it can make the single instance unhealthy briefly.
-- **Rapid is “development” only** in intent; docs and rules say to turn Off when not needed.
+| **No version pin.** ECR `academy-api:latest` 태그만 사용. SHA/커밋 기반 태그 없음. 롤백 시 이전 이미지 특정이 어려움. | workflow file, params ecr.useLatestTag |
+| **Instance refresh 중 잠시 서비스 불안정.** MinHealthyPercentage=100이지만 새 인스턴스 기동 + health check 통과까지 지연 가능. | v1-build-and-push-latest.yml, api.ps1 |
+| **SSM env 변경 시 자동 반영 안 됨.** SSM 변경만으로는 기존 인스턴스의 /opt/api.env가 갱신되지 않음. instance refresh 또는 deploy.ps1 필요. | api.ps1 UserData, deploy_api_on_server.sh |
 
 ---
 
@@ -133,10 +122,8 @@
 
 | Purpose | Path | Set by |
 |---------|------|--------|
-| API env (prod) | `/opt/api.env` | UserData (Formal), deploy_api_on_server.sh (Rapid) from SSM `/academy/api/env` |
+| API env (prod) | `/opt/api.env` | UserData from SSM `/academy/api/env` |
 | Workers env (prod) | `/opt/workers.env` | UserData from SSM `/academy/workers/env` (base64 JSON) |
-| Rapid last deploy info | `/home/ec2-user/.academy-rapid-deploy-last` | deploy_api_on_server.sh |
-| Rapid cron log | `/home/ec2-user/auto_deploy.log` | Cron redirect in auto_deploy_cron_on.sh |
 | API userdata log | `/var/log/academy-api-userdata.log` | UserData in api.ps1 |
 | Worker userdata log | `/var/log/academy-worker-userdata.log` | UserData in worker_userdata.ps1 |
 | Local dev env | `.env` (backend root) | docker-compose.yml env_file; not used on EC2 |
