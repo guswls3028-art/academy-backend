@@ -28,6 +28,16 @@ _s3 = boto3.client(
 # API
 # ---------------------------------------------------------------------
 
+def upload_fileobj(fileobj, key: str, content_type: str = "application/octet-stream", bucket: str | None = None) -> None:
+    """Upload a file-like object to R2."""
+    _s3.upload_fileobj(
+        fileobj,
+        bucket or settings.R2_STORAGE_BUCKET,
+        key,
+        ExtraArgs={"ContentType": content_type},
+    )
+
+
 def head_object(key: str) -> Tuple[bool, int]:
     """
     Check object exists + size (bytes)

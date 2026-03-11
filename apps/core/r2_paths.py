@@ -48,6 +48,17 @@ def ai_submission_key(
     return f"tenants/{tenant_id}/ai/submissions/{submission_id}/{unique_id}.{ext}"
 
 
+def profile_photo_key(
+    *,
+    tenant_id: int,
+    student_id: int,
+    unique_id: str,
+    ext: str,
+) -> str:
+    """학생 프로필 사진 R2 키."""
+    return f"tenants/{tenant_id}/profiles/students/{student_id}/{unique_id}.{ext}"
+
+
 def ai_exam_asset_key(
     *,
     tenant_id: int,

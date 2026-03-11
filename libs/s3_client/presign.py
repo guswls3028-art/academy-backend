@@ -61,6 +61,7 @@ def create_presigned_put_url(
 def create_presigned_get_url(
     key: str,
     expires_in: int = PRESIGN_STREAM_EXPIRES,
+    bucket: str | None = None,
 ) -> str:
     """
     Generate presigned GET url (download / stream)
@@ -68,7 +69,7 @@ def create_presigned_get_url(
     return _s3.generate_presigned_url(
         ClientMethod="get_object",
         Params={
-            "Bucket": _get_bucket(),
+            "Bucket": bucket or _get_bucket(),
             "Key": key,
         },
         ExpiresIn=expires_in,

@@ -1,4 +1,6 @@
 # apps/domains/student_app/profile/views.py
+import logging
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -9,12 +11,30 @@ from apps.domains.student_app.permissions import IsStudent, IsStudentOrParent, g
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
+
+
+def _get_profile_photo_url(student):
+    """Return presigned R2 URL for profile photo, or None."""
+    r2_key = getattr(student, "profile_photo_r2_key", None) or ""
+    if r2_key:
+        try:
+            from django.conf import settings
+            from libs.s3_client.presign import create_presigned_get_url
+            return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
+        except Exception:
+            logger.warning("Failed to generate presigned URL for profile photo r2_key=%s", r2_key)
+    # Fallback to local file (legacy)
+    if student.profile_photo:
+        try:
+            return student.profile_photo.url
+        except Exception:
+            pass
+    return None
 
 
 def _profile_response(request, student, *, is_parent_read_only=False, parent_display_name=None):
-    url = None
-    if student.profile_photo:
-        url = request.build_absolute_uri(student.profile_photo.url)
+    url = _get_profile_photo_url(student)
     payload = {
         "id": student.id,
         "name": student.name,
@@ -67,14 +87,36 @@ class StudentProfileView(APIView):
         if not student:
             return Response({"detail": "학생 프로필이 없습니다."}, status=404)
 
-        # 1) 프로필 사진 (multipart)
+        # 1) 프로필 사진 (multipart) → R2 업로드
         photo = request.FILES.get("profile_photo")
         if photo:
             if not (photo.content_type and photo.content_type.startswith("image/")):
                 return Response({"detail": "이미지 파일만 업로드할 수 있습니다."}, status=400)
-            student.profile_photo = photo
-            student.save(update_fields=["profile_photo"])
-            return _profile_response(request, student)
+            # R2에 업로드
+            try:
+                import uuid
+                from apps.core.r2_paths import profile_photo_key
+                from libs.s3_client.client import upload_fileobj
+
+                ext = (photo.name or "photo.jpg").rsplit(".", 1)[-1].lower() or "jpg"
+                if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
+                    ext = "jpg"
+                r2_key = profile_photo_key(
+                    tenant_id=student.tenant_id,
+                    student_id=student.id,
+                    unique_id=str(uuid.uuid4())[:8],
+                    ext=ext,
+                )
+                upload_fileobj(photo, r2_key, content_type=photo.content_type)
+                student.profile_photo_r2_key = r2_key
+                student.save(update_fields=["profile_photo_r2_key"])
+                return _profile_response(request, student)
+            except Exception as e:
+                logger.error("R2 profile photo upload failed: %s", e)
+                # Fallback to local storage
+                student.profile_photo = photo
+                student.save(update_fields=["profile_photo"])
+                return _profile_response(request, student)
 
         # 2) JSON: name, username, 비밀번호 변경
         data = getattr(request, "data", None) or {}

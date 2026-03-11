@@ -118,7 +118,13 @@ class Student(TimestampModel):
         upload_to="student_profile/%Y/%m/",
         null=True,
         blank=True,
-        help_text="학생이 학생앱에서 업로드한 프로필 사진",
+        help_text="학생이 학생앱에서 업로드한 프로필 사진 (레거시 로컬)",
+    )
+    profile_photo_r2_key = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="R2에 저장된 프로필 사진 키. 설정 시 profile_photo 대신 사용",
     )
 
     deleted_at = models.DateTimeField(

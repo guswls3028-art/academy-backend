@@ -21,6 +21,11 @@ from .views.playback_views import (
     PlaybackEndView,
     PlaybackEventBatchView,
 )
+from .views.admin_social_views import (
+    AdminVideoCommentListView,
+    AdminVideoCommentDetailView,
+    AdminVideoEngagementView,
+)
 
 # ========================================================
 # Router
@@ -104,5 +109,27 @@ urlpatterns += [
         "videos/<int:pk>/progress/",
         VideoProgressView.as_view(),
         name="video-progress",
+    ),
+]
+
+# ========================================================
+# Admin Video Social (Comments, Engagement)
+# ========================================================
+
+urlpatterns += [
+    path(
+        "videos/<int:video_id>/comments/",
+        AdminVideoCommentListView.as_view(),
+        name="admin-video-comments",
+    ),
+    path(
+        "videos/comments/<int:comment_id>/",
+        AdminVideoCommentDetailView.as_view(),
+        name="admin-video-comment-detail",
+    ),
+    path(
+        "videos/<int:video_id>/engagement/",
+        AdminVideoEngagementView.as_view(),
+        name="admin-video-engagement",
     ),
 ]
