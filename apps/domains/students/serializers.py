@@ -161,6 +161,11 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         allow_blank=True,
         help_text="미입력 시 임의 6자리 자동 부여 (학생이 추후 변경 가능)",
     )
+    omr_code = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="validate()에서 자동 생성 (학생/부모 전화번호 뒤 8자리)",
+    )
 
     def validate_parent_phone(self, value):
         v = str(value or "").strip().replace(" ", "").replace("-", "").replace(".", "")
