@@ -4,7 +4,7 @@
 
 - 알림톡 / SMS / LMS 발송 지원
 - 환경변수: PPURIO_API_KEY, PPURIO_ACCOUNT, PPURIO_API_URL
-- 뿌리오 REST API v2 사용: https://api.ppurio.com/v2/
+- 뿌리오 REST API 사용
 """
 
 import base64
@@ -32,15 +32,6 @@ def _get_ppurio_credentials() -> dict:
             or getattr(settings, "PPURIO_API_URL", DEFAULT_API_URL)
         ).rstrip("/"),
     }
-
-
-def _is_ppurio_mock_mode() -> bool:
-    """DEBUG=True 또는 PPURIO_MOCK=true면 실제 API 호출 없이 Mock."""
-    if os.environ.get("PPURIO_MOCK", "").lower() in ("true", "1", "yes"):
-        return True
-    if getattr(settings, "DEBUG", False):
-        return True
-    return os.environ.get("DEBUG", "").lower() in ("true", "1", "yes")
 
 
 def _get_access_token(creds: dict) -> Optional[str]:
@@ -81,10 +72,6 @@ def send_ppurio_sms(
 
     Returns: {"status": "ok"|"error"|"skipped", "msgkey"?, "reason"?}
     """
-    if _is_ppurio_mock_mode():
-        logger.info("[PPURIO-MOCK] SMS to=%s**** text=%s...", to[:4], text[:30])
-        return {"status": "ok", "msgkey": "mock-ppurio-sms"}
-
     creds = _get_ppurio_credentials()
     if not creds["api_key"] or not creds["account"]:
         return {"status": "skipped", "reason": "ppurio_not_configured"}
@@ -150,18 +137,12 @@ def send_ppurio_alimtalk(
     Args:
         to: 수신 번호
         sender: 발신 번호
-        pf_id: 카카오 비즈니스 채널 PF ID
-        template_id: 카카오 알림톡 템플릿 ID
+        pf_id: 카카오 비즈니스 채널 발신프로필키 (senderKey)
+        template_id: 카카오 알림톡 템플릿 코드
         replacements: [{"key": "name", "value": "홍길동"}, ...]
 
     Returns: {"status": "ok"|"error", "msgkey"?, "reason"?}
     """
-    if _is_ppurio_mock_mode():
-        logger.info(
-            "[PPURIO-MOCK] alimtalk to=%s**** template=%s", to[:4], template_id
-        )
-        return {"status": "ok", "msgkey": "mock-ppurio-alimtalk"}
-
     creds = _get_ppurio_credentials()
     if not creds["api_key"] or not creds["account"]:
         return {"status": "error", "reason": "ppurio_not_configured"}
