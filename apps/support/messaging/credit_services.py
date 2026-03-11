@@ -65,7 +65,7 @@ def get_tenant_messaging_info(tenant_id: int) -> Optional[dict]:
     messaging_is_active는 표시용 반환만 하며, 발송 차단 정책에는 미사용(policy.can_send_sms 등 기준)."""
     t = Tenant.objects.filter(pk=tenant_id).values(
         "kakao_pfid", "credit_balance", "messaging_is_active", "messaging_base_price",
-        "messaging_sender",
+        "messaging_sender", "messaging_provider",
     ).first()
     if not t:
         return None
@@ -76,4 +76,5 @@ def get_tenant_messaging_info(tenant_id: int) -> Optional[dict]:
         "is_active": t["messaging_is_active"],
         "base_price": str(t["messaging_base_price"]),
         "sender": sender if sender else None,
+        "messaging_provider": (t.get("messaging_provider") or "solapi").strip(),
     }
