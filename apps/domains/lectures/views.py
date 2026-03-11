@@ -18,10 +18,13 @@ from .serializers import LectureSerializer, SessionSerializer
 
 from apps.core.models import TenantMembership
 from apps.domains.attendance.models import Attendance
+from rest_framework.permissions import IsAuthenticated
+from apps.core.permissions import TenantResolvedAndStaff
 
 
 class LectureViewSet(ModelViewSet):
     serializer_class = LectureSerializer
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["is_active", "subject"]
@@ -179,6 +182,7 @@ class LectureViewSet(ModelViewSet):
 
 class SessionViewSet(ModelViewSet):
     serializer_class = SessionSerializer
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["lecture", "date"]

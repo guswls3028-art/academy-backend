@@ -19,6 +19,9 @@ from .serializers import (
 )
 from .filters import AttendanceFilter
 
+from rest_framework.permissions import IsAuthenticated
+from apps.core.permissions import TenantResolvedAndStaff
+
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.ai.gateway import dispatch_job
@@ -39,6 +42,7 @@ class AttendanceViewSet(ModelViewSet):
     """
 
     serializer_class = AttendanceSerializer
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     pagination_class = AttendanceListPagination
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -76,8 +80,11 @@ class AttendanceViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = enroll_repo.get_session_by_id(session_id)
+        session = Session.objects.select_related("lecture").filter(id=session_id).first()
         if not session:
+            raise NotFound("세션을 찾을 수 없습니다.")
+        # 🔐 tenant isolation: verify session belongs to request tenant
+        if session.lecture.tenant_id != tenant.id:
             raise NotFound("세션을 찾을 수 없습니다.")
         created = []
 

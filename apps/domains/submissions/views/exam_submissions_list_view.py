@@ -44,7 +44,7 @@ def _resolve_student_name(enrollment_id: Optional[int]) -> str:
 
     # 1) 가장 흔한 케이스: apps.domains.enrollments.models.Enrollment
     try:
-        from apps.domains.enrollments.models import Enrollment  # type: ignore
+        from apps.domains.enrollment.models import Enrollment  # type: ignore
 
         obj = Enrollment.objects.filter(id=int(enrollment_id)).first()
         if obj:

@@ -22,12 +22,15 @@ from apps.domains.attendance.models import Attendance
 from apps.domains.ai.gateway import dispatch_job
 from django.conf import settings
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
+from rest_framework.permissions import IsAuthenticated
+from apps.core.permissions import TenantResolvedAndStaff
 
 logger = logging.getLogger(__name__)
 
 
 class EnrollmentViewSet(ModelViewSet):
     serializer_class = EnrollmentSerializer
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_class = EnrollmentFilter
@@ -212,6 +215,7 @@ class EnrollmentViewSet(ModelViewSet):
 
 class SessionEnrollmentViewSet(ModelViewSet):
     serializer_class = SessionEnrollmentSerializer
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["session", "enrollment"]

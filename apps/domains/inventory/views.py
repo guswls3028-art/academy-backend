@@ -348,6 +348,14 @@ class PresignView(View):
         expires_in = int(body.get("expires_in") or 3600)
         if not r2_key:
             return JsonResponse({"detail": "r2_key required"}, status=400)
+        # 🔐 tenant isolation: R2 key must belong to the requesting tenant
+        tenant = request.tenant
+        expected_prefix = f"tenants/{tenant.id}/"
+        if not r2_key.startswith(expected_prefix):
+            return JsonResponse(
+                {"detail": "Access denied: r2_key does not belong to this tenant"},
+                status=403,
+            )
         if not generate_presigned_get_url_storage:
             return JsonResponse({"url": ""}, status=200)
         url = generate_presigned_get_url_storage(key=r2_key, expires_in=expires_in)

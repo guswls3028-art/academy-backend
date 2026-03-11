@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.exams.models import ExamAsset
 from apps.domains.assets.omr.services.meta_generator import (
     build_objective_template_meta,
@@ -11,10 +12,14 @@ from apps.domains.assets.omr.services.meta_generator import (
 
 
 class ObjectiveOMRTemplateListView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
-        qs = ExamAsset.objects.filter(asset_type="OMR_TEMPLATE")
+        # 🔐 tenant isolation: only show OMR templates for exams belonging to this tenant
+        qs = ExamAsset.objects.filter(
+            asset_type="OMR_TEMPLATE",
+            exam__sessions__lecture__tenant=request.tenant,
+        ).distinct()
 
         exam_id = request.query_params.get("exam_id")
         if exam_id:

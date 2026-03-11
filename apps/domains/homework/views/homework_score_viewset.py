@@ -54,7 +54,7 @@ from apps.domains.homework.serializers import (
 )
 from apps.domains.homework.filters import HomeworkScoreFilter
 
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.core.permissions import TenantResolvedAndStaff
 
 # submissions 기준 보정 (기존 구조 유지)
 from apps.domains.submissions.models import Submission
@@ -175,14 +175,15 @@ class HomeworkScoreViewSet(ModelViewSet):
     HomeworkScore 관리 ViewSet
     """
 
-    queryset: QuerySet[HomeworkScore] = HomeworkScore.objects.select_related(
-        "session",
-        "session__lecture",
-        "homework",
-    ).all()
-
     serializer_class = HomeworkScoreSerializer
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def get_queryset(self) -> QuerySet[HomeworkScore]:
+        return (
+            HomeworkScore.objects
+            .select_related("session", "session__lecture", "homework")
+            .filter(session__lecture__tenant=self.request.tenant)
+        )
 
     filter_backends = [
         DjangoFilterBackend,
@@ -307,8 +308,11 @@ class HomeworkScoreViewSet(ModelViewSet):
             meta_status = serializer.validated_data.get("meta_status")
 
             # ✅ 단일 진실: homework → session (DoesNotExist → 404)
+            # 🔐 tenant isolation: homework must belong to request tenant
             homework = get_object_or_404(
-                Homework.objects.select_related("session"),
+                Homework.objects.select_related("session").filter(
+                    session__lecture__tenant=self.request.tenant,
+                ),
                 id=homework_id,
             )
             session = homework.session

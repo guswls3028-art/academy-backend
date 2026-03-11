@@ -21,8 +21,19 @@ from apps.domains.results.serializers.exam_result import (
     ManualGradeSerializer,
 )
 from apps.domains.results.services.exam_grading_service import ExamGradingService
+from apps.domains.submissions.models import Submission
 
 logger = logging.getLogger(__name__)
+
+
+def _verify_submission_tenant(submission_id: int, tenant) -> None:
+    """🔐 Verify submission's exam belongs to the request tenant."""
+    if not Submission.objects.filter(
+        id=submission_id,
+        tenant=tenant,
+    ).exists():
+        from rest_framework.exceptions import NotFound
+        raise NotFound("Submission not found for this tenant.")
 
 
 def _resolve_student_filter_path(user: Any) -> Tuple[str, Dict[str, Any]]:
@@ -58,6 +69,7 @@ class AutoGradeSubmissionView(APIView):
 
     @transaction.atomic
     def post(self, request, submission_id: int):
+        _verify_submission_tenant(int(submission_id), request.tenant)
         service = ExamGradingService()
         out = service.auto_grade_objective(submission_id=int(submission_id))
         serializer = ExamResultSerializer(out.result)
@@ -76,6 +88,7 @@ class ManualGradeSubmissionView(APIView):
 
     @transaction.atomic
     def put(self, request, submission_id: int):
+        _verify_submission_tenant(int(submission_id), request.tenant)
         serializer = ManualGradeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -105,6 +118,7 @@ class FinalizeResultView(APIView):
 
     @transaction.atomic
     def post(self, request, submission_id: int):
+        _verify_submission_tenant(int(submission_id), request.tenant)
         service = ExamGradingService()
         result = service.finalize(submission_id=int(submission_id))
         return Response(ExamResultSerializer(result).data, status=status.HTTP_200_OK)
