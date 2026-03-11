@@ -424,6 +424,8 @@ def main() -> int:
                                         amount_deducted=Decimal("0"),
                                         recipient_summary=to[:4] + "****",
                                         failure_reason="sms_not_allowed_for_tenant",
+                                        message_body=text[:2000],
+                                        message_mode=message_mode,
                                     )
                                 except Exception as e:
                                     logger.warning("create_notification_log failed: %s", e)
@@ -490,6 +492,8 @@ def main() -> int:
                                     amount_deducted=Decimal(str(base_price)),
                                     recipient_summary=to[:4] + "****",
                                     template_summary=template_id or "SMS",
+                                    message_body=text[:2000],
+                                    message_mode=message_mode,
                                 )
                             else:
                                 if deducted:
@@ -512,6 +516,8 @@ def main() -> int:
                                     amount_deducted=Decimal("0"),
                                     recipient_summary=to[:4] + "****",
                                     failure_reason=failure_reason[:500],
+                                    message_body=text[:2000],
+                                    message_mode=message_mode,
                                 )
                         except Exception as e:
                             logger.exception("NotificationLog/rollback failed: %s", e)
