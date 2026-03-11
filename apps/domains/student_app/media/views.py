@@ -479,6 +479,8 @@ class StudentSessionVideoListView(APIView):
                 "duration": getattr(v, "duration", None),
                 "progress": progress_percent,  # 0-100
                 "completed": bool(progress_obj and progress_obj.completed) if progress_obj else False,
+                "updated_at": v.updated_at.isoformat() if hasattr(v, "updated_at") and v.updated_at else None,
+                "order": getattr(v, "order", 0),
                 **_policy_from_video(v),
                 "effective_rule": _effective_rule(perm_obj),  # Legacy field
                 "access_mode": access_mode_value,  # New field

@@ -13,6 +13,8 @@ class StudentVideoListItemSerializer(serializers.Serializer):
     # 진행률 (0-100)
     progress = serializers.FloatField(required=False, default=0)
     completed = serializers.BooleanField(required=False, default=False)
+    updated_at = serializers.DateTimeField(required=False, allow_null=True)
+    order = serializers.IntegerField(required=False, default=0)
 
     # 정책(단일 진실)
     allow_skip = serializers.BooleanField()
