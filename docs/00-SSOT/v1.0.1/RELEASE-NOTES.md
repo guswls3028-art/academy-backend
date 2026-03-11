@@ -30,9 +30,24 @@
 6. **클리닉/직원 설정 페이지** — ClinicMsgSettingsPage, StaffSettingsPage 신규
 7. **커뮤니티 설정** — CommunitySettingsPage 리팩터링
 
-### Backend (c033877b) — 변경 없음
-- 최신 커밋: 메시징 템플릿·서비스·워커 정리
-- 재배포 불필요 (API 정상 동작 확인됨)
+### Backend (0823943b)
+
+#### Critical — 테넌트 격리 강화
+1. **Exam 뷰 7개 tenant 필터링 추가**
+   - `TemplateBuilderView`, `TemplateEditorView`, `TemplateStatusView` — `get_object_or_404`에 tenant Q 필터
+   - `RegularExamFromTemplateView` — 템플릿 조회 시 tenant 검증
+   - `ExamQuestionsByExamView` — 문제 조회 시 tenant 검증
+   - `ExamViewSet.perform_create` — 템플릿 참조 시 tenant 검증
+   - `SheetViewSet._assert_exam_is_template` — tenant 검증 추가
+
+2. **Results 뷰 20개 tenant 필터링 추가**
+   - Admin 뷰: ExamAttempt, ExamAttempts, ExamResultDetail, ExamSummary, ExamResults, SessionExamsSummary, SessionExams, SessionScoreSummary, ResultFact, QuestionStats(3종), ItemScore, ObjectiveScore, SubjectiveScore, TotalScore, RepresentativeAttempt, ExamGrading(2종)
+   - Student 뷰: StudentExamAttempts, WrongNote, WrongNotePDF(2종)
+
+#### Security
+3. **자격증명 파일 git 추적 해제**
+   - `.env.local`, `tmp_api_env.json` — `git rm --cached`
+   - `tmp_api_env.json` `.gitignore` 추가
 
 ---
 
@@ -75,3 +90,6 @@
 | User-facing "TODO" text | 2 | 0 |
 | Dead code files | 1 (LearningLayout) | 0 |
 | Build status | PASS | PASS |
+| Exam views without tenant filter | 7 | 0 |
+| Results views without tenant filter | 22 | 0 |
+| Credentials tracked in git | 2 files | 0 |
