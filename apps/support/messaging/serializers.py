@@ -17,23 +17,61 @@ class MessagingInfoSerializer(serializers.ModelSerializer):
         source="messaging_base_price", max_digits=10, decimal_places=2, read_only=True
     )
 
+    # 자체 연동 키 — GET 시 마스킹 처리
+    own_solapi_api_key = serializers.SerializerMethodField()
+    own_solapi_api_secret = serializers.SerializerMethodField()
+    own_ppurio_api_key = serializers.SerializerMethodField()
+    own_ppurio_account = serializers.CharField(read_only=True)
+    has_own_credentials = serializers.SerializerMethodField()
+
     class Meta:
         model = Tenant
         fields = [
             "kakao_pfid", "messaging_sender", "credit_balance",
             "is_active", "base_price", "messaging_provider",
+            "own_solapi_api_key", "own_solapi_api_secret",
+            "own_ppurio_api_key", "own_ppurio_account",
+            "has_own_credentials",
         ]
         read_only_fields = ["credit_balance", "is_active", "base_price"]
 
+    @staticmethod
+    def _mask(value: str) -> str:
+        if not value:
+            return ""
+        if len(value) <= 4:
+            return "****"
+        return "****" + value[-4:]
+
+    def get_own_solapi_api_key(self, obj) -> str:
+        return self._mask(obj.own_solapi_api_key)
+
+    def get_own_solapi_api_secret(self, obj) -> str:
+        return self._mask(obj.own_solapi_api_secret)
+
+    def get_own_ppurio_api_key(self, obj) -> str:
+        return self._mask(obj.own_ppurio_api_key)
+
+    def get_has_own_credentials(self, obj) -> bool:
+        provider = (obj.messaging_provider or "solapi").strip().lower()
+        if provider == "ppurio":
+            return bool(obj.own_ppurio_api_key and obj.own_ppurio_account)
+        return bool(obj.own_solapi_api_key and obj.own_solapi_api_secret)
+
 
 class MessagingInfoUpdateSerializer(serializers.Serializer):
-    """PATCH 요청: PFID, 발신번호, 공급자 수정 가능"""
+    """PATCH 요청: PFID, 발신번호, 공급자, 자체 연동 키 수정 가능"""
     kakao_pfid = serializers.CharField(max_length=100, required=False, allow_blank=True)
     messaging_sender = serializers.CharField(max_length=20, required=False, allow_blank=True)
     messaging_provider = serializers.ChoiceField(
         choices=[("solapi", "솔라피"), ("ppurio", "뿌리오")],
         required=False,
     )
+    # 자체 연동 키 (직접 연동 모드)
+    own_solapi_api_key = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    own_solapi_api_secret = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    own_ppurio_api_key = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    own_ppurio_account = serializers.CharField(max_length=100, required=False, allow_blank=True)
 
 
 class VerifySenderRequestSerializer(serializers.Serializer):

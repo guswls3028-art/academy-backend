@@ -66,6 +66,11 @@ class MessagingInfoView(APIView):
         if ser.validated_data.get("messaging_provider") is not None:
             tenant.messaging_provider = ser.validated_data["messaging_provider"]
             update_fields.append("messaging_provider")
+        # 자체 연동 키
+        for field in ("own_solapi_api_key", "own_solapi_api_secret", "own_ppurio_api_key", "own_ppurio_account"):
+            if field in ser.validated_data:
+                setattr(tenant, field, (ser.validated_data[field] or "").strip())
+                update_fields.append(field)
         if update_fields:
             tenant.save(update_fields=update_fields)
         serializer = MessagingInfoSerializer(tenant)

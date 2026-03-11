@@ -85,6 +85,34 @@ def get_tenant_provider(tenant_id: int) -> str:
         return "solapi"
 
 
+def get_tenant_own_credentials(tenant_id: int) -> dict:
+    """
+    테넌트 자체 연동 키 반환. 직접 연동 모드에서 사용.
+    Returns: {"solapi_api_key", "solapi_api_secret", "ppurio_api_key", "ppurio_account", "provider"}
+    비어 있으면 시스템 기본 키 사용.
+    """
+    try:
+        from apps.core.models import Tenant
+        t = Tenant.objects.filter(pk=int(tenant_id)).values(
+            "messaging_provider",
+            "own_solapi_api_key", "own_solapi_api_secret",
+            "own_ppurio_api_key", "own_ppurio_account",
+        ).first()
+        if not t:
+            return {}
+        provider = (t.get("messaging_provider") or "solapi").strip().lower()
+        return {
+            "provider": provider,
+            "solapi_api_key": (t.get("own_solapi_api_key") or "").strip(),
+            "solapi_api_secret": (t.get("own_solapi_api_secret") or "").strip(),
+            "ppurio_api_key": (t.get("own_ppurio_api_key") or "").strip(),
+            "ppurio_account": (t.get("own_ppurio_account") or "").strip(),
+        }
+    except Exception as e:
+        logger.warning("get_tenant_own_credentials failed: %s", e)
+        return {}
+
+
 def resolve_messaging_provider(tenant_id: int, message_type: str) -> dict:
     """
     발송 유형별 허용 여부 및 채널 정보를 한 곳에서 결정.

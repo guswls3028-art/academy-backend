@@ -66,6 +66,9 @@ def send_ppurio_sms(
     to: str,
     text: str,
     sender: str,
+    *,
+    api_key: str = "",
+    account: str = "",
 ) -> dict:
     """
     뿌리오 SMS/LMS 발송.
@@ -73,6 +76,10 @@ def send_ppurio_sms(
     Returns: {"status": "ok"|"error"|"skipped", "msgkey"?, "reason"?}
     """
     creds = _get_ppurio_credentials()
+    # 테넌트 자체 키 우선
+    if api_key and account:
+        creds["api_key"] = api_key
+        creds["account"] = account
     if not creds["api_key"] or not creds["account"]:
         return {"status": "skipped", "reason": "ppurio_not_configured"}
 
@@ -130,6 +137,9 @@ def send_ppurio_alimtalk(
     pf_id: str,
     template_id: str,
     replacements: Optional[list] = None,
+    *,
+    api_key: str = "",
+    account: str = "",
 ) -> dict:
     """
     뿌리오 알림톡 발송.
