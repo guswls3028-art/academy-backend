@@ -430,6 +430,23 @@ def main() -> int:
                         consecutive_errors += 1
                         continue
 
+                    # 공급자별 발송 함수 선택
+                    def _dispatch_sms(to_, text_, sender_):
+                        if tenant_provider == "ppurio":
+                            return send_one_sms_ppurio(to=to_, text=text_, sender=sender_)
+                        return send_one_sms(cfg, to=to_, text=text_, sender=sender_)
+
+                    def _dispatch_alimtalk(to_, sender_, pf_id_, template_id_, replacements_):
+                        if tenant_provider == "ppurio":
+                            return send_one_alimtalk_ppurio(
+                                to=to_, sender=sender_, pf_id=pf_id_,
+                                template_id=template_id_, replacements=replacements_,
+                            )
+                        return send_one_alimtalk(
+                            cfg, to=to_, sender=sender_, pf_id=pf_id_,
+                            template_id=template_id_, replacements=replacements_,
+                        )
+
                     # message_mode: sms | alimtalk | both
                     _record_progress(job_id, "sending", 70, step_index=3, step_percent=0, tenant_id=tenant_id_str)
                     result = None
@@ -467,30 +484,26 @@ def main() -> int:
                             )
                             _current_receipt_handle = None
                             continue
-                        result = send_one_sms(cfg, to=to, text=text, sender=sender)
+                        result = _dispatch_sms(to, text, sender)
                     elif message_mode == "alimtalk":
                         if pf_id and template_id:
-                            result = send_one_alimtalk(
-                                cfg, to=to, sender=sender,
-                                pf_id=pf_id,
-                                template_id=template_id,
-                                replacements=alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
+                            result = _dispatch_alimtalk(
+                                to, sender, pf_id, template_id,
+                                alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
                             )
                             # 알림톡만: 폴백 없음
                         else:
                             result = {"status": "error", "reason": "alimtalk_requires_pf_id_and_template_id"}
                     elif message_mode == "both" and pf_id and template_id:
-                        result = send_one_alimtalk(
-                            cfg, to=to, sender=sender,
-                            pf_id=pf_id,
-                            template_id=template_id,
-                            replacements=alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
+                        result = _dispatch_alimtalk(
+                            to, sender, pf_id, template_id,
+                            alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
                         )
                         if result.get("status") != "ok":
-                            logger.info("alimtalk failed, fallback to SMS")
+                            logger.info("alimtalk failed, fallback to SMS (provider=%s)", tenant_provider)
                             # SMS 폴백 시에도 내 테넌트에서만 허용
                             if tenant_id is not None and int(tenant_id) == cfg.OWNER_TENANT_ID:
-                                result = send_one_sms(cfg, to=to, text=text, sender=sender)
+                                result = _dispatch_sms(to, text, sender)
                             else:
                                 logger.warning(
                                     "SMS fallback skipped by policy: tenant_id=%s (SMS allowed only for owner)",
@@ -508,7 +521,7 @@ def main() -> int:
                             )
                             result = {"status": "error", "reason": "sms_not_allowed_for_tenant"}
                         else:
-                            result = send_one_sms(cfg, to=to, text=text, sender=sender)
+                            result = _dispatch_sms(to, text, sender)
                     _record_progress(job_id, "sending", 90, step_index=3, step_percent=100, tenant_id=tenant_id_str)
 
                     # 성공 시 로그, 실패 시 롤백 + 로그

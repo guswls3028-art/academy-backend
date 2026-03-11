@@ -63,6 +63,9 @@ class MessagingInfoView(APIView):
                 ser.validated_data["messaging_sender"] or ""
             ).strip().replace("-", "")
             update_fields.append("messaging_sender")
+        if ser.validated_data.get("messaging_provider") is not None:
+            tenant.messaging_provider = ser.validated_data["messaging_provider"]
+            update_fields.append("messaging_provider")
         if update_fields:
             tenant.save(update_fields=update_fields)
         serializer = MessagingInfoSerializer(tenant)

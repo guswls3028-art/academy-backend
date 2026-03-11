@@ -19,14 +19,21 @@ class MessagingInfoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Tenant
-        fields = ["kakao_pfid", "messaging_sender", "credit_balance", "is_active", "base_price"]
+        fields = [
+            "kakao_pfid", "messaging_sender", "credit_balance",
+            "is_active", "base_price", "messaging_provider",
+        ]
         read_only_fields = ["credit_balance", "is_active", "base_price"]
 
 
 class MessagingInfoUpdateSerializer(serializers.Serializer):
-    """PATCH 요청: PFID, 발신번호 수정 가능"""
+    """PATCH 요청: PFID, 발신번호, 공급자 수정 가능"""
     kakao_pfid = serializers.CharField(max_length=100, required=False, allow_blank=True)
     messaging_sender = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    messaging_provider = serializers.ChoiceField(
+        choices=[("solapi", "솔라피"), ("ppurio", "뿌리오")],
+        required=False,
+    )
 
 
 class VerifySenderRequestSerializer(serializers.Serializer):
