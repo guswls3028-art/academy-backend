@@ -196,7 +196,7 @@ def send_one_alimtalk(
 ) -> dict:
     """
     Solapi 알림톡 1건 발송. 실패/수신거부 시 caller가 SMS로 fallback.
-    replacements: [{"key": "name", "value": "홍길동"}, ...] — 템플릿 #{name}, #{date}, #{clinic_name} 등 치환.
+    replacements: [{"key": "학생이름2", "value": "길동"}, ...] — 템플릿 #{학생이름2}, #{날짜}, #{클리닉명} 등 치환.
     """
     try:
         from solapi.model import RequestMessage

@@ -71,7 +71,7 @@ class MessagingSQSQueue:
                 - alimtalk: 알림톡만 발송 (실패 시 폴백 없음)
                 - both: 알림톡 우선, 실패 시 SMS 폴백
             use_alimtalk_first: (하위호환) True면 both, False면 sms. message_mode가 있으면 무시
-            alimtalk_replacements: 알림톡 치환 [{"key": "name", "value": "홍길동"}, ...]
+            alimtalk_replacements: 알림톡 치환 [{"key": "학생이름2", "value": "길동"}, ...]
             template_id: 알림톡 템플릿 ID (미지정 시 워커 기본값 사용)
         """
         mode = (message_mode or "").strip().lower() or None

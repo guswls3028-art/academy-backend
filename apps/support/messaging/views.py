@@ -423,9 +423,9 @@ class SendMessageView(APIView):
             name_3 = name[:3] if len(name) >= 3 else name
             site_url = get_site_url(request) or ""
             text = (
-                body_base.replace("#{student_name_2}", name_2)
-                .replace("#{student_name_3}", name_3)
-                .replace("#{site_link}", site_url)
+                body_base.replace("#{학생이름2}", name_2)
+                .replace("#{학생이름3}", name_3)
+                .replace("#{사이트링크}", site_url)
             )
             if subject_base:
                 text = subject_base + "\n" + text
@@ -435,9 +435,9 @@ class SendMessageView(APIView):
             if message_mode in ("alimtalk", "both") and solapi_template_id:
                 template_id_solapi = solapi_template_id
                 alimtalk_replacements = [
-                    {"key": "student_name_2", "value": name_2},
-                    {"key": "student_name_3", "value": name_3},
-                    {"key": "site_link", "value": site_url},
+                    {"key": "학생이름2", "value": name_2},
+                    {"key": "학생이름3", "value": name_3},
+                    {"key": "사이트링크", "value": site_url},
                 ]
 
             try:
@@ -519,9 +519,9 @@ class SendMessageView(APIView):
             name_3 = name[:3] if len(name) >= 3 else name
             site_url = get_site_url(request) or ""
             text = (
-                body_base.replace("#{student_name_2}", name_2)
-                .replace("#{student_name_3}", name_3)
-                .replace("#{site_link}", site_url)
+                body_base.replace("#{학생이름2}", name_2)
+                .replace("#{학생이름3}", name_3)
+                .replace("#{사이트링크}", site_url)
             )
             if subject_base:
                 text = subject_base + "\n" + text
@@ -531,9 +531,9 @@ class SendMessageView(APIView):
             if message_mode in ("alimtalk", "both") and solapi_template_id:
                 template_id_solapi = solapi_template_id
                 alimtalk_replacements = [
-                    {"key": "student_name_2", "value": name_2},
-                    {"key": "student_name_3", "value": name_3},
-                    {"key": "site_link", "value": site_url},
+                    {"key": "학생이름2", "value": name_2},
+                    {"key": "학생이름3", "value": name_3},
+                    {"key": "사이트링크", "value": site_url},
                 ]
 
             try:

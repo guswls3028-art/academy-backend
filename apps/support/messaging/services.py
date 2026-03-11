@@ -133,7 +133,7 @@ def enqueue_sms(
             - alimtalk: 알림톡만 발송 (실패 시 폴백 없음)
             - both: 알림톡 우선, 실패 시 SMS 폴백
         use_alimtalk_first: (하위호환) True면 both, False면 sms. message_mode가 있으면 무시
-        alimtalk_replacements: 알림톡 템플릿 치환 [{"key": "name", "value": "홍길동"}, ...]
+        alimtalk_replacements: 알림톡 템플릿 치환 [{"key": "학생이름2", "value": "길동"}, ...]
         template_id: 알림톡 템플릿 ID (선택)
 
     Returns:
@@ -276,11 +276,11 @@ def send_welcome_messages(
         # 학생용
         if phone and len(phone) >= 10:
             text = (
-                body.replace("#{student_name_2}", name_2)
-                .replace("#{student_name_3}", name_3)
-                .replace("#{site_link}", site_url)
-                .replace("#{student_id}", ps_number)
-                .replace("#{student_password}", student_password)
+                body.replace("#{학생이름2}", name_2)
+                .replace("#{학생이름3}", name_3)
+                .replace("#{사이트링크}", site_url)
+                .replace("#{학생아이디}", ps_number)
+                .replace("#{학생비밀번호}", student_password)
             )
             if subject:
                 text = subject.strip() + "\n" + text
@@ -289,11 +289,11 @@ def send_welcome_messages(
             if use_alimtalk:
                 template_id_solapi = solapi_id
                 alimtalk_replacements = [
-                    {"key": "student_name_2", "value": name_2},
-                    {"key": "student_name_3", "value": name_3},
-                    {"key": "site_link", "value": site_url},
-                    {"key": "student_id", "value": ps_number},
-                    {"key": "student_password", "value": student_password},
+                    {"key": "학생이름2", "value": name_2},
+                    {"key": "학생이름3", "value": name_3},
+                    {"key": "사이트링크", "value": site_url},
+                    {"key": "학생아이디", "value": ps_number},
+                    {"key": "학생비밀번호", "value": student_password},
                 ]
             try:
                 ok = enqueue_sms(
@@ -314,13 +314,13 @@ def send_welcome_messages(
         if parent_phone and len(parent_phone) >= 10:
             pwd = parent_password_by_phone.get(parent_phone, student_password)
             text = (
-                body.replace("#{student_name_2}", name_2)
-                .replace("#{student_name_3}", name_3)
-                .replace("#{site_link}", site_url)
-                .replace("#{student_id}", ps_number)
-                .replace("#{student_password}", student_password)
-                .replace("#{parent_password}", pwd)
-                .replace("#{parent_id}", parent_phone)
+                body.replace("#{학생이름2}", name_2)
+                .replace("#{학생이름3}", name_3)
+                .replace("#{사이트링크}", site_url)
+                .replace("#{학생아이디}", ps_number)
+                .replace("#{학생비밀번호}", student_password)
+                .replace("#{학부모비밀번호}", pwd)
+                .replace("#{학부모아이디}", parent_phone)
             )
             if subject:
                 text = subject.strip() + "\n" + text
@@ -329,13 +329,13 @@ def send_welcome_messages(
             if use_alimtalk:
                 template_id_solapi = solapi_id
                 alimtalk_replacements = [
-                    {"key": "student_name_2", "value": name_2},
-                    {"key": "student_name_3", "value": name_3},
-                    {"key": "site_link", "value": site_url},
-                    {"key": "student_id", "value": ps_number},
-                    {"key": "student_password", "value": student_password},
-                    {"key": "parent_password", "value": pwd},
-                    {"key": "parent_id", "value": parent_phone},
+                    {"key": "학생이름2", "value": name_2},
+                    {"key": "학생이름3", "value": name_3},
+                    {"key": "사이트링크", "value": site_url},
+                    {"key": "학생아이디", "value": ps_number},
+                    {"key": "학생비밀번호", "value": student_password},
+                    {"key": "학부모비밀번호", "value": pwd},
+                    {"key": "학부모아이디", "value": parent_phone},
                 ]
             try:
                 ok = enqueue_sms(
@@ -374,9 +374,9 @@ def send_registration_approved_messages(
     가입 신청 승인 시 학생·학부모에게 알림톡/SMS 발송.
 
     - 학생용: 트리거 registration_approved_student 템플릿 사용
-      플레이스홀더: #{student_name}, #{student_id}, #{student_password}, #{site_link}, #{pw_notice}
+      플레이스홀더: #{학생이름}, #{학생아이디}, #{학생비밀번호}, #{사이트링크}, #{비밀번호안내}
     - 학부모용: 트리거 registration_approved_parent 템플릿 사용
-      플레이스홀더: #{parent_id}, #{parent_password}, #{student_name}, #{student_id}, #{student_password}, #{site_link}, #{pw_notice}
+      플레이스홀더: #{학부모아이디}, #{학부모비밀번호}, #{학생이름}, #{학생아이디}, #{학생비밀번호}, #{사이트링크}, #{비밀번호안내}
 
     설정이 없거나 비활성화면 발송하지 않음.
     """
@@ -399,11 +399,11 @@ def send_registration_approved_messages(
         use_alimtalk = config_student.message_mode in ("alimtalk", "both") and solapi_id and getattr(t, "solapi_status", None) == "APPROVED"
 
         text = (
-            body.replace("#{student_name}", student_name or "")
-            .replace("#{student_id}", student_id or "")
-            .replace("#{student_password}", student_password or "")
-            .replace("#{site_link}", site_url)
-            .replace("#{pw_notice}", notice)
+            body.replace("#{학생이름}", student_name or "")
+            .replace("#{학생아이디}", student_id or "")
+            .replace("#{학생비밀번호}", student_password or "")
+            .replace("#{사이트링크}", site_url)
+            .replace("#{비밀번호안내}", notice)
         )
         if subject:
             text = subject + "\n" + text
@@ -412,11 +412,11 @@ def send_registration_approved_messages(
         if use_alimtalk:
             template_id_solapi = solapi_id
             alimtalk_replacements = [
-                {"key": "student_name", "value": student_name or ""},
-                {"key": "student_id", "value": student_id or ""},
-                {"key": "student_password", "value": student_password or ""},
-                {"key": "site_link", "value": site_url},
-                {"key": "pw_notice", "value": notice},
+                {"key": "학생이름", "value": student_name or ""},
+                {"key": "학생아이디", "value": student_id or ""},
+                {"key": "학생비밀번호", "value": student_password or ""},
+                {"key": "사이트링크", "value": site_url},
+                {"key": "비밀번호안내", "value": notice},
             ]
         try:
             if enqueue_sms(
@@ -442,13 +442,13 @@ def send_registration_approved_messages(
 
         parent_id_display = parent_phone  # 로그인 ID로 전화번호 안내
         text = (
-            body.replace("#{parent_id}", parent_id_display)
-            .replace("#{parent_password}", parent_password or "")
-            .replace("#{student_name}", student_name or "")
-            .replace("#{student_id}", student_id or "")
-            .replace("#{student_password}", student_password or "")
-            .replace("#{site_link}", site_url)
-            .replace("#{pw_notice}", notice)
+            body.replace("#{학부모아이디}", parent_id_display)
+            .replace("#{학부모비밀번호}", parent_password or "")
+            .replace("#{학생이름}", student_name or "")
+            .replace("#{학생아이디}", student_id or "")
+            .replace("#{학생비밀번호}", student_password or "")
+            .replace("#{사이트링크}", site_url)
+            .replace("#{비밀번호안내}", notice)
         )
         if subject:
             text = subject + "\n" + text
@@ -457,13 +457,13 @@ def send_registration_approved_messages(
         if use_alimtalk:
             template_id_solapi = solapi_id
             alimtalk_replacements = [
-                {"key": "parent_id", "value": parent_id_display},
-                {"key": "parent_password", "value": parent_password or ""},
-                {"key": "student_name", "value": student_name or ""},
-                {"key": "student_id", "value": student_id or ""},
-                {"key": "student_password", "value": student_password or ""},
-                {"key": "site_link", "value": site_url},
-                {"key": "pw_notice", "value": notice},
+                {"key": "학부모아이디", "value": parent_id_display},
+                {"key": "학부모비밀번호", "value": parent_password or ""},
+                {"key": "학생이름", "value": student_name or ""},
+                {"key": "학생아이디", "value": student_id or ""},
+                {"key": "학생비밀번호", "value": student_password or ""},
+                {"key": "사이트링크", "value": site_url},
+                {"key": "비밀번호안내", "value": notice},
             ]
         try:
             if enqueue_sms(

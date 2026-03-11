@@ -149,7 +149,7 @@ def send_ppurio_alimtalk(
         sender: 발신 번호
         pf_id: 카카오 비즈니스 채널 발신프로필키 (senderKey)
         template_id: 카카오 알림톡 템플릿 코드
-        replacements: [{"key": "name", "value": "홍길동"}, ...]
+        replacements: [{"key": "학생이름2", "value": "길동"}, ...]
 
     Returns: {"status": "ok"|"error", "msgkey"?, "reason"?}
     """
