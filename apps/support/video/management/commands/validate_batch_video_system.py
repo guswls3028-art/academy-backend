@@ -141,7 +141,7 @@ def run_iam_role(role_name: str):
 
 
 class Command(BaseCommand):
-    help = "Validate AWS Batch video transcoding system (DB, Batch, Logs, Stuck scan, Lambda, IAM)."
+    help = "Validate AWS Batch video transcoding system (DB, Batch, Logs, Stuck scan, EventBridge, IAM)."
 
     def handle(self, *args, **options):
         from apps.support.video.models import VideoTranscodeJob
@@ -224,18 +224,20 @@ class Command(BaseCommand):
         else:
             self.stdout.write("STEP 4 scan_stuck_video_jobs (dry-run): OK " + out.getvalue()[:300])
 
-        # --- STEP 5 ---
-        vars1, e1 = run_lambda_config(LAMBDA_QUEUE_DEPTH)
-        vars2, e2 = run_lambda_config(LAMBDA_AUTOSCALE)
-        if e1 or e2:
-            self.stdout.write("STEP 5 Lambda config error: " + (e1 or e2 or ""))
-        else:
-            v1, v2 = vars1 or {}, vars2 or {}
-            enable_video_metrics = v1.get("ENABLE_VIDEO_METRICS", "false").lower() == "true"
-            enable_video_wake = v2.get("ENABLE_VIDEO_WAKE", "false").lower() == "true"
-            lambda_ok = not enable_video_metrics and not enable_video_wake
-            self.stdout.write("STEP 5 queue_depth ENABLE_VIDEO_METRICS: %s" % v1.get("ENABLE_VIDEO_METRICS", "(missing=ok)"))
-            self.stdout.write("STEP 5 autoscale ENABLE_VIDEO_WAKE: %s" % v2.get("ENABLE_VIDEO_WAKE", "(missing=ok)"))
+        # --- STEP 5 --- EventBridge rules (v1: Lambda 제거 → ASG scaling + EventBridge ops)
+        eb_ok = True
+        for rule_name in EVENTBRIDGE_RULES:
+            info, err = run_eventbridge_rule(rule_name)
+            if err:
+                self.stdout.write("STEP 5 EventBridge rule '%s' error: %s" % (rule_name, err))
+                eb_ok = False
+            elif info:
+                state = info.get("State", "UNKNOWN")
+                self.stdout.write("STEP 5 EventBridge rule '%s': State=%s Schedule=%s" % (
+                    rule_name, state, info.get("ScheduleExpression", "(none)"),
+                ))
+                if state != "ENABLED":
+                    eb_ok = False
 
         # --- STEP 6 ---
         r1, e1 = run_iam_role("academy-video-batch-job-role")
@@ -252,8 +254,8 @@ class Command(BaseCommand):
         self.stdout.write("BATCH_CHECK: " + ("OK" if batch_ok else "FAIL"))
         self.stdout.write("LOG_CHECK: " + ("OK" if log_ok else "FAIL"))
         self.stdout.write("STUCK_CHECK: " + ("OK" if stuck_ok else "FAIL"))
-        self.stdout.write("LAMBDA_CHECK: " + ("OK" if lambda_ok else "FAIL"))
+        self.stdout.write("EVENTBRIDGE_CHECK: " + ("OK" if eb_ok else "FAIL"))
         self.stdout.write("IAM_CHECK: " + ("OK" if iam_ok else "FAIL"))
-        all_ok = db_ok and batch_ok and log_ok and stuck_ok and lambda_ok and iam_ok
+        all_ok = db_ok and batch_ok and log_ok and stuck_ok and eb_ok and iam_ok
         self.stdout.write("SYSTEM_STATUS: " + ("FULLY_STABLE" if all_ok else "NEEDS_ATTENTION"))
         self.stdout.write("=" * 60)
