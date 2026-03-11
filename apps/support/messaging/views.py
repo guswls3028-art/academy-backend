@@ -211,7 +211,8 @@ class MessageTemplateListCreateView(APIView):
     def get(self, request):
         qs = MessageTemplate.objects.filter(tenant=request.tenant).order_by("-updated_at")
         category = (request.query_params.get("category") or "").strip().lower()
-        if category in ("default", "lecture", "clinic"):
+        valid_cats = {c.value for c in MessageTemplate.Category}
+        if category and category in valid_cats:
             qs = qs.filter(category=category)
         serializer = MessageTemplateSerializer(qs, many=True)
         return Response(serializer.data)
