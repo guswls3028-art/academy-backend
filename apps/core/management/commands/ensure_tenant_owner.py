@@ -17,6 +17,7 @@ from django.db import transaction
 from django.contrib.auth import get_user_model
 
 from academy.adapters.db.django import repositories_core as core_repo
+from apps.core.models.program import Program
 from apps.core.models.user import user_internal_username, user_display_username
 
 User = get_user_model()
@@ -48,6 +49,13 @@ class Command(BaseCommand):
             type=str,
             default="",
             help="Display name (유저 생성 시 사용)",
+        )
+        parser.add_argument(
+            "--plan",
+            type=str,
+            choices=[c[0] for c in Program.Plan.choices],
+            default=None,
+            help="요금제 설정 (lite/basic/premium). 미지정 시 기존값 유지.",
         )
 
     def handle(self, *args, **options):
@@ -102,6 +110,21 @@ class Command(BaseCommand):
                 tenant.owner_name = display[:100]
                 tenant.save(update_fields=["owner_name"])
                 self.stdout.write(self.style.SUCCESS(f"Set tenant.owner_name = {tenant.owner_name!r}"))
+
+            # --plan 지정 시 Program 요금제 업데이트
+            plan_value = options.get("plan")
+            if plan_value:
+                program = core_repo.program_get_by_tenant(tenant)
+                if program:
+                    program.plan = plan_value
+                    program.save(update_fields=["plan", "monthly_price"])
+                    self.stdout.write(
+                        self.style.SUCCESS(
+                            f"Set plan={program.plan}, monthly_price={program.monthly_price:,}원"
+                        )
+                    )
+                else:
+                    self.stderr.write(self.style.WARNING("Program not found for tenant — plan not set."))
 
         self.stdout.write(
             self.style.SUCCESS(f"Done. Tenant {tenant.code} (id={tenant.id}) now has owner: {user_display_username(user)}")

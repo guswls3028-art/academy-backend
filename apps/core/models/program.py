@@ -27,6 +27,12 @@ class Program(TimestampModel):
         BASIC = "basic", "Basic"
         PREMIUM = "premium", "Premium"
 
+    PLAN_PRICES: dict[str, int] = {
+        Plan.LITE: 99_000,
+        Plan.BASIC: 150_000,
+        Plan.PREMIUM: 300_000,
+    }
+
     tenant = models.OneToOneField(
         Tenant,
         on_delete=models.CASCADE,
@@ -53,6 +59,10 @@ class Program(TimestampModel):
         default=Plan.PREMIUM,
         help_text="요금제 (lite/basic/premium)",
     )
+    monthly_price = models.PositiveIntegerField(
+        default=300_000,
+        help_text="월 요금(원). PLAN_PRICES 기준 자동 설정.",
+    )
 
     feature_flags = models.JSONField(default=dict, blank=True)
     ui_config = models.JSONField(default=dict, blank=True)
@@ -67,6 +77,12 @@ class Program(TimestampModel):
             models.Index(fields=["login_variant"]),
             models.Index(fields=["plan"]),
         ]
+
+    def save(self, *args, **kwargs):
+        # plan 변경 시 가격 자동 동기화
+        if self.plan in self.PLAN_PRICES:
+            self.monthly_price = self.PLAN_PRICES[self.plan]
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"Program<{self.tenant.code}>:{self.display_name}"
