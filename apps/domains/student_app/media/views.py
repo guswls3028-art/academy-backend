@@ -625,7 +625,7 @@ class StudentVideoPlaybackView(APIView):
         student = get_request_student(request)
         if student:
             from apps.support.video.models import VideoLike
-            is_liked = VideoLike.objects.filter(video_id=video_id, student=student).exists()
+            is_liked = VideoLike.objects.filter(video_id=video_id, student=student, tenant_id=tenant.id).exists()
 
         payload = {
             "video": {
@@ -830,17 +830,26 @@ class StudentVideoLikeView(APIView):
         if video_tenant_id != tenant.id:
             raise PermissionDenied("접근 권한이 없습니다.")
 
-        existing = VideoLike.objects.filter(video=video, student=student).first()
-        if existing:
-            existing.delete()
-            Video.objects.filter(id=video_id).update(like_count=F("like_count") - 1)
-            # 음수 방지
-            Video.objects.filter(id=video_id, like_count__lt=0).update(like_count=0)
-            return Response({"liked": False, "like_count": max(0, video.like_count - 1)})
-        else:
-            VideoLike.objects.create(video=video, student=student, tenant_id=tenant.id)
-            Video.objects.filter(id=video_id).update(like_count=F("like_count") + 1)
-            return Response({"liked": True, "like_count": video.like_count + 1})
+        from django.db import transaction, IntegrityError
+
+        try:
+            with transaction.atomic():
+                existing = VideoLike.objects.filter(video=video, student=student, tenant_id=tenant.id).first()
+                if existing:
+                    existing.delete()
+                    Video.objects.filter(id=video_id).update(like_count=F("like_count") - 1)
+                    # 음수 방지
+                    Video.objects.filter(id=video_id, like_count__lt=0).update(like_count=0)
+                    return Response({"liked": False, "like_count": max(0, video.like_count - 1)})
+                else:
+                    VideoLike.objects.create(video=video, student=student, tenant_id=tenant.id)
+                    Video.objects.filter(id=video_id).update(like_count=F("like_count") + 1)
+                    return Response({"liked": True, "like_count": video.like_count + 1})
+        except IntegrityError:
+            # 동시 요청으로 중복 좋아요 시도 — 현재 상태 반환
+            is_liked = VideoLike.objects.filter(video=video, student=student, tenant_id=tenant.id).exists()
+            video.refresh_from_db(fields=["like_count"])
+            return Response({"liked": is_liked, "like_count": video.like_count})
 
 
 # ========================================================
@@ -902,8 +911,11 @@ class StudentVideoCommentListView(APIView):
                 "is_deleted": c.is_deleted,
                 "is_mine": is_mine,
                 "created_at": c.created_at.isoformat(),
-                "reply_count": c.replies.count() if not c.is_deleted else 0,
-                "replies": [_serialize_comment(r) for r in c.replies.filter(is_deleted=False).order_by("created_at")[:20]],
+                "reply_count": len([r for r in c.replies.all() if not r.is_deleted]) if not c.is_deleted else 0,
+                "replies": [_serialize_comment(r) for r in sorted(
+                    [r for r in c.replies.all() if not r.is_deleted],
+                    key=lambda r: r.created_at
+                )[:20]],
             }
 
         data = [_serialize_comment(c) for c in comments]
