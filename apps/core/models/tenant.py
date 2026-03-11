@@ -36,6 +36,17 @@ class Tenant(models.Model):
     is_active = models.BooleanField(default=True)
 
     # ---------- 메시징(알림톡) ----------
+    class MessagingProvider(models.TextChoices):
+        SOLAPI = "solapi", "솔라피(Solapi)"
+        PPURIO = "ppurio", "뿌리오(Ppurio)"
+
+    # 메시징 공급자 (솔라피 or 뿌리오)
+    messaging_provider = models.CharField(
+        max_length=10,
+        choices=MessagingProvider.choices,
+        default=MessagingProvider.SOLAPI,
+        help_text="SMS/알림톡 발송에 사용할 공급자 (solapi 또는 ppurio)",
+    )
     # 학원 개별 카카오 프로필 ID (연동 시 저장)
     kakao_pfid = models.CharField(max_length=100, blank=True, default="")
     # 학원별 SMS 발신번호 (솔라피에 등록·인증된 번호, 예: 01031217466)
