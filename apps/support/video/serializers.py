@@ -260,8 +260,49 @@ class VideoSerializer(serializers.ModelSerializer):
 
 
 class VideoDetailSerializer(VideoSerializer):
+    can_retry = serializers.SerializerMethodField()
+
     class Meta(VideoSerializer.Meta):
+        fields = VideoSerializer.Meta.fields + ["can_retry"]
         ref_name = "SealedVideoDetail"
+
+    def get_can_retry(self, obj):
+        """
+        Retry 버튼 표시 여부를 서버에서 판단.
+        - PENDING + file_key → True (upload-complete 재실행)
+        - FAILED, UPLOADED → True
+        - PROCESSING/READY + current_job RUNNING(not cancel_requested) → False
+        - PROCESSING/READY + no active job or stale job → True
+        """
+        RETRY_ALLOWED = {
+            Video.Status.PENDING,
+            Video.Status.FAILED,
+            Video.Status.UPLOADED,
+            Video.Status.PROCESSING,
+            Video.Status.READY,
+        }
+
+        st = obj.status
+        if st not in RETRY_ALLOWED:
+            return False
+
+        if st == Video.Status.PENDING:
+            return bool((obj.file_key or "").strip())
+
+        # Check current job state
+        job_id = getattr(obj, "current_job_id", None)
+        if job_id:
+            try:
+                from apps.support.video.models import VideoTranscodeJob
+                cur = VideoTranscodeJob.objects.filter(pk=job_id).only("state", "cancel_requested").first()
+                if cur and cur.state == VideoTranscodeJob.State.RUNNING and not getattr(cur, "cancel_requested", False):
+                    return False
+                if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
+                    return False
+            except Exception:
+                pass
+
+        return True
 
 
 # ========================================================
