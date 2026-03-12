@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import boto3
 from boto3.s3.transfer import TransferConfig
 
 from apps.worker.video_worker.utils import guess_content_type, cache_control_for_object, trim_tail, backoff_sleep
+
+logger = logging.getLogger(__name__)
 
 
 class UploadError(RuntimeError):
@@ -60,33 +64,46 @@ def upload_directory(
 
     local_dir = local_dir.resolve()
 
+    # Collect all files first for progress logging
+    all_files = []
     for root, _, files in os.walk(local_dir):
         for name in files:
             full_path = Path(root) / name
             rel = full_path.relative_to(local_dir)
             key = f"{prefix.rstrip('/')}/{rel.as_posix()}"
+            all_files.append((full_path, key, name))
 
-            extra = {
-                "ContentType": guess_content_type(name),
-                "CacheControl": cache_control_for_object(name),
-            }
+    total = len(all_files)
+    logger.info("[R2_UPLOAD] Starting upload: %d files to %s", total, prefix)
 
-            attempt = 0
-            while True:
-                try:
-                    s3.upload_file(
-                        Filename=str(full_path),
-                        Bucket=bucket,
-                        Key=key,
-                        ExtraArgs=extra,
-                        Config=transfer_cfg,
-                    )
-                    break
-                except Exception as e:
-                    attempt += 1
-                    if attempt >= retry_max:
-                        raise UploadError(f"upload failed key={key} err={trim_tail(str(e))}") from e
-                    backoff_sleep(attempt, backoff_base, backoff_cap)
+    for idx, (full_path, key, name) in enumerate(all_files, 1):
+        extra = {
+            "ContentType": guess_content_type(name),
+            "CacheControl": cache_control_for_object(name),
+        }
+
+        attempt = 0
+        while True:
+            try:
+                s3.upload_file(
+                    Filename=str(full_path),
+                    Bucket=bucket,
+                    Key=key,
+                    ExtraArgs=extra,
+                    Config=transfer_cfg,
+                )
+                break
+            except Exception as e:
+                attempt += 1
+                if attempt >= retry_max:
+                    raise UploadError(f"upload failed key={key} err={trim_tail(str(e))}") from e
+                backoff_sleep(attempt, backoff_base, backoff_cap)
+
+        # Log progress every 500 files or at start/end
+        if idx == 1 or idx == total or idx % 500 == 0:
+            logger.info("[R2_UPLOAD] Progress: %d/%d files uploaded", idx, total)
+
+    logger.info("[R2_UPLOAD] Upload complete: %d files", total)
 
 
 def _s3_client(endpoint_url: str, access_key: str, secret_key: str, region: str):
@@ -146,22 +163,57 @@ def publish_tmp_to_final(
     access_key: str,
     secret_key: str,
     region: str,
+    max_workers: int = 16,
 ) -> None:
-    client = _s3_client(endpoint_url, access_key, secret_key, region)
+    """
+    tmp → final 병렬 복사. 기존 순차 copy_object를 ThreadPoolExecutor로 병렬화.
+    4000+ 세그먼트도 수 분 내 완료.
+    """
     tmp_prefix = tmp_prefix.rstrip("/") + "/"
     final_prefix = final_prefix.rstrip("/") + "/"
     keys = list_prefix(bucket=bucket, prefix=tmp_prefix, endpoint_url=endpoint_url, access_key=access_key, secret_key=secret_key, region=region)
-    for key in keys:
+
+    total = len(keys)
+    logger.info("[R2_PUBLISH] Starting publish: %d files from %s -> %s", total, tmp_prefix, final_prefix)
+
+    if total == 0:
+        return
+
+    def _copy_one(key: str) -> str:
         if not key.startswith(tmp_prefix):
-            continue
-        rel = key[len(tmp_prefix) :]
+            return key
+        rel = key[len(tmp_prefix):]
         dest_key = final_prefix + rel
+        client = _s3_client(endpoint_url, access_key, secret_key, region)
         client.copy_object(
             CopySource={"Bucket": bucket, "Key": key},
             Bucket=bucket,
             Key=dest_key,
         )
+        return dest_key
+
+    copied = 0
+    errors = []
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_copy_one, key): key for key in keys}
+        for future in as_completed(futures):
+            copied += 1
+            try:
+                future.result()
+            except Exception as e:
+                src_key = futures[future]
+                errors.append(f"{src_key}: {e}")
+                logger.warning("[R2_PUBLISH] copy failed: %s -> %s", src_key, e)
+
+            if copied == 1 or copied == total or copied % 500 == 0:
+                logger.info("[R2_PUBLISH] Progress: %d/%d files copied", copied, total)
+
+    if errors:
+        raise UploadError(f"publish_tmp_to_final failed for {len(errors)} files: {errors[0]}")
+
+    logger.info("[R2_PUBLISH] Publish complete: %d files. Cleaning tmp...", total)
     delete_prefix(bucket=bucket, prefix=tmp_prefix, endpoint_url=endpoint_url, access_key=access_key, secret_key=secret_key, region=region)
+    logger.info("[R2_PUBLISH] Tmp cleaned: %s", tmp_prefix)
 
 
 def verify_hls_integrity_r2(
