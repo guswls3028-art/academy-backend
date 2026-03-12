@@ -1,15 +1,20 @@
 # PATH: apps/support/video/management/commands/enqueue_uploaded_videos.py
 """
-Enqueue UPLOADED videos that have no active job.
+Enqueue UPLOADED (and optionally FAILED) videos that have no active job.
 
 This picks up videos left in UPLOADED status when create_job_and_submit_batch
 was skipped due to tenant/global concurrency limits (e.g. 5 simultaneous uploads
 with a tenant limit of 2). Respects existing concurrency limits.
 
+With --include-failed, also re-enqueues FAILED videos that have a file_key
+(transient failures that can be retried).
+
 Run via cron or EventBridge (e.g. every 10 min):
   python manage.py enqueue_uploaded_videos
+  python manage.py enqueue_uploaded_videos --include-failed
 """
 from django.core.management.base import BaseCommand
+from django.db import transaction
 from django.db.models import Q
 
 from apps.support.video.models import Video, VideoTranscodeJob
@@ -31,10 +36,16 @@ class Command(BaseCommand):
             default=20,
             help="Max videos to process per run (default: 20)",
         )
+        parser.add_argument(
+            "--include-failed",
+            action="store_true",
+            help="Also re-enqueue FAILED videos with file_key (reset to UPLOADED first)",
+        )
 
     def handle(self, *args, **options):
         dry_run = options.get("dry_run", False)
         limit = options.get("limit", 20)
+        include_failed = options.get("include_failed", False)
 
         # Find UPLOADED videos with no active job (QUEUED/RUNNING/RETRY_WAIT)
         active_job_video_ids = VideoTranscodeJob.objects.filter(
@@ -45,8 +56,12 @@ class Command(BaseCommand):
             ],
         ).values_list("video_id", flat=True)
 
+        target_statuses = [Video.Status.UPLOADED]
+        if include_failed:
+            target_statuses.append(Video.Status.FAILED)
+
         candidates = (
-            Video.objects.filter(status=Video.Status.UPLOADED)
+            Video.objects.filter(status__in=target_statuses)
             .exclude(pk__in=active_job_video_ids)
             .filter(file_key__isnull=False)
             .exclude(file_key="")
@@ -68,10 +83,23 @@ class Command(BaseCommand):
 
             if dry_run:
                 self.stdout.write(
-                    f"DRY-RUN enqueue | video_id={video.id} tenant_id={tenant_id}"
+                    f"DRY-RUN enqueue | video_id={video.id} tenant_id={tenant_id} status={video.status}"
                 )
                 enqueued += 1
                 continue
+
+            # FAILED videos need to be reset to UPLOADED before job creation
+            if video.status == Video.Status.FAILED:
+                with transaction.atomic():
+                    v = Video.objects.select_for_update().filter(pk=video.id).first()
+                    if not v or v.status != Video.Status.FAILED:
+                        skipped += 1
+                        continue
+                    v.status = Video.Status.UPLOADED
+                    v.error_reason = ""
+                    v.save(update_fields=["status", "error_reason", "updated_at"])
+                    video = v
+                self.stdout.write(f"RESET FAILED→UPLOADED | video_id={video.id}")
 
             result = create_job_and_submit_batch(video)
             if result.job:

@@ -120,22 +120,26 @@ def poll_next_job():
     """
     QUEUED 또는 RETRY_WAIT 상태의 작업 중 duration <= 30분인 것을 하나 가져옴.
     duration이 NULL인 경우도 포함 (ffprobe 실패 시 워커에서 재검증).
+    select_for_update(skip_locked=True)로 다중 데몬 인스턴스 안전성 확보.
     """
+    from django.db import transaction
     from apps.support.video.models import VideoTranscodeJob
     from django.db.models import Q
 
-    return (
-        VideoTranscodeJob.objects
-        .select_related("video", "video__session", "video__session__lecture", "video__session__lecture__tenant")
-        .filter(
-            state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT],
+    with transaction.atomic():
+        return (
+            VideoTranscodeJob.objects
+            .select_for_update(skip_locked=True)
+            .select_related("video", "video__session", "video__session__lecture", "video__session__lecture__tenant")
+            .filter(
+                state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT],
+            )
+            .filter(
+                Q(video__duration__isnull=True) | Q(video__duration__lte=DAEMON_MAX_DURATION_SECONDS)
+            )
+            .order_by("created_at")
+            .first()
         )
-        .filter(
-            Q(video__duration__isnull=True) | Q(video__duration__lte=DAEMON_MAX_DURATION_SECONDS)
-        )
-        .order_by("created_at")
-        .first()
-    )
 
 
 # ── Heartbeat ────────────────────────────────────────────────
