@@ -303,23 +303,6 @@ class StudentVideoMeView(APIView):
             .prefetch_related("sessions")
             .order_by("title")
         )
-        lectures_data = []
-        for lec in lectures_qs:
-            sessions_data = [
-                {
-                    "id": s.id,
-                    "title": s.title or f"{s.order}차시",
-                    "order": s.order,
-                    "date": s.date.isoformat() if s.date else None,
-                }
-                for s in sorted(lec.sessions.all(), key=lambda x: (x.order, x.id))
-            ]
-            lectures_data.append({
-                "id": lec.id,
-                "title": lec.title or lec.name or "강의",
-                "sessions": sessions_data,
-                "enrollment_id": enrollment_by_lecture.get(lec.id),
-            })
 
         # 전체공개영상: 없으면 자동 생성 — 학생이면 항상 볼 수 있어야 함
         public_lecture, _ = Lecture.objects.get_or_create(
@@ -337,9 +320,99 @@ class StudentVideoMeView(APIView):
             order=1,
             defaults={"title": "전체공개영상", "date": None},
         )
+
+        # 강의별 영상 요약을 한 번의 쿼리로 가져오기 (N+1 방지)
+        from apps.support.video.models import Video
+        from django.db.models import Count, Sum
+
+        # 수강 강의 세션 + 전체공개영상 세션 모두 포함
+        all_lecture_ids = lecture_ids + [public_lecture.id]
+        session_ids_all = list(
+            Session.objects.filter(lecture_id__in=all_lecture_ids)
+            .values_list("id", flat=True)
+        )
+        video_summary_by_session = {}
+        first_video_by_lecture = {}
+        if session_ids_all:
+            summaries = (
+                Video.objects.filter(
+                    session_id__in=session_ids_all,
+                    status=Video.Status.READY,
+                )
+                .values("session_id")
+                .annotate(
+                    video_count=Count("id"),
+                    total_duration=Sum("duration"),
+                )
+            )
+            for s in summaries:
+                video_summary_by_session[s["session_id"]] = {
+                    "video_count": s["video_count"],
+                    "total_duration": s["total_duration"] or 0,
+                }
+            # 강의별 첫 번째 영상 (썸네일용, 한 번의 쿼리)
+            first_videos = (
+                Video.objects.filter(
+                    session_id__in=session_ids_all,
+                    status=Video.Status.READY,
+                )
+                .select_related("session__lecture__tenant")
+                .order_by("session__lecture_id", "order", "id")
+            )
+            first_video_by_lecture = {}
+            for v in first_videos:
+                lid = v.session.lecture_id
+                if lid not in first_video_by_lecture:
+                    first_video_by_lecture[lid] = v
+
+        lectures_data = []
+        for lec in lectures_qs:
+            sessions = sorted(lec.sessions.all(), key=lambda x: (x.order, x.id))
+            sessions_data = [
+                {
+                    "id": s.id,
+                    "title": s.title or f"{s.order}차시",
+                    "order": s.order,
+                    "date": s.date.isoformat() if s.date else None,
+                }
+                for s in sessions
+            ]
+            # 강의 내 전체 영상 수/시간 합산
+            lec_video_count = 0
+            lec_total_duration = 0
+            for s in sessions:
+                info = video_summary_by_session.get(s.id)
+                if info:
+                    lec_video_count += info["video_count"]
+                    lec_total_duration += info["total_duration"]
+
+            # 썸네일 URL (기존 _build_thumbnail_url 헬퍼 재사용)
+            first_vid = first_video_by_lecture.get(lec.id)
+            thumb_url = _build_thumbnail_url(first_vid) if first_vid else None
+
+            lectures_data.append({
+                "id": lec.id,
+                "title": lec.title or lec.name or "강의",
+                "sessions": sessions_data,
+                "enrollment_id": enrollment_by_lecture.get(lec.id),
+                "video_count": lec_video_count,
+                "total_duration": lec_total_duration,
+                "thumbnail_url": thumb_url,
+            })
+
+        # 전체공개영상 세션 영상 요약
+        pub_summary = video_summary_by_session.get(public_session.id)
+        pub_video_count = pub_summary["video_count"] if pub_summary else 0
+        pub_total_duration = pub_summary["total_duration"] if pub_summary else 0
+        pub_first_vid = first_video_by_lecture.get(public_lecture.id)
+        pub_thumb_url = _build_thumbnail_url(pub_first_vid) if pub_first_vid else None
+
         public_data = {
             "session_id": public_session.id,
             "lecture_id": public_lecture.id,
+            "video_count": pub_video_count,
+            "total_duration": pub_total_duration,
+            "thumbnail_url": pub_thumb_url,
         }
 
         return Response({
@@ -438,31 +511,31 @@ class StudentSessionVideoListView(APIView):
                 )
                 raise PermissionDenied(detail)
 
-        videos = Video.objects.filter(session_id=session_id).order_by("order", "id")
+        videos = list(Video.objects.filter(session_id=session_id).order_by("order", "id"))
 
-        # 진행률 일괄 조회: 요청 학생 소유의 수강정보만 사용 (IDOR 방지)
+        # 진행률 + 권한을 일괄 조회 (N+1 방지)
         from academy.adapters.db.django import repositories_video as video_repo
 
+        video_ids = [v.id for v in videos]
         progress_map = {}
-        if enrollment_obj:
-            # 세션 내 모든 영상의 진행률을 일괄 조회 (최적화)
-            video_ids = list(videos.values_list("id", flat=True))
-            if video_ids:
-                progresses = video_repo.video_progress_filter_video_enrollment_ids(
-                    video=None,
-                    enrollment_ids=[enrollment_obj.id],
-                ).filter(video_id__in=video_ids)
-                progress_map = {p.video_id: p for p in progresses}
+        perm_map = {}
+        if enrollment_obj and video_ids:
+            progresses = video_repo.video_progress_filter_video_enrollment_ids(
+                video=None,
+                enrollment_ids=[enrollment_obj.id],
+            ).filter(video_id__in=video_ids)
+            progress_map = {p.video_id: p for p in progresses}
+
+            if VideoPermission:
+                perms = VideoPermission.objects.filter(
+                    video_id__in=video_ids,
+                    enrollment_id=enrollment_obj.id,
+                )
+                perm_map = {p.video_id: p for p in perms}
 
         items = []
         for v in videos:
-            perm_obj = None
-            if VideoPermission and enrollment_obj:
-                perm_obj = (
-                    VideoPermission.objects
-                    .filter(video_id=v.id, enrollment_id=enrollment_obj.id)
-                    .first()
-                )
+            perm_obj = perm_map.get(v.id)
 
             thumb = _build_thumbnail_url(v)
 

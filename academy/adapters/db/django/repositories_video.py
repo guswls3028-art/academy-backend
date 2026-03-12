@@ -101,7 +101,7 @@ def video_filter_by_session_ready(session_id):
     return Video.objects.filter(
         session_id=session_id,
         status=Video.Status.READY,
-    ).order_by("order", "id")
+    ).select_related("session__lecture").order_by("order", "id")
 
 
 def enrollment_get_by_student_lecture_active(student, lecture):

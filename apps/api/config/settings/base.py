@@ -398,6 +398,8 @@ VIDEO_JOB_TIMEOUT_LONG_SECONDS = int(os.getenv("VIDEO_JOB_TIMEOUT_LONG_SECONDS",
 # Reconcile orphan safety: min RUNNABLE age (minutes) before terminating; skip if CE desiredvCpus=0
 RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES = int(os.getenv("RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES", "15"))
 RECONCILE_ORPHAN_DISABLED = os.getenv("RECONCILE_ORPHAN_DISABLED", "").lower() in ("1", "true", "yes")
+# Worker mode: "daemon" (상주 프로세스, DB 폴링) or "batch" (AWS Batch 1-shot). Default: daemon.
+VIDEO_WORKER_MODE = os.getenv("VIDEO_WORKER_MODE", "daemon")
 VIDEO_TENANT_MAX_CONCURRENT = int(os.getenv("VIDEO_TENANT_MAX_CONCURRENT", "2"))
 VIDEO_GLOBAL_MAX_CONCURRENT = int(os.getenv("VIDEO_GLOBAL_MAX_CONCURRENT", "20"))
 VIDEO_MAX_JOBS_PER_VIDEO = int(os.getenv("VIDEO_MAX_JOBS_PER_VIDEO", "10"))

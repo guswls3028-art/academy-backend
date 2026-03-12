@@ -8,7 +8,7 @@ from botocore.client import Config
 # Constants
 # ---------------------------------------------------------------------
 
-PRESIGN_UPLOAD_EXPIRES = 900        # 15 min
+PRESIGN_UPLOAD_EXPIRES = 7200       # 2 hours — large video uploads need ample time
 PRESIGN_STREAM_EXPIRES = 60 * 60    # 1 hour
 
 # ---------------------------------------------------------------------

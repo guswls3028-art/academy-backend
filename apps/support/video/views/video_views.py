@@ -331,6 +331,52 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         )
 
     # ==================================================
+    # upload/refresh-url — 만료된 presigned PUT URL 재발급
+    # ==================================================
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/refresh-url",
+        parser_classes=[JSONParser],
+    )
+    def upload_refresh_url(self, request, pk=None):
+        """
+        R2 PUT용 presigned URL 재발급.
+        대용량 파일 업로드 시 기존 URL 만료 대비.
+        PENDING 상태 영상에서만 허용.
+        """
+        try:
+            video = self.get_object()
+        except Exception:
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if video.status != Video.Status.PENDING:
+            return Response(
+                {"detail": f"URL 재발급은 PENDING 상태에서만 가능합니다. (현재: {video.status})"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if not video.file_key:
+            return Response(
+                {"detail": "파일 키가 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content_type = request.data.get("content_type", "video/mp4").split(";")[0]
+        upload_url = create_presigned_put_url(
+            key=video.file_key,
+            content_type=content_type,
+        )
+
+        return Response({
+            "upload_url": upload_url,
+            "video_id": video.id,
+        })
+
+    # ==================================================
     # upload/complete
     # ==================================================
     @transaction.atomic

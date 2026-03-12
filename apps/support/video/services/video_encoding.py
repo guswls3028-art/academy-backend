@@ -1,8 +1,12 @@
 """
-Video Encoding - DB → Batch ONLY.
+Video Encoding - DB → Batch or Daemon.
 
-Upload Complete → Create VideoTranscodeJob → DDB lock(video_id) → submit_batch_job → Exit.
+Upload Complete → Create VideoTranscodeJob → DDB lock(video_id) → submit (Batch or daemon poll).
 1 video 1 job: DynamoDB lock key=video_id, TTL 12h+, heartbeat로 lease 연장.
+
+VIDEO_WORKER_MODE:
+  "daemon" → Job만 DB 생성, Batch 제출 안 함. daemon_main이 폴링하여 처리.
+  "batch"  → 기존대로 AWS Batch 제출 (기본값).
 """
 
 from __future__ import annotations
@@ -131,6 +135,15 @@ def create_job_and_submit_batch(video: Video) -> JobResult:
                     video.save(update_fields=["current_job_id", "updated_at"])
                 logger.info("create_job_and_submit_batch: video %s DDB lock failed, returning existing=%s", video.id, existing_after.id if existing_after else None)
                 return JobResult(existing_after, None if existing_after else REASON_SUBMIT_FAILED)
+
+            # Daemon mode: Job만 DB 생성하고 Batch 제출 생략 (daemon이 폴링)
+            worker_mode = getattr(settings, "VIDEO_WORKER_MODE", "batch")
+            if worker_mode == "daemon":
+                logger.info(
+                    "create_job_and_submit_batch: DAEMON mode — job %s created, skipping Batch submit (video %s, duration=%s)",
+                    job.id, video.id, video.duration,
+                )
+                return JobResult(job, None)
 
             aws_job_id, submit_error = submit_batch_job(str(job.id), duration_seconds=video.duration if video.duration else None)
             if aws_job_id:

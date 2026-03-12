@@ -34,8 +34,9 @@ RUN pip install --user --no-cache-dir -r requirements.txt
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import sys; sys.exit(0)" || exit 1
 
-# Video Worker 실행 (AWS Batch)
-# ENTRYPOINT: SSM /academy/workers/env fetch 후 batch_main 실행
-# Batch command: ["python", "-m", "apps.worker.video_worker.batch_main", "Ref::job_id"]
+# Video Worker 실행
+# ENTRYPOINT: SSM /academy/workers/env fetch 후 워커 실행
+# Daemon mode (기본): 상주 프로세스로 DB 폴링하여 30분 이하 영상 처리
+# Batch mode: ["python", "-m", "apps.worker.video_worker.batch_main", "Ref::job_id"]
 ENTRYPOINT ["python", "-m", "apps.worker.video_worker.batch_entrypoint"]
-CMD ["python", "-m", "apps.worker.video_worker.batch_main"]
+CMD ["python", "-m", "apps.worker.video_worker.daemon_main"]
