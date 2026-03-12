@@ -305,7 +305,12 @@ class PostViewSet(viewsets.ModelViewSet):
 
         from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
-        url = generate_presigned_get_url_storage(key=att.r2_key, expires_in=3600)
+        url = generate_presigned_get_url_storage(
+            key=att.r2_key,
+            expires_in=3600,
+            filename=att.original_name,
+            content_type=att.content_type or None,
+        )
         return Response({"url": url, "original_name": att.original_name})
 
     @action(detail=True, methods=["delete"], url_path=r"attachments/(?P<att_id>[^/.]+)")

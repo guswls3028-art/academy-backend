@@ -345,7 +345,7 @@ class PresignView(View):
         except Exception:
             return JsonResponse({"detail": "Invalid JSON"}, status=400)
         r2_key = body.get("r2_key")
-        expires_in = int(body.get("expires_in") or 3600)
+        expires_in = min(int(body.get("expires_in") or 3600), 3600)  # cap at 1 hour
         if not r2_key:
             return JsonResponse({"detail": "r2_key required"}, status=400)
         # 🔐 tenant isolation: R2 key must belong to the requesting tenant

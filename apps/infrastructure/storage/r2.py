@@ -118,6 +118,13 @@ def _storage_bucket():
     return getattr(settings, "R2_STORAGE_BUCKET", "academy-storage")
 
 
+def _guess_content_type(key: str, fallback: str | None = None) -> str:
+    """파일 확장자로 MIME 타입을 추정. application/octet-stream 대신 정확한 타입 반환."""
+    import mimetypes
+    guessed, _ = mimetypes.guess_type(key)
+    return guessed or fallback or "application/octet-stream"
+
+
 def upload_fileobj_to_r2_storage(
     *,
     fileobj,
@@ -126,12 +133,13 @@ def upload_fileobj_to_r2_storage(
 ) -> None:
     """Django UploadedFile -> R2 Storage 버킷 업로드."""
     s3 = _get_s3_client()
+    resolved_type = content_type or _guess_content_type(key)
     s3.upload_fileobj(
         Fileobj=fileobj,
         Bucket=_storage_bucket(),
         Key=key,
         ExtraArgs={
-            "ContentType": content_type or "application/octet-stream"
+            "ContentType": resolved_type
         },
     )
 
@@ -140,15 +148,29 @@ def generate_presigned_get_url_storage(
     *,
     key: str,
     expires_in: int = 3600,
+    filename: str | None = None,
+    content_type: str | None = None,
 ) -> str:
-    """R2 Storage 버킷 presigned GET URL."""
+    """R2 Storage 버킷 presigned GET URL.
+
+    filename/content_type를 지정하면 ResponseContentDisposition,
+    ResponseContentType이 presigned URL에 포함되어 브라우저가 올바른
+    MIME 타입과 파일명으로 다운로드합니다.
+    보안 제품이 application/octet-stream을 malware로 분류하는 것을 방지합니다.
+    """
     s3 = _get_s3_client()
+    params: dict = {
+        "Bucket": _storage_bucket(),
+        "Key": key,
+    }
+    if filename:
+        safe_name = filename.replace('"', "")
+        params["ResponseContentDisposition"] = f'attachment; filename="{safe_name}"'
+    if content_type:
+        params["ResponseContentType"] = content_type
     return s3.generate_presigned_url(
         ClientMethod="get_object",
-        Params={
-            "Bucket": _storage_bucket(),
-            "Key": key,
-        },
+        Params=params,
         ExpiresIn=expires_in,
     )
 

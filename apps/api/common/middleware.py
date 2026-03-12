@@ -63,6 +63,22 @@ def _add_cors_headers_to_response(request, response):
     return response
 
 
+class SecurityHeadersMiddleware:
+    """
+    모든 응답에 보안 헤더 추가.
+    - X-Content-Type-Options: nosniff → 브라우저 MIME 스니핑 차단.
+      보안 제품이 application/octet-stream + MIME 스니핑 가능 응답을 malware로 분류하는 것을 방지.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+
 class CorsResponseFixMiddleware:
     """
     모든 응답에서 Access-Control-Allow-Origin 이 없고, 요청 Origin 이 허용 목록에 있으면 CORS 헤더 추가.
