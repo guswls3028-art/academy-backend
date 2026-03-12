@@ -292,6 +292,14 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
     # DELETE (Staff + Teacher + User)
     # =========================
     def delete(self, instance):
+        # 🔐 Owner 삭제 방지
+        from apps.core.models import TenantMembership
+        is_owner = TenantMembership.objects.filter(
+            user=instance.user, tenant=instance.tenant, is_active=True, role="owner"
+        ).exists()
+        if is_owner:
+            raise serializers.ValidationError("대표(Owner)는 삭제할 수 없습니다.")
+
         user = instance.user
 
         teacher_repo.teacher_delete_by_name_phone(instance.tenant, instance.name, instance.phone or "")

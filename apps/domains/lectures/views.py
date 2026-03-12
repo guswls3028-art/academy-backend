@@ -219,3 +219,12 @@ class SessionViewSet(ModelViewSet):
             agg = enroll_repo.session_aggregate_max_order(lecture)
             order = (agg["max_order"] or 0) + 1
         serializer.save(order=order)
+
+    def perform_update(self, serializer):
+        """
+        🔐 Session 수정 시 lecture FK 변경 → 테넌트 검증
+        """
+        lecture = serializer.validated_data.get("lecture", serializer.instance.lecture)
+        if lecture.tenant_id != self.request.tenant.id:
+            raise PermissionDenied("다른 학원의 강의로 세션을 이동할 수 없습니다.")
+        serializer.save()

@@ -148,6 +148,21 @@ class ProgramUpdateSerializer(serializers.ModelSerializer):
             "is_active",
         ]
 
+    def validate_plan(self, value):
+        """플랜 변경은 owner만 가능."""
+        request = self.context.get("request")
+        if request:
+            from apps.core.models import TenantMembership
+            tenant = getattr(request, "tenant", None)
+            user = getattr(request, "user", None)
+            if tenant and user:
+                is_owner = TenantMembership.objects.filter(
+                    user=user, tenant=tenant, is_active=True, role="owner"
+                ).exists()
+                if not is_owner and not getattr(user, "is_superuser", False):
+                    raise serializers.ValidationError("플랜 변경은 대표만 가능합니다.")
+        return value
+
 
 class ProfileSerializer(serializers.ModelSerializer):
     class Meta:

@@ -29,10 +29,14 @@ class ExamAttemptViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get_queryset(self):
-        # ✅ tenant isolation: ExamAttempt → exam → sessions → lecture → tenant
+        # exam_id는 PositiveIntegerField(FK 아님)이므로 서브쿼리 사용
+        from apps.domains.exams.models import Exam
+        tenant = self.request.tenant
+        tenant_exam_ids = Exam.objects.filter(
+            sessions__lecture__tenant=tenant
+        ).values_list("id", flat=True).distinct()
         return (
             ExamAttempt.objects
-            .filter(exam__sessions__lecture__tenant=self.request.tenant)
-            .distinct()
+            .filter(exam_id__in=tenant_exam_ids)
             .order_by("-created_at")
         )

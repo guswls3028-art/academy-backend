@@ -56,6 +56,50 @@ def _jwt_required(view_func):
     return wrapped
 
 
+def _is_tenant_staff(request):
+    """요청 사용자가 테넌트의 스태프(owner/admin/teacher/assistant)인지 확인."""
+    user = getattr(request, "user", None)
+    tenant = getattr(request, "tenant", None)
+    if not user or not tenant:
+        return False
+    if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
+        return True
+    from apps.core.models import TenantMembership
+    return TenantMembership.objects.filter(
+        user=user, tenant=tenant, is_active=True,
+        role__in=["owner", "admin", "teacher", "assistant"],
+    ).exists()
+
+
+def _check_scope_permission(request, scope=None):
+    """admin scope 접근 시 스태프 권한 필수. 학생은 자기 scope만 접근."""
+    if scope is None:
+        import json
+        try:
+            body = json.loads(request.body)
+        except Exception:
+            body = {}
+        scope = (body.get("scope") or request.GET.get("scope") or "admin").lower()
+    if scope == "admin" and not _is_tenant_staff(request):
+        return JsonResponse({"detail": "관리자 권한이 필요합니다."}, status=403)
+    if scope == "student" and not _is_tenant_staff(request):
+        # 학생은 자기 ps_number만 접근 가능
+        student_profile = getattr(request.user, "student_profile", None)
+        if not student_profile:
+            return JsonResponse({"detail": "학생 정보가 없습니다."}, status=403)
+        student_ps = (request.GET.get("student_ps") or "").strip()
+        if not student_ps:
+            import json
+            try:
+                body = json.loads(request.body)
+            except Exception:
+                body = {}
+            student_ps = (body.get("student_ps") or "").strip()
+        if student_ps and student_ps != student_profile.ps_number:
+            return JsonResponse({"detail": "다른 학생의 자료에 접근할 수 없습니다."}, status=403)
+    return None  # OK
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class QuotaView(View):
     """GET /storage/quota/ — 테넌트 사용량 및 플랜 한도."""
@@ -94,6 +138,9 @@ class InventoryListView(View):
         scope = (request.GET.get("scope") or "admin").lower()
         if scope not in ("admin", "student"):
             return JsonResponse({"detail": "Invalid scope"}, status=400)
+        perm_err = _check_scope_permission(request, scope)
+        if perm_err:
+            return perm_err
         student_ps = (request.GET.get("student_ps") or "").strip()
         if scope == "student" and not student_ps:
             return JsonResponse({"detail": "student_ps required for student scope"}, status=400)

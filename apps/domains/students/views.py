@@ -138,6 +138,10 @@ class StudentViewSet(ModelViewSet):
         if self.action == "list":
             return StudentListSerializer
 
+        if self.action in ("update", "partial_update"):
+            from .serializers import StudentUpdateSerializer
+            return StudentUpdateSerializer
+
         return StudentDetailSerializer
 
     # ------------------------------

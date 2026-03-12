@@ -146,10 +146,14 @@ class StudentProfileView(APIView):
         update_fields = []
         if "phone" in data:
             raw = (data.get("phone") or "").strip().replace("-", "").replace(" ", "")
+            if raw and (not raw.isdigit() or len(raw) < 10 or len(raw) > 15):
+                return Response({"detail": "올바른 전화번호를 입력해 주세요."}, status=400)
             student.phone = raw[:20] if raw else None
             update_fields.append("phone")
         if "parent_phone" in data:
             raw = (data.get("parent_phone") or "").strip().replace("-", "").replace(" ", "")
+            if raw and (not raw.isdigit() or len(raw) < 10 or len(raw) > 15):
+                return Response({"detail": "올바른 학부모 전화번호를 입력해 주세요."}, status=400)
             if raw:
                 student.parent_phone = raw[:20]
                 update_fields.append("parent_phone")

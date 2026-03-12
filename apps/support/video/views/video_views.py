@@ -532,17 +532,39 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             STALE_QUEUED_THRESHOLD = getattr(
                 settings, "VIDEO_RETRY_STALE_QUEUED_HOURS", 1
             )
+            STALE_RUNNING_THRESHOLD = getattr(
+                settings, "VIDEO_RETRY_STALE_RUNNING_MINUTES", 30
+            )
             now = timezone.now()
             stale_cutoff = now - timedelta(hours=STALE_QUEUED_THRESHOLD)
+            stale_running_cutoff = now - timedelta(minutes=STALE_RUNNING_THRESHOLD)
 
             cur = None
             if video.current_job_id:
                 cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
                 if cur and cur.state == VideoTranscodeJob.State.RUNNING and not getattr(cur, "cancel_requested", False):
-                    return Response(
-                        {"detail": "Cannot retry: a job is currently RUNNING. Request cancel first or wait for it to finish."},
-                        status=status.HTTP_409_CONFLICT,
-                    )
+                    # Stale RUNNING detection: if no heartbeat or last activity too old, treat as dead
+                    last_activity = cur.last_heartbeat_at or cur.updated_at
+                    if last_activity < stale_running_cutoff:
+                        logger.warning(
+                            "VIDEO_RETRY_STALE_RUNNING | job_id=%s | video_id=%s | last_activity=%s",
+                            cur.id, video.id, last_activity,
+                        )
+                        terminate_batch_job(str(cur.id), reason="stale_running_superseded")
+                        job_mark_dead(
+                            str(cur.id),
+                            error_code="STALE_RUNNING",
+                            error_message=f"Stale RUNNING job (last activity: {last_activity}), superseded via retry",
+                        )
+                        video.refresh_from_db()
+                        video.current_job_id = None
+                        video.status = Video.Status.UPLOADED
+                        video.save(update_fields=["current_job_id", "status", "updated_at"])
+                    else:
+                        return Response(
+                            {"detail": "Cannot retry: a job is currently RUNNING. Request cancel first or wait for it to finish."},
+                            status=status.HTTP_409_CONFLICT,
+                        )
                 if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
                     has_batch_id = bool((getattr(cur, "aws_batch_job_id", None) or "").strip())
                     if not has_batch_id:

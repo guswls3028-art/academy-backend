@@ -618,9 +618,13 @@ class StudentVideoPlaybackView(APIView):
         
         thumb = _build_thumbnail_url(video)
 
-        # 조회수 증가 (재생 시작 시)
+        # 조회수 증가 — 동일 사용자 5분 내 중복 카운트 방지
         from django.db.models import F as _F
-        Video.objects.filter(id=video_id).update(view_count=_F("view_count") + 1)
+        from django.core.cache import cache as _cache
+        _view_key = f"video_view:{video_id}:{request.user.id}"
+        if not _cache.get(_view_key):
+            Video.objects.filter(id=video_id).update(view_count=_F("view_count") + 1)
+            _cache.set(_view_key, 1, 300)  # 5분 dedup
 
         # play_url 생성 (hls_url 우선, 없으면 mp4_url)
         play_url = hls_url or mp4_url
