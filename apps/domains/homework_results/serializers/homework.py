@@ -17,6 +17,7 @@ class HomeworkSerializer(serializers.ModelSerializer):
             "title",
             "status",
             "meta",
+            "display_order",
             "updated_at",
             "created_at",
         ]

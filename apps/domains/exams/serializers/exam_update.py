@@ -21,6 +21,8 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
             "allow_retake",
             "max_attempts",
             "pass_score",
+            "max_score",
+            "display_order",
             "open_at",
             "close_at",
         ]

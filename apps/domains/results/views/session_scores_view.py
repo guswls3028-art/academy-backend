@@ -208,12 +208,19 @@ class SessionScoresView(APIView):
             else:
                 exam_questions_map[int(ex.id)] = questions_by_sheet.get(sheet.id, [])
 
+        # 시험/과제를 display_order 기준으로 정렬 (0이면 created_at 순)
+        exams = sorted(exams, key=lambda e: (getattr(e, "display_order", 0) or 0, e.created_at))
+        exam_ids = [int(e.id) for e in exams]
+        homeworks = sorted(homeworks, key=lambda h: (getattr(h, "display_order", 0) or 0, h.created_at))
+
         meta = {
             "exams": [
                 {
                     "exam_id": int(ex.id),
                     "title": str(getattr(ex, "title", "")),
                     "pass_score": float(getattr(ex, "pass_score", 0.0) or 0.0),
+                    "max_score": float(getattr(ex, "max_score", 100.0) or 100.0),
+                    "display_order": int(getattr(ex, "display_order", 0) or 0),
                     "questions": exam_questions_map.get(int(ex.id), []),
                 }
                 for ex in exams
@@ -223,6 +230,7 @@ class SessionScoresView(APIView):
                     "homework_id": int(hw.id),
                     "title": str(hw.title),
                     "unit": None,  # 서버 단일 진실
+                    "display_order": int(getattr(hw, "display_order", 0) or 0),
                 }
                 for hw in homeworks
             ],

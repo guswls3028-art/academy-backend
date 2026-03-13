@@ -74,6 +74,14 @@ class Exam(BaseModel):
     allow_retake = models.BooleanField(default=False)
     max_attempts = models.PositiveIntegerField(default=1)
     pass_score = models.FloatField(default=0.0)
+    max_score = models.FloatField(
+        default=100.0,
+        help_text="만점. 답안등록 없이 합산 입력 시 사용. 답안등록 시 문항 합산으로 자동 재계산.",
+    )
+    display_order = models.PositiveIntegerField(
+        default=0,
+        help_text="성적탭 내 표시 순서 (작을수록 앞)",
+    )
 
     open_at = models.DateTimeField(null=True, blank=True)
     close_at = models.DateTimeField(null=True, blank=True)

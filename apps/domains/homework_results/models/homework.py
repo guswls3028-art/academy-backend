@@ -72,6 +72,10 @@ class Homework(TimestampModel):
     )
 
     meta = models.JSONField(null=True, blank=True)
+    display_order = models.PositiveIntegerField(
+        default=0,
+        help_text="성적탭 내 표시 순서 (작을수록 앞)",
+    )
 
     class Meta:
         ordering = ["-updated_at", "-id"]
