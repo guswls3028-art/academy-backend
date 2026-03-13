@@ -173,7 +173,7 @@ def send_one_alimtalk_own_solapi(
         return {"status": "error", "reason": "to_pf_template_required"}
     try:
         kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id)
-        message = RequestMessage(from_=sender, to=to, text=text or " ", kakao_options=kakao_option, replacements=replacements or None)
+        message = RequestMessage(from_=sender, to=to, text=text or " ", kakao_options=kakao_option)
         response = client.send(message)
         group_id = getattr(getattr(response, "group_info", None), "group_id", None)
         count = getattr(getattr(response, "group_info", None), "count", None)
@@ -216,7 +216,6 @@ def send_one_alimtalk(
             to=to,
             text=text or " ",
             kakao_options=kakao_option,
-            replacements=replacements or None,
         )
         response = client.send(message)
         group_id = getattr(getattr(response, "group_info", None), "group_id", None)
