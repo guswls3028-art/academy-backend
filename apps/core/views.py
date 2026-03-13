@@ -690,6 +690,9 @@ class TenantInfoView(APIView):
             "phone": (tenant.phone or "").strip(),
             "headquarters_phone": (getattr(tenant, "headquarters_phone", None) or "").strip(),
             "academies": academies,
+            "og_title": (getattr(tenant, "og_title", None) or "").strip(),
+            "og_description": (getattr(tenant, "og_description", None) or "").strip(),
+            "og_image_url": (getattr(tenant, "og_image_url", None) or "").strip(),
         })
 
     def patch(self, request):
@@ -725,9 +728,50 @@ class TenantInfoView(APIView):
                         update_fields.append("name")
                     if "headquarters_phone" not in request.data:
                         update_fields.append("headquarters_phone")
+        # OG 필드
+        for og_field, max_len in [("og_title", 100), ("og_description", 300), ("og_image_url", 500)]:
+            if og_field in request.data:
+                setattr(tenant, og_field, (request.data.get(og_field) or "").strip()[:max_len])
+                update_fields.append(og_field)
+
         if update_fields:
             tenant.save(update_fields=update_fields)
         return self.get(request)
+
+
+class PublicOgMetaView(APIView):
+    """
+    GET /api/v1/core/og-meta/?hostname=tchul.com
+    공개 API — Cloudflare Pages Function에서 호출. 인증 불필요.
+    hostname으로 TenantDomain → Tenant 조회 후 OG 메타 반환.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        hostname = (request.query_params.get("hostname") or "").strip().lower()
+        if not hostname:
+            return Response({"title": "", "description": "", "image": ""})
+
+        try:
+            td = TenantDomain.objects.select_related("tenant").get(
+                host=hostname, is_active=True,
+            )
+        except TenantDomain.DoesNotExist:
+            return Response({"title": "", "description": "", "image": ""})
+
+        tenant = td.tenant
+        title = (tenant.og_title or "").strip() or (tenant.name or "").strip()
+        description = (tenant.og_description or "").strip()
+        image = (tenant.og_image_url or "").strip()
+
+        return Response({
+            "title": title,
+            "description": description or f"{title} 학습 플랫폼",
+            "image": image,
+        }, headers={
+            "Cache-Control": "public, max-age=300",
+            "Access-Control-Allow-Origin": "*",
+        })
 
 
 class TenantCreateView(APIView):

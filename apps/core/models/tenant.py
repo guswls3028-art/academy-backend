@@ -104,6 +104,20 @@ class Tenant(models.Model):
         help_text="True면 학생 가입 신청을 즉시 자동 승인합니다.",
     )
 
+    # ---------- OG(Open Graph) 미리보기 ----------
+    og_title = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="카카오톡/SNS 링크 미리보기 제목 (비어 있으면 학원명 사용)",
+    )
+    og_description = models.CharField(
+        max_length=300, blank=True, default="",
+        help_text="카카오톡/SNS 링크 미리보기 설명",
+    )
+    og_image_url = models.CharField(
+        max_length=500, blank=True, default="",
+        help_text="카카오톡/SNS 링크 미리보기 이미지 URL (절대 경로 또는 /tenants/... 상대 경로)",
+    )
+
     class Meta:
         app_label = "core"
         verbose_name = "Tenant"
