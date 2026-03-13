@@ -73,7 +73,11 @@ def _get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_i
             {"detail": "학생 정보를 확인할 수 없습니다."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    enrollment = Enrollment.objects.filter(id=enrollment_id, student=student, status="ACTIVE").first()
+    tenant = getattr(request, "tenant", None)
+    qs = Enrollment.objects.filter(id=enrollment_id, student=student, status="ACTIVE")
+    if tenant:
+        qs = qs.filter(tenant=tenant)
+    enrollment = qs.first()
     if not enrollment:
         return None, Response(
             {"detail": "해당 수강 정보에 접근할 수 없습니다."},
@@ -292,7 +296,10 @@ class StudentVideoMeView(APIView):
             )
 
         enrollments = (
-            Enrollment.objects.filter(student=student, tenant=tenant, status="ACTIVE")
+            Enrollment.objects.filter(
+                student=student, tenant=tenant, status="ACTIVE",
+                lecture__tenant=tenant,  # defense-in-depth: lecture must match tenant
+            )
             .select_related("lecture")
             .order_by("lecture__title")
         )
@@ -928,21 +935,25 @@ class StudentVideoLikeView(APIView):
             raise PermissionDenied("접근 권한이 없습니다.")
 
         from django.db import transaction, IntegrityError
+        from django.db.models.functions import Greatest
 
         try:
             with transaction.atomic():
+                # select_for_update on video row to serialize like toggles
+                Video.objects.select_for_update().filter(id=video_id).first()
                 existing = VideoLike.objects.filter(video=video, student=student, tenant_id=tenant.id).first()
                 if existing:
                     existing.delete()
-                    from django.db.models.functions import Greatest
                     Video.objects.filter(id=video_id).update(
                         like_count=Greatest(F("like_count") - 1, 0)
                     )
-                    return Response({"liked": False, "like_count": max(0, video.like_count - 1)})
+                    video.refresh_from_db(fields=["like_count"])
+                    return Response({"liked": False, "like_count": video.like_count})
                 else:
                     VideoLike.objects.create(video=video, student=student, tenant_id=tenant.id)
                     Video.objects.filter(id=video_id).update(like_count=F("like_count") + 1)
-                    return Response({"liked": True, "like_count": video.like_count + 1})
+                    video.refresh_from_db(fields=["like_count"])
+                    return Response({"liked": True, "like_count": video.like_count})
         except IntegrityError:
             # 동시 요청으로 중복 좋아요 시도 — 현재 상태 반환
             is_liked = VideoLike.objects.filter(video=video, student=student, tenant_id=tenant.id).exists()

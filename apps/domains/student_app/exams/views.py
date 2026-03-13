@@ -124,7 +124,7 @@ class StudentExamQuestionsView(APIView):
         return Response(list(questions))
 
 
-def _get_enrollment_for_exam(user, exam_id):
+def _get_enrollment_for_exam(user, exam_id, tenant=None):
     """시험 응시 권한이 있는 enrollment 한 개 반환. (enrollment, tenant) 또는 (None, None)."""
     from apps.domains.exams.models import ExamEnrollment
     from apps.domains.enrollment.models import Enrollment
@@ -133,17 +133,24 @@ def _get_enrollment_for_exam(user, exam_id):
     student = getattr(user, "student_profile", None)
     if not student:
         try:
-            # tenant 컨텍스트 없이 user 기반 조회 — 단일 Student만 존재해야 정상
-            student = Student.objects.filter(user=user).first()
+            # request.tenant 기반으로 정확한 student 조회
+            qs = Student.objects.filter(user=user)
+            if tenant:
+                qs = qs.filter(tenant=tenant)
+            student = qs.first()
         except Exception:
             return None, None
     if not student:
         return None, None
+    # tenant가 전달되면 student.tenant 일치 여부 교차 검증
+    if tenant and getattr(student, "tenant_id", None) != tenant.id:
+        return None, None
+    filter_tenant = tenant or student.tenant
     ee = (
         ExamEnrollment.objects.filter(
             exam_id=int(exam_id),
             enrollment__student=student,
-            enrollment__tenant=student.tenant,  # tenant 격리
+            enrollment__tenant=filter_tenant,
         )
         .select_related("enrollment", "enrollment__tenant")
         .first()
@@ -172,7 +179,7 @@ class StudentExamSubmitView(APIView):
                 {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        enrollment, tenant = _get_enrollment_for_exam(request.user, exam_id)
+        enrollment, tenant = _get_enrollment_for_exam(request.user, exam_id, tenant=tenant)
         if not enrollment or not tenant:
             return Response(
                 {"detail": "응시 대상이 아닙니다."},

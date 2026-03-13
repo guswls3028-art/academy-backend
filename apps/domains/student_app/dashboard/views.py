@@ -12,12 +12,8 @@ from .serializers import StudentDashboardSerializer
 
 
 def _get_tenant_from_request(request):
-    tenant = getattr(request, "tenant", None)
-    if not tenant:
-        student = get_request_student(request)
-        if student and getattr(student, "tenant", None):
-            tenant = student.tenant
-    return tenant
+    """request.tenant 반환. 테넌트 미해석 시 None (폴백 없음 — §B 절대 격리)."""
+    return getattr(request, "tenant", None)
 
 
 class StudentDashboardView(APIView):
@@ -73,18 +69,14 @@ class StudentDashboardView(APIView):
             student = get_request_student(request)
             if student:
                 today = date.today()
-                session_ids = (
-                    SessionEnrollment.objects.filter(
-                        enrollment__student=student,
-                        enrollment__tenant=tenant,
-                        session__date=today,
-                    )
-                    .values_list("session_id", flat=True)
-                    .distinct()
-                )
                 sessions = (
-                    LectureSession.objects.filter(id__in=session_ids)
+                    LectureSession.objects.filter(
+                        sessionenrollment__enrollment__student=student,
+                        sessionenrollment__enrollment__tenant=tenant,
+                        date=today,
+                    )
                     .select_related("lecture")
+                    .distinct()
                     .order_by("order", "id")
                 )
                 data["today_sessions"] = [

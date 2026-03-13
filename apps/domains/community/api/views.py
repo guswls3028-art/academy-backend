@@ -37,13 +37,8 @@ MAX_ATTACHMENTS_PER_POST = 10
 
 
 def _get_tenant_from_request(request):
-    """request.tenant 또는 학생 소속 tenant 반환."""
-    tenant = getattr(request, "tenant", None)
-    if not tenant:
-        request_student = get_request_student(request)
-        if request_student and getattr(request_student, "tenant", None):
-            tenant = request_student.tenant
-    return tenant
+    """request.tenant 반환. 테넌트 미해석 시 None (폴백 없음 — §B 절대 격리)."""
+    return getattr(request, "tenant", None)
 
 
 class PostViewSet(viewsets.ModelViewSet):
@@ -87,10 +82,6 @@ class PostViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
-            request_student = get_request_student(self.request)
-            if request_student and getattr(request_student, "tenant", None):
-                tenant = request_student.tenant
-        if not tenant:
             return get_empty_post_queryset()
         raw = self.request.query_params.get("node_id")
         try:
@@ -119,9 +110,6 @@ class PostViewSet(viewsets.ModelViewSet):
     def notices(self, request):
         """GET /community/posts/notices/ — 학생앱·관리자 동일: block_type code=notice 인 공지 목록."""
         tenant = getattr(request, "tenant", None)
-        request_student = get_request_student(request)
-        if not tenant and request_student and getattr(request_student, "tenant", None):
-            tenant = request_student.tenant
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         qs = get_notice_posts_for_tenant(tenant)
@@ -143,9 +131,6 @@ class PostViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         tenant = getattr(request, "tenant", None)
         request_student = get_request_student(request)
-        # tenant 미설정 시 학생 소속 tenant로 폴백 (호스트 기반 테넌트 해석 실패 시 403 방지)
-        if not tenant and request_student and getattr(request_student, "tenant", None):
-            tenant = request_student.tenant
         if not tenant:
             return Response(
                 {"detail": "tenant required", "code": "tenant_required"},
