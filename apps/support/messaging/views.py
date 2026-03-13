@@ -3,6 +3,10 @@
 메시징 API — 잔액/충전/PFID/발송 로그 (테넌트 기준)
 """
 
+from datetime import timedelta
+
+from django.utils import timezone
+
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -48,6 +52,13 @@ class MessagingInfoView(APIView):
         data["sms_allowed"] = can_send_sms(tenant.id)
         channel = resolve_kakao_channel(tenant.id)
         data["channel_source"] = "system_default" if channel.get("use_default", True) else "tenant_override"
+        resolved_pf_id = (channel.get("pf_id") or "").strip()
+        data["resolved_pf_id"] = resolved_pf_id
+        # alimtalk_available: PFID resolved AND at least one APPROVED template exists
+        has_approved_template = MessageTemplate.objects.filter(
+            tenant=tenant, solapi_status="APPROVED",
+        ).exists() if resolved_pf_id else False
+        data["alimtalk_available"] = bool(resolved_pf_id and has_approved_template)
         return Response(data)
 
     def patch(self, request):
@@ -80,6 +91,12 @@ class MessagingInfoView(APIView):
         data["sms_allowed"] = can_send_sms(tenant.id)
         channel = resolve_kakao_channel(tenant.id)
         data["channel_source"] = "system_default" if channel.get("use_default", True) else "tenant_override"
+        resolved_pf_id = (channel.get("pf_id") or "").strip()
+        data["resolved_pf_id"] = resolved_pf_id
+        has_approved_template = MessageTemplate.objects.filter(
+            tenant=tenant, solapi_status="APPROVED",
+        ).exists() if resolved_pf_id else False
+        data["alimtalk_available"] = bool(resolved_pf_id and has_approved_template)
         return Response(data)
 
 
@@ -197,11 +214,12 @@ class ChannelCheckView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
-        # TODO: Solapi/카카오 API로 실제 채널 공유 여부 조회
-        pfid = (request.tenant.kakao_pfid or "").strip()
-        if not pfid:
-            return Response({"shared": False, "message": "PFID 미연동"})
-        return Response({"shared": True, "message": "연동됨 (실제 검증은 API 연동 후)"})
+        channel = resolve_kakao_channel(request.tenant.id)
+        resolved_pf_id = (channel.get("pf_id") or "").strip()
+        if not resolved_pf_id:
+            return Response({"shared": False, "message": "PFID 미연동 (테넌트·시스템 모두 없음)"})
+        source = "시스템 기본" if channel.get("use_default", True) else "테넌트 직접 연동"
+        return Response({"shared": True, "message": f"연동됨 ({source})"})
 
 
 class MessageTemplateListCreateView(APIView):
@@ -357,6 +375,17 @@ class SendMessageView(APIView):
         from apps.support.messaging.services import enqueue_sms, get_site_url
         from apps.support.messaging.policy import MessagingPolicyError
 
+        # Rate limit: max 500 messages per tenant per hour
+        one_hour_ago = timezone.now() - timedelta(hours=1)
+        recent_count = NotificationLog.objects.filter(
+            tenant=tenant, sent_at__gte=one_hour_ago,
+        ).count()
+        if recent_count >= 500:
+            return Response(
+                {"detail": "시간당 발송 한도(500건)를 초과했습니다. 잠시 후 다시 시도해 주세요."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
         if send_to == "staff":
             return self._send_to_staff(
                 request, tenant, data, sender, message_mode,
@@ -375,6 +404,11 @@ class SendMessageView(APIView):
         if not students:
             return Response(
                 {"detail": "선택한 학생을 찾을 수 없거나 삭제된 학생입니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(students) > 200:
+            return Response(
+                {"detail": f"한 번에 최대 200명까지 발송할 수 있습니다. (선택: {len(students)}명)"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -423,10 +457,14 @@ class SendMessageView(APIView):
             name_3 = name[:3] if len(name) >= 3 else name
             site_url = get_site_url(request) or ""
             text = (
-                body_base.replace("#{학생이름2}", name_2)
+                body_base.replace("#{학생이름}", name)
+                .replace("#{학생이름2}", name_2)
                 .replace("#{학생이름3}", name_3)
                 .replace("#{사이트링크}", site_url)
             )
+            # Context-dependent variables not available in manual send — replace with empty string
+            for var in ("강의명", "차시명", "시험명", "과제명", "클리닉명", "장소", "날짜", "시간", "시험성적", "클리닉합불"):
+                text = text.replace(f"#{{{var}}}", "")
             if subject_base:
                 text = subject_base + "\n" + text
 
@@ -435,6 +473,7 @@ class SendMessageView(APIView):
             if message_mode in ("alimtalk", "both") and solapi_template_id:
                 template_id_solapi = solapi_template_id
                 alimtalk_replacements = [
+                    {"key": "학생이름", "value": name},
                     {"key": "학생이름2", "value": name_2},
                     {"key": "학생이름3", "value": name_3},
                     {"key": "사이트링크", "value": site_url},
@@ -478,6 +517,11 @@ class SendMessageView(APIView):
                 {"detail": "선택한 직원을 찾을 수 없습니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if len(staffs) > 200:
+            return Response(
+                {"detail": f"한 번에 최대 200명까지 발송할 수 있습니다. (선택: {len(staffs)}명)"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         body_base = (raw_body or "").strip()
         subject_base = (raw_subject or "").strip()
@@ -519,10 +563,14 @@ class SendMessageView(APIView):
             name_3 = name[:3] if len(name) >= 3 else name
             site_url = get_site_url(request) or ""
             text = (
-                body_base.replace("#{학생이름2}", name_2)
+                body_base.replace("#{학생이름}", name)
+                .replace("#{학생이름2}", name_2)
                 .replace("#{학생이름3}", name_3)
                 .replace("#{사이트링크}", site_url)
             )
+            # Context-dependent variables not available in manual send — replace with empty string
+            for var in ("강의명", "차시명", "시험명", "과제명", "클리닉명", "장소", "날짜", "시간", "시험성적", "클리닉합불"):
+                text = text.replace(f"#{{{var}}}", "")
             if subject_base:
                 text = subject_base + "\n" + text
 
@@ -531,6 +579,7 @@ class SendMessageView(APIView):
             if message_mode in ("alimtalk", "both") and solapi_template_id:
                 template_id_solapi = solapi_template_id
                 alimtalk_replacements = [
+                    {"key": "학생이름", "value": name},
                     {"key": "학생이름2", "value": name_2},
                     {"key": "학생이름3", "value": name_3},
                     {"key": "사이트링크", "value": site_url},
