@@ -1594,24 +1594,34 @@ class StudentPasswordFindRequestView(APIView):
             if use_alimtalk:
                 template_id_solapi = solapi_id
                 alimtalk_replacements = [{"key": "인증번호", "value": code}]
-            # 알림톡 템플릿이 없으면 SMS 폴백
-            mode = "alimtalk" if template_id_solapi else "both"
-            try:
-                ok = enqueue_sms(
-                    tenant_id=tenant.id,
-                    to=phone,
-                    text=text or fallback_text,
-                    message_mode=mode,
-                    template_id=template_id_solapi,
-                    alimtalk_replacements=alimtalk_replacements,
-                )
-            except MessagingPolicyError:
-                ok = False
+            if template_id_solapi:
+                try:
+                    ok = enqueue_sms(
+                        tenant_id=tenant.id,
+                        to=phone,
+                        text=text or fallback_text,
+                        message_mode="alimtalk",
+                        template_id=template_id_solapi,
+                        alimtalk_replacements=alimtalk_replacements,
+                    )
+                except MessagingPolicyError:
+                    ok = False
+            else:
+                from apps.support.messaging.policy import get_owner_tenant_id
+                try:
+                    ok = enqueue_sms(
+                        tenant_id=get_owner_tenant_id(),
+                        to=phone,
+                        text=text or fallback_text,
+                        message_mode="sms",
+                    )
+                except MessagingPolicyError:
+                    ok = False
         else:
-            # AutoSendConfig 미설정 — SMS로 발송 (template_id 없는 alimtalk은 워커에서 실패)
+            from apps.support.messaging.policy import get_owner_tenant_id
             try:
                 ok = enqueue_sms(
-                    tenant_id=tenant.id,
+                    tenant_id=get_owner_tenant_id(),
                     to=phone,
                     text=fallback_text,
                     message_mode="sms",
@@ -1846,62 +1856,43 @@ class StudentPasswordResetSendView(APIView):
                     {"key": k.strip("#{}"), "value": v}
                     for k, v in replacements_map.items()
                 ]
-            # 알림톡 템플릿이 없으면 SMS로 폴백 (template_id 없는 alimtalk은 워커에서 실패)
-            mode = "alimtalk" if template_id_solapi else "both"
-            try:
-                ok = enqueue_sms(
-                    tenant_id=tenant.id,
-                    to=send_to,
-                    text=text or fallback_text,
-                    message_mode=mode,
-                    template_id=template_id_solapi,
-                    alimtalk_replacements=alimtalk_replacements,
-                )
-            except MessagingPolicyError:
-                ok = False
-        else:
-            # AutoSendConfig 미설정 — 승인된 signup 템플릿 자동 검색, 없으면 SMS
-            from apps.support.messaging.models import MessageTemplate
-            auto_template = MessageTemplate.objects.filter(
-                tenant_id=tenant.id,
-                category="signup",
-                solapi_status="APPROVED",
-            ).exclude(solapi_template_id="").first()
-            if auto_template:
-                auto_replacements_map = {
-                    "#{학생이름}": display_name or "",
-                    "#{아이디}": display_username or "",
-                    "#{임시비밀번호}": temp_password,
-                    "#{비밀번호안내}": notice,
-                }
-                auto_text = (auto_template.body or "").strip()
-                for placeholder, value in auto_replacements_map.items():
-                    auto_text = auto_text.replace(placeholder, value)
-                auto_alimtalk_reps = [
-                    {"key": k.strip("#{}"), "value": v}
-                    for k, v in auto_replacements_map.items()
-                ]
+            if template_id_solapi:
+                # 승인된 알림톡 템플릿 있음 → 알림톡 발송
                 try:
                     ok = enqueue_sms(
                         tenant_id=tenant.id,
                         to=send_to,
-                        text=auto_text or fallback_text,
+                        text=text or fallback_text,
                         message_mode="alimtalk",
-                        template_id=auto_template.solapi_template_id,
-                        alimtalk_replacements=auto_alimtalk_reps,
+                        template_id=template_id_solapi,
+                        alimtalk_replacements=alimtalk_replacements,
                     )
                 except MessagingPolicyError:
                     ok = False
             else:
+                # 승인된 템플릿 없음 → 시스템 키로 SMS 발송 (비밀번호 찾기는 필수 기능)
+                from apps.support.messaging.policy import get_owner_tenant_id
                 try:
                     ok = enqueue_sms(
-                        tenant_id=tenant.id,
+                        tenant_id=get_owner_tenant_id(),
                         to=send_to,
-                        text=fallback_text,
+                        text=text or fallback_text,
                         message_mode="sms",
                     )
                 except MessagingPolicyError:
                     ok = False
+        else:
+            # AutoSendConfig 미설정 — 시스템 키로 SMS 발송 (비밀번호 찾기는 필수 기능)
+            from apps.support.messaging.policy import get_owner_tenant_id
+            try:
+                ok = enqueue_sms(
+                    tenant_id=get_owner_tenant_id(),
+                    to=send_to,
+                    text=fallback_text,
+                    message_mode="sms",
+                )
+            except MessagingPolicyError:
+                ok = False
 
         if not ok:
             # 발송 실패 시 비밀번호 롤백 — 비밀번호는 바뀌었는데 알림 못 받는 상황 방지
@@ -2007,10 +1998,11 @@ class SendExistingCredentialsView(APIView):
             except MessagingPolicyError:
                 ok = False
         else:
-            # 템플릿 없으면 SMS로 발송 (template_id 없는 alimtalk은 워커에서 실패)
+            # 템플릿 없음 → 시스템 키로 SMS (비밀번호 찾기는 필수 기능)
+            from apps.support.messaging.policy import get_owner_tenant_id
             try:
                 ok = enqueue_sms(
-                    tenant_id=tenant.id,
+                    tenant_id=get_owner_tenant_id(),
                     to=send_to,
                     text=fallback_text,
                     message_mode="sms",
