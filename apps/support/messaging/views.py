@@ -344,9 +344,9 @@ class SendMessageView(APIView):
         raw_body = (data.get("raw_body") or "").strip()
         raw_subject = (data.get("raw_subject") or "").strip()
 
-        # 발신번호 없으면 워커에서 sender_required 로 조용히 실패함 → API에서 즉시 400
+        # 발신번호: 알림톡 전용이면 선택, SMS/both면 필수
         sender = (tenant.messaging_sender or "").strip()
-        if not sender:
+        if not sender and message_mode != "alimtalk":
             return Response(
                 {
                     "detail": "발신번호가 등록되지 않았습니다. 메시지 > 설정 탭에서 발신번호를 등록·저장한 뒤 발송해 주세요.",
