@@ -158,7 +158,7 @@ def send_one_sms_own_solapi(
 def send_one_alimtalk_own_solapi(
     to: str, sender: str, pf_id: str, template_id: str,
     replacements: Optional[list] = None,
-    *, api_key: str, api_secret: str,
+    *, api_key: str, api_secret: str, text: str = "",
 ) -> dict:
     """테넌트 자체 솔라피 키로 알림톡 1건 발송."""
     try:
@@ -173,7 +173,7 @@ def send_one_alimtalk_own_solapi(
         return {"status": "error", "reason": "to_pf_template_required"}
     try:
         kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id)
-        message = RequestMessage(from_=sender, to=to, kakao_options=kakao_option, replacements=replacements or None)
+        message = RequestMessage(from_=sender, to=to, text=text or " ", kakao_options=kakao_option, replacements=replacements or None)
         response = client.send(message)
         group_id = getattr(getattr(response, "group_info", None), "group_id", None)
         count = getattr(getattr(response, "group_info", None), "count", None)
@@ -193,10 +193,12 @@ def send_one_alimtalk(
     pf_id: str,
     template_id: str,
     replacements: Optional[list] = None,
+    text: str = "",
 ) -> dict:
     """
     Solapi 알림톡 1건 발송. 실패/수신거부 시 caller가 SMS로 fallback.
     replacements: [{"key": "학생이름2", "value": "길동"}, ...] — 템플릿 #{학생이름2}, #{날짜}, #{클리닉명} 등 치환.
+    text: SMS 대체 본문 (Solapi 필수 필드).
     """
     try:
         from solapi.model import RequestMessage
@@ -212,6 +214,7 @@ def send_one_alimtalk(
         message = RequestMessage(
             from_=sender,
             to=to,
+            text=text or " ",
             kakao_options=kakao_option,
             replacements=replacements or None,
         )
@@ -525,7 +528,7 @@ def main() -> int:
                             )
                         return send_one_sms(cfg, to=to_, text=text_, sender=sender_)
 
-                    def _dispatch_alimtalk(to_, sender_, pf_id_, template_id_, replacements_):
+                    def _dispatch_alimtalk(to_, sender_, pf_id_, template_id_, replacements_, text_=""):
                         if tenant_provider == "ppurio":
                             return send_one_alimtalk_ppurio(
                                 to=to_, sender=sender_, pf_id=pf_id_,
@@ -536,11 +539,11 @@ def main() -> int:
                             return send_one_alimtalk_own_solapi(
                                 to=to_, sender=sender_, pf_id=pf_id_,
                                 template_id=template_id_, replacements=replacements_,
-                                api_key=_own_solapi_key, api_secret=_own_solapi_secret,
+                                api_key=_own_solapi_key, api_secret=_own_solapi_secret, text=text_,
                             )
                         return send_one_alimtalk(
                             cfg, to=to_, sender=sender_, pf_id=pf_id_,
-                            template_id=template_id_, replacements=replacements_,
+                            template_id=template_id_, replacements=replacements_, text=text_,
                         )
 
                     # message_mode: sms | alimtalk | both
@@ -587,6 +590,7 @@ def main() -> int:
                                 result = _dispatch_alimtalk(
                                     to, sender, pf_id, template_id,
                                     alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
+                                    text_=text,
                                 )
                                 # 알림톡만: 폴백 없음
                             else:
@@ -595,6 +599,7 @@ def main() -> int:
                             result = _dispatch_alimtalk(
                                 to, sender, pf_id, template_id,
                                 alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
+                                text_=text,
                             )
                             if result.get("status") != "ok":
                                 logger.info("alimtalk failed, fallback to SMS (provider=%s)", tenant_provider)
