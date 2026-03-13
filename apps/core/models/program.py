@@ -33,7 +33,7 @@ class Program(TimestampModel):
     PLAN_PRICES: dict[str, int] = {
         Plan.STANDARD: 99_000,
         Plan.PRO: 198_000,
-        Plan.MAX: 300_000,
+        Plan.MAX: 330_000,
     }
 
     tenant = models.OneToOneField(
