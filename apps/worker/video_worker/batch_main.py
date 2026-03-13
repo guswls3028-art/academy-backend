@@ -15,8 +15,6 @@ import sys
 import threading
 import time
 
-import threading
-import time
 
 # Must be set by batch_entrypoint from SSM; no fallback.
 if not os.environ.get("DJANGO_SETTINGS_MODULE"):
