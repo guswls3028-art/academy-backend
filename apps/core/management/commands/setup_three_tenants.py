@@ -67,7 +67,7 @@ class Command(BaseCommand):
                     "display_name": name,
                     "brand_key": code,
                     "login_variant": Program.LoginVariant.HAKWONPLUS,
-                    "plan": Program.Plan.PREMIUM,
+                    "plan": Program.Plan.MAX,
                     "feature_flags": {
                         "student_app_enabled": True,
                         "admin_enabled": True,

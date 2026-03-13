@@ -191,10 +191,19 @@ class SubscriptionView(APIView):
                 status=404,
             )
 
+        # Promo/discount calculation
+        from apps.core.models.program import Program as ProgramModel
+        original_price = ProgramModel.PLAN_PRICES.get(program.plan, program.monthly_price)
+        is_promo = program.monthly_price < original_price
+        discount_rate = round((1 - program.monthly_price / original_price) * 100) if is_promo and original_price > 0 else 0
+
         return Response({
             "plan": program.plan,
             "plan_display": program.get_plan_display(),
             "monthly_price": program.monthly_price,
+            "original_price": original_price,
+            "is_promo": is_promo,
+            "discount_rate": discount_rate,
             "subscription_status": program.subscription_status,
             "subscription_status_display": program.get_subscription_status_display(),
             "subscription_started_at": str(program.subscription_started_at) if program.subscription_started_at else None,
@@ -763,7 +772,7 @@ class TenantCreateView(APIView):
                 "display_name": name,
                 "brand_key": code,
                 "login_variant": Program.LoginVariant.HAKWONPLUS,
-                "plan": Program.Plan.PREMIUM,
+                "plan": Program.Plan.MAX,
                 "feature_flags": {
                     "student_app_enabled": True,
                     "admin_enabled": True,

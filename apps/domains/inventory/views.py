@@ -30,7 +30,7 @@ except ImportError:
     copy_object_r2_storage = None
     delete_object_r2_storage = None
 
-QUOTA_BYTES = {"lite": 0, "basic": 10 * 1024**3, "premium": 200 * 1024**3}
+QUOTA_BYTES = {"standard": 10 * 1024**3, "pro": 50 * 1024**3, "max": 200 * 1024**3}
 
 
 def _tenant_required(view_func):
@@ -110,11 +110,11 @@ class QuotaView(View):
         tenant = request.tenant
         try:
             program = Program.ensure_for_tenant(tenant=tenant)
-            plan = (program.plan or "basic").lower()
+            plan = (program.plan or "pro").lower()
         except Exception:
-            plan = "basic"
+            plan = "pro"
         try:
-            limit = QUOTA_BYTES.get(plan, QUOTA_BYTES["basic"])
+            limit = QUOTA_BYTES.get(plan, QUOTA_BYTES["pro"])
             used = inv_repo.inventory_file_aggregate_size(tenant)
             return JsonResponse({
                 "usedBytes": used,
@@ -260,12 +260,12 @@ class FileUploadView(View):
         # Quota
         try:
             program = Program.ensure_for_tenant(tenant=tenant)
-            plan = (program.plan or "basic").lower()
+            plan = (program.plan or "pro").lower()
         except Exception:
-            plan = "basic"
-        limit = QUOTA_BYTES.get(plan, QUOTA_BYTES["basic"])
-        if plan == "lite":
-            return JsonResponse({"detail": "인벤토리 기능을 사용할 수 없는 플랜입니다.", "code": "plan_lite"}, status=403)
+            plan = "pro"
+        limit = QUOTA_BYTES.get(plan, QUOTA_BYTES["pro"])
+        if plan == "standard":
+            return JsonResponse({"detail": "인벤토리 기능을 사용할 수 없는 플랜입니다.", "code": "plan_standard"}, status=403)
         used = inv_repo.inventory_file_aggregate_size(tenant)
         if used + file_obj.size > limit:
             return JsonResponse({"detail": "용량 한도를 초과했습니다. 플랜 업그레이드가 필요합니다.", "code": "quota_exceeded"}, status=403)

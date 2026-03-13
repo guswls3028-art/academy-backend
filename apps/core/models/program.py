@@ -26,14 +26,14 @@ class Program(TimestampModel):
         CUSTOM = "custom", "Custom"
 
     class Plan(models.TextChoices):
-        LITE = "lite", "Lite"
-        BASIC = "basic", "Basic"
-        PREMIUM = "premium", "Premium"
+        STANDARD = "standard", "Standard"
+        PRO = "pro", "Pro"
+        MAX = "max", "Max"
 
     PLAN_PRICES: dict[str, int] = {
-        Plan.LITE: 55_000,
-        Plan.BASIC: 198_000,
-        Plan.PREMIUM: 300_000,
+        Plan.STANDARD: 99_000,
+        Plan.PRO: 198_000,
+        Plan.MAX: 300_000,
     }
 
     tenant = models.OneToOneField(
@@ -59,11 +59,11 @@ class Program(TimestampModel):
     plan = models.CharField(
         max_length=20,
         choices=Plan.choices,
-        default=Plan.PREMIUM,
-        help_text="요금제 (lite/basic/premium)",
+        default=Plan.PRO,
+        help_text="요금제 (standard/pro/max)",
     )
     monthly_price = models.PositiveIntegerField(
-        default=300_000,
+        default=198_000,
         help_text="월 요금(원). PLAN_PRICES 기준 자동 설정.",
     )
 
@@ -114,13 +114,15 @@ class Program(TimestampModel):
         ]
 
     def save(self, *args, **kwargs):
-        # plan 변경 시 가격 자동 동기화
+        # plan 변경 시 가격 자동 동기화 (프로모션 가격이 설정되어 있으면 유지)
         if self.plan in self.PLAN_PRICES:
-            self.monthly_price = self.PLAN_PRICES[self.plan]
-            # update_fields 에 monthly_price 자동 포함
-            uf = kwargs.get("update_fields")
-            if uf is not None and "monthly_price" not in uf:
-                kwargs["update_fields"] = list(uf) + ["monthly_price"]
+            # monthly_price가 아직 기본값이거나 다른 플랜의 정가인 경우에만 동기화
+            other_plan_prices = {v for k, v in self.PLAN_PRICES.items() if k != self.plan}
+            if self.monthly_price in other_plan_prices or self.monthly_price == 0:
+                self.monthly_price = self.PLAN_PRICES[self.plan]
+                uf = kwargs.get("update_fields")
+                if uf is not None and "monthly_price" not in uf:
+                    kwargs["update_fields"] = list(uf) + ["monthly_price"]
         super().save(*args, **kwargs)
 
     @property
