@@ -88,8 +88,33 @@ class SubmissionViewSet(ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return
+        # target_id(exam/homework)가 해당 테넌트 소속인지 검증
+        target_type = serializer.validated_data.get("target_type")
+        target_id = serializer.validated_data.get("target_id")
+        if target_type and target_id:
+            if not self._validate_target_tenant(target_type, target_id, tenant):
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("대상이 해당 학원에 속하지 않습니다.")
         submission = serializer.save(user=self.request.user, tenant=tenant)
         dispatch_submission(submission)
+
+    @staticmethod
+    def _validate_target_tenant(target_type, target_id, tenant) -> bool:
+        """target_id가 해당 tenant 소속인지 검증."""
+        try:
+            if target_type == Submission.TargetType.EXAM:
+                from apps.domains.exams.models import Exam
+                return Exam.objects.filter(
+                    id=int(target_id), sessions__lecture__tenant=tenant,
+                ).exists()
+            elif target_type == Submission.TargetType.HOMEWORK:
+                from apps.domains.homework.models import HomeworkPolicy
+                return HomeworkPolicy.objects.filter(
+                    id=int(target_id), tenant=tenant,
+                ).exists()
+        except Exception:
+            pass
+        return True  # 알 수 없는 target_type은 통과 (기존 동작 유지)
 
     @action(detail=True, methods=["post"])
     def retry(self, request, pk=None):
@@ -114,9 +139,41 @@ class SubmissionViewSet(ModelViewSet):
             }
         )
 
-    @action(detail=True, methods=["post"], url_path="manual-edit")
-    @transaction.atomic
+    @action(detail=True, methods=["get", "post"], url_path="manual-edit")
     def manual_edit(self, request, pk=None):
+        if request.method == "GET":
+            return self._manual_edit_get(request, pk)
+        return self._manual_edit_post(request, pk)
+
+    def _manual_edit_get(self, request, pk=None):
+        """GET: 현재 답안 목록 + identifier 반환 (수동 편집 화면용)."""
+        submission: Submission = self.get_object()
+        answers_qs = SubmissionAnswer.objects.filter(
+            submission=submission,
+        ).order_by("exam_question_id")
+        answers_data = []
+        for a in answers_qs:
+            answers_data.append({
+                "question_id": a.exam_question_id,
+                "question_no": a.exam_question_id,
+                "answer": a.answer or "",
+            })
+        meta = dict(submission.meta or {})
+        identifier = None
+        omr = meta.get("omr") or {}
+        if isinstance(omr, dict):
+            identifier = omr.get("identifier_override") or omr.get("identifier")
+        return Response({
+            "identifier": identifier,
+            "answers": answers_data,
+            "meta": {
+                "manual_review": meta.get("manual_review"),
+                "ai_result": meta.get("ai_result"),
+            },
+        })
+
+    @transaction.atomic
+    def _manual_edit_post(self, request, pk=None):
         submission: Submission = Submission.objects.select_for_update().get(pk=self.get_object().pk)
 
         if submission.status == Submission.Status.GRADING:

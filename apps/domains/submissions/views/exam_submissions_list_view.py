@@ -11,70 +11,42 @@ from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.submissions.models import Submission
 
 
-def _map_row_status(s: str) -> str:
+def _resolve_student_name(submission) -> str:
     """
-    Front SubmissionRow.status contract:
-    - pending | processing | done | failed
+    Submission → enrollment → student name 추출 (select_related 전제).
     """
-    s = str(s or "").lower()
-
-    if s in ("failed",):
-        return "failed"
-
-    # needs_identification도 운영상 "처리중(수동개입 필요)"로 본다
-    if s in ("done",):
-        return "done"
-
-    if s in ("submitted", "dispatched"):
-        return "pending"
-
-    if s in ("extracting", "answers_ready", "grading", "needs_identification"):
-        return "processing"
-
-    return "processing"
-
-
-def _resolve_student_name(enrollment_id: Optional[int]) -> str:
-    """
-    프로젝트마다 Enrollment/Student 모델 경로가 다르므로 best-effort.
-    없으면 빈 문자열 반환(프론트가 #id로도 식별 가능).
-    """
-    if not enrollment_id:
+    enrollment = getattr(submission, "_enrollment_cache", None)
+    if enrollment is None:
+        enrollment_id = getattr(submission, "enrollment_id", None)
+        if not enrollment_id:
+            return ""
+        try:
+            from apps.domains.enrollment.models import Enrollment
+            enrollment = Enrollment.objects.select_related("student").filter(id=int(enrollment_id)).first()
+        except Exception:
+            return ""
+    if not enrollment:
         return ""
-
-    # 1) 가장 흔한 케이스: apps.domains.enrollments.models.Enrollment
-    try:
-        from apps.domains.enrollment.models import Enrollment  # type: ignore
-
-        obj = Enrollment.objects.filter(id=int(enrollment_id)).first()
-        if obj:
-            for attr in ("student_name", "name", "full_name"):
-                v = getattr(obj, attr, None)
-                if isinstance(v, str) and v.strip():
-                    return v.strip()
-    except Exception:
-        pass
-
-    # 2) 다른 케이스들(있으면 확장)
+    student = getattr(enrollment, "student", None)
+    if student:
+        name = getattr(student, "name", None)
+        if name and isinstance(name, str) and name.strip():
+            return name.strip()
+    for attr in ("student_name", "name", "full_name"):
+        v = getattr(enrollment, attr, None)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
     return ""
 
 
 def _resolve_score_for_submission(submission_id: int) -> Optional[float]:
-    """
-    결과 도메인 구현이 여러 형태일 수 있어 best-effort.
-    있으면 score 반환, 없으면 None.
-    """
-    # 흔한 케이스: results 모델에 submission_id 연결
     try:
-        from apps.domains.results.models import Result  # type: ignore
-
+        from apps.domains.results.models import Result
         r = Result.objects.filter(submission_id=int(submission_id)).order_by("-id").first()
         if r and getattr(r, "score", None) is not None:
             return float(r.score)
     except Exception:
         pass
-
-    # 다른 테이블 구조라면 여기 추가
     return None
 
 
@@ -85,6 +57,16 @@ class ExamSubmissionsListView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response([], status=200)
+
+        # 테넌트 격리: exam이 해당 테넌트 소속인지 검증
+        from apps.domains.exams.models import Exam
+        if not Exam.objects.filter(
+            id=int(exam_id),
+        ).filter(
+            sessions__lecture__tenant=tenant,
+        ).exists():
+            return Response([], status=200)
+
         qs = (
             Submission.objects
             .filter(
@@ -102,8 +84,8 @@ class ExamSubmissionsListView(APIView):
                 {
                     "id": int(s.id),
                     "enrollment_id": int(enrollment_id) if enrollment_id else 0,
-                    "student_name": _resolve_student_name(enrollment_id),
-                    "status": _map_row_status(getattr(s, "status", "")),
+                    "student_name": _resolve_student_name(s),
+                    "status": str(getattr(s, "status", "")),
                     "score": _resolve_score_for_submission(int(s.id)),
                     "created_at": s.created_at.isoformat(),
                 }

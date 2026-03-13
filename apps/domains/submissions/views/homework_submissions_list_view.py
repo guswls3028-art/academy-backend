@@ -11,27 +11,18 @@ from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.submissions.models import Submission
 
 
-def _map_row_status(s: str) -> str:
-    s = str(s or "").lower()
-    if s in ("failed",):
-        return "failed"
-    if s in ("done",):
-        return "done"
-    if s in ("submitted", "dispatched"):
-        return "pending"
-    if s in ("extracting", "answers_ready", "grading", "needs_identification"):
-        return "processing"
-    return "processing"
-
-
 def _resolve_student_name(enrollment_id: Optional[int]) -> str:
     if not enrollment_id:
         return ""
     try:
         from apps.domains.enrollment.models import Enrollment
-
-        obj = Enrollment.objects.filter(id=int(enrollment_id)).first()
+        obj = Enrollment.objects.select_related("student").filter(id=int(enrollment_id)).first()
         if obj:
+            student = getattr(obj, "student", None)
+            if student:
+                name = getattr(student, "name", None)
+                if name and isinstance(name, str) and name.strip():
+                    return name.strip()
             for attr in ("student_name", "name", "full_name"):
                 v = getattr(obj, attr, None)
                 if isinstance(v, str) and v.strip():
@@ -46,7 +37,6 @@ def _resolve_lecture_info(enrollment_id: Optional[int]) -> Dict[str, Any]:
         return {}
     try:
         from apps.domains.enrollment.models import Enrollment
-
         obj = Enrollment.objects.select_related("lecture").filter(id=int(enrollment_id)).first()
         if obj and getattr(obj, "lecture", None):
             lec = obj.lecture
@@ -67,6 +57,14 @@ class HomeworkSubmissionsListView(APIView):
         if not tenant:
             return Response([], status=200)
 
+        # 테넌트 격리: homework가 해당 테넌트 소속인지 검증
+        from apps.domains.homework.models import HomeworkPolicy
+        if not HomeworkPolicy.objects.filter(
+            id=int(homework_id),
+            tenant=tenant,
+        ).exists():
+            return Response([], status=200)
+
         qs = (
             Submission.objects.filter(
                 tenant=tenant,
@@ -83,20 +81,17 @@ class HomeworkSubmissionsListView(APIView):
             source = getattr(s, "source", "")
             file_key = getattr(s, "file_key", None) or ""
             file_type = ""
-            file_size = None
+            file_size = getattr(s, "file_size", None)
             if file_key:
                 ext = file_key.rsplit(".", 1)[-1].lower() if "." in file_key else ""
                 file_type = ext
-            meta = getattr(s, "meta", None) or {}
-            if isinstance(meta, dict):
-                file_size = meta.get("file_size")
 
             items.append(
                 {
                     "id": int(s.id),
                     "enrollment_id": int(enrollment_id) if enrollment_id else 0,
                     "student_name": _resolve_student_name(enrollment_id),
-                    "status": _map_row_status(getattr(s, "status", "")),
+                    "status": str(getattr(s, "status", "")),
                     "source": str(source),
                     "file_key": file_key,
                     "file_type": file_type,
