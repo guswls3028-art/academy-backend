@@ -184,11 +184,26 @@ class VerifySenderView(APIView):
         ser.is_valid(raise_exception=True)
         phone = (ser.validated_data["phone_number"] or "").strip()
 
-        api_key = getattr(settings, "SOLAPI_API_KEY", None) or ""
-        api_secret = getattr(settings, "SOLAPI_API_SECRET", None) or ""
+        tenant = request.tenant
+        provider = (tenant.messaging_provider or "solapi").strip().lower()
+
+        # 자체 연동 키 우선, 없으면 시스템 키
+        if provider == "solapi" and tenant.own_solapi_api_key and tenant.own_solapi_api_secret:
+            api_key = tenant.own_solapi_api_key
+            api_secret = tenant.own_solapi_api_secret
+        else:
+            api_key = getattr(settings, "SOLAPI_API_KEY", None) or ""
+            api_secret = getattr(settings, "SOLAPI_API_SECRET", None) or ""
+
+        if provider == "ppurio":
+            return Response(
+                {"verified": True, "message": "뿌리오는 발신번호 인증을 뿌리오 관리자 페이지에서 직접 확인하세요. 저장만 진행해도 됩니다."},
+                status=status.HTTP_200_OK,
+            )
+
         if not api_key or not api_secret:
             return Response(
-                {"verified": False, "message": "솔라피 API가 설정되지 않았습니다."},
+                {"verified": False, "message": "솔라피 API가 설정되지 않았습니다. 직접 연동 모드에서 API 키를 먼저 등록하세요."},
                 status=status.HTTP_200_OK,
             )
 
@@ -288,18 +303,37 @@ class MessageTemplateSubmitReviewView(APIView):
         if not t:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        pfid = (request.tenant.kakao_pfid or "").strip()
+        tenant = request.tenant
+        provider = (tenant.messaging_provider or "solapi").strip().lower()
+
+        if provider == "ppurio":
+            return Response(
+                {"detail": "뿌리오(Ppurio)는 알림톡 템플릿 검수를 뿌리오 관리자 페이지에서 직접 진행해야 합니다. "
+                           "승인된 템플릿 코드를 받은 뒤, 이 템플릿의 솔라피 템플릿 ID 필드에 해당 코드를 입력해 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # PFID: 테넌트 직접 연동 > 시스템 기본
+        pfid = (tenant.kakao_pfid or "").strip()
+        if not pfid:
+            default_pf_id = (getattr(settings, "SOLAPI_KAKAO_PF_ID", None) or "").strip()
+            pfid = default_pf_id
         if not pfid:
             return Response(
                 {"detail": "카카오 채널(PFID)이 연동되지 않았습니다. 메시징 설정에서 PFID를 등록해 주세요."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        api_key = getattr(settings, "SOLAPI_API_KEY", None) or ""
-        api_secret = getattr(settings, "SOLAPI_API_SECRET", None) or ""
+        # 자체 솔라피 키 우선, 없으면 시스템 키
+        if tenant.own_solapi_api_key and tenant.own_solapi_api_secret:
+            api_key = tenant.own_solapi_api_key
+            api_secret = tenant.own_solapi_api_secret
+        else:
+            api_key = getattr(settings, "SOLAPI_API_KEY", None) or ""
+            api_secret = getattr(settings, "SOLAPI_API_SECRET", None) or ""
         if not api_key or not api_secret:
             return Response(
-                {"detail": "솔라피 API 키가 설정되지 않았습니다. (SOLAPI_API_KEY, SOLAPI_API_SECRET)"},
+                {"detail": "솔라피 API 키가 설정되지 않았습니다. 직접 연동 모드에서 API 키를 먼저 등록하세요."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
@@ -416,6 +450,8 @@ class SendMessageView(APIView):
         subject_base = (raw_subject or "").strip()
         t = None
         solapi_template_id = ""
+        user_custom_content = ""  # 사용자가 직접 입력한 본문 (#{내용} 변수용)
+
         if template_id:
             t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
             if not t:
@@ -423,11 +459,26 @@ class SendMessageView(APIView):
                     {"detail": "템플릿을 찾을 수 없습니다."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
+            # 사용자 커스텀 본문이 있고, 템플릿에 #{내용} 변수가 있으면 자유양식 모드
+            if body_base and "#{내용}" in (t.body or ""):
+                user_custom_content = body_base
             if not body_base:
                 body_base = (t.body or "").strip()
             if not subject_base:
                 subject_base = (t.subject or "").strip()
             solapi_template_id = (t.solapi_template_id or "").strip()
+
+        # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택
+        if message_mode in ("alimtalk", "both") and not solapi_template_id:
+            freeform = MessageTemplate.objects.filter(
+                tenant=tenant, solapi_status="APPROVED", body__contains="#{내용}",
+            ).first()
+            if freeform:
+                t = freeform
+                solapi_template_id = (freeform.solapi_template_id or "").strip()
+                user_custom_content = body_base  # 전체 본문을 #{내용}으로
+                if not subject_base:
+                    subject_base = (freeform.subject or "").strip()
 
         if message_mode in ("alimtalk", "both") and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
             return Response(
@@ -461,6 +512,7 @@ class SendMessageView(APIView):
                 .replace("#{학생이름2}", name_2)
                 .replace("#{학생이름3}", name_3)
                 .replace("#{사이트링크}", site_url)
+                .replace("#{내용}", user_custom_content)
             )
             # Context-dependent variables not available in manual send — replace with empty string
             for var in ("강의명", "차시명", "시험명", "과제명", "클리닉명", "장소", "날짜", "시간", "시험성적", "클리닉합불"):
@@ -478,6 +530,8 @@ class SendMessageView(APIView):
                     {"key": "학생이름3", "value": name_3},
                     {"key": "사이트링크", "value": site_url},
                 ]
+                if user_custom_content:
+                    alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
 
             try:
                 ok = enqueue_sms(
@@ -527,14 +581,30 @@ class SendMessageView(APIView):
         subject_base = (raw_subject or "").strip()
         t = None
         solapi_template_id = ""
+        user_custom_content = ""
+
         if template_id:
             t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
             if t:
+                if body_base and "#{내용}" in (t.body or ""):
+                    user_custom_content = body_base
                 if not body_base:
                     body_base = (t.body or "").strip()
                 if not subject_base:
                     subject_base = (t.subject or "").strip()
                 solapi_template_id = (t.solapi_template_id or "").strip()
+
+        # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택
+        if message_mode in ("alimtalk", "both") and not solapi_template_id:
+            freeform = MessageTemplate.objects.filter(
+                tenant=tenant, solapi_status="APPROVED", body__contains="#{내용}",
+            ).first()
+            if freeform:
+                t = freeform
+                solapi_template_id = (freeform.solapi_template_id or "").strip()
+                user_custom_content = body_base
+                if not subject_base:
+                    subject_base = (freeform.subject or "").strip()
 
         if message_mode in ("alimtalk", "both") and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
             return Response(
@@ -567,6 +637,7 @@ class SendMessageView(APIView):
                 .replace("#{학생이름2}", name_2)
                 .replace("#{학생이름3}", name_3)
                 .replace("#{사이트링크}", site_url)
+                .replace("#{내용}", user_custom_content)
             )
             # Context-dependent variables not available in manual send — replace with empty string
             for var in ("강의명", "차시명", "시험명", "과제명", "클리닉명", "장소", "날짜", "시간", "시험성적", "클리닉합불"):
@@ -584,6 +655,8 @@ class SendMessageView(APIView):
                     {"key": "학생이름3", "value": name_3},
                     {"key": "사이트링크", "value": site_url},
                 ]
+                if user_custom_content:
+                    alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
 
             try:
                 ok = enqueue_sms(
@@ -652,11 +725,13 @@ class AutoSendConfigView(APIView):
     @staticmethod
     def _auto_provision(tenant):
         """기본 템플릿 + AutoSendConfig 자동 생성 (첫 접근 시 1회)"""
-        from .default_templates import DEFAULT_TEMPLATES
+        from .default_templates import get_default_templates
         import logging
         logger = logging.getLogger(__name__)
 
-        for trigger, defaults in DEFAULT_TEMPLATES.items():
+        templates = get_default_templates(tenant.name or "학원")
+        valid_triggers = {c[0] for c in AutoSendConfig.Trigger.choices}
+        for trigger, defaults in templates.items():
             tpl_name = defaults["name"]
             tpl, created = MessageTemplate.objects.get_or_create(
                 tenant=tenant,
@@ -667,6 +742,9 @@ class AutoSendConfigView(APIView):
                     "body": defaults["body"],
                 },
             )
+            # 자유양식 템플릿 등 유효한 트리거가 아니면 AutoSendConfig 생성 스킵
+            if trigger not in valid_triggers:
+                continue
             AutoSendConfig.objects.get_or_create(
                 tenant=tenant,
                 trigger=trigger,
@@ -732,20 +810,21 @@ class ProvisionDefaultTemplatesView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request):
-        from .default_templates import DEFAULT_TEMPLATES
+        from .default_templates import get_default_templates
 
         tenant = request.tenant
+        templates = get_default_templates(tenant.name or "학원")
         existing_configs = {
             c.trigger: c
             for c in AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
         }
-        default_names = {d["name"] for d in DEFAULT_TEMPLATES.values()}
+        default_names = {d["name"] for d in templates.values()}
         created_templates = 0
         created_configs = 0
         reset_templates = 0
         linked = 0
 
-        for trigger, defaults in DEFAULT_TEMPLATES.items():
+        for trigger, defaults in templates.items():
             tpl_name = defaults["name"]
             tpl_category = defaults["category"]
             tpl_subject = defaults.get("subject", "")
@@ -781,6 +860,11 @@ class ProvisionDefaultTemplatesView(APIView):
                 )
                 created_templates += 1
 
+            # 자유양식 템플릿 등 유효한 트리거가 아니면 AutoSendConfig 스킵
+            valid_triggers = {c[0] for c in AutoSendConfig.Trigger.choices}
+            if trigger not in valid_triggers:
+                continue
+
             existing = existing_configs.get(trigger)
             if existing:
                 if not existing.template_id:
@@ -807,3 +891,182 @@ class ProvisionDefaultTemplatesView(APIView):
             "total_templates": MessageTemplate.objects.filter(tenant=tenant).count(),
             "total_configs": total_configs,
         }, status=status.HTTP_200_OK)
+
+
+class TestCredentialsView(APIView):
+    """POST: 현재 저장된 공급자 연동 키가 유효한지 테스트.
+    테넌트 자체 키 또는 시스템 키를 검증하여 결과를 반환한다.
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def post(self, request):
+        import logging as _logging
+        _logger = _logging.getLogger(__name__)
+        from django.conf import settings
+
+        tenant = request.tenant
+        provider = (tenant.messaging_provider or "solapi").strip().lower()
+
+        results = {"provider": provider, "checks": []}
+
+        if provider == "solapi":
+            # Solapi: 자체 키 우선, 없으면 시스템 키
+            if tenant.own_solapi_api_key and tenant.own_solapi_api_secret:
+                api_key = tenant.own_solapi_api_key
+                api_secret = tenant.own_solapi_api_secret
+                key_source = "tenant"
+            else:
+                api_key = getattr(settings, "SOLAPI_API_KEY", None) or ""
+                api_secret = getattr(settings, "SOLAPI_API_SECRET", None) or ""
+                key_source = "system"
+
+            if not api_key or not api_secret:
+                results["checks"].append({
+                    "test": "api_credentials",
+                    "ok": False,
+                    "message": "솔라피 API 키가 설정되지 않았습니다." + (
+                        " 직접 연동 모드에서 API Key와 Secret을 입력해 주세요."
+                        if key_source == "tenant"
+                        else " 운영자에게 문의하세요."
+                    ),
+                })
+            else:
+                # 발신번호 목록 조회로 인증 테스트
+                try:
+                    from apps.support.messaging.solapi_sender_client import get_active_sender_numbers
+                    numbers = get_active_sender_numbers(api_key, api_secret)
+                    results["checks"].append({
+                        "test": "api_credentials",
+                        "ok": True,
+                        "message": f"솔라피 API 인증 성공 ({key_source} 키). 등록된 발신번호 {len(numbers)}개.",
+                        "sender_numbers": numbers[:10],
+                    })
+                except ValueError as e:
+                    err_msg = str(e)
+                    results["checks"].append({
+                        "test": "api_credentials",
+                        "ok": False,
+                        "message": f"솔라피 API 인증 실패: {err_msg}",
+                    })
+                except Exception as e:
+                    _logger.exception("test_credentials solapi error")
+                    results["checks"].append({
+                        "test": "api_credentials",
+                        "ok": False,
+                        "message": f"솔라피 연결 오류: {str(e)[:200]}",
+                    })
+
+            # 발신번호 확인
+            sender = (tenant.messaging_sender or "").strip()
+            if sender:
+                results["checks"].append({
+                    "test": "sender_number",
+                    "ok": True,
+                    "message": f"발신번호 등록됨: {sender}",
+                })
+            else:
+                results["checks"].append({
+                    "test": "sender_number",
+                    "ok": False,
+                    "message": "발신번호가 등록되지 않았습니다. SMS 발송에 필요합니다.",
+                })
+
+        elif provider == "ppurio":
+            if tenant.own_ppurio_api_key and tenant.own_ppurio_account:
+                api_key = tenant.own_ppurio_api_key
+                account = tenant.own_ppurio_account
+                key_source = "tenant"
+            else:
+                import os
+                api_key = os.environ.get("PPURIO_API_KEY") or getattr(settings, "PPURIO_API_KEY", "")
+                account = os.environ.get("PPURIO_ACCOUNT") or getattr(settings, "PPURIO_ACCOUNT", "")
+                key_source = "system"
+
+            if not api_key or not account:
+                results["checks"].append({
+                    "test": "api_credentials",
+                    "ok": False,
+                    "message": "뿌리오 API 키 또는 Account ID가 설정되지 않았습니다." + (
+                        " 직접 연동 모드에서 입력해 주세요."
+                        if key_source == "tenant"
+                        else " 운영자에게 문의하세요."
+                    ),
+                })
+            else:
+                # 뿌리오: 토큰 발급 테스트
+                try:
+                    from apps.support.messaging.ppurio_client import _get_access_token
+                    creds = {"api_key": api_key, "account": account, "api_url": "https://message.ppurio.com"}
+                    token = _get_access_token(creds)
+                    if token:
+                        results["checks"].append({
+                            "test": "api_credentials",
+                            "ok": True,
+                            "message": f"뿌리오 API 인증 성공 ({key_source} 키). 토큰 발급 확인됨.",
+                        })
+                    else:
+                        results["checks"].append({
+                            "test": "api_credentials",
+                            "ok": False,
+                            "message": "뿌리오 토큰 발급 실패. API Key 또는 Account ID를 확인해 주세요.",
+                        })
+                except Exception as e:
+                    _logger.exception("test_credentials ppurio error")
+                    results["checks"].append({
+                        "test": "api_credentials",
+                        "ok": False,
+                        "message": f"뿌리오 연결 오류: {str(e)[:200]}",
+                    })
+
+            sender = (tenant.messaging_sender or "").strip()
+            if sender:
+                results["checks"].append({
+                    "test": "sender_number",
+                    "ok": True,
+                    "message": f"발신번호 등록됨: {sender}",
+                })
+            else:
+                results["checks"].append({
+                    "test": "sender_number",
+                    "ok": False,
+                    "message": "발신번호가 등록되지 않았습니다.",
+                })
+
+        # 공통: 알림톡 채널 확인
+        channel = resolve_kakao_channel(tenant.id)
+        pf_id = (channel.get("pf_id") or "").strip()
+        if pf_id:
+            source = "자체 채널" if not channel.get("use_default") else "시스템 기본 채널"
+            results["checks"].append({
+                "test": "alimtalk_channel",
+                "ok": True,
+                "message": f"알림톡 채널 연동됨 ({source})",
+            })
+        else:
+            results["checks"].append({
+                "test": "alimtalk_channel",
+                "ok": False,
+                "message": "알림톡 채널(PFID)이 미연동입니다. 알림톡을 사용하려면 PFID를 등록해 주세요.",
+            })
+
+        # 승인된 템플릿 수
+        approved_count = MessageTemplate.objects.filter(
+            tenant=tenant, solapi_status="APPROVED"
+        ).count()
+        results["checks"].append({
+            "test": "approved_templates",
+            "ok": approved_count > 0,
+            "message": f"검수 승인된 템플릿: {approved_count}개" + (
+                "" if approved_count > 0 else " (알림톡 발송에 필요합니다)"
+            ),
+        })
+
+        all_ok = all(c["ok"] for c in results["checks"])
+        results["all_ok"] = all_ok
+        results["summary"] = (
+            "모든 설정이 정상입니다. 메시지를 발송할 수 있습니다."
+            if all_ok
+            else "일부 설정이 필요합니다. 위 항목을 확인해 주세요."
+        )
+
+        return Response(results)

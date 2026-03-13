@@ -133,6 +133,7 @@ def _get_enrollment_for_exam(user, exam_id):
     student = getattr(user, "student_profile", None)
     if not student:
         try:
+            # tenant 컨텍스트 없이 user 기반 조회 — 단일 Student만 존재해야 정상
             student = Student.objects.filter(user=user).first()
         except Exception:
             return None, None
@@ -142,6 +143,7 @@ def _get_enrollment_for_exam(user, exam_id):
         ExamEnrollment.objects.filter(
             exam_id=int(exam_id),
             enrollment__student=student,
+            enrollment__tenant=student.tenant,  # tenant 격리
         )
         .select_related("enrollment", "enrollment__tenant")
         .first()

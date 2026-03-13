@@ -19,4 +19,5 @@ urlpatterns = [
     ),
     path("auto-send/", views.AutoSendConfigView.as_view(), name="messaging-auto-send"),
     path("provision-defaults/", views.ProvisionDefaultTemplatesView.as_view(), name="messaging-provision-defaults"),
+    path("test-credentials/", views.TestCredentialsView.as_view(), name="messaging-test-credentials"),
 ]

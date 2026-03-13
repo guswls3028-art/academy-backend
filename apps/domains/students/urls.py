@@ -9,6 +9,7 @@ from .views import (
     StudentPasswordFindRequestView,
     StudentPasswordFindVerifyView,
     StudentPasswordResetSendView,
+    SendExistingCredentialsView,
 )
 
 router = DefaultRouter()
@@ -22,4 +23,5 @@ urlpatterns = [
     path("password_find/request/", StudentPasswordFindRequestView.as_view(), name="student-password-find-request"),
     path("password_find/verify/", StudentPasswordFindVerifyView.as_view(), name="student-password-find-verify"),
     path("password_reset_send/", StudentPasswordResetSendView.as_view(), name="student-password-reset-send"),
+    path("send_existing_credentials/", SendExistingCredentialsView.as_view(), name="student-send-existing-credentials"),
 ] + router.urls

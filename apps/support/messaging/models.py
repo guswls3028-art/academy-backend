@@ -139,6 +139,10 @@ class AutoSendConfig(models.Model):
         PAYMENT_DUE_DAYS_BEFORE = "payment_due_days_before", "납부 예정일 N일 전"
         # H. 운영공지
         URGENT_NOTICE = "urgent_notice", "긴급 공지"
+        # I. 비밀번호 찾기/재설정
+        PASSWORD_FIND_OTP = "password_find_otp", "비밀번호 찾기 인증번호"
+        PASSWORD_RESET_STUDENT = "password_reset_student", "비밀번호 재설정(학생)"
+        PASSWORD_RESET_PARENT = "password_reset_parent", "비밀번호 재설정(학부모)"
 
     tenant = models.ForeignKey(
         "core.Tenant",

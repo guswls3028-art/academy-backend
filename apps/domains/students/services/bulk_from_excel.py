@@ -34,6 +34,8 @@ def bulk_create_students_from_excel_rows(
 
     created_count = 0
     failed: list[dict] = []
+    duplicates: list[dict] = []
+    restored: list[dict] = []
     total = len(students_data)
 
     for row_index, raw in enumerate(students_data, start=1):
@@ -48,16 +50,29 @@ def bulk_create_students_from_excel_rows(
             continue
 
         try:
-            student, created = get_or_create_student_for_lecture_enroll(
+            student, created, was_restored = get_or_create_student_for_lecture_enroll(
                 tenant, item, initial_password
             )
             if student and created:
                 created_count += 1
+            elif student and was_restored:
+                restored.append({
+                    "row": row_index,
+                    "name": name or "(이름 없음)",
+                    "student_id": student.id,
+                })
+            elif student and not created:
+                # 이미 활성 상태로 존재하는 학생
+                duplicates.append({
+                    "row": row_index,
+                    "name": name or "(이름 없음)",
+                    "student_id": student.id,
+                })
             elif not student:
                 failed.append({
                     "row": row_index,
                     "name": name or "(이름 없음)",
-                    "error": "이름·학부모전화(010 11자리) 조건 미충족 또는 이미 존재하는 학생입니다.",
+                    "error": "이름·학부모전화(010 11자리) 조건 미충족",
                     "conflict_student_id": None,
                 })
         except ValueError as e:
@@ -84,7 +99,7 @@ def bulk_create_students_from_excel_rows(
                 "conflict_student_id": None,
             })
 
-    if not created_count and not failed and total > 0:
+    if not created_count and not failed and not duplicates and not restored and total > 0:
         raise ValueError(
             "등록할 수 있는 학생이 없습니다. 이름·학부모 전화번호(010 11자리)를 확인해 주세요."
         )
@@ -92,6 +107,8 @@ def bulk_create_students_from_excel_rows(
     return {
         "created": created_count,
         "failed": failed,
+        "duplicates": duplicates,
+        "restored": restored,
         "total": total,
         "processed_by": "worker",
     }

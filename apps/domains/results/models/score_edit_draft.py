@@ -18,4 +18,4 @@ class ScoreEditDraft(models.Model):
 
     class Meta:
         db_table = "results_score_edit_draft"
-        unique_together = (("session_id", "editor_user_id"),)
+        unique_together = (("tenant_id", "session_id", "editor_user_id"),)

@@ -155,6 +155,21 @@ def send_one_sms_own_solapi(
         return {"status": "error", "reason": str(e)[:500]}
 
 
+def _build_variables_dict(replacements: Optional[list]) -> Optional[dict]:
+    """Convert [{"key": "학생이름2", "value": "길동"}, ...] → {"#{학생이름2}": "길동", ...}"""
+    if not replacements:
+        return None
+    variables = {}
+    for r in replacements:
+        if isinstance(r, dict) and "key" in r and "value" in r:
+            key = str(r["key"])
+            val = str(r["value"])
+            if not key.startswith("#{"):
+                key = f"#{{{key}}}"
+            variables[key] = val
+    return variables if variables else None
+
+
 def send_one_alimtalk_own_solapi(
     to: str, sender: str, pf_id: str, template_id: str,
     replacements: Optional[list] = None,
@@ -172,7 +187,8 @@ def send_one_alimtalk_own_solapi(
     if not to or not pf_id or not template_id:
         return {"status": "error", "reason": "to_pf_template_required"}
     try:
-        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id)
+        variables = _build_variables_dict(replacements)
+        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id, variables=variables)
         message = RequestMessage(from_=sender, to=to, text=text or " ", kakao_options=kakao_option)
         response = client.send(message)
         group_id = getattr(getattr(response, "group_info", None), "group_id", None)
@@ -210,7 +226,8 @@ def send_one_alimtalk(
     if not to or not pf_id or not template_id:
         return {"status": "error", "reason": "to_pf_template_required"}
     try:
-        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id)
+        variables = _build_variables_dict(replacements)
+        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id, variables=variables)
         message = RequestMessage(
             from_=sender,
             to=to,
@@ -553,15 +570,23 @@ def main() -> int:
                             template_id=template_id_, replacements=replacements_, text=text_,
                         )
 
+                    # SMS 정책: 자체 연동 키가 있는 테넌트는 허용, 없으면 OWNER_TENANT_ID만
+                    _sms_allowed = (
+                        tenant_id is None
+                        or int(tenant_id) == cfg.OWNER_TENANT_ID
+                        or bool(_own_solapi_key and _own_solapi_secret)
+                        or bool(_own_ppurio_key and _own_ppurio_acct)
+                    )
+
                     # message_mode: sms | alimtalk | both
                     try:
                         _record_progress(job_id, "sending", 70, step_index=3, step_percent=0, tenant_id=tenant_id_str)
                         result = None
                         if message_mode == "sms":
-                            # SMS는 내 테넌트(OWNER_TENANT_ID)에서만 허용
-                            if tenant_id is not None and int(tenant_id) != cfg.OWNER_TENANT_ID:
+                            # SMS: 자체 키 보유 또는 OWNER_TENANT_ID만 허용
+                            if not _sms_allowed:
                                 logger.warning(
-                                    "SMS blocked by policy: tenant_id=%s is not owner tenant (allowed only for OWNER_TENANT_ID=%s)",
+                                    "SMS blocked by policy: tenant_id=%s (no own credentials, not owner_tenant=%s)",
                                     tenant_id, cfg.OWNER_TENANT_ID,
                                 )
                                 if deducted:
@@ -611,22 +636,22 @@ def main() -> int:
                             )
                             if result.get("status") != "ok":
                                 logger.info("alimtalk failed, fallback to SMS (provider=%s)", tenant_provider)
-                                # SMS 폴백 시에도 내 테넌트에서만 허용
-                                if tenant_id is not None and int(tenant_id) == cfg.OWNER_TENANT_ID:
+                                # SMS 폴백: 자체 키 보유 또는 OWNER_TENANT_ID만 허용
+                                if _sms_allowed:
                                     result = _dispatch_sms(to, text, sender)
                                 else:
                                     logger.warning(
-                                        "SMS fallback skipped by policy: tenant_id=%s (SMS allowed only for owner)",
+                                        "SMS fallback skipped by policy: tenant_id=%s (no own credentials, not owner)",
                                         tenant_id,
                                     )
                         else:
                             # alimtalk/both인데 pf_id·template_id 없으면 SMS로 대체
                             if message_mode in ("alimtalk", "both") and (not pf_id or not template_id):
                                 logger.warning("alimtalk requested but pf_id/template_id missing, sending SMS")
-                            # SMS 대체 시 내 테넌트에서만 허용
-                            if tenant_id is not None and int(tenant_id) != cfg.OWNER_TENANT_ID:
+                            # SMS 대체: 자체 키 보유 또는 OWNER_TENANT_ID만 허용
+                            if not _sms_allowed:
                                 logger.warning(
-                                    "SMS fallback blocked by policy: tenant_id=%s (allowed only for owner)",
+                                    "SMS fallback blocked by policy: tenant_id=%s (no own credentials, not owner)",
                                     tenant_id,
                                 )
                                 result = {"status": "error", "reason": "sms_not_allowed_for_tenant"}

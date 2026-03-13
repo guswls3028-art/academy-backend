@@ -4,9 +4,11 @@ Students / User / Tag / Enrollment 등 DB 조회·저장 — .objects. 접근을
 from __future__ import annotations
 
 
-def tag_all():
+def tag_all(tenant=None):
     from apps.domains.students.models import Tag
-    return Tag.objects.all()
+    if tenant is None:
+        return Tag.objects.none()
+    return Tag.objects.filter(tenant=tenant)
 
 
 def student_filter_tenant(tenant):

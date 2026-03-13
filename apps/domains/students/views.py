@@ -26,7 +26,7 @@ from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
 
 from apps.domains.parents.services import ensure_parent_for_student
-from apps.support.messaging.services import send_welcome_messages, get_site_url, send_sms, send_registration_approved_messages
+from apps.support.messaging.services import send_welcome_messages, get_site_url, send_sms, send_registration_approved_messages, enqueue_sms
 from apps.domains.ai.gateway import dispatch_job
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 
@@ -57,13 +57,16 @@ class TagViewSet(ModelViewSet):
     """
     학생 태그 관리
     - 관리자 / 스태프 전용
-    - Tag 자체는 테넌트에 종속되지 않음 (공통 분류)
+    - 테넌트별 격리
     """
     serializer_class = TagSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get_queryset(self):
-        return student_repo.tag_all()
+        return student_repo.tag_all(tenant=self.request.tenant)
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.tenant)
 
 
 # ======================================================
@@ -177,8 +180,28 @@ class StudentViewSet(ModelViewSet):
             return Response(
                 {
                     "code": "deleted_student_exists",
-                    "detail": "삭제된 학생이 있습니다. 복원하시겠습니까?",
+                    "detail": "삭제 대기중인 학생입니다. 복구하시겠습니까?",
                     "deleted_student": StudentDetailSerializer(deleted_student, context={"request": request}).data,
+                },
+                status=409,
+            )
+
+        # 활성 학생 중복 체크 (전화번호 또는 이름+학부모전화)
+        active_duplicate = None
+        if phone:
+            active_duplicate = Student.objects.filter(
+                tenant=tenant, deleted_at__isnull=True, phone=phone
+            ).first()
+        if not active_duplicate and name and parent_phone:
+            active_duplicate = student_repo.student_filter_tenant_name_parent_phone_active(
+                tenant, name, parent_phone
+            )
+        if active_duplicate:
+            return Response(
+                {
+                    "code": "duplicate_student",
+                    "detail": "이미 있는 학생입니다.",
+                    "existing_student": StudentDetailSerializer(active_duplicate, context={"request": request}).data,
                 },
                 status=409,
             )
@@ -839,69 +862,80 @@ class StudentViewSet(ModelViewSet):
         try:
             with transaction.atomic():
                 with connection.cursor() as cursor:
-                    # Enrollment를 참조하는 테이블들을 먼저 삭제 (존재하는 테이블만)
-                    sub = "SELECT id FROM enrollment_enrollment WHERE student_id IN %s"
-                    params = [tuple(student_ids)]
+                    # enrollment ID를 먼저 명시적으로 수집
+                    cursor.execute(
+                        "SELECT id FROM enrollment_enrollment WHERE student_id IN %s",
+                        [tuple(student_ids)],
+                    )
+                    enrollment_ids = [row[0] for row in cursor.fetchall()]
+                    logger.info(
+                        "bulk_permanent_delete enrollment_ids=%s (count=%s)",
+                        enrollment_ids[:20], len(enrollment_ids),
+                    )
 
-                    # 1) results / submissions / homework (enrollment_id)
-                    for tbl, where_sql, where_params in [
-                        (
-                            "results_result_item",
-                            f"result_id IN (SELECT id FROM results_result WHERE enrollment_id IN ({sub}))",
-                            params,
-                        ),
-                        ("results_result", f"enrollment_id IN ({sub})", params),
-                        ("results_exam_attempt", f"enrollment_id IN ({sub})", params),
-                        ("results_fact", f"enrollment_id IN ({sub})", params),
-                        ("results_wrong_note_pdf", f"enrollment_id IN ({sub})", params),
-                        (
-                            "results_exam_result",
-                            f"submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN ({sub}))",
-                            params,
-                        ),
-                        (
-                            "submissions_submissionanswer",
-                            f"submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN ({sub}))",
-                            params,
-                        ),
-                        ("submissions_submission", f"enrollment_id IN ({sub})", params),
-                        ("homework_results_homeworkscore", f"enrollment_id IN ({sub})", params),
-                        ("homework_assignment", f"enrollment_id IN ({sub})", params),
-                        ("homework_enrollment", f"enrollment_id IN ({sub})", params),
-                    ]:
-                        cursor.execute(
-                            "SELECT 1 FROM information_schema.tables "
-                            "WHERE table_schema = %s AND table_name = %s",
-                            ["public", tbl],
-                        )
-                        if cursor.fetchone():
-                            logger.info("bulk_permanent_delete DELETE %s", tbl)
-                            cursor.execute(f"DELETE FROM {tbl} WHERE {where_sql}", where_params)
+                    if enrollment_ids:
+                        e_ids = tuple(enrollment_ids)
 
-                    enrollment_child_tables = [
-                        "attendance_attendance",
-                        "enrollment_sessionenrollment",
-                        "video_videopermission",
-                        "video_videoprogress",
-                        "video_videoplaybacksession",
-                        "video_videoplaybackevent",
-                        "progress_sessionprogress",
-                        "progress_lectureprogress",
-                        "progress_cliniclink",
-                        "progress_risklog",
-                    ]
-                    for tbl in enrollment_child_tables:
-                        cursor.execute(
-                            "SELECT 1 FROM information_schema.tables "
-                            "WHERE table_schema = %s AND table_name = %s",
-                            ["public", tbl],
-                        )
-                        if cursor.fetchone():
-                            logger.info("bulk_permanent_delete DELETE %s", tbl)
+                        # 1) results / submissions / homework (enrollment_id 기반)
+                        for tbl, where_sql in [
+                            (
+                                "results_result_item",
+                                "result_id IN (SELECT id FROM results_result WHERE enrollment_id IN %s)",
+                            ),
+                            ("results_result", "enrollment_id IN %s"),
+                            ("results_exam_attempt", "enrollment_id IN %s"),
+                            ("results_fact", "enrollment_id IN %s"),
+                            ("results_wrong_note_pdf", "enrollment_id IN %s"),
+                            (
+                                "results_exam_result",
+                                "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN %s)",
+                            ),
+                            (
+                                "submissions_submissionanswer",
+                                "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN %s)",
+                            ),
+                            ("submissions_submission", "enrollment_id IN %s"),
+                            ("homework_results_homeworkscore", "enrollment_id IN %s"),
+                            ("homework_assignment", "enrollment_id IN %s"),
+                            ("homework_enrollment", "enrollment_id IN %s"),
+                        ]:
                             cursor.execute(
-                                f"DELETE FROM {tbl} WHERE enrollment_id IN ({sub})",
-                                params,
+                                "SELECT 1 FROM information_schema.tables "
+                                "WHERE table_schema = %s AND table_name = %s",
+                                ["public", tbl],
                             )
+                            if cursor.fetchone():
+                                logger.info("bulk_permanent_delete DELETE %s", tbl)
+                                cursor.execute(f"DELETE FROM {tbl} WHERE {where_sql}", [e_ids])
+
+                        # 2) enrollment 자식 테이블들 (enrollment_id FK)
+                        enrollment_child_tables = [
+                            "attendance_attendance",
+                            "enrollment_sessionenrollment",
+                            "exams_exam_enrollment",
+                            "video_videopermission",
+                            "video_videoprogress",
+                            "video_videoplaybacksession",
+                            "video_videoplaybackevent",
+                            "progress_sessionprogress",
+                            "progress_lectureprogress",
+                            "progress_cliniclink",
+                            "progress_risklog",
+                        ]
+                        for tbl in enrollment_child_tables:
+                            cursor.execute(
+                                "SELECT 1 FROM information_schema.tables "
+                                "WHERE table_schema = %s AND table_name = %s",
+                                ["public", tbl],
+                            )
+                            if cursor.fetchone():
+                                logger.info("bulk_permanent_delete DELETE %s", tbl)
+                                cursor.execute(
+                                    f"DELETE FROM {tbl} WHERE enrollment_id IN %s",
+                                    [e_ids],
+                                )
+
+                    # 3) enrollment 자체 삭제
                     logger.info("bulk_permanent_delete DELETE enrollment_enrollment")
                     cursor.execute(
                         "DELETE FROM enrollment_enrollment WHERE student_id IN %s",
@@ -923,7 +957,12 @@ class StudentViewSet(ModelViewSet):
                             "UPDATE students_studentregistrationrequest SET student_id = NULL WHERE student_id IN %s",
                             [tuple(student_ids)],
                         )
-                    for tbl in ["clinic_sessionparticipant", "clinic_submission"]:
+                    for tbl in [
+                        "clinic_sessionparticipant",
+                        "clinic_submission",
+                        "video_videocomment",
+                        "video_videolike",
+                    ]:
                         cursor.execute(
                             "SELECT 1 FROM information_schema.tables "
                             "WHERE table_schema = %s AND table_name = %s",
@@ -931,8 +970,10 @@ class StudentViewSet(ModelViewSet):
                         )
                         if cursor.fetchone():
                             logger.info("bulk_permanent_delete DELETE %s", tbl)
+                            # video_videocomment uses author_student_id, others use student_id
+                            col = "author_student_id" if tbl == "video_videocomment" else "student_id"
                             cursor.execute(
-                                f"DELETE FROM {tbl} WHERE student_id IN %s",
+                                f"DELETE FROM {tbl} WHERE {col} IN %s",
                                 [tuple(student_ids)],
                             )
                     # 커뮤니티(QnA 등)가 해당 학생을 created_by로 참조 → FK 해제 (SET_NULL과 동일)
@@ -1118,7 +1159,9 @@ def _approve_registration_request(request, reg):
     from apps.core.models.user import user_internal_username
 
     tenant = request.tenant
-    password = reg.initial_password
+    # 승인 시 임시 비밀번호 생성 (평문) — 알림톡 발송용
+    # reg.initial_password는 해시값이므로 평문 복원 불가
+    temp_password = _generate_temp_password(8)
     name = reg.name
     parent_phone = reg.parent_phone
     phone = reg.phone
@@ -1151,7 +1194,7 @@ def _approve_registration_request(request, reg):
                     tenant=tenant,
                     parent_phone=parent_phone,
                     student_name=name,
-                    parent_password=password,
+                    parent_password=temp_password,
                 )
             User = get_user_model()
             user = student_repo.user_create_user(
@@ -1160,8 +1203,7 @@ def _approve_registration_request(request, reg):
                 phone=phone or "",
                 name=name,
             )
-            # initial_password는 이미 해시됨 — 직접 대입
-            user.password = password
+            user.set_password(temp_password)
             user.save()
 
             student = student_repo.student_create(
@@ -1196,9 +1238,9 @@ def _approve_registration_request(request, reg):
             student_name=name,
             student_phone=(phone or "") if phone else "",
             student_id=requested_username,
-            student_password=password,
+            student_password=temp_password,
             parent_phone=parent_phone or "",
-            parent_password=password,
+            parent_password=temp_password,
         )
         return None
     except Exception as e:
@@ -1255,6 +1297,39 @@ class RegistrationRequestViewSet(ModelViewSet):
             )
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
+
+        # 중복 가입 체크: 전화번호 또는 username이 이미 활성 학생으로 존재하는 경우
+        data_check = serializer.validated_data
+        phone_check = (data_check.get("phone") or "").strip()
+        username_check = (data_check.get("username") or "").strip()
+        tenant = request.tenant
+
+        existing_student = None
+        if phone_check:
+            existing_student = Student.objects.filter(
+                tenant=tenant,
+                deleted_at__isnull=True,
+            ).filter(
+                Q(phone=phone_check) | Q(parent_phone=phone_check)
+            ).select_related("user").first()
+        if not existing_student and username_check:
+            existing_student = Student.objects.filter(
+                tenant=tenant,
+                deleted_at__isnull=True,
+                user__username__endswith=f"_{username_check}",
+            ).select_related("user").first()
+
+        if existing_student:
+            return Response(
+                {
+                    "code": "already_registered",
+                    "detail": "이미 가입된 아이디입니다.",
+                    "student_name": existing_student.name,
+                    "student_phone": existing_student.phone or existing_student.parent_phone or "",
+                },
+                status=409,
+            )
+
         from django.contrib.auth.hashers import make_password
         data = serializer.validated_data.copy()
         password = make_password(data.pop("initial_password"))
@@ -1458,7 +1533,7 @@ def _pw_reset_cache_key(tenant_id, phone: str) -> str:
 
 
 class StudentPasswordFindRequestView(APIView):
-    """POST: name, phone → 학생 조회 후 6자리 인증번호 SMS 발송, 캐시 저장."""
+    """POST: name, phone → 학생 조회 후 6자리 인증번호 알림톡 발송, 캐시 저장."""
     permission_classes = [AllowAny, TenantResolved]
 
     def get_authenticators(self):
@@ -1466,6 +1541,9 @@ class StudentPasswordFindRequestView(APIView):
 
     def post(self, request):
         from django.core.cache import cache
+        from apps.support.messaging.selectors import get_auto_send_config
+        from apps.support.messaging.policy import MessagingPolicyError, is_messaging_disabled
+
         name = (request.data.get("name") or "").strip()
         phone = (request.data.get("phone") or "").replace(" ", "").replace("-", "").replace(".", "")
         if not name or not phone or len(phone) != 11 or not phone.startswith("010"):
@@ -1493,20 +1571,55 @@ class StudentPasswordFindRequestView(APIView):
         code = "".join([str(random.randint(0, 9)) for _ in range(6)])
         key = _pw_reset_cache_key(tenant.id, phone)
         cache.set(key, {"user_id": student.user_id, "code": code}, timeout=600)
-        result = send_sms(phone, f"[학원] 비밀번호 찾기 인증번호: {code} (10분 내 입력)", tenant_id=tenant.id)
-        if result.get("status") == "skipped" and result.get("reason") == "messaging_disabled_for_test_tenant":
+
+        # 알림톡 발송 (AutoSendConfig 템플릿 사용)
+        if is_messaging_disabled(tenant.id):
             return Response(
                 {"message": "인증번호가 발송되었습니다. (테스트 테넌트에서는 실제 발송이 생략됩니다.)"},
                 status=200,
             )
-        if result.get("status") == "error" and result.get("reason") == "sms_allowed_only_for_owner_tenant":
+
+        config = get_auto_send_config(tenant.id, "password_find_otp")
+        fallback_text = f"[학원] 비밀번호 찾기 인증번호: {code} (10분 내 입력)"
+
+        if config and config.enabled and config.template:
+            t = config.template
+            body = (t.body or "").strip()
+            solapi_id = (t.solapi_template_id or "").strip()
+            use_alimtalk = solapi_id and t.solapi_status == "APPROVED"
+
+            text = body.replace("#{인증번호}", code)
+            alimtalk_replacements = None
+            template_id_solapi = None
+            if use_alimtalk:
+                template_id_solapi = solapi_id
+                alimtalk_replacements = [{"key": "인증번호", "value": code}]
+            try:
+                ok = enqueue_sms(
+                    tenant_id=tenant.id,
+                    to=phone,
+                    text=text or fallback_text,
+                    message_mode="alimtalk",
+                    template_id=template_id_solapi,
+                    alimtalk_replacements=alimtalk_replacements,
+                )
+            except MessagingPolicyError:
+                ok = False
+        else:
+            # AutoSendConfig 미설정 시에도 알림톡 시도 (시스템 기본 템플릿 사용)
+            try:
+                ok = enqueue_sms(
+                    tenant_id=tenant.id,
+                    to=phone,
+                    text=fallback_text,
+                    message_mode="alimtalk",
+                )
+            except MessagingPolicyError:
+                ok = False
+
+        if not ok:
             return Response(
-                {"detail": "문자 발송은 해당 학원에서 사용할 수 없습니다. 관리자에게 문의해 주세요."},
-                status=403,
-            )
-        if result.get("status") != "ok":
-            return Response(
-                {"detail": result.get("reason", "인증번호 발송에 실패했습니다.")},
+                {"detail": "인증번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."},
                 status=503,
             )
         return Response({"message": "인증번호가 발송되었습니다."}, status=200)
@@ -1589,17 +1702,31 @@ class StudentPasswordResetSendView(APIView):
             return Response({"detail": "학생 이름을 입력해 주세요."}, status=400)
 
         if target == "student":
-            if not student_ps_number:
-                return Response({"detail": "학생 번호를 입력해 주세요."}, status=400)
-            student = (
-                student_repo.student_filter_tenant_ps_number(tenant, student_ps_number)
-                .filter(name__iexact=student_name)
-                .select_related("user")
-                .first()
-            )
+            student_phone = _normalize_phone_for_reset(request.data.get("student_phone") or "")
+            if not student_ps_number and not student_phone:
+                return Response({"detail": "학생 전화번호를 입력해 주세요."}, status=400)
+            # 전화번호 우선, 없으면 PS번호로 조회
+            if student_phone:
+                student = (
+                    Student.objects.filter(
+                        tenant=tenant,
+                        deleted_at__isnull=True,
+                        name__iexact=student_name,
+                    )
+                    .filter(Q(phone=student_phone) | Q(parent_phone=student_phone))
+                    .select_related("user")
+                    .first()
+                )
+            else:
+                student = (
+                    student_repo.student_filter_tenant_ps_number(tenant, student_ps_number)
+                    .filter(name__iexact=student_name)
+                    .select_related("user")
+                    .first()
+                )
             if not student or not getattr(student, "user", None):
                 return Response(
-                    {"detail": "해당 이름과 학생 번호로 등록된 학생이 없습니다."},
+                    {"detail": "해당 이름과 전화번호로 등록된 학생이 없습니다."},
                     status=404,
                 )
             send_to = (student.phone or "").replace(" ", "").replace("-", "").strip()
@@ -1657,9 +1784,22 @@ class StudentPasswordResetSendView(APIView):
         user.set_password(temp_password)
         user.save(update_fields=["password"])
 
+        # 알림톡 발송
+        from apps.support.messaging.selectors import get_auto_send_config
+        from apps.support.messaging.policy import MessagingPolicyError, is_messaging_disabled
+
+        if is_messaging_disabled(tenant.id):
+            return Response(
+                {"message": "임시 비밀번호가 발송되었습니다. (테스트 환경에서는 실제 발송이 생략됩니다.)"},
+                status=200,
+            )
+
         notice = "로그인 후 설정에서 비밀번호를 변경하실 수 있습니다."
+        trigger = "password_reset_student" if target == "student" else "password_reset_parent"
+        config = get_auto_send_config(tenant.id, trigger)
+
         if target == "student":
-            text = (
+            fallback_text = (
                 f"[학원] 비밀번호 찾기\n"
                 f"이름: {display_name}\n"
                 f"아이디: {display_username}\n"
@@ -1667,7 +1807,7 @@ class StudentPasswordResetSendView(APIView):
                 f"{notice}"
             )
         else:
-            text = (
+            fallback_text = (
                 f"[학원] 비밀번호 찾기\n"
                 f"이름: {display_name}\n"
                 f"아이디(학부모 전화번호): {display_username}\n"
@@ -1675,20 +1815,167 @@ class StudentPasswordResetSendView(APIView):
                 f"{notice}"
             )
 
-        result = send_sms(send_to, text, tenant_id=tenant.id)
-        if result.get("status") == "skipped" and result.get("reason") == "messaging_disabled_for_test_tenant":
+        ok = False
+        if config and config.enabled and config.template:
+            t = config.template
+            body = (t.body or "").strip()
+            solapi_id = (t.solapi_template_id or "").strip()
+            use_alimtalk = solapi_id and t.solapi_status == "APPROVED"
+
+            replacements_map = {
+                "#{학생이름}": display_name or "",
+                "#{아이디}": display_username or "",
+                "#{임시비밀번호}": temp_password,
+                "#{비밀번호안내}": notice,
+            }
+            if target == "parent":
+                replacements_map["#{학부모아이디}"] = display_username or ""
+
+            text = body
+            for placeholder, value in replacements_map.items():
+                text = text.replace(placeholder, value)
+
+            alimtalk_replacements = None
+            template_id_solapi = None
+            if use_alimtalk:
+                template_id_solapi = solapi_id
+                alimtalk_replacements = [
+                    {"key": k.strip("#{}"), "value": v}
+                    for k, v in replacements_map.items()
+                ]
+            try:
+                ok = enqueue_sms(
+                    tenant_id=tenant.id,
+                    to=send_to,
+                    text=text or fallback_text,
+                    message_mode="alimtalk",
+                    template_id=template_id_solapi,
+                    alimtalk_replacements=alimtalk_replacements,
+                )
+            except MessagingPolicyError:
+                ok = False
+        else:
+            # AutoSendConfig 미설정 시에도 알림톡 시도
+            try:
+                ok = enqueue_sms(
+                    tenant_id=tenant.id,
+                    to=send_to,
+                    text=fallback_text,
+                    message_mode="alimtalk",
+                )
+            except MessagingPolicyError:
+                ok = False
+
+        if not ok:
             return Response(
-                {"message": "임시 비밀번호가 발송되었습니다. (테스트 환경에서는 실제 발송이 생략됩니다.)"},
-                status=200,
-            )
-        if result.get("status") == "error" and result.get("reason") == "sms_allowed_only_for_owner_tenant":
-            return Response(
-                {"detail": "문자 발송은 해당 학원에서 사용할 수 없습니다. 관리자에게 문의해 주세요."},
-                status=403,
-            )
-        if result.get("status") != "ok":
-            return Response(
-                {"detail": result.get("reason", "임시 비밀번호 발송에 실패했습니다.")},
+                {"detail": "임시 비밀번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."},
                 status=503,
             )
-        return Response({"message": "임시 비밀번호가 발송되었습니다. 문자를 확인해 주세요."}, status=200)
+        return Response({"message": "임시 비밀번호가 발송되었습니다. 알림톡을 확인해 주세요."}, status=200)
+
+
+class SendExistingCredentialsView(APIView):
+    """
+    POST: 이미 등록된 학생에게 기존 아이디 + 임시 비밀번호를 알림톡으로 발송.
+    (회원가입 시 중복 감지 → "카카오톡으로 ID/비밀번호 발송" 버튼용)
+    """
+    permission_classes = [AllowAny, TenantResolved]
+
+    def get_authenticators(self):
+        return []
+
+    def post(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant를 확인할 수 없습니다."}, status=400)
+
+        phone = _normalize_phone_for_reset(request.data.get("phone") or "")
+        name = (request.data.get("name") or "").strip()
+
+        if not phone or len(phone) != 11:
+            return Response({"detail": "전화번호를 입력해 주세요."}, status=400)
+
+        # 학생 조회 (전화번호 또는 학부모전화번호 + 이름)
+        qs = Student.objects.filter(tenant=tenant, deleted_at__isnull=True)
+        if name:
+            qs = qs.filter(name__iexact=name)
+        student = qs.filter(
+            Q(phone=phone) | Q(parent_phone=phone)
+        ).select_related("user").first()
+
+        if not student or not getattr(student, "user", None):
+            return Response({"detail": "등록된 학생을 찾을 수 없습니다."}, status=404)
+
+        # 임시 비밀번호 생성 및 저장
+        temp_password = _generate_temp_password()
+        student.user.set_password(temp_password)
+        student.user.save(update_fields=["password"])
+
+        display_username = student.ps_number or user_display_username(student.user)
+        send_to = (student.phone or "").strip()
+        if not send_to or len(send_to) != 11:
+            send_to = (student.parent_phone or "").strip()
+        if not send_to or len(send_to) != 11:
+            return Response({"detail": "등록된 전화번호가 없어 발송할 수 없습니다."}, status=400)
+
+        from apps.support.messaging.policy import MessagingPolicyError, is_messaging_disabled
+
+        if is_messaging_disabled(tenant.id):
+            return Response({"message": "아이디/비밀번호가 발송되었습니다."}, status=200)
+
+        fallback_text = (
+            f"[학원] 회원 정보 안내\n"
+            f"이름: {student.name}\n"
+            f"아이디: {display_username}\n"
+            f"임시 비밀번호: {temp_password}\n"
+            f"로그인 후 비밀번호를 변경해 주세요."
+        )
+
+        # 승인된 signup 템플릿 자동 검색
+        from apps.support.messaging.models import MessageTemplate
+        template = MessageTemplate.objects.filter(
+            tenant_id=tenant.id,
+            category="signup",
+            solapi_status="APPROVED",
+        ).exclude(solapi_template_id="").first()
+
+        ok = False
+        if template:
+            body = (template.body or "").strip()
+            replacements_map = {
+                "#{학생이름}": student.name or "",
+                "#{아이디}": display_username or "",
+                "#{임시비밀번호}": temp_password,
+            }
+            text = body
+            for placeholder, value in replacements_map.items():
+                text = text.replace(placeholder, value)
+            alimtalk_replacements = [
+                {"key": k.strip("#{}"), "value": v}
+                for k, v in replacements_map.items()
+            ]
+            try:
+                ok = enqueue_sms(
+                    tenant_id=tenant.id,
+                    to=send_to,
+                    text=text or fallback_text,
+                    message_mode="alimtalk",
+                    template_id=template.solapi_template_id,
+                    alimtalk_replacements=alimtalk_replacements,
+                )
+            except MessagingPolicyError:
+                ok = False
+        else:
+            try:
+                ok = enqueue_sms(
+                    tenant_id=tenant.id,
+                    to=send_to,
+                    text=fallback_text,
+                    message_mode="alimtalk",
+                )
+            except MessagingPolicyError:
+                ok = False
+
+        if not ok:
+            return Response({"detail": "발송에 실패했습니다. 잠시 후 다시 시도해 주세요."}, status=503)
+        return Response({"message": "아이디와 임시 비밀번호가 알림톡으로 발송되었습니다."}, status=200)

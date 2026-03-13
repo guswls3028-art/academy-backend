@@ -213,6 +213,21 @@ class SessionScoresView(APIView):
         exam_ids = [int(e.id) for e in exams]
         homeworks = sorted(homeworks, key=lambda h: (getattr(h, "display_order", 0) or 0, h.created_at))
 
+        # Homework 대표 max_score: HomeworkScore 레코드에서 집계 (과제별 최대값, 없으면 100)
+        hw_max_scores: Dict[int, float] = {}
+        if homeworks:
+            from django.db.models import Max
+            hw_ids = [int(hw.id) for hw in homeworks]
+            hw_max_agg = (
+                HomeworkScore.objects
+                .filter(homework_id__in=hw_ids)
+                .values("homework_id")
+                .annotate(rep_max=Max("max_score"))
+            )
+            for row in hw_max_agg:
+                if row["rep_max"] is not None:
+                    hw_max_scores[int(row["homework_id"])] = float(row["rep_max"])
+
         meta = {
             "exams": [
                 {
@@ -230,6 +245,7 @@ class SessionScoresView(APIView):
                     "homework_id": int(hw.id),
                     "title": str(hw.title),
                     "unit": None,  # 서버 단일 진실
+                    "max_score": hw_max_scores.get(int(hw.id), 100.0),
                     "display_order": int(getattr(hw, "display_order", 0) or 0),
                 }
                 for hw in homeworks
@@ -250,9 +266,11 @@ class SessionScoresView(APIView):
 
         # -------------------------------------------------
         # 3b) 클리닉 수강 완료(enrollment별 ATTENDED 1건 이상) → 하이라이트 제거
+        # ⚠️ tenant 필터 필수: enrollment_id 만으로 필터 시 타 테넌트 데이터 혼입 가능
         # -------------------------------------------------
         enrollment_ids_clinic_attended: Set[int] = set(
             SessionParticipant.objects.filter(
+                tenant=tenant,
                 enrollment_id__in=enrollment_ids,
                 status=SessionParticipant.Status.ATTENDED,
             )
@@ -265,6 +283,7 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         enrollment_ids_with_clinic_booking: Set[int] = set(
             SessionParticipant.objects.filter(
+                tenant=tenant,
                 enrollment_id__in=enrollment_ids,
                 status__in=[
                     SessionParticipant.Status.PENDING,
@@ -383,9 +402,9 @@ class SessionScoresView(APIView):
                     locked = attempt_status.lower() == "grading"
                     pass_score = exam_pass_score_map.get(exid, 0.0)
                     passed = bool(float(r.total_score or 0.0) >= float(pass_score))
+                    items_list = list(r.items.all()) if hasattr(r, "items") else []
                     subjective_sum = sum(
-                        float(ri.score or 0.0)
-                        for ri in (r.items.all() if hasattr(r, "items") else [])
+                        float(ri.score or 0.0) for ri in items_list
                     )
                     objective_val = float(getattr(r, "objective_score", 0.0) or 0.0)
 
@@ -406,7 +425,7 @@ class SessionScoresView(APIView):
 
                 items_payload: List[Dict[str, Any]] = []
                 if r is not None and hasattr(r, "items"):
-                    for ri in r.items.all():
+                    for ri in items_list:
                         items_payload.append({
                             "question_id": ri.question_id,
                             "score": float(ri.score or 0.0),

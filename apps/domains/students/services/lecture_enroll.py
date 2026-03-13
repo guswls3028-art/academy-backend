@@ -33,7 +33,7 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
     """
     엑셀 한 행으로 기존 학생 조회 또는 신규 생성.
     item: name, parent_phone(필수), phone(선택), school, school_type, grade, memo, uses_identifier 등
-    Returns: (Student, created: bool)
+    Returns: (Student, created: bool, was_restored: bool)
     """
     name = (item.get("name") or "").strip()
     parent_phone = _normalize_phone(item.get("parent_phone") or "")
@@ -42,14 +42,14 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
     if phone and (len(phone) != 11 or not phone.startswith("010")):
         phone = None
     if not parent_phone or len(parent_phone) != 11 or not parent_phone.startswith("010"):
-        return None, False  # 학부모 전화 필수; 실패 시 스킵
+        return None, False, False  # 학부모 전화 필수; 실패 시 스킵
 
     # 1) 기존 활성 학생 조회: 이름 + 학부모전화 일치 (tenant, 삭제 안 된 것만)
     existing = student_repo.student_filter_tenant_name_parent_phone_active(
         tenant, name, parent_phone
     )
     if existing:
-        return existing, False
+        return existing, False, False
 
     # 2) 소프트 삭제된 학생 조회: 동일 이름+학부모전화면 복원 후 재사용 (중복 생성 방지)
     deleted_student = student_repo.student_filter_tenant_name_parent_phone_deleted(
@@ -109,7 +109,7 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
             user=deleted_student.user,
             role="student",
         )
-        return deleted_student, False
+        return deleted_student, False, True  # was_restored=True
 
     # 3) 신규 생성 (bulk_create 한 건 분 로직)
     ps_number = _generate_unique_ps_number()
@@ -118,9 +118,9 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
     with transaction.atomic():
         if phone:
             if student_repo.user_filter_phone_active(phone, tenant=tenant).exists():
-                return None, False
+                return None, False, False
         if student_repo.student_filter_tenant_ps_number(tenant, ps_number).exists():
-            return None, False
+            return None, False, False
 
         parent = None
         if parent_phone:
@@ -173,4 +173,4 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
             user=user,
             role="student",
         )
-        return student, True
+        return student, True, False

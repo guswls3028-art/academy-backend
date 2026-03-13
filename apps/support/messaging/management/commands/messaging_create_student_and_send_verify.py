@@ -69,7 +69,7 @@ class Command(BaseCommand):
             "phone": None,
         }
         password = "TempMsgVerify1!"
-        student, created = get_or_create_student_for_lecture_enroll(
+        student, created, _restored = get_or_create_student_for_lecture_enroll(
             tenant, item, password
         )
         if not student:

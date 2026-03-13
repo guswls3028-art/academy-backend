@@ -100,6 +100,8 @@ class NotificationLogSerializer(serializers.Serializer):
 
 
 class MessageTemplateSerializer(serializers.ModelSerializer):
+    has_content_var = serializers.SerializerMethodField()
+
     class Meta:
         model = MessageTemplate
         fields = [
@@ -110,6 +112,7 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
             "body",
             "solapi_template_id",
             "solapi_status",
+            "has_content_var",
             "created_at",
             "updated_at",
         ]
@@ -117,9 +120,15 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
             "id",
             "solapi_template_id",
             "solapi_status",
+            "has_content_var",
             "created_at",
             "updated_at",
         ]
+
+    @staticmethod
+    def get_has_content_var(obj) -> bool:
+        """본문에 #{내용} 변수가 있는지 — 자유양식 발송 가능 여부"""
+        return "#{내용}" in (obj.body or "")
 
 
 class SendMessageRequestSerializer(serializers.Serializer):

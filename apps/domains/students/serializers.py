@@ -10,7 +10,7 @@ from apps.domains.students.ps_number import _generate_unique_ps_number
 class TagSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tag
-        fields = "__all__"
+        fields = ["id", "name", "color"]
         ref_name = "StudentTagSerializer"
 
 
@@ -362,7 +362,6 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
             "initial_password": "비밀번호",
             "parent_phone": "학부모 연락처",
             "phone": "휴대전화",
-            "high_school_class": "반",
             "grade": "학년",
             "gender": "성별",
             "address": "주소",

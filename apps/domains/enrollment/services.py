@@ -92,7 +92,7 @@ def lecture_enroll_from_excel_rows(
                 "major": raw.get("major"),
             }
             try:
-                student, created = get_or_create_student_for_lecture_enroll(tenant, row, initial_password)
+                student, created, _restored = get_or_create_student_for_lecture_enroll(tenant, row, initial_password)
             except Exception as e:
                 logger.warning(
                     "[lecture_enroll_excel] row=%s name=%r parent=%s error=%s",

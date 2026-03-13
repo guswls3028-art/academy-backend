@@ -179,14 +179,19 @@ class Student(TimestampModel):
 
 
 class Tag(models.Model):
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="tags",
+    )
     name = models.CharField(max_length=50)
     color = models.CharField(max_length=20, default="#000000")
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["name"],
-                name="uniq_tag_name",
+                fields=["tenant", "name"],
+                name="uniq_tag_name_per_tenant",
             )
         ]
 

@@ -153,16 +153,16 @@ def enqueue_sms(
     if mode not in ("sms", "alimtalk", "both"):
         mode = "sms"
 
-    # SMS 또는 both(알림톡 실패 시 SMS 폴백)인 경우, 내 테넌트에서만 허용
+    # SMS 또는 both(알림톡 실패 시 SMS 폴백)인 경우, 자체 키 보유 또는 OWNER 테넌트만 허용
     if mode in ("sms", "both"):
         if not can_send_sms(tenant_id):
             logger.warning(
-                "enqueue_sms blocked by policy: tenant_id=%s cannot send SMS (allowed only for owner tenant)",
+                "enqueue_sms blocked by policy: tenant_id=%s cannot send SMS (no own credentials, not owner)",
                 tenant_id,
             )
             raise MessagingPolicyError(
-                "문자(SMS) 발송은 내 테넌트에서만 가능합니다.",
-                reason="sms_allowed_only_for_owner_tenant",
+                "SMS 발송을 위해서는 자체 발송 계정을 연동하거나 운영자에게 문의하세요.",
+                reason="sms_not_allowed",
             )
 
     queue = MessagingSQSQueue()
@@ -382,6 +382,7 @@ def send_registration_approved_messages(
     """
     from apps.support.messaging.selectors import get_auto_send_config
     from apps.support.messaging.policy import MessagingPolicyError
+    from apps.support.messaging.models import MessageTemplate
 
     sent = 0
     student_phone = (student_phone or "").replace("-", "").strip()
@@ -389,94 +390,112 @@ def send_registration_approved_messages(
     site_url = (site_url or "").strip()
     notice = REGISTRATION_APPROVED_NOTICE
 
+    def _resolve_template(trigger: str):
+        """AutoSendConfig 우선, 없으면 승인된 signup 카테고리 템플릿 자동 발견."""
+        config = get_auto_send_config(tenant_id, trigger)
+        if config and config.enabled and config.template:
+            t = config.template
+            solapi_id = (t.solapi_template_id or "").strip()
+            mode = config.message_mode or "alimtalk"
+            use_alimtalk = mode in ("alimtalk", "both") and solapi_id and t.solapi_status == "APPROVED"
+            return t, solapi_id if use_alimtalk else None, mode
+        # fallback: 승인된 signup 카테고리 템플릿 자동 발견
+        t = MessageTemplate.objects.filter(
+            tenant_id=tenant_id,
+            category="signup",
+            solapi_status="APPROVED",
+        ).exclude(solapi_template_id="").first()
+        if t:
+            logger.info(
+                "send_registration_approved fallback: trigger=%s using template=%s (id=%s)",
+                trigger, t.name, t.solapi_template_id,
+            )
+            return t, (t.solapi_template_id or "").strip(), "alimtalk"
+        return None, None, "alimtalk"
+
+    replacements_base = {
+        "학생이름": student_name or "",
+        "학생아이디": student_id or "",
+        "학생비밀번호": student_password or "",
+        "사이트링크": site_url,
+        "비밀번호안내": notice,
+    }
+
     # 학생용
-    config_student = get_auto_send_config(tenant_id, "registration_approved_student")
-    if config_student and config_student.template and student_phone and len(student_phone) >= 10:
-        t = config_student.template
-        body = (t.body or "").strip()
-        subject = (t.subject or "").strip()
-        solapi_id = (t.solapi_template_id or "").strip()
-        use_alimtalk = config_student.message_mode in ("alimtalk", "both") and solapi_id and getattr(t, "solapi_status", None) == "APPROVED"
+    if student_phone and len(student_phone) >= 10:
+        tmpl, solapi_id, mode = _resolve_template("registration_approved_student")
+        if tmpl:
+            body = (tmpl.body or "").strip()
+            text = body
+            for k, v in replacements_base.items():
+                text = text.replace(f"#{{{k}}}", v)
+            subject = (tmpl.subject or "").strip()
+            if subject:
+                text = subject + "\n" + text
 
-        text = (
-            body.replace("#{학생이름}", student_name or "")
-            .replace("#{학생아이디}", student_id or "")
-            .replace("#{학생비밀번호}", student_password or "")
-            .replace("#{사이트링크}", site_url)
-            .replace("#{비밀번호안내}", notice)
-        )
-        if subject:
-            text = subject + "\n" + text
-        alimtalk_replacements = None
-        template_id_solapi = None
-        if use_alimtalk:
-            template_id_solapi = solapi_id
-            alimtalk_replacements = [
-                {"key": "학생이름", "value": student_name or ""},
-                {"key": "학생아이디", "value": student_id or ""},
-                {"key": "학생비밀번호", "value": student_password or ""},
-                {"key": "사이트링크", "value": site_url},
-                {"key": "비밀번호안내", "value": notice},
-            ]
-        try:
-            if enqueue_sms(
-                tenant_id=tenant_id,
-                to=student_phone,
-                text=text,
-                message_mode=config_student.message_mode,
-                template_id=template_id_solapi,
-                alimtalk_replacements=alimtalk_replacements,
-            ):
-                sent += 1
-        except MessagingPolicyError:
-            logger.info("send_registration_approved student skipped (policy: tenant_id=%s)", tenant_id)
+            alimtalk_replacements = None
+            template_id_solapi = None
+            if solapi_id:
+                template_id_solapi = solapi_id
+                alimtalk_replacements = [{"key": k, "value": v} for k, v in replacements_base.items()]
+            try:
+                if enqueue_sms(
+                    tenant_id=tenant_id,
+                    to=student_phone,
+                    text=text,
+                    message_mode=mode,
+                    template_id=template_id_solapi,
+                    alimtalk_replacements=alimtalk_replacements,
+                ):
+                    sent += 1
+            except MessagingPolicyError:
+                logger.info("send_registration_approved student skipped (policy: tenant_id=%s)", tenant_id)
+        else:
+            logger.warning(
+                "send_registration_approved student: no template found (tenant_id=%s, trigger=registration_approved_student)",
+                tenant_id,
+            )
 
-    # 학부모용 (학부모 로그인 ID = 전화번호로 통일하여 안내)
-    config_parent = get_auto_send_config(tenant_id, "registration_approved_parent")
-    if config_parent and config_parent.template and parent_phone and len(parent_phone) >= 10:
-        t = config_parent.template
-        body = (t.body or "").strip()
-        subject = (t.subject or "").strip()
-        solapi_id = (t.solapi_template_id or "").strip()
-        use_alimtalk = config_parent.message_mode in ("alimtalk", "both") and solapi_id and getattr(t, "solapi_status", None) == "APPROVED"
+    # 학부모용
+    if parent_phone and len(parent_phone) >= 10:
+        tmpl, solapi_id, mode = _resolve_template("registration_approved_parent")
+        if tmpl:
+            parent_id_display = parent_phone
+            parent_replacements = {
+                **replacements_base,
+                "학부모아이디": parent_id_display,
+                "학부모비밀번호": parent_password or "",
+            }
+            body = (tmpl.body or "").strip()
+            text = body
+            for k, v in parent_replacements.items():
+                text = text.replace(f"#{{{k}}}", v)
+            subject = (tmpl.subject or "").strip()
+            if subject:
+                text = subject + "\n" + text
 
-        parent_id_display = parent_phone  # 로그인 ID로 전화번호 안내
-        text = (
-            body.replace("#{학부모아이디}", parent_id_display)
-            .replace("#{학부모비밀번호}", parent_password or "")
-            .replace("#{학생이름}", student_name or "")
-            .replace("#{학생아이디}", student_id or "")
-            .replace("#{학생비밀번호}", student_password or "")
-            .replace("#{사이트링크}", site_url)
-            .replace("#{비밀번호안내}", notice)
-        )
-        if subject:
-            text = subject + "\n" + text
-        alimtalk_replacements = None
-        template_id_solapi = None
-        if use_alimtalk:
-            template_id_solapi = solapi_id
-            alimtalk_replacements = [
-                {"key": "학부모아이디", "value": parent_id_display},
-                {"key": "학부모비밀번호", "value": parent_password or ""},
-                {"key": "학생이름", "value": student_name or ""},
-                {"key": "학생아이디", "value": student_id or ""},
-                {"key": "학생비밀번호", "value": student_password or ""},
-                {"key": "사이트링크", "value": site_url},
-                {"key": "비밀번호안내", "value": notice},
-            ]
-        try:
-            if enqueue_sms(
-                tenant_id=tenant_id,
-                to=parent_phone,
-                text=text,
-                message_mode=config_parent.message_mode,
-                template_id=template_id_solapi,
-                alimtalk_replacements=alimtalk_replacements,
-            ):
-                sent += 1
-        except MessagingPolicyError:
-            logger.info("send_registration_approved parent skipped (policy: tenant_id=%s)", tenant_id)
+            alimtalk_replacements = None
+            template_id_solapi = None
+            if solapi_id:
+                template_id_solapi = solapi_id
+                alimtalk_replacements = [{"key": k, "value": v} for k, v in parent_replacements.items()]
+            try:
+                if enqueue_sms(
+                    tenant_id=tenant_id,
+                    to=parent_phone,
+                    text=text,
+                    message_mode=mode,
+                    template_id=template_id_solapi,
+                    alimtalk_replacements=alimtalk_replacements,
+                ):
+                    sent += 1
+            except MessagingPolicyError:
+                logger.info("send_registration_approved parent skipped (policy: tenant_id=%s)", tenant_id)
+        else:
+            logger.warning(
+                "send_registration_approved parent: no template found (tenant_id=%s, trigger=registration_approved_parent)",
+                tenant_id,
+            )
 
     if sent:
         return {"status": "enqueued", "enqueued": sent}

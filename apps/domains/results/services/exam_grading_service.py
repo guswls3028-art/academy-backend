@@ -135,7 +135,10 @@ class ExamGradingService:
             submission.status = "done"
             submission.save(update_fields=["status", "updated_at"])
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception(
+                "Failed to update submission %s status to 'done'", submission.id
+            )
 
         return result
 

@@ -2,7 +2,7 @@
 """
 메시징 발송 정책 및 채널 resolver — 단일 진입점.
 
-- SMS: OWNER_TENANT_ID(내 테넌트)에서만 허용.
+- SMS: OWNER_TENANT_ID(내 테넌트) 또는 자체 연동 키가 있는 테넌트에서 허용.
 - 알림톡: 모든 tenant 허용. tenant별 kakao_pfid 있으면 해당 채널, 없으면 시스템 기본 채널.
 """
 
@@ -29,11 +29,28 @@ def is_messaging_disabled(tenant_id: int) -> bool:
     return int(tenant_id) == get_test_tenant_id()
 
 
+def _has_own_sms_credentials(tenant_id: int) -> bool:
+    """테넌트가 자체 SMS 발송 가능한 연동 키를 갖고 있는지."""
+    try:
+        creds = get_tenant_own_credentials(tenant_id)
+        provider = creds.get("provider", "solapi")
+        if provider == "ppurio":
+            return bool(creds.get("ppurio_api_key") and creds.get("ppurio_account"))
+        return bool(creds.get("solapi_api_key") and creds.get("solapi_api_secret"))
+    except Exception:
+        return False
+
+
 def can_send_sms(tenant_id: int) -> bool:
-    """해당 tenant가 문자(SMS/LMS) 발송을 허용하는지 여부."""
+    """해당 tenant가 문자(SMS/LMS) 발송을 허용하는지 여부.
+    - 시스템 키 사용: OWNER_TENANT_ID만 허용 (플랫폼 SMS 비용 보호)
+    - 자체 연동 키 보유: 해당 테넌트 자체 계정 사용이므로 허용
+    """
     if is_messaging_disabled(tenant_id):
         return False
-    return int(tenant_id) == get_owner_tenant_id()
+    if int(tenant_id) == get_owner_tenant_id():
+        return True
+    return _has_own_sms_credentials(tenant_id)
 
 
 class MessagingPolicyError(Exception):
@@ -133,7 +150,7 @@ def resolve_messaging_provider(tenant_id: int, message_type: str) -> dict:
         allowed = can_send_sms(tenant_id)
         return {
             "allowed": allowed,
-            "reason": None if allowed else "sms_allowed_only_for_owner_tenant",
+            "reason": None if allowed else "sms_not_allowed",
             "provider": provider,
         }
     if message_type == "alimtalk":

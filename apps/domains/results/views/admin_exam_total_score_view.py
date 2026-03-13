@@ -40,7 +40,7 @@ class AdminExamTotalScoreView(APIView):
 
         # ✅ tenant isolation: verify exam belongs to tenant
         from django.shortcuts import get_object_or_404 as _get_or_404
-        _get_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
+        exam = _get_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
 
         if "score" not in request.data:
             raise ValidationError({"detail": "score is required", "code": "INVALID"})
@@ -53,8 +53,15 @@ class AdminExamTotalScoreView(APIView):
         if new_score < 0:
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})
 
-        # 성적 탭 입력은 0~100 고정 (요구사항)
-        max_score = 100.0
+        # max_score: 프론트에서 전달하면 사용, 없으면 시험 모델에서 가져옴 (기본 100)
+        req_max = request.data.get("max_score")
+        if req_max is not None:
+            try:
+                max_score = float(req_max)
+            except (TypeError, ValueError):
+                max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
+        else:
+            max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
 
         # -------------------------------------------------
         # 1️⃣ Result (대표 스냅샷)

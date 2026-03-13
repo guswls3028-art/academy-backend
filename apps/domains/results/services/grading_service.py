@@ -22,7 +22,10 @@ def grade_submission(submission_id: int) -> ExamResult:
         if sub and getattr(sub, "source", None) == Submission.Source.ONLINE:
             sync_result_from_exam_submission(submission_id)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception(
+            "Result sync failed for submission %s", submission_id
+        )
 
     # ✅ 시험 채점 완료 → progress / clinic 자동 갱신
     dispatch_progress_pipeline(submission_id=int(submission_id))

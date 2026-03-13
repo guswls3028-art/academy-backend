@@ -1024,9 +1024,9 @@ class StudentVideoCommentListView(APIView):
                 "is_deleted": c.is_deleted,
                 "is_mine": is_mine,
                 "created_at": c.created_at.isoformat(),
-                "reply_count": len([r for r in c.replies.all() if not r.is_deleted]) if not c.is_deleted else 0,
+                "reply_count": len(active_replies := [r for r in c.replies.all() if not r.is_deleted]) if not c.is_deleted else 0,
                 "replies": [_serialize_comment(r) for r in sorted(
-                    [r for r in c.replies.all() if not r.is_deleted],
+                    active_replies if not c.is_deleted else [],
                     key=lambda r: r.created_at
                 )[:20]],
             }

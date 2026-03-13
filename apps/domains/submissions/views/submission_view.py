@@ -1,6 +1,7 @@
 # PATH: apps/domains/submissions/views/submission_view.py
 from __future__ import annotations
 
+from django.db import transaction
 from django.utils import timezone
 
 from rest_framework.viewsets import ModelViewSet
@@ -114,8 +115,9 @@ class SubmissionViewSet(ModelViewSet):
         )
 
     @action(detail=True, methods=["post"], url_path="manual-edit")
+    @transaction.atomic
     def manual_edit(self, request, pk=None):
-        submission: Submission = self.get_object()
+        submission: Submission = Submission.objects.select_for_update().get(pk=self.get_object().pk)
 
         if submission.status == Submission.Status.GRADING:
             return Response({"detail": "Submission is grading now."}, status=409)

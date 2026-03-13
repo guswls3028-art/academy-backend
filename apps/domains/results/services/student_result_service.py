@@ -26,6 +26,8 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     user = request.user
     if tenant is None:
         tenant = getattr(request, "tenant", None)
+    if tenant is None:
+        raise Http404("tenant resolution failed")
     exam_id = int(exam_id)
     exam = Exam.objects.filter(id=exam_id).first()
     if not exam:
@@ -35,9 +37,8 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     allowed_enrollment_ids = ExamEnrollment.objects.filter(
         exam_id=exam_id
     ).values_list("enrollment_id", flat=True)
-    enrollment_qs = Enrollment.objects.filter(id__in=allowed_enrollment_ids)
-    if tenant is not None:
-        enrollment_qs = enrollment_qs.filter(tenant=tenant)
+    # ⚠️ tenant 필터 필수: 타 테넌트 enrollment 접근 차단
+    enrollment_qs = Enrollment.objects.filter(id__in=allowed_enrollment_ids, tenant=tenant)
     if hasattr(Enrollment, "user_id"):
         enrollment_qs = enrollment_qs.filter(user_id=user.id)
     elif hasattr(Enrollment, "student_id"):
