@@ -48,8 +48,10 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.homework_results.models import Homework
 
-from apps.domains.homework.serializers import (
+from apps.domains.homework_results.serializers import (
     HomeworkScoreSerializer,
+)
+from apps.domains.homework.serializers import (
     HomeworkQuickPatchSerializer,
 )
 from apps.domains.homework.filters import HomeworkScoreFilter

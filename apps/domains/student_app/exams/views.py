@@ -203,32 +203,44 @@ class StudentExamSubmitView(APIView):
                 {"detail": "최소 1개 문항의 답을 입력하세요."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        from django.db import transaction, IntegrityError
         from apps.domains.submissions.models import Submission
         from apps.domains.submissions.services.dispatcher import dispatch_submission
 
-        # 중복 제출 방지
-        existing = Submission.objects.filter(
-            user=request.user,
-            target_type=Submission.TargetType.EXAM,
-            target_id=exam_id,
-            status__in=["submitted", "dispatched", "extracting", "answers_ready", "grading", "done"],
-        ).exists()
-        if existing:
+        # 중복 제출 방지 (atomic + select_for_update로 race condition 방지)
+        try:
+            with transaction.atomic():
+                existing = (
+                    Submission.objects.select_for_update()
+                    .filter(
+                        user=request.user,
+                        target_type=Submission.TargetType.EXAM,
+                        target_id=exam_id,
+                        status__in=["submitted", "dispatched", "extracting", "answers_ready", "grading", "done"],
+                    )
+                    .exists()
+                )
+                if existing:
+                    return Response(
+                        {"detail": "이미 제출된 시험입니다."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                submission = Submission.objects.create(
+                    tenant=tenant,
+                    user=request.user,
+                    enrollment_id=enrollment.id,
+                    target_type=Submission.TargetType.EXAM,
+                    target_id=exam_id,
+                    source=Submission.Source.ONLINE,
+                    payload={"answers": answers},
+                    status=Submission.Status.SUBMITTED,
+                )
+        except IntegrityError:
             return Response(
                 {"detail": "이미 제출된 시험입니다."},
                 status=status.HTTP_409_CONFLICT,
             )
-
-        submission = Submission.objects.create(
-            tenant=tenant,
-            user=request.user,
-            enrollment_id=enrollment.id,
-            target_type=Submission.TargetType.EXAM,
-            target_id=exam_id,
-            source=Submission.Source.ONLINE,
-            payload={"answers": answers},
-            status=Submission.Status.SUBMITTED,
-        )
         try:
             dispatch_submission(submission)
         except Exception as e:

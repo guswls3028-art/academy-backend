@@ -439,6 +439,26 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # 상태 전이 검증 (유효한 전이만 허용)
+        VALID_TRANSITIONS = {
+            SessionParticipant.Status.PENDING: {
+                SessionParticipant.Status.BOOKED,
+                SessionParticipant.Status.REJECTED,
+                SessionParticipant.Status.CANCELLED,
+            },
+            SessionParticipant.Status.BOOKED: {
+                SessionParticipant.Status.ATTENDED,
+                SessionParticipant.Status.NO_SHOW,
+                SessionParticipant.Status.CANCELLED,
+            },
+        }
+        valid_next = VALID_TRANSITIONS.get(obj.status)
+        if valid_next is not None and next_status not in valid_next:
+            return Response(
+                {"detail": f"'{obj.status}'에서 '{next_status}'(으)로 변경할 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # 학생 권한 체크: 자신의 예약 신청만 취소 가능
         from apps.domains.student_app.permissions import get_request_student
         request_student = get_request_student(request)

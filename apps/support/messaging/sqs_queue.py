@@ -78,6 +78,11 @@ class MessagingSQSQueue:
         if not mode:
             mode = "both" if use_alimtalk_first else "sms"
         if mode not in ("sms", "alimtalk", "both"):
+            import logging
+            logging.getLogger(__name__).warning(
+                "Invalid message_mode '%s' downgraded to 'sms' (tenant=%s, to=%s)",
+                message_mode, tenant_id, to,
+            )
             mode = "sms"
 
         message = {

@@ -43,9 +43,17 @@ class StudentClinicIdcardView(APIView):
                 "current_result": "SUCCESS",
             })
 
-        qs = Enrollment.objects.filter(student=student, status="ACTIVE")
-        if tenant is not None:
-            qs = qs.filter(tenant=tenant)
+        if not tenant:
+            return Response({
+                "student_name": getattr(student, "name", "") or "",
+                "profile_photo_url": None,
+                "background_colors": colors[:3],
+                "server_date": timezone.now().date().isoformat(),
+                "server_datetime": timezone.now().isoformat(),
+                "histories": [],
+                "current_result": "SUCCESS",
+            })
+        qs = Enrollment.objects.filter(student=student, tenant=tenant, status="ACTIVE")
         enrollment = qs.select_related("lecture").order_by("id").first()
         
         if not enrollment:
@@ -76,6 +84,7 @@ class StudentClinicIdcardView(APIView):
                 enrollment_id=enrollment_id,
                 is_auto=True,
                 resolved_at__isnull=True,
+                session__lecture__tenant=tenant,
             ).values_list("session_id", flat=True)
         )
 

@@ -123,7 +123,7 @@ class AdminExamResultsView(ListAPIView):
         attempt_ids = [r.attempt_id for r in results if getattr(r, "attempt_id", None)]
         attempt_map = {
             a.id: a
-            for a in ExamAttempt.objects.filter(id__in=attempt_ids)
+            for a in ExamAttempt.objects.filter(id__in=attempt_ids, exam_id=exam_id)
         }
 
         for r in results:
@@ -147,7 +147,7 @@ class AdminExamResultsView(ListAPIView):
             if v.get("submission_id")
         ]
         submission_status_map = (
-            {s.id: s.status for s in Submission.objects.filter(id__in=submission_ids)}
+            {s.id: s.status for s in Submission.objects.filter(id__in=submission_ids, tenant=request.tenant)}
             if submission_ids
             else {}
         )
