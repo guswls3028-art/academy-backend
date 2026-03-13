@@ -621,6 +621,12 @@ class AutoSendConfigView(APIView):
         tenant = request.tenant
         triggers = [c[0] for c in AutoSendConfig.Trigger.choices]
         configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
+
+        # ── 자동 프로비저닝: config가 하나도 없으면 기본 템플릿 + config 자동 생성 ──
+        if not configs.exists():
+            self._auto_provision(tenant)
+            configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
+
         by_trigger = {c.trigger: c for c in configs}
 
         result = []
@@ -642,6 +648,36 @@ class AutoSendConfigView(APIView):
                     "updated_at": None,
                 })
         return Response(result)
+
+    @staticmethod
+    def _auto_provision(tenant):
+        """기본 템플릿 + AutoSendConfig 자동 생성 (첫 접근 시 1회)"""
+        from .default_templates import DEFAULT_TEMPLATES
+        import logging
+        logger = logging.getLogger(__name__)
+
+        for trigger, defaults in DEFAULT_TEMPLATES.items():
+            tpl_name = defaults["name"]
+            tpl, created = MessageTemplate.objects.get_or_create(
+                tenant=tenant,
+                name=tpl_name,
+                defaults={
+                    "category": defaults["category"],
+                    "subject": defaults.get("subject", ""),
+                    "body": defaults["body"],
+                },
+            )
+            AutoSendConfig.objects.get_or_create(
+                tenant=tenant,
+                trigger=trigger,
+                defaults={
+                    "template": tpl,
+                    "enabled": True,
+                    "message_mode": "both",
+                    "minutes_before": defaults.get("minutes_before"),
+                },
+            )
+        logger.info("Auto-provisioned default templates for tenant %s", tenant.id)
 
     def patch(self, request):
         tenant = request.tenant
