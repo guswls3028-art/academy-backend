@@ -118,13 +118,12 @@ def verify_connections() -> bool:
 # ── Job polling ──────────────────────────────────────────────
 def poll_next_job():
     """
-    QUEUED 또는 RETRY_WAIT 상태의 작업 중 duration <= 30분인 것을 하나 가져옴.
-    duration이 NULL인 경우도 포함 (ffprobe 실패 시 워커에서 재검증).
+    QUEUED 또는 RETRY_WAIT 상태의 작업 중 duration이 알려져 있고 <= 30분인 것을 하나 가져옴.
+    duration이 NULL인 영상은 제외 — Batch로 라우팅됨 (안전: 길이 불명 = 잠재적 장시간).
     select_for_update(skip_locked=True)로 다중 데몬 인스턴스 안전성 확보.
     """
     from django.db import transaction
     from apps.support.video.models import VideoTranscodeJob
-    from django.db.models import Q
 
     with transaction.atomic():
         return (
@@ -135,7 +134,8 @@ def poll_next_job():
                 state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT],
             )
             .filter(
-                Q(video__duration__isnull=True) | Q(video__duration__lte=DAEMON_MAX_DURATION_SECONDS)
+                video__duration__isnull=False,
+                video__duration__lte=DAEMON_MAX_DURATION_SECONDS,
             )
             .order_by("created_at")
             .first()

@@ -137,24 +137,26 @@ def create_job_and_submit_batch(video: Video) -> JobResult:
                 return JobResult(existing_after, None if existing_after else REASON_SUBMIT_FAILED)
 
             # Worker mode routing:
-            # - daemon mode + duration <= 30min (or unknown): daemon polls DB
-            # - daemon mode + duration > 30min: auto-fallback to Batch (daemon won't pick these up)
+            # - daemon mode + known duration <= 30min: daemon polls DB
+            # - daemon mode + duration > 30min OR unknown (NULL): auto-fallback to Batch
+            #   (NULL duration = ffprobe failed or not yet probed → treat as potentially long → Batch is safer)
             # - batch mode: always submit to Batch
             worker_mode = getattr(settings, "VIDEO_WORKER_MODE", "batch")
             daemon_max_duration = int(getattr(settings, "DAEMON_MAX_DURATION_SECONDS", 1800))
-            video_duration = video.duration or 0
+            video_duration = video.duration  # None if unknown
 
-            if worker_mode == "daemon" and video_duration <= daemon_max_duration:
+            if worker_mode == "daemon" and video_duration is not None and video_duration <= daemon_max_duration:
                 logger.info(
                     "create_job_and_submit_batch: DAEMON mode — job %s created, skipping Batch submit (video %s, duration=%s)",
                     job.id, video.id, video.duration,
                 )
                 return JobResult(job, None)
 
-            if worker_mode == "daemon" and video_duration > daemon_max_duration:
+            if worker_mode == "daemon":
+                reason = "duration unknown (NULL)" if video_duration is None else f"duration {video_duration}s > {daemon_max_duration}s"
                 logger.info(
-                    "create_job_and_submit_batch: DAEMON mode but duration %ss > %ss — fallback to Batch (video %s, job %s)",
-                    video_duration, daemon_max_duration, video.id, job.id,
+                    "create_job_and_submit_batch: DAEMON mode but %s — fallback to Batch (video %s, job %s)",
+                    reason, video.id, job.id,
                 )
 
             aws_job_id, submit_error = submit_batch_job(str(job.id), duration_seconds=video.duration if video.duration else None)

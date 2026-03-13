@@ -103,11 +103,11 @@ class Command(BaseCommand):
                     job.locked_until = None
                     job.save(update_fields=["state", "attempt_count", "locked_by", "locked_until", "updated_at"])
 
-                    # In daemon mode, short videos are picked up by daemon polling (no Batch submit needed).
-                    # Only submit to Batch for long videos or when in batch mode.
+                    # In daemon mode, short videos (known duration <= max) are picked up by daemon polling.
+                    # Submit to Batch for: long videos, unknown-duration videos, or batch mode.
                     worker_mode = getattr(settings, "VIDEO_WORKER_MODE", "batch")
                     daemon_max = int(getattr(settings, "DAEMON_MAX_DURATION_SECONDS", 1800))
-                    use_batch = (worker_mode != "daemon") or (duration_sec and duration_sec > daemon_max)
+                    use_batch = (worker_mode != "daemon") or (duration_sec is None) or (duration_sec > daemon_max)
 
                     if use_batch:
                         aws_job_id, submit_err = submit_batch_job(str(job.id), duration_seconds=duration_sec)

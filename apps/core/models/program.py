@@ -32,7 +32,7 @@ class Program(TimestampModel):
 
     PLAN_PRICES: dict[str, int] = {
         Plan.LITE: 55_000,
-        Plan.BASIC: 150_000,
+        Plan.BASIC: 198_000,
         Plan.PREMIUM: 300_000,
     }
 
