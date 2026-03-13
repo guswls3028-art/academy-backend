@@ -7,6 +7,7 @@ from .views.exam_omr_submit_view import ExamOMRSubmitView
 
 # ✅ 추가
 from .views.exam_submissions_list_view import ExamSubmissionsListView
+from .views.homework_submissions_list_view import HomeworkSubmissionsListView
 from .views.exam_omr_batch_upload_view import ExamOMRBatchUploadView
 
 router = DefaultRouter()
@@ -25,6 +26,13 @@ urlpatterns = [
         "submissions/exams/<int:exam_id>/",
         ExamSubmissionsListView.as_view(),
         name="exam-submissions-list",
+    ),
+
+    # ✅ 과제 제출 목록: GET /submissions/homework/{homeworkId}/
+    path(
+        "submissions/homework/<int:homework_id>/",
+        HomeworkSubmissionsListView.as_view(),
+        name="homework-submissions-list",
     ),
 
     # ✅ 다건 업로드: POST /submissions/exams/{examId}/omr/batch/
