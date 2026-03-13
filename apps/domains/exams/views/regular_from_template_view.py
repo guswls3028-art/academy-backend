@@ -12,6 +12,7 @@ from rest_framework import status
 from apps.domains.exams.models import Exam
 from apps.domains.exams.serializers.exam import ExamSerializer
 from apps.domains.exams.services.regular_exam_factory import RegularExamFactory
+from apps.domains.lectures.models import Session
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
 
@@ -49,6 +50,9 @@ class RegularExamFromTemplateView(APIView):
             session_id = int(session_id)
         except (TypeError, ValueError):
             return Response({"detail": "session_id must be integer"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # ✅ Tenant isolation: validate session belongs to same tenant
+        get_object_or_404(Session, id=session_id, lecture__tenant=tenant)
 
         factory = RegularExamFactory()
         regular = factory.create_regular_from_template(
