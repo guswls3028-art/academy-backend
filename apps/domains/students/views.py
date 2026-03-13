@@ -1594,25 +1594,27 @@ class StudentPasswordFindRequestView(APIView):
             if use_alimtalk:
                 template_id_solapi = solapi_id
                 alimtalk_replacements = [{"key": "인증번호", "value": code}]
+            # 알림톡 템플릿이 없으면 SMS 폴백
+            mode = "alimtalk" if template_id_solapi else "both"
             try:
                 ok = enqueue_sms(
                     tenant_id=tenant.id,
                     to=phone,
                     text=text or fallback_text,
-                    message_mode="alimtalk",
+                    message_mode=mode,
                     template_id=template_id_solapi,
                     alimtalk_replacements=alimtalk_replacements,
                 )
             except MessagingPolicyError:
                 ok = False
         else:
-            # AutoSendConfig 미설정 시에도 알림톡 시도 (시스템 기본 템플릿 사용)
+            # AutoSendConfig 미설정 — SMS로 발송 (template_id 없는 alimtalk은 워커에서 실패)
             try:
                 ok = enqueue_sms(
                     tenant_id=tenant.id,
                     to=phone,
                     text=fallback_text,
-                    message_mode="alimtalk",
+                    message_mode="sms",
                 )
             except MessagingPolicyError:
                 ok = False
@@ -1781,6 +1783,7 @@ class StudentPasswordResetSendView(APIView):
             if client_temp_password and is_staff_request
             else _generate_temp_password()
         )
+        old_password_hash = user.password  # 발송 실패 시 롤백용
         user.set_password(temp_password)
         user.save(update_fields=["password"])
 
@@ -1843,30 +1846,67 @@ class StudentPasswordResetSendView(APIView):
                     {"key": k.strip("#{}"), "value": v}
                     for k, v in replacements_map.items()
                 ]
+            # 알림톡 템플릿이 없으면 SMS로 폴백 (template_id 없는 alimtalk은 워커에서 실패)
+            mode = "alimtalk" if template_id_solapi else "both"
             try:
                 ok = enqueue_sms(
                     tenant_id=tenant.id,
                     to=send_to,
                     text=text or fallback_text,
-                    message_mode="alimtalk",
+                    message_mode=mode,
                     template_id=template_id_solapi,
                     alimtalk_replacements=alimtalk_replacements,
                 )
             except MessagingPolicyError:
                 ok = False
         else:
-            # AutoSendConfig 미설정 시에도 알림톡 시도
-            try:
-                ok = enqueue_sms(
-                    tenant_id=tenant.id,
-                    to=send_to,
-                    text=fallback_text,
-                    message_mode="alimtalk",
-                )
-            except MessagingPolicyError:
-                ok = False
+            # AutoSendConfig 미설정 — 승인된 signup 템플릿 자동 검색, 없으면 SMS
+            from apps.support.messaging.models import MessageTemplate
+            auto_template = MessageTemplate.objects.filter(
+                tenant_id=tenant.id,
+                category="signup",
+                solapi_status="APPROVED",
+            ).exclude(solapi_template_id="").first()
+            if auto_template:
+                auto_replacements_map = {
+                    "#{학생이름}": display_name or "",
+                    "#{아이디}": display_username or "",
+                    "#{임시비밀번호}": temp_password,
+                    "#{비밀번호안내}": notice,
+                }
+                auto_text = (auto_template.body or "").strip()
+                for placeholder, value in auto_replacements_map.items():
+                    auto_text = auto_text.replace(placeholder, value)
+                auto_alimtalk_reps = [
+                    {"key": k.strip("#{}"), "value": v}
+                    for k, v in auto_replacements_map.items()
+                ]
+                try:
+                    ok = enqueue_sms(
+                        tenant_id=tenant.id,
+                        to=send_to,
+                        text=auto_text or fallback_text,
+                        message_mode="alimtalk",
+                        template_id=auto_template.solapi_template_id,
+                        alimtalk_replacements=auto_alimtalk_reps,
+                    )
+                except MessagingPolicyError:
+                    ok = False
+            else:
+                try:
+                    ok = enqueue_sms(
+                        tenant_id=tenant.id,
+                        to=send_to,
+                        text=fallback_text,
+                        message_mode="sms",
+                    )
+                except MessagingPolicyError:
+                    ok = False
 
         if not ok:
+            # 발송 실패 시 비밀번호 롤백 — 비밀번호는 바뀌었는데 알림 못 받는 상황 방지
+            user.password = old_password_hash
+            user.save(update_fields=["password"])
             return Response(
                 {"detail": "임시 비밀번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."},
                 status=503,
@@ -1908,6 +1948,7 @@ class SendExistingCredentialsView(APIView):
 
         # 임시 비밀번호 생성 및 저장
         temp_password = _generate_temp_password()
+        old_password_hash = student.user.password  # 발송 실패 시 롤백용
         student.user.set_password(temp_password)
         student.user.save(update_fields=["password"])
 
@@ -1966,16 +2007,20 @@ class SendExistingCredentialsView(APIView):
             except MessagingPolicyError:
                 ok = False
         else:
+            # 템플릿 없으면 SMS로 발송 (template_id 없는 alimtalk은 워커에서 실패)
             try:
                 ok = enqueue_sms(
                     tenant_id=tenant.id,
                     to=send_to,
                     text=fallback_text,
-                    message_mode="alimtalk",
+                    message_mode="sms",
                 )
             except MessagingPolicyError:
                 ok = False
 
         if not ok:
+            # 발송 실패 시 비밀번호 롤백
+            student.user.password = old_password_hash
+            student.user.save(update_fields=["password"])
             return Response({"detail": "발송에 실패했습니다. 잠시 후 다시 시도해 주세요."}, status=503)
         return Response({"message": "아이디와 임시 비밀번호가 알림톡으로 발송되었습니다."}, status=200)
