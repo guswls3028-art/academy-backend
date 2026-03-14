@@ -111,6 +111,34 @@ class AttendanceViewSet(ModelViewSet):
         return super().partial_update(request, *args, **kwargs)
 
     # =========================================================
+    # 0-1️⃣ 전체 현장 출석 (세션 내 모든 출결을 PRESENT로 일괄 변경)
+    # =========================================================
+    @transaction.atomic
+    @action(detail=False, methods=["post"], url_path="bulk_set_present")
+    def bulk_set_present(self, request):
+        tenant = getattr(request, "tenant", None)
+        session_id = request.data.get("session")
+        if not session_id:
+            return Response(
+                {"detail": "session은 필수입니다"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        session = Session.objects.select_related("lecture").filter(id=session_id).first()
+        if not session:
+            raise NotFound("세션을 찾을 수 없습니다.")
+        if session.lecture.tenant_id != tenant.id:
+            raise NotFound("세션을 찾을 수 없습니다.")
+
+        updated = Attendance.objects.filter(
+            tenant=tenant, session=session,
+        ).exclude(status="PRESENT").update(status="PRESENT")
+
+        return Response(
+            {"updated": updated, "session": session_id},
+            status=status.HTTP_200_OK,
+        )
+
+    # =========================================================
     # 1️⃣ 세션 기준 학생 등록
     # =========================================================
     @transaction.atomic
