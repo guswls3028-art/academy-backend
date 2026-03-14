@@ -91,6 +91,9 @@ jobs:
   deploy-infra:
     needs: [guard-no-legacy-scripts, build-and-push]
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
