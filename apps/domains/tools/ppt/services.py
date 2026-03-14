@@ -13,7 +13,7 @@ import io
 import logging
 from typing import Literal
 
-from PIL import Image, ImageOps, ImageEnhance, ImageStat
+from PIL import Image, ImageOps, ImageEnhance, ImageStat, ImageFilter
 from pptx import Presentation
 from pptx.util import Inches
 from pptx.dml.color import RGBColor
@@ -66,45 +66,45 @@ def validate_image_bytes(raw_bytes: bytes) -> Image.Image:
     return img
 
 
-def _auto_enhance(img: Image.Image) -> Image.Image:
-    """자동 밝기/대비 보정 — 빔프로젝터용.
+def _auto_enhance_document(img: Image.Image) -> Image.Image:
+    """문서용 자동 보정 — "읽기 쉬운 흑백" 목표.
 
-    어두운 이미지를 분석하여 적절한 밝기/대비를 자동으로 올린다.
-    - 평균 밝기가 낮을수록 더 강하게 보정
-    - 대비도 함께 조절하여 선명도 유지
+    목적: 빔프로젝터에서 문서/시험지가 선명하게 보이도록.
+    원칙:
+    - "밝게"가 아니라 "글자 선명, 배경 깨끗"
+    - 배경 watermark/로고가 과도하게 밝아지면 안 됨
+    - histogram 기반 대비 정규화 (단순 brightness 증가 아님)
+    - 선명도 보강으로 글자 edge 강화
     """
-    # 그레이스케일 통계로 평균 밝기 측정
     gray = img.convert("L")
     stat = ImageStat.Stat(gray)
-    mean_brightness = stat.mean[0]  # 0~255
+    mean_val = stat.mean[0]
+    stddev = stat.stddev[0] if stat.stddev else 0
 
-    # 밝기 보정 강도 계산
-    # mean < 60: 매우 어두움 → 강하게 보정
-    # mean 60~120: 어두움 → 보통 보정
-    # mean 120~180: 보통 → 약하게 보정
-    # mean > 180: 밝음 → 보정 불필요
-    if mean_brightness > 180:
-        return img  # 이미 충분히 밝음
+    # 이미 고대비 흑백 (mean~128, stddev 높음) → 보정 최소화
+    if stddev > 80 and 80 < mean_val < 180:
+        # 선명도만 살짝 보강
+        img = ImageEnhance.Sharpness(img).enhance(1.3)
+        return img
 
-    if mean_brightness < 30:
-        brightness_factor = 2.5
-        contrast_factor = 1.6
-    elif mean_brightness < 60:
-        brightness_factor = 2.0
-        contrast_factor = 1.4
-    elif mean_brightness < 90:
-        brightness_factor = 1.6
-        contrast_factor = 1.3
-    elif mean_brightness < 120:
-        brightness_factor = 1.3
-        contrast_factor = 1.2
-    else:
-        brightness_factor = 1.15
-        contrast_factor = 1.1
+    # --- histogram 기반 대비 정규화 (autocontrast) ---
+    # cutoff: 상하위 0.5% 클리핑 → 연한 배경/워터마크는 날리지 않으면서
+    # 글자와 배경의 대비를 자연스럽게 확장
+    if img.mode == "RGB":
+        img = ImageOps.autocontrast(img, cutoff=0.5)
+    elif img.mode == "L":
+        img = ImageOps.autocontrast(img, cutoff=0.5)
+        img = img.convert("RGB")
 
-    # 밝기 → 대비 순서로 적용
-    img = ImageEnhance.Brightness(img).enhance(brightness_factor)
-    img = ImageEnhance.Contrast(img).enhance(contrast_factor)
+    # --- 대비 보강 (제한적) ---
+    # stddev가 낮으면 = 대비 부족 (흐릿한 스캔 등) → 대비만 올림
+    if stddev < 40:
+        img = ImageEnhance.Contrast(img).enhance(1.4)
+    elif stddev < 60:
+        img = ImageEnhance.Contrast(img).enhance(1.2)
+
+    # --- 선명도 보강 (글자 edge 강화) ---
+    img = ImageEnhance.Sharpness(img).enhance(1.5)
 
     return img
 
@@ -181,15 +181,15 @@ def _process_image(
     if invert:
         img = ImageOps.invert(img)
 
-    # 자동 보정 (반전 후 적용 — 반전된 이미지 기준으로 밝기 분석)
+    # 자동 보정 (문서용: 선명한 흑백 출력 목표)
     if auto_enhance:
-        img = _auto_enhance(img)
+        img = _auto_enhance_document(img)
 
-    # 수동 밝기/대비 조절
+    # 수동 밝기/대비 조절 (자동 보정 위에 추가 적용 가능)
     if brightness != 1.0:
         brightness = max(0.2, min(3.0, brightness))
         img = ImageEnhance.Brightness(img).enhance(brightness)
-        # 밝기를 올리면 대비가 떨어지므로 자동 보상 (10% 비율)
+        # 밝기를 올리면 대비가 떨어지므로 자동 보상
         if brightness > 1.0 and contrast == 1.0:
             compensation = 1.0 + (brightness - 1.0) * 0.3
             img = ImageEnhance.Contrast(img).enhance(compensation)
