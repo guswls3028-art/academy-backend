@@ -650,10 +650,7 @@ class StudentViewSet(ModelViewSet):
                             student.user.is_active = True
                             student.user.save(update_fields=["is_active"])
                         TenantMembership.ensure_active(tenant=tenant, user=student.user, role="student")
-                        # ✅ 복원 시 수강등록도 재활성화
-                        Enrollment.objects.filter(
-                            student=student, tenant=tenant
-                        ).update(status="ACTIVE")
+                        # 복원 시 이전 수강등록은 재활성화하지 않음 (이전 이력이 유령 복원되는 것 방지)
                     restored_count += 1
                     created_students.append(student)
                 else:
@@ -824,10 +821,7 @@ class StudentViewSet(ModelViewSet):
                     TenantMembership.ensure_active(
                         tenant=tenant, user=student.user, role="student"
                     )
-                # ✅ 복원 시 수강등록도 재활성화
-                Enrollment.objects.filter(
-                    student=student, tenant=tenant
-                ).update(status="ACTIVE")
+                # 복원 시 이전 수강등록은 재활성화하지 않음 (유령 복원 방지)
         return Response({"restored": len(to_restore)}, status=200)
 
     @action(
@@ -1604,7 +1598,8 @@ class StudentPasswordFindRequestView(APIView):
                         template_id=template_id_solapi,
                         alimtalk_replacements=alimtalk_replacements,
                     )
-                except MessagingPolicyError:
+                except (MessagingPolicyError, Exception) as exc:
+                    logger.warning("PasswordFind SMS failed (alimtalk): %s", exc)
                     ok = False
             else:
                 from apps.support.messaging.policy import get_owner_tenant_id
@@ -1615,7 +1610,8 @@ class StudentPasswordFindRequestView(APIView):
                         text=text or fallback_text,
                         message_mode="sms",
                     )
-                except MessagingPolicyError:
+                except (MessagingPolicyError, Exception) as exc:
+                    logger.warning("PasswordFind SMS failed (system sms): %s", exc)
                     ok = False
         else:
             from apps.support.messaging.policy import get_owner_tenant_id
@@ -1626,7 +1622,8 @@ class StudentPasswordFindRequestView(APIView):
                     text=fallback_text,
                     message_mode="sms",
                 )
-            except MessagingPolicyError:
+            except (MessagingPolicyError, Exception) as exc:
+                logger.warning("PasswordFind SMS failed (no config sms): %s", exc)
                 ok = False
 
         if not ok:
@@ -1867,7 +1864,8 @@ class StudentPasswordResetSendView(APIView):
                         template_id=template_id_solapi,
                         alimtalk_replacements=alimtalk_replacements,
                     )
-                except MessagingPolicyError:
+                except (MessagingPolicyError, Exception) as exc:
+                    logger.warning("Password reset SMS failed (alimtalk): %s", exc)
                     ok = False
             else:
                 # 승인된 템플릿 없음 → 시스템 키로 SMS 발송 (비밀번호 찾기는 필수 기능)
@@ -1879,7 +1877,8 @@ class StudentPasswordResetSendView(APIView):
                         text=text or fallback_text,
                         message_mode="sms",
                     )
-                except MessagingPolicyError:
+                except (MessagingPolicyError, Exception) as exc:
+                    logger.warning("Password reset SMS failed (system sms): %s", exc)
                     ok = False
         else:
             # AutoSendConfig 미설정 — 시스템 키로 SMS 발송 (비밀번호 찾기는 필수 기능)
@@ -1891,7 +1890,8 @@ class StudentPasswordResetSendView(APIView):
                     text=fallback_text,
                     message_mode="sms",
                 )
-            except MessagingPolicyError:
+            except (MessagingPolicyError, Exception) as exc:
+                logger.warning("Password reset SMS failed (no config sms): %s", exc)
                 ok = False
 
         if not ok:
@@ -1995,7 +1995,8 @@ class SendExistingCredentialsView(APIView):
                     template_id=template.solapi_template_id,
                     alimtalk_replacements=alimtalk_replacements,
                 )
-            except MessagingPolicyError:
+            except (MessagingPolicyError, Exception) as exc:
+                logger.warning("SendExistingCredentials SMS failed (alimtalk): %s", exc)
                 ok = False
         else:
             # 템플릿 없음 → 시스템 키로 SMS (비밀번호 찾기는 필수 기능)
@@ -2007,7 +2008,8 @@ class SendExistingCredentialsView(APIView):
                     text=fallback_text,
                     message_mode="sms",
                 )
-            except MessagingPolicyError:
+            except (MessagingPolicyError, Exception) as exc:
+                logger.warning("SendExistingCredentials SMS failed (system sms): %s", exc)
                 ok = False
 
         if not ok:

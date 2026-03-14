@@ -101,9 +101,8 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
             if len(parts) >= 4:
                 deleted_student.ps_number = parts[3]
                 deleted_student.save(update_fields=["ps_number"])
-        # Reactivate enrollments
-        from apps.domains.enrollment.models import Enrollment
-        Enrollment.objects.filter(student=deleted_student, tenant=tenant).update(status="ACTIVE")
+        # NOTE: 이전 수강등록은 재활성화하지 않음.
+        # 복원된 학생은 새로운 수강등록만 받아야 함 (이전 수강 이력이 유령처럼 되살아나는 것 방지).
         TenantMembership.ensure_active(
             tenant=tenant,
             user=deleted_student.user,
