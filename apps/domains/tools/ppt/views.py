@@ -16,6 +16,7 @@ from django.views.decorators.http import require_POST
 from django.utils.decorators import method_decorator
 
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
 from .services import generate_ppt
 
@@ -110,14 +111,26 @@ class PptGenerateView(View):
         t_start = time.monotonic()
 
         # JWT 인증
-        auth = JWTAuthentication()
-        result = auth.authenticate(request)
-        if result is None:
+        try:
+            auth = JWTAuthentication()
+            result = auth.authenticate(request)
+            if result is None:
+                return JsonResponse(
+                    {"detail": "Authentication required", "code": "auth_required"},
+                    status=401,
+                )
+            request.user, request.auth = result[0], result[1]
+        except (InvalidToken, TokenError):
             return JsonResponse(
-                {"detail": "Authentication required", "code": "auth_required"},
+                {"detail": "Invalid or expired token", "code": "invalid_token"},
                 status=401,
             )
-        request.user, request.auth = result[0], result[1]
+        except Exception:
+            logger.exception("JWT 인증 예외: tenant=%s", getattr(request, "tenant", None))
+            return JsonResponse(
+                {"detail": "Authentication failed", "code": "auth_error"},
+                status=401,
+            )
 
         # 테넌트 필수
         if not getattr(request, "tenant", None):
