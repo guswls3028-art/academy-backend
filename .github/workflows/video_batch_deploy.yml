@@ -1,9 +1,11 @@
 # ==============================================================================
-# Video Batch deploy — SSOT v1. Build video-worker, push ECR, run scripts/v1/deploy.ps1 only.
-# Legacy: scripts-infra/*.ps1 실행/호출 금지 (denylist 가드).
+# Video Worker — Build and push to ECR only.
+# Infrastructure provisioning (deploy.ps1) is NOT run here.
+# Infra changes require broader admin permissions and must use the controlled
+# operator path: run-with-env.ps1 -- deploy.ps1 (local/SSH).
 # ==============================================================================
 
-name: Video Batch Deploy
+name: Video Worker Build
 
 on:
   workflow_dispatch:
@@ -11,8 +13,8 @@ on:
     branches: [main]
     paths:
       - "docker/video-worker/**"
-      - "scripts/v1/**"
-      - "docs/00-SSOT/**"
+      - "apps/worker/video_worker/**"
+      - "apps/support/video/**"
       - ".github/workflows/video_batch_deploy.yml"
 
 concurrency:
@@ -22,36 +24,13 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-2' }}
   ECR_REPO: academy-video-worker
-  JOB_QUEUE_NAME: academy-video-batch-queue
 
 jobs:
-  guard-no-legacy-scripts:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Guard — no legacy script execution (all workflows)
-        run: |
-          INFRA_PAT='scripts/inf''ra'
-          for f in .github/workflows/*.yml .github/workflows/*.yaml; do
-            [ -f "$f" ] || continue
-            if grep -E "run:.*${INFRA_PAT}|pwsh.*${INFRA_PAT}|-File.*${INFRA_PAT}" "$f"; then
-              echo "::error::Legacy script execution detected in $f. Use scripts/v1/deploy.ps1 only."
-              exit 1
-            fi
-            if grep -E 'pwsh.*deploy\.ps1|-File.*deploy\.ps1' "$f" | grep -v 'scripts/v1/deploy.ps1'; then
-              echo "::error::Deploy must use scripts/v1/deploy.ps1 only. Found root or other deploy.ps1 in $f."
-              exit 1
-            fi
-          done
-          echo "Guard OK: only scripts/v1/deploy.ps1 used for deploy; no scripts/infra"
-
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
-    outputs:
-      ecr_uri: ${{ steps.meta.outputs.ecr_uri }}
     steps:
       - uses: actions/checkout@v4
 
@@ -68,14 +47,6 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: ECR URI
-        id: meta
-        run: |
-          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
-          TAG="${{ github.sha }}"
-          echo "ecr_uri=${REGISTRY}/${ECR_REPO}:${TAG}" >> $GITHUB_OUTPUT
-          echo "ECR_URI=${REGISTRY}/${ECR_REPO}:${TAG}" >> $GITHUB_ENV
-
       - name: Build and push video-worker
         uses: docker/build-push-action@v6
         with:
@@ -84,46 +55,14 @@ jobs:
           build-args: BASE_IMAGE=${{ steps.login-ecr.outputs.registry }}/academy-base:latest
           platforms: linux/arm64
           push: true
-          tags: ${{ env.ECR_URI }}
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}:latest
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}:sha-${{ github.sha }}
           cache-from: type=gha,scope=video-batch
           cache-to: type=gha,mode=max,scope=video-batch
 
-  deploy-infra:
-    needs: [guard-no-legacy-scripts, build-and-push]
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install PowerShell
+      - name: Summary
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y powershell
-
-      - name: Configure AWS credentials (OIDC only)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_VIDEO_BATCH }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: One-Take Deploy (SSOT v1)
-        run: pwsh -File scripts/v1/deploy.ps1 -Env prod -Ci -SkipNetprobe -SkipApiSSMWait -EcrRepoUri "${{ needs.build-and-push.outputs.ecr_uri }}"
-        timeout-minutes: 25
-
-      - name: Purge Cloudflare CDN Cache (Video HLS Playlists)
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_KEY }}
-        run: |
-          # Purge only HLS playlist files (.m3u8) from CDN cache — NOT R2 objects.
-          # R2 video objects must never be deleted here; only CDN cached responses are invalidated.
-          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "${{ secrets.CLOUDFLARE_ZONE_ID }}" ]; then
-            curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/purge_cache" \
-                 -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_KEY }}" \
-                 -H "Content-Type: application/json" \
-                 --data '{"files":[{"url":"*.m3u8","prefix":true}]}' \
-            || echo "CDN purge failed (non-fatal)"
-          else
-            echo "CLOUDFLARE_ZONE_ID or token not set; skipping CDN purge"
-          fi
+          echo "## Video Worker Build" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}:sha-${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Infra provisioning:** Not included. Use \`run-with-env.ps1 -- deploy.ps1\` for infra changes." >> $GITHUB_STEP_SUMMARY
