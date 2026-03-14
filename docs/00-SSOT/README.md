@@ -1,38 +1,42 @@
-# 00-SSOT — 인프라 단일 진실(SSOT)
+# 00-SSOT — 단일 진실(Single Source of Truth)
 
-**정식: 풀셋팅 v1.** (기존 v4 인프라 제거 후 v1으로 새로 셋팅)
+**현재 활성 버전: V1.1.0** (무중단 배포 인프라 전환)
 
 ---
 
-## 정식 문서 (v1)
+## 버전 정책 (Va.b.c)
 
-| 문서 | 설명 |
+| 세그먼트 | 의미 | 변경 조건 |
+|----------|------|-----------|
+| **a** | 프로젝트 버전 | 프로젝트 철학·구조 근본 변경 시. 사실상 1 유지 |
+| **b** | 인프라 버전 | AWS 인프라 구조 변경 시만 변경 |
+| **c** | 패치 버전 | 기능 추가, 버그 수정, UI 개선 등 |
+
+---
+
+## 활성 문서
+
+| 버전 | 상태 | 설명 |
+|------|------|------|
+| [v1.1.0/](v1.1.0/) | **ACTIVE** | 무중단 배포 인프라 |
+
+---
+
+## 아카이브 (봉인됨, 수정 불가)
+
+| 버전 | 설명 |
 |------|------|
-| [v1/SSOT.md](v1/SSOT.md) | **진입 문서** — 리소스 이름·규칙·원칙 |
-| [v1/params.yaml](v1/params.yaml) | 환경별 파라미터 (스크립트 단일 입력). **API ASG max=2 고정** |
-| [v1/INFRA-AND-SPECS.md](v1/INFRA-AND-SPECS.md) | **인프라·스펙 한눈에 보기** — API/빌드/AI/Messaging ASG, Video Batch |
+| [archive/v1.0.3/](archive/v1.0.3/) | Video infrastructure hardening |
+| [archive/v1.0.2/](archive/v1.0.2/) | Subscription/billing, video social |
+| [archive/v1.0.1/](archive/v1.0.1/) | CSS tokens, tenant isolation |
+| [archive/v1.0.0/](archive/v1.0.0/) | Initial v1 infrastructure setup |
+| [archive/v4/](archive/v4/) | Legacy v4 infrastructure |
+| [archive/v3/](archive/v3/) | Legacy v3 |
 
 ---
 
-## 정식 배포·검증
+## 원칙
 
-- **배포:** `scripts/v1/deploy.ps1`
-- **검증:** `scripts/v1/verify.ps1` — 새 PC 5단계 검증 자동화
-- **네이밍:** 모든 리소스 `academy-v1-*` (VPC, ASG, Batch, RDS, Redis, DynamoDB, EventBridge 등)
-
----
-
-## 아카이브 (참고용, 실행/배포에 사용하지 않음)
-
-- **[archive/](archive/)** — 구버전 문서 한곳 모음
-  - **archive/v4/** — 이전 SSOT v4
-  - **archive/v3/** — v3 문서·증명
-  - **archive/legacy_reports/** — 과거 리포트
-
----
-
-## 원칙·용어
-
-- **SSOT**: Single Source of Truth. 인프라 스펙·이름·파라미터는 **v1** 문서와 `docs/00-SSOT/v1/params.yaml`만 기준으로 한다.
-- **정식 배포**: `scripts/v1/deploy.ps1` (bootstrap → deploy -Plan → 필요 시 -PruneLegacy → deploy 재실행으로 No-op 확인).
-- **검증**: `scripts/v1/verify.ps1`
+- **SSOT**: 인프라 스펙·이름·파라미터는 활성 버전 문서만 기준으로 한다.
+- **봉인 버전**: 아카이브된 버전 문서는 수정하지 않는다.
+- **충돌 시**: 실행 코드(scripts, workflows, Dockerfile) > SSOT 문서 > 기타 문서.

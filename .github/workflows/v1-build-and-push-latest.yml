@@ -1,8 +1,9 @@
 # ==============================================================================
-# V1 ECR build/push — OIDC 전용. Access Key 미사용.
+# V1 ECR build/push + selective deploy — OIDC 전용. Access Key 미사용.
 # Backend repo: guswls3028-art/academy-backend. SSOT: docs/00-SSOT/v1/params.yaml.
-# 5개 이미지 linux/arm64 latest 빌드·푸시 후 digest를 ci-build.latest.md에 기록.
-# 보강: API 이미지 푸시 후 API ASG instance refresh로 push=서버 반영 완성.
+# 5개 이미지 linux/arm64 빌드·푸시 (latest + sha 태그). 변경된 서비스만 ASG refresh.
+# V1.1.0: Zero-downtime deployment — SHA tagging, selective worker deploy,
+#          pre-deploy migration, deploy verification.
 # ==============================================================================
 
 name: V1 Build and Push latest (OIDC)
@@ -19,14 +20,111 @@ concurrency:
 env:
   AWS_REGION: ap-northeast-2
   ECR_REGISTRY: 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com
+  ALB_DNS: academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com
 
 permissions:
   id-token: write
   contents: write
 
 jobs:
+  # ============================================================
+  # Phase 1: Detect changes
+  # ============================================================
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      build_api: ${{ steps.changes.outputs.build_api }}
+      build_video: ${{ steps.changes.outputs.build_video }}
+      build_messaging: ${{ steps.changes.outputs.build_messaging }}
+      build_ai: ${{ steps.changes.outputs.build_ai }}
+      force_full: ${{ steps.changes.outputs.build_all }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set commit metadata
+        id: meta
+        run: |
+          echo "short_sha=${GITHUB_SHA:0:8}" >> $GITHUB_OUTPUT
+
+      - name: Detect changes
+        id: changes
+        run: |
+          PREV=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+          if [ -z "$PREV" ]; then
+            echo "No previous commit — full build"
+            echo "build_all=true" >> $GITHUB_OUTPUT
+            echo "build_api=true" >> $GITHUB_OUTPUT
+            echo "build_video=true" >> $GITHUB_OUTPUT
+            echo "build_messaging=true" >> $GITHUB_OUTPUT
+            echo "build_ai=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          CHANGED=$(git diff --name-only "$PREV" HEAD)
+
+          # 전체 빌드 트리거: base 이미지, 공통 requirements, docker 설정, 공통 코드
+          FORCE_ALL=false
+          echo "$CHANGED" | grep -qE "^docker/Dockerfile\.base$" && FORCE_ALL=true
+          echo "$CHANGED" | grep -qE "^requirements/common\.txt$" && FORCE_ALL=true
+          echo "$CHANGED" | grep -qE "^requirements/requirements\.txt$" && FORCE_ALL=true
+          echo "$CHANGED" | grep -qE "^libs/" && FORCE_ALL=true
+          echo "$CHANGED" | grep -qE "^academy/" && FORCE_ALL=true
+
+          if [ "$FORCE_ALL" = "true" ]; then
+            echo "Core/shared change detected — full build"
+            echo "build_all=true" >> $GITHUB_OUTPUT
+            echo "build_api=true" >> $GITHUB_OUTPUT
+            echo "build_video=true" >> $GITHUB_OUTPUT
+            echo "build_messaging=true" >> $GITHUB_OUTPUT
+            echo "build_ai=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "build_all=false" >> $GITHUB_OUTPUT
+
+          # API: apps/ (대부분), docker/api/, requirements/api.txt
+          API=false
+          echo "$CHANGED" | grep -qE "^apps/" && API=true
+          echo "$CHANGED" | grep -qE "^docker/api/" && API=true
+          echo "$CHANGED" | grep -qE "^requirements/api\.txt$" && API=true
+          echo "build_api=$API" >> $GITHUB_OUTPUT
+
+          # Video worker
+          VIDEO=false
+          echo "$CHANGED" | grep -qE "^apps/worker/video_worker/" && VIDEO=true
+          echo "$CHANGED" | grep -qE "^apps/support/video/" && VIDEO=true
+          echo "$CHANGED" | grep -qE "^docker/video-worker/" && VIDEO=true
+          echo "$CHANGED" | grep -qE "^requirements/worker-video\.txt$" && VIDEO=true
+          echo "build_video=$VIDEO" >> $GITHUB_OUTPUT
+
+          # Messaging worker
+          MSG=false
+          echo "$CHANGED" | grep -qE "^apps/worker/messaging_worker/" && MSG=true
+          echo "$CHANGED" | grep -qE "^apps/support/messaging/" && MSG=true
+          echo "$CHANGED" | grep -qE "^docker/messaging-worker/" && MSG=true
+          echo "$CHANGED" | grep -qE "^requirements/worker-messaging\.txt$" && MSG=true
+          echo "build_messaging=$MSG" >> $GITHUB_OUTPUT
+
+          # AI worker
+          AI=false
+          echo "$CHANGED" | grep -qE "^apps/worker/ai_worker/" && AI=true
+          echo "$CHANGED" | grep -qE "^apps/domains/ai/" && AI=true
+          echo "$CHANGED" | grep -qE "^docker/ai-worker" && AI=true
+          echo "$CHANGED" | grep -qE "^requirements/worker-ai" && AI=true
+          echo "build_ai=$AI" >> $GITHUB_OUTPUT
+
+          echo "Detection complete: api=$API video=$VIDEO messaging=$MSG ai=$AI"
+
+  # ============================================================
+  # Phase 2: Build and push images (latest + sha tag)
+  # ============================================================
   build-and-push:
     runs-on: ubuntu-latest
+    needs: detect-changes
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,6 +154,7 @@ jobs:
             aws ecr create-repository --repository-name "$repo" --region ${{ env.AWS_REGION }}
           done
 
+      # ── Base image (always built, foundation for all others) ──
       - name: Build and push academy-base (arm64)
         uses: docker/build-push-action@v6
         with:
@@ -63,11 +162,15 @@ jobs:
           file: docker/Dockerfile.base
           platforms: linux/arm64
           push: true
-          tags: ${{ env.ECR_REGISTRY }}/academy-base:latest
+          tags: |
+            ${{ env.ECR_REGISTRY }}/academy-base:latest
+            ${{ env.ECR_REGISTRY }}/academy-base:sha-${{ needs.detect-changes.outputs.short_sha }}
           cache-from: type=gha,scope=base
           cache-to: type=gha,mode=max,scope=base
 
+      # ── API ──
       - name: Build and push academy-api (arm64)
+        if: needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -75,11 +178,15 @@ jobs:
           build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
           platforms: linux/arm64
           push: true
-          tags: ${{ env.ECR_REGISTRY }}/academy-api:latest
+          tags: |
+            ${{ env.ECR_REGISTRY }}/academy-api:latest
+            ${{ env.ECR_REGISTRY }}/academy-api:sha-${{ needs.detect-changes.outputs.short_sha }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
+      # ── Video worker ──
       - name: Build and push academy-video-worker (arm64)
+        if: needs.detect-changes.outputs.build_video == 'true' || needs.detect-changes.outputs.force_full == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -87,11 +194,15 @@ jobs:
           build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
           platforms: linux/arm64
           push: true
-          tags: ${{ env.ECR_REGISTRY }}/academy-video-worker:latest
+          tags: |
+            ${{ env.ECR_REGISTRY }}/academy-video-worker:latest
+            ${{ env.ECR_REGISTRY }}/academy-video-worker:sha-${{ needs.detect-changes.outputs.short_sha }}
           cache-from: type=gha,scope=video
           cache-to: type=gha,mode=max,scope=video
 
+      # ── Messaging worker ──
       - name: Build and push academy-messaging-worker (arm64)
+        if: needs.detect-changes.outputs.build_messaging == 'true' || needs.detect-changes.outputs.force_full == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -99,11 +210,15 @@ jobs:
           build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
           platforms: linux/arm64
           push: true
-          tags: ${{ env.ECR_REGISTRY }}/academy-messaging-worker:latest
+          tags: |
+            ${{ env.ECR_REGISTRY }}/academy-messaging-worker:latest
+            ${{ env.ECR_REGISTRY }}/academy-messaging-worker:sha-${{ needs.detect-changes.outputs.short_sha }}
           cache-from: type=gha,scope=messaging
           cache-to: type=gha,mode=max,scope=messaging
 
+      # ── AI worker ──
       - name: Build and push academy-ai-worker-cpu (arm64)
+        if: needs.detect-changes.outputs.build_ai == 'true' || needs.detect-changes.outputs.force_full == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -111,72 +226,170 @@ jobs:
           build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
           platforms: linux/arm64
           push: true
-          tags: ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:latest
+          tags: |
+            ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:latest
+            ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:sha-${{ needs.detect-changes.outputs.short_sha }}
           cache-from: type=gha,scope=ai-cpu
           cache-to: type=gha,mode=max,scope=ai-cpu
 
+      # ── Build report ──
       - name: Collect digests and write ci-build.latest.md
         id: digests
         run: |
           BUILD_TIME=$(date -Iseconds)
           SHA="${{ github.sha }}"
-          SHORT_SHA="${SHA:0:7}"
-          REPORTS_DIR="docs/00-SSOT/v1/reports"
+          SHORT_SHA="${SHA:0:8}"
+          REPORTS_DIR="docs/00-SSOT/v1.1.0/reports"
           mkdir -p "$REPORTS_DIR"
 
-          echo "## V1 CI Build — latest 이미지 푸시 증거 (OIDC)" > "$REPORTS_DIR/ci-build.latest.md"
-          echo "" >> "$REPORTS_DIR/ci-build.latest.md"
-          echo "**Generated:** $BUILD_TIME" >> "$REPORTS_DIR/ci-build.latest.md"
-          echo "**SSOT:** docs/00-SSOT/v1/params.yaml" >> "$REPORTS_DIR/ci-build.latest.md"
-          echo "**Region:** ${{ env.AWS_REGION }}" >> "$REPORTS_DIR/ci-build.latest.md"
-          echo "**gitSha:** $SHA" >> "$REPORTS_DIR/ci-build.latest.md"
-          echo "**shortSha:** $SHORT_SHA" >> "$REPORTS_DIR/ci-build.latest.md"
-          echo "" >> "$REPORTS_DIR/ci-build.latest.md"
-          echo "| repo | tag | imageDigest |" >> "$REPORTS_DIR/ci-build.latest.md"
-          echo "|------|-----|-------------|" >> "$REPORTS_DIR/ci-build.latest.md"
+          cat > "$REPORTS_DIR/ci-build.latest.md" <<HEREDOC
+          ## V1.1.0 CI Build — latest + sha 이미지 푸시 증거 (OIDC)
+
+          **Generated:** $BUILD_TIME
+          **SSOT:** docs/00-SSOT/v1/params.yaml
+          **Region:** ${{ env.AWS_REGION }}
+          **gitSha:** $SHA
+          **shortSha:** $SHORT_SHA
+          **Changes:** api=${{ needs.detect-changes.outputs.build_api }} video=${{ needs.detect-changes.outputs.build_video }} messaging=${{ needs.detect-changes.outputs.build_messaging }} ai=${{ needs.detect-changes.outputs.build_ai }} force_full=${{ needs.detect-changes.outputs.force_full }}
+
+          | repo | tags | imageDigest |
+          |------|------|-------------|
+          HEREDOC
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' "$REPORTS_DIR/ci-build.latest.md"
 
           for repo in academy-base academy-api academy-video-worker academy-messaging-worker academy-ai-worker-cpu; do
             DIGEST=$(aws ecr describe-images --repository-name "$repo" --image-ids imageTag=latest --region ${{ env.AWS_REGION }} --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "N/A")
-            echo "| $repo | latest | $DIGEST |" >> "$REPORTS_DIR/ci-build.latest.md"
-            outname=$(echo "$repo" | tr '-' '_')
-            echo "${outname}=${DIGEST}" >> $GITHUB_OUTPUT
+            echo "| $repo | latest, sha-$SHORT_SHA | $DIGEST |" >> "$REPORTS_DIR/ci-build.latest.md"
           done
 
           echo "buildTime=$BUILD_TIME" >> $GITHUB_OUTPUT
 
       - name: Workflow summary
         run: |
-          echo "## V1 Build and Push latest (OIDC)" >> $GITHUB_STEP_SUMMARY
-          cat docs/00-SSOT/v1/reports/ci-build.latest.md >> $GITHUB_STEP_SUMMARY
+          echo "## V1.1.0 Build and Push (OIDC)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }} (sha-${{ needs.detect-changes.outputs.short_sha }})" >> $GITHUB_STEP_SUMMARY
+          echo "**Changes:** api=${{ needs.detect-changes.outputs.build_api }} video=${{ needs.detect-changes.outputs.build_video }} messaging=${{ needs.detect-changes.outputs.build_messaging }} ai=${{ needs.detect-changes.outputs.build_ai }} force_full=${{ needs.detect-changes.outputs.force_full }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat docs/00-SSOT/v1.1.0/reports/ci-build.latest.md >> $GITHUB_STEP_SUMMARY
 
       - name: Upload ci-build.latest.md artifact
         uses: actions/upload-artifact@v4
         with:
           name: ci-build-report
-          path: docs/00-SSOT/v1/reports/ci-build.latest.md
+          path: docs/00-SSOT/v1.1.0/reports/ci-build.latest.md
 
       - name: Commit and push ci-build.latest.md
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/00-SSOT/v1/reports/ci-build.latest.md
+          git add docs/00-SSOT/v1.1.0/reports/ci-build.latest.md
           if git diff --staged --quiet; then
             echo "No change to ci-build.latest.md"
           else
-            git commit -m "chore(ci): update ci-build.latest.md (OIDC build digest)"
+            git commit -m "chore(ci): update ci-build.latest.md [V1.1.0] (sha-${{ needs.detect-changes.outputs.short_sha }})"
             git push
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # push = 서버 반영: ECR 푸시 후 API ASG instance refresh.
-  # 역할(AWS_ROLE_ARN_FOR_ECR_BUILD)에 autoscaling:StartInstanceRefresh 등 필요. 없으면 이 job 실패 → 권한 추가.
-  deploy-api-refresh:
-    name: API ASG instance refresh
+  # ============================================================
+  # Phase 3: Run database migrations (before API deploy)
+  # ============================================================
+  run-migrations:
+    name: Run database migrations
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: [detect-changes, build-and-push]
+    if: needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true'
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run Django migrate via SSM
+        id: migrate
+        run: |
+          # Find a running API instance to run migrations on (before refresh)
+          INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names academy-v1-api-asg \
+            --region ${{ env.AWS_REGION }} \
+            --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId | [0]' \
+            --output text)
+
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "::warning::No InService API instance found for migration. Skipping."
+            echo "skipped=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Running migrations on instance: $INSTANCE_ID"
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["docker exec academy-api python manage.py migrate --no-input 2>&1"]' \
+            --timeout-seconds 120 \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
+
+          echo "SSM Command ID: $COMMAND_ID"
+
+          # Wait for command to complete
+          for i in $(seq 1 20); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'Status' \
+              --output text 2>/dev/null || echo "Pending")
+
+            echo "Attempt $i: status=$STATUS"
+
+            if [ "$STATUS" = "Success" ]; then
+              echo "Migration completed successfully"
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --region ${{ env.AWS_REGION }} \
+                --query 'StandardOutputContent' \
+                --output text
+              echo "skipped=false" >> $GITHUB_OUTPUT
+              exit 0
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
+              echo "::error::Migration failed with status: $STATUS"
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --region ${{ env.AWS_REGION }} \
+                --query 'StandardErrorContent' \
+                --output text
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          echo "::error::Migration timed out waiting for SSM command"
+          exit 1
+
+  # ============================================================
+  # Phase 4: Selective ASG instance refresh (deploy)
+  # ============================================================
+  deploy-api:
+    name: Deploy API (ASG refresh)
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-and-push, run-migrations]
+    if: |
+      always() &&
+      needs.build-and-push.result == 'success' &&
+      (needs.run-migrations.result == 'success' || needs.run-migrations.result == 'skipped') &&
+      (needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true')
     env:
-      AWS_REGION: ap-northeast-2
       API_ASG_NAME: academy-v1-api-asg
     steps:
       - name: Configure AWS credentials (OIDC)
@@ -186,12 +399,247 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Start API ASG instance refresh
+        id: refresh
         run: |
-          aws autoscaling start-instance-refresh \
+          REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'
+            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}' \
+            --query 'InstanceRefreshId' \
+            --output text)
+          echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT
+          echo "API ASG instance refresh started: $REFRESH_ID"
 
-      - name: Summary
+      - name: Wait for API refresh to complete
         run: |
-          echo "API ASG instance refresh started. New instances will pull academy-api:latest (see docs/02-OPERATIONS/CI-CD-분석-및-보강안.md)."
+          REFRESH_ID="${{ steps.refresh.outputs.refresh_id }}"
+          for i in $(seq 1 20); do
+            STATUS=$(aws autoscaling describe-instance-refreshes \
+              --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
+              --instance-refresh-ids "$REFRESH_ID" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'InstanceRefreshes[0].Status' \
+              --output text)
+
+            echo "Attempt $i/20: API refresh status=$STATUS"
+
+            if [ "$STATUS" = "Successful" ]; then
+              echo "API ASG refresh completed successfully"
+              exit 0
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+              echo "::error::API ASG refresh $STATUS"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::API ASG refresh timed out after 10 minutes"
+          exit 1
+
+  deploy-messaging:
+    name: Deploy Messaging Worker (ASG refresh)
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-and-push]
+    if: needs.detect-changes.outputs.build_messaging == 'true' || needs.detect-changes.outputs.force_full == 'true'
+    env:
+      MESSAGING_ASG_NAME: academy-v1-messaging-worker-asg
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start Messaging ASG instance refresh
+        id: refresh
+        run: |
+          REFRESH_ID=$(aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name ${{ env.MESSAGING_ASG_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120}' \
+            --query 'InstanceRefreshId' \
+            --output text)
+          echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT
+          echo "Messaging ASG instance refresh started: $REFRESH_ID"
+
+      - name: Wait for Messaging refresh to complete
+        run: |
+          REFRESH_ID="${{ steps.refresh.outputs.refresh_id }}"
+          for i in $(seq 1 20); do
+            STATUS=$(aws autoscaling describe-instance-refreshes \
+              --auto-scaling-group-name ${{ env.MESSAGING_ASG_NAME }} \
+              --instance-refresh-ids "$REFRESH_ID" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'InstanceRefreshes[0].Status' \
+              --output text)
+
+            echo "Attempt $i/20: Messaging refresh status=$STATUS"
+
+            if [ "$STATUS" = "Successful" ]; then
+              echo "Messaging ASG refresh completed successfully"
+              exit 0
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+              echo "::error::Messaging ASG refresh $STATUS"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::Messaging ASG refresh timed out after 10 minutes"
+          exit 1
+
+  deploy-ai:
+    name: Deploy AI Worker (ASG refresh)
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-and-push]
+    if: needs.detect-changes.outputs.build_ai == 'true' || needs.detect-changes.outputs.force_full == 'true'
+    env:
+      AI_ASG_NAME: academy-v1-ai-worker-asg
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start AI ASG instance refresh
+        id: refresh
+        run: |
+          REFRESH_ID=$(aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name ${{ env.AI_ASG_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120}' \
+            --query 'InstanceRefreshId' \
+            --output text)
+          echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT
+          echo "AI ASG instance refresh started: $REFRESH_ID"
+
+      - name: Wait for AI refresh to complete
+        run: |
+          REFRESH_ID="${{ steps.refresh.outputs.refresh_id }}"
+          for i in $(seq 1 20); do
+            STATUS=$(aws autoscaling describe-instance-refreshes \
+              --auto-scaling-group-name ${{ env.AI_ASG_NAME }} \
+              --instance-refresh-ids "$REFRESH_ID" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'InstanceRefreshes[0].Status' \
+              --output text)
+
+            echo "Attempt $i/20: AI refresh status=$STATUS"
+
+            if [ "$STATUS" = "Successful" ]; then
+              echo "AI ASG refresh completed successfully"
+              exit 0
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+              echo "::error::AI ASG refresh $STATUS"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::AI ASG refresh timed out after 10 minutes"
+          exit 1
+
+  # ============================================================
+  # Phase 5: Deploy verification
+  # ============================================================
+  verify-deployment:
+    name: Verify deployment
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-and-push, deploy-api, deploy-messaging, deploy-ai]
+    if: always() && needs.build-and-push.result == 'success'
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify health endpoints
+        id: health
+        run: |
+          echo "=== Stage 2: Health Check ==="
+          PASS=true
+
+          # healthz (liveness, ALB)
+          HEALTHZ_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --connect-timeout 10 --max-time 15 \
+            "http://${{ env.ALB_DNS }}/healthz" || echo "000")
+          echo "healthz: $HEALTHZ_STATUS"
+          if [ "$HEALTHZ_STATUS" != "200" ]; then
+            echo "::error::healthz returned $HEALTHZ_STATUS (expected 200)"
+            PASS=false
+          fi
+
+          # health (readiness, DB-dependent)
+          HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --connect-timeout 10 --max-time 15 \
+            "http://${{ env.ALB_DNS }}/health" || echo "000")
+          echo "health: $HEALTH_STATUS"
+          if [ "$HEALTH_STATUS" != "200" ]; then
+            echo "::error::health returned $HEALTH_STATUS (expected 200)"
+            PASS=false
+          fi
+
+          echo "health_pass=$PASS" >> $GITHUB_OUTPUT
+
+      - name: Verify ASG health
+        id: asg
+        run: |
+          echo "=== Stage 3: ASG Instance Health ==="
+          PASS=true
+
+          for ASG_NAME in academy-v1-api-asg academy-v1-messaging-worker-asg academy-v1-ai-worker-asg; do
+            INSTANCES=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names "$ASG_NAME" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'AutoScalingGroups[0].Instances[*].[InstanceId,HealthStatus,LifecycleState]' \
+              --output text 2>/dev/null || echo "")
+
+            MIN_SIZE=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names "$ASG_NAME" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'AutoScalingGroups[0].MinSize' \
+              --output text 2>/dev/null || echo "0")
+
+            if [ -z "$INSTANCES" ] || [ "$INSTANCES" = "None" ]; then
+              echo "::warning::$ASG_NAME: no instances found"
+              continue
+            fi
+
+            HEALTHY_COUNT=$(echo "$INSTANCES" | grep -c "Healthy.*InService" || true)
+            TOTAL_COUNT=$(echo "$INSTANCES" | wc -l | tr -d ' ')
+
+            echo "$ASG_NAME: $HEALTHY_COUNT/$TOTAL_COUNT healthy (min=$MIN_SIZE)"
+
+            if [ "$HEALTHY_COUNT" -lt "$MIN_SIZE" ]; then
+              echo "::error::$ASG_NAME: healthy=$HEALTHY_COUNT < min=$MIN_SIZE"
+              PASS=false
+            fi
+          done
+
+          echo "asg_pass=$PASS" >> $GITHUB_OUTPUT
+
+      - name: Deployment summary
+        run: |
+          echo "## V1.1.0 Deploy Verification" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }} (sha-${{ needs.detect-changes.outputs.short_sha }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Health endpoints | ${{ steps.health.outputs.health_pass }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ASG instances | ${{ steps.asg.outputs.asg_pass }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| deploy-api | ${{ needs.deploy-api.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| deploy-messaging | ${{ needs.deploy-messaging.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| deploy-ai | ${{ needs.deploy-ai.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.health.outputs.health_pass }}" != "true" ]; then
+            echo "::error::Deploy verification FAILED: health check failure"
+            exit 1
+          fi
+
+          if [ "${{ steps.asg.outputs.asg_pass }}" != "true" ]; then
+            echo "::error::Deploy verification FAILED: ASG health failure"
+            exit 1
+          fi
+
+          echo "Deploy verification PASS" >> $GITHUB_STEP_SUMMARY
