@@ -224,13 +224,10 @@ class PptGenerateView(View):
             fit_mode = "contain"
 
         # Upload each image to R2 temp location
-        from apps.infrastructure.storage.r2 import (
-            upload_fileobj_to_r2_storage,
-            generate_presigned_get_url_storage,
-        )
+        from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
 
         job_unique = uuid.uuid4().hex[:12]
-        download_urls = []
+        r2_keys = []
 
         for idx, f in enumerate(ordered_files):
             ext = f.name.rsplit(".", 1)[-1] if "." in f.name else "bin"
@@ -241,8 +238,7 @@ class PptGenerateView(View):
                 key=tmp_key,
                 content_type=f.content_type or "application/octet-stream",
             )
-            presigned = generate_presigned_get_url_storage(key=tmp_key, expires_in=3600)
-            download_urls.append(presigned)
+            r2_keys.append(tmp_key)
 
         # Build settings payload for worker
         image_settings = {
@@ -263,7 +259,7 @@ class PptGenerateView(View):
             job_type="ppt_generation",
             payload={
                 "mode": "images",
-                "download_urls": download_urls,
+                "r2_keys": r2_keys,
                 "config": {
                     "aspect_ratio": aspect_ratio,
                     "background": background,
@@ -284,13 +280,13 @@ class PptGenerateView(View):
 
         logger.info(
             "PPT 작업 등록: tenant=%s user=%s job_id=%s images=%d",
-            tenant_id, request.user.id, result["job_id"], len(download_urls),
+            tenant_id, request.user.id, result["job_id"], len(r2_keys),
         )
 
         return JsonResponse({
             "job_id": result["job_id"],
             "status": "PENDING",
-            "slide_count": len(download_urls),
+            "slide_count": len(r2_keys),
         })
 
     def _handle_pdf_mode(self, request, pdf_file, tenant_id: str) -> JsonResponse:
@@ -340,10 +336,7 @@ class PptGenerateView(View):
             fit_mode = "contain"
 
         # Upload PDF to R2
-        from apps.infrastructure.storage.r2 import (
-            upload_fileobj_to_r2_storage,
-            generate_presigned_get_url_storage,
-        )
+        from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
 
         job_unique = uuid.uuid4().hex[:12]
         tmp_key = f"tenants/{tenant_id}/tools/ppt/tmp/{job_unique}/source.pdf"
@@ -353,7 +346,6 @@ class PptGenerateView(View):
             key=tmp_key,
             content_type="application/pdf",
         )
-        download_url = generate_presigned_get_url_storage(key=tmp_key, expires_in=3600)
 
         # Dispatch job
         from apps.domains.ai.gateway import dispatch_job
@@ -362,7 +354,7 @@ class PptGenerateView(View):
             job_type="ppt_generation",
             payload={
                 "mode": "pdf",
-                "download_url": download_url,
+                "r2_key": tmp_key,
                 "config": {
                     "aspect_ratio": aspect_ratio,
                     "background": background,

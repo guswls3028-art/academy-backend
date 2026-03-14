@@ -1,3 +1,3 @@
 # Worker AI Tools — PPT generation + PDF question splitting
-python-pptx
-PyMuPDF
+python-pptx==1.0.2
+PyMuPDF==1.25.3

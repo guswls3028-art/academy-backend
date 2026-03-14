@@ -1,8 +1,8 @@
 # PATH: academy/adapters/tools/pymupdf_renderer.py
 # PDF rendering via PyMuPDF (fitz).
 #
-# Page-by-page processing: opens doc, renders one page, closes.
-# No full-document memory load.
+# PdfDocument context manager: opens once, exposes all operations.
+# Standalone functions kept for backward compatibility.
 
 from __future__ import annotations
 
@@ -22,57 +22,48 @@ class TextBlock:
     y1: float
 
 
-def render_page(pdf_path: str, page_index: int, dpi: int = 200) -> Image.Image:
-    """Render a single PDF page as a PIL Image.
+class PdfDocument:
+    """Context manager that opens a PDF once and exposes all page operations.
 
-    Opens the PDF, renders only the requested page, then closes.
-
-    Args:
-        pdf_path: Path to the PDF file.
-        page_index: 0-based page index.
-        dpi: Rendering resolution. Default 200.
-
-    Returns:
-        PIL Image (RGB).
+    Usage:
+        with PdfDocument(pdf_path) as doc:
+            for i in range(doc.page_count()):
+                w, h = doc.page_dimensions(i)
+                blocks = doc.extract_text_blocks(i)
+                img = doc.render_page(i, dpi=200)
     """
-    import fitz  # PyMuPDF
 
-    doc = fitz.open(pdf_path)
-    try:
-        if page_index < 0 or page_index >= len(doc):
+    def __init__(self, pdf_path: str):
+        import fitz  # PyMuPDF
+        self._doc = fitz.open(pdf_path)
+
+    def __enter__(self) -> PdfDocument:
+        return self
+
+    def __exit__(self, *_) -> None:
+        self._doc.close()
+
+    def page_count(self) -> int:
+        """Get total number of pages."""
+        return len(self._doc)
+
+    def page_dimensions(self, page_index: int) -> Tuple[float, float]:
+        """Get page dimensions (width, height) in PDF points."""
+        if page_index < 0 or page_index >= len(self._doc):
             raise IndexError(
-                f"Page index {page_index} out of range (0-{len(doc) - 1})"
+                f"Page index {page_index} out of range (0-{len(self._doc) - 1})"
             )
-        page = doc[page_index]
-        zoom = dpi / 72.0
-        mat = fitz.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=mat)
-        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        return img
-    finally:
-        doc.close()
+        page = self._doc[page_index]
+        rect = page.rect
+        return rect.width, rect.height
 
-
-def extract_text_blocks(pdf_path: str, page_index: int) -> List[TextBlock]:
-    """Extract text blocks with positions from a single PDF page.
-
-    Args:
-        pdf_path: Path to the PDF file.
-        page_index: 0-based page index.
-
-    Returns:
-        List of TextBlock with text content and bounding coordinates.
-    """
-    import fitz  # PyMuPDF
-
-    doc = fitz.open(pdf_path)
-    try:
-        if page_index < 0 or page_index >= len(doc):
+    def extract_text_blocks(self, page_index: int) -> List[TextBlock]:
+        """Extract text blocks with positions from a single PDF page."""
+        if page_index < 0 or page_index >= len(self._doc):
             raise IndexError(
-                f"Page index {page_index} out of range (0-{len(doc) - 1})"
+                f"Page index {page_index} out of range (0-{len(self._doc) - 1})"
             )
-        page = doc[page_index]
-        # get_text("blocks") returns: (x0, y0, x1, y1, text, block_no, block_type)
+        page = self._doc[page_index]
         raw_blocks = page.get_text("blocks")
 
         result: List[TextBlock] = []
@@ -88,8 +79,56 @@ def extract_text_blocks(pdf_path: str, page_index: int) -> List[TextBlock]:
                         y1=block[3],
                     ))
         return result
-    finally:
-        doc.close()
+
+    def render_page(self, page_index: int, dpi: int = 200) -> Image.Image:
+        """Render a single PDF page as a PIL Image (RGB)."""
+        import fitz  # PyMuPDF
+
+        if page_index < 0 or page_index >= len(self._doc):
+            raise IndexError(
+                f"Page index {page_index} out of range (0-{len(self._doc) - 1})"
+            )
+        page = self._doc[page_index]
+        zoom = dpi / 72.0
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat)
+        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        return img
+
+
+# ---------------------------------------------------------------------------
+# Standalone functions (backward compatibility)
+# ---------------------------------------------------------------------------
+
+def render_page(pdf_path: str, page_index: int, dpi: int = 200) -> Image.Image:
+    """Render a single PDF page as a PIL Image.
+
+    Opens the PDF, renders only the requested page, then closes.
+
+    Args:
+        pdf_path: Path to the PDF file.
+        page_index: 0-based page index.
+        dpi: Rendering resolution. Default 200.
+
+    Returns:
+        PIL Image (RGB).
+    """
+    with PdfDocument(pdf_path) as doc:
+        return doc.render_page(page_index, dpi)
+
+
+def extract_text_blocks(pdf_path: str, page_index: int) -> List[TextBlock]:
+    """Extract text blocks with positions from a single PDF page.
+
+    Args:
+        pdf_path: Path to the PDF file.
+        page_index: 0-based page index.
+
+    Returns:
+        List of TextBlock with text content and bounding coordinates.
+    """
+    with PdfDocument(pdf_path) as doc:
+        return doc.extract_text_blocks(page_index)
 
 
 def get_page_count(pdf_path: str) -> int:
@@ -101,13 +140,8 @@ def get_page_count(pdf_path: str) -> int:
     Returns:
         Number of pages.
     """
-    import fitz  # PyMuPDF
-
-    doc = fitz.open(pdf_path)
-    try:
-        return len(doc)
-    finally:
-        doc.close()
+    with PdfDocument(pdf_path) as doc:
+        return doc.page_count()
 
 
 def get_page_dimensions(pdf_path: str, page_index: int) -> Tuple[float, float]:
@@ -120,16 +154,5 @@ def get_page_dimensions(pdf_path: str, page_index: int) -> Tuple[float, float]:
     Returns:
         (width, height) in points.
     """
-    import fitz  # PyMuPDF
-
-    doc = fitz.open(pdf_path)
-    try:
-        if page_index < 0 or page_index >= len(doc):
-            raise IndexError(
-                f"Page index {page_index} out of range (0-{len(doc) - 1})"
-            )
-        page = doc[page_index]
-        rect = page.rect
-        return rect.width, rect.height
-    finally:
-        doc.close()
+    with PdfDocument(pdf_path) as doc:
+        return doc.page_dimensions(page_index)

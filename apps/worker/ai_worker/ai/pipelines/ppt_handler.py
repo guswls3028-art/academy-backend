@@ -61,8 +61,8 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
 
     Payload fields:
       - mode: "images" or "pdf" (default: "images")
-      - download_urls: list of presigned URLs for images (mode=images)
-      - download_url: presigned URL for PDF (mode=pdf)
+      - r2_keys: list of R2 object keys for images (mode=images)
+      - r2_key: R2 object key for PDF (mode=pdf)
       - config: {aspect_ratio, background, fit_mode}
       - tenant_id: tenant ID for R2 storage path
       - settings: image processing settings (invert, grayscale, etc.)
@@ -89,12 +89,12 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
         )
 
         if mode == "pdf":
-            download_url = payload.get("download_url")
-            if not download_url:
-                return AIResult.failed(job.id, "download_url required for pdf mode")
+            r2_key = payload.get("r2_key")
+            if not r2_key:
+                return AIResult.failed(job.id, "r2_key required for pdf mode")
 
-            from apps.worker.ai_worker.storage.downloader import download_to_tmp
-            pdf_path = download_to_tmp(download_url=download_url, job_id=str(job.id))
+            from apps.worker.ai_worker.storage.downloader import download_r2_key_to_tmp
+            pdf_path = download_r2_key_to_tmp(r2_key=r2_key, job_id=str(job.id))
             tmp_dirs.append(os.path.dirname(pdf_path))
 
             _record_progress(
@@ -131,16 +131,16 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
 
         else:
             # mode == "images"
-            download_urls = payload.get("download_urls") or []
-            if not download_urls:
-                return AIResult.failed(job.id, "download_urls required for images mode")
+            r2_keys = payload.get("r2_keys") or []
+            if not r2_keys:
+                return AIResult.failed(job.id, "r2_keys required for images mode")
 
-            from apps.worker.ai_worker.storage.downloader import download_to_tmp
+            from apps.worker.ai_worker.storage.downloader import download_r2_key_to_tmp
 
             image_bytes_list = []
-            total_imgs = len(download_urls)
-            for i, url in enumerate(download_urls):
-                local_path = download_to_tmp(download_url=url, job_id=f"{job.id}-{i}")
+            total_imgs = len(r2_keys)
+            for i, key in enumerate(r2_keys):
+                local_path = download_r2_key_to_tmp(r2_key=key, job_id=f"{job.id}-{i}")
                 tmp_dirs.append(os.path.dirname(local_path))
                 with open(local_path, "rb") as f:
                     raw_bytes = f.read()

@@ -89,12 +89,7 @@ class GeneratePptFromPdfUseCase:
         Returns:
             PptResult with PPTX bytes and slide count.
         """
-        from academy.adapters.tools.pymupdf_renderer import (
-            render_page,
-            extract_text_blocks,
-            get_page_count,
-            get_page_dimensions,
-        )
+        from academy.adapters.tools.pymupdf_renderer import PdfDocument
         from academy.domain.tools.question_splitter import (
             split_questions,
             TextBlock as SplitterTextBlock,
@@ -110,69 +105,71 @@ class GeneratePptFromPdfUseCase:
         )
 
         composer = PptComposer(ppt_config)
-        page_count = get_page_count(pdf_path)
 
-        for page_idx in range(page_count):
-            if on_progress:
-                pct = int(page_idx / max(page_count, 1) * 100)
-                on_progress(pct, f"페이지 {page_idx + 1}/{page_count}")
+        with PdfDocument(pdf_path) as doc:
+            page_count = doc.page_count()
 
-            # Get page dimensions (in PDF points)
-            page_w, page_h = get_page_dimensions(pdf_path, page_idx)
+            for page_idx in range(page_count):
+                if on_progress:
+                    pct = int(page_idx / max(page_count, 1) * 100)
+                    on_progress(pct, f"페이지 {page_idx + 1}/{page_count}")
 
-            # Extract text blocks for question detection
-            raw_blocks = extract_text_blocks(pdf_path, page_idx)
-            splitter_blocks = [
-                SplitterTextBlock(
-                    text=b.text,
-                    x0=b.x0,
-                    y0=b.y0,
-                    x1=b.x1,
-                    y1=b.y1,
-                )
-                for b in raw_blocks
-            ]
+                # Get page dimensions (in PDF points)
+                page_w, page_h = doc.page_dimensions(page_idx)
 
-            # Split into question regions
-            regions = split_questions(splitter_blocks, page_w, page_h, page_idx)
+                # Extract text blocks for question detection
+                raw_blocks = doc.extract_text_blocks(page_idx)
+                splitter_blocks = [
+                    SplitterTextBlock(
+                        text=b.text,
+                        x0=b.x0,
+                        y0=b.y0,
+                        x1=b.x1,
+                        y1=b.y1,
+                    )
+                    for b in raw_blocks
+                ]
 
-            if not regions:
-                # No questions found — treat whole page as one slide
-                page_img = render_page(pdf_path, page_idx, dpi=200)
-                export_img = preprocess_for_export(page_img)
-                img_bytes = _image_to_bytes(export_img)
-                composer.add_slide(img_bytes)
-                del page_img, export_img
-                continue
+                # Split into question regions
+                regions = split_questions(splitter_blocks, page_w, page_h, page_idx)
 
-            # Render the page image
-            page_img = render_page(pdf_path, page_idx, dpi=200)
-            img_w, img_h = page_img.size
-
-            # Scale factor: PDF points -> rendered pixels
-            scale_x = img_w / page_w if page_w > 0 else 1.0
-            scale_y = img_h / page_h if page_h > 0 else 1.0
-
-            for region in regions:
-                # Convert bbox from PDF points to pixel coordinates
-                rx0, ry0, rx1, ry1 = region.bbox
-                px0 = max(0, int(rx0 * scale_x))
-                py0 = max(0, int(ry0 * scale_y))
-                px1 = min(img_w, int(rx1 * scale_x))
-                py1 = min(img_h, int(ry1 * scale_y))
-
-                # Skip degenerate regions
-                if px1 - px0 < 10 or py1 - py0 < 10:
+                if not regions:
+                    # No questions found — treat whole page as one slide
+                    page_img = doc.render_page(page_idx, dpi=200)
+                    export_img = preprocess_for_export(page_img)
+                    img_bytes = _image_to_bytes(export_img)
+                    composer.add_slide(img_bytes)
+                    del page_img, export_img
                     continue
 
-                crop = page_img.crop((px0, py0, px1, py1))
-                export_img = preprocess_for_export(crop)
-                img_bytes = _image_to_bytes(export_img)
-                composer.add_slide(img_bytes)
-                del crop, export_img
+                # Render the page image
+                page_img = doc.render_page(page_idx, dpi=200)
+                img_w, img_h = page_img.size
 
-            # Release page image memory
-            del page_img
+                # Scale factor: PDF points -> rendered pixels
+                scale_x = img_w / page_w if page_w > 0 else 1.0
+                scale_y = img_h / page_h if page_h > 0 else 1.0
+
+                for region in regions:
+                    # Convert bbox from PDF points to pixel coordinates
+                    rx0, ry0, rx1, ry1 = region.bbox
+                    px0 = max(0, int(rx0 * scale_x))
+                    py0 = max(0, int(ry0 * scale_y))
+                    px1 = min(img_w, int(rx1 * scale_x))
+                    py1 = min(img_h, int(ry1 * scale_y))
+
+                    # Skip degenerate regions
+                    if px1 - px0 < 10 or py1 - py0 < 10:
+                        continue
+
+                    crop = page_img.crop((px0, py0, px1, py1))
+                    export_img = preprocess_for_export(crop)
+                    img_bytes = _image_to_bytes(export_img)
+                    composer.add_slide(img_bytes)
+                    del crop, export_img
+
+                # Release page image memory
+                del page_img
 
         if composer.slide_count == 0:
             raise ValueError("No slides could be generated from the PDF")

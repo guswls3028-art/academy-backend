@@ -1142,59 +1142,104 @@ class StudentViewSet(ModelViewSet):
         tenant = request.tenant
         user = student.user
 
-        # 아이디 변경
-        new_username = (data.get("username") or "").strip()
-        if new_username and new_username != user_display_username(user):
-            from apps.core.models.user import user_internal_username
-            internal = user_internal_username(tenant, new_username)
-            # 테넌트 내 중복 검사 (다른 테넌트는 같은 아이디 허용)
-            if get_user_model().objects.filter(username=internal).exclude(id=user.id).exists():
+        # --- 기본 정보 필드 유효성 검증 (setattr 전에 수행) ---
+        VALID_SCHOOL_TYPES = {"MIDDLE", "HIGH"}
+        VALID_GRADES = {1, 2, 3}
+        STRING_FIELD_LIMITS = {
+            "name": 100, "phone": 20, "parent_phone": 20,
+            "gender": 10, "address": 255, "high_school": 100,
+            "middle_school": 100, "origin_middle_school": 100,
+            "high_school_class": 100, "major": 50, "memo": None,
+        }
+
+        if "school_type" in data and data["school_type"] not in VALID_SCHOOL_TYPES:
+            return Response(
+                {"detail": f"school_type은 {VALID_SCHOOL_TYPES} 중 하나여야 합니다."},
+                status=400,
+            )
+        if "grade" in data and data["grade"] is not None:
+            try:
+                grade_val = int(data["grade"])
+            except (TypeError, ValueError):
                 return Response(
-                    {"detail": "이미 사용 중인 아이디입니다."},
+                    {"detail": "grade는 정수여야 합니다."}, status=400,
+                )
+            if grade_val not in VALID_GRADES:
+                return Response(
+                    {"detail": f"grade는 {sorted(VALID_GRADES)} 중 하나여야 합니다."},
                     status=400,
                 )
-            user.username = internal
-            user.save(update_fields=["username"])
-            # ps_number도 동기화
-            student.ps_number = new_username
-            student.save(update_fields=["ps_number"])
+        for field, max_len in STRING_FIELD_LIMITS.items():
+            if field in data and data[field] is not None:
+                if not isinstance(data[field], str):
+                    return Response(
+                        {"detail": f"{field}은(는) 문자열이어야 합니다."},
+                        status=400,
+                    )
+                if max_len and len(data[field]) > max_len:
+                    return Response(
+                        {"detail": f"{field}은(는) {max_len}자 이하여야 합니다."},
+                        status=400,
+                    )
 
-        # 비밀번호 변경
-        current_pw = (data.get("current_password") or "").strip()
-        new_pw = (data.get("new_password") or "").strip()
-        if current_pw and new_pw:
-            if not user.check_password(current_pw):
-                return Response(
-                    {"detail": "현재 비밀번호가 일치하지 않습니다."},
-                    status=400,
-                )
-            if len(new_pw) < 4:
-                return Response(
-                    {"detail": "새 비밀번호는 4자 이상이어야 합니다."},
-                    status=400,
-                )
-            user.set_password(new_pw)
-            user.save(update_fields=["password"])
+        with transaction.atomic():
+            # 아이디 변경
+            new_username = (data.get("username") or "").strip()
+            if new_username and new_username != user_display_username(user):
+                from apps.core.models.user import user_internal_username
+                internal = user_internal_username(tenant, new_username)
+                # 테넌트 내 중복 검사 (다른 테넌트는 같은 아이디 허용)
+                if get_user_model().objects.filter(username=internal).exclude(id=user.id).exists():
+                    return Response(
+                        {"detail": "이미 사용 중인 아이디입니다."},
+                        status=400,
+                    )
+                user.username = internal
+                user.save(update_fields=["username"])
+                # ps_number도 동기화
+                student.ps_number = new_username
+                student.save(update_fields=["ps_number"])
 
-        # 프로필 사진
-        if "profile_photo" in request.FILES:
-            student.profile_photo = request.FILES["profile_photo"]
-            student.save(update_fields=["profile_photo"])
+            # 비밀번호 변경
+            current_pw = (data.get("current_password") or "").strip()
+            new_pw = (data.get("new_password") or "").strip()
+            if current_pw and new_pw:
+                if not user.check_password(current_pw):
+                    return Response(
+                        {"detail": "현재 비밀번호가 일치하지 않습니다."},
+                        status=400,
+                    )
+                if len(new_pw) < 4:
+                    return Response(
+                        {"detail": "새 비밀번호는 4자 이상이어야 합니다."},
+                        status=400,
+                    )
+                user.set_password(new_pw)
+                user.save(update_fields=["password"])
 
-        # 기본 정보 수정
-        updatable_fields = [
-            "name", "phone", "parent_phone", "gender", "address",
-            "school_type", "high_school", "middle_school",
-            "origin_middle_school", "grade", "high_school_class",
-            "major", "memo",
-        ]
-        update_fields = []
-        for field in updatable_fields:
-            if field in data:
-                setattr(student, field, data[field])
-                update_fields.append(field)
-        if update_fields:
-            student.save(update_fields=update_fields)
+            # 프로필 사진
+            if "profile_photo" in request.FILES:
+                student.profile_photo = request.FILES["profile_photo"]
+                student.save(update_fields=["profile_photo"])
+
+            # 기본 정보 수정
+            updatable_fields = [
+                "name", "phone", "parent_phone", "gender", "address",
+                "school_type", "high_school", "middle_school",
+                "origin_middle_school", "grade", "high_school_class",
+                "major", "memo",
+            ]
+            update_fields = []
+            for field in updatable_fields:
+                if field in data:
+                    value = data[field]
+                    # grade: 정수 변환 (검증은 위에서 완료)
+                    if field == "grade" and value is not None:
+                        value = int(value)
+                    setattr(student, field, value)
+                    update_fields.append(field)
+            if update_fields:
+                student.save(update_fields=update_fields)
 
         serializer = StudentDetailSerializer(
             student,
