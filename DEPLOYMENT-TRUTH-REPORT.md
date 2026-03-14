@@ -1,3 +1,5 @@
+> **DEPRECATED**: This document predates V1.1.0. Authoritative deployment docs are at `docs/00-SSOT/v1.1.0/`. References to `docs/00-SSOT/v1/` are stale.
+
 > **참고:** 배포 **검증** 절차는 `docs/00-SSOT/v1/DEPLOY-VERIFICATION-SSOT.md` (V1.0.0)이 SSOT. 본 문서는 아티팩트 사실 기록으로 유효.
 
 # Deployment Truth Report (Executable Artifacts Only)

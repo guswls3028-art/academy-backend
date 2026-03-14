@@ -1,3 +1,5 @@
+> **DEPRECATED**: This document predates V1.1.0. Authoritative deployment docs are at `docs/00-SSOT/v1.1.0/`. References to `docs/00-SSOT/v1/` are stale.
+
 # scripts/v1 — 정식 배포·검증 (풀셋팅 v1)
 
 **딸깍 5단계** (새 PC에서 그대로 재현):

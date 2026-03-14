@@ -1,3 +1,5 @@
+> **DEPRECATED**: This document predates V1.1.0. Authoritative deployment docs are at `docs/00-SSOT/v1.1.0/`. References to `docs/00-SSOT/v1/` are stale.
+
 # Academy Backend
 
 학원 관리 시스템 백엔드 API 서버

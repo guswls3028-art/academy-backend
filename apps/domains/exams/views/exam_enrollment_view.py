@@ -13,6 +13,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
+from apps.core.permissions import TenantResolvedAndStaff
+
 from apps.domains.exams.models import ExamEnrollment
 from apps.domains.exams.models.exam import Exam
 
@@ -42,7 +44,7 @@ class ExamEnrollmentManageView(APIView):
     - enrollment_ids는 반드시 "해당 세션 등록 학생"의 enrollment_id만 허용
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [TenantResolvedAndStaff]
 
     def _get_session_id_or_400(self, request, exam: Exam) -> int:
         """

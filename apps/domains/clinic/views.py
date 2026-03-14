@@ -491,8 +491,6 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         - 학생: 자신의 예약 신청(status="pending")만 취소 가능
         - 선생: 모든 상태 변경 가능
         """
-        obj = self.get_object()
-
         next_status = request.data.get("status")
         memo = request.data.get("memo")
 
@@ -521,50 +519,57 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             SessionParticipant.Status.REJECTED: set(),
             SessionParticipant.Status.CANCELLED: set(),
         }
-        valid_next = VALID_TRANSITIONS.get(obj.status, set())
-        if next_status not in valid_next:
-            return Response(
-                {"detail": f"'{obj.status}'에서 '{next_status}'(으)로 변경할 수 없습니다."},
-                status=status.HTTP_400_BAD_REQUEST,
+
+        with transaction.atomic():
+            # Re-fetch with row lock to prevent concurrent status transitions
+            obj = SessionParticipant.objects.select_for_update().get(
+                pk=self.get_object().pk
             )
 
-        # 학생 권한 체크: 자신의 예약 신청만 취소 가능
-        from apps.domains.student_app.permissions import get_request_student
-        request_student = get_request_student(request)
-        if request_student:
-            if obj.student != request_student:
+            valid_next = VALID_TRANSITIONS.get(obj.status, set())
+            if next_status not in valid_next:
                 return Response(
-                    {"detail": "다른 학생의 예약을 수정할 수 없습니다."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            # 학생은 pending 상태만 cancelled로 변경 가능
-            if obj.status != SessionParticipant.Status.PENDING:
-                return Response(
-                    {"detail": "승인 대기 중인 예약만 취소할 수 있습니다."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            if next_status != SessionParticipant.Status.CANCELLED:
-                return Response(
-                    {"detail": "학생은 예약 취소만 가능합니다."},
-                    status=status.HTTP_403_FORBIDDEN,
+                    {"detail": f"'{obj.status}'에서 '{next_status}'(으)로 변경할 수 없습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        obj.status = next_status
-        obj.status_changed_at = timezone.now()
-        obj.status_changed_by = request.user
+            # 학생 권한 체크: 자신의 예약 신청만 취소 가능
+            from apps.domains.student_app.permissions import get_request_student
+            request_student = get_request_student(request)
+            if request_student:
+                if obj.student != request_student:
+                    return Response(
+                        {"detail": "다른 학생의 예약을 수정할 수 없습니다."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+                # 학생은 pending 상태만 cancelled로 변경 가능
+                if obj.status != SessionParticipant.Status.PENDING:
+                    return Response(
+                        {"detail": "승인 대기 중인 예약만 취소할 수 있습니다."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+                if next_status != SessionParticipant.Status.CANCELLED:
+                    return Response(
+                        {"detail": "학생은 예약 취소만 가능합니다."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
 
-        if memo is not None:
-            obj.memo = memo
+            obj.status = next_status
+            obj.status_changed_at = timezone.now()
+            obj.status_changed_by = request.user
 
-        obj.save(
-            update_fields=[
-                "status",
-                "memo",
-                "status_changed_at",
-                "status_changed_by",
-                "updated_at",
-            ]
-        )
+            if memo is not None:
+                obj.memo = memo
+
+            obj.save(
+                update_fields=[
+                    "status",
+                    "memo",
+                    "status_changed_at",
+                    "status_changed_by",
+                    "updated_at",
+                ]
+            )
 
         if next_status in {
             SessionParticipant.Status.NO_SHOW,

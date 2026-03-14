@@ -1,3 +1,5 @@
+> **DEPRECATED**: This document predates V1.1.0. Authoritative deployment docs are at `docs/00-SSOT/v1.1.0/`. References to `docs/00-SSOT/v1/` are stale.
+
 # V1 배포 아키텍처 및 표준화 보고서 (Macro Deployment Report)
 
 **최종 갱신일:** 2026-03-11  

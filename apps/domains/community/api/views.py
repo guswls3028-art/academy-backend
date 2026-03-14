@@ -28,7 +28,7 @@ from apps.domains.community.selectors import (
 from apps.domains.community.services import CommunityService
 from apps.domains.community.models import PostTemplate, PostReply, BlockType, PostAttachment
 from apps.domains.student_app.permissions import get_request_student
-from apps.core.permissions import TenantResolvedAndStaff
+from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ def _get_tenant_from_request(request):
 class PostViewSet(viewsets.ModelViewSet):
     """Post CRUD. tenant from request. list: ?node_id= or admin list."""
     serializer_class = PostEntitySerializer
+    permission_classes = [TenantResolvedAndMember]
 
     def update(self, request, *args, **kwargs):
         """학생은 본인 글만 수정 가능."""

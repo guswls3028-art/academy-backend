@@ -1,3 +1,5 @@
+> **DEPRECATED**: This document predates V1.1.0. Authoritative deployment docs are at `docs/00-SSOT/v1.1.0/`. References to `docs/00-SSOT/v1/` are stale.
+
 # V1 Deployment — Video Encoding Pipeline
 
 ## Architecture

@@ -30,6 +30,15 @@ class VideoPermissionViewSet(ModelViewSet):
     @action(detail=False, methods=["post"])
     def bulk_set(self, request):
         video_id = request.data.get("video_id")
+
+        # Tenant validation: ensure the video belongs to request.tenant
+        from apps.support.video.models import Video
+        if not Video.objects.filter(
+            id=video_id,
+            session__lecture__tenant=request.tenant,
+        ).exists():
+            return Response({"error": "Video not found"}, status=404)
+
         enrollments = request.data.get("enrollments", [])
 
         rule = request.data.get("rule")

@@ -51,9 +51,9 @@ def get_request_student(request):
     if not parent:
         return None
     tenant = getattr(request, "tenant", None)
-    qs_filter = {"deleted_at__isnull": True}
-    if tenant:
-        qs_filter["tenant"] = tenant
+    if not tenant:
+        return None
+    qs_filter = {"deleted_at__isnull": True, "tenant": tenant}
     active_students = parent.students.filter(**qs_filter)
     header_id = request.META.get("HTTP_X_STUDENT_ID")
     if header_id:

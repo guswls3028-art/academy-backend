@@ -81,6 +81,7 @@ jobs:
         with:
           context: .
           file: docker/video-worker/Dockerfile
+          build-args: BASE_IMAGE=${{ steps.login-ecr.outputs.registry }}/academy-base:latest
           platforms: linux/arm64
           push: true
           tags: ${{ env.ECR_URI }}
