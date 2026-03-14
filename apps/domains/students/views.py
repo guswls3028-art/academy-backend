@@ -1261,24 +1261,27 @@ def _approve_registration_request(request, reg):
     from apps.core.models.user import user_internal_username
 
     tenant = request.tenant
-    # 학부모 비밀번호는 항상 "0000" 고정
-    parent_fixed_password = "0000"
+    parent_fixed_password = "0000"  # 학부모 비밀번호 고정
     name = reg.name
     parent_phone = reg.parent_phone
     phone = reg.phone
 
-    try:
-        ps_number = _generate_unique_ps_number(tenant=tenant)
-    except ValueError as e:
-        return Response({"detail": str(e)}, status=400)
-
-    requested_username = (reg.username or "").strip()
-    if requested_username:
-        internal = user_internal_username(tenant, requested_username)
+    # SSOT: ps_number = 로그인 아이디 = 표시 아이디 (하나의 값)
+    # 학생이 요청한 아이디가 있으면 그것을 ps_number로, 없으면 랜덤
+    requested_id = (reg.username or "").strip()
+    if requested_id:
+        internal = user_internal_username(tenant, requested_id)
+        # 테넌트 내 중복 검사 (User.username + Student.ps_number)
         if get_user_model().objects.filter(username=internal).exists():
-            requested_username = None
-    if not requested_username:
-        requested_username = ps_number
+            requested_id = ""
+        elif Student.objects.filter(tenant=tenant, ps_number=requested_id, deleted_at__isnull=True).exists():
+            requested_id = ""
+    if not requested_id:
+        try:
+            requested_id = _generate_unique_ps_number(tenant=tenant)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+    ps_number = requested_id  # ps_number = 로그인 아이디 = 하나의 값
 
     if phone and len(str(phone)) >= 8:
         omr_code = str(phone)[-8:]
@@ -1298,7 +1301,7 @@ def _approve_registration_request(request, reg):
                 )
             User = get_user_model()
             user = student_repo.user_create_user(
-                username=requested_username,
+                username=ps_number,
                 tenant=tenant,
                 phone=phone or "",
                 name=name,
@@ -1338,7 +1341,7 @@ def _approve_registration_request(request, reg):
             site_url=get_site_url(request) or "",
             student_name=name,
             student_phone=(phone or "") if phone else "",
-            student_id=requested_username,
+            student_id=ps_number,
             student_password="가입 시 입력한 비밀번호",
             parent_phone=parent_phone or "",
             parent_password=parent_fixed_password,
