@@ -196,6 +196,7 @@ def send_alimtalk_via_owner(trigger: str, to: str, replacements: dict[str, str])
     FALLBACK_TRIGGERS = {
         "password_reset_student": "registration_approved_student",
         "password_reset_parent": "registration_approved_parent",
+        "password_find_otp": "registration_approved_student",
     }
     if not solapi_id or (t and t.solapi_status != "APPROVED"):
         fallback_trigger = FALLBACK_TRIGGERS.get(trigger)

@@ -1635,11 +1635,20 @@ class StudentPasswordFindRequestView(APIView):
             )
 
         # 오너 테넌트의 승인된 알림톡 템플릿으로 발송 (모든 테넌트 공통, SMS fallback 없음)
+        # password_find_otp 전용 템플릿이 PENDING이면 registration_approved_student로 fallback
         from apps.support.messaging.policy import send_alimtalk_via_owner
         ok = send_alimtalk_via_owner(
             trigger="password_find_otp",
             to=phone,
-            replacements={"인증번호": code},
+            replacements={
+                "인증번호": code,
+                # fallback 시 registration_approved_student 플레이스홀더 매핑
+                "학생이름": student.name or "",
+                "학생아이디": "비밀번호 찾기",
+                "학생비밀번호": code,
+                "사이트링크": "",
+                "비밀번호안내": "위 인증번호를 10분 내 입력해 주세요.",
+            },
         )
 
         if not ok:
