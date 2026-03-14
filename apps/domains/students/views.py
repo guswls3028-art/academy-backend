@@ -1942,7 +1942,7 @@ class SendExistingCredentialsView(APIView):
                 "학생아이디": display_username or "",
                 "학생비밀번호": temp_password,
                 "사이트링크": site_url,
-                "비밀번호안내": "로그인 후 비밀번호를 변경해 주세요.",
+                "비밀번호안내": "접속해서 ID\xb7비밀번호를 변경할 수 있습니다.",
             },
         )
 
