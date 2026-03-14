@@ -399,10 +399,12 @@ class SessionScoresView(APIView):
                     }
                     updated_at = None
                 else:
-                    attempt_status = attempt_status_map.get(
-                        int(r.attempt_id), ""
+                    attempt_status = (
+                        attempt_status_map.get(int(r.attempt_id), "")
+                        if r.attempt_id is not None
+                        else ""
                     )
-                    locked = attempt_status.lower() == "grading"
+                    locked = attempt_status.lower() == "grading" if attempt_status else False
                     pass_score = exam_pass_score_map.get(exid, 0.0)
                     passed = bool(float(r.total_score or 0.0) >= float(pass_score))
                     items_list = list(r.items.all()) if hasattr(r, "items") else []
