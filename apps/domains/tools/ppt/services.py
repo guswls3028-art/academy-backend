@@ -109,6 +109,23 @@ def _auto_enhance(img: Image.Image) -> Image.Image:
     return img
 
 
+def _needs_processing(
+    invert: bool, grayscale: bool, auto_enhance: bool,
+    brightness: float, contrast: float,
+) -> bool:
+    """효과가 하나라도 적용되는지 확인."""
+    return invert or grayscale or auto_enhance or brightness != 1.0 or contrast != 1.0
+
+
+def _detect_format(image_bytes: bytes) -> str:
+    """이미지 바이트에서 원본 포맷 감지."""
+    if image_bytes[:3] == b"\xff\xd8\xff":
+        return "JPEG"
+    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "PNG"
+    return "PNG"  # 기타 → PNG
+
+
 def _process_image(
     image_bytes: bytes,
     *,
@@ -120,17 +137,28 @@ def _process_image(
 ) -> bytes:
     """이미지 전처리: 반전, 그레이스케일, 밝기/대비 조절 등.
 
+    효과가 없으면 원본 바이트를 그대로 반환하여 화질 손실을 방지한다.
+    JPEG 원본은 JPEG로 유지 (quality=95), PNG 원본은 PNG로 유지.
+
     Args:
         invert: 흑백 반전.
         grayscale: 그레이스케일 변환.
         auto_enhance: 자동 밝기/대비 보정 (빔프로젝터용).
-        brightness: 밝기 배수 (1.0=원본, 1.5=50% 밝게, 0.5=50% 어둡게).
-        contrast: 대비 배수 (1.0=원본, 1.5=50% 강하게).
+        brightness: 밝기 배수 (1.0=원본).
+        contrast: 대비 배수 (1.0=원본).
 
     Raises:
         ValueError: 유효하지 않은 이미지.
     """
-    img = validate_image_bytes(image_bytes)
+    # 유효성 검증은 항상 수행
+    validate_image_bytes(image_bytes)
+
+    # 효과 없으면 원본 그대로 반환 (화질 보존)
+    if not _needs_processing(invert, grayscale, auto_enhance, brightness, contrast):
+        return image_bytes
+
+    orig_format = _detect_format(image_bytes)
+    img = Image.open(io.BytesIO(image_bytes))
 
     # EXIF 회전 보정
     img = ImageOps.exif_transpose(img)
@@ -157,18 +185,25 @@ def _process_image(
     if auto_enhance:
         img = _auto_enhance(img)
 
-    # 수동 밝기/대비 조절 (auto_enhance와 병행 가능)
+    # 수동 밝기/대비 조절
     if brightness != 1.0:
-        # clamp: 0.2 ~ 3.0
         brightness = max(0.2, min(3.0, brightness))
         img = ImageEnhance.Brightness(img).enhance(brightness)
+        # 밝기를 올리면 대비가 떨어지므로 자동 보상 (10% 비율)
+        if brightness > 1.0 and contrast == 1.0:
+            compensation = 1.0 + (brightness - 1.0) * 0.3
+            img = ImageEnhance.Contrast(img).enhance(compensation)
 
     if contrast != 1.0:
         contrast = max(0.2, min(3.0, contrast))
         img = ImageEnhance.Contrast(img).enhance(contrast)
 
+    # 원본 포맷 유지하여 저장 (화질 보존)
     out = io.BytesIO()
-    img.save(out, format="PNG", optimize=True)
+    if orig_format == "JPEG":
+        img.save(out, format="JPEG", quality=95, subsampling=0)
+    else:
+        img.save(out, format="PNG", optimize=True)
     out.seek(0)
     return out.read()
 

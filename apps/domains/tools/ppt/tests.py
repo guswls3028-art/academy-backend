@@ -282,9 +282,13 @@ def run_all():
         assert img.mode == "RGB"
 
     def t_process_rgba():
-        r = _process_image(make_img(mode="RGBA"))
-        img = Image.open(io.BytesIO(r))
-        assert img.mode == "RGB"
+        # 효과 없으면 원본 유지, 효과 있으면 RGB 변환
+        rgba_bytes = make_img(mode="RGBA")
+        r = _process_image(rgba_bytes)
+        assert r == rgba_bytes, "No effects = original preserved"
+        r2 = _process_image(rgba_bytes, invert=True)
+        img = Image.open(io.BytesIO(r2))
+        assert img.mode == "RGB", "With effects = converted to RGB"
 
     test("_process_image invert", t_process_invert)
     test("_process_image grayscale", t_process_grayscale)
