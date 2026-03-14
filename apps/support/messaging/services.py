@@ -431,9 +431,7 @@ def send_registration_approved_messages(
             text = body
             for k, v in replacements_base.items():
                 text = text.replace(f"#{{{k}}}", v)
-            subject = (tmpl.subject or "").strip()
-            if subject:
-                text = subject + "\n" + text
+            # subject를 text에 합치지 않음 — 카카오 알림톡은 body만 검증, subject 합치면 3034 불일치
 
             alimtalk_replacements = None
             template_id_solapi = None
@@ -473,9 +471,7 @@ def send_registration_approved_messages(
             text = body
             for k, v in parent_replacements.items():
                 text = text.replace(f"#{{{k}}}", v)
-            subject = (tmpl.subject or "").strip()
-            if subject:
-                text = subject + "\n" + text
+            # subject를 text에 합치지 않음 — 카카오 알림톡은 body만 검증
 
             alimtalk_replacements = None
             template_id_solapi = None
