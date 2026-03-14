@@ -136,12 +136,16 @@ class AttendanceViewSet(ModelViewSet):
         created = []
 
         for sid in student_ids:
-            enrollment, _ = enroll_repo.enrollment_get_or_create(
+            enrollment, created_new = enroll_repo.enrollment_get_or_create(
                 tenant=tenant,
                 lecture=session.lecture,
                 student_id=sid,
                 defaults={"status": "ACTIVE"},
             )
+            # 퇴원(INACTIVE) 수강생 재등록 시 활성화 복원
+            if not created_new and enrollment.status != "ACTIVE":
+                enrollment.status = "ACTIVE"
+                enrollment.save(update_fields=["status"])
 
             enroll_repo.session_enrollment_get_or_create_tenant(
                 tenant=tenant,

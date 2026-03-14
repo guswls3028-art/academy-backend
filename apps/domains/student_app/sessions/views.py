@@ -21,13 +21,14 @@ class StudentSessionListView(APIView):
         student = get_request_student(request)
         if not student:
             return Response(StudentSessionSerializer([], many=True).data)
-        tenant = getattr(request, "tenant", None) or getattr(student, "tenant", None)
+        tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response(StudentSessionSerializer([], many=True).data)
         session_ids = (
             SessionEnrollment.objects.filter(
                 enrollment__student=student,
                 enrollment__tenant=tenant,
+                enrollment__status="ACTIVE",  # ✅ 퇴원 학생 제외
             )
             .values_list("session_id", flat=True)
             .distinct()
@@ -61,12 +62,13 @@ class StudentSessionDetailView(APIView):
         student = get_request_student(request)
         if not student:
             return Response({"detail": "Not found."}, status=404)
-        tenant = getattr(request, "tenant", None) or getattr(student, "tenant", None)
+        tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Not found."}, status=404)
         has_access = SessionEnrollment.objects.filter(
             enrollment__student=student,
             enrollment__tenant=tenant,
+            enrollment__status="ACTIVE",  # ✅ 퇴원 학생 제외
             session_id=pk,
         ).exists()
         if not has_access:

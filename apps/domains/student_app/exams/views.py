@@ -28,6 +28,7 @@ def _exam_queryset_for_user(user, tenant):
             exam_type=Exam.ExamType.REGULAR,
             exam_enrollments__enrollment__student__user=user,
             exam_enrollments__enrollment__tenant=tenant,
+            exam_enrollments__enrollment__status="ACTIVE",  # ✅ 퇴원 학생 방어
             is_active=True,
         )
         .filter(
@@ -142,15 +143,19 @@ def _get_enrollment_for_exam(user, exam_id, tenant=None):
             return None, None
     if not student:
         return None, None
-    # tenant가 전달되면 student.tenant 일치 여부 교차 검증
-    if tenant and getattr(student, "tenant_id", None) != tenant.id:
+    # tenant는 필수 — 없으면 조회 불가 (cross-tenant fallback 금지)
+    if not tenant:
         return None, None
-    filter_tenant = tenant or student.tenant
+    # student.tenant 일치 여부 교차 검증
+    if getattr(student, "tenant_id", None) != tenant.id:
+        return None, None
+    filter_tenant = tenant
     ee = (
         ExamEnrollment.objects.filter(
             exam_id=int(exam_id),
             enrollment__student=student,
             enrollment__tenant=filter_tenant,
+            enrollment__status="ACTIVE",  # ✅ 퇴원 학생 방어
         )
         .select_related("enrollment", "enrollment__tenant")
         .first()
@@ -236,11 +241,13 @@ class StudentExamSubmitView(APIView):
                     payload={"answers": answers},
                     status=Submission.Status.SUBMITTED,
                 )
-        except IntegrityError:
-            return Response(
-                {"detail": "이미 제출된 시험입니다."},
-                status=status.HTTP_409_CONFLICT,
-            )
+        except IntegrityError as e:
+            if "unique_active_submission_per_target" in str(e):
+                return Response(
+                    {"detail": "이미 제출된 시험입니다."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            raise
         try:
             dispatch_submission(submission)
         except Exception as e:

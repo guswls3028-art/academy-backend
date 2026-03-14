@@ -73,6 +73,7 @@ class StudentDashboardView(APIView):
                     LectureSession.objects.filter(
                         sessionenrollment__enrollment__student=student,
                         sessionenrollment__enrollment__tenant=tenant,
+                        sessionenrollment__enrollment__status="ACTIVE",  # ✅ 퇴원 학생 제외
                         date=today,
                     )
                     .select_related("lecture")

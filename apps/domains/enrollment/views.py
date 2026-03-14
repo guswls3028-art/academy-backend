@@ -72,12 +72,16 @@ class EnrollmentViewSet(ModelViewSet):
                     {"detail": f"학생(id={sid})은 현재 학원 소속이 아닙니다."}
                 )
 
-            obj, _ = enroll_repo.enrollment_get_or_create(
+            obj, created_new = enroll_repo.enrollment_get_or_create(
                 tenant=tenant,
                 lecture=lecture,
                 student_id=sid,
                 defaults={"status": "ACTIVE"},
             )
+            # 퇴원(INACTIVE) 수강생 재등록 시 활성화 복원
+            if not created_new and obj.status != "ACTIVE":
+                obj.status = "ACTIVE"
+                obj.save(update_fields=["status"])
             created.append(obj)
 
         return Response(

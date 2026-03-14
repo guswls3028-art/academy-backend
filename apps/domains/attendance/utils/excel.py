@@ -37,7 +37,7 @@ def build_attendance_excel(lecture):
     sessions = enroll_repo.get_sessions_for_lecture_ordered(lecture)
     enrollment_ids = list(enroll_repo.get_session_enrollment_enrollment_ids_by_lecture(lecture))
     tenant = getattr(lecture, "tenant", None) or getattr(lecture, "tenant_id", None)
-    enrollments = enroll_repo.get_enrollments_by_ids_active(enrollment_ids, tenant)
+    enrollments = enroll_repo.get_enrollments_by_ids_all(enrollment_ids, tenant)
     attendances = enroll_repo.get_attendances_for_lecture_by_lecture(lecture, enrollments)
 
     attendance_map = {
