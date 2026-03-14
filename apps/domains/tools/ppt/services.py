@@ -13,7 +13,7 @@ import io
 import logging
 from typing import Literal
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageEnhance, ImageStat
 from pptx import Presentation
 from pptx.util import Inches
 from pptx.dml.color import RGBColor
@@ -66,13 +66,66 @@ def validate_image_bytes(raw_bytes: bytes) -> Image.Image:
     return img
 
 
+def _auto_enhance(img: Image.Image) -> Image.Image:
+    """자동 밝기/대비 보정 — 빔프로젝터용.
+
+    어두운 이미지를 분석하여 적절한 밝기/대비를 자동으로 올린다.
+    - 평균 밝기가 낮을수록 더 강하게 보정
+    - 대비도 함께 조절하여 선명도 유지
+    """
+    # 그레이스케일 통계로 평균 밝기 측정
+    gray = img.convert("L")
+    stat = ImageStat.Stat(gray)
+    mean_brightness = stat.mean[0]  # 0~255
+
+    # 밝기 보정 강도 계산
+    # mean < 60: 매우 어두움 → 강하게 보정
+    # mean 60~120: 어두움 → 보통 보정
+    # mean 120~180: 보통 → 약하게 보정
+    # mean > 180: 밝음 → 보정 불필요
+    if mean_brightness > 180:
+        return img  # 이미 충분히 밝음
+
+    if mean_brightness < 30:
+        brightness_factor = 2.5
+        contrast_factor = 1.6
+    elif mean_brightness < 60:
+        brightness_factor = 2.0
+        contrast_factor = 1.4
+    elif mean_brightness < 90:
+        brightness_factor = 1.6
+        contrast_factor = 1.3
+    elif mean_brightness < 120:
+        brightness_factor = 1.3
+        contrast_factor = 1.2
+    else:
+        brightness_factor = 1.15
+        contrast_factor = 1.1
+
+    # 밝기 → 대비 순서로 적용
+    img = ImageEnhance.Brightness(img).enhance(brightness_factor)
+    img = ImageEnhance.Contrast(img).enhance(contrast_factor)
+
+    return img
+
+
 def _process_image(
     image_bytes: bytes,
     *,
     invert: bool = False,
     grayscale: bool = False,
+    auto_enhance: bool = False,
+    brightness: float = 1.0,
+    contrast: float = 1.0,
 ) -> bytes:
-    """이미지 전처리: 반전, 그레이스케일 등.
+    """이미지 전처리: 반전, 그레이스케일, 밝기/대비 조절 등.
+
+    Args:
+        invert: 흑백 반전.
+        grayscale: 그레이스케일 변환.
+        auto_enhance: 자동 밝기/대비 보정 (빔프로젝터용).
+        brightness: 밝기 배수 (1.0=원본, 1.5=50% 밝게, 0.5=50% 어둡게).
+        contrast: 대비 배수 (1.0=원본, 1.5=50% 강하게).
 
     Raises:
         ValueError: 유효하지 않은 이미지.
@@ -99,6 +152,20 @@ def _process_image(
 
     if invert:
         img = ImageOps.invert(img)
+
+    # 자동 보정 (반전 후 적용 — 반전된 이미지 기준으로 밝기 분석)
+    if auto_enhance:
+        img = _auto_enhance(img)
+
+    # 수동 밝기/대비 조절 (auto_enhance와 병행 가능)
+    if brightness != 1.0:
+        # clamp: 0.2 ~ 3.0
+        brightness = max(0.2, min(3.0, brightness))
+        img = ImageEnhance.Brightness(img).enhance(brightness)
+
+    if contrast != 1.0:
+        contrast = max(0.2, min(3.0, contrast))
+        img = ImageEnhance.Contrast(img).enhance(contrast)
 
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True)
@@ -187,6 +254,9 @@ def generate_ppt(
     fit_mode: str = "contain",
     invert: bool = False,
     grayscale: bool = False,
+    auto_enhance: bool = False,
+    brightness: float = 1.0,
+    contrast: float = 1.0,
     per_slide_settings: list[dict] | None = None,
 ) -> bytes:
     """PPT 생성.
@@ -198,7 +268,10 @@ def generate_ppt(
         fit_mode: 이미지 배치 모드 ("contain", "cover", "stretch").
         invert: True면 모든 이미지 흑백 반전.
         grayscale: True면 모든 이미지 그레이스케일 변환.
-        per_slide_settings: 슬라이드별 개별 설정 (invert, grayscale 등).
+        auto_enhance: True면 어두운 이미지 자동 밝기/대비 보정.
+        brightness: 밝기 배수 (1.0=원본).
+        contrast: 대비 배수 (1.0=원본).
+        per_slide_settings: 슬라이드별 개별 설정.
 
     Returns:
         PPTX 파일 바이트.
@@ -236,11 +309,17 @@ def generate_ppt(
         # 슬라이드별 개별 설정
         slide_invert = invert
         slide_grayscale = grayscale
+        slide_auto_enhance = auto_enhance
+        slide_brightness = brightness
+        slide_contrast = contrast
         if per_slide_settings and idx < len(per_slide_settings):
             ss = per_slide_settings[idx]
             if isinstance(ss, dict):
                 slide_invert = ss.get("invert", invert)
                 slide_grayscale = ss.get("grayscale", grayscale)
+                slide_auto_enhance = ss.get("auto_enhance", auto_enhance)
+                slide_brightness = float(ss.get("brightness", brightness))
+                slide_contrast = float(ss.get("contrast", contrast))
 
         # 이미지 전처리
         try:
@@ -248,6 +327,9 @@ def generate_ppt(
                 raw_bytes,
                 invert=slide_invert,
                 grayscale=slide_grayscale,
+                auto_enhance=slide_auto_enhance,
+                brightness=slide_brightness,
+                contrast=slide_contrast,
             )
         except (ValueError, Exception) as exc:
             logger.warning("이미지 처리 실패: %s (idx=%d): %s", filename, idx, exc)

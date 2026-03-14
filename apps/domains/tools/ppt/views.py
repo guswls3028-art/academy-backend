@@ -208,6 +208,18 @@ class PptGenerateView(View):
 
         invert = bool(ppt_settings.get("invert", False))
         grayscale = bool(ppt_settings.get("grayscale", False))
+        auto_enhance = bool(ppt_settings.get("auto_enhance", False))
+
+        # 밝기/대비: float, clamp 0.2~3.0
+        try:
+            brightness_val = float(ppt_settings.get("brightness", 1.0))
+        except (ValueError, TypeError):
+            brightness_val = 1.0
+        try:
+            contrast_val = float(ppt_settings.get("contrast", 1.0))
+        except (ValueError, TypeError):
+            contrast_val = 1.0
+
         per_slide = ppt_settings.get("per_slide")
         if per_slide is not None and not isinstance(per_slide, list):
             per_slide = None
@@ -220,6 +232,9 @@ class PptGenerateView(View):
                 fit_mode=fit_mode,
                 invert=invert,
                 grayscale=grayscale,
+                auto_enhance=auto_enhance,
+                brightness=brightness_val,
+                contrast=contrast_val,
                 per_slide_settings=per_slide,
             )
         except ValueError as exc:
