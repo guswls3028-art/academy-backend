@@ -179,7 +179,7 @@ def send_alimtalk_via_owner(trigger: str, to: str, replacements: dict[str, str])
         True if enqueue 성공
     """
     from apps.support.messaging.selectors import get_auto_send_config
-    from apps.support.messaging.sms import enqueue_sms
+    from apps.support.messaging.services import enqueue_sms
 
     owner_id = get_owner_tenant_id()
 
