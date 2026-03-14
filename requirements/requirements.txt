@@ -36,4 +36,5 @@ gevent>=23.0.0
 reportlab
 solapi>=5.0.0
 pillow
+python-pptx
 opencv-python-headless

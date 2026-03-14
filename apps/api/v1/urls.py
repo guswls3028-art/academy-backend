@@ -149,6 +149,11 @@ urlpatterns = [
     ),
 
     # =========================
+    # Tools (선생님 편의 도구)
+    # =========================
+    path("tools/", include("apps.domains.tools.urls")),
+
+    # =========================
     # Student App
     # =========================
     path("student/", include("apps.domains.student_app.urls")),
