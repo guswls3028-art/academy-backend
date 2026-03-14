@@ -72,8 +72,8 @@ def _tenant_required(view_func):
 
 def _is_tenant_staff(request) -> bool:
     """요청 사용자가 테넌트의 스태프인지 확인."""
-    from apps.core.models import Membership
-    return Membership.objects.filter(
+    from apps.core.models.tenant_membership import TenantMembership
+    return TenantMembership.objects.filter(
         user=request.user,
         tenant=request.tenant,
         is_active=True,
