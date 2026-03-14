@@ -19,12 +19,20 @@ def user_internal_username(tenant, display_username: str) -> str:
 
 
 def user_display_username(user) -> str:
-    """API/화면 노출용. tenant 소속이면 t{id}_ 접두어 제거."""
+    """API/화면 노출용. tenant 소속이면 t{id}_ 접두어 제거. 학부모는 p_{id}_ 제거."""
     if not user or not getattr(user, "username", None):
         return ""
     uname = user.username
-    if getattr(user, "tenant_id", None) and uname.startswith(f"{USERNAME_TENANT_PREFIX}{user.tenant_id}_"):
-        return uname[len(f"{USERNAME_TENANT_PREFIX}{user.tenant_id}_"):]
+    tenant_id = getattr(user, "tenant_id", None)
+    if tenant_id:
+        # 학생/선생: t{id}_ prefix 제거
+        t_prefix = f"{USERNAME_TENANT_PREFIX}{tenant_id}_"
+        if uname.startswith(t_prefix):
+            return uname[len(t_prefix):]
+        # 학부모: p_{id}_ prefix 제거 → 전화번호만 노출
+        p_prefix = f"p_{tenant_id}_"
+        if uname.startswith(p_prefix):
+            return uname[len(p_prefix):]
     return uname
 
 
