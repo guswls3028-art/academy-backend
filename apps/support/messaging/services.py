@@ -391,23 +391,25 @@ def send_registration_approved_messages(
     notice = REGISTRATION_APPROVED_NOTICE
 
     def _resolve_template(trigger: str):
-        """AutoSendConfig 우선, 없으면 승인된 signup 카테고리 템플릿 자동 발견."""
-        config = get_auto_send_config(tenant_id, trigger)
+        """오너 테넌트의 승인된 템플릿 사용 (모든 테넌트 공통). SMS fallback 없음."""
+        from apps.support.messaging.policy import get_owner_tenant_id
+        owner_id = get_owner_tenant_id()
+        # 1) 오너 테넌트의 AutoSendConfig
+        config = get_auto_send_config(owner_id, trigger)
         if config and config.enabled and config.template:
             t = config.template
             solapi_id = (t.solapi_template_id or "").strip()
-            mode = config.message_mode or "alimtalk"
-            use_alimtalk = mode in ("alimtalk", "both") and solapi_id and t.solapi_status == "APPROVED"
-            return t, solapi_id if use_alimtalk else None, mode
-        # fallback: 승인된 signup 카테고리 템플릿 자동 발견
+            if solapi_id and t.solapi_status == "APPROVED":
+                return t, solapi_id, "alimtalk"
+        # 2) 오너 테넌트의 승인된 signup 카테고리 템플릿 자동 발견
         t = MessageTemplate.objects.filter(
-            tenant_id=tenant_id,
+            tenant_id=owner_id,
             category="signup",
             solapi_status="APPROVED",
         ).exclude(solapi_template_id="").first()
         if t:
             logger.info(
-                "send_registration_approved fallback: trigger=%s using template=%s (id=%s)",
+                "send_registration_approved fallback: trigger=%s using owner template=%s (id=%s)",
                 trigger, t.name, t.solapi_template_id,
             )
             return t, (t.solapi_template_id or "").strip(), "alimtalk"
@@ -439,11 +441,12 @@ def send_registration_approved_messages(
                 template_id_solapi = solapi_id
                 alimtalk_replacements = [{"key": k, "value": v} for k, v in replacements_base.items()]
             try:
+                from apps.support.messaging.policy import get_owner_tenant_id as _owner
                 if enqueue_sms(
-                    tenant_id=tenant_id,
+                    tenant_id=_owner(),
                     to=student_phone,
                     text=text,
-                    message_mode=mode,
+                    message_mode="alimtalk",
                     template_id=template_id_solapi,
                     alimtalk_replacements=alimtalk_replacements,
                 ):
@@ -480,11 +483,12 @@ def send_registration_approved_messages(
                 template_id_solapi = solapi_id
                 alimtalk_replacements = [{"key": k, "value": v} for k, v in parent_replacements.items()]
             try:
+                from apps.support.messaging.policy import get_owner_tenant_id as _owner
                 if enqueue_sms(
-                    tenant_id=tenant_id,
+                    tenant_id=_owner(),
                     to=parent_phone,
                     text=text,
-                    message_mode=mode,
+                    message_mode="alimtalk",
                     template_id=template_id_solapi,
                     alimtalk_replacements=alimtalk_replacements,
                 ):

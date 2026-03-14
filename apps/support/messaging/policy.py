@@ -162,3 +162,80 @@ def resolve_messaging_provider(tenant_id: int, message_type: str) -> dict:
             "provider": provider,
         }
     return {"allowed": False, "reason": "unknown_message_type", "provider": provider}
+
+
+def send_alimtalk_via_owner(trigger: str, to: str, replacements: dict[str, str]) -> bool:
+    """
+    오너 테넌트의 승인된 알림톡 템플릿으로 발송.
+    모든 테넌트에서 학생 인증 관련 알림톡은 이 함수를 사용.
+    SMS fallback 없음 — 알림톡 온리.
+
+    Args:
+        trigger: AutoSendConfig trigger (예: "password_find_otp")
+        to: 수신자 전화번호 (01012345678)
+        replacements: 템플릿 치환 맵 (예: {"인증번호": "123456"})
+
+    Returns:
+        True if enqueue 성공
+    """
+    from apps.support.messaging.selectors import get_auto_send_config
+    from apps.support.messaging.sms import enqueue_sms
+
+    owner_id = get_owner_tenant_id()
+
+    if is_messaging_disabled(owner_id):
+        logger.info("send_alimtalk_via_owner: messaging disabled for owner tenant")
+        return True  # 테스트 환경에서는 성공 간주
+
+    config = get_auto_send_config(owner_id, trigger)
+    t = config.template if config else None
+    solapi_id = (t.solapi_template_id or "").strip() if t else ""
+
+    # 승인된 템플릿이 없으면 fallback 트리거 시도
+    # 비번 리셋 → 가입 승인 템플릿 재활용 (같은 플레이스홀더)
+    FALLBACK_TRIGGERS = {
+        "password_reset_student": "registration_approved_student",
+        "password_reset_parent": "registration_approved_parent",
+    }
+    if not solapi_id or (t and t.solapi_status != "APPROVED"):
+        fallback_trigger = FALLBACK_TRIGGERS.get(trigger)
+        if fallback_trigger:
+            fb_config = get_auto_send_config(owner_id, fallback_trigger)
+            if fb_config and fb_config.template:
+                fb_t = fb_config.template
+                fb_id = (fb_t.solapi_template_id or "").strip()
+                if fb_id and fb_t.solapi_status == "APPROVED":
+                    logger.info(
+                        "send_alimtalk_via_owner: fallback %s → %s (template=%s)",
+                        trigger, fallback_trigger, fb_id,
+                    )
+                    t = fb_t
+                    solapi_id = fb_id
+
+    if not t or not solapi_id or t.solapi_status != "APPROVED":
+        logger.error(
+            "send_alimtalk_via_owner: no approved template trigger=%s owner=%s",
+            trigger, owner_id,
+        )
+        return False
+
+    # 본문 치환
+    text = (t.body or "").strip()
+    alimtalk_replacements = []
+    for key, value in replacements.items():
+        text = text.replace(f"#{{{{key}}}}", str(value))
+        text = text.replace(f"#{{{key}}}", str(value))
+        alimtalk_replacements.append({"key": key, "value": str(value)})
+
+    try:
+        return enqueue_sms(
+            tenant_id=owner_id,
+            to=to,
+            text=text,
+            message_mode="alimtalk",
+            template_id=solapi_id,
+            alimtalk_replacements=alimtalk_replacements,
+        )
+    except Exception as exc:
+        logger.error("send_alimtalk_via_owner: enqueue failed trigger=%s error=%s", trigger, exc)
+        return False

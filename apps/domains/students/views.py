@@ -1634,58 +1634,13 @@ class StudentPasswordFindRequestView(APIView):
                 status=200,
             )
 
-        config = get_auto_send_config(tenant.id, "password_find_otp")
-        fallback_text = f"[학원] 비밀번호 찾기 인증번호: {code} (10분 내 입력)"
-
-        if config and config.enabled and config.template:
-            t = config.template
-            body = (t.body or "").strip()
-            solapi_id = (t.solapi_template_id or "").strip()
-            use_alimtalk = solapi_id and t.solapi_status == "APPROVED"
-
-            text = body.replace("#{인증번호}", code)
-            alimtalk_replacements = None
-            template_id_solapi = None
-            if use_alimtalk:
-                template_id_solapi = solapi_id
-                alimtalk_replacements = [{"key": "인증번호", "value": code}]
-            if template_id_solapi:
-                try:
-                    ok = enqueue_sms(
-                        tenant_id=tenant.id,
-                        to=phone,
-                        text=text or fallback_text,
-                        message_mode="alimtalk",
-                        template_id=template_id_solapi,
-                        alimtalk_replacements=alimtalk_replacements,
-                    )
-                except (MessagingPolicyError, Exception) as exc:
-                    logger.warning("PasswordFind SMS failed (alimtalk): %s", exc)
-                    ok = False
-            else:
-                from apps.support.messaging.policy import get_owner_tenant_id
-                try:
-                    ok = enqueue_sms(
-                        tenant_id=get_owner_tenant_id(),
-                        to=phone,
-                        text=text or fallback_text,
-                        message_mode="sms",
-                    )
-                except (MessagingPolicyError, Exception) as exc:
-                    logger.warning("PasswordFind SMS failed (system sms): %s", exc)
-                    ok = False
-        else:
-            from apps.support.messaging.policy import get_owner_tenant_id
-            try:
-                ok = enqueue_sms(
-                    tenant_id=get_owner_tenant_id(),
-                    to=phone,
-                    text=fallback_text,
-                    message_mode="sms",
-                )
-            except (MessagingPolicyError, Exception) as exc:
-                logger.warning("PasswordFind SMS failed (no config sms): %s", exc)
-                ok = False
+        # 오너 테넌트의 승인된 알림톡 템플릿으로 발송 (모든 테넌트 공통, SMS fallback 없음)
+        from apps.support.messaging.policy import send_alimtalk_via_owner
+        ok = send_alimtalk_via_owner(
+            trigger="password_find_otp",
+            to=phone,
+            replacements={"인증번호": code},
+        )
 
         if not ok:
             return Response(
@@ -1886,74 +1841,18 @@ class StudentPasswordResetSendView(APIView):
                 f"{notice}"
             )
 
-        ok = False
-        if config and config.enabled and config.template:
-            t = config.template
-            body = (t.body or "").strip()
-            solapi_id = (t.solapi_template_id or "").strip()
-            use_alimtalk = solapi_id and t.solapi_status == "APPROVED"
-
-            replacements_map = {
-                "#{학생이름}": display_name or "",
-                "#{아이디}": display_username or "",
-                "#{임시비밀번호}": temp_password,
-                "#{비밀번호안내}": notice,
-            }
-            if target == "parent":
-                replacements_map["#{학부모아이디}"] = display_username or ""
-
-            text = body
-            for placeholder, value in replacements_map.items():
-                text = text.replace(placeholder, value)
-
-            alimtalk_replacements = None
-            template_id_solapi = None
-            if use_alimtalk:
-                template_id_solapi = solapi_id
-                alimtalk_replacements = [
-                    {"key": k.strip("#{}"), "value": v}
-                    for k, v in replacements_map.items()
-                ]
-            if template_id_solapi:
-                # 승인된 알림톡 템플릿 있음 → 알림톡 발송
-                try:
-                    ok = enqueue_sms(
-                        tenant_id=tenant.id,
-                        to=send_to,
-                        text=text or fallback_text,
-                        message_mode="alimtalk",
-                        template_id=template_id_solapi,
-                        alimtalk_replacements=alimtalk_replacements,
-                    )
-                except (MessagingPolicyError, Exception) as exc:
-                    logger.warning("Password reset SMS failed (alimtalk): %s", exc)
-                    ok = False
-            else:
-                # 승인된 템플릿 없음 → 시스템 키로 SMS 발송 (비밀번호 찾기는 필수 기능)
-                from apps.support.messaging.policy import get_owner_tenant_id
-                try:
-                    ok = enqueue_sms(
-                        tenant_id=get_owner_tenant_id(),
-                        to=send_to,
-                        text=text or fallback_text,
-                        message_mode="sms",
-                    )
-                except (MessagingPolicyError, Exception) as exc:
-                    logger.warning("Password reset SMS failed (system sms): %s", exc)
-                    ok = False
-        else:
-            # AutoSendConfig 미설정 — 시스템 키로 SMS 발송 (비밀번호 찾기는 필수 기능)
-            from apps.support.messaging.policy import get_owner_tenant_id
-            try:
-                ok = enqueue_sms(
-                    tenant_id=get_owner_tenant_id(),
-                    to=send_to,
-                    text=fallback_text,
-                    message_mode="sms",
-                )
-            except (MessagingPolicyError, Exception) as exc:
-                logger.warning("Password reset SMS failed (no config sms): %s", exc)
-                ok = False
+        # 오너 테넌트의 승인된 알림톡 템플릿으로 발송 (모든 테넌트 공통, SMS fallback 없음)
+        from apps.support.messaging.policy import send_alimtalk_via_owner
+        trigger = "password_reset_student" if target == "student" else "password_reset_parent"
+        replacements = {
+            "학생이름": display_name or "",
+            "아이디": display_username or "",
+            "임시비밀번호": temp_password,
+            "비밀번호안내": notice,
+        }
+        if target == "parent":
+            replacements["학부모아이디"] = display_username or ""
+        ok = send_alimtalk_via_owner(trigger=trigger, to=send_to, replacements=replacements)
 
         if not ok:
             # 발송 실패 시 비밀번호 롤백 — 비밀번호는 바뀌었는데 알림 못 받는 상황 방지
@@ -2016,62 +1915,18 @@ class SendExistingCredentialsView(APIView):
         if is_messaging_disabled(tenant.id):
             return Response({"message": "아이디/비밀번호가 발송되었습니다."}, status=200)
 
-        fallback_text = (
-            f"[학원] 회원 정보 안내\n"
-            f"이름: {student.name}\n"
-            f"아이디: {display_username}\n"
-            f"임시 비밀번호: {temp_password}\n"
-            f"로그인 후 비밀번호를 변경해 주세요."
+        # 오너 테넌트의 승인된 알림톡 템플릿으로 발송 (모든 테넌트 공통, SMS fallback 없음)
+        from apps.support.messaging.policy import send_alimtalk_via_owner
+        ok = send_alimtalk_via_owner(
+            trigger="password_reset_student",
+            to=send_to,
+            replacements={
+                "학생이름": student.name or "",
+                "아이디": display_username or "",
+                "임시비밀번호": temp_password,
+                "비밀번호안내": "로그인 후 비밀번호를 변경해 주세요.",
+            },
         )
-
-        # 승인된 signup 템플릿 자동 검색
-        from apps.support.messaging.models import MessageTemplate
-        template = MessageTemplate.objects.filter(
-            tenant_id=tenant.id,
-            category="signup",
-            solapi_status="APPROVED",
-        ).exclude(solapi_template_id="").first()
-
-        ok = False
-        if template:
-            body = (template.body or "").strip()
-            replacements_map = {
-                "#{학생이름}": student.name or "",
-                "#{아이디}": display_username or "",
-                "#{임시비밀번호}": temp_password,
-            }
-            text = body
-            for placeholder, value in replacements_map.items():
-                text = text.replace(placeholder, value)
-            alimtalk_replacements = [
-                {"key": k.strip("#{}"), "value": v}
-                for k, v in replacements_map.items()
-            ]
-            try:
-                ok = enqueue_sms(
-                    tenant_id=tenant.id,
-                    to=send_to,
-                    text=text or fallback_text,
-                    message_mode="alimtalk",
-                    template_id=template.solapi_template_id,
-                    alimtalk_replacements=alimtalk_replacements,
-                )
-            except (MessagingPolicyError, Exception) as exc:
-                logger.warning("SendExistingCredentials SMS failed (alimtalk): %s", exc)
-                ok = False
-        else:
-            # 템플릿 없음 → 시스템 키로 SMS (비밀번호 찾기는 필수 기능)
-            from apps.support.messaging.policy import get_owner_tenant_id
-            try:
-                ok = enqueue_sms(
-                    tenant_id=get_owner_tenant_id(),
-                    to=send_to,
-                    text=fallback_text,
-                    message_mode="sms",
-                )
-            except (MessagingPolicyError, Exception) as exc:
-                logger.warning("SendExistingCredentials SMS failed (system sms): %s", exc)
-                ok = False
 
         if not ok:
             # 발송 실패 시 비밀번호 롤백
