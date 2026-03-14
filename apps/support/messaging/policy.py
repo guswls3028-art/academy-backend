@@ -220,12 +220,12 @@ def send_alimtalk_via_owner(trigger: str, to: str, replacements: dict[str, str])
         )
         return False
 
-    # 본문 치환
+    # 본문 치환 — text와 variables 모두 정확히 일치해야 카카오 검증 통과
     text = (t.body or "").strip()
     alimtalk_replacements = []
     for key, value in replacements.items():
-        text = text.replace(f"#{{{{key}}}}", str(value))
-        text = text.replace(f"#{{{key}}}", str(value))
+        placeholder = f"#{{{key}}}"
+        text = text.replace(placeholder, str(value))
         alimtalk_replacements.append({"key": key, "value": str(value)})
 
     try:

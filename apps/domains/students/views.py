@@ -1637,6 +1637,8 @@ class StudentPasswordFindRequestView(APIView):
         # 오너 테넌트의 승인된 알림톡 템플릿으로 발송 (모든 테넌트 공통, SMS fallback 없음)
         # password_find_otp 전용 템플릿이 PENDING이면 registration_approved_student로 fallback
         from apps.support.messaging.policy import send_alimtalk_via_owner
+        from django.conf import settings as _settings
+        site_url = getattr(_settings, "SITE_URL", "") or "https://hakwonplus.com"
         ok = send_alimtalk_via_owner(
             trigger="password_find_otp",
             to=phone,
@@ -1644,10 +1646,10 @@ class StudentPasswordFindRequestView(APIView):
                 "인증번호": code,
                 # fallback 시 registration_approved_student 플레이스홀더 매핑
                 "학생이름": student.name or "",
-                "학생아이디": "비밀번호 찾기",
+                "학생아이디": "인증번호 안내",
                 "학생비밀번호": code,
-                "사이트링크": "",
-                "비밀번호안내": "위 인증번호를 10분 내 입력해 주세요.",
+                "사이트링크": site_url,
+                "비밀번호안내": "위 인증번호를 10분 내에 입력해 주세요.",
             },
         )
 
@@ -1852,15 +1854,19 @@ class StudentPasswordResetSendView(APIView):
 
         # 오너 테넌트의 승인된 알림톡 템플릿으로 발송 (모든 테넌트 공통, SMS fallback 없음)
         from apps.support.messaging.policy import send_alimtalk_via_owner
+        from django.conf import settings as _settings
+        site_url = getattr(_settings, "SITE_URL", "") or "https://hakwonplus.com"
         trigger = "password_reset_student" if target == "student" else "password_reset_parent"
         replacements = {
             "학생이름": display_name or "",
-            "아이디": display_username or "",
-            "임시비밀번호": temp_password,
+            "학생아이디": display_username or "",
+            "학생비밀번호": temp_password,
+            "사이트링크": site_url,
             "비밀번호안내": notice,
         }
         if target == "parent":
             replacements["학부모아이디"] = display_username or ""
+            replacements["학부모비밀번호"] = temp_password
         ok = send_alimtalk_via_owner(trigger=trigger, to=send_to, replacements=replacements)
 
         if not ok:
@@ -1926,13 +1932,16 @@ class SendExistingCredentialsView(APIView):
 
         # 오너 테넌트의 승인된 알림톡 템플릿으로 발송 (모든 테넌트 공통, SMS fallback 없음)
         from apps.support.messaging.policy import send_alimtalk_via_owner
+        from django.conf import settings as _settings
+        site_url = getattr(_settings, "SITE_URL", "") or "https://hakwonplus.com"
         ok = send_alimtalk_via_owner(
             trigger="password_reset_student",
             to=send_to,
             replacements={
                 "학생이름": student.name or "",
-                "아이디": display_username or "",
-                "임시비밀번호": temp_password,
+                "학생아이디": display_username or "",
+                "학생비밀번호": temp_password,
+                "사이트링크": site_url,
                 "비밀번호안내": "로그인 후 비밀번호를 변경해 주세요.",
             },
         )
