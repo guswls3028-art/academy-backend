@@ -314,6 +314,13 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         source = serializer.validated_data.get("source")
         requested_status = serializer.validated_data.get("status")
 
+        # ✅ 테넌트 교차 검증 (defense-in-depth: serializer queryset + view 명시 체크)
+        if session and getattr(session, "tenant_id", None) != getattr(tenant, "id", None):
+            return Response(
+                {"detail": "해당 세션에 접근할 권한이 없습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # 지난 날짜 예약 차단
         if session and session.date < timezone.localdate():
             return Response(
@@ -383,9 +390,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
         # ✅ atomic block: capacity check lock + duplicate check + save를 직렬화
         with transaction.atomic():
-            # 세션 행 잠금 (학생 신청 시 capacity 재검증 + 중복/저장 직렬화)
-            if session and request_student:
-                _locked = Session.objects.select_for_update().get(pk=session.pk)
+            # 세션 행 잠금 (capacity 재검증 + 중복/저장 직렬화, 학생·선생 모두)
+            if session:
+                _locked = Session.objects.filter(tenant=tenant).select_for_update().get(pk=session.pk)
                 # 정원 재검증 (lock 획득 후)
                 if _locked.max_participants is not None:
                     current_booked = SessionParticipant.objects.filter(
@@ -447,14 +454,20 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 if enrollment:
                     enrollment_id = enrollment.id
 
-            obj = serializer.save(
-                tenant=tenant,
-                student=student,
-                source=source,
-                status=requested_status or SessionParticipant.Status.PENDING,
-                enrollment_id=enrollment_id,
-                participant_role=participant_role,
-            )
+            try:
+                obj = serializer.save(
+                    tenant=tenant,
+                    student=student,
+                    source=source,
+                    status=requested_status or SessionParticipant.Status.PENDING,
+                    enrollment_id=enrollment_id,
+                    participant_role=participant_role,
+                )
+            except IntegrityError:
+                return Response(
+                    {"detail": "이미 해당 세션에 예약된 학생입니다."},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
             # enrollment_id가 있고 session이 있으면 ClinicLink 업데이트
             if enrollment_id and session:

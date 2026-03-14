@@ -142,6 +142,12 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
     - 학생 신청 시: session 또는 (requested_date + requested_start_time) 필수
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request, "tenant") and request.tenant:
+            self.fields["session"].queryset = Session.objects.filter(tenant=request.tenant)
+
     class Meta:
         model = SessionParticipant
         fields = [
