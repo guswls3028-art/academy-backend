@@ -37,6 +37,7 @@ def bulk_create_students_from_excel_rows(
     duplicates: list[dict] = []
     restored: list[dict] = []
     total = len(students_data)
+    skipped_empty = 0
 
     for row_index, raw in enumerate(students_data, start=1):
         if on_row_progress and total > 0:
@@ -47,6 +48,7 @@ def bulk_create_students_from_excel_rows(
         parent_phone = "".join(c for c in str(parent_phone) if c.isdigit())
 
         if not name and not parent_phone:
+            skipped_empty += 1
             continue
 
         try:
@@ -100,8 +102,14 @@ def bulk_create_students_from_excel_rows(
             })
 
     if not created_count and not failed and not duplicates and not restored and total > 0:
+        logger.error(
+            "[bulk_create_excel] ALL students skipped: total=%s skipped_empty=%s",
+            total, skipped_empty,
+        )
         raise ValueError(
-            "등록할 수 있는 학생이 없습니다. 이름·학부모 전화번호(010 11자리)를 확인해 주세요."
+            f"등록할 수 있는 학생이 없습니다. "
+            f"전체 {total}행 중 {skipped_empty}행이 이름·전화 모두 비어 건너뜀. "
+            f"이름·학부모 전화번호(010 11자리)를 확인해 주세요."
         )
 
     return {

@@ -53,6 +53,7 @@ def lecture_enroll_from_excel_rows(
         created_student_count = 0
         seen: set[tuple[str, str]] = set()
 
+        skipped_reasons: list[str] = []
         for row_index, item in enumerate(students_data, start=1):
             raw = dict(item) if isinstance(item, dict) else {}
             name = (raw.get("name") or "").strip()
@@ -60,11 +61,21 @@ def lecture_enroll_from_excel_rows(
             parent_phone = "".join(c for c in parent_phone if c.isdigit())
 
             if not name or len(parent_phone) != 11 or not parent_phone.startswith("010"):
+                reason = []
+                if not name:
+                    reason.append("name_empty")
+                if len(parent_phone) != 11:
+                    reason.append(f"phone_len={len(parent_phone)}")
+                if parent_phone and not parent_phone.startswith("010"):
+                    reason.append("phone_not_010")
+                reason_str = ",".join(reason) or "unknown"
+                skipped_reasons.append(f"row{row_index}:{reason_str}")
                 logger.debug(
-                    "[lecture_enroll_excel] row=%s skip name=%r parent_phone_len=%s reason=invalid_or_missing",
+                    "[lecture_enroll_excel] row=%s skip name=%r parent_phone_len=%s reason=%s",
                     row_index,
                     name or "(empty)",
                     len(parent_phone),
+                    reason_str,
                 )
                 continue
             key = (name, parent_phone)
@@ -122,8 +133,18 @@ def lecture_enroll_from_excel_rows(
                 )
 
         if not student_ids:
+            total_rows = len(students_data)
+            skipped_count = len(skipped_reasons)
+            logger.error(
+                "[lecture_enroll_excel] ALL students skipped: total=%s skipped=%s reasons=%s",
+                total_rows,
+                skipped_count,
+                "; ".join(skipped_reasons[:10]),
+            )
             raise ValueError(
-                "등록할 수 있는 학생이 없습니다. 이름·학부모 전화번호(010 11자리)를 확인해 주세요."
+                f"등록할 수 있는 학생이 없습니다. "
+                f"전체 {total_rows}행 중 {skipped_count}행 건너뜀. "
+                f"이름·학부모 전화번호(010 11자리)를 확인해 주세요."
             )
 
         enrollments_created: list = []

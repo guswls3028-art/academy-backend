@@ -254,11 +254,12 @@ def _mask_phone_for_ai(v: str) -> str:
 
 
 def _validate_parent_phone(raw: str) -> bool:
-    """010 10~11자리 형식인지 검사. parent_phone 필수 검증용."""
+    """010 11자리 형식인지 검사. parent_phone 필수 검증용.
+    enrollment 코드가 정확히 11자리를 요구하므로 10자리(구형 번호)는 거부."""
     p = _to_raw_phone(raw)
     if not p or not p.startswith("010"):
         return False
-    return len(p) in (10, 11)
+    return len(p) == 11
 
 
 def _parse_school_grade(value: str) -> tuple[str, str]:

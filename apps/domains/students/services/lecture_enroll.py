@@ -112,14 +112,24 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
         return deleted_student, False, True  # was_restored=True
 
     # 3) 신규 생성 (bulk_create 한 건 분 로직)
-    ps_number = _generate_unique_ps_number()
+    ps_number = _generate_unique_ps_number(tenant=tenant)
     omr_code = (phone[-8:] if phone and len(phone) >= 8 else parent_phone[-8:]).ljust(8, "0")[:8]
 
     with transaction.atomic():
         if phone:
             if student_repo.user_filter_phone_active(phone, tenant=tenant).exists():
+                import logging as _log
+                _log.getLogger(__name__).info(
+                    "[lecture_enroll] skip name=%r: phone=%s already active in tenant",
+                    name, phone[:3] + "****" + phone[-4:] if len(phone) >= 7 else "***",
+                )
                 return None, False, False
         if student_repo.student_filter_tenant_ps_number(tenant, ps_number).exists():
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "[lecture_enroll] skip name=%r: ps_number=%s collision (should not happen with tenant check)",
+                name, ps_number,
+            )
             return None, False, False
 
         parent = None
