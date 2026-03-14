@@ -106,10 +106,22 @@ def _validate_order(order: list, image_count: int) -> list[int] | None:
 class PptGenerateView(View):
     """POST: 이미지 업로드 → PPT 생성 → R2 저장 → presigned download URL 반환."""
 
-    @_jwt_required
-    @_tenant_required
     def post(self, request, *args, **kwargs):
         t_start = time.monotonic()
+
+        # JWT 인증
+        auth = JWTAuthentication()
+        result = auth.authenticate(request)
+        if result is None:
+            return JsonResponse(
+                {"detail": "Authentication required", "code": "auth_required"},
+                status=401,
+            )
+        request.user, request.auth = result[0], result[1]
+
+        # 테넌트 필수
+        if not getattr(request, "tenant", None):
+            return JsonResponse({"detail": "Tenant required"}, status=400)
 
         # 스태프 확인
         if not _is_tenant_staff(request):
