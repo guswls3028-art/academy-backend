@@ -1,15 +1,15 @@
 ## V1 CI Build — latest 이미지 푸시 증거 (OIDC)
 
-**Generated:** 2026-03-14T07:54:50+00:00
+**Generated:** 2026-03-14T09:08:17+00:00
 **SSOT:** docs/00-SSOT/v1/params.yaml
 **Region:** ap-northeast-2
-**gitSha:** 63cab0225649d2818ab7aed7ebf122da1d9450b5
-**shortSha:** 63cab02
+**gitSha:** e5f83c406172fc02fd8693a8e18332c257cffc46
+**shortSha:** e5f83c4
 
 | repo | tag | imageDigest |
 |------|-----|-------------|
-| academy-base | latest | sha256:e7b6e5d31167cb9061e0abf53b5af2d7152d524150177dc328160dc47d761a33 |
-| academy-api | latest | sha256:29231e277ee3ddb0b73ee2fe81a5d98a667454c12d25845585560421e46740f1 |
-| academy-video-worker | latest | sha256:5779f48954843ea2513da9fe967e9db52a6e6006bb43afaf9c517097e4b0912b |
-| academy-messaging-worker | latest | sha256:a1ce1ef3f4839e40d58594eb7562925b6966416958b66439e75f6fca5bcd5d1d |
-| academy-ai-worker-cpu | latest | sha256:b972e24cd6547cf1e2e861ec6162987a1729e795292d9a532e4d7c6a54a3d200 |
+| academy-base | latest | sha256:177e04bc6a373a3ff0bc4168d857c802acf3654b865e1320dd17cbf02e4dbd3a |
+| academy-api | latest | sha256:38ce92018923a25946ea3ff767765d1b7ff71833fc5895048c8fc7c9f41b456c |
+| academy-video-worker | latest | sha256:1a587a7ff036b44a0fdcd30e57dab3cdf3d966552942fb6fecfbeaeaca7e5b3b |
+| academy-messaging-worker | latest | sha256:764abf12a4b522af3ec5d9afb3e5402da6446fc9059a03cb254785d26da757c0 |
+| academy-ai-worker-cpu | latest | sha256:cca7954be5d42b4f753a41947b705f1e8006f9175422d4a2e62df0b40859a274 |
