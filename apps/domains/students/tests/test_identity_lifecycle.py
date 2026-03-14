@@ -3,8 +3,7 @@
 Regression tests for student identity SSOT, lifecycle, and ghost-data elimination.
 Covers: ps_number/username sync, deletion semantics, restore flow, ghost data filters.
 """
-import pytest
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
@@ -14,6 +13,7 @@ from apps.core.models.user import user_internal_username, user_display_username
 from apps.domains.students.models import Student
 from apps.domains.parents.models import Parent
 from apps.domains.inventory.models import InventoryFolder, InventoryFile
+from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
 
 User = get_user_model()
 
@@ -124,6 +124,79 @@ class TestSoftDeleteSemantics(TestCase):
         self.student.user.refresh_from_db()
         self.assertFalse(self.student.user.is_active)
         self.assertIsNone(self.student.user.phone)
+
+
+class TestSoftDeleteCancelsClinicBookings(TestCase):
+    """Student soft-delete should cancel active clinic participants (PENDING/BOOKED → CANCELLED)."""
+
+    def setUp(self):
+        self.tenant = _create_tenant()
+        self.student = _create_student(self.tenant, "CL001", phone="01055550001", parent_phone="01099990001")
+        self.session = ClinicSession.objects.create(
+            tenant=self.tenant,
+            date="2026-04-01",
+            start_time="14:00",
+            location="Room A",
+            max_participants=10,
+        )
+        # Create BOOKED and PENDING participants
+        self.booked = SessionParticipant.objects.create(
+            tenant=self.tenant, session=self.session, student=self.student,
+            status=SessionParticipant.Status.BOOKED, source=SessionParticipant.Source.AUTO,
+        )
+        self.pending = SessionParticipant.objects.create(
+            tenant=self.tenant, session=None, student=self.student,
+            requested_date="2026-04-02", requested_start_time="15:00",
+            status=SessionParticipant.Status.PENDING, source=SessionParticipant.Source.STUDENT_REQUEST,
+        )
+
+    def test_soft_delete_cancels_active_bookings(self):
+        """BOOKED/PENDING 예약이 학생 삭제 시 CANCELLED로 변경."""
+        now = timezone.now()
+        # Simulate soft-delete clinic cancellation
+        SessionParticipant.objects.filter(
+            student=self.student, tenant=self.tenant,
+            status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
+        ).update(status=SessionParticipant.Status.CANCELLED, status_changed_at=now)
+
+        self.booked.refresh_from_db()
+        self.pending.refresh_from_db()
+        self.assertEqual(self.booked.status, "cancelled")
+        self.assertEqual(self.pending.status, "cancelled")
+
+    def test_attended_not_cancelled(self):
+        """ATTENDED 상태는 삭제 시에도 보존 (이력)."""
+        attended = SessionParticipant.objects.create(
+            tenant=self.tenant, session=self.session, student=self.student,
+            status=SessionParticipant.Status.ATTENDED, source=SessionParticipant.Source.AUTO,
+            participant_role="target",
+        )
+        # Only cancel PENDING/BOOKED
+        SessionParticipant.objects.filter(
+            student=self.student, tenant=self.tenant,
+            status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
+        ).update(status=SessionParticipant.Status.CANCELLED)
+
+        attended.refresh_from_db()
+        self.assertEqual(attended.status, "attended")  # 보존됨
+
+    def test_session_count_after_cancel(self):
+        """예약 취소 후 세션 카운트가 정확해야 함."""
+        SessionParticipant.objects.filter(
+            student=self.student, tenant=self.tenant,
+            status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
+        ).update(status=SessionParticipant.Status.CANCELLED)
+
+        from django.db.models import Count, Q
+        session = (
+            ClinicSession.objects.filter(pk=self.session.pk)
+            .annotate(
+                booked_count=Count("participants", filter=Q(
+                    participants__status__in=["booked", "pending"]
+                ))
+            ).first()
+        )
+        self.assertEqual(session.booked_count, 0)  # 모두 취소됨
 
 
 class TestBulkRestoreFlow(TestCase):

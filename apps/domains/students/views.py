@@ -35,6 +35,7 @@ from .models import Student, Tag, StudentTag, StudentRegistrationRequest
 from .filters import StudentFilter
 from .services import normalize_school_from_name
 from apps.domains.enrollment.models import Enrollment
+from apps.domains.clinic.models import SessionParticipant
 from .serializers import (
     _generate_unique_ps_number,
     StudentListSerializer,
@@ -303,6 +304,11 @@ class StudentViewSet(ModelViewSet):
         Enrollment.objects.filter(
             student=student, tenant=request.tenant
         ).update(status="INACTIVE")
+        # ✅ 소프트 삭제 시 활성 클리닉 예약도 취소 (정원 즉시 반환)
+        SessionParticipant.objects.filter(
+            student=student, tenant=request.tenant,
+            status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
+        ).update(status=SessionParticipant.Status.CANCELLED, status_changed_at=now)
         return Response(status=204)
 
     # ------------------------------
@@ -781,6 +787,11 @@ class StudentViewSet(ModelViewSet):
                 Enrollment.objects.filter(
                     student=student, tenant=tenant
                 ).update(status="INACTIVE")
+                # ✅ 소프트 삭제 시 활성 클리닉 예약도 취소 (정원 즉시 반환)
+                SessionParticipant.objects.filter(
+                    student=student, tenant=tenant,
+                    status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
+                ).update(status=SessionParticipant.Status.CANCELLED, status_changed_at=now)
         return Response({"deleted": len(to_delete)}, status=200)
 
     @action(
