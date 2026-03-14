@@ -59,52 +59,35 @@ class SessionViewSet(viewsets.ModelViewSet):
             .filter(tenant=tenant)
             .prefetch_related("target_lectures")
             .annotate(
-                # 삭제된 학생 참가자 제외
-                participant_count=Count("participants", filter=Q(participants__student__deleted_at__isnull=True)),
+                participant_count=Count("participants"),
                 booked_count=Count(
                     "participants",
                     filter=Q(
                         participants__status__in=[
                             SessionParticipant.Status.BOOKED,
                             SessionParticipant.Status.PENDING,
-                        ],
-                        participants__student__deleted_at__isnull=True,
+                        ]
                     ),
                 ),
                 attended_count=Count(
                     "participants",
-                    filter=Q(
-                        participants__status=SessionParticipant.Status.ATTENDED,
-                        participants__student__deleted_at__isnull=True,
-                    ),
+                    filter=Q(participants__status=SessionParticipant.Status.ATTENDED),
                 ),
                 no_show_count=Count(
                     "participants",
-                    filter=Q(
-                        participants__status=SessionParticipant.Status.NO_SHOW,
-                        participants__student__deleted_at__isnull=True,
-                    ),
+                    filter=Q(participants__status=SessionParticipant.Status.NO_SHOW),
                 ),
                 cancelled_count=Count(
                     "participants",
-                    filter=Q(
-                        participants__status=SessionParticipant.Status.CANCELLED,
-                        participants__student__deleted_at__isnull=True,
-                    ),
+                    filter=Q(participants__status=SessionParticipant.Status.CANCELLED),
                 ),
                 auto_count=Count(
                     "participants",
-                    filter=Q(
-                        participants__source=SessionParticipant.Source.AUTO,
-                        participants__student__deleted_at__isnull=True,
-                    ),
+                    filter=Q(participants__source=SessionParticipant.Source.AUTO),
                 ),
                 manual_count=Count(
                     "participants",
-                    filter=Q(
-                        participants__source=SessionParticipant.Source.MANUAL,
-                        participants__student__deleted_at__isnull=True,
-                    ),
+                    filter=Q(participants__source=SessionParticipant.Source.MANUAL),
                 ),
             )
         )
