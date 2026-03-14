@@ -15,9 +15,8 @@ from typing import Literal
 
 from PIL import Image, ImageOps
 from pptx import Presentation
-from pptx.util import Inches, Emu
+from pptx.util import Inches
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +32,39 @@ BACKGROUND_COLORS = {
     "dark_gray": RGBColor(30, 30, 30),
 }
 
+# 이미지 최대 크기 (Pillow decompression bomb 방지)
+MAX_IMAGE_PIXELS = 50_000_000  # 50 megapixels
+# Pillow 기본 제한을 올림 (기본 178M, 충분히 안전)
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
+
+def validate_image_bytes(raw_bytes: bytes) -> Image.Image:
+    """이미지 바이트를 검증하고 PIL Image로 반환.
+
+    Raises:
+        ValueError: 유효하지 않은 이미지인 경우.
+    """
+    if len(raw_bytes) < 8:
+        raise ValueError("Too small to be a valid image")
+
+    try:
+        img = Image.open(io.BytesIO(raw_bytes))
+        img.verify()  # 구조 검증 (verify 후 재로딩 필요)
+    except Exception as exc:
+        raise ValueError(f"Invalid image data: {exc}") from exc
+
+    # verify() 후 재로딩 (verify는 이미지를 소비함)
+    img = Image.open(io.BytesIO(raw_bytes))
+
+    # 크기 검증
+    w, h = img.size
+    if w <= 0 or h <= 0:
+        raise ValueError(f"Invalid image dimensions: {w}x{h}")
+    if w * h > MAX_IMAGE_PIXELS:
+        raise ValueError(f"Image too large: {w}x{h} ({w * h} pixels)")
+
+    return img
+
 
 def _process_image(
     image_bytes: bytes,
@@ -40,8 +72,12 @@ def _process_image(
     invert: bool = False,
     grayscale: bool = False,
 ) -> bytes:
-    """이미지 전처리: 반전, 그레이스케일 등."""
-    img = Image.open(io.BytesIO(image_bytes))
+    """이미지 전처리: 반전, 그레이스케일 등.
+
+    Raises:
+        ValueError: 유효하지 않은 이미지.
+    """
+    img = validate_image_bytes(image_bytes)
 
     # EXIF 회전 보정
     img = ImageOps.exif_transpose(img)
@@ -51,7 +87,10 @@ def _process_image(
         background = Image.new("RGB", img.size, (255, 255, 255))
         background.paste(img, mask=img.split()[3])
         img = background
-    elif img.mode != "RGB":
+    elif img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+
+    if img.mode == "L":
         img = img.convert("RGB")
 
     if grayscale:
@@ -86,6 +125,10 @@ def _fit_image_to_slide(
     if fit_mode == "stretch":
         return 0, 0, slide_width, slide_height
 
+    # ZeroDivisionError 방어
+    if img_width <= 0 or img_height <= 0:
+        return 0, 0, slide_width, slide_height
+
     img_ratio = img_width / img_height
     slide_ratio = slide_width / slide_height
 
@@ -107,6 +150,33 @@ def _fit_image_to_slide(
     left = (slide_width - width) // 2
     top = (slide_height - height) // 2
     return left, top, width, height
+
+
+def _get_blank_layout(prs: Presentation):
+    """빈 슬라이드 레이아웃을 안전하게 찾는다.
+
+    index 6이 항상 blank라는 보장이 없으므로 이름으로 검색 후 fallback.
+    """
+    # 이름으로 검색 (Blank, 빈 슬라이드 등)
+    for layout in prs.slide_layouts:
+        name = (layout.name or "").lower()
+        if name in ("blank", "빈 슬라이드", "빈 화면"):
+            return layout
+
+    # placeholder가 가장 적은 레이아웃 선택
+    min_ph = None
+    best = None
+    for layout in prs.slide_layouts:
+        ph_count = len(layout.placeholders)
+        if min_ph is None or ph_count < min_ph:
+            min_ph = ph_count
+            best = layout
+
+    if best is not None:
+        return best
+
+    # 최후 fallback: 마지막 레이아웃 (보통 blank)
+    return prs.slide_layouts[-1]
 
 
 def generate_ppt(
@@ -132,7 +202,13 @@ def generate_ppt(
 
     Returns:
         PPTX 파일 바이트.
+
+    Raises:
+        ValueError: 이미지가 비어있거나 유효하지 않은 경우.
     """
+    if not images:
+        raise ValueError("No images provided")
+
     prs = Presentation()
 
     # 슬라이드 크기 설정
@@ -153,17 +229,18 @@ def generate_ppt(
     elif bg_color is None:
         bg_color = BACKGROUND_COLORS["black"]
 
-    # 빈 레이아웃 (blank slide layout — 일반적으로 index 6)
-    blank_layout = prs.slide_layouts[6]
+    blank_layout = _get_blank_layout(prs)
 
+    failed_slides = []
     for idx, (filename, raw_bytes) in enumerate(images):
         # 슬라이드별 개별 설정
         slide_invert = invert
         slide_grayscale = grayscale
         if per_slide_settings and idx < len(per_slide_settings):
             ss = per_slide_settings[idx]
-            slide_invert = ss.get("invert", invert)
-            slide_grayscale = ss.get("grayscale", grayscale)
+            if isinstance(ss, dict):
+                slide_invert = ss.get("invert", invert)
+                slide_grayscale = ss.get("grayscale", grayscale)
 
         # 이미지 전처리
         try:
@@ -172,9 +249,10 @@ def generate_ppt(
                 invert=slide_invert,
                 grayscale=slide_grayscale,
             )
-        except Exception:
-            logger.warning("이미지 처리 실패: %s (idx=%d), 원본 사용", filename, idx)
-            processed = raw_bytes
+        except (ValueError, Exception) as exc:
+            logger.warning("이미지 처리 실패: %s (idx=%d): %s", filename, idx, exc)
+            failed_slides.append(idx)
+            continue  # 실패한 이미지는 건너뜀 (원본 삽입 시도 대신 안전하게 skip)
 
         # 이미지 크기 파악
         img = Image.open(io.BytesIO(processed))
@@ -199,6 +277,14 @@ def generate_ppt(
         # 이미지 추가
         img_stream = io.BytesIO(processed)
         slide.shapes.add_picture(img_stream, left, top, width, height)
+
+    # 유효한 슬라이드가 하나도 없으면 에러
+    successful = len(images) - len(failed_slides)
+    if successful == 0:
+        raise ValueError(f"All {len(images)} images failed to process")
+
+    if failed_slides:
+        logger.info("PPT 생성: %d/%d 슬라이드 성공, 실패=%s", successful, len(images), failed_slides)
 
     # PPTX 바이트 출력
     output = io.BytesIO()
