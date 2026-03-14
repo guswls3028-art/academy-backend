@@ -5,6 +5,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from django.db import IntegrityError
+from django.utils import timezone as tz
+
 
 def create_notification_log(
     tenant_id: int,
@@ -45,3 +48,62 @@ def create_notification_log(
         sqs_message_id=sqs_message_id[:128] if sqs_message_id else "",
     )
     return True
+
+
+def claim_notification_slot(
+    tenant_id: int,
+    message_mode: str,
+    business_idempotency_key: str,
+    sqs_message_id: str = "",
+    recipient_summary: str = "",
+) -> tuple[bool, int | None]:
+    """
+    Atomic claim: insert a 'processing' row. If unique constraint fails, it's a duplicate.
+
+    Returns:
+        (True, log_id): Slot claimed successfully. Proceed to send.
+        (False, None): Duplicate. Already claimed/sent by another worker.
+    """
+    from apps.support.messaging.models import NotificationLog
+
+    if not business_idempotency_key:
+        # Legacy message without business key — skip claim, fall through to old path
+        return True, None
+
+    try:
+        log = NotificationLog.objects.create(
+            tenant_id=tenant_id,
+            message_mode=message_mode[:20] if message_mode else "",
+            business_idempotency_key=business_idempotency_key,
+            status="processing",
+            claimed_at=tz.now(),
+            success=False,
+            amount_deducted=Decimal("0"),
+            recipient_summary=recipient_summary[:500] if recipient_summary else "",
+            sqs_message_id=sqs_message_id[:128] if sqs_message_id else "",
+        )
+        return True, log.id
+    except IntegrityError:
+        return False, None
+
+
+def finalize_notification(
+    log_id: int,
+    *,
+    success: bool,
+    amount_deducted: Decimal = Decimal("0"),
+    template_summary: str = "",
+    failure_reason: str = "",
+    message_body: str = "",
+) -> None:
+    """Update a claimed notification slot with final result."""
+    from apps.support.messaging.models import NotificationLog
+
+    NotificationLog.objects.filter(id=log_id).update(
+        success=success,
+        amount_deducted=amount_deducted,
+        status="sent" if success else "failed",
+        template_summary=template_summary[:255] if template_summary else "",
+        failure_reason=failure_reason[:500] if failure_reason else "",
+        message_body=message_body[:2000] if message_body else "",
+    )

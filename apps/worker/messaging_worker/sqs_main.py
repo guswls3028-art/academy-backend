@@ -506,16 +506,23 @@ def main() -> int:
                     pf_id = pf_id_tenant or cfg.SOLAPI_KAKAO_PF_ID
                     template_id = (template_id_msg or "").strip() or cfg.SOLAPI_KAKAO_TEMPLATE_ID
 
-                    # DB-level dedup: Redis 장애 복구 후 재처리 시 이미 발송된 메시지 스킵
-                    if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
+                    # Business-level atomic claim (Layer 2: DB dedup via unique constraint)
+                    business_key = data.get("business_idempotency_key", "")
+                    claim_log_id = None
+                    if business_key and tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
                         try:
-                            from apps.support.messaging.models import NotificationLog as _NL
-                            if _NL.objects.filter(
-                                sqs_message_id=message_id, success=True
-                            ).exists():
+                            from academy.adapters.db.django.repositories_messaging import claim_notification_slot
+                            claimed, claim_log_id = claim_notification_slot(
+                                tenant_id=int(tenant_id),
+                                message_mode=message_mode or "sms",
+                                business_idempotency_key=business_key,
+                                sqs_message_id=message_id,
+                                recipient_summary=to[:4] + "****" if to else "",
+                            )
+                            if not claimed:
                                 logger.info(
-                                    "DB dedup: message_id=%s already sent successfully, skipping",
-                                    message_id,
+                                    "Business dedup: key=%s already claimed, skipping (tenant=%s)",
+                                    business_key[:16], tenant_id,
                                 )
                                 queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
@@ -525,7 +532,29 @@ def main() -> int:
                                 _current_receipt_handle = None
                                 continue
                         except Exception as e:
-                            logger.warning("DB dedup check failed (proceeding): %s", e)
+                            logger.warning("Business claim failed (proceeding with legacy path): %s", e)
+                            claim_log_id = None
+                    else:
+                        # Legacy DB-level dedup: Redis 장애 복구 후 재처리 시 이미 발송된 메시지 스킵
+                        if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
+                            try:
+                                from apps.support.messaging.models import NotificationLog as _NL
+                                if _NL.objects.filter(
+                                    sqs_message_id=message_id, success=True
+                                ).exists():
+                                    logger.info(
+                                        "DB dedup: message_id=%s already sent successfully, skipping",
+                                        message_id,
+                                    )
+                                    queue_client.delete_message(
+                                        queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                                        receipt_handle=receipt_handle,
+                                    )
+                                    _msg_deleted = True
+                                    _current_receipt_handle = None
+                                    continue
+                            except Exception as e:
+                                logger.warning("DB dedup check failed (proceeding): %s", e)
 
                     # 잔액 검증 및 차감 (Django + info 있을 때, 단가 > 0)
                     deducted = False
@@ -698,18 +727,29 @@ def main() -> int:
                             try:
                                 from decimal import Decimal
                                 from apps.support.messaging.credit_services import rollback_credits
-                                from academy.adapters.db.django.repositories_messaging import create_notification_log
+                                from academy.adapters.db.django.repositories_messaging import (
+                                    create_notification_log, finalize_notification,
+                                )
                                 if result.get("status") == "ok":
-                                    create_notification_log(
-                                        tenant_id=int(tenant_id),
-                                        success=True,
-                                        amount_deducted=Decimal(str(base_price)),
-                                        recipient_summary=to[:4] + "****",
-                                        template_summary=template_id or "SMS",
-                                        message_body=text[:2000],
-                                        message_mode=message_mode,
-                                        sqs_message_id=message_id,
-                                    )
+                                    if claim_log_id is not None:
+                                        finalize_notification(
+                                            claim_log_id,
+                                            success=True,
+                                            amount_deducted=Decimal(str(base_price)),
+                                            template_summary=template_id or "SMS",
+                                            message_body=text[:2000],
+                                        )
+                                    else:
+                                        create_notification_log(
+                                            tenant_id=int(tenant_id),
+                                            success=True,
+                                            amount_deducted=Decimal(str(base_price)),
+                                            recipient_summary=to[:4] + "****",
+                                            template_summary=template_id or "SMS",
+                                            message_body=text[:2000],
+                                            message_mode=message_mode,
+                                            sqs_message_id=message_id,
+                                        )
                                 else:
                                     if deducted:
                                         rollback_credits(int(tenant_id), base_price)
@@ -725,16 +765,24 @@ def main() -> int:
                                         ) + (raw_reason or "")[:400]
                                     else:
                                         failure_reason = raw_reason
-                                    create_notification_log(
-                                        tenant_id=int(tenant_id),
-                                        success=False,
-                                        amount_deducted=Decimal("0"),
-                                        recipient_summary=to[:4] + "****",
-                                        failure_reason=failure_reason[:500],
-                                        message_body=text[:2000],
-                                        message_mode=message_mode,
-                                        sqs_message_id=message_id,
-                                    )
+                                    if claim_log_id is not None:
+                                        finalize_notification(
+                                            claim_log_id,
+                                            success=False,
+                                            failure_reason=failure_reason[:500],
+                                            message_body=text[:2000],
+                                        )
+                                    else:
+                                        create_notification_log(
+                                            tenant_id=int(tenant_id),
+                                            success=False,
+                                            amount_deducted=Decimal("0"),
+                                            recipient_summary=to[:4] + "****",
+                                            failure_reason=failure_reason[:500],
+                                            message_body=text[:2000],
+                                            message_mode=message_mode,
+                                            sqs_message_id=message_id,
+                                        )
                             except Exception as e:
                                 logger.exception("NotificationLog/rollback failed: %s", e)
                                 if deducted and result.get("status") != "ok":

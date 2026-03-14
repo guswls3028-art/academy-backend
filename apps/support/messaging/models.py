@@ -37,12 +37,33 @@ class NotificationLog(models.Model):
         max_length=128, blank=True, default="", db_index=True,
         help_text="SQS MessageId for dedup (empty for legacy logs)",
     )
+    business_idempotency_key = models.CharField(
+        max_length=64, blank=True, default="",
+        help_text="SHA-256 hash of business dedup key (tenant+channel+event+target+recipient). Empty for legacy.",
+    )
+    status = models.CharField(
+        max_length=20, blank=True, default="sent",
+        choices=[
+            ("processing", "처리중"),
+            ("sent", "발송완료"),
+            ("failed", "실패"),
+        ],
+        help_text="발송 상태. processing=선점됨, sent=발송완료, failed=실패",
+    )
+    claimed_at = models.DateTimeField(null=True, blank=True, help_text="Worker 선점 시각")
 
     class Meta:
         app_label = "messaging"
         ordering = ["-sent_at"]
         verbose_name = "Notification log"
         verbose_name_plural = "Notification logs"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "message_mode", "business_idempotency_key"],
+                condition=models.Q(business_idempotency_key__gt=""),
+                name="uniq_notification_business_key_per_tenant_channel",
+            ),
+        ]
 
 
 class MessageTemplate(models.Model):
