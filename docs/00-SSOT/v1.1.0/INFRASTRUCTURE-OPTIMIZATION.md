@@ -532,6 +532,15 @@ No additional drain work needed.
 
 ## 7. Monitoring & Continuous Verification
 
+**Existing CloudWatch alarms (confirmed 2026-03-15, 5 active, all OK):**
+- `academy-video-BatchJobFailures` (AWS/Batch Failed)
+- `academy-video-DeadJobs` (Academy/Video DeadJobs)
+- `academy-video-FailedJobs` (Academy/Video FailedJobs)
+- `academy-video-QueueRunnable` (AWS/Batch RUNNABLE)
+- `academy-video-UploadFailures` (Academy/Video UploadFailures)
+
+**Gap:** Video monitoring exists. API/RDS/Redis/SQS/Messaging alarms are NOT yet created — these are recommended additions below.
+
 | Metric | Threshold | Check Frequency | Action |
 |--------|-----------|-----------------|--------|
 | `/healthz` response | 200 | Every deploy + continuous ALB | Page on failure |
@@ -558,7 +567,7 @@ No additional drain work needed.
 |-------|--------|--------|--------|--------|
 | 1 | **CI/CD `cancel-in-progress: false`** | **Prevent orphaned ASG refreshes** | 5 min | ✅ [COMPLETED] |
 | 2 | **Video Worker CI/CD** | **Build-and-push only, deploy-infra removed** | Multiple | ✅ [COMPLETED] OIDC+build-arg+permission+params+profile fixed, deploy-infra removed |
-| 3 | **Video job auto-recovery cron** | **Prevent stuck jobs after daemon crash** | 15 min | **Pending** |
+| 3 | **Video job auto-recovery** | **EventBridge rules already exist** | — | ✅ [ALREADY EXISTS] 3 rules confirmed |
 | 4 | ECR manifest-aware cleanup | $200/mo savings + deployment hygiene | Done | ✅ [COMPLETED] 34,026 images deleted (5.2TB → 5.4GB) |
 | 5 | ECR lifecycle policy re-apply | Recurrence prevention | Done | ✅ [COMPLETED] Applied 2026-03-15, verify after 2026-03-17 |
 | 6 | Messaging business-level idempotency | Atomic claim + DB UniqueConstraint + fail-closed | 4 hours | ✅ [COMPLETED] 3-layer defense (Redis lock + DB unique + transport dedup) |
@@ -716,11 +725,14 @@ if exists:
 
 ## 12. Operational Recovery Automation
 
-### 12.1 Video Job Auto-Recovery Cron **[Critical — must implement]**
+### 12.1 Video Job Auto-Recovery **[ALREADY EXISTS — EventBridge]**
 
-**Problem:** If the video daemon crashes mid-job, the video record stays in `PENDING` status indefinitely. No auto-recovery exists.
+**Status:** Auto-recovery is already implemented via EventBridge rules (confirmed 2026-03-15):
+- `academy-v1-enqueue-uploaded-videos` — re-enqueue UPLOADED videos
+- `academy-v1-reconcile-video-jobs` — reconcile stale jobs
+- `academy-v1-video-scan-stuck-rate` — detect stuck RUNNING jobs
 
-**Fix:** Schedule `scan_stuck_video_jobs` management command as a cron job.
+**Previous assessment was incorrect:** §12.1 originally stated "no auto-recovery exists." This was wrong — EventBridge-based recovery was already deployed.
 
 ```bash
 # Crontab on video worker instance (or via SSM RunCommand)
