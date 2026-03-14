@@ -291,6 +291,14 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
             ).exists():
                 raise serializers.ValidationError({"ps_number": "이미 사용 중인 PS 번호입니다."})
 
+        # username(아이디) 중복 검사 — ps_number 변경 시 User.username도 동기화되므로
+        if ps_number and ps_number != instance.ps_number and instance.user:
+            from apps.core.models.user import user_internal_username
+            from django.contrib.auth import get_user_model
+            internal = user_internal_username(tenant, ps_number)
+            if get_user_model().objects.filter(username=internal).exclude(id=instance.user_id).exists():
+                raise serializers.ValidationError({"ps_number": "이미 사용 중인 아이디입니다."})
+
         return attrs
 
 
