@@ -228,7 +228,6 @@ class StudentViewSet(ModelViewSet):
                 tenant=request.tenant,
                 parent_phone=parent_phone,
                 student_name=data.get("name", ""),
-                parent_password=password,
             )
 
         # 2️⃣ User 생성 (tenant + 내부 username t{id}_{ps_number} 로 전역 유일)
@@ -508,7 +507,6 @@ class StudentViewSet(ModelViewSet):
                             tenant=tenant,
                             parent_phone=parent_phone,
                             student_name=item.get("name", ""),
-                            parent_password=password,
                         )
 
                     user = student_repo.user_create_user(
@@ -668,7 +666,6 @@ class StudentViewSet(ModelViewSet):
                             tenant=tenant,
                             parent_phone=parent_phone,
                             student_name=student_data.get("name", ""),
-                            parent_password=password,
                         )
                     phone_raw = str(student_data.get("phone", "")).replace(" ", "").replace("-", "").replace(".", "")
                     phone = phone_raw if phone_raw and len(phone_raw) == 11 and phone_raw.startswith("010") else None
@@ -1188,7 +1185,6 @@ def _approve_registration_request(request, reg):
                     tenant=tenant,
                     parent_phone=parent_phone,
                     student_name=name,
-                    parent_password=temp_password,
                 )
             User = get_user_model()
             user = student_repo.user_create_user(
@@ -1268,13 +1264,13 @@ class RegistrationRequestViewSet(ModelViewSet):
         return queryset
 
     def get_authenticators(self):
-        # create는 비로그인 요청 허용 → JWT 검사 생략 (만료 토큰 시 401 방지)
-        if getattr(self, "action", None) == "create":
+        # create/check_duplicate는 비로그인 요청 허용 → JWT 검사 생략 (만료 토큰 시 401 방지)
+        if getattr(self, "action", None) in ("create", "check_duplicate"):
             return []
         return super().get_authenticators()
 
     def get_permissions(self):
-        if getattr(self, "action", None) == "create":
+        if getattr(self, "action", None) in ("create", "check_duplicate"):
             return [AllowAny(), TenantResolved()]
         return [IsAuthenticated(), TenantResolvedAndStaff()]
 
@@ -1282,6 +1278,71 @@ class RegistrationRequestViewSet(ModelViewSet):
         if getattr(self, "action", None) == "create":
             return RegistrationRequestCreateSerializer
         return RegistrationRequestListSerializer
+
+    @action(detail=False, methods=["post"], url_path="check_duplicate")
+    def check_duplicate(self, request):
+        """
+        회원가입 실시간 중복검사.
+        POST body: { "username": "abc", "phone": "01012345678" }
+        둘 다 선택적 — 입력된 필드만 검사.
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "테넌트를 확인할 수 없습니다."}, status=403)
+
+        username = (request.data.get("username") or "").strip()
+        phone = (request.data.get("phone") or "").strip().replace("-", "")
+
+        result = {}
+
+        if username:
+            # 1) 이미 등록된 학생 (활성)
+            exists = Student.objects.filter(
+                tenant=tenant,
+                deleted_at__isnull=True,
+                user__username__endswith=f"_{username}",
+            ).exists()
+            if exists:
+                result["username"] = {"available": False, "reason": "이미 사용 중인 아이디입니다."}
+            else:
+                # 2) 승인 대기 중인 신청
+                pending = StudentRegistrationRequest.objects.filter(
+                    tenant=tenant,
+                    status=StudentRegistrationRequest.PENDING,
+                    username=username,
+                ).exists()
+                if pending:
+                    result["username"] = {"available": False, "reason": "승인 대기 중인 아이디입니다. 선생님의 승인을 기다려 주세요."}
+                else:
+                    result["username"] = {"available": True}
+
+        if phone and len(phone) == 11:
+            # 1) 이미 등록된 학생 (활성)
+            existing = Student.objects.filter(
+                tenant=tenant,
+                deleted_at__isnull=True,
+            ).filter(
+                Q(phone=phone) | Q(parent_phone=phone)
+            ).first()
+            if existing:
+                result["phone"] = {
+                    "available": False,
+                    "reason": "이미 등록된 전화번호입니다. 기존 계정으로 로그인해 주세요.",
+                }
+            else:
+                # 2) 승인 대기 중인 신청
+                pending = StudentRegistrationRequest.objects.filter(
+                    tenant=tenant,
+                    status=StudentRegistrationRequest.PENDING,
+                ).filter(
+                    Q(phone=phone) | Q(parent_phone=phone)
+                ).exists()
+                if pending:
+                    result["phone"] = {"available": False, "reason": "해당 전화번호로 가입 신청이 승인 대기 중입니다."}
+                else:
+                    result["phone"] = {"available": True}
+
+        return Response(result)
 
     def create(self, request, *args, **kwargs):
         if not getattr(request, "tenant", None):
