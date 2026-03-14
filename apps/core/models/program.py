@@ -99,6 +99,30 @@ class Program(TimestampModel):
         help_text="결제 관련 이메일 알림 수신",
     )
 
+    # ✅ 결제 방식
+    BILLING_MODE_CHOICES = [
+        ("AUTO_CARD", "카드 자동결제"),
+        ("INVOICE_REQUEST", "세금계산서 청구"),
+    ]
+    billing_mode = models.CharField(
+        max_length=20,
+        choices=BILLING_MODE_CHOICES,
+        default="AUTO_CARD",
+        help_text="결제 방식: 카드 자동결제 또는 세금계산서 청구",
+    )
+    next_billing_at = models.DateField(
+        null=True, blank=True,
+        help_text="다음 결제 예정일",
+    )
+    cancel_at_period_end = models.BooleanField(
+        default=False,
+        help_text="현재 구독 기간 종료 시 자동 해지",
+    )
+    canceled_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="해지 요청 시각",
+    )
+
     feature_flags = models.JSONField(default=dict, blank=True)
     ui_config = models.JSONField(default=dict, blank=True)
 

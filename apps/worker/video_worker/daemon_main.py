@@ -336,11 +336,12 @@ def main() -> int:
             job_obj = poll_next_job()
         except Exception as e:
             _log("DAEMON_POLL_ERROR", error=str(e))
-            # DB 연결이 끊겼을 수 있으므로 리셋
+            # DB 연결이 끊겼을 수 있으므로 리셋 + backoff 증가
             try:
                 connection.close()
             except Exception:
                 pass
+            current_interval = min(current_interval * 2, DAEMON_POLL_MAX_INTERVAL)
             if _shutdown_event.wait(timeout=current_interval):
                 break
             continue

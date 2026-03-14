@@ -1,0 +1,3 @@
+# Worker AI Tools — PPT generation + PDF question splitting
+python-pptx
+PyMuPDF

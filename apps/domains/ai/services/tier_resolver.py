@@ -53,7 +53,7 @@ def resolve_tier(
         return "basic"
     
     # OMR/status detection, 엑셀 파싱 -> Basic 이상 필요
-    if job_type_lower in ("omr_grading", "homework_video_analysis", "excel_parsing"):
+    if job_type_lower in ("omr_grading", "homework_video_analysis", "excel_parsing", "ppt_generation"):
         return "basic"
     
     # 고급 분석 -> Premium 필요 (향후)
@@ -91,6 +91,7 @@ def validate_tier_for_job_type(tier: str, job_type: str) -> bool:
             "excel_parsing",
             "attendance_excel_export",
             "staff_excel_export",
+            "ppt_generation",
         )
     
     # Premium: 모든 작업 허용

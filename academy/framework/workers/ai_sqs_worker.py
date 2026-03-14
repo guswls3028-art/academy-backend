@@ -20,6 +20,7 @@ from typing import Optional
 from academy.adapters.db.django.uow import DjangoUnitOfWork
 from academy.adapters.queue.sqs.ai_queue import SQSAIQueueAdapter
 from academy.adapters.queue.sqs.visibility_extender import SQSVisibilityExtender
+from libs.queue import QueueUnavailableError
 from academy.application.use_cases.ai.process_ai_job_from_sqs import (
     prepare_ai_job,
     complete_ai_job,
@@ -107,13 +108,10 @@ def run_ai_sqs_worker() -> int:
             try:
                 try:
                     message, tier = _weighted_poll(queue)
-                except Exception as e:
-                    from libs.queue import QueueUnavailableError
-                    if type(e).__name__ == "QueueUnavailableError":
-                        logger.warning("SQS unavailable, waiting 60s: %s", e)
-                        time.sleep(60)
-                        continue
-                    raise
+                except QueueUnavailableError:
+                    logger.warning("SQS unavailable, waiting 60s")
+                    time.sleep(60)
+                    continue
 
                 if not message:
                     consecutive_errors = 0

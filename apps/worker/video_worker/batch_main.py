@@ -59,8 +59,14 @@ def _handle_term(signum: int, frame: object) -> None:
     jid = _current_job_id[0]
     if jid:
         try:
-            job_fail_retry(jid, "TERMINATED")
-            _log_json("BATCH_TERMINATED", job_id=jid, signal=signum)
+            # 현재 상태 확인 후 RUNNING일 때만 RETRY_WAIT로 전환 (SUCCEEDED 덮어쓰기 방지)
+            job_obj = job_get_by_id(jid)
+            if job_obj and job_obj.state == "RUNNING":
+                job_fail_retry(jid, "TERMINATED")
+                _log_json("BATCH_TERMINATED", job_id=jid, signal=signum)
+            else:
+                _log_json("BATCH_SIGNAL_IGNORED", job_id=jid, signal=signum,
+                          reason=f"state={job_obj.state if job_obj else 'NOT_FOUND'}")
         except Exception as e:
             logger.exception("job_fail_retry on signal failed: %s", e)
     sys.exit(1)

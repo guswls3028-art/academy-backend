@@ -142,6 +142,12 @@ def _check_subscription(tenant, request) -> JsonResponse | None:
             status=402,
         )
     except Exception as e:
-        # 구독 체크 실패 시에는 통과 (서비스 가용성 우선)
-        logger.warning("Subscription check failed for tenant %s: %s", tenant.code, e)
-        return None
+        # 구독 체크 실패 시 fail-closed: 서비스 가용성보다 보안/과금 정확성 우선
+        logger.exception("Subscription check failed (fail-closed) for tenant %s: %s", tenant.code, e)
+        return JsonResponse(
+            {
+                "detail": "일시적인 서비스 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+                "code": "subscription_check_error",
+            },
+            status=503,
+        )

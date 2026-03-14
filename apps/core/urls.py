@@ -21,6 +21,7 @@ from apps.core.views import (
     TenantOwnerListView,
     TenantOwnerDetailView,
     PublicOgMetaView,
+    LegalConfigView,
 )
 
 router = DefaultRouter()
@@ -40,6 +41,7 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/", TenantDetailView.as_view(), name="core-tenant-detail"),
     path("tenant-info/", TenantInfoView.as_view(), name="core-tenant-info"),
     path("og-meta/", PublicOgMetaView.as_view(), name="core-og-meta"),
+    path("legal-config/", LegalConfigView.as_view(), name="core-legal-config"),
     path("tenants/create/", TenantCreateView.as_view(), name="core-tenant-create"),
     path("tenants/<int:tenant_id>/owner/", TenantOwnerView.as_view(), name="core-tenant-owner"),
     path("tenants/<int:tenant_id>/owners/", TenantOwnerListView.as_view(), name="core-tenant-owners"),

@@ -70,8 +70,11 @@ class Video(TimestampModel):
 
     session = models.ForeignKey(
         Session,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name="videos",
+        help_text="SET_NULL: Session 삭제 시 soft-delete 보존 (6개월 retention 보장)",
     )
     
     folder = models.ForeignKey(

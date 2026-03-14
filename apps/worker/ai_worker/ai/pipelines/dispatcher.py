@@ -19,6 +19,7 @@ from apps.worker.ai_worker.ai.pipelines.excel_export_handler import (
     handle_attendance_excel_export,
     handle_staff_excel_export,
 )
+from apps.worker.ai_worker.ai.pipelines.ppt_handler import handle_ppt_generation_job
 from apps.worker.ai_worker.ai.utils.image_resizer import resize_if_large
 from apps.worker.ai_worker.storage.downloader import download_to_tmp
 import logging
@@ -69,6 +70,8 @@ def handle_ai_job(job: AIJob) -> AIResult:
             return handle_attendance_excel_export(job)
         if job_type_lower == "staff_excel_export":
             return handle_staff_excel_export(job)
+        if job_type_lower == "ppt_generation":
+            return handle_ppt_generation_job(job)
 
         cfg = AIConfig.load()
 

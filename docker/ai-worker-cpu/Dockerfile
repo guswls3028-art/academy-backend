@@ -37,6 +37,9 @@ RUN pip install --user --no-cache-dir -r requirements/worker-ai-cpu.txt
 COPY requirements/worker-ai-excel.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/worker-ai-excel.txt
 
+COPY requirements/worker-ai-tools.txt ./requirements/
+RUN pip install --user --no-cache-dir -r requirements/worker-ai-tools.txt
+
 # Excel 파싱 워커 의존: apps.infrastructure.storage.r2_adapter (apps SSOT)
 RUN python -c "from apps.infrastructure.storage.r2_adapter import R2ObjectStorageAdapter" || (echo "ERROR: R2ObjectStorageAdapter not importable" && exit 1)
 # AI 파이프라인 의존: apps.worker.ai_worker.storage.downloader

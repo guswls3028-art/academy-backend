@@ -141,11 +141,12 @@ def resolve_tenant_from_request(request) -> Optional[Tenant]:
             if tenant:
                 return tenant
             # 로컬 개발: 프론트가 X-Tenant-Code: 9999 를 쓰지만 DB에 테넌트 9999가 없는 경우
-            # (ensure_localhost_tenant 미실행 또는 1번만 사용) 첫 번째 활성 테넌트로 폴백.
+            # → 에러 반환 (cross-tenant fallback 금지). ensure_localhost_tenant 실행 필요.
             if host_lower in ("localhost", "127.0.0.1") and raw == "9999":
-                tenant = core_repo.tenant_first_active()
-                if tenant:
-                    return tenant
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Tenant code '9999' not found on localhost. Run: python manage.py ensure_localhost_tenant"
+                )
         return None
 
     raise TenantResolutionError(

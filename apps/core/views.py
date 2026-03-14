@@ -774,6 +774,34 @@ class PublicOgMetaView(APIView):
         })
 
 
+class LegalConfigView(APIView):
+    """
+    GET /api/v1/core/legal-config/
+    공개 API — 법적 고지 메타데이터. 인증 불필요.
+    프론트 법적 페이지 및 푸터에서 사용.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({
+            "company_name": "[TODO_FOR_OWNER: 상호]",
+            "representative": "[TODO_FOR_OWNER: 대표자명]",
+            "business_number": "[TODO_FOR_OWNER: 사업자등록번호]",
+            "ecommerce_number": "[TODO_FOR_OWNER: 통신판매업 신고번호]",
+            "address": "[TODO_FOR_OWNER: 사업장 주소]",
+            "support_email": "[TODO_FOR_OWNER: 고객센터 이메일]",
+            "support_phone": "[TODO_FOR_OWNER: 고객센터 전화번호]",
+            "privacy_officer_name": "[TODO_FOR_OWNER: 개인정보 보호책임자 성명]",
+            "privacy_officer_contact": "[TODO_FOR_OWNER: 개인정보 보호책임자 연락처]",
+            "terms_version": "1.0",
+            "privacy_version": "1.0",
+            "effective_date": "2026-03-14",
+        }, headers={
+            "Cache-Control": "public, max-age=3600",
+            "Access-Control-Allow-Origin": "*",
+        })
+
+
 class TenantCreateView(APIView):
     """
     POST /api/v1/core/tenants/

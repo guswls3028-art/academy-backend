@@ -147,6 +147,8 @@ INSTALLED_APPS = [
     "apps.domains.assets",
     "apps.domains.inventory",
 
+    "apps.billing",
+
     "apps.support.video",
     "apps.support.messaging",
 

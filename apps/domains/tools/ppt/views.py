@@ -1,12 +1,20 @@
 # PATH: apps/domains/tools/ppt/views.py
-# PPT 생성 API — 이미지 업로드 → PPTX 생성 → R2 업로드 → presigned URL 반환
+# PPT 생성 API — async worker migration
+#
+# Flow:
+# 1. Validate auth, tenant, staff, files
+# 2. Upload images to R2 temp location
+# 3. Dispatch "ppt_generation" job to AI worker
+# 4. Return {job_id, status: "PENDING"}
+#
+# Frontend polls GET /api/v1/jobs/{job_id}/progress/ for status.
+# Worker generates PPT, uploads to R2, sets result with download_url.
 
 from __future__ import annotations
 
 import io
 import json
 import logging
-import time
 import uuid
 
 from django.http import JsonResponse
@@ -18,8 +26,6 @@ from django.utils.decorators import method_decorator
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
-from .services import generate_ppt
-
 logger = logging.getLogger(__name__)
 
 # 허용 이미지 MIME 타입 (SVG 제외 — Pillow 미지원 + XXE 벡터)
@@ -28,46 +34,30 @@ ALLOWED_IMAGE_TYPES = {
     "image/bmp", "image/tiff",
 }
 
+# PDF MIME types (for pdf mode)
+ALLOWED_PDF_TYPES = {
+    "application/pdf",
+}
+
 # 이미지 파일 매직 바이트 (실제 바이너리 헤더 검증)
 IMAGE_MAGIC_BYTES = {
     b"\xff\xd8\xff": "image/jpeg",
     b"\x89PNG\r\n\x1a\n": "image/png",
     b"GIF87a": "image/gif",
     b"GIF89a": "image/gif",
-    b"RIFF": "image/webp",  # RIFF____WEBP
+    b"RIFF": "image/webp",
     b"BM": "image/bmp",
-    b"II": "image/tiff",  # little-endian TIFF
-    b"MM": "image/tiff",  # big-endian TIFF
+    b"II": "image/tiff",
+    b"MM": "image/tiff",
 }
 
+PDF_MAGIC = b"%PDF"
+
 # 최대 제한
-MAX_IMAGES = 50  # 50장으로 축소 (메모리 안전 + 실용적 충분)
+MAX_IMAGES = 50
 MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB per image
 MAX_TOTAL_SIZE = 200 * 1024 * 1024  # 200MB total
-
-
-def _jwt_required(view_func):
-    """JWT 인증 필수."""
-    def wrapped(request, *args, **kwargs):
-        auth = JWTAuthentication()
-        result = auth.authenticate(request)
-        if result is None:
-            return JsonResponse(
-                {"detail": "Authentication required", "code": "auth_required"},
-                status=401,
-            )
-        request.user, request.auth = result[0], result[1]
-        return view_func(request, *args, **kwargs)
-    return wrapped
-
-
-def _tenant_required(view_func):
-    """테넌트 필수."""
-    def wrapped(request, *args, **kwargs):
-        if not getattr(request, "tenant", None):
-            return JsonResponse({"detail": "Tenant required"}, status=400)
-        return view_func(request, *args, **kwargs)
-    return wrapped
+MAX_PDF_SIZE = 100 * 1024 * 1024  # 100MB per PDF
 
 
 def _is_tenant_staff(request) -> bool:
@@ -99,18 +89,16 @@ def _validate_order(order: list, image_count: int) -> list[int] | None:
     except (ValueError, TypeError):
         return None
     if sorted(int_order) != list(range(image_count)):
-        return None  # 중복이나 범위 밖 인덱스 차단
+        return None
     return int_order
 
 
 @method_decorator([csrf_exempt, require_POST], name="dispatch")
 class PptGenerateView(View):
-    """POST: 이미지 업로드 → PPT 생성 → R2 저장 → presigned download URL 반환."""
+    """POST: 이미지/PDF 업로드 → R2 임시 저장 → 워커 job 발행 → job_id 반환."""
 
     def post(self, request, *args, **kwargs):
-        t_start = time.monotonic()
-
-        # JWT 인증
+        # ── JWT 인증 ──
         try:
             auth = JWTAuthentication()
             result = auth.authenticate(request)
@@ -132,32 +120,42 @@ class PptGenerateView(View):
                 status=401,
             )
 
-        # 테넌트 필수
+        # ── 테넌트 필수 ──
         if not getattr(request, "tenant", None):
             return JsonResponse({"detail": "Tenant required"}, status=400)
 
-        # 스태프 확인
+        # ── 스태프 확인 ──
         if not _is_tenant_staff(request):
             return JsonResponse(
                 {"detail": "Staff permission required"},
                 status=403,
             )
 
-        # 이미지 파일 추출
+        tenant_id = str(request.tenant.id)
+
+        # ── 모드 판별: PDF or Images ──
+        pdf_file = request.FILES.get("pdf")
         images_files = request.FILES.getlist("images")
-        if not images_files:
+
+        if pdf_file:
+            return self._handle_pdf_mode(request, pdf_file, tenant_id)
+        elif images_files:
+            return self._handle_images_mode(request, images_files, tenant_id)
+        else:
             return JsonResponse(
-                {"detail": "이미지를 업로드해주세요.", "code": "no_images"},
+                {"detail": "이미지 또는 PDF를 업로드해주세요.", "code": "no_files"},
                 status=400,
             )
 
+    def _handle_images_mode(self, request, images_files, tenant_id: str) -> JsonResponse:
+        """Images mode: upload images to R2, dispatch job."""
         if len(images_files) > MAX_IMAGES:
             return JsonResponse(
                 {"detail": f"최대 {MAX_IMAGES}장까지 업로드할 수 있습니다.", "code": "too_many_images"},
                 status=400,
             )
 
-        # MIME 타입 + 크기 + 매직 바이트 검증
+        # MIME + size + magic byte validation
         total_size = 0
         for f in images_files:
             ct = (f.content_type or "").lower()
@@ -173,7 +171,6 @@ class PptGenerateView(View):
                 )
             total_size += f.size
 
-            # 매직 바이트 검증 (첫 16바이트 읽고 되감기)
             header = f.read(16)
             f.seek(0)
             if not _verify_image_magic(header):
@@ -188,7 +185,7 @@ class PptGenerateView(View):
                 status=400,
             )
 
-        # 순서 파싱
+        # Parse order
         order_str = request.POST.get("order", "")
         validated_order = None
         if order_str:
@@ -196,9 +193,9 @@ class PptGenerateView(View):
                 raw_order = json.loads(order_str)
                 validated_order = _validate_order(raw_order, len(images_files))
             except (json.JSONDecodeError, TypeError):
-                pass  # 잘못된 순서 → 무시 (원본 순서)
+                pass
 
-        # 설정 파싱
+        # Parse settings
         settings_str = request.POST.get("settings", "{}")
         try:
             ppt_settings = json.loads(settings_str)
@@ -207,22 +204,17 @@ class PptGenerateView(View):
         except (json.JSONDecodeError, TypeError):
             ppt_settings = {}
 
-        # 이미지 바이트 읽기 (스트리밍으로 한장씩)
-        raw_images = []
-        for f in images_files:
-            raw_images.append((f.name, f.read()))
-
-        # 순서 적용 (검증된 순서만)
+        # Apply order
+        ordered_files = list(images_files)
         if validated_order is not None:
-            raw_images = [raw_images[i] for i in validated_order]
+            ordered_files = [images_files[i] for i in validated_order]
 
-        # PPT 생성 설정 추출 및 검증
+        # Extract and validate PPT config
         aspect_ratio = ppt_settings.get("aspect_ratio", "16:9")
         if aspect_ratio not in ("16:9", "4:3"):
             aspect_ratio = "16:9"
 
         background = ppt_settings.get("background", "black")
-        # background XSS/injection 방지: 허용된 이름 또는 hex만
         if background not in ("black", "white", "dark_gray"):
             if not (isinstance(background, str) and len(background) == 7 and background.startswith("#")):
                 background = "black"
@@ -231,89 +223,169 @@ class PptGenerateView(View):
         if fit_mode not in ("contain", "cover", "stretch"):
             fit_mode = "contain"
 
-        invert = bool(ppt_settings.get("invert", False))
-        grayscale = bool(ppt_settings.get("grayscale", False))
-        auto_enhance = bool(ppt_settings.get("auto_enhance", False))
+        # Upload each image to R2 temp location
+        from apps.infrastructure.storage.r2 import (
+            upload_fileobj_to_r2_storage,
+            generate_presigned_get_url_storage,
+        )
 
-        # 밝기/대비: float, clamp 0.2~3.0
-        try:
-            brightness_val = float(ppt_settings.get("brightness", 1.0))
-        except (ValueError, TypeError):
-            brightness_val = 1.0
-        try:
-            contrast_val = float(ppt_settings.get("contrast", 1.0))
-        except (ValueError, TypeError):
-            contrast_val = 1.0
+        job_unique = uuid.uuid4().hex[:12]
+        download_urls = []
 
-        per_slide = ppt_settings.get("per_slide")
-        if per_slide is not None and not isinstance(per_slide, list):
-            per_slide = None
+        for idx, f in enumerate(ordered_files):
+            ext = f.name.rsplit(".", 1)[-1] if "." in f.name else "bin"
+            tmp_key = f"tenants/{tenant_id}/tools/ppt/tmp/{job_unique}/{idx}.{ext}"
 
-        try:
-            pptx_bytes = generate_ppt(
-                raw_images,
-                aspect_ratio=aspect_ratio,
-                background=background,
-                fit_mode=fit_mode,
-                invert=invert,
-                grayscale=grayscale,
-                auto_enhance=auto_enhance,
-                brightness=brightness_val,
-                contrast=contrast_val,
-                per_slide_settings=per_slide,
-            )
-        except ValueError as exc:
-            logger.warning("PPT 생성 실패 (validation): tenant=%s user=%s: %s",
-                           request.tenant.id, request.user.id, exc)
-            return JsonResponse(
-                {"detail": str(exc), "code": "generation_failed"},
-                status=400,
-            )
-        except Exception:
-            logger.exception("PPT 생성 실패 (unexpected): tenant=%s user=%s",
-                             request.tenant.id, request.user.id)
-            return JsonResponse(
-                {"detail": "PPT 생성 중 오류가 발생했습니다.", "code": "generation_failed"},
-                status=500,
-            )
-
-        # R2 업로드
-        unique_id = uuid.uuid4().hex[:12]
-        r2_key = f"tenants/{request.tenant.id}/tools/ppt/{unique_id}.pptx"
-        filename = f"presentation_{unique_id}.pptx"
-
-        try:
-            from apps.infrastructure.storage.r2 import (
-                upload_fileobj_to_r2_storage,
-                generate_presigned_get_url_storage,
-            )
             upload_fileobj_to_r2_storage(
-                fileobj=io.BytesIO(pptx_bytes),
-                key=r2_key,
-                content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                fileobj=f,
+                key=tmp_key,
+                content_type=f.content_type or "application/octet-stream",
             )
-            download_url = generate_presigned_get_url_storage(
-                key=r2_key,
-                expires_in=3600,
-                filename=filename,
-                content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            )
-        except Exception:
-            logger.exception("R2 업로드 실패: tenant=%s key=%s", request.tenant.id, r2_key)
+            presigned = generate_presigned_get_url_storage(key=tmp_key, expires_in=3600)
+            download_urls.append(presigned)
+
+        # Build settings payload for worker
+        image_settings = {
+            "invert": bool(ppt_settings.get("invert", False)),
+            "grayscale": bool(ppt_settings.get("grayscale", False)),
+            "auto_enhance": bool(ppt_settings.get("auto_enhance", False)),
+            "brightness": float(ppt_settings.get("brightness", 1.0)),
+            "contrast": float(ppt_settings.get("contrast", 1.0)),
+        }
+        per_slide = ppt_settings.get("per_slide")
+        if isinstance(per_slide, list):
+            image_settings["per_slide"] = per_slide
+
+        # Dispatch job
+        from apps.domains.ai.gateway import dispatch_job
+
+        result = dispatch_job(
+            job_type="ppt_generation",
+            payload={
+                "mode": "images",
+                "download_urls": download_urls,
+                "config": {
+                    "aspect_ratio": aspect_ratio,
+                    "background": background,
+                    "fit_mode": fit_mode,
+                },
+                "settings": image_settings,
+                "tenant_id": tenant_id,
+            },
+            tenant_id=tenant_id,
+            source_domain="tools",
+        )
+
+        if not result.get("ok"):
             return JsonResponse(
-                {"detail": "파일 저장에 실패했습니다. 잠시 후 다시 시도해주세요.", "code": "storage_failed"},
+                {"detail": result.get("error", "작업 등록 실패"), "code": "dispatch_failed"},
                 status=500,
             )
 
-        elapsed = time.monotonic() - t_start
         logger.info(
-            "PPT 생성 완료: tenant=%s user=%s slides=%d size=%d elapsed=%.1fs",
-            request.tenant.id, request.user.id, len(raw_images), len(pptx_bytes), elapsed,
+            "PPT 작업 등록: tenant=%s user=%s job_id=%s images=%d",
+            tenant_id, request.user.id, result["job_id"], len(download_urls),
         )
 
         return JsonResponse({
-            "download_url": download_url,
-            "filename": filename,
-            "slide_count": len(raw_images),
-            "size_bytes": len(pptx_bytes),
+            "job_id": result["job_id"],
+            "status": "PENDING",
+            "slide_count": len(download_urls),
+        })
+
+    def _handle_pdf_mode(self, request, pdf_file, tenant_id: str) -> JsonResponse:
+        """PDF mode: upload PDF to R2, dispatch job with question splitting."""
+        ct = (pdf_file.content_type or "").lower()
+        if ct not in ALLOWED_PDF_TYPES:
+            return JsonResponse(
+                {"detail": "PDF 파일만 업로드할 수 있습니다.", "code": "invalid_type"},
+                status=400,
+            )
+
+        if pdf_file.size > MAX_PDF_SIZE:
+            return JsonResponse(
+                {"detail": f"PDF가 너무 큽니다 ({pdf_file.size // (1024*1024)}MB, 최대 100MB).", "code": "pdf_too_large"},
+                status=400,
+            )
+
+        # Magic byte verification
+        header = pdf_file.read(16)
+        pdf_file.seek(0)
+        if not header.startswith(PDF_MAGIC):
+            return JsonResponse(
+                {"detail": "유효한 PDF 파일이 아닙니다.", "code": "invalid_pdf"},
+                status=400,
+            )
+
+        # Parse settings
+        settings_str = request.POST.get("settings", "{}")
+        try:
+            ppt_settings = json.loads(settings_str)
+            if not isinstance(ppt_settings, dict):
+                ppt_settings = {}
+        except (json.JSONDecodeError, TypeError):
+            ppt_settings = {}
+
+        aspect_ratio = ppt_settings.get("aspect_ratio", "16:9")
+        if aspect_ratio not in ("16:9", "4:3"):
+            aspect_ratio = "16:9"
+
+        background = ppt_settings.get("background", "black")
+        if background not in ("black", "white", "dark_gray"):
+            if not (isinstance(background, str) and len(background) == 7 and background.startswith("#")):
+                background = "black"
+
+        fit_mode = ppt_settings.get("fit_mode", "contain")
+        if fit_mode not in ("contain", "cover", "stretch"):
+            fit_mode = "contain"
+
+        # Upload PDF to R2
+        from apps.infrastructure.storage.r2 import (
+            upload_fileobj_to_r2_storage,
+            generate_presigned_get_url_storage,
+        )
+
+        job_unique = uuid.uuid4().hex[:12]
+        tmp_key = f"tenants/{tenant_id}/tools/ppt/tmp/{job_unique}/source.pdf"
+
+        upload_fileobj_to_r2_storage(
+            fileobj=pdf_file,
+            key=tmp_key,
+            content_type="application/pdf",
+        )
+        download_url = generate_presigned_get_url_storage(key=tmp_key, expires_in=3600)
+
+        # Dispatch job
+        from apps.domains.ai.gateway import dispatch_job
+
+        result = dispatch_job(
+            job_type="ppt_generation",
+            payload={
+                "mode": "pdf",
+                "download_url": download_url,
+                "config": {
+                    "aspect_ratio": aspect_ratio,
+                    "background": background,
+                    "fit_mode": fit_mode,
+                },
+                "tenant_id": tenant_id,
+            },
+            tenant_id=tenant_id,
+            source_domain="tools",
+        )
+
+        if not result.get("ok"):
+            return JsonResponse(
+                {"detail": result.get("error", "작업 등록 실패"), "code": "dispatch_failed"},
+                status=500,
+            )
+
+        logger.info(
+            "PPT(PDF) 작업 등록: tenant=%s user=%s job_id=%s",
+            tenant_id, request.user.id, result["job_id"],
+        )
+
+        return JsonResponse({
+            "job_id": result["job_id"],
+            "status": "PENDING",
         })

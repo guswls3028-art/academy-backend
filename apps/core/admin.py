@@ -32,6 +32,9 @@ class ProgramAdmin(admin.ModelAdmin):
         "brand_key",
         "login_variant",
         "plan",
+        "billing_mode",
+        "next_billing_at",
+        "cancel_at_period_end",
         "is_active",
     )
-    list_filter = ("login_variant", "plan", "is_active")
+    list_filter = ("login_variant", "plan", "billing_mode", "cancel_at_period_end", "is_active")

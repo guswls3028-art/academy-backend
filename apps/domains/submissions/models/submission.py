@@ -84,5 +84,17 @@ class Submission(TimestampModel):
             models.Index(fields=["user", "created_at"]),
             models.Index(fields=["status"]),
             models.Index(fields=["source"]),
-            models.Index(fields=["tenant", "created_at"]),  # ✅ 복합 인덱스 추가
+            models.Index(fields=["tenant", "created_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "target_type", "target_id"],
+                condition=models.Q(
+                    status__in=[
+                        "submitted", "dispatched", "extracting",
+                        "answers_ready", "grading", "done",
+                    ]
+                ),
+                name="unique_active_submission_per_target",
+            ),
         ]

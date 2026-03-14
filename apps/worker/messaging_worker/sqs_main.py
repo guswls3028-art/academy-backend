@@ -320,6 +320,15 @@ def main() -> int:
         django.setup()
         logger.info("Django setup done (ORM available)")
 
+        # DB 연결 검증 (startup validation): 연결 불가 시 즉시 종료
+        try:
+            from django.db import connection as db_conn
+            db_conn.ensure_connection()
+            logger.info("DB connection validated at startup")
+        except Exception as e:
+            logger.error("DB connection failed at startup: %s. Exiting.", e)
+            return 1
+
     cfg = load_config()
     queue_client = get_queue_client()
 
