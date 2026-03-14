@@ -43,9 +43,9 @@
 ┌────────▼─────────┐  ┌─────────────▼──────────┐  ┌─────────────▼──────────┐
 │  API Server       │  │  Messaging Worker      │  │  AI Worker             │
 │  t4g.medium       │  │  t4g.small [PROPOSED]  │  │  t4g.medium            │
-│  ASG: min=1 max=2 │  │  ASG: min=1 max=3     │  │  ASG: min=0 max=5     │
+│  ASG: min=1 max=2 │  │  ASG: min=1 max=3     │  │  ASG: min=1 max=5     │
 │  Gunicorn 4w      │  │  SQS long-poll         │  │  SQS long-poll         │
-│  gevent           │  │  SMS/LMS via Solapi    │  │  SQS-based autoscale   │
+│  gevent           │  │  SMS/LMS via Solapi    │  │  Always warm (정책)    │
 │  ❌ No ffmpeg     │  │                         │  │                        │
 │  ❌ No video      │  │                         │  │                        │
 │     daemon        │  │                         │  │                        │
@@ -406,38 +406,37 @@ done
 |---------|-----------------|-----------------|--------|-------|
 | **ECR Storage** | **$213** | **~$5** | **-98%** | 5.2TB → <50GB after cleanup |
 | **VPC** | $82 | ~$20 | -76% | Interface endpoints removed, self-resolving |
-| **EC2 Compute** | $87 | $51 | -41% | Messaging→t4g.small ($12 save), AI min=0 ($24 save) |
+| **EC2 Compute** | $87 | $73 | -16% | Messaging→t4g.small ($14.50 save). AI min=1 유지 (운영 원칙) |
 | **RDS** | $71 | $71 | 0% | Keep db.t4g.medium Single-AZ (see §11 Accepted Risks) |
 | **ElastiCache** | $38 | $38 | 0% | Keep cache.t4g.small |
 | **EC2-Other** | $44 | $35 | -20% | IPv4 reduction where possible |
 | **ALB** | $10 | $10 | 0% | Required |
 | **Tax** | $61 | ~$25 | Proportional | |
-| **Total** | **~$606** | **~$255** | **-58%** | |
+| **Total** | **~$606** | **~$279** | **-54%** | AI min=1 유지 반영 |
 
-**Cost floor (theoretical minimum):** ~$204/mo — post-optimization $255 minus $51 RI savings = $204. Requires 1yr no-upfront RIs on API + messaging + RDS. Only commit after 3 months of stable usage.
+**Cost floor (theoretical minimum):** ~$217/mo — post-optimization $279 minus ~$62 RI savings (API+AI+messaging+RDS). AI min=1 유지 반영. Requires 1yr no-upfront RIs. Only commit after 3 months of stable usage.
 
 ### 5.1.1 Worker Right-Sizing [PROPOSED]
 
 | Worker | Current | Proposed | Savings | Justification |
 |--------|---------|----------|---------|---------------|
-| **Messaging** | t4g.medium ($29/mo) | t4g.small ($14.50/mo) | $14.50/mo | SQS→Solapi is I/O-bound; 2GB RAM sufficient |
-| **AI** | t4g.medium min=1 ($29/mo) | t4g.medium min=0 ($5/mo avg) | $24/mo | Queue nearly always empty; SQS-based autoscale |
+| **Messaging** | t4g.medium ($29/mo) | t4g.small ($14.50/mo) | $14.50/mo | SQS→Solapi is I/O-bound; 2GB RAM sufficient. 실측 후 판단. |
+| **AI** | t4g.medium min=1 | **min=1 유지 (운영 원칙)** | $0 | ~~min=0 제안 폐기~~ — 상시 1대 대기 원칙과 충돌 |
 | **API** | t4g.medium | t4g.medium (keep) | $0 | Gunicorn 4w + gevent needs 4GB headroom |
 
-**AI Worker SQS-Based Autoscaling [PROPOSED]:**
-- ASG min=0, max=5, desired=0
-- CloudWatch alarm: `ApproximateNumberOfMessagesVisible > 0` for 1 min → scale to 1
-- Scale-in: `ApproximateNumberOfMessagesVisible = 0` for 10 min → scale to 0
-- Cost: ~$5/mo average (occasional on-demand usage) vs $29/mo always-on
+**AI Worker Capacity Policy (FIXED — not negotiable):**
+
+AI worker min=1 is an operating principle, not a cost optimization target. The previously noted min=0 cost-saving option is withdrawn because it conflicts with the policy of keeping one worker always warm. This ensures immediate processing of OCR/Excel/AI tasks without cold start delays.
 
 ### 5.1.2 Reserved Instance Recommendation [PROPOSED]
 
 | Resource | RI Type | On-Demand | RI Price | Savings |
 |----------|---------|-----------|----------|---------|
 | API t4g.medium | 1yr no-upfront | $29/mo | $18/mo | $11/mo |
+| AI t4g.medium | 1yr no-upfront | $29/mo | $18/mo | $11/mo |
 | Messaging t4g.small | 1yr no-upfront | $14.50/mo | $9/mo | $5.50/mo |
 | RDS db.t4g.medium | 1yr no-upfront | $71/mo | $36.50/mo | $34.50/mo |
-| **Total RI savings** | | | | **$51/mo** |
+| **Total RI savings** | | | | **$62/mo** |
 
 **Note:** Only commit to RIs after 3 months of stable usage patterns. With RIs, cost floor drops to ~$204/mo.
 
@@ -448,22 +447,21 @@ done
 | API t4g.medium | Gunicorn 4w + gevent needs headroom; downsizing risks latency spikes |
 | RDS db.t4g.medium | PostgreSQL query workload; t4g.small has only 2GB RAM |
 | Redis cache.t4g.small | Video progress + session cache; t4g.micro has only 0.5GB |
-| API + Messaging min=1 | Cold start delays hurt UX; always-on gives instant processing |
+| API + Messaging + AI min=1 | Cold start delays hurt UX; always-on gives instant processing. **All workers min=1 is an operating principle.** |
 | MinHealthyPercentage=100% | Zero-downtime guarantee; non-negotiable |
 
 **What CAN be cut (see §5.1.1):**
 
 | Resource | Why Cut | Risk |
 |----------|---------|------|
-| Messaging t4g.medium → t4g.small | SQS→Solapi is I/O-bound, 2GB sufficient | Low — monitor RSS after switch |
-| AI worker min=1 → min=0 | Queue nearly always empty; SQS autoscale handles spikes | Medium — first request has ~60s cold start |
+| Messaging t4g.medium → t4g.small | SQS→Solapi is I/O-bound, 2GB sufficient | Low — 실측 후 판단 필요 |
 
 ### 5.3 Cost Guardrails
 
-**AWS Budget alerts (calibrated to ~$255 target):**
-- $270 (baseline +6%): Informational — steady-state confirmation
-- $320 (baseline +25%): Warning — investigate cost spike
-- $380 (baseline +50%): Action required — check for runaway resources
+**AWS Budget alerts (calibrated to ~$279 target, AI min=1 반영):**
+- $300 (baseline +8%): Informational — steady-state confirmation
+- $340 (baseline +22%): Warning — investigate cost spike
+- $380 (baseline +36%): Action required — check for runaway resources
 
 ### 5.4 Stale Infrastructure Detection Checklist (Monthly)
 
@@ -567,8 +565,8 @@ No additional drain work needed.
 | 7 | AWS Budget alerts | Cost guardrail ($270/$320/$380) | 15 min | ✅ [COMPLETED] academy-monthly-infra created |
 | 8 | Single 720p encoding switch [PROPOSED] | ~50-55% time-to-ready improvement | 1 hour | Pending (code change needed) |
 | 9 | DAEMON_MAX_DURATION_SECONDS → 5400 [PROPOSED] | Daemon handles up to 90min videos | 10 min | Pending (config change) |
-| 10 | AI worker min=0 + SQS autoscale [PROPOSED] | $24/mo savings | 1 hour | Pending |
-| 11 | Messaging worker → t4g.small [PROPOSED] | $14.50/mo savings | 30 min | Pending |
+| 10 | ~~AI worker min=0~~ | ~~$24/mo savings~~ | — | **WITHDRAWN — 운영 원칙 충돌. min=1 확정.** |
+| 11 | Messaging worker → t4g.small [PROPOSED] | $14.50/mo savings | 30 min | Pending (실측 후 판단) |
 | 12 | Video worker ASG separation [PROPOSED] | API stability + encoding throughput | Half day | Pending (infra creation) |
 | 13 | Tablet QA for 720p text | Validate or escalate to 1080p | 1-2 hours | Pending |
 | 14 | Base image conditional build | Skip rebuild when only app code changed | 30 min | Pending |
