@@ -489,7 +489,7 @@ All ASG refreshes use `MinHealthyPercentage=100%`:
 
 **This is non-negotiable and must not be changed.**
 
-### 6.2 CI/CD Concurrency Safety Fix (Required) **[FAIL — must fix]**
+### 6.2 CI/CD Concurrency Safety Fix **[COMPLETED]**
 
 **Problem:** `v1-build-and-push-latest.yml` uses `cancel-in-progress: true`. If push B arrives while push A's ASG refresh is in progress, the workflow for push A is cancelled — but the ASG refresh continues as an orphaned AWS operation. The new push B then starts its own ASG refresh, potentially causing two simultaneous refreshes.
 
@@ -528,7 +528,7 @@ No additional drain work needed.
 - Two-release process for breaking schema changes
 - Migration runs BEFORE new code deploys via SSM
 - **Safe failure state:** If migration succeeds but ASG deploy fails (health check failure), the system is in new-schema + old-code state. Because migrations are additive-only, old code continues to work correctly with the new schema. No manual migration rollback is needed in this case.
-- **[PROPOSED] Add `CONN_HEALTH_CHECKS: True`** to DATABASES settings in both `base.py` and `worker.py`. Without this, Django reuses stale DB connections after RDS recovery, causing post-recovery errors for up to 60 seconds (CONN_MAX_AGE=60).
+- **[COMPLETED] `CONN_HEALTH_CHECKS: True`** added to DATABASES settings in both `base.py` and `worker.py`. Without this, Django reuses stale DB connections after RDS recovery, causing post-recovery errors for up to 60 seconds (CONN_MAX_AGE=60).
 
 ---
 
@@ -558,12 +558,12 @@ No additional drain work needed.
 
 | Order | Action | Impact | Effort | Status |
 |-------|--------|--------|--------|--------|
-| 1 | **CI/CD `cancel-in-progress: false`** | **Prevent orphaned ASG refreshes (FAIL)** | 5 min | **Pending — CRITICAL** |
+| 1 | **CI/CD `cancel-in-progress: false`** | **Prevent orphaned ASG refreshes** | 5 min | ✅ [COMPLETED] |
 | 2 | **Video Batch Deploy OIDC fix** | **Restore batch fallback (live bug)** | 30 min | **Pending — CRITICAL** |
 | 3 | **Video job auto-recovery cron** | **Prevent stuck jobs after daemon crash** | 15 min | **Pending — CRITICAL** |
 | 4 | ECR manifest-aware cleanup | $200/mo savings + deployment hygiene | Done | ✅ [COMPLETED] Script created, executing |
 | 5 | ECR lifecycle policy re-apply | Recurrence prevention | Done | ✅ [COMPLETED] Applied 2026-03-15 |
-| 6 | Messaging dedup hardening | Prevent duplicate SMS on Redis outage | 2 hours | Pending (see §10) |
+| 6 | Messaging dedup hardening | Prevent duplicate SMS on Redis outage | 2 hours | ✅ [COMPLETED] (fail-closed + DB dedup) |
 | 7 | AWS Budget alerts | Cost guardrail | 15 min | Pending |
 | 8 | Single 720p encoding switch [PROPOSED] | ~50-55% time-to-ready improvement | 1 hour | Pending (code change needed) |
 | 9 | DAEMON_MAX_DURATION_SECONDS → 5400 [PROPOSED] | Daemon handles up to 90min videos | 10 min | Pending (config change) |
@@ -578,7 +578,7 @@ No additional drain work needed.
 
 ## 9. Rollback Runbook
 
-### 9.1 SHA Rollback is a 2-Step Process **[FAIL — must document]**
+### 9.1 SHA Rollback is a 2-Step Process **[COMPLETED]**
 
 **Problem:** SHA-based image rollback (re-tagging a previous `sha-XXXXXXXX` as `:latest` and refreshing ASG) only rolls back application code. It does NOT reverse database migrations. If the rolled-back code is incompatible with the new schema, the rollback will fail silently or cause runtime errors.
 
