@@ -5,6 +5,10 @@ from django.db.models import Prefetch, QuerySet, Q, Count
 from apps.domains.community.models import PostEntity, PostMapping, ScopeNode
 
 
+# 삭제된 학생 게시물 제외 필터: created_by가 NULL(선생님/영구삭제)이거나 활성 학생만 포함
+_EXCLUDE_DELETED_AUTHOR = Q(created_by__isnull=True) | Q(created_by__deleted_at__isnull=True)
+
+
 def get_empty_post_queryset() -> QuerySet:
     """tenant 없을 때 등 빈 목록용."""
     return PostEntity.objects.none()
@@ -31,6 +35,7 @@ def get_all_posts_for_tenant(tenant) -> QuerySet:
     """tenant 전체 Post 목록 (node_id 없을 때 list용). replies_count, N+1 방지."""
     return (
         PostEntity.objects.filter(tenant=tenant)
+        .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
         .select_related("block_type", "created_by")
         .prefetch_related(
@@ -84,6 +89,7 @@ def get_posts_for_node(
     )
     return (
         PostEntity.objects.filter(id__in=post_ids, tenant=tenant)
+        .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
         .select_related("block_type", "created_by")
         .prefetch_related(
@@ -108,6 +114,7 @@ def get_admin_post_list(
     """관리자용 목록. 필터: block_type, lecture(해당 강의 노드에 매핑된 것만). 페이지네이션."""
     qs = (
         PostEntity.objects.filter(tenant=tenant)
+        .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
         .select_related("block_type", "created_by")
         .prefetch_related(
@@ -134,6 +141,7 @@ def get_notice_posts_for_tenant(tenant) -> QuerySet:
     """테넌트의 공지 게시물 목록 (block_type code='notice'). 학생앱 공지 목록 및 관리자와 동일 데이터."""
     return (
         PostEntity.objects.filter(tenant=tenant, block_type__code__iexact="notice")
+        .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
         .select_related("block_type", "created_by")
         .prefetch_related(

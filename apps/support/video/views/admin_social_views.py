@@ -4,7 +4,7 @@ Admin-side video social API (comments, engagement stats).
 Teachers can view/reply to student comments on videos.
 """
 
-from django.db.models import F
+from django.db.models import F, Q, Prefetch
 from django.db.models.functions import Greatest
 from django.http import Http404
 from rest_framework import status
@@ -113,12 +113,20 @@ class AdminVideoCommentListView(APIView):
 
         staff = _get_staff(request)
 
+        # 삭제된 학생의 댓글 제외 (고스트 데이터 방지)
+        _active_author = Q(author_student__isnull=True) | Q(author_student__deleted_at__isnull=True)
         comments = (
             VideoComment.objects.filter(
                 video=video, tenant_id=tenant.id, parent__isnull=True
             )
+            .filter(_active_author)
             .select_related("author_student", "author_staff")
-            .prefetch_related("replies__author_student", "replies__author_staff")
+            .prefetch_related(
+                Prefetch(
+                    "replies",
+                    queryset=VideoComment.objects.filter(_active_author).select_related("author_student", "author_staff"),
+                )
+            )
             .order_by("-created_at")[:100]
         )
 

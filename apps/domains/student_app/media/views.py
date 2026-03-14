@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional, Tuple
 
+from django.db.models import Prefetch
 from django.http import Http404
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -989,11 +990,21 @@ class StudentVideoCommentListView(APIView):
             raise PermissionDenied("접근 권한이 없습니다.")
 
         # 최상위 댓글만 (parent=None), 대댓글은 prefetch
+        # 삭제된 학생의 댓글 제외 (고스트 데이터 방지)
+        from django.db.models import Q
+        _active_author = Q(author_student__isnull=True) | Q(author_student__deleted_at__isnull=True)
+        _active_reply_author = Q(author_student__isnull=True) | Q(author_student__deleted_at__isnull=True)
         comments = (
             VideoComment.objects
             .filter(video=video, tenant_id=tenant.id, parent__isnull=True)
+            .filter(_active_author)
             .select_related("author_student", "author_staff")
-            .prefetch_related("replies__author_student", "replies__author_staff")
+            .prefetch_related(
+                Prefetch(
+                    "replies",
+                    queryset=VideoComment.objects.filter(_active_reply_author).select_related("author_student", "author_staff"),
+                )
+            )
             .order_by("-created_at")[:100]
         )
 

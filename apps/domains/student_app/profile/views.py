@@ -139,8 +139,18 @@ class StudentProfileView(APIView):
                 internal = user_internal_username(student.tenant, new_username)
                 if User.objects.filter(username=internal).exclude(pk=student.user_id).exists():
                     return Response({"detail": "이미 사용 중인 아이디입니다."}, status=400)
+                # ps_number 동일 여부 확인 (다른 활성 학생이 이미 사용 중이면 거부)
+                from apps.domains.students.models import Student as StudentModel
+                if StudentModel.objects.filter(
+                    tenant=student.tenant, ps_number=new_username, deleted_at__isnull=True
+                ).exclude(pk=student.pk).exists():
+                    return Response({"detail": "이미 사용 중인 아이디입니다."}, status=400)
+                # SSOT: ps_number = 로그인 아이디 = 표시 아이디 (동기화)
                 student.user.username = internal
                 student.user.save(update_fields=["username"])
+                student.ps_number = new_username
+                # Student.save() hook이 User.username 동기화 + 인벤토리 student_ps 연쇄 업데이트 처리
+                student.save(update_fields=["ps_number"])
 
         # 학생 본인 수정 가능 필드 (선생앱 학생 스펙과 동일)
         update_fields = []

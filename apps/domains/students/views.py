@@ -802,24 +802,57 @@ class StudentViewSet(ModelViewSet):
 
         tenant = request.tenant
         to_restore = list(student_repo.student_filter_tenant_ids_deleted(tenant, ids))
+        restored = []
+        skipped = []
         with transaction.atomic():
             for student in to_restore:
                 student.deleted_at = None
                 update_fields = ["deleted_at"]
+                # ps_number 복원 + 충돌 검사
                 if student.ps_number and student.ps_number.startswith("_del_"):
                     parts = student.ps_number.split("_", 3)
                     if len(parts) >= 4:
-                        student.ps_number = parts[3]
+                        original_ps = parts[3]
+                        # 충돌 검사: 다른 활성 학생이 이미 사용 중이면 스킵
+                        if Student.objects.filter(
+                            tenant=tenant, ps_number=original_ps, deleted_at__isnull=True
+                        ).exists():
+                            skipped.append({"id": student.id, "reason": f"ps_number '{original_ps}' already in use"})
+                            continue
+                        student.ps_number = original_ps
                         update_fields.append("ps_number")
                 student.save(update_fields=update_fields)
+                # User 계정 복원: is_active + phone
                 if student.user:
+                    user_update = ["is_active"]
                     student.user.is_active = True
-                    student.user.save(update_fields=["is_active"])
+                    # phone 복원 (삭제 시 User.phone이 None으로 클리어됨)
+                    if not student.user.phone and student.phone:
+                        student.user.phone = student.phone
+                        user_update.append("phone")
+                    student.user.save(update_fields=user_update)
                     TenantMembership.ensure_active(
                         tenant=tenant, user=student.user, role="student"
                     )
+                # 학부모 재연결 (삭제 시 parent_id가 None으로 해제됨)
+                if not student.parent_id and student.parent_phone:
+                    try:
+                        parent = ensure_parent_for_student(
+                            tenant=tenant,
+                            parent_phone=student.parent_phone,
+                            student_name=student.name,
+                        )
+                        if parent:
+                            student.parent = parent
+                            student.save(update_fields=["parent"])
+                    except Exception:
+                        logger.warning("bulk_restore: failed to re-link parent for student_id=%s", student.id)
+                restored.append(student.id)
                 # 복원 시 이전 수강등록은 재활성화하지 않음 (유령 복원 방지)
-        return Response({"restored": len(to_restore)}, status=200)
+        result = {"restored": len(restored)}
+        if skipped:
+            result["skipped"] = skipped
+        return Response(result, status=200)
 
     @action(
         detail=False,

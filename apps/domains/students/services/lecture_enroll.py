@@ -91,16 +91,39 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
             deleted_student.gender = (item.get("gender") or "").strip().upper()[:1] or None
             update_fields.append("gender")
         deleted_student.save(update_fields=update_fields)
-        # Reactivate user account
+        # Reactivate user account + phone 복원
         if deleted_student.user:
+            user_update = ["is_active"]
             deleted_student.user.is_active = True
-            deleted_student.user.save(update_fields=["is_active"])
-        # Unmangle ps_number
+            if not deleted_student.user.phone and (phone or deleted_student.phone):
+                deleted_student.user.phone = phone or deleted_student.phone
+                user_update.append("phone")
+            deleted_student.user.save(update_fields=user_update)
+        # Unmangle ps_number (충돌 검사 포함)
         if deleted_student.ps_number and deleted_student.ps_number.startswith("_del_"):
             parts = deleted_student.ps_number.split("_", 3)  # ["", "del", "{id}", "{original}"]
             if len(parts) >= 4:
-                deleted_student.ps_number = parts[3]
-                deleted_student.save(update_fields=["ps_number"])
+                original_ps = parts[3]
+                from apps.domains.students.models import Student as StudentModel
+                if not StudentModel.objects.filter(
+                    tenant=tenant, ps_number=original_ps, deleted_at__isnull=True
+                ).exists():
+                    deleted_student.ps_number = original_ps
+                    deleted_student.save(update_fields=["ps_number"])
+                # 충돌 시 _del_ 접두사 유지 (새 ps_number 자동 생성하지 않음 — 관리자 수동 처리 필요)
+        # 학부모 재연결 (삭제 시 parent_id가 None으로 해제됨)
+        if not deleted_student.parent_id and parent_phone:
+            try:
+                parent = ensure_parent_for_student(
+                    tenant=tenant,
+                    parent_phone=parent_phone,
+                    student_name=name,
+                )
+                if parent:
+                    deleted_student.parent = parent
+                    deleted_student.save(update_fields=["parent"])
+            except Exception:
+                pass  # 학부모 연결 실패 시 무시 (학생 복원은 계속)
         # NOTE: 이전 수강등록은 재활성화하지 않음.
         # 복원된 학생은 새로운 수강등록만 받아야 함 (이전 수강 이력이 유령처럼 되살아나는 것 방지).
         TenantMembership.ensure_active(

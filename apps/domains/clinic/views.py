@@ -59,35 +59,52 @@ class SessionViewSet(viewsets.ModelViewSet):
             .filter(tenant=tenant)
             .prefetch_related("target_lectures")
             .annotate(
-                participant_count=Count("participants"),
+                # 삭제된 학생 참가자 제외
+                participant_count=Count("participants", filter=Q(participants__student__deleted_at__isnull=True)),
                 booked_count=Count(
                     "participants",
                     filter=Q(
                         participants__status__in=[
                             SessionParticipant.Status.BOOKED,
                             SessionParticipant.Status.PENDING,
-                        ]
+                        ],
+                        participants__student__deleted_at__isnull=True,
                     ),
                 ),
                 attended_count=Count(
                     "participants",
-                    filter=Q(participants__status=SessionParticipant.Status.ATTENDED),
+                    filter=Q(
+                        participants__status=SessionParticipant.Status.ATTENDED,
+                        participants__student__deleted_at__isnull=True,
+                    ),
                 ),
                 no_show_count=Count(
                     "participants",
-                    filter=Q(participants__status=SessionParticipant.Status.NO_SHOW),
+                    filter=Q(
+                        participants__status=SessionParticipant.Status.NO_SHOW,
+                        participants__student__deleted_at__isnull=True,
+                    ),
                 ),
                 cancelled_count=Count(
                     "participants",
-                    filter=Q(participants__status=SessionParticipant.Status.CANCELLED),
+                    filter=Q(
+                        participants__status=SessionParticipant.Status.CANCELLED,
+                        participants__student__deleted_at__isnull=True,
+                    ),
                 ),
                 auto_count=Count(
                     "participants",
-                    filter=Q(participants__source=SessionParticipant.Source.AUTO),
+                    filter=Q(
+                        participants__source=SessionParticipant.Source.AUTO,
+                        participants__student__deleted_at__isnull=True,
+                    ),
                 ),
                 manual_count=Count(
                     "participants",
-                    filter=Q(participants__source=SessionParticipant.Source.MANUAL),
+                    filter=Q(
+                        participants__source=SessionParticipant.Source.MANUAL,
+                        participants__student__deleted_at__isnull=True,
+                    ),
                 ),
             )
         )
@@ -277,15 +294,16 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         qs = (
             SessionParticipant.objects
             .filter(tenant=tenant)
+            .filter(student__deleted_at__isnull=True)  # 삭제된 학생 제외
             .select_related("student", "session", "status_changed_by")
         )
-        
+
         # 학생이 조회하는 경우: 자신의 예약 신청만 조회
         from apps.domains.student_app.permissions import get_request_student
         student = get_request_student(self.request)
         if student:
             qs = qs.filter(student=student)
-        
+
         return qs
 
     def get_serializer_class(self):

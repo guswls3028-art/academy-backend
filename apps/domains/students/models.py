@@ -170,6 +170,17 @@ class Student(TimestampModel):
                     if self.user.username != new_username:
                         self.user.username = new_username
                         self.user.save(update_fields=["username"])
+                    # 인벤토리 student_ps 연쇄 업데이트 (ps_number 변경 시 고아 방지)
+                    old_ps = old.ps_number
+                    new_ps = self.ps_number
+                    if old_ps and new_ps and not new_ps.startswith("_del_"):
+                        from apps.domains.inventory.models import InventoryFolder, InventoryFile
+                        InventoryFolder.objects.filter(
+                            tenant=self.tenant, student_ps=old_ps
+                        ).update(student_ps=new_ps)
+                        InventoryFile.objects.filter(
+                            tenant=self.tenant, student_ps=old_ps
+                        ).update(student_ps=new_ps)
             except Student.DoesNotExist:
                 pass
         super().save(*args, **kwargs)
