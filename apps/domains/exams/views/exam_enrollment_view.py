@@ -87,9 +87,11 @@ class ExamEnrollmentManageView(APIView):
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         # 1) 세션 등록 학생 목록 (아바타·강의 딱지용 select_related)
+        #    ✅ 퇴원(INACTIVE) 수강생 제외
         session_enrollments = (
             SessionEnrollment.objects
             .filter(session_id=session_id)
+            .filter(enrollment__status="ACTIVE")
             .filter(enrollment__student__deleted_at__isnull=True)
             .select_related("enrollment", "enrollment__student", "enrollment__lecture")
             .order_by("id")

@@ -245,6 +245,17 @@ def get_enrollments_by_ids_active(enrollment_ids, tenant):
     )
 
 
+def get_enrollments_by_ids_all(enrollment_ids, tenant):
+    """Matrix용: INACTIVE(퇴원) 포함 전체 조회"""
+    from apps.domains.enrollment.models import Enrollment
+    return (
+        Enrollment.objects.filter(id__in=enrollment_ids, tenant=tenant)
+        .filter(student__deleted_at__isnull=True)
+        .select_related("student")
+        .order_by("student__name", "id")
+    )
+
+
 def get_attendances_for_lecture(tenant, lecture, enrollments):
     from apps.domains.attendance.models import Attendance
     return Attendance.objects.filter(

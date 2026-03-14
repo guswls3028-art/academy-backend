@@ -24,6 +24,8 @@ from apps.core.permissions import TenantResolvedAndStaff
 
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.domains.exams.models import ExamEnrollment
+from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.ai.gateway import dispatch_job
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,51 @@ class AttendanceViewSet(ModelViewSet):
                 "enrollment__student",
             )
         )
+
+    # =========================================================
+    # 0️⃣ 퇴원 처리 (SECESSION → 수강등록 비활성화 + 시험/과제 대상 제외)
+    # =========================================================
+    @transaction.atomic
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        new_status = request.data.get("status")
+
+        if new_status == "SECESSION" and instance.status != "SECESSION":
+            tenant = getattr(request, "tenant", None)
+            enrollment = instance.enrollment
+
+            # 수강등록 비활성화
+            Enrollment.objects.filter(
+                id=enrollment.id, tenant=tenant
+            ).update(status="INACTIVE")
+
+            # 해당 수강등록의 모든 출결을 SECESSION으로 변경
+            Attendance.objects.filter(
+                tenant=tenant, enrollment=enrollment
+            ).update(status="SECESSION")
+
+            # 시험 응시 대상에서 제거
+            ExamEnrollment.objects.filter(
+                enrollment=enrollment
+            ).delete()
+
+            # 과제 대상에서 제거
+            HomeworkAssignment.objects.filter(
+                tenant=tenant, enrollment=enrollment
+            ).delete()
+
+            logger.info(
+                "SECESSION enrollment_id=%s student_id=%s tenant_id=%s — "
+                "enrollment INACTIVE, exam/homework enrollments removed",
+                enrollment.id,
+                enrollment.student_id,
+                tenant.id,
+            )
+
+            instance.refresh_from_db()
+            return Response(AttendanceSerializer(instance).data)
+
+        return super().partial_update(request, *args, **kwargs)
 
     # =========================================================
     # 1️⃣ 세션 기준 학생 등록
@@ -137,7 +184,7 @@ class AttendanceViewSet(ModelViewSet):
         sessions = enroll_repo.get_sessions_for_lecture_ordered(lecture)
 
         enrollment_ids = list(enroll_repo.get_session_enrollment_enrollment_ids(tenant, lecture))
-        enrollments = enroll_repo.get_enrollments_by_ids_active(enrollment_ids, tenant)
+        enrollments = enroll_repo.get_enrollments_by_ids_all(enrollment_ids, tenant)
 
         attendances = enroll_repo.get_attendances_for_lecture(tenant, lecture, enrollments)
 

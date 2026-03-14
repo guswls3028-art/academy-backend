@@ -127,12 +127,14 @@ class SessionScoresView(APIView):
                     Q(id__in=hw_enrollment_ids_qs)
                     | Q(id__in=ex_enrollment_ids_qs)
                 )
+                .filter(status="ACTIVE")  # ✅ 퇴원(INACTIVE) 수강생 제외
                 .filter(student__deleted_at__isnull=True)
                 .distinct()
             )
         else:
             enrollment_qs = (
                 Enrollment.objects.filter(id__in=hw_enrollment_ids_qs)
+                .filter(status="ACTIVE")  # ✅ 퇴원(INACTIVE) 수강생 제외
                 .filter(student__deleted_at__isnull=True)
                 .distinct()
             )
@@ -155,7 +157,7 @@ class SessionScoresView(APIView):
         ).values_list("enrollment_id", "homework_id"):
             hw_assigned_set.add((int(row[0]), int(row[1])))
 
-        # 시험/과제 연결 전: 세션 수강생(SessionEnrollment) 폴백 — 삭제된 학생 제외
+        # 시험/과제 연결 전: 세션 수강생(SessionEnrollment) 폴백 — 삭제된 학생·퇴원 학생 제외
         if not enrollment_ids:
             session_enrollment_ids = list(
                 SessionEnrollment.objects.filter(session=session)
@@ -164,7 +166,8 @@ class SessionScoresView(APIView):
             )
             enrollment_ids = list(
                 Enrollment.objects.filter(
-                    id__in=session_enrollment_ids
+                    id__in=session_enrollment_ids,
+                    status="ACTIVE",  # ✅ 퇴원(INACTIVE) 수강생 제외
                 )
                 .filter(student__deleted_at__isnull=True)
                 .values_list("id", flat=True)

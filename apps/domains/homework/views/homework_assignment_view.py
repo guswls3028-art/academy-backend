@@ -48,12 +48,14 @@ class HomeworkAssignmentManageView(APIView):
         tenant = getattr(request, "tenant", None)
         session_id = homework.session_id
 
+        # ✅ 퇴원(INACTIVE) 수강생 제외
         session_enrollments = (
             SessionEnrollment.objects
             .filter(
                 tenant=tenant,
                 session_id=session_id,
             )
+            .filter(enrollment__status="ACTIVE")
             .filter(enrollment__student__deleted_at__isnull=True)
             .select_related("enrollment", "enrollment__student", "enrollment__lecture")
             .order_by("id")

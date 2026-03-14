@@ -41,12 +41,14 @@ class HomeworkEnrollmentManageView(APIView):
         if not Session.objects.filter(id=session_id, lecture__tenant=tenant).exists():
             return Response({"detail": "해당 차시를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
+        # ✅ 퇴원(INACTIVE) 수강생 제외
         session_enrollments = (
             SessionEnrollment.objects
             .filter(
                 tenant=tenant,
                 session_id=session_id,
             )
+            .filter(enrollment__status="ACTIVE")
             .filter(enrollment__student__deleted_at__isnull=True)
             .select_related("enrollment", "enrollment__student")
             .order_by("id")
