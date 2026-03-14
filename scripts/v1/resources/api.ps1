@@ -204,7 +204,7 @@ function Invoke-CollectRuntimeImagesReport {
     [void]$sb.AppendLine("# V1 Runtime Images — API 인스턴스 실제 실행 이미지")
     [void]$sb.AppendLine("")
     [void]$sb.AppendLine("**Generated:** $generated")
-    [void]$sb.AppendLine("**SSOT:** docs/00-SSOT/v1/params.yaml")
+    [void]$sb.AppendLine("**SSOT:** docs/00-SSOT/params.yaml")
     [void]$sb.AppendLine("")
     if ($null -ne $ciDigest -and -not $anyMatch) {
         [void]$sb.AppendLine("### CI vs Runtime")

@@ -3,7 +3,7 @@
 $ErrorActionPreference = "Stop"
 $SsotDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $SsotDir "..\..\..")).Path
-$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\v1\params.yaml"
+$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\params.yaml"
 
 if (-not (Test-Path $ParamsPath)) { throw "params.yaml not found: $ParamsPath" }
 

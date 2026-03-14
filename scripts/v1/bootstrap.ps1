@@ -54,7 +54,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "OK: Minimal describe permission" -ForegroundColor Green
 
 # params.yaml
-$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\v1\params.yaml"
+$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\params.yaml"
 if (-not (Test-Path $ParamsPath)) {
     Write-Host "FAIL: params.yaml not found at $ParamsPath" -ForegroundColor Red
     exit 1

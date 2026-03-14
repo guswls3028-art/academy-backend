@@ -1,0 +1,267 @@
+# Academy SSOT v1 — 풀셋팅 단일소스. scripts/v1 전용.
+# 1인 개발·운영(장애 대응 10~60분), 1k~1.5k 사용자·동시 50~300 버스트.
+# API ASG: 런칭 전 비용 절감으로 min/desired=1, max=2 (docs/00-SSOT/v1/reports/scale-policy.latest.md).
+
+global:
+  env: prod
+  region: ap-northeast-2
+  accountId: "809466760795"
+  namingPrefix: academy-
+  validationMode: "Strict"
+  tags:
+    Project: academy
+    ManagedBy: ssot-v1
+
+# 2-tier: Public 2 + Private 2, NAT 1개. academy-v1-* 네이밍.
+# 기존 RDS(academy-db) 사용 시 동일 VPC 사용.
+network:
+  vpcId: "vpc-0831a2484f9b114c2"
+  vpcCidr: "172.30.0.0/16"
+  publicSubnetCidr1: "172.30.0.0/24"
+  publicSubnetCidr2: "172.30.2.0/24"
+  privateSubnetCidr1: "172.30.1.0/24"
+  privateSubnetCidr2: "172.30.3.0/24"
+  # V1 운영 단순화: NAT 미사용(0). Private subnet은 데이터(RDS/Redis) 전용.
+  natEnabled: false
+  albEnabled: true
+  natGatewayId: ""
+  # 비워두면 Ensure-Network가 academy-v1-sg-app/batch/data를 이름으로 찾거나 생성함. (인프라 리셋 후 재배포 시 필수)
+  securityGroupApp: ""
+  securityGroupBatch: ""
+  securityGroupData: ""
+  vpcName: academy-v1-vpc
+  sgAppName: academy-v1-sg-app
+  sgBatchName: academy-v1-sg-batch
+  sgDataName: academy-v1-sg-data
+
+networkPublicSubnets:
+  - ""
+  - ""
+networkPrivateSubnets:
+  - ""
+  - ""
+
+ssm:
+  apiEnv: /academy/api/env
+  workersEnv: /academy/workers/env
+  deployLockParam: /academy/deploy-lock
+
+ecr:
+  baseRepo: academy-base
+  apiRepo: academy-api
+  videoWorkerRepo: academy-video-worker
+  messagingWorkerRepo: academy-messaging-worker
+  aiWorkerRepo: academy-ai-worker-cpu
+  # 이미지 빌드는 GitHub Actions만 사용. CI는 5개 이미지 모두 :latest 푸시. 풀배포(deploy.ps1)는 :latest 사용으로 정합.
+  useLatestTag: true
+  immutableTagRequired: false
+
+# API: V1. 런칭 전 비용 절감으로 min/desired=1, max=2. 롤링 배포 시 instance-refresh MinHealthyPercentage.
+# Gunicorn/ALB 타임아웃 60s 내 권장(동영상/AI는 비동기 전용).
+api:
+  amiId: ami-0885e191a9bcf28b0
+  instanceProfile: academy-ec2-role
+  securityGroupId: ""  # 비워두면 SecurityGroupApp 사용 (Ensure-Network가 설정)
+  instanceType: t4g.medium
+  userData: ""
+  asgName: academy-v1-api-asg
+  asgLaunchTemplateName: academy-v1-api-lt
+  asgMinSize: 1
+  asgMaxSize: 2
+  asgDesiredCapacity: 1
+  instanceRefreshMinHealthyPercentage: 100
+  instanceRefreshInstanceWarmup: 300
+  containerName: academy-api
+  albName: academy-v1-api-alb
+  targetGroupName: academy-v1-api-tg
+  # ALB health check는 DB/외부 의존성 체크 금지. 200만 반환하는 /healthz 사용. /health는 DB 연동·503 가능 → readiness/관측용.
+  healthPath: /healthz
+  instanceTagKey: Name
+  instanceTagValue: academy-v1-api
+  # 배포된 ALB URL. alb.ps1에서 ALB DNS로 자동 설정됨. api.hakwonplus.com 사용 시 params에 명시.
+  apiBaseUrl: ""
+
+messagingWorker:
+  asgName: academy-v1-messaging-worker-asg
+  launchTemplateName: academy-v1-messaging-worker-lt
+  instanceTagValue: academy-v1-messaging-worker
+  amiId: ami-0885e191a9bcf28b0
+  instanceType: t4g.medium
+  minSize: 1
+  # 운영 단순화: 메시징 워커 스케일 상한 축소
+  maxSize: 3
+  desiredCapacity: 1
+  scaleInProtection: true
+  scalingPolicyScaleOutCooldown: 300
+  scalingPolicyScaleInCooldown: 900
+  scalingPolicyScaleOutThreshold: 20
+  scalingPolicyScaleInThreshold: 0
+  sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-messaging-queue
+  sqsQueueName: academy-v1-messaging-queue
+  visibilityTimeoutSeconds: 900
+  dlqMaxReceiveCount: 5
+  dlqSuffix: -dlq
+
+aiWorker:
+  # 엑셀 학생등록 등으로 1대 상시 대기. min=1이면 scale-in으로도 1 밑으로 내려가지 않음.
+  asgName: academy-v1-ai-worker-asg
+  launchTemplateName: academy-v1-ai-worker-lt
+  instanceTagValue: academy-v1-ai-worker
+  amiId: ami-0885e191a9bcf28b0
+  instanceType: t4g.medium
+  minSize: 1
+  maxSize: 5
+  desiredCapacity: 1
+  scaleInProtection: true
+  scalingPolicyScaleOutCooldown: 300
+  scalingPolicyScaleInCooldown: 900
+  scalingPolicyScaleOutThreshold: 20
+  scalingPolicyScaleInThreshold: 0
+  sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-ai-queue
+  sqsQueueName: academy-v1-ai-queue
+  visibilityTimeoutSeconds: 1800   # 엑셀 worst-case 30분, graceful shutdown·in-flight 유실 방지
+  dlqMaxReceiveCount: 5
+  dlqSuffix: -dlq
+
+videoBatch:
+  # standard: 기존 계열 유지. 3시간 이하 일반 작업. maxvCpus=40, Spot 혼합.
+  standard:
+    computeEnvironmentName: academy-v1-video-batch-ce
+    videoQueueName: academy-v1-video-batch-queue
+    workerJobDefName: academy-v1-video-batch-jobdef
+    minvCpus: 0
+    maxvCpus: 40
+    instanceType: c6g.xlarge
+    rootVolumeSizeGb: 200
+    jobTimeoutSeconds: 21600
+    stuckHeartbeatAgeMinutes: 20
+    allocationStrategy: BEST_FIT_PROGRESSIVE
+    useSpot: true
+  # long: 3시간 초과·장시간 작업. On-Demand 우선(Spot 중단 리스크 회피). maxvCpus=80.
+  long:
+    computeEnvironmentName: academy-v1-video-batch-long-ce
+    videoQueueName: academy-v1-video-batch-long-queue
+    workerJobDefName: academy-v1-video-batch-long-jobdef
+    minvCpus: 0
+    maxvCpus: 80
+    instanceType: c6g.xlarge
+    rootVolumeSizeGb: 300
+    jobTimeoutSeconds: 43200
+    stuckHeartbeatAgeMinutes: 45
+    allocationStrategy: BEST_FIT
+    useSpot: false
+  longComputeEnvironmentName: academy-v1-video-batch-long-ce
+  longQueueName: academy-v1-video-batch-long-queue
+  longWorkerJobDefName: academy-v1-video-batch-long-jobdef
+  # Job timeout / stuck / retry (3시간 영상 기준)
+  jobTimeoutStandardSeconds: 21600
+  jobTimeoutLongSeconds: 43200
+  stuckHeartbeatAgeStandardMinutes: 20
+  stuckHeartbeatAgeLongMinutes: 45
+  retryNetworkUploadAttempts: 8
+  retryFfmpegContentAttempts: 1
+  # R2 업로드 안정화
+  r2UploadPartSizeMb: 64
+  r2UploadMaxConcurrency: 8
+  r2UploadMaxAttempts: 8
+  r2UploadCheckpointTable: academy-v1-video-upload-checkpoints
+  # 관측/알람 SSOT
+  observability:
+    queueDepthAlarmThreshold: 50
+    failedJobsAlarmThreshold: 5
+    stuckDetectedAlarmEnabled: true
+    logRetentionDays: 30
+  # Ops: lightweight hourly recovery. 1 instance max (maxvCpus=2), scale to 0 when idle. ECS_AL2023: t4g 미지원 → m6g.medium.
+  opsComputeEnvironmentName: academy-v1-video-ops-ce
+  opsQueueName: academy-v1-video-ops-queue
+  opsInstanceType: m6g.medium
+  opsMaxvCpus: 2
+  opsJobDefs:
+    reconcile: academy-v1-video-ops-reconcile
+    scanstuck: academy-v1-video-ops-scanstuck
+    netprobe: academy-v1-video-ops-netprobe
+    enqueueUploaded: academy-v1-video-ops-enqueue-uploaded
+
+eventBridge:
+  reconcileRuleName: academy-v1-reconcile-video-jobs
+  scanStuckRuleName: academy-v1-video-scan-stuck-rate
+  enqueueUploadedRuleName: academy-v1-enqueue-uploaded-videos
+  roleName: academy-v1-eventbridge-batch-video-role
+  # 1시간 주기: ops CE 스케일업 빈도 감소 (30분이면 매 30분마다 새 job 제출 → 계속 켜짐)
+  reconcileSchedule: "rate(1 hour)"
+  scanStuckSchedule: "rate(1 hour)"
+  enqueueUploadedSchedule: "rate(10 minutes)"
+  # 운영 자동 복구: 규칙은 ENABLED 유지. 배포 시 DISABLED면 ENABLED로 재설정 (resources/eventbridge.ps1).
+  reconcileState: ENABLED
+  scanStuckState: ENABLED
+  enqueueUploadedState: ENABLED
+
+dynamodb:
+  lockTableName: academy-v1-video-job-lock
+  lockTableTtlAttribute: ttl
+  lockTtlSeconds: 43200
+  uploadCheckpointTableName: academy-v1-video-upload-checkpoints
+
+rds:
+  engine: postgres
+  engineVersion: "15.16"
+  instanceClass: "db.t4g.medium"
+  allocatedStorage: 20
+  dbIdentifier: academy-db
+  dbSubnetGroupName: academy-v1-db-subnets
+  masterUsername: admin97
+  masterPasswordSsmParam: "/academy/rds/master_password"
+  performanceInsightsEnabled: true
+  performanceInsightsRetentionDays: 7
+  multiAz: false
+
+observability:
+  logRetentionDays: 30
+  alarmEvaluationPeriods: 2
+  alarmPeriodSeconds: 300
+  apiAlb5xxThreshold: 10
+  apiTargetUnhealthyThreshold: 1
+  sqsQueueDepthThreshold: 100
+  sqsDlqDepthThreshold: 5
+  batchQueueDepthThreshold: 50
+  batchFailedJobsThreshold: 5
+  batchStuckDetectedEnabled: true
+  rdsCpuThresholdPercent: 80
+  rdsFreeStorageGbThreshold: 5
+  rdsConnectionsThreshold: 90
+  redisCpuThresholdPercent: 75
+  redisEvictionsThreshold: 100
+
+redis:
+  replicationGroupId: academy-v1-redis
+  subnetGroupName: academy-v1-redis-subnets
+  securityGroupId: ""
+  nodeType: cache.t4g.small
+  engineVersion: "7.1"
+
+r2:
+  bucket: ""
+  publicBaseUrl: ""
+
+# 프론트 정적 + R2 + CDN (엔드투엔드). S3 미사용·R2만.
+# 도메인/라우팅: app.<domain> → CDN → R2(static), api.<domain> → ALB(또는 Cloudflare proxy 정책 명시).
+front:
+  domains:
+    app: ""          # 예: app.hakwonplus.com, academy-frontend-26b.pages.dev
+    api: "https://api.hakwonplus.com"  # Cloudflare CNAME → ALB
+  domainsApp: ""      # SSOT 스크립트용 flat 키 (domains.app과 동일)
+  domainsApi: "https://api.hakwonplus.com"  # SSOT 스크립트용 flat 키 (domains.api과 동일)
+  cors:
+    allowedOrigins: []  # [ "https://app.hakwonplus.com" ] — 와일드카드 금지
+    credentials: true   # 쿠키 인증 사용 시 true
+  deployStrategy: "versioned"  # versioned | atomic
+  buildOutputDir: "dist"       # Vite 등 빌드 산출물 디렉터리(프론트 repo 기준)
+  r2StaticBucket: ""           # 정적 배포용 R2 버킷(예: academy-storage)
+  r2StaticPrefix: "static/front"  # 버전 디렉터리 상위 prefix
+  purgeOnDeploy: true          # 배포 시 CDN 캐시 purge 여부
+  cdnCacheControl:
+    assetMaxAge: "31536000"    # 해시 파일명 정적 자산 1년
+    indexMaxAge: "0"           # index.html no-cache 권장
+  uploadDownload:
+    multipartResume: true      # 대용량 multipart + resume/checkpoint
+    signedUrlMethod: "server"  # server(서버 중계) | presigned

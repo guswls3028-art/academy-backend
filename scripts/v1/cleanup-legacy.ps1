@@ -295,7 +295,7 @@ if (-not $DryRun -and ($runEIPReleased.Count -gt 0 -or $runVolumesDeleted.Count 
     $rcSb = [System.Text.StringBuilder]::new()
     $rcSb.AppendLine("# V1 리소스 정리 기록 (증거)")
     $rcSb.AppendLine("")
-    $rcSb.AppendLine("**리전:** $R **갱신:** $runAt **SSOT:** docs/00-SSOT/v1/params.yaml")
+    $rcSb.AppendLine("**리전:** $R **갱신:** $runAt **SSOT:** docs/00-SSOT/params.yaml")
     $rcSb.AppendLine("")
     $rcSb.AppendLine("## Elastic IP (released)")
     $rcSb.AppendLine("| AllocationId | PublicIp | 조치 | 시각 |")

@@ -1,7 +1,7 @@
 ﻿# 프론트 정적 빌드 → R2 업로드 → CDN purge → 검증
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않는다.
 # deploy.ps1 -DeployFront 시 호출. .env에서 CLOUDFLARE_* 로드 후 실행 권장 (run-with-env.ps1).
-# SSOT: docs/00-SSOT/v1/params.yaml front.*
+# SSOT: docs/00-SSOT/params.yaml front.*
 $ErrorActionPreference = "Stop"
 param(
     [string]$RepoRoot = "",
@@ -13,7 +13,7 @@ param(
 )
 $ScriptRoot = $PSScriptRoot
 if (-not $RepoRoot) { $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path }
-$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\v1\params.yaml"
+$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\params.yaml"
 if (-not (Test-Path $ParamsPath)) {
     Write-Host "params.yaml not found: $ParamsPath" -ForegroundColor Yellow
     exit 0
