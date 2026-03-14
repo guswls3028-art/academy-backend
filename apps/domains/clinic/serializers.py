@@ -15,11 +15,19 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
     # 대상 강의: 쓰기 시 id 배열, 읽기 시 id+title
     target_lecture_ids = serializers.PrimaryKeyRelatedField(
         source="target_lectures",
-        queryset=Lecture.objects.all(),
+        queryset=Lecture.objects.none(),  # __init__에서 tenant 필터 적용
         many=True,
         required=False,
     )
     target_lecture_names = serializers.SerializerMethodField()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request, "tenant") and request.tenant:
+            self.fields["target_lecture_ids"].child_relation.queryset = (
+                Lecture.objects.filter(tenant=request.tenant)
+            )
 
     # ✅ 파생 필드: 종료 시간 (저장 X)
     end_time = serializers.SerializerMethodField()
@@ -47,13 +55,13 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
         return (dt + timedelta(minutes=obj.duration_minutes)).time()
 
     def get_available_slots(self, obj):
-        cnt = getattr(obj, "participant_count", None)
+        cnt = getattr(obj, "booked_count", None)
         if obj.max_participants is None or cnt is None:
             return None
         return max(obj.max_participants - cnt, 0)
 
     def get_is_full(self, obj):
-        cnt = getattr(obj, "participant_count", None)
+        cnt = getattr(obj, "booked_count", None)
         if obj.max_participants is None or cnt is None:
             return False
         return cnt >= obj.max_participants

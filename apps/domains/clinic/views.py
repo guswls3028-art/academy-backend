@@ -57,6 +57,7 @@ class SessionViewSet(viewsets.ModelViewSet):
         qs = (
             Session.objects
             .filter(tenant=tenant)
+            .prefetch_related("target_lectures")
             .annotate(
                 participant_count=Count("participants"),
                 booked_count=Count(
@@ -95,12 +96,16 @@ class SessionViewSet(viewsets.ModelViewSet):
         from apps.domains.student_app.permissions import get_request_student
         student = get_request_student(self.request)
         if student:
-            # 학년 필터
+            # 학년 필터: 학년 미설정 학생은 제한 없는 세션만
             if student.grade:
                 qs = qs.filter(Q(target_grade__isnull=True) | Q(target_grade=student.grade))
-            # 학교유형 필터
+            else:
+                qs = qs.filter(target_grade__isnull=True)
+            # 학교유형 필터: 미설정 시 제한 없는 세션만
             if student.school_type:
                 qs = qs.filter(Q(target_school_type__isnull=True) | Q(target_school_type=student.school_type))
+            else:
+                qs = qs.filter(target_school_type__isnull=True)
             # 강의 필터: 수강 중인 강의가 대상에 포함되거나 대상 강의가 비어있는 경우
             from apps.domains.enrollment.models import Enrollment
             enrolled_lecture_ids = list(
@@ -334,17 +339,19 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             # 학년 제한 검증
-            if session.target_grade and request_student.grade and session.target_grade != request_student.grade:
-                return Response(
-                    {"detail": "해당 클리닉은 다른 학년 대상입니다. 본인 학년의 클리닉만 신청할 수 있습니다."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+            if session.target_grade:
+                if not request_student.grade or session.target_grade != request_student.grade:
+                    return Response(
+                        {"detail": "해당 클리닉은 다른 학년 대상입니다. 본인 학년의 클리닉만 신청할 수 있습니다."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
             # 학교유형 제한 검증
-            if session.target_school_type and request_student.school_type and session.target_school_type != request_student.school_type:
-                return Response(
-                    {"detail": "해당 클리닉은 다른 학교 유형 대상입니다."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+            if session.target_school_type:
+                if not request_student.school_type or session.target_school_type != request_student.school_type:
+                    return Response(
+                        {"detail": "해당 클리닉은 다른 학교 유형 대상입니다."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
             # 강의 제한 검증
             target_lec_ids = set(session.target_lectures.values_list("id", flat=True))
             if target_lec_ids:
