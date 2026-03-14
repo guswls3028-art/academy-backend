@@ -4,7 +4,7 @@
 **Date:** 2026-03-15
 **SSOT Status:** Active
 **Scope:** Performance, Cost, Stability, Operational Safety
-**Review Status:** Conditionally Approved 2026-03-15. 5 rounds, 15+ specialist agents. Confirmed/projected/unverified separated.
+**Review Status:** Substantially Complete 2026-03-15. Confirmed/projected/unverified separated. ECR lifecycle re-check pending 2026-03-17.
 
 > **Current State vs. Target State:**
 > This document describes both current infrastructure reality and proposed improvements.
@@ -559,12 +559,12 @@ No additional drain work needed.
 | Order | Action | Impact | Effort | Status |
 |-------|--------|--------|--------|--------|
 | 1 | **CI/CD `cancel-in-progress: false`** | **Prevent orphaned ASG refreshes** | 5 min | ✅ [COMPLETED] |
-| 2 | **Video Batch Deploy OIDC fix** | **Restore batch fallback (live bug)** | 30 min | **Pending — CRITICAL** |
-| 3 | **Video job auto-recovery cron** | **Prevent stuck jobs after daemon crash** | 15 min | **Pending — CRITICAL** |
-| 4 | ECR manifest-aware cleanup | $200/mo savings + deployment hygiene | Done | ✅ [COMPLETED] Script created, executing |
-| 5 | ECR lifecycle policy re-apply | Recurrence prevention | Done | ✅ [COMPLETED] Applied 2026-03-15 |
-| 6 | Messaging dedup hardening | Prevent duplicate SMS on Redis outage | 2 hours | ✅ [COMPLETED] (fail-closed + DB dedup) |
-| 7 | AWS Budget alerts | Cost guardrail | 15 min | Pending |
+| 2 | **Video Worker CI/CD** | **Build-and-push only, deploy-infra removed** | Multiple | ✅ [COMPLETED] OIDC+build-arg+permission+params+profile fixed, deploy-infra removed |
+| 3 | **Video job auto-recovery cron** | **Prevent stuck jobs after daemon crash** | 15 min | **Pending** |
+| 4 | ECR manifest-aware cleanup | $200/mo savings + deployment hygiene | Done | ✅ [COMPLETED] 34,026 images deleted (5.2TB → 5.4GB) |
+| 5 | ECR lifecycle policy re-apply | Recurrence prevention | Done | ✅ [COMPLETED] Applied 2026-03-15, verify after 2026-03-17 |
+| 6 | Messaging business-level idempotency | Atomic claim + DB UniqueConstraint + fail-closed | 4 hours | ✅ [COMPLETED] 3-layer defense (Redis lock + DB unique + transport dedup) |
+| 7 | AWS Budget alerts | Cost guardrail ($270/$320/$380) | 15 min | ✅ [COMPLETED] academy-monthly-infra created |
 | 8 | Single 720p encoding switch [PROPOSED] | ~50-55% time-to-ready improvement | 1 hour | Pending (code change needed) |
 | 9 | DAEMON_MAX_DURATION_SECONDS → 5400 [PROPOSED] | Daemon handles up to 90min videos | 10 min | Pending (config change) |
 | 10 | AI worker min=0 + SQS autoscale [PROPOSED] | $24/mo savings | 1 hour | Pending |
@@ -773,3 +773,4 @@ This skips base image rebuild on normal pushes. Base image only rebuilds on:
 | V1.1.0 | 2026-03-14 | Zero-downtime deployment, selective service deploy, SHA tagging |
 | V1.1.0 | 2026-03-15 | Infrastructure Optimization: ECR safety, single 720p, service separation, cost optimization |
 | V1.1.0 | 2026-03-15 | Round 2 revision: CI/CD concurrency fix, rollback runbook, messaging dedup, RDS RPO/RTO, worker right-sizing, video auto-recovery, cost floor correction ($204), duration threshold 5400s, performance breakdown (50-55%), `-refs 3`, base image conditional build |
+| V1.1.0 | 2026-03-15 | Implementation complete: business-level messaging idempotency (atomic claim + DB UniqueConstraint), Video Worker CI narrowed to build-and-push (deploy-infra removed, role separation), cancel-in-progress:false verified in live runs, AWS Budget created, CONN_HEALTH_CHECKS applied, params.yaml moved to SSOT root. ECR lifecycle re-check pending 2026-03-17. |
