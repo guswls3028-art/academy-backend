@@ -63,7 +63,7 @@ def tenant_get_by_code(code: str) -> Optional[Any]:
     raw = (code and str(code).strip()) or ""
     if not raw:
         return None
-    return Tenant.objects.filter(code__iexact=raw, is_active=True).first()
+    return Tenant.objects.select_related("program").filter(code__iexact=raw, is_active=True).first()
 
 
 def tenant_get_or_create(code: str, defaults: dict) -> tuple[Any, bool]:
@@ -78,7 +78,7 @@ def tenant_first_active() -> Optional[Any]:
 
 def tenant_domain_filter_by_host(host):
     from apps.core.models import TenantDomain
-    return TenantDomain.objects.select_related("tenant").filter(host=host)
+    return TenantDomain.objects.select_related("tenant__program").filter(host=host)
 
 
 def tenant_domain_get_or_create(host: str, tenant, defaults: Optional[dict] = None):
