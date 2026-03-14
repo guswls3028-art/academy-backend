@@ -137,7 +137,6 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
                 tenant=tenant,
                 parent_phone=parent_phone,
                 student_name=name,
-                parent_password=password,
             )
 
         user = student_repo.user_create_user(

@@ -31,12 +31,30 @@ class Session(TimestampModel):
     location = models.CharField(max_length=255)
     max_participants = models.PositiveIntegerField()
 
-    # ✅ 대상 학년: null이면 전체 학년 대상, 1/2/3이면 해당 학년만
+    # 대상 학년: null이면 전체 학년 대상, 1/2/3이면 해당 학년만
     target_grade = models.PositiveSmallIntegerField(
         choices=GRADE_CHOICES,
         null=True,
         blank=True,
         help_text="대상 학년. 비어있으면 전체 학년.",
+    )
+
+    # 대상 학교 유형: null이면 전체, MIDDLE/HIGH이면 해당 유형만
+    SCHOOL_TYPE_CHOICES = [("MIDDLE", "중등"), ("HIGH", "고등")]
+    target_school_type = models.CharField(
+        max_length=10,
+        choices=SCHOOL_TYPE_CHOICES,
+        null=True,
+        blank=True,
+        help_text="대상 학교 유형. 비어있으면 전체.",
+    )
+
+    # 대상 강의: 비어있으면 전체, 지정하면 해당 강의 수강생만
+    target_lectures = models.ManyToManyField(
+        "lectures.Lecture",
+        blank=True,
+        related_name="clinic_sessions",
+        help_text="대상 강의. 비어있으면 전체 학생.",
     )
 
     created_by = models.ForeignKey(

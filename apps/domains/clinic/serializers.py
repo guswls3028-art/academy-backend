@@ -3,15 +3,23 @@
 from datetime import datetime, timedelta
 from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
+from apps.domains.lectures.models import Lecture
 
 
 class ClinicSessionSerializer(serializers.ModelSerializer):
-    # (선택) 운영 페이지에서 잔여 좌석 계산. create 직후 인스턴스에는 annotate 없음 → getattr로 0 처리
     participant_count = serializers.SerializerMethodField()
 
-    # ✅ tenant, created_by는 서버에서 request 기준으로 설정 (생성 시 클라이언트 제출 불필요)
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    # 대상 강의: 쓰기 시 id 배열, 읽기 시 id+title
+    target_lecture_ids = serializers.PrimaryKeyRelatedField(
+        source="target_lectures",
+        queryset=Lecture.objects.all(),
+        many=True,
+        required=False,
+    )
+    target_lecture_names = serializers.SerializerMethodField()
 
     # ✅ 파생 필드: 종료 시간 (저장 X)
     end_time = serializers.SerializerMethodField()
@@ -27,7 +35,7 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Session
-        fields = "__all__"
+        exclude = ("target_lectures",)
 
     def get_participant_count(self, obj: Session):
         return getattr(obj, "participant_count", 0)
@@ -66,6 +74,12 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
     def get_has_auto_targets(self, obj):
         return getattr(obj, "auto_count", 0) > 0
+
+    def get_target_lecture_names(self, obj):
+        lectures = obj.target_lectures.all()
+        if not lectures:
+            return []
+        return [{"id": lec.id, "title": lec.title} for lec in lectures]
 
 
 class ClinicSessionParticipantSerializer(serializers.ModelSerializer):

@@ -10,8 +10,6 @@
   python manage.py ensure_parent_accounts_for_students              # 실행
   python manage.py ensure_parent_accounts_for_students --dry-run    # 대상만 출력
 """
-import secrets
-
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
@@ -81,7 +79,6 @@ class Command(BaseCommand):
                         tenant=student.tenant,
                         parent_phone=parent_phone,
                         student_name=student.name or "학생",
-                        parent_password=secrets.token_urlsafe(16),
                     )
                     if not parent.user_id:
                         errors.append(f"student_id={student.id}: parent user 생성 실패")

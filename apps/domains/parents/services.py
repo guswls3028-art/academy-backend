@@ -12,12 +12,14 @@ from apps.core.models import TenantMembership
 from .models import Parent
 
 
+PARENT_DEFAULT_PASSWORD = "0000"
+
+
 def ensure_parent_for_student(
     *,
     tenant,
     parent_phone: str,
     student_name: str,
-    parent_password: str,
 ) -> Parent:
     """
     학부모 전화번호로 Parent 조회 또는 생성
@@ -43,7 +45,7 @@ def ensure_parent_for_student(
                     name=f"{student_name} 학부모",
                     tenant=tenant,
                 )
-                user.set_password(parent_password)
+                user.set_password(PARENT_DEFAULT_PASSWORD)
                 user.save()
                 parent.user = user
                 parent.save(update_fields=["user"])
@@ -64,7 +66,7 @@ def ensure_parent_for_student(
             name=f"{student_name} 학부모",
             tenant=tenant,
         )
-        user.set_password(parent_password)
+        user.set_password(PARENT_DEFAULT_PASSWORD)
         user.save()
 
         parent = Parent.objects.create(

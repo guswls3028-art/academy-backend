@@ -1,7 +1,7 @@
 # PATH: apps/domains/clinic/views.py
 
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Exists, OuterRef
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -91,11 +91,29 @@ class SessionViewSet(viewsets.ModelViewSet):
             )
         )
 
-        # ✅ 학생 조회 시: 본인 학년에 해당하는 세션만 노출 (시스템 레벨 통제)
+        # 학생 조회 시: 본인 조건에 맞는 세션만 노출
         from apps.domains.student_app.permissions import get_request_student
         student = get_request_student(self.request)
-        if student and student.grade:
-            qs = qs.filter(Q(target_grade__isnull=True) | Q(target_grade=student.grade))
+        if student:
+            # 학년 필터
+            if student.grade:
+                qs = qs.filter(Q(target_grade__isnull=True) | Q(target_grade=student.grade))
+            # 학교유형 필터
+            if student.school_type:
+                qs = qs.filter(Q(target_school_type__isnull=True) | Q(target_school_type=student.school_type))
+            # 강의 필터: 수강 중인 강의가 대상에 포함되거나 대상 강의가 비어있는 경우
+            from apps.domains.enrollment.models import Enrollment
+            enrolled_lecture_ids = list(
+                Enrollment.objects.filter(
+                    student=student, tenant=tenant, status="ACTIVE"
+                ).values_list("lecture_id", flat=True)
+            )
+            if enrolled_lecture_ids:
+                qs = qs.filter(
+                    Q(target_lectures__isnull=True) | Q(target_lectures__id__in=enrolled_lecture_ids)
+                ).distinct()
+            else:
+                qs = qs.filter(target_lectures__isnull=True)
 
         return qs
 
@@ -187,6 +205,9 @@ class SessionViewSet(viewsets.ModelViewSet):
                     "participants",
                     filter=Q(participants__status=SessionParticipant.Status.NO_SHOW),
                 ),
+                _has_target_lectures=Exists(
+                    Session.target_lectures.through.objects.filter(session_id=OuterRef("pk"))
+                ),
             )
             .order_by("date", "start_time")
         )
@@ -199,6 +220,8 @@ class SessionViewSet(viewsets.ModelViewSet):
                 "start_time": s.start_time,
                 "location": s.location,
                 "target_grade": s.target_grade,
+                "target_school_type": s.target_school_type,
+                "has_target_lectures": s._has_target_lectures,
                 "participant_count": s.participant_count,
                 "booked_count": s.booked_count,
                 "no_show_count": s.no_show_count,
@@ -310,12 +333,32 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     {"detail": "등록 가능한 클리닉을 선택해주세요. 해당 날짜에 열린 클리닉만 신청할 수 있습니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            # ✅ 학년 제한 검증: 학생 학년과 세션 대상 학년이 불일치하면 거부
+            # 학년 제한 검증
             if session.target_grade and request_student.grade and session.target_grade != request_student.grade:
                 return Response(
                     {"detail": "해당 클리닉은 다른 학년 대상입니다. 본인 학년의 클리닉만 신청할 수 있습니다."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
+            # 학교유형 제한 검증
+            if session.target_school_type and request_student.school_type and session.target_school_type != request_student.school_type:
+                return Response(
+                    {"detail": "해당 클리닉은 다른 학교 유형 대상입니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            # 강의 제한 검증
+            target_lec_ids = set(session.target_lectures.values_list("id", flat=True))
+            if target_lec_ids:
+                from apps.domains.enrollment.models import Enrollment
+                enrolled_lec_ids = set(
+                    Enrollment.objects.filter(
+                        student=request_student, tenant=tenant, status="ACTIVE"
+                    ).values_list("lecture_id", flat=True)
+                )
+                if not target_lec_ids & enrolled_lec_ids:
+                    return Response(
+                        {"detail": "해당 클리닉은 특정 강의 수강생 대상입니다."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
             # 정원 체크는 아래 atomic 블록에서 select_for_update와 함께 수행
             # 학생 신청은 기본적으로 pending 상태
             if not requested_status or requested_status == SessionParticipant.Status.BOOKED:
@@ -451,9 +494,14 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 SessionParticipant.Status.NO_SHOW,
                 SessionParticipant.Status.CANCELLED,
             },
+            # Terminal states — no further transitions allowed
+            SessionParticipant.Status.ATTENDED: set(),
+            SessionParticipant.Status.NO_SHOW: set(),
+            SessionParticipant.Status.REJECTED: set(),
+            SessionParticipant.Status.CANCELLED: set(),
         }
-        valid_next = VALID_TRANSITIONS.get(obj.status)
-        if valid_next is not None and next_status not in valid_next:
+        valid_next = VALID_TRANSITIONS.get(obj.status, set())
+        if next_status not in valid_next:
             return Response(
                 {"detail": f"'{obj.status}'에서 '{next_status}'(으)로 변경할 수 없습니다."},
                 status=status.HTTP_400_BAD_REQUEST,
