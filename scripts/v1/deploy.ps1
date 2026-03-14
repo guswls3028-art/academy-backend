@@ -43,9 +43,9 @@ $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
 # -AwsProfile 기본값 default (문서·룰: 반드시 default 사용, 프로필 묻지 말 것)
 # CI mode (-Ci): OIDC uses env vars (AWS_ACCESS_KEY_ID/AWS_SESSION_TOKEN), not named profiles.
 if ($Ci) {
-    $env:AWS_PROFILE = ""
+    Remove-Item Env:AWS_PROFILE -ErrorAction SilentlyContinue
     if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" }
-    Write-Host "CI mode: using env-var credentials (no AWS_PROFILE)" -ForegroundColor Cyan
+    Write-Host "CI mode: using env-var credentials (AWS_PROFILE removed)" -ForegroundColor Cyan
 } elseif ($AwsProfile -and $AwsProfile.Trim() -ne "") {
     $env:AWS_PROFILE = $AwsProfile.Trim()
     if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" }
