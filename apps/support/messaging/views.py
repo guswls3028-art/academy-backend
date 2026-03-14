@@ -751,7 +751,7 @@ class AutoSendConfigView(APIView):
                 defaults={
                     "template": tpl,
                     "enabled": True,
-                    "message_mode": "both",
+                    "message_mode": "alimtalk",
                     "minutes_before": defaults.get("minutes_before"),
                 },
             )

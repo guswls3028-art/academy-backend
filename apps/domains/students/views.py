@@ -1150,9 +1150,11 @@ def _approve_registration_request(request, reg):
     from apps.core.models.user import user_internal_username
 
     tenant = request.tenant
-    # 승인 시 임시 비밀번호 생성 (평문) — 알림톡 발송용
-    # reg.initial_password는 해시값이므로 평문 복원 불가
+    # 가입 시 입력한 비밀번호 사용 — reg.initial_password는 해시값이므로 직접 설정
+    # 평문은 알림톡 발송용으로 별도 관리 불가 → 임시 비번 생성 후 안내
     temp_password = _generate_temp_password(8)
+    # 학부모 비밀번호는 항상 "0000" 고정
+    parent_fixed_password = "0000"
     name = reg.name
     parent_phone = reg.parent_phone
     phone = reg.phone
@@ -1230,7 +1232,7 @@ def _approve_registration_request(request, reg):
             student_id=requested_username,
             student_password=temp_password,
             parent_phone=parent_phone or "",
-            parent_password=temp_password,
+            parent_password=parent_fixed_password,
         )
         return None
     except Exception as e:
