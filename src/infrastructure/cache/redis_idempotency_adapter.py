@@ -55,8 +55,9 @@ class RedisIdempotencyAdapter(IIdempotency):
         """
         client = get_redis_client()
         if not client:
-            logger.warning("Redis not available, allowing job (no idempotency)")
-            return True
+            # fail-CLOSED: 중복 실행 방지를 위해 거부. SQS에서 재시도됨.
+            logger.warning("Redis not available, REJECTING job for safety (fail-closed) job_id=%s", job_id)
+            return False
 
         key = f"job:{job_id}:lock"
         try:
@@ -76,8 +77,9 @@ class RedisIdempotencyAdapter(IIdempotency):
             logger.info(LOG_IDEMPOTENT_SKIP, job_id)
             return False
         except Exception as e:
-            logger.warning("Redis lock acquire failed, allowing job: %s", e)
-            return True
+            # fail-CLOSED: Redis 장애 시 중복 실행 방지를 위해 거부.
+            logger.warning("Redis lock acquire failed, REJECTING job for safety: %s", e)
+            return False
 
     def release_lock(self, job_id: str) -> None:
         """작업 완료/실패 시 락 해제 및 renew 중단"""

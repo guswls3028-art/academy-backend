@@ -1,6 +1,6 @@
 # ==============================================================================
 # V1 ECR build/push + selective deploy — OIDC 전용. Access Key 미사용.
-# Backend repo: guswls3028-art/academy-backend. SSOT: docs/00-SSOT/v1/params.yaml.
+# Backend repo: guswls3028-art/academy-backend. SSOT: docs/00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md
 # 5개 이미지 linux/arm64 빌드·푸시 (latest + sha 태그). 변경된 서비스만 ASG refresh.
 # V1.1.0: Zero-downtime deployment — SHA tagging, selective worker deploy,
 #          pre-deploy migration, deploy verification.
@@ -15,7 +15,7 @@ on:
 
 concurrency:
   group: v1-build-and-push-latest
-  cancel-in-progress: true
+  cancel-in-progress: false  # V1.1.0: prevent orphaned ASG refreshes on concurrent pushes
 
 env:
   AWS_REGION: ap-northeast-2
@@ -246,7 +246,7 @@ jobs:
           ## V1.1.0 CI Build — latest + sha 이미지 푸시 증거 (OIDC)
 
           **Generated:** $BUILD_TIME
-          **SSOT:** docs/00-SSOT/v1/params.yaml
+          **SSOT:** docs/00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md
           **Region:** ${{ env.AWS_REGION }}
           **gitSha:** $SHA
           **shortSha:** $SHORT_SHA
@@ -289,7 +289,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "No change to ci-build.latest.md"
           else
-            git commit -m "chore(ci): update ci-build.latest.md [V1.1.0] (sha-${{ needs.detect-changes.outputs.short_sha }})"
+            git commit -m "chore(ci): update ci-build.latest.md [V1.1.0] (sha-${{ needs.detect-changes.outputs.short_sha }}) [skip ci]"
             git push
           fi
         env:

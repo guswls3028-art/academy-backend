@@ -36,7 +36,7 @@ Before API ASG refresh, migrations run automatically via SSM RunCommand on a cur
 - Only runs when API or shared code changed
 - Executes `docker exec academy-api python manage.py migrate --no-input`
 - Must succeed before API refresh begins
-- Times out after 200 seconds with clear error reporting
+- Times out after 120 seconds with clear error reporting
 
 ### 4. Post-Deploy Verification
 

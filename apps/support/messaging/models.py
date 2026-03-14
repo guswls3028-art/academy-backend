@@ -33,6 +33,10 @@ class NotificationLog(models.Model):
         choices=[("sms", "SMS"), ("alimtalk", "알림톡"), ("both", "알림톡→SMS")],
         help_text="발송 방식",
     )
+    sqs_message_id = models.CharField(
+        max_length=128, blank=True, default="", db_index=True,
+        help_text="SQS MessageId for dedup (empty for legacy logs)",
+    )
 
     class Meta:
         app_label = "messaging"

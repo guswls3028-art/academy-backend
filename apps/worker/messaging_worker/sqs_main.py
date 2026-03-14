@@ -16,7 +16,7 @@ import time
 from typing import Optional
 
 from libs.queue import get_queue_client, QueueUnavailableError
-from libs.redis.idempotency import acquire_job_lock, release_job_lock
+from libs.redis.idempotency import acquire_job_lock, release_job_lock, RedisLockUnavailableError
 
 from apps.worker.messaging_worker.config import load_config
 
@@ -369,7 +369,15 @@ def main() -> int:
                     continue
 
                 job_id = f"messaging:{message_id}"
-                if not acquire_job_lock(job_id):
+                try:
+                    lock_acquired = acquire_job_lock(job_id)
+                except RedisLockUnavailableError:
+                    # Redis 장애: 메시지를 SQS에 남겨 재시도 (fail-closed)
+                    logger.warning("Redis unavailable, leaving message in SQS for retry job_id=%s", job_id)
+                    time.sleep(10)  # back-off to avoid tight loop during Redis outage
+                    continue
+                if not lock_acquired:
+                    # 중복 메시지: 다른 워커가 이미 처리 중 → 삭제
                     queue_client.delete_message(
                         queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                         receipt_handle=receipt_handle,
@@ -498,6 +506,27 @@ def main() -> int:
                     pf_id = pf_id_tenant or cfg.SOLAPI_KAKAO_PF_ID
                     template_id = (template_id_msg or "").strip() or cfg.SOLAPI_KAKAO_TEMPLATE_ID
 
+                    # DB-level dedup: Redis 장애 복구 후 재처리 시 이미 발송된 메시지 스킵
+                    if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
+                        try:
+                            from apps.support.messaging.models import NotificationLog as _NL
+                            if _NL.objects.filter(
+                                sqs_message_id=message_id, success=True
+                            ).exists():
+                                logger.info(
+                                    "DB dedup: message_id=%s already sent successfully, skipping",
+                                    message_id,
+                                )
+                                queue_client.delete_message(
+                                    queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                                    receipt_handle=receipt_handle,
+                                )
+                                _msg_deleted = True
+                                _current_receipt_handle = None
+                                continue
+                        except Exception as e:
+                            logger.warning("DB dedup check failed (proceeding): %s", e)
+
                     # 잔액 검증 및 차감 (Django + info 있을 때, 단가 > 0)
                     deducted = False
                     try:
@@ -521,6 +550,7 @@ def main() -> int:
                                     failure_reason="insufficient_balance",
                                     message_body=text[:2000],
                                     message_mode=message_mode,
+                                    sqs_message_id=message_id,
                                 )
                                 queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
@@ -617,6 +647,7 @@ def main() -> int:
                                             failure_reason="sms_not_allowed_for_tenant",
                                             message_body=text[:2000],
                                             message_mode=message_mode,
+                                            sqs_message_id=message_id,
                                         )
                                     except Exception as e:
                                         logger.warning("create_notification_log failed: %s", e)
@@ -677,6 +708,7 @@ def main() -> int:
                                         template_summary=template_id or "SMS",
                                         message_body=text[:2000],
                                         message_mode=message_mode,
+                                        sqs_message_id=message_id,
                                     )
                                 else:
                                     if deducted:
@@ -701,6 +733,7 @@ def main() -> int:
                                         failure_reason=failure_reason[:500],
                                         message_body=text[:2000],
                                         message_mode=message_mode,
+                                        sqs_message_id=message_id,
                                     )
                             except Exception as e:
                                 logger.exception("NotificationLog/rollback failed: %s", e)

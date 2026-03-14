@@ -11,8 +11,8 @@
 | API | academy-api | academy-v1-api-asg | academy-api | Django REST API (Gunicorn) |
 | Messaging Worker | academy-messaging-worker | academy-v1-messaging-worker-asg | academy-messaging-worker | SQS message processing |
 | AI Worker | academy-ai-worker-cpu | academy-v1-ai-worker-asg | academy-ai-worker-cpu | AI task processing |
-| Video Worker (Daemon) | academy-video-worker | (runs on API/dedicated instance) | — | Video processing (short, <30min) |
-| Video Worker (Batch) | academy-video-worker | AWS Batch | — | Video processing (long, >30min) |
+| Video Worker (Daemon) | academy-video-worker | **Dedicated video worker instance** | academy-video-worker | Video processing (< 30 min, current DAEMON_MAX_DURATION_SECONDS=1800) |
+| Video Worker (Batch) | academy-video-worker | AWS Batch (on-demand) | — | Video processing (>= 30 min, or auto-fallback from daemon) |
 | Base | academy-base | — | — | Shared base image for all services |
 
 **Note:** Video daemon worker is NOT deployed via this workflow. Video Batch uses a separate `video_batch_deploy.yml`.
@@ -190,23 +190,34 @@ ECR repositories should have lifecycle policies to prevent unbounded image accum
   "rules": [
     {
       "rulePriority": 1,
-      "description": "Keep last 50 sha-tagged images",
+      "description": "Remove untagged images after 1 day",
       "selection": {
-        "tagStatus": "tagged",
-        "tagPrefixList": ["sha-"],
-        "countType": "imageCountMoreThan",
-        "countNumber": 50
+        "tagStatus": "untagged",
+        "countType": "sinceImagePushed",
+        "countUnit": "days",
+        "countNumber": 1
       },
       "action": { "type": "expire" }
     },
     {
       "rulePriority": 2,
-      "description": "Remove untagged images after 7 days",
+      "description": "Keep last 10 sha-tagged images",
       "selection": {
-        "tagStatus": "untagged",
-        "countType": "sinceImagePushed",
-        "countUnit": "days",
-        "countNumber": 7
+        "tagStatus": "tagged",
+        "tagPrefixList": ["sha-"],
+        "countType": "imageCountMoreThan",
+        "countNumber": 10
+      },
+      "action": { "type": "expire" }
+    },
+    {
+      "rulePriority": 3,
+      "description": "Keep last 5 release/deploy tags",
+      "selection": {
+        "tagStatus": "tagged",
+        "tagPrefixList": ["latest", "v", "prod", "main", "deploy"],
+        "countType": "imageCountMoreThan",
+        "countNumber": 5
       },
       "action": { "type": "expire" }
     }
@@ -214,7 +225,7 @@ ECR repositories should have lifecycle policies to prevent unbounded image accum
 }
 ```
 
-This keeps ~50 rollback points (about 2 months of daily deploys) and cleans up untagged intermediates.
+This keeps 10 rollback points and aggressively cleans untagged manifests. See `INFRASTRUCTURE-OPTIMIZATION.md` Section 4 for full ECR operational safety design including manifest-aware cleanup strategy.
 
 ## 10. Health Check Design
 
@@ -241,4 +252,3 @@ This keeps ~50 rollback points (about 2 months of daily deploys) and cleans up u
 | `scripts/v1/resources/asg_messaging.ps1` | Messaging ASG + launch template management |
 | `scripts/v1/resources/api.ps1` | API ASG + launch template management |
 | `scripts/v1/deploy.ps1` | Manual/bootstrap deployment (not used in CI/CD) |
-| `docs/00-SSOT/v1/params.yaml` | Infrastructure parameters SSOT |
