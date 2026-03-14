@@ -153,6 +153,7 @@ class ProgramView(APIView):
             program,
             data=(request.data if isinstance(request.data, dict) else {}),
             partial=True,
+            context={"request": request},
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()

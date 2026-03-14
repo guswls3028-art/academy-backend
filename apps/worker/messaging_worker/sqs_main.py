@@ -34,6 +34,7 @@ MESSAGING_STEPS = [
     (3, "sending", "발송"),
     (4, "done", "완료"),
 ]
+_STEP_DISPLAY = {step_name: display for _, step_name, display in MESSAGING_STEPS}
 
 
 def _record_progress(
@@ -53,7 +54,7 @@ def _record_progress(
                 "step_index": step_index,
                 "step_total": MESSAGING_STEP_TOTAL,
                 "step_name": step,
-                "step_name_display": dict(MESSAGING_STEPS).get(step, step),
+                "step_name_display": _STEP_DISPLAY.get(step, step),
                 "step_percent": step_percent if step_percent is not None else 100,
             })
         # ✅ tenant_id 전달 (tenant namespace 키 사용)
