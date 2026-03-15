@@ -50,6 +50,39 @@ A verification job runs after all deploy jobs complete:
 
 CI build reports now write to `docs/00-SSOT/v1.1.0/reports/ci-build.latest.md` (was `v1/reports/`).
 
+## V1.1.0 Patch — Video Pipeline Overhaul (2026-03-16)
+
+### 6. Video Encoding: 2-Tier ABR with Aspect Ratio Preservation
+
+기존 360p+720p 고정비트레이트 인코딩을 **CRF 기반 2단계 ABR**로 교체.
+
+| Variant | 해상도 | CRF | maxrate | Profile |
+|---------|--------|-----|---------|---------|
+| v2 (고화질) | 원본 유지 (≤1080p) | 20 | 8000k | High L4.1 |
+| v1 (중화질) | 720p 비율 보존 | 23 | 3000k | Main L3.1 |
+
+- 원본 비율 정확 보존 (기존: 16:9 강제 스케일링)
+- 휴대폰 rotation 메타데이터 자동 처리 (90°/270° w↔h 스왑)
+- 원본 ≤720p인 경우 단일 variant (업스케일 방지)
+- **코드:** `apps/worker/video_worker/video/transcoder.py`
+
+### 7. Video Worker Mode: batch 고정
+
+`VIDEO_WORKER_MODE` 기본값을 `daemon` → `batch`로 변경. Daemon 프로세스 미운용 상태에서 짧은 영상이 QUEUED에서 무한 대기하던 문제 해결.
+
+- **코드:** `apps/api/config/settings/base.py`
+
+### 8. Heartbeat DB Connection Recovery
+
+장시간 인코딩 중 DB 커넥션 만료로 heartbeat 갱신이 무음 실패하던 문제 수정.
+- `close_old_connections()` 추가
+- heartbeat 실패 로그 DEBUG → WARNING 승격
+- **코드:** `apps/worker/video_worker/batch_main.py`, `daemon_main.py`
+
+### 9. Operational Data Protection (CLAUDE.md §B)
+
+Tenant 1(개발/테스트) 제외 모든 테넌트 데이터는 실제 운영 데이터. 삭제/수정/초기화 등 파괴적 조작 절대 금지.
+
 ## What Did NOT Change
 
 - Video Batch worker deployment (uses separate `video_batch_deploy.yml` with its own SHA tagging)

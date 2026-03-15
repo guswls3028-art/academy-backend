@@ -92,86 +92,43 @@
 
 ## 3. Video Pipeline Design
 
-### 3.1 Encoding Strategy: Single 720p **[PROPOSED]**
+### 3.1 Encoding Strategy: 2-Tier ABR with Aspect Ratio Preservation **[IMPLEMENTED 2026-03-16]**
 
-**Default output:** Single 720p HLS variant.
-**Current code:** `transcoder.py` still uses 2-variant (360p+720p). Code change required.
+**구현 완료.** CRF 기반 2단계 ABR. 원본 비율 정확 보존.
 
-```python
-# transcoder.py — V1.1.0 encoding configuration
-HLS_VARIANT = {
-    "name": "1",
-    "width": 1280,
-    "height": 720,
-    "video_bitrate": "3500k",   # Text-safe: do NOT lower below 3000k
-    "audio_bitrate": "128k",
-}
-```
+| Variant | 해상도 | CRF | maxrate | bufsize | Profile | Audio |
+|---------|--------|-----|---------|---------|---------|-------|
+| v2 (고화질) | 원본 유지 (≤1080p) | 20 | 8000k | 12000k | High L4.1 | AAC 128k |
+| v1 (중화질) | 720p 비율 보존 | 23 | 3000k | 4500k | Main L3.1 | AAC 96k |
 
-**Why single 720p:**
-- Eliminates 360p variant → ~50% fewer HLS segments
-- Removes filter_complex `split` → simpler ffmpeg pipeline
-- 1 variant instead of 2 → encoding time reduced ~25%
-- R2 upload file count halved → faster publish
-- **Combined with preset change (see below): total time-to-ready improvement ~50-55%**
+**핵심 변경:**
+- 고정 비트레이트 → CRF 기반 품질 제어 (장면별 비트레이트 자동 조절)
+- 16:9 강제 스케일링 → 원본 비율 정확 보존 (`_compute_output_resolution`)
+- 휴대폰 rotation 메타데이터 자동 처리 (90°/270° w↔h 스왑)
+- 원본 ≤720p인 경우 단일 variant (업스케일 방지)
+- `VIDEO_WORKER_MODE=batch` 고정 (daemon 미운용)
+- preset: `medium` (품질 우선)
 
-**Why 3500kbps (not lower):**
-- Academy lectures include document/code/Excel/PDF screen recordings
-- At 2500kbps, compression artifacts blur small text on tablets
-- At 3500kbps, text remains readable on iPad Pro 12.9" and Galaxy Tab S
-- 3500kbps is comparable to the old 2-variant total (800k + 2500k = 3300k)
-- Storage cost increase is negligible vs. quality improvement
+**인코딩 시간 (c6g.xlarge 4 vCPU 기준):**
+| 영상 길이 | 소요 시간 |
+|----------|----------|
+| 1분 | ~3분 |
+| 10분 | ~15분 |
+| 60분 | ~60분 |
+| 173분 | ~90-120분 |
 
-**FFmpeg optimization flags (new):**
-- `-preset fast` (was: unset = medium default). ~35% faster encode, slight quality trade-off.
-- `-refs 3` (compensate for `fast` preset's reduced reference frames). Restores text sharpness for document/code content.
-- `-threads 0` (auto-detect CPU cores). Utilizes full video worker CPU.
-- `-profile:v main` (unchanged, compatibility)
-- `-g 48 -keyint_min 48 -sc_threshold 0` (unchanged)
+**기존 영상 정책:** 원본 파일은 인코딩 성공 후 자동 삭제. 기존 운영 영상 재인코딩 불가 → 현재 HLS 유지. 신규 업로드부터 새 정책 적용.
 
-**Performance gain breakdown (two independent sources):**
-1. **Variant reduction** (2-variant → single 720p): ~25% time savings (fewer segments, no split filter)
-2. **Preset change** (`medium` → `fast`): ~35% time savings (faster encoding per frame)
-3. **Combined**: ~50-55% total time-to-ready improvement (multiplicative, not additive)
+**Video Worker Instance: c6g.xlarge (Batch CE)**
 
-**⚠ CRITICAL: Instance Type Warning for Video Worker**
+현재 AWS Batch Compute Environment에서 `c6g.xlarge` (4 vCPU ARM, 8GB) 사용.
+- 비버스트, 전용 CPU → 인코딩 성능 안정적
+- min=0, max=8 (job 기반 자동 스케일)
+- 영상 없을 때 0대 → 비용 없음
 
-t4g.medium is a **burstable** instance. CPU credits exhaust in ~30 minutes of sustained encoding. After credit depletion, CPU throttles to 20% baseline (40% total for 2 vCPU). Real-world encoding times:
+### 3.2 Text Readability — Resolved
 
-| Video Duration | With Credits (first 30min) | After Throttle | Total Wall Time |
-|---------------|---------------------------|----------------|-----------------|
-| 10 min | ~4 min | N/A | ~4 min |
-| 30 min | 30 min at full speed | ~15 min throttled | ~25 min |
-| 60 min | 30 min at full speed | ~90 min throttled | **~120 min** |
-| 90 min | 30 min at full speed | ~180 min throttled | **~210 min** |
-
-**Recommendation:** Video worker should use a **non-burstable compute-optimized instance**:
-- `c6g.medium` (1 vCPU dedicated, ~$25/mo) — minimum for consistent encoding
-- `c6g.large` (2 vCPU dedicated, ~$50/mo) — recommended for 60-90 min lectures
-- `c7g.medium` (Graviton3, ~$30/mo) — better per-core performance
-
-The 50-55% improvement estimate above is valid **only on non-burstable instances**. On t4g.medium, improvement is limited to the first 30 minutes of encoding before credit depletion.
-
-### 3.2 Text Readability Risk Acknowledgment
-
-**720p is NOT guaranteed sufficient for all content types.**
-
-| Content Type | 720p@3500k | Risk |
-|-------------|-----------|------|
-| Talking head + whiteboard | Excellent | None |
-| Slide presentation (large text) | Good | Low |
-| Document/PDF (body text) | Acceptable | Medium |
-| Code editor (small font) | Borderline | **High** |
-| Excel spreadsheet (dense cells) | Borderline | **High** |
-| Handwritten math (fine lines) | Acceptable | Medium |
-
-**Mandatory QA before finalizing 720p:**
-
-| Test | Device | Pass Criteria |
-|------|--------|---------------|
-| Code editor lecture | iPad Pro 12.9" | 12pt code readable without zooming |
-| Excel spreadsheet lecture | iPad mini | Cell text legible at normal viewing distance |
-| PDF textbook lecture | Galaxy Tab S | Body text (10-11pt equivalent) clear |
+V1.1.0 패치로 고화질 variant(v2)가 원본 해상도를 유지하므로 720p 고정 출력의 텍스트 가독성 리스크는 해소됨. 저속 네트워크 시 v1(720p)로 fallback되지만, CRF 23 + 3000kbps로 기존(고정 2500kbps)보다 품질 향상.
 | Whiteboard lecture | Any tablet | Board text readable |
 
 **If QA fails → upgrade to single 1080p:**
