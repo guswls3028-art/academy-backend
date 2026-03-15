@@ -21,12 +21,19 @@ _RE_TIME = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
 # ffmpeg -progress pipe:1 출력 (out_time_ms=마이크로초)
 _RE_OUT_TIME_MS = re.compile(r"out_time_ms=(\d+)")
 
-# 360p + 720p만 사용 (240p 제거로 CPU 부담 감소, 학원 실사용에 충분)
-# preset 유지 (순서 중요): v1=360p, v2=720p
-HLS_VARIANTS = [
-    {"name": "1", "width": 640, "height": 360, "video_bitrate": "800k", "audio_bitrate": "96k"},
-    {"name": "2", "width": 1280, "height": 720, "video_bitrate": "2500k", "audio_bitrate": "128k"},
-]
+# ── Encoding Policy (V1.1.0+) ──────────────────────────────────────
+# 강의 품질 보존 파이프라인: 태블릿 시청 기준, 필기/수식/화면 텍스트 가독성 최적화.
+# - 원본 비율 정확 보존 (강제 스케일링 금지)
+# - 원본 해상도 ≤ 1080p면 그대로 유지, 초과 시 1080p 다운스케일
+# - CRF 기반 품질 제어 (강의 장면 특성에 따라 비트레이트 자동 조절)
+# - 단일 고화질 출력 (불필요한 저화질 variant 제거)
+ENCODING_CRF = 20          # 높은 품질 (18=거의 무손실, 23=기본, 28=저화질)
+ENCODING_MAXRATE = "8000k"  # 스트리밍 대역폭 상한
+ENCODING_BUFSIZE = "12000k" # VBV 버퍼 (maxrate * 1.5)
+ENCODING_PRESET = "medium"  # 품질 우선 (slow > medium > fast)
+ENCODING_AUDIO_BITRATE = "128k"
+MAX_OUTPUT_HEIGHT = 1080    # 출력 해상도 상한
+MAX_OUTPUT_WIDTH = 1920
 
 
 class TranscodeError(RuntimeError):
@@ -65,22 +72,37 @@ def _probe_resolution(input_path: str, ffprobe_bin: str, timeout: int) -> tuple[
         return 0, 0
 
 
-def _select_variants(input_w: int, input_h: int) -> List[dict]:
+def _compute_output_resolution(input_w: int, input_h: int) -> tuple[int, int]:
     """
-    입력 해상도 상한 반영:
-    - 원본보다 큰 variant는 제외
+    원본 비율을 정확히 보존하면서 출력 해상도를 결정.
+    - 원본이 1080p 이하면 그대로 유지
+    - 초과 시 1080p에 맞춰 다운스케일 (비율 보존)
+    - ffmpeg libx264는 짝수 치수 필요 → 2의 배수로 내림
     """
-    selected = []
-    for v in HLS_VARIANTS:
-        if v["width"] <= input_w and v["height"] <= input_h:
-            selected.append(v)
-    # 안전장치: 최소 1개
-    if not selected:
-        selected.append(HLS_VARIANTS[0])
-    return selected
+    if input_w <= 0 or input_h <= 0:
+        # probe 실패 시 스케일링 없이 원본 그대로 (ffmpeg이 알아서 처리)
+        return 0, 0
+
+    # 원본이 상한 이내면 그대로
+    if input_w <= MAX_OUTPUT_WIDTH and input_h <= MAX_OUTPUT_HEIGHT:
+        # 짝수 보장
+        return input_w - (input_w % 2), input_h - (input_h % 2)
+
+    # 비율 보존 다운스케일: width와 height 모두 상한 이내가 되도록
+    scale_w = MAX_OUTPUT_WIDTH / input_w
+    scale_h = MAX_OUTPUT_HEIGHT / input_h
+    scale = min(scale_w, scale_h)
+
+    out_w = int(input_w * scale)
+    out_h = int(input_h * scale)
+    # 짝수 보장 (내림)
+    out_w -= out_w % 2
+    out_h -= out_h % 2
+    return out_w, out_h
 
 
 def prepare_output_dirs(output_root: Path, variants: List[dict]) -> None:
+    """Legacy: kept for backward compatibility. Use direct ensure_dir for new pipeline."""
     ensure_dir(output_root)
     for v in variants:
         ensure_dir(output_root / f"v{v['name']}")
@@ -117,56 +139,72 @@ def has_audio_stream(*, input_path: str, ffprobe_bin: str, timeout: int) -> bool
         return False
 
 
-def build_filter_complex(variants: List[dict]) -> str:
-    parts: List[str] = []
-    split_count = len(variants)
-    parts.append("[0:v]split={}".format(split_count) + "".join(f"[v{i}]" for i in range(split_count)))
-    for i, v in enumerate(variants):
-        parts.append(f"[v{i}]scale={v['width']}:{v['height']}[v{i}out]")
-    return ";".join(parts)
+def build_scale_filter(out_w: int, out_h: int) -> Optional[str]:
+    """
+    원본 비율 보존 스케일 필터. 스케일링 불필요 시 None 반환.
+    out_w, out_h가 0이면 스케일링 안 함 (원본 그대로, 짝수 보장만).
+    _compute_output_resolution에서 이미 비율 보존 + 짝수 계산 완료이므로
+    여기서는 단순 스케일만 적용.
+    """
+    if out_w <= 0 or out_h <= 0:
+        # probe 실패: 짝수 보장만 (원본 유지)
+        return "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+    return f"scale={out_w}:{out_h},setsar=1"
 
 
 def build_ffmpeg_command(
     *,
     input_path: str,
-    variants: List[dict],
+    out_w: int,
+    out_h: int,
     with_audio: bool,
     ffmpeg_bin: str,
     hls_time: int,
 ) -> List[str]:
+    """
+    CRF 기반 단일 고화질 HLS 출력. 원본 비율 보존.
+    """
     cmd: List[str] = [
         ffmpeg_bin,
         "-y",
         "-i", input_path,
-        "-filter_complex", build_filter_complex(variants),
     ]
 
-    for i, v in enumerate(variants):
-        cmd += ["-map", f"[v{i}out]"]
-        if with_audio:
-            cmd += ["-map", "0:a?"]
+    # 스케일 필터 (필요시에만)
+    scale_filter = build_scale_filter(out_w, out_h)
+    if scale_filter:
+        cmd += ["-vf", scale_filter]
 
+    # 비디오 스트림
+    cmd += [
+        "-map", "0:v:0",
+        "-c:v", "libx264",
+        "-profile:v", "high",
+        "-level", "4.1",
+        "-pix_fmt", "yuv420p",
+        "-crf", str(ENCODING_CRF),
+        "-maxrate", ENCODING_MAXRATE,
+        "-bufsize", ENCODING_BUFSIZE,
+        "-preset", ENCODING_PRESET,
+        "-g", "48",
+        "-keyint_min", "48",
+        "-sc_threshold", "0",
+    ]
+
+    # 오디오 스트림
+    if with_audio:
         cmd += [
-            f"-c:v:{i}", "libx264",
-            "-profile:v", "main",
-            "-pix_fmt", "yuv420p",
-            f"-b:v:{i}", v["video_bitrate"],
-            "-g", "48",
-            "-keyint_min", "48",
-            "-sc_threshold", "0",
+            "-map", "0:a?",
+            "-c:a", "aac",
+            "-ac", "2",
+            "-b:a", ENCODING_AUDIO_BITRATE,
         ]
 
-        if with_audio:
-            cmd += [
-                f"-c:a:{i}", "aac",
-                "-ac", "2",
-                f"-b:a:{i}", v["audio_bitrate"],
-            ]
-
+    # HLS 출력 (단일 variant → master playlist은 v1만 참조)
     if with_audio:
-        var_map = " ".join(f"v:{i},a:{i},name:{v['name']}" for i, v in enumerate(variants))
+        var_map = "v:0,a:0,name:1"
     else:
-        var_map = " ".join(f"v:{i},name:{v['name']}" for i, v in enumerate(variants))
+        var_map = "v:0,name:1"
 
     cmd += [
         "-progress", "pipe:1",
@@ -227,11 +265,17 @@ def transcode_to_hls(
     cancel_event: Optional[threading.Event] = None,
 ) -> Path:
     effective_timeout = _effective_ffmpeg_timeout(duration_sec, timeout)
-    # 입력 해상도 기반 variant 선택 (probe는 짧은 제한)
-    w, h = _probe_resolution(input_path, ffprobe_bin, min(60, effective_timeout))
-    variants = _select_variants(w, h)
+    # 입력 해상도 probe → 비율 보존 출력 해상도 결정
+    input_w, input_h = _probe_resolution(input_path, ffprobe_bin, min(60, effective_timeout))
+    out_w, out_h = _compute_output_resolution(input_w, input_h)
+    logger.info(
+        "[TRANSCODER] Resolution: input=%dx%d → output=%dx%d video_id=%s",
+        input_w, input_h, out_w, out_h, video_id,
+    )
 
-    prepare_output_dirs(output_root, variants)
+    # 단일 variant 디렉토리 (v1)
+    ensure_dir(output_root)
+    ensure_dir(output_root / "v1")
 
     with_audio = has_audio_stream(
         input_path=input_path,
@@ -241,7 +285,8 @@ def transcode_to_hls(
 
     cmd = build_ffmpeg_command(
         input_path=input_path,
-        variants=variants,
+        out_w=out_w,
+        out_h=out_h,
         with_audio=with_audio,
         ffmpeg_bin=ffmpeg_bin,
         hls_time=hls_time,
