@@ -435,14 +435,26 @@ AI worker min=1 is an operating principle, not a cost optimization target. The p
 
 ## 6. Deployment & Safety
 
-### 6.1 Zero-Downtime (Unchanged from V1.1.0 baseline)
+### 6.1 Zero-Downtime Deployment (Updated 2026-03-16)
 
-All ASG refreshes use `MinHealthyPercentage=100%`:
-- New instance launches and passes health check BEFORE old instance terminates
-- API warmup: 300s, Workers warmup: 120s
-- ALB drains connections before terminating old instance
+**API 무중단 배포 — Scale-Up 방식:**
+1. 현재 desired=1이면 desired=2로 scale-up
+2. 90초 대기 후 2대 Healthy 확인
+3. Instance refresh 실행 (`MinHealthyPercentage=50%`, `InstanceWarmup=300s`, `SkipMatching=true`)
+4. Refresh 완료 후 desired=1로 scale-down
 
-**This is non-negotiable and must not be changed.**
+**워커 배포:**
+- `MinHealthyPercentage=100%`, `InstanceWarmup=120s`
+- Scale-up 불필요 (SQS 큐가 버퍼 역할)
+
+**IAM 요구사항:** `autoscaling:UpdateAutoScalingGroup` (scale-up/down에 필수)
+
+**CRITICAL — 배포 후 워커 검증 필수:**
+워커 장애는 사일런트 장애. API 200 반환하면서 SQS에 잡만 쌓이고, 사용자는 "영상이 안 나와요" "알림이 안 와요"만 보고한다. 배포 후 반드시:
+1. 3개 ASG 인스턴스 Healthy + InService
+2. SSM `docker ps` → 3개 컨테이너 `(healthy)`
+3. SQS 큐 적체 0, DLQ 0
+→ 상세: **RUNBOOK-DEPLOY-CHECKLIST.md** § Step 2~3
 
 ### 6.2 CI/CD Concurrency Safety Fix **[COMPLETED]**
 
@@ -741,3 +753,4 @@ This skips base image rebuild on normal pushes. Base image only rebuilds on:
 | V1.1.0 | 2026-03-15 | Infrastructure Optimization: ECR safety, single 720p, service separation, cost optimization |
 | V1.1.0 | 2026-03-15 | Round 2 revision: CI/CD concurrency fix, rollback runbook, messaging dedup, RDS RPO/RTO, worker right-sizing, video auto-recovery, cost floor correction ($204), duration threshold 5400s, performance breakdown (50-55%), `-refs 3`, base image conditional build |
 | V1.1.0 | 2026-03-15 | Implementation complete: business-level messaging idempotency (atomic claim + DB UniqueConstraint), Video Worker CI narrowed to build-and-push (deploy-infra removed, role separation), cancel-in-progress:false verified in live runs, AWS Budget created, CONN_HEALTH_CHECKS applied, params.yaml moved to SSOT root. ECR lifecycle re-check pending 2026-03-17. |
+| V1.1.0 | 2026-03-16 | Zero-downtime deploy: scale-up 1→2 mechanism, IAM `UpdateAutoScalingGroup` 추가, worker refresh timeout 20min, workflow_dispatch force full build. CRITICAL: 배포 후 워커 컨테이너 검증 필수 룰 추가 (RUNBOOK-DEPLOY-CHECKLIST §Step 2-3). |

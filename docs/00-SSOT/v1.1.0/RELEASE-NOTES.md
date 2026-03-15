@@ -118,8 +118,21 @@ All migrations must be backward-compatible (additive only). The migration runs o
 
 The OIDC role (`AWS_ROLE_ARN_FOR_ECR_BUILD`) must have:
 - `autoscaling:StartInstanceRefresh` (all 3 ASGs)
+- `autoscaling:UpdateAutoScalingGroup` (all 3 ASGs) — zero-downtime scale-up/down
 - `autoscaling:DescribeInstanceRefreshes` (all 3 ASGs)
 - `autoscaling:DescribeAutoScalingGroups`
 - `ssm:SendCommand` (API instances)
 - `ssm:GetCommandInvocation`
 - Existing ECR push permissions (already present)
+
+## CRITICAL: Post-Deploy Worker Verification
+
+**워커가 안 돌고 있으면 배포 성공이 아니다.**
+
+워커 장애는 사일런트 장애 — API는 200 반환하면서 SQS에 잡만 쌓이고, 사용자는 "영상이 안 나와요" "알림이 안 와요"만 보고한다. 배포 후 반드시:
+
+1. 3개 ASG 인스턴스 전부 Healthy + InService 확인
+2. SSM `docker ps` → 3개 컨테이너 전부 `(healthy)` 확인
+3. SQS 큐 적체 0, DLQ 0 확인
+
+상세 절차: **RUNBOOK-DEPLOY-CHECKLIST.md** § Step 2~3 참조.

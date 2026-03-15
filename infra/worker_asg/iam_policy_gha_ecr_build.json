@@ -1,0 +1,67 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EcrAuth",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "EcrPushPull",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload"
+      ],
+      "Resource": "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-*"
+    },
+    {
+      "Sid": "EcrRepoManage",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:CreateRepository",
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:ListImages"
+      ],
+      "Resource": "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-*"
+    },
+    {
+      "Sid": "AsgInstanceRefresh",
+      "Effect": "Allow",
+      "Action": [
+        "autoscaling:StartInstanceRefresh",
+        "autoscaling:UpdateAutoScalingGroup"
+      ],
+      "Resource": [
+        "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:*:autoScalingGroupName/academy-v1-api-asg",
+        "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:*:autoScalingGroupName/academy-v1-messaging-worker-asg",
+        "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:*:autoScalingGroupName/academy-v1-ai-worker-asg"
+      ]
+    },
+    {
+      "Sid": "AsgDescribe",
+      "Effect": "Allow",
+      "Action": [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:DescribeInstanceRefreshes"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SsmMigration",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:SendCommand",
+        "ssm:GetCommandInvocation"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
