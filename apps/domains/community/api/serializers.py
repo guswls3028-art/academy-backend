@@ -100,6 +100,7 @@ class PostEntitySerializer(serializers.ModelSerializer):
             "created_by",
             "created_by_display",
             "created_by_deleted",
+            "is_urgent",
             "created_at",
             "replies_count",
             "mappings",

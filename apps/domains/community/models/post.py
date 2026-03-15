@@ -33,6 +33,7 @@ class PostEntity(models.Model):
         blank=True,
         related_name="post_entities",
     )
+    is_urgent = models.BooleanField(default=False, help_text="긴급 공지 여부")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -75,7 +75,7 @@ class StudentDashboardView(APIView):
             # 공지: Community 공지 최대 5건
             notice_qs = get_notice_posts_for_tenant(tenant)[:5]
             data["notices"] = [
-                {"id": p.id, "title": getattr(p, "title", "") or "", "created_at": getattr(p, "created_at", None)}
+                {"id": p.id, "title": getattr(p, "title", "") or "", "created_at": getattr(p, "created_at", None), "is_urgent": getattr(p, "is_urgent", False)}
                 for p in notice_qs
             ]
             # 오늘 일정: 학생이 수강 중인 차시 중 date=오늘
