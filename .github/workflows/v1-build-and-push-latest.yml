@@ -428,6 +428,7 @@ jobs:
 
       - name: Scale up API ASG for zero-downtime (desired 1→2)
         id: scaleup
+        continue-on-error: true  # IAM 권한 없으면 skip하고 instance refresh는 진행
         run: |
           CURRENT_DESIRED=$(aws autoscaling describe-auto-scaling-groups \
             --auto-scaling-group-names ${{ env.API_ASG_NAME }} \
@@ -497,6 +498,7 @@ jobs:
 
       - name: Scale down API ASG after deploy (desired 2→1)
         if: always() && steps.scaleup.outputs.current_desired == '1'
+        continue-on-error: true  # IAM 권한 없으면 skip (ASG min=1이므로 자동 정리됨)
         run: |
           echo "Scaling back down to desired=1..."
           aws autoscaling update-auto-scaling-group \
