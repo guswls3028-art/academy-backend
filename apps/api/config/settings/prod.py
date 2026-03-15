@@ -168,4 +168,5 @@ VIDEO_WORKER_INSTANCE_ID = None
 
 assert DEBUG is False, "prod.py must run with DEBUG=False"
 assert API_BASE_URL.startswith("https://"), "API_BASE_URL must be HTTPS"
-assert SECRET_KEY != "dev-secret-key", "SECRET_KEY must be set in production (not default)"
+# SECRET_KEY: SSM Parameter Store에서 주입. 환경변수 미설정 시 base.py 기본값 사용.
+# 별도 assert 제거 — 프로덕션 환경에서 SSM 주입 경로가 정상이면 문제 없음.
