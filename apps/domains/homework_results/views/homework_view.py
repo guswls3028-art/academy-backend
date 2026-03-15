@@ -97,7 +97,7 @@ class HomeworkViewSet(ModelViewSet):
                 session_id=int(session_id),
                 template_homework=template,
                 title=title,
-                status=Homework.Status.DRAFT,
+                status=Homework.Status.OPEN,
             )
             return Response(
                 HomeworkSerializer(instance).data,

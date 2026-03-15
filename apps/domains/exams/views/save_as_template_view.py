@@ -32,7 +32,7 @@ class SaveAsTemplateView(APIView):
             subject=exam.subject or "",
             exam_type=Exam.ExamType.TEMPLATE,
             template_exam=None,
-            status=Exam.Status.DRAFT,
+            status=Exam.Status.OPEN,
         )
         exam.template_exam = template
         exam.save(update_fields=["template_exam_id"])

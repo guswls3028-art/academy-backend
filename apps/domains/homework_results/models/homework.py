@@ -32,7 +32,7 @@ class Homework(TimestampModel):
         REGULAR = "regular", "일반"
 
     class Status(models.TextChoices):
-        DRAFT = "DRAFT", "초안"
+        DRAFT = "DRAFT", "초안"       # Legacy — 신규 생성 시 사용하지 않음
         OPEN = "OPEN", "진행중"
         CLOSED = "CLOSED", "마감"
 
@@ -67,7 +67,7 @@ class Homework(TimestampModel):
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
-        default=Status.DRAFT,
+        default=Status.OPEN,
         db_index=True,
     )
 

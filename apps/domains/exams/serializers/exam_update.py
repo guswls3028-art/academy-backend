@@ -30,13 +30,9 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         exam: Exam = self.instance
 
-        # 시험 상태 전이 제한
+        # 상태 전이 제한: CLOSED → OPEN (채점 결과 있으면 불가)
         new_status = attrs.get("status")
         if new_status and exam.status == Exam.Status.CLOSED:
-            if new_status == Exam.Status.DRAFT:
-                raise serializers.ValidationError(
-                    {"status": "마감된 시험은 초안으로 되돌릴 수 없습니다."}
-                )
             if new_status == Exam.Status.OPEN:
                 from apps.domains.results.models import ExamResult
                 if ExamResult.objects.filter(exam=exam).exists():

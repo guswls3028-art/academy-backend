@@ -1,5 +1,6 @@
 # apps/domains/student_app/dashboard/views.py
-from datetime import date
+import re
+from datetime import date, time as dt_time
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -10,6 +11,16 @@ from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.lectures.models import Session as LectureSession
 from apps.domains.clinic.models import SessionParticipant
 from .serializers import StudentDashboardSerializer
+
+
+def _parse_lecture_start_time(lecture_time_str: str) -> dt_time | None:
+    """lecture_time CharField (예: '토 12:00 ~ 13:00')에서 시작 시각 추출."""
+    if not lecture_time_str:
+        return None
+    m = re.search(r"(\d{1,2}):(\d{2})", lecture_time_str)
+    if m:
+        return dt_time(int(m.group(1)), int(m.group(2)))
+    return None
 
 
 def _get_tenant_from_request(request):
@@ -88,6 +99,9 @@ class StudentDashboardView(APIView):
                         "date": s.date.isoformat() if s.date else None,
                         "status": None,
                         "type": "session",
+                        "start_time": _parse_lecture_start_time(
+                            getattr(s.lecture, "lecture_time", "") or ""
+                        ),
                     }
                     for s in sessions
                 ]
@@ -106,9 +120,10 @@ class StudentDashboardView(APIView):
                     sess = cp.session
                     data["today_sessions"].append({
                         "id": cp.id * -1,
-                        "title": f"🏥 클리닉 {sess.title or sess.location}" if sess else "🏥 클리닉",
+                        "title": f"클리닉 {sess.title or sess.location}" if sess else "클리닉",
                         "date": today.isoformat(),
                         "status": "대기 중" if cp.status == "pending" else "예약됨",
                         "type": "clinic",
+                        "start_time": sess.start_time if sess else None,
                     })
         return Response(StudentDashboardSerializer(data).data)

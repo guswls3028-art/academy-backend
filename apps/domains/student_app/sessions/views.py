@@ -1,4 +1,7 @@
 # apps/domains/student_app/sessions/views.py
+import re
+from datetime import time as dt_time
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -8,6 +11,16 @@ from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.lectures.models import Session as LectureSession
 from apps.domains.clinic.models import SessionParticipant
 from .serializers import StudentSessionSerializer
+
+
+def _parse_lecture_start_time(lecture_time_str: str) -> dt_time | None:
+    """lecture_time CharField (예: '토 12:00 ~ 13:00')에서 시작 시각 추출."""
+    if not lecture_time_str:
+        return None
+    m = re.search(r"(\d{1,2}):(\d{2})", lecture_time_str)
+    if m:
+        return dt_time(int(m.group(1)), int(m.group(2)))
+    return None
 
 
 class StudentSessionListView(APIView):
@@ -49,6 +62,9 @@ class StudentSessionListView(APIView):
                 "status": None,
                 "exam_ids": [],
                 "type": "session",
+                "start_time": _parse_lecture_start_time(
+                    getattr(s.lecture, "lecture_time", "") or ""
+                ),
             }
             for s in sessions
         ]
@@ -74,6 +90,7 @@ class StudentSessionListView(APIView):
                 "status": status_label,
                 "exam_ids": [],
                 "type": "clinic",
+                "start_time": sess.start_time if sess else None,
             })
 
         # 날짜 정렬

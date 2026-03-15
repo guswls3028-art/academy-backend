@@ -13,3 +13,4 @@ class StudentSessionSerializer(serializers.Serializer):
         allow_null=True,
     )
     type = serializers.CharField(default="session", required=False)
+    start_time = serializers.TimeField(allow_null=True, required=False)

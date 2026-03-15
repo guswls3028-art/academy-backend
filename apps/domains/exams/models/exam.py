@@ -26,7 +26,7 @@ class Exam(BaseModel):
         REGULAR = "regular", "Regular"
 
     class Status(models.TextChoices):
-        DRAFT = "DRAFT", "초안"
+        DRAFT = "DRAFT", "초안"       # Legacy — 신규 생성 시 사용하지 않음
         OPEN = "OPEN", "진행중"
         CLOSED = "CLOSED", "마감"
 
@@ -44,9 +44,9 @@ class Exam(BaseModel):
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
-        default=Status.DRAFT,
+        default=Status.OPEN,
         db_index=True,
-        help_text="과제와 동일: 생성=DRAFT, 진행하기=OPEN, 마감=CLOSED. 사용자에는 설정 중/진행 중/마감으로만 노출.",
+        help_text="생성=OPEN(즉시 진행), 마감=CLOSED. DRAFT는 레거시(기존 데이터 호환).",
     )
 
     # ===============================
