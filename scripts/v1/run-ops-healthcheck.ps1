@@ -561,9 +561,9 @@ try {
             $qStatus = $bq.status
 
             if ($qState -eq "ENABLED" -and $qStatus -eq "VALID") {
-                Write-Check "✅" "Batch 큐 $qName: $qState/$qStatus"
+                Write-Check "✅" "Batch 큐 ${qName}: $qState/$qStatus"
             } else {
-                Write-Check "⚠️" "Batch 큐 $qName: $qState/$qStatus"
+                Write-Check "⚠️" "Batch 큐 ${qName}: $qState/$qStatus"
                 Add-Warning "Batch 큐 $qName 상태 이상: $qState/$qStatus"
             }
         }
