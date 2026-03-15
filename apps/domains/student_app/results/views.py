@@ -86,7 +86,7 @@ class MyGradesSummaryView(APIView):
                 target_type="exam",
             )
             .order_by("-submitted_at")
-            .values("target_id", "total_score", "max_score", "submitted_at")
+            .values("target_id", "enrollment_id", "total_score", "max_score", "submitted_at")
         )
         exam_ids = list({r["target_id"] for r in results})
         exams_map = {}
@@ -111,6 +111,7 @@ class MyGradesSummaryView(APIView):
                     lecture_title = getattr(session.lecture, "title", None)
             exam_list.append({
                 "exam_id": eid,
+                "enrollment_id": r["enrollment_id"],
                 "title": info["title"],
                 "total_score": r["total_score"],
                 "max_score": r["max_score"],
@@ -143,6 +144,7 @@ class MyGradesSummaryView(APIView):
                     lecture_title = getattr(session.lecture, "title", None)
             homework_list.append({
                 "homework_id": hs.homework_id,
+                "enrollment_id": hs.enrollment_id,
                 "title": hs.homework.title if hs.homework else f"과제 #{hs.homework_id}",
                 "score": hs.score,
                 "max_score": hs.max_score,
