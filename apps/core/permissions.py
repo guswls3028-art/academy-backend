@@ -143,12 +143,12 @@ class TenantResolvedAndMember(BasePermission):
 
     - request.tenant 가 resolve 되어야 함
     - 인증된 사용자
-    - 활성 TenantMembership 존재
+    - 활성 TenantMembership 존재 OR User.tenant 일치
 
     ❗ role 은 여기서 절대 해석하지 않음
     """
 
-    message = "Tenant membership required."
+    message = "이 학원에 소속되어 있지 않습니다."
 
     def has_permission(self, request, view):
         tenant = getattr(request, "tenant", None)
@@ -159,6 +159,10 @@ class TenantResolvedAndMember(BasePermission):
 
         if not user or not user.is_authenticated:
             return False
+
+        # Fast path: User.tenant 일치 (학생/학부모 등 tenant FK 직접 연결)
+        if getattr(user, "tenant_id", None) == tenant.id:
+            return True
 
         from academy.adapters.db.django import repositories_core as core_repo
         return core_repo.membership_exists(tenant=tenant, user=user, is_active=True)
