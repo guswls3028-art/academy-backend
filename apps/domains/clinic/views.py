@@ -382,6 +382,18 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             if getattr(tenant, "clinic_auto_approve_booking", False):
                 requested_status = SessionParticipant.Status.BOOKED
 
+        # ✅ 선생님 경로: enrollment_id로부터 student 자동 해석
+        if not student and enrollment_id:
+            from apps.domains.enrollment.models import Enrollment
+            try:
+                enrollment = Enrollment.objects.get(id=enrollment_id, tenant=tenant)
+                student = enrollment.student
+            except Enrollment.DoesNotExist:
+                return Response(
+                    {"detail": "해당 수강 등록 정보를 찾을 수 없습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         if not student:
             return Response(
                 {"detail": "student가 필요합니다."},
