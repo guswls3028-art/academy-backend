@@ -426,6 +426,10 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     tenant=tenant,
                     session=session,
                     student=student,
+                    status__in=[
+                        SessionParticipant.Status.PENDING,
+                        SessionParticipant.Status.BOOKED,
+                    ],
                 ).exists()
                 if exists:
                     return Response(
