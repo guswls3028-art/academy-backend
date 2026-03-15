@@ -356,7 +356,8 @@ class FileUploadView(View):
 
 @method_decorator(csrf_exempt, name="dispatch")
 class FolderDeleteView(View):
-    """DELETE /storage/inventory/folders/:id/ — 비어있을 때만 삭제."""
+    """DELETE /storage/inventory/folders/:id/ — 비어있을 때만 삭제.
+    PATCH — 폴더 이름 변경."""
 
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
@@ -379,10 +380,40 @@ class FolderDeleteView(View):
         folder.delete()
         return JsonResponse({}, status=204)
 
+    @method_decorator(_tenant_required)
+    @method_decorator(_jwt_required)
+    def patch(self, request, folder_id):
+        import json
+        tenant = request.tenant
+        scope = (request.GET.get("scope") or "admin").lower()
+        student_ps = (request.GET.get("student_ps") or "").strip()
+
+        folder = inv_repo.inventory_folder_get(tenant, folder_id)
+        if not folder:
+            return JsonResponse({"detail": "Not found"}, status=404)
+        if folder.scope != scope or (scope == "student" and folder.student_ps != student_ps):
+            return JsonResponse({"detail": "Forbidden"}, status=403)
+
+        try:
+            body = json.loads(request.body)
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        name = (body.get("name") or "").strip()
+        if not name:
+            return JsonResponse({"detail": "이름을 입력해주세요."}, status=400)
+        if len(name) > 100:
+            return JsonResponse({"detail": "이름은 100자 이하로 입력해주세요."}, status=400)
+
+        folder.name = name
+        folder.save(update_fields=["name", "updated_at"])
+        return JsonResponse({"id": str(folder.id), "name": folder.name})
+
 
 @method_decorator(csrf_exempt, name="dispatch")
 class FileDeleteView(View):
-    """DELETE /storage/inventory/files/:id/ — DB 삭제 후 R2 객체 삭제."""
+    """DELETE /storage/inventory/files/:id/ — DB 삭제 후 R2 객체 삭제.
+    PATCH — 파일 표시명/설명 변경."""
 
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
@@ -399,10 +430,50 @@ class FileDeleteView(View):
 
         r2_key = inv_file.r2_key
         inv_file.delete()
-        # R2 객체 삭제 (선택: 구현 시 s3.delete_object 호출)
-        # if delete_r2_object:
-        #     delete_r2_object(r2_key)
         return JsonResponse({}, status=204)
+
+    @method_decorator(_tenant_required)
+    @method_decorator(_jwt_required)
+    def patch(self, request, file_id):
+        import json
+        tenant = request.tenant
+        scope = (request.GET.get("scope") or "admin").lower()
+        student_ps = (request.GET.get("student_ps") or "").strip()
+
+        inv_file = inv_repo.inventory_file_get(tenant, file_id)
+        if not inv_file:
+            return JsonResponse({"detail": "Not found"}, status=404)
+        if inv_file.scope != scope or (scope == "student" and inv_file.student_ps != student_ps):
+            return JsonResponse({"detail": "Forbidden"}, status=403)
+
+        try:
+            body = json.loads(request.body)
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        fields = []
+        if "displayName" in body:
+            name = (body["displayName"] or "").strip()
+            if not name:
+                return JsonResponse({"detail": "이름을 입력해주세요."}, status=400)
+            if len(name) > 200:
+                return JsonResponse({"detail": "이름은 200자 이하로 입력해주세요."}, status=400)
+            inv_file.display_name = name
+            fields.append("display_name")
+        if "description" in body:
+            inv_file.description = (body["description"] or "").strip()[:500]
+            fields.append("description")
+
+        if not fields:
+            return JsonResponse({"detail": "변경할 내용이 없습니다."}, status=400)
+
+        fields.append("updated_at")
+        inv_file.save(update_fields=fields)
+        return JsonResponse({
+            "id": str(inv_file.id),
+            "displayName": inv_file.display_name,
+            "description": inv_file.description,
+        })
 
 
 @method_decorator(csrf_exempt, name="dispatch")
