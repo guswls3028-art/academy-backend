@@ -52,11 +52,16 @@ class TranscodeError(RuntimeError):
 
 
 def _probe_resolution(input_path: str, ffprobe_bin: str, timeout: int) -> tuple[int, int]:
+    """
+    원본 해상도 + 회전 메타데이터 반영.
+    휴대폰 가로 촬영 시 센서는 세로(1080×1920)이고 rotation=90으로 가로 표시.
+    side_data_list의 rotation 또는 stream tags의 rotate 값을 읽어 90/270도면 w↔h 스왑.
+    """
     cmd = [
         ffprobe_bin,
         "-v", "error",
         "-select_streams", "v:0",
-        "-show_entries", "stream=width,height",
+        "-show_entries", "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
         "-of", "json",
         input_path,
     ]
@@ -78,7 +83,26 @@ def _probe_resolution(input_path: str, ffprobe_bin: str, timeout: int) -> tuple[
     try:
         data = json.loads(p.stdout)
         s = (data.get("streams") or [{}])[0]
-        return int(s.get("width") or 0), int(s.get("height") or 0)
+        w = int(s.get("width") or 0)
+        h = int(s.get("height") or 0)
+
+        # 회전 감지: side_data_list 또는 tags.rotate
+        rotation = 0
+        for sd in (s.get("side_data_list") or []):
+            if "rotation" in sd:
+                rotation = abs(int(float(sd["rotation"])))
+                break
+        if rotation == 0:
+            tags = s.get("tags") or {}
+            rot_str = tags.get("rotate") or tags.get("ROTATE") or "0"
+            rotation = abs(int(float(rot_str)))
+
+        # 90도 또는 270도 회전이면 가로세로 스왑
+        if rotation in (90, 270):
+            w, h = h, w
+            logger.info("[PROBE] Rotation=%d detected, swapped to %dx%d", rotation, w, h)
+
+        return w, h
     except Exception:
         return 0, 0
 
