@@ -262,7 +262,7 @@ class StudentViewSet(ModelViewSet):
             send_welcome_messages(
                 created_students=[student],
                 student_password=password,
-                parent_password_by_phone={parent_phone: password} if parent_phone else {},
+                parent_password_by_phone={parent_phone: "0000"} if parent_phone else {},
                 site_url=site_url,
             )
 
@@ -574,7 +574,7 @@ class StudentViewSet(ModelViewSet):
 
         if send_welcome and created_students:
             site_url = get_site_url(request)
-            parent_pw = {s.parent_phone: password for s in created_students if getattr(s, "parent_phone", None)}
+            parent_pw = {s.parent_phone: "0000" for s in created_students if getattr(s, "parent_phone", None)}
             send_welcome_messages(
                 created_students=created_students,
                 student_password=password,
@@ -728,7 +728,7 @@ class StudentViewSet(ModelViewSet):
 
         if send_welcome and created_students:
             site_url = get_site_url(request)
-            parent_pw = {s.parent_phone: password for s in created_students if getattr(s, "parent_phone", None)}
+            parent_pw = {s.parent_phone: "0000" for s in created_students if getattr(s, "parent_phone", None)}
             send_welcome_messages(
                 created_students=created_students,
                 student_password=password,
