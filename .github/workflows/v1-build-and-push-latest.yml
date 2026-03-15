@@ -426,13 +426,45 @@ jobs:
             exit 1
           fi
 
+      - name: Scale up API ASG for zero-downtime (desired 1→2)
+        id: scaleup
+        run: |
+          CURRENT_DESIRED=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names ${{ env.API_ASG_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'AutoScalingGroups[0].DesiredCapacity' \
+            --output text)
+          echo "current_desired=$CURRENT_DESIRED" >> $GITHUB_OUTPUT
+          if [ "$CURRENT_DESIRED" = "1" ]; then
+            echo "Scaling up to desired=2 for zero-downtime deploy..."
+            aws autoscaling update-auto-scaling-group \
+              --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
+              --region ${{ env.AWS_REGION }} \
+              --desired-capacity 2 \
+              --max-size 3
+            echo "Waiting 90s for new instance to register with ALB..."
+            sleep 90
+            # Verify both instances are healthy
+            HEALTHY=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names ${{ env.API_ASG_NAME }} \
+              --region ${{ env.AWS_REGION }} \
+              --query 'AutoScalingGroups[0].Instances[?HealthStatus==`Healthy`] | length(@)' \
+              --output text)
+            echo "Healthy instances: $HEALTHY"
+            if [ "$HEALTHY" -lt 2 ]; then
+              echo "::warning::Only $HEALTHY healthy instance(s), proceeding anyway"
+            fi
+          else
+            echo "Already desired=$CURRENT_DESIRED, skipping scale-up"
+          fi
+
       - name: Start API ASG instance refresh
         id: refresh
         run: |
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300,"SkipMatching":true}' \
+            --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":300,"SkipMatching":true}' \
             --query 'InstanceRefreshId' \
             --output text)
           echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT
@@ -462,6 +494,17 @@ jobs:
           done
           echo "::error::API ASG refresh timed out after 10 minutes"
           exit 1
+
+      - name: Scale down API ASG after deploy (desired 2→1)
+        if: always() && steps.scaleup.outputs.current_desired == '1'
+        run: |
+          echo "Scaling back down to desired=1..."
+          aws autoscaling update-auto-scaling-group \
+            --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --desired-capacity 1 \
+            --max-size 2
+          echo "API ASG scaled back to desired=1"
 
   deploy-messaging:
     name: Deploy Messaging Worker (ASG refresh)
