@@ -16,7 +16,7 @@ def get_video_status(video_id: int) -> Optional[str]:
 def get_video_for_update(video_id: int):
     """select_for_update로 Video 1건 조회 (tenant_id 추출을 위한 select_related 포함)."""
     from apps.support.video.models import Video
-    return Video.objects.select_for_update().select_related(
+    return Video.objects.select_for_update(of=("self",)).select_related(
         "session", "session__lecture", "session__lecture__tenant"
     ).filter(id=int(video_id)).first()
 
@@ -683,7 +683,7 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
     from apps.support.video.models import Video, VideoTranscodeJob
 
     with transaction.atomic():
-        job = VideoTranscodeJob.objects.select_for_update().select_related("video").filter(pk=job_id).first()
+        job = VideoTranscodeJob.objects.select_for_update(of=("self",)).select_related("video").filter(pk=job_id).first()
         if not job:
             return False, "job_not_found"
         if job.state == VideoTranscodeJob.State.SUCCEEDED:

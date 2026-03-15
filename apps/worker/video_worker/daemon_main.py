@@ -128,7 +128,7 @@ def poll_next_job():
     with transaction.atomic():
         return (
             VideoTranscodeJob.objects
-            .select_for_update(skip_locked=True)
+            .select_for_update(skip_locked=True, of=("self",))
             .select_related("video", "video__session", "video__session__lecture", "video__session__lecture__tenant")
             .filter(
                 state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT],

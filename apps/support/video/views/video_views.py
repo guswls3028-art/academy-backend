@@ -557,7 +557,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         from apps.support.video.services.batch_submit import terminate_batch_job
 
         try:
-            video = Video.objects.select_for_update().select_related("session__lecture__tenant").get(
+            video = Video.objects.select_for_update(of=("self",)).select_related("session__lecture__tenant").get(
                 pk=self.get_object().pk
             )
         except Video.DoesNotExist:
