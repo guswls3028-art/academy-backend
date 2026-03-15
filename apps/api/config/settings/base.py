@@ -410,8 +410,8 @@ VIDEO_JOB_TIMEOUT_LONG_SECONDS = int(os.getenv("VIDEO_JOB_TIMEOUT_LONG_SECONDS",
 # Reconcile orphan safety: min RUNNABLE age (minutes) before terminating; skip if CE desiredvCpus=0
 RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES = int(os.getenv("RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES", "15"))
 RECONCILE_ORPHAN_DISABLED = os.getenv("RECONCILE_ORPHAN_DISABLED", "").lower() in ("1", "true", "yes")
-# Worker mode: "daemon" (상주 프로세스, DB 폴링) or "batch" (AWS Batch 1-shot). Default: daemon.
-VIDEO_WORKER_MODE = os.getenv("VIDEO_WORKER_MODE", "daemon")
+# Worker mode: "batch" (AWS Batch 1-shot). Daemon 미운용이므로 batch 고정.
+VIDEO_WORKER_MODE = os.getenv("VIDEO_WORKER_MODE", "batch")
 # Daemon max duration: videos longer than this are auto-routed to Batch even in daemon mode.
 DAEMON_MAX_DURATION_SECONDS = int(os.getenv("DAEMON_MAX_DURATION_SECONDS", "1800"))
 VIDEO_TENANT_MAX_CONCURRENT = int(os.getenv("VIDEO_TENANT_MAX_CONCURRENT", "2"))
