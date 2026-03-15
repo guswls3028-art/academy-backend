@@ -20,7 +20,7 @@ def _get_profile_photo_url(student):
     if r2_key:
         try:
             from django.conf import settings
-            from libs.s3_client.presign import create_presigned_get_url
+            from libs.r2_client.presign import create_presigned_get_url
             return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
         except Exception:
             logger.warning("Failed to generate presigned URL for profile photo r2_key=%s", r2_key)
@@ -94,7 +94,7 @@ class StudentProfileView(APIView):
             try:
                 import uuid
                 from apps.core.r2_paths import profile_photo_key
-                from libs.s3_client.client import upload_fileobj
+                from libs.r2_client.client import upload_fileobj
 
                 ext = (photo.name or "photo.jpg").rsplit(".", 1)[-1].lower() or "jpg"
                 if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
@@ -217,8 +217,8 @@ class StudentProfileView(APIView):
         if current_password is not None and new_password is not None:
             if not request.user.check_password(current_password):
                 return Response({"detail": "현재 비밀번호가 일치하지 않습니다."}, status=400)
-            if not str(new_password).strip() or len(str(new_password)) < 6:
-                return Response({"detail": "새 비밀번호는 6자 이상이어야 합니다."}, status=400)
+            if not str(new_password).strip() or len(str(new_password)) < 4:
+                return Response({"detail": "새 비밀번호는 4자 이상이어야 합니다."}, status=400)
             request.user.set_password(new_password)
             request.user.save(update_fields=["password"])
 

@@ -1,6 +1,7 @@
 # apps/domains/student_app/dashboard/views.py
 import re
 from datetime import date, time as dt_time
+from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -80,7 +81,7 @@ class StudentDashboardView(APIView):
             # 오늘 일정: 학생이 수강 중인 차시 중 date=오늘
             student = get_request_student(request)
             if student:
-                today = date.today()
+                today = timezone.localdate()
                 sessions = (
                     LectureSession.objects.filter(
                         sessionenrollment__enrollment__student=student,

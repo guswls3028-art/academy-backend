@@ -34,6 +34,7 @@ class ExamSerializer(serializers.ModelSerializer):
             "display_order",
             "open_at",
             "close_at",
+            "answer_visibility",
 
             "created_at",
             "updated_at",

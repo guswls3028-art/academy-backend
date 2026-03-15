@@ -222,7 +222,7 @@ services:
   ai-worker-cpu:
     build:
       context: .
-      dockerfile: docker/ai-worker/Dockerfile
+      dockerfile: docker/ai-worker-cpu/Dockerfile
       target: base
       args:
         BASE_IMAGE: academy-base:latest
@@ -282,7 +282,7 @@ services:
   ai-worker-gpu:
     build:
       context: .
-      dockerfile: docker/ai-worker/Dockerfile
+      dockerfile: docker/ai-worker-cpu/Dockerfile
       target: base
       args:
         BASE_IMAGE: academy-base:latest

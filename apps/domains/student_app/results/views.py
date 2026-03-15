@@ -68,10 +68,12 @@ class MyGradesSummaryView(APIView):
             return Response({"detail": "student not found"}, status=403)
 
         tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"exams": [], "homeworks": []})
         enrollment_ids = list(
             Enrollment.objects.filter(
                 student=student,
-                **({"tenant": tenant} if tenant else {}),
+                tenant=tenant,
             ).values_list("id", flat=True)
         )
         if not enrollment_ids:

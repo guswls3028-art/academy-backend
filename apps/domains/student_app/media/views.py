@@ -75,9 +75,12 @@ def _get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_i
             status=status.HTTP_403_FORBIDDEN,
         )
     tenant = getattr(request, "tenant", None)
-    qs = Enrollment.objects.filter(id=enrollment_id, student=student, status="ACTIVE")
-    if tenant:
-        qs = qs.filter(tenant=tenant)
+    if not tenant:
+        return None, Response(
+            {"detail": "tenant required"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    qs = Enrollment.objects.filter(id=enrollment_id, student=student, status="ACTIVE", tenant=tenant)
     enrollment = qs.first()
     if not enrollment:
         return None, Response(
@@ -871,25 +874,25 @@ class StudentVideoProgressView(APIView):
                 progress_value = progress_value / 100.0
             progress_value = max(0.0, min(1.0, float(progress_value)))
 
-        progress_obj, created = VideoProgress.objects.get_or_create(
+        defaults = {}
+        if progress_value is not None:
+            defaults["progress"] = progress_value
+        else:
+            defaults["progress"] = 0.0
+        if completed is not None:
+            defaults["completed"] = completed
+        else:
+            defaults["completed"] = False
+        if last_position is not None:
+            defaults["last_position"] = last_position
+        else:
+            defaults["last_position"] = 0
+
+        progress_obj, created = VideoProgress.objects.update_or_create(
             video=video,
             enrollment=enrollment,
-            defaults={
-                "progress": progress_value if progress_value is not None else 0.0,
-                "completed": completed if completed is not None else False,
-                "last_position": last_position if last_position is not None else 0,
-            },
+            defaults=defaults,
         )
-
-        if not created:
-            # 기존 레코드 업데이트
-            if progress_value is not None:
-                progress_obj.progress = progress_value
-            if completed is not None:
-                progress_obj.completed = completed
-            if last_position is not None:
-                progress_obj.last_position = last_position
-            progress_obj.save()
 
         return Response({
             "id": progress_obj.id,
@@ -1018,7 +1021,7 @@ class StudentVideoCommentListView(APIView):
             if r2_key:
                 try:
                     from django.conf import settings as _s
-                    from libs.s3_client.presign import create_presigned_get_url
+                    from libs.r2_client.presign import create_presigned_get_url
                     return create_presigned_get_url(r2_key, expires_in=3600, bucket=_s.R2_STORAGE_BUCKET)
                 except Exception:
                     pass
@@ -1105,7 +1108,7 @@ class StudentVideoCommentListView(APIView):
             if r2_key:
                 try:
                     from django.conf import settings as _s
-                    from libs.s3_client.presign import create_presigned_get_url
+                    from libs.r2_client.presign import create_presigned_get_url
                     photo_url = create_presigned_get_url(r2_key, expires_in=3600, bucket=_s.R2_STORAGE_BUCKET)
                 except Exception:
                     pass

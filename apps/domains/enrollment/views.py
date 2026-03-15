@@ -59,6 +59,12 @@ class EnrollmentViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if len(student_ids) > 200:
+            return Response(
+                {"detail": "최대 200건까지 일괄 처리할 수 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # ✅ lecture tenant 검증
         lecture = enroll_repo.get_lecture_by_id_tenant(lecture_id, tenant)
         if not lecture:
@@ -249,6 +255,12 @@ class SessionEnrollmentViewSet(ModelViewSet):
         if not session_id or not isinstance(enrollment_ids, list):
             return Response(
                 {"detail": "session, enrollments(list)는 필수입니다"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(enrollment_ids) > 200:
+            return Response(
+                {"detail": "최대 200건까지 일괄 처리할 수 있습니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

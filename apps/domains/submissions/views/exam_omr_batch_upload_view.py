@@ -5,14 +5,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from apps.core.permissions import TenantResolvedAndMember
+from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.serializers.submission import SubmissionCreateSerializer
 from apps.domains.submissions.services.dispatcher import dispatch_submission
 
 
 class ExamOMRBatchUploadView(APIView):
-    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request, exam_id: int):
         """
@@ -33,6 +33,31 @@ class ExamOMRBatchUploadView(APIView):
 
         if not files:
             return Response({"detail": "files required"}, status=400)
+
+        # 파일 수 제한
+        if len(files) > 100:
+            return Response(
+                {"detail": "한 번에 최대 100개 파일까지 업로드할 수 있습니다."},
+                status=400,
+            )
+
+        # 파일별 크기·타입 검증
+        ALLOWED_CONTENT_TYPES = {
+            "image/jpeg", "image/png", "image/tiff", "application/pdf",
+        }
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+        for f in files:
+            if f.size > MAX_FILE_SIZE:
+                return Response(
+                    {"detail": f"파일 '{f.name}'의 크기가 10MB를 초과합니다."},
+                    status=400,
+                )
+            if f.content_type not in ALLOWED_CONTENT_TYPES:
+                return Response(
+                    {"detail": f"파일 '{f.name}'의 형식이 허용되지 않습니다. (허용: JPEG, PNG, TIFF, PDF)"},
+                    status=400,
+                )
 
         # exam 테넌트 검증 — 크로스 테넌트 시험 제출 방지
         from apps.domains.exams.models import Exam

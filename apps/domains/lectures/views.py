@@ -105,57 +105,47 @@ class LectureViewSet(ModelViewSet):
         # 비디오 수
         videos = video_repo.video_filter_by_lecture(lecture)
 
-        # 출결 통계
+        # 출결 통계 — single aggregate query instead of 10 separate .filter().count()
         attendances = enroll_repo.get_attendances_for_lecture(
             tenant, lecture, enrollments
         ).select_related("session", "enrollment")
 
-        attendance_by_status = {}
-        # Attendance 모델의 choices 사용
-        status_choices = [
-            ("PRESENT", "출석"),
-            ("LATE", "지각"),
-            ("ONLINE", "온라인"),
-            ("SUPPLEMENT", "보강"),
-            ("EARLY_LEAVE", "조퇴"),
-            ("ABSENT", "결석"),
-            ("RUNAWAY", "출튀"),
-            ("MATERIAL", "자료"),
-            ("INACTIVE", "부재"),
-            ("SECESSION", "탈퇴"),
-        ]
-        for status_code, _ in status_choices:
-            count = attendances.filter(status=status_code).count()
-            if count > 0:
-                attendance_by_status[status_code] = count
+        # One query: GROUP BY status → {status: count}
+        status_counts = attendances.values("status").annotate(cnt=Count("id"))
+        attendance_by_status = {
+            row["status"]: row["cnt"]
+            for row in status_counts
+            if row["cnt"] > 0
+        }
+
+        # Prefetch all attendances into memory, grouped by enrollment_id.
+        # Order by session date/order descending so index [0] = latest.
+        all_attendance_rows = list(
+            attendances.order_by("-session__date", "-session__order")
+            .values_list("enrollment_id", "status")
+        )
+        latest_attendance_by_enrollment = {}
+        for enrollment_id, status in all_attendance_rows:
+            # First occurrence per enrollment_id is the latest (due to ordering)
+            if enrollment_id not in latest_attendance_by_enrollment:
+                latest_attendance_by_enrollment[enrollment_id] = status
+
+        # Video count — same for every student, fetch once outside the loop
+        total_videos = videos.count()
 
         # 학생별 리포트 데이터
         students_data = []
         for enrollment in enrollments:
             student = enrollment.student
 
-            # 비디오 진행률 계산
-            student_videos = video_repo.video_filter_by_lecture(lecture)
-
-            # TODO: 실제 비디오 진행률 계산 로직 필요
-            # 현재는 기본값 반환
-            completed_videos = 0
-            total_videos = student_videos.count()
-            avg_progress = 0.0
-
-            # 마지막 출결 상태
-            last_attendance = attendances.filter(
-                enrollment=enrollment
-            ).order_by("-session__date", "-session__order").first()
-
             students_data.append({
                 "enrollment": enrollment.id,
                 "student_id": student.id,
                 "student_name": student.name,
-                "avg_progress": avg_progress,
-                "completed_videos": completed_videos,
+                "avg_progress": 0.0,
+                "completed_videos": 0,
                 "total_videos": total_videos,
-                "last_attendance_status": last_attendance.status if last_attendance else None,
+                "last_attendance_status": latest_attendance_by_enrollment.get(enrollment.id),
             })
 
         # 요약 통계

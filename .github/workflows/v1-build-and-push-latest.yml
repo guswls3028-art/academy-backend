@@ -37,6 +37,7 @@ jobs:
       build_video: ${{ steps.changes.outputs.build_video }}
       build_messaging: ${{ steps.changes.outputs.build_messaging }}
       build_ai: ${{ steps.changes.outputs.build_ai }}
+      build_base: ${{ steps.changes.outputs.build_base }}
       force_full: ${{ steps.changes.outputs.build_all }}
       short_sha: ${{ steps.meta.outputs.short_sha }}
     steps:
@@ -57,6 +58,7 @@ jobs:
           if [ -z "$PREV" ]; then
             echo "No previous commit — full build"
             echo "build_all=true" >> $GITHUB_OUTPUT
+            echo "build_base=true" >> $GITHUB_OUTPUT
             echo "build_api=true" >> $GITHUB_OUTPUT
             echo "build_video=true" >> $GITHUB_OUTPUT
             echo "build_messaging=true" >> $GITHUB_OUTPUT
@@ -77,6 +79,7 @@ jobs:
           if [ "$FORCE_ALL" = "true" ]; then
             echo "Core/shared change detected — full build"
             echo "build_all=true" >> $GITHUB_OUTPUT
+            echo "build_base=true" >> $GITHUB_OUTPUT
             echo "build_api=true" >> $GITHUB_OUTPUT
             echo "build_video=true" >> $GITHUB_OUTPUT
             echo "build_messaging=true" >> $GITHUB_OUTPUT
@@ -85,6 +88,13 @@ jobs:
           fi
 
           echo "build_all=false" >> $GITHUB_OUTPUT
+
+          # Base image: only when Dockerfile.base, common requirements, or libs change
+          BASE=false
+          echo "$CHANGED" | grep -qE "^docker/Dockerfile\.base$" && BASE=true
+          echo "$CHANGED" | grep -qE "^requirements/common\.txt$" && BASE=true
+          echo "$CHANGED" | grep -qE "^libs/" && BASE=true
+          echo "build_base=$BASE" >> $GITHUB_OUTPUT
 
           # API: apps/ (대부분), docker/api/, requirements/api.txt
           API=false
@@ -154,8 +164,9 @@ jobs:
             aws ecr create-repository --repository-name "$repo" --region ${{ env.AWS_REGION }}
           done
 
-      # ── Base image (always built, foundation for all others) ──
+      # ── Base image (only when base-relevant files change) ──
       - name: Build and push academy-base (arm64)
+        if: needs.detect-changes.outputs.build_base == 'true' || needs.detect-changes.outputs.force_full == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .

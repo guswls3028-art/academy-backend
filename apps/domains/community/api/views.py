@@ -358,6 +358,7 @@ class PostViewSet(viewsets.ModelViewSet):
 
 class AdminPostViewSet(viewsets.GenericViewSet):
     """Admin list with filters. block_type_id, lecture_id, page, page_size."""
+    permission_classes = [TenantResolvedAndStaff]
     serializer_class = PostEntitySerializer
 
     def list(self, request, *args, **kwargs):

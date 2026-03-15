@@ -213,3 +213,15 @@ class TenantResolvedAndOwner(BasePermission):
 
         from academy.adapters.db.django import repositories_core as core_repo
         return core_repo.membership_exists_staff(tenant=tenant, user=user, staff_roles=("owner",))
+
+
+def is_platform_admin_tenant(request) -> bool:
+    """
+    request.tenant이 플랫폼 관리 테넌트(OWNER_TENANT_ID)인지 확인.
+    크로스 테넌트 관리 기능은 반드시 이 검증을 통과해야 한다.
+    """
+    tenant = getattr(request, "tenant", None)
+    if not tenant:
+        return False
+    owner_tenant_id = getattr(settings, "OWNER_TENANT_ID", None)
+    return tenant.id == owner_tenant_id

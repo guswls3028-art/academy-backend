@@ -21,6 +21,7 @@ from apps.core.permissions import (
     TenantResolvedAndMember,
     TenantResolvedAndStaff,
     TenantResolvedAndOwner,
+    is_platform_admin_tenant,
 )
 from apps.core.serializers import (
     UserSerializer,
@@ -211,7 +212,6 @@ class SubscriptionView(APIView):
             "subscription_expires_at": str(program.subscription_expires_at) if program.subscription_expires_at else None,
             "is_subscription_active": program.is_subscription_active,
             "days_remaining": program.days_remaining,
-            "billing_email": program.billing_email or "",
             "tenant_code": tenant.code,
             "tenant_name": tenant.name or "",
         })
@@ -437,7 +437,15 @@ class TenantBrandingView(APIView):
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
+    def _check_tenant_access(self, request, tenant_id: int):
+        """같은 테넌트이거나 플랫폼 관리 테넌트인 경우만 허용."""
+        if request.tenant.id != tenant_id and not is_platform_admin_tenant(request):
+            return False
+        return True
+
     def get(self, request, tenant_id: int):
+        if not self._check_tenant_access(request, tenant_id):
+            return Response({"detail": "Cross-tenant access denied."}, status=403)
         tenant = core_repo.tenant_get_by_id_any(tenant_id)
         if not tenant:
             return Response({"detail": "Tenant not found."}, status=404)
@@ -447,6 +455,8 @@ class TenantBrandingView(APIView):
         return Response(_tenant_branding_dto(program))
 
     def patch(self, request, tenant_id: int):
+        if not self._check_tenant_access(request, tenant_id):
+            return Response({"detail": "Cross-tenant access denied."}, status=403)
         tenant = core_repo.tenant_get_by_id_any(tenant_id)
         if not tenant:
             return Response({"detail": "Tenant not found."}, status=404)
@@ -481,6 +491,8 @@ class TenantBrandingUploadLogoView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
     def post(self, request, tenant_id: int):
+        if request.tenant.id != tenant_id and not is_platform_admin_tenant(request):
+            return Response({"detail": "Cross-tenant access denied."}, status=403)
         tenant = core_repo.tenant_get_by_id_any(tenant_id)
         if not tenant:
             return Response({"detail": "Tenant not found."}, status=404)
@@ -526,11 +538,13 @@ class TenantBrandingUploadLogoView(APIView):
 class TenantListView(APIView):
     """
     GET /api/v1/core/tenants/
-    dev_app 전용 — owner role만. 모든 테넌트 목록.
+    플랫폼 관리 테넌트(OWNER_TENANT_ID) 전용 — owner role만. 모든 테넌트 목록.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
     def get(self, request):
+        if not is_platform_admin_tenant(request):
+            return Response({"detail": "Platform admin tenant required."}, status=403)
         tenants = Tenant.objects.all().order_by('id')
         data = []
         for tenant in tenants:
@@ -550,11 +564,13 @@ class TenantListView(APIView):
 class TenantDetailView(APIView):
     """
     GET/PATCH /api/v1/core/tenants/<tenant_id>/
-    dev_app 전용 — owner role만. 테넌트 상세 정보.
+    플랫폼 관리 테넌트(OWNER_TENANT_ID) 전용 — owner role만. 테넌트 상세 정보.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
     def get(self, request, tenant_id: int):
+        if not is_platform_admin_tenant(request):
+            return Response({"detail": "Platform admin tenant required."}, status=403)
         tenant = core_repo.tenant_get_by_id_any(tenant_id)
         if not tenant:
             return Response({"detail": "Tenant not found."}, status=404)
@@ -575,16 +591,18 @@ class TenantDetailView(APIView):
         return Response(data)
 
     def patch(self, request, tenant_id: int):
+        if not is_platform_admin_tenant(request):
+            return Response({"detail": "Platform admin tenant required."}, status=403)
         tenant = core_repo.tenant_get_by_id_any(tenant_id)
         if not tenant:
             return Response({"detail": "Tenant not found."}, status=404)
-        
+
         if "name" in request.data:
             tenant.name = request.data["name"]
         if "isActive" in request.data:
             tenant.is_active = bool(request.data["isActive"])
         tenant.save(update_fields=["name", "is_active"])
-        
+
         return self.get(request, tenant_id)
 
 
@@ -603,6 +621,8 @@ class MaintenanceModeView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
     def get(self, request):
+        if not is_platform_admin_tenant(request):
+            return Response({"detail": "Platform admin tenant required."}, status=403)
         exempt_codes = ("hakwonplus", "9999")
         qs = Program.objects.exclude(tenant__code__in=exempt_codes)
         total = qs.count()
@@ -616,6 +636,8 @@ class MaintenanceModeView(APIView):
 
     @transaction.atomic
     def patch(self, request):
+        if not is_platform_admin_tenant(request):
+            return Response({"detail": "Platform admin tenant required."}, status=403)
         enabled = bool((request.data or {}).get("enabled"))
 
         exempt_codes = ("hakwonplus", "9999")
@@ -777,23 +799,41 @@ class PublicOgMetaView(APIView):
 
 class LegalConfigView(APIView):
     """
-    GET /api/v1/core/legal-config/
-    공개 API — 법적 고지 메타데이터. 인증 불필요.
-    프론트 법적 페이지 및 푸터에서 사용.
+    GET  /api/v1/core/legal-config/  — 공개 API, 인증 불필요. 테넌트별 법적 고지 메타데이터.
+    PATCH /api/v1/core/legal-config/ — owner 전용. 법적 고지 정보 수정.
     """
-    permission_classes = [AllowAny]
+    def get_permissions(self):
+        if self.request.method == "PATCH":
+            return [IsAuthenticated(), TenantResolvedAndOwner()]
+        return [AllowAny()]
+
+    def _get_program(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return None
+        try:
+            return tenant.program
+        except Program.DoesNotExist:
+            return None
 
     def get(self, request):
+        program = self._get_program(request)
+
+        def val(field_name):
+            if program is None:
+                return ""
+            return (getattr(program, field_name, None) or "").strip()
+
         return Response({
-            "company_name": "[TODO_FOR_OWNER: 상호]",
-            "representative": "[TODO_FOR_OWNER: 대표자명]",
-            "business_number": "[TODO_FOR_OWNER: 사업자등록번호]",
-            "ecommerce_number": "[TODO_FOR_OWNER: 통신판매업 신고번호]",
-            "address": "[TODO_FOR_OWNER: 사업장 주소]",
-            "support_email": "[TODO_FOR_OWNER: 고객센터 이메일]",
-            "support_phone": "[TODO_FOR_OWNER: 고객센터 전화번호]",
-            "privacy_officer_name": "[TODO_FOR_OWNER: 개인정보 보호책임자 성명]",
-            "privacy_officer_contact": "[TODO_FOR_OWNER: 개인정보 보호책임자 연락처]",
+            "company_name": val("legal_company_name"),
+            "representative": val("legal_representative"),
+            "business_number": val("legal_business_number"),
+            "ecommerce_number": val("legal_ecommerce_number"),
+            "address": val("legal_address"),
+            "support_email": val("legal_support_email"),
+            "support_phone": val("legal_support_phone"),
+            "privacy_officer_name": val("legal_privacy_officer_name"),
+            "privacy_officer_contact": val("legal_privacy_officer_contact"),
             "terms_version": "1.0",
             "privacy_version": "1.0",
             "effective_date": "2026-03-14",
@@ -802,15 +842,59 @@ class LegalConfigView(APIView):
             "Access-Control-Allow-Origin": "*",
         })
 
+    def patch(self, request):
+        program = self._get_program(request)
+        if not program:
+            return Response({"detail": "Program not found for this tenant."}, status=404)
+
+        LEGAL_FIELDS = {
+            "company_name": ("legal_company_name", 200),
+            "representative": ("legal_representative", 100),
+            "business_number": ("legal_business_number", 50),
+            "ecommerce_number": ("legal_ecommerce_number", 100),
+            "address": ("legal_address", 500),
+            "support_email": ("legal_support_email", 200),
+            "support_phone": ("legal_support_phone", 50),
+            "privacy_officer_name": ("legal_privacy_officer_name", 100),
+            "privacy_officer_contact": ("legal_privacy_officer_contact", 200),
+        }
+
+        update_fields = []
+        for api_key, (model_field, max_len) in LEGAL_FIELDS.items():
+            if api_key in request.data:
+                value = (request.data.get(api_key) or "").strip()[:max_len]
+                setattr(program, model_field, value)
+                update_fields.append(model_field)
+
+        if update_fields:
+            program.save(update_fields=update_fields)
+
+        return Response({
+            "company_name": (program.legal_company_name or "").strip(),
+            "representative": (program.legal_representative or "").strip(),
+            "business_number": (program.legal_business_number or "").strip(),
+            "ecommerce_number": (program.legal_ecommerce_number or "").strip(),
+            "address": (program.legal_address or "").strip(),
+            "support_email": (program.legal_support_email or "").strip(),
+            "support_phone": (program.legal_support_phone or "").strip(),
+            "privacy_officer_name": (program.legal_privacy_officer_name or "").strip(),
+            "privacy_officer_contact": (program.legal_privacy_officer_contact or "").strip(),
+            "terms_version": "1.0",
+            "privacy_version": "1.0",
+            "effective_date": "2026-03-14",
+        })
+
 
 class TenantCreateView(APIView):
     """
     POST /api/v1/core/tenants/
-    dev_app 전용 — owner role만. 새 테넌트 생성.
+    플랫폼 관리 테넌트(OWNER_TENANT_ID) 전용 — owner role만. 새 테넌트 생성.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
     def post(self, request):
+        if not is_platform_admin_tenant(request):
+            return Response({"detail": "Platform admin tenant required."}, status=403)
         code = request.data.get("code")
         name = request.data.get("name")
         domain = request.data.get("domain")
@@ -873,6 +957,8 @@ class TenantOwnerView(APIView):
     def post(self, request, tenant_id: int):
         import logging
         logger = logging.getLogger(__name__)
+        if not is_platform_admin_tenant(request):
+            return Response({"detail": "Platform admin tenant required."}, status=403)
         try:
             tenant = core_repo.tenant_get_by_id_any(tenant_id)
             if not tenant:
@@ -946,7 +1032,7 @@ class TenantOwnerView(APIView):
         except Exception as e:
             logger.exception("TenantOwnerView post failed: %s", e)
             return Response(
-                {"detail": str(e)},
+                {"detail": "Owner 등록 중 오류가 발생했습니다."},
                 status=500,
             )
 
@@ -959,6 +1045,8 @@ class TenantOwnerListView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
     def get(self, request, tenant_id: int):
+        if not is_platform_admin_tenant(request):
+            return Response({"detail": "Platform admin tenant required."}, status=403)
         tenant = core_repo.tenant_get_by_id_any(tenant_id)
         if not tenant:
             return Response({"detail": "Tenant not found."}, status=404)
@@ -994,7 +1082,9 @@ class TenantOwnerDetailView(APIView):
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
-    def _get_owner_membership(self, tenant_id: int, user_id: int):
+    def _get_owner_membership(self, request, tenant_id: int, user_id: int):
+        if not is_platform_admin_tenant(request):
+            return None, None, 403
         tenant = core_repo.tenant_get_by_id_any(tenant_id)
         if not tenant:
             return None, None, 404
@@ -1014,9 +1104,10 @@ class TenantOwnerDetailView(APIView):
         return tenant, membership, None
 
     def patch(self, request, tenant_id: int, user_id: int):
-        tenant, membership, err = self._get_owner_membership(tenant_id, user_id)
+        tenant, membership, err = self._get_owner_membership(request, tenant_id, user_id)
         if err:
-            return Response({"detail": "Owner not found."}, status=err)
+            msg = "Platform admin tenant required." if err == 403 else "Owner not found."
+            return Response({"detail": msg}, status=err)
         user = membership.user
         if "name" in request.data:
             user.name = request.data.get("name") or ""
@@ -1032,9 +1123,10 @@ class TenantOwnerDetailView(APIView):
         })
 
     def delete(self, request, tenant_id: int, user_id: int):
-        tenant, membership, err = self._get_owner_membership(tenant_id, user_id)
+        tenant, membership, err = self._get_owner_membership(request, tenant_id, user_id)
         if err:
-            return Response({"detail": "Owner not found."}, status=err)
+            msg = "Platform admin tenant required." if err == 403 else "Owner not found."
+            return Response({"detail": msg}, status=err)
         membership.is_active = False
         membership.save(update_fields=["is_active"])
         return Response(status=204)

@@ -88,9 +88,27 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     pass_score = float(getattr(exam, "pass_score", 0) or 0)
     data["is_pass"] = float(result.total_score) >= pass_score
 
+    # 정답 공개 정책 적용
+    show_answers = exam.should_show_answers()
+    data["answer_visibility"] = getattr(exam, "answer_visibility", "hidden")
+    data["answers_visible"] = show_answers
+
+    # 정답 공개 시 answer key에서 correct_answer 주입
+    correct_answer_map = {}
+    if show_answers:
+        from apps.domains.exams.models import AnswerKey
+        template_exam_id = exam.effective_template_exam_id
+        ak = AnswerKey.objects.filter(exam_id=template_exam_id).first()
+        if ak and ak.answers:
+            correct_answer_map = ak.answers  # key=question_id(str), value=answer
+
     for item in data.get("items") or []:
         item.setdefault("question_number", item.get("question_id"))
         item.setdefault("student_answer", item.get("answer"))
-        item.setdefault("correct_answer", None)
+        if show_answers:
+            q_id = str(item.get("question_id", ""))
+            item["correct_answer"] = correct_answer_map.get(q_id) or None
+        else:
+            item["correct_answer"] = None
 
     return data

@@ -19,18 +19,18 @@ class WorkHourCalculationPolicy:
     """
     근무 시간 계산 정책
     - 시간 왜곡 금지
-    - 휴게시간은 분 단위로 차감
+    - 휴게시간·식사시간은 분 단위로 차감
     """
 
     @staticmethod
-    def calculate(date, start_time, end_time, break_minutes) -> Decimal:
+    def calculate(date, start_time, end_time, break_minutes, meal_minutes=0) -> Decimal:
         start_dt = datetime.combine(date, start_time)
         end_dt = datetime.combine(date, end_time)
         if end_dt < start_dt:
             end_dt += timedelta(days=1)
 
         total_minutes = (end_dt - start_dt).total_seconds() / 60
-        total_minutes = max(0, total_minutes - break_minutes)
+        total_minutes = max(0, total_minutes - break_minutes - meal_minutes)
 
         return Decimal(total_minutes / 60).quantize(Decimal("0.01"))
 
@@ -53,11 +53,13 @@ class WageResolutionPolicy:
 class PayrollAmountPolicy:
     """
     금액 계산 정책
+    - adjustment_amount: 조정 금액 (양수=추가, 음수=차감)
     """
 
     @staticmethod
-    def calculate(hours: Decimal, hourly_wage: int) -> int:
-        return int(hours * Decimal(hourly_wage))
+    def calculate(hours: Decimal, hourly_wage: int, adjustment_amount: int = 0) -> int:
+        base = int(hours * Decimal(hourly_wage))
+        return max(0, base + adjustment_amount)
 
 
 # ======================================================
@@ -254,6 +256,19 @@ class WorkRecord(TimestampModel):
         help_text="급여 계산에 실제 사용된 시급",
     )
 
+    meal_minutes = models.PositiveIntegerField(
+        default=0,
+        help_text="식사시간 (분). 근무시간에서 차감.",
+    )
+    adjustment_amount = models.IntegerField(
+        default=0,
+        help_text="조정 금액 (양수=추가, 음수=차감). 자동 계산 후 가감.",
+    )
+    is_manually_edited = models.BooleanField(
+        default=False,
+        help_text="관리자가 근무시간/금액을 수동 수정했으면 True. 자동 재계산 방지.",
+    )
+
     memo = models.TextField(blank=True)
 
     class Meta:
@@ -268,6 +283,7 @@ class WorkRecord(TimestampModel):
             self.start_time,
             self.end_time,
             self.break_minutes,
+            self.meal_minutes,
         )
 
         wage = WageResolutionPolicy.resolve(
@@ -276,11 +292,12 @@ class WorkRecord(TimestampModel):
             work_type=self.work_type,
         )
 
-        amount = PayrollAmountPolicy.calculate(hours, wage)
+        amount = PayrollAmountPolicy.calculate(hours, wage, self.adjustment_amount)
         return hours, amount, wage
 
     def save(self, *args, **kwargs):
-        if self.end_time and (self.work_hours is None or self.amount is None):
+        # Auto-calculate when end_time is set, unless manually edited
+        if self.end_time and not self.is_manually_edited:
             self.work_hours, self.amount, self.resolved_hourly_wage = self.calculate_payroll()
         super().save(*args, **kwargs)
 

@@ -41,6 +41,12 @@ class VideoPermissionViewSet(ModelViewSet):
 
         enrollments = request.data.get("enrollments", [])
 
+        if len(enrollments) > 200:
+            return Response(
+                {"detail": "최대 200건까지 일괄 처리할 수 있습니다."},
+                status=400,
+            )
+
         rule = request.data.get("rule")
         access_mode_str = request.data.get("access_mode")
 

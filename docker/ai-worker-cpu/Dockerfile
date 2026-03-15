@@ -45,7 +45,7 @@ RUN python -c "from apps.infrastructure.storage.r2_adapter import R2ObjectStorag
 # AI 파이프라인 의존: apps.worker.ai_worker.storage.downloader
 RUN python -c "from apps.worker.ai_worker.storage.downloader import download_to_tmp" || (echo "ERROR: download_to_tmp not importable" && exit 1)
 
-HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD pgrep -f "python" > /dev/null || exit 1
 
 CMD ["python", "-m", "apps.worker.ai_worker.sqs_main_cpu"]

@@ -30,6 +30,11 @@ class Exam(BaseModel):
         OPEN = "OPEN", "진행중"
         CLOSED = "CLOSED", "마감"
 
+    class AnswerVisibility(models.TextChoices):
+        HIDDEN = "hidden", "비공개"
+        AFTER_CLOSED = "after_closed", "마감 후 공개"
+        ALWAYS = "always", "항상 공개"
+
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     subject = models.CharField(max_length=100, blank=True, default="")
@@ -86,6 +91,13 @@ class Exam(BaseModel):
     open_at = models.DateTimeField(null=True, blank=True)
     close_at = models.DateTimeField(null=True, blank=True)
 
+    answer_visibility = models.CharField(
+        max_length=20,
+        choices=AnswerVisibility.choices,
+        default=AnswerVisibility.HIDDEN,
+        help_text="정답 공개 정책: hidden=비공개, after_closed=마감 후 공개, always=항상 공개",
+    )
+
     class Meta:
         db_table = "exams_exam"
         ordering = ["-created_at"]
@@ -121,3 +133,16 @@ class Exam(BaseModel):
     def assert_regular(self):
         if self.exam_type != self.ExamType.REGULAR:
             raise ValueError("This operation is allowed only for regular exams.")
+
+    def should_show_answers(self) -> bool:
+        """정답 공개 여부를 answer_visibility 정책에 따라 판단."""
+        from django.utils import timezone
+
+        if self.answer_visibility == self.AnswerVisibility.ALWAYS:
+            return True
+        if self.answer_visibility == self.AnswerVisibility.AFTER_CLOSED:
+            if self.status == self.Status.CLOSED:
+                return True
+            if self.close_at and self.close_at <= timezone.now():
+                return True
+        return False

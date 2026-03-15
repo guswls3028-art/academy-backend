@@ -59,7 +59,7 @@ def process_video(
     from apps.worker.video_worker.video.transcoder import transcode_to_hls
     from apps.worker.video_worker.video.validate import validate_hls_output
     from apps.worker.video_worker.video.r2_uploader import upload_directory
-    from libs.s3_client.presign import create_presigned_get_url
+    from libs.r2_client.presign import create_presigned_get_url
 
     video_id = int(job.get("video_id"))
     file_key = str(job.get("file_key") or "")

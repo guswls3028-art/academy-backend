@@ -202,13 +202,13 @@ def is_reservation_cancelled(reservation_id: int, tenant_id=None) -> bool:
 
 def send_clinic_reminder_for_students(*args, **kwargs):
     """
-    서버 부팅용 더미 함수
-    - 실제 문자 발송 없음
-    - ImportError 방지용
+    클리닉 리마인더 발송 — 미구현 상태.
+    호출 시 not_implemented 상태를 반환하여 프론트엔드에 알림.
     """
+    logger.info("send_clinic_reminder_for_students: feature not yet implemented")
     return {
-        "status": "noop",
-        "message": "clinic reminder skipped (stub)",
+        "status": "not_implemented",
+        "message": "클리닉 알림 기능이 아직 준비 중입니다.",
     }
 
 

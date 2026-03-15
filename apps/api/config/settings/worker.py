@@ -139,7 +139,7 @@ SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
 # Worker → API 통신
 # ==================================================
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
-INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "long-random-secret")
+INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "")
 
 # ==================================================
 # ALLOWED_HOSTS (Django runserver용, Worker는 미사용)

@@ -253,6 +253,32 @@ class FileUploadView(View):
         file_obj = request.FILES.get("file")
         if not file_obj:
             return JsonResponse({"detail": "file required"}, status=400)
+
+        # 파일 크기 제한: 100MB
+        MAX_FILE_SIZE = 100 * 1024 * 1024
+        if file_obj.size > MAX_FILE_SIZE:
+            return JsonResponse({"detail": "파일 크기가 100MB를 초과합니다."}, status=400)
+
+        # 파일 타입 화이트리스트
+        ALLOWED_CONTENT_TYPES = {
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "text/plain",
+            "application/zip",
+        }
+        ALLOWED_TYPE_PREFIXES = ("image/", "video/")
+        ct = getattr(file_obj, "content_type", "") or ""
+        if ct not in ALLOWED_CONTENT_TYPES and not any(ct.startswith(p) for p in ALLOWED_TYPE_PREFIXES):
+            return JsonResponse(
+                {"detail": "허용되지 않는 파일 형식입니다."},
+                status=400,
+            )
+
         if scope == "student" and not student_ps:
             return JsonResponse({"detail": "student_ps required for student scope"}, status=400)
 

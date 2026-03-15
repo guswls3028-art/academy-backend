@@ -25,8 +25,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from libs.s3_client.presign import create_presigned_put_url, create_presigned_get_url
-from libs.s3_client.client import head_object
+from libs.r2_client.presign import create_presigned_put_url, create_presigned_get_url
+from libs.r2_client.client import head_object
 
 
 from apps.core.r2_paths import video_raw_key, video_hls_prefix
@@ -720,6 +720,10 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     # ==================================================
     @action(detail=True, methods=["get"], url_path="stats")
     def stats(self, request, pk=None):
+        from apps.core.permissions import is_effective_staff
+        if not is_effective_staff(request.user, getattr(request, 'tenant', None)):
+            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+
         video = self.get_object()
         lecture = video.session.lecture
 

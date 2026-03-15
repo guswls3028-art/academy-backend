@@ -466,6 +466,12 @@ class StudentViewSet(ModelViewSet):
 
         password = serializer.validated_data["initial_password"]
         students_data = serializer.validated_data["students"]
+
+        if len(students_data) > 200:
+            return Response(
+                {"detail": "최대 200건까지 일괄 처리할 수 있습니다."},
+                status=400,
+            )
         send_welcome = serializer.validated_data.get("send_welcome_message", False)
         User = get_user_model()
         tenant = request.tenant
@@ -478,7 +484,7 @@ class StudentViewSet(ModelViewSet):
             phone = item.get("phone")  # nullable
             parent_phone = item.get("parent_phone", "")
             # ps_number: 임의 6자리 자동 부여 (학생이 추후 변경 가능)
-            ps_number = _generate_unique_ps_number()
+            ps_number = _generate_unique_ps_number(tenant=tenant)
             # omr_code: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
             if phone and len(phone) >= 8:
                 omr_code = phone[-8:]
@@ -678,7 +684,7 @@ class StudentViewSet(ModelViewSet):
                     parent_phone_val = student_data.get("parent_phone") or student_data.get("parentPhone", "")
                     parent_phone = str(parent_phone_val).replace(" ", "").replace("-", "").replace(".", "")
                     # ps_number: 임의 6자리 자동 부여
-                    ps_number = _generate_unique_ps_number()
+                    ps_number = _generate_unique_ps_number(tenant=tenant)
                     # omr_code: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
                     if phone and len(phone) >= 8:
                         omr_code = phone[-8:]
@@ -755,6 +761,8 @@ class StudentViewSet(ModelViewSet):
         ids = request.data.get("ids") or []
         if not isinstance(ids, (list, tuple)):
             return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
+        if len(ids) > 200:
+            return Response({"detail": "최대 200건까지 일괄 처리할 수 있습니다."}, status=400)
         ids = [int(x) for x in ids if isinstance(x, (int, str)) and str(x).isdigit()]
         if not ids:
             return Response({"detail": "삭제할 ID가 없습니다."}, status=400)

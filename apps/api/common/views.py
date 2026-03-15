@@ -24,12 +24,11 @@ def health_check(request):
             "service": "academy-api",
             "database": "connected",
         }, status=200)
-    except Exception as e:
+    except Exception:
         return JsonResponse({
             "status": "unhealthy",
             "service": "academy-api",
             "database": "disconnected",
-            "error": str(e),
         }, status=503)
 
 
@@ -51,8 +50,8 @@ def readyz(request):
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
         return JsonResponse({"status": "ready", "service": "academy-api", "database": "connected"}, status=200)
-    except Exception as e:
+    except Exception:
         return JsonResponse(
-            {"status": "not_ready", "service": "academy-api", "database": "disconnected", "error": str(e)},
+            {"status": "not_ready", "service": "academy-api", "database": "disconnected"},
             status=503,
         )

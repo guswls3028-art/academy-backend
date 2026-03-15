@@ -13,7 +13,7 @@ from apps.support.video.models import Video, VideoTranscodeJob
 
 
 def _head_object(key: str):
-    from libs.s3_client.client import head_object
+    from libs.r2_client.client import head_object
     return head_object(key)
 
 

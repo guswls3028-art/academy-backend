@@ -56,7 +56,7 @@ CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 # Cloudflare Pages *.pages.dev (프로젝트별 서브도메인)
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^https://[a-z0-9-]+\.pages\.dev$",
+    r"^https://[a-z0-9-]*academy-frontend[a-z0-9-]*\.pages\.dev$",
 ]
 
 CORS_ALLOWED_ORIGINS = [
@@ -168,3 +168,4 @@ VIDEO_WORKER_INSTANCE_ID = None
 
 assert DEBUG is False, "prod.py must run with DEBUG=False"
 assert API_BASE_URL.startswith("https://"), "API_BASE_URL must be HTTPS"
+assert SECRET_KEY != "dev-secret-key", "SECRET_KEY must be set in production (not default)"

@@ -38,7 +38,17 @@ class StudentListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Student
-        fields = "__all__"
+        fields = [
+            "id", "tenant", "user", "ps_number", "omr_code",
+            "name", "gender", "grade", "school_type",
+            "phone", "parent_phone", "uses_identifier", "parent",
+            "high_school", "high_school_class", "major",
+            "middle_school", "origin_middle_school",
+            "memo", "address", "is_managed", "deleted_at",
+            "created_at", "updated_at",
+            # computed
+            "tags", "enrollments", "is_enrolled", "profile_photo_url",
+        ]
         ref_name = "StudentList"
 
     def get_profile_photo_url(self, obj):
@@ -47,7 +57,7 @@ class StudentListSerializer(serializers.ModelSerializer):
         if r2_key:
             try:
                 from django.conf import settings
-                from libs.s3_client.presign import create_presigned_get_url
+                from libs.r2_client.presign import create_presigned_get_url
                 return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
             except Exception:
                 pass
@@ -81,7 +91,17 @@ class StudentDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Student
-        fields = "__all__"
+        fields = [
+            "id", "tenant", "user", "ps_number", "omr_code",
+            "name", "gender", "grade", "school_type",
+            "phone", "parent_phone", "uses_identifier", "parent",
+            "high_school", "high_school_class", "major",
+            "middle_school", "origin_middle_school",
+            "memo", "address", "is_managed", "deleted_at",
+            "created_at", "updated_at",
+            # computed
+            "tags", "enrollments", "profile_photo_url",
+        ]
         ref_name = "StudentDetail"
 
     def get_profile_photo_url(self, obj):
@@ -89,7 +109,7 @@ class StudentDetailSerializer(serializers.ModelSerializer):
         if r2_key:
             try:
                 from django.conf import settings
-                from libs.s3_client.presign import create_presigned_get_url
+                from libs.r2_client.presign import create_presigned_get_url
                 return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
             except Exception:
                 pass

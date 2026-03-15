@@ -681,8 +681,23 @@ class VideoComment(models.Model):
 
     @property
     def author_photo_url(self):
-        if self.author_student and self.author_student.profile_photo:
-            return self.author_student.profile_photo.url
-        if self.author_staff and hasattr(self.author_staff, "profile_photo") and self.author_staff.profile_photo:
-            return self.author_staff.profile_photo.url
+        # R2 presigned URL 사용 (로컬 .url은 프로덕션 404)
+        if self.author_student:
+            r2_key = getattr(self.author_student, "profile_photo_r2_key", None) or ""
+            if r2_key:
+                try:
+                    from django.conf import settings as _s
+                    from libs.r2_client.presign import create_presigned_get_url
+                    return create_presigned_get_url(r2_key, expires_in=3600, bucket=_s.R2_STORAGE_BUCKET)
+                except Exception:
+                    pass
+        if self.author_staff:
+            r2_key = getattr(self.author_staff, "profile_photo_r2_key", None) or ""
+            if r2_key:
+                try:
+                    from django.conf import settings as _s
+                    from libs.r2_client.presign import create_presigned_get_url
+                    return create_presigned_get_url(r2_key, expires_in=3600, bucket=_s.R2_STORAGE_BUCKET)
+                except Exception:
+                    pass
         return None

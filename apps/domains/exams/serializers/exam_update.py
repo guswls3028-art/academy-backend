@@ -25,6 +25,7 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
             "display_order",
             "open_at",
             "close_at",
+            "answer_visibility",
         ]
 
     def validate(self, attrs):

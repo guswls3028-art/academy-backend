@@ -74,6 +74,11 @@ class AttendanceViewSet(ModelViewSet):
         new_status = request.data.get("status")
 
         if new_status == "SECESSION" and instance.status != "SECESSION":
+            if not request.data.get("confirm_secession"):
+                return Response(
+                    {"detail": "퇴원 처리는 confirm_secession: true를 포함해야 합니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             tenant = getattr(request, "tenant", None)
             enrollment = instance.enrollment
 
@@ -131,7 +136,13 @@ class AttendanceViewSet(ModelViewSet):
 
         updated = Attendance.objects.filter(
             tenant=tenant, session=session,
-        ).exclude(status="PRESENT").update(status="PRESENT")
+        ).exclude(
+            status="PRESENT",
+        ).exclude(
+            status="SECESSION",
+        ).exclude(
+            enrollment__status="INACTIVE",
+        ).update(status="PRESENT")
 
         return Response(
             {"updated": updated, "session": session_id},

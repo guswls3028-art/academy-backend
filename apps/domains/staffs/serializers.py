@@ -351,13 +351,17 @@ class WorkRecordSerializer(serializers.ModelSerializer):
             "start_time",
             "end_time",
             "break_minutes",
+            "meal_minutes",
             "work_hours",
             "amount",
+            "adjustment_amount",
+            "resolved_hourly_wage",
+            "is_manually_edited",
             "memo",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["work_hours", "amount", "created_at", "updated_at"]
+        read_only_fields = ["resolved_hourly_wage", "is_manually_edited", "created_at", "updated_at"]
         ref_name = "StaffWorkRecord"
 
 

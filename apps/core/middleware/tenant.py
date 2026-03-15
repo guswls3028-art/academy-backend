@@ -103,6 +103,7 @@ _SUBSCRIPTION_EXEMPT_PREFIXES = (
     "/api/v1/core/me",
     "/api/v1/core/program",
     "/api/v1/core/subscription",
+    "/api/v1/core/legal-config",
     "/admin/",
     "/static/",
     "/media/",

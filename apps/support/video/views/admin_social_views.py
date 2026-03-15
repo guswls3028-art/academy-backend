@@ -59,7 +59,7 @@ def _serialize_comment(c, request, staff=None):
         if r2_key:
             try:
                 from django.conf import settings as _s
-                from libs.s3_client.presign import create_presigned_get_url
+                from libs.r2_client.presign import create_presigned_get_url
                 photo_url = create_presigned_get_url(r2_key, expires_in=3600, bucket=_s.R2_STORAGE_BUCKET)
             except Exception:
                 pass

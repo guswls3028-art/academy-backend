@@ -123,6 +123,44 @@ class Program(TimestampModel):
         help_text="해지 요청 시각",
     )
 
+    # ✅ 법적 고지 정보 (이용약관, 개인정보처리방침에 표시)
+    legal_company_name = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="상호 (법적 고지용)",
+    )
+    legal_representative = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="대표자명",
+    )
+    legal_business_number = models.CharField(
+        max_length=50, blank=True, default="",
+        help_text="사업자등록번호",
+    )
+    legal_ecommerce_number = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="통신판매업 신고번호",
+    )
+    legal_address = models.CharField(
+        max_length=500, blank=True, default="",
+        help_text="사업장 주소",
+    )
+    legal_support_email = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="고객센터 이메일",
+    )
+    legal_support_phone = models.CharField(
+        max_length=50, blank=True, default="",
+        help_text="고객센터 전화번호",
+    )
+    legal_privacy_officer_name = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="개인정보 보호책임자 성명",
+    )
+    legal_privacy_officer_contact = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="개인정보 보호책임자 연락처 (전화 또는 이메일)",
+    )
+
     feature_flags = models.JSONField(default=dict, blank=True)
     ui_config = models.JSONField(default=dict, blank=True)
 

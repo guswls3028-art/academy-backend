@@ -1,6 +1,9 @@
 # PATH: apps/domains/clinic/views.py
+import logging
 
 from django.db import IntegrityError, transaction
+
+logger = logging.getLogger(__name__)
 from django.db.models import Count, Q, Exists, OuterRef
 from django.utils import timezone
 from rest_framework import viewsets, status
@@ -151,9 +154,10 @@ class SessionViewSet(viewsets.ModelViewSet):
         """단일 세션 조회 시 직렬화 오류 방지 (annotate 필드 누락 등)."""
         try:
             return super().retrieve(request, *args, **kwargs)
-        except Exception as e:
+        except Exception:
+            logger.exception("ClinicSessionViewSet.retrieve failed")
             return Response(
-                {"detail": str(e)},
+                {"detail": "세션 조회 중 오류가 발생했습니다."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -164,7 +168,9 @@ class SessionViewSet(viewsets.ModelViewSet):
         - 세션 참가자 리마인더 발송
         """
         session = self.get_object()
-        send_clinic_reminder_for_students(session_id=session.id)
+        result = send_clinic_reminder_for_students(session_id=session.id)
+        if result.get("status") == "not_implemented":
+            return Response(result, status=status.HTTP_501_NOT_IMPLEMENTED)
         return Response({"ok": True})
 
     # ------------------------------------------------------------
@@ -601,6 +607,229 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             obj, context={"request": request}
         ).data
         return Response(out)
+
+    @action(detail=True, methods=["post"], url_path="change-booking")
+    def change_booking(self, request, pk=None):
+        """
+        POST /clinic/participants/{id}/change-booking/
+        Atomic booking change: secure new session first, then cancel old.
+        If new booking fails, old booking is preserved (transaction rollback).
+
+        Request body: { "new_session_id": int, "memo": str (optional) }
+        """
+        new_session_id = request.data.get("new_session_id")
+        memo = request.data.get("memo")
+
+        if not new_session_id:
+            return Response(
+                {"detail": "new_session_id가 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "테넌트 컨텍스트가 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Only students can use this endpoint
+        from apps.domains.student_app.permissions import get_request_student
+        request_student = get_request_student(request)
+        if not request_student:
+            return Response(
+                {"detail": "학생만 일정 변경을 신청할 수 있습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        with transaction.atomic():
+            # Lock and fetch old booking
+            try:
+                old_booking = (
+                    SessionParticipant.objects
+                    .select_for_update()
+                    .get(pk=pk, tenant=tenant)
+                )
+            except SessionParticipant.DoesNotExist:
+                return Response(
+                    {"detail": "예약을 찾을 수 없습니다."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Verify ownership
+            if old_booking.student != request_student:
+                return Response(
+                    {"detail": "다른 학생의 예약을 변경할 수 없습니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Only pending bookings can be changed by student
+            if old_booking.status != SessionParticipant.Status.PENDING:
+                return Response(
+                    {"detail": "승인 대기 중인 예약만 변경할 수 있습니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Prevent no-op change
+            if old_booking.session_id == new_session_id:
+                return Response(
+                    {"detail": "같은 세션으로는 변경할 수 없습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Lock and validate new session
+            try:
+                new_session = (
+                    Session.objects
+                    .filter(tenant=tenant)
+                    .select_for_update()
+                    .get(pk=new_session_id)
+                )
+            except Session.DoesNotExist:
+                return Response(
+                    {"detail": "변경할 세션을 찾을 수 없습니다."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Tenant cross-check (defense-in-depth)
+            if new_session.tenant_id != tenant.id:
+                return Response(
+                    {"detail": "해당 세션에 접근할 권한이 없습니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Past date check
+            if new_session.date < timezone.localdate():
+                return Response(
+                    {"detail": "지난 날짜의 클리닉은 예약할 수 없습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Grade restriction
+            if new_session.target_grade:
+                if not request_student.grade or new_session.target_grade != request_student.grade:
+                    return Response(
+                        {"detail": "해당 클리닉은 다른 학년 대상입니다."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+            # School type restriction
+            if new_session.target_school_type:
+                if not request_student.school_type or new_session.target_school_type != request_student.school_type:
+                    return Response(
+                        {"detail": "해당 클리닉은 다른 학교 유형 대상입니다."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+            # Lecture restriction
+            target_lec_ids = set(new_session.target_lectures.values_list("id", flat=True))
+            if target_lec_ids:
+                from apps.domains.enrollment.models import Enrollment
+                enrolled_lec_ids = set(
+                    Enrollment.objects.filter(
+                        student=request_student, tenant=tenant, status="ACTIVE"
+                    ).values_list("lecture_id", flat=True)
+                )
+                if not target_lec_ids & enrolled_lec_ids:
+                    return Response(
+                        {"detail": "해당 클리닉은 특정 강의 수강생 대상입니다."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+            # Capacity check (after lock)
+            if new_session.max_participants is not None:
+                current_booked = SessionParticipant.objects.filter(
+                    session=new_session,
+                    status__in=[
+                        SessionParticipant.Status.BOOKED,
+                        SessionParticipant.Status.PENDING,
+                    ],
+                ).count()
+                if current_booked >= new_session.max_participants:
+                    return Response(
+                        {"detail": "해당 클리닉은 정원이 마감되었습니다."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+            # Duplicate check on new session
+            exists = SessionParticipant.objects.filter(
+                tenant=tenant,
+                session=new_session,
+                student=request_student,
+                status__in=[
+                    SessionParticipant.Status.PENDING,
+                    SessionParticipant.Status.BOOKED,
+                ],
+            ).exists()
+            if exists:
+                return Response(
+                    {"detail": "이미 해당 세션에 예약된 학생입니다."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            # Determine status for new booking
+            new_status = SessionParticipant.Status.PENDING
+            if getattr(tenant, "clinic_auto_approve_booking", False):
+                new_status = SessionParticipant.Status.BOOKED
+
+            # Resolve enrollment_id
+            enrollment_id = old_booking.enrollment_id
+            if not enrollment_id:
+                from apps.domains.enrollment.models import Enrollment
+                enrollment = Enrollment.objects.filter(
+                    student=request_student,
+                    tenant=tenant,
+                    status="ACTIVE"
+                ).first()
+                if enrollment:
+                    enrollment_id = enrollment.id
+
+            # --- Atomic core: create new, then cancel old ---
+            try:
+                new_booking = SessionParticipant.objects.create(
+                    tenant=tenant,
+                    session=new_session,
+                    student=request_student,
+                    status=new_status,
+                    source=SessionParticipant.Source.STUDENT_REQUEST,
+                    enrollment_id=enrollment_id,
+                    participant_role="manual",
+                    memo=memo or "",
+                )
+            except IntegrityError:
+                return Response(
+                    {"detail": "이미 해당 세션에 예약된 학생입니다."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            # Cancel old booking (only after new is secured)
+            old_booking.status = SessionParticipant.Status.CANCELLED
+            old_booking.status_changed_at = timezone.now()
+            old_booking.status_changed_by = request.user
+            old_booking.save(
+                update_fields=["status", "status_changed_at", "status_changed_by", "updated_at"]
+            )
+
+            # Update ClinicLink if applicable
+            if old_booking.enrollment_id and old_booking.session:
+                ClinicLink.objects.filter(
+                    session=old_booking.session,
+                    enrollment_id=old_booking.enrollment_id,
+                    is_auto=True,
+                ).update(resolved_at=None)
+
+            if enrollment_id and new_session:
+                ClinicLink.objects.filter(
+                    session=new_session,
+                    enrollment_id=enrollment_id,
+                    is_auto=True,
+                    resolved_at__isnull=True,
+                ).update(resolved_at=timezone.now())
+
+        out = ClinicSessionParticipantSerializer(
+            new_booking, context={"request": request}
+        ).data
+        return Response(out, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=["get"])
     def by_session(self, request):

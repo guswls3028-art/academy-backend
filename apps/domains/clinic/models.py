@@ -178,8 +178,8 @@ class SessionParticipant(TimestampModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["tenant", "session", "student"],
-                name="uniq_clinic_participant_per_tenant",
-                condition=models.Q(session__isnull=False),  # session이 있을 때만 유니크 제약
+                name="uniq_clinic_participant_active",
+                condition=models.Q(session__isnull=False, status__in=["pending", "booked"]),
             ),
             models.UniqueConstraint(
                 fields=["tenant", "requested_date", "requested_start_time", "student"],

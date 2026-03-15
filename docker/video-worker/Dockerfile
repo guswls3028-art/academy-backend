@@ -31,8 +31,8 @@ USER appuser
 COPY requirements/requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 # 헬스체크
-HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD pgrep -f "python" > /dev/null || exit 1
 
 # Video Worker 실행
 # ENTRYPOINT: SSM /academy/workers/env fetch 후 워커 실행
