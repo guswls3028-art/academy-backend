@@ -42,7 +42,7 @@
          │                           │                           │
 ┌────────▼─────────┐  ┌─────────────▼──────────┐  ┌─────────────▼──────────┐
 │  API Server       │  │  Messaging Worker      │  │  AI Worker             │
-│  t4g.medium       │  │  t4g.small [PROPOSED]  │  │  t4g.medium            │
+│  t4g.medium       │  │  t4g.medium            │  │  t4g.medium            │
 │  ASG: min=1 max=2 │  │  ASG: min=1 max=3     │  │  ASG: min=1 max=5     │
 │  Gunicorn 4w      │  │  SQS long-poll         │  │  SQS long-poll         │
 │  gevent           │  │  SMS/LMS via Solapi    │  │  Always warm (정책)    │
@@ -119,12 +119,16 @@
 
 **기존 영상 정책:** 원본 파일은 인코딩 성공 후 자동 삭제. 기존 운영 영상 재인코딩 불가 → 현재 HLS 유지. 신규 업로드부터 새 정책 적용.
 
-**Video Worker Instance: c6g.xlarge (Batch CE)**
+**Video Worker Instances: AWS Batch Compute Environments**
 
-현재 AWS Batch Compute Environment에서 `c6g.xlarge` (4 vCPU ARM, 8GB) 사용.
-- 비버스트, 전용 CPU → 인코딩 성능 안정적
-- min=0, max=8 (job 기반 자동 스케일)
-- 영상 없을 때 0대 → 비용 없음
+| CE | 인스턴스 | max vCPU | 용도 |
+|----|---------|----------|------|
+| academy-v1-video-batch-ce | c6g.xlarge (4 vCPU ARM, 8GB) | 40 | 일반 영상 인코딩 |
+| academy-v1-video-batch-long-ce | c6g.xlarge | 80 | 장시간 영상 (≥3h) |
+| academy-v1-video-ops-ce | m6g.medium | 2 | scan/reconcile 운영 작업 |
+
+- 전체 min=0 → 영상 없을 때 0대, 비용 없음
+- 비버스트 전용 CPU → 인코딩 성능 안정적
 
 ### 3.2 Text Readability — Resolved
 

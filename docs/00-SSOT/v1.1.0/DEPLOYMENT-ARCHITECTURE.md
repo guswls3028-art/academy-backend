@@ -11,11 +11,10 @@
 | API | academy-api | academy-v1-api-asg | academy-api | Django REST API (Gunicorn) |
 | Messaging Worker | academy-messaging-worker | academy-v1-messaging-worker-asg | academy-messaging-worker | SQS message processing |
 | AI Worker | academy-ai-worker-cpu | academy-v1-ai-worker-asg | academy-ai-worker-cpu | AI task processing |
-| Video Worker (Daemon) | academy-video-worker | **Dedicated video worker instance** | academy-video-worker | Video processing (< 30 min, current DAEMON_MAX_DURATION_SECONDS=1800) |
-| Video Worker (Batch) | academy-video-worker | AWS Batch (on-demand) | — | Video processing (>= 30 min, or auto-fallback from daemon) |
+| Video Worker (Batch) | academy-video-worker | AWS Batch CE (c6g.xlarge, on-demand) | — | 모든 영상 인코딩 (VIDEO_WORKER_MODE=batch) |
 | Base | academy-base | — | — | Shared base image for all services |
 
-**Note:** Video daemon worker is NOT deployed via this workflow. Video Batch uses a separate `video_batch_deploy.yml`.
+**Note:** Video Worker는 `video_batch_deploy.yml`로 별도 빌드. Daemon 모드 미운용 (VIDEO_WORKER_MODE=batch 고정).
 
 ## 2. CI/CD Pipeline Architecture
 
