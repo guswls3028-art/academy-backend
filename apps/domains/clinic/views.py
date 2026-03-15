@@ -261,6 +261,71 @@ class SessionViewSet(viewsets.ModelViewSet):
         )
         return Response([x for x in qs if x])
 
+    @action(detail=False, methods=["post"], url_path="bulk-create")
+    def bulk_create(self, request, *args, **kwargs):
+        """
+        POST /clinic/sessions/bulk-create/
+        반복 클리닉 세션 일괄 생성 (최대 20일)
+        - 과거 날짜는 건너뜀
+        - IntegrityError(중복)는 건너뜀
+        - tenant는 request.tenant에서 강제 설정
+        """
+        from .serializers import ClinicSessionBulkCreateSerializer
+
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"tenant": "테넌트 컨텍스트가 필요합니다."}
+            )
+
+        ser = ClinicSessionBulkCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+
+        dates = data.pop("dates")
+        target_lecture_ids = data.pop("target_lecture_ids")
+        today = timezone.localdate()
+        created_by = request.user if request.user.is_authenticated else None
+
+        created = []
+        skipped = []
+
+        for d in dates:
+            # Skip past dates
+            if d < today:
+                skipped.append({"date": str(d), "reason": "past_date"})
+                continue
+
+            try:
+                with transaction.atomic():
+                    session = Session.objects.create(
+                        tenant=tenant,
+                        title=data.get("title", ""),
+                        date=d,
+                        start_time=data["start_time"],
+                        duration_minutes=data["duration_minutes"],
+                        location=data["location"],
+                        max_participants=data["max_participants"],
+                        target_grade=data.get("target_grade"),
+                        target_school_type=data.get("target_school_type"),
+                        created_by=created_by,
+                    )
+                    if target_lecture_ids:
+                        session.target_lectures.set(target_lecture_ids)
+                    created.append({"date": str(d), "id": session.id})
+            except IntegrityError:
+                skipped.append({"date": str(d), "reason": "duplicate"})
+
+        return Response(
+            {
+                "created": created,
+                "skipped": skipped,
+                "created_count": len(created),
+                "skipped_count": len(skipped),
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
 
 # ============================================================
 # Participant
@@ -476,15 +541,37 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 if enrollment:
                     enrollment_id = enrollment.id
 
-            try:
-                obj = serializer.save(
-                    tenant=tenant,
-                    student=student,
-                    source=source,
-                    status=requested_status or SessionParticipant.Status.PENDING,
+            # Auto-determine clinic_reason from ClinicLink if not explicitly set
+            clinic_reason = serializer.validated_data.get("clinic_reason")
+            if not clinic_reason and enrollment_id:
+                links = ClinicLink.objects.filter(
                     enrollment_id=enrollment_id,
-                    participant_role=participant_role,
+                    resolved_at__isnull=True,
                 )
+                has_exam = links.filter(reason__in=["AUTO_FAILED", "AUTO_RISK"]).exists()
+                has_homework = False  # TODO: check homework-specific links when available
+                if has_exam and has_homework:
+                    clinic_reason = "both"
+                elif has_exam:
+                    clinic_reason = "exam"
+                elif has_homework:
+                    clinic_reason = "homework"
+                else:
+                    clinic_reason = None
+
+            save_kwargs = dict(
+                tenant=tenant,
+                student=student,
+                source=source,
+                status=requested_status or SessionParticipant.Status.PENDING,
+                enrollment_id=enrollment_id,
+                participant_role=participant_role,
+            )
+            if clinic_reason:
+                save_kwargs["clinic_reason"] = clinic_reason
+
+            try:
+                obj = serializer.save(**save_kwargs)
             except IntegrityError:
                 return Response(
                     {"detail": "이미 해당 세션에 예약된 학생입니다."},

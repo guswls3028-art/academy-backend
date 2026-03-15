@@ -188,6 +188,36 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class ClinicSessionBulkCreateSerializer(serializers.Serializer):
+    """
+    POST /clinic/sessions/bulk-create/ 전용 직렬화기
+    - dates 배열 (최대 20일) + 공통 세션 필드
+    """
+    title = serializers.CharField(required=False, allow_blank=True, default="")
+    start_time = serializers.TimeField()
+    duration_minutes = serializers.IntegerField(min_value=1)
+    location = serializers.CharField()
+    max_participants = serializers.IntegerField(min_value=1, default=20)
+    target_grade = serializers.IntegerField(required=False, allow_null=True, default=None)
+    target_school_type = serializers.CharField(required=False, allow_null=True, default=None)
+    target_lecture_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=[]
+    )
+    dates = serializers.ListField(
+        child=serializers.DateField(), min_length=1, max_length=20
+    )
+
+    def validate_target_grade(self, value):
+        if value is not None and value not in (1, 2, 3):
+            raise serializers.ValidationError("학년은 1, 2, 3 중 하나여야 합니다.")
+        return value
+
+    def validate_target_school_type(self, value):
+        if value is not None and value not in ("MIDDLE", "HIGH"):
+            raise serializers.ValidationError("학교 유형은 MIDDLE 또는 HIGH이어야 합니다.")
+        return value
+
+
 class ClinicTestSerializer(serializers.ModelSerializer):
     class Meta:
         model = Test
