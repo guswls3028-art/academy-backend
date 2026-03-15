@@ -6,13 +6,14 @@ from rest_framework.permissions import IsAuthenticated
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.lectures.models import Session as LectureSession
+from apps.domains.clinic.models import SessionParticipant
 from .serializers import StudentSessionSerializer
 
 
 class StudentSessionListView(APIView):
     """
     GET /student/sessions/me/
-    학생이 SessionEnrollment로 접근 가능한 차시 목록 (date 기준 정렬).
+    학생이 접근 가능한 차시 목록 + 클리닉 예약 (date 기준 정렬).
     """
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
@@ -24,11 +25,13 @@ class StudentSessionListView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response(StudentSessionSerializer([], many=True).data)
+
+        # 1) 강의 차시
         session_ids = (
             SessionEnrollment.objects.filter(
                 enrollment__student=student,
                 enrollment__tenant=tenant,
-                enrollment__status="ACTIVE",  # ✅ 퇴원 학생 제외
+                enrollment__status="ACTIVE",
             )
             .values_list("session_id", flat=True)
             .distinct()
@@ -45,9 +48,36 @@ class StudentSessionListView(APIView):
                 "date": s.date.isoformat() if s.date else None,
                 "status": None,
                 "exam_ids": [],
+                "type": "session",
             }
             for s in sessions
         ]
+
+        # 2) 클리닉 예약 (PENDING/BOOKED만, session 있는 것만)
+        clinic_participants = (
+            SessionParticipant.objects
+            .filter(
+                student=student,
+                tenant=tenant,
+                status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
+                session__isnull=False,
+            )
+            .select_related("session")
+        )
+        for cp in clinic_participants:
+            sess = cp.session
+            status_label = "대기 중" if cp.status == "pending" else "예약됨"
+            data.append({
+                "id": cp.id * -1,  # 음수 ID로 클리닉 구분
+                "title": f"🏥 클리닉 {sess.title or sess.location}" if sess else "🏥 클리닉",
+                "date": sess.date.isoformat() if sess and sess.date else None,
+                "status": status_label,
+                "exam_ids": [],
+                "type": "clinic",
+            })
+
+        # 날짜 정렬
+        data.sort(key=lambda x: x.get("date") or "9999-99-99")
         return Response(StudentSessionSerializer(data, many=True).data)
 
 

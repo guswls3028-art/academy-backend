@@ -8,6 +8,7 @@ from apps.domains.student_app.permissions import IsStudentOrParent, get_request_
 from apps.domains.community.selectors import get_notice_posts_for_tenant
 from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.lectures.models import Session as LectureSession
+from apps.domains.clinic.models import SessionParticipant
 from .serializers import StudentDashboardSerializer
 
 
@@ -86,7 +87,28 @@ class StudentDashboardView(APIView):
                         "title": getattr(s, "title", "") or f"{getattr(s.lecture, 'title', '')} {s.order}차시",
                         "date": s.date.isoformat() if s.date else None,
                         "status": None,
+                        "type": "session",
                     }
                     for s in sessions
                 ]
+                # 오늘 클리닉 예약 (PENDING/BOOKED)
+                clinic_today = (
+                    SessionParticipant.objects.filter(
+                        student=student,
+                        tenant=tenant,
+                        status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
+                        session__isnull=False,
+                        session__date=today,
+                    )
+                    .select_related("session")
+                )
+                for cp in clinic_today:
+                    sess = cp.session
+                    data["today_sessions"].append({
+                        "id": cp.id * -1,
+                        "title": f"🏥 클리닉 {sess.title or sess.location}" if sess else "🏥 클리닉",
+                        "date": today.isoformat(),
+                        "status": "대기 중" if cp.status == "pending" else "예약됨",
+                        "type": "clinic",
+                    })
         return Response(StudentDashboardSerializer(data).data)

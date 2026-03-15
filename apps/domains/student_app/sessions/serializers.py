@@ -12,3 +12,4 @@ class StudentSessionSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
+    type = serializers.CharField(default="session", required=False)
