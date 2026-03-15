@@ -22,18 +22,29 @@ _RE_TIME = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
 _RE_OUT_TIME_MS = re.compile(r"out_time_ms=(\d+)")
 
 # ── Encoding Policy (V1.1.0+) ──────────────────────────────────────
-# 강의 품질 보존 파이프라인: 태블릿 시청 기준, 필기/수식/화면 텍스트 가독성 최적화.
-# - 원본 비율 정확 보존 (강제 스케일링 금지)
-# - 원본 해상도 ≤ 1080p면 그대로 유지, 초과 시 1080p 다운스케일
-# - CRF 기반 품질 제어 (강의 장면 특성에 따라 비트레이트 자동 조절)
-# - 단일 고화질 출력 (불필요한 저화질 variant 제거)
-ENCODING_CRF = 20          # 높은 품질 (18=거의 무손실, 23=기본, 28=저화질)
-ENCODING_MAXRATE = "8000k"  # 스트리밍 대역폭 상한
-ENCODING_BUFSIZE = "12000k" # VBV 버퍼 (maxrate * 1.5)
-ENCODING_PRESET = "medium"  # 품질 우선 (slow > medium > fast)
-ENCODING_AUDIO_BITRATE = "128k"
-MAX_OUTPUT_HEIGHT = 1080    # 출력 해상도 상한
+# 2단계 ABR: 고화질(원본 유지) + 중화질(720p fallback). 비율 정확 보존.
+# 태블릿 시청 기준, 필기/수식/화면 텍스트 가독성 최적화.
+MAX_OUTPUT_HEIGHT = 1080
 MAX_OUTPUT_WIDTH = 1920
+MID_HEIGHT = 720
+
+# v2 = 고화질 (원본 해상도 유지, ≤1080p)
+HI_CRF = 20
+HI_MAXRATE = "8000k"
+HI_BUFSIZE = "12000k"
+HI_PROFILE = "high"
+HI_LEVEL = "4.1"
+HI_AUDIO_BITRATE = "128k"
+
+# v1 = 중화질 (720p, 저속 네트워크 fallback)
+MID_CRF = 23
+MID_MAXRATE = "3000k"
+MID_BUFSIZE = "4500k"
+MID_PROFILE = "main"
+MID_LEVEL = "3.1"
+MID_AUDIO_BITRATE = "96k"
+
+ENCODING_PRESET = "medium"
 
 
 class TranscodeError(RuntimeError):
@@ -139,72 +150,109 @@ def has_audio_stream(*, input_path: str, ffprobe_bin: str, timeout: int) -> bool
         return False
 
 
-def build_scale_filter(out_w: int, out_h: int) -> Optional[str]:
+def _compute_mid_resolution(input_w: int, input_h: int) -> tuple[int, int]:
     """
-    원본 비율 보존 스케일 필터. 스케일링 불필요 시 None 반환.
-    out_w, out_h가 0이면 스케일링 안 함 (원본 그대로, 짝수 보장만).
-    _compute_output_resolution에서 이미 비율 보존 + 짝수 계산 완료이므로
-    여기서는 단순 스케일만 적용.
+    중화질 variant 해상도: 720p 기준 비율 보존 다운스케일.
+    원본이 720p 이하면 480p fallback.
     """
-    if out_w <= 0 or out_h <= 0:
-        # probe 실패: 짝수 보장만 (원본 유지)
-        return "scale=trunc(iw/2)*2:trunc(ih/2)*2"
-    return f"scale={out_w}:{out_h},setsar=1"
+    if input_w <= 0 or input_h <= 0:
+        return 0, 0
+
+    # 원본이 720p 이하 → 480p로 fallback
+    if input_h <= MID_HEIGHT:
+        target_h = 480
+    else:
+        target_h = MID_HEIGHT
+
+    scale = target_h / input_h
+    out_w = int(input_w * scale)
+    out_h = target_h
+    # 짝수 보장
+    out_w -= out_w % 2
+    out_h -= out_h % 2
+    return out_w, out_h
+
+
+def _needs_two_variants(input_w: int, input_h: int, hi_w: int, hi_h: int) -> bool:
+    """고화질과 중화질이 실질적으로 다른 해상도인 경우에만 2단계."""
+    mid_w, mid_h = _compute_mid_resolution(input_w, input_h)
+    # 해상도 차이가 의미 있을 때만 (높이 차이 100px 이상)
+    return mid_h > 0 and abs(hi_h - mid_h) >= 100
 
 
 def build_ffmpeg_command(
     *,
     input_path: str,
-    out_w: int,
-    out_h: int,
+    hi_w: int,
+    hi_h: int,
+    mid_w: int,
+    mid_h: int,
+    two_variants: bool,
     with_audio: bool,
     ffmpeg_bin: str,
     hls_time: int,
 ) -> List[str]:
     """
-    CRF 기반 단일 고화질 HLS 출력. 원본 비율 보존.
+    CRF 기반 2단계 ABR HLS. 원본 비율 보존.
+    two_variants=False면 고화질 단일 출력.
     """
-    cmd: List[str] = [
-        ffmpeg_bin,
-        "-y",
-        "-i", input_path,
-    ]
+    cmd: List[str] = [ffmpeg_bin, "-y", "-i", input_path]
 
-    # 스케일 필터 (필요시에만)
-    scale_filter = build_scale_filter(out_w, out_h)
-    if scale_filter:
-        cmd += ["-vf", scale_filter]
+    if two_variants:
+        # filter_complex: split → 고화질 스케일 + 중화질 스케일
+        hi_scale = f"scale={hi_w}:{hi_h},setsar=1" if hi_w > 0 else "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1"
+        mid_scale = f"scale={mid_w}:{mid_h},setsar=1"
+        fc = f"[0:v]split=2[vhi][vmid];[vhi]{hi_scale}[vhiout];[vmid]{mid_scale}[vmidout]"
+        cmd += ["-filter_complex", fc]
 
-    # 비디오 스트림
-    cmd += [
-        "-map", "0:v:0",
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-level", "4.1",
-        "-pix_fmt", "yuv420p",
-        "-crf", str(ENCODING_CRF),
-        "-maxrate", ENCODING_MAXRATE,
-        "-bufsize", ENCODING_BUFSIZE,
-        "-preset", ENCODING_PRESET,
-        "-g", "48",
-        "-keyint_min", "48",
-        "-sc_threshold", "0",
-    ]
-
-    # 오디오 스트림
-    if with_audio:
+        # v2 = 고화질
+        cmd += ["-map", "[vhiout]"]
+        if with_audio:
+            cmd += ["-map", "0:a?"]
         cmd += [
-            "-map", "0:a?",
-            "-c:a", "aac",
-            "-ac", "2",
-            "-b:a", ENCODING_AUDIO_BITRATE,
+            "-c:v:0", "libx264", "-profile:v", HI_PROFILE, "-level", HI_LEVEL,
+            "-pix_fmt", "yuv420p",
+            "-crf", str(HI_CRF), "-maxrate:v:0", HI_MAXRATE, "-bufsize:v:0", HI_BUFSIZE,
+            "-preset", ENCODING_PRESET, "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
         ]
+        if with_audio:
+            cmd += ["-c:a:0", "aac", "-ac", "2", "-b:a:0", HI_AUDIO_BITRATE]
 
-    # HLS 출력 (단일 variant → master playlist은 v1만 참조)
-    if with_audio:
-        var_map = "v:0,a:0,name:1"
+        # v1 = 중화질
+        cmd += ["-map", "[vmidout]"]
+        if with_audio:
+            cmd += ["-map", "0:a?"]
+        cmd += [
+            "-c:v:1", "libx264", "-profile:v", MID_PROFILE, "-level", MID_LEVEL,
+            "-pix_fmt", "yuv420p",
+            "-crf", str(MID_CRF), "-maxrate:v:1", MID_MAXRATE, "-bufsize:v:1", MID_BUFSIZE,
+            "-preset", ENCODING_PRESET, "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
+        ]
+        if with_audio:
+            cmd += ["-c:a:1", "aac", "-ac", "2", "-b:a:1", MID_AUDIO_BITRATE]
+
+        if with_audio:
+            var_map = "v:0,a:0,name:2 v:1,a:1,name:1"
+        else:
+            var_map = "v:0,name:2 v:1,name:1"
     else:
-        var_map = "v:0,name:1"
+        # 단일 고화질
+        hi_scale = f"scale={hi_w}:{hi_h},setsar=1" if hi_w > 0 else "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1"
+        cmd += ["-vf", hi_scale]
+        cmd += [
+            "-map", "0:v:0",
+            "-c:v", "libx264", "-profile:v", HI_PROFILE, "-level", HI_LEVEL,
+            "-pix_fmt", "yuv420p",
+            "-crf", str(HI_CRF), "-maxrate", HI_MAXRATE, "-bufsize", HI_BUFSIZE,
+            "-preset", ENCODING_PRESET, "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
+        ]
+        if with_audio:
+            cmd += ["-map", "0:a?", "-c:a", "aac", "-ac", "2", "-b:a", HI_AUDIO_BITRATE]
+
+        if with_audio:
+            var_map = "v:0,a:0,name:1"
+        else:
+            var_map = "v:0,name:1"
 
     cmd += [
         "-progress", "pipe:1",
@@ -267,15 +315,19 @@ def transcode_to_hls(
     effective_timeout = _effective_ffmpeg_timeout(duration_sec, timeout)
     # 입력 해상도 probe → 비율 보존 출력 해상도 결정
     input_w, input_h = _probe_resolution(input_path, ffprobe_bin, min(60, effective_timeout))
-    out_w, out_h = _compute_output_resolution(input_w, input_h)
+    hi_w, hi_h = _compute_output_resolution(input_w, input_h)
+    mid_w, mid_h = _compute_mid_resolution(input_w, input_h)
+    two_variants = _needs_two_variants(input_w, input_h, hi_w, hi_h)
+
     logger.info(
-        "[TRANSCODER] Resolution: input=%dx%d → output=%dx%d video_id=%s",
-        input_w, input_h, out_w, out_h, video_id,
+        "[TRANSCODER] Resolution: input=%dx%d → hi=%dx%d mid=%dx%d two_variants=%s video_id=%s",
+        input_w, input_h, hi_w, hi_h, mid_w, mid_h, two_variants, video_id,
     )
 
-    # 단일 variant 디렉토리 (v1)
     ensure_dir(output_root)
     ensure_dir(output_root / "v1")
+    if two_variants:
+        ensure_dir(output_root / "v2")
 
     with_audio = has_audio_stream(
         input_path=input_path,
@@ -285,8 +337,11 @@ def transcode_to_hls(
 
     cmd = build_ffmpeg_command(
         input_path=input_path,
-        out_w=out_w,
-        out_h=out_h,
+        hi_w=hi_w,
+        hi_h=hi_h,
+        mid_w=mid_w,
+        mid_h=mid_h,
+        two_variants=two_variants,
         with_audio=with_audio,
         ffmpeg_bin=ffmpeg_bin,
         hls_time=hls_time,
