@@ -400,7 +400,12 @@ class AdminPostViewSet(viewsets.GenericViewSet):
 class BlockTypeViewSet(viewsets.ModelViewSet):
     """블록 유형 CRUD. 커스텀 유형 생성/수정/삭제. tenant에 하나도 없으면 기본 QnA 유형 자동 생성."""
     serializer_class = BlockTypeSerializer
-    permission_classes = [TenantResolvedAndStaff]
+
+    def get_permissions(self):
+        # 목록/상세 조회는 학생도 가능 (QnA block type ID resolve 용)
+        if self.action in ("list", "retrieve"):
+            return [TenantResolvedAndMember()]
+        return [TenantResolvedAndStaff()]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
@@ -408,22 +413,26 @@ class BlockTypeViewSet(viewsets.ModelViewSet):
             return get_empty_block_type_queryset()
         return get_block_types_for_tenant(tenant)
 
+    # 기본 블록 유형 (tenant에 하나도 없을 때 자동 생성)
+    _DEFAULT_BLOCK_TYPES = [
+        ("qna", "QnA", 1),
+        ("notice", "공지", 2),
+        ("counsel", "상담 신청", 50),
+        ("materials", "자료실", 60),
+    ]
+
     def list(self, request, *args, **kwargs):
-        """목록 조회 시 tenant에 블록 유형이 없으면 기본 QnA·공지 유형을 한 번만 생성 후 반환."""
+        """목록 조회 시 tenant에 블록 유형이 없으면 기본 유형을 한 번만 생성 후 반환."""
         tenant = getattr(request, "tenant", None)
         if tenant:
             qs = get_block_types_for_tenant(tenant)
             if not qs.exists():
-                BlockType.objects.get_or_create(
-                    tenant=tenant,
-                    code="qna",
-                    defaults={"label": "QnA", "order": 1},
-                )
-                BlockType.objects.get_or_create(
-                    tenant=tenant,
-                    code="notice",
-                    defaults={"label": "공지", "order": 2},
-                )
+                for code, label, order in self._DEFAULT_BLOCK_TYPES:
+                    BlockType.objects.get_or_create(
+                        tenant=tenant,
+                        code=code,
+                        defaults={"label": label, "order": order},
+                    )
         return super().list(request, *args, **kwargs)
 
     def perform_create(self, serializer):
@@ -462,6 +471,7 @@ class PostTemplateViewSet(viewsets.ModelViewSet):
 class ScopeNodeViewSet(viewsets.ReadOnlyModelViewSet):
     """ScopeNode list for tree. Filter by tenant (from request). Pagination disabled so frontend gets full list."""
     serializer_class = ScopeNodeMinimalSerializer
+    permission_classes = [TenantResolvedAndMember]
     pagination_class = None
 
     def get_queryset(self):
