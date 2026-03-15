@@ -11,6 +11,12 @@ name: V1 Build and Push latest (OIDC)
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'README*'
+      - '.gitignore'
+      - 'LICENSE'
   workflow_dispatch:
 
 concurrency:
@@ -409,13 +415,24 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Pre-deploy health gate
+        run: |
+          echo "Verifying API is healthy before starting refresh..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 15 \
+            "http://${{ env.ALB_DNS }}/healthz" || echo "000")
+          echo "Pre-deploy healthz: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::API is not healthy before deploy (healthz=$STATUS). Aborting refresh."
+            exit 1
+          fi
+
       - name: Start API ASG instance refresh
         id: refresh
         run: |
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}' \
+            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300,"SkipMatching":true}' \
             --query 'InstanceRefreshId' \
             --output text)
           echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT
