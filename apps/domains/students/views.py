@@ -1388,16 +1388,22 @@ def _approve_registration_request(request, reg):
             reg.student = student
             reg.save(update_fields=["status", "student", "updated_at"])
 
+        # 알림톡에 실제 비밀번호 전달 (원문 보관 필드 사용)
+        actual_password = (reg.initial_password_plain or "").strip()
         send_registration_approved_messages(
             tenant_id=tenant.id,
             site_url=get_site_url(request) or "",
             student_name=name,
             student_phone=(phone or "") if phone else "",
             student_id=ps_number,
-            student_password="가입 시 입력한 비밀번호",
+            student_password=actual_password if actual_password else "비밀번호를 변경해 주세요",
             parent_phone=parent_phone or "",
             parent_password=parent_fixed_password,
         )
+        # 원문 비밀번호 즉시 삭제 (보안)
+        if reg.initial_password_plain:
+            reg.initial_password_plain = ""
+            reg.save(update_fields=["initial_password_plain"])
         return None
     except Exception as e:
         logger.exception("_approve_registration_request error: %s", e)
@@ -1553,7 +1559,8 @@ class RegistrationRequestViewSet(ModelViewSet):
 
         from django.contrib.auth.hashers import make_password
         data = serializer.validated_data.copy()
-        password = make_password(data.pop("initial_password"))
+        raw_password = data.pop("initial_password")
+        password = make_password(raw_password)
         # grade: model은 PositiveSmallIntegerField(null=True) → int 또는 None만 허용
         raw_grade = data.get("grade")
         if raw_grade is not None and raw_grade != "":
@@ -1571,6 +1578,7 @@ class RegistrationRequestViewSet(ModelViewSet):
                 tenant=request.tenant,
                 status=StudentRegistrationRequest.PENDING,
                 initial_password=password,
+                initial_password_plain=raw_password,
                 name=data.get("name", ""),
                 username=(data.get("username") or "").strip() or "",
                 parent_phone=data.get("parent_phone", ""),

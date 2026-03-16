@@ -92,9 +92,8 @@
 
 ### A. 가입/등록 (signup_registration)
 
-- `student_signup` — 가입 완료
-- `registration_approved_student` — 가입 승인(학생)
-- `registration_approved_parent` — 가입 승인(학부모)
+- `registration_approved_student` — 가입 안내(학생). 선생 등록·셀프가입 승인 모두 이 템플릿 사용.
+- `registration_approved_parent` — 가입 안내(학부모). 선생 등록·셀프가입 승인 모두 이 템플릿 사용.
 - `class_enrollment_complete` — 반 등록 완료
 - `class_change_complete` — 수강반 변경
 - `enrollment_start_date` — 수강 시작일 도래

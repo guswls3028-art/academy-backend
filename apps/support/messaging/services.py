@@ -232,10 +232,11 @@ def send_welcome_messages(
     site_url: str = "",
 ):
     """
-    가입 성공 메시지 일괄 발송 (학생 + 학부모).
+    가입 안내 알림톡 일괄 발송 (학생 + 학부모).
 
-    자동발송 설정(student_signup)이 활성화되어 있고 템플릿이 있으면 enqueue_sms로 발송.
-    없으면 로깅만 (기존 스텁 동작).
+    셀프가입 승인과 동일한 솔라피 승인 템플릿 사용:
+    - 학생: registration_approved_student (#{학생이름}, #{학생아이디}, #{학생비밀번호}, #{사이트링크}, #{비밀번호안내})
+    - 학부모: registration_approved_parent (위 + #{학부모아이디}, #{학부모비밀번호})
     """
     parent_password_by_phone = parent_password_by_phone or {}
     sent = 0
@@ -243,66 +244,68 @@ def send_welcome_messages(
     if not created_students:
         return {"status": "skip", "enqueued": 0}
 
-    from apps.support.messaging.selectors import get_auto_send_config
-    from apps.support.messaging.policy import MessagingPolicyError
+    from apps.support.messaging.policy import MessagingPolicyError, get_owner_tenant_id
 
     tenant_id = getattr(created_students[0], "tenant_id", None)
     if not tenant_id:
         logger.warning("send_welcome: no tenant_id, skip")
         return {"status": "skip", "enqueued": 0}
 
-    # 항상 오너 테넌트의 승인 템플릿 사용 (알림톡 온리, SMS fallback 없음)
-    from apps.support.messaging.policy import get_owner_tenant_id
     owner_id = get_owner_tenant_id()
-    config = get_auto_send_config(owner_id, "student_signup")
-    if not config or not config.enabled or not config.template:
-        for student in created_students:
-            name = getattr(student, "name", "")
-            logger.info("send_welcome (stub) student=%s", name)
-            sent += 1
-        return {"status": "stub", "logged": sent}
+    notice = REGISTRATION_APPROVED_NOTICE
 
-    t = config.template
-    body = (t.body or "").strip()
-    solapi_id = (t.solapi_template_id or "").strip()
-    use_alimtalk = solapi_id and t.solapi_status == "APPROVED"
+    # 셀프가입 승인과 동일한 템플릿 resolve (학생용, 학부모용 각각)
+    def _resolve(trigger: str):
+        from apps.support.messaging.selectors import get_auto_send_config
+        from apps.support.messaging.models import MessageTemplate
+        config = get_auto_send_config(owner_id, trigger)
+        if config and config.enabled and config.template:
+            t = config.template
+            sid = (t.solapi_template_id or "").strip()
+            if sid and t.solapi_status == "APPROVED":
+                return t, sid
+        t = MessageTemplate.objects.filter(
+            tenant_id=owner_id, category="signup", solapi_status="APPROVED",
+        ).exclude(solapi_template_id="").first()
+        if t:
+            return t, (t.solapi_template_id or "").strip()
+        return None, None
+
+    tmpl_student, sid_student = _resolve("registration_approved_student")
+    tmpl_parent, sid_parent = _resolve("registration_approved_parent")
+
+    if not tmpl_student and not tmpl_parent:
+        for student in created_students:
+            logger.info("send_welcome (stub) student=%s", getattr(student, "name", ""))
+        return {"status": "stub", "logged": len(created_students)}
 
     for student in created_students:
         name = (getattr(student, "name", "") or "").strip()
         ps_number = (getattr(student, "ps_number", "") or "").strip()
         phone = (getattr(student, "phone", "") or "").replace("-", "").strip()
         parent_phone = (getattr(student, "parent_phone", "") or "").replace("-", "").strip()
-        name_2 = name[:2] if len(name) >= 2 else name
-        name_3 = name[:3] if len(name) >= 3 else name
 
-        # 학생용
-        if phone and len(phone) >= 10:
-            text = (
-                body.replace("#{학생이름2}", name_2)
-                .replace("#{학생이름3}", name_3)
-                .replace("#{사이트링크}", site_url)
-                .replace("#{학생아이디}", ps_number)
-                .replace("#{학생비밀번호}", student_password)
-            )
-            alimtalk_replacements = None
-            template_id_solapi = None
-            if use_alimtalk:
-                template_id_solapi = solapi_id
-                alimtalk_replacements = [
-                    {"key": "학생이름2", "value": name_2},
-                    {"key": "학생이름3", "value": name_3},
-                    {"key": "사이트링크", "value": site_url},
-                    {"key": "학생아이디", "value": ps_number},
-                    {"key": "학생비밀번호", "value": student_password},
-                ]
+        # 학생용 — registration_approved_student 템플릿
+        if phone and len(phone) >= 10 and tmpl_student and sid_student:
+            replacements = {
+                "학생이름": name,
+                "학생아이디": ps_number,
+                "학생비밀번호": student_password,
+                "사이트링크": site_url,
+                "비밀번호안내": notice,
+            }
+            body = (tmpl_student.body or "").strip()
+            text = body
+            for k, v in replacements.items():
+                text = text.replace(f"#{{{k}}}", v)
             try:
                 ok = enqueue_sms(
                     tenant_id=owner_id,
                     to=phone,
                     text=text,
                     message_mode="alimtalk",
-                    template_id=template_id_solapi,
-                    alimtalk_replacements=alimtalk_replacements,
+                    template_id=sid_student,
+                    alimtalk_replacements=[{"key": k, "value": v} for k, v in replacements.items()],
                 )
             except MessagingPolicyError:
                 logger.info("send_welcome student skipped (policy: tenant_id=%s)", tenant_id)
@@ -310,39 +313,30 @@ def send_welcome_messages(
             if ok:
                 sent += 1
 
-        # 학부모용
-        if parent_phone and len(parent_phone) >= 10:
-            pwd = parent_password_by_phone.get(parent_phone, student_password)
-            text = (
-                body.replace("#{학생이름2}", name_2)
-                .replace("#{학생이름3}", name_3)
-                .replace("#{사이트링크}", site_url)
-                .replace("#{학생아이디}", ps_number)
-                .replace("#{학생비밀번호}", student_password)
-                .replace("#{학부모비밀번호}", pwd)
-                .replace("#{학부모아이디}", parent_phone)
-            )
-            alimtalk_replacements = None
-            template_id_solapi = None
-            if use_alimtalk:
-                template_id_solapi = solapi_id
-                alimtalk_replacements = [
-                    {"key": "학생이름2", "value": name_2},
-                    {"key": "학생이름3", "value": name_3},
-                    {"key": "사이트링크", "value": site_url},
-                    {"key": "학생아이디", "value": ps_number},
-                    {"key": "학생비밀번호", "value": student_password},
-                    {"key": "학부모비밀번호", "value": pwd},
-                    {"key": "학부모아이디", "value": parent_phone},
-                ]
+        # 학부모용 — registration_approved_parent 템플릿
+        if parent_phone and len(parent_phone) >= 10 and tmpl_parent and sid_parent:
+            pwd = parent_password_by_phone.get(parent_phone, "0000")
+            replacements = {
+                "학생이름": name,
+                "학생아이디": ps_number,
+                "학생비밀번호": student_password,
+                "학부모아이디": parent_phone,
+                "학부모비밀번호": pwd,
+                "사이트링크": site_url,
+                "비밀번호안내": notice,
+            }
+            body = (tmpl_parent.body or "").strip()
+            text = body
+            for k, v in replacements.items():
+                text = text.replace(f"#{{{k}}}", v)
             try:
                 ok = enqueue_sms(
                     tenant_id=owner_id,
                     to=parent_phone,
                     text=text,
                     message_mode="alimtalk",
-                    template_id=template_id_solapi,
-                    alimtalk_replacements=alimtalk_replacements,
+                    template_id=sid_parent,
+                    alimtalk_replacements=[{"key": k, "value": v} for k, v in replacements.items()],
                 )
             except MessagingPolicyError:
                 logger.info("send_welcome parent skipped (policy: tenant_id=%s)", tenant_id)

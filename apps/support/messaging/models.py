@@ -132,9 +132,9 @@ class AutoSendConfig(models.Model):
     """
     class Trigger(models.TextChoices):
         # A. 가입/등록
-        STUDENT_SIGNUP = "student_signup", "가입 완료"
-        REGISTRATION_APPROVED_STUDENT = "registration_approved_student", "가입 승인(학생)"
-        REGISTRATION_APPROVED_PARENT = "registration_approved_parent", "가입 승인(학부모)"
+        STUDENT_SIGNUP = "student_signup", "가입 완료(레거시·미사용)"
+        REGISTRATION_APPROVED_STUDENT = "registration_approved_student", "가입 안내(학생)"
+        REGISTRATION_APPROVED_PARENT = "registration_approved_parent", "가입 안내(학부모)"
         CLASS_ENROLLMENT_COMPLETE = "class_enrollment_complete", "반 등록 완료"
         ENROLLMENT_EXPIRING_SOON = "enrollment_expiring_soon", "등록 만료 예정"
         WITHDRAWAL_COMPLETE = "withdrawal_complete", "퇴원 처리 완료"

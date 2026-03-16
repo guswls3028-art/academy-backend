@@ -12,21 +12,6 @@ import copy
 # trigger -> { category, name, subject, body, minutes_before }
 _TEMPLATE_DEFINITIONS: dict[str, dict] = {
     # ───────── 가입/등록 ─────────
-    "student_signup": {
-        "category": "signup",
-        "name": "[{academy_name}] 가입 완료 안내",
-        "subject": "{academy_name} 가입을 환영합니다",
-        "body": (
-            "#{학생이름2}학생님, {academy_name} 가입이 완료되었습니다.\n"
-            "\n"
-            "아래 링크에서 학원 앱에 접속하실 수 있습니다.\n"
-            "#{사이트링크}\n"
-            "\n"
-            "수업 일정, 과제, 시험 등 모든 학원 정보를 앱에서 확인하세요.\n"
-            "궁금하신 점은 학원으로 문의해 주세요."
-        ),
-        "minutes_before": None,
-    },
     "registration_approved_student": {
         "category": "signup",
         "name": "[{academy_name}] 가입 승인 안내 (학생)",
