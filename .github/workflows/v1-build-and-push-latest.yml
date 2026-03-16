@@ -534,13 +534,31 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Remove scale-in protection before refresh
+        run: |
+          INSTANCES=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names ${{ env.MESSAGING_ASG_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'AutoScalingGroups[0].Instances[?ProtectedFromScaleIn==`true`].InstanceId' \
+            --output text)
+          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
+            echo "Removing scale-in protection from: $INSTANCES"
+            aws autoscaling set-instance-protection \
+              --auto-scaling-group-name ${{ env.MESSAGING_ASG_NAME }} \
+              --instance-ids $INSTANCES \
+              --no-protected-from-scale-in \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "No protected instances found"
+          fi
+
       - name: Start Messaging ASG instance refresh
         id: refresh
         run: |
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.MESSAGING_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120}' \
+            --preferences '{"MinHealthyPercentage":0,"InstanceWarmup":120}' \
             --query 'InstanceRefreshId' \
             --output text)
           echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT
@@ -585,13 +603,31 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Remove scale-in protection before refresh
+        run: |
+          INSTANCES=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names ${{ env.AI_ASG_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'AutoScalingGroups[0].Instances[?ProtectedFromScaleIn==`true`].InstanceId' \
+            --output text)
+          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
+            echo "Removing scale-in protection from: $INSTANCES"
+            aws autoscaling set-instance-protection \
+              --auto-scaling-group-name ${{ env.AI_ASG_NAME }} \
+              --instance-ids $INSTANCES \
+              --no-protected-from-scale-in \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "No protected instances found"
+          fi
+
       - name: Start AI ASG instance refresh
         id: refresh
         run: |
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.AI_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120}' \
+            --preferences '{"MinHealthyPercentage":0,"InstanceWarmup":120}' \
             --query 'InstanceRefreshId' \
             --output text)
           echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT
