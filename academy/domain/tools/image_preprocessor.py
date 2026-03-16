@@ -53,6 +53,48 @@ def preprocess_for_export(img: Image.Image) -> Image.Image:
     return img
 
 
+def trim_bottom_whitespace(img: Image.Image, padding_px: int = 12) -> Image.Image:
+    """Crop된 문항 이미지의 하단 여백을 제거하되, 내용 손실 방지.
+
+    마지막 non-white 행을 찾아 그 아래를 잘라냄.
+    padding_px만큼 여유를 남김 (내용 손실 방지).
+
+    Args:
+        img: PIL Image (RGB or L).
+        padding_px: 하단에 남길 여백 (px).
+
+    Returns:
+        하단 여백이 제거된 PIL Image.
+    """
+    gray = img.convert("L") if img.mode != "L" else img
+    width, height = gray.size
+
+    # 상단은 그대로, 하단에서 위로 스캔하며 non-white 행 찾기
+    # threshold 240: 거의 흰색이 아닌 행 = content 있음
+    threshold = 240
+    last_content_row = height - 1
+
+    for y in range(height - 1, -1, -1):
+        row = gray.crop((0, y, width, y + 1))
+        pixels = list(row.getdata())
+        # 행의 5% 이상이 threshold 이하면 content 행
+        dark_count = sum(1 for p in pixels if p < threshold)
+        if dark_count > width * 0.02:
+            last_content_row = y
+            break
+
+    # 내용 행 + padding
+    new_bottom = min(height, last_content_row + padding_px)
+
+    # 최소 높이 보장 (너무 작아지면 원본 유지)
+    if new_bottom < height * 0.3:
+        return img
+
+    if new_bottom < height - 5:  # 5px 이상 절약되면 trim
+        return img.crop((0, 0, width, new_bottom))
+    return img
+
+
 def preprocess_for_detect(img: Image.Image) -> Image.Image:
     """Aggressive preprocessing for question boundary detection.
 

@@ -164,25 +164,36 @@ def split_questions(
             x0 = 0
             x1 = page_width
 
+        # ── 하단 종료점 결정 ──
+        # 텍스트 블록 기반 bottom (비텍스트 요소는 텍스트 블록에 안 잡힘)
+        text_bottom = max(b.y1 for b in region_blocks)
+        # 비텍스트 콘텐츠(그림/표/수식)를 위한 확장 여유 (텍스트 높이의 50%)
+        avg_block_height = sum(b.y1 - b.y0 for b in region_blocks) / len(region_blocks)
+        content_padding = max(margin * 4, avg_block_height * 0.5)
+
         if i + 1 < len(question_starts):
             # End just before next question starts
             next_block = sorted_blocks[question_starts[i + 1][1]]
 
             if is_dual_column:
-                # In dual column: if next question is in different column,
-                # extend current to bottom of its column
                 curr_in_left = start_block.x0 < mid_x
                 next_in_left = next_block.x0 < mid_x
                 if curr_in_left != next_in_left:
-                    # Use actual content bottom + padding instead of page_height
-                    y1 = max(b.y1 for b in region_blocks) + margin * 4
+                    y1 = text_bottom + content_padding
                 else:
-                    y1 = next_block.y0 - margin
+                    # 다음 문항 시작까지 — 텍스트 bottom + padding이 더 클 수 있음
+                    y1 = min(next_block.y0 - margin, text_bottom + content_padding)
+                    # 최소한 텍스트 bottom은 포함
+                    y1 = max(y1, text_bottom + margin)
             else:
-                y1 = next_block.y0 - margin
+                # 다음 문항 직전까지가 상한, 텍스트 bottom + padding이 하한
+                y1_next = next_block.y0 - margin
+                y1_content = text_bottom + content_padding
+                y1 = min(y1_next, y1_content)
+                y1 = max(y1, text_bottom + margin)
         else:
-            # Last question: use actual content bottom + padding, not page_height
-            y1 = max(b.y1 for b in region_blocks) + margin * 4
+            # 마지막 문항: 텍스트 bottom + 넉넉한 패딩 (비텍스트 요소 포함)
+            y1 = text_bottom + content_padding * 1.5
 
         y1 = min(page_height, max(y1, y0 + 10))
 

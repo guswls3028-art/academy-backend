@@ -95,7 +95,7 @@ class GeneratePptFromPdfUseCase:
             split_questions,
             TextBlock as SplitterTextBlock,
         )
-        from academy.domain.tools.image_preprocessor import preprocess_for_export
+        from academy.domain.tools.image_preprocessor import preprocess_for_export, trim_bottom_whitespace
         from academy.domain.tools.ppt_composer import PptComposer, PptConfig
 
         cfg = config or {}
@@ -159,6 +159,8 @@ class GeneratePptFromPdfUseCase:
                         continue
 
                     crop = page_img.crop((px0, py0, px1, py1))
+                    # 하단 여백 정밀 trim (비텍스트 콘텐츠 보호, 빈 공간만 제거)
+                    crop = trim_bottom_whitespace(crop, padding_px=12)
                     export_img = preprocess_for_export(crop)
                     img_bytes = _image_to_bytes(export_img)
 
