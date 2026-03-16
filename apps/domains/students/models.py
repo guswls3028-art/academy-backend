@@ -32,7 +32,7 @@ class Student(TimestampModel):
 
     # ✅ NEW: PS 번호 (학원 공식 학생 ID)
     ps_number = models.CharField(
-        max_length=20,
+        max_length=50,
         null=False,
         blank=False,
         help_text="PS 번호 (학원 학생 ID)",
