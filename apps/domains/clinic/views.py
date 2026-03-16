@@ -394,7 +394,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         requested_start_time = serializer.validated_data.get("requested_start_time")
         student = serializer.validated_data.get("student")
         enrollment_id = serializer.validated_data.get("enrollment_id")
-        source = serializer.validated_data.get("source")
+        source = serializer.validated_data.get("source") or SessionParticipant.Source.MANUAL
         requested_status = serializer.validated_data.get("status")
 
         # ✅ 테넌트 교차 검증 (defense-in-depth: serializer queryset + view 명시 체크)
@@ -505,7 +505,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
             # 중복 체크: session이 있으면 session 기준, 없으면 requested_date/requested_start_time 기준
             if session:
-                dup_qs = SessionParticipant.objects.filter(
+                exists = SessionParticipant.objects.filter(
                     tenant=tenant,
                     session=session,
                     student=student,
@@ -513,19 +513,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                         SessionParticipant.Status.PENDING,
                         SessionParticipant.Status.BOOKED,
                     ],
-                )
-                exists = dup_qs.exists()
+                ).exists()
                 if exists:
-                    dup = dup_qs.first()
-                    logger.warning(
-                        "clinic_duplicate: tenant=%s session=%s(pk=%s) student=%s(pk=%s) found_id=%s found_session=%s found_status=%s",
-                        getattr(tenant, "id", None),
-                        session, getattr(session, "pk", None),
-                        student, getattr(student, "pk", None),
-                        dup.id if dup else None,
-                        dup.session_id if dup else None,
-                        dup.status if dup else None,
-                    )
                     return Response(
                         {"detail": "이미 해당 세션에 예약된 학생입니다."},
                         status=status.HTTP_409_CONFLICT,
