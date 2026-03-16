@@ -78,6 +78,7 @@ class GeneratePptFromPdfUseCase:
         pdf_path: str,
         config: Optional[dict] = None,
         on_progress: Optional[Callable[[int, str], None]] = None,
+        image_settings: Optional[dict] = None,
     ) -> PptResult:
         """Execute PPT generation from PDF.
 
@@ -160,6 +161,25 @@ class GeneratePptFromPdfUseCase:
                     crop = page_img.crop((px0, py0, px1, py1))
                     export_img = preprocess_for_export(crop)
                     img_bytes = _image_to_bytes(export_img)
+
+                    # 사용자 이미지 설정 적용 (invert, grayscale, brightness, contrast 등)
+                    if image_settings and any([
+                        image_settings.get("invert"),
+                        image_settings.get("grayscale"),
+                        image_settings.get("auto_enhance"),
+                        float(image_settings.get("brightness", 1.0)) != 1.0,
+                        float(image_settings.get("contrast", 1.0)) != 1.0,
+                    ]):
+                        from apps.domains.tools.ppt.services import _process_image
+                        img_bytes = _process_image(
+                            img_bytes,
+                            invert=bool(image_settings.get("invert", False)),
+                            grayscale=bool(image_settings.get("grayscale", False)),
+                            auto_enhance=bool(image_settings.get("auto_enhance", False)),
+                            brightness=float(image_settings.get("brightness", 1.0)),
+                            contrast=float(image_settings.get("contrast", 1.0)),
+                        )
+
                     composer.add_slide(img_bytes)
                     del crop, export_img
 

@@ -125,6 +125,7 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
 
             result = GeneratePptFromPdfUseCase().execute(
                 pdf_path, config=config, on_progress=_on_pdf_progress,
+                image_settings=settings,
             )
             pptx_bytes = result.pptx_bytes
             slide_count = result.slide_count
