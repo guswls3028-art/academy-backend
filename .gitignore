@@ -65,3 +65,6 @@ tmp_api_env.json
 # 로컬 구조: academy/backend, academy/frontend — backend 리포에 frontend 디렉터리 포함하지 않음
 /frontend/
 .claude/
+
+# 로컬 테스트 자료 (git 제외)
+로컬테스트자료/
