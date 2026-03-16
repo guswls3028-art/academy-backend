@@ -127,8 +127,9 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
 
     @staticmethod
     def get_has_content_var(obj) -> bool:
-        """본문에 #{내용} 변수가 있는지 — 자유양식 발송 가능 여부"""
-        return "#{내용}" in (obj.body or "")
+        """본문에 #{공지내용} 또는 #{내용} 변수가 있는지 — 자유양식 발송 가능 여부"""
+        body = obj.body or ""
+        return "#{공지내용}" in body or "#{내용}" in body
 
 
 class SendMessageRequestSerializer(serializers.Serializer):

@@ -373,55 +373,134 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         ),
         "minutes_before": 4320,
     },
-    # ───────── 자유양식 (카테고리별 [헤더] + #{내용}) ─────────
-    # 카카오 검수 통과를 위해 카테고리 헤더를 명시하고, #{내용}에 자유 입력
+    # ───────── 자유양식 (카카오 공지형 3-1 구조) ─────────
+    # 고정 문구(인사말·구분선·안내문) + #{공지내용} 변수 1개.
+    # 카카오 검수 통과를 위해 고정 구조를 반드시 유지하고, #{공지내용}에만 자유 입력.
+    # 변수 예시 텍스트는 검수 신청 시 별도 제출 (solapi_template_client 참조).
     "freeform_general": {
         "category": "notice",
-        "name": "[{academy_name}] 학원 안내",
+        "name": "[{academy_name}] 공지사항 안내",
         "subject": "",
-        "body": "[학원 안내]\n#{내용}",
+        "body": (
+            "[{academy_name}] 공지사항 안내\n"
+            "\n"
+            "#{학생이름2}님, 안녕하세요.\n"
+            "\n"
+            "아래 내용을 안내드립니다.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "#{공지내용}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "\n"
+            "확인 후 문의사항은 학원으로 연락 주세요."
+        ),
         "minutes_before": None,
     },
     "freeform_grades": {
         "category": "grades",
         "name": "[{academy_name}] 성적 안내",
         "subject": "",
-        "body": "[성적 안내]\n#{내용}",
+        "body": (
+            "[{academy_name}] 성적 안내\n"
+            "\n"
+            "#{학생이름2}님, 안녕하세요.\n"
+            "\n"
+            "아래 내용을 안내드립니다.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "#{공지내용}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "\n"
+            "확인 후 문의사항은 학원으로 연락 주세요."
+        ),
         "minutes_before": None,
     },
     "freeform_lecture": {
         "category": "attendance",
         "name": "[{academy_name}] 수업 안내",
         "subject": "",
-        "body": "[수업 안내]\n#{내용}",
+        "body": (
+            "[{academy_name}] 수업 안내\n"
+            "\n"
+            "#{학생이름2}님, 안녕하세요.\n"
+            "\n"
+            "아래 내용을 안내드립니다.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "#{공지내용}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "\n"
+            "확인 후 문의사항은 학원으로 연락 주세요."
+        ),
         "minutes_before": None,
     },
     "freeform_exam": {
         "category": "exam",
         "name": "[{academy_name}] 시험 안내",
         "subject": "",
-        "body": "[시험 안내]\n#{내용}",
+        "body": (
+            "[{academy_name}] 시험 안내\n"
+            "\n"
+            "#{학생이름2}님, 안녕하세요.\n"
+            "\n"
+            "아래 내용을 안내드립니다.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "#{공지내용}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "\n"
+            "확인 후 문의사항은 학원으로 연락 주세요."
+        ),
         "minutes_before": None,
     },
     "freeform_assignment": {
         "category": "assignment",
         "name": "[{academy_name}] 과제 안내",
         "subject": "",
-        "body": "[과제 안내]\n#{내용}",
+        "body": (
+            "[{academy_name}] 과제 안내\n"
+            "\n"
+            "#{학생이름2}님, 안녕하세요.\n"
+            "\n"
+            "아래 내용을 안내드립니다.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "#{공지내용}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "\n"
+            "확인 후 문의사항은 학원으로 연락 주세요."
+        ),
         "minutes_before": None,
     },
     "freeform_payment": {
         "category": "payment",
-        "name": "[{academy_name}] 결제 안내",
+        "name": "[{academy_name}] 수납 안내",
         "subject": "",
-        "body": "[결제 안내]\n#{내용}",
+        "body": (
+            "[{academy_name}] 수납 안내\n"
+            "\n"
+            "#{학생이름2}님, 안녕하세요.\n"
+            "\n"
+            "아래 내용을 안내드립니다.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "#{공지내용}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "\n"
+            "확인 후 문의사항은 학원으로 연락 주세요."
+        ),
         "minutes_before": None,
     },
     "freeform_clinic": {
         "category": "clinic",
-        "name": "[{academy_name}] 클리닉 안내",
+        "name": "[{academy_name}] 보충수업 안내",
         "subject": "",
-        "body": "[클리닉 안내]\n#{내용}",
+        "body": (
+            "[{academy_name}] 보충수업 안내\n"
+            "\n"
+            "#{학생이름2}님, 안녕하세요.\n"
+            "\n"
+            "아래 내용을 안내드립니다.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "#{공지내용}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "\n"
+            "확인 후 문의사항은 학원으로 연락 주세요."
+        ),
         "minutes_before": None,
     },
     # ───────── 운영공지 ─────────
