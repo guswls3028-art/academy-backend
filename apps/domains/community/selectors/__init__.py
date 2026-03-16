@@ -5,6 +5,7 @@ from .post_selector import (
     get_post_by_id,
     get_all_posts_for_tenant,
     get_notice_posts_for_tenant,
+    get_posts_by_type_for_tenant,
     get_empty_post_queryset,
 )
 from .scope_node_selector import get_scope_nodes_for_tenant, get_empty_scope_node_queryset
@@ -17,6 +18,7 @@ __all__ = [
     "get_post_by_id",
     "get_all_posts_for_tenant",
     "get_notice_posts_for_tenant",
+    "get_posts_by_type_for_tenant",
     "get_empty_post_queryset",
     "get_scope_nodes_for_tenant",
     "get_empty_scope_node_queryset",

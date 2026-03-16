@@ -22,6 +22,7 @@ from apps.domains.community.selectors import (
     get_all_posts_for_tenant,
     get_empty_post_queryset,
     get_notice_posts_for_tenant,
+    get_posts_by_type_for_tenant,
     get_block_types_for_tenant,
     get_empty_block_type_queryset,
     get_scope_nodes_for_tenant,
@@ -130,11 +131,15 @@ class PostViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="notices")
     def notices(self, request):
-        """GET /community/posts/notices/ — 학생앱·관리자 동일: post_type=notice 인 공지 목록."""
+        """GET /community/posts/notices/ — 공지 목록."""
+        return self._list_by_type(request, "notice")
+
+    def _list_by_type(self, request, post_type: str):
+        """공용: post_type별 목록 (notices/board/materials 공통 로직)."""
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
-        qs = get_notice_posts_for_tenant(tenant)
+        qs = get_posts_by_type_for_tenant(tenant, post_type)
         try:
             page_size = min(int(request.query_params.get("page_size") or 50), 200)
         except (TypeError, ValueError):
@@ -147,6 +152,16 @@ class PostViewSet(viewsets.ModelViewSet):
         page_qs = qs[offset : offset + page_size]
         serializer = self.get_serializer(page_qs, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], url_path="board")
+    def board(self, request):
+        """GET /community/posts/board/ — 게시판 목록."""
+        return self._list_by_type(request, "board")
+
+    @action(detail=False, methods=["get"], url_path="materials")
+    def materials(self, request):
+        """GET /community/posts/materials/ — 자료실 목록."""
+        return self._list_by_type(request, "materials")
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

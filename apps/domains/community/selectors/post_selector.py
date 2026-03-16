@@ -141,6 +141,24 @@ def get_admin_post_list(
     return qs[offset : offset + page_size], total
 
 
+def get_posts_by_type_for_tenant(tenant, post_type: str) -> QuerySet:
+    """테넌트의 특정 post_type 게시물 목록. 학생앱 공용."""
+    return (
+        PostEntity.objects.filter(tenant=tenant, post_type=post_type)
+        .filter(_EXCLUDE_DELETED_AUTHOR)
+        .annotate(replies_count=Count("replies"))
+        .select_related("created_by", "block_type")
+        .prefetch_related(
+            Prefetch(
+                "mappings",
+                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
+            ),
+            "attachments",
+        )
+        .order_by("-created_at")
+    )
+
+
 def get_notice_posts_for_tenant(tenant) -> QuerySet:
     """테넌트의 공지 게시물 목록 (post_type='notice'). 학생앱 공지 목록 및 관리자와 동일 데이터."""
     return (
