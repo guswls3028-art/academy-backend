@@ -35,13 +35,13 @@ def enforce_tier_limits(
     
     # Lite: OCR + 엑셀 파싱 (경량)
     if tier == "lite":
-        if job_type_lower not in ("ocr", "excel_parsing"):
+        if job_type_lower not in ("ocr", "excel_parsing", "ppt_generation"):
             return False, f"Tier 'lite' only allows 'ocr', 'excel_parsing', got '{job_type}'"
         return True, None
 
     # Basic: OCR + OMR/status detection + 엑셀 파싱
     if tier == "basic":
-        allowed_types = ("ocr", "omr_grading", "homework_video_analysis", "excel_parsing")
+        allowed_types = ("ocr", "omr_grading", "homework_video_analysis", "excel_parsing", "ppt_generation")
         if job_type_lower not in allowed_types:
             return False, f"Tier 'basic' only allows {allowed_types}, got '{job_type}'"
         return True, None
