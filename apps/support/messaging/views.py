@@ -839,6 +839,15 @@ class ProvisionDefaultTemplatesView(APIView):
         reset_templates = 0
         linked = 0
 
+        # 자유양식 템플릿 이름 변경 마이그레이션 (구 이름 → 신 이름)
+        academy_name = tenant.name or "학원"
+        _freeform_name_migrations = {
+            f"[{academy_name}] 학원 안내": f"[{academy_name}] 공지사항 안내",
+            f"[{academy_name}] 결제 안내": f"[{academy_name}] 수납 안내",
+            f"[{academy_name}] 클리닉 안내": f"[{academy_name}] 보충수업 안내",
+        }
+        _old_to_new = {v: k for k, v in _freeform_name_migrations.items()}  # new → old
+
         for trigger, defaults in templates.items():
             tpl_name = defaults["name"]
             tpl_category = defaults["category"]
@@ -848,6 +857,16 @@ class ProvisionDefaultTemplatesView(APIView):
             existing_tpl = MessageTemplate.objects.filter(
                 tenant=tenant, name=tpl_name,
             ).first()
+
+            # 이름 변경된 자유양식: 구 이름으로도 검색하여 rename
+            if not existing_tpl and tpl_name in _old_to_new:
+                old_name = _old_to_new[tpl_name]
+                existing_tpl = MessageTemplate.objects.filter(
+                    tenant=tenant, name=old_name,
+                ).first()
+                if existing_tpl:
+                    existing_tpl.name = tpl_name
+                    existing_tpl.save(update_fields=["name", "updated_at"])
 
             if existing_tpl:
                 # 기본 템플릿이면 본문·제목·카테고리를 최신 기본값으로 리셋
@@ -862,7 +881,14 @@ class ProvisionDefaultTemplatesView(APIView):
                     existing_tpl.body = tpl_body
                     changed = True
                 if changed:
-                    existing_tpl.save(update_fields=["category", "subject", "body", "updated_at"])
+                    update_fields = ["category", "subject", "body", "updated_at"]
+                    # 자유양식 템플릿의 본문이 변경되면 솔라피 연동 상태 초기화
+                    # (구 본문으로 검수 중/승인된 템플릿 ID가 새 본문과 불일치 → 3034 에러 방지)
+                    if trigger.startswith("freeform_") and existing_tpl.solapi_template_id:
+                        existing_tpl.solapi_template_id = ""
+                        existing_tpl.solapi_status = ""
+                        update_fields.extend(["solapi_template_id", "solapi_status"])
+                    existing_tpl.save(update_fields=update_fields)
                     reset_templates += 1
                 tpl = existing_tpl
             else:
