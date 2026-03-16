@@ -17,7 +17,7 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Messaging Worker 전용 Python 의존성 (-r ./common.txt만, api.txt 미사용)
-COPY requirements/common.txt requirements/worker-messaging.txt ./requirements/
+COPY requirements/constraints.txt requirements/common.txt requirements/worker-messaging.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/worker-messaging.txt
 
 # 헬스체크

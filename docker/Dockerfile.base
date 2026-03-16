@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build
 
 # 의존성 파일 복사 및 설치 (pip 업그레이드와 단일 RUN으로 레이어 최소화)
+COPY requirements/constraints.txt ./requirements/constraints.txt
 COPY requirements/common.txt ./requirements/common.txt
 RUN pip install --upgrade pip && pip install --user --no-cache-dir -r requirements/common.txt
 

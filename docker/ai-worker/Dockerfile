@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER appuser
 # AI Worker 전용 Python 의존성 (-r ./common.txt만, api.txt 미사용)
-COPY requirements/common.txt requirements/worker-ai-common.txt requirements/worker-ai-cpu.txt ./requirements/
+COPY requirements/constraints.txt requirements/common.txt requirements/worker-ai-common.txt requirements/worker-ai-cpu.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/worker-ai-cpu.txt
 
 # 헬스체크

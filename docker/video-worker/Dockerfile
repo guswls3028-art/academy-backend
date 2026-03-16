@@ -28,6 +28,7 @@ RUN mkdir -p /tmp/video-worker /tmp/video-worker-locks && chown -R appuser:appus
 
 USER appuser
 # Shared requirements (API + Worker same file)
+COPY requirements/constraints.txt .
 COPY requirements/requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 # 헬스체크

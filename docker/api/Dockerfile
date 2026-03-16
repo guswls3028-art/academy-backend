@@ -24,6 +24,7 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Shared requirements (API + Worker same file)
+COPY requirements/constraints.txt .
 COPY requirements/requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 

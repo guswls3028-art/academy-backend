@@ -36,7 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # 공통 + AI GPU 의존성 (torch CUDA, onnxruntime-gpu)
-COPY requirements/common.txt requirements/worker-ai-common.txt requirements/worker-ai-gpu.txt ./requirements/
+COPY requirements/constraints.txt requirements/common.txt requirements/worker-ai-common.txt requirements/worker-ai-gpu.txt ./requirements/
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements/worker-ai-gpu.txt
 
