@@ -285,6 +285,18 @@ class SessionViewSet(viewsets.ModelViewSet):
         dates = data.pop("dates")
         target_lecture_ids = data.pop("target_lecture_ids")
         today = timezone.localdate()
+
+        # Validate target_lecture_ids belong to this tenant
+        if target_lecture_ids:
+            from apps.domains.lectures.models import Lecture
+            valid_count = Lecture.objects.filter(
+                id__in=target_lecture_ids, tenant=tenant
+            ).count()
+            if valid_count != len(target_lecture_ids):
+                return Response(
+                    {"detail": "선택한 강의가 유효하지 않습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         created_by = request.user if request.user.is_authenticated else None
 
         created = []
@@ -572,7 +584,12 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
             try:
                 obj = serializer.save(**save_kwargs)
-            except IntegrityError:
+            except IntegrityError as e:
+                logger.warning(
+                    "clinic_participant IntegrityError: tenant=%s session=%s student=%s err=%s",
+                    getattr(tenant, "id", None), getattr(session, "id", None),
+                    getattr(student, "id", None), str(e)[:200],
+                )
                 return Response(
                     {"detail": "이미 해당 세션에 예약된 학생입니다."},
                     status=status.HTTP_409_CONFLICT,
@@ -684,7 +701,6 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             SessionParticipant.Status.CANCELLED,
         } and obj.enrollment_id:
             ClinicLink.objects.filter(
-                session=obj.session,
                 enrollment_id=obj.enrollment_id,
                 is_auto=True,
             ).update(resolved_at=None)
@@ -897,16 +913,14 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             )
 
             # Update ClinicLink if applicable
-            if old_booking.enrollment_id and old_booking.session:
+            if old_booking.enrollment_id:
                 ClinicLink.objects.filter(
-                    session=old_booking.session,
                     enrollment_id=old_booking.enrollment_id,
                     is_auto=True,
                 ).update(resolved_at=None)
 
-            if enrollment_id and new_session:
+            if enrollment_id:
                 ClinicLink.objects.filter(
-                    session=new_session,
                     enrollment_id=enrollment_id,
                     is_auto=True,
                     resolved_at__isnull=True,
@@ -930,7 +944,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             )
 
         qs = self.get_queryset().filter(session_id=session_id)
-        data = ClinicSessionParticipantSerializer(qs, many=True).data
+        data = ClinicSessionParticipantSerializer(
+            qs, many=True, context={"request": request}
+        ).data
         return Response(data)
 
 
@@ -950,7 +966,12 @@ class TestViewSet(viewsets.ModelViewSet):
         return Test.objects.filter(tenant=tenant).select_related("session")
 
     def perform_create(self, serializer):
-        serializer.save(tenant=getattr(self.request, "tenant", None))
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"tenant": "테넌트 컨텍스트가 필요합니다."}
+            )
+        serializer.save(tenant=tenant)
 
 
 # ============================================================
