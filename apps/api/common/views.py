@@ -40,6 +40,16 @@ def healthz(request):
     return JsonResponse({"status": "ok", "service": "academy-api"}, status=200)
 
 
+def sentry_test(request):
+    """
+    Sentry 검증용 — DEBUG 모드에서만 동작.
+    GET /sentry-test/ → 의도적 예외 발생 → Sentry에 캡처되는지 확인.
+    """
+    if not settings.DEBUG:
+        return JsonResponse({"detail": "only in DEBUG mode"}, status=404)
+    raise RuntimeError("Sentry test exception — if you see this in Sentry, it works!")
+
+
 def readyz(request):
     """
     Readiness 엔드포인트. 의존성(DB 등)까지 포함해 준비 상태를 판단한다.

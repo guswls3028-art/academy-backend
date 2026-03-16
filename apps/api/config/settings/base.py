@@ -442,24 +442,24 @@ if SENTRY_DSN:
     from sentry_sdk.integrations.django import DjangoIntegration
     from sentry_sdk.integrations.logging import LoggingIntegration
 
-    sentry_sdk.init(
-        dsn=SENTRY_DSN,
-        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
-        release=os.getenv("SENTRY_RELEASE", "academy-backend@unknown"),
-        integrations=[
-            DjangoIntegration(transaction_style="url"),
-            LoggingIntegration(level=None, event_level="ERROR"),
-        ],
-        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")),
-        send_default_pii=False,
-        before_send=lambda event, hint: _sentry_before_send(event, hint),
-    )
-
     def _sentry_before_send(event, hint):
-        """health check 에러, DisallowedHost 등 노이즈 필터링"""
+        """노이즈 필터: health check, DisallowedHost, SuspiciousOperation"""
         exc = hint.get("exc_info")
         if exc:
             exc_type = exc[0]
             if exc_type and exc_type.__name__ in ("DisallowedHost", "SuspiciousOperation"):
                 return None
         return event
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        release=os.getenv("SENTRY_RELEASE", f"academy-backend@{os.getenv('GIT_SHA', 'unknown')}"),
+        integrations=[
+            DjangoIntegration(transaction_style="url"),
+            LoggingIntegration(level=None, event_level="ERROR"),
+        ],
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")),
+        send_default_pii=False,
+        before_send=_sentry_before_send,
+    )
