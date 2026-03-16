@@ -1,0 +1,28 @@
+# constraints.txt — pinned versions for reproducible builds
+# Only core packages that affect API/Worker behavior.
+# AI/ML packages (torch, transformers, etc.) are NOT constrained here.
+# Generated: 2026-03-17
+
+# Django ecosystem
+Django==5.1.7
+djangorestframework==3.15.2
+django-filter==25.1
+django-cors-headers==4.7.0
+djangorestframework-simplejwt==5.5.0
+
+# AWS / Infrastructure
+boto3==1.37.24
+botocore==1.37.24
+
+# Database
+psycopg2-binary==2.9.10
+
+# Serialization / Validation
+pydantic==2.11.3
+
+# Server
+gunicorn==23.0.0
+gevent==25.4.1
+
+# Redis
+redis==5.2.1

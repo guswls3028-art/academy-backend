@@ -1,4 +1,5 @@
 # common.txt — API/Worker 공통
+-c constraints.txt
 # HTTP, AWS, Django(ORM), DB, Redis
 
 # HTTP / Utils
