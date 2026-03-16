@@ -134,12 +134,7 @@ class GeneratePptFromPdfUseCase:
                 regions = split_questions(splitter_blocks, page_w, page_h, page_idx)
 
                 if not regions:
-                    # No questions found — treat whole page as one slide
-                    page_img = doc.render_page(page_idx, dpi=200)
-                    export_img = preprocess_for_export(page_img)
-                    img_bytes = _image_to_bytes(export_img)
-                    composer.add_slide(img_bytes)
-                    del page_img, export_img
+                    # No questions found — skip page (table of contents, cover, etc.)
                     continue
 
                 # Render the page image

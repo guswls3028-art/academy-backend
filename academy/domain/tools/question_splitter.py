@@ -129,14 +129,8 @@ def split_questions(
             question_starts.append((qnum, idx))
 
     if not question_starts:
-        # No questions detected — return entire page as single region
-        return [
-            QuestionRegion(
-                number=1,
-                bbox=(0, 0, page_width, page_height),
-                page_index=page_index,
-            )
-        ]
+        # No questions detected — skip this page (table of contents, cover, etc.)
+        return []
 
     # Build regions: each question spans from its start to the next question start
     regions: List[QuestionRegion] = []
@@ -159,9 +153,16 @@ def split_questions(
             continue
 
         # Calculate bounding box from all blocks in this region
-        x0 = max(0, min(b.x0 for b in region_blocks) - margin)
         y0 = max(0, start_block.y0 - margin)
-        x1 = min(page_width, max(b.x1 for b in region_blocks) + margin)
+
+        if is_dual_column:
+            # Dual column: use actual text block bounds
+            x0 = max(0, min(b.x0 for b in region_blocks) - margin)
+            x1 = min(page_width, max(b.x1 for b in region_blocks) + margin)
+        else:
+            # Single column: use full page width (images/diagrams may extend beyond text)
+            x0 = 0
+            x1 = page_width
 
         if i + 1 < len(question_starts):
             # End just before next question starts
@@ -173,13 +174,15 @@ def split_questions(
                 curr_in_left = start_block.x0 < mid_x
                 next_in_left = next_block.x0 < mid_x
                 if curr_in_left != next_in_left:
-                    y1 = page_height
+                    # Use actual content bottom + padding instead of page_height
+                    y1 = max(b.y1 for b in region_blocks) + margin * 4
                 else:
                     y1 = next_block.y0 - margin
             else:
                 y1 = next_block.y0 - margin
         else:
-            y1 = page_height
+            # Last question: use actual content bottom + padding, not page_height
+            y1 = max(b.y1 for b in region_blocks) + margin * 4
 
         y1 = min(page_height, max(y1, y0 + 10))
 
