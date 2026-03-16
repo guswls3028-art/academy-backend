@@ -38,7 +38,7 @@ class PostEntity(models.Model):
         help_text="레거시 블록 타입 FK (post_type으로 대체됨)",
     )
     title = models.CharField(max_length=255)
-    content = models.TextField()
+    content = models.TextField(blank=True, default="")
     category_label = models.CharField(
         max_length=100,
         null=True,
