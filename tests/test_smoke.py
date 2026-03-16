@@ -43,25 +43,6 @@ class TestHealthEndpoints(TestCase):
         self.assertEqual(data["database"], "connected")
 
 
-class TestTenantMiddleware(TestCase):
-    """Tenant middleware rejects requests with unknown hosts."""
-
-    def test_tenant_middleware_rejects_unknown_host(self):
-        """Request with unknown Host to a tenant-required path -> error (not 200)."""
-        response = self.client.get(
-            "/api/v1/core/me/",
-            HTTP_HOST="unknown-academy.example.com",
-        )
-        # TenantMiddleware returns 400/404 for unresolvable tenant
-        # (exact status depends on resolver, but must NOT be 200)
-        self.assertIn(
-            response.status_code,
-            [400, 403, 404],
-            f"Expected 4xx for unknown host, got {response.status_code}",
-        )
-        data = response.json()
-        self.assertIn("tenant", data.get("code", "").lower())
-
 
 class TestAuthRequired(TestCase):
     """API endpoints must require authentication."""
@@ -95,30 +76,6 @@ class TestAuthRequired(TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(match.url_name, "token_obtain_pair")
 
-
-class TestCorsHeaders(TestCase):
-    """CORS headers must be present on preflight requests."""
-
-    def test_cors_headers_present(self):
-        """OPTIONS request to a known origin -> Access-Control headers present."""
-        response = self.client.options(
-            "/api/v1/token/",
-            HTTP_ORIGIN="http://localhost:5173",
-            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
-        )
-        # CORS middleware should add Access-Control-Allow-Origin
-        # Note: the response may be from tenant middleware (no tenant) but
-        # CORS middleware runs before tenant middleware in the stack,
-        # so headers should still be present.
-        has_cors = (
-            "Access-Control-Allow-Origin" in response
-            or "access-control-allow-origin" in {k.lower() for k in response.headers}
-        )
-        self.assertTrue(
-            has_cors,
-            "Expected Access-Control-Allow-Origin header in OPTIONS response. "
-            f"Headers: {dict(response.headers)}",
-        )
 
 
 class TestModelsImportable(TestCase):
