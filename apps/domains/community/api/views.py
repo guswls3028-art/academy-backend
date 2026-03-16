@@ -155,12 +155,24 @@ class PostViewSet(viewsets.ModelViewSet):
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+        # 관리자 글: 작성자 이름 저장
+        author_display_name = None
+        if created_by is None and request.user and request.user.is_authenticated:
+            # Staff/admin: 이름 가져오기
+            staff = getattr(request.user, "staff", None) or getattr(request.user, "staff_profile", None)
+            if staff and getattr(staff, "name", None):
+                author_display_name = staff.name
+            elif getattr(request.user, "first_name", None) or getattr(request.user, "last_name", None):
+                author_display_name = f"{request.user.last_name}{request.user.first_name}".strip() or None
+
         data = {
             "block_type": serializer.validated_data["block_type"],
             "title": serializer.validated_data["title"],
             "content": serializer.validated_data["content"],
             "category_label": request.data.get("category_label"),
             "created_by": created_by,
+            "author_display_name": author_display_name,
+            "is_urgent": bool(request.data.get("is_urgent", False)),
         }
         svc = CommunityService(tenant)
         post = svc.create_post(data, node_ids)

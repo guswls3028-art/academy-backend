@@ -75,7 +75,7 @@ class PostEntitySerializer(serializers.ModelSerializer):
     def _is_created_by_deleted(self, obj):
         created_by = getattr(obj, "created_by", None)
         if created_by is None:
-            return True
+            return False  # 관리자 작성 — 삭제된 사용자 아님
         return bool(getattr(created_by, "deleted_at", None))
 
     def get_created_by_deleted(self, obj):
@@ -84,6 +84,11 @@ class PostEntitySerializer(serializers.ModelSerializer):
     def get_created_by_display(self, obj):
         if self._is_created_by_deleted(obj):
             return "삭제된 학생입니다."
+        # 1) author_display_name 우선 (관리자 글)
+        display = getattr(obj, "author_display_name", None)
+        if display:
+            return display
+        # 2) Student FK
         created_by = getattr(obj, "created_by", None)
         return getattr(created_by, "name", None) if created_by else None
 
