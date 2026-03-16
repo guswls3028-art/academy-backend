@@ -135,11 +135,43 @@ class PostViewSet(viewsets.ModelViewSet):
         return self._list_by_type(request, "notice")
 
     def _list_by_type(self, request, post_type: str):
-        """공용: post_type별 목록 (notices/board/materials 공통 로직)."""
+        """
+        공용: post_type별 목록 (notices/board/materials 공통).
+        학생 요청 시 가시성 정책 적용:
+          - mapping 없음(전체글) → 보임
+          - mapping 있음 → 학생이 수강 중인 강의/세션 node에 매핑된 것만 보임
+        """
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         qs = get_posts_by_type_for_tenant(tenant, post_type)
+
+        # 학생이면 수강 기반 스코프 필터링
+        request_student = get_request_student(request)
+        if request_student is not None:
+            from apps.domains.enrollment.models import Enrollment
+            from apps.domains.community.models import ScopeNode, PostMapping
+            enrolled_lecture_ids = set(
+                Enrollment.objects.filter(
+                    tenant=tenant, student=request_student, status="ACTIVE"
+                ).values_list("lecture_id", flat=True)
+            )
+            # 학생이 볼 수 있는 node: 수강 강의의 COURSE + SESSION 노드
+            visible_node_ids = set(
+                ScopeNode.objects.filter(
+                    tenant=tenant, lecture_id__in=enrolled_lecture_ids
+                ).values_list("id", flat=True)
+            )
+            # mapping 없는 글(전체글) OR 학생의 visible node에 매핑된 글
+            scoped_post_ids = set(
+                PostMapping.objects.filter(
+                    node_id__in=visible_node_ids
+                ).values_list("post_id", flat=True)
+            )
+            qs = qs.filter(
+                Q(mappings__isnull=True) | Q(id__in=scoped_post_ids)
+            ).distinct()
+
         try:
             page_size = min(int(request.query_params.get("page_size") or 50), 200)
         except (TypeError, ValueError):
