@@ -578,10 +578,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_409_CONFLICT,
                 )
 
-            # enrollment_id가 있고 session이 있으면 ClinicLink 업데이트
-            if enrollment_id and session:
+            # enrollment_id가 있으면 해당 수강의 미해소 ClinicLink를 resolved 처리
+            if enrollment_id:
                 ClinicLink.objects.filter(
-                    session=session,
                     enrollment_id=enrollment_id,
                     is_auto=True,
                     resolved_at__isnull=True,
