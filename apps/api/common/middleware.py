@@ -105,6 +105,30 @@ class CorsResponseFixMiddleware:
         return response
 
 
+class SentryContextMiddleware:
+    """Sentry scope에 tenant_id, correlation_id, user_id 주입."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        try:
+            import sentry_sdk
+            with sentry_sdk.configure_scope() as scope:
+                tenant = getattr(request, "tenant", None)
+                if tenant:
+                    scope.set_tag("tenant_id", str(tenant.id))
+                    scope.set_tag("tenant_code", getattr(tenant, "code", ""))
+                user = getattr(request, "user", None)
+                if user and getattr(user, "is_authenticated", False):
+                    scope.set_user({"id": str(user.id)})
+                from apps.api.common.correlation import get_correlation_id
+                scope.set_tag("correlation_id", get_correlation_id())
+        except Exception:
+            pass
+        return self.get_response(request)
+
+
 class UnhandledExceptionMiddleware:
     """미처리 예외를 500 JSON으로 변환. process_exception 응답에 CORS 헤더를 직접 붙임."""
 

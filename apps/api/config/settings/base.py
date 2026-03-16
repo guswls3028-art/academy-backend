@@ -184,6 +184,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.api.common.middleware.SentryContextMiddleware",
     "apps.api.common.middleware.UnhandledExceptionMiddleware",
 ]
 
@@ -430,3 +431,35 @@ MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-v1-mes
 # ==================================================
 
 INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "")
+
+# ==================================================
+# SENTRY (에러 모니터링) — DSN 미설정 시 비활성화
+# ==================================================
+
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        release=os.getenv("SENTRY_RELEASE", "academy-backend@unknown"),
+        integrations=[
+            DjangoIntegration(transaction_style="url"),
+            LoggingIntegration(level=None, event_level="ERROR"),
+        ],
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")),
+        send_default_pii=False,
+        before_send=lambda event, hint: _sentry_before_send(event, hint),
+    )
+
+    def _sentry_before_send(event, hint):
+        """health check 에러, DisallowedHost 등 노이즈 필터링"""
+        exc = hint.get("exc_info")
+        if exc:
+            exc_type = exc[0]
+            if exc_type and exc_type.__name__ in ("DisallowedHost", "SuspiciousOperation"):
+                return None
+        return event
