@@ -134,7 +134,11 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
         return deleted_student, False, True  # was_restored=True
 
     # 3) 신규 생성 (bulk_create 한 건 분 로직)
-    ps_number = _generate_unique_ps_number(tenant=tenant)
+    # 학생 아이디: 본인 전화번호 우선, 없으면 랜덤
+    if phone and not student_repo.student_filter_tenant_ps_number(tenant, phone).exists():
+        ps_number = phone
+    else:
+        ps_number = _generate_unique_ps_number(tenant=tenant)
     omr_code = (phone[-8:] if phone and len(phone) >= 8 else parent_phone[-8:]).ljust(8, "0")[:8]
 
     with transaction.atomic():

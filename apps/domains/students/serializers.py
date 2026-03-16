@@ -242,10 +242,16 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         ps_number_raw = attrs.get("ps_number") or ""
         ps_number = str(ps_number_raw).strip() if ps_number_raw else ""
         if not ps_number:
-            try:
-                ps_number = _generate_unique_ps_number(tenant=tenant)
-            except ValueError as e:
-                raise serializers.ValidationError({"ps_number": str(e)})
+            # 학생 전화번호 우선, 중복 시 랜덤
+            phone_candidate = str(attrs.get("phone") or "").strip()
+            from academy.adapters.db.django import repositories_students as _repo
+            if phone_candidate and len(phone_candidate) == 11 and not _repo.student_filter_tenant_ps_number(tenant, phone_candidate).exists():
+                ps_number = phone_candidate
+            else:
+                try:
+                    ps_number = _generate_unique_ps_number(tenant=tenant)
+                except ValueError as e:
+                    raise serializers.ValidationError({"ps_number": str(e)})
         parent_phone = str(self._require(attrs, "parent_phone")).strip()
         name = str(self._require(attrs, "name")).strip()
         phone = attrs.get("phone")
