@@ -253,19 +253,30 @@ function Ensure-ASGAi {
     $capacityDrift = ($asg.MinSize -ne $script:AiMinSize) -or ($asg.MaxSize -ne $script:AiMaxSize)
     $clampedDesired = [Math]::Max($script:AiMinSize, [Math]::Min($script:AiMaxSize, $asg.DesiredCapacity))
     if ($capacityDrift -or $asg.DesiredCapacity -ne $clampedDesired) {
-        Invoke-Aws @("autoscaling", "update-auto-scaling-group",
+        $updateArgs = @("autoscaling", "update-auto-scaling-group",
             "--auto-scaling-group-name", $script:AiASGName,
             "--min-size", $script:AiMinSize.ToString(),
             "--max-size", $script:AiMaxSize.ToString(),
             "--desired-capacity", $clampedDesired.ToString(),
-            "--new-instances-protected-from-scale-in",
-            "--region", $script:Region) -ErrorMessage "update-auto-scaling-group failed" | Out-Null
-        Write-Ok "ASG $($script:AiASGName) min=$($script:AiMinSize) max=$($script:AiMaxSize) desired(clamp)=$clampedDesired protection=ON"
+            "--region", $script:Region)
+        if ($script:AiScaleInProtection) {
+            $updateArgs += "--new-instances-protected-from-scale-in"
+        } else {
+            $updateArgs += "--no-new-instances-protected-from-scale-in"
+        }
+        Invoke-Aws $updateArgs -ErrorMessage "update-auto-scaling-group failed" | Out-Null
+        $protLabel = if ($script:AiScaleInProtection) { "ON" } else { "OFF" }
+        Write-Ok "ASG $($script:AiASGName) min=$($script:AiMinSize) max=$($script:AiMaxSize) desired(clamp)=$clampedDesired protection=$protLabel"
         $script:ChangesMade = $true
     }
     if ($script:AiScaleInProtection -and -not $asg.NewInstancesProtectedFromScaleIn) {
         Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:AiASGName, "--new-instances-protected-from-scale-in", "--region", $script:Region) -ErrorMessage "set scale-in protection" | Out-Null
         Write-Ok "ASG $($script:AiASGName) scale-in protection enabled"
+        $script:ChangesMade = $true
+    }
+    if (-not $script:AiScaleInProtection -and $asg.NewInstancesProtectedFromScaleIn) {
+        Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:AiASGName, "--no-new-instances-protected-from-scale-in", "--region", $script:Region) -ErrorMessage "disable scale-in protection" | Out-Null
+        Write-Ok "ASG $($script:AiASGName) scale-in protection disabled"
         $script:ChangesMade = $true
     }
 

@@ -253,19 +253,30 @@ function Ensure-ASGMessaging {
     $capacityDrift = ($asg.MinSize -ne $script:MessagingMinSize) -or ($asg.MaxSize -ne $script:MessagingMaxSize)
     $clampedDesired = [Math]::Max($script:MessagingMinSize, [Math]::Min($script:MessagingMaxSize, $asg.DesiredCapacity))
     if ($capacityDrift -or $asg.DesiredCapacity -ne $clampedDesired) {
-        Invoke-Aws @("autoscaling", "update-auto-scaling-group",
+        $updateArgs = @("autoscaling", "update-auto-scaling-group",
             "--auto-scaling-group-name", $script:MessagingASGName,
             "--min-size", $script:MessagingMinSize.ToString(),
             "--max-size", $script:MessagingMaxSize.ToString(),
             "--desired-capacity", $clampedDesired.ToString(),
-            "--new-instances-protected-from-scale-in",
-            "--region", $script:Region) -ErrorMessage "update-auto-scaling-group failed" | Out-Null
-        Write-Ok "ASG $($script:MessagingASGName) min=$($script:MessagingMinSize) max=$($script:MessagingMaxSize) desired(clamp)=$clampedDesired protection=ON"
+            "--region", $script:Region)
+        if ($script:MessagingScaleInProtection) {
+            $updateArgs += "--new-instances-protected-from-scale-in"
+        } else {
+            $updateArgs += "--no-new-instances-protected-from-scale-in"
+        }
+        Invoke-Aws $updateArgs -ErrorMessage "update-auto-scaling-group failed" | Out-Null
+        $protLabel = if ($script:MessagingScaleInProtection) { "ON" } else { "OFF" }
+        Write-Ok "ASG $($script:MessagingASGName) min=$($script:MessagingMinSize) max=$($script:MessagingMaxSize) desired(clamp)=$clampedDesired protection=$protLabel"
         $script:ChangesMade = $true
     }
     if ($script:MessagingScaleInProtection -and -not $asg.NewInstancesProtectedFromScaleIn) {
         Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:MessagingASGName, "--new-instances-protected-from-scale-in", "--region", $script:Region) -ErrorMessage "set scale-in protection" | Out-Null
         Write-Ok "ASG $($script:MessagingASGName) scale-in protection enabled"
+        $script:ChangesMade = $true
+    }
+    if (-not $script:MessagingScaleInProtection -and $asg.NewInstancesProtectedFromScaleIn) {
+        Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:MessagingASGName, "--no-new-instances-protected-from-scale-in", "--region", $script:Region) -ErrorMessage "disable scale-in protection" | Out-Null
+        Write-Ok "ASG $($script:MessagingASGName) scale-in protection disabled"
         $script:ChangesMade = $true
     }
 

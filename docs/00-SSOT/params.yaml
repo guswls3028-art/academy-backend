@@ -91,7 +91,9 @@ messagingWorker:
   # 운영 단순화: 메시징 워커 스케일 상한 축소
   maxSize: 3
   desiredCapacity: 1
-  scaleInProtection: true
+  # V1.1.1: scale-in protection 비활성화. min=1이면 ASG가 1 밑으로 안 내림.
+  # protection=true면 instance refresh 실패 → 배포 차단 (근본 원인 확인됨).
+  scaleInProtection: false
   scalingPolicyScaleOutCooldown: 300
   scalingPolicyScaleInCooldown: 900
   scalingPolicyScaleOutThreshold: 20
@@ -112,7 +114,9 @@ aiWorker:
   minSize: 1
   maxSize: 5
   desiredCapacity: 1
-  scaleInProtection: true
+  # V1.1.1: scale-in protection 비활성화. min=1이면 ASG가 1 밑으로 안 내림.
+  # protection=true면 instance refresh 실패 → 배포 차단 (근본 원인 확인됨).
+  scaleInProtection: false
   scalingPolicyScaleOutCooldown: 300
   scalingPolicyScaleInCooldown: 900
   scalingPolicyScaleOutThreshold: 20
