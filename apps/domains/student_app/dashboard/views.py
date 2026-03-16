@@ -84,9 +84,9 @@ class StudentDashboardView(APIView):
                 today = timezone.localdate()
                 sessions = (
                     LectureSession.objects.filter(
-                        sessionenrollment__enrollment__student=student,
-                        sessionenrollment__enrollment__tenant=tenant,
-                        sessionenrollment__enrollment__status="ACTIVE",  # ✅ 퇴원 학생 제외
+                        session_enrollments__enrollment__student=student,
+                        session_enrollments__enrollment__tenant=tenant,
+                        session_enrollments__enrollment__status="ACTIVE",
                         date=today,
                     )
                     .select_related("lecture")
