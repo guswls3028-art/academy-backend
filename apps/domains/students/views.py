@@ -2033,14 +2033,13 @@ class StudentPasswordResetSendView(APIView):
         trigger = "password_reset_student" if target == "student" else "password_reset_parent"
         replacements = {
             "학생이름": display_name or "",
-            "학생아이디": display_username or "",
-            "학생비밀번호": temp_password,
-            "사이트링크": site_url,
+            "아이디": display_username or "",
+            "임시비밀번호": temp_password,
             "비밀번호안내": notice,
         }
         if target == "parent":
             replacements["학부모아이디"] = display_username or ""
-            replacements["학부모비밀번호"] = temp_password
+            replacements["임시비밀번호"] = temp_password
         ok = send_alimtalk_via_owner(trigger=trigger, to=send_to, replacements=replacements)
 
         if not ok:
@@ -2113,9 +2112,8 @@ class SendExistingCredentialsView(APIView):
             to=send_to,
             replacements={
                 "학생이름": student.name or "",
-                "학생아이디": display_username or "",
-                "학생비밀번호": temp_password,
-                "사이트링크": site_url,
+                "아이디": display_username or "",
+                "임시비밀번호": temp_password,
                 "비밀번호안내": "접속해서 ID\xb7비밀번호를 변경할 수 있습니다.",
             },
         )
