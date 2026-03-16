@@ -1,6 +1,8 @@
 import hashlib
 import logging
 
+from django.db import transaction
+from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -63,7 +65,7 @@ class PostViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     def retrieve(self, request, *args, **kwargs):
-        """단건 조회: 학생은 (1) 공지(post_type=notice) 또는 (2) 본인 작성 글만 허용."""
+        """단건 조회: 학생은 공개 타입(notice/board/materials) 또는 본인 작성 글만 허용."""
         tenant = _get_tenant_from_request(request)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
@@ -73,9 +75,10 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         request_student = get_request_student(request)
         if request_student is not None:
-            is_notice = getattr(post, "post_type", "") == "notice"
+            from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
+            is_public = getattr(post, "post_type", "") in STUDENT_PUBLIC_POST_TYPES
             is_own = getattr(post, "created_by_id", None) == request_student.id
-            if not is_notice and not is_own:
+            if not is_public and not is_own:
                 return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = self.get_serializer(post)
         return Response(serializer.data)
@@ -90,12 +93,30 @@ class PostViewSet(viewsets.ModelViewSet):
         except (TypeError, ValueError):
             node_id = None
         if node_id is not None:
-            return get_posts_for_node(tenant, node_id, include_inherited=True)
-        qs = get_all_posts_for_tenant(tenant)
-        # 학생 요청 시 node_id 없으면 본인 작성 글만 반환 (학생 앱 "내 질문" 목록)
-        request_student = get_request_student(self.request)
-        if request_student is not None:
-            qs = qs.filter(created_by=request_student)
+            qs = get_posts_for_node(tenant, node_id, include_inherited=True)
+            request_student = get_request_student(self.request)
+            if request_student is not None:
+                from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
+                qs = qs.filter(
+                    Q(post_type__in=STUDENT_PUBLIC_POST_TYPES) |
+                    Q(created_by=request_student)
+                )
+        else:
+            qs = get_all_posts_for_tenant(tenant)
+            # 학생 요청 시 node_id 없으면 본인 작성 글만 반환 (학생 앱 "내 질문" 목록)
+            request_student = get_request_student(self.request)
+            if request_student is not None:
+                qs = qs.filter(created_by=request_student)
+
+        # F4: post_type server-side filter
+        from apps.domains.community.models.post import VALID_POST_TYPES
+        post_type_param = (self.request.query_params.get("post_type") or "").strip().lower()
+        if post_type_param:
+            if post_type_param not in VALID_POST_TYPES:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({"post_type": f"허용되지 않는 타입입니다: {post_type_param}"})
+            qs = qs.filter(post_type=post_type_param)
+
         return qs
 
     def list(self, request, *args, **kwargs):
@@ -138,6 +159,8 @@ class PostViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         node_ids = request.data.get("node_ids") or []
+        if not isinstance(node_ids, list):
+            return Response({"detail": "node_ids must be a list"}, status=status.HTTP_400_BAD_REQUEST)
         created_by = serializer.validated_data.get("created_by")
         if request_student is not None:
             created_by = request_student
@@ -192,7 +215,7 @@ class PostViewSet(viewsets.ModelViewSet):
         }
         svc = CommunityService(tenant)
         post = svc.create_post(data, node_ids)
-        return Response(PostEntitySerializer(post).data, status=status.HTTP_201_CREATED)
+        return Response(self.get_serializer(post).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["patch"], url_path="nodes")
     def update_nodes(self, request, pk=None):
@@ -201,12 +224,14 @@ class PostViewSet(viewsets.ModelViewSet):
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         node_ids = request.data.get("node_ids") or []
+        if not isinstance(node_ids, list):
+            return Response({"detail": "node_ids must be a list"}, status=status.HTTP_400_BAD_REQUEST)
         svc = CommunityService(tenant)
         svc.update_post_nodes(int(pk), node_ids)
         post = get_post_by_id(tenant, int(pk))
         if not post:
             return Response(status=status.HTTP_404_NOT_FOUND)
-        return Response(PostEntitySerializer(post).data)
+        return Response(self.get_serializer(post).data)
 
     @action(detail=True, methods=["get", "post"], url_path="replies")
     def replies(self, request, pk=None):
@@ -275,36 +300,54 @@ class PostViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
-
-        created = []
+        # Step 1: Pre-validate ALL file sizes before any upload
         for f in files:
             if f.size > MAX_ATTACHMENT_SIZE:
                 return Response(
                     {"detail": f"파일 '{f.name}'이(가) 50MB를 초과합니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            name_hash = hashlib.md5(f.name.encode()).hexdigest()[:8]
-            r2_key = f"tenants/{tenant.id}/community/posts/{post.id}/{name_hash}_{f.name}"
 
-            upload_fileobj_to_r2_storage(
-                fileobj=f,
-                key=r2_key,
-                content_type=f.content_type or "application/octet-stream",
-            )
-            att = PostAttachment.objects.create(
-                tenant=tenant,
-                post=post,
-                r2_key=r2_key,
-                original_name=f.name,
-                size_bytes=f.size,
-                content_type=f.content_type or "application/octet-stream",
-            )
-            created.append(att)
-            logger.info("PostAttachment created: post=%s, file=%s, key=%s", post.id, f.name, r2_key)
+        from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage, delete_object_r2_storage
 
-        serializer = PostAttachmentSerializer(created, many=True)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        # Step 2: R2 uploads (outside atomic — external I/O)
+        uploaded = []  # list of (r2_key, original_name, size_bytes, content_type)
+        try:
+            for f in files:
+                name_hash = hashlib.md5(f.name.encode()).hexdigest()[:8]
+                r2_key = f"tenants/{tenant.id}/community/posts/{post.id}/{name_hash}_{f.name}"
+                upload_fileobj_to_r2_storage(
+                    fileobj=f,
+                    key=r2_key,
+                    content_type=f.content_type or "application/octet-stream",
+                )
+                uploaded.append((r2_key, f.name, f.size, f.content_type))
+
+            # Step 3: DB creates (inside atomic)
+            with transaction.atomic():
+                created = []
+                for r2_key, fname, fsize, ftype in uploaded:
+                    att = PostAttachment.objects.create(
+                        tenant=tenant,
+                        post=post,
+                        r2_key=r2_key,
+                        original_name=fname,
+                        size_bytes=fsize,
+                        content_type=ftype or "application/octet-stream",
+                    )
+                    created.append(att)
+                    logger.info("PostAttachment created: post=%s, file=%s, key=%s", post.id, fname, r2_key)
+
+            serializer = PostAttachmentSerializer(created, many=True)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Exception:
+            # Step 4: Best-effort R2 cleanup on failure
+            for r2_key, *_ in uploaded:
+                try:
+                    delete_object_r2_storage(key=r2_key)
+                except Exception:
+                    logger.warning("R2 orphan cleanup failed: key=%s", r2_key)
+            raise
 
     @action(detail=True, methods=["get"], url_path=r"attachments/(?P<att_id>[^/.]+)/download")
     def download_attachment(self, request, pk=None, att_id=None):
@@ -319,7 +362,8 @@ class PostViewSet(viewsets.ModelViewSet):
         # 학생 접근 제어: 공지·자료실·게시판 글은 허용, 그 외는 본인 글만
         request_student = get_request_student(request)
         if request_student is not None:
-            is_public = getattr(post, "post_type", "") in ("notice", "materials", "board")
+            from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
+            is_public = getattr(post, "post_type", "") in STUDENT_PUBLIC_POST_TYPES
             is_own = post.created_by_id == request_student.id
             if not is_public and not is_own:
                 return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)

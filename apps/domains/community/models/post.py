@@ -12,6 +12,11 @@ POST_TYPE_CHOICES = [
     ("counsel", "상담 신청"),
 ]
 
+# Student-visible public post types (policy: students see these + their own posts)
+STUDENT_PUBLIC_POST_TYPES = frozenset({"notice", "board", "materials"})
+
+VALID_POST_TYPES = {choice[0] for choice in POST_TYPE_CHOICES}
+
 
 class PostEntity(models.Model):
     """콘텐츠 단일 객체. 노출 위치는 PostMapping으로 관리. tenant 필수."""

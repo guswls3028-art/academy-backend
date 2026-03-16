@@ -55,11 +55,15 @@ class PostReplySerializer(serializers.ModelSerializer):
         post = validated_data.pop("post")
         created_by = validated_data.pop("created_by", None)
         tenant = validated_data.pop("tenant", None)
+        author_display_name = validated_data.pop("author_display_name", None)
+        author_role = validated_data.pop("author_role", "staff")
         return PostReply.objects.create(
             post=post,
             tenant_id=tenant.id if tenant else post.tenant_id,
             content=validated_data["content"],
             created_by=created_by,
+            author_display_name=author_display_name,
+            author_role=author_role,
         )
 
 
@@ -75,6 +79,16 @@ class PostEntitySerializer(serializers.ModelSerializer):
         queryset=BlockType.objects.all(), required=False, allow_null=True, default=None,
     )
     content = serializers.CharField(allow_blank=True, required=False, default="")
+
+    def get_fields(self):
+        fields = super().get_fields()
+        request = self.context.get("request")
+        if request and hasattr(request, "tenant") and request.tenant:
+            fields["block_type"].queryset = BlockType.objects.filter(tenant=request.tenant)
+        elif "block_type" in fields:
+            # No request context = explicit deny. Never allow unscoped queryset.
+            fields["block_type"].queryset = BlockType.objects.none()
+        return fields
     mappings = PostMappingSerializer(many=True, read_only=True)
     attachments = PostAttachmentSerializer(many=True, read_only=True)
     block_type_label = serializers.SerializerMethodField(read_only=True)
@@ -182,6 +196,16 @@ class PostTemplateSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        request = self.context.get("request")
+        if request and hasattr(request, "tenant") and request.tenant:
+            fields["block_type"].queryset = BlockType.objects.filter(tenant=request.tenant)
+        elif "block_type" in fields:
+            # No request context = explicit deny. Never allow unscoped queryset.
+            fields["block_type"].queryset = BlockType.objects.none()
+        return fields
 
     def get_block_type_label(self, obj):
         return obj.block_type.label if obj.block_type_id else None

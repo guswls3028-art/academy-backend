@@ -19,7 +19,7 @@ def get_post_by_id(tenant, post_id: int):
     return (
         PostEntity.objects.filter(tenant=tenant, id=post_id)
         .annotate(replies_count=Count("replies"))
-        .select_related("created_by")
+        .select_related("created_by", "block_type")
         .prefetch_related(
             Prefetch(
                 "mappings",
@@ -37,7 +37,7 @@ def get_all_posts_for_tenant(tenant) -> QuerySet:
         PostEntity.objects.filter(tenant=tenant)
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
-        .select_related("created_by")
+        .select_related("created_by", "block_type")
         .prefetch_related(
             Prefetch(
                 "mappings",
@@ -91,7 +91,7 @@ def get_posts_for_node(
         PostEntity.objects.filter(id__in=post_ids, tenant=tenant)
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
-        .select_related("created_by")
+        .select_related("created_by", "block_type")
         .prefetch_related(
             Prefetch(
                 "mappings",
@@ -117,7 +117,7 @@ def get_admin_post_list(
         PostEntity.objects.filter(tenant=tenant)
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
-        .select_related("created_by")
+        .select_related("created_by", "block_type")
         .prefetch_related(
             Prefetch(
                 "mappings",
@@ -147,7 +147,7 @@ def get_notice_posts_for_tenant(tenant) -> QuerySet:
         PostEntity.objects.filter(tenant=tenant, post_type="notice")
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
-        .select_related("created_by")
+        .select_related("created_by", "block_type")
         .prefetch_related(
             Prefetch(
                 "mappings",
