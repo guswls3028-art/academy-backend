@@ -319,7 +319,8 @@ jobs:
             echo "No change to ci-build.latest.md"
           else
             git commit -m "chore(ci): update ci-build.latest.md [V1.1.0] (sha-${{ needs.detect-changes.outputs.short_sha }}) [skip ci]"
-            git push
+            git pull --rebase origin main || true
+            git push || echo "::warning::ci-build.latest.md push failed (non-critical)"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
