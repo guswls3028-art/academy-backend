@@ -72,14 +72,39 @@ class StudentDashboardView(APIView):
                 "headquarters_phone": hq_phone,
                 "academies": academies,
             }
-            # 공지: Community 공지 최대 5건
-            notice_qs = get_notice_posts_for_tenant(tenant)[:5]
+            # 공지: 학생 수강 기반 스코프 필터링 (전체글 + 수강 강의/세션 글만)
+            notice_qs = get_notice_posts_for_tenant(tenant)
+            student = get_request_student(request)
+            if student:
+                from apps.domains.enrollment.models import Enrollment as _Enrollment
+                from apps.domains.community.models import ScopeNode as _ScopeNode, PostMapping as _PostMapping
+                from django.db.models import Q as _Q
+                _enrolled_lids = set(
+                    _Enrollment.objects.filter(
+                        tenant=tenant, student=student, status="ACTIVE"
+                    ).values_list("lecture_id", flat=True)
+                )
+                _visible_nids = set(
+                    _ScopeNode.objects.filter(
+                        tenant=tenant, lecture_id__in=_enrolled_lids
+                    ).values_list("id", flat=True)
+                )
+                _scoped_pids = set(
+                    _PostMapping.objects.filter(
+                        node_id__in=_visible_nids
+                    ).values_list("post_id", flat=True)
+                )
+                notice_qs = notice_qs.filter(
+                    _Q(mappings__isnull=True) | _Q(id__in=_scoped_pids)
+                ).distinct()
+            notice_list = notice_qs[:5]
             data["notices"] = [
                 {"id": p.id, "title": getattr(p, "title", "") or "", "created_at": getattr(p, "created_at", None), "is_urgent": getattr(p, "is_urgent", False)}
-                for p in notice_qs
+                for p in notice_list
             ]
             # 오늘 일정: 학생이 수강 중인 차시 중 date=오늘
-            student = get_request_student(request)
+            if not student:
+                student = get_request_student(request)
             if student:
                 today = timezone.localdate()
                 sessions = (
