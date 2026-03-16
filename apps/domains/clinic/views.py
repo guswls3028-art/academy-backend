@@ -571,11 +571,22 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 else:
                     clinic_reason = None
 
+            # 기본 상태 결정: 선생 수동 배정(manual/auto)은 booked, 학생 신청은 pending (auto_approve 시 booked)
+            if not requested_status:
+                if source in (SessionParticipant.Source.MANUAL, SessionParticipant.Source.AUTO):
+                    default_status = SessionParticipant.Status.BOOKED
+                elif getattr(tenant, "clinic_auto_approve_booking", False):
+                    default_status = SessionParticipant.Status.BOOKED
+                else:
+                    default_status = SessionParticipant.Status.PENDING
+            else:
+                default_status = requested_status
+
             save_kwargs = dict(
                 tenant=tenant,
                 student=student,
                 source=source,
-                status=requested_status or SessionParticipant.Status.PENDING,
+                status=default_status,
                 enrollment_id=enrollment_id,
                 participant_role=participant_role,
             )
