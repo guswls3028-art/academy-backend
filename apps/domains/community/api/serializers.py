@@ -71,6 +71,9 @@ class PostAttachmentSerializer(serializers.ModelSerializer):
 
 
 class PostEntitySerializer(serializers.ModelSerializer):
+    block_type = serializers.PrimaryKeyRelatedField(
+        queryset=BlockType.objects.all(), required=False, allow_null=True, default=None,
+    )
     content = serializers.CharField(allow_blank=True, required=False, default="")
     mappings = PostMappingSerializer(many=True, read_only=True)
     attachments = PostAttachmentSerializer(many=True, read_only=True)
