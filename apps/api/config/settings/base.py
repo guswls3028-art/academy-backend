@@ -168,6 +168,7 @@ INSTALLED_APPS = [
 # ==================================================
 
 MIDDLEWARE = [
+    "apps.api.common.correlation.CorrelationIdMiddleware",
     "apps.api.common.middleware.HealthCheckHostMiddleware",
     "apps.api.common.middleware.SecurityHeadersMiddleware",
     "apps.api.common.middleware.CorsResponseFixMiddleware",

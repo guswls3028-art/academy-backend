@@ -130,16 +130,25 @@ TENANT_ALLOW_INACTIVE = None
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "correlation_id": {
+            "()": "apps.api.common.correlation.CorrelationIdFilter",
+        },
+    },
     "formatters": {
+        "json": {
+            "()": "apps.api.common.logging_json.JsonFormatter",
+        },
         "simple": {
-            "format": "[{levelname}] {asctime} {name}: {message}",
+            "format": "[{levelname}] {asctime} [{correlation_id}] {name}: {message}",
             "style": "{",
-        }
+        },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "simple",
+            "formatter": "json",
+            "filters": ["correlation_id"],
         }
     },
     "root": {
