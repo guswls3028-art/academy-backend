@@ -63,7 +63,7 @@ class PostViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     def retrieve(self, request, *args, **kwargs):
-        """단건 조회: 학생은 (1) 공지(block_type code=notice) 또는 (2) 본인 작성 글만 허용."""
+        """단건 조회: 학생은 (1) 공지(post_type=notice) 또는 (2) 본인 작성 글만 허용."""
         tenant = _get_tenant_from_request(request)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
@@ -73,7 +73,7 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         request_student = get_request_student(request)
         if request_student is not None:
-            is_notice = getattr(post.block_type, "code", None) and str(post.block_type.code).strip().lower() == "notice"
+            is_notice = getattr(post, "post_type", "") == "notice"
             is_own = getattr(post, "created_by_id", None) == request_student.id
             if not is_notice and not is_own:
                 return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -109,7 +109,7 @@ class PostViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="notices")
     def notices(self, request):
-        """GET /community/posts/notices/ — 학생앱·관리자 동일: block_type code=notice 인 공지 목록."""
+        """GET /community/posts/notices/ — 학생앱·관리자 동일: post_type=notice 인 공지 목록."""
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
@@ -143,18 +143,27 @@ class PostViewSet(viewsets.ModelViewSet):
             created_by = request_student
         elif created_by is None and getattr(request.user, "student_profile", None):
             created_by = request.user.student_profile
-        # QnA는 작성자(created_by) 필수. 프로필 로드 전 제출 시 null 저장 방지(배포에서 "질문 등록 안 됨" 원인).
+
+        # Resolve post_type: from request data, or fall back to block_type.code
+        post_type = (request.data.get("post_type") or "").strip().lower()
         block_type = serializer.validated_data.get("block_type")
-        if block_type is not None:
-            code = getattr(block_type, "code", None) or ""
-            if str(code).strip().lower() == "qna" and created_by is None:
-                return Response(
-                    {
-                        "detail": "프로필을 불러온 후 다시 시도해 주세요.",
-                        "code": "profile_required",
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        if not post_type and block_type is not None:
+            # Backward compat: derive post_type from block_type.code
+            code = (getattr(block_type, "code", None) or "").strip().lower()
+            valid_types = {"notice", "board", "materials", "qna", "counsel"}
+            post_type = code if code in valid_types else "board"
+        if not post_type:
+            post_type = "board"
+
+        # QnA는 작성자(created_by) 필수. 프로필 로드 전 제출 시 null 저장 방지.
+        if post_type == "qna" and created_by is None:
+            return Response(
+                {
+                    "detail": "프로필을 불러온 후 다시 시도해 주세요.",
+                    "code": "profile_required",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         # 관리자 글: 작성자 이름 저장
         author_display_name = None
         if created_by is None and request.user and request.user.is_authenticated:
@@ -166,7 +175,8 @@ class PostViewSet(viewsets.ModelViewSet):
                 author_display_name = f"{request.user.last_name}{request.user.first_name}".strip() or None
 
         data = {
-            "block_type": serializer.validated_data["block_type"],
+            "post_type": post_type,
+            "block_type": block_type,
             "title": serializer.validated_data["title"],
             "content": serializer.validated_data["content"],
             "category_label": request.data.get("category_label"),
@@ -290,8 +300,7 @@ class PostViewSet(viewsets.ModelViewSet):
         # 학생 접근 제어: 공지·자료실·게시판 글은 허용, 그 외는 본인 글만
         request_student = get_request_student(request)
         if request_student is not None:
-            bt_code = (getattr(post.block_type, "code", None) or "").strip().lower()
-            is_public = bt_code in ("notice", "materials", "board")
+            is_public = getattr(post, "post_type", "") in ("notice", "materials", "board")
             is_own = post.created_by_id == request_student.id
             if not is_public and not is_own:
                 return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -385,6 +394,7 @@ class AdminPostViewSet(viewsets.GenericViewSet):
             except (TypeError, ValueError):
                 return None
 
+        post_type = (request.query_params.get("post_type") or "").strip().lower() or None
         block_type_id = _int_or_none(request.query_params.get("block_type_id"))
         lecture_id = _int_or_none(request.query_params.get("lecture_id"))
         try:
@@ -394,6 +404,7 @@ class AdminPostViewSet(viewsets.GenericViewSet):
             page, page_size = 1, 20
         qs, total = get_admin_post_list(
             tenant,
+            post_type=post_type,
             block_type_id=block_type_id,
             lecture_id=lecture_id,
             page=page,

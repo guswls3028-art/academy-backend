@@ -19,7 +19,7 @@ def get_post_by_id(tenant, post_id: int):
     return (
         PostEntity.objects.filter(tenant=tenant, id=post_id)
         .annotate(replies_count=Count("replies"))
-        .select_related("block_type", "created_by")
+        .select_related("created_by")
         .prefetch_related(
             Prefetch(
                 "mappings",
@@ -37,7 +37,7 @@ def get_all_posts_for_tenant(tenant) -> QuerySet:
         PostEntity.objects.filter(tenant=tenant)
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
-        .select_related("block_type", "created_by")
+        .select_related("created_by")
         .prefetch_related(
             Prefetch(
                 "mappings",
@@ -91,7 +91,7 @@ def get_posts_for_node(
         PostEntity.objects.filter(id__in=post_ids, tenant=tenant)
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
-        .select_related("block_type", "created_by")
+        .select_related("created_by")
         .prefetch_related(
             Prefetch(
                 "mappings",
@@ -106,17 +106,18 @@ def get_posts_for_node(
 def get_admin_post_list(
     tenant,
     *,
+    post_type: Optional[str] = None,
     block_type_id: Optional[int] = None,
     lecture_id: Optional[int] = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[QuerySet, int]:
-    """관리자용 목록. 필터: block_type, lecture(해당 강의 노드에 매핑된 것만). 페이지네이션."""
+    """관리자용 목록. 필터: post_type, block_type(레거시), lecture. 페이지네이션."""
     qs = (
         PostEntity.objects.filter(tenant=tenant)
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
-        .select_related("block_type", "created_by")
+        .select_related("created_by")
         .prefetch_related(
             Prefetch(
                 "mappings",
@@ -127,7 +128,10 @@ def get_admin_post_list(
         .order_by("-created_at")
         .distinct()
     )
-    if block_type_id is not None:
+    if post_type:
+        qs = qs.filter(post_type=post_type)
+    elif block_type_id is not None:
+        # Legacy: filter by block_type FK (backward compat)
         qs = qs.filter(block_type_id=block_type_id)
     if lecture_id is not None:
         node_ids = ScopeNode.objects.filter(tenant=tenant, lecture_id=lecture_id).values_list("id", flat=True)
@@ -138,12 +142,12 @@ def get_admin_post_list(
 
 
 def get_notice_posts_for_tenant(tenant) -> QuerySet:
-    """테넌트의 공지 게시물 목록 (block_type code='notice'). 학생앱 공지 목록 및 관리자와 동일 데이터."""
+    """테넌트의 공지 게시물 목록 (post_type='notice'). 학생앱 공지 목록 및 관리자와 동일 데이터."""
     return (
-        PostEntity.objects.filter(tenant=tenant, block_type__code__iexact="notice")
+        PostEntity.objects.filter(tenant=tenant, post_type="notice")
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
-        .select_related("block_type", "created_by")
+        .select_related("created_by")
         .prefetch_related(
             Prefetch(
                 "mappings",

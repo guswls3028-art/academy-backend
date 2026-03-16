@@ -4,6 +4,15 @@ from apps.domains.students.models import Student
 from .block_type import BlockType
 
 
+POST_TYPE_CHOICES = [
+    ("notice", "공지사항"),
+    ("board", "게시판"),
+    ("materials", "자료실"),
+    ("qna", "QnA"),
+    ("counsel", "상담 신청"),
+]
+
+
 class PostEntity(models.Model):
     """콘텐츠 단일 객체. 노출 위치는 PostMapping으로 관리. tenant 필수."""
     tenant = models.ForeignKey(
@@ -13,10 +22,20 @@ class PostEntity(models.Model):
         null=False,
         db_index=True,
     )
+    post_type = models.CharField(
+        max_length=20,
+        choices=POST_TYPE_CHOICES,
+        default="board",
+        db_index=True,
+        help_text="게시글 유형 (notice, board, materials, qna, counsel)",
+    )
     block_type = models.ForeignKey(
         BlockType,
-        on_delete=models.PROTECT,
+        on_delete=models.SET_NULL,
         related_name="posts",
+        null=True,
+        blank=True,
+        help_text="레거시 블록 타입 FK (post_type으로 대체됨)",
     )
     title = models.CharField(max_length=255)
     content = models.TextField()
@@ -44,7 +63,7 @@ class PostEntity(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["tenant", "created_at"]),
-            models.Index(fields=["tenant", "block_type"]),
+            models.Index(fields=["tenant", "post_type"]),
         ]
         verbose_name = "Post"
         verbose_name_plural = "Posts"

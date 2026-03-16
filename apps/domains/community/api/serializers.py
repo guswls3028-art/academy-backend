@@ -64,10 +64,20 @@ class PostAttachmentSerializer(serializers.ModelSerializer):
 class PostEntitySerializer(serializers.ModelSerializer):
     mappings = PostMappingSerializer(many=True, read_only=True)
     attachments = PostAttachmentSerializer(many=True, read_only=True)
-    block_type_label = serializers.CharField(source="block_type.label", read_only=True)
+    block_type_label = serializers.SerializerMethodField(read_only=True)
+    post_type_label = serializers.SerializerMethodField(read_only=True)
     replies_count = serializers.SerializerMethodField(read_only=True)
     created_by_display = serializers.SerializerMethodField(read_only=True)
     created_by_deleted = serializers.SerializerMethodField(read_only=True)
+
+    def get_block_type_label(self, obj):
+        bt = getattr(obj, "block_type", None)
+        if bt is not None:
+            return getattr(bt, "label", None)
+        return None
+
+    def get_post_type_label(self, obj):
+        return obj.get_post_type_display() if getattr(obj, "post_type", None) else None
 
     def get_replies_count(self, obj):
         return getattr(obj, "replies_count", 0) if hasattr(obj, "replies_count") else 0
@@ -97,6 +107,8 @@ class PostEntitySerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "tenant",
+            "post_type",
+            "post_type_label",
             "block_type",
             "block_type_label",
             "title",

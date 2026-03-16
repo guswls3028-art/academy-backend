@@ -1,6 +1,6 @@
 from .block_type import BlockType
 from .scope_node import ScopeNode
-from .post import PostEntity
+from .post import PostEntity, POST_TYPE_CHOICES
 from .post_mapping import PostMapping
 from .post_template import PostTemplate
 from .reply import PostReply
@@ -14,4 +14,5 @@ __all__ = [
     "PostTemplate",
     "PostReply",
     "PostAttachment",
+    "POST_TYPE_CHOICES",
 ]

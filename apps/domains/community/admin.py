@@ -16,8 +16,8 @@ class ScopeNodeAdmin(admin.ModelAdmin):
 
 @admin.register(PostEntity)
 class PostEntityAdmin(admin.ModelAdmin):
-    list_display = ("id", "tenant", "title", "block_type", "created_by", "created_at")
-    list_filter = ("tenant", "block_type")
+    list_display = ("id", "tenant", "title", "post_type", "block_type", "created_by", "created_at")
+    list_filter = ("tenant", "post_type")
 
 
 @admin.register(PostMapping)
