@@ -696,7 +696,9 @@ jobs:
     name: Verify deployment
     runs-on: ubuntu-latest
     needs: [detect-changes, build-and-push, deploy-api, deploy-messaging, deploy-ai]
-    if: always() && needs.build-and-push.result == 'success'
+    if: |
+      always() && needs.build-and-push.result == 'success' &&
+      (needs.deploy-api.result == 'success' || needs.deploy-messaging.result == 'success' || needs.deploy-ai.result == 'success')
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
