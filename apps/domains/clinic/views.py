@@ -505,7 +505,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
             # 중복 체크: session이 있으면 session 기준, 없으면 requested_date/requested_start_time 기준
             if session:
-                exists = SessionParticipant.objects.filter(
+                dup_qs = SessionParticipant.objects.filter(
                     tenant=tenant,
                     session=session,
                     student=student,
@@ -513,8 +513,19 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                         SessionParticipant.Status.PENDING,
                         SessionParticipant.Status.BOOKED,
                     ],
-                ).exists()
+                )
+                exists = dup_qs.exists()
                 if exists:
+                    dup = dup_qs.first()
+                    logger.warning(
+                        "clinic_duplicate: tenant=%s session=%s(pk=%s) student=%s(pk=%s) found_id=%s found_session=%s found_status=%s",
+                        getattr(tenant, "id", None),
+                        session, getattr(session, "pk", None),
+                        student, getattr(student, "pk", None),
+                        dup.id if dup else None,
+                        dup.session_id if dup else None,
+                        dup.status if dup else None,
+                    )
                     return Response(
                         {"detail": "이미 해당 세션에 예약된 학생입니다."},
                         status=status.HTTP_409_CONFLICT,
