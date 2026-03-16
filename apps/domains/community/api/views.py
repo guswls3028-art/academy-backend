@@ -164,10 +164,15 @@ class PostViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # 관리자 글: 작성자 이름 저장
+        # 작성자 정보 resolve
         author_display_name = None
-        if created_by is None and request.user and request.user.is_authenticated:
-            # Staff/admin: 이름 가져오기
+        author_role = "staff"
+        if created_by is not None:
+            # 학생 작성
+            author_display_name = getattr(created_by, "name", None)
+            author_role = "student"
+        elif request.user and request.user.is_authenticated:
+            # 관리자/강사 작성
             staff = getattr(request.user, "staff", None) or getattr(request.user, "staff_profile", None)
             if staff and getattr(staff, "name", None):
                 author_display_name = staff.name
@@ -182,6 +187,7 @@ class PostViewSet(viewsets.ModelViewSet):
             "category_label": request.data.get("category_label"),
             "created_by": created_by,
             "author_display_name": author_display_name,
+            "author_role": author_role,
             "is_urgent": bool(request.data.get("is_urgent", False)),
         }
         svc = CommunityService(tenant)
@@ -220,14 +226,27 @@ class PostViewSet(viewsets.ModelViewSet):
         # POST: 답변 등록 (content만 필수)
         serializer = PostReplySerializer(data=request.data, partial=False)
         serializer.is_valid(raise_exception=True)
-        # created_by: 학생이면 student, 아니면 staff에서 가져옴
+
         created_by = None
+        author_display_name = None
+        author_role = "staff"
         request_student = get_request_student(request)
         if request_student is not None:
             created_by = request_student
-        elif hasattr(request.user, "staff"):
-            created_by = request.user.staff
-        reply = serializer.save(post=post, tenant=tenant, created_by=created_by)
+            author_display_name = getattr(request_student, "name", None)
+            author_role = "student"
+        else:
+            # Staff: 이름 resolve
+            staff = getattr(request.user, "staff", None) or getattr(request.user, "staff_profile", None)
+            if staff and getattr(staff, "name", None):
+                author_display_name = staff.name
+            elif request.user:
+                author_display_name = f"{request.user.last_name}{request.user.first_name}".strip() or None
+
+        reply = serializer.save(
+            post=post, tenant=tenant, created_by=created_by,
+            author_display_name=author_display_name, author_role=author_role,
+        )
         return Response(PostReplySerializer(reply).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="attachments")

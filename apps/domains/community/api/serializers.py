@@ -33,14 +33,23 @@ class PostReplySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PostReply
-        fields = ["id", "post", "question", "content", "created_by", "created_by_display", "created_at"]
+        fields = ["id", "post", "question", "content", "created_by", "created_by_display", "author_role", "created_at"]
         read_only_fields = ["post", "created_by", "created_at"]
 
     def get_created_by_display(self, obj):
-        if not getattr(obj, "created_by_id", None):
-            return None
+        # 1) author_display_name (저장된 이름)
+        display = getattr(obj, "author_display_name", None)
+        if display:
+            return display
+        # 2) Student FK
         created_by = getattr(obj, "created_by", None)
-        return getattr(created_by, "name", None) if created_by else None
+        if created_by:
+            deleted = getattr(created_by, "deleted_at", None)
+            if deleted:
+                return "삭제된 사용자"
+            return getattr(created_by, "name", None)
+        # 3) 관리자 (레거시)
+        return "관리자"
 
     def create(self, validated_data):
         post = validated_data.pop("post")
@@ -93,14 +102,17 @@ class PostEntitySerializer(serializers.ModelSerializer):
 
     def get_created_by_display(self, obj):
         if self._is_created_by_deleted(obj):
-            return "삭제된 학생입니다."
-        # 1) author_display_name 우선 (관리자 글)
+            return "삭제된 사용자"
+        # 1) author_display_name (관리자/학생 모두 저장)
         display = getattr(obj, "author_display_name", None)
         if display:
             return display
         # 2) Student FK
         created_by = getattr(obj, "created_by", None)
-        return getattr(created_by, "name", None) if created_by else None
+        if created_by:
+            return getattr(created_by, "name", None)
+        # 3) 관리자 글인데 이름 미저장 (레거시)
+        return "관리자"
 
     class Meta:
         model = PostEntity
@@ -117,6 +129,7 @@ class PostEntitySerializer(serializers.ModelSerializer):
             "created_by",
             "created_by_display",
             "created_by_deleted",
+            "author_role",
             "is_urgent",
             "created_at",
             "replies_count",

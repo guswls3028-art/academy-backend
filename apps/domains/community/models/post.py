@@ -54,7 +54,11 @@ class PostEntity(models.Model):
     )
     author_display_name = models.CharField(
         max_length=100, null=True, blank=True,
-        help_text="작성자 표시명 (관리자 글: 관리자 이름 저장, 학생 글: created_by에서 파생)",
+        help_text="작성자 표시명 (관리자: staff 이름, 학생: created_by에서 파생)",
+    )
+    author_role = models.CharField(
+        max_length=20, default="staff", blank=True,
+        help_text="작성자 역할 (staff/student)",
     )
     is_urgent = models.BooleanField(default=False, help_text="긴급 공지 여부")
     created_at = models.DateTimeField(auto_now_add=True)

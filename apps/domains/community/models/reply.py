@@ -26,6 +26,14 @@ class PostReply(models.Model):
         blank=True,
         related_name="post_replies",
     )
+    author_display_name = models.CharField(
+        max_length=100, null=True, blank=True,
+        help_text="작성자 표시명 (관리자: staff 이름, 학생: created_by에서 파생)",
+    )
+    author_role = models.CharField(
+        max_length=20, default="staff", blank=True,
+        help_text="작성자 역할 (staff/student)",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
