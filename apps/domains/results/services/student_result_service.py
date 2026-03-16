@@ -39,12 +39,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     ).values_list("enrollment_id", flat=True)
     # ⚠️ tenant 필터 필수: 타 테넌트 enrollment 접근 차단
     enrollment_qs = Enrollment.objects.filter(id__in=allowed_enrollment_ids, tenant=tenant)
-    if hasattr(Enrollment, "user_id"):
-        enrollment_qs = enrollment_qs.filter(user_id=user.id)
-    elif hasattr(Enrollment, "student_id"):
-        enrollment_qs = enrollment_qs.filter(student_id=user.id)
-    else:
-        enrollment_qs = enrollment_qs.filter(student__user=user)
+    enrollment_qs = enrollment_qs.filter(student__user=user)
 
     enrollment = enrollment_qs.first()
     if not enrollment:
