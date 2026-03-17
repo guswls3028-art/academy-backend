@@ -486,17 +486,35 @@ jobs:
               --region ${{ env.AWS_REGION }} \
               --desired-capacity 2 \
               --max-size 3
-            echo "Waiting 90s for new instance to register with ALB..."
-            sleep 90
-            # Verify both instances are healthy
-            HEALTHY=$(aws autoscaling describe-auto-scaling-groups \
-              --auto-scaling-group-names ${{ env.API_ASG_NAME }} \
+
+            # Get ALB target group ARN for real health check
+            TG_ARN=$(aws elbv2 describe-target-groups \
+              --names academy-v1-api-tg \
               --region ${{ env.AWS_REGION }} \
-              --query 'AutoScalingGroups[0].Instances[?HealthStatus==`Healthy`] | length(@)' \
-              --output text)
-            echo "Healthy instances: $HEALTHY"
-            if [ "$HEALTHY" -lt 2 ]; then
-              echo "::warning::Only $HEALTHY healthy instance(s), proceeding anyway"
+              --query 'TargetGroups[0].TargetGroupArn' \
+              --output text 2>/dev/null || echo "")
+
+            echo "Waiting for 2 ALB-healthy targets (max 5 min)..."
+            for WAIT in $(seq 1 20); do
+              if [ -n "$TG_ARN" ]; then
+                ALB_HEALTHY=$(aws elbv2 describe-target-health \
+                  --target-group-arn "$TG_ARN" \
+                  --region ${{ env.AWS_REGION }} \
+                  --query 'TargetHealthDescriptions[?TargetHealth.State==`healthy`] | length(@)' \
+                  --output text 2>/dev/null || echo "0")
+              else
+                ALB_HEALTHY=0
+              fi
+              echo "  Attempt $WAIT/20: ALB healthy targets=$ALB_HEALTHY"
+              if [ "$ALB_HEALTHY" -ge 2 ]; then
+                echo "2+ ALB-healthy targets confirmed"
+                break
+              fi
+              sleep 15
+            done
+
+            if [ "$ALB_HEALTHY" -lt 2 ]; then
+              echo "::warning::Only $ALB_HEALTHY ALB-healthy target(s) after 5 min, proceeding with caution"
             fi
           else
             echo "Already desired=$CURRENT_DESIRED, skipping scale-up"
@@ -508,7 +526,7 @@ jobs:
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":300,"SkipMatching":true}' \
+            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300,"SkipMatching":false}' \
             --query 'InstanceRefreshId' \
             --output text)
           echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT
