@@ -1998,6 +1998,13 @@ class StudentPasswordResetSendView(APIView):
                     {"detail": "해당 학생 이름과 학부모 전화번호로 등록된 정보가 없습니다."},
                     status=404,
                 )
+            # Ensure parent account exists (may not exist if student was created before parent auto-creation was added)
+            from apps.domains.parents.services import ensure_parent_for_student
+            ensure_parent_for_student(
+                tenant=tenant,
+                parent_phone=parent_phone,
+                student_name=student.name,
+            )
             from apps.domains.parents.models import Parent
             parent = Parent.objects.filter(tenant=tenant, phone=parent_phone).first()
             if not parent or not getattr(parent, "user", None):
