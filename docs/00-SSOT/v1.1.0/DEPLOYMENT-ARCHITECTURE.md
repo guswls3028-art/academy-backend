@@ -11,10 +11,11 @@
 | API | academy-api | academy-v1-api-asg | academy-api | Django REST API (Gunicorn) |
 | Messaging Worker | academy-messaging-worker | academy-v1-messaging-worker-asg | academy-messaging-worker | SQS message processing |
 | AI Worker | academy-ai-worker-cpu | academy-v1-ai-worker-asg | academy-ai-worker-cpu | AI task processing |
-| Video Worker (Batch) | academy-video-worker | AWS Batch CE (c6g.xlarge, on-demand) | — | 모든 영상 인코딩 (VIDEO_WORKER_MODE=batch) |
+| Video Worker (Daemon) | academy-video-worker | Unmanaged EC2 instance | academy-video-worker | 영상 인코딩 daemon (VIDEO_WORKER_MODE=daemon, DAEMON_MAX_DURATION_SECONDS=5400) |
+| Video Worker (Batch) | academy-video-worker | AWS Batch CE (c6g.xlarge, on-demand) | — | 90분 초과 영상 auto-fallback |
 | Base | academy-base | — | — | Shared base image for all services |
 
-**Note:** Video Worker는 `video_batch_deploy.yml`로 별도 빌드. Daemon 모드 미운용 (VIDEO_WORKER_MODE=batch 고정).
+**Note:** Video Worker는 `video_batch_deploy.yml`로 별도 빌드. 운영 환경은 VIDEO_WORKER_MODE=daemon으로 unmanaged EC2 인스턴스에서 실행 중. 90분 초과 영상은 AWS Batch로 자동 라우팅.
 
 ## 2. CI/CD Pipeline Architecture
 
@@ -30,11 +31,11 @@ git push main
     |── (if API changed) ──> [run-migrations] ─── SSM RunCommand ──> migrate on current instance
     |                              |
     |                              v
-    |── (if API changed) ──> [deploy-api] ─── ASG instance refresh (MinHealthy=100%, Warmup=300s)
+    |── (if API changed) ──> [deploy-api] ─── ASG instance refresh (MinHealthy=50%, Warmup=300s)
     |
-    |── (if messaging changed) ──> [deploy-messaging] ─── ASG instance refresh (MinHealthy=100%, Warmup=120s)
+    |── (if messaging changed) ──> [deploy-messaging] ─── ASG instance refresh (MinHealthy=0%, Warmup=120s)
     |
-    |── (if AI changed) ──> [deploy-ai] ─── ASG instance refresh (MinHealthy=100%, Warmup=120s)
+    |── (if AI changed) ──> [deploy-ai] ─── ASG instance refresh (MinHealthy=0%, Warmup=120s)
     |
     v
 [verify-deployment] ─── healthz 200 + health 200 + ASG healthy instances ──> PASS/FAIL
@@ -79,9 +80,12 @@ Dependencies:
 
 ### ASG Instance Refresh
 
-- **MinHealthyPercentage: 100%** — ASG launches new instance(s) before terminating old ones
+- **MinHealthyPercentage: 50%** (API) — scale-up to desired=2 before refresh ensures zero-downtime with 50% threshold
+- **MinHealthyPercentage: 0%** (workers) — workers tolerate brief downtime during replacement (no HTTP traffic)
 - **InstanceWarmup: 300s** (API) / **120s** (workers) — time for instance to be considered healthy
-- ALB health check on `/healthz` determines when new instance is ready
+- **HealthCheckType: EC2** — ASG uses EC2-level status checks only. **Known gap:** no application-level (ELB) auto-recovery; if the app crashes but the instance is healthy, ASG will not replace it. ALB routes traffic based on `/healthz` but does not trigger instance replacement.
+- **HealthCheckGracePeriod: 0** — no grace period configured
+- ALB health check on `/healthz` determines routing decisions (not instance replacement)
 - Old instances are drained and terminated only after new ones pass health checks
 
 ### Deployment Sequence
@@ -97,7 +101,7 @@ Dependencies:
 Workers use the same ASG instance refresh mechanism as API but with:
 - Shorter warmup (120s vs 300s) — workers don't serve HTTP traffic
 - No ALB health check — workers are background processors
-- Same MinHealthyPercentage=100% for zero message loss
+- **MinHealthyPercentage=0%** — workers tolerate brief downtime during replacement. Message loss is prevented by SQS visibility timeout (messages return to queue if not acknowledged)
 
 ### Worker UserData Flow
 
@@ -167,7 +171,7 @@ Every build produces immutable SHA-tagged images. To rollback:
    ```bash
    aws autoscaling start-instance-refresh \
      --auto-scaling-group-name academy-v1-api-asg \
-     --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'
+     --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":300}'
    ```
 
 ### Migration Rollback

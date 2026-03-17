@@ -4,7 +4,7 @@
 **Date:** 2026-03-15
 **SSOT Status:** Active
 **Scope:** Performance, Cost, Stability, Operational Safety
-**Review Status:** Substantially Complete 2026-03-15. Confirmed/projected/unverified separated. ECR lifecycle re-check pending 2026-03-17.
+**Review Status:** Substantially Complete 2026-03-15. ECR lifecycle CONFIRMED working 2026-03-17 (lastEvaluatedAt: 2026-03-17T05:02:57).
 
 > **Current State vs. Target State:**
 > This document describes both current infrastructure reality and proposed improvements.
@@ -59,8 +59,9 @@
          │  │  Owns: download, ffmpeg, upload, publish         │
          │  │  Isolated from API completely                    │
          │  │                                                  │
-         │  │  CURRENT STATE: Video daemon runs on an          │
-         │  │  unmanaged instance, NOT via CI/CD pipeline.     │
+         │  │  CURRENT STATE: Video daemon is ACTIVE on an       │
+         │  │  unmanaged instance (VIDEO_WORKER_MODE=daemon),  │
+         │  │  processing videos ≤90min. NOT via CI/CD.        │
          │  │  TARGET: Create academy-v1-video-worker-asg      │
          │  │  with launch template + CI/CD deploy job.        │
          │  └─────────────────────────────────────────────────┘
@@ -106,7 +107,7 @@
 - 16:9 강제 스케일링 → 원본 비율 정확 보존 (`_compute_output_resolution`)
 - 휴대폰 rotation 메타데이터 자동 처리 (90°/270° w↔h 스왑)
 - 원본 ≤720p인 경우 단일 variant (업스케일 방지)
-- `VIDEO_WORKER_MODE=batch` 고정 (daemon 미운용)
+- `VIDEO_WORKER_MODE`: 코드 기본값은 `batch`. 운영 비관리 인스턴스는 환경변수로 `daemon` 설정하여 ≤90min 영상 처리 중
 - preset: `medium` (품질 우선)
 
 **인코딩 시간 (c6g.xlarge 4 vCPU 기준):**
@@ -173,6 +174,8 @@ def _select_variant(input_w: int, input_h: int) -> dict:
 | >= 90 min | AWS Batch (on-demand) | Batch compute environment |
 
 **Config [APPLIED 2026-03-17]:** `DAEMON_MAX_DURATION_SECONDS=5400` (changed from 1800 in `base.py`, `daemon_main.py`, `video_encoding.py`)
+
+**Video concurrency limits [CURRENT]:** `VIDEO_TENANT_MAX_CONCURRENT=9999`, `VIDEO_GLOBAL_MAX_CONCURRENT=9999` (previously tenant=2/global=20; removed as bottleneck since Batch CE max vCPU provides natural capacity ceiling).
 
 The 90-minute threshold balances:
 - Most academy lectures are 60-90 minutes → daemon handles majority
@@ -365,7 +368,7 @@ done
 
 | Service | Before (monthly) | After (monthly) | Change | Notes |
 |---------|-----------------|-----------------|--------|-------|
-| **ECR Storage** | **$213** | **~$5** | **-98%** | 5.2TB → <50GB after cleanup |
+| **ECR Storage** | **$213** | **~$5** | **-98%** | 5.2TB → <50GB after cleanup (검증 완료 2026-03-17) |
 | **VPC** | $82 | ~$20 | -76% | Interface endpoints removed, self-resolving |
 | **EC2 Compute** | $87 | $73 | -16% | Messaging→t4g.small ($14.50 save). AI min=1 유지 (운영 원칙) |
 | **RDS** | $71 | $71 | 0% | Keep db.t4g.medium Single-AZ (see §11 Accepted Risks) |
@@ -521,7 +524,7 @@ No additional drain work needed.
 | SQS DLQ depth | 0 | Daily | Investigate failed messages |
 | **SQS ApproximateAgeOfOldestMessage** | **< 300s** | **CloudWatch alarm** | **Worker stall — investigate immediately** |
 | ECR total images | < 100/repo | Weekly | Run ecr-cleanup.py |
-| ECR `lastEvaluatedAt` | < 7 days old | Weekly | Re-apply policy if stale; **if still 1970-01-01 after 48h, switch to scheduled `ecr-cleanup.py`** |
+| ECR `lastEvaluatedAt` | < 7 days old | Weekly | Re-apply policy if stale. **CONFIRMED working 2026-03-17 (lastEvaluatedAt: 2026-03-17T05:02:57)** |
 | RDS CPU | < 70% | CloudWatch | Consider scaling if sustained |
 | **RDS FreeStorageSpace** | **> 2 GB** | **CloudWatch alarm** | **Expand storage immediately** |
 | **RDS DatabaseConnections** | **< 80% of max** | **CloudWatch alarm** | **Investigate connection leaks** |
@@ -542,11 +545,11 @@ No additional drain work needed.
 | 2 | **Video Worker CI/CD** | **Build-and-push only, deploy-infra removed** | Multiple | ✅ [COMPLETED] OIDC+build-arg+permission+params+profile fixed, deploy-infra removed |
 | 3 | **Video job auto-recovery** | **EventBridge rules already exist** | — | ✅ [ALREADY EXISTS] 3 rules confirmed |
 | 4 | ECR manifest-aware cleanup | $200/mo savings + deployment hygiene | Done | ✅ [COMPLETED] 34,026 images deleted (5.2TB → 5.4GB) |
-| 5 | ECR lifecycle policy re-apply | Recurrence prevention | Done | ✅ [COMPLETED] Applied 2026-03-15, verify after 2026-03-17 |
+| 5 | ECR lifecycle policy re-apply | Recurrence prevention | Done | ✅ [CONFIRMED] Applied 2026-03-15, lastEvaluatedAt 2026-03-17T05:02:57 — working |
 | 6 | Messaging business-level idempotency | Atomic claim + DB UniqueConstraint + fail-closed | 4 hours | ✅ [COMPLETED] 3-layer defense (Redis lock + DB unique + transport dedup) |
 | 7 | AWS Budget alerts | Cost guardrail ($270/$320/$380) | 15 min | ✅ [COMPLETED] academy-monthly-infra created |
 | 8 | Single 720p encoding switch [PROPOSED] | ~50-55% time-to-ready improvement | 1 hour | Pending (code change needed) |
-| 9 | DAEMON_MAX_DURATION_SECONDS → 5400 [PROPOSED] | Daemon handles up to 90min videos | 10 min | Pending (config change) |
+| 9 | DAEMON_MAX_DURATION_SECONDS → 5400 | Daemon handles up to 90min videos | 10 min | ✅ [APPLIED 2026-03-17] base.py, daemon_main.py, video_encoding.py |
 | 10 | ~~AI worker min=0~~ | ~~$24/mo savings~~ | — | **WITHDRAWN — 운영 원칙 충돌. min=1 확정.** |
 | 11 | Messaging worker → t4g.small [PROPOSED] | $14.50/mo savings | 30 min | Pending (실측 후 판단) |
 | 12 | Video worker ASG separation [PROPOSED] | API stability + encoding throughput | Half day | Pending (infra creation) |
@@ -720,10 +723,12 @@ if exists:
 
 ### 12.2 ECR Lifecycle Verification
 
-**If ECR lifecycle policy `lastEvaluatedAt` remains `1970-01-01` after 48 hours post-apply:**
+**Status: CONFIRMED WORKING** (lastEvaluatedAt: 2026-03-17T05:02:57). Lifecycle policies applied 2026-03-15 are actively evaluating.
 
-1. ECR lifecycle is not evaluating (known AWS issue with OCI Image Index manifests)
-2. Switch to scheduled `ecr-cleanup.py` as primary cleanup mechanism:
+**Fallback (if lifecycle stops evaluating in the future):**
+
+1. Check `lastEvaluatedAt` — if stale (> 7 days), re-apply lifecycle policy
+2. If re-apply does not fix, switch to scheduled `ecr-cleanup.py` as primary cleanup mechanism:
 
 ```bash
 # Weekly cron (e.g., Sunday 3 AM KST)
@@ -758,3 +763,4 @@ This skips base image rebuild on normal pushes. Base image only rebuilds on:
 | V1.1.0 | 2026-03-15 | Round 2 revision: CI/CD concurrency fix, rollback runbook, messaging dedup, RDS RPO/RTO, worker right-sizing, video auto-recovery, cost floor correction ($204), duration threshold 5400s, performance breakdown (50-55%), `-refs 3`, base image conditional build |
 | V1.1.0 | 2026-03-15 | Implementation complete: business-level messaging idempotency (atomic claim + DB UniqueConstraint), Video Worker CI narrowed to build-and-push (deploy-infra removed, role separation), cancel-in-progress:false verified in live runs, AWS Budget created, CONN_HEALTH_CHECKS applied, params.yaml moved to SSOT root. ECR lifecycle re-check pending 2026-03-17. |
 | V1.1.0 | 2026-03-16 | Zero-downtime deploy: scale-up 1→2 mechanism, IAM `UpdateAutoScalingGroup` 추가, worker refresh timeout 20min, workflow_dispatch force full build. CRITICAL: 배포 후 워커 컨테이너 검증 필수 룰 추가 (RUNBOOK-DEPLOY-CHECKLIST §Step 2-3). |
+| V1.1.0 | 2026-03-17 | ECR lifecycle CONFIRMED (lastEvaluatedAt 2026-03-17T05:02:57). DAEMON_MAX_DURATION_SECONDS=5400 APPLIED. Video daemon status clarified (active on unmanaged instance). Video concurrency limits updated (9999/9999). ECR cost status → 검증 완료. |
