@@ -1894,7 +1894,9 @@ class StudentPasswordResetSendView(APIView):
     permission_classes = [AllowAny, TenantResolved]
 
     def get_authenticators(self):
-        return []
+        """AllowAny이지만 JWT가 있으면 파싱 — staff 판별용 (temp_password/skip_notify)."""
+        from rest_framework_simplejwt.authentication import JWTAuthentication
+        return [JWTAuthentication()]
 
     def post(self, request):
         tenant = getattr(request, "tenant", None)
