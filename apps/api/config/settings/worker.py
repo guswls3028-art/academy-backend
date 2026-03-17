@@ -145,3 +145,24 @@ INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "")
 # ALLOWED_HOSTS (Django runserver용, Worker는 미사용)
 # ==================================================
 ALLOWED_HOSTS = ["*"]
+
+# ==================================================
+# Sentry (Worker 에러 모니터링)
+# ==================================================
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        release=os.getenv("SENTRY_RELEASE", f"academy-backend@{os.getenv('GIT_SHA', 'unknown')}"),
+        integrations=[
+            DjangoIntegration(transaction_style="url"),
+            LoggingIntegration(level=None, event_level="ERROR"),
+        ],
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.01")),
+        send_default_pii=False,
+    )
