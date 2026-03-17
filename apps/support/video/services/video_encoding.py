@@ -80,8 +80,8 @@ def create_job_and_submit_batch(video: Video) -> JobResult:
             return JobResult(existing, None)
 
         from django.conf import settings
-        tenant_limit = int(getattr(settings, "VIDEO_TENANT_MAX_CONCURRENT", 2))
-        global_limit = int(getattr(settings, "VIDEO_GLOBAL_MAX_CONCURRENT", 20))
+        tenant_limit = int(getattr(settings, "VIDEO_TENANT_MAX_CONCURRENT", 9999))
+        global_limit = int(getattr(settings, "VIDEO_GLOBAL_MAX_CONCURRENT", 9999))
         per_video_limit = int(getattr(settings, "VIDEO_MAX_JOBS_PER_VIDEO", 10))
 
         tenant_active = VideoTranscodeJob.objects.filter(
