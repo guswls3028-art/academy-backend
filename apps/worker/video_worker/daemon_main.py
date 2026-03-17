@@ -115,6 +115,39 @@ def verify_connections() -> bool:
     return False
 
 
+# ── Auto-enqueue ─────────────────────────────────────────────
+def _try_enqueue_next_for_tenant(tenant_id: int) -> None:
+    """Job 완료 후 tenant 슬롯이 비었으면 다음 UPLOADED 비디오를 자동 enqueue."""
+    from apps.support.video.models import Video, VideoTranscodeJob
+    from apps.support.video.services.video_encoding import create_job_and_submit_batch
+
+    active_video_ids = VideoTranscodeJob.objects.filter(
+        tenant_id=tenant_id,
+        state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RUNNING, VideoTranscodeJob.State.RETRY_WAIT],
+    ).values_list("video_id", flat=True)
+
+    next_video = (
+        Video.objects.filter(
+            status=Video.Status.UPLOADED,
+            session__lecture__tenant_id=tenant_id,
+            file_key__isnull=False,
+        )
+        .exclude(file_key="")
+        .exclude(pk__in=active_video_ids)
+        .select_related("session__lecture__tenant")
+        .order_by("updated_at")
+        .first()
+    )
+    if not next_video:
+        return
+
+    result = create_job_and_submit_batch(next_video)
+    if result.job:
+        _log("AUTO_ENQUEUE_OK", video_id=next_video.id, job_id=str(result.job.id), tenant_id=tenant_id)
+    else:
+        _log("AUTO_ENQUEUE_SKIP", video_id=next_video.id, reason=result.reject_reason, tenant_id=tenant_id)
+
+
 # ── Job polling ──────────────────────────────────────────────
 def poll_next_job():
     """
@@ -257,19 +290,13 @@ def process_one_job(job_obj) -> int:
         _log("DAEMON_JOB_COMPLETED", job_id=job_id, tenant_id=tid, video_id=vid,
              elapsed_sec=round(elapsed, 2))
 
-        # R2 raw 파일 삭제
-        file_key = job_dict.get("file_key", "").strip()
-        if file_key:
-            for attempt in range(3):
-                try:
-                    from apps.infrastructure.storage.r2 import delete_object_r2_video
-                    delete_object_r2_video(key=file_key)
-                    _log("R2_RAW_DELETED", job_id=job_id, video_id=vid, key_prefix=file_key[:80])
-                    break
-                except Exception as e:
-                    logger.warning("R2 raw delete failed video_id=%s attempt=%s: %s", vid, attempt + 1, e)
-                    if attempt < 2:
-                        time.sleep(2 ** attempt)
+        # R2 raw 파일은 즉시 삭제하지 않음. purge_raw_videos 커맨드가 3일 후 정리.
+
+        # Auto-enqueue: tenant 슬롯이 비었으니 다음 UPLOADED 비디오 enqueue
+        try:
+            _try_enqueue_next_for_tenant(tid)
+        except Exception as e:
+            logger.warning("Auto-enqueue failed tenant_id=%s: %s", tid, e)
 
         return 0
 

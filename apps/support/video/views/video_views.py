@@ -175,37 +175,45 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         """
         video = video_repo.get_video_by_pk_with_relations(instance.pk)
         video_id = instance.id
-        if video and video.current_job_id:
-            try:
-                from apps.support.video.models import VideoTranscodeJob
-                from apps.support.video.services.batch_control import terminate_batch_job
-                from academy.adapters.db.django.repositories_video import job_mark_dead_if_active
+        # Kill ALL active TranscodeJobs for this video (not just current_job).
+        # Soft-delete doesn't trigger CASCADE, so zombie RETRY_WAIT jobs can
+        # block tenant concurrency slots indefinitely.
+        try:
+            from apps.support.video.models import VideoTranscodeJob
+            from apps.support.video.services.batch_control import terminate_batch_job
+            from academy.adapters.db.django.repositories_video import job_mark_dead_if_active
 
-                cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
-                if cur and cur.state in (
+            active_jobs = VideoTranscodeJob.objects.filter(
+                video_id=video_id,
+                state__in=[
                     VideoTranscodeJob.State.QUEUED,
                     VideoTranscodeJob.State.RUNNING,
                     VideoTranscodeJob.State.RETRY_WAIT,
-                ):
-                    aws_batch_job_id = (getattr(cur, "aws_batch_job_id", None) or "").strip()
-                    if aws_batch_job_id:
+                ],
+            )
+            for cur in active_jobs:
+                aws_batch_job_id = (getattr(cur, "aws_batch_job_id", None) or "").strip()
+                if aws_batch_job_id:
+                    try:
                         terminate_batch_job(
                             aws_batch_job_id,
                             "video_deleted",
                             video_id=video_id,
                             job_id=str(cur.id),
                         )
-                    _, rows = job_mark_dead_if_active(
-                        str(cur.id),
-                        error_code="VIDEO_DELETED",
-                        error_message="Video deleted; job marked DEAD",
-                    )
-                    if rows:
-                        logger.info("Video delete: DEAD_UPDATED (rows=1) video_id=%s job_id=%s", video_id, cur.id)
-                    else:
-                        logger.info("Video delete: DEAD_SKIPPED_ALREADY_TERMINAL (rows=0) video_id=%s job_id=%s", video_id, cur.id)
-            except Exception as e:
-                logger.warning("Video delete: job DEAD mark failed video_id=%s: %s", video_id, e)
+                    except Exception as e:
+                        logger.warning("Video delete: Batch terminate failed video_id=%s job_id=%s: %s", video_id, cur.id, e)
+                _, rows = job_mark_dead_if_active(
+                    str(cur.id),
+                    error_code="VIDEO_DELETED",
+                    error_message="Video deleted; job marked DEAD",
+                )
+                if rows:
+                    logger.info("Video delete: DEAD_UPDATED video_id=%s job_id=%s", video_id, cur.id)
+                else:
+                    logger.info("Video delete: DEAD_SKIPPED_ALREADY_TERMINAL video_id=%s job_id=%s", video_id, cur.id)
+        except Exception as e:
+            logger.warning("Video delete: job cleanup failed video_id=%s: %s", video_id, e)
         # Soft-delete: sets deleted_at, keeps row + R2 files for 6-month retention
         instance.delete()
         logger.info("Video soft-deleted: video_id=%s", video_id)

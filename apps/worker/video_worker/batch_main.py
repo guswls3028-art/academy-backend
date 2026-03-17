@@ -53,6 +53,38 @@ _shutdown_event = threading.Event()
 _heartbeat_stop = threading.Event()
 
 
+def _try_enqueue_next_for_tenant(tenant_id: int) -> None:
+    """Job 완료 후 tenant 슬롯이 비었으면 다음 UPLOADED 비디오를 자동 enqueue."""
+    from apps.support.video.models import Video, VideoTranscodeJob
+    from apps.support.video.services.video_encoding import create_job_and_submit_batch
+
+    active_video_ids = VideoTranscodeJob.objects.filter(
+        tenant_id=tenant_id,
+        state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RUNNING, VideoTranscodeJob.State.RETRY_WAIT],
+    ).values_list("video_id", flat=True)
+
+    next_video = (
+        Video.objects.filter(
+            status=Video.Status.UPLOADED,
+            session__lecture__tenant_id=tenant_id,
+            file_key__isnull=False,
+        )
+        .exclude(file_key="")
+        .exclude(pk__in=active_video_ids)
+        .select_related("session__lecture__tenant")
+        .order_by("updated_at")
+        .first()
+    )
+    if not next_video:
+        return
+
+    result = create_job_and_submit_batch(next_video)
+    if result.job:
+        _log_json("AUTO_ENQUEUE_OK", video_id=next_video.id, job_id=str(result.job.id), tenant_id=tenant_id)
+    else:
+        _log_json("AUTO_ENQUEUE_SKIP", video_id=next_video.id, reason=result.reject_reason, tenant_id=tenant_id)
+
+
 def _handle_term(signum: int, frame: object) -> None:
     """SIGTERM/SIGINT 수신 시 DB에 종료 반영 후 즉시 종료 (Spot/scale-in/terminate-job 대응)."""
     _shutdown_event.set()
@@ -219,19 +251,13 @@ def main() -> int:
             duration_sec=round(elapsed, 2),
         )
 
-        file_key = job_dict.get("file_key", "").strip()
-        if file_key:
-            for attempt in range(3):
-                try:
-                    from apps.infrastructure.storage.r2 import delete_object_r2_video
+        # R2 raw 파일은 즉시 삭제하지 않음. purge_raw_videos 커맨드가 3일 후 정리.
 
-                    delete_object_r2_video(key=file_key)
-                    _log_json("R2_RAW_DELETED", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, key_prefix=file_key[:80])
-                    break
-                except Exception as e:
-                    logger.warning("R2 raw delete failed video_id=%s attempt=%s: %s", job_obj.video_id, attempt + 1, e)
-                    if attempt < 2:
-                        time.sleep(2**attempt)
+        # Auto-enqueue: tenant 슬롯이 비었으니 다음 UPLOADED 비디오 enqueue
+        try:
+            _try_enqueue_next_for_tenant(job_obj.tenant_id)
+        except Exception as e:
+            logger.warning("Auto-enqueue failed tenant_id=%s: %s", job_obj.tenant_id, e)
 
         return 0
 
