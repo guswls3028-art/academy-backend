@@ -1995,6 +1995,11 @@ class StudentPasswordResetSendView(APIView):
         user.set_password(temp_password)
         user.save(update_fields=["password"])
 
+        # skip_notify: 비밀번호만 변경, 알림톡 발송 안 함 (관리자 전용)
+        skip_notify = bool(request.data.get("skip_notify", False)) and is_staff_request
+        if skip_notify:
+            return Response({"message": "비밀번호가 변경되었습니다. (알림톡 미발송)"}, status=200)
+
         # 알림톡 발송
         from apps.support.messaging.selectors import get_auto_send_config
         from apps.support.messaging.policy import MessagingPolicyError, is_messaging_disabled
