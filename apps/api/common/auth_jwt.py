@@ -35,9 +35,14 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         user = core_repo.user_get_by_tenant_username(tenant, username)
         # 학부모: ID = 학부모 전화번호. username이 전화번호일 때 Parent로 조회 후 해당 User로 인증
+        # 학생 로그인ID와 학부모 전화번호가 동일할 수 있으므로, 첫 매칭 실패 시 학부모도 시도
         if not user:
             parent = core_repo.parent_get_by_tenant_phone(tenant, username)
             if parent and parent.user_id:
+                user = parent.user
+        elif not user.check_password(password):
+            parent = core_repo.parent_get_by_tenant_phone(tenant, username)
+            if parent and parent.user_id and parent.user.check_password(password):
                 user = parent.user
         if not user or not user.check_password(password):
             raise serializers.ValidationError(
