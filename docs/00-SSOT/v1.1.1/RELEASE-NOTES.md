@@ -116,17 +116,87 @@
 - 프로모 로그인 → native <a href> (모달 우회)
 - 무중단 배포 원칙 CLAUDE.md §F 명시
 
+### 진정한 무중단 배포 달성 (2026-03-17)
+- **근본 원인 수정**: SkipMatching=true → false, MinHealthyPercentage=50→100
+  - 기존: instance refresh가 no-op (SkipMatching=true + launch template 미변경), scale-down 시 0 healthy target → 502 gap
+  - 수정: refresh가 실제 인스턴스 교체 수행, 새 인스턴스 healthy 전까지 기존 유지
+- **Scale-up 후 ALB target health 실측 확인** (고정 90s 대기 → 실제 ALB healthy 2개 확인, max 5min)
+- **Dockerfile CMD migrate 제거** — CI run-migrations에서 실행. 컨테이너 시작 5-30초 단축
+- **ALB deregistration delay 300s→30s** — API에 장시간 요청 없음
+- **Instance refresh timeout 10min→15min, warmup 300s→120s**
+- **검증**: 배포 중 30회 연속 healthz=200, 502 0건
+
+### ASG / ALB 안전 설정 (2026-03-17)
+- **API ASG**: HealthCheckType EC2→**ELB** (앱 크래시 시 자동 교체), GracePeriod 0→**120s**
+- **Messaging ASG**: GracePeriod 0→**60s**
+- **AI ASG**: GracePeriod 0→**60s**
+
+### Video Worker CI/CD (2026-03-17)
+- **deploy-video job** 추가 — Batch job definition을 SHA-pinned image로 갱신
+- 7개 job definition 자동 업데이트: batch, batch-long, ops (scan_stuck, reconcile, netprobe, enqueue_uploaded, purge_raw)
+- Batch CE VALID/ENABLED 검증 포함
+
+### R2 원본 자동 정리 (2026-03-17)
+- **EventBridge rule** `academy-v1-purge-raw-videos`: daily 3AM KST
+- Batch ops queue → `purge_raw_videos` command (READY 3일 후 raw 삭제)
+
+### Workers Sentry (2026-03-17)
+- `worker.py`에 Sentry 설정 추가 (SENTRY_DSN 환경변수 있을 때만 활성화)
+- traces_sample_rate=0.01 (워커는 낮게)
+
+### 학부모 비밀번호 재설정 서비스 버그 수정 (2026-03-17)
+- **문제**: Parent 레코드 없는 학생의 학부모 비밀번호 재설정 시 404
+- **수정**: `StudentPasswordResetSendView`에서 parent target 처리 시 `ensure_parent_for_student()` 자동 호출
+- **영향**: 교사가 학부모 비밀번호 재설정 → Parent 없으면 자동 생성 후 진행
+
+### parent_phone FK 동기화 (2026-03-17)
+- **문제**: admin이 학생의 parent_phone 변경 시 Student.parent FK 미갱신 → 데이터 불일치
+- **수정**: admin update (perform_update) + student self-edit (me PATCH) 모두 `ensure_parent_for_student()` 호출
+
+### SSOT 전체 정합성 감사 (2026-03-17)
+- 20건 불일치 수정 (SSOT docs, context files, scripts, code)
+- MinHealthyPercentage 100%→실제값, SQS queue names, API domain, HLS encoding, daemon duration, version policy
+- 상세: 커밋 `fix: SSOT 전체 정합성 감사 — 20건 불일치 수정`
+
+### Frontend UX 수정 (2026-03-17)
+- ProfilePage 저장 성공 studentToast 추가
+- PasswordResetModal 자동닫기 2s→4s
+- Promo LoginModal 하드코딩 "sswe" → "학원 관리 시스템"
+
 ---
 
 ## 테넌트 격리 감사
 - 6항목 점검: 위반 없음
 - X-Tenant-Code 헤더, Dev 앱 접근, 에이전트 엔드포인트, queryClient.clear, 클리닉 스코핑, 학생 예약 교차 — 모두 SAFE
+- student-domain 전체 감사 (2026-03-17): auth, signup, login, password reset, parent linking — 모든 flow에서 tenant 격리 위반 없음
+
+## 데이터 정합성 감사 (2026-03-17)
+- Orphaned students (no User): **0**
+- Parent phone mismatch: **0** (운영), 1 (test tenant 9999)
+- Duplicate student phones: **0**
+- Wrong membership roles: **0**
+- Plaintext passwords in pending requests: **0**
+- Stuck transcode jobs: **0**
+- Orphaned parents: 120 (dead rows, 기능 영향 없음)
+
+## 워커 연결 검증 (2026-03-17)
+- API: healthz=200, health=200 (database connected)
+- Messaging worker: 최근 5건 alimtalk success, SQS=0, DLQ=0
+- AI worker: InService, SQS=0, DLQ=0
+- Video worker: 오늘 job 5건 SUCCEEDED
+
+## E2E 검증 (2026-03-17)
+- **전체 137 tests, 0 failures**
+- Smoke, Student, Admin, Tenant Branding, Tenant Isolation, Failure Edge Cases, Complaint Prevention, Notice/QnA/Clinic Roundtrip, Password Reset, Data Link, UI Create, Real Scenario, Full Check, Guide — ALL PASS
 
 ---
 
 ## 다음 패치 (V1.1.x) TODO
-- [ ] `purge_raw_videos` cron 등록 (매일 1회, R2 원본 3일 보관 후 삭제)
+- [x] ~~`purge_raw_videos` cron 등록~~ (EventBridge daily 3AM KST → 완료 2026-03-17)
 - [ ] Video CASCADE 위험: Session/Lecture 삭제 시 soft-delete 우회 → SET_NULL 검토
+- [ ] Student phone uniqueness DB 제약 추가 (현재 app-only, race condition 가능)
+- [ ] Student self-edit phone validation/dedup 강화
+- [ ] OTP rate limiting 추가
 - [ ] window.confirm 38건 → 커스텀 확인 모달
 - [ ] Tailwind 색상 52건 → 디자인 토큰
 - [ ] clinic_reason 자동 판정 API

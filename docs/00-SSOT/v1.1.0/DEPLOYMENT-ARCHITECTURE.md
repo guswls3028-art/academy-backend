@@ -80,13 +80,15 @@ Dependencies:
 
 ### ASG Instance Refresh
 
-- **MinHealthyPercentage: 50%** (API) — scale-up to desired=2 before refresh ensures zero-downtime with 50% threshold
+- **MinHealthyPercentage: 100%** (API) — 새 인스턴스가 healthy가 될 때까지 기존 인스턴스 유지. 502 gap 0건 보장.
 - **MinHealthyPercentage: 0%** (workers) — workers tolerate brief downtime during replacement (no HTTP traffic)
-- **InstanceWarmup: 300s** (API) / **120s** (workers) — time for instance to be considered healthy
-- **HealthCheckType: EC2** — ASG uses EC2-level status checks only. **Known gap:** no application-level (ELB) auto-recovery; if the app crashes but the instance is healthy, ASG will not replace it. ALB routes traffic based on `/healthz` but does not trigger instance replacement.
-- **HealthCheckGracePeriod: 0** — no grace period configured
-- ALB health check on `/healthz` determines routing decisions (not instance replacement)
-- Old instances are drained and terminated only after new ones pass health checks
+- **SkipMatching: false** (API) — launch template 변경 없어도 실제 인스턴스 교체 수행
+- **InstanceWarmup: 120s** (API/workers 동일) — Dockerfile CMD에서 migrate 제거로 시작 시간 단축
+- **HealthCheckType: ELB** (API) — 앱 크래시 시 ALB가 감지 → ASG 자동 교체. **EC2** (workers) — ALB 없음.
+- **HealthCheckGracePeriod: 120s** (API) / **60s** (workers) — 새 인스턴스 부팅 중 조기 종료 방지
+- **ALB deregistration delay: 30s** — in-flight 연결 drain 후 즉시 정리
+- Scale-up 후 **ALB target health 실측 확인** (고정 대기 아닌 실제 healthy 2개 확인, max 5min)
+- Old instances are drained and terminated only after new ones pass ALB health checks
 
 ### Deployment Sequence
 
