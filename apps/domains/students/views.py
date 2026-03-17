@@ -273,6 +273,26 @@ class StudentViewSet(ModelViewSet):
         return Response(output.data, status=201)
 
     # ------------------------------
+    # UPDATE: parent_phone 변경 시 parent FK 동기화
+    # ------------------------------
+    @transaction.atomic
+    def perform_update(self, serializer):
+        old_parent_phone = serializer.instance.parent_phone
+        instance = serializer.save()
+
+        # parent_phone이 변경되었으면 Parent FK 재연결
+        new_parent_phone = serializer.validated_data.get("parent_phone")
+        if new_parent_phone and new_parent_phone != old_parent_phone:
+            parent = ensure_parent_for_student(
+                tenant=self.request.tenant,
+                parent_phone=new_parent_phone,
+                student_name=instance.name,
+            )
+            if parent and instance.parent_id != parent.id:
+                instance.parent = parent
+                instance.save(update_fields=["parent_id", "updated_at"])
+
+    # ------------------------------
     # DELETE: 소프트 삭제 (30일 보관)
     # ------------------------------
     @transaction.atomic
@@ -1234,6 +1254,8 @@ class StudentViewSet(ModelViewSet):
                         status=400,
                     )
 
+        old_parent_phone = student.parent_phone  # parent FK 동기화용
+
         with transaction.atomic():
             # 아이디 변경
             new_username = (data.get("username") or "").strip()
@@ -1292,6 +1314,19 @@ class StudentViewSet(ModelViewSet):
                     update_fields.append(field)
             if update_fields:
                 student.save(update_fields=update_fields)
+
+            # parent_phone 변경 시 Parent FK 재연결
+            if "parent_phone" in data:
+                new_parent_phone = str(data["parent_phone"] or "").strip()
+                if new_parent_phone and new_parent_phone != (old_parent_phone or ""):
+                    parent = ensure_parent_for_student(
+                        tenant=tenant,
+                        parent_phone=new_parent_phone,
+                        student_name=student.name,
+                    )
+                    if parent and student.parent_id != parent.id:
+                        student.parent = parent
+                        student.save(update_fields=["parent_id", "updated_at"])
 
         serializer = StudentDetailSerializer(
             student,

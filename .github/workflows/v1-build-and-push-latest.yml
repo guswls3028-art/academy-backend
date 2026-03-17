@@ -770,28 +770,36 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Verify health endpoints
+      - name: Verify health endpoints (with retry)
         id: health
         run: |
-          echo "=== Stage 2: Health Check ==="
-          PASS=true
+          echo "=== Stage 2: Health Check (retry up to 5x, 15s interval) ==="
+          PASS=false
 
-          # healthz (liveness, ALB)
-          HEALTHZ_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            --connect-timeout 10 --max-time 15 \
-            "http://${{ env.ALB_DNS }}/healthz" || echo "000")
-          echo "healthz: $HEALTHZ_STATUS"
-          if [ "$HEALTHZ_STATUS" != "200" ]; then
+          for ATTEMPT in 1 2 3 4 5; do
+            echo "--- Attempt $ATTEMPT/5 ---"
+            HEALTHZ_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --connect-timeout 10 --max-time 15 \
+              "http://${{ env.ALB_DNS }}/healthz" || echo "000")
+            HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --connect-timeout 10 --max-time 15 \
+              "http://${{ env.ALB_DNS }}/health" || echo "000")
+            echo "healthz=$HEALTHZ_STATUS health=$HEALTH_STATUS"
+
+            if [ "$HEALTHZ_STATUS" = "200" ] && [ "$HEALTH_STATUS" = "200" ]; then
+              PASS=true
+              echo "Health check PASS on attempt $ATTEMPT"
+              break
+            fi
+
+            if [ "$ATTEMPT" -lt 5 ]; then
+              echo "Health check not ready, waiting 15s..."
+              sleep 15
+            fi
+          done
+
+          if [ "$PASS" != "true" ]; then
             echo "::error::healthz returned $HEALTHZ_STATUS (expected 200)"
-            PASS=false
-          fi
-
-          # health (readiness, DB-dependent)
-          HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            --connect-timeout 10 --max-time 15 \
-            "http://${{ env.ALB_DNS }}/health" || echo "000")
-          echo "health: $HEALTH_STATUS"
-          if [ "$HEALTH_STATUS" != "200" ]; then
             echo "::error::health returned $HEALTH_STATUS (expected 200)"
             PASS=false
           fi
