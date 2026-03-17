@@ -142,7 +142,7 @@ def create_job_and_submit_batch(video: Video) -> JobResult:
             #   (NULL duration = ffprobe failed or not yet probed → treat as potentially long → Batch is safer)
             # - batch mode: always submit to Batch
             worker_mode = getattr(settings, "VIDEO_WORKER_MODE", "batch")
-            daemon_max_duration = int(getattr(settings, "DAEMON_MAX_DURATION_SECONDS", 1800))
+            daemon_max_duration = int(getattr(settings, "DAEMON_MAX_DURATION_SECONDS", 5400))
             video_duration = video.duration  # None if unknown
 
             if worker_mode == "daemon" and video_duration is not None and video_duration <= daemon_max_duration:

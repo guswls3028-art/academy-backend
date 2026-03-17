@@ -415,7 +415,7 @@ RECONCILE_ORPHAN_DISABLED = os.getenv("RECONCILE_ORPHAN_DISABLED", "").lower() i
 # Worker mode: "batch" (AWS Batch 1-shot). Daemon 미운용이므로 batch 고정.
 VIDEO_WORKER_MODE = os.getenv("VIDEO_WORKER_MODE", "batch")
 # Daemon max duration: videos longer than this are auto-routed to Batch even in daemon mode.
-DAEMON_MAX_DURATION_SECONDS = int(os.getenv("DAEMON_MAX_DURATION_SECONDS", "1800"))
+DAEMON_MAX_DURATION_SECONDS = int(os.getenv("DAEMON_MAX_DURATION_SECONDS", "5400"))
 VIDEO_TENANT_MAX_CONCURRENT = int(os.getenv("VIDEO_TENANT_MAX_CONCURRENT", "2"))
 VIDEO_GLOBAL_MAX_CONCURRENT = int(os.getenv("VIDEO_GLOBAL_MAX_CONCURRENT", "20"))
 VIDEO_MAX_JOBS_PER_VIDEO = int(os.getenv("VIDEO_MAX_JOBS_PER_VIDEO", "10"))
