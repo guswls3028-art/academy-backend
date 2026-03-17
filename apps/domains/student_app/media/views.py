@@ -368,7 +368,7 @@ class StudentVideoMeView(APIView):
                     status=Video.Status.READY,
                 )
                 .select_related("session__lecture__tenant")
-                .order_by("session__lecture_id", "order", "id")
+                .order_by("session__lecture_id", "title", "created_at", "id")
             )
             first_video_by_lecture = {}
             for v in first_videos:
@@ -522,7 +522,7 @@ class StudentSessionVideoListView(APIView):
                 )
                 raise PermissionDenied(detail)
 
-        videos = list(Video.objects.filter(session_id=session_id).order_by("order", "id"))
+        videos = list(Video.objects.filter(session_id=session_id).order_by("title", "created_at", "id"))
 
         # 진행률 + 권한을 일괄 조회 (N+1 방지)
         from academy.adapters.db.django import repositories_video as video_repo

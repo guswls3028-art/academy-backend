@@ -174,7 +174,7 @@ class Video(TimestampModel):
     )
 
     class Meta:
-        ordering = ["order", "id"]
+        ordering = ["title", "created_at", "id"]
         indexes = [
             models.Index(fields=["status", "updated_at"]),
             models.Index(fields=["leased_until", "status"]),
