@@ -526,7 +526,7 @@ jobs:
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300,"SkipMatching":false}' \
+            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120,"SkipMatching":false}' \
             --query 'InstanceRefreshId' \
             --output text)
           echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT
@@ -535,7 +535,7 @@ jobs:
       - name: Wait for API refresh to complete
         run: |
           REFRESH_ID="${{ steps.refresh.outputs.refresh_id }}"
-          for i in $(seq 1 20); do
+          for i in $(seq 1 30); do
             STATUS=$(aws autoscaling describe-instance-refreshes \
               --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
               --instance-refresh-ids "$REFRESH_ID" \
@@ -554,7 +554,7 @@ jobs:
             fi
             sleep 30
           done
-          echo "::error::API ASG refresh timed out after 10 minutes"
+          echo "::error::API ASG refresh timed out after 15 minutes"
           exit 1
 
       - name: Scale down API ASG after deploy (desired 2→1)
