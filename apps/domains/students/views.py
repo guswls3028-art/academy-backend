@@ -26,7 +26,7 @@ from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
 
 from apps.domains.parents.services import ensure_parent_for_student
-from apps.support.messaging.services import send_welcome_messages, get_site_url, send_sms, send_registration_approved_messages, enqueue_sms
+from apps.support.messaging.services import send_welcome_messages, get_site_url, get_tenant_site_url, send_sms, send_registration_approved_messages, enqueue_sms
 from apps.domains.ai.gateway import dispatch_job
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 
@@ -258,7 +258,7 @@ class StudentViewSet(ModelViewSet):
 
         # 5️⃣ 가입 성공 메시지 발송
         if send_welcome:
-            site_url = get_site_url(request)
+            site_url = get_tenant_site_url(request.tenant)
             send_welcome_messages(
                 created_students=[student],
                 student_password=password,
@@ -599,7 +599,7 @@ class StudentViewSet(ModelViewSet):
                 })
 
         if send_welcome and created_students:
-            site_url = get_site_url(request)
+            site_url = get_tenant_site_url(request.tenant)
             parent_pw = {s.parent_phone: "0000" for s in created_students if getattr(s, "parent_phone", None)}
             send_welcome_messages(
                 created_students=created_students,
@@ -753,7 +753,7 @@ class StudentViewSet(ModelViewSet):
                 failed.append({"row": row, "name": student_data.get("name", ""), "error": str(e)})
 
         if send_welcome and created_students:
-            site_url = get_site_url(request)
+            site_url = get_tenant_site_url(request.tenant)
             parent_pw = {s.parent_phone: "0000" for s in created_students if getattr(s, "parent_phone", None)}
             send_welcome_messages(
                 created_students=created_students,
@@ -1427,7 +1427,7 @@ def _approve_registration_request(request, reg):
         actual_password = (reg.initial_password_plain or "").strip()
         send_registration_approved_messages(
             tenant_id=tenant.id,
-            site_url=get_site_url(request) or "",
+            site_url=get_tenant_site_url(request.tenant) or "",
             student_name=name,
             student_phone=(phone or "") if phone else "",
             student_id=ps_number,

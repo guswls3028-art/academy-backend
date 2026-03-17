@@ -406,7 +406,7 @@ class SendMessageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from apps.support.messaging.services import enqueue_sms, get_site_url
+        from apps.support.messaging.services import enqueue_sms, get_site_url, get_tenant_site_url
         from apps.support.messaging.policy import MessagingPolicyError
 
         # Rate limit: max 500 messages per tenant per hour
@@ -511,7 +511,7 @@ class SendMessageView(APIView):
             name = (s.name or "").strip()
             name_2 = name[:2] if len(name) >= 2 else name
             name_3 = name[:3] if len(name) >= 3 else name
-            site_url = get_site_url(request) or ""
+            site_url = get_tenant_site_url(request.tenant) or ""
             text = (
                 body_base.replace("#{학생이름}", name)
                 .replace("#{학생이름2}", name_2)
@@ -630,7 +630,7 @@ class SendMessageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from apps.support.messaging.services import enqueue_sms, get_site_url
+        from apps.support.messaging.services import enqueue_sms, get_site_url, get_tenant_site_url
         from apps.support.messaging.policy import MessagingPolicyError
 
         enqueued = 0
@@ -643,7 +643,7 @@ class SendMessageView(APIView):
             name = (s.name or "").strip()
             name_2 = name[:2] if len(name) >= 2 else name
             name_3 = name[:3] if len(name) >= 3 else name
-            site_url = get_site_url(request) or ""
+            site_url = get_tenant_site_url(request.tenant) or ""
             text = (
                 body_base.replace("#{학생이름}", name)
                 .replace("#{학생이름2}", name_2)

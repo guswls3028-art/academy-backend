@@ -224,6 +224,21 @@ def get_site_url(request=None):
     return ""
 
 
+def get_tenant_site_url(tenant) -> str:
+    """
+    테넌트별 사이트 URL 반환.
+    테넌트의 primary domain이 있으면 https://{host}, 없으면 get_site_url() fallback.
+    """
+    if tenant is not None:
+        try:
+            domain = tenant.domains.filter(is_primary=True).first()
+            if domain and domain.host:
+                return f"https://{domain.host}".rstrip("/")
+        except Exception:
+            pass
+    return get_site_url()
+
+
 def send_welcome_messages(
     *,
     created_students: list,
@@ -247,6 +262,17 @@ def send_welcome_messages(
     from apps.support.messaging.policy import MessagingPolicyError, get_owner_tenant_id
 
     tenant_id = getattr(created_students[0], "tenant_id", None)
+
+    # site_url이 비어 있으면 테넌트의 primary domain에서 자동 파생
+    if not site_url:
+        tenant_obj = getattr(created_students[0], "tenant", None)
+        if tenant_obj is None and tenant_id:
+            try:
+                from apps.core.models import Tenant
+                tenant_obj = Tenant.objects.get(pk=tenant_id)
+            except Exception:
+                tenant_obj = None
+        site_url = get_tenant_site_url(tenant_obj)
     if not tenant_id:
         logger.warning("send_welcome: no tenant_id, skip")
         return {"status": "skip", "enqueued": 0}
@@ -266,7 +292,7 @@ def send_welcome_messages(
                 return t, sid
         t = MessageTemplate.objects.filter(
             tenant_id=owner_id, category="signup", solapi_status="APPROVED",
-        ).exclude(solapi_template_id="").first()
+        ).exclude(solapi_template_id="").order_by("pk").first()
         if t:
             return t, (t.solapi_template_id or "").strip()
         return None, None
@@ -398,7 +424,7 @@ def send_registration_approved_messages(
             tenant_id=owner_id,
             category="signup",
             solapi_status="APPROVED",
-        ).exclude(solapi_template_id="").first()
+        ).exclude(solapi_template_id="").order_by("pk").first()
         if t:
             logger.info(
                 "send_registration_approved fallback: trigger=%s using owner template=%s (id=%s)",

@@ -33,6 +33,7 @@ def bulk_create_students_from_excel_rows(
         raise ValueError("initial_password는 4자 이상이어야 합니다.")
 
     created_count = 0
+    created_students: list = []
     failed: list[dict] = []
     duplicates: list[dict] = []
     restored: list[dict] = []
@@ -57,6 +58,7 @@ def bulk_create_students_from_excel_rows(
             )
             if student and created:
                 created_count += 1
+                created_students.append(student)
             elif student and was_restored:
                 restored.append({
                     "row": row_index,
@@ -100,6 +102,25 @@ def bulk_create_students_from_excel_rows(
                 "error": str(e)[:500],
                 "conflict_student_id": None,
             })
+
+    # 가입 안내 알림톡 발송 (새로 생성된 학생만)
+    if created_students:
+        try:
+            from apps.support.messaging.services import send_welcome_messages, get_tenant_site_url
+            site_url = get_tenant_site_url(tenant)
+            parent_pw = {
+                s.parent_phone: "0000"
+                for s in created_students
+                if getattr(s, "parent_phone", None)
+            }
+            send_welcome_messages(
+                created_students=created_students,
+                student_password=initial_password,
+                parent_password_by_phone=parent_pw,
+                site_url=site_url,
+            )
+        except Exception:
+            logger.exception("bulk_create_excel: send_welcome_messages failed (non-fatal)")
 
     if not created_count and not failed and not duplicates and not restored and total > 0:
         logger.error(
