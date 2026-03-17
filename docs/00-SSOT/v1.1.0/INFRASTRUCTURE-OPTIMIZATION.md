@@ -172,7 +172,7 @@ def _select_variant(input_w: int, input_h: int) -> dict:
 | < 90 min | Daemon (DB polling) | Video Worker ASG |
 | >= 90 min | AWS Batch (on-demand) | Batch compute environment |
 
-**Config [PROPOSED]:** `DAEMON_MAX_DURATION_SECONDS=5400` (currently 1800 in `base.py` and `daemon_main.py`)
+**Config [APPLIED 2026-03-17]:** `DAEMON_MAX_DURATION_SECONDS=5400` (changed from 1800 in `base.py`, `daemon_main.py`, `video_encoding.py`)
 
 The 90-minute threshold balances:
 - Most academy lectures are 60-90 minutes → daemon handles majority

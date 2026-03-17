@@ -1,7 +1,7 @@
 # V1.1.1 Release Notes — 기능 안정화 + UX 고도화
 
 **버전:** V1.1.1
-**날짜:** 2026-03-15~16
+**날짜:** 2026-03-15~17
 **유형:** 패치 (c 변경 — 인프라 변경 없음)
 
 ---
@@ -47,9 +47,18 @@
 - 점수/개인정보 제외 (공개 게시물 안전)
 - 미리보기 모달 → 다운로드
 
-### 7. 영상 개선
+### 7. 영상 인프라 개선 (2026-03-17)
+- **좀비 job 정리**: soft-delete 시 모든 active TranscodeJob을 DEAD 처리 (기존: current_job만). Soft-delete는 CASCADE를 트리거하지 않아 RETRY_WAIT job이 좀비로 잔존하던 버그 수정
+- **자동 enqueue**: job 완료 후 같은 tenant의 다음 UPLOADED 비디오를 즉시 자동 enqueue (daemon/batch 공통). 수동 개입 불필요
+- **R2 원본 3일 보관**: 인코딩 완료 후 즉시 삭제 → 3일 보관 후 `purge_raw_videos` 커맨드로 정리
+- **동시 처리 한도 제거**: tenant 2 / global 20 → 사실상 무제한 (9999). 실제 병목은 daemon 인스턴스 수
+- **daemon 90분 확장**: `DAEMON_MAX_DURATION_SECONDS` 1800→5400. 30분 초과 영상도 daemon에서 처리
+- **이름순 정렬**: Video 기본 정렬 `order, id` → `title, created_at, id` (학생앱/선생앱 공통)
+
+### 8. 영상 UX 개선 (2026-03-17)
+- **동적 업로드 슬롯**: 고정 5개 → 1개 시작, 파일 추가 시 자동 확장 (제한 없음)
+- **영상 이름 변경**: 상세 페이지에서 제목 클릭 → 인라인 편집 (PATCH API)
 - 전체공개영상 → 차시 선택 스킵 (자동 리다이렉트)
-- 영상 목록 오름차순 정렬 (1,2,3,4)
 - 인코딩 중 영상 "인코딩 중" 배지 표시
 
 ---
@@ -57,6 +66,7 @@
 ## 버그 수정
 
 ### Critical
+- **영상 처리 stuck 버그** — 삭제된 비디오의 좀비 RETRY_WAIT job이 tenant 동시 처리 한도를 차지하여 새 업로드가 영구 UPLOADED 상태에 stuck. 근본 원인: soft-delete가 CASCADE를 트리거하지 않음 + perform_destroy가 current_job만 정리. 3가지 수정으로 완전 해결 (좀비 정리 + 자동 enqueue + 한도 제거)
 - 선생님 대상자 등록 400 에러 — enrollment_id→student 자동 resolve 추가
 - 학생 클리닉 재예약 차단 — 중복 체크에서 cancelled 제외
 - LoginPage 프로모 리다이렉트 무한루프 — 강제 리다이렉트 제거
@@ -86,6 +96,16 @@
 
 ---
 
+## 운영 변경
+
+### 학부모 비밀번호 일괄 변경 (2026-03-17)
+- Tenant 2: 학부모 17명 → 비밀번호 `1234`
+- Tenant 1,3,8,9999: 학부모 243명 → 비밀번호 `0000`
+- 변경 범위: `TenantMembership.role='parent'`만 (owner/staff/student/teacher 미변경, 검증 완료)
+- E2E 검증: API 8/8 PASS, Playwright 브라우저 2/2 PASS
+- 학부모 계정 자동 생성 E2E: 학생 등록 → 아이디=전화번호, 비번=0000 → 카카오톡 알림톡 발송 success=True
+- SSOT 문서: `PARENT-ACCOUNT-SYSTEM.md`
+
 ## 인프라/운영
 
 - 버전 체커: 새 배포 감지 → "새로운 업데이트가 있습니다" 배너
@@ -105,6 +125,8 @@
 ---
 
 ## 다음 패치 (V1.1.x) TODO
+- [ ] `purge_raw_videos` cron 등록 (매일 1회, R2 원본 3일 보관 후 삭제)
+- [ ] Video CASCADE 위험: Session/Lecture 삭제 시 soft-delete 우회 → SET_NULL 검토
 - [ ] window.confirm 38건 → 커스텀 확인 모달
 - [ ] Tailwind 색상 52건 → 디자인 토큰
 - [ ] clinic_reason 자동 판정 API
