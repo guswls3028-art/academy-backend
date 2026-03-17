@@ -28,7 +28,7 @@ Previously only the API ASG was refreshed on push. Now all three ASGs are condit
 | Messaging | academy-v1-messaging-worker-asg | messaging worker code changed |
 | AI | academy-v1-ai-worker-asg | AI worker code changed |
 
-Workers use `MinHealthyPercentage=100, InstanceWarmup=120s` (shorter than API's 300s).
+API: MinHealthyPercentage=50%, InstanceWarmup=300s. Workers (messaging/AI): MinHealthyPercentage=0%, InstanceWarmup=120s.
 
 ### 3. Pre-Deploy Database Migration
 
@@ -104,7 +104,7 @@ MANIFEST=$(aws ecr batch-get-image --repository-name academy-api --image-ids ima
 aws ecr put-image --repository-name academy-api --image-tag latest --image-manifest "$MANIFEST"
 
 # 3. Trigger ASG instance refresh
-aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'
+aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":300}'
 ```
 
 ## Migration Safety

@@ -20,8 +20,8 @@
 ### 즉시 확인 (30초)
 ```bash
 # 헬스체크
-curl -s https://api.1academy.co.kr/healthz
-curl -s https://api.1academy.co.kr/health
+curl -s https://api.hakwonplus.com/healthz
+curl -s https://api.hakwonplus.com/health
 
 # 최근 배포 확인
 gh run list -w "v1-build-and-push-latest.yml" -L 3
@@ -53,8 +53,8 @@ RUN_ENV aws autoscaling describe-auto-scaling-groups \
 
 ### 복구 확인
 ```bash
-curl -s https://api.1academy.co.kr/healthz   # 200
-curl -s https://api.1academy.co.kr/health     # 200
+curl -s https://api.hakwonplus.com/healthz   # 200
+curl -s https://api.hakwonplus.com/health     # 200
 ```
 
 ### 에스컬레이션 기준
@@ -73,13 +73,13 @@ curl -s https://api.1academy.co.kr/health     # 200
 ```bash
 # SQS 큐 깊이 확인
 RUN_ENV aws sqs get-queue-attributes \
-  --queue-url https://sqs.ap-northeast-2.amazonaws.com/{ACCOUNT}/academy-messaging-queue \
+  --queue-url https://sqs.ap-northeast-2.amazonaws.com/{ACCOUNT}/academy-v1-messaging-queue \
   --attribute-names ApproximateNumberOfMessages,ApproximateNumberOfMessagesNotVisible \
   --output table
 
 # DLQ 확인
 RUN_ENV aws sqs get-queue-attributes \
-  --queue-url https://sqs.ap-northeast-2.amazonaws.com/{ACCOUNT}/academy-dlq \
+  --queue-url https://sqs.ap-northeast-2.amazonaws.com/{ACCOUNT}/academy-v1-messaging-queue-dlq \
   --attribute-names ApproximateNumberOfMessages \
   --output text
 
@@ -113,7 +113,7 @@ RUN_ENV aws autoscaling set-desired-capacity \
 ```bash
 # 큐 깊이 0으로 수렴 확인
 RUN_ENV aws sqs get-queue-attributes \
-  --queue-url https://sqs.ap-northeast-2.amazonaws.com/{ACCOUNT}/academy-messaging-queue \
+  --queue-url https://sqs.ap-northeast-2.amazonaws.com/{ACCOUNT}/academy-v1-messaging-queue \
   --attribute-names ApproximateNumberOfMessages --output text
 ```
 
@@ -252,7 +252,7 @@ RUN_ENV aws ecr list-images --repository-name academy-api \
 ### 즉시 확인 (30초)
 ```bash
 # 헬스 엔드포인트로 DB 상태 확인
-curl -s https://api.1academy.co.kr/health
+curl -s https://api.hakwonplus.com/health
 
 # RDS 상태 확인
 RUN_ENV aws rds describe-db-instances \
@@ -287,7 +287,7 @@ RUN_ENV aws rds reboot-db-instance \
 
 ### 복구 확인
 ```bash
-curl -s https://api.1academy.co.kr/health   # 200 + "database": "connected"
+curl -s https://api.hakwonplus.com/health   # 200 + "database": "connected"
 ```
 
 ### 에스컬레이션 기준
@@ -313,8 +313,8 @@ gh run list -w "v1-build-and-push-latest.yml" -L 3
 gh run view --log-failed
 
 # 현재 헬스 확인
-curl -s https://api.1academy.co.kr/healthz
-curl -s https://api.1academy.co.kr/health
+curl -s https://api.hakwonplus.com/healthz
+curl -s https://api.hakwonplus.com/health
 ```
 
 ### 즉시 조치 (5분)
@@ -348,7 +348,7 @@ RUN_ENV aws ecr put-image \
 # 3단계: ASG 인스턴스 새로고침 (롤백 배포)
 RUN_ENV aws autoscaling start-instance-refresh \
   --auto-scaling-group-name academy-v1-api-asg \
-  --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'
+  --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":300}'
 ```
 
 > **워커 롤백도 동일 패턴.** repository-name과 ASG 이름만 변경:
@@ -373,8 +373,8 @@ RUN_ENV aws autoscaling describe-instance-refreshes \
   --output table
 
 # 헬스 확인
-curl -s https://api.1academy.co.kr/healthz   # 200
-curl -s https://api.1academy.co.kr/health     # 200
+curl -s https://api.hakwonplus.com/healthz   # 200
+curl -s https://api.hakwonplus.com/health     # 200
 ```
 
 ### 에스컬레이션 기준

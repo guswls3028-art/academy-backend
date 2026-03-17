@@ -2,7 +2,7 @@
 Video Worker - Daemon Mode (상주 프로세스)
 
 DB 폴링 기반 장기 실행 데몬. Batch 컨테이너 대신 상주하며 QUEUED 작업을 처리.
-- 30분(1800초) 이하 영상만 처리
+- 90분(5400초) 이하 영상만 처리
 - 시작 시 + 주기적 연결 검증 (DB, Redis)
 - Graceful shutdown (SIGTERM/SIGINT → 현재 작업 완료 후 종료)
 - Idle backoff (작업 없으면 폴링 간격 점진 증가)

@@ -1,5 +1,5 @@
 ﻿# ==============================================================================
-# API 재배포 + 전체 워커 연결 검증 (SSOT V1.0.0)
+# API 재배포 + 전체 워커 연결 검증 (SSOT V1.1.0)
 # API ASG instance refresh → 헬스체크 대기 → 워커 연결 전체 검증
 # Usage: pwsh scripts/v1/deploy-api-and-verify-workers.ps1 [-AwsProfile default] [-SkipRefresh]
 # ==============================================================================
@@ -33,7 +33,7 @@ function Add-Result($stage, $item, $status, $detail) {
 
 $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
 Write-Host "`n============================================" -ForegroundColor Cyan
-Write-Host " API Deploy + Worker Verification (SSOT V1.0.0)" -ForegroundColor Cyan
+Write-Host " API Deploy + Worker Verification (SSOT V1.1.0)" -ForegroundColor Cyan
 Write-Host " $timestamp" -ForegroundColor Cyan
 Write-Host "============================================`n" -ForegroundColor Cyan
 
@@ -105,7 +105,7 @@ try {
 }
 
 # 0-3. CI build report digest (from ci-build.latest.md)
-$ciBuildReportPath = Join-Path $repoRoot "docs\00-SSOT\v1\reports\ci-build.latest.md"
+$ciBuildReportPath = Join-Path $repoRoot "docs\00-SSOT\v1.1.0\reports\ci-build.latest.md"
 $ciBuildReportSha = $null
 if (Test-Path $ciBuildReportPath) {
     try {
@@ -539,7 +539,7 @@ $verdict = if ($failCount -gt 0) { "FAIL" } elseif ($warnCount -gt 0) { "WARNING
 Write-Host "`n  VERDICT: $verdict" -ForegroundColor $(if ($verdict -eq "FAIL") { "Red" } elseif ($verdict -eq "WARNING") { "Yellow" } else { "Green" })
 
 # Save report
-$reportDir = Join-Path (Get-RepoRoot) "docs\00-SSOT\v1\reports"
+$reportDir = Join-Path (Get-RepoRoot) "docs\00-SSOT\v1.1.0\reports"
 if (-not (Test-Path $reportDir)) { New-Item -ItemType Directory -Path $reportDir -Force | Out-Null }
 $reportPath = Join-Path $reportDir "api-deploy-worker-verify.latest.md"
 
@@ -547,7 +547,7 @@ $md = @"
 # API Deploy + Worker Verification Report
 
 **Generated:** $timestamp
-**SSOT Version:** V1.0.0
+**SSOT Version:** V1.1.0
 **Verdict:** $verdict (PASS=$passCount, WARN=$warnCount, FAIL=$failCount)
 
 ---
@@ -564,7 +564,7 @@ $md += @"
 
 ---
 
-**SSOT Reference:** ``docs/00-SSOT/v1/DEPLOY-VERIFICATION-SSOT.md`` (V1.0.0)
+**SSOT Reference:** ``docs/00-SSOT/v1.1.0/DEPLOY-VERIFICATION-SSOT.md`` (V1.1.0)
 "@
 
 $md | Out-File -FilePath $reportPath -Encoding UTF8 -Force

@@ -53,7 +53,7 @@ git push main
 | `apps/worker/messaging_worker/`, `apps/support/messaging/`, `docker/messaging-worker/`, `requirements/worker-messaging.txt` | Messaging Worker |
 | `apps/worker/ai_worker/`, `apps/domains/ai/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
 
-The base image is ALWAYS built (it is the foundation for all service images). Conditional builds only apply to service-specific images.
+Base image build is CONDITIONAL — triggered only when `docker/Dockerfile.base`, `requirements/common.txt`, or `libs/` files change (or on workflow_dispatch). Conditional builds also apply to service-specific images.
 
 ### Build Output
 
@@ -236,6 +236,7 @@ This keeps 10 rollback points and aggressively cleans untagged manifests. See `I
 |----------|---------|--------|---------|
 | `/healthz` | Liveness probe | App is running, can respond | ALB health check, deploy verification |
 | `/health` | Readiness probe | App + database connection | Deploy verification, smoke tests |
+| `/readyz` | Readiness check (same as /health) | App + database connection | Registered at `urls.py` lines 16-18 |
 
 - ALB uses `/healthz` for routing decisions (lightweight, no DB)
 - Deploy verification checks BOTH endpoints

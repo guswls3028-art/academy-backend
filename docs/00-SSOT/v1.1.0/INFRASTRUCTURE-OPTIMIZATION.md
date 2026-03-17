@@ -21,7 +21,7 @@
 3. **Tenant isolation is absolute.** No change in this document weakens tenant boundaries.
 4. **Correctness over speed.** Fast execution is valued, but never at the cost of data integrity or tenant safety.
 5. **Non-wasteful, not cheap.** Eliminate unjustified waste; do not cut where UX or reliability suffers.
-6. **Zero-downtime deployment must never break.** All changes preserve MinHealthyPercentage=100% ASG refresh.
+6. **Zero-downtime deployment must never break.** API uses scale-up + MinHealthyPercentage=50%; workers use MinHealthyPercentage=0% (SQS buffers during refresh).
 
 ---
 
@@ -153,6 +153,8 @@ Architecture supports this switch with zero structural changes.
 
 ### 3.3 Source Resolution Protection
 
+> [NOTE: This code snippet shows a PROPOSED approach that was not implemented. Actual source resolution logic is in `transcoder.py:_compute_output_resolution()`.]
+
 ```python
 def _select_variant(input_w: int, input_h: int) -> dict:
     """Do not upscale. If source < 720p, encode at source resolution."""
@@ -198,6 +200,8 @@ The 90-minute threshold balances:
 **Benefits:** Resumable uploads, per-part retry, progress tracking, 1GB upload in ~1-2min vs 5-10min.
 
 ### 3.6 Performance Expectations
+
+> **[SUPERSEDED]** This table was for a proposed single-720p approach that was NOT implemented. Actual encoding: 2-tier ABR (CRF 20 original + CRF 23 720p), preset=medium. These performance projections are INVALID for the current system. See §3.1 for the implemented encoding strategy.
 
 | Metric | Before (2-variant, medium preset) | After (single 720p, fast preset) | Improvement | Source |
 |--------|-----------------------------------|----------------------------------|-------------|--------|
@@ -412,7 +416,7 @@ AI worker min=1 is an operating principle, not a cost optimization target. The p
 | RDS db.t4g.medium | PostgreSQL query workload; t4g.small has only 2GB RAM |
 | Redis cache.t4g.small | Video progress + session cache; t4g.micro has only 0.5GB |
 | API + Messaging + AI min=1 | Cold start delays hurt UX; always-on gives instant processing. **All workers min=1 is an operating principle.** |
-| MinHealthyPercentage=100% | Zero-downtime guarantee; non-negotiable |
+| MinHealthyPercentage: API=50%, Workers=0% | Zero-downtime via scale-up strategy (API) and SQS buffering (workers) |
 
 **What CAN be cut (see §5.1.1):**
 
@@ -451,8 +455,8 @@ AI worker min=1 is an operating principle, not a cost optimization target. The p
 4. Refresh 완료 후 desired=1로 scale-down
 
 **워커 배포:**
-- `MinHealthyPercentage=100%`, `InstanceWarmup=120s`
-- Scale-up 불필요 (SQS 큐가 버퍼 역할)
+- `MinHealthyPercentage=0%`, `InstanceWarmup=120s`
+- Scale-up 불필요 (SQS 큐가 버퍼 역할, 일시적 워커 부재 허용)
 
 **IAM 요구사항:** `autoscaling:UpdateAutoScalingGroup` (scale-up/down에 필수)
 
@@ -547,14 +551,14 @@ No additional drain work needed.
 | 4 | ECR manifest-aware cleanup | $200/mo savings + deployment hygiene | Done | ✅ [COMPLETED] 34,026 images deleted (5.2TB → 5.4GB) |
 | 5 | ECR lifecycle policy re-apply | Recurrence prevention | Done | ✅ [CONFIRMED] Applied 2026-03-15, lastEvaluatedAt 2026-03-17T05:02:57 — working |
 | 6 | Messaging business-level idempotency | Atomic claim + DB UniqueConstraint + fail-closed | 4 hours | ✅ [COMPLETED] 3-layer defense (Redis lock + DB unique + transport dedup) |
-| 7 | AWS Budget alerts | Cost guardrail ($270/$320/$380) | 15 min | ✅ [COMPLETED] academy-monthly-infra created |
-| 8 | Single 720p encoding switch [PROPOSED] | ~50-55% time-to-ready improvement | 1 hour | Pending (code change needed) |
+| 7 | AWS Budget alerts | Cost guardrail ($300/$340/$380) | 15 min | ✅ [COMPLETED] academy-monthly-infra created |
+| 8 | ~~Single 720p encoding switch~~ | SUPERSEDED by 2-tier ABR (§3.1). Not applicable. | — | SUPERSEDED |
 | 9 | DAEMON_MAX_DURATION_SECONDS → 5400 | Daemon handles up to 90min videos | 10 min | ✅ [APPLIED 2026-03-17] base.py, daemon_main.py, video_encoding.py |
 | 10 | ~~AI worker min=0~~ | ~~$24/mo savings~~ | — | **WITHDRAWN — 운영 원칙 충돌. min=1 확정.** |
 | 11 | Messaging worker → t4g.small [PROPOSED] | $14.50/mo savings | 30 min | Pending (실측 후 판단) |
 | 12 | Video worker ASG separation [PROPOSED] | API stability + encoding throughput | Half day | Pending (infra creation) |
-| 13 | Tablet QA for 720p text | Validate or escalate to 1080p | 1-2 hours | Pending |
-| 14 | Base image conditional build | Skip rebuild when only app code changed | 30 min | Pending |
+| 13 | Tablet QA for 720p text | RESOLVED — 2-tier ABR retains original resolution in v2 variant (§3.2). | — | RESOLVED |
+| 14 | Base image conditional build | Skip rebuild when only app code changed | 30 min | ✅ [COMPLETED] Already implemented in workflow (detect-changes job) |
 | 15 | Multipart upload [PROPOSED] | Large file UX improvement | 1-2 days | Pending |
 
 ---
@@ -587,7 +591,7 @@ Step 3: ROLL BACK CODE (image re-tag + ASG refresh)
   $ aws ecr put-image --repository-name academy-api \
       --image-tag latest --image-manifest "$MANIFEST"
   $ aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg \
-      --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'
+      --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":300}'
 
 Step 4: VERIFY
   - /healthz returns 200

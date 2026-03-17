@@ -106,7 +106,7 @@ class Command(BaseCommand):
                     # In daemon mode, short videos (known duration <= max) are picked up by daemon polling.
                     # Submit to Batch for: long videos, unknown-duration videos, or batch mode.
                     worker_mode = getattr(settings, "VIDEO_WORKER_MODE", "batch")
-                    daemon_max = int(getattr(settings, "DAEMON_MAX_DURATION_SECONDS", 1800))
+                    daemon_max = int(getattr(settings, "DAEMON_MAX_DURATION_SECONDS", 5400))
                     use_batch = (worker_mode != "daemon") or (duration_sec is None) or (duration_sec > daemon_max)
 
                     if use_batch:
