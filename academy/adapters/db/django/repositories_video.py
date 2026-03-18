@@ -93,7 +93,7 @@ def get_playback_events_queryset_for_video(video, since=None):
 
 def video_filter_by_lecture(lecture):
     from apps.support.video.models import Video
-    return Video.objects.filter(session__lecture=lecture).distinct()
+    return Video.objects.filter(session__lecture=lecture).order_by("order", "title", "id").distinct()
 
 
 def video_filter_by_session_ready(session_id):
@@ -101,7 +101,7 @@ def video_filter_by_session_ready(session_id):
     return Video.objects.filter(
         session_id=session_id,
         status=Video.Status.READY,
-    ).select_related("session__lecture").order_by("title", "created_at", "id")
+    ).select_related("session__lecture").order_by("order", "title", "id")
 
 
 def enrollment_get_by_student_lecture_active(student, lecture):

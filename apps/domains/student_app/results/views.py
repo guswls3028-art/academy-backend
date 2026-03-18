@@ -109,6 +109,9 @@ class MyGradesSummaryView(APIView):
                 session_title = getattr(session, "title", None) or f"{getattr(session, 'order', '')}차시"
                 if hasattr(session, "lecture") and session.lecture:
                     lecture_title = getattr(session.lecture, "title", None)
+            # 전체공개영상 강의는 성적에서 제외
+            if lecture_title == "전체공개영상":
+                continue
             exam_list.append({
                 "exam_id": eid,
                 "enrollment_id": r["enrollment_id"],
@@ -125,6 +128,7 @@ class MyGradesSummaryView(APIView):
         hw_scores = (
             HomeworkScore.objects.filter(enrollment_id__in=enrollment_ids)
             .exclude(score__isnull=True)
+            .exclude(session__lecture__title="전체공개영상")
             .select_related("homework", "session", "session__lecture")
             .order_by("-updated_at")
         )
