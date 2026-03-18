@@ -22,3 +22,39 @@ def get_all_auto_send_configs(tenant_id: int) -> dict[str, Optional[AutoSendConf
     """테넌트의 모든 자동발송 설정 조회. trigger -> config."""
     configs = AutoSendConfig.objects.filter(tenant_id=tenant_id).select_related("template")
     return {c.trigger: c for c in configs}
+
+
+def resolve_freeform_template(tenant_id: int):
+    """
+    알림톡 자유양식 APPROVED 템플릿 resolve.
+    1) 현재 테넌트의 APPROVED 템플릿 (#{공지내용} 또는 #{내용})
+    2) 없으면 오너 테넌트의 APPROVED 템플릿으로 fallback
+    Returns: MessageTemplate | None
+    """
+    from apps.support.messaging.models import MessageTemplate
+    from apps.support.messaging.policy import get_owner_tenant_id
+
+    for tid in [tenant_id, get_owner_tenant_id()]:
+        freeform = MessageTemplate.objects.filter(
+            tenant_id=tid, solapi_status="APPROVED", body__contains="#{공지내용}",
+        ).first()
+        if not freeform:
+            freeform = MessageTemplate.objects.filter(
+                tenant_id=tid, solapi_status="APPROVED", body__contains="#{내용}",
+            ).first()
+        if freeform:
+            return freeform
+    return None
+
+
+def has_any_approved_template(tenant_id: int) -> bool:
+    """테넌트 또는 오너 테넌트에 APPROVED 알림톡 템플릿이 있는지 확인."""
+    from apps.support.messaging.models import MessageTemplate
+    from apps.support.messaging.policy import get_owner_tenant_id
+
+    if MessageTemplate.objects.filter(tenant_id=tenant_id, solapi_status="APPROVED").exists():
+        return True
+    owner_id = get_owner_tenant_id()
+    if tenant_id != owner_id:
+        return MessageTemplate.objects.filter(tenant_id=owner_id, solapi_status="APPROVED").exists()
+    return False

@@ -36,6 +36,7 @@ from apps.support.messaging.serializers import (
 )
 from apps.support.messaging.solapi_sender_client import verify_sender_number
 from apps.support.messaging.policy import can_send_sms, resolve_kakao_channel
+from apps.support.messaging.selectors import resolve_freeform_template, has_any_approved_template
 
 
 class MessagingInfoView(APIView):
@@ -54,11 +55,8 @@ class MessagingInfoView(APIView):
         data["channel_source"] = "system_default" if channel.get("use_default", True) else "tenant_override"
         resolved_pf_id = (channel.get("pf_id") or "").strip()
         data["resolved_pf_id"] = resolved_pf_id
-        # alimtalk_available: PFID resolved AND at least one APPROVED template exists
-        has_approved_template = MessageTemplate.objects.filter(
-            tenant=tenant, solapi_status="APPROVED",
-        ).exists() if resolved_pf_id else False
-        data["alimtalk_available"] = bool(resolved_pf_id and has_approved_template)
+        # alimtalk_available: PFID resolved AND at least one APPROVED template exists (tenant or owner fallback)
+        data["alimtalk_available"] = bool(resolved_pf_id and has_any_approved_template(tenant.id))
         return Response(data)
 
     def patch(self, request):
@@ -93,10 +91,7 @@ class MessagingInfoView(APIView):
         data["channel_source"] = "system_default" if channel.get("use_default", True) else "tenant_override"
         resolved_pf_id = (channel.get("pf_id") or "").strip()
         data["resolved_pf_id"] = resolved_pf_id
-        has_approved_template = MessageTemplate.objects.filter(
-            tenant=tenant, solapi_status="APPROVED",
-        ).exists() if resolved_pf_id else False
-        data["alimtalk_available"] = bool(resolved_pf_id and has_approved_template)
+        data["alimtalk_available"] = bool(resolved_pf_id and has_any_approved_template(tenant.id))
         return Response(data)
 
 
@@ -469,19 +464,13 @@ class SendMessageView(APIView):
                 subject_base = (t.subject or "").strip()
             solapi_template_id = (t.solapi_template_id or "").strip()
 
-        # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택 (#{공지내용} 우선, #{내용} 하위호환)
+        # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택 (테넌트 → 오너 fallback)
         if message_mode in ("alimtalk", "both") and not solapi_template_id:
-            freeform = MessageTemplate.objects.filter(
-                tenant=tenant, solapi_status="APPROVED", body__contains="#{공지내용}",
-            ).first()
-            if not freeform:
-                freeform = MessageTemplate.objects.filter(
-                    tenant=tenant, solapi_status="APPROVED", body__contains="#{내용}",
-                ).first()
+            freeform = resolve_freeform_template(tenant.id)
             if freeform:
                 t = freeform
                 solapi_template_id = (freeform.solapi_template_id or "").strip()
-                user_custom_content = body_base  # 전체 본문을 #{내용}으로
+                user_custom_content = body_base  # 전체 본문을 #{공지내용}으로
                 if not subject_base:
                     subject_base = (freeform.subject or "").strip()
 
@@ -602,15 +591,9 @@ class SendMessageView(APIView):
                     subject_base = (t.subject or "").strip()
                 solapi_template_id = (t.solapi_template_id or "").strip()
 
-        # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택 (#{공지내용} 우선, #{내용} 하위호환)
+        # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택 (테넌트 → 오너 fallback)
         if message_mode in ("alimtalk", "both") and not solapi_template_id:
-            freeform = MessageTemplate.objects.filter(
-                tenant=tenant, solapi_status="APPROVED", body__contains="#{공지내용}",
-            ).first()
-            if not freeform:
-                freeform = MessageTemplate.objects.filter(
-                    tenant=tenant, solapi_status="APPROVED", body__contains="#{내용}",
-                ).first()
+            freeform = resolve_freeform_template(tenant.id)
             if freeform:
                 t = freeform
                 solapi_template_id = (freeform.solapi_template_id or "").strip()
