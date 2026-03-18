@@ -40,6 +40,12 @@ TENANTS_CONFIG = [
         "hosts": ["sswe.co.kr", "www.sswe.co.kr"],
         "primary_host": "sswe.co.kr",
     },
+    {
+        "code": "dnb",
+        "name": "DNB Academy",
+        "hosts": ["dnbacademy.co.kr", "www.dnbacademy.co.kr"],
+        "primary_host": "dnbacademy.co.kr",
+    },
 ]
 
 
