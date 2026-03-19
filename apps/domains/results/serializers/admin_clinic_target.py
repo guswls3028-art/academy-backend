@@ -22,6 +22,11 @@ class AdminClinicTargetSerializer(serializers.Serializer):
     session_title = serializers.CharField()
 
     reason = serializers.ChoiceField(choices=["score", "confidence"])
+    clinic_reason = serializers.ChoiceField(
+        choices=["exam", "homework", "both"],
+        required=False,
+        allow_null=True,
+    )
 
     exam_score = serializers.FloatField()
     cutline_score = serializers.FloatField()
