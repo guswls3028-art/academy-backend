@@ -146,10 +146,24 @@ def _register_fonts():
         if os.path.isfile(p):
             try: pdfmetrics.registerFont(TTFont(_FN, p)); break
             except Exception: continue
+    bold_ok = False
     for p in bold:
         if os.path.isfile(p):
-            try: pdfmetrics.registerFont(TTFont(_FB, p)); break
-            except Exception: continue
+            try:
+                pdfmetrics.registerFont(TTFont(_FB, p))
+                bold_ok = True
+                break
+            except Exception:
+                continue
+    # Bold 없으면 Regular를 Bold로도 등록 (폰트 없어서 크래시 방지)
+    if not bold_ok:
+        for p in reg:
+            if os.path.isfile(p):
+                try:
+                    pdfmetrics.registerFont(TTFont(_FB, p))
+                    break
+                except Exception:
+                    continue
     _FONT_OK = True
 
 
