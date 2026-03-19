@@ -734,9 +734,11 @@ jobs:
 
       - name: Register new Batch job definition revisions with SHA image
         run: |
+          set +e
           IMAGE="${{ env.ECR_REGISTRY }}/academy-video-worker:sha-${{ needs.detect-changes.outputs.short_sha }}"
           echo "Deploying video worker image: $IMAGE"
           FAIL_COUNT=0
+          SUCCESS_COUNT=0
           for JOBDEF_NAME in $VIDEO_JOB_DEFS; do
             echo "=== $JOBDEF_NAME ==="
             CURRENT=$(aws batch describe-job-definitions \
@@ -746,35 +748,36 @@ jobs:
               echo "::warning::Job definition $JOBDEF_NAME not found, skipping"
               continue
             fi
-            # Update container image + strip read-only fields that register rejects
-            NEW_CONTAINER=$(echo "$CURRENT" | jq --arg img "$IMAGE" '
+            # Write stripped containerProperties to temp file (avoids shell escaping issues)
+            TMPFILE=$(mktemp /tmp/jobdef-XXXXXX.json)
+            echo "$CURRENT" | jq --arg img "$IMAGE" '
               .containerProperties
               | .image = $img
-              | del(
-                  .networkInterfaces,
-                  .taskArn,
-                  .containerInstanceArn,
-                  .logStreamName,
-                  .assignPublicIp,
-                  .networkConfiguration
-                )
+              | del(.networkInterfaces, .taskArn, .containerInstanceArn,
+                    .logStreamName, .assignPublicIp, .networkConfiguration)
               | if .secrets == [] then del(.secrets) else . end
-            ')
+              | if .logConfiguration.secretOptions == [] then .logConfiguration |= del(.secretOptions) else . end
+            ' > "$TMPFILE"
             PLATFORM=$(echo "$CURRENT" | jq -r '.platformCapabilities // ["EC2"] | join(",")')
-            if aws batch register-job-definition \
+            ERR=$(aws batch register-job-definition \
               --job-definition-name "$JOBDEF_NAME" \
               --type container \
               --platform-capabilities "$PLATFORM" \
-              --container-properties "$NEW_CONTAINER" \
-              --output text --query 'jobDefinitionArn' 2>&1; then
-              echo "  ✅ New revision registered"
+              --container-properties "file://$TMPFILE" \
+              --output text --query 'jobDefinitionArn' 2>&1)
+            RC=$?
+            rm -f "$TMPFILE"
+            if [ $RC -eq 0 ]; then
+              echo "  ✅ $ERR"
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
             else
-              echo "::error::Failed to register $JOBDEF_NAME"
+              echo "::error::Failed to register $JOBDEF_NAME (exit $RC): $ERR"
               FAIL_COUNT=$((FAIL_COUNT + 1))
             fi
           done
+          echo "Summary: $SUCCESS_COUNT success, $FAIL_COUNT failed"
           if [ "$FAIL_COUNT" -gt 0 ]; then
-            echo "::error::$FAIL_COUNT job definition(s) failed to register"
+            echo "::error::$FAIL_COUNT job definition(s) failed"
             exit 1
           fi
 
