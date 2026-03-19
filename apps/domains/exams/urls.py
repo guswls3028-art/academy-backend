@@ -24,6 +24,7 @@ from apps.domains.exams.views.question_auto_view import SheetAutoQuestionsView
 from apps.domains.exams.views.exam_enrollment_view import ExamEnrollmentManageView
 from apps.domains.exams.views.student_exam_view import StudentAvailableExamListView
 from apps.domains.exams.views.bulk_template_create_view import BulkTemplateCreateView
+from apps.domains.exams.views.pdf_question_extract_view import PdfQuestionExtractView
 
 router = DefaultRouter()
 # 서브 리소스(answer-keys, sheets, questions)를 빈 prefix("")보다 먼저 등록해야 함.
@@ -59,6 +60,11 @@ urlpatterns = [
     # =========================
     path("<int:exam_id>/spawn-regular/", RegularExamFromTemplateView.as_view()),
     path("<int:exam_id>/save-as-template/", SaveAsTemplateView.as_view()),
+
+    # =========================
+    # PDF 문항 분할 (AI)
+    # =========================
+    path("pdf-extract/", PdfQuestionExtractView.as_view()),
 
     # =========================
     # Assets / OMR
