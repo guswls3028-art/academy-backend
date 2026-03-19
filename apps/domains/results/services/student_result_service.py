@@ -88,6 +88,19 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     data["answer_visibility"] = getattr(exam, "answer_visibility", "hidden")
     data["answers_visible"] = show_answers
 
+    # question_id → question_number 매핑 (ExamQuestion.number 사용)
+    from apps.domains.exams.models.question import ExamQuestion
+    item_question_ids = [
+        item.get("question_id") for item in (data.get("items") or [])
+        if item.get("question_id")
+    ]
+    question_number_map = {}
+    if item_question_ids:
+        question_number_map = dict(
+            ExamQuestion.objects.filter(id__in=item_question_ids)
+            .values_list("id", "number")
+        )
+
     # 정답 공개 시 answer key에서 correct_answer 주입
     correct_answer_map = {}
     if show_answers:
@@ -98,11 +111,11 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
             correct_answer_map = ak.answers  # key=question_id(str), value=answer
 
     for item in data.get("items") or []:
-        item.setdefault("question_number", item.get("question_id"))
+        q_id = item.get("question_id")
+        item["question_number"] = question_number_map.get(q_id, q_id)
         item.setdefault("student_answer", item.get("answer"))
         if show_answers:
-            q_id = str(item.get("question_id", ""))
-            item["correct_answer"] = correct_answer_map.get(q_id) or None
+            item["correct_answer"] = correct_answer_map.get(str(q_id or "")) or None
         else:
             item["correct_answer"] = None
 

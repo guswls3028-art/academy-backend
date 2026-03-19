@@ -26,10 +26,9 @@ class GradingContractGuard:
         if exam.exam_type != Exam.ExamType.REGULAR:
             raise ValidationError("only REGULAR exams are gradable")
 
-        if not exam.template_exam_id:
-            raise ValidationError("regular exam must have template_exam")
-
-        template_exam = exam.template_exam
+        # template_exam이 있으면 사용, 없으면 자기 자신이 구조 SSOT
+        from apps.domains.exams.services.template_resolver import resolve_template_exam
+        template_exam = resolve_template_exam(exam)
 
         # Sheet 검증
         sheet = getattr(template_exam, "sheet", None)

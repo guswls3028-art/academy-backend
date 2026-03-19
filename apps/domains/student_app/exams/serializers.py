@@ -12,3 +12,5 @@ class StudentExamSerializer(serializers.Serializer):
     pass_score = serializers.IntegerField()
     description = serializers.CharField(allow_null=True, required=False)
     session_id = serializers.IntegerField(allow_null=True, required=False)
+    has_result = serializers.BooleanField(default=False, required=False)
+    attempt_count = serializers.IntegerField(default=0, required=False)

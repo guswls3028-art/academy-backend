@@ -6,6 +6,7 @@ class DashboardNoticeSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     title = serializers.CharField()
     created_at = serializers.DateTimeField(allow_null=True, required=False)
+    is_urgent = serializers.BooleanField(default=False, required=False)
 
 
 class DashboardSessionSerializer(serializers.Serializer):

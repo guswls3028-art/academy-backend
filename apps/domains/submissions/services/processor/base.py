@@ -49,6 +49,7 @@ class BaseSubmissionProcessor(ABC):
                 defaults={
                     "answer": str(item.get("answer") or ""),
                     "meta": item.get("meta") or {},
+                    "tenant": self.submission.tenant,
                 },
             )
             results.append(obj)

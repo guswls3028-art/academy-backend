@@ -44,13 +44,16 @@ def _exam_queryset_for_user(user, tenant):
     )
 
 
-def _serialize_exam(exam):
+def _serialize_exam(exam, *, submission_status_map=None):
     """Exam → StudentExamSerializer 호환 dict."""
     session_id = None
     if hasattr(exam, "sessions") and exam.sessions.exists():
         first = exam.sessions.first()
         if first:
             session_id = first.id
+
+    sub_info = (submission_status_map or {}).get(exam.id, {})
+
     return StudentExamSerializer({
         "id": exam.id,
         "title": exam.title,
@@ -61,6 +64,8 @@ def _serialize_exam(exam):
         "max_attempts": int(getattr(exam, "max_attempts", 1) or 1),
         "pass_score": int(getattr(exam, "pass_score", 0) or 0),
         "session_id": session_id,
+        "has_result": sub_info.get("has_result", False),
+        "attempt_count": sub_info.get("attempt_count", 0),
     }).data
 
 
@@ -72,7 +77,25 @@ class StudentExamListView(APIView):
         if not tenant:
             return Response({"items": []})
         qs = _exam_queryset_for_user(request.user, tenant)
-        items = [_serialize_exam(exam) for exam in qs]
+        exams = list(qs)
+
+        # 제출 상태 일괄 조회 (N+1 방지)
+        submission_status_map = {}
+        if exams:
+            from apps.domains.submissions.models.submission import Submission
+            exam_ids = [e.id for e in exams]
+            subs = Submission.objects.filter(
+                user=request.user,
+                target_type=Submission.TargetType.EXAM,
+                target_id__in=exam_ids,
+            ).values_list("target_id", "status")
+            for target_id, sub_status in subs:
+                entry = submission_status_map.setdefault(target_id, {"has_result": False, "attempt_count": 0})
+                entry["attempt_count"] += 1
+                if sub_status == "done":
+                    entry["has_result"] = True
+
+        items = [_serialize_exam(exam, submission_status_map=submission_status_map) for exam in exams]
         return Response({"items": items})
 
 
@@ -217,20 +240,42 @@ class StudentExamSubmitView(APIView):
         # 중복 제출 방지 (atomic + select_for_update로 race condition 방지)
         try:
             with transaction.atomic():
-                existing = (
+                in_progress_statuses = ["submitted", "dispatched", "extracting", "answers_ready", "grading"]
+                prev_submissions = list(
                     Submission.objects.select_for_update()
                     .filter(
                         user=request.user,
                         target_type=Submission.TargetType.EXAM,
                         target_id=exam_id,
-                        status__in=["submitted", "dispatched", "extracting", "answers_ready", "grading", "done"],
+                        status__in=in_progress_statuses + ["done"],
                     )
-                    .exists()
                 )
-                if existing:
+                in_progress = [s for s in prev_submissions if s.status in in_progress_statuses]
+                done_submissions = [s for s in prev_submissions if s.status == "done"]
+
+                # 처리 중인 제출이 있으면 차단
+                if in_progress:
                     return Response(
                         {"detail": "이미 제출된 시험입니다."},
                         status=status.HTTP_409_CONFLICT,
+                    )
+
+                # 완료된 제출이 있으면 재응시 정책 확인
+                if done_submissions:
+                    allow_retake = getattr(exam, "allow_retake", False)
+                    max_attempts = getattr(exam, "max_attempts", 1) or 1
+                    attempt_count = len(done_submissions)
+                    if not allow_retake or attempt_count >= max_attempts:
+                        return Response(
+                            {"detail": "재응시가 허용되지 않는 시험입니다."},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    # 기존 done 제출을 superseded로 전환
+                    from apps.domains.submissions.services.transition import bulk_transit
+                    bulk_transit(
+                        Submission.objects.filter(id__in=[s.id for s in done_submissions]),
+                        Submission.Status.SUPERSEDED,
+                        from_status=Submission.Status.DONE,
                     )
 
                 submission = Submission.objects.create(

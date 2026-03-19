@@ -50,10 +50,10 @@ class ExamGradingService:
         sheet,
         answer_key,
         submission_answers,
-    ) -> int:
+    ) -> Tuple[int, float, Dict]:
         """
         Returns:
-          total_score (0~100)
+          (total_score, max_score, breakdown)
         """
 
         key_map: Dict[int, str] = {
@@ -72,20 +72,36 @@ class ExamGradingService:
         questions = list(sheet.questions.all())
 
         if not questions:
-            return 0
+            return 0, 0.0, {}
 
         total_score = 0
+        max_score = 0.0
+        breakdown: Dict[str, dict] = {}
+
         for q in questions:
             qid = int(q.id)
             q_score = float(getattr(q, "score", 0) or 0)
-            if (
-                qid in key_map
-                and qid in answers_map
-                and answers_map[qid] == key_map[qid]
-            ):
+            max_score += q_score
+            correct_answer = key_map.get(qid)
+            student_answer = answers_map.get(qid, "")
+            is_correct = (
+                correct_answer is not None
+                and student_answer == correct_answer
+            )
+            earned = q_score if is_correct else 0
+
+            if is_correct:
                 total_score += q_score
 
-        return int(round(total_score))
+            breakdown[str(q.number)] = {
+                "question_id": qid,
+                "correct": is_correct,
+                "earned": earned,
+                "answer": student_answer,
+                "correct_answer": correct_answer or "",
+            }
+
+        return int(round(total_score)), max_score, breakdown
 
     # ------------------------------------------------------------------
     # Public API
@@ -110,15 +126,22 @@ class ExamGradingService:
             .first()
         )
 
+        # FINAL 결과는 불변 — 재채점으로 덮어쓰기 금지
+        if existing and existing.status == ExamResult.Status.FINAL:
+            return existing
+
         submission_answers = list(
             SubmissionAnswer.objects.filter(submission=submission)
         )
 
-        total_score = self._compute_score(
+        total_score, max_score, breakdown = self._compute_score(
             sheet=sheet,
             answer_key=answer_key,
             submission_answers=submission_answers,
         )
+
+        pass_score = float(getattr(exam, "pass_score", 0) or 0)
+        is_passed = total_score >= pass_score if pass_score > 0 else False
 
         result = existing or ExamResult.objects.create(
             submission=submission,
@@ -128,12 +151,19 @@ class ExamGradingService:
         )
 
         result.total_score = total_score
+        result.max_score = max_score
+        result.objective_score = total_score
+        result.breakdown = breakdown
+        result.is_passed = is_passed
         result.status = ExamResult.Status.DRAFT
-        result.save(update_fields=["total_score", "status", "updated_at"])
+        result.save(update_fields=[
+            "total_score", "max_score", "objective_score",
+            "breakdown", "is_passed", "status", "updated_at",
+        ])
 
         try:
-            submission.status = "done"
-            submission.save(update_fields=["status", "updated_at"])
+            from apps.domains.submissions.services.transition import transit_save
+            transit_save(submission, "done", actor="ExamGradingService.auto_grade")
         except Exception:
             import logging
             logging.getLogger(__name__).exception(
