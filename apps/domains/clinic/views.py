@@ -11,6 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
+from apps.core.permissions import TenantResolvedAndStaff
 from rest_framework import serializers
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -62,7 +63,7 @@ class SessionViewSet(viewsets.ModelViewSet):
             .filter(tenant=tenant)
             .prefetch_related("target_lectures")
             .annotate(
-                participant_count=Count("participants"),
+                participant_count=Count("participants", distinct=True),
                 booked_count=Count(
                     "participants",
                     filter=Q(
@@ -71,26 +72,32 @@ class SessionViewSet(viewsets.ModelViewSet):
                             SessionParticipant.Status.PENDING,
                         ]
                     ),
+                    distinct=True,
                 ),
                 attended_count=Count(
                     "participants",
                     filter=Q(participants__status=SessionParticipant.Status.ATTENDED),
+                    distinct=True,
                 ),
                 no_show_count=Count(
                     "participants",
                     filter=Q(participants__status=SessionParticipant.Status.NO_SHOW),
+                    distinct=True,
                 ),
                 cancelled_count=Count(
                     "participants",
                     filter=Q(participants__status=SessionParticipant.Status.CANCELLED),
+                    distinct=True,
                 ),
                 auto_count=Count(
                     "participants",
                     filter=Q(participants__source=SessionParticipant.Source.AUTO),
+                    distinct=True,
                 ),
                 manual_count=Count(
                     "participants",
                     filter=Q(participants__source=SessionParticipant.Source.MANUAL),
+                    distinct=True,
                 ),
             )
         )
@@ -105,10 +112,11 @@ class SessionViewSet(viewsets.ModelViewSet):
             else:
                 qs = qs.filter(target_grade__isnull=True)
             # 학교유형 필터: 미설정 시 제한 없는 세션만
+            _no_school_restrict = Q(target_school_type__isnull=True) | Q(target_school_type="")
             if student.school_type:
-                qs = qs.filter(Q(target_school_type__isnull=True) | Q(target_school_type=student.school_type))
+                qs = qs.filter(_no_school_restrict | Q(target_school_type=student.school_type))
             else:
-                qs = qs.filter(target_school_type__isnull=True)
+                qs = qs.filter(_no_school_restrict)
             # 강의 필터: 수강 중인 강의가 대상에 포함되거나 대상 강의가 비어있는 경우
             from apps.domains.enrollment.models import Enrollment
             enrolled_lecture_ids = list(
@@ -355,6 +363,11 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     ordering_fields = ["created_at", "updated_at", "session__date"]
     ordering = ["-created_at"]
 
+    def get_permissions(self):
+        if self.action in ("update", "partial_update", "destroy"):
+            return [TenantResolvedAndStaff()]
+        return [IsAuthenticated()]
+
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
         qs = (
@@ -436,8 +449,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                         {"detail": "해당 클리닉은 다른 학년 대상입니다. 본인 학년의 클리닉만 신청할 수 있습니다."},
                         status=status.HTTP_403_FORBIDDEN,
                     )
-            # 학교유형 제한 검증
-            if session.target_school_type:
+            # 학교유형 제한 검증 (빈 문자열 = 제한 없음)
+            if session.target_school_type and session.target_school_type.strip():
                 if not request_student.school_type or session.target_school_type != request_student.school_type:
                     return Response(
                         {"detail": "해당 클리닉은 다른 학교 유형 대상입니다."},
@@ -826,8 +839,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_403_FORBIDDEN,
                     )
 
-            # School type restriction
-            if new_session.target_school_type:
+            # School type restriction (빈 문자열 = 제한 없음)
+            if new_session.target_school_type and new_session.target_school_type.strip():
                 if not request_student.school_type or new_session.target_school_type != request_student.school_type:
                     return Response(
                         {"detail": "해당 클리닉은 다른 학교 유형 대상입니다."},
@@ -916,6 +929,15 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 )
 
             # Cancel old booking (only after new is secured)
+            # Validate transition: terminal states (attended, no_show, rejected, cancelled) cannot be cancelled
+            CANCEL_ALLOWED_FROM = {
+                SessionParticipant.Status.PENDING,
+                SessionParticipant.Status.BOOKED,
+            }
+            if old_booking.status not in CANCEL_ALLOWED_FROM:
+                raise serializers.ValidationError(
+                    f"'{old_booking.get_status_display()}' 상태의 예약은 변경할 수 없습니다."
+                )
             old_booking.status = SessionParticipant.Status.CANCELLED
             old_booking.status_changed_at = timezone.now()
             old_booking.status_changed_by = request.user

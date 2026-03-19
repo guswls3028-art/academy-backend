@@ -8,6 +8,7 @@ from apps.domains.lectures.models import Lecture
 
 class ClinicSessionSerializer(serializers.ModelSerializer):
     participant_count = serializers.SerializerMethodField()
+    booked_count = serializers.SerializerMethodField()
 
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     created_by = serializers.PrimaryKeyRelatedField(read_only=True)
@@ -47,6 +48,9 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
     def get_participant_count(self, obj: Session):
         return getattr(obj, "participant_count", 0)
+
+    def get_booked_count(self, obj: Session):
+        return getattr(obj, "booked_count", 0)
 
     def get_end_time(self, obj: Session):
         if not obj.start_time or not obj.duration_minutes:
