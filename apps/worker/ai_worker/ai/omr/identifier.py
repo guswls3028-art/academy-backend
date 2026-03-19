@@ -129,20 +129,38 @@ def detect_identifier_v1(
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
 
     ident = meta.get("identifier") or {}
-    bubbles = list(ident.get("bubbles") or [])
-    if not bubbles:
+    # v7: identifier.digits[].bubbles[], 구버전: identifier.bubbles[]
+    raw_bubbles = list(ident.get("bubbles") or [])
+    digits_meta = list(ident.get("digits") or [])
+
+    # v7 형식을 flat bubbles 리스트로 변환
+    if digits_meta and not raw_bubbles:
+        for dm in digits_meta:
+            di = dm.get("digit_index", 0)
+            for bub in dm.get("bubbles", []):
+                raw_bubbles.append({
+                    "digit_index": di,
+                    "number": int(bub.get("value", bub.get("number", 0))),
+                    "center": bub.get("center", {}),
+                    "r": float(bub.get("r", 0) or max(
+                        float(bub.get("radius_x", 0) or 0),
+                        float(bub.get("radius_y", 0) or 0),
+                    )),
+                })
+
+    if not raw_bubbles:
         return {"identifier": None, "digits": [], "confidence": 0.0, "status": "error"}
 
     scale: PageScale = build_page_scale_from_meta(meta=meta, image_size_px=(w, h))
 
     # group bubbles by digit_index
     by_digit: Dict[int, List[Dict[str, Any]]] = {}
-    for b in bubbles:
+    for b in raw_bubbles:
         try:
             di = int(b.get("digit_index") or 0)
         except Exception:
             continue
-        if di <= 0:
+        if di < 0:
             continue
         by_digit.setdefault(di, []).append(b)
 
@@ -156,9 +174,12 @@ def detect_identifier_v1(
 
         marks: List[Dict[str, Any]] = []
         for b in bs:
-            num = int(b.get("number") or 0)
+            num = int(b.get("number") or b.get("value") or 0)
             c = b.get("center") or {}
-            r_mm = float(b.get("r") or 0.0)
+            r_mm = float(b.get("r") or max(
+                float(b.get("radius_x") or 0),
+                float(b.get("radius_y") or 0),
+            ) or 1.8)
 
             cx_mm = float(c.get("x") or 0.0)
             cy_mm = float(c.get("y") or 0.0)

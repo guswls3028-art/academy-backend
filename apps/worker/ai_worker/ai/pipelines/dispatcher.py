@@ -217,45 +217,26 @@ def handle_ai_job(job: AIJob) -> AIResult:
             # 7단계: 다운로드(완료), 메타가져오기, 이미지로드, 정렬, ROI빌드, 식별자감지, 답안감지
             import cv2  # type: ignore
 
-            from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v1, OMRConfigV1
-            from apps.worker.ai_worker.ai.omr.roi_builder import build_questions_payload_from_meta
-            from apps.worker.ai_worker.ai.omr.warp import warp_to_a4_landscape
-            from apps.worker.ai_worker.ai.omr.template_meta import fetch_objective_meta, TemplateMetaFetchError
+            from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
+            from apps.worker.omr.warp import warp_to_a4_landscape
             from apps.worker.ai_worker.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
+            from apps.domains.assets.omr.services.meta_generator import build_omr_meta
 
             mode = str(payload.get("mode") or "auto").lower()
             if mode not in ("scan", "photo", "auto"):
                 mode = "auto"
 
-            # 1) meta 확보
-            _record_progress(job.id, "fetching_meta", 20, step_index=2, step_total=7, step_name_display="메타가져오기", step_percent=0, tenant_id=tenant_id)
+            # 1) meta 확보 — meta_generator.py가 SSOT
+            _record_progress(job.id, "fetching_meta", 20, step_index=2, step_total=7, step_name_display="메타생성", step_percent=0, tenant_id=tenant_id)
             meta = payload.get("template_meta")
-            meta_used = False
-            meta_fetch_error = None
 
             if not meta:
-                tf = payload.get("template_fetch") or {}
-                base_url = tf.get("base_url")
-                if base_url:
-                    qc = int(payload.get("question_count") or 0)
-                    if qc not in (10, 20, 30):
-                        return AIResult.failed(job.id, "question_count required (10|20|30) for template_fetch")
+                qc = int(payload.get("question_count") or payload.get("mc_count") or 30)
+                ec = int(payload.get("essay_count") or 0)
+                nc = int(payload.get("n_choices") or 5)
+                meta = build_omr_meta(question_count=qc, n_choices=nc, essay_count=ec)
 
-                    try:
-                        meta_obj = fetch_objective_meta(
-                            base_url=str(base_url),
-                            question_count=qc,
-                            auth_cookie_header=tf.get("cookie"),
-                            bearer_token=tf.get("bearer_token"),
-                            worker_token_header=tf.get("worker_token"),
-                            timeout=int(tf.get("timeout") or 10),
-                        )
-                        meta = meta_obj.raw
-                        meta_used = True
-                    except TemplateMetaFetchError as e:
-                        meta = None
-                        meta_fetch_error = str(e)[:500]
-            _record_progress(job.id, "fetching_meta", 30, step_index=2, step_total=7, step_name_display="메타가져오기", step_percent=100, tenant_id=tenant_id)
+            _record_progress(job.id, "fetching_meta", 30, step_index=2, step_total=7, step_name_display="메타생성", step_percent=100, tenant_id=tenant_id)
 
             # 2) 이미지 로드 및 리사이징
             _record_progress(job.id, "loading", 35, step_index=3, step_total=7, step_name_display="이미지로드", step_percent=0, tenant_id=tenant_id)
@@ -283,77 +264,35 @@ def handle_ai_job(job: AIJob) -> AIResult:
                     aligned = warped
             _record_progress(job.id, "aligning", 55, step_index=4, step_total=7, step_name_display="정렬", step_percent=100, tenant_id=tenant_id)
 
-            # 4) meta 없으면 legacy
-            if not meta:
-                questions = payload.get("questions") or []
-                if not questions:
-                    return AIResult.failed(job.id, "template_meta/template_fetch failed and legacy questions missing")
-
-                _record_progress(job.id, "detecting", 80, step_index=6, step_total=7, step_name_display="답안감지", step_percent=0, tenant_id=tenant_id)
-                answers = detect_omr_answers_v1(
-                    image_path=local_path,
-                    questions=list(questions),
-                    cfg=None,
-                )
-                _record_progress(job.id, "detecting", 95, step_index=6, step_total=7, step_name_display="답안감지", step_percent=100, tenant_id=tenant_id)
-                _record_progress(job.id, "done", 100, step_index=7, step_total=7, step_name_display="완료", step_percent=100, tenant_id=tenant_id)
-                return AIResult.done(
-                    job.id,
-                    {
-                        "version": "v1",
-                        "mode": "legacy_questions",
-                        "aligned": False,
-                        "identifier": None,
-                        "answers": answers,
-                        "meta_used": False,
-                        "debug": {
-                            "meta_fetch_error": meta_fetch_error,
-                        },
-                    },
-                )
-
-            # 5) ROI + identifier
-            _record_progress(job.id, "building_roi", 60, step_index=5, step_total=7, step_name_display="ROI빌드", step_percent=0, tenant_id=tenant_id)
-            h, w = aligned.shape[:2]
-            questions_payload = build_questions_payload_from_meta(meta, (w, h))
-            _record_progress(job.id, "building_roi", 70, step_index=5, step_total=7, step_name_display="ROI빌드", step_percent=100, tenant_id=tenant_id)
-
-            _record_progress(job.id, "detecting_id", 75, step_index=6, step_total=7, step_name_display="식별자감지", step_percent=0, tenant_id=tenant_id)
+            # 4) identifier 감지
+            _record_progress(job.id, "detecting_id", 60, step_index=4, step_total=6, step_name_display="식별자감지", step_percent=0, tenant_id=tenant_id)
             ident = detect_identifier_v1(
                 image_bgr=aligned,
                 meta=meta,
                 cfg=IdentifierConfigV1(),
             )
-            _record_progress(job.id, "detecting_id", 80, step_index=6, step_total=7, step_name_display="식별자감지", step_percent=100, tenant_id=tenant_id)
+            _record_progress(job.id, "detecting_id", 70, step_index=4, step_total=6, step_name_display="식별자감지", step_percent=100, tenant_id=tenant_id)
 
-            # 6) aligned 저장 후 OMR
-            import tempfile, os
-
-            tmp_path = os.path.join(tempfile.gettempdir(), f"omr_aligned_{job.id}.jpg")
-            cv2.imwrite(tmp_path, aligned)
-
-            _record_progress(job.id, "detecting_answers", 85, step_index=7, step_total=7, step_name_display="답안감지", step_percent=0, tenant_id=tenant_id)
-            cfg = OMRConfigV1()
-            answers = detect_omr_answers_v1(
-                image_path=tmp_path,
-                questions=list(questions_payload),
-                cfg=cfg,
+            # 5) 객관식 답안 감지 — v7 엔진 (image_bgr + meta 직접 전달)
+            _record_progress(job.id, "detecting_answers", 75, step_index=5, step_total=6, step_name_display="답안감지", step_percent=0, tenant_id=tenant_id)
+            answer_results = detect_omr_answers_v7(
+                image_bgr=aligned,
+                meta=meta,
+                config=AnswerDetectConfig(),
             )
-            _record_progress(job.id, "detecting_answers", 95, step_index=7, step_total=7, step_name_display="답안감지", step_percent=100, tenant_id=tenant_id)
-            _record_progress(job.id, "done", 100, step_index=7, step_total=7, step_name_display="완료", step_percent=100, tenant_id=tenant_id)
+            answers = [a.to_dict() for a in answer_results]
+            _record_progress(job.id, "detecting_answers", 95, step_index=5, step_total=6, step_name_display="답안감지", step_percent=100, tenant_id=tenant_id)
+
+            _record_progress(job.id, "done", 100, step_index=6, step_total=6, step_name_display="완료", step_percent=100, tenant_id=tenant_id)
 
             return AIResult.done(
                 job.id,
                 {
-                    "version": "v1",
+                    "version": "v7",
                     "mode": mode,
                     "aligned": bool(aligned is not img_bgr),
                     "identifier": ident,
                     "answers": answers,
-                    "meta_used": meta_used,
-                    "debug": {
-                        "meta_fetch_error": meta_fetch_error,
-                    },
                 },
             )
 

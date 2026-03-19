@@ -1,8 +1,16 @@
 # PATH: apps/domains/exams/views/omr_generate_view.py
-from __future__ import annotations
+"""
+OMR 메타 생성 뷰 v7
 
-import io
-import uuid
+PDF 렌더링은 더 이상 서버에서 수행하지 않는다.
+SSOT = frontend/public/omr-sheet.html (브라우저에서 인쇄/PDF)
+
+이 뷰는:
+1. 시험의 문항 수를 확인
+2. OMR 메타(좌표)를 생성하여 반환
+3. 프론트엔드는 이 정보로 OMR 시트 URL을 구성
+"""
+from __future__ import annotations
 
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
@@ -12,84 +20,60 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
-from apps.domains.exams.models import Exam, ExamAsset
-from apps.domains.exams.serializers.exam_asset import ExamAssetSerializer
-from apps.domains.exams.services.template_builder_service import TemplateBuilderService
-from apps.domains.assets.omr.renderer.v245_final import render_to_bytes as render_omr_v245_pdf
-from apps.domains.exams.services.template_resolver import assert_template_editable
-from apps.core.r2_paths import ai_exam_asset_key
-from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
+from apps.domains.exams.models import Exam
+from apps.domains.assets.omr.services.meta_generator import build_omr_meta
 from apps.core.permissions import TenantResolvedAndStaff
 
 
 class GenerateOMRSheetAssetView(APIView):
     """
-    ✅ PHASE 2-B
-    POST /api/v1/exams/<template_exam_id>/generate-omr/
+    POST /api/v1/exams/<exam_id>/generate-omr/
 
-    - template exam에 대해서만 생성
-    - derived regular 존재 시(봉인) 생성 금지(운영 사고 방지)
-    - 생성 결과를 ExamAsset(omr_sheet)로 저장
+    시험의 문항 구성에 맞는 OMR 메타(좌표)를 반환한다.
+    프론트엔드에서 /omr-sheet.html?mc=N&essay=M 으로 답안지를 생성/인쇄한다.
     """
-
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request, exam_id: int):
         tenant = request.tenant
-        template_exam = get_object_or_404(
+
+        exam = get_object_or_404(
             Exam.objects.filter(
                 Q(sessions__lecture__tenant=tenant)
                 | Q(derived_exams__sessions__lecture__tenant=tenant)
             ).distinct(),
             id=int(exam_id),
-            exam_type=Exam.ExamType.TEMPLATE,
         )
 
-        # 봉인: 이미 regular로 사용 중이면 구조/자산 변경 금지
-        assert_template_editable(template_exam)
+        sheet = getattr(exam, "sheet", None)
+        total_questions = int(getattr(sheet, "total_questions", 0) or 0)
 
-        init = TemplateBuilderService.ensure_initialized(template_exam)
-        sheet = getattr(template_exam, "sheet", None)
-        question_count = int(getattr(sheet, "total_questions", 0) or 0)
+        mc_count = int(request.data.get("mc_count", 0) or total_questions)
+        essay_count = int(request.data.get("essay_count", 0) or 0)
+        n_choices = int(request.data.get("n_choices", 5) or 5)
 
-        # question_count가 0이면 최소한 template_exam의 OMR preset으로 생성하도록 fallback
-        # (원하면 프론트에서 total_questions 먼저 확정시키는 흐름이 정석)
-        if question_count <= 0:
-            question_count = int(request.data.get("question_count") or 20)
+        if mc_count <= 0:
+            mc_count = total_questions or 20
 
-        if question_count not in (10, 20, 30, 45):
-            return Response({"detail": "question_count must be 10|20|30|45"}, status=status.HTTP_400_BAD_REQUEST)
+        if mc_count > 45:
+            return Response(
+                {"detail": "객관식은 최대 45문항입니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # 1) PDF 생성 — v245 OMR 시험지 (좌: 로고/시험명/과목/성명/전화/OMR 8자리, 우: 답란 1~15/16~30/31~45)
-        pdf_bytes = render_omr_v245_pdf(question_count=question_count, debug_grid=False)
-        bio = io.BytesIO(pdf_bytes)
-
-        # 2) 업로드 (경로 통일: tenants/{id}/ai/exams/...)
-        tenant_id = getattr(request, "tenant", None) and request.tenant.id
-        if not tenant_id:
-            return Response({"detail": "tenant required for upload"}, status=status.HTTP_400_BAD_REQUEST)
-        key = ai_exam_asset_key(
-            tenant_id=tenant_id,
-            exam_id=template_exam.id,
-            asset_type="omr_sheet",
-            unique_id=uuid.uuid4().hex,
-            ext="pdf",
-        )
-        upload_fileobj_to_r2(
-            fileobj=bio,
-            key=key,
-            content_type="application/pdf",
+        meta = build_omr_meta(
+            question_count=mc_count,
+            n_choices=n_choices,
+            essay_count=essay_count,
         )
 
-        # 3) ExamAsset 저장/갱신(최신 교체)
-        obj, _ = ExamAsset.objects.update_or_create(
-            exam=template_exam,
-            asset_type=ExamAsset.AssetType.OMR_SHEET,
-            defaults={
-                "file_key": key,
-                "file_type": "application/pdf",
-                "file_size": len(pdf_bytes),
-            },
-        )
+        # OMR 시트 URL 구성
+        omr_url = f"/omr-sheet.html?exam={exam.title}&mc={mc_count}&essay={essay_count}&choices={n_choices}"
 
-        return Response(ExamAssetSerializer(obj).data, status=status.HTTP_201_CREATED)
+        return Response({
+            "omr_url": omr_url,
+            "meta": meta,
+            "mc_count": mc_count,
+            "essay_count": essay_count,
+            "n_choices": n_choices,
+        }, status=status.HTTP_200_OK)

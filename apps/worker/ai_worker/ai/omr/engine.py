@@ -1,4 +1,16 @@
-# apps/worker/ai_worker/ai/omr/identifier.py
+# apps/worker/ai_worker/ai/omr/engine.py
+"""
+OMR 객관식 답안 검출 엔진 v7
+
+omr-sheet.html SSOT 레이아웃 기준.
+meta_generator.py의 좌표를 사용하여 스캔 이미지에서 마킹된 버블을 감지한다.
+
+원리:
+1. 워프된 A4 landscape 이미지를 받는다
+2. 메타의 mm 좌표를 px로 변환한다
+3. 각 문항의 각 버블 ROI에서 fill ratio를 측정한다
+4. 가장 높은 fill의 버블을 정답으로 판정한다
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,249 +20,160 @@ import cv2  # type: ignore
 import numpy as np  # type: ignore
 
 from apps.worker.ai_worker.ai.omr.meta_px import build_page_scale_from_meta, PageScale
-from apps.worker.ai_worker.ai.utils.image_resizer import resize_if_large
-
-
-BBox = Tuple[int, int, int, int]
+from apps.worker.ai_worker.ai.omr.types import OMRAnswerV1
 
 
 @dataclass(frozen=True)
-class IdentifierConfigV1:
-    """
-    Identifier OMR v1 (8 digits, each digit 0~9 single mark).
-
-    Principles:
-    - ROI based fill score (same philosophy as detect_omr_answers_v1)
-    - Robust to scan/photo noise by sampling a square ROI around each bubble
-    - No DB, no external calls, worker-only judgement/extraction
-    """
-    # 주변 ROI(버블 중심 기준) 확장 계수: r * k
+class AnswerDetectConfig:
+    """객관식 버블 감지 설정."""
+    # ROI 확장 계수 (버블 반지름 × k)
     roi_expand_k: float = 1.55
-
-    # blank 판단: 해당 digit에서 최고 fill이 이 값보다 작으면 blank
-    blank_threshold: float = 0.070
-
-    # ambiguous 판단: top-2 gap이 이 값보다 작으면 ambiguous
-    conf_gap_threshold: float = 0.060
-
-    # (운영 편의) digit-level confidence clamp
-    min_confidence: float = 0.0
-    max_confidence: float = 1.0
+    # blank 판단: 최고 fill이 이 값 미만이면 blank
+    blank_threshold: float = 0.060
+    # ambiguous 판단: top-2 gap이 이 값 미만이면 ambiguous
+    conf_gap_threshold: float = 0.055
+    # 이진화 threshold
+    binarize_threshold: int = 140
 
 
-def _clamp(v: int, lo: int, hi: int) -> int:
-    return max(lo, min(hi, v))
-
-
-def _crop(gray: np.ndarray, bbox: BBox) -> np.ndarray:
-    x, y, w, h = bbox
-    x = _clamp(int(x), 0, gray.shape[1] - 1)
-    y = _clamp(int(y), 0, gray.shape[0] - 1)
-    w = max(1, int(w))
-    h = max(1, int(h))
-    w = min(w, gray.shape[1] - x)
-    h = min(h, gray.shape[0] - y)
-    return gray[y:y + h, x:x + w]
-
-
-def _fill_score(roi_gray: np.ndarray) -> float:
-    """
-    Same core idea as OMR v1:
-    - blur
-    - OTSU + INV
-    - filled pixel ratio
-    """
-    if roi_gray.size == 0:
-        return 0.0
-
-    blur = cv2.GaussianBlur(roi_gray, (5, 5), 0)
-    _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    filled = float(np.sum(th > 0))
-    total = float(th.size) if th.size > 0 else 1.0
-    score = filled / total
-    return float(max(0.0, min(1.0, score)))
-
-
-def _bubble_roi_bbox_px(
-    *,
-    center_px: Tuple[int, int],
-    r_px: int,
-    cfg: IdentifierConfigV1,
-    img_w: int,
-    img_h: int,
-) -> BBox:
-    cx, cy = center_px
-    side = int(round(max(2, r_px) * cfg.roi_expand_k)) * 2
-    x = int(cx - side // 2)
-    y = int(cy - side // 2)
-    x = _clamp(x, 0, img_w - 1)
-    y = _clamp(y, 0, img_h - 1)
-    w = _clamp(side, 1, img_w - x)
-    h = _clamp(side, 1, img_h - y)
-    return (x, y, w, h)
-
-
-def detect_identifier_v1(
+def detect_omr_answers_v7(
     *,
     image_bgr: np.ndarray,
     meta: Dict[str, Any],
-    cfg: Optional[IdentifierConfigV1] = None,
-) -> Dict[str, Any]:
+    config: Optional[AnswerDetectConfig] = None,
+) -> List[OMRAnswerV1]:
     """
-    Extract identifier(8 digits) from aligned full-page image.
+    워프된 A4 이미지에서 객관식 답안을 감지한다.
 
-    meta requirements:
-      meta["identifier"]["bubbles"] list with:
-        - digit_index (1..8)
-        - number (0..9)
-        - center: {x(mm), y(mm)}
-        - r(mm)
+    Args:
+        image_bgr: 워프된 BGR 이미지 (전체 페이지 = 전체 이미지)
+        meta: build_omr_meta() 결과
+        config: 감지 설정
 
-    return contract:
-      {
-        "identifier": "12345678" | None,
-        "digits": [{"digit_index":1,"value":1,"status":"ok|blank|ambiguous","confidence":0.91,"marks":[...]}...],
-        "confidence": 0.0~1.0,
-        "status": "ok|ambiguous|blank|error"
-      }
+    Returns:
+        문항별 OMRAnswerV1 리스트
     """
-    cfg = cfg or IdentifierConfigV1()
+    if config is None:
+        config = AnswerDetectConfig()
 
-    if image_bgr is None or image_bgr.size == 0:
-        return {"identifier": None, "digits": [], "confidence": 0.0, "status": "error"}
+    scale = build_page_scale_from_meta(
+        meta=meta,
+        image_size_px=(image_bgr.shape[1], image_bgr.shape[0]),
+    )
 
-    h, w = image_bgr.shape[:2]
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, config.binarize_threshold, 255, cv2.THRESH_BINARY_INV)
 
-    ident = meta.get("identifier") or {}
-    bubbles = list(ident.get("bubbles") or [])
-    if not bubbles:
-        return {"identifier": None, "digits": [], "confidence": 0.0, "status": "error"}
+    results: List[OMRAnswerV1] = []
 
-    scale: PageScale = build_page_scale_from_meta(meta=meta, image_size_px=(w, h))
+    for q in meta.get("questions", []):
+        q_num = int(q.get("question_number", 0))
+        choices = q.get("choices", [])
+        if not choices:
+            continue
 
-    # group bubbles by digit_index
-    by_digit: Dict[int, List[Dict[str, Any]]] = {}
-    for b in bubbles:
         try:
-            di = int(b.get("digit_index") or 0)
+            answer = _detect_single_question(
+                binary=binary,
+                scale=scale,
+                q_num=q_num,
+                choices=choices,
+                config=config,
+                img_shape=image_bgr.shape,
+            )
+            results.append(answer)
         except Exception:
-            continue
-        if di <= 0:
-            continue
-        by_digit.setdefault(di, []).append(b)
+            results.append(OMRAnswerV1(
+                version="v7",
+                question_id=q_num,
+                detected=[],
+                marking="blank",
+                confidence=0.0,
+                status="error",
+            ))
 
-    digits_out: List[Dict[str, Any]] = []
-    identifier_chars: List[str] = []
-    status_rollup = "ok"
-    confidences: List[float] = []
+    return results
 
-    for digit_index in sorted(by_digit.keys()):
-        bs = by_digit[digit_index]
 
-        marks: List[Dict[str, Any]] = []
-        for b in bs:
-            num = int(b.get("number") or 0)
-            c = b.get("center") or {}
-            r_mm = float(b.get("r") or 0.0)
+def _detect_single_question(
+    *,
+    binary: np.ndarray,
+    scale: PageScale,
+    q_num: int,
+    choices: List[Dict[str, Any]],
+    config: AnswerDetectConfig,
+    img_shape: Tuple[int, ...],
+) -> OMRAnswerV1:
+    """단일 문항의 버블 fill ratio 측정 및 판정."""
+    img_h, img_w = img_shape[:2]
+    fills: List[Tuple[str, float]] = []
 
-            cx_mm = float(c.get("x") or 0.0)
-            cy_mm = float(c.get("y") or 0.0)
+    for ch in choices:
+        label = str(ch.get("label", ""))
+        center = ch.get("center", {})
+        cx_mm = float(center.get("x", 0))
+        cy_mm = float(center.get("y", 0))
+        rx_mm = float(ch.get("radius_x", 1.8))
+        ry_mm = float(ch.get("radius_y", 2.6))
 
-            cx_px, cy_px = scale.mm_to_px_point(cx_mm, cy_mm)
+        cx_px, cy_px = scale.mm_to_px_point(cx_mm, cy_mm)
+        rx_px = max(1, int(round(rx_mm * config.roi_expand_k * scale.sx)))
+        ry_px = max(1, int(round(ry_mm * config.roi_expand_k * scale.sy)))
 
-            # radius: use average scale for robustness (mm->px)
-            r_px_x = max(1, scale.mm_to_px_len_x(r_mm))
-            r_px_y = max(1, scale.mm_to_px_len_y(r_mm))
-            r_px = max(1, int(round((r_px_x + r_px_y) / 2.0)))
+        x1 = max(0, cx_px - rx_px)
+        y1 = max(0, cy_px - ry_px)
+        x2 = min(img_w, cx_px + rx_px)
+        y2 = min(img_h, cy_px + ry_px)
 
-            bbox = _bubble_roi_bbox_px(
-                center_px=(cx_px, cy_px),
-                r_px=r_px,
-                cfg=cfg,
-                img_w=w,
-                img_h=h,
-            )
-            roi = _crop(gray, bbox)
-            fill = _fill_score(roi)
-
-            marks.append(
-                {
-                    "number": int(num),
-                    "fill": float(fill),
-                    "center_px": {"x": int(cx_px), "y": int(cy_px)},
-                    "roi_px": {"x": int(bbox[0]), "y": int(bbox[1]), "w": int(bbox[2]), "h": int(bbox[3])},
-                }
-            )
-
-        marks_sorted = sorted(marks, key=lambda m: float(m.get("fill") or 0.0), reverse=True)
-        top = marks_sorted[0] if marks_sorted else {"number": 0, "fill": 0.0}
-        second = marks_sorted[1] if len(marks_sorted) > 1 else {"number": 0, "fill": 0.0}
-
-        top_fill = float(top.get("fill") or 0.0)
-        second_fill = float(second.get("fill") or 0.0)
-        gap = float(top_fill - second_fill)
-
-        if top_fill < cfg.blank_threshold:
-            digits_out.append(
-                {
-                    "digit_index": int(digit_index),
-                    "value": None,
-                    "status": "blank",
-                    "confidence": 0.0,
-                    "marks": marks_sorted,
-                }
-            )
-            identifier_chars.append("?")
-            status_rollup = "blank" if status_rollup == "ok" else status_rollup
+        roi = binary[y1:y2, x1:x2]
+        if roi.size == 0:
+            fills.append((label, 0.0))
             continue
 
-        if gap < cfg.conf_gap_threshold:
-            digits_out.append(
-                {
-                    "digit_index": int(digit_index),
-                    "value": int(top.get("number") or 0),
-                    "status": "ambiguous",
-                    "confidence": float(max(cfg.min_confidence, min(cfg.max_confidence, top_fill))),
-                    "gap": float(gap),
-                    "marks": marks_sorted,
-                }
-            )
-            identifier_chars.append(str(int(top.get("number") or 0)))
-            status_rollup = "ambiguous" if status_rollup in ("ok",) else status_rollup
-            confidences.append(float(top_fill))
-            continue
+        fill = float(np.count_nonzero(roi)) / roi.size
+        fills.append((label, fill))
 
-        # ok
-        conf = float(max(cfg.min_confidence, min(cfg.max_confidence, top_fill)))
-        digits_out.append(
-            {
-                "digit_index": int(digit_index),
-                "value": int(top.get("number") or 0),
-                "status": "ok",
-                "confidence": conf,
-                "gap": float(gap),
-                "marks": marks_sorted,
-            }
+    if not fills:
+        return OMRAnswerV1(
+            version="v7", question_id=q_num,
+            detected=[], marking="blank",
+            confidence=0.0, status="error",
         )
-        identifier_chars.append(str(int(top.get("number") or 0)))
-        confidences.append(conf)
 
-    # identifier validity: must be 8 digits all ok/ambiguous (blank이면 ? 포함)
-    identifier = "".join(identifier_chars)
-    if "?" in identifier:
-        identifier_final: Optional[str] = None
-    else:
-        identifier_final = identifier
+    # 정렬: fill 높은 순
+    fills.sort(key=lambda x: x[1], reverse=True)
+    top_label, top_fill = fills[0]
+    second_fill = fills[1][1] if len(fills) > 1 else 0.0
+    gap = top_fill - second_fill
 
-    # overall confidence: conservative (mean of digit conf where available)
-    overall_conf = float(sum(confidences) / len(confidences)) if confidences else 0.0
+    # 판정
+    if top_fill < config.blank_threshold:
+        return OMRAnswerV1(
+            version="v7", question_id=q_num,
+            detected=[], marking="blank",
+            confidence=0.0, status="blank",
+            raw={"fills": {l: round(f, 4) for l, f in fills}},
+        )
 
-    return {
-        "identifier": identifier_final,
-        "raw_identifier": identifier,  # '?' 포함 가능 (운영 디버그/리트라이용)
-        "digits": digits_out,
-        "confidence": float(max(0.0, min(1.0, overall_conf))),
-        "status": status_rollup,
-    }
+    if gap < config.conf_gap_threshold:
+        # 복수 마킹 가능성
+        marked = [l for l, f in fills if f >= config.blank_threshold]
+        return OMRAnswerV1(
+            version="v7", question_id=q_num,
+            detected=marked,
+            marking="multi" if len(marked) > 1 else "single",
+            confidence=round(gap, 4),
+            status="ambiguous",
+            raw={"fills": {l: round(f, 4) for l, f in fills}},
+        )
+
+    confidence = min(1.0, gap / 0.3)  # gap 0.3 이상이면 confidence 1.0
+
+    return OMRAnswerV1(
+        version="v7", question_id=q_num,
+        detected=[top_label],
+        marking="single",
+        confidence=round(confidence, 4),
+        status="ok",
+        raw={"fills": {l: round(f, 4) for l, f in fills}},
+    )

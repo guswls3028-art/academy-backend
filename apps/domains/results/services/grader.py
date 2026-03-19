@@ -306,7 +306,7 @@ def grade_submission_to_results(submission: Submission) -> None:
                 answer_type = _infer_answer_type(q)
 
                 if answer_type in ("choice", "omr", "multiple_choice"):
-                    if omr_version.lower() in ("v1", "v2"):
+                    if omr_version.lower() in ("v1", "v2", "v7"):
                         is_correct, score, final_meta = _grade_choice_v1(
                             detected=[str(x) for x in detected],
                             marking=marking,

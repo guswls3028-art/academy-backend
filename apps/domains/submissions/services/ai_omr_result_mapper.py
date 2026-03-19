@@ -11,6 +11,49 @@ from apps.domains.submissions.models import Submission, SubmissionAnswer
 logger = logging.getLogger(__name__)
 
 
+def _resolve_enrollment_by_phone(
+    *,
+    exam_id: int,
+    phone_last8: str,
+    tenant,
+) -> int | None:
+    """
+    전화번호 뒤 8자리로 해당 시험의 enrollment을 찾는다.
+
+    매칭 순서:
+    1. 학생 본인 휴대폰 뒤 8자리
+    2. 학부모 휴대폰 뒤 8자리
+
+    중복 시 None 반환 (수동 매칭 필요).
+    """
+    from apps.domains.enrollment.models import Enrollment
+
+    # 시험에 연결된 enrollment 중에서 검색
+    enrollments = Enrollment.objects.filter(
+        exam_enrollments__exam_id=exam_id,
+        tenant=tenant,
+    ).select_related("student").distinct()
+
+    matches = []
+    for enr in enrollments:
+        student = getattr(enr, "student", None)
+        if not student:
+            continue
+        s_phone = str(getattr(student, "phone", "") or "").replace("-", "").strip()
+        p_phone = str(getattr(student, "parent_phone", "") or "").replace("-", "").strip()
+
+        if s_phone and s_phone[-8:] == phone_last8:
+            matches.append(enr.id)
+        elif p_phone and p_phone[-8:] == phone_last8:
+            matches.append(enr.id)
+
+    if len(matches) == 1:
+        return matches[0]
+
+    # 0 또는 2+ 매칭 → 수동 식별 필요
+    return None
+
+
 @transaction.atomic
 def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     """
@@ -53,7 +96,8 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     reasons = []
 
     for a in answers:
-        eqid = a.get("exam_question_id")
+        # v7 engine은 question_id, 구버전은 exam_question_id
+        eqid = a.get("exam_question_id") or a.get("question_id")
         if not eqid:
             continue
 
@@ -95,17 +139,34 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             manual_required = True
             reasons.append("ANSWER_LOW_CONFIDENCE")
 
-    # ✅ 식별자 실패 → 명시적 상태
-    identifier_ok = (
-        isinstance(identifier, dict)
-        and identifier.get("status") == "ok"
-        and identifier.get("enrollment_id")
-    )
+    # ✅ 식별자 → enrollment 매칭 (전화번호 뒤 8자리 → 학생 자동 식별)
+    enrollment_id = None
+    identifier_status = "missing"
+
+    if isinstance(identifier, dict) and identifier.get("status") == "ok":
+        detected_code = str(identifier.get("identifier") or "").strip()
+        identifier_status = "detected"
+
+        if detected_code and len(detected_code) == 8 and submission.target_id:
+            # 전화번호 뒤 8자리로 enrollment 조회
+            enrollment_id = _resolve_enrollment_by_phone(
+                exam_id=int(submission.target_id),
+                phone_last8=detected_code,
+                tenant=submission.tenant,
+            )
+            if enrollment_id:
+                identifier_status = "matched"
+            else:
+                identifier_status = "no_match"
+                reasons.append("IDENTIFIER_NO_ENROLLMENT_MATCH")
+
+    identifier_ok = enrollment_id is not None
 
     meta.setdefault("manual_review", {})
     meta["manual_review"]["required"] = bool(manual_required or not identifier_ok)
     meta["manual_review"]["reasons"] = sorted(set(reasons))
     meta["manual_review"]["updated_at"] = datetime.now(timezone.utc).isoformat()
+    meta["identifier_status"] = identifier_status
 
     submission.meta = meta
 
@@ -115,7 +176,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
         return submission.id
 
-    submission.enrollment_id = int(identifier.get("enrollment_id"))
+    submission.enrollment_id = int(enrollment_id)
     submission.status = Submission.Status.ANSWERS_READY
     submission.error_message = ""
     submission.save(update_fields=["meta", "status", "enrollment_id", "error_message", "updated_at"])

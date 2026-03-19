@@ -49,7 +49,8 @@ def build_page_scale_from_meta(
     img_w, img_h = int(image_size_px[0]), int(image_size_px[1])
 
     page = meta.get("page") or {}
-    size = page.get("size") or {}
+    # v7: page.width 직접, 구버전: page.size.width
+    size = page.get("size") or page
     page_w_mm = float(size.get("width") or 0.0)
     page_h_mm = float(size.get("height") or 0.0)
 
