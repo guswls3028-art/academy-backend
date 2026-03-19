@@ -2,6 +2,7 @@ import hashlib
 import logging
 
 from django.db import transaction
+from apps.domains.community.services.html_sanitizer import sanitize_html
 from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -196,6 +197,12 @@ class PostViewSet(viewsets.ModelViewSet):
         return self._list_by_type(request, "materials")
 
     def create(self, request, *args, **kwargs):
+        # 학부모 write 차단 — 학부모는 읽기 전용
+        if getattr(request.user, "parent_profile", None) is not None:
+            return Response(
+                {"detail": "학부모 계정은 글 작성이 제한됩니다.", "code": "parent_read_only"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         tenant = getattr(request, "tenant", None)
@@ -249,20 +256,41 @@ class PostViewSet(viewsets.ModelViewSet):
             elif getattr(request.user, "first_name", None) or getattr(request.user, "last_name", None):
                 author_display_name = f"{request.user.last_name}{request.user.first_name}".strip() or None
 
+        # Sanitize HTML content server-side
+        raw_content = serializer.validated_data["content"]
+        safe_content = sanitize_html(raw_content) if raw_content else ""
+
         data = {
             "post_type": post_type,
             "block_type": block_type,
             "title": serializer.validated_data["title"],
-            "content": serializer.validated_data["content"],
+            "content": safe_content,
             "category_label": request.data.get("category_label"),
             "created_by": created_by,
             "author_display_name": author_display_name,
             "author_role": author_role,
             "is_urgent": bool(request.data.get("is_urgent", False)),
+            "is_pinned": bool(request.data.get("is_pinned", False)),
+            "status": request.data.get("status", "published"),
+            "published_at": request.data.get("published_at") or None,
         }
         svc = CommunityService(tenant)
         post = svc.create_post(data, node_ids)
         return Response(self.get_serializer(post).data, status=status.HTTP_201_CREATED)
+
+    def perform_update(self, serializer):
+        """PATCH /posts/:id/ — sanitize content on update, enforce parent read-only."""
+        request = self.request
+        # 학부모 write 차단
+        if getattr(request.user, "parent_profile", None) is not None:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("학부모 계정은 수정이 제한됩니다.")
+        # Content sanitization
+        if "content" in serializer.validated_data:
+            serializer.validated_data["content"] = sanitize_html(
+                serializer.validated_data["content"]
+            )
+        serializer.save()
 
     @action(detail=True, methods=["patch"], url_path="nodes")
     def update_nodes(self, request, pk=None):

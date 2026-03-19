@@ -66,10 +66,27 @@ class PostEntity(models.Model):
         help_text="작성자 역할 (staff/student)",
     )
     is_urgent = models.BooleanField(default=False, help_text="긴급 공지 여부")
+    is_pinned = models.BooleanField(default=False, help_text="상단 고정 여부")
+    status = models.CharField(
+        max_length=20,
+        default="published",
+        choices=[
+            ("draft", "임시저장"),
+            ("published", "게시됨"),
+            ("archived", "보관됨"),
+        ],
+        db_index=True,
+        help_text="게시 상태 (draft=임시저장, published=게시됨, archived=보관됨)",
+    )
+    published_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="예약 게시 시각. null이면 즉시 게시.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["-created_at"]
+        ordering = ["-is_pinned", "-created_at"]
         indexes = [
             models.Index(fields=["tenant", "created_at"]),
             models.Index(fields=["tenant", "post_type"]),
