@@ -1,10 +1,7 @@
 # apps/domains/assets/omr/services/omr_asset_service.py
 """
-OMR Asset 서비스 v7
-
-PDF는 더 이상 서버에서 생성하지 않는다.
-SSOT = frontend/public/omr-sheet.html
-이 서비스는 OMR 메타 좌표를 생성/저장하는 역할만 한다.
+⚠️ DEPRECATED — 레거시 OMR 메타 서비스.
+새 시스템은 omr_document_service.py를 사용합니다.
 """
 from __future__ import annotations
 

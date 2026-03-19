@@ -1,10 +1,7 @@
 # apps/domains/assets/omr/services/omr_render_service.py
 """
-OMR 렌더링 서비스 v7
-
-SSOT = frontend/public/omr-sheet.html (브라우저 렌더링 + 인쇄/PDF)
-서버사이드 PDF 생성은 더 이상 수행하지 않는다.
-이 서비스는 OMR 메타 좌표 생성과 URL 구성을 담당한다.
+⚠️ DEPRECATED — 레거시 OMR URL 구성 서비스.
+새 시스템은 omr_document_service.py + pdf_renderer.py + html_renderer.py를 사용합니다.
 """
 from __future__ import annotations
 

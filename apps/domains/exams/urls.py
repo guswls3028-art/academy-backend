@@ -9,6 +9,11 @@ from apps.domains.exams.views.answer_key_view import AnswerKeyViewSet
 
 from apps.domains.exams.views.exam_asset_view import ExamAssetView
 from apps.domains.exams.views.omr_generate_view import GenerateOMRSheetAssetView
+from apps.domains.assets.omr.views.omr_document_views import (
+    ExamOMRDefaultsView,
+    ExamOMRPreviewView,
+    ExamOMRPdfView,
+)
 
 from apps.domains.exams.views.template_builder_view import TemplateBuilderView
 from apps.domains.exams.views.template_editor_view import TemplateEditorView
@@ -70,7 +75,10 @@ urlpatterns = [
     # Assets / OMR
     # =========================
     path("<int:exam_id>/assets/", ExamAssetView.as_view()),
-    path("<int:exam_id>/generate-omr/", GenerateOMRSheetAssetView.as_view()),
+    path("<int:exam_id>/generate-omr/", GenerateOMRSheetAssetView.as_view()),  # legacy
+    path("<int:exam_id>/omr/defaults/", ExamOMRDefaultsView.as_view()),
+    path("<int:exam_id>/omr/preview/", ExamOMRPreviewView.as_view()),
+    path("<int:exam_id>/omr/pdf/", ExamOMRPdfView.as_view()),
 
     # =========================
     # Questions

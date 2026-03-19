@@ -1,14 +1,12 @@
 # PATH: apps/domains/exams/views/omr_generate_view.py
 """
-OMR 메타 생성 뷰 v7
+⚠️ DEPRECATED — 이 뷰는 레거시입니다.
+새 OMR 시스템은 omr_document_views.py를 사용합니다:
+  - GET /exams/{id}/omr/defaults/
+  - POST /exams/{id}/omr/preview/
+  - POST /exams/{id}/omr/pdf/
 
-PDF 렌더링은 더 이상 서버에서 수행하지 않는다.
-SSOT = frontend/public/omr-sheet.html (브라우저에서 인쇄/PDF)
-
-이 뷰는:
-1. 시험의 문항 수를 확인
-2. OMR 메타(좌표)를 생성하여 반환
-3. 프론트엔드는 이 정보로 OMR 시트 URL을 구성
+기존 호출자 호환을 위해 유지합니다.
 """
 from __future__ import annotations
 

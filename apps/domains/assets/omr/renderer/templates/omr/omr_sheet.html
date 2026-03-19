@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ exam_title }} OMR 답안지</title>
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;color:#000;margin:0;padding:0}
+
+@media print{
+  @page{size:A4 landscape;margin:0}
+  body{background:#fff;margin:0;padding:0}
+}
+
+.omr{width:297mm;height:210mm;margin:0 auto;background:#fff;position:relative;overflow:hidden;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+
+.cm{position:absolute;z-index:20}.cm b{position:absolute;background:#000;display:block}
+.cm-tl{top:3mm;left:3mm}.cm-tl .h{width:5mm;height:0.5mm;top:0;left:0}.cm-tl .v{width:0.5mm;height:5mm;top:0;left:0}
+.cm-tr{top:3mm;right:3mm}.cm-tr .h{width:5mm;height:0.5mm;top:0;right:0}.cm-tr .v{width:0.5mm;height:5mm;top:0;right:0}
+.cm-bl{bottom:3mm;left:3mm}.cm-bl .h{width:5mm;height:0.5mm;bottom:0;left:0}.cm-bl .v{width:0.5mm;height:5mm;bottom:0;left:0}
+.cm-br{bottom:3mm;right:3mm}.cm-br .h{width:5mm;height:0.5mm;bottom:0;right:0}.cm-br .v{width:0.5mm;height:5mm;bottom:0;right:0}
+
+.omr-c{position:absolute;top:9mm;left:10mm;right:10mm;bottom:6mm;display:flex;gap:3mm}
+
+/* ═══ LEFT PANEL ═══ */
+.lp{
+  width:62mm;flex-shrink:0;
+  border:1.5px solid #000;border-radius:2mm;
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.lp-top{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  flex:1;padding:2mm 2mm;
+}
+.lp-top img{max-width:95%;max-height:26mm;object-fit:contain;margin-bottom:2.5mm}
+.lp-ttl-exam{font-size:12pt;font-weight:800;line-height:1.4;overflow-wrap:break-word;word-break:break-all;text-align:center}
+.lp-ttl-sub{font-size:6.5pt;color:#555;margin-top:0.8mm;line-height:1.3;text-align:center}
+.lp-bottom{
+  display:flex;flex-direction:column;
+  justify-content:flex-end;
+}
+.lp-bottom .sec:first-child{border-top:1.5px solid #000}
+.sec{border-bottom:1.5px solid #000}
+.sec:last-of-type{border-bottom:none}
+.sec-h{background:#f0f0f0;border-bottom:0.8px solid #000;padding:1mm 2mm;font-size:6.5pt;font-weight:700;letter-spacing:1px;text-align:center}
+.sec-b{padding:2mm 2.5mm}
+
+.nm-area{height:10mm}
+
+.ph-write{display:flex;justify-content:center;gap:0;margin-bottom:1.5mm}
+.ph-cell{width:5.8mm;height:7mm;border:0.7px solid #000;display:flex;align-items:center;justify-content:center}
+.ph-cell+.ph-cell{border-left:none}
+.ph-sep{width:3.5mm;display:flex;align-items:center;justify-content:center;font-size:10pt;font-weight:800}
+.ph-bub-row{display:flex;justify-content:center;gap:0}
+.ph-bub-col{display:flex;flex-direction:column;align-items:center;width:5.8mm}
+.ph-bub-sep{width:3.5mm}
+.ph-bub{width:3.6mm;height:5.2mm;border:0.5px solid #000;border-radius:40%;display:flex;align-items:center;justify-content:center;font-size:4.5pt;color:#aaa;margin:0.12mm 0;background:#fff}
+
+.lp-note{
+  padding:1.5mm 2mm;
+  font-size:5pt;color:#333;line-height:1.6;
+  border-top:1.5px solid #000;
+  margin-top:auto;
+}
+
+/* ═══ ANSWER AREA ═══ */
+.ans{flex:1;display:flex;gap:2.5mm;min-width:0}
+
+.ac{
+  width:44mm;flex-shrink:0;flex-grow:0;
+  border:1.5px solid #000;border-radius:2mm;
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.ac-h{
+  display:flex;align-items:center;
+  height:5.5mm;
+  background:#f0f0f0;
+  border-bottom:1px solid #000;
+}
+.ac-h-n{
+  width:8mm;text-align:center;flex-shrink:0;
+  font-size:5.5pt;font-weight:700;
+  border-right:0.5px solid #999;
+  align-self:stretch;display:flex;align-items:center;justify-content:center;
+}
+.ac-h-a{
+  flex:1;text-align:center;
+  font-size:5.5pt;font-weight:700;letter-spacing:0.5px;
+}
+.ac-b{flex:1;display:flex;flex-direction:column}
+
+.ar{display:flex;align-items:center;flex:1;min-height:4mm;border-bottom:0.2px solid #ddd}
+.ar-g5{border-bottom:0.8px solid #999!important}
+.ar:last-child{border-bottom:none}
+.ar-n{
+  width:8mm;text-align:center;font-size:7pt;font-weight:700;
+  border-right:0.5px solid #ccc;flex-shrink:0;
+  align-self:stretch;display:flex;align-items:center;justify-content:center;
+}
+.ar-bs{flex:1;display:flex;justify-content:space-evenly;align-items:center;padding:0 0.5mm}
+.bu{width:3.6mm;height:5.2mm;border:0.55px solid #000;border-radius:40%;display:inline-flex;align-items:center;justify-content:center;font-size:5pt;color:#aaa;background:#fff;flex-shrink:0}
+
+.dc{
+  flex:1;min-width:40mm;
+  border:1.5px solid #000;border-radius:2mm;
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.dc-h{
+  display:flex;align-items:center;
+  height:5.5mm;background:#f0f0f0;
+  border-bottom:1px solid #000;
+}
+.dc-h-n{
+  width:8mm;text-align:center;flex-shrink:0;
+  font-size:5.5pt;font-weight:700;
+  border-right:0.5px solid #999;
+  align-self:stretch;display:flex;align-items:center;justify-content:center;
+}
+.dc-h-a{
+  flex:1;text-align:center;
+  font-size:5.5pt;font-weight:700;letter-spacing:0.5px;
+}
+.dc-b{flex:1;display:flex;flex-direction:column}
+.dr{display:flex;align-items:stretch;flex:1;border-bottom:0.5px solid #ccc}
+.dr-g5{border-bottom:0.8px solid #999!important}
+.dr:last-child{border-bottom:none}
+.dr-n{
+  width:8mm;display:flex;align-items:center;justify-content:center;
+  font-size:7pt;font-weight:700;flex-shrink:0;
+  border-right:0.5px solid #ccc;
+}
+.dr-bx{flex:1}
+</style>
+</head>
+<body>
+
+<div class="omr">
+  <!-- 코너 마크 -->
+  <div class="cm cm-tl"><b class="h"></b><b class="v"></b></div>
+  <div class="cm cm-tr"><b class="h"></b><b class="v"></b></div>
+  <div class="cm cm-bl"><b class="h"></b><b class="v"></b></div>
+  <div class="cm cm-br"><b class="h"></b><b class="v"></b></div>
+
+  <div class="omr-c">
+    <!-- 왼쪽 패널 -->
+    <div class="lp">
+      <div class="lp-top">
+        {% if logo_url %}<img src="{{ logo_url }}" alt="" onerror="this.style.display='none'">{% endif %}
+        <div class="lp-ttl-exam">{{ exam_title }}</div>
+        {% if sub_line %}<div class="lp-ttl-sub">{{ sub_line }}</div>{% endif %}
+      </div>
+      <div class="lp-bottom">
+        <div class="sec">
+          <div class="sec-h">성 명</div>
+          <div class="sec-b"><div class="nm-area"></div></div>
+        </div>
+        <div class="sec">
+          <div class="sec-h">전화번호 뒤 8자리</div>
+          <div class="sec-b">
+            <div class="ph-write">
+              {% for d in phone_digits %}{% if d == 4 %}<div class="ph-sep">–</div>{% endif %}<div class="ph-cell"></div>{% endfor %}
+            </div>
+            <div class="ph-bub-row">
+              {% for d in phone_digits %}{% if d == 4 %}<div class="ph-bub-sep"></div>{% endif %}<div class="ph-bub-col">{% for v in phone_values %}<div class="ph-bub">{{ v }}</div>{% endfor %}</div>{% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="lp-note">
+        <b>✍ 답안지 작성 안내</b>
+        <div style="margin-top:0.5mm">
+          <div style="display:flex;margin-bottom:0.3mm"><span style="min-width:2.5mm">1.</span><span>전화번호는 본인 휴대폰 번호 뒤 8자리를 적어주세요. 휴대폰이 없는 학생은 부모님 번호 뒤 8자리를 적어주세요.</span></div>
+          <div style="display:flex;margin-bottom:0.3mm"><span style="min-width:2.5mm">2.</span><span>객관식은 컴퓨터용 사인펜으로 버블을 빈틈없이 칠해주세요.</span></div>
+          <div style="display:flex;margin-bottom:0.3mm"><span style="min-width:2.5mm">3.</span><span>서술형은 답을 정자로 깔끔하게 적어주세요.</span></div>
+          <div style="display:flex"><span style="min-width:2.5mm">4.</span><span>수정할 때는 수정테이프를 사용해주세요.</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 답안 영역 -->
+    <div class="ans">
+      {% for col in mc_columns %}
+      <div class="ac">
+        <div class="ac-h">
+          <div class="ac-h-n">번호</div>
+          <div class="ac-h-a">{{ col.label }}</div>
+        </div>
+        <div class="ac-b">
+          {% for row in col.rows %}
+          <div class="ar{% if row.is_g5 %} ar-g5{% endif %}">
+            <div class="ar-n">{{ row.number }}</div>
+            <div class="ar-bs">{% for lbl in choices_labels %}<span class="bu">{{ lbl }}</span>{% endfor %}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+
+      {% if essay_count > 0 %}
+      <div class="dc">
+        <div class="dc-h">
+          <div class="dc-h-n">번호</div>
+          <div class="dc-h-a">서술형 {{ essay_count }}문항</div>
+        </div>
+        <div class="dc-b">
+          {% for row in essay_rows %}
+          <div class="dr{% if row.is_g5 %} dr-g5{% endif %}">
+            <div class="dr-n">{{ row.number }}</div>
+            <div class="dr-bx"></div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
