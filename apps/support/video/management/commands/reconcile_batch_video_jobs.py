@@ -37,6 +37,7 @@ NOT_FOUND_COUNT_KEY_PREFIX = "video:reconcile:not_found:"
 NOT_FOUND_COUNT_TTL_SECONDS = 3600
 NOT_FOUND_CONSECUTIVE_THRESHOLD = 3
 NOT_FOUND_MIN_AGE_MINUTES = 30
+MAX_ATTEMPTS = 5
 # Do not terminate RUNNABLE orphans until job has been RUNNABLE this long AND CE has scaled (desiredvCpus > 0)
 RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES = getattr(settings, "RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES", 15)
 # Set True to disable orphan terminate entirely (e.g. operator switch)
@@ -289,17 +290,30 @@ class Command(BaseCommand):
                         pass
                     job_fail_retry(str(job.id), status_reason or "Batch FAILED")
                     updated += 1
-                    if resubmit:
+                    job.refresh_from_db()
+                    # MAX_ATTEMPTS 체크 — 초과 시 DEAD 처리 (무한 RETRY_WAIT 방지)
+                    if job.attempt_count >= MAX_ATTEMPTS:
+                        job_mark_dead(
+                            str(job.id),
+                            error_code="RECONCILE_MAX_ATTEMPTS",
+                            error_message=f"Batch FAILED {job.attempt_count} times: {(status_reason or '')[:500]}",
+                        )
+                        self.stdout.write(self.style.WARNING(f"RECONCILE DEAD (max attempts) job_id={job.id} video_id={job.video_id}"))
+                    else:
+                        # 항상 자동 재제출 (--resubmit 플래그 불필요)
                         dur = None
                         try:
                             if getattr(job, "video", None) and getattr(job.video, "duration", None):
                                 dur = int(job.video.duration)
                         except Exception:
                             pass
-                        aws_job_id, _ = submit_batch_job(str(job.id), duration_seconds=dur)
+                        aws_job_id, submit_err = submit_batch_job(str(job.id), duration_seconds=dur)
                         if aws_job_id:
                             job.aws_batch_job_id = aws_job_id
                             job.save(update_fields=["aws_batch_job_id", "updated_at"])
+                            self.stdout.write(self.style.SUCCESS(f"RECONCILE resubmit job_id={job.id} new_batch={aws_job_id[:12]}"))
+                        else:
+                            self.stderr.write(f"RECONCILE resubmit FAILED job_id={job.id}: {submit_err}")
                 self.stdout.write(f"RECONCILE fail_retry job_id={job.id} reason={status_reason[:100]}")
 
             elif status == "RUNNING" and job.state == VideoTranscodeJob.State.QUEUED:
@@ -344,7 +358,15 @@ class Command(BaseCommand):
                         pass
                     job_fail_retry(str(job.id), "Reconcile: Batch job not found (after threshold)")
                     updated += 1
-                    if resubmit:
+                    job.refresh_from_db()
+                    if job.attempt_count >= MAX_ATTEMPTS:
+                        job_mark_dead(
+                            str(job.id),
+                            error_code="RECONCILE_MAX_ATTEMPTS",
+                            error_message="Batch job not found after max attempts",
+                        )
+                        self.stdout.write(self.style.WARNING(f"RECONCILE DEAD (max attempts) job_id={job.id}"))
+                    else:
                         dur = None
                         try:
                             if getattr(job, "video", None) and getattr(job.video, "duration", None):
@@ -353,9 +375,9 @@ class Command(BaseCommand):
                             pass
                         aws_job_id, _ = submit_batch_job(str(job.id), duration_seconds=dur)
                         if aws_job_id:
-                            job.refresh_from_db()
                             job.aws_batch_job_id = aws_job_id
                             job.save(update_fields=["aws_batch_job_id", "updated_at"])
+                            self.stdout.write(self.style.SUCCESS(f"RECONCILE resubmit job_id={job.id} new_batch={aws_job_id[:12]}"))
                 logger.info(
                     "reconcile not_found fail (after threshold)",
                     extra={
