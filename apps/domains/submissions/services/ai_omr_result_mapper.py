@@ -7,8 +7,17 @@ from datetime import datetime, timezone
 from django.db import transaction
 
 from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.domains.submissions.services.transition import transit, InvalidTransitionError
 
 logger = logging.getLogger(__name__)
+
+# 멱등성: 이미 처리된 submission은 callback을 무시한다
+_ALREADY_PROCESSED_STATUSES = frozenset({
+    Submission.Status.ANSWERS_READY,
+    Submission.Status.GRADING,
+    Submission.Status.DONE,
+    Submission.Status.SUPERSEDED,
+})
 
 
 def _resolve_enrollment_by_phone(
@@ -67,7 +76,16 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     try:
         submission = Submission.objects.select_for_update().get(id=int(submission_id))
     except Submission.DoesNotExist:
+        logger.warning("apply_omr_ai_result: submission %s not found", submission_id)
         return None
+
+    # 멱등성 가드: 이미 DISPATCHED 이후 단계로 진행된 submission은 건너뛴다
+    if submission.status in _ALREADY_PROCESSED_STATUSES:
+        logger.info(
+            "apply_omr_ai_result: submission %s already %s, skipping (idempotent)",
+            submission_id, submission.status,
+        )
+        return submission.id
 
     status = payload.get("status")
     result = payload.get("result") or {}
@@ -84,8 +102,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     submission.meta = meta
 
     if status == "FAILED":
-        submission.status = Submission.Status.FAILED
-        submission.error_message = error or "AI worker failed"
+        transit(submission, Submission.Status.FAILED, error_message=error or "AI worker failed", actor="ai_omr_mapper")
         submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
         return submission.id
 
@@ -171,14 +188,12 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     submission.meta = meta
 
     if not identifier_ok:
-        submission.status = Submission.Status.NEEDS_IDENTIFICATION
-        submission.error_message = ""
+        transit(submission, Submission.Status.NEEDS_IDENTIFICATION, actor="ai_omr_mapper")
         submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
         return submission.id
 
     submission.enrollment_id = int(enrollment_id)
-    submission.status = Submission.Status.ANSWERS_READY
-    submission.error_message = ""
+    transit(submission, Submission.Status.ANSWERS_READY, actor="ai_omr_mapper")
     submission.save(update_fields=["meta", "status", "enrollment_id", "error_message", "updated_at"])
 
     return submission.id

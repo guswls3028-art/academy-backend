@@ -114,6 +114,8 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         },
     )
     if not created:
+        # Re-fetch with row lock to prevent race with concurrent grader
+        attempt = ExamAttempt.objects.select_for_update().get(pk=attempt.pk)
         attempt.is_representative = True
         attempt.status = "done"
         attempt.save(update_fields=["is_representative", "status", "updated_at"])

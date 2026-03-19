@@ -195,8 +195,11 @@ class ExamEnrollmentManageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ✅ 완전 치환 방식
-        ExamEnrollment.objects.filter(exam_id=exam_id).delete()
+        # ✅ 세션 범위 내 치환 (다른 세션의 enrollment은 유지)
+        ExamEnrollment.objects.filter(
+            exam_id=exam_id,
+            enrollment_id__in=valid_ids,
+        ).delete()
 
         bulk = [
             ExamEnrollment(exam_id=exam_id, enrollment_id=eid)

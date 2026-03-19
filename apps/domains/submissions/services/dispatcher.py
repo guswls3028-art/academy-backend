@@ -8,6 +8,7 @@ from django.db import transaction
 
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.submission_service import SubmissionService
+from apps.domains.submissions.services.transition import transit_save
 
 from apps.domains.exams.models import ExamQuestion, Sheet
 from apps.domains.assets.omr.services.meta_generator import build_objective_template_meta
@@ -98,8 +99,11 @@ def _build_ai_payload(submission: Submission) -> Dict[str, Any]:
 @transaction.atomic
 def dispatch_submission(submission: Submission) -> None:
     """
-    Submission 처리 SSOT
+    Submission 처리 SSOT.
+    select_for_update로 동시 dispatch를 방지한다.
     """
+    # 동시성 방어: DB에서 최신 상태를 잠금 재조회
+    submission = Submission.objects.select_for_update().get(pk=submission.pk)
 
     if submission.status != Submission.Status.SUBMITTED:
         return
@@ -107,27 +111,26 @@ def dispatch_submission(submission: Submission) -> None:
     # ONLINE
     if submission.source == Submission.Source.ONLINE:
         SubmissionService.process(submission)
+        # process()가 ANSWERS_READY로 전이함. 이어서 GRADING으로.
 
-        submission.status = Submission.Status.GRADING
-        submission.save(update_fields=["status", "updated_at"])
+        transit_save(submission, Submission.Status.GRADING, actor="dispatcher.online")
 
         grade_submission(int(submission.id))
         dispatch_progress_pipeline(submission_id=submission.id)
 
-        submission.status = Submission.Status.DONE
-        submission.save(update_fields=["status", "updated_at"])
+        transit_save(submission, Submission.Status.DONE, actor="dispatcher.online")
         return
 
     # FILE 기반
     if not submission.file_key:
-        submission.status = Submission.Status.FAILED
-        submission.error_message = "file_key missing"
-        submission.save(update_fields=["status", "error_message", "updated_at"])
+        transit_save(
+            submission, Submission.Status.FAILED,
+            error_message="file_key missing",
+            actor="dispatcher.file",
+        )
         return
 
-    submission.status = Submission.Status.DISPATCHED
-    submission.error_message = ""
-    submission.save(update_fields=["status", "error_message", "updated_at"])
+    transit_save(submission, Submission.Status.DISPATCHED, actor="dispatcher.file")
 
     # ==================================================
     # ✅ 1) AI Job 생성 (DB SSOT)

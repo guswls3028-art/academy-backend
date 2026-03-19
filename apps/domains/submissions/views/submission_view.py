@@ -17,6 +17,10 @@ from apps.domains.submissions.serializers.submission import (
     SubmissionCreateSerializer,
 )
 from apps.domains.submissions.services.dispatcher import dispatch_submission
+from apps.domains.submissions.services.transition import (
+    transit_save,
+    InvalidTransitionError,
+)
 from apps.domains.results.services.grading_service import grade_submission
 
 
@@ -95,6 +99,17 @@ class SubmissionViewSet(ModelViewSet):
             if not self._validate_target_tenant(target_type, target_id, tenant):
                 from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("대상이 해당 학원에 속하지 않습니다.")
+        # enrollment_id 소유권 검증: 학생은 자신의 enrollment만 사용 가능
+        enrollment_id = serializer.validated_data.get("enrollment_id")
+        if enrollment_id:
+            student = getattr(self.request.user, "student_profile", None)
+            if student:
+                from apps.domains.enrollment.models import Enrollment
+                if not Enrollment.objects.filter(
+                    id=enrollment_id, student=student, tenant=tenant,
+                ).exists():
+                    from rest_framework.exceptions import PermissionDenied
+                    raise PermissionDenied("해당 수강 정보에 접근할 수 없습니다.")
         submission = serializer.save(user=self.request.user, tenant=tenant)
         dispatch_submission(submission)
 
@@ -114,21 +129,23 @@ class SubmissionViewSet(ModelViewSet):
                 ).exists()
         except Exception:
             pass
-        return True  # 알 수 없는 target_type은 통과 (기존 동작 유지)
+        return False  # 알 수 없는 target_type은 거부 (fail-closed)
 
     @action(detail=True, methods=["post"])
     def retry(self, request, pk=None):
-        submission: Submission = self.get_object()
+        with transaction.atomic():
+            submission = Submission.objects.select_for_update().get(pk=self.get_object().pk)
 
-        if submission.status != Submission.Status.FAILED:
-            return Response(
-                {"detail": "Only FAILED submissions can be retried."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        submission.status = Submission.Status.SUBMITTED
-        submission.error_message = ""
-        submission.save(update_fields=["status", "error_message", "updated_at"])
+            try:
+                transit_save(
+                    submission, Submission.Status.SUBMITTED,
+                    actor="admin.retry",
+                )
+            except InvalidTransitionError:
+                return Response(
+                    {"detail": "Only FAILED submissions can be retried."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         dispatch_submission(submission)
 
@@ -176,8 +193,16 @@ class SubmissionViewSet(ModelViewSet):
     def _manual_edit_post(self, request, pk=None):
         submission: Submission = Submission.objects.select_for_update().get(pk=self.get_object().pk)
 
-        if submission.status == Submission.Status.GRADING:
-            return Response({"detail": "Submission is grading now."}, status=409)
+        # admin_override=True: DONE/FAILED/SUBMITTED/DISPATCHED/NI → ANSWERS_READY 허용
+        # GRADING/SUPERSEDED → ANSWERS_READY 차단 (transition.py에서 강제)
+        try:
+            transit_save(
+                submission, Submission.Status.ANSWERS_READY,
+                admin_override=True,
+                actor=f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}",
+            )
+        except InvalidTransitionError as e:
+            return Response({"detail": str(e)}, status=409)
 
         identifier = request.data.get("identifier")
         answers = request.data.get("answers") or []
@@ -222,9 +247,7 @@ class SubmissionViewSet(ModelViewSet):
         meta["manual_review"]["resolved_at"] = timezone.now().isoformat()
 
         submission.meta = meta
-        submission.status = Submission.Status.ANSWERS_READY
-        submission.error_message = ""
-        submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
+        submission.save(update_fields=["meta", "updated_at"])
 
         try:
             result_obj = grade_submission(int(submission.id))

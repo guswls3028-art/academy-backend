@@ -17,9 +17,9 @@ class VideoAchievementView(APIView):
         video = video_repo.video_get_by_id_with_session(video_id)
         lecture = video.session.lecture
 
-        # Tenant isolation check
+        # Tenant isolation check (fail-closed: no tenant = deny)
         tenant = getattr(request, "tenant", None)
-        if tenant and getattr(lecture, "tenant_id", None) != tenant.id:
+        if not tenant or getattr(lecture, "tenant_id", None) != tenant.id:
             return Response({"detail": "접근 권한이 없습니다."}, status=403)
 
         online_attendance = video_repo.attendance_filter_session_status(video.session, "ONLINE")

@@ -85,11 +85,6 @@ urlpatterns = [
     path("jobs/", include("apps.domains.ai.urls")),
 
     # =========================
-    # AI (internal)
-    # =========================
-    path("internal/ai/", include("apps.api.v1.internal.ai.urls")),
-
-    # =========================
     # ✅ Video Worker (internal)
     # /api/v1/internal/video-worker/*
     # =========================

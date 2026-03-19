@@ -64,6 +64,35 @@ def _weighted_poll(queue: SQSAIQueueAdapter) -> tuple[Optional[dict], str]:
     return msg, tier
 
 
+def _dispatch_domain_callback(
+    prepared: PreparedJob,
+    *,
+    status: str,
+    result_payload: dict | None,
+    error: str | None,
+) -> None:
+    """
+    AI Job 완료 후 도메인 콜백 디스패치.
+    콜백 실패는 AI Job 상태에 영향을 주지 않는다 (fire-and-forget with logging).
+    """
+    try:
+        from apps.domains.ai.callbacks import dispatch_ai_result_to_domain
+        dispatch_ai_result_to_domain(
+            job_id=prepared.job_id,
+            status=status,
+            result_payload=result_payload,
+            error=error,
+            source_domain=prepared.source_domain,
+            source_id=prepared.source_id,
+            tier=prepared.tier,
+        )
+    except Exception:
+        logger.exception(
+            "Domain callback failed (non-fatal): job_id=%s source=%s/%s",
+            prepared.job_id, prepared.source_domain, prepared.source_id,
+        )
+
+
 def _run_inference(prepared: PreparedJob):
     """기존 handle_ai_job 호출 (contract 변환)."""
     from apps.shared.contracts.ai_job import AIJob
@@ -190,6 +219,10 @@ def run_ai_sqs_worker() -> int:
                             request_id, job_id,
                         )
                         fail_ai_job(uow_factory(), job_id, "inference_timeout_60min", tier_from_msg)
+                        _dispatch_domain_callback(
+                            prepared, status="FAILED", result_payload=None,
+                            error="inference_timeout_60min",
+                        )
                         queue.delete(receipt_handle, tier_from_msg)
                         extender.stop()
                         _current_receipt_handle = None
@@ -201,16 +234,29 @@ def run_ai_sqs_worker() -> int:
                     result = result_container[0] if result_container else None
                     if result is None:
                         fail_ai_job(uow_factory(), job_id, "inference_error_no_result", tier_from_msg)
+                        _dispatch_domain_callback(
+                            prepared, status="FAILED", result_payload=None,
+                            error="inference_error_no_result",
+                        )
                         queue.delete(receipt_handle, tier_from_msg)
                         consecutive_errors += 1
                     elif result.status == "DONE":
                         complete_ai_job(uow_factory(), job_id, result.result)
+                        _dispatch_domain_callback(
+                            prepared, status="DONE",
+                            result_payload=result.result if isinstance(result.result, dict) else {},
+                            error=None,
+                        )
                         queue.delete(receipt_handle, tier_from_msg)
                         logger.info("SQS_JOB_COMPLETED | request_id=%s | job_id=%s", request_id, job_id)
                         consecutive_errors = 0
                     else:
                         fail_ai_job(uow_factory(), job_id, result.error or "failed", tier_from_msg)
-                        logger.exception("SQS_JOB_FAILED | request_id=%s | job_id=%s | error=%s", request_id, job_id, result.error)
+                        _dispatch_domain_callback(
+                            prepared, status="FAILED", result_payload=None,
+                            error=result.error or "failed",
+                        )
+                        logger.warning("SQS_JOB_FAILED | request_id=%s | job_id=%s | error=%s", request_id, job_id, result.error)
                         consecutive_errors += 1
                 finally:
                     extender.stop()

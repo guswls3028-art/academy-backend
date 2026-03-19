@@ -295,10 +295,18 @@ def job_get_by_idempotency_key(key: str):
 
 def job_save_failed(job_model, error_message: str, last_error: str) -> None:
     """job_model 상태를 FAILED로 저장 (publish 실패 시)."""
-    job_model.status = "FAILED"
-    job_model.error_message = error_message
-    job_model.last_error = last_error
-    job_model.save(update_fields=["status", "error_message", "last_error", "updated_at"])
+    from django.db import transaction
+    from apps.domains.ai.models import AIJobModel
+
+    _TERMINAL = {"DONE", "FAILED", "REJECTED_BAD_INPUT"}
+    with transaction.atomic():
+        locked = AIJobModel.objects.select_for_update().filter(pk=job_model.pk).first()
+        if not locked or locked.status in _TERMINAL:
+            return
+        locked.status = "FAILED"
+        locked.error_message = error_message
+        locked.last_error = last_error
+        locked.save(update_fields=["status", "error_message", "last_error", "updated_at"])
 
 
 def result_exists_for_job(job_model) -> bool:

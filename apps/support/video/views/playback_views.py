@@ -146,6 +146,12 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         enrollment = video_repo.enrollment_get_by_id_active_with_student_lecture(enrollment_id)
         video = video_repo.video_get_by_id_with_relations(int(video_id))
 
+        # Tenant isolation: enrollment and video must belong to request.tenant
+        if enrollment.lecture.tenant_id != request.tenant.id:
+            return _deny("tenant_mismatch", code=403)
+        if video.session.lecture.tenant_id != request.tenant.id:
+            return _deny("tenant_mismatch", code=403)
+
         # 전체공개영상: 같은 테넌트(프로그램)에 등록된 학생이면 시청 가능
         is_public_lecture = (
             getattr(video.session.lecture, "title", None) == "전체공개영상"

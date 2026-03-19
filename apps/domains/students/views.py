@@ -1379,6 +1379,11 @@ def _approve_registration_request(request, reg):
 
     try:
         with transaction.atomic():
+            # Row lock to prevent double-approve race condition
+            reg = StudentRegistrationRequest.objects.select_for_update().get(pk=reg.pk)
+            if reg.status != StudentRegistrationRequest.PENDING:
+                return Response({"detail": "이미 처리된 신청입니다."}, status=400)
+
             parent = None
             if parent_phone:
                 parent = ensure_parent_for_student(
@@ -1766,8 +1771,16 @@ class RegistrationRequestViewSet(ModelViewSet):
                 {"detail": "이미 처리된 신청입니다."},
                 status=400,
             )
-        reg.status = StudentRegistrationRequest.REJECTED
-        reg.save(update_fields=["status", "updated_at"])
+        with transaction.atomic():
+            # Row lock to prevent approve/reject race condition
+            reg = StudentRegistrationRequest.objects.select_for_update().get(pk=reg.pk)
+            if reg.status != StudentRegistrationRequest.PENDING:
+                return Response(
+                    {"detail": "이미 처리된 신청입니다."},
+                    status=400,
+                )
+            reg.status = StudentRegistrationRequest.REJECTED
+            reg.save(update_fields=["status", "updated_at"])
         return Response({"status": "rejected", "id": reg.id}, status=200)
 
     @action(detail=False, methods=["post"], url_path="bulk_reject")
@@ -1784,11 +1797,13 @@ class RegistrationRequestViewSet(ModelViewSet):
             return Response({"detail": "거절할 ID가 없습니다."}, status=400)
 
         tenant = request.tenant
-        updated = StudentRegistrationRequest.objects.filter(
-            tenant=tenant,
-            id__in=ids,
-            status=StudentRegistrationRequest.PENDING,
-        ).update(status=StudentRegistrationRequest.REJECTED)
+        with transaction.atomic():
+            # Row lock to prevent approve/reject race condition
+            updated = StudentRegistrationRequest.objects.select_for_update().filter(
+                tenant=tenant,
+                id__in=ids,
+                status=StudentRegistrationRequest.PENDING,
+            ).update(status=StudentRegistrationRequest.REJECTED)
         return Response({"rejected": updated}, status=200)
 
 

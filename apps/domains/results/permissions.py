@@ -26,8 +26,7 @@ def is_teacher_user(u) -> bool:
 
 
 def is_student_user(u) -> bool:
-    # 명시적으로 teacher/admin 아니면 student로 취급(일반적인 정책)
-    return bool(not is_teacher_user(u))
+    return bool(hasattr(u, "student_profile") and u.student_profile is not None)
 
 
 class IsStudent(BasePermission):

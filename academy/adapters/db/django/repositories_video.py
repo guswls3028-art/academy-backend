@@ -737,15 +737,28 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
 
 
 def job_fail_retry(job_id: str, reason: str) -> tuple[bool, str]:
-    """Job FAILED + attempt_count++ + state=RETRY_WAIT. Video는 변경 없음."""
+    """Job FAILED + attempt_count++ + state=RETRY_WAIT. Video는 변경 없음. Terminal 상태는 보호."""
     from django.db import transaction
     from django.db.models import F
     from apps.support.video.models import VideoTranscodeJob
+
+    TERMINAL_STATES = {
+        VideoTranscodeJob.State.SUCCEEDED,
+        VideoTranscodeJob.State.FAILED,
+        VideoTranscodeJob.State.DEAD,
+        VideoTranscodeJob.State.CANCELLED,
+    }
 
     with transaction.atomic():
         job = VideoTranscodeJob.objects.select_for_update().filter(pk=job_id).first()
         if not job:
             return False, "job_not_found"
+        if job.state in TERMINAL_STATES:
+            import logging
+            logging.getLogger(__name__).warning(
+                "job_fail_retry: job %s already in terminal state %s, skipping", job_id, job.state,
+            )
+            return False, "already_terminal"
         job.state = VideoTranscodeJob.State.RETRY_WAIT
         job.attempt_count = F("attempt_count") + 1
         job.error_message = str(reason)[:2000]
@@ -776,11 +789,18 @@ def job_is_cancel_requested(job_id) -> bool:
 
 
 def job_cancel(job_id: str) -> bool:
-    """Job CANCELLED (재시도 버튼으로 사용자가 취소 요청 시)."""
+    """Job CANCELLED (재시도 버튼으로 사용자가 취소 요청 시). Terminal 상태는 보호."""
     from django.utils import timezone
     from apps.support.video.models import VideoTranscodeJob
 
-    n = VideoTranscodeJob.objects.filter(pk=job_id).update(
+    n = VideoTranscodeJob.objects.filter(
+        pk=job_id,
+        state__in=[
+            VideoTranscodeJob.State.QUEUED,
+            VideoTranscodeJob.State.RUNNING,
+            VideoTranscodeJob.State.RETRY_WAIT,
+        ],
+    ).update(
         state=VideoTranscodeJob.State.CANCELLED,
         locked_by="",
         locked_until=None,
@@ -790,16 +810,28 @@ def job_cancel(job_id: str) -> bool:
 
 
 def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") -> bool:
-    """Job DEAD. Transactional: Job + Video 원자적 업데이트. Use job_mark_dead_if_active when deleting video to avoid overwriting SUCCEEDED."""
+    """Job DEAD. Transactional: Job + Video 원자적 업데이트. Terminal 상태(SUCCEEDED, DEAD, CANCELLED)는 보호."""
     from django.db import transaction
     from django.utils import timezone
     from apps.support.video.models import Video, VideoTranscodeJob
+
+    TERMINAL_STATES = {
+        VideoTranscodeJob.State.SUCCEEDED,
+        VideoTranscodeJob.State.DEAD,
+        VideoTranscodeJob.State.CANCELLED,
+    }
 
     err_msg = str(error_message)[:2000]
     err_code = str(error_code)[:64]
     with transaction.atomic():
         job = VideoTranscodeJob.objects.select_for_update().filter(pk=job_id).first()
         if not job:
+            return False
+        if job.state in TERMINAL_STATES:
+            import logging
+            logging.getLogger(__name__).warning(
+                "job_mark_dead: job %s already in terminal state %s, skipping", job_id, job.state,
+            )
             return False
         job.state = VideoTranscodeJob.State.DEAD
         job.error_code = err_code

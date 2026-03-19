@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from apps.core.permissions import TenantResolved
 from apps.domains.students.models import Student
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Session as LectureSession
@@ -22,17 +23,17 @@ class StudentClinicIdcardView(APIView):
     GET /clinic/idcard/
     학생 본인 차시별 합불 + 클리닉 대상 여부.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolved]
 
     def get(self, request):
         user = request.user
         student = getattr(user, "student_profile", None)
-        tenant = getattr(request, "tenant", None)
+        tenant = request.tenant
         
         # 패스카드 배경 색상 (매일 자동 3색 또는 저장값)
         colors = get_effective_clinic_colors(tenant) if tenant else ["#ef4444", "#3b82f6", "#22c55e"]
         
-        if not student or not isinstance(student, Student):
+        if not student or not isinstance(student, Student) or student.tenant_id != tenant.id:
             return Response({
                 "student_name": "",
                 "profile_photo_url": None,
@@ -43,16 +44,7 @@ class StudentClinicIdcardView(APIView):
                 "current_result": "SUCCESS",
             })
 
-        if not tenant:
-            return Response({
-                "student_name": getattr(student, "name", "") or "",
-                "profile_photo_url": None,
-                "background_colors": colors[:3],
-                "server_date": timezone.now().date().isoformat(),
-                "server_datetime": timezone.now().isoformat(),
-                "histories": [],
-                "current_result": "SUCCESS",
-            })
+        # tenant is guaranteed by TenantResolved permission
         qs = Enrollment.objects.filter(student=student, tenant=tenant, status="ACTIVE")
         enrollment = qs.select_related("lecture").order_by("id").first()
         

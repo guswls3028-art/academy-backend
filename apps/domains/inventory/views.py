@@ -209,6 +209,10 @@ class FolderCreateView(View):
         if scope == "student" and not student_ps:
             return JsonResponse({"detail": "student_ps required for student scope"}, status=400)
 
+        perm_err = _check_scope_permission(request, scope)
+        if perm_err:
+            return perm_err
+
         tenant = request.tenant
         parent = None
         pid = None
@@ -246,6 +250,11 @@ class FileUploadView(View):
     def post(self, request):
         scope = (request.POST.get("scope") or "admin").lower()
         student_ps = (request.POST.get("student_ps") or "").strip()
+
+        perm_err = _check_scope_permission(request, scope)
+        if perm_err:
+            return perm_err
+
         folder_id = request.POST.get("folder_id")
         display_name = (request.POST.get("display_name") or "").strip()
         description = (request.POST.get("description") or "").strip()

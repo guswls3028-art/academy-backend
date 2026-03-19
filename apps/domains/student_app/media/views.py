@@ -522,7 +522,7 @@ class StudentSessionVideoListView(APIView):
                 )
                 raise PermissionDenied(detail)
 
-        videos = list(Video.objects.filter(session_id=session_id).order_by("title", "created_at", "id"))
+        videos = list(Video.objects.filter(session_id=session_id).order_by("order", "title", "id"))
 
         # 진행률 + 권한을 일괄 조회 (N+1 방지)
         from academy.adapters.db.django import repositories_video as video_repo

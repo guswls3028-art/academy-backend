@@ -2,7 +2,7 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 
-from apps.core.permissions import TenantResolvedAndMember
+from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from .models import Dday
 from .serializers import DdaySerializer
 
@@ -13,6 +13,11 @@ class DdayViewSet(ModelViewSet):
 
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["lecture"]
+
+    def get_permissions(self):
+        if self.action in ("create", "update", "partial_update", "destroy"):
+            return [TenantResolvedAndStaff()]
+        return [TenantResolvedAndMember()]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)

@@ -29,19 +29,12 @@ class Submission(TimestampModel):
         DONE = "done", "Done"
         FAILED = "failed", "Failed"
         NEEDS_IDENTIFICATION = "needs_identification", "Needs Identification"
+        SUPERSEDED = "superseded", "Superseded"  # 재응시로 대체됨
 
-    STATUS_FLOW = {
-        Status.SUBMITTED: {Status.DISPATCHED},
-        Status.DISPATCHED: {Status.EXTRACTING, Status.ANSWERS_READY},
-        Status.ANSWERS_READY: {Status.GRADING},
-        Status.GRADING: {Status.DONE, Status.FAILED},
-        Status.FAILED: {Status.SUBMITTED},
-        Status.NEEDS_IDENTIFICATION: {Status.ANSWERS_READY},
-    }
-
-    @classmethod
-    def can_transit(cls, from_status: str, to_status: str) -> bool:
-        return to_status in cls.STATUS_FLOW.get(from_status, set())
+    # ──────────────────────────────────────────────
+    # 상태 전이 SSOT → apps/domains/submissions/services/transition.py
+    # 모든 상태 변경은 transition.transit() 를 통해서만 수행할 것.
+    # ──────────────────────────────────────────────
 
     tenant = models.ForeignKey(
         Tenant,
@@ -92,7 +85,7 @@ class Submission(TimestampModel):
                 condition=models.Q(
                     status__in=[
                         "submitted", "dispatched", "extracting",
-                        "answers_ready", "grading", "done",
+                        "answers_ready", "grading",
                     ]
                 ),
                 name="unique_active_submission_per_target",

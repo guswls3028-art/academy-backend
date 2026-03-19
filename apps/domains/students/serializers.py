@@ -426,4 +426,4 @@ class RegistrationRequestListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StudentRegistrationRequest
-        exclude = ("initial_password",)
+        exclude = ("initial_password", "initial_password_plain")
