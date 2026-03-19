@@ -12,7 +12,7 @@ from rest_framework.parsers import MultiPartParser
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.ai.gateway import dispatch_job
-from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage, generate_presigned_download_url
+from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage, generate_presigned_get_url_storage as generate_presigned_download_url
 
 logger = logging.getLogger(__name__)
 
