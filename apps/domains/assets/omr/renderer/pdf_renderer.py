@@ -133,19 +133,40 @@ def _register_fonts():
         reg = [os.path.join(fd, "malgun.ttf"), os.path.join(fd, "NotoSansKR-VF.ttf")]
         bold = [os.path.join(fd, "malgunbd.ttf")]
     else:
-        reg = ["/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-               "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-               "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"]
-        bold = ["/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-                "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
-                "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"]
+        # Linux — .ttf 우선 (.ttc는 subfontIndex 필요)
+        reg = ["/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+               "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.ttf"]
+        bold = ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSansKR-Bold.ttf"]
     bd = os.path.join(os.path.dirname(__file__), "fonts")
     reg.append(os.path.join(bd, "NotoSansKR-Regular.ttf"))
     bold.append(os.path.join(bd, "NotoSansKR-Bold.ttf"))
+
+    # .ttc fallback (subfontIndex=0 for Korean)
+    ttc_reg = ["/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"]
+    ttc_bold = ["/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"]
+
+    # Regular
+    reg_ok = False
     for p in reg:
         if os.path.isfile(p):
-            try: pdfmetrics.registerFont(TTFont(_FN, p)); break
-            except Exception: continue
+            try:
+                pdfmetrics.registerFont(TTFont(_FN, p))
+                reg_ok = True
+                break
+            except Exception:
+                continue
+    if not reg_ok:
+        for p in ttc_reg:
+            if os.path.isfile(p):
+                try:
+                    pdfmetrics.registerFont(TTFont(_FN, p, subfontIndex=0))
+                    reg_ok = True
+                    break
+                except Exception:
+                    continue
+
+    # Bold
     bold_ok = False
     for p in bold:
         if os.path.isfile(p):
@@ -155,12 +176,24 @@ def _register_fonts():
                 break
             except Exception:
                 continue
-    # Bold 없으면 Regular를 Bold로도 등록 (폰트 없어서 크래시 방지)
     if not bold_ok:
-        for p in reg:
+        for p in ttc_bold:
             if os.path.isfile(p):
                 try:
-                    pdfmetrics.registerFont(TTFont(_FB, p))
+                    pdfmetrics.registerFont(TTFont(_FB, p, subfontIndex=0))
+                    bold_ok = True
+                    break
+                except Exception:
+                    continue
+    # 최후 fallback: Regular 폰트 파일을 Bold 이름으로도 등록
+    if not bold_ok:
+        for p in (reg + ttc_reg):
+            if os.path.isfile(p):
+                try:
+                    if p.endswith(".ttc"):
+                        pdfmetrics.registerFont(TTFont(_FB, p, subfontIndex=0))
+                    else:
+                        pdfmetrics.registerFont(TTFont(_FB, p))
                     break
                 except Exception:
                     continue

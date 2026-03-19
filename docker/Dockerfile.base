@@ -41,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     libpq5 \
     ca-certificates \
-    fonts-noto-cjk \
+    fonts-nanum \
     && rm -rf /var/lib/apt/lists/*
 
 # non-root 사용자 (보안·감사 대비, CMD/경로 규칙 유지)
