@@ -736,6 +736,7 @@ jobs:
         run: |
           IMAGE="${{ env.ECR_REGISTRY }}/academy-video-worker:sha-${{ needs.detect-changes.outputs.short_sha }}"
           echo "Deploying video worker image: $IMAGE"
+          FAIL_COUNT=0
           for JOBDEF_NAME in $VIDEO_JOB_DEFS; do
             echo "=== $JOBDEF_NAME ==="
             CURRENT=$(aws batch describe-job-definitions \
@@ -745,17 +746,37 @@ jobs:
               echo "::warning::Job definition $JOBDEF_NAME not found, skipping"
               continue
             fi
-            # Update container image to SHA-pinned version
-            NEW_CONTAINER=$(echo "$CURRENT" | jq --arg img "$IMAGE" '.containerProperties | .image = $img')
+            # Update container image + strip read-only fields that register rejects
+            NEW_CONTAINER=$(echo "$CURRENT" | jq --arg img "$IMAGE" '
+              .containerProperties
+              | .image = $img
+              | del(
+                  .networkInterfaces,
+                  .taskArn,
+                  .containerInstanceArn,
+                  .logStreamName,
+                  .assignPublicIp,
+                  .networkConfiguration
+                )
+              | if .secrets == [] then del(.secrets) else . end
+            ')
             PLATFORM=$(echo "$CURRENT" | jq -r '.platformCapabilities // ["EC2"] | join(",")')
-            aws batch register-job-definition \
+            if aws batch register-job-definition \
               --job-definition-name "$JOBDEF_NAME" \
               --type container \
               --platform-capabilities "$PLATFORM" \
               --container-properties "$NEW_CONTAINER" \
-              --output text --query 'jobDefinitionArn'
-            echo "  ✅ New revision registered"
+              --output text --query 'jobDefinitionArn' 2>&1; then
+              echo "  ✅ New revision registered"
+            else
+              echo "::error::Failed to register $JOBDEF_NAME"
+              FAIL_COUNT=$((FAIL_COUNT + 1))
+            fi
           done
+          if [ "$FAIL_COUNT" -gt 0 ]; then
+            echo "::error::$FAIL_COUNT job definition(s) failed to register"
+            exit 1
+          fi
 
       - name: Verify Batch compute environments
         run: |
