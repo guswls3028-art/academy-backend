@@ -185,11 +185,14 @@ videoBatch:
     scanstuck: academy-v1-video-ops-scanstuck
     netprobe: academy-v1-video-ops-netprobe
     enqueueUploaded: academy-v1-video-ops-enqueue-uploaded
+    purgeRaw: academy-v1-video-ops-purge-raw
+    detectStuck: academy-v1-video-ops-detect-stuck
 
 eventBridge:
   reconcileRuleName: academy-v1-reconcile-video-jobs
   scanStuckRuleName: academy-v1-video-scan-stuck-rate
   enqueueUploadedRuleName: academy-v1-enqueue-uploaded-videos
+  detectStuckRuleName: academy-v1-detect-stuck-videos
   roleName: academy-v1-eventbridge-batch-video-role
   # 1시간 주기: ops CE 스케일업 빈도 감소 (30분이면 매 30분마다 새 job 제출 → 계속 켜짐)
   reconcileSchedule: "rate(1 hour)"
@@ -199,6 +202,8 @@ eventBridge:
   reconcileState: ENABLED
   scanStuckState: ENABLED
   enqueueUploadedState: ENABLED
+  detectStuckSchedule: "rate(30 minutes)"
+  detectStuckState: ENABLED
 
 dynamodb:
   lockTableName: academy-v1-video-job-lock

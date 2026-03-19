@@ -719,11 +719,12 @@ jobs:
       VIDEO_JOB_DEFS: >-
         academy-v1-video-batch-jobdef
         academy-v1-video-batch-long-jobdef
-        academy-v1-video-ops-scan-stuck
+        academy-v1-video-ops-scanstuck
         academy-v1-video-ops-reconcile
         academy-v1-video-ops-netprobe
         academy-v1-video-ops-enqueue-uploaded
         academy-v1-video-ops-purge-raw
+        academy-v1-video-ops-detect-stuck
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
