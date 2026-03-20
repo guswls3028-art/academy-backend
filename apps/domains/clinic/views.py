@@ -160,9 +160,9 @@ class SessionViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         """
-        세션 삭제 전 참가자의 ClinicLink를 un-resolve 처리.
-        CASCADE 삭제로 참가자가 사라지기 전에 enrollment_id 기반으로
-        resolved된 ClinicLink를 되돌려 대상자 목록에 다시 나타나게 한다.
+        세션 삭제. ClinicLink 해소는 시험/과제 통과에 의해 결정되므로
+        세션 삭제 시 해소 상태를 건드리지 않음.
+        단, BOOKING_LEGACY 해소만 되돌림 (레거시 호환).
         """
         enrollment_ids = list(
             SessionParticipant.objects.filter(
@@ -176,10 +176,12 @@ class SessionViewSet(viewsets.ModelViewSet):
         )
         with transaction.atomic():
             if enrollment_ids:
+                # 레거시 예약 기반 해소만 되돌림. 실제 pass 기반 해소는 유지.
                 ClinicLink.objects.filter(
                     enrollment_id__in=enrollment_ids,
                     is_auto=True,
-                ).update(resolved_at=None)
+                    resolution_type="BOOKING_LEGACY",
+                ).update(resolved_at=None, resolution_type=None, resolution_evidence=None)
             instance.delete()
 
     def retrieve(self, request, *args, **kwargs):
@@ -660,13 +662,10 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_409_CONFLICT,
                 )
 
-            # enrollment_id가 있으면 해당 수강의 미해소 ClinicLink를 resolved 처리
-            if enrollment_id:
-                ClinicLink.objects.filter(
-                    enrollment_id=enrollment_id,
-                    is_auto=True,
-                    resolved_at__isnull=True,
-                ).update(resolved_at=timezone.now())
+            # ✅ V1.1.1 remediation 재정렬:
+            # 예약(booking)은 운영 이벤트이며 해소 트리거가 아님.
+            # ClinicLink 해소는 실제 시험/과제 통과 시에만 발생.
+            # (ClinicResolutionService가 progress pipeline에서 자동 처리)
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
@@ -761,18 +760,10 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 ]
             )
 
-            # ClinicLink un-resolve: 예약이 실질적으로 무효화된 경우
-            # (no_show, cancelled, rejected) ClinicLink를 다시 미해소로 되돌림
-            # 트랜잭션 안에서 실행하여 상태 변경과 원자적으로 처리
-            if next_status in {
-                SessionParticipant.Status.NO_SHOW,
-                SessionParticipant.Status.CANCELLED,
-                SessionParticipant.Status.REJECTED,
-            } and obj.enrollment_id:
-                ClinicLink.objects.filter(
-                    enrollment_id=obj.enrollment_id,
-                    is_auto=True,
-                ).update(resolved_at=None)
+            # ✅ V1.1.1 remediation 재정렬:
+            # 예약 상태 변경(no_show, cancelled, rejected)은 ClinicLink 해소에 영향 없음.
+            # ClinicLink 해소는 실제 시험/과제 통과에 의해서만 결정됨.
+            # (레거시 BOOKING_LEGACY 해소는 마이그레이션에서 보존됨)
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
@@ -991,26 +982,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 update_fields=["status", "status_changed_at", "status_changed_by", "updated_at"]
             )
 
-            # Update ClinicLink if applicable
-            # 핵심: un-resolve 전에 현재 resolved된 link ID를 기록하고,
-            # re-resolve 시 그 ID들만 대상으로 함 (새로 생긴 link를 잘못 resolve 방지)
-            if old_booking.enrollment_id:
-                previously_resolved_ids = list(
-                    ClinicLink.objects.filter(
-                        enrollment_id=old_booking.enrollment_id,
-                        is_auto=True,
-                        resolved_at__isnull=False,
-                    ).values_list("id", flat=True)
-                )
-                ClinicLink.objects.filter(
-                    id__in=previously_resolved_ids,
-                ).update(resolved_at=None)
-
-            if enrollment_id and previously_resolved_ids:
-                ClinicLink.objects.filter(
-                    id__in=previously_resolved_ids,
-                    resolved_at__isnull=True,
-                ).update(resolved_at=timezone.now())
+            # ✅ V1.1.1 remediation 재정렬:
+            # 예약 변경은 ClinicLink 해소에 영향 없음.
+            # ClinicLink 해소는 시험/과제 통과에 의해서만 결정됨.
 
         out = ClinicSessionParticipantSerializer(
             new_booking, context={"request": request}

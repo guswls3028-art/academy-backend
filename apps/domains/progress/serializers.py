@@ -62,9 +62,38 @@ class LectureProgressSerializer(serializers.ModelSerializer):
 
 
 class ClinicLinkSerializer(serializers.ModelSerializer):
+    enrollment_id = serializers.IntegerField(read_only=True)
+    session_title = serializers.CharField(source="session.title", read_only=True, default="")
+    lecture_title = serializers.CharField(source="session.lecture.title", read_only=True, default="")
+    student_name = serializers.SerializerMethodField()
+
     class Meta:
         model = ClinicLink
-        fields = "__all__"
+        fields = [
+            "id",
+            "enrollment_id",
+            "session",
+            "session_title",
+            "lecture_title",
+            "student_name",
+            "reason",
+            "is_auto",
+            "approved",
+            "resolved_at",
+            "resolution_type",
+            "resolution_evidence",
+            "cycle_no",
+            "memo",
+            "meta",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_student_name(self, obj) -> str:
+        try:
+            return obj.enrollment.student.name
+        except Exception:
+            return ""
 
 
 class RiskLogSerializer(serializers.ModelSerializer):

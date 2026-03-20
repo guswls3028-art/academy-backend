@@ -205,6 +205,25 @@ def _apply_score_and_policy(
     obj.updated_by_user_id = _safe_user_id(request)
 
     obj.save(update_fields=save_fields + ["updated_at"])
+
+    # ✅ 과제 통과 시 ClinicLink 자동 해소
+    if obj.passed:
+        try:
+            from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
+            ClinicResolutionService.resolve_by_homework_pass(
+                enrollment_id=int(obj.enrollment_id),
+                session_id=int(obj.session_id),
+                homework_id=int(obj.homework_id),
+                score=obj.score,
+                max_score=obj.max_score,
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "clinic auto-resolve homework failed (enrollment=%s, session=%s, homework=%s)",
+                obj.enrollment_id, obj.session_id, obj.homework_id,
+            )
+
     return obj
 
 

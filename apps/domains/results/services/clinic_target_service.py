@@ -201,14 +201,14 @@ class ClinicTargetService:
     """
 
     @staticmethod
-    def list_admin_targets(tenant: Any = None) -> List[Dict[str, Any]]:
+    def list_admin_targets(tenant: Any = None, include_resolved: bool = False) -> List[Dict[str, Any]]:
         links = (
             ClinicLink.objects.filter(is_auto=True)
-            # ✅ 수정사항(추가): 예약 완료로 분리된 대상자는 "대상자"에서 제외
-            .filter(resolved_at__isnull=True)
             .select_related("session")
-            .order_by("-created_at")  # 최신 자동 대상 우선
+            .order_by("-created_at")
         )
+        if not include_resolved:
+            links = links.filter(resolved_at__isnull=True)
         if tenant is not None:
             links = links.filter(session__lecture__tenant=tenant)
 
@@ -250,6 +250,13 @@ class ClinicTargetService:
                 out.append({
                     "enrollment_id": enrollment_id,
                     "_session_id": session_id,
+                    "session_id": session_id,
+                    "lecture_id": int(getattr(session, "lecture_id", 0) or 0),
+                    "exam_id": None,
+                    "clinic_link_id": int(link.id),
+                    "cycle_no": int(getattr(link, "cycle_no", 1) or 1),
+                    "resolution_type": getattr(link, "resolution_type", None),
+                    "resolved_at": getattr(link, "resolved_at", None),
                     "student_name": _get_student_name_by_enrollment_id(enrollment_id),
                     "session_title": _get_session_title(session),
                     "reason": "score",
@@ -289,6 +296,13 @@ class ClinicTargetService:
             out.append({
                 "enrollment_id": enrollment_id,
                 "_session_id": session_id,
+                "session_id": session_id,
+                "lecture_id": int(getattr(session, "lecture_id", 0) or 0),
+                "exam_id": exam_id,
+                "clinic_link_id": int(link.id),
+                "cycle_no": int(getattr(link, "cycle_no", 1) or 1),
+                "resolution_type": getattr(link, "resolution_type", None),
+                "resolved_at": getattr(link, "resolved_at", None),
                 "student_name": _get_student_name_by_enrollment_id(enrollment_id),
                 "session_title": _get_session_title(session),
                 "reason": reason,

@@ -31,4 +31,15 @@ class AdminClinicTargetSerializer(serializers.Serializer):
     exam_score = serializers.FloatField(allow_null=True)
     cutline_score = serializers.FloatField(allow_null=True)
 
+    # ✅ V1.1.1 remediation: ClinicLink 식별/상태 필드
+    clinic_link_id = serializers.IntegerField(required=False, allow_null=True)
+    cycle_no = serializers.IntegerField(required=False, default=1)
+    resolution_type = serializers.CharField(required=False, allow_null=True)
+    resolved_at = serializers.DateTimeField(required=False, allow_null=True)
+
+    # ✅ V1.1.1 remediation: 시험/과제 페이지 직접 연결용
+    session_id = serializers.IntegerField(required=False, allow_null=True)
+    lecture_id = serializers.IntegerField(required=False, allow_null=True)
+    exam_id = serializers.IntegerField(required=False, allow_null=True)
+
     created_at = serializers.DateTimeField(allow_null=True)

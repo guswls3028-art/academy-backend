@@ -40,10 +40,12 @@ class ClinicLinkFilter(django_filters.FilterSet):
     reason = django_filters.CharFilter(field_name="reason")
     is_auto = django_filters.BooleanFilter(field_name="is_auto")
     approved = django_filters.BooleanFilter(field_name="approved")
+    resolution_type = django_filters.CharFilter(field_name="resolution_type")
+    cycle_no = django_filters.NumberFilter(field_name="cycle_no")
 
     class Meta:
         model = ClinicLink
-        fields = ["enrollment_id", "session", "lecture", "reason", "is_auto", "approved"]
+        fields = ["enrollment_id", "session", "lecture", "reason", "is_auto", "approved", "resolution_type", "cycle_no"]
 
 
 class RiskLogFilter(django_filters.FilterSet):

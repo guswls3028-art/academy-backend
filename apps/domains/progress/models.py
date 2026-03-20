@@ -204,11 +204,26 @@ class LectureProgress(TimestampModel):
 
 
 class ClinicLink(TimestampModel):
+    """
+    학습 실패 → 클리닉 대상 연결 (remediation case)
+
+    핵심 의미: "이 학생(enrollment)이 이 차시(session)에서 실패하여 클리닉 대상이 됨"
+    해소(resolved_at)는 실제 시험/과제 통과 또는 관리자 명시 해소 시에만 설정.
+    예약/출석은 운영 이벤트이며 해소 트리거가 아님.
+    """
+
     class Reason(models.TextChoices):
         AUTO_FAILED = "AUTO_FAILED", "자동(차시 미통과)"
         AUTO_RISK = "AUTO_RISK", "자동(위험 알림)"
         MANUAL_REQUEST = "MANUAL_REQUEST", "수동(학생/학부모 요청)"
         TEACHER_RECOMMEND = "TEACHER_RECOMMEND", "강사 추천"
+
+    class ResolutionType(models.TextChoices):
+        EXAM_PASS = "EXAM_PASS", "시험 통과"
+        HOMEWORK_PASS = "HOMEWORK_PASS", "과제 통과"
+        MANUAL_OVERRIDE = "MANUAL_OVERRIDE", "관리자 수동 해소"
+        WAIVED = "WAIVED", "면제"
+        BOOKING_LEGACY = "BOOKING_LEGACY", "레거시(예약 기반)"
 
     enrollment = models.ForeignKey(
         "enrollment.Enrollment",
@@ -227,8 +242,26 @@ class ClinicLink(TimestampModel):
     is_auto = models.BooleanField(default=False)
     approved = models.BooleanField(default=False)
 
-    # ✅ 수정사항(추가): 예약 완료/분리 처리를 위한 타임스탬프
+    # --- resolution fields ---
     resolved_at = models.DateTimeField(null=True, blank=True)
+    resolution_type = models.CharField(
+        max_length=30,
+        choices=ResolutionType.choices,
+        null=True,
+        blank=True,
+        help_text="해소 유형: 시험통과/과제통과/수동해소/면제/레거시",
+    )
+    resolution_evidence = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="해소 근거: {exam_id, attempt_id, homework_id, score, ...}",
+    )
+
+    # --- cycle tracking ---
+    cycle_no = models.PositiveIntegerField(
+        default=1,
+        help_text="클리닉 차수: 1차, 2차, 3차...",
+    )
 
     memo = models.TextField(null=True, blank=True)
     meta = models.JSONField(null=True, blank=True)
@@ -238,13 +271,13 @@ class ClinicLink(TimestampModel):
             models.Index(fields=["enrollment_id", "created_at"]),
             models.Index(fields=["session", "created_at"]),
             models.Index(fields=["reason"]),
-            # ✅ 수정사항(추가)
             models.Index(fields=["resolved_at"]),
+            models.Index(fields=["resolution_type"]),
         ]
         ordering = ["-created_at", "-id"]
 
     def __str__(self):
-        return f"ClinicLink(enroll={self.enrollment_id}, session={self.session_id}, reason={self.reason})"
+        return f"ClinicLink(enroll={self.enrollment_id}, session={self.session_id}, reason={self.reason}, cycle={self.cycle_no})"
 
 
 class RiskLog(TimestampModel):

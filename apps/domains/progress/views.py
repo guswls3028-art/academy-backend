@@ -1,4 +1,7 @@
 # apps/domains/progress/views.py
+from rest_framework import status as drf_status
+from rest_framework.decorators import action
+from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -20,6 +23,7 @@ from .filters import (
     ClinicLinkFilter,
     RiskLogFilter,
 )
+from .services.clinic_resolution_service import ClinicResolutionService
 
 
 class ProgressPolicyViewSet(ModelViewSet):
@@ -100,14 +104,121 @@ class ClinicLinkViewSet(ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ClinicLinkFilter
     search_fields = ["enrollment_id", "session__title", "session__lecture__title", "memo"]
-    ordering_fields = ["id", "created_at", "updated_at", "approved", "is_auto"]
+    ordering_fields = ["id", "created_at", "updated_at", "approved", "is_auto", "cycle_no", "resolution_type"]
     ordering = ["-created_at", "-id"]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return ClinicLink.objects.none()
-        return ClinicLink.objects.filter(session__lecture__tenant=tenant).select_related("session", "session__lecture")
+        qs = ClinicLink.objects.filter(
+            session__lecture__tenant=tenant,
+        ).select_related("session", "session__lecture", "enrollment__student")
+
+        # 추가 필터: unresolved_only
+        unresolved_only = self.request.query_params.get("unresolved_only")
+        if unresolved_only in ("true", "1"):
+            qs = qs.filter(resolved_at__isnull=True)
+
+        return qs
+
+    @action(detail=True, methods=["post"])
+    def resolve(self, request, pk=None):
+        """
+        POST /progress/clinic-links/{id}/resolve/
+        관리자 수동 해소. body: { "memo": "..." }
+        """
+        link = self.get_object()
+        if link.resolved_at:
+            return Response(
+                {"detail": "이미 해소된 항목입니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        memo = request.data.get("memo")
+        result = ClinicResolutionService.resolve_manually(
+            clinic_link_id=link.id,
+            user_id=request.user.id,
+            memo=memo,
+        )
+        if not result:
+            return Response(
+                {"detail": "해소에 실패했습니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(ClinicLinkSerializer(result).data)
+
+    @action(detail=True, methods=["post"])
+    def waive(self, request, pk=None):
+        """
+        POST /progress/clinic-links/{id}/waive/
+        면제 처리. body: { "memo": "..." }
+        """
+        link = self.get_object()
+        if link.resolved_at:
+            return Response(
+                {"detail": "이미 해소된 항목입니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        memo = request.data.get("memo")
+        result = ClinicResolutionService.waive(
+            clinic_link_id=link.id,
+            user_id=request.user.id,
+            memo=memo,
+        )
+        if not result:
+            return Response(
+                {"detail": "면제 처리에 실패했습니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(ClinicLinkSerializer(result).data)
+
+    @action(detail=True, methods=["post"], url_path="carry-over")
+    def carry_over(self, request, pk=None):
+        """
+        POST /progress/clinic-links/{id}/carry-over/
+        다음 cycle로 이월.
+        """
+        link = self.get_object()
+        if link.resolved_at:
+            return Response(
+                {"detail": "이미 해소된 항목은 이월할 수 없습니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_link = ClinicResolutionService.carry_over(clinic_link_id=link.id)
+        if not new_link:
+            return Response(
+                {"detail": "이월에 실패했습니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(ClinicLinkSerializer(new_link).data, status=drf_status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"])
+    def unresolve(self, request, pk=None):
+        """
+        POST /progress/clinic-links/{id}/unresolve/
+        해소 취소 (되돌리기).
+        """
+        link = self.get_object()
+        if not link.resolved_at:
+            return Response(
+                {"detail": "미해소 상태입니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        result = ClinicResolutionService.unresolve(clinic_link_id=link.id)
+        if not result:
+            return Response(
+                {"detail": "해소 취소에 실패했습니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(ClinicLinkSerializer(result).data)
 
 
 class RiskLogViewSet(ModelViewSet):

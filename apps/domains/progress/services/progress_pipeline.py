@@ -11,6 +11,7 @@ from apps.domains.progress.services.session_calculator import SessionProgressCal
 from apps.domains.progress.services.lecture_calculator import LectureProgressCalculator
 from apps.domains.progress.services.risk_evaluator import RiskEvaluator
 from apps.domains.progress.services.clinic_trigger_service import ClinicTriggerService
+from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +221,15 @@ class ProgressPipelineService:
             except Exception:
                 logger.exception("clinic exam risk trigger failed (enroll=%s, exam=%s, session=%s)", enrollment_id, exam_id, session.id)
 
+        # ✅ Auto-resolution: 시험/과제 통과 시 ClinicLink 자동 해소
+        # 핵심: 예약/출석이 아닌, 실제 pass 여부로만 해소
+        self._try_auto_resolve(
+            enrollment_id=int(enrollment_id),
+            session=session,
+            session_progress=sp,
+            exam_id=exam_id,
+        )
+
         # lecture aggregates + risk
         try:
             lp = LectureProgressCalculator.calculate(enrollment_id=int(enrollment_id), lecture=session.lecture)
@@ -227,3 +237,100 @@ class ProgressPipelineService:
         except Exception:
             logger.exception("lecture/risk recompute failed (enroll=%s, lecture=%s)", enrollment_id, getattr(session, "lecture_id", None))
             raise
+
+    # ---------------------------------------------------------
+    # Auto-resolution: pass 시 ClinicLink 자동 해소
+    # ---------------------------------------------------------
+    def _try_auto_resolve(
+        self,
+        *,
+        enrollment_id: int,
+        session,
+        session_progress,
+        exam_id: Optional[int] = None,
+    ) -> None:
+        """
+        SessionProgress 계산 후, 시험/과제 통과 시 ClinicLink를 자동 해소.
+        해소 조건:
+        - exam_passed=True → EXAM_PASS로 해소
+        - homework_passed=True → HOMEWORK_PASS로 해소
+        예약/출석은 해소 트리거가 아님.
+        """
+        try:
+            from apps.domains.progress.models import ClinicLink
+
+            # 미해소 ClinicLink가 없으면 skip
+            has_unresolved = ClinicLink.objects.filter(
+                enrollment_id=enrollment_id,
+                session_id=session.id,
+                resolved_at__isnull=True,
+            ).exists()
+
+            if not has_unresolved:
+                return
+
+            # 시험 통과 시 해소
+            if session_progress.exam_passed and exam_id is not None:
+                exam_meta = session_progress.exam_meta or {}
+                exam_rows = exam_meta.get("exams", [])
+                # 해당 exam의 점수 정보 추출
+                exam_row = next(
+                    (r for r in exam_rows if int(r.get("exam_id", 0)) == int(exam_id)),
+                    None,
+                )
+                score = exam_row.get("score") if exam_row else None
+                pass_score = exam_row.get("pass_score") if exam_row else None
+
+                # attempt_id 조회
+                attempt_id = None
+                try:
+                    from apps.domains.results.models import ExamAttempt
+                    attempt = ExamAttempt.objects.filter(
+                        exam_id=int(exam_id),
+                        enrollment_id=int(enrollment_id),
+                        is_representative=True,
+                    ).order_by("-attempt_index").first()
+                    if attempt:
+                        attempt_id = attempt.id
+                except Exception:
+                    pass
+
+                ClinicResolutionService.resolve_by_exam_pass(
+                    enrollment_id=enrollment_id,
+                    session_id=session.id,
+                    exam_id=int(exam_id),
+                    attempt_id=attempt_id,
+                    score=score,
+                    pass_score=pass_score,
+                )
+
+            # 과제 통과 시 해소 (homework_passed는 calculator에서 결정)
+            if session_progress.homework_passed:
+                # homework_id 조회
+                try:
+                    from apps.domains.homework_results.models import HomeworkScore
+                    hw_score = HomeworkScore.objects.filter(
+                        enrollment_id=int(enrollment_id),
+                        session_id=session.id,
+                        passed=True,
+                    ).first()
+                    if hw_score:
+                        ClinicResolutionService.resolve_by_homework_pass(
+                            enrollment_id=enrollment_id,
+                            session_id=session.id,
+                            homework_id=hw_score.homework_id,
+                            score=hw_score.score,
+                            max_score=hw_score.max_score,
+                        )
+                except Exception:
+                    logger.debug(
+                        "clinic auto-resolve homework: could not find HomeworkScore "
+                        "(enrollment=%s, session=%s)", enrollment_id, session.id,
+                    )
+
+        except Exception:
+            # Auto-resolution failure must not block the pipeline
+            logger.exception(
+                "clinic auto-resolve failed (enrollment=%s, session=%s)",
+                enrollment_id, getattr(session, "id", None),
+            )
