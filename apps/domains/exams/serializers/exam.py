@@ -16,6 +16,14 @@ class ExamSerializer(serializers.ModelSerializer):
     - open_at / close_at로 시험 공개/마감 UX 구현
     """
 
+    # sessions M2M: 읽기 시 id 배열, 쓰기 시 id 배열로 설정
+    session_ids = serializers.PrimaryKeyRelatedField(
+        source="sessions",
+        many=True,
+        queryset=Exam.sessions.rel.related_model.objects.all(),
+        required=False,
+    )
+
     class Meta:
         model = Exam
         fields = [
@@ -35,6 +43,7 @@ class ExamSerializer(serializers.ModelSerializer):
             "open_at",
             "close_at",
             "answer_visibility",
+            "session_ids",
 
             "created_at",
             "updated_at",
