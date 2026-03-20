@@ -229,7 +229,12 @@ class VideoTranscodeJob(models.Model):
         on_delete=models.CASCADE,
         related_name="transcode_jobs",
     )
-    tenant_id = models.PositiveIntegerField(db_index=True)
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="video_transcode_jobs",
+        db_index=True,
+    )
 
     state = models.CharField(
         max_length=20,
@@ -293,8 +298,14 @@ class VideoOpsEvent(models.Model):
 
     type = models.CharField(max_length=64, choices=EventType.choices, db_index=True)
     severity = models.CharField(max_length=16, choices=Severity.choices, default=Severity.WARNING, db_index=True)
-    tenant_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
-    video_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="video_ops_events",
+        db_index=True,
+    )
+    video_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)  # 로그 보존: 삭제된 video 참조 허용
     job_id = models.UUIDField(null=True, blank=True, db_index=True)
     aws_batch_job_id = models.CharField(max_length=256, blank=True, db_index=True)
     payload = models.JSONField(default=dict, blank=True)
@@ -593,7 +604,12 @@ class VideoLike(models.Model):
         on_delete=models.CASCADE,
         related_name="video_likes",
     )
-    tenant_id = models.PositiveIntegerField(db_index=True)
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="video_likes",
+        db_index=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -604,7 +620,7 @@ class VideoLike(models.Model):
             )
         ]
         indexes = [
-            models.Index(fields=["tenant_id", "video"]),
+            models.Index(fields=["tenant", "video"]),
         ]
 
     def __str__(self):
@@ -621,7 +637,12 @@ class VideoComment(models.Model):
         on_delete=models.CASCADE,
         related_name="comments",
     )
-    tenant_id = models.PositiveIntegerField(db_index=True)
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="video_comments",
+        db_index=True,
+    )
 
     # 작성자: 학생 또는 선생님 중 하나
     author_student = models.ForeignKey(

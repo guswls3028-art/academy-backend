@@ -146,7 +146,12 @@ class SessionParticipant(TimestampModel):
         choices=Source.choices,
         default=Source.AUTO,
     )
-    enrollment_id = models.PositiveIntegerField(null=True, blank=True)
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="clinic_participations",
+    )
     clinic_reason = models.CharField(
         max_length=20,
         choices=Reason.choices,

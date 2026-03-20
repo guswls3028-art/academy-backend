@@ -430,7 +430,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         requested_date = serializer.validated_data.get("requested_date")
         requested_start_time = serializer.validated_data.get("requested_start_time")
         student = serializer.validated_data.get("student")
-        enrollment_id = serializer.validated_data.get("enrollment_id")
+        enrollment_obj = serializer.validated_data.get("enrollment")
+        enrollment_id = enrollment_obj.id if enrollment_obj else None
         source = serializer.validated_data.get("source") or SessionParticipant.Source.MANUAL
         requested_status = serializer.validated_data.get("status")
 

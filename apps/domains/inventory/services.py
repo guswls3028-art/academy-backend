@@ -44,7 +44,7 @@ def _check_duplicate_file(target_folder_id: int | None, tenant: Tenant, scope: s
     qs = inv_repo.inventory_file_filter_folder(tenant, scope, target_folder_id)
     if scope == "student":
         qs = qs.filter(student_ps=student_ps)
-    return qs.filter(display_name=display_name).first()
+    return qs.filter(display_name=display_name).order_by("id").first()
 
 
 def move_file(
@@ -207,7 +207,7 @@ def move_folder(
     q = inv_repo.inventory_folder_filter_parent_id_name(tenant, target_folder_id, source_folder.name)
     if scope == "student":
         q = q.filter(student_ps=student_ps)
-    existing_sibling = q.first()
+    existing_sibling = q.order_by("id").first()
     if existing_sibling and existing_sibling.id != source_folder_id:
         if on_duplicate == "overwrite":
             _delete_folder_tree_r2_and_db(existing_sibling, tenant, scope, student_ps)

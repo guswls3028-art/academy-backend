@@ -35,7 +35,7 @@ domains/homework/models/homework_enrollment.py:enrollment_id
 domains/homework/models/homework_assignment.py:enrollment_id
 domains/homework_results/models/score.py:enrollment_id
 domains/homework_results/models/score.py:updated_by_user_id
-domains/clinic/models.py:enrollment_id
-support/video/models.py:tenant_id
+# domains/clinic/models.py:enrollment_id — CONVERTED to FK (0008_fk_enrollment_conversion)
+# support/video/models.py:tenant_id — CONVERTED to FK (0010_fk_tenant_conversion, 4 models)
 support/video/models.py:video_id
 support/video/models.py:user_id

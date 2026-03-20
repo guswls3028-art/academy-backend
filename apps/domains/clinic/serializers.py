@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
 from apps.domains.lectures.models import Lecture
+from apps.domains.enrollment.models import Enrollment
 
 
 class ClinicSessionSerializer(serializers.ModelSerializer):
@@ -111,9 +112,17 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         default=None,
     )
 
+    # FK 전환 후 API 호환성: enrollment → enrollment_id로 노출
+    enrollment_id = serializers.PrimaryKeyRelatedField(
+        source="enrollment", read_only=True,
+    )
+
     class Meta:
         model = SessionParticipant
         fields = "__all__"
+        extra_kwargs = {
+            "enrollment": {"write_only": True, "required": False},
+        }
 
     def get_session_date(self, obj):
         """session이 있으면 session.date, 없으면 requested_date"""
@@ -151,6 +160,14 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if request and hasattr(request, "tenant") and request.tenant:
             self.fields["session"].queryset = Session.objects.filter(tenant=request.tenant)
+
+    # FK 전환 호환: 프론트가 enrollment_id로 보내면 enrollment FK로 매핑
+    enrollment_id = serializers.PrimaryKeyRelatedField(
+        source="enrollment",
+        queryset=Enrollment.objects.all(),
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = SessionParticipant

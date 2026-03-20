@@ -51,7 +51,7 @@ class OMRDocumentService:
         # session/lecture 이름 resolve
         _lecture_name = ""
         _session_name = ""
-        first_session = exam.sessions.select_related("lecture").first()
+        first_session = exam.sessions.select_related("lecture").order_by("order", "id").first()
         if first_session:
             _session_name = first_session.title or ""
             _lecture_name = first_session.lecture.title if first_session.lecture else ""
