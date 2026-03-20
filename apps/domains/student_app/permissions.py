@@ -62,4 +62,5 @@ def get_request_student(request):
             return active_students.filter(id=sid).first()
         except (TypeError, ValueError):
             pass
-    return active_students.first()
+    # Deterministic ordering: latest student ID first (prevents ambiguity when parent has multiple students)
+    return active_students.order_by("-id").first()

@@ -594,14 +594,15 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             else:
                 participant_role = "target"
 
-            # enrollment_id 자동 조회 (학생 신청 시)
-            if not enrollment_id and request_student:
+            # enrollment_id 자동 조회 (student만 있고 enrollment_id 없을 때)
+            if not enrollment_id and student:
                 from apps.domains.enrollment.models import Enrollment
+                # Deterministic ordering: most recent enrollment first (prevents ambiguity with multiple active enrollments)
                 enrollment = Enrollment.objects.filter(
-                    student=request_student,
+                    student=student,
                     tenant=tenant,
                     status="ACTIVE"
-                ).first()
+                ).order_by("-enrolled_at", "-id").first()
                 if enrollment:
                     enrollment_id = enrollment.id
 
@@ -945,11 +946,12 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             enrollment_id = old_booking.enrollment_id
             if not enrollment_id:
                 from apps.domains.enrollment.models import Enrollment
+                # Deterministic ordering: most recent enrollment first (prevents ambiguity with multiple active enrollments)
                 enrollment = Enrollment.objects.filter(
                     student=request_student,
                     tenant=tenant,
                     status="ACTIVE"
-                ).first()
+                ).order_by("-enrolled_at", "-id").first()
                 if enrollment:
                     enrollment_id = enrollment.id
 

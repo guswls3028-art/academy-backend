@@ -1,0 +1,41 @@
+# Known integer FK fields (existing technical debt)
+# Adding new entries requires approval
+# Format: relative_path_from_apps:field_name
+#
+# These fields use IntegerField/PositiveIntegerField/BigIntegerField
+# instead of proper ForeignKey. They are allowed to pass CI but will
+# generate warnings. New integer FK fields NOT in this list will fail CI.
+
+domains/ai/views/exam_sheet.py:exam_id
+domains/ai/views/exam_sheet.py:sheet_id
+domains/results/models/result.py:target_id
+domains/results/models/result.py:enrollment_id
+domains/results/models/result.py:attempt_id
+domains/results/models/result_fact.py:target_id
+domains/results/models/result_fact.py:enrollment_id
+domains/results/models/result_fact.py:submission_id
+domains/results/models/result_fact.py:attempt_id
+domains/results/models/result_fact.py:question_id
+domains/results/models/exam_attempt.py:exam_id
+domains/results/models/exam_attempt.py:enrollment_id
+domains/results/models/exam_attempt.py:submission_id
+domains/results/models/result_item.py:question_id
+domains/results/models/score_edit_draft.py:session_id
+domains/results/models/score_edit_draft.py:tenant_id
+domains/results/models/score_edit_draft.py:editor_user_id
+domains/results/models/wrong_note_pdf.py:enrollment_id
+domains/results/models/wrong_note_pdf.py:lecture_id
+domains/results/models/wrong_note_pdf.py:exam_id
+domains/progress/models.py:enrollment_id
+domains/submissions/models/submission.py:enrollment_id
+domains/submissions/models/submission.py:target_id
+domains/submissions/models/submission_answer.py:exam_question_id
+domains/homework/models/homework_enrollment.py:session_id
+domains/homework/models/homework_enrollment.py:enrollment_id
+domains/homework/models/homework_assignment.py:enrollment_id
+domains/homework_results/models/score.py:enrollment_id
+domains/homework_results/models/score.py:updated_by_user_id
+domains/clinic/models.py:enrollment_id
+support/video/models.py:tenant_id
+support/video/models.py:video_id
+support/video/models.py:user_id

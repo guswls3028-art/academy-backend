@@ -432,6 +432,10 @@ class HomeworkScoreViewSet(ModelViewSet):
         homework_id = serializer.validated_data["homework_id"]
         enrollment_id = serializer.validated_data["enrollment_id"]
 
+        # Tenant isolation guard: ensure enrollment_id belongs to this tenant
+        from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
+        validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
+
         status_key_present, normalized_status = _normalize_status_from_request(request)
         if status_key_present and normalized_status == "__INVALID__":
             return Response(

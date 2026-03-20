@@ -514,9 +514,10 @@ class StudentSessionVideoListView(APIView):
                 from apps.domains.enrollment.models import Enrollment as _Enroll
                 _student = get_request_student(request)
                 if _student:
+                    # Deterministic ordering: latest enrollment first (prevents ambiguity)
                     enrollment_obj = _Enroll.objects.filter(
                         student=_student, lecture_id=lecture_id_val, status="ACTIVE",
-                    ).first()
+                    ).order_by("-id").first()
             if enrollment_obj is None and not _student_can_access_session(request, session):
                 detail = (
                     "전체공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."
@@ -633,9 +634,10 @@ class StudentVideoPlaybackView(APIView):
             if not enrollment_obj and not enrollment_id and lecture_id:
                 _student = get_request_student(request)
                 if _student:
+                    # Deterministic ordering: latest enrollment first (prevents ambiguity)
                     enrollment_obj = _Enrollment.objects.filter(
                         student=_student, lecture_id=lecture_id, status="ACTIVE",
-                    ).first()
+                    ).order_by("-id").first()
 
             if not enrollment_obj:
                 raise PermissionDenied("이 영상을 시청하려면 해당 강의에 수강 등록이 필요합니다.")
