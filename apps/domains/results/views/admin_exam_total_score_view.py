@@ -194,7 +194,18 @@ class AdminExamTotalScoreView(APIView):
         # progress pipeline: 동기 dispatch (Result commit 후 즉시 실행)
         progress_ok = False
         progress_error = None
+        progress_debug = {}
         try:
+            # 디버그: pipeline 실행 전 상태 확인
+            from apps.domains.results.models import Result as _R
+            from apps.domains.results.utils.session_exam import get_session_ids_for_exam
+            _results_count = _R.objects.filter(target_type="exam", target_id=int(exam_id)).count()
+            _session_ids = get_session_ids_for_exam(int(exam_id))
+            progress_debug = {
+                "results_for_exam": _results_count,
+                "sessions_for_exam": _session_ids,
+            }
+
             if submission_id:
                 dispatch_progress_pipeline(submission_id=int(submission_id))
             else:
@@ -211,7 +222,7 @@ class AdminExamTotalScoreView(APIView):
                 "enrollment_id": enrollment_id,
                 "total_score": float(result.total_score or 0.0),
                 "max_score": float(result.max_score or 0.0),
-                "progress": {"dispatched": progress_ok, "error": progress_error},
+                "progress": {"dispatched": progress_ok, "error": progress_error, "debug": progress_debug},
             },
             status=drf_status.HTTP_200_OK,
         )
