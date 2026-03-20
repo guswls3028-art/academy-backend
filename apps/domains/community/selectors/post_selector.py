@@ -31,10 +31,13 @@ def get_post_by_id(tenant, post_id: int):
     )
 
 
-def get_all_posts_for_tenant(tenant) -> QuerySet:
+def get_all_posts_for_tenant(tenant, *, include_unpublished: bool = False) -> QuerySet:
     """tenant 전체 Post 목록 (node_id 없을 때 list용). replies_count, N+1 방지."""
+    qs = PostEntity.objects.filter(tenant=tenant)
+    if not include_unpublished:
+        qs = qs.filter(status="published")
     return (
-        PostEntity.objects.filter(tenant=tenant)
+        qs
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
         .select_related("created_by", "block_type")
@@ -54,6 +57,7 @@ def get_posts_for_node(
     node_id: int,
     *,
     include_inherited: bool = True,
+    include_unpublished: bool = False,
 ) -> QuerySet:
     """
     SESSION: 해당 SESSION + (include_inherited 시) 상위 COURSE 노드에 매핑된 Post.
@@ -87,8 +91,11 @@ def get_posts_for_node(
         .values_list("post_id", flat=True)
         .distinct()
     )
+    qs = PostEntity.objects.filter(id__in=post_ids, tenant=tenant)
+    if not include_unpublished:
+        qs = qs.filter(status="published")
     return (
-        PostEntity.objects.filter(id__in=post_ids, tenant=tenant)
+        qs
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
         .select_related("created_by", "block_type")
@@ -141,10 +148,13 @@ def get_admin_post_list(
     return qs[offset : offset + page_size], total
 
 
-def get_posts_by_type_for_tenant(tenant, post_type: str) -> QuerySet:
+def get_posts_by_type_for_tenant(tenant, post_type: str, *, include_unpublished: bool = False) -> QuerySet:
     """테넌트의 특정 post_type 게시물 목록. 학생앱 공용."""
+    qs = PostEntity.objects.filter(tenant=tenant, post_type=post_type)
+    if not include_unpublished:
+        qs = qs.filter(status="published")
     return (
-        PostEntity.objects.filter(tenant=tenant, post_type=post_type)
+        qs
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
         .select_related("created_by", "block_type")
@@ -159,10 +169,13 @@ def get_posts_by_type_for_tenant(tenant, post_type: str) -> QuerySet:
     )
 
 
-def get_notice_posts_for_tenant(tenant) -> QuerySet:
+def get_notice_posts_for_tenant(tenant, *, include_unpublished: bool = False) -> QuerySet:
     """테넌트의 공지 게시물 목록 (post_type='notice'). 학생앱 공지 목록 및 관리자와 동일 데이터."""
+    qs = PostEntity.objects.filter(tenant=tenant, post_type="notice")
+    if not include_unpublished:
+        qs = qs.filter(status="published")
     return (
-        PostEntity.objects.filter(tenant=tenant, post_type="notice")
+        qs
         .filter(_EXCLUDE_DELETED_AUTHOR)
         .annotate(replies_count=Count("replies"))
         .select_related("created_by", "block_type")

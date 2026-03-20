@@ -89,14 +89,15 @@ class PostViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return get_empty_post_queryset()
+        request_student = get_request_student(self.request)
+        is_staff = request_student is None  # staff/admin은 학생이 아님
         raw = self.request.query_params.get("node_id")
         try:
             node_id = int(raw) if raw not in (None, "") else None
         except (TypeError, ValueError):
             node_id = None
         if node_id is not None:
-            qs = get_posts_for_node(tenant, node_id, include_inherited=True)
-            request_student = get_request_student(self.request)
+            qs = get_posts_for_node(tenant, node_id, include_inherited=True, include_unpublished=is_staff)
             if request_student is not None:
                 from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
                 qs = qs.filter(
@@ -104,9 +105,8 @@ class PostViewSet(viewsets.ModelViewSet):
                     Q(created_by=request_student)
                 )
         else:
-            qs = get_all_posts_for_tenant(tenant)
+            qs = get_all_posts_for_tenant(tenant, include_unpublished=is_staff)
             # 학생 요청 시 node_id 없으면 본인 작성 글만 반환 (학생 앱 "내 질문" 목록)
-            request_student = get_request_student(self.request)
             if request_student is not None:
                 qs = qs.filter(created_by=request_student)
 
@@ -324,13 +324,21 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
 
         # POST: 답변 등록 (content만 필수)
+        # 학생은 공개 타입(notice/board/materials) 또는 본인 글에만 답변 가능
+        request_student = get_request_student(request)
+        if request_student is not None:
+            from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
+            is_public = getattr(post, "post_type", "") in STUDENT_PUBLIC_POST_TYPES
+            is_own = getattr(post, "created_by_id", None) == request_student.id
+            if not is_public and not is_own:
+                return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+
         serializer = PostReplySerializer(data=request.data, partial=False)
         serializer.is_valid(raise_exception=True)
 
         created_by = None
         author_display_name = None
         author_role = "staff"
-        request_student = get_request_student(request)
         if request_student is not None:
             created_by = request_student
             author_display_name = getattr(request_student, "name", None)
@@ -555,7 +563,7 @@ class AdminPostViewSet(viewsets.GenericViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return get_empty_post_queryset()
-        return get_all_posts_for_tenant(tenant)
+        return get_all_posts_for_tenant(tenant, include_unpublished=True)
 
 
 class BlockTypeViewSet(viewsets.ModelViewSet):

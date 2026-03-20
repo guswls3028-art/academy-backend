@@ -158,6 +158,30 @@ class SessionViewSet(viewsets.ModelViewSet):
                 )
             raise
 
+    def perform_destroy(self, instance):
+        """
+        세션 삭제 전 참가자의 ClinicLink를 un-resolve 처리.
+        CASCADE 삭제로 참가자가 사라지기 전에 enrollment_id 기반으로
+        resolved된 ClinicLink를 되돌려 대상자 목록에 다시 나타나게 한다.
+        """
+        enrollment_ids = list(
+            SessionParticipant.objects.filter(
+                session=instance,
+                enrollment_id__isnull=False,
+                status__in=[
+                    SessionParticipant.Status.BOOKED,
+                    SessionParticipant.Status.PENDING,
+                ],
+            ).values_list("enrollment_id", flat=True)
+        )
+        with transaction.atomic():
+            if enrollment_ids:
+                ClinicLink.objects.filter(
+                    enrollment_id__in=enrollment_ids,
+                    is_auto=True,
+                ).update(resolved_at=None)
+            instance.delete()
+
     def retrieve(self, request, *args, **kwargs):
         """단일 세션 조회 시 직렬화 오류 방지 (annotate 필드 누락 등)."""
         try:
@@ -489,6 +513,21 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     {"detail": "해당 수강 등록 정보를 찾을 수 없습니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+        # ✅ enrollment_id ↔ student 교차검증: 불일치 시 데이터 정합성 위반 방지
+        elif student and enrollment_id:
+            from apps.domains.enrollment.models import Enrollment
+            try:
+                enrollment = Enrollment.objects.get(id=enrollment_id, tenant=tenant)
+                if enrollment.student_id != student.id:
+                    return Response(
+                        {"detail": "enrollment_id와 student가 일치하지 않습니다."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            except Enrollment.DoesNotExist:
+                return Response(
+                    {"detail": "해당 수강 등록 정보를 찾을 수 없습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         if not student:
             return Response(
@@ -720,14 +759,18 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 ]
             )
 
-        if next_status in {
-            SessionParticipant.Status.NO_SHOW,
-            SessionParticipant.Status.CANCELLED,
-        } and obj.enrollment_id:
-            ClinicLink.objects.filter(
-                enrollment_id=obj.enrollment_id,
-                is_auto=True,
-            ).update(resolved_at=None)
+            # ClinicLink un-resolve: 예약이 실질적으로 무효화된 경우
+            # (no_show, cancelled, rejected) ClinicLink를 다시 미해소로 되돌림
+            # 트랜잭션 안에서 실행하여 상태 변경과 원자적으로 처리
+            if next_status in {
+                SessionParticipant.Status.NO_SHOW,
+                SessionParticipant.Status.CANCELLED,
+                SessionParticipant.Status.REJECTED,
+            } and obj.enrollment_id:
+                ClinicLink.objects.filter(
+                    enrollment_id=obj.enrollment_id,
+                    is_auto=True,
+                ).update(resolved_at=None)
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
