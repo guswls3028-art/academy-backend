@@ -209,13 +209,10 @@ class AdminExamItemScoreView(APIView):
             .order_by("-id")
             .first()
         )
-        if not submission:
-            return Response(
-                {"detail": "no submission found; cannot recalculate progress", "code": "NO_SUBMISSION"},
-                status=drf_status.HTTP_409_CONFLICT,
-            )
-
-        dispatch_progress_pipeline(int(submission.id))
+        if submission:
+            dispatch_progress_pipeline(submission_id=int(submission.id))
+        else:
+            dispatch_progress_pipeline(exam_id=int(exam_id))
 
         return Response(
             {

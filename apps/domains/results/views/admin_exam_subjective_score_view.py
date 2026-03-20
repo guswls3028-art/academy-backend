@@ -170,8 +170,12 @@ class AdminExamSubjectiveScoreView(APIView):
 
         if submission_id:
             def _dispatch():
-                dispatch_progress_pipeline(int(submission_id))
+                dispatch_progress_pipeline(submission_id=int(submission_id))
             transaction.on_commit(_dispatch)
+        else:
+            def _dispatch_by_exam():
+                dispatch_progress_pipeline(exam_id=int(exam_id))
+            transaction.on_commit(_dispatch_by_exam)
 
         return Response(
             {

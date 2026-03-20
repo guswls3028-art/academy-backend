@@ -185,11 +185,16 @@ class AdminExamTotalScoreView(APIView):
 
         # -------------------------------------------------
         # 6️⃣ progress pipeline (best-effort)
+        # Submission이 있으면 submission 기반, 없으면 exam_id 기반으로 dispatch
         # -------------------------------------------------
         if submission_id:
             def _dispatch():
-                dispatch_progress_pipeline(int(submission_id))
+                dispatch_progress_pipeline(submission_id=int(submission_id))
             transaction.on_commit(_dispatch)
+        else:
+            def _dispatch_by_exam():
+                dispatch_progress_pipeline(exam_id=int(exam_id))
+            transaction.on_commit(_dispatch_by_exam)
 
         return Response(
             {
@@ -198,7 +203,7 @@ class AdminExamTotalScoreView(APIView):
                 "enrollment_id": enrollment_id,
                 "total_score": float(result.total_score or 0.0),
                 "max_score": float(result.max_score or 0.0),
-                "progress": {"dispatched": bool(submission_id), "reason": None if submission_id else "NO_SUBMISSION"},
+                "progress": {"dispatched": True},
             },
             status=drf_status.HTTP_200_OK,
         )
