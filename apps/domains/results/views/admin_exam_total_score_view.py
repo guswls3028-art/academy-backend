@@ -191,17 +191,18 @@ class AdminExamTotalScoreView(APIView):
         # 6️⃣ progress pipeline (best-effort, 실패해도 점수 저장은 유지)
         # Submission이 있으면 submission 기반, 없으면 exam_id 기반으로 dispatch
         # -------------------------------------------------
-        _sid = int(submission_id) if submission_id else 0
-        _eid = int(exam_id)
-        def _dispatch_progress():
-            try:
-                if _sid:
-                    dispatch_progress_pipeline(submission_id=_sid)
-                else:
-                    dispatch_progress_pipeline(exam_id=_eid)
-            except Exception:
-                logger.exception("progress pipeline dispatch failed (exam=%s, submission=%s)", _eid, _sid)
-        transaction.on_commit(_dispatch_progress)
+        # progress pipeline: 동기 dispatch (Result commit 후 즉시 실행)
+        progress_ok = False
+        progress_error = None
+        try:
+            if submission_id:
+                dispatch_progress_pipeline(submission_id=int(submission_id))
+            else:
+                dispatch_progress_pipeline(exam_id=int(exam_id))
+            progress_ok = True
+        except Exception as exc:
+            logger.exception("progress pipeline failed (exam=%s, submission=%s)", exam_id, submission_id)
+            progress_error = str(exc)[:200]
 
         return Response(
             {
@@ -210,7 +211,7 @@ class AdminExamTotalScoreView(APIView):
                 "enrollment_id": enrollment_id,
                 "total_score": float(result.total_score or 0.0),
                 "max_score": float(result.max_score or 0.0),
-                "progress": {"dispatched": True},
+                "progress": {"dispatched": progress_ok, "error": progress_error},
             },
             status=drf_status.HTTP_200_OK,
         )
