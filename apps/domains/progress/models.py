@@ -257,6 +257,20 @@ class ClinicLink(TimestampModel):
         help_text="해소 근거: {exam_id, attempt_id, homework_id, score, ...}",
     )
 
+    # --- source tracking (V1.1.2: 시험/과제별 개별 추적) ---
+    source_type = models.CharField(
+        max_length=20,
+        choices=[("exam", "시험"), ("homework", "과제")],
+        null=True,
+        blank=True,
+        help_text="출처 유형: exam 또는 homework",
+    )
+    source_id = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="출처 ID: exam.id 또는 homework.id",
+    )
+
     # --- cycle tracking ---
     cycle_no = models.PositiveIntegerField(
         default=1,
@@ -273,6 +287,14 @@ class ClinicLink(TimestampModel):
             models.Index(fields=["reason"]),
             models.Index(fields=["resolved_at"]),
             models.Index(fields=["resolution_type"]),
+            models.Index(fields=["source_type", "source_id"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["enrollment", "session", "source_type", "source_id", "cycle_no"],
+                name="uniq_cliniclink_per_source_cycle",
+                condition=models.Q(source_type__isnull=False, source_id__isnull=False),
+            ),
         ]
         ordering = ["-created_at", "-id"]
 

@@ -55,15 +55,29 @@ class ClinicResolutionService:
             evidence["attempt_id"] = attempt_id
 
         now = timezone.now()
-        count = ClinicLink.objects.filter(
-            enrollment_id=enrollment_id,
-            session_id=session_id,
-            resolved_at__isnull=True,
-        ).update(
+        update_kwargs = dict(
             resolved_at=now,
             resolution_type=ClinicLink.ResolutionType.EXAM_PASS,
             resolution_evidence=evidence,
         )
+
+        # V1.1.2: source-specific 해소 (시험별 개별)
+        count = ClinicLink.objects.filter(
+            enrollment_id=enrollment_id,
+            session_id=session_id,
+            source_type="exam",
+            source_id=int(exam_id),
+            resolved_at__isnull=True,
+        ).update(**update_kwargs)
+
+        # Fallback: legacy links (source_type=NULL, V1.1.1 이전 데이터)
+        if count == 0:
+            count = ClinicLink.objects.filter(
+                enrollment_id=enrollment_id,
+                session_id=session_id,
+                source_type__isnull=True,
+                resolved_at__isnull=True,
+            ).update(**update_kwargs)
 
         if count > 0:
             logger.info(
@@ -223,10 +237,12 @@ class ClinicResolutionService:
         link.resolution_evidence = {"carried_over": True, "carried_at": now.isoformat()}
         link.save(update_fields=["resolved_at", "resolution_type", "resolution_evidence", "updated_at"])
 
-        # Create next cycle
+        # Create next cycle (source 전파)
         new_link = ClinicLink.objects.create(
             enrollment_id=link.enrollment_id,
             session_id=link.session_id,
+            source_type=link.source_type,
+            source_id=link.source_id,
             reason=link.reason,
             is_auto=link.is_auto,
             approved=False,

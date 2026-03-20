@@ -227,24 +227,20 @@ class ClinicTargetService:
             if not session_id or not enrollment_id:
                 continue
 
-            # clinic_reason 판정: ClinicLink.reason → clinic_reason 매핑
-            link_reason = getattr(link, "reason", "")
-            if link_reason in ("AUTO_FAILED", "AUTO_RISK"):
-                clinic_reason = "exam"
+            # clinic_reason 판정
+            source_type = getattr(link, "source_type", None)
+            clinic_reason = source_type or "exam"
+
+            # V1.1.2: source_id가 있으면 직접 사용, 없으면 대표 exam fallback
+            source_id = getattr(link, "source_id", None)
+            if source_type == "exam" and source_id:
+                exam = Exam.objects.filter(id=int(source_id)).first()
             else:
-                clinic_reason = "exam"  # 기본값: 시험 사유
-
-            # 대표 exam 선정 (세션에 시험이 여러 개면 1개만 표기)
-            if session_id not in exams_cache:
-                exams = list(get_exams_for_session(session))
-                if exams:
-                    # ✅ 보수적 정책: id가 가장 작은 exam을 대표로
-                    ex = sorted(exams, key=lambda x: int(getattr(x, "id", 0) or 0))[0]
-                    exams_cache[session_id] = ex
-                else:
-                    exams_cache[session_id] = None
-
-            exam = exams_cache.get(session_id)
+                # Legacy fallback: 세션의 대표 exam
+                if session_id not in exams_cache:
+                    exams = list(get_exams_for_session(session))
+                    exams_cache[session_id] = sorted(exams, key=lambda x: x.id)[0] if exams else None
+                exam = exams_cache.get(session_id)
             if not exam:
                 # 세션에 시험이 없으면 score/cutline은 0으로 내려서 화면이 깨지지 않게
                 out.append({

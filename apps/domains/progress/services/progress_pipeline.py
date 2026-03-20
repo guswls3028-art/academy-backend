@@ -269,24 +269,22 @@ class ProgressPipelineService:
             if not has_unresolved:
                 return
 
-            # 시험 통과 시 해소
-            if session_progress.exam_passed and exam_id is not None:
-                exam_meta = session_progress.exam_meta or {}
-                exam_rows = exam_meta.get("exams", [])
-                # 해당 exam의 점수 정보 추출
-                exam_row = next(
-                    (r for r in exam_rows if int(r.get("exam_id", 0)) == int(exam_id)),
-                    None,
-                )
-                score = exam_row.get("score") if exam_row else None
-                pass_score = exam_row.get("pass_score") if exam_row else None
+            # V1.1.2: 개별 시험 단위로 해소 (세션 집계와 독립적)
+            exam_meta = session_progress.exam_meta or {}
+            exam_rows = exam_meta.get("exams", [])
+            for exam_row in exam_rows:
+                eid = int(exam_row.get("exam_id", 0) or 0)
+                if not eid:
+                    continue
+                if not exam_row.get("passed", False):
+                    continue  # 불합격 시험은 해소하지 않음
 
-                # attempt_id 조회
+                # 합격한 시험의 ClinicLink 해소
                 attempt_id = None
                 try:
                     from apps.domains.results.models import ExamAttempt
                     attempt = ExamAttempt.objects.filter(
-                        exam_id=int(exam_id),
+                        exam_id=eid,
                         enrollment_id=int(enrollment_id),
                         is_representative=True,
                     ).order_by("-attempt_index").first()
@@ -298,10 +296,10 @@ class ProgressPipelineService:
                 ClinicResolutionService.resolve_by_exam_pass(
                     enrollment_id=enrollment_id,
                     session_id=session.id,
-                    exam_id=int(exam_id),
+                    exam_id=eid,
                     attempt_id=attempt_id,
-                    score=score,
-                    pass_score=pass_score,
+                    score=exam_row.get("score"),
+                    pass_score=exam_row.get("pass_score"),
                 )
 
             # 과제 통과 시 해소 (homework_passed는 calculator에서 결정)
