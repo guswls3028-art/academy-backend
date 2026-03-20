@@ -150,7 +150,7 @@ class SessionProgressCalculator:
                     "max_score": cls._safe_float(r.max_score, default=0.0),
                     "pass_score": float(pass_score),
                     "passed": bool(score >= float(pass_score)),
-                    "submitted_at": r.submitted_at,
+                    "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
                     "attempt_count": int(attempt_counts.get(int(r.target_id), 0)),
                 }
             )
