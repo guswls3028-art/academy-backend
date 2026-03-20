@@ -87,9 +87,12 @@ def _get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_i
             {"detail": "해당 수강 정보에 접근할 수 없습니다."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    # lecture_id가 주어졌을 때 다른 강의 수강이면 None 반환 (403 아님: 세션 목록에서 무시하고 진행률 0으로 표시)
+    # lecture_id가 주어졌을 때 다른 강의 수강이면 에러 반환 (잘못된 enrollment_id로 다른 수강이 대체되는 것 방지)
     if lecture_id is not None and enrollment.lecture_id != lecture_id:
-        return None, None
+        return None, Response(
+            {"detail": "수강 정보가 해당 강의와 일치하지 않습니다."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     return enrollment, None
 
 
@@ -506,8 +509,8 @@ class StudentSessionVideoListView(APIView):
                 )
                 if err:
                     return err
-            # enrollment_id 미전달/불일치 시 강의 기준 자동 매칭
-            if enrollment_obj is None and lecture_id_val:
+            # enrollment_id 미전달 시에만 강의 기준 자동 매칭 (명시적 enrollment_id가 실패한 경우 대체하지 않음)
+            if enrollment_obj is None and not enrollment_id and lecture_id_val:
                 from apps.domains.enrollment.models import Enrollment as _Enroll
                 _student = get_request_student(request)
                 if _student:
@@ -626,8 +629,8 @@ class StudentVideoPlaybackView(APIView):
                 if err:
                     return err
 
-            # enrollment_id 미전달 또는 강의 불일치 시 자동 매칭
-            if not enrollment_obj and lecture_id:
+            # enrollment_id 미전달 시에만 자동 매칭 (명시적 enrollment_id가 실패한 경우 대체하지 않음)
+            if not enrollment_obj and not enrollment_id and lecture_id:
                 _student = get_request_student(request)
                 if _student:
                     enrollment_obj = _Enrollment.objects.filter(
