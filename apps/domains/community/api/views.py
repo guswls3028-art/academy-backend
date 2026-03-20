@@ -67,7 +67,7 @@ class PostViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     def retrieve(self, request, *args, **kwargs):
-        """단건 조회: 학생은 공개 타입(notice/board/materials) 또는 본인 작성 글만 허용."""
+        """단건 조회: 학생/학부모는 published 공개 타입 또는 본인 작성 글만 허용."""
         tenant = _get_tenant_from_request(request)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
@@ -75,22 +75,44 @@ class PostViewSet(viewsets.ModelViewSet):
         post = get_post_by_id(tenant, pk)
         if not post:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        request_student = get_request_student(request)
-        if request_student is not None:
-            from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
-            is_public = getattr(post, "post_type", "") in STUDENT_PUBLIC_POST_TYPES
-            is_own = getattr(post, "created_by_id", None) == request_student.id
-            if not is_public and not is_own:
+        # staff가 아닌 사용자: published만 조회 가능 + 공개 타입 또는 본인 글
+        if not self._is_staff_request(request):
+            # unpublished 차단 (본인 글은 draft라도 볼 수 있음)
+            request_student = get_request_student(request)
+            is_own = request_student is not None and getattr(post, "created_by_id", None) == request_student.id
+            if not is_own and getattr(post, "status", "") != "published":
                 return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            # 비공개 타입(qna/counsel)은 본인 글만
+            if not is_own:
+                from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
+                is_public = getattr(post, "post_type", "") in STUDENT_PUBLIC_POST_TYPES
+                if not is_public:
+                    return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = self.get_serializer(post)
         return Response(serializer.data)
+
+    def _is_staff_request(self, request) -> bool:
+        """staff/admin 여부를 TenantMembership 역할로 판단. 학부모는 staff가 아님."""
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser or user.is_staff:
+            return True
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return False
+        from apps.core.models import TenantMembership
+        return TenantMembership.objects.filter(
+            tenant=tenant, user=user, is_active=True,
+            role__in=["owner", "admin", "staff", "teacher"],
+        ).exists()
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return get_empty_post_queryset()
         request_student = get_request_student(self.request)
-        is_staff = request_student is None  # staff/admin은 학생이 아님
+        is_staff = self._is_staff_request(self.request)
         raw = self.request.query_params.get("node_id")
         try:
             node_id = int(raw) if raw not in (None, "") else None
