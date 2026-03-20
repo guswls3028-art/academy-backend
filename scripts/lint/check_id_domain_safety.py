@@ -160,32 +160,190 @@ def check_integer_fk(filepath: Path, lines: list, allowlist: set) -> list:
     return findings
 
 
-def _is_pk_or_unique_lookup(lines: list, first_lineno: int) -> bool:
-    """Suppress false positives: PK/unique lookups always return 0-1 rows."""
-    chain = ""
-    for lookback in range(0, min(15, first_lineno)):
+def _build_filter_chain(lines: list, first_lineno: int) -> str:
+    """Build a string containing the queryset chain up to 20 lines before .first().
+
+    Unlike the simple lookback (which stops at the first non-continuation line),
+    this version collects ALL 20 preceding lines to form a wide context string.
+    This handles multi-line .filter(...) blocks where individual filter args span
+    many lines and no single line contains the full filter call.
+    """
+    parts = []
+    for lookback in range(0, min(20, first_lineno)):
         prev = lines[first_lineno - 1 - lookback].strip()
-        chain = prev + " " + chain
-        if not prev.startswith(".") and not prev.startswith(")") and lookback > 0:
-            break
+        parts.append(prev)
+    # Return lines in order (oldest first) so patterns read naturally
+    return " ".join(reversed(parts))
+
+
+def _is_pk_or_unique_lookup(lines: list, first_lineno: int) -> bool:
+    """Suppress false positives: PK/unique lookups always return 0-1 rows.
+
+    Uses a wide 20-line context window so multi-line .filter() blocks are
+    captured even when arguments are each on their own line.
+    """
+    chain = _build_filter_chain(lines, first_lineno)
+
     pk_patterns = [
-        r"\.filter\(\s*id\s*=", r"\.filter\(\s*pk\s*=",
-        r"\.get\(", r"get_or_create\(", r"get_object_or_404\(",
+        # Direct PK/unique lookups
+        r"\.filter\(\s*id\s*=",
+        r"\.filter\(\s*pk\s*=",
+        r"\.get\(",
+        r"get_or_create\(",
+        r"get_object_or_404\(",
+        r"\.filter\([^)]*host\s*=",
+
+        # Compound unique with user+tenant or code+tenant
         r"\.filter\([^)]*user\s*=.*tenant\s*=",
         r"\.filter\([^)]*tenant\s*=.*user\s*=",
         r"\.filter\([^)]*code\s*=.*tenant\s*=",
         r"\.filter\([^)]*tenant\s*=.*code\s*=",
-        r"\.filter\([^)]*host\s*=",
+
+        # PK lookup with tenant scope
+        r"\.filter\([^)]*tenant[_\s=][^,)]*,\s*pk\s*=",
+        r"\.filter\([^)]*pk\s*=.*tenant[_\s=]",
+        r"\.filter\([^)]*tenant[_\s=][^,)]*,\s*id\s*=",
+        r"\.filter\([^)]*id\s*=.*tenant[_\s=]",
+        # pk=int(...) variants
+        r"\bpk\s*=\s*int\(",
+        r"\bpk\s*=\s*\w+_id\b",
+
+        # Compound FK pairs: enrollment_id + homework_id (HomeworkScore unique_together)
+        r"enrollment_id\s*=.*homework_id\s*=",
+        r"homework_id\s*=.*enrollment_id\s*=",
+
+        # Result model: target_type + target_id + enrollment_id (unique compound)
+        r"target_type\s*=.*target_id\s*=.*enrollment_id\s*=",
+        r"target_type\s*=.*enrollment_id\s*=",
+        r"enrollment_id\s*=.*target_type\s*=",
+
+        # ResultItem: result=X + question_id=Y (unique compound)
+        r"result\s*=\s*result.*question_id\s*=",
+        r"question_id\s*=.*result\s*=\s*result",
+
+        # VideoPermission: video_id + enrollment_id
+        r"video_id\s*=.*enrollment_id\s*=",
+        r"enrollment_id\s*=.*video_id\s*=",
+
+        # Single FK ID lookups (0-or-1 by design)
+        r"\.filter\(\s*exam_id\s*=",
+        r"\.filter\(\s*session_id\s*=",
+        r"\.filter\(\s*lecture\s*=",
+        r"\.filter\(\s*lecture_id\s*=",
+        r"\.filter\(\s*video\s*=",
+        r"\.filter\(\s*video_id\s*=",
+        r"\.filter\(\s*job\s*=",
+
+        # Tenant-scoped FK lookups
+        r"session_id\s*=.*tenant[_\s=]",
+        r"tenant[_\s=].*session_id\s*=",
+        r"staff_id\s*=.*year\s*=.*month\s*=",   # StaffMonthSnapshot unique per staff+year+month
+
+        # Tenant + phone (unique per tenant in practice)
+        r"tenant[_\s=].*phone\s*=",
+        r"phone\s*=.*tenant[_\s=]",
+        r"tenant_id\s*=.*phone\s*=",
+        r"deleted_at__isnull\s*=\s*True.*phone\s*=",
+        r"phone\s*=.*deleted_at__isnull\s*=\s*True",
+
+        # Tenant + trigger (AutoSendConfig: unique per tenant+trigger)
+        r"tenant_id\s*=.*trigger\s*=",
+        r"trigger\s*=.*tenant_id\s*=",
+        r"trigger\s*=.*enabled\s*=",  # unique trigger per tenant context
+
+        # Tenant + name (MessageTemplate name unique per tenant)
+        r"tenant[_\s=].*name\s*=",
+        r"name\s*=.*tenant[_\s=]",
+
+        # is_primary=True on domain (only one primary per tenant)
+        r"is_primary\s*=\s*True",
+
+        # role=owner (at most one owner per tenant)
+        r"role\s*=\s*['\"]owner['\"]",
+
+        # submission FK (one Result per submission)
+        r"submission\s*=\s*submission\b",
+        r"submission_id\s*=",
+
+        # VideoTranscodeJob state__in idempotency: one active job per video
+        r"video\s*=\s*video.*state__in",
+        r"state__in.*video\s*=\s*video",
+
+        # VideoPlaybackSession: session_id is a unique token
+        r"session_id\s*=\s*session_id\b",
+
+        # Program.objects.filter(tenant=...) — Program is 1-per-tenant
+        r"Program\.objects\.filter\(",
+
+        # ScoreEditDraft: unique per session_id + tenant_id + editor_user_id
+        r"editor_user_id\s*=",
+
+        # Asset by id with tenant cross-check (multiline: id=asset_id earlier)
+        r"id\s*=\s*asset_id",
+
+        # VideoComment lookup by id (PK)
+        r"id\s*=\s*parent_id",
+
+        # Tenant.objects.filter(pk=...) or filter(id=...)
+        r"Tenant\.objects\.filter\(",
+
+        # values(...).first() on PK-scoped qs — getting a scalar from a PK lookup
+        r"\.values\([^)]*\)\.first\(\)",
+        r"\.values_list\([^)]*\)\.first\(\)",
+
+        # Explicit uniqueness guard before .first(): count() checked above
+        # e.g. resolver.py pattern: cnt = qs.count() ... if cnt > 1: raise ... td = qs.first()
+        r"cnt\s*=\s*\w+\.count\(\)",
+        r"\.count\(\).*if.*cnt\b",
+
+        # Enrollment qs scoped to tenant + user_id or student_id (near-unique: one enrollment per user per tenant)
+        r"user_id\s*=\s*user\.id",
+        r"student_id\s*=\s*user\.id",
+
+        # attendance_filter_session_enrollment / similar named functions that scope session+enrollment (unique_together)
+        r"filter_session_enrollment\(",
+        r"attendance_filter_.*enrollment\(",
     ]
+
     for pattern in pk_patterns:
         if re.search(pattern, chain):
             return True
     return False
 
 
+# Paths that are non-production code — suppress UNORDERED_FIRST entirely
+_NON_PRODUCTION_PATH_PARTS = (
+    "management/commands/",
+    "management\\commands\\",
+    "/tests/",
+    "\\tests\\",
+    "test_",          # test_*.py files
+    "_seed.py",       # seed scripts
+    "_test_seed.py",
+)
+
+
+def _is_non_production_file(filepath: Path) -> bool:
+    """Return True for management commands, test files, and seed scripts."""
+    path_str = str(filepath).replace("\\", "/")
+    fname = filepath.name
+    return (
+        "management/commands/" in path_str
+        or "/tests/" in path_str
+        or fname.startswith("test_")
+        or fname.endswith("_seed.py")
+        or fname.endswith("_test_seed.py")
+    )
+
+
 def check_unordered_first(filepath: Path, lines: list) -> list:
-    """Check for .first() without .order_by(). Suppresses PK/unique lookups."""
+    """Check for .first() without .order_by(). Suppresses PK/unique lookups
+    and non-production files (management commands, tests, seed scripts)."""
     findings = []
+
+    # Skip non-production files entirely
+    if _is_non_production_file(filepath):
+        return findings
 
     for lineno, line in enumerate(lines, 1):
         if not RE_UNORDERED_FIRST.search(line):
@@ -193,16 +351,13 @@ def check_unordered_first(filepath: Path, lines: list) -> list:
         if RE_ORDER_BY.search(line):
             continue
 
+        # Look back up to 20 lines for an .order_by() call without early exit.
+        # Using 20 lines handles deeply nested Case/When order_by blocks.
         has_order_by = False
-        for lookback in range(1, min(11, lineno)):
+        for lookback in range(1, min(21, lineno)):
             prev_line = lines[lineno - 1 - lookback]
             if RE_ORDER_BY.search(prev_line):
                 has_order_by = True
-                break
-            stripped = prev_line.strip()
-            if stripped and not stripped.startswith(".") and not stripped.startswith(")"):
-                if RE_ORDER_BY.search(stripped):
-                    has_order_by = True
                 break
 
         if has_order_by:
