@@ -989,16 +989,23 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             )
 
             # Update ClinicLink if applicable
+            # 핵심: un-resolve 전에 현재 resolved된 link ID를 기록하고,
+            # re-resolve 시 그 ID들만 대상으로 함 (새로 생긴 link를 잘못 resolve 방지)
             if old_booking.enrollment_id:
+                previously_resolved_ids = list(
+                    ClinicLink.objects.filter(
+                        enrollment_id=old_booking.enrollment_id,
+                        is_auto=True,
+                        resolved_at__isnull=False,
+                    ).values_list("id", flat=True)
+                )
                 ClinicLink.objects.filter(
-                    enrollment_id=old_booking.enrollment_id,
-                    is_auto=True,
+                    id__in=previously_resolved_ids,
                 ).update(resolved_at=None)
 
-            if enrollment_id:
+            if enrollment_id and previously_resolved_ids:
                 ClinicLink.objects.filter(
-                    enrollment_id=enrollment_id,
-                    is_auto=True,
+                    id__in=previously_resolved_ids,
                     resolved_at__isnull=True,
                 ).update(resolved_at=timezone.now())
 
