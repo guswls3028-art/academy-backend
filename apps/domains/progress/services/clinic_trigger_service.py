@@ -41,21 +41,41 @@ class ClinicTriggerService:
                 continue  # 이 시험은 합격 → ClinicLink 불필요
 
             # 불합격 시험에 대해 개별 ClinicLink 생성
-            ClinicLink.objects.get_or_create(
+            # 이미 미해소 link가 있으면 skip (idempotent)
+            existing_unresolved = ClinicLink.objects.filter(
+                enrollment_id=session_progress.enrollment_id,
+                session=session_progress.session,
+                source_type="exam",
+                source_id=exam_id,
+                resolved_at__isnull=True,
+            ).exists()
+            if existing_unresolved:
+                continue  # 이미 미해소 항목 존재 → 중복 생성 방지
+
+            # 해소된 link의 최대 cycle_no를 찾아 +1 (재불합격 시 새 cycle)
+            from django.db.models import Max
+            max_cycle = ClinicLink.objects.filter(
+                enrollment_id=session_progress.enrollment_id,
+                session=session_progress.session,
+                source_type="exam",
+                source_id=exam_id,
+            ).aggregate(Max("cycle_no"))["cycle_no__max"] or 0
+            next_cycle = max(max_cycle + 1, 1)
+
+            ClinicLink.objects.create(
                 enrollment_id=session_progress.enrollment_id,
                 session=session_progress.session,
                 source_type="exam",
                 source_id=exam_id,
                 reason=ClinicLink.Reason.AUTO_FAILED,
-                defaults={
-                    "is_auto": True,
-                    "approved": False,
-                    "meta": {
-                        "kind": "EXAM_FAILED",
-                        "exam_id": exam_id,
-                        "score": exam_row.get("score"),
-                        "pass_score": exam_row.get("pass_score"),
-                    },
+                is_auto=True,
+                approved=False,
+                cycle_no=next_cycle,
+                meta={
+                    "kind": "EXAM_FAILED",
+                    "exam_id": exam_id,
+                    "score": exam_row.get("score"),
+                    "pass_score": exam_row.get("pass_score"),
                 },
             )
 
@@ -105,29 +125,46 @@ class ClinicTriggerService:
         if not reasons:
             return
 
-        obj, created = ClinicLink.objects.get_or_create(
+        # 미해소 link가 있으면 meta만 갱신
+        existing = ClinicLink.objects.filter(
+            enrollment_id=int(enrollment_id),
+            session=session,
+            source_type="exam",
+            source_id=int(exam_id),
+            resolved_at__isnull=True,
+        ).first()
+
+        if existing:
+            meta = dict(existing.meta or {})
+            meta["kind"] = "EXAM_RISK"
+            meta["exam_id"] = int(exam_id)
+            meta["exam_reasons"] = reasons
+            existing.meta = meta
+            existing.is_auto = True
+            existing.save(update_fields=["meta", "is_auto", "updated_at"])
+            return
+
+        # 새로 생성 (재불합격 시 cycle 증가)
+        from django.db.models import Max
+        max_cycle = ClinicLink.objects.filter(
+            enrollment_id=int(enrollment_id),
+            session=session,
+            source_type="exam",
+            source_id=int(exam_id),
+        ).aggregate(Max("cycle_no"))["cycle_no__max"] or 0
+
+        ClinicLink.objects.create(
             enrollment_id=int(enrollment_id),
             session=session,
             source_type="exam",
             source_id=int(exam_id),
             reason=ClinicLink.Reason.AUTO_FAILED,
-            defaults={
-                "is_auto": True,
-                "approved": False,
-                "meta": {
-                    "kind": "EXAM_RISK",
-                    "exam_id": int(exam_id),
-                    "exam_reasons": reasons,
-                },
+            is_auto=True,
+            approved=False,
+            cycle_no=max(max_cycle + 1, 1),
+            meta={
+                "kind": "EXAM_RISK",
+                "exam_id": int(exam_id),
+                "exam_reasons": reasons,
             },
         )
-
-        # 이미 있으면 meta 보강 (exam_reasons 갱신)
-        if not created:
-            meta = dict(obj.meta or {})
-            meta["kind"] = meta.get("kind") or "EXAM_RISK"
-            meta["exam_id"] = int(exam_id)
-            meta["exam_reasons"] = reasons
-            obj.meta = meta
-            obj.is_auto = True
-            obj.save(update_fields=["meta", "is_auto", "updated_at"])
