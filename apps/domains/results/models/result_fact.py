@@ -22,14 +22,23 @@ class ResultFact(BaseModel):
     target_type = models.CharField(max_length=20)
     target_id = models.PositiveIntegerField()
 
-    enrollment_id = models.PositiveIntegerField()
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        db_column="enrollment_id",
+        related_name="result_facts",
+    )
     submission_id = models.PositiveIntegerField()
 
     # ✅ 어떤 attempt에서 생성된 Fact인지
-    attempt_id = models.PositiveIntegerField(
+    attempt = models.ForeignKey(
+        "results.ExamAttempt",
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
+        db_column="attempt_id",
         db_index=True,
+        related_name="result_facts",
         help_text="이 Fact를 생성한 ExamAttempt.id",
     )
 

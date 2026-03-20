@@ -249,6 +249,7 @@ class ClinicTargetService:
                 # 세션에 시험이 없으면 score/cutline은 0으로 내려서 화면이 깨지지 않게
                 out.append({
                     "enrollment_id": enrollment_id,
+                    "_session_id": session_id,
                     "student_name": _get_student_name_by_enrollment_id(enrollment_id),
                     "session_title": _get_session_title(session),
                     "reason": "score",
@@ -287,6 +288,7 @@ class ClinicTargetService:
 
             out.append({
                 "enrollment_id": enrollment_id,
+                "_session_id": session_id,
                 "student_name": _get_student_name_by_enrollment_id(enrollment_id),
                 "session_title": _get_session_title(session),
                 "reason": reason,
@@ -295,5 +297,130 @@ class ClinicTargetService:
                 "cutline_score": float(cutline),
                 "created_at": getattr(link, "created_at", None),
             })
+
+        # ── 누락자 감지: 시험이 실시되었으나 미응시한 수강생 ──
+        missing = ClinicTargetService._find_missing_students(
+            tenant=tenant,
+            exams_cache=exams_cache,
+            existing_enrollment_session_pairs={
+                (row["enrollment_id"], row.get("_session_id"))
+                for row in out
+            },
+        )
+        out.extend(missing)
+
+        return out
+
+    @staticmethod
+    def _find_missing_students(
+        *,
+        tenant: Any,
+        exams_cache: Dict[int, Optional[Exam]],
+        existing_enrollment_session_pairs: set,
+    ) -> List[Dict[str, Any]]:
+        """
+        누락자 감지: 수강 중이지만 시험 결과가 없는 학생.
+        - 시험이 이미 실시된(최소 1명의 결과 존재) 차시만 대상
+        - 해당 강의에 ACTIVE 수강 중인 학생 중 Result가 없는 학생을 반환
+        """
+        import datetime
+        from django.utils import timezone
+        from apps.domains.enrollment.models import Enrollment
+
+        if tenant is None:
+            return []
+
+        out: List[Dict[str, Any]] = []
+
+        # 최근 90일 내 세션만 대상 (성능 제한)
+        cutoff = timezone.localdate() - datetime.timedelta(days=90)
+
+        # 시험이 있는 세션 수집
+        sessions_with_exams: Dict[int, tuple] = {}  # session_id → (session, exam)
+        for session in (
+            Session.objects
+            .filter(lecture__tenant=tenant, date__gte=cutoff)
+            .select_related("lecture")
+        ):
+            sid = session.id
+            if sid in exams_cache:
+                exam = exams_cache[sid]
+            else:
+                exams = list(get_exams_for_session(session))
+                exam = sorted(exams, key=lambda x: x.id)[0] if exams else None
+                exams_cache[sid] = exam
+            if exam:
+                sessions_with_exams[sid] = (session, exam)
+
+        if not sessions_with_exams:
+            return out
+
+        # 시험이 실시되었는지 확인 (최소 1명의 Result 존재)
+        exam_ids = list({exam.id for _, exam in sessions_with_exams.values()})
+        exams_with_results = set(
+            Result.objects.filter(
+                target_type="exam",
+                target_id__in=exam_ids,
+            ).values_list("target_id", flat=True).distinct()
+        )
+
+        # 실시된 시험이 있는 세션만 대상
+        active_sessions = {
+            sid: (session, exam)
+            for sid, (session, exam) in sessions_with_exams.items()
+            if exam.id in exams_with_results
+        }
+        if not active_sessions:
+            return out
+
+        # 강의별 ACTIVE 수강생 일괄 조회
+        lecture_ids = list({session.lecture_id for session, _ in active_sessions.values()})
+        enrollments_by_lecture: Dict[int, set] = {}
+        for e in Enrollment.objects.filter(
+            lecture_id__in=lecture_ids, tenant=tenant, status="ACTIVE"
+        ).values("id", "lecture_id"):
+            enrollments_by_lecture.setdefault(e["lecture_id"], set()).add(e["id"])
+
+        # 시험별 결과가 있는 수강생 일괄 조회
+        results_by_exam: Dict[int, set] = {}
+        for exam_id_val, eid in (
+            Result.objects.filter(
+                target_type="exam",
+                target_id__in=[exam.id for _, exam in active_sessions.values()],
+            ).values_list("target_id", "enrollment_id")
+        ):
+            results_by_exam.setdefault(exam_id_val, set()).add(eid)
+
+        # 기존 ClinicLink가 있는 (session, enrollment) 쌍 일괄 조회
+        existing_links = set(
+            ClinicLink.objects.filter(
+                session_id__in=active_sessions.keys(),
+            ).values_list("session_id", "enrollment_id")
+        )
+
+        # 누락자 수집
+        for sid, (session, exam) in active_sessions.items():
+            enrolled_ids = enrollments_by_lecture.get(session.lecture_id, set())
+            with_results = results_by_exam.get(exam.id, set())
+            cutline = _safe_float(getattr(exam, "pass_score", 0.0), 0.0)
+
+            for eid in enrolled_ids:
+                if eid in with_results:
+                    continue
+                if (sid, eid) in existing_links:
+                    continue
+                if (eid, sid) in existing_enrollment_session_pairs:
+                    continue
+
+                out.append({
+                    "enrollment_id": eid,
+                    "student_name": _get_student_name_by_enrollment_id(eid),
+                    "session_title": _get_session_title(session),
+                    "reason": "missing",
+                    "clinic_reason": "exam",
+                    "exam_score": None,
+                    "cutline_score": float(cutline),
+                    "created_at": None,
+                })
 
         return out

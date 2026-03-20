@@ -17,8 +17,18 @@ class HomeworkEnrollment(models.Model):
         related_name="homework_enrollments",
     )
 
-    session_id = models.IntegerField(db_index=True)
-    enrollment_id = models.IntegerField(db_index=True)
+    session = models.ForeignKey(
+        "lectures.Session",
+        on_delete=models.CASCADE,
+        db_column="session_id",
+        related_name="homework_enrollments",
+    )
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        db_column="enrollment_id",
+        related_name="homework_enrollments",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -26,7 +36,7 @@ class HomeworkEnrollment(models.Model):
         db_table = "homework_enrollment"
         constraints = [
             models.UniqueConstraint(
-                fields=["tenant", "session_id", "enrollment_id"],
+                fields=["tenant", "session", "enrollment"],
                 name="uniq_homework_enrollment_per_tenant",
             )
         ]

@@ -21,14 +21,14 @@ class AdminClinicTargetSerializer(serializers.Serializer):
     student_name = serializers.CharField()
     session_title = serializers.CharField()
 
-    reason = serializers.ChoiceField(choices=["score", "confidence"])
+    reason = serializers.ChoiceField(choices=["score", "confidence", "missing"])
     clinic_reason = serializers.ChoiceField(
         choices=["exam", "homework", "both"],
         required=False,
         allow_null=True,
     )
 
-    exam_score = serializers.FloatField()
-    cutline_score = serializers.FloatField()
+    exam_score = serializers.FloatField(allow_null=True)
+    cutline_score = serializers.FloatField(allow_null=True)
 
-    created_at = serializers.DateTimeField()
+    created_at = serializers.DateTimeField(allow_null=True)

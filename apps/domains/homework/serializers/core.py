@@ -57,6 +57,9 @@ class HomeworkPolicyPatchSerializer(serializers.ModelSerializer):
 
 
 class HomeworkScoreSerializer(serializers.ModelSerializer):
+    # Backward-compat: expose FK _id value under original key name
+    enrollment_id = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = HomeworkScore
         fields = [

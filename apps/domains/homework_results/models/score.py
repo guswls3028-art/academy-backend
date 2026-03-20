@@ -36,7 +36,12 @@ class HomeworkScore(TimestampModel):
         """
         NOT_SUBMITTED = "NOT_SUBMITTED"
 
-    enrollment_id = models.PositiveIntegerField(db_index=True)
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        db_column="enrollment_id",
+        related_name="homework_scores",
+    )
 
     session = models.ForeignKey(
         Session,
@@ -78,7 +83,7 @@ class HomeworkScore(TimestampModel):
 
         constraints = [
             models.UniqueConstraint(
-                fields=["enrollment_id", "session", "homework"],
+                fields=["enrollment", "session", "homework"],
                 name="uniq_hwscore_enrollment_session_homework",
             )
         ]
@@ -86,7 +91,7 @@ class HomeworkScore(TimestampModel):
         # ✅ 운영 성능 필수 인덱스 (삭제 금지: RULE 2)
         indexes = [
             models.Index(
-                fields=["enrollment_id", "updated_at"],
+                fields=["enrollment", "updated_at"],
                 name="hwres_enroll_upd_idx",
             ),
             models.Index(

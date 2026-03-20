@@ -9,6 +9,8 @@ class ResultItemSerializer(serializers.ModelSerializer):
     """
     ✅ 학생 화면: 문항별 결과
     """
+    question_id = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = ResultItem
         fields = [
@@ -34,8 +36,11 @@ class StudentExamResultSerializer(serializers.ModelSerializer):
 
     items = ResultItemSerializer(many=True, read_only=True)
 
-    # ✅ STEP 2: 프론트 재시험 버튼 판단용 (응답 전용 필드)
+    # Backward-compat: expose FK _id values under original key names
+    enrollment_id = serializers.IntegerField(read_only=True)
     attempt_id = serializers.IntegerField(allow_null=True, required=False, read_only=True)
+
+    # ✅ STEP 2: 프론트 재시험 버튼 판단용 (응답 전용 필드)
     can_retake = serializers.BooleanField(required=False, read_only=True)
     max_attempts = serializers.IntegerField(required=False, read_only=True)
     allow_retake = serializers.BooleanField(required=False, read_only=True)

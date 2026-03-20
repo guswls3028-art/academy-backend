@@ -30,6 +30,9 @@ class HomeworkScoreSerializer(serializers.ModelSerializer):
     - 기존 meta 응답은 유지되며, status는 meta.status로만 표현한다(필드 추가 X).
     """
 
+    # Backward-compat: expose FK _id value under original key name
+    enrollment_id = serializers.IntegerField(read_only=True)
+
     # write-only convenience field (DB 컬럼 추가 아님)
     status = _StatusField(required=False, allow_null=True, allow_blank=True, write_only=True)
 

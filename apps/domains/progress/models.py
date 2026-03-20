@@ -100,7 +100,12 @@ class SessionProgress(TimestampModel):
         ONLINE = "online", "Online"
         OFFLINE = "offline", "Offline"
 
-    enrollment_id = models.PositiveIntegerField(db_index=True)
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        db_column="enrollment_id",
+        related_name="session_progress_rows",
+    )
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
@@ -137,7 +142,7 @@ class SessionProgress(TimestampModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["enrollment_id", "session"],
+                fields=["enrollment", "session"],
                 name="unique_session_progress_per_enrollment",
             )
         ]
@@ -156,7 +161,13 @@ class LectureProgress(TimestampModel):
         WARNING = "WARNING", "Warning"
         DANGER = "DANGER", "Danger"
 
-    enrollment_id = models.PositiveIntegerField(unique=True, db_index=True)
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        unique=True,
+        db_column="enrollment_id",
+        related_name="lecture_progress_rows",
+    )
     lecture = models.ForeignKey(
         Lecture,
         on_delete=models.CASCADE,
@@ -199,7 +210,13 @@ class ClinicLink(TimestampModel):
         MANUAL_REQUEST = "MANUAL_REQUEST", "수동(학생/학부모 요청)"
         TEACHER_RECOMMEND = "TEACHER_RECOMMEND", "강사 추천"
 
-    enrollment_id = models.PositiveIntegerField(db_index=True)
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        related_name="clinic_links",
+        db_column="enrollment_id",
+        db_index=True,
+    )
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
@@ -240,7 +257,13 @@ class RiskLog(TimestampModel):
         CONSECUTIVE_LOW_SCORE = "CONSECUTIVE_LOW_SCORE", "연속 저점수"
         OTHER = "OTHER", "기타"
 
-    enrollment_id = models.PositiveIntegerField(db_index=True)
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        related_name="risk_logs",
+        db_column="enrollment_id",
+        db_index=True,
+    )
     session = models.ForeignKey(
         Session,
         on_delete=models.SET_NULL,

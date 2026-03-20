@@ -20,13 +20,24 @@ class Result(BaseModel):
     target_type = models.CharField(max_length=20)  # exam / homework
     target_id = models.PositiveIntegerField()
 
-    enrollment_id = models.PositiveIntegerField()
-
-    # ✅ 어떤 attempt의 결과인지 추적 (대표 attempt 기준)
-    attempt_id = models.PositiveIntegerField(
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
+        db_column="enrollment_id",
+        related_name="results",
+    )
+
+    # ✅ 어떤 attempt의 결과인지 추적 (대표 attempt 기준)
+    attempt = models.ForeignKey(
+        "results.ExamAttempt",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="attempt_id",
         db_index=True,
+        related_name="results",
         help_text="이 Result가 참조하는 대표 ExamAttempt.id",
     )
 
@@ -41,4 +52,4 @@ class Result(BaseModel):
 
     class Meta:
         db_table = "results_result"
-        unique_together = ("target_type", "target_id", "enrollment_id")
+        unique_together = ("target_type", "target_id", "enrollment")

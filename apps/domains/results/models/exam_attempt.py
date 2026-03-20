@@ -28,8 +28,18 @@ class ExamAttempt(BaseModel):
        - 재채점 사유 등
     """
 
-    exam_id = models.PositiveIntegerField()
-    enrollment_id = models.PositiveIntegerField()
+    exam = models.ForeignKey(
+        "exams.Exam",
+        on_delete=models.CASCADE,
+        db_column="exam_id",
+        related_name="attempts",
+    )
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        db_column="enrollment_id",
+        related_name="exam_attempts",
+    )
 
     # Submission은 시도의 원인(event)
     submission_id = models.PositiveIntegerField(
@@ -72,7 +82,7 @@ class ExamAttempt(BaseModel):
 
     class Meta:
         db_table = "results_exam_attempt"
-        unique_together = ("exam_id", "enrollment_id", "attempt_index")
+        unique_together = ("exam", "enrollment", "attempt_index")
         ordering = ["-created_at"]
 
     def __str__(self):

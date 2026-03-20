@@ -32,7 +32,12 @@ class HomeworkAssignment(models.Model):
         db_index=True,
     )
 
-    enrollment_id = models.IntegerField(db_index=True)
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        db_column="enrollment_id",
+        related_name="homework_assignments",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -40,7 +45,7 @@ class HomeworkAssignment(models.Model):
         db_table = "homework_assignment"
         constraints = [
             models.UniqueConstraint(
-                fields=["tenant", "homework", "enrollment_id"],
+                fields=["tenant", "homework", "enrollment"],
                 name="uniq_homework_assignment_per_tenant",
             )
         ]

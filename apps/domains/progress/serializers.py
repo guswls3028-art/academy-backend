@@ -11,15 +11,54 @@ class ProgressPolicySerializer(serializers.ModelSerializer):
 
 
 class SessionProgressSerializer(serializers.ModelSerializer):
+    # Backward-compat: expose FK _id value under original key name
+    enrollment_id = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = SessionProgress
-        fields = "__all__"
+        fields = [
+            "id",
+            "enrollment_id",
+            "session",
+            "attendance_type",
+            "video_progress_rate",
+            "video_completed",
+            "exam_attempted",
+            "exam_aggregate_score",
+            "exam_passed",
+            "exam_meta",
+            "homework_submitted",
+            "homework_passed",
+            "completed",
+            "completed_at",
+            "calculated_at",
+            "meta",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class LectureProgressSerializer(serializers.ModelSerializer):
+    # Backward-compat: expose FK _id value under original key name
+    enrollment_id = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = LectureProgress
-        fields = "__all__"
+        fields = [
+            "id",
+            "enrollment_id",
+            "lecture",
+            "total_sessions",
+            "completed_sessions",
+            "failed_sessions",
+            "consecutive_failed_sessions",
+            "risk_level",
+            "last_session",
+            "last_updated",
+            "meta",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class ClinicLinkSerializer(serializers.ModelSerializer):

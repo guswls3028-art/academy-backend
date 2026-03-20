@@ -13,7 +13,12 @@ class ResultItem(BaseModel):
         related_name="items",
     )
 
-    question_id = models.PositiveIntegerField()
+    question = models.ForeignKey(
+        "exams.ExamQuestion",
+        on_delete=models.CASCADE,
+        db_column="question_id",
+        related_name="result_items",
+    )
 
     answer = models.TextField(blank=True)
     is_correct = models.BooleanField(default=False)
@@ -25,4 +30,4 @@ class ResultItem(BaseModel):
 
     class Meta:
         db_table = "results_result_item"
-        unique_together = ("result", "question_id")
+        unique_together = ("result", "question")
