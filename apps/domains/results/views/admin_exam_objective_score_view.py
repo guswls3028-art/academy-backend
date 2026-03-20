@@ -7,8 +7,12 @@ PATCH /results/admin/exams/{exam_id}/enrollments/{enrollment_id}/objective/
 
 from __future__ import annotations
 
+import logging
+
 from django.db import transaction
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -156,14 +160,17 @@ class AdminExamObjectiveScoreView(APIView):
         result.max_score = float(result.max_score or max_score)
         result.save(update_fields=["objective_score", "total_score", "max_score", "updated_at"])
 
-        if submission_id:
-            def _dispatch():
-                dispatch_progress_pipeline(submission_id=int(submission_id))
-            transaction.on_commit(_dispatch)
-        else:
-            def _dispatch_by_exam():
-                dispatch_progress_pipeline(exam_id=int(exam_id))
-            transaction.on_commit(_dispatch_by_exam)
+        _sid = int(submission_id) if submission_id else 0
+        _eid = int(exam_id)
+        def _dispatch_progress():
+            try:
+                if _sid:
+                    dispatch_progress_pipeline(submission_id=_sid)
+                else:
+                    dispatch_progress_pipeline(exam_id=_eid)
+            except Exception:
+                logger.exception("progress pipeline dispatch failed (exam=%s, submission=%s)", _eid, _sid)
+        transaction.on_commit(_dispatch_progress)
 
         return Response(
             {
