@@ -160,42 +160,63 @@ def check_integer_fk(filepath: Path, lines: list, allowlist: set) -> list:
     return findings
 
 
+def _is_pk_or_unique_lookup(lines: list, first_lineno: int) -> bool:
+    """Suppress false positives: PK/unique lookups always return 0-1 rows."""
+    chain = ""
+    for lookback in range(0, min(15, first_lineno)):
+        prev = lines[first_lineno - 1 - lookback].strip()
+        chain = prev + " " + chain
+        if not prev.startswith(".") and not prev.startswith(")") and lookback > 0:
+            break
+    pk_patterns = [
+        r"\.filter\(\s*id\s*=", r"\.filter\(\s*pk\s*=",
+        r"\.get\(", r"get_or_create\(", r"get_object_or_404\(",
+        r"\.filter\([^)]*user\s*=.*tenant\s*=",
+        r"\.filter\([^)]*tenant\s*=.*user\s*=",
+        r"\.filter\([^)]*code\s*=.*tenant\s*=",
+        r"\.filter\([^)]*tenant\s*=.*code\s*=",
+        r"\.filter\([^)]*host\s*=",
+    ]
+    for pattern in pk_patterns:
+        if re.search(pattern, chain):
+            return True
+    return False
+
+
 def check_unordered_first(filepath: Path, lines: list) -> list:
-    """Check for .first() without .order_by() on the same logical chain."""
+    """Check for .first() without .order_by(). Suppresses PK/unique lookups."""
     findings = []
 
     for lineno, line in enumerate(lines, 1):
         if not RE_UNORDERED_FIRST.search(line):
             continue
-
-        # Check if .order_by( appears on the same line
         if RE_ORDER_BY.search(line):
             continue
 
-        # Check preceding lines for multi-line queryset chain
-        # Look back up to 10 lines for .order_by( in the chain
         has_order_by = False
         for lookback in range(1, min(11, lineno)):
             prev_line = lines[lineno - 1 - lookback]
             if RE_ORDER_BY.search(prev_line):
                 has_order_by = True
                 break
-            # Stop at assignment or function def (new statement)
             stripped = prev_line.strip()
             if stripped and not stripped.startswith(".") and not stripped.startswith(")"):
-                # Could be start of queryset chain — check it too
                 if RE_ORDER_BY.search(stripped):
                     has_order_by = True
                 break
 
-        if not has_order_by:
-            findings.append({
-                "file": str(filepath),
-                "line": lineno,
-                "pattern": "UNORDERED_FIRST",
-                "allowed": True,  # warning only
-                "description": ".first() without .order_by() - non-deterministic row selection",
-            })
+        if has_order_by:
+            continue
+        if _is_pk_or_unique_lookup(lines, lineno):
+            continue
+
+        findings.append({
+            "file": str(filepath),
+            "line": lineno,
+            "pattern": "UNORDERED_FIRST",
+            "allowed": True,
+            "description": ".first() without .order_by() - non-deterministic row selection",
+        })
 
     return findings
 
