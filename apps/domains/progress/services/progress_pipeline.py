@@ -310,6 +310,7 @@ class ProgressPipelineService:
                     hw_score = HomeworkScore.objects.filter(
                         enrollment_id=int(enrollment_id),
                         session_id=session.id,
+                        attempt_index=1,
                         passed=True,
                     ).first()
                     if hw_score:

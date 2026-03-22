@@ -98,7 +98,7 @@ class ClinicResolutionService:
         max_score: Optional[float] = None,
     ) -> int:
         """
-        과제 통과 시 해당 enrollment+session의 미해소 ClinicLink를 해소.
+        과제 통과 시 해당 enrollment+session+homework의 미해소 ClinicLink를 해소.
         Returns: 해소된 ClinicLink 수
         """
         evidence = {
@@ -108,15 +108,29 @@ class ClinicResolutionService:
         }
 
         now = timezone.now()
-        count = ClinicLink.objects.filter(
-            enrollment_id=enrollment_id,
-            session_id=session_id,
-            resolved_at__isnull=True,
-        ).update(
+        update_kwargs = dict(
             resolved_at=now,
             resolution_type=ClinicLink.ResolutionType.HOMEWORK_PASS,
             resolution_evidence=evidence,
         )
+
+        # V1.1.2: source-specific 해소 (과제별 개별) — exam과 동일 패턴
+        count = ClinicLink.objects.filter(
+            enrollment_id=enrollment_id,
+            session_id=session_id,
+            source_type="homework",
+            source_id=int(homework_id),
+            resolved_at__isnull=True,
+        ).update(**update_kwargs)
+
+        # Fallback: legacy links (source_type=NULL, V1.1.1 이전 데이터)
+        if count == 0:
+            count = ClinicLink.objects.filter(
+                enrollment_id=enrollment_id,
+                session_id=session_id,
+                source_type__isnull=True,
+                resolved_at__isnull=True,
+            ).update(**update_kwargs)
 
         if count > 0:
             logger.info(

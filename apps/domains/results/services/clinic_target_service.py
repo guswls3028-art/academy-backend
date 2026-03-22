@@ -26,6 +26,7 @@ from apps.domains.lectures.models import Session
 from apps.domains.progress.models import ClinicLink
 from apps.domains.exams.models import Exam
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
+from apps.domains.homework_results.models import HomeworkScore, Homework
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.session_exam import get_exams_for_session
@@ -204,13 +205,16 @@ class ClinicTargetService:
     def list_admin_targets(tenant: Any = None, include_resolved: bool = False) -> List[Dict[str, Any]]:
         links = (
             ClinicLink.objects.filter(is_auto=True)
-            .select_related("session")
+            .select_related("session", "session__lecture")
             .order_by("-created_at")
         )
         if not include_resolved:
             links = links.filter(resolved_at__isnull=True)
         if tenant is not None:
             links = links.filter(session__lecture__tenant=tenant)
+
+        # ✅ 퇴원(INACTIVE) 수강생의 ClinicLink 제외
+        links = links.filter(enrollment__status="ACTIVE")
 
         out: List[Dict[str, Any]] = []
 
@@ -231,7 +235,88 @@ class ClinicTargetService:
             source_type = getattr(link, "source_type", None)
             clinic_reason = source_type or "exam"
 
-            # V1.1.2: source_id가 있으면 직접 사용, 없으면 대표 exam fallback
+            lecture = getattr(session, "lecture", None)
+            lecture_id = int(getattr(session, "lecture_id", 0) or 0)
+            lecture_title = _safe_str(getattr(lecture, "title", None), "") if lecture else ""
+
+            # 공통 base row
+            base_row = {
+                "enrollment_id": enrollment_id,
+                "_session_id": session_id,
+                "session_id": session_id,
+                "lecture_id": lecture_id,
+                "lecture_title": lecture_title,
+                "clinic_link_id": int(link.id),
+                "cycle_no": int(getattr(link, "cycle_no", 1) or 1),
+                "resolution_type": getattr(link, "resolution_type", None),
+                "resolved_at": getattr(link, "resolved_at", None),
+                "student_name": _get_student_name_by_enrollment_id(enrollment_id),
+                "session_title": _get_session_title(session),
+                "source_type": source_type,
+                "source_id": getattr(link, "source_id", None),
+                "created_at": getattr(link, "created_at", None),
+            }
+
+            # ── Homework source ──
+            if source_type == "homework":
+                source_id = getattr(link, "source_id", None)
+                hw = Homework.objects.filter(id=int(source_id)).first() if source_id else None
+                hw_title = _safe_str(getattr(hw, "title", None), "-") if hw else "-"
+
+                # 1차 점수 (성적 산출 대상)
+                first_hw_score = HomeworkScore.objects.filter(
+                    enrollment_id=enrollment_id,
+                    session_id=session_id,
+                    homework_id=int(source_id) if source_id else 0,
+                    attempt_index=1,
+                ).first()
+
+                original_score = float(first_hw_score.score or 0) if first_hw_score and first_hw_score.score is not None else None
+                hw_max_score = float(first_hw_score.max_score or 100) if first_hw_score and first_hw_score.max_score else 100.0
+
+                # 과제 cutline은 HomeworkPolicy 기반
+                from apps.domains.homework.models import HomeworkPolicy
+                hw_tenant = getattr(lecture, "tenant", None) if lecture else None
+                cutline = 80.0
+                if hw_tenant:
+                    hp = HomeworkPolicy.objects.filter(tenant=hw_tenant, session=session).first()
+                    if hp:
+                        cutline = float(getattr(hp, "cutline_value", 80) or 80)
+
+                # 재시도 이력
+                all_hw_scores = HomeworkScore.objects.filter(
+                    enrollment_id=enrollment_id,
+                    session_id=session_id,
+                    homework_id=int(source_id) if source_id else 0,
+                ).order_by("attempt_index")
+
+                attempt_history = []
+                latest_attempt_index = 1
+                for hs in all_hw_scores:
+                    attempt_history.append({
+                        "attempt_index": hs.attempt_index,
+                        "score": float(hs.score) if hs.score is not None else None,
+                        "max_score": float(hs.max_score) if hs.max_score is not None else None,
+                        "passed": bool(hs.passed),
+                        "at": hs.created_at.isoformat() if hs.created_at else None,
+                    })
+                    latest_attempt_index = max(latest_attempt_index, hs.attempt_index)
+
+                out.append({
+                    **base_row,
+                    "exam_id": None,
+                    "reason": "score",
+                    "clinic_reason": "homework",
+                    "exam_score": original_score,
+                    "cutline_score": float(cutline),
+                    "max_score": hw_max_score,
+                    "source_title": hw_title,
+                    "latest_attempt_index": latest_attempt_index,
+                    "attempt_history": attempt_history,
+                })
+                continue
+
+            # ── Exam source (기존 로직 + 확장) ──
             source_id = getattr(link, "source_id", None)
             if source_type == "exam" and source_id:
                 exam = Exam.objects.filter(id=int(source_id)).first()
@@ -241,32 +326,28 @@ class ClinicTargetService:
                     exams = list(get_exams_for_session(session))
                     exams_cache[session_id] = sorted(exams, key=lambda x: x.id)[0] if exams else None
                 exam = exams_cache.get(session_id)
+
             if not exam:
-                # 세션에 시험이 없으면 score/cutline은 0으로 내려서 화면이 깨지지 않게
                 out.append({
-                    "enrollment_id": enrollment_id,
-                    "_session_id": session_id,
-                    "session_id": session_id,
-                    "lecture_id": int(getattr(session, "lecture_id", 0) or 0),
+                    **base_row,
                     "exam_id": None,
-                    "clinic_link_id": int(link.id),
-                    "cycle_no": int(getattr(link, "cycle_no", 1) or 1),
-                    "resolution_type": getattr(link, "resolution_type", None),
-                    "resolved_at": getattr(link, "resolved_at", None),
-                    "student_name": _get_student_name_by_enrollment_id(enrollment_id),
-                    "session_title": _get_session_title(session),
                     "reason": "score",
                     "clinic_reason": clinic_reason,
                     "exam_score": 0.0,
                     "cutline_score": 0.0,
-                    "created_at": getattr(link, "created_at", None),
+                    "max_score": 0.0,
+                    "source_title": "-",
+                    "latest_attempt_index": 1,
+                    "attempt_history": [],
                 })
                 continue
 
             exam_id = int(getattr(exam, "id", 0) or 0)
             cutline = _safe_float(getattr(exam, "pass_score", 0.0), 0.0)
+            exam_max_score = _safe_float(getattr(exam, "max_score", 100.0), 100.0)
+            exam_title = _safe_str(getattr(exam, "title", None), "-")
 
-            # 대표 스냅샷 Result (시험 단위)
+            # 대표 스냅샷 Result (1차 시험 결과 = 성적 산출 대상)
             result = (
                 Result.objects.filter(
                     target_type="exam",
@@ -280,9 +361,35 @@ class ClinicTargetService:
             exam_score = _safe_float(getattr(result, "total_score", 0.0) if result else 0.0, 0.0)
             attempt_id = int(getattr(result, "attempt_id", 0) or 0) if result else 0
 
+            # 재시도 이력 (ExamAttempt 전체)
+            all_attempts = ExamAttempt.objects.filter(
+                exam_id=exam_id,
+                enrollment_id=enrollment_id,
+            ).order_by("attempt_index")
+
+            attempt_history = []
+            latest_attempt_index = 1
+            for att in all_attempts:
+                att_score = None
+                att_passed = False
+                meta = att.meta or {}
+                if "total_score" in meta:
+                    att_score = float(meta["total_score"])
+                    att_passed = att_score >= cutline if cutline > 0 else False
+                elif att.attempt_index == 1 and result:
+                    att_score = float(exam_score)
+                    att_passed = att_score >= cutline if cutline > 0 else False
+
+                attempt_history.append({
+                    "attempt_index": att.attempt_index,
+                    "score": att_score,
+                    "max_score": exam_max_score,
+                    "passed": att_passed,
+                    "at": att.created_at.isoformat() if att.created_at else None,
+                })
+                latest_attempt_index = max(latest_attempt_index, att.attempt_index)
+
             # reason 판정
-            # - LOW_CONFIDENCE 흔적이 있으면 confidence
-            # - 아니면 score
             reason = "confidence" if _is_low_confidence_for_attempt(
                 exam_id=exam_id,
                 enrollment_id=enrollment_id,
@@ -290,22 +397,16 @@ class ClinicTargetService:
             ) else "score"
 
             out.append({
-                "enrollment_id": enrollment_id,
-                "_session_id": session_id,
-                "session_id": session_id,
-                "lecture_id": int(getattr(session, "lecture_id", 0) or 0),
+                **base_row,
                 "exam_id": exam_id,
-                "clinic_link_id": int(link.id),
-                "cycle_no": int(getattr(link, "cycle_no", 1) or 1),
-                "resolution_type": getattr(link, "resolution_type", None),
-                "resolved_at": getattr(link, "resolved_at", None),
-                "student_name": _get_student_name_by_enrollment_id(enrollment_id),
-                "session_title": _get_session_title(session),
                 "reason": reason,
                 "clinic_reason": clinic_reason,
                 "exam_score": float(exam_score),
                 "cutline_score": float(cutline),
-                "created_at": getattr(link, "created_at", None),
+                "max_score": exam_max_score,
+                "source_title": exam_title,
+                "latest_attempt_index": latest_attempt_index,
+                "attempt_history": attempt_history,
             })
 
         # ── 누락자 감지: 시험이 실시되었으나 미응시한 수강생 ──
@@ -430,6 +531,15 @@ class ClinicTargetService:
                     "clinic_reason": "exam",
                     "exam_score": None,
                     "cutline_score": float(cutline),
+                    "max_score": float(getattr(exam, "max_score", 100.0) or 100.0),
+                    "source_type": "exam",
+                    "source_id": int(exam.id),
+                    "source_title": _safe_str(getattr(exam, "title", None), "-"),
+                    "lecture_title": _safe_str(
+                        getattr(getattr(session, "lecture", None), "title", None), ""
+                    ),
+                    "latest_attempt_index": 0,
+                    "attempt_history": [],
                     "created_at": None,
                 })
 

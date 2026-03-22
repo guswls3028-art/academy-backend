@@ -67,6 +67,16 @@ class ExamAttempt(BaseModel):
         default="pending",
     )
 
+    # ✅ V1.1.1: 클리닉 재시험 추적
+    clinic_link = models.ForeignKey(
+        "progress.ClinicLink",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="exam_retake_attempts",
+        help_text="클리닉 재시험 시 연결된 ClinicLink (attempt_index>=2)",
+    )
+
     # ==================================================
     # ✅ NEW: attempt 단위 메타데이터 (설계 필수)
     # ==================================================

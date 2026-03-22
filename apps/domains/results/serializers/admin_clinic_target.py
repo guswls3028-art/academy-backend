@@ -42,4 +42,17 @@ class AdminClinicTargetSerializer(serializers.Serializer):
     lecture_id = serializers.IntegerField(required=False, allow_null=True)
     exam_id = serializers.IntegerField(required=False, allow_null=True)
 
+    # ✅ V1.1.1 clinic retake: 클리닉 재시도 점수 입력 지원
+    source_type = serializers.CharField(required=False, allow_null=True)
+    source_id = serializers.IntegerField(required=False, allow_null=True)
+    source_title = serializers.CharField(required=False, allow_null=True)
+    lecture_title = serializers.CharField(required=False, allow_null=True)
+    max_score = serializers.FloatField(required=False, allow_null=True)
+    latest_attempt_index = serializers.IntegerField(required=False, default=1)
+    attempt_history = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        default=list,
+    )
+
     created_at = serializers.DateTimeField(allow_null=True)

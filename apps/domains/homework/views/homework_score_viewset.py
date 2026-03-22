@@ -320,11 +320,13 @@ class HomeworkScoreViewSet(ModelViewSet):
             session = homework.session
 
             with transaction.atomic():
+                # ✅ attempt_index=1: 성적 페이지는 1차(성적 산출 대상)만 조회/수정
                 obj = (
                     HomeworkScore.objects.select_for_update()
                     .filter(
                         homework_id=homework_id,
                         enrollment_id=enrollment_id,
+                        attempt_index=1,
                     )
                     .select_related("session", "homework")
                     .first()
@@ -339,6 +341,7 @@ class HomeworkScoreViewSet(ModelViewSet):
                             homework=homework,
                             session=session,
                             enrollment_id=enrollment_id,
+                            attempt_index=1,
                             score=None,
                             max_score=None,
                             updated_by_user_id=_safe_user_id(request),
@@ -348,6 +351,7 @@ class HomeworkScoreViewSet(ModelViewSet):
                             HomeworkScore.objects.filter(
                                 homework_id=homework_id,
                                 enrollment_id=enrollment_id,
+                                attempt_index=1,
                             )
                             .select_related("session", "homework")
                             .first()

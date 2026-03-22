@@ -43,6 +43,20 @@ class HomeworkScore(TimestampModel):
         related_name="homework_scores",
     )
 
+    # ✅ V1.1.1: 클리닉 재시도 지원
+    attempt_index = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="시도 차수: 1=1차(성적 산출), 2+=클리닉 재시도",
+    )
+    clinic_link = models.ForeignKey(
+        "progress.ClinicLink",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="homework_retake_scores",
+        help_text="클리닉 재시도 시 연결된 ClinicLink (attempt_index>=2)",
+    )
+
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
@@ -83,8 +97,8 @@ class HomeworkScore(TimestampModel):
 
         constraints = [
             models.UniqueConstraint(
-                fields=["enrollment", "session", "homework"],
-                name="uniq_hwscore_enrollment_session_homework",
+                fields=["enrollment", "session", "homework", "attempt_index"],
+                name="uniq_hwscore_enroll_sess_hw_attempt",
             )
         ]
 

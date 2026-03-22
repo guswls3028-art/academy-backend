@@ -317,8 +317,10 @@ class HomeworkScoreViewSet(ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return HomeworkScore.objects.none()
+        # ✅ 성적 페이지: attempt_index=1 (1차) 만 표시/편집
         return HomeworkScore.objects.filter(
-            session__lecture__tenant=tenant
+            session__lecture__tenant=tenant,
+            attempt_index=1,
         ).select_related(
             "session",
             "session__lecture",

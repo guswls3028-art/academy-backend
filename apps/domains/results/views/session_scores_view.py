@@ -317,9 +317,11 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         # 5) HomeworkScore map (enrollment → homework → score)
         # -------------------------------------------------
+        # ✅ 성적 산출: attempt_index=1 (1차) 만 사용
         hw_scores = HomeworkScore.objects.filter(
             session=session,
             enrollment_id__in=enrollment_ids,
+            attempt_index=1,
         )
 
         hw_map: Dict[int, Dict[int, HomeworkScore]] = {}

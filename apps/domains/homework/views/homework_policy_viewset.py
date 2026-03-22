@@ -30,9 +30,11 @@ def _recalc_scores_for_policy_change(*, policy: HomeworkPolicy) -> int:
     session = policy.session
     tenant = policy.tenant
 
+    # ✅ 성적 정책 재계산: attempt_index=1 (1차) 만 대상
     qs = HomeworkScore.objects.filter(
         session=session,
         session__lecture__tenant=tenant,
+        attempt_index=1,
     ).only(
         "id",
         "score",
