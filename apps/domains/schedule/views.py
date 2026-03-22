@@ -33,3 +33,13 @@ class DdayViewSet(ModelViewSet):
         if lecture is not None and getattr(lecture, "tenant_id", None) != tenant.id:
             raise PermissionDenied("Lecture does not belong to your program.")
         serializer.save()
+
+    def perform_update(self, serializer):
+        # 🔐 크로스 테넌트 lecture FK 변경 방지
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            raise PermissionDenied("Tenant required")
+        lecture = serializer.validated_data.get("lecture")
+        if lecture is not None and getattr(lecture, "tenant_id", None) != tenant.id:
+            raise PermissionDenied("Lecture does not belong to your program.")
+        serializer.save()

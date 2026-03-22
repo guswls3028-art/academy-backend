@@ -173,6 +173,75 @@ class ExamGradingService:
         return result
 
     @transaction.atomic
+    def apply_manual_overrides(
+        self, *, submission_id: int, overrides: dict
+    ) -> ExamResult:
+        """
+        수동 채점 오버라이드: 교사가 개별 문항 점수를 수동 조정.
+        overrides 형태: {"grades": [...], "answers": [...], "note": "..."} 등
+        """
+        submission = self._load_submission(submission_id)
+        exam = self._load_exam(submission)
+
+        existing = (
+            ExamResult.objects
+            .select_for_update()
+            .filter(submission=submission)
+            .first()
+        )
+
+        if existing and existing.status == ExamResult.Status.FINAL:
+            return existing
+
+        result = existing or ExamResult.objects.create(
+            submission=submission,
+            exam=exam,
+            total_score=0,
+            status=ExamResult.Status.DRAFT,
+        )
+
+        # overrides에서 점수 정보 추출
+        grades = overrides.get("grades") or overrides.get("overrides") or []
+        note = overrides.get("note", "")
+
+        manual_total = 0.0
+        manual_max = 0.0
+        manual_breakdown = {}
+
+        for item in grades:
+            if isinstance(item, dict):
+                qid = item.get("exam_question_id", 0)
+                score = float(item.get("score", 0) or 0)
+                max_score_item = float(item.get("max_score", score) or score)
+                manual_total += score
+                manual_max += max_score_item
+                manual_breakdown[str(qid)] = {
+                    "question_id": qid,
+                    "score": score,
+                    "is_correct": item.get("is_correct", score >= max_score_item),
+                    "source": "manual",
+                    "note": item.get("note", ""),
+                }
+
+        if grades:
+            result.total_score = manual_total
+            result.max_score = manual_max
+            result.subjective_score = manual_total
+            result.manual_breakdown = manual_breakdown
+        if note:
+            result.note = note
+
+        result.status = ExamResult.Status.DRAFT
+
+        update_fields = ["total_score", "max_score", "status", "updated_at"]
+        for f in ("subjective_score", "manual_breakdown", "note"):
+            if hasattr(result, f):
+                update_fields.append(f)
+        result.save(update_fields=list(dict.fromkeys(update_fields)))
+
+        return result
+
+    @transaction.atomic
     def finalize(self, *, submission_id: int) -> ExamResult:
         submission = self._load_submission(submission_id)
 

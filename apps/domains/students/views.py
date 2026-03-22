@@ -363,7 +363,8 @@ class StudentViewSet(ModelViewSet):
         serializer = AddTagSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        tag = student_repo.tag_get(serializer.validated_data["tag_id"])
+        # 🔐 tenant-scoped tag lookup: 다른 테넌트 태그 연결 방지
+        tag = student_repo.tag_get(serializer.validated_data["tag_id"], tenant=request.tenant)
         student_repo.student_tag_get_or_create(student, tag)
 
         return Response({"status": "ok"}, status=201)

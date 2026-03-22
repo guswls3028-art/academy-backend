@@ -140,6 +140,7 @@ def _sync_clinic_link_for_not_submitted(
             enrollment_id=int(enrollment_id),
             session_id=int(session_id),
             reason=ClinicLink.Reason.AUTO_FAILED,
+            source_type="homework",
             defaults={
                 "is_auto": True,
                 "approved": False,

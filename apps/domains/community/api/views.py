@@ -373,6 +373,11 @@ class PostViewSet(viewsets.ModelViewSet):
             elif request.user:
                 author_display_name = f"{request.user.last_name}{request.user.first_name}".strip() or None
 
+        # 🔐 XSS 방지: 댓글 content sanitize
+        content = serializer.validated_data.get("content", "")
+        if content:
+            serializer.validated_data["content"] = sanitize_html(content)
+
         reply = serializer.save(
             post=post, tenant=tenant, created_by=created_by,
             author_display_name=author_display_name, author_role=author_role,
@@ -541,6 +546,10 @@ class PostViewSet(viewsets.ModelViewSet):
         # PATCH
         serializer = PostReplySerializer(reply, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        # 🔐 XSS 방지: 댓글 수정 시에도 content sanitize
+        content = serializer.validated_data.get("content")
+        if content:
+            serializer.validated_data["content"] = sanitize_html(content)
         serializer.save()
         return Response(serializer.data)
 

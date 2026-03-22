@@ -132,9 +132,12 @@ def staff_get(tenant, pk):
     return Staff.objects.get(id=pk, tenant=tenant)
 
 
-def staff_get_by_name_phone(name, phone):
+def staff_get_by_name_phone(name, phone, tenant=None):
     from apps.domains.staffs.models import Staff
-    return Staff.objects.filter(name=name, phone=phone or "").first()
+    qs = Staff.objects.filter(name=name, phone=phone or "")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    return qs.first()
 
 
 def work_month_lock_update_or_create(staff, year, month, defaults):

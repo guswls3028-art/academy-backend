@@ -68,7 +68,8 @@ class Command(BaseCommand):
         for job in qs:
             threshold_minutes = override_threshold if override_threshold is not None else _stuck_threshold_minutes(job)
             cutoff = timezone.now() - timedelta(minutes=threshold_minutes)
-            if job.last_heartbeat_at >= cutoff:
+            # 🔐 null safety: heartbeat 없는 RUNNING 잡은 stuck으로 간주
+            if job.last_heartbeat_at is not None and job.last_heartbeat_at >= cutoff:
                 continue
 
             attempt_after = job.attempt_count + 1

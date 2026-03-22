@@ -31,9 +31,12 @@ def student_create(tenant, **kwargs):
     return Student.objects.create(tenant=tenant, **kwargs)
 
 
-def tag_get(pk):
+def tag_get(pk, tenant=None):
     from apps.domains.students.models import Tag
-    return Tag.objects.get(id=pk)
+    qs = Tag.objects.filter(id=pk)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    return qs.get()
 
 
 def student_tag_get_or_create(student, tag):

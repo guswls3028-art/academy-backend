@@ -103,15 +103,24 @@ class InternalAIJobResultView(APIView):
         q = DBJobQueue()
         tier = (job.tier or "basic").lower()
 
+        # 🔐 중복 콜백 방어: IntegrityError 발생 시 중복으로 처리
+        from django.db import IntegrityError as DjIntegrityError
+
         if status_in == "FAILED" and tier in ("lite", "basic"):
             _, flags = status_for_exception(tier)
             payload_to_store = dict(result or {})
             payload_to_store["flags"] = {**(payload_to_store.get("flags") or {}), **flags}
-            ai_repo.result_create(job, payload_to_store)
+            try:
+                ai_repo.result_create(job, payload_to_store)
+            except DjIntegrityError:
+                return Response({"ok": True, "detail": "duplicate_ignored"}, status=status.HTTP_200_OK)
             q.mark_done(job_id=job.job_id)
             return Response({"ok": True, "detail": "done_lite_basic_no_fail"}, status=status.HTTP_200_OK)
 
-        ai_repo.result_create(job, result or None)
+        try:
+            ai_repo.result_create(job, result or None)
+        except DjIntegrityError:
+            return Response({"ok": True, "detail": "duplicate_ignored"}, status=status.HTTP_200_OK)
 
         if status_in == "FAILED":
             q.mark_failed(job_id=job.job_id, error=error or "failed", retryable=True)

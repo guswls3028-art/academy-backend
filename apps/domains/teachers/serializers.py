@@ -9,8 +9,17 @@ class TeacherSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Teacher
-        fields = "__all__"
+        fields = [
+            "id", "tenant", "name", "phone", "email",
+            "subject", "note", "is_active",
+            "created_at", "updated_at", "staff_id",
+        ]
+        read_only_fields = ["id", "tenant", "created_at", "updated_at", "staff_id"]
 
     def get_staff_id(self, obj):
-        staff = staff_repo.staff_get_by_name_phone(obj.name, obj.phone or "")
+        # 🔐 tenant-scoped lookup: 같은 테넌트 내에서만 Staff 매칭
+        tenant = getattr(obj, "tenant", None)
+        if not tenant:
+            return None
+        staff = staff_repo.staff_get_by_name_phone(obj.name, obj.phone or "", tenant=tenant)
         return staff.id if staff else None

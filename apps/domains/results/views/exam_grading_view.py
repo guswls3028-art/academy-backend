@@ -71,11 +71,12 @@ class AutoGradeSubmissionView(APIView):
     def post(self, request, submission_id: int):
         _verify_submission_tenant(int(submission_id), request.tenant)
         service = ExamGradingService()
-        out = service.auto_grade_objective(submission_id=int(submission_id))
-        serializer = ExamResultSerializer(out.result)
+        result = service.auto_grade_objective(submission_id=int(submission_id))
+        # auto_grade_objective returns ExamResult directly (not a wrapper)
+        serializer = ExamResultSerializer(result)
         return Response(
-            {"created": (not out.updated), "updated": bool(out.updated), "result": serializer.data},
-            status=status.HTTP_201_CREATED if not out.updated else status.HTTP_200_OK,
+            {"result": serializer.data},
+            status=status.HTTP_200_OK,
         )
 
 

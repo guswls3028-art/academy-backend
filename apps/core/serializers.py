@@ -148,19 +148,37 @@ class ProgramUpdateSerializer(serializers.ModelSerializer):
             "is_active",
         ]
 
+    def _is_owner_or_superuser(self):
+        request = self.context.get("request")
+        if not request:
+            return False
+        from apps.core.models import TenantMembership
+        tenant = getattr(request, "tenant", None)
+        user = getattr(request, "user", None)
+        if not tenant or not user:
+            return False
+        if getattr(user, "is_superuser", False):
+            return True
+        return TenantMembership.objects.filter(
+            user=user, tenant=tenant, is_active=True, role="owner"
+        ).exists()
+
     def validate_plan(self, value):
         """플랜 변경은 owner만 가능."""
-        request = self.context.get("request")
-        if request:
-            from apps.core.models import TenantMembership
-            tenant = getattr(request, "tenant", None)
-            user = getattr(request, "user", None)
-            if tenant and user:
-                is_owner = TenantMembership.objects.filter(
-                    user=user, tenant=tenant, is_active=True, role="owner"
-                ).exists()
-                if not is_owner and not getattr(user, "is_superuser", False):
-                    raise serializers.ValidationError("플랜 변경은 대표만 가능합니다.")
+        if not self._is_owner_or_superuser():
+            raise serializers.ValidationError("플랜 변경은 대표만 가능합니다.")
+        return value
+
+    def validate_is_active(self, value):
+        """프로그램 활성화/비활성화는 owner만 가능."""
+        if not self._is_owner_or_superuser():
+            raise serializers.ValidationError("프로그램 활성화/비활성화는 대표만 가능합니다.")
+        return value
+
+    def validate_feature_flags(self, value):
+        """기능 플래그 변경은 owner만 가능."""
+        if not self._is_owner_or_superuser():
+            raise serializers.ValidationError("기능 설정 변경은 대표만 가능합니다.")
         return value
 
 

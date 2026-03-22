@@ -131,7 +131,7 @@ def video_progress_get(video, enrollment):
 
 def session_all_queryset():
     from apps.domains.lectures.models import Session
-    return Session.objects.all()
+    return Session.objects.select_related("lecture").all()
 
 
 def session_get_by_id_with_lecture(session_id):

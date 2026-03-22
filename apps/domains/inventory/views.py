@@ -375,6 +375,11 @@ class FolderDeleteView(View):
         scope = (request.GET.get("scope") or "admin").lower()
         student_ps = (request.GET.get("student_ps") or "").strip()
 
+        # 🔐 scope 권한 검증: 학생은 admin scope 접근 불가
+        perm_err = _check_scope_permission(request, scope)
+        if perm_err:
+            return perm_err
+
         folder = inv_repo.inventory_folder_get(tenant, folder_id)
         if not folder:
             return JsonResponse({"detail": "Not found"}, status=404)
@@ -396,6 +401,11 @@ class FolderDeleteView(View):
         tenant = request.tenant
         scope = (request.GET.get("scope") or "admin").lower()
         student_ps = (request.GET.get("student_ps") or "").strip()
+
+        # 🔐 scope 권한 검증
+        perm_err = _check_scope_permission(request, scope)
+        if perm_err:
+            return perm_err
 
         folder = inv_repo.inventory_folder_get(tenant, folder_id)
         if not folder:
@@ -431,6 +441,11 @@ class FileDeleteView(View):
         scope = (request.GET.get("scope") or "admin").lower()
         student_ps = (request.GET.get("student_ps") or "").strip()
 
+        # 🔐 scope 권한 검증: 학생은 admin scope 파일 삭제 불가
+        perm_err = _check_scope_permission(request, scope)
+        if perm_err:
+            return perm_err
+
         inv_file = inv_repo.inventory_file_get(tenant, file_id)
         if not inv_file:
             return JsonResponse({"detail": "Not found"}, status=404)
@@ -439,6 +454,17 @@ class FileDeleteView(View):
 
         r2_key = inv_file.r2_key
         inv_file.delete()
+
+        # 🔐 R2 스토리지 객체 삭제 (스토리지 누수 방지)
+        if r2_key and delete_object_r2_storage:
+            try:
+                delete_object_r2_storage(key=r2_key)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Failed to delete R2 object: %s", r2_key, exc_info=True
+                )
+
         return JsonResponse({}, status=204)
 
     @method_decorator(_tenant_required)
@@ -448,6 +474,11 @@ class FileDeleteView(View):
         tenant = request.tenant
         scope = (request.GET.get("scope") or "admin").lower()
         student_ps = (request.GET.get("student_ps") or "").strip()
+
+        # 🔐 scope 권한 검증
+        perm_err = _check_scope_permission(request, scope)
+        if perm_err:
+            return perm_err
 
         inv_file = inv_repo.inventory_file_get(tenant, file_id)
         if not inv_file:
@@ -542,6 +573,11 @@ class MoveView(View):
         student_ps = (body.get("student_ps") or request.GET.get("student_ps") or "").strip()
         if scope == "student" and not student_ps:
             return JsonResponse({"detail": "student_ps required for student scope"}, status=400)
+
+        # 🔐 scope 권한 검증: 학생은 admin scope 이동 불가
+        perm_err = _check_scope_permission(request, scope)
+        if perm_err:
+            return perm_err
 
         tenant = request.tenant
         try:

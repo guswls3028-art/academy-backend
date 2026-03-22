@@ -31,7 +31,7 @@ class VideoSerializer(serializers.ModelSerializer):
     - Legacy 경로 normalize
     """
 
-    # write
+    # write — queryset is overridden in __init__ to enforce tenant isolation
     session = serializers.PrimaryKeyRelatedField(
         queryset=video_repo.session_all_queryset(),
         write_only=True,
@@ -104,6 +104,18 @@ class VideoSerializer(serializers.ModelSerializer):
             "encoding_step_percent",
         ]
         ref_name = "SealedVideo"
+
+    def validate_session(self, value):
+        """🔐 크로스 테넌트 세션 연결 방지: 세션이 요청 테넌트 소속인지 확인."""
+        request = self.context.get("request")
+        if request:
+            tenant = getattr(request, "tenant", None)
+            if tenant and hasattr(value, "lecture") and value.lecture:
+                if getattr(value.lecture, "tenant_id", None) != tenant.id:
+                    raise serializers.ValidationError(
+                        "Session does not belong to your program."
+                    )
+        return value
 
     # ---------------------------
     # helpers

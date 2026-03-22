@@ -49,7 +49,7 @@ class AdminExamSummaryView(APIView):
 
         # ✅ tenant isolation: verify exam belongs to tenant
         from django.shortcuts import get_object_or_404
-        exam = get_object_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
+        exam = get_object_or_404(Exam.objects.filter(sessions__lecture__tenant=request.tenant).distinct(), id=exam_id)
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
         # ✅ 중복 방어: enrollment당 최신 Result만
