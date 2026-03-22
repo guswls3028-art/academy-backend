@@ -29,6 +29,7 @@ class OMRDocument:
     logo_url: Optional[str] = None  # presigned URL (HTML preview용)
     logo_bytes: Optional[bytes] = None  # 로고 바이너리 (PDF 렌더용)
     logo_mime: Optional[str] = None  # "image/png" 등
+    brand_color: Optional[str] = None  # 테넌트 프라이머리 컬러 (e.g. "#3B82F6")
 
     def with_logo_bytes(
         self, logo_bytes: Optional[bytes], logo_mime: Optional[str] = None

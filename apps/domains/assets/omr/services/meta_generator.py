@@ -1,6 +1,6 @@
 # apps/domains/assets/omr/services/meta_generator.py
 """
-OMR v7 좌표 메타 생성기 — SSOT
+OMR v8 좌표 메타 생성기 — SSOT
 
 이 파일은 omr-sheet.html(프론트엔드 SSOT)의 CSS 레이아웃과 동기화된
 mm 단위 좌표를 정의한다.
@@ -22,7 +22,7 @@ PAGE_H = 210.0
 MARGIN_L = 10.0
 MARGIN_T = 9.0
 MARGIN_R = 10.0
-MARGIN_B = 6.0
+MARGIN_B = 8.0
 
 CONTENT_X = MARGIN_L
 CONTENT_Y = MARGIN_T
@@ -54,7 +54,7 @@ ID_DIGIT_W = 5.8
 ID_SEP_W = 3.5
 ID_BUB_W = 3.6
 ID_BUB_H = 5.2
-ID_BUB_GAP = 0.24
+ID_BUB_GAP = 0.6
 ID_DIGITS = 8
 ID_VALUES = 10
 
@@ -127,7 +127,7 @@ def build_omr_meta(
             })
 
     return {
-        "version": "v7",
+        "version": "v8",
         "units": "mm",
         "page": {"width": PAGE_W, "height": PAGE_H},
         "mc_count": question_count,
@@ -177,7 +177,7 @@ def _build_identifier_meta() -> Dict[str, Any]:
         ]
         digits.append({"digit_index": d, "bubbles": bubbles})
 
-    return {"version": "v7", "digits": digits, "digit_count": ID_DIGITS}
+    return {"version": "v8", "digits": digits, "digit_count": ID_DIGITS}
 
 
 # ── 하위호환 래퍼 ──

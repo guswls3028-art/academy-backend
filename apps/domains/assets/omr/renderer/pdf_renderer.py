@@ -8,12 +8,13 @@ OMR PDF 렌더러 — reportlab 기반 벡터 PDF 생성
 시각 시스템 정의
 ═══════════════════════════════════════════════════
 
-A. STROKE HIERARCHY
+A. STROKE HIERARCHY (v8)
   S1  0.80pt  #333333  카드 외곽 / MC·서술형 최외곽 (좌우 동일)
   S2  0.50pt  #555555  헤더↔본문 구분선 (카드 내부 구획)
   S3  0.35pt  #aaaaaa  5행 강조 가로선
-  S4  0.15pt  #cccccc  일반 행 구분 / 번호↔버블 세로선 / 선지 세로선
+  S4  0.25pt  #cccccc  일반 행 구분 / 번호↔버블 세로선 (최소 인쇄 보장)
   S5  0.35pt  #444444  버블 외곽
+  --  1.00pt  #666666  10행 강조 가로선
 
 B. SPACING (mm)
   로고 영역 상단 패딩     5
@@ -70,7 +71,7 @@ from apps.domains.assets.omr.services.meta_generator import (
     ANS_X,
     MC_COL_W, MC_COL_GAP, MC_HEADER_H, MC_NUM_W, MC_BUB_PAD,
     BUB_W, BUB_H,
-    ID_DIGITS, ID_VALUES,
+    ID_DIGITS, ID_VALUES, ID_BUB_GAP, ID_BUB_H,
     MARGIN_R,
 )
 
@@ -80,7 +81,7 @@ from apps.domains.assets.omr.services.meta_generator import (
 S1 = 0.80   # 카드/컬럼 외곽
 S2 = 0.50   # 헤더↔본문
 S3 = 0.35   # 5행 강조
-S4 = 0.15   # 보조선 (가장 약함)
+S4 = 0.25   # 보조선 (최소 인쇄 보장)
 S5 = 0.35   # 버블
 
 C1 = HexColor("#333333")   # S1 외곽
@@ -93,10 +94,15 @@ C5 = HexColor("#444444")   # S5 버블
 CT  = HexColor("#111111")   # 본문
 CT2 = HexColor("#222222")   # 헤더
 CT3 = HexColor("#666666")   # 부제/안내본문
-CT4 = HexColor("#bbbbbb")   # 버블숫자
+CT4 = HexColor("#c0c0c0")   # 버블숫자
 
 # 헤더 배경
 C_HDR = HexColor("#f4f4f4")
+C_HDR_ESSAY = HexColor("#e8e8e8")   # 서술형 헤더
+C_ZEBRA = HexColor("#fafafa")       # zebra striping
+C_BUB_FILL = HexColor("#f8f8f8")    # 버블 내부 fill
+C_G10 = HexColor("#666666")         # 10행 강조선
+C_ESSAY_LINE = HexColor("#e8e8e8")  # 서술형 줄선
 
 # B. SPACING (mm)
 PAD_LOGO_TOP = 5.0
@@ -258,21 +264,53 @@ class OMRPdfRenderer:
         t_phone = t_name + H_NAME
         t_note = t_phone + H_PHONE
 
+        # 0) 브랜드 컬러 바 (2mm, 상단)
+        if doc.brand_color:
+            try:
+                bc = HexColor(doc.brand_color)
+                c.setFillColor(bc)
+                c.roundRect(x, _y(t_logo + 2), w, _mm(2), _mm(1), fill=1, stroke=0)
+            except Exception:
+                pass
+
         # 1) 로고+제목 — 테두리 없는 열린 영역
         self._logo_title(c, doc, x, w, t_logo, H_LOGO)
 
-        # 2) 성명 카드
+        # 2) 성명 카드 (밑줄 가이드 포함)
         _card(c, x, t_name, H_NAME, w)
         _header(c, x, w, t_name, "성 명")
+        self._name_guides(c, x, w, t_name)
 
         # 3) 전화번호 카드
         _card(c, x, t_phone, H_PHONE, w)
-        _header(c, x, w, t_phone, "전화번호 뒤 8자리")
+        _header(c, x, w, t_phone, "학생 식별번호 (전화번호 뒤 8자리)")
         self._phone(c, x, w, t_phone)
 
         # 4) 안내 카드
         _card(c, x, t_note, H_NOTE, w)
         self._note(c, x, w, t_note)
+
+        # 5) QR 예약 영역 (안내 카드 우하단)
+        qr_x = x + w - _mm(9)
+        qr_y = _y(t_note + H_NOTE - 1)
+        c.setStrokeColor(C4); c.setLineWidth(S4)
+        c.setDash(1, 1)
+        c.rect(qr_x, qr_y, _mm(8), _mm(8), stroke=1, fill=0)
+        c.setDash()
+
+    def _name_guides(self, c, x, w, top):
+        """성명란 밑줄 가이드 (3칸 분리)."""
+        body_top = top + HEADER_H
+        body_h = H_NAME - HEADER_H
+        guide_y = body_top + body_h - 3  # 하단에서 3mm 위
+        inner_x = x + _mm(3)
+        inner_w = w - _mm(6)
+        seg_w = inner_w / 3
+        c.setStrokeColor(C2); c.setLineWidth(S2)
+        for i in range(3):
+            sx = inner_x + seg_w * i + _mm(1)
+            ex = inner_x + seg_w * (i + 1) - _mm(1)
+            c.line(sx, _y(guide_y), ex, _y(guide_y))
 
     def _logo_title(self, c, doc, x, w, top, h):
         """로고 + 시험명 + 부제. 테두리 없음. 내부 여백 확보."""
@@ -301,8 +339,10 @@ class OMRPdfRenderer:
         else:
             cursor = logo_ceil - _mm(8)
 
-        # 시험명 — 12pt bold, 중심축
-        c.setFont(_FB, 12); c.setFillColor(CT)
+        # 시험명 — 자동 축소 (15자 초과 → 10pt, 20자 초과 → 9pt)
+        title_len = len(doc.exam_title) if doc.exam_title else 0
+        title_pt = 9 if title_len > 20 else (10 if title_len > 15 else 12)
+        c.setFont(_FB, title_pt); c.setFillColor(CT)
         c.drawCentredString(cx, cursor, doc.exam_title)
 
         # 부제 — 7pt regular, 시험명 아래 2mm
@@ -338,9 +378,9 @@ class OMRPdfRenderer:
             c.setFont(_FB, 10); c.setFillColor(CT)
             c.drawCentredString(sx + _mm(sw / 2), _y(wy + ch - 1.5), "–")
 
-        # 버블 그리드
+        # 버블 그리드 (gap은 meta_generator.ID_BUB_GAP과 동기화)
         by0 = top + HEADER_H + ch + 4.0
-        bg = 0.4
+        bg = ID_BUB_GAP  # 0.6mm — meta_generator와 동기화
         c.setLineWidth(S5)
         for d in range(ID_DIGITS):
             dx = gx + _mm((d * dw) if d < 4 else (4 * dw + sw + (d - 4) * dw))
@@ -348,30 +388,59 @@ class OMRPdfRenderer:
             for v in range(ID_VALUES):
                 by = by0 + v * (BUB_H + bg)
                 bcy = _y(by + BUB_H / 2)
-                c.setStrokeColor(C5); c.setFillColor(white)
+                c.setStrokeColor(C5); c.setFillColor(C_BUB_FILL)
                 c.ellipse(ccx - _mm(BUB_W/2), bcy - _mm(BUB_H/2),
                           ccx + _mm(BUB_W/2), bcy + _mm(BUB_H/2), stroke=1, fill=1)
-                c.setFont(_FN, 4.5); c.setFillColor(CT4)
+                c.setFont(_FN, 5.5); c.setFillColor(CT4)
                 c.drawCentredString(ccx, bcy - _mm(0.8), str(v))
 
     def _note(self, c, x, w, top):
-        """답안지 작성 안내. 원문 5줄 유지."""
+        """답안지 작성 안내."""
         ix = x + _mm(3)
         ty = _y(top + 3)
+        lh = 3.6  # 줄 간격 mm
 
-        c.setFont(_FB, 6.5); c.setFillColor(CT2)
+        c.setFont(_FB, 7); c.setFillColor(CT2)
         c.drawString(ix, ty, "답안지 작성 안내")
 
-        c.setFont(_FN, 5.5); c.setFillColor(CT3)
-        lines = [
-            "1. 전화번호는 본인 휴대폰 번호 뒤 8자리를 적어주세요.",
-            "   휴대폰이 없는 학생은 부모님 번호 뒤 8자리를 적어주세요.",
-            "2. 객관식은 컴퓨터용 사인펜으로 버블을 빈틈없이 칠해주세요.",
-            "3. 서술형은 답을 정자로 깔끔하게 적어주세요.",
-            "4. 수정할 때는 수정테이프를 사용해주세요.",
-        ]
-        for i, ln in enumerate(lines):
-            c.drawString(ix, ty - _mm(4.0 + i * 3.8), ln)
+        y0 = ty - _mm(4.0)
+
+        # 1번
+        c.setFont(_FN, 6); c.setFillColor(CT3)
+        c.drawString(ix, y0, "1. 전화번호는 본인 휴대폰 번호 뒤 8자리를 적어주세요.")
+        c.drawString(ix + _mm(2.5), y0 - _mm(lh), "휴대폰이 없으면 부모님 번호 뒤 8자리를 적어주세요.")
+
+        # 2번 — "사인펜" bold
+        c.setFont(_FN, 6); c.setFillColor(CT3)
+        c.drawString(ix, y0 - _mm(lh * 2), "2. 객관식은 ")
+        c.setFont(_FB, 6)
+        c.drawString(ix + _mm(13.5), y0 - _mm(lh * 2), "컴퓨터용 사인펜")
+        c.setFont(_FN, 6)
+        c.drawString(ix + _mm(31), y0 - _mm(lh * 2), "으로 칠해주세요.")
+
+        # 3번
+        c.drawString(ix, y0 - _mm(lh * 3), "3. 서술형은 답을 정자로 깔끔하게 적어주세요.")
+
+        # 4번 — "수정테이프" bold
+        c.drawString(ix, y0 - _mm(lh * 4), "4. ")
+        c.setFont(_FB, 6)
+        c.drawString(ix + _mm(3), y0 - _mm(lh * 4), "수정테이프")
+        c.setFont(_FN, 6)
+        c.drawString(ix + _mm(16), y0 - _mm(lh * 4), "를 사용해주세요. (수정액 금지)")
+
+        # 5번 — 마킹 예시
+        c.drawString(ix, y0 - _mm(lh * 5), "5. 올바른 마킹: ")
+        # 올바른 마킹 — 채워진 타원
+        mark_x = ix + _mm(17)
+        mark_y = y0 - _mm(lh * 5) + _mm(0.5)
+        c.setFillColor(HexColor("#333333"))
+        c.ellipse(mark_x, mark_y - _mm(1.5), mark_x + _mm(3), mark_y + _mm(1.5),
+                  fill=1, stroke=0)
+        # 잘못된 마킹
+        c.setFont(_FN, 6); c.setFillColor(CT3)
+        c.drawString(mark_x + _mm(5), y0 - _mm(lh * 5), "잘못된 마킹: ")
+        c.setFont(_FB, 7); c.setFillColor(HexColor("#999999"))
+        c.drawString(mark_x + _mm(17), y0 - _mm(lh * 5), "✓  △  ─")
 
     # ══════════════════════════════════════════
     # MC 컬럼
@@ -413,13 +482,13 @@ class OMRPdfRenderer:
 
         c.setFont(_FB, 5.5); c.setFillColor(CT2)
         c.drawCentredString(cx + nw/2, ct - hh + _mm(1.5), "번호")
-        lb = f"{s}번 ~ {e}번" if ncols > 1 else "객관식"
+        cnt = e - s + 1
+        lb = f"{s}번 ~ {e}번" if ncols > 1 else f"객관식 {cnt}문항"
         c.drawCentredString(cx + nw + (cw - nw)/2, ct - hh + _mm(1.5), lb)
 
         # 바디
         bt = CONTENT_Y + MC_HEADER_H
         bh = CONTENT_H - MC_HEADER_H
-        cnt = e - s + 1
         rh = bh / cnt if cnt else bh
 
         # 번호↔버블 세로선 (S4, 전체 높이)
@@ -433,11 +502,7 @@ class OMRPdfRenderer:
         gap = (aw - nc * BUB_W) / (nc + 1)
         bxs = [ax + gap*(i+1) + BUB_W*i + BUB_W/2 for i in range(nc)]
 
-        # 선지 세로선 (S4, 전체 높이)
-        c.setStrokeColor(C4); c.setLineWidth(S4)
-        for i in range(nc - 1):
-            mx = _mm((bxs[i] + bxs[i+1]) / 2)
-            c.line(mx, _y(bt), mx, _y(bt + bh))
+        # 선지 세로선 제거 — 버블 간격만으로 충분히 구분됨
 
         # 행
         for qi in range(cnt):
@@ -445,25 +510,36 @@ class OMRPdfRenderer:
             rt = bt + qi * rh
             rc = rt + rh / 2
 
+            # zebra striping (5행 그룹 교대)
+            group_idx = qi // 5
+            if group_idx % 2 == 1:
+                c.setFillColor(C_ZEBRA)
+                c.rect(cx, _y(rt + rh), cw, _mm(rh), fill=1, stroke=0)
+
             # 행 구분선
             if qi > 0:
+                g10 = (qi % 10 == 0)
                 g5 = (qi % 5 == 0)
-                c.setStrokeColor(C3 if g5 else C4)
-                c.setLineWidth(S3 if g5 else S4)
+                if g10:
+                    c.setStrokeColor(C_G10); c.setLineWidth(1.0)
+                elif g5:
+                    c.setStrokeColor(C3); c.setLineWidth(S3)
+                else:
+                    c.setStrokeColor(C4); c.setLineWidth(S4)
                 c.line(cx, _y(rt), cx + cw, _y(rt))
 
-            # 번호
-            c.setFont(_FB, 7); c.setFillColor(CT)
-            c.drawCentredString(cx + nw/2, _y(rc) - _mm(1.2), str(qn))
+            # 번호 (8pt bold)
+            c.setFont(_FB, 8); c.setFillColor(CT)
+            c.drawCentredString(cx + nw/2, _y(rc) - _mm(1.4), str(qn))
 
-            # 버블
+            # 버블 (fill: #f8f8f8)
             for bi, bx_mm in enumerate(bxs):
                 bx = _mm(bx_mm)
                 by = _y(rc)
-                c.setStrokeColor(C5); c.setLineWidth(S5); c.setFillColor(white)
+                c.setStrokeColor(C5); c.setLineWidth(S5); c.setFillColor(C_BUB_FILL)
                 c.ellipse(bx - _mm(BUB_W/2), by - _mm(BUB_H/2),
                           bx + _mm(BUB_W/2), by + _mm(BUB_H/2), stroke=1, fill=1)
-                c.setFont(_FN, 5); c.setFillColor(CT4)
+                c.setFont(_FN, 5.5); c.setFillColor(CT4)
                 c.drawCentredString(bx, by - _mm(0.8), str(bi + 1))
 
     # ══════════════════════════════════════════
@@ -486,9 +562,9 @@ class OMRPdfRenderer:
         c.setStrokeColor(C1); c.setLineWidth(S1)
         c.rect(ex, et - eh, ew, eh, stroke=1, fill=0)
 
-        # 헤더
+        # 헤더 (서술형 → 다른 배경)
         hh = _mm(MC_HEADER_H)
-        c.setFillColor(C_HDR)
+        c.setFillColor(C_HDR_ESSAY)
         c.rect(ex, et - hh, ew, hh, fill=1, stroke=0)
         c.setStrokeColor(C2); c.setLineWidth(S2)
         c.line(ex, et - hh, ex + ew, et - hh)
@@ -513,10 +589,33 @@ class OMRPdfRenderer:
         for i in range(doc.essay_count):
             rt = bt + i * rh
             rc = rt + rh / 2
+
+            # zebra striping
+            group_idx = i // 5
+            if group_idx % 2 == 1:
+                c.setFillColor(C_ZEBRA)
+                c.rect(ex, _y(rt + rh), ew, _mm(rh), fill=1, stroke=0)
+
             if i > 0:
+                g10 = (i % 10 == 0)
                 g5 = (i % 5 == 0)
-                c.setStrokeColor(C3 if g5 else C4)
-                c.setLineWidth(S3 if g5 else S4)
+                if g10:
+                    c.setStrokeColor(C_G10); c.setLineWidth(1.0)
+                elif g5:
+                    c.setStrokeColor(C3); c.setLineWidth(S3)
+                else:
+                    c.setStrokeColor(C4); c.setLineWidth(S4)
                 c.line(ex, _y(rt), ex + ew, _y(rt))
-            c.setFont(_FB, 7); c.setFillColor(CT)
-            c.drawCentredString(ex + nw/2, _y(rc) - _mm(1.2), str(i + 1))
+
+            # 번호 (8pt bold)
+            c.setFont(_FB, 8); c.setFillColor(CT)
+            c.drawCentredString(ex + nw/2, _y(rc) - _mm(1.4), str(i + 1))
+
+            # 서술형 줄선 (4mm 간격)
+            write_x = ex + nw
+            write_w = ew - nw
+            c.setStrokeColor(C_ESSAY_LINE); c.setLineWidth(S4)
+            line_y = rt + 4.0
+            while line_y < rt + rh - 1.0:
+                c.line(write_x + _mm(1), _y(line_y), write_x + write_w - _mm(1), _y(line_y))
+                line_y += 4.0

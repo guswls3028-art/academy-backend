@@ -8,7 +8,6 @@ CSS는 omr-sheet.html과 동일한 스타일을 사용.
 from __future__ import annotations
 
 import math
-import os
 from typing import Any
 
 from django.template.loader import render_to_string
@@ -35,6 +34,15 @@ class OMRHtmlRenderer:
         if doc.session_name:
             sub_parts.append(doc.session_name)
 
+        # 시험명 길이에 따라 폰트 크기 결정
+        title_len = len(doc.exam_title) if doc.exam_title else 0
+        if title_len > 20:
+            title_font_pt = 9
+        elif title_len > 15:
+            title_font_pt = 10
+        else:
+            title_font_pt = 12
+
         return {
             "exam_title": doc.exam_title,
             "lecture_name": doc.lecture_name,
@@ -44,6 +52,8 @@ class OMRHtmlRenderer:
             "essay_count": doc.essay_count,
             "n_choices": doc.n_choices,
             "logo_url": doc.logo_url,
+            "brand_color": doc.brand_color,
+            "title_font_pt": title_font_pt,
             "mc_columns": mc_columns,
             "essay_rows": essay_rows,
             "choices_labels": [str(i + 1) for i in range(doc.n_choices)],
@@ -70,17 +80,22 @@ class OMRHtmlRenderer:
             start = col_idx * per_col + 1
             end = min(start + per_col - 1, mc)
 
+            count_in_col = end - start + 1
             if n_cols > 1:
                 label = f"{start}번 ~ {end}번"
             else:
-                label = "객관식"
+                label = f"객관식 {count_in_col}문항"
 
             rows = []
             for q in range(start, end + 1):
                 row_in_col = q - start + 1
+                # 5행 그룹 인덱스 (0-based)
+                group_idx = (row_in_col - 1) // 5
                 rows.append({
                     "number": q,
                     "is_g5": (row_in_col % 5 == 0 and q != end),
+                    "is_g10": (row_in_col % 10 == 0 and q != end),
+                    "is_zebra": (group_idx % 2 == 1),
                 })
 
             columns.append({
@@ -96,8 +111,11 @@ class OMRHtmlRenderer:
 
         rows = []
         for i in range(1, doc.essay_count + 1):
+            group_idx = (i - 1) // 5
             rows.append({
                 "number": i,
                 "is_g5": (i % 5 == 0 and i != doc.essay_count),
+                "is_g10": (i % 10 == 0 and i != doc.essay_count),
+                "is_zebra": (group_idx % 2 == 1),
             })
         return rows

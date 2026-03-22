@@ -70,11 +70,11 @@ class OMRDocumentService:
 
         _essay_count = essay_count if essay_count is not None else 0
 
-        # 로고 resolve
+        # 로고 & 브랜드 컬러 resolve
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
-        # HTML 프리뷰에서 기본 로고 표시용 (logo_url이 없으면 기본 SVG)
         if not logo_url:
             logo_url = "/omr-default-logo.svg"
+        brand_color = OMRDocumentService._resolve_brand_color(tenant)
 
         return OMRDocument(
             exam_title=title,
@@ -84,6 +84,7 @@ class OMRDocumentService:
             essay_count=_essay_count,
             n_choices=n_choices,
             logo_url=logo_url,
+            brand_color=brand_color,
         )
 
     @staticmethod
@@ -101,6 +102,7 @@ class OMRDocumentService:
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
         if not logo_url:
             logo_url = "/omr-default-logo.svg"
+        brand_color = OMRDocumentService._resolve_brand_color(tenant)
 
         return OMRDocument(
             exam_title=exam_title,
@@ -110,6 +112,7 @@ class OMRDocumentService:
             essay_count=essay_count,
             n_choices=n_choices,
             logo_url=logo_url,
+            brand_color=brand_color,
         )
 
     @staticmethod
@@ -133,6 +136,25 @@ class OMRDocumentService:
             return resolve_admin_logo_url(logo_key=logo_key, logo_url=logo_url)
         except Exception:
             logger.warning("OMR 로고 resolve 실패", exc_info=True)
+            return None
+
+    @staticmethod
+    def _resolve_brand_color(tenant) -> Optional[str]:
+        """테넌트 브랜드 프라이머리 컬러 resolve."""
+        try:
+            from apps.core.models import Program
+
+            program = Program.objects.filter(tenant=tenant).first()
+            if not program:
+                return None
+
+            ui = program.ui_config or {}
+            color = ui.get("primary_color") or ui.get("brand_color")
+            if color and isinstance(color, str) and color.startswith("#"):
+                return color
+            return None
+        except Exception:
+            logger.warning("OMR 브랜드 컬러 resolve 실패", exc_info=True)
             return None
 
     @staticmethod

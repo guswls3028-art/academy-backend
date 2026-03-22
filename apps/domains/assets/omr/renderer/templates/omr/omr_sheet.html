@@ -21,7 +21,7 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 .cm-bl{bottom:3mm;left:3mm}.cm-bl .h{width:5mm;height:0.5mm;bottom:0;left:0}.cm-bl .v{width:0.5mm;height:5mm;bottom:0;left:0}
 .cm-br{bottom:3mm;right:3mm}.cm-br .h{width:5mm;height:0.5mm;bottom:0;right:0}.cm-br .v{width:0.5mm;height:5mm;bottom:0;right:0}
 
-.omr-c{position:absolute;top:9mm;left:10mm;right:10mm;bottom:6mm;display:flex;gap:3mm}
+.omr-c{position:absolute;top:9mm;left:10mm;right:10mm;bottom:8mm;display:flex;gap:3mm}
 
 /* ═══ LEFT PANEL ═══ */
 .lp{
@@ -29,12 +29,13 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
   border:1.5px solid #000;border-radius:2mm;
   display:flex;flex-direction:column;overflow:hidden;
 }
+.lp-brand{height:2mm;flex-shrink:0}
 .lp-top{
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   flex:1;padding:2mm 2mm;
 }
 .lp-top img{max-width:95%;max-height:26mm;object-fit:contain;margin-bottom:2.5mm}
-.lp-ttl-exam{font-size:12pt;font-weight:800;line-height:1.4;overflow-wrap:break-word;word-break:break-all;text-align:center}
+.lp-ttl-exam{font-weight:800;line-height:1.4;overflow-wrap:break-word;word-break:break-all;text-align:center}
 .lp-ttl-sub{font-size:6.5pt;color:#555;margin-top:0.8mm;line-height:1.3;text-align:center}
 .lp-bottom{
   display:flex;flex-direction:column;
@@ -46,8 +47,12 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 .sec-h{background:#f0f0f0;border-bottom:0.8px solid #000;padding:1mm 2mm;font-size:6.5pt;font-weight:700;letter-spacing:1px;text-align:center}
 .sec-b{padding:2mm 2.5mm}
 
-.nm-area{height:10mm}
+.nm-area{height:10mm;display:flex;align-items:flex-end;justify-content:center;gap:0;padding-bottom:1mm}
+.nm-cell{flex:1;height:7mm;border-bottom:1.5px solid #333;margin:0 1mm}
+.nm-cell:first-child{margin-left:2mm}
+.nm-cell:last-child{margin-right:2mm}
 
+.ph-guide{display:flex;justify-content:center;font-size:6pt;color:#ccc;margin-bottom:0.5mm;letter-spacing:2px}
 .ph-write{display:flex;justify-content:center;gap:0;margin-bottom:1.5mm}
 .ph-cell{width:5.8mm;height:7mm;border:0.7px solid #000;display:flex;align-items:center;justify-content:center}
 .ph-cell+.ph-cell{border-left:none}
@@ -55,14 +60,18 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 .ph-bub-row{display:flex;justify-content:center;gap:0}
 .ph-bub-col{display:flex;flex-direction:column;align-items:center;width:5.8mm}
 .ph-bub-sep{width:3.5mm}
-.ph-bub{width:3.6mm;height:5.2mm;border:0.5px solid #000;border-radius:40%;display:flex;align-items:center;justify-content:center;font-size:4.5pt;color:#aaa;margin:0.12mm 0;background:#fff}
+.ph-bub{width:3.6mm;height:5.2mm;border:0.55px solid #000;border-radius:40%;display:flex;align-items:center;justify-content:center;font-size:5.5pt;color:#c0c0c0;margin:0.3mm 0;background:#f8f8f8}
 
 .lp-note{
   padding:1.5mm 2mm;
-  font-size:5pt;color:#333;line-height:1.6;
+  font-size:6pt;color:#333;line-height:1.6;
   border-top:1.5px solid #000;
   margin-top:auto;
 }
+.lp-note b{font-weight:800}
+.note-mark{display:inline-flex;align-items:center;gap:0.5mm;margin-top:0.5mm}
+.note-mark .good{width:3mm;height:4mm;background:#333;border-radius:40%;display:inline-block}
+.note-mark .bad{font-size:7pt;color:#999;font-weight:700}
 
 /* ═══ ANSWER AREA ═══ */
 .ans{flex:1;display:flex;gap:2.5mm;min-width:0}
@@ -90,16 +99,18 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 }
 .ac-b{flex:1;display:flex;flex-direction:column}
 
-.ar{display:flex;align-items:center;flex:1;min-height:4mm;border-bottom:0.2px solid #ddd}
+.ar{display:flex;align-items:center;flex:1;min-height:4mm;border-bottom:0.4px solid #ddd}
 .ar-g5{border-bottom:0.8px solid #999!important}
+.ar-g10{border-bottom:1.2px solid #666!important}
+.ar-zebra{background:#fafafa}
 .ar:last-child{border-bottom:none}
 .ar-n{
-  width:8mm;text-align:center;font-size:7pt;font-weight:700;
-  border-right:0.5px solid #ccc;flex-shrink:0;
+  width:8mm;text-align:center;font-size:8pt;font-weight:700;
+  border-right:0.4px solid #ccc;flex-shrink:0;
   align-self:stretch;display:flex;align-items:center;justify-content:center;
 }
 .ar-bs{flex:1;display:flex;justify-content:space-evenly;align-items:center;padding:0 0.5mm}
-.bu{width:3.6mm;height:5.2mm;border:0.55px solid #000;border-radius:40%;display:inline-flex;align-items:center;justify-content:center;font-size:5pt;color:#aaa;background:#fff;flex-shrink:0}
+.bu{width:3.6mm;height:5.2mm;border:0.55px solid #000;border-radius:40%;display:inline-flex;align-items:center;justify-content:center;font-size:5.5pt;color:#c0c0c0;background:#f8f8f8;flex-shrink:0}
 
 .dc{
   flex:1;min-width:40mm;
@@ -108,7 +119,7 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 }
 .dc-h{
   display:flex;align-items:center;
-  height:5.5mm;background:#f0f0f0;
+  height:5.5mm;background:#e8e8e8;
   border-bottom:1px solid #000;
 }
 .dc-h-n{
@@ -122,15 +133,20 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
   font-size:5.5pt;font-weight:700;letter-spacing:0.5px;
 }
 .dc-b{flex:1;display:flex;flex-direction:column}
-.dr{display:flex;align-items:stretch;flex:1;border-bottom:0.5px solid #ccc}
+.dr{display:flex;align-items:stretch;flex:1;border-bottom:0.4px solid #ccc}
 .dr-g5{border-bottom:0.8px solid #999!important}
+.dr-g10{border-bottom:1.2px solid #666!important}
+.dr-zebra{background:#fafafa}
 .dr:last-child{border-bottom:none}
 .dr-n{
   width:8mm;display:flex;align-items:center;justify-content:center;
-  font-size:7pt;font-weight:700;flex-shrink:0;
-  border-right:0.5px solid #ccc;
+  font-size:8pt;font-weight:700;flex-shrink:0;
+  border-right:0.4px solid #ccc;
 }
-.dr-bx{flex:1}
+.dr-bx{flex:1;background:repeating-linear-gradient(to bottom,transparent,transparent 3.8mm,#e8e8e8 3.8mm,#e8e8e8 4mm)}
+
+/* QR reservation */
+.qr-area{width:8mm;height:8mm;border:0.3px dashed #ccc;position:absolute;bottom:1mm;right:1mm}
 </style>
 </head>
 <body>
@@ -145,19 +161,27 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
   <div class="omr-c">
     <!-- 왼쪽 패널 -->
     <div class="lp">
+      {% if brand_color %}<div class="lp-brand" style="background:{{ brand_color }};border-radius:1mm 1mm 0 0"></div>{% endif %}
       <div class="lp-top">
         {% if logo_url %}<img src="{{ logo_url }}" alt="" onerror="this.style.display='none'">{% endif %}
-        <div class="lp-ttl-exam">{{ exam_title }}</div>
+        <div class="lp-ttl-exam" style="font-size:{{ title_font_pt }}pt">{{ exam_title }}</div>
         {% if sub_line %}<div class="lp-ttl-sub">{{ sub_line }}</div>{% endif %}
       </div>
       <div class="lp-bottom">
         <div class="sec">
           <div class="sec-h">성 명</div>
-          <div class="sec-b"><div class="nm-area"></div></div>
+          <div class="sec-b">
+            <div class="nm-area">
+              <div class="nm-cell"></div>
+              <div class="nm-cell"></div>
+              <div class="nm-cell"></div>
+            </div>
+          </div>
         </div>
         <div class="sec">
-          <div class="sec-h">전화번호 뒤 8자리</div>
+          <div class="sec-h">학생 식별번호 (전화번호 뒤 8자리)</div>
           <div class="sec-b">
+            <div class="ph-guide">0 0 0 0 – 0 0 0 0</div>
             <div class="ph-write">
               {% for d in phone_digits %}{% if d == 4 %}<div class="ph-sep">–</div>{% endif %}<div class="ph-cell"></div>{% endfor %}
             </div>
@@ -167,14 +191,16 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
           </div>
         </div>
       </div>
-      <div class="lp-note">
-        <b>✍ 답안지 작성 안내</b>
+      <div class="lp-note" style="position:relative">
+        <b>답안지 작성 안내</b>
         <div style="margin-top:0.5mm">
           <div style="display:flex;margin-bottom:0.3mm"><span style="min-width:2.5mm">1.</span><span>전화번호는 본인 휴대폰 번호 뒤 8자리를 적어주세요. 휴대폰이 없는 학생은 부모님 번호 뒤 8자리를 적어주세요.</span></div>
-          <div style="display:flex;margin-bottom:0.3mm"><span style="min-width:2.5mm">2.</span><span>객관식은 컴퓨터용 사인펜으로 버블을 빈틈없이 칠해주세요.</span></div>
+          <div style="display:flex;margin-bottom:0.3mm"><span style="min-width:2.5mm">2.</span><span>객관식은 <b>컴퓨터용 사인펜</b>으로 버블을 빈틈없이 칠해주세요.</span></div>
           <div style="display:flex;margin-bottom:0.3mm"><span style="min-width:2.5mm">3.</span><span>서술형은 답을 정자로 깔끔하게 적어주세요.</span></div>
-          <div style="display:flex"><span style="min-width:2.5mm">4.</span><span>수정할 때는 수정테이프를 사용해주세요.</span></div>
+          <div style="display:flex;margin-bottom:0.3mm"><span style="min-width:2.5mm">4.</span><span><b>수정테이프</b>를 사용해주세요. (수정액 사용 금지)</span></div>
+          <div class="note-mark"><span style="min-width:2.5mm">5.</span><span>올바른 마킹: </span><span class="good"></span><span style="margin-left:2mm">잘못된 마킹: </span><span class="bad">✓ △ ─</span></div>
         </div>
+        <div class="qr-area"></div>
       </div>
     </div>
 
@@ -188,7 +214,7 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
         </div>
         <div class="ac-b">
           {% for row in col.rows %}
-          <div class="ar{% if row.is_g5 %} ar-g5{% endif %}">
+          <div class="ar{% if row.is_g10 %} ar-g10{% elif row.is_g5 %} ar-g5{% endif %}{% if row.is_zebra %} ar-zebra{% endif %}">
             <div class="ar-n">{{ row.number }}</div>
             <div class="ar-bs">{% for lbl in choices_labels %}<span class="bu">{{ lbl }}</span>{% endfor %}</div>
           </div>
@@ -205,7 +231,7 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
         </div>
         <div class="dc-b">
           {% for row in essay_rows %}
-          <div class="dr{% if row.is_g5 %} dr-g5{% endif %}">
+          <div class="dr{% if row.is_g10 %} dr-g10{% elif row.is_g5 %} dr-g5{% endif %}{% if row.is_zebra %} dr-zebra{% endif %}">
             <div class="dr-n">{{ row.number }}</div>
             <div class="dr-bx"></div>
           </div>
