@@ -1,26 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 100" fill="none">
-  <!-- 방패형 아이콘 -->
-  <g transform="translate(16, 4)">
-    <path d="M44 2 L82 14 L82 50 C82 68 63 82 44 90 C25 82 6 68 6 50 L6 14 Z"
-          fill="#1a1a2e"/>
-    <path d="M44 8 L76 18 L76 48 C76 64 60 76 44 83 C28 76 12 64 12 48 L12 18 Z"
-          fill="#16213e"/>
-    <!-- 펜촉 -->
-    <g transform="translate(44, 46)" fill="#e8d5b7">
-      <path d="M0-28 L7-6 L2.5-1.5 L0 5 L-2.5-1.5 L-7-6 Z"/>
-      <rect x="-2.5" y="3" width="5" height="3.5" rx="1"/>
-    </g>
-    <!-- 별 3개 -->
-    <circle cx="30" cy="24" r="2.2" fill="#e8d5b7" opacity="0.7"/>
-    <circle cx="58" cy="24" r="2.2" fill="#e8d5b7" opacity="0.7"/>
-    <circle cx="44" cy="16" r="2.8" fill="#e8d5b7" opacity="0.85"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 60" fill="none">
+  <!-- 펼친 책 아이콘 (심플) -->
+  <g transform="translate(80, 30)">
+    <!-- 왼쪽 페이지 -->
+    <path d="M-2 -18 L-2 18 Q-14 16 -26 12 L-26 -14 Q-14 -16 -2 -18Z" fill="#333" opacity="0.85"/>
+    <!-- 오른쪽 페이지 -->
+    <path d="M2 -18 L2 18 Q14 16 26 12 L26 -14 Q14 -16 2 -18Z" fill="#333" opacity="0.75"/>
+    <!-- 책등 -->
+    <line x1="0" y1="-20" x2="0" y2="20" stroke="#555" stroke-width="1.2"/>
+    <!-- 줄 (왼쪽) -->
+    <line x1="-6" y1="-10" x2="-20" y2="-8" stroke="#999" stroke-width="0.6" opacity="0.5"/>
+    <line x1="-6" y1="-4" x2="-20" y2="-2" stroke="#999" stroke-width="0.6" opacity="0.5"/>
+    <line x1="-6" y1="2" x2="-20" y2="4" stroke="#999" stroke-width="0.6" opacity="0.5"/>
+    <!-- 줄 (오른쪽) -->
+    <line x1="6" y1="-10" x2="20" y2="-8" stroke="#999" stroke-width="0.6" opacity="0.5"/>
+    <line x1="6" y1="-4" x2="20" y2="-2" stroke="#999" stroke-width="0.6" opacity="0.5"/>
+    <line x1="6" y1="2" x2="20" y2="4" stroke="#999" stroke-width="0.6" opacity="0.5"/>
   </g>
-  <!-- ACADEMY 텍스트 -->
-  <text x="112" y="42" font-family="Georgia,'Times New Roman',serif"
-        font-size="34" font-weight="700" fill="#1a1a2e" letter-spacing="4">ACADEMY</text>
-  <line x1="112" y1="52" x2="300" y2="52" stroke="#c9a96e" stroke-width="1.8"/>
-  <text x="112" y="70" font-family="'Segoe UI',Helvetica,sans-serif"
-        font-size="12" font-weight="400" fill="#666" letter-spacing="6">ANSWER SHEET</text>
-  <text x="112" y="88" font-family="'Malgun Gothic',sans-serif"
-        font-size="10" fill="#999" letter-spacing="1">OMR 답안지</text>
+  <!-- OMR 답안지 텍스트 -->
+  <text x="80" y="55" text-anchor="middle" font-family="'Malgun Gothic',sans-serif"
+        font-size="7" fill="#999" letter-spacing="1">OMR 답안지</text>
 </svg>

@@ -276,10 +276,10 @@ class OMRPdfRenderer:
         # 1) 로고+제목 — 테두리 없는 열린 영역
         self._logo_title(c, doc, x, w, t_logo, H_LOGO)
 
-        # 2) 성명 카드 (밑줄 가이드 포함)
+        # 2) 성명 카드
         _card(c, x, t_name, H_NAME, w)
         _header(c, x, w, t_name, "성 명")
-        self._name_guides(c, x, w, t_name)
+        self._name_line(c, x, w, t_name)
 
         # 3) 전화번호 카드
         _card(c, x, t_phone, H_PHONE, w)
@@ -298,19 +298,15 @@ class OMRPdfRenderer:
         c.rect(qr_x, qr_y, _mm(8), _mm(8), stroke=1, fill=0)
         c.setDash()
 
-    def _name_guides(self, c, x, w, top):
-        """성명란 밑줄 가이드 (3칸 분리)."""
+    def _name_line(self, c, x, w, top):
+        """성명란 밑줄 (한 줄)."""
         body_top = top + HEADER_H
         body_h = H_NAME - HEADER_H
-        guide_y = body_top + body_h - 3  # 하단에서 3mm 위
+        guide_y = body_top + body_h - 3
         inner_x = x + _mm(3)
         inner_w = w - _mm(6)
-        seg_w = inner_w / 3
         c.setStrokeColor(C2); c.setLineWidth(S2)
-        for i in range(3):
-            sx = inner_x + seg_w * i + _mm(1)
-            ex = inner_x + seg_w * (i + 1) - _mm(1)
-            c.line(sx, _y(guide_y), ex, _y(guide_y))
+        c.line(inner_x, _y(guide_y), inner_x + inner_w, _y(guide_y))
 
     def _logo_title(self, c, doc, x, w, top, h):
         """로고 + 시험명 + 부제. 테두리 없음. 내부 여백 확보."""
