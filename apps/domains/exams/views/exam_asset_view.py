@@ -39,6 +39,7 @@ class ExamAssetView(APIView):
             Exam.objects.filter(
                 Q(sessions__lecture__tenant=tenant)
                 | Q(derived_exams__sessions__lecture__tenant=tenant)
+                | Q(tenant=tenant)
             ).distinct(),
             id=int(exam_id),
         )
@@ -53,6 +54,7 @@ class ExamAssetView(APIView):
             Exam.objects.filter(
                 Q(sessions__lecture__tenant=tenant)
                 | Q(derived_exams__sessions__lecture__tenant=tenant)
+                | Q(tenant=tenant)
             ).distinct(),
             id=int(exam_id),
         )

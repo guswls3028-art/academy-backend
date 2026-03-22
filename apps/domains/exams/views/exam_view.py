@@ -102,9 +102,11 @@ class ExamViewSet(ModelViewSet):
                     {"template_exam_id": "template exam must not receive template_exam_id"}
                 )
 
+            tenant = getattr(self.request, "tenant", None)
             serializer.save(
                 exam_type=Exam.ExamType.TEMPLATE,
                 template_exam=None,
+                tenant=tenant,
             )
             return
 
@@ -127,6 +129,8 @@ class ExamViewSet(ModelViewSet):
                     sessions__lecture__tenant=tenant
                 ) | Q(
                     derived_exams__sessions__lecture__tenant=tenant
+                ) | Q(
+                    tenant=tenant
                 ) if tenant else Q()
                 template_exam = Exam.objects.filter(tenant_filter).distinct().get(id=template_exam_id)
             except Exam.DoesNotExist:
@@ -161,6 +165,7 @@ class ExamViewSet(ModelViewSet):
             exam_type=Exam.ExamType.REGULAR,
             subject=subject,
             template_exam=template_exam,
+            tenant=tenant,
         )
 
         exam.sessions.add(session)
@@ -196,7 +201,9 @@ class ExamViewSet(ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return Exam.objects.none()
-        qs = Exam.objects.filter(sessions__lecture__tenant=tenant).distinct()
+        qs = Exam.objects.filter(
+            Q(sessions__lecture__tenant=tenant) | Q(tenant=tenant)
+        ).distinct()
 
         exam_type = self.request.query_params.get("exam_type")
         if exam_type:

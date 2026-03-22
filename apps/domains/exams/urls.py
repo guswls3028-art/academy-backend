@@ -48,6 +48,11 @@ urlpatterns = [
     path("templates/with-usage/", TemplateWithUsageListView.as_view()),
 
     # =========================
+    # PDF 문항 분할 (AI) — router 빈 prefix("") detail 패턴이 "pdf-extract"를 pk로 먹으므로 반드시 router 앞에 배치
+    # =========================
+    path("pdf-extract/", PdfQuestionExtractView.as_view()),
+
+    # =========================
     # Core
     # =========================
     path("", include(router.urls)),
@@ -65,11 +70,6 @@ urlpatterns = [
     # =========================
     path("<int:exam_id>/spawn-regular/", RegularExamFromTemplateView.as_view()),
     path("<int:exam_id>/save-as-template/", SaveAsTemplateView.as_view()),
-
-    # =========================
-    # PDF 문항 분할 (AI)
-    # =========================
-    path("pdf-extract/", PdfQuestionExtractView.as_view()),
 
     # =========================
     # Assets / OMR

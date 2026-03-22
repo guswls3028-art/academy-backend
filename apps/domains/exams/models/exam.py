@@ -4,6 +4,7 @@ from __future__ import annotations
 from django.db import models
 from django.db.models import Q
 from apps.api.common.models import BaseModel
+from apps.core.models.tenant import Tenant
 from apps.domains.lectures.models import Session
 
 
@@ -34,6 +35,16 @@ class Exam(BaseModel):
         HIDDEN = "hidden", "비공개"
         AFTER_CLOSED = "after_closed", "마감 후 공개"
         ALWAYS = "always", "항상 공개"
+
+    # 🔐 Tenant isolation — template exam도 세션 없이 tenant에 소속
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="exams",
+        null=True,
+        blank=True,
+        help_text="이 시험이 속한 학원. template exam의 tenant isolation 보장.",
+    )
 
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)

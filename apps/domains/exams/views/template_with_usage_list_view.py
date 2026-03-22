@@ -34,6 +34,7 @@ class TemplateWithUsageListView(APIView):
             .filter(
                 Q(derived_exams__sessions__lecture__tenant=tenant)
                 | Q(sessions__lecture__tenant=tenant)
+                | Q(tenant=tenant)
             )
             .distinct()
             .prefetch_related("derived_exams__sessions__lecture")
