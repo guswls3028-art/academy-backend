@@ -57,7 +57,7 @@ def test_struct():
 
     # A1. meta_generator 기본 생성
     meta = build_omr_meta(question_count=30, n_choices=5, essay_count=5)
-    check("A1. meta version", meta["version"] == "v7")
+    check("A1. meta version", meta["version"] == "v8")
     check("A1. meta page", meta["page"]["width"] == 297.0 and meta["page"]["height"] == 210.0)
     check("A1. mc_count", meta["mc_count"] == 30)
     check("A1. questions count", len(meta["questions"]) == 30)
@@ -115,10 +115,10 @@ def test_struct():
     labels = [c["label"] for c in meta["questions"][0]["choices"]]
     check("A8. answer labels numeric", labels == ["1", "2", "3", "4", "5"])
 
-    # A9. grader v7 version string 포함
+    # A9. grader — meta 버전과 독립적으로 동작 확인
     with open("apps/domains/results/services/grader.py", encoding="utf-8") as f:
         grader_src = f.read()
-    check("A9. grader handles v7", '"v7"' in grader_src)
+    check("A9. grader handles v8", "_grade_choice_v1" in grader_src)
 
     # A10. dispatcher v7 imports
     with open("apps/worker/ai_worker/ai/pipelines/dispatcher.py", encoding="utf-8") as f:
@@ -230,7 +230,7 @@ def test_synth(meta):
     # B6. OMRAnswerV1 직렬화
     r = results_all[0]
     d = r.to_dict()
-    check("B6. to_dict version", d["version"] == "v7")
+    check("B6. to_dict version", d["version"] == "v8")
     check("B6. to_dict question_id", d["question_id"] == 1)
     check("B6. to_dict detected", d["detected"] == ["1"])
     check("B6. to_dict has raw fills", "fills" in (d.get("raw") or {}))

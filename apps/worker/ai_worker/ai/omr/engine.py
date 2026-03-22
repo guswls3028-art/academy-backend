@@ -1,6 +1,6 @@
 # apps/worker/ai_worker/ai/omr/engine.py
 """
-OMR 객관식 답안 검출 엔진 v7
+OMR 객관식 답안 검출 엔진 v8
 
 omr-sheet.html SSOT 레이아웃 기준.
 meta_generator.py의 좌표를 사용하여 스캔 이미지에서 마킹된 버블을 감지한다.
@@ -84,7 +84,7 @@ def detect_omr_answers_v7(
             results.append(answer)
         except Exception:
             results.append(OMRAnswerV1(
-                version="v7",
+                version="v8",
                 question_id=q_num,
                 detected=[],
                 marking="blank",
@@ -135,7 +135,7 @@ def _detect_single_question(
 
     if not fills:
         return OMRAnswerV1(
-            version="v7", question_id=q_num,
+            version="v8", question_id=q_num,
             detected=[], marking="blank",
             confidence=0.0, status="error",
         )
@@ -149,7 +149,7 @@ def _detect_single_question(
     # 판정
     if top_fill < config.blank_threshold:
         return OMRAnswerV1(
-            version="v7", question_id=q_num,
+            version="v8", question_id=q_num,
             detected=[], marking="blank",
             confidence=0.0, status="blank",
             raw={"fills": {l: round(f, 4) for l, f in fills}},
@@ -159,7 +159,7 @@ def _detect_single_question(
         # 복수 마킹 가능성
         marked = [l for l, f in fills if f >= config.blank_threshold]
         return OMRAnswerV1(
-            version="v7", question_id=q_num,
+            version="v8", question_id=q_num,
             detected=marked,
             marking="multi" if len(marked) > 1 else "single",
             confidence=round(gap, 4),
@@ -170,7 +170,7 @@ def _detect_single_question(
     confidence = min(1.0, gap / 0.3)  # gap 0.3 이상이면 confidence 1.0
 
     return OMRAnswerV1(
-        version="v7", question_id=q_num,
+        version="v8", question_id=q_num,
         detected=[top_label],
         marking="single",
         confidence=round(confidence, 4),

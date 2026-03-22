@@ -288,7 +288,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
             return AIResult.done(
                 job.id,
                 {
-                    "version": "v7",
+                    "version": "v8",
                     "mode": mode,
                     "aligned": bool(aligned is not img_bgr),
                     "identifier": ident,
