@@ -59,6 +59,33 @@ from apps.domains.exams.models.sheet import Sheet
 from apps.domains.exams.services.template_resolver import resolve_template_exam
 
 
+def _get_profile_photo_url(student) -> Optional[str]:
+    """학생 프로필 사진 R2 presigned URL 반환 (없으면 None)."""
+    r2_key = getattr(student, "profile_photo_r2_key", None) or ""
+    if r2_key:
+        try:
+            from django.conf import settings
+            from libs.r2_client.presign import create_presigned_get_url
+            return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
+        except Exception:
+            pass
+    return None
+
+
+def _get_enrollment_display_fields(enrollment: Optional[Enrollment]) -> dict:
+    """Enrollment에서 학생 SSOT 표시 필드 추출 (아바타 + 강의 딱지)."""
+    if not enrollment:
+        return {"profile_photo_url": None, "lecture_title": None, "lecture_color": None, "lecture_chip_label": None}
+    student = getattr(enrollment, "student", None)
+    lecture = getattr(enrollment, "lecture", None)
+    return {
+        "profile_photo_url": _get_profile_photo_url(student) if student else None,
+        "lecture_title": getattr(lecture, "title", None) if lecture else None,
+        "lecture_color": getattr(lecture, "color", None) if lecture else None,
+        "lecture_chip_label": getattr(lecture, "chip_label", None) if lecture else None,
+    }
+
+
 def _safe_student_name(enrollment: Optional[Enrollment]) -> str:
     if not enrollment:
         return "-"
@@ -302,7 +329,7 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         enrollment_map = {
             int(e.id): e
-            for e in Enrollment.objects.filter(id__in=enrollment_ids).select_related("student")
+            for e in Enrollment.objects.filter(id__in=enrollment_ids).select_related("student", "lecture")
         }
 
         student_name_map = {
@@ -510,6 +537,9 @@ class SessionScoresView(APIView):
                 clinic_required and eid not in enrollment_ids_clinic_attended
             )
 
+            # 학생 SSOT 표시용 필드 (아바타 + 강의 딱지)
+            display = _get_enrollment_display_fields(enrollment_map.get(eid))
+
             rows.append(
                 {
                     "enrollment_id": eid,
@@ -520,6 +550,7 @@ class SessionScoresView(APIView):
                     "updated_at": updated_at or timezone.now(),
                     "clinic_required": clinic_required,
                     "name_highlight_clinic_target": name_highlight_clinic_target,
+                    **display,
                 }
             )
 

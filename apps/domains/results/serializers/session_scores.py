@@ -77,3 +77,9 @@ class SessionScoreRowSerializer(serializers.Serializer):
     clinic_required = serializers.BooleanField(default=False)
     # 클리닉 대상이면서 해당 주차 클리닉 미수강 시 이름만 노란 형광펜 하이라이트(수강 완료 시 제거)
     name_highlight_clinic_target = serializers.BooleanField(default=False)
+
+    # ✅ 학생 SSOT 표시용: 아바타 + 강의 딱지
+    profile_photo_url = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+    lecture_title = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+    lecture_color = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+    lecture_chip_label = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)

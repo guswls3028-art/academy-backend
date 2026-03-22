@@ -216,12 +216,21 @@ class ClinicTargetService:
         # ✅ 퇴원(INACTIVE) 수강생의 ClinicLink 제외
         links = links.filter(enrollment__status="ACTIVE")
 
+        # ✅ enrollment 일괄 조회 (N+1 방지 + 학생 SSOT 표시 필드)
+        links_list = list(links)
+        all_enrollment_ids = list({int(getattr(lk, "enrollment_id", 0) or 0) for lk in links_list} - {0})
+        from apps.domains.enrollment.models import Enrollment as _Enrollment
+        enrollment_map: Dict[int, Any] = {
+            int(e.id): e
+            for e in _Enrollment.objects.filter(id__in=all_enrollment_ids).select_related("student", "lecture")
+        }
+
         out: List[Dict[str, Any]] = []
 
         # 세션별 exam 후보 캐시 (쿼리 절약)
         exams_cache: Dict[int, Optional[Exam]] = {}
 
-        for link in links:
+        for link in links_list:
             session = getattr(link, "session", None)
             if not session:
                 continue
@@ -239,6 +248,13 @@ class ClinicTargetService:
             lecture_id = int(getattr(session, "lecture_id", 0) or 0)
             lecture_title = _safe_str(getattr(lecture, "title", None), "") if lecture else ""
 
+            # 학생 이름: enrollment_map에서 일괄 조회 (N+1 방지)
+            enr = enrollment_map.get(enrollment_id)
+            if enr and hasattr(enr, "student") and enr.student:
+                student_name = _safe_str(getattr(enr.student, "name", None), "-")
+            else:
+                student_name = _get_student_name_by_enrollment_id(enrollment_id)
+
             # 공통 base row
             base_row = {
                 "enrollment_id": enrollment_id,
@@ -246,11 +262,13 @@ class ClinicTargetService:
                 "session_id": session_id,
                 "lecture_id": lecture_id,
                 "lecture_title": lecture_title,
+                "lecture_color": getattr(lecture, "color", None) if lecture else None,
+                "lecture_chip_label": getattr(lecture, "chip_label", None) if lecture else None,
                 "clinic_link_id": int(link.id),
                 "cycle_no": int(getattr(link, "cycle_no", 1) or 1),
                 "resolution_type": getattr(link, "resolution_type", None),
                 "resolved_at": getattr(link, "resolved_at", None),
-                "student_name": _get_student_name_by_enrollment_id(enrollment_id),
+                "student_name": student_name,
                 "session_title": _get_session_title(session),
                 "source_type": source_type,
                 "source_id": getattr(link, "source_id", None),
@@ -538,6 +556,8 @@ class ClinicTargetService:
                     "lecture_title": _safe_str(
                         getattr(getattr(session, "lecture", None), "title", None), ""
                     ),
+                    "lecture_color": getattr(getattr(session, "lecture", None), "color", None),
+                    "lecture_chip_label": getattr(getattr(session, "lecture", None), "chip_label", None),
                     "latest_attempt_index": 0,
                     "attempt_history": [],
                     "created_at": None,

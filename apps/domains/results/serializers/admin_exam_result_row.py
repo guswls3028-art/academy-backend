@@ -20,6 +20,12 @@ class AdminExamResultRowSerializer(serializers.Serializer):
 
     submitted_at = serializers.DateTimeField(allow_null=True)
 
+    # ✅ 학생 SSOT 표시용: 아바타 + 강의 딱지
+    profile_photo_url = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+    lecture_title = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+    lecture_color = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+    lecture_chip_label = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+
     # ===============================
     # 🔥 Submission 연동 필드 (기존 유지)
     # ===============================

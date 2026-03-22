@@ -47,6 +47,8 @@ class AdminClinicTargetSerializer(serializers.Serializer):
     source_id = serializers.IntegerField(required=False, allow_null=True)
     source_title = serializers.CharField(required=False, allow_null=True)
     lecture_title = serializers.CharField(required=False, allow_null=True)
+    lecture_color = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    lecture_chip_label = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     max_score = serializers.FloatField(required=False, allow_null=True)
     latest_attempt_index = serializers.IntegerField(required=False, default=1)
     attempt_history = serializers.ListField(

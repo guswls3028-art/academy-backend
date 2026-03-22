@@ -105,6 +105,11 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     session_duration_minutes = serializers.SerializerMethodField()
     session_end_time = serializers.SerializerMethodField()
 
+    # ✅ 학생 SSOT 표시용: 강의 딱지
+    lecture_title = serializers.SerializerMethodField()
+    lecture_color = serializers.SerializerMethodField()
+    lecture_chip_label = serializers.SerializerMethodField()
+
     # ✅ [ADD] 변경자 이름 노출
     status_changed_by_name = serializers.CharField(
         source="status_changed_by.username",
@@ -145,6 +150,21 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
             return None
         dt = datetime.combine(obj.session.date, obj.session.start_time)
         return (dt + timedelta(minutes=obj.session.duration_minutes)).time()
+
+    def get_lecture_title(self, obj):
+        enrollment = getattr(obj, "enrollment", None)
+        lecture = getattr(enrollment, "lecture", None) if enrollment else None
+        return getattr(lecture, "title", None) if lecture else None
+
+    def get_lecture_color(self, obj):
+        enrollment = getattr(obj, "enrollment", None)
+        lecture = getattr(enrollment, "lecture", None) if enrollment else None
+        return getattr(lecture, "color", None) if lecture else None
+
+    def get_lecture_chip_label(self, obj):
+        enrollment = getattr(obj, "enrollment", None)
+        lecture = getattr(enrollment, "lecture", None) if enrollment else None
+        return getattr(lecture, "chip_label", None) if lecture else None
 
 
 class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):

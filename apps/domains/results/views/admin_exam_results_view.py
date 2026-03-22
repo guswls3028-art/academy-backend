@@ -20,7 +20,7 @@ from apps.domains.enrollment.models import Enrollment
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
-from apps.domains.results.views.session_scores_view import _safe_student_name
+from apps.domains.results.views.session_scores_view import _safe_student_name, _get_enrollment_display_fields
 
 
 class AdminExamResultsView(ListAPIView):
@@ -87,7 +87,7 @@ class AdminExamResultsView(ListAPIView):
         enrollment_ids_page = [int(r.enrollment_id) for r in results]
         enrollment_map = {
             int(e.id): e
-            for e in Enrollment.objects.filter(id__in=enrollment_ids_page).select_related("student")
+            for e in Enrollment.objects.filter(id__in=enrollment_ids_page).select_related("student", "lecture")
         }
         student_name_map = {
             eid: _safe_student_name(enrollment_map.get(eid))
@@ -177,6 +177,9 @@ class AdminExamResultsView(ListAPIView):
                 )
             )
 
+            # 학생 SSOT 표시용 필드 (아바타 + 강의 딱지)
+            display = _get_enrollment_display_fields(enrollment_map.get(enrollment_id))
+
             rows.append({
                 "enrollment_id": enrollment_id,
                 "student_name": student_name,
@@ -193,6 +196,7 @@ class AdminExamResultsView(ListAPIView):
 
                 "submission_id": submission_id,
                 "submission_status": submission_status,
+                **display,
             })
 
         serializer = AdminExamResultRowSerializer(rows, many=True)

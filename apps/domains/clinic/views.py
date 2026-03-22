@@ -400,7 +400,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             SessionParticipant.objects
             .filter(tenant=tenant)
             .filter(student__deleted_at__isnull=True)  # 삭제된 학생 제외
-            .select_related("student", "session", "status_changed_by")
+            .select_related("student", "session", "status_changed_by", "enrollment__lecture")
         )
 
         # 학생이 조회하는 경우: 자신의 예약 신청만 조회
