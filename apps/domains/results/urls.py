@@ -36,6 +36,7 @@ from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFSt
 
 from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
 from apps.domains.results.views.admin_clinic_targets_view import AdminClinicTargetsView
+from apps.domains.results.views.admin_attempt_history_view import AdminAttemptHistoryView
 
 from apps.domains.clinic.views import ParticipantViewSet as AdminClinicBookingViewSet
 
@@ -106,6 +107,7 @@ urlpatterns = [
         name="admin-session-exams-summary",
     ),
     path("admin/facts/", AdminResultFactView.as_view(), name="admin-result-facts"),
+    path("admin/attempt-history/", AdminAttemptHistoryView.as_view(), name="admin-attempt-history"),
     path("admin/clinic-targets/", AdminClinicTargetsView.as_view(), name="admin-clinic-targets"),
     path("wrong-notes", WrongNoteView.as_view(), name="wrong-note"),
     path("wrong-notes/pdf/", WrongNotePDFCreateView.as_view(), name="wrong-note-pdf-create"),
