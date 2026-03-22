@@ -21,6 +21,7 @@ from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.views.session_scores_view import _safe_student_name, _get_enrollment_display_fields
+from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 
 
 class AdminExamResultsView(ListAPIView):
@@ -153,6 +154,15 @@ class AdminExamResultsView(ListAPIView):
         )
 
         # -------------------------------------------------
+        # 클리닉 하이라이트 (SSOT 유틸)
+        # -------------------------------------------------
+        highlight_map = compute_clinic_highlight_map(
+            tenant=request.tenant,
+            enrollment_ids=set(enrollment_ids_page),
+            session=session,
+        ) if session else {}
+
+        # -------------------------------------------------
         # rows 구성 (기존 로직 유지)
         # -------------------------------------------------
         rows = []
@@ -196,6 +206,7 @@ class AdminExamResultsView(ListAPIView):
 
                 "submission_id": submission_id,
                 "submission_status": submission_status,
+                "name_highlight_clinic_target": highlight_map.get(enrollment_id, False),
                 **display,
             })
 

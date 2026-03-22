@@ -20,6 +20,9 @@ class AdminExamResultRowSerializer(serializers.Serializer):
 
     submitted_at = serializers.DateTimeField(allow_null=True)
 
+    # ✅ 클리닉 대상 하이라이트
+    name_highlight_clinic_target = serializers.BooleanField(default=False)
+
     # ✅ 학생 SSOT 표시용: 아바타 + 강의 딱지
     profile_photo_url = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
     lecture_title = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)

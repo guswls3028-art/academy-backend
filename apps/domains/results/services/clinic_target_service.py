@@ -225,6 +225,13 @@ class ClinicTargetService:
             for e in _Enrollment.objects.filter(id__in=all_enrollment_ids).select_related("student", "lecture")
         }
 
+        # ✅ 클리닉 하이라이트 (미출석 대상자 노란 형광펜)
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+        highlight_map = compute_clinic_highlight_map(
+            tenant=tenant,
+            enrollment_ids=set(all_enrollment_ids),
+        ) if tenant else {}
+
         out: List[Dict[str, Any]] = []
 
         # 세션별 exam 후보 캐시 (쿼리 절약)
@@ -273,6 +280,7 @@ class ClinicTargetService:
                 "source_type": source_type,
                 "source_id": getattr(link, "source_id", None),
                 "created_at": getattr(link, "created_at", None),
+                "name_highlight_clinic_target": highlight_map.get(enrollment_id, False),
             }
 
             # ── Homework source ──

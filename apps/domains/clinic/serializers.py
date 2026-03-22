@@ -105,10 +105,11 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     session_duration_minutes = serializers.SerializerMethodField()
     session_end_time = serializers.SerializerMethodField()
 
-    # ✅ 학생 SSOT 표시용: 강의 딱지
+    # ✅ 학생 SSOT 표시용: 강의 딱지 + 클리닉 하이라이트
     lecture_title = serializers.SerializerMethodField()
     lecture_color = serializers.SerializerMethodField()
     lecture_chip_label = serializers.SerializerMethodField()
+    name_highlight_clinic_target = serializers.SerializerMethodField()
 
     # ✅ [ADD] 변경자 이름 노출
     status_changed_by_name = serializers.CharField(
@@ -165,6 +166,20 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         enrollment = getattr(obj, "enrollment", None)
         lecture = getattr(enrollment, "lecture", None) if enrollment else None
         return getattr(lecture, "chip_label", None) if lecture else None
+
+    def get_name_highlight_clinic_target(self, obj):
+        """클리닉 대상(미해결) + 미출석이면 True"""
+        # 이미 출석(ATTENDED)이면 False
+        if getattr(obj, "status", None) == "attended":
+            return False
+        # enrollment에 미해결 ClinicLink이 있는지 확인
+        eid = getattr(obj, "enrollment_id", None)
+        if not eid:
+            return False
+        from apps.domains.progress.models import ClinicLink
+        return ClinicLink.objects.filter(
+            enrollment_id=eid, is_auto=True, resolved_at__isnull=True,
+        ).exists()
 
 
 class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
