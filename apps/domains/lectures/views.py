@@ -33,7 +33,7 @@ class LectureViewSet(ModelViewSet):
     def get_queryset(self):
         """
         🔐 tenant 단일 진실
-        강의 목록(list)에서는 시스템용 "전체공개영상" 강의를 제외하여 강의 관리 화면에 노출되지 않도록 함.
+        강의 목록(list)에서는 시스템용 강의(is_system=True)를 제외하여 강의 관리 화면에 노출되지 않도록 함.
         (해당 강의는 영상 탭/학생 앱에서 public-session API 호출 시 get_or_create 되며, 상세/링크는 retrieve로 접근 가능해야 함)
         """
         tenant = getattr(self.request, "tenant", None)
@@ -44,7 +44,7 @@ class LectureViewSet(ModelViewSet):
             )
         qs = enroll_repo.lecture_filter_tenant(tenant)
         if self.action == "list":
-            qs = qs.exclude(title="전체공개영상")
+            qs = qs.exclude(is_system=True)
         return qs
 
     def perform_create(self, serializer):

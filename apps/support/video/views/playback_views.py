@@ -152,12 +152,16 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         if video.session.lecture.tenant_id != request.tenant.id:
             return _deny("tenant_mismatch", code=403)
 
-        # 전체공개영상: 같은 테넌트(프로그램)에 등록된 학생이면 시청 가능
-        is_public_lecture = (
-            getattr(video.session.lecture, "title", None) == "전체공개영상"
-        )
-        if is_public_lecture:
-            if enrollment.lecture.tenant_id != video.session.lecture.tenant_id:
+        # 공개 영상: 같은 테넌트(프로그램)에 등록된 학생이면 시청 가능
+        from apps.support.video.models import Video as _Video
+        is_public_video = getattr(video, "visibility", _Video.Visibility.ENROLLED) == _Video.Visibility.PUBLIC
+        if is_public_video:
+            video_tenant_id = getattr(video, "tenant_id", None)
+            if video_tenant_id is None:
+                video_tenant_id = (
+                    video.session.lecture.tenant_id if video.session and video.session.lecture else None
+                )
+            if enrollment.lecture.tenant_id != video_tenant_id:
                 return _deny("tenant_mismatch", code=403)
         else:
             if enrollment.lecture_id != video.session.lecture_id:

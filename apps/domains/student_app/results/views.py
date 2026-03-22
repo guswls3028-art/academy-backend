@@ -109,8 +109,8 @@ class MyGradesSummaryView(APIView):
                 session_title = getattr(session, "title", None) or f"{getattr(session, 'order', '')}차시"
                 if hasattr(session, "lecture") and session.lecture:
                     lecture_title = getattr(session.lecture, "title", None)
-            # 전체공개영상 강의는 성적에서 제외
-            if lecture_title == "전체공개영상":
+            # 시스템 강의(공개 영상 컨테이너)는 성적에서 제외
+            if session and hasattr(session, "lecture") and session.lecture and getattr(session.lecture, "is_system", False):
                 continue
             exam_list.append({
                 "exam_id": eid,
@@ -125,10 +125,11 @@ class MyGradesSummaryView(APIView):
             })
 
         # 과제 성적: HomeworkScore (기입된 것만, score is not None)
+        # ✅ 성적 산출: attempt_index=1 (1차) 만 학생에게 표시
         hw_scores = (
-            HomeworkScore.objects.filter(enrollment_id__in=enrollment_ids)
+            HomeworkScore.objects.filter(enrollment_id__in=enrollment_ids, attempt_index=1)
             .exclude(score__isnull=True)
-            .exclude(session__lecture__title="전체공개영상")
+            .exclude(session__lecture__is_system=True)
             .select_related("homework", "session", "session__lecture")
             .order_by("-updated_at")
         )

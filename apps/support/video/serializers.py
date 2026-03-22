@@ -82,6 +82,7 @@ class VideoSerializer(serializers.ModelSerializer):
             "thumbnail_url",
             "hls_path",
             "hls_url",
+            "visibility",
             "created_at",
             "updated_at",
             "source_type",
@@ -503,11 +504,11 @@ class VideoRiskRowSerializer(serializers.Serializer):
 # ========================================================
 
 class VideoFolderSerializer(serializers.ModelSerializer):
-    """전체공개영상 폴더 Serializer."""
-    
+    """공개 영상 폴더 Serializer."""
+
     parent_id = serializers.IntegerField(source="parent.id", read_only=True, allow_null=True)
-    session_id = serializers.IntegerField(source="session.id", read_only=True)
-    
+    session_id = serializers.IntegerField(source="session.id", read_only=True, allow_null=True)
+
     class Meta:
         model = VideoFolder
         fields = [

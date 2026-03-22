@@ -42,9 +42,9 @@ def get_session_by_id_with_lecture_tenant(session_id):
     return Session.objects.select_related("lecture", "lecture__tenant").get(id=session_id)
 
 
-def create_video(session, title, file_key, order, status, allow_skip=False, max_speed=1.0, show_watermark=True):
+def create_video(session, title, file_key, order, status, allow_skip=False, max_speed=1.0, show_watermark=True, visibility=None, tenant=None):
     from apps.support.video.models import Video
-    return Video.objects.create(
+    kwargs = dict(
         session=session,
         title=title,
         file_key=file_key,
@@ -54,6 +54,17 @@ def create_video(session, title, file_key, order, status, allow_skip=False, max_
         max_speed=max_speed,
         show_watermark=show_watermark,
     )
+    if visibility is not None:
+        kwargs["visibility"] = visibility
+    # tenant: 명시적 전달 우선, 없으면 session→lecture→tenant 자동 추출
+    if tenant is not None:
+        kwargs["tenant"] = tenant
+    elif session:
+        try:
+            kwargs["tenant_id"] = session.lecture.tenant_id
+        except Exception:
+            pass
+    return Video.objects.create(**kwargs)
 
 
 def get_enrollments_for_lecture_active(lecture):

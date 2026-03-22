@@ -272,6 +272,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             ext=ext,
         )
 
+        # 시스템 강의(공개 영상 컨테이너)인 경우 visibility=PUBLIC 자동 설정
+        is_public = getattr(session.lecture, "is_system", False)
         video = video_repo.create_video(
             session=session,
             title=title,
@@ -281,6 +283,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             allow_skip=allow_skip,
             max_speed=max_speed,
             show_watermark=show_watermark,
+            visibility=Video.Visibility.PUBLIC if is_public else Video.Visibility.ENROLLED,
+            tenant=tenant,
         )
 
         content_type = (request.data.get("content_type") or "video/mp4").split(";")[0]
@@ -297,7 +301,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         )
 
     # ==================================================
-    # public_session — 전체공개영상 업로드/목록용 세션 (테넌트당 1개)
+    # public_session — 공개 영상 업로드/목록용 세션 (테넌트당 1개)
     # ==================================================
     @transaction.atomic
     @action(
@@ -308,9 +312,10 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     )
     def public_session(self, request):
         """
-        테넌트당 "전체공개영상" 전용 Lecture + Session을 get_or_create 하고
+        테넌트당 공개 영상 전용 시스템 Lecture + Session을 get_or_create 하고
         session_id, lecture_id 를 반환합니다.
-        이 세션에 올린 영상은 프로그램(테넌트)에 등록된 모든 학생이 시청 가능합니다.
+        이 세션에 올린 영상은 visibility=PUBLIC으로 설정되어
+        프로그램(테넌트)에 등록된 모든 학생이 시청 가능합니다.
         """
         tenant = getattr(request, "tenant", None)
         if not tenant:
@@ -318,16 +323,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 {"detail": "테넌트를 확인할 수 없습니다. X-Tenant-Code 헤더가 필요합니다. 같은 도메인(예: tchul.com)으로 접속했는지 확인하세요."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        lecture, _ = Lecture.objects.get_or_create(
-            tenant=tenant,
-            title="전체공개영상",
-            defaults={
-                "name": "전체공개영상",
-                "subject": "공개",
-                "description": "프로그램에 등록된 모든 학생이 시청할 수 있는 영상입니다.",
-                "is_active": True,
-            },
-        )
+        lecture = Lecture.get_or_create_system_lecture(tenant)
         session, _ = Session.objects.get_or_create(
             lecture=lecture,
             order=1,
@@ -887,7 +883,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         return self._student_list_impl(request)
 
     # ==================================================
-    # video folders — 전체공개영상 폴더 관리
+    # video folders — 공개 영상 폴더 관리
     # ==================================================
     @action(
         detail=False,
@@ -901,7 +897,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         return self._create_folder_impl(request)
 
     def _list_folders_impl(self, request):
-        """전체공개영상 세션의 폴더 목록 조회."""
+        """공개 영상 폴더 목록 조회. session_id(레거시) 또는 tenant 기반."""
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response(
@@ -909,29 +905,30 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         session_id = request.query_params.get("session_id")
-        if not session_id:
-            return Response(
-                {"detail": "session_id required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
-        except Session.DoesNotExist:
-            return Response(
-                {"detail": "Session not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        if session.lecture.tenant_id != tenant.id:
-            return Response(
-                {"detail": "Session not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        folders = VideoFolder.objects.filter(session=session).order_by("order", "name")
+        if session_id:
+            # 레거시 호환: session_id가 전달되면 해당 세션의 폴더 조회
+            try:
+                session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
+            except Session.DoesNotExist:
+                return Response(
+                    {"detail": "Session not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            if session.lecture.tenant_id != tenant.id:
+                return Response(
+                    {"detail": "Session not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            folders = VideoFolder.objects.filter(
+                models.Q(session=session) | models.Q(tenant=tenant, session__isnull=True)
+            ).order_by("order", "name")
+        else:
+            # 신규: tenant 기반 폴더 조회
+            folders = VideoFolder.objects.filter(tenant=tenant).order_by("order", "name")
         return Response(VideoFolderSerializer(folders, many=True).data)
 
     def _create_folder_impl(self, request):
-        """전체공개영상 세션에 폴더 생성."""
+        """공개 영상 폴더 생성."""
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response(
@@ -942,29 +939,31 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         name = request.data.get("name")
         parent_id = request.data.get("parent_id")  # null이면 루트 폴더
 
-        if not session_id or not name:
+        if not name:
             return Response(
-                {"detail": "session_id and name required"},
+                {"detail": "name required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
-        except Session.DoesNotExist:
-            return Response(
-                {"detail": "Session not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        if session.lecture.tenant_id != tenant.id:
-            return Response(
-                {"detail": "Session not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        session = None
+        if session_id:
+            try:
+                session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
+            except Session.DoesNotExist:
+                return Response(
+                    {"detail": "Session not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            if session.lecture.tenant_id != tenant.id:
+                return Response(
+                    {"detail": "Session not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
         parent = None
         if parent_id:
             try:
-                parent = VideoFolder.objects.get(id=parent_id, session=session)
+                parent = VideoFolder.objects.get(id=parent_id, tenant=tenant)
             except VideoFolder.DoesNotExist:
                 return Response(
                     {"detail": "Parent folder not found"},
@@ -972,17 +971,18 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 )
 
         # 같은 이름의 폴더가 이미 있는지 확인
-        if VideoFolder.objects.filter(session=session, parent=parent, name=name).exists():
+        if VideoFolder.objects.filter(tenant=tenant, parent=parent, name=name).exists():
             return Response(
                 {"detail": "Folder with this name already exists"},
                 status=status.HTTP_409_CONFLICT,
             )
 
         folder = VideoFolder.objects.create(
+            tenant=tenant,
             session=session,
             parent=parent,
             name=name,
-            order=VideoFolder.objects.filter(session=session, parent=parent).count(),
+            order=VideoFolder.objects.filter(tenant=tenant, parent=parent).count(),
         )
 
         return Response(VideoFolderSerializer(folder).data, status=status.HTTP_201_CREATED)
@@ -993,7 +993,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         url_path="folders/(?P<folder_id>[^/.]+)",
     )
     def delete_folder(self, request, folder_id=None):
-        """전체공개영상 폴더 삭제."""
+        """공개 영상 폴더 삭제."""
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response(
@@ -1001,9 +1001,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         try:
-            folder = VideoFolder.objects.select_related("session__lecture").get(
+            folder = VideoFolder.objects.get(
                 id=folder_id,
-                session__lecture__tenant=tenant,
+                tenant=tenant,
             )
         except VideoFolder.DoesNotExist:
             return Response(

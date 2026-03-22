@@ -240,7 +240,7 @@ def _policy_from_video(video) -> Dict[str, Any]:
 class StudentPublicSessionView(APIView):
     """
     GET /student/video/public-session/
-    테넌트별 전체공개영상 세션 ID 반환. 같은 테넌트 학생만 호출 가능.
+    테넌트별 공개 영상 세션 ID 반환. 같은 테넌트 학생만 호출 가능.
     """
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
@@ -255,22 +255,13 @@ class StudentPublicSessionView(APIView):
                 {"detail": "tenant or student required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # 전체공개: 수강등록 없이 해당 테넌트 소속 학생이면 허용 (1테넌트=1프로그램)
+        # 공개 영상: 수강등록 없이 해당 테넌트 소속 학생이면 허용 (1테넌트=1프로그램)
         if getattr(student, "tenant_id", None) != getattr(tenant, "id", None):
             return Response(
-                {"detail": "전체공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."},
+                {"detail": "공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        lecture, _ = Lecture.objects.get_or_create(
-            tenant=tenant,
-            title="전체공개영상",
-            defaults={
-                "name": "전체공개영상",
-                "subject": "공개",
-                "description": "프로그램에 등록된 모든 학생이 시청할 수 있는 영상입니다.",
-                "is_active": True,
-            },
-        )
+        lecture = Lecture.get_or_create_system_lecture(tenant)
         session, _ = Session.objects.get_or_create(
             lecture=lecture,
             order=1,
@@ -318,17 +309,8 @@ class StudentVideoMeView(APIView):
             .order_by("title")
         )
 
-        # 전체공개영상: 없으면 자동 생성 — 학생이면 항상 볼 수 있어야 함
-        public_lecture, _ = Lecture.objects.get_or_create(
-            tenant=tenant,
-            title="전체공개영상",
-            defaults={
-                "name": "전체공개영상",
-                "subject": "공개",
-                "description": "프로그램에 등록된 모든 학생이 시청할 수 있는 영상입니다.",
-                "is_active": True,
-            },
-        )
+        # 공개 영상: 시스템 강의가 없으면 자동 생성 — 학생이면 항상 볼 수 있어야 함
+        public_lecture = Lecture.get_or_create_system_lecture(tenant)
         public_session, _ = Session.objects.get_or_create(
             lecture=public_lecture,
             order=1,
@@ -448,7 +430,7 @@ def _students_for_request(request):
 
 
 def _student_can_access_session(request, session) -> bool:
-    """세션 접근: 전체공개영상 = 콘텐츠 테넌트 내 학생이면 OK. 그 외 = 해당 강의 수강생만. X-Tenant-Code 미의존."""
+    """세션 접근: 시스템 강의(공개 영상) = 콘텐츠 테넌트 내 학생이면 OK. 그 외 = 해당 강의 수강생만. X-Tenant-Code 미의존."""
     from apps.domains.enrollment.models import Enrollment
 
     lecture = getattr(session, "lecture", None)
@@ -459,8 +441,8 @@ def _student_can_access_session(request, session) -> bool:
         return False
     tenant_id = getattr(tenant, "id", None)
 
-    # 전체공개영상: student.tenant_id == lecture.tenant_id 이면 허용. X-Tenant-Code/request.tenant 사용 안 함.
-    if getattr(lecture, "title", None) == "전체공개영상":
+    # 시스템 강의(공개 영상): student.tenant_id == lecture.tenant_id 이면 허용
+    if getattr(lecture, "is_system", False):
         students = _students_for_request(request)
         return bool(students and any(getattr(s, "tenant_id", None) == tenant_id for s in students))
 
@@ -495,9 +477,9 @@ class StudentSessionVideoListView(APIView):
             raise Http404
 
         lecture = getattr(session, "lecture", None)
-        is_public = lecture and getattr(lecture, "title", None) == "전체공개영상"
+        is_public = lecture and getattr(lecture, "is_system", False)
 
-        # 전체공개영상: 테넌트 내 학생이면 enrollment 없이 허용
+        # 공개 영상(시스템 강의): 테넌트 내 학생이면 enrollment 없이 허용
         if is_public and _student_can_access_session(request, session):
             enrollment_obj = None
         else:
@@ -520,7 +502,7 @@ class StudentSessionVideoListView(APIView):
                     ).order_by("-id").first()
             if enrollment_obj is None and not _student_can_access_session(request, session):
                 detail = (
-                    "전체공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."
+                    "공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."
                     if is_public
                     else "이 차시의 영상을 볼 수 있는 권한이 없습니다."
                 )
@@ -609,17 +591,20 @@ class StudentVideoPlaybackView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
-        # 전체공개영상 세션인지 확인
-        is_public_session = False
-        if video.session and video.session.lecture:
-            is_public_session = getattr(video.session.lecture, "title", None) == "전체공개영상"
+        # 공개 영상인지 확인 (visibility 필드 기반)
+        from apps.support.video.models import Video as _VideoModel
+        is_public_session = getattr(video, "visibility", _VideoModel.Visibility.ENROLLED) == _VideoModel.Visibility.PUBLIC
 
         if is_public_session:
-            # 전체공개영상: 수강등록 없이, 해당 테넌트 소속 학생만 시청 가능 (1테넌트=1프로그램)
+            # 공개 영상: 수강등록 없이, 해당 테넌트 소속 학생만 시청 가능 (1테넌트=1프로그램)
             student = get_request_student(request)
-            lecture_tenant_id = getattr(video.session.lecture, "tenant_id", None)
-            if not student or getattr(student, "tenant_id", None) != lecture_tenant_id:
-                raise PermissionDenied("전체공개 영상은 해당 학원 소속 학생만 시청할 수 있습니다.")
+            video_tenant_id = getattr(video, "tenant_id", None)
+            if video_tenant_id is None:
+                video_tenant_id = (
+                    getattr(video.session.lecture, "tenant_id", None) if video.session and video.session.lecture else None
+                )
+            if not student or getattr(student, "tenant_id", None) != video_tenant_id:
+                raise PermissionDenied("공개 영상은 해당 학원 소속 학생만 시청할 수 있습니다.")
         else:
             # 일반 영상: enrollment 자동 매칭 (enrollment_id 누락/불일치 시 강의 기준 자동 탐색)
             from apps.domains.enrollment.models import Enrollment as _Enrollment
@@ -736,7 +721,12 @@ class StudentVideoPlaybackView(APIView):
         student = get_request_student(request)
         if student:
             from apps.support.video.models import VideoLike
-            video_tenant_id = getattr(video.session.lecture, "tenant_id", None) if video.session and video.session.lecture else None
+            video_tenant_id = getattr(video, "tenant_id", None)
+            if video_tenant_id is None:
+                video_tenant_id = (
+                    getattr(video.session.lecture, "tenant_id", None)
+                    if video.session and video.session.lecture else None
+                )
             if video_tenant_id:
                 is_liked = VideoLike.objects.filter(video_id=video_id, student=student, tenant_id=video_tenant_id).exists()
 
@@ -825,14 +815,11 @@ class StudentVideoProgressView(APIView):
                 "last_position": int(request.data.get("last_position") or 0),
             }, status=status.HTTP_200_OK)
 
-        # 전체공개영상: 수강등록 없이 시청 가능. VideoProgress는 (video, enrollment) 필수라 DB 저장 불가.
+        # 공개 영상: 수강등록 없이 시청 가능. VideoProgress는 (video, enrollment) 필수라 DB 저장 불가.
         # 동일 응답 형태로 200 반환해 프론트 스펙 유지 (DB 미저장)
-        is_public_lecture = (
-            video.session
-            and video.session.lecture
-            and getattr(video.session.lecture, "title", None) == "전체공개영상"
-        )
-        if is_public_lecture:
+        from apps.support.video.models import Video as _VideoModel2
+        is_public_video = getattr(video, "visibility", _VideoModel2.Visibility.ENROLLED) == _VideoModel2.Visibility.PUBLIC
+        if is_public_video:
             progress_value = request.data.get("progress", None)
             completed = request.data.get("completed", False)
             try:
@@ -938,8 +925,13 @@ class StudentVideoLikeView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
-        # 테넌트 격리 검증
-        video_tenant_id = getattr(video.session.lecture, "tenant_id", None) if video.session and video.session.lecture else None
+        # 테넌트 격리 검증 (video.tenant 직접 참조 우선, 레거시 폴백)
+        video_tenant_id = getattr(video, "tenant_id", None)
+        if video_tenant_id is None:
+            video_tenant_id = (
+                getattr(video.session.lecture, "tenant_id", None)
+                if video.session and video.session.lecture else None
+            )
         if video_tenant_id != tenant.id:
             raise PermissionDenied("접근 권한이 없습니다.")
 

@@ -54,6 +54,10 @@ class Video(TimestampModel):
         READY = "READY", "사용 가능"
         FAILED = "FAILED", "실패"
 
+    class Visibility(models.TextChoices):
+        ENROLLED = "ENROLLED", "수강생 전용"
+        PUBLIC = "PUBLIC", "전체 공개"
+
     # --------------------------------------------------
     # Soft-delete support (6-month retention)
     # --------------------------------------------------
@@ -68,6 +72,24 @@ class Video(TimestampModel):
     objects = VideoManager()
     all_with_deleted = VideoAllManager()
 
+    visibility = models.CharField(
+        max_length=10,
+        choices=Visibility.choices,
+        default=Visibility.ENROLLED,
+        db_index=True,
+        help_text="접근 범위: ENROLLED(수강생 전용) / PUBLIC(테넌트 내 전체 학생)",
+    )
+
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="videos",
+        db_index=True,
+        help_text="영상 소유 테넌트 (직접 참조, session→lecture→tenant 체인 대체)",
+    )
+
     session = models.ForeignKey(
         Session,
         on_delete=models.SET_NULL,
@@ -76,14 +98,14 @@ class Video(TimestampModel):
         related_name="videos",
         help_text="SET_NULL: Session 삭제 시 soft-delete 보존 (6개월 retention 보장)",
     )
-    
+
     folder = models.ForeignKey(
         "VideoFolder",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="videos",
-        help_text="전체공개영상 내 폴더 (일반 차시 영상은 null)",
+        help_text="공개 영상 폴더 (일반 차시 영상은 null)",
     )
 
     title = models.CharField(max_length=255)
@@ -554,13 +576,24 @@ class VideoPlaybackEvent(TimestampModel):
 # ========================================================
 
 class VideoFolder(TimestampModel):
-    """전체공개영상 세션 내 폴더 구조 (재귀 구조)."""
-    
+    """공개 영상 폴더 구조 (재귀 구조)."""
+
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="video_folders",
+        db_index=True,
+        help_text="폴더 소유 테넌트",
+    )
     session = models.ForeignKey(
         Session,
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name="video_folders",
-        help_text="전체공개영상 세션",
+        help_text="레거시: 공개 영상 세션 (신규 폴더는 tenant 직접 참조)",
     )
     parent = models.ForeignKey(
         "self",
@@ -577,16 +610,17 @@ class VideoFolder(TimestampModel):
         ordering = ["order", "name"]
         constraints = [
             models.UniqueConstraint(
-                fields=["session", "parent", "name"],
-                name="unique_video_folder_name",
+                fields=["tenant", "parent", "name"],
+                name="unique_video_folder_name_per_tenant",
             )
         ]
         indexes = [
-            models.Index(fields=["session", "parent"]),
+            models.Index(fields=["tenant", "parent"]),
         ]
 
     def __str__(self):
-        return f"{self.session.lecture.title if self.session else '?'} / {self.name}"
+        label = self.tenant.code if self.tenant else "?"
+        return f"{label} / {self.name}"
 
 
 # ========================================================
