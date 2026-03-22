@@ -123,6 +123,12 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         source="enrollment", read_only=True,
     )
 
+    completed_by_name = serializers.CharField(
+        source="completed_by.username",
+        read_only=True,
+        default=None,
+    )
+
     class Meta:
         model = SessionParticipant
         fields = "__all__"

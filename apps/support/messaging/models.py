@@ -158,6 +158,7 @@ class AutoSendConfig(models.Model):
         CLINIC_REMINDER = "clinic_reminder", "클리닉 시작 N분 전"
         CLINIC_RESERVATION_CREATED = "clinic_reservation_created", "클리닉 예약 완료"
         CLINIC_RESERVATION_CHANGED = "clinic_reservation_changed", "클리닉 예약 변경"
+        CLINIC_SELF_STUDY_COMPLETED = "clinic_self_study_completed", "자율학습 완료"
         COUNSELING_RESERVATION_CREATED = "counseling_reservation_created", "상담 예약 완료"
         # G. 결제
         PAYMENT_COMPLETE = "payment_complete", "결제 완료"

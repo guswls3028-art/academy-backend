@@ -770,6 +770,66 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         ).data
         return Response(out)
 
+    @action(detail=True, methods=["post"])
+    def complete(self, request, pk=None):
+        """
+        POST /clinic/participants/{id}/complete/
+        자율학습 완료 처리 — 이력 기록 + 문자 트리거
+        """
+        with transaction.atomic():
+            obj = SessionParticipant.objects.select_for_update().get(
+                pk=self.get_object().pk
+            )
+            if obj.completed_at:
+                return Response(
+                    {"detail": "이미 완료 처리된 참가자입니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            obj.completed_at = timezone.now()
+            obj.completed_by = request.user
+            # 출석 처리도 같이 (자율학습 완료 = 출석 확정)
+            if obj.status in (
+                SessionParticipant.Status.PENDING,
+                SessionParticipant.Status.BOOKED,
+            ):
+                obj.status = SessionParticipant.Status.ATTENDED
+                obj.status_changed_at = timezone.now()
+                obj.status_changed_by = request.user
+            obj.save(update_fields=[
+                "completed_at", "completed_by",
+                "status", "status_changed_at", "status_changed_by",
+                "updated_at",
+            ])
+
+        out = ClinicSessionParticipantSerializer(
+            obj, context={"request": request}
+        ).data
+        return Response(out)
+
+    @action(detail=True, methods=["post"])
+    def uncomplete(self, request, pk=None):
+        """
+        POST /clinic/participants/{id}/uncomplete/
+        완료 취소
+        """
+        with transaction.atomic():
+            obj = SessionParticipant.objects.select_for_update().get(
+                pk=self.get_object().pk
+            )
+            if not obj.completed_at:
+                return Response(
+                    {"detail": "완료 처리되지 않은 참가자입니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            obj.completed_at = None
+            obj.completed_by = None
+            obj.save(update_fields=["completed_at", "completed_by", "updated_at"])
+
+        out = ClinicSessionParticipantSerializer(
+            obj, context={"request": request}
+        ).data
+        return Response(out)
+
     @action(detail=True, methods=["post"], url_path="change-booking")
     def change_booking(self, request, pk=None):
         """

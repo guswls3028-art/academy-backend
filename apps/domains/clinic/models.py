@@ -177,6 +177,15 @@ class SessionParticipant(TimestampModel):
     checked_in_at = models.DateTimeField(null=True, blank=True)
     is_late = models.BooleanField(default=False)
 
+    completed_at = models.DateTimeField(null=True, blank=True, help_text="자율학습 완료 시각")
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="clinic_completions",
+    )
+
     memo = models.TextField(blank=True, null=True)
 
     class Meta:

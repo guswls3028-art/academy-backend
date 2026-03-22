@@ -314,6 +314,21 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         ),
         "minutes_before": None,
     },
+    "clinic_self_study_completed": {
+        "category": "clinic",
+        "name": "[{academy_name}] 자율학습 완료 안내",
+        "subject": "자율학습이 완료되었습니다",
+        "body": (
+            "#{학생이름2}학생님, 자율학습이 완료되었습니다.\n"
+            "\n"
+            "클리닉: #{클리닉명}\n"
+            "일시: #{날짜} #{시간}\n"
+            "\n"
+            "수고하셨습니다.\n"
+            "#{사이트링크}"
+        ),
+        "minutes_before": None,
+    },
     "clinic_result_notification": {
         "category": "clinic",
         "name": "[{academy_name}] 클리닉 결과 안내",
