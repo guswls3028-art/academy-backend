@@ -137,16 +137,21 @@ class MyGradesSummaryView(APIView):
             if session and hasattr(session, "lecture") and session.lecture and getattr(session.lecture, "is_system", False):
                 continue
 
-            is_pass_1st = float(r["total_score"]) >= info["pass_score"]
+            # pass_score=0 → 합격 기준 미설정 → is_pass=None (합/불 판정 없음)
+            raw_pass_score = info["pass_score"] or 0
+            is_pass_1st = float(r["total_score"]) >= raw_pass_score if raw_pass_score > 0 else None
             enroll_id = r["enrollment_id"]
             resolution = resolved_exam_links.get((enroll_id, eid))
             max_attempt = retake_counts.get((enroll_id, eid), 1)
 
             # 최종 학습 성취 판정
+            # - 합격 기준 없음 (pass_score=0) → None (판정 불가)
             # - 1차 합격 → "PASS"
             # - 1차 불합격 + 보강 합격 → "REMEDIATED" (보강 후 합격)
             # - 1차 불합격 + 미해소 → "FAIL"
-            if is_pass_1st:
+            if is_pass_1st is None:
+                achievement = None
+            elif is_pass_1st:
                 achievement = "PASS"
             elif resolution in ("EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE"):
                 achievement = "REMEDIATED"
