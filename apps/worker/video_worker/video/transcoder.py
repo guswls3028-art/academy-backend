@@ -29,22 +29,25 @@ MAX_OUTPUT_WIDTH = 1920
 MID_HEIGHT = 720
 
 # v2 = 고화질 (원본 해상도 유지, ≤1080p)
-HI_CRF = 20
-HI_MAXRATE = "8000k"
-HI_BUFSIZE = "12000k"
+# 강의 영상(칠판 글씨, 판서, 화면 캡처) 기준 선명도 최적화.
+# CRF 18 + maxrate 12Mbps + preset slow → 텍스트/선 디테일 보존.
+HI_CRF = 18
+HI_MAXRATE = "12000k"
+HI_BUFSIZE = "18000k"
 HI_PROFILE = "high"
 HI_LEVEL = "4.1"
 HI_AUDIO_BITRATE = "128k"
 
 # v1 = 중화질 (720p, 저속 네트워크 fallback)
-MID_CRF = 23
-MID_MAXRATE = "3000k"
-MID_BUFSIZE = "4500k"
+# CRF 21 + maxrate 5Mbps → 모바일에서도 칠판 글씨 판독 가능 수준.
+MID_CRF = 21
+MID_MAXRATE = "5000k"
+MID_BUFSIZE = "7500k"
 MID_PROFILE = "main"
 MID_LEVEL = "3.1"
-MID_AUDIO_BITRATE = "96k"
+MID_AUDIO_BITRATE = "128k"
 
-ENCODING_PRESET = "medium"
+ENCODING_PRESET = "slow"
 
 
 class TranscodeError(RuntimeError):
