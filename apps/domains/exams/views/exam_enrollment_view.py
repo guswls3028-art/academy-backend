@@ -117,6 +117,12 @@ class ExamEnrollmentManageView(APIView):
             lecture_color = ""
             lecture_chip_label = ""
 
+            # 학생 상세 필드
+            parent_phone = ""
+            student_phone = ""
+            school = ""
+            grade = None
+
             if enrollment is not None:
                 student = getattr(enrollment, "student", None)
                 if student is not None:
@@ -128,6 +134,14 @@ class ExamEnrollmentManageView(APIView):
                             )
                         except Exception:
                             profile_photo_url = None
+                    parent_phone = getattr(student, "parent_phone", "") or ""
+                    student_phone = getattr(student, "phone", "") or ""
+                    school_type = getattr(student, "school_type", None)
+                    if school_type == "HIGH":
+                        school = getattr(student, "high_school", "") or ""
+                    else:
+                        school = getattr(student, "middle_school", "") or ""
+                    grade = getattr(student, "grade", None)
                 else:
                     student_name = str(getattr(enrollment, "student_name", "") or "")
 
@@ -146,6 +160,10 @@ class ExamEnrollmentManageView(APIView):
                     "lecture_title": lecture_title or None,
                     "lecture_color": lecture_color or None,
                     "lecture_chip_label": lecture_chip_label or None,
+                    "parent_phone": parent_phone or None,
+                    "student_phone": student_phone or None,
+                    "school": school or None,
+                    "grade": grade,
                 }
             )
 

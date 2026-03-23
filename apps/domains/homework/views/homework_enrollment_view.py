@@ -50,7 +50,7 @@ class HomeworkEnrollmentManageView(APIView):
             )
             .filter(enrollment__status="ACTIVE")
             .filter(enrollment__student__deleted_at__isnull=True)
-            .select_related("enrollment", "enrollment__student")
+            .select_related("enrollment", "enrollment__student", "enrollment__lecture")
             .order_by("id")
         )
 
@@ -64,19 +64,58 @@ class HomeworkEnrollmentManageView(APIView):
         )
 
         items: List[dict] = []
+        request_obj = request
         for se in session_enrollments:
             enrollment = se.enrollment
-            student_name = (
-                enrollment.student.name
-                if enrollment and hasattr(enrollment, "student")
-                else ""
-            )
+            student_name = ""
+            profile_photo_url = None
+            parent_phone = ""
+            student_phone = ""
+            school = ""
+            grade = None
+            lecture_title = ""
+            lecture_color = ""
+            lecture_chip_label = ""
+
+            if enrollment and hasattr(enrollment, "student"):
+                student = enrollment.student
+                if student is not None:
+                    student_name = str(getattr(student, "name", "") or "")
+                    if getattr(student, "profile_photo", None):
+                        try:
+                            profile_photo_url = request_obj.build_absolute_uri(
+                                student.profile_photo.url
+                            )
+                        except Exception:
+                            profile_photo_url = None
+                    parent_phone = getattr(student, "parent_phone", "") or ""
+                    student_phone = getattr(student, "phone", "") or ""
+                    school_type = getattr(student, "school_type", None)
+                    if school_type == "HIGH":
+                        school = getattr(student, "high_school", "") or ""
+                    else:
+                        school = getattr(student, "middle_school", "") or ""
+                    grade = getattr(student, "grade", None)
+
+                lecture = getattr(enrollment, "lecture", None)
+                if lecture is not None:
+                    lecture_title = str(getattr(lecture, "title", "") or "")
+                    lecture_color = str(getattr(lecture, "color", "") or "") or "#3b82f6"
+                    lecture_chip_label = str(getattr(lecture, "chip_label", "") or "")
 
             items.append(
                 {
                     "enrollment_id": se.enrollment_id,
                     "student_name": student_name,
                     "is_selected": se.enrollment_id in selected_ids,
+                    "profile_photo_url": profile_photo_url,
+                    "lecture_title": lecture_title or None,
+                    "lecture_color": lecture_color or None,
+                    "lecture_chip_label": lecture_chip_label or None,
+                    "parent_phone": parent_phone or None,
+                    "student_phone": student_phone or None,
+                    "school": school or None,
+                    "grade": grade,
                 }
             )
 
