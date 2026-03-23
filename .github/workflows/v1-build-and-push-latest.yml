@@ -141,6 +141,8 @@ jobs:
           AI=false
           echo "$CHANGED" | grep -qE "^apps/worker/ai_worker/" && AI=true
           echo "$CHANGED" | grep -qE "^apps/domains/ai/" && AI=true
+          echo "$CHANGED" | grep -qE "^apps/domains/submissions/" && AI=true
+          echo "$CHANGED" | grep -qE "^apps/domains/results/" && AI=true
           echo "$CHANGED" | grep -qE "^apps/support/ai/" && AI=true
           echo "$CHANGED" | grep -qE "^academy/" && AI=true
           echo "$CHANGED" | grep -qE "^libs/queue/" && AI=true
