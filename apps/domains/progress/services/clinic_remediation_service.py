@@ -246,3 +246,162 @@ class ClinicRemediationService:
         )
 
         return result
+
+    # ─── 기존 시도 점수 수정 ───
+
+    @staticmethod
+    @transaction.atomic
+    def update_exam_retake(
+        *,
+        clinic_link_id: int,
+        attempt_index: int,
+        score: float,
+        graded_by_user_id: int,
+    ) -> RetakeResult:
+        """
+        기존 시험 재시도의 점수를 수정한다.
+        attempt_index >= 2인 ExamAttempt만 수정 가능 (1차는 성적표 편집으로 수정).
+        수정 후 합격 여부를 재판정하고, 합격 시 ClinicLink를 통과 처리한다.
+        """
+        from apps.domains.results.models import ExamAttempt
+        from apps.domains.exams.models import Exam
+
+        if attempt_index < 2:
+            raise ValueError("1차 시도는 이 API로 수정할 수 없습니다. 성적표 편집을 사용하세요.")
+
+        link = ClinicLink.objects.select_for_update().get(id=clinic_link_id)
+
+        if link.source_type != "exam":
+            raise ValueError(f"ClinicLink {clinic_link_id}는 시험 유형이 아닙니다")
+
+        exam = Exam.objects.get(id=link.source_id)
+        pass_score = float(getattr(exam, "pass_score", 0) or 0)
+        max_score_val = float(getattr(exam, "max_score", 100) or 100)
+
+        attempt = ExamAttempt.objects.select_for_update().get(
+            exam_id=exam.id,
+            enrollment_id=link.enrollment_id,
+            attempt_index=attempt_index,
+        )
+
+        # 점수 업데이트
+        attempt.meta = attempt.meta or {}
+        attempt.meta["total_score"] = score
+        attempt.meta["pass_score"] = pass_score
+        attempt.meta["updated_by_user_id"] = graded_by_user_id
+        attempt.save(update_fields=["meta", "updated_at"])
+
+        is_passed = score >= pass_score if pass_score > 0 else False
+
+        result = RetakeResult(
+            passed=is_passed,
+            score=score,
+            max_score=max_score_val,
+            attempt_index=attempt_index,
+            clinic_link_id=link.id,
+        )
+
+        # 합격으로 변경 + 아직 미통과 상태면 → 통과 처리
+        if is_passed and link.resolved_at is None:
+            ClinicResolutionService.resolve_by_exam_pass(
+                enrollment_id=link.enrollment_id,
+                session_id=link.session_id,
+                exam_id=exam.id,
+                attempt_id=attempt.id,
+                score=score,
+                pass_score=pass_score,
+            )
+            link.refresh_from_db()
+            result.resolution_type = link.resolution_type
+            result.resolved_at = link.resolved_at.isoformat() if link.resolved_at else None
+        elif not is_passed and link.resolved_at is not None:
+            # 합격→불합격으로 수정: 통과 취소
+            ClinicResolutionService.unresolve(clinic_link_id=link.id)
+            link.refresh_from_db()
+
+        logger.info(
+            "clinic_remediation: exam retake UPDATE (link=%s, exam=%s, attempt=%d, score=%s, passed=%s)",
+            clinic_link_id, exam.id, attempt_index, score, is_passed,
+        )
+
+        return result
+
+    @staticmethod
+    @transaction.atomic
+    def update_homework_retake(
+        *,
+        clinic_link_id: int,
+        attempt_index: int,
+        score: float,
+        max_score: Optional[float] = None,
+        graded_by_user_id: int,
+    ) -> RetakeResult:
+        """
+        기존 과제 재시도의 점수를 수정한다.
+        attempt_index >= 2인 HomeworkScore만 수정 가능.
+        """
+        from apps.domains.homework_results.models import HomeworkScore, Homework
+        from apps.domains.homework.utils.homework_policy import calc_homework_passed_and_clinic
+
+        if attempt_index < 2:
+            raise ValueError("1차 시도는 이 API로 수정할 수 없습니다. 성적표 편집을 사용하세요.")
+
+        link = ClinicLink.objects.select_for_update().get(id=clinic_link_id)
+
+        if link.source_type != "homework":
+            raise ValueError(f"ClinicLink {clinic_link_id}는 과제 유형이 아닙니다")
+
+        homework = Homework.objects.get(id=link.source_id)
+        session = link.session
+
+        hs = HomeworkScore.objects.select_for_update().get(
+            enrollment_id=link.enrollment_id,
+            session=session,
+            homework=homework,
+            attempt_index=attempt_index,
+        )
+
+        if max_score is None:
+            max_score = float(hs.max_score or 100)
+
+        passed, _, _ = calc_homework_passed_and_clinic(
+            session=session,
+            score=score,
+            max_score=max_score,
+        )
+
+        hs.score = score
+        hs.max_score = max_score
+        hs.passed = passed
+        hs.updated_by_user_id = graded_by_user_id
+        hs.save(update_fields=["score", "max_score", "passed", "updated_by_user_id", "updated_at"])
+
+        result = RetakeResult(
+            passed=passed,
+            score=score,
+            max_score=max_score,
+            attempt_index=attempt_index,
+            clinic_link_id=link.id,
+        )
+
+        if passed and link.resolved_at is None:
+            ClinicResolutionService.resolve_by_homework_pass(
+                enrollment_id=link.enrollment_id,
+                session_id=session.id,
+                homework_id=homework.id,
+                score=score,
+                max_score=max_score,
+            )
+            link.refresh_from_db()
+            result.resolution_type = link.resolution_type
+            result.resolved_at = link.resolved_at.isoformat() if link.resolved_at else None
+        elif not passed and link.resolved_at is not None:
+            ClinicResolutionService.unresolve(clinic_link_id=link.id)
+            link.refresh_from_db()
+
+        logger.info(
+            "clinic_remediation: homework retake UPDATE (link=%s, homework=%s, attempt=%d, score=%s, passed=%s)",
+            clinic_link_id, homework.id, attempt_index, score, passed,
+        )
+
+        return result

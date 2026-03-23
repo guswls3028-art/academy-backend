@@ -188,6 +188,15 @@ class AdminExamTotalScoreView(APIView):
         result.save(update_fields=["total_score", "max_score", "updated_at"])
 
         # -------------------------------------------------
+        # 5-b) Representative ExamAttempt 점수 동기화 (드로어 AttemptHistory 정합성)
+        # -------------------------------------------------
+        if attempt and attempt.is_representative:
+            attempt.meta = attempt.meta or {}
+            attempt.meta["total_score"] = float(new_score)
+            attempt.meta["synced_from_result"] = True
+            attempt.save(update_fields=["meta", "updated_at"])
+
+        # -------------------------------------------------
         # 6️⃣ progress pipeline (best-effort, 실패해도 점수 저장은 유지)
         # Submission이 있으면 submission 기반, 없으면 exam_id 기반으로 dispatch
         # -------------------------------------------------

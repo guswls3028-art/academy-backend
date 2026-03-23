@@ -386,6 +386,74 @@ class SessionScoresView(APIView):
         }
 
         # -------------------------------------------------
+        # 7-b) Attempt count & clinic_link_id bulk (차수별 편집 지원)
+        # -------------------------------------------------
+        from django.db.models import Count
+
+        # Exam: 차수(attempt) 수
+        exam_attempt_stats = (
+            ExamAttempt.objects
+            .filter(exam_id__in=exam_ids, enrollment_id__in=enrollment_ids)
+            .values("exam_id", "enrollment_id")
+            .annotate(count=Count("id"))
+        )
+        exam_attempt_count_map: Dict[tuple, int] = {
+            (int(row["exam_id"]), int(row["enrollment_id"])): row["count"]
+            for row in exam_attempt_stats
+        }
+
+        # Exam: 미해소 ClinicLink ID (source_type=exam 기준)
+        exam_clinic_link_qs = (
+            ClinicLink.objects
+            .filter(
+                session=session,
+                enrollment_id__in=enrollment_ids,
+                source_type="exam",
+                source_id__in=exam_ids,
+                resolved_at__isnull=True,
+            )
+            .values("enrollment_id", "source_id", "id")
+        )
+        exam_clinic_link_map: Dict[tuple, int] = {
+            (int(row["source_id"]), int(row["enrollment_id"])): row["id"]
+            for row in exam_clinic_link_qs
+        }
+
+        # Homework: 차수(attempt) 수
+        hw_ids = [int(hw.id) for hw in homeworks]
+        hw_attempt_stats = (
+            HomeworkScore.objects
+            .filter(
+                session=session,
+                enrollment_id__in=enrollment_ids,
+                homework_id__in=hw_ids,
+            )
+            .values("homework_id", "enrollment_id")
+            .annotate(count=Count("id"))
+        )
+        hw_attempt_count_map: Dict[tuple, int] = {
+            (int(row["homework_id"]), int(row["enrollment_id"])): row["count"]
+            for row in hw_attempt_stats
+        }
+
+        # Homework: 미해소 ClinicLink ID
+        hw_clinic_link_qs = (
+            ClinicLink.objects
+            .filter(
+                session=session,
+                enrollment_id__in=enrollment_ids,
+                source_type="homework",
+                source_id__in=hw_ids,
+                resolved_at__isnull=True,
+            )
+            .values("enrollment_id", "source_id", "id")
+        )
+        hw_clinic_link_map: Dict[tuple, int] = {
+            (int(row["source_id"]), int(row["enrollment_id"])): row["id"]
+            for row in hw_clinic_link_qs
+        }
+
+        # -------------------------------------------------
         # 8) Exam 메타
         # -------------------------------------------------
         exam_pass_score_map = {
@@ -473,6 +541,8 @@ class SessionScoresView(APIView):
                         "pass_score": exam_pass_score_map.get(exid, 0.0),
                         "block": block,
                         "items": items_payload,
+                        "attempt_count": exam_attempt_count_map.get((exid, eid), 0),
+                        "clinic_link_id": exam_clinic_link_map.get((exid, eid)),
                     }
                 )
 
@@ -516,6 +586,8 @@ class SessionScoresView(APIView):
                         "homework_id": int(hw.id),
                         "title": str(hw.title),
                         "block": block,
+                        "attempt_count": hw_attempt_count_map.get((int(hw.id), eid), 0),
+                        "clinic_link_id": hw_clinic_link_map.get((int(hw.id), eid)),
                     }
                 )
 

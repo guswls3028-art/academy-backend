@@ -286,11 +286,100 @@ class ClinicLinkViewSet(ModelViewSet):
             "clinic_link_id": result.clinic_link_id,
         })
 
+    @action(detail=True, methods=["post"], url_path="update-retake")
+    def update_retake(self, request, pk=None):
+        """
+        POST /progress/clinic-links/{id}/update-retake/
+        기존 재시도(2차+)의 점수를 수정한다.
+
+        Body:
+        - attempt_index (required): 수정할 시도 차수 (2 이상)
+        - score (required): 새 점수
+        - max_score (optional): 과제 최대 점수
+        """
+        link = self.get_object()
+
+        attempt_index = request.data.get("attempt_index")
+        score = request.data.get("score")
+
+        if attempt_index is None or score is None:
+            return Response(
+                {"detail": "attempt_index와 score는 필수입니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            attempt_index = int(attempt_index)
+            score = float(score)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "attempt_index는 정수, score는 숫자여야 합니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        if attempt_index < 2:
+            return Response(
+                {"detail": "1차 시도는 이 API로 수정할 수 없습니다. 성적표 편집을 사용하세요."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        if score < 0:
+            return Response(
+                {"detail": "score는 0 이상이어야 합니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        max_score = request.data.get("max_score")
+        if max_score is not None:
+            try:
+                max_score = float(max_score)
+            except (TypeError, ValueError):
+                max_score = None
+
+        source_type = link.source_type
+
+        try:
+            if source_type == "exam":
+                result = ClinicRemediationService.update_exam_retake(
+                    clinic_link_id=link.id,
+                    attempt_index=attempt_index,
+                    score=score,
+                    graded_by_user_id=request.user.id,
+                )
+            elif source_type == "homework":
+                result = ClinicRemediationService.update_homework_retake(
+                    clinic_link_id=link.id,
+                    attempt_index=attempt_index,
+                    score=score,
+                    max_score=max_score,
+                    graded_by_user_id=request.user.id,
+                )
+            else:
+                return Response(
+                    {"detail": f"지원하지 않는 source_type: {source_type}"},
+                    status=drf_status.HTTP_400_BAD_REQUEST,
+                )
+        except (ClinicLink.DoesNotExist, Exception) as e:
+            return Response(
+                {"detail": str(e)},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({
+            "passed": result.passed,
+            "score": result.score,
+            "max_score": result.max_score,
+            "attempt_index": result.attempt_index,
+            "resolution_type": result.resolution_type,
+            "resolved_at": result.resolved_at,
+            "clinic_link_id": result.clinic_link_id,
+        })
+
     @action(detail=True, methods=["post"])
     def unresolve(self, request, pk=None):
         """
         POST /progress/clinic-links/{id}/unresolve/
-        해소 취소 (되돌리기).
+        통과 취소 (되돌리기).
         """
         link = self.get_object()
         if not link.resolved_at:

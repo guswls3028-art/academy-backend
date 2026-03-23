@@ -55,12 +55,20 @@ class ExamScoreBlockSerializer(serializers.Serializer):
         default=list,
     )
 
+    # V1.1.1: 차수별 편집 지원
+    attempt_count = serializers.IntegerField(default=0)
+    clinic_link_id = serializers.IntegerField(allow_null=True, default=None)
+
 
 class HomeworkScoreBlockSerializer(serializers.Serializer):
     homework_id = serializers.IntegerField()
     title = serializers.CharField(allow_blank=True)
 
     block = ScoreBlockSerializer()
+
+    # V1.1.1: 차수별 편집 지원
+    attempt_count = serializers.IntegerField(default=0)
+    clinic_link_id = serializers.IntegerField(allow_null=True, default=None)
 
 
 class SessionScoreRowSerializer(serializers.Serializer):
