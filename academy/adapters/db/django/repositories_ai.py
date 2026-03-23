@@ -125,13 +125,28 @@ class DjangoAIJobRepository:
         lease_expires_at: datetime,
         now: datetime,
     ) -> bool:
+        import logging, os
+        from django.db import connection
+        _log = logging.getLogger("ai.mark_running")
+        _log.info(
+            "MARK_RUNNING_ENTER | job_id=%s worker=%s pid=%s db_alias=%s autocommit=%s in_atomic=%s",
+            job_id, worker_id, os.getpid(),
+            connection.alias, connection.get_autocommit(), connection.in_atomic_block,
+        )
         from apps.domains.ai.models import AIJobModel
-        job = AIJobModel.objects.select_for_update().filter(job_id=job_id).first()
+        try:
+            job = AIJobModel.objects.select_for_update().filter(job_id=job_id).first()
+        except Exception as exc:
+            _log.exception("MARK_RUNNING_EXCEPTION | job_id=%s error=%s", job_id, exc)
+            return False
         if not job:
+            _log.warning("MARK_RUNNING_NOT_FOUND | job_id=%s", job_id)
             return False
         if job.status == "RUNNING":
+            _log.info("MARK_RUNNING_ALREADY | job_id=%s", job_id)
             return True
         if job.status not in ("PENDING", "RETRYING"):
+            _log.warning("MARK_RUNNING_BAD_STATUS | job_id=%s status=%r", job_id, job.status)
             return False
         job.status = "RUNNING"
         job.locked_by = str(worker_id)

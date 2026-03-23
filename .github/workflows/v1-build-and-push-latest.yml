@@ -141,6 +141,9 @@ jobs:
           AI=false
           echo "$CHANGED" | grep -qE "^apps/worker/ai_worker/" && AI=true
           echo "$CHANGED" | grep -qE "^apps/domains/ai/" && AI=true
+          echo "$CHANGED" | grep -qE "^apps/support/ai/" && AI=true
+          echo "$CHANGED" | grep -qE "^academy/" && AI=true
+          echo "$CHANGED" | grep -qE "^libs/queue/" && AI=true
           echo "$CHANGED" | grep -qE "^docker/ai-worker" && AI=true
           echo "$CHANGED" | grep -qE "^requirements/worker-ai" && AI=true
           echo "build_ai=$AI" >> $GITHUB_OUTPUT
