@@ -468,16 +468,8 @@ class ClinicTargetService:
                 "attempt_history": attempt_history,
             })
 
-        # ── 누락자 감지: 시험이 실시되었으나 미응시한 수강생 ──
-        missing = ClinicTargetService._find_missing_students(
-            tenant=tenant,
-            exams_cache=exams_cache,
-            existing_enrollment_session_pairs={
-                (row["enrollment_id"], row.get("_session_id"))
-                for row in out
-            },
-        )
-        out.extend(missing)
+        # 미응시(missing)는 클리닉 대상이 아님 — 시험/과제를 아직 응시하지 않은 학생은
+        # 불합격한 것이 아니므로 클리닉 보강 대상에서 제외한다.
 
         return out
 
