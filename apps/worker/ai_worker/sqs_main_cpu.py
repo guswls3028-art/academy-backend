@@ -14,5 +14,10 @@ if os.environ.get("DJANGO_SETTINGS_MODULE"):
     django.setup()
 
 if __name__ == "__main__":
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] [AI-SQS-WORKER-CPU] %(message)s",
+    )
     from academy.framework.workers.ai_sqs_worker import run_ai_sqs_worker
     sys.exit(run_ai_sqs_worker())
