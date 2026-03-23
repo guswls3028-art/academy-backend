@@ -75,7 +75,44 @@ class AdminExamResultDetailView(APIView):
             .first()
         )
         if not result:
-            raise NotFound("result not found")
+            # ── Auto-create for manual scoring (답안지 제출 없이 수동 입력) ──
+            from apps.domains.enrollment.models import Enrollment
+            enrollment_obj = Enrollment.objects.filter(
+                id=enrollment_id, tenant=request.tenant
+            ).first()
+            if not enrollment_obj:
+                raise NotFound("enrollment not found for this tenant")
+
+            attempt, _ = ExamAttempt.objects.get_or_create(
+                exam_id=exam_id,
+                enrollment_id=enrollment_id,
+                attempt_index=1,
+                defaults={
+                    "submission_id": 0,
+                    "is_retake": False,
+                    "is_representative": True,
+                    "status": "done",
+                    "meta": {"source": "manual_entry"},
+                },
+            )
+
+            result_obj, _ = Result.objects.get_or_create(
+                target_type="exam",
+                target_id=exam_id,
+                enrollment=enrollment_obj,
+                defaults={
+                    "attempt": attempt,
+                    "total_score": 0,
+                    "max_score": float(exam.max_score or 0),
+                    "objective_score": 0,
+                },
+            )
+            result = (
+                Result.objects
+                .filter(id=result_obj.id)
+                .prefetch_related("items")
+                .first()
+            )
 
         # -------------------------------------------------
         # 2️⃣ passed (시험 단위 기준)
@@ -140,6 +177,22 @@ class AdminExamResultDetailView(APIView):
         # -------------------------------------------------
         # 7️⃣ 최종 응답 (기존 계약 + PHASE 3 확장)
         # -------------------------------------------------
+        # -------------------------------------------------
+        # 8️⃣ correct_answers (AnswerKey에서 정답 매핑)
+        # -------------------------------------------------
+        correct_answers = {}
+        template_id = exam.effective_template_exam_id
+        try:
+            from apps.domains.exams.models import AnswerKey
+            ak = AnswerKey.objects.get(exam_id=template_id)
+            correct_answers = ak.answers or {}
+        except AnswerKey.DoesNotExist:
+            pass
+
+        for item in data.get("items", []):
+            qid = str(item.get("question_id", ""))
+            item["correct_answer"] = correct_answers.get(qid, "")
+
         data.update({
             "passed": passed,
             "allow_retake": allow_retake,
@@ -147,6 +200,7 @@ class AdminExamResultDetailView(APIView):
             "can_retake": can_retake,
             "clinic_required": bool(clinic_required),
             "edit_state": edit_state,
+            "correct_answers": correct_answers,
         })
 
         return Response(data)

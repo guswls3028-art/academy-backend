@@ -68,8 +68,11 @@ class AdminExamItemScoreView(APIView):
         except Exception:
             raise ValidationError({"detail": "score must be number", "code": "INVALID"})
 
+        # ✅ 답안 필드 (수동 입력용, 선택 사항)
+        new_answer = request.data.get("answer")  # None이면 미변경
+
         # -------------------------------------------------
-        # 1️⃣ Result (대표 스냅샷)
+        # 1️⃣ Result (대표 스냅샷) — 없으면 자동 생성 (수동 입력용)
         # -------------------------------------------------
         result = (
             Result.objects
@@ -82,7 +85,47 @@ class AdminExamItemScoreView(APIView):
             .first()
         )
         if not result:
-            raise NotFound({"detail": "result not found", "code": "NOT_FOUND"})
+            from apps.domains.enrollment.models import Enrollment
+            enrollment_obj = Enrollment.objects.filter(
+                id=enrollment_id, tenant=request.tenant
+            ).first()
+            if not enrollment_obj:
+                raise NotFound({"detail": "enrollment not found", "code": "NOT_FOUND"})
+
+            from apps.domains.exams.models import Exam
+            exam_obj = Exam.objects.filter(id=exam_id).first()
+
+            attempt, _ = ExamAttempt.objects.get_or_create(
+                exam_id=exam_id,
+                enrollment_id=enrollment_id,
+                attempt_index=1,
+                defaults={
+                    "submission_id": 0,
+                    "is_retake": False,
+                    "is_representative": True,
+                    "status": "done",
+                    "meta": {"source": "manual_entry"},
+                },
+            )
+
+            result, _ = Result.objects.get_or_create(
+                target_type="exam",
+                target_id=exam_id,
+                enrollment=enrollment_obj,
+                defaults={
+                    "attempt": attempt,
+                    "total_score": 0,
+                    "max_score": float(exam_obj.max_score or 0) if exam_obj else 0,
+                    "objective_score": 0,
+                },
+            )
+            # Re-fetch with lock
+            result = (
+                Result.objects
+                .select_for_update()
+                .filter(id=result.id)
+                .first()
+            )
 
         if not result.attempt_id:
             raise ValidationError(
@@ -126,7 +169,7 @@ class AdminExamItemScoreView(APIView):
             item = ResultItem.objects.create(
                 result=result,
                 question_id=question_id,
-                answer="",
+                answer=new_answer if new_answer is not None else "",
                 is_correct=bool(new_score >= max_score),
                 score=float(new_score),
                 max_score=max_score,
@@ -155,7 +198,7 @@ class AdminExamItemScoreView(APIView):
             attempt_id=int(result.attempt_id),
 
             question_id=question_id,
-            answer=item.answer or "",
+            answer=new_answer if new_answer is not None else (item.answer or ""),
             is_correct=bool(new_score >= max_score),
             score=float(new_score),
             max_score=max_score,
@@ -173,7 +216,11 @@ class AdminExamItemScoreView(APIView):
             item.score = float(new_score)
             item.is_correct = bool(new_score >= max_score)
             item.source = "manual"
-            item.save(update_fields=["score", "is_correct", "source"])
+            update_fields = ["score", "is_correct", "source"]
+            if new_answer is not None:
+                item.answer = new_answer
+                update_fields.append("answer")
+            item.save(update_fields=update_fields)
 
         # -------------------------------------------------
         # 6️⃣ total_score 재계산 (sum of all ResultItems — objective 이미 포함)
