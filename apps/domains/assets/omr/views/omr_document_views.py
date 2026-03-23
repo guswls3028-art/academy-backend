@@ -127,7 +127,7 @@ class ExamOMRPdfView(APIView):
         if err:
             return err
 
-        doc = OMRDocumentService.fetch_logo_bytes(doc)
+        doc = OMRDocumentService.fetch_logo_bytes(doc, tenant=request.tenant)
         pdf_bytes = OMRPdfRenderer().render(doc)
 
         filename = _safe_filename(doc.exam_title)
@@ -190,7 +190,7 @@ class ToolsOMRPdfView(APIView):
         if err:
             return err
 
-        doc = OMRDocumentService.fetch_logo_bytes(doc)
+        doc = OMRDocumentService.fetch_logo_bytes(doc, tenant=request.tenant)
         pdf_bytes = OMRPdfRenderer().render(doc)
 
         filename = _safe_filename(doc.exam_title)

@@ -22,6 +22,12 @@ _DEFAULT_LOGO_PATH = os.path.join(
     "renderer", "fonts", "omr-default-logo.png",
 )
 
+# 테넌트별 정적 로고 디렉터리 (로그인 페이지와 동일한 로고)
+_TENANT_LOGOS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "renderer", "logos",
+)
+
 
 class OMRDocumentService:
     """OMR 문서 생성 서비스."""
@@ -158,12 +164,12 @@ class OMRDocumentService:
             return None
 
     @staticmethod
-    def fetch_logo_bytes(doc: OMRDocument) -> OMRDocument:
+    def fetch_logo_bytes(doc: OMRDocument, tenant=None) -> OMRDocument:
         """
         PDF 렌더링용: logo_url에서 이미지 바이너리를 다운로드하여 OMRDocument에 추가.
-        로고가 없거나 다운로드 실패 시 기본 로고 사용.
+        로고가 없거나 다운로드 실패 시 테넌트 정적 로고 → 기본 로고 순서로 폴백.
         """
-        # 1) 절대 URL인 테넌트 로고가 있으면 다운로드 시도
+        # 1) 절대 URL인 테넌트 로고가 있으면 다운로드 시도 (R2 업로드 로고)
         if doc.logo_url and doc.logo_url.startswith("http"):
             try:
                 resp = requests.get(doc.logo_url, timeout=5)
@@ -173,8 +179,29 @@ class OMRDocumentService:
             except Exception:
                 logger.warning("OMR 로고 다운로드 실패: %s", doc.logo_url, exc_info=True)
 
-        # 2) 테넌트 로고 없음 또는 상대 경로(기본값) 또는 실패 → 기본 로고 사용
+        # 2) 테넌트 정적 로고 (로그인 페이지와 동일한 로고 파일)
+        if tenant:
+            result = OMRDocumentService._apply_tenant_static_logo(doc, tenant)
+            if result is not None:
+                return result
+
+        # 3) 기본 로고
         return OMRDocumentService._apply_default_logo(doc)
+
+    @staticmethod
+    def _apply_tenant_static_logo(doc: OMRDocument, tenant) -> Optional[OMRDocument]:
+        """테넌트 코드 기반 정적 로고 적용 (로그인 페이지와 동일한 로고)."""
+        try:
+            code = getattr(tenant, "code", None)
+            if not code:
+                return None
+            logo_path = os.path.join(_TENANT_LOGOS_DIR, f"{code}.png")
+            if os.path.isfile(logo_path):
+                with open(logo_path, "rb") as f:
+                    return doc.with_logo_bytes(f.read(), "image/png")
+        except Exception:
+            logger.warning("테넌트 정적 로고 로드 실패: %s", getattr(tenant, "code", "?"), exc_info=True)
+        return None
 
     @staticmethod
     def _apply_default_logo(doc: OMRDocument) -> OMRDocument:
