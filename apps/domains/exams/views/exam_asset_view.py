@@ -58,8 +58,8 @@ class ExamAssetView(APIView):
             ).distinct(),
             id=int(exam_id),
         )
-        if exam.exam_type != Exam.ExamType.TEMPLATE:
-            return Response({"detail": "Assets can be uploaded only to template exams."}, status=403)
+        # regular → template resolve (GET과 동일 정책)
+        exam = resolve_template_exam(exam)
 
         # template이 사용 중이면 구조 봉인 (asset 포함)
         assert_template_editable(exam)
