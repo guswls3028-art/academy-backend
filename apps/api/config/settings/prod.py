@@ -174,8 +174,8 @@ STATICFILES_STORAGE = "django.contrib.staticfiles.storage.ManifestStaticFilesSto
 # ==================================================
 
 INTERNAL_WORKER_TOKEN = os.environ.get("INTERNAL_WORKER_TOKEN", "")
-AI_WORKER_INSTANCE_ID = None
-VIDEO_WORKER_INSTANCE_ID = None
+# AI_WORKER_INSTANCE_ID: base.py에서 os.getenv()로 읽음 — SSM에 설정된 값 사용
+# VIDEO_WORKER_INSTANCE_ID: 현재 Batch 방식이므로 미사용
 
 # ==================================================
 # FINAL ASSERTIONS
