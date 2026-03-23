@@ -236,14 +236,34 @@ class AttendanceViewSet(ModelViewSet):
             for a in attendances
         }
 
+        # ✅ 클리닉 하이라이트 일괄 계산
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+        highlight_map = compute_clinic_highlight_map(
+            tenant=tenant,
+            enrollment_ids=set(en.id for en in enrollments),
+        )
+
         students_payload = []
 
         for en in enrollments:
+            # profile_photo_url
+            profile_photo_url = None
+            r2_key = getattr(en.student, "profile_photo_r2_key", None) or ""
+            if r2_key:
+                try:
+                    from django.conf import settings as _settings
+                    from libs.r2_client.presign import create_presigned_get_url
+                    profile_photo_url = create_presigned_get_url(r2_key, expires_in=3600, bucket=_settings.R2_STORAGE_BUCKET)
+                except Exception:
+                    pass
+
             row = {
                 "student_id": en.student.id,
                 "name": en.student.name,
                 "phone": en.student.phone,
                 "parent_phone": en.student.parent_phone,
+                "profile_photo_url": profile_photo_url,
+                "name_highlight_clinic_target": highlight_map.get(en.id, False),
                 "attendance": {},
             }
 

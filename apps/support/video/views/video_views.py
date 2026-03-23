@@ -746,6 +746,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             for a in video_repo.get_attendance_for_session(video.session)
         }
 
+        # ✅ 클리닉 하이라이트 일괄 계산
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+        tenant = getattr(request, "tenant", None)
+        highlight_map = compute_clinic_highlight_map(
+            tenant=tenant,
+            enrollment_ids=set(e.id for e in enrollments),
+        ) if tenant else {}
+
         students = []
         for e in enrollments:
             vp = progresses.get(e.id)
@@ -754,7 +762,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             # Use SSOT access resolver
             from apps.support.video.services.access_resolver import resolve_access_mode
             access_mode = resolve_access_mode(video=video, enrollment=e)
-            
+
             # Legacy rule for backward compatibility
             rule = perm.rule if perm else "free"
             effective_rule = rule
@@ -762,6 +770,18 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 effective_rule = "free"
 
             lecture = getattr(video.session, "lecture", None) if video.session else None
+
+            # profile_photo_url
+            profile_photo_url = None
+            r2_key = getattr(e.student, "profile_photo_r2_key", None) or ""
+            if r2_key:
+                try:
+                    from django.conf import settings as _settings
+                    from libs.r2_client.presign import create_presigned_get_url
+                    profile_photo_url = create_presigned_get_url(r2_key, expires_in=3600, bucket=_settings.R2_STORAGE_BUCKET)
+                except Exception:
+                    pass
+
             students.append(
                 {
                     "enrollment": e.id,
@@ -778,6 +798,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     "student_phone": getattr(e.student, "phone", None),
                     "school": getattr(e.student, "school", None),
                     "grade": getattr(e.student, "grade", None),
+                    "profile_photo_url": profile_photo_url,
+                    "name_highlight_clinic_target": highlight_map.get(e.id, False),
                 }
             )
 

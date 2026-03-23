@@ -47,6 +47,21 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return float(default)
 
 
+def _get_student_photo_url(student: Any) -> Optional[str]:
+    """R2 presigned URL 생성 (StudentListSerializer.get_profile_photo_url과 동일 로직)"""
+    if not student:
+        return None
+    r2_key = getattr(student, "profile_photo_r2_key", None) or ""
+    if not r2_key:
+        return None
+    try:
+        from django.conf import settings
+        from libs.r2_client.presign import create_presigned_get_url
+        return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
+    except Exception:
+        return None
+
+
 def _extract_invalid_reason_from_meta(meta: Any) -> Optional[str]:
     """
     ResultFact.meta / Attempt.meta / SubmissionAnswer.meta 등 다양한 위치에 있을 수 있는
@@ -257,10 +272,23 @@ class ClinicTargetService:
 
             # 학생 이름: enrollment_map에서 일괄 조회 (N+1 방지)
             enr = enrollment_map.get(enrollment_id)
-            if enr and hasattr(enr, "student") and enr.student:
-                student_name = _safe_str(getattr(enr.student, "name", None), "-")
+            student = getattr(enr, "student", None) if enr else None
+            if student:
+                student_name = _safe_str(getattr(student, "name", None), "-")
             else:
                 student_name = _get_student_name_by_enrollment_id(enrollment_id)
+
+            # 학생 프로필 필드 (ClinicTargetSelectModal 테이블 컬럼용)
+            parent_phone = getattr(student, "parent_phone", None) if student else None
+            student_phone = getattr(student, "phone", None) if student else None
+            school_type = getattr(student, "school_type", "HIGH") if student else "HIGH"
+            school_name = (
+                getattr(student, "high_school", None)
+                if school_type == "HIGH"
+                else getattr(student, "middle_school", None)
+            ) if student else None
+            grade_val = getattr(student, "grade", None) if student else None
+            profile_photo_url = _get_student_photo_url(student)
 
             # 공통 base row
             base_row = {
@@ -281,6 +309,11 @@ class ClinicTargetService:
                 "source_id": getattr(link, "source_id", None),
                 "created_at": getattr(link, "created_at", None),
                 "name_highlight_clinic_target": highlight_map.get(enrollment_id, False),
+                "parent_phone": parent_phone or "",
+                "student_phone": student_phone or "",
+                "school": school_name or "",
+                "grade": grade_val,
+                "profile_photo_url": profile_photo_url,
             }
 
             # ── Homework source ──

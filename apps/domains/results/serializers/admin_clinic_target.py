@@ -50,6 +50,14 @@ class AdminClinicTargetSerializer(serializers.Serializer):
     lecture_color = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     lecture_chip_label = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     name_highlight_clinic_target = serializers.BooleanField(default=False)
+
+    # ✅ 학생 프로필 필드 (ClinicTargetSelectModal 테이블 컬럼용)
+    parent_phone = serializers.CharField(required=False, default="", allow_blank=True)
+    student_phone = serializers.CharField(required=False, default="", allow_blank=True)
+    school = serializers.CharField(required=False, default="", allow_blank=True)
+    grade = serializers.IntegerField(required=False, allow_null=True)
+    profile_photo_url = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
     max_score = serializers.FloatField(required=False, allow_null=True)
     latest_attempt_index = serializers.IntegerField(required=False, default=1)
     attempt_history = serializers.ListField(

@@ -43,10 +43,26 @@ def _resolve_lecture_info(enrollment_id: Optional[int]) -> Dict[str, Any]:
             return {
                 "lecture_title": getattr(lec, "title", ""),
                 "lecture_color": getattr(lec, "color", None),
+                "lecture_chip_label": getattr(lec, "chip_label", None),
             }
     except Exception:
         pass
     return {}
+
+
+def _get_photo_url(student) -> Optional[str]:
+    """R2 presigned URL for student profile photo."""
+    if not student:
+        return None
+    r2_key = getattr(student, "profile_photo_r2_key", None) or ""
+    if not r2_key:
+        return None
+    try:
+        from django.conf import settings
+        from libs.r2_client.presign import create_presigned_get_url
+        return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
+    except Exception:
+        return None
 
 
 class HomeworkSubmissionsListView(APIView):
@@ -71,13 +87,48 @@ class HomeworkSubmissionsListView(APIView):
                 target_type=Submission.TargetType.HOMEWORK,
                 target_id=int(homework_id),
             )
+            .select_related("enrollment__student", "enrollment__lecture")
             .order_by("-id")[:200]
         )
 
+        # ✅ 클리닉 하이라이트 일괄 계산
+        submissions_list = list(qs)
+        enrollment_ids = set()
+        for s in submissions_list:
+            eid = getattr(s, "enrollment_id", None)
+            if eid:
+                enrollment_ids.add(int(eid))
+
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+        highlight_map = compute_clinic_highlight_map(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+        ) if enrollment_ids else {}
+
         items: list[Dict[str, Any]] = []
-        for s in qs:
+        for s in submissions_list:
             enrollment_id = getattr(s, "enrollment_id", None)
-            lecture_info = _resolve_lecture_info(enrollment_id)
+            enrollment = getattr(s, "enrollment", None)
+            student = getattr(enrollment, "student", None) if enrollment else None
+            lecture = getattr(enrollment, "lecture", None) if enrollment else None
+
+            # student name
+            student_name = ""
+            if student:
+                student_name = getattr(student, "name", "") or ""
+            if not student_name:
+                student_name = _resolve_student_name(enrollment_id)
+
+            # lecture info
+            if lecture:
+                lecture_info = {
+                    "lecture_title": getattr(lecture, "title", ""),
+                    "lecture_color": getattr(lecture, "color", None),
+                    "lecture_chip_label": getattr(lecture, "chip_label", None),
+                }
+            else:
+                lecture_info = _resolve_lecture_info(enrollment_id)
+
             source = getattr(s, "source", "")
             file_key = getattr(s, "file_key", None) or ""
             file_type = ""
@@ -90,13 +141,15 @@ class HomeworkSubmissionsListView(APIView):
                 {
                     "id": int(s.id),
                     "enrollment_id": int(enrollment_id) if enrollment_id else 0,
-                    "student_name": _resolve_student_name(enrollment_id),
+                    "student_name": student_name,
                     "status": str(getattr(s, "status", "")),
                     "source": str(source),
                     "file_key": file_key,
                     "file_type": file_type,
                     "file_size": file_size,
                     "created_at": s.created_at.isoformat() if hasattr(s, "created_at") and s.created_at else None,
+                    "profile_photo_url": _get_photo_url(student),
+                    "name_highlight_clinic_target": highlight_map.get(int(enrollment_id), False) if enrollment_id else False,
                     **lecture_info,
                 }
             )

@@ -63,9 +63,55 @@ class StudentListSerializer(serializers.ModelSerializer):
                 pass
         return None
 
+    def _get_clinic_highlight_map(self):
+        """클리닉 하이라이트 맵을 context에서 가져오거나 lazy 계산"""
+        ctx = self.context
+        if "_clinic_highlight_map" in ctx:
+            return ctx["_clinic_highlight_map"]
+
+        # 첫 호출 시 일괄 계산
+        request = ctx.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        if not tenant:
+            ctx["_clinic_highlight_map"] = {}
+            return {}
+
+        # list serializer인 경우 parent의 instance에서 enrollment_ids 수집
+        enrollment_ids = set()
+        instances = getattr(self.parent, "instance", None) if self.parent else None
+        if instances is not None and hasattr(instances, "__iter__"):
+            for student in instances:
+                for enr in getattr(student, "enrollments", {}).all():
+                    enrollment_ids.add(int(enr.id))
+        elif hasattr(self, "instance") and self.instance:
+            for enr in getattr(self.instance, "enrollments", {}).all():
+                enrollment_ids.add(int(enr.id))
+
+        if not enrollment_ids:
+            ctx["_clinic_highlight_map"] = {}
+            return {}
+
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+        highlight_map = compute_clinic_highlight_map(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+        )
+        ctx["_clinic_highlight_map"] = highlight_map
+        return highlight_map
+
     def to_representation(self, obj):
         data = super().to_representation(obj)
         data["profile_photo_url"] = self.get_profile_photo_url(obj)
+
+        # 클리닉 하이라이트: 해당 학생의 활성 enrollment 중 하나라도 True이면 True
+        highlight_map = self._get_clinic_highlight_map()
+        is_highlight = False
+        for enr in getattr(obj, "enrollments", {}).all():
+            if highlight_map.get(int(enr.id), False):
+                is_highlight = True
+                break
+        data["name_highlight_clinic_target"] = is_highlight
+
         return data
 
     def get_is_enrolled(self, obj):

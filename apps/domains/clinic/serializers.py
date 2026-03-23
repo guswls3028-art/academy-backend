@@ -105,11 +105,12 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     session_duration_minutes = serializers.SerializerMethodField()
     session_end_time = serializers.SerializerMethodField()
 
-    # ✅ 학생 SSOT 표시용: 강의 딱지 + 클리닉 하이라이트
+    # ✅ 학생 SSOT 표시용: 강의 딱지 + 클리닉 하이라이트 + 아바타
     lecture_title = serializers.SerializerMethodField()
     lecture_color = serializers.SerializerMethodField()
     lecture_chip_label = serializers.SerializerMethodField()
     name_highlight_clinic_target = serializers.SerializerMethodField()
+    profile_photo_url = serializers.SerializerMethodField()
 
     # ✅ [ADD] 변경자 이름 노출
     status_changed_by_name = serializers.CharField(
@@ -186,6 +187,21 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         return ClinicLink.objects.filter(
             enrollment_id=eid, is_auto=True, resolved_at__isnull=True,
         ).exists()
+
+    def get_profile_photo_url(self, obj):
+        """학생 프로필 사진 R2 presigned URL"""
+        student = getattr(obj, "student", None)
+        if not student:
+            return None
+        r2_key = getattr(student, "profile_photo_r2_key", None) or ""
+        if not r2_key:
+            return None
+        try:
+            from django.conf import settings
+            from libs.r2_client.presign import create_presigned_get_url
+            return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
+        except Exception:
+            return None
 
 
 class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
