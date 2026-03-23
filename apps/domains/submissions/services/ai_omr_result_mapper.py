@@ -88,8 +88,17 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         return submission.id
 
     status = payload.get("status")
-    result = payload.get("result") or {}
     error = payload.get("error")
+
+    # AI worker는 version/answers/identifier를 payload 최상위에 보낸다.
+    # 구버전 호환: payload["result"] 하위에 있을 수도 있다.
+    _nested = payload.get("result")
+    if isinstance(_nested, dict) and _nested:
+        result = _nested
+    else:
+        # payload 최상위에서 AI 결과 필드만 추출
+        _exclude = {"submission_id", "status", "error"}
+        result = {k: v for k, v in payload.items() if k not in _exclude}
 
     meta = dict(submission.meta or {})
     meta["ai_result"] = {
