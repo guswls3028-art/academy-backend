@@ -146,5 +146,10 @@ def dispatch_submission(submission: Submission) -> None:
     # ✅ 2) 워커 EC2 깨우기 (API 서버 책임)
     # - job이 실제로 생긴 뒤에만 호출
     # - 중복 호출돼도 EC2는 idempotent
+    # - 워커 기동 실패는 dispatch를 롤백시키지 않음
+    #   (SQS에 job이 있으면 워커가 나중에 켜졌을 때 처리)
     # ==================================================
-    start_ai_worker_instance()
+    try:
+        start_ai_worker_instance()
+    except Exception:
+        logger.warning("[dispatcher] AI 워커 EC2 기동 실패 — job은 SQS에 정상 등록됨, 워커 수동 확인 필요")
