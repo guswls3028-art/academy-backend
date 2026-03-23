@@ -208,9 +208,14 @@ class AISQSQueue:
             else:
                 job_data = body
             
-            # 메시지 형식 검증
+            # 메시지 형식 검증 — 잘못된 메시지는 삭제하여 큐 블로킹 방지
             if not isinstance(job_data, dict) or "job_id" not in job_data:
-                logger.error("Invalid message format: %s", job_data)
+                logger.error("Invalid message format (deleting): %s", job_data)
+                if receipt_handle:
+                    try:
+                        self.queue_client.delete_message(queue_name=queue_name, receipt_handle=receipt_handle)
+                    except Exception:
+                        pass
                 return None
             
             # ReceiptHandle 필수 (SQS)
