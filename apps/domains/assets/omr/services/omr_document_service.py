@@ -6,6 +6,7 @@ OMR Document 서비스 — OMRDocument DTO 생성 SSOT
 """
 from __future__ import annotations
 
+import base64
 import logging
 import os
 from typing import Optional
@@ -79,7 +80,7 @@ class OMRDocumentService:
         # 로고 & 브랜드 컬러 resolve
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
         if not logo_url:
-            logo_url = "/omr-default-logo.svg"
+            logo_url = OMRDocumentService._resolve_static_logo_data_uri(tenant)
         brand_color = OMRDocumentService._resolve_brand_color(tenant)
 
         return OMRDocument(
@@ -107,7 +108,7 @@ class OMRDocumentService:
         """도구 페이지용. 시험 없이 직접 파라미터로 OMRDocument 생성."""
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
         if not logo_url:
-            logo_url = "/omr-default-logo.svg"
+            logo_url = OMRDocumentService._resolve_static_logo_data_uri(tenant)
         brand_color = OMRDocumentService._resolve_brand_color(tenant)
 
         return OMRDocument(
@@ -145,6 +146,26 @@ class OMRDocumentService:
             return None
 
     @staticmethod
+    def _resolve_static_logo_data_uri(tenant) -> Optional[str]:
+        """테넌트 정적 로고 또는 기본 로고를 base64 data URI로 반환 (HTML 프리뷰용)."""
+        try:
+            code = getattr(tenant, "code", None)
+            logo_path = None
+            if code:
+                tenant_path = os.path.join(_TENANT_LOGOS_DIR, f"{code}.png")
+                if os.path.isfile(tenant_path):
+                    logo_path = tenant_path
+            if not logo_path and os.path.isfile(_DEFAULT_LOGO_PATH):
+                logo_path = _DEFAULT_LOGO_PATH
+            if logo_path:
+                with open(logo_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("ascii")
+                return f"data:image/png;base64,{b64}"
+        except Exception:
+            logger.warning("정적 로고 data URI 변환 실패", exc_info=True)
+        return None
+
+    @staticmethod
     def _resolve_brand_color(tenant) -> Optional[str]:
         """테넌트 브랜드 프라이머리 컬러 resolve."""
         try:
@@ -179,13 +200,23 @@ class OMRDocumentService:
             except Exception:
                 logger.warning("OMR 로고 다운로드 실패: %s", doc.logo_url, exc_info=True)
 
-        # 2) 테넌트 정적 로고 (로그인 페이지와 동일한 로고 파일)
+        # 2) data URI (정적 로고가 base64로 이미 임베드된 경우)
+        if doc.logo_url and doc.logo_url.startswith("data:"):
+            try:
+                header, b64_data = doc.logo_url.split(",", 1)
+                mime = header.split(":")[1].split(";")[0]
+                img_bytes = base64.b64decode(b64_data)
+                return doc.with_logo_bytes(img_bytes, mime)
+            except Exception:
+                logger.warning("data URI 로고 디코딩 실패", exc_info=True)
+
+        # 3) 테넌트 정적 로고 (로그인 페이지와 동일한 로고 파일)
         if tenant:
             result = OMRDocumentService._apply_tenant_static_logo(doc, tenant)
             if result is not None:
                 return result
 
-        # 3) 기본 로고
+        # 4) 기본 로고
         return OMRDocumentService._apply_default_logo(doc)
 
     @staticmethod
