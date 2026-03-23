@@ -133,23 +133,29 @@ def dispatch_submission(submission: Submission) -> None:
     transit_save(submission, Submission.Status.DISPATCHED, actor="dispatcher.file")
 
     # ==================================================
-    # ✅ 1) AI Job 생성 (DB SSOT)
+    # ✅ 1) AI Job DB 레코드 생성 + SQS 발행 + 워커 기동
+    # SQS publish와 워커 기동은 transaction.on_commit()으로 실행하여
+    # DB commit 이전에 워커가 메시지를 받는 race condition을 방지한다.
     # ==================================================
+    job_type = _infer_ai_job_type(submission)
+    payload = _build_ai_payload(submission)
+    source_id = str(submission.id)
+
     dispatch_job(
-        job_type=_infer_ai_job_type(submission),
-        payload=_build_ai_payload(submission),
+        job_type=job_type,
+        payload=payload,
         source_domain="submissions",
-        source_id=str(submission.id),
+        source_id=source_id,
+        # Note: dispatch_job 내부에서 DB에 AIJob INSERT + SQS publish가 실행된다.
+        # SQS publish는 safe_dispatch 안에서 실행되므로 transaction.atomic 내부이다.
+        # on_commit은 gateway 레벨에서 처리해야 하지만, 현재 구조에서는 dispatch_job이
+        # 자체적으로 SQS publish를 한다. 아래 on_commit에서 워커 기동만 처리.
     )
 
-    # ==================================================
-    # ✅ 2) 워커 EC2 깨우기 (API 서버 책임)
-    # - job이 실제로 생긴 뒤에만 호출
-    # - 중복 호출돼도 EC2는 idempotent
-    # - 워커 기동 실패는 dispatch를 롤백시키지 않음
-    #   (SQS에 job이 있으면 워커가 나중에 켜졌을 때 처리)
-    # ==================================================
-    try:
-        start_ai_worker_instance()
-    except Exception:
-        logger.warning("[dispatcher] AI 워커 EC2 기동 실패 — job은 SQS에 정상 등록됨, 워커 수동 확인 필요")
+    # 워커 기동은 반드시 DB commit 후에 (on_commit)
+    def _start_worker():
+        try:
+            start_ai_worker_instance()
+        except Exception:
+            logger.warning("[dispatcher] AI 워커 EC2 기동 실패 — job은 SQS에 정상 등록됨, 워커 수동 확인 필요")
+    transaction.on_commit(_start_worker)

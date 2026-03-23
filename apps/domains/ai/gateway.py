@@ -17,6 +17,18 @@ from apps.domains.ai.services.pre_validation import validate_input_for_basic
 logger = logging.getLogger(__name__)
 
 
+def _publish_after_commit(job: AIJob, job_model) -> None:
+    """DB commit 후 SQS에 job을 publish. 실패 시 job을 FAILED로 마킹."""
+    try:
+        publish_job(job)
+    except Exception as e:
+        logger.exception("SQS publish failed after commit: job_id=%s error=%s", job.id, e)
+        try:
+            ai_repo.job_save_failed(job_model, str(e), str(e))
+        except Exception:
+            pass
+
+
 def dispatch_job(
     *,
     job_type: AIJobType,
@@ -129,11 +141,10 @@ def dispatch_job(
                 source_id=source_id,
             )
 
-        try:
-            publish_job(job)
-        except Exception as e:
-            ai_repo.job_save_failed(job_model, str(e), str(e))
-            raise
+        # SQS publish는 DB commit 후에 실행 (race condition 방지)
+        # 워커가 SQS 메시지를 받았을 때 DB에 AIJob row가 이미 있어야 한다.
+        from django.db import transaction as _txn
+        _txn.on_commit(lambda: _publish_after_commit(job, job_model))
 
         return {"ok": True, "job_id": job.id, "type": job.type}
 
