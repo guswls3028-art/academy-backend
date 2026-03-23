@@ -253,13 +253,13 @@ def handle_ai_job(job: AIJob) -> AIResult:
             # 3) mode 정책
             _record_progress(job.id, "aligning", 45, step_index=4, step_total=7, step_name_display="정렬", step_percent=0, tenant_id=tenant_id)
             if mode == "photo":
-                warped = warp_to_a4_landscape(img_bgr)
+                warped = warp_to_a4_landscape(image_bgr=img_bgr)
                 if warped is None:
                     return AIResult.failed(job.id, "warp_failed_for_photo_mode")
                 aligned = warped
 
             elif mode == "auto":
-                warped = warp_to_a4_landscape(img_bgr)
+                warped = warp_to_a4_landscape(image_bgr=img_bgr)
                 if warped is not None:
                     aligned = warped
             _record_progress(job.id, "aligning", 55, step_index=4, step_total=7, step_name_display="정렬", step_percent=100, tenant_id=tenant_id)
