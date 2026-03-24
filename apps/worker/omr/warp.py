@@ -106,7 +106,10 @@ def _get_marker_dst_points(
     with 2D coordinate arrays.
     """
     markers_meta = meta.get("markers") or {}
-    corners_meta = markers_meta.get("corners") or {}
+    if any(k in markers_meta for k in ("TL", "TR", "BL", "BR")):
+        corners_meta = markers_meta
+    else:
+        corners_meta = markers_meta.get("corners") or {}
     page = meta.get("page") or {}
     size = page.get("size") or page
     page_w_mm = float(size.get("width") or 297.0)

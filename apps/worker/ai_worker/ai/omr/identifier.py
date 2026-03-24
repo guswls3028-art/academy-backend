@@ -40,7 +40,7 @@ class IdentifierConfigV1:
     - Local anchor alignment for v9 meta
     """
     # ROI 확장 계수: r * k
-    roi_expand_k: float = 1.5
+    roi_expand_k: float = 1.2
     # blank 판단: 해당 digit에서 최고 z-score 기반
     blank_threshold: float = 0.06
     # ambiguous 판단: gap 기준
@@ -153,17 +153,20 @@ def _detect_id_anchors(
     Detect identifier anchor squares and compute local affine transform.
     Returns 2x3 affine matrix or None.
     """
-    top_anchor = anchors_meta.get("top")
-    bottom_anchor = anchors_meta.get("bottom")
+    # v9 meta uses "TL"/"BR" keys with nested "center"
+    top_anchor = anchors_meta.get("TL") or anchors_meta.get("top")
+    bottom_anchor = anchors_meta.get("BR") or anchors_meta.get("bottom")
     if not top_anchor or not bottom_anchor:
         return None
 
     try:
+        top_c = top_anchor.get("center", top_anchor)
+        bot_c = bottom_anchor.get("center", bottom_anchor)
         top_exp_x, top_exp_y = scale.mm_to_px_point(
-            float(top_anchor["x"]), float(top_anchor["y"])
+            float(top_c["x"]), float(top_c["y"])
         )
         bot_exp_x, bot_exp_y = scale.mm_to_px_point(
-            float(bottom_anchor["x"]), float(bottom_anchor["y"])
+            float(bot_c["x"]), float(bot_c["y"])
         )
 
         top_det = _detect_anchor_square(gray, top_exp_x, top_exp_y, scale)

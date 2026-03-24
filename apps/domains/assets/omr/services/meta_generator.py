@@ -157,6 +157,7 @@ def build_omr_meta(
             q_entry = {
                 "question_number": q_num,
                 "type": "choice",
+                "column": c,  # column index for per-column alignment
                 "roi": {
                     "x": round(col_x, 2),
                     "y": round(row_cy - row_h / 2, 2),

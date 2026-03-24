@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 class AnswerDetectConfig:
     """객관식 버블 감지 설정."""
     # ROI 확장 계수 (버블 반지름 x k)
-    roi_expand_k: float = 1.5
+    roi_expand_k: float = 1.2
     # blank 판단: 최고 score가 이 값 미만이면 blank
     blank_threshold: float = 0.08
     # ambiguous 판단: top-2 gap이 이 값 미만이면 ambiguous
@@ -40,8 +40,8 @@ class AnswerDetectConfig:
     use_adaptive_threshold: bool = True
     # adaptive threshold block size (must be odd)
     adaptive_block_size: int = 15
-    # adaptive threshold C constant
-    adaptive_c: int = 8
+    # adaptive threshold C constant (낮을수록 연한 마킹 감지 가능, 너무 낮으면 노이즈 증가)
+    adaptive_c: int = 5
     # elliptical mask 사용 여부
     use_elliptical_mask: bool = True
     # multi-feature scoring 사용 여부
@@ -163,11 +163,13 @@ def _compute_column_transforms(
 
         try:
             # Expected anchor positions (from meta, mm -> px)
+            top_c = top_anchor.get("center", top_anchor)
+            bot_c = bottom_anchor.get("center", bottom_anchor)
             top_exp_x, top_exp_y = scale.mm_to_px_point(
-                float(top_anchor["x"]), float(top_anchor["y"])
+                float(top_c["x"]), float(top_c["y"])
             )
             bot_exp_x, bot_exp_y = scale.mm_to_px_point(
-                float(bottom_anchor["x"]), float(bottom_anchor["y"])
+                float(bot_c["x"]), float(bot_c["y"])
             )
 
             # Detect actual anchor positions in the image
