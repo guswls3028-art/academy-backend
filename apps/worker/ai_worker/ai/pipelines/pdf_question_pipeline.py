@@ -263,9 +263,15 @@ def _is_non_question_page(blocks: List[Dict]) -> bool:
     if has_choices or has_question_indicator:
         return False  # 문항 페이지
 
-    # 해설지 감지: 설명조 문장이 많고 보기/문항지시문 없으면 해설지
-    explanation_markers = re.findall(r"(?:이므로|때문이다|따라서|그러므로|해설)", full_text)
-    if len(explanation_markers) >= 3:
+    # 해설지 감지: "1. ⑴ ...이다. ⑶ ...이다." 형태
+    # 문항 번호 바로 뒤에 ⑴⑵⑶ 소문항이 오고, 보기(①②③) 없이 서술만 있으면 해설
+    sub_q_pattern = re.findall(r"\d+\.\s*[⑴⑵⑶⑷⑸⑹⑺⑻⑼]", full_text)
+    if len(sub_q_pattern) >= 3 and not has_question_indicator:
+        return True
+
+    # 설명조 종결어미 빈도 기반 해설지 감지
+    explanation_markers = re.findall(r"(?:이므로|때문이다|따라서|그러므로|해설|나타난다|관측된다|생성된다)", full_text)
+    if len(explanation_markers) >= 3 and not has_question_indicator:
         return True
 
     # 비문항 지표: 진도표, 강의방침, 안내 등
