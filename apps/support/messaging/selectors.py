@@ -50,22 +50,18 @@ def resolve_freeform_template(tenant_id: int):
 def resolve_category_template(tenant_id: int, extra_vars: dict = None):
     """
     카테고리별 승인 템플릿 fallback.
-    extra_vars에 시험명/시험성적 등이 있으면 grades 카테고리 승인 템플릿 반환.
-    자유양식 없을 때 성적 공개 등 특정 목적 템플릿으로 대체.
+    extra_vars에 시험성적이 있으면 #{시험성적} 변수를 가진 APPROVED grades 템플릿 반환.
     """
     from apps.support.messaging.models import MessageTemplate
     from apps.support.messaging.policy import get_owner_tenant_id
 
-    if not extra_vars:
-        return None
-    # 성적 관련 변수가 있으면 grades 템플릿 찾기
-    has_score_vars = any(k in extra_vars for k in ("시험명", "시험성적", "강의명"))
-    if not has_score_vars:
+    if not extra_vars or "시험성적" not in extra_vars:
         return None
     for tid in [tenant_id, get_owner_tenant_id()]:
         tpl = MessageTemplate.objects.filter(
-            tenant_id=tid, solapi_status="APPROVED", category="grades",
-        ).exclude(body__contains="#{공지내용}").first()
+            tenant_id=tid, solapi_status="APPROVED",
+            body__contains="#{시험성적}",
+        ).first()
         if tpl:
             return tpl
     return None
