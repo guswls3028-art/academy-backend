@@ -29,10 +29,17 @@ def warp_to_a4_landscape(
     촬영/프레임 이미지에서 문서(답안지) 외곽을 찾아 A4 landscape로 워프.
     성공하면 "페이지 전체 = 이미지 전체"가 되므로 meta ROI를 그대로 적용 가능.
 
+    portrait 이미지(세로>가로)는 먼저 90도 반시계 회전하여 landscape로 변환.
+
     실패하면 None 반환 -> caller가 fallback(yolo/opencv segmentation 등) 처리
     """
     if image_bgr is None or image_bgr.size == 0:
         return None
+
+    h, w = image_bgr.shape[:2]
+    if h > w:
+        # Portrait → landscape: 시계 90도 회전 (스캐너에서 세로로 스캔한 landscape 문서)
+        image_bgr = cv2.rotate(image_bgr, cv2.ROTATE_90_CLOCKWISE)
 
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)

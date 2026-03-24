@@ -131,6 +131,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             submission=submission,
             exam_question_id=int(eqid),
             defaults={
+                "tenant": submission.tenant,
                 "answer": "".join([str(x) for x in a.get("detected") or []]),
                 "meta": {
                     "omr": {

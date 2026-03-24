@@ -86,7 +86,11 @@ class Submission(TimestampModel):
                     status__in=[
                         "submitted", "dispatched", "extracting",
                         "answers_ready", "grading",
-                    ]
+                    ],
+                    # OMR batch upload: staff가 여러 학생 답안지를 업로드하므로
+                    # 같은 user+exam에 복수 active submission 허용 필요
+                    source__in=["online", "omr_manual", "homework_image",
+                                "homework_video", "ai_match"],
                 ),
                 name="unique_active_submission_per_target",
             ),
