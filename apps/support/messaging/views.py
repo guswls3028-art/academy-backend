@@ -510,10 +510,12 @@ class SendMessageView(APIView):
             name_2 = name[:2] if len(name) >= 2 else name
             name_3 = name[:3] if len(name) >= 3 else name
             site_url = get_tenant_site_url(request.tenant) or ""
+            academy_name = (tenant.name or "").strip()
             text = (
                 body_base.replace("#{학생이름}", name)
                 .replace("#{학생이름2}", name_2)
                 .replace("#{학생이름3}", name_3)
+                .replace("#{학원명}", academy_name)
                 .replace("#{사이트링크}", site_url)
                 .replace("#{공지내용}", user_custom_content)
                 .replace("#{내용}", user_custom_content)
@@ -533,6 +535,7 @@ class SendMessageView(APIView):
                     {"key": "학생이름", "value": name},
                     {"key": "학생이름2", "value": name_2},
                     {"key": "학생이름3", "value": name_3},
+                    {"key": "학원명", "value": academy_name},
                     {"key": "사이트링크", "value": site_url},
                 ]
                 if user_custom_content:
@@ -640,10 +643,12 @@ class SendMessageView(APIView):
             name_2 = name[:2] if len(name) >= 2 else name
             name_3 = name[:3] if len(name) >= 3 else name
             site_url = get_tenant_site_url(request.tenant) or ""
+            academy_name = (tenant.name or "").strip()
             text = (
                 body_base.replace("#{학생이름}", name)
                 .replace("#{학생이름2}", name_2)
                 .replace("#{학생이름3}", name_3)
+                .replace("#{학원명}", academy_name)
                 .replace("#{사이트링크}", site_url)
                 .replace("#{공지내용}", user_custom_content)
                 .replace("#{내용}", user_custom_content)
@@ -662,6 +667,7 @@ class SendMessageView(APIView):
                     {"key": "학생이름", "value": name},
                     {"key": "학생이름2", "value": name_2},
                     {"key": "학생이름3", "value": name_3},
+                    {"key": "학원명", "value": academy_name},
                     {"key": "사이트링크", "value": site_url},
                 ]
                 if user_custom_content:
