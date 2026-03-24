@@ -358,6 +358,18 @@ def _extract_candidates(
                     corner="",
                 )
 
+    def _has_all_corners() -> bool:
+        """Quick check if candidates cover all 4 corner regions."""
+        corners_hit = set()
+        for cand in seen.values():
+            cx, cy = cand.center
+            for corner_name, (xr, yr) in _CORNER_REGIONS.items():
+                x_lo, x_hi = xr[0] * img_w, xr[1] * img_w
+                y_lo, y_hi = yr[0] * img_h, yr[1] * img_h
+                if x_lo <= cx <= x_hi and y_lo <= cy <= y_hi:
+                    corners_hit.add(corner_name)
+        return len(corners_hit) >= 4
+
     # Strategy 1: Adaptive threshold + RETR_TREE
     binary_adapt = cv2.adaptiveThreshold(
         gray, 255,
@@ -371,6 +383,10 @@ def _extract_candidates(
     )
     _process(contours_a)
 
+    # Early exit: if we already have candidates in all 4 corners, skip extras
+    if _has_all_corners():
+        return list(seen.values())
+
     # Strategy 2: Otsu threshold + RETR_TREE
     _, binary_otsu = cv2.threshold(
         gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU,
@@ -379,6 +395,9 @@ def _extract_candidates(
         binary_otsu, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE,
     )
     _process(contours_o)
+
+    if _has_all_corners():
+        return list(seen.values())
 
     # Strategy 3: Fixed threshold + RETR_LIST (broad fallback)
     _, binary_fix = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY_INV)
