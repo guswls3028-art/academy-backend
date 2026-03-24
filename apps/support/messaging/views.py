@@ -474,6 +474,15 @@ class SendMessageView(APIView):
                 if not subject_base:
                     subject_base = (freeform.subject or "").strip()
 
+        # 자유양식 없으면 카테고리별 승인 템플릿 fallback (성적 공개 등)
+        alimtalk_extra_vars = data.get("alimtalk_extra_vars") or {}
+        if message_mode in ("alimtalk", "both") and not solapi_template_id:
+            from apps.support.messaging.selectors import resolve_category_template
+            category_tpl = resolve_category_template(tenant.id, alimtalk_extra_vars)
+            if category_tpl:
+                t = category_tpl
+                solapi_template_id = (category_tpl.solapi_template_id or "").strip()
+
         if message_mode in ("alimtalk", "both") and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
             return Response(
                 {"detail": "알림톡/폴백 모드는 검수 승인된 템플릿이 필요합니다. 템플릿을 선택하거나 SMS만 모드로 발송하세요."},
@@ -509,9 +518,10 @@ class SendMessageView(APIView):
                 .replace("#{공지내용}", user_custom_content)
                 .replace("#{내용}", user_custom_content)
             )
-            # Context-dependent variables not available in manual send — replace with empty string
+            # Context-dependent variables: 추가 변수에 있으면 치환, 없으면 빈 문자열
             for var in ("강의명", "차시명", "시험명", "과제명", "클리닉명", "장소", "날짜", "시간", "시험성적", "클리닉합불"):
-                text = text.replace(f"#{{{var}}}", "")
+                val = alimtalk_extra_vars.get(var, "")
+                text = text.replace(f"#{{{var}}}", val)
             if subject_base:
                 text = subject_base + "\n" + text
 
@@ -527,8 +537,11 @@ class SendMessageView(APIView):
                 ]
                 if user_custom_content:
                     alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
-                    # 하위호환: 구버전 #{내용} 변수 템플릿용
                     alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
+                # 추가 변수 (성적 발송 등 카테고리별 템플릿 변수)
+                for var_key, var_val in alimtalk_extra_vars.items():
+                    if var_val and var_key not in ("학생이름", "학생이름2", "학생이름3", "사이트링크"):
+                        alimtalk_replacements.append({"key": var_key, "value": str(var_val)})
 
             try:
                 ok = enqueue_sms(

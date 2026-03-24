@@ -162,6 +162,12 @@ class SendMessageRequestSerializer(serializers.Serializer):
     template_id = serializers.IntegerField(required=False, allow_null=True)
     raw_body = serializers.CharField(required=False, allow_blank=True)
     raw_subject = serializers.CharField(required=False, allow_blank=True, default="")
+    alimtalk_extra_vars = serializers.DictField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        default=dict,
+        help_text="알림톡 추가 치환 변수 (예: {시험명: '수학', 시험성적: '80/100'})",
+    )
 
     def validate(self, attrs):
         send_to = attrs.get("send_to") or "parent"
