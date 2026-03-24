@@ -222,7 +222,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
             import cv2  # type: ignore
 
             from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
-            from apps.worker.omr.warp import warp_to_a4_landscape
+            from apps.worker.omr.warp import align_to_a4_landscape
             from apps.worker.ai_worker.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
             from apps.domains.assets.omr.services.meta_generator import build_omr_meta
 
@@ -258,18 +258,12 @@ def handle_ai_job(job: AIJob) -> AIResult:
 
             aligned = img_bgr
 
-            # 3) mode 정책
+            # 3) v9 정렬 (marker homography → contour warp → rotation fallback)
             _record_progress(job.id, "aligning", 45, step_index=4, step_total=7, step_name_display="정렬", step_percent=0, tenant_id=tenant_id)
-            if mode == "photo":
-                warped = warp_to_a4_landscape(image_bgr=img_bgr)
-                if warped is None:
-                    return AIResult.failed(job.id, "warp_failed_for_photo_mode")
-                aligned = warped
-
-            elif mode == "auto":
-                warped = warp_to_a4_landscape(image_bgr=img_bgr)
-                if warped is not None:
-                    aligned = warped
+            align_result = align_to_a4_landscape(image_bgr=img_bgr, meta=meta)
+            aligned = align_result.image
+            if mode == "photo" and not align_result.success:
+                return AIResult.failed(job.id, f"alignment_failed_for_photo_mode (method={align_result.method})")
             _record_progress(job.id, "aligning", 55, step_index=4, step_total=7, step_name_display="정렬", step_percent=100, tenant_id=tenant_id)
 
             # 4) identifier 감지
@@ -296,9 +290,10 @@ def handle_ai_job(job: AIJob) -> AIResult:
             return AIResult.done(
                 job.id,
                 {
-                    "version": "v8",
+                    "version": "v9",
                     "mode": mode,
-                    "aligned": bool(aligned is not img_bgr),
+                    "aligned": align_result.success,
+                    "alignment_method": align_result.method,
                     "identifier": ident,
                     "answers": answers,
                 },
