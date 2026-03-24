@@ -246,6 +246,17 @@ def _is_non_question_page(blocks: List[Dict]) -> bool:
     if len(answer_pattern) >= 5:
         return True
 
+    # 해설지 감지 (정답지 다음으로 우선): "번호. ⑴ ...이다." 소문항 패턴
+    sub_q_pattern = re.findall(r"\d+\.\s*[⑴⑵⑶⑷⑸⑹⑺⑻⑼]", full_text)
+    if len(sub_q_pattern) >= 2:
+        # 문항 지시문이 없으면 해설지 확정
+        question_indicators_early = [
+            "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
+            "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
+        ]
+        if not any(kw in full_text for kw in question_indicators_early):
+            return True
+
     # 문항 페이지 강력 지표: 보기 번호 패턴이 있으면 문항 페이지
     choice_patterns = [
         "①", "②", "③", "④", "⑤",
@@ -262,12 +273,6 @@ def _is_non_question_page(blocks: List[Dict]) -> bool:
 
     if has_choices or has_question_indicator:
         return False  # 문항 페이지
-
-    # 해설지 감지: "1. ⑴ ...이다. ⑶ ...이다." 형태
-    # 문항 번호 바로 뒤에 ⑴⑵⑶ 소문항이 오고, 보기(①②③) 없이 서술만 있으면 해설
-    sub_q_pattern = re.findall(r"\d+\.\s*[⑴⑵⑶⑷⑸⑹⑺⑻⑼]", full_text)
-    if len(sub_q_pattern) >= 3 and not has_question_indicator:
-        return True
 
     # 설명조 종결어미 빈도 기반 해설지 감지
     explanation_markers = re.findall(r"(?:이므로|때문이다|따라서|그러므로|해설|나타난다|관측된다|생성된다)", full_text)
