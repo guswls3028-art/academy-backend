@@ -1,5 +1,6 @@
 # PATH: apps/domains/ai/services/worker_instance_control.py
 
+import os
 import boto3
 import logging
 
@@ -11,6 +12,18 @@ REGION = "ap-northeast-2"
 AI_WORKER_ASG_NAME = "academy-v1-ai-worker-asg"
 
 
+def _aws_client(service: str):
+    """AWS 클라이언트 생성. ROOT 키가 있으면 명시적 사용 (R2 키 충돌 방지)."""
+    root_key = os.getenv("AWS_ROOT_ACCESS_KEY_ID")
+    root_secret = os.getenv("AWS_ROOT_SECRET_ACCESS_KEY")
+    if root_key and root_secret:
+        return boto3.client(
+            service, region_name=REGION,
+            aws_access_key_id=root_key, aws_secret_access_key=root_secret,
+        )
+    return boto3.client(service, region_name=REGION)
+
+
 def start_ai_worker_instance():
     """
     API 서버에서 호출
@@ -19,7 +32,7 @@ def start_ai_worker_instance():
     - 이미 running이면 no-op (idempotent)
     """
     try:
-        asg = boto3.client("autoscaling", region_name=REGION)
+        asg = _aws_client("autoscaling")
         resp = asg.describe_auto_scaling_groups(
             AutoScalingGroupNames=[AI_WORKER_ASG_NAME]
         )
@@ -42,7 +55,7 @@ def start_ai_worker_instance():
             return
 
         # 인스턴스가 있으면 stopped 상태인지 확인하여 start
-        ec2 = boto3.client("ec2", region_name=REGION)
+        ec2 = _aws_client("ec2")
         for inst in instances:
             iid = inst["InstanceId"]
             ec2_resp = ec2.describe_instance_status(

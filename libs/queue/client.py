@@ -80,12 +80,24 @@ class QueueClient(ABC):
 
 class SQSQueueClient(QueueClient):
     """AWS SQS 기반 큐 클라이언트 (프로덕션용)"""
-    
+
     def __init__(self, region_name: Optional[str] = None):
         try:
             import boto3
             self.region_name = region_name or os.getenv("AWS_REGION", "ap-northeast-2")
-            self.sqs = boto3.client("sqs", region_name=self.region_name)
+            # AWS_ACCESS_KEY_ID가 R2(Cloudflare) 자격증명으로 설정될 수 있으므로
+            # AWS_ROOT_ACCESS_KEY_ID가 있으면 명시적으로 사용 (SQS는 AWS 서비스)
+            root_key = os.getenv("AWS_ROOT_ACCESS_KEY_ID")
+            root_secret = os.getenv("AWS_ROOT_SECRET_ACCESS_KEY")
+            if root_key and root_secret:
+                self.sqs = boto3.client(
+                    "sqs",
+                    region_name=self.region_name,
+                    aws_access_key_id=root_key,
+                    aws_secret_access_key=root_secret,
+                )
+            else:
+                self.sqs = boto3.client("sqs", region_name=self.region_name)
             logger.info(f"SQSQueueClient initialized: {self.region_name}")
         except ImportError:
             raise ImportError("boto3 package is required for SQSQueueClient")

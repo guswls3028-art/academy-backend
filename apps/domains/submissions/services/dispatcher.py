@@ -50,6 +50,17 @@ def _build_ai_payload(submission: Submission) -> Dict[str, Any]:
 
     sheet_id = _safe_int(payload.get("sheet_id"))
 
+    # sheet_id가 없으면 exam에서 자동 탐색
+    if not sheet_id and submission.target_type == "exam":
+        from apps.domains.exams.models import Exam
+        exam = Exam.objects.filter(id=int(submission.target_id)).first()
+        if exam:
+            sheet = Sheet.objects.filter(exam=exam).first()
+            if not sheet and getattr(exam, "template_exam_id", None):
+                sheet = Sheet.objects.filter(exam_id=exam.template_exam_id).first()
+            if sheet:
+                sheet_id = sheet.id
+
     questions_payload = []
     if sheet_id:
         qs = ExamQuestion.objects.filter(sheet_id=sheet_id).order_by("number")

@@ -8,6 +8,7 @@ import cv2  # type: ignore
 import numpy as np  # type: ignore
 
 from apps.worker.ai_worker.ai.omr.meta_px import build_page_scale_from_meta, PageScale
+from apps.worker.ai_worker.ai.utils.image_resizer import resize_if_large
 
 
 BBox = Tuple[int, int, int, int]
