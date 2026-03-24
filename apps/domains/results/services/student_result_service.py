@@ -84,7 +84,9 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     data["is_pass"] = float(result.total_score) >= pass_score
 
     # 정답 공개 정책 적용
-    show_answers = exam.should_show_answers()
+    # 불합격 학생은 정답 비공개 (재시험 부정행위 방지)
+    is_pass = data["is_pass"]
+    show_answers = exam.should_show_answers() if is_pass else False
     data["answer_visibility"] = getattr(exam, "answer_visibility", "hidden")
     data["answers_visible"] = show_answers
 
