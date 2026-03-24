@@ -255,6 +255,18 @@ def _is_non_question_page(blocks: List[Dict]) -> bool:
     if has_choices or has_question_indicator:
         return False  # 문항 페이지
 
+    # 정답지 감지: "⑴ × ⑵ O" "⑴ ② ⑵ ④" 같은 정답 표기 패턴이 반복
+    import re
+    answer_pattern = re.findall(r"[⑴⑵⑶⑷⑸⑹⑺⑻⑼]\s*[×OX①②③④⑤]", full_text)
+    if len(answer_pattern) >= 5:
+        return True
+
+    # 해설지 감지: "~이므로", "~이다.", "~때문이다" 등 설명조 문장이 많고
+    # "옳은 것", "구하시오" 등 문항 지시문이 없으면 해설지
+    explanation_markers = re.findall(r"(?:이므로|때문이다|따라서|그러므로|해설)", full_text)
+    if len(explanation_markers) >= 5 and not has_choices and not has_question_indicator:
+        return True
+
     # 비문항 지표: 진도표, 강의방침, 안내 등
     non_question_indicators = [
         "진도", "운영 방침", "재시험", "클리닉", "홈페이지",
