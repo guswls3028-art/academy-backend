@@ -163,6 +163,9 @@ class ExamGradingService:
 
         try:
             from apps.domains.submissions.services.transition import transit_save
+            # answers_ready → grading → done (STATUS_FLOW SSOT 준수)
+            if submission.status == "answers_ready":
+                transit_save(submission, "grading", actor="ExamGradingService.auto_grade")
             transit_save(submission, "done", actor="ExamGradingService.auto_grade")
         except Exception:
             import logging
