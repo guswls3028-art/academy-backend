@@ -46,12 +46,28 @@ class PdfQuestionExtractView(APIView):
 
         exam_id = request.data.get("exam_id")
 
+        # Template exam만 문항 구조 변경 가능 — regular exam은 사전 차단
+        if exam_id:
+            try:
+                from apps.domains.exams.models import Exam
+                exam = Exam.objects.get(id=int(exam_id))
+                if exam.exam_type != Exam.ExamType.TEMPLATE:
+                    return Response(
+                        {"detail": "문항 분할은 템플릿 시험에서만 가능합니다."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            except Exam.DoesNotExist:
+                return Response(
+                    {"detail": "시험을 찾을 수 없습니다."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
         try:
             # Upload to R2
             name_hash = hashlib.md5(pdf_file.name.encode()).hexdigest()[:8]
             r2_key = f"tenants/{tenant.id}/exams/pdf-extract/{uuid.uuid4()}/{name_hash}_{pdf_file.name}"
             upload_fileobj_to_r2_storage(
-                file_obj=pdf_file,
+                fileobj=pdf_file,
                 key=r2_key,
                 content_type=pdf_file.content_type or "application/pdf",
             )

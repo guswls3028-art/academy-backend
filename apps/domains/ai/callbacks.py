@@ -31,6 +31,23 @@ def dispatch_ai_result_to_domain(
     AI Job 완료 후 도메인별 후속 처리 디스패처.
     source_domain에 따라 적절한 도메인 핸들러로 라우팅한다.
     """
+    # exams 도메인: question_segmentation 결과 처리
+    if source_domain == "exams":
+        try:
+            _handle_exam_ai_result(
+                job_id=job_id,
+                status=status,
+                result_payload=result_payload or {},
+                error=error,
+                source_id=source_id,
+            )
+        except Exception:
+            logger.exception(
+                "AI_CALLBACK_EXAM_FAILED | job_id=%s | source_id=%s",
+                job_id, source_id,
+            )
+        return
+
     if source_domain != "submissions":
         logger.debug(
             "AI_CALLBACK_SKIP | source_domain=%s job_id=%s (not submissions)",
@@ -138,6 +155,152 @@ def _handle_submission_ai_result(
             "AI_CALLBACK_GRADING_ERROR | submission_id=%s | job_id=%s",
             returned_id, job_id,
         )
+
+
+def _handle_exam_ai_result(
+    *,
+    job_id: str,
+    status: str,
+    result_payload: Dict[str, Any],
+    error: Optional[str],
+    source_id: Optional[str],
+) -> None:
+    """
+    Exam 도메인 AI 결과 처리 (question_segmentation).
+
+    결과에서 문항 박스 추출 → Sheet/ExamQuestion 자동 생성.
+    해설이 포함되어 있으면 QuestionExplanation도 생성.
+    """
+    if status == "FAILED":
+        logger.warning(
+            "AI_CALLBACK_EXAM_FAILED_STATUS | job_id=%s | error=%s",
+            job_id, error,
+        )
+        return
+
+    exam_id = result_payload.get("exam_id") or source_id
+    if not exam_id:
+        logger.warning("AI_CALLBACK_EXAM_NO_EXAM_ID | job_id=%s", job_id)
+        return
+
+    boxes = result_payload.get("boxes", [])
+    questions_data = result_payload.get("questions", [])
+    explanations_data = result_payload.get("explanations", [])
+
+    if not boxes and not questions_data:
+        logger.info(
+            "AI_CALLBACK_EXAM_NO_BOXES | job_id=%s | exam_id=%s",
+            job_id, exam_id,
+        )
+        return
+
+    try:
+        from django.db import transaction
+        from apps.domains.exams.models import Exam, Sheet, ExamQuestion, QuestionExplanation
+
+        with transaction.atomic():
+            exam = Exam.objects.select_for_update().get(id=int(exam_id))
+
+            # Template exam만 구조 변경 가능
+            if exam.exam_type != Exam.ExamType.TEMPLATE:
+                logger.warning(
+                    "AI_CALLBACK_EXAM_NOT_TEMPLATE | job_id=%s | exam_id=%s | type=%s",
+                    job_id, exam_id, exam.exam_type,
+                )
+                return
+
+            # Sheet 가져오기 또는 생성
+            sheet, _ = Sheet.objects.get_or_create(
+                exam=exam,
+                defaults={"name": "MAIN", "total_questions": 0},
+            )
+
+            # 문항 개수 결정
+            total = len(questions_data) if questions_data else len(boxes)
+            if total == 0:
+                return
+
+            # total_questions 동기화
+            if sheet.total_questions != total:
+                sheet.total_questions = total
+                sheet.save(update_fields=["total_questions", "updated_at"])
+
+            # 기존 문항 정리 (범위 밖 삭제)
+            existing_numbers = set(
+                ExamQuestion.objects.filter(sheet=sheet).values_list("number", flat=True)
+            )
+            new_numbers = set(range(1, total + 1))
+            to_delete = existing_numbers - new_numbers
+            if to_delete:
+                ExamQuestion.objects.filter(sheet=sheet, number__in=to_delete).delete()
+
+            # 문항 생성/갱신
+            created_questions = []
+            for idx in range(1, total + 1):
+                # questions_data가 있으면 사용, 없으면 boxes에서 직접
+                if questions_data and idx <= len(questions_data):
+                    q_data = questions_data[idx - 1]
+                    bbox = q_data.get("bbox", [0, 0, 0, 0])
+                    region_meta = {
+                        "x": int(bbox[0]) if len(bbox) > 0 else 0,
+                        "y": int(bbox[1]) if len(bbox) > 1 else 0,
+                        "w": int(bbox[2]) if len(bbox) > 2 else 0,
+                        "h": int(bbox[3]) if len(bbox) > 3 else 0,
+                    }
+                elif boxes and idx <= len(boxes):
+                    b = boxes[idx - 1]
+                    region_meta = {
+                        "x": int(b[0]) if len(b) > 0 else 0,
+                        "y": int(b[1]) if len(b) > 1 else 0,
+                        "w": int(b[2]) if len(b) > 2 else 0,
+                        "h": int(b[3]) if len(b) > 3 else 0,
+                    }
+                else:
+                    region_meta = {"x": 0, "y": 0, "w": 0, "h": 0}
+
+                obj, _ = ExamQuestion.objects.update_or_create(
+                    sheet=sheet,
+                    number=idx,
+                    defaults={"region_meta": region_meta},
+                )
+                created_questions.append(obj)
+
+            # 해설 생성 (있는 경우만)
+            if explanations_data:
+                # question_number → ExamQuestion 매핑
+                q_by_number = {q.number: q for q in created_questions}
+
+                for exp in explanations_data:
+                    q_num = exp.get("question_number")
+                    text = exp.get("text", "")
+                    if not q_num or q_num not in q_by_number:
+                        continue
+
+                    QuestionExplanation.objects.update_or_create(
+                        question=q_by_number[q_num],
+                        defaults={
+                            "text": text[:2000],
+                            "source": QuestionExplanation.Source.AI_EXTRACTED,
+                            "match_confidence": 1.0 if text else 0.5,
+                        },
+                    )
+
+            logger.info(
+                "AI_CALLBACK_EXAM_SUCCESS | job_id=%s | exam_id=%s | questions=%d | explanations=%d",
+                job_id, exam_id, len(created_questions), len(explanations_data),
+            )
+
+    except Exam.DoesNotExist:
+        logger.warning(
+            "AI_CALLBACK_EXAM_NOT_FOUND | job_id=%s | exam_id=%s",
+            job_id, exam_id,
+        )
+    except Exception:
+        logger.exception(
+            "AI_CALLBACK_EXAM_ERROR | job_id=%s | exam_id=%s",
+            job_id, exam_id,
+        )
+        raise
 
 
 def detect_stuck_dispatched() -> list[dict]:

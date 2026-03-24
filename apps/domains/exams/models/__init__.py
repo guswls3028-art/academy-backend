@@ -5,6 +5,7 @@ from .question import ExamQuestion
 from .answer_key import AnswerKey
 from .exam_asset import ExamAsset
 from .exam_enrollment import ExamEnrollment
+from .question_explanation import QuestionExplanation
 
 __all__ = [
     "Exam",
@@ -13,4 +14,5 @@ __all__ = [
     "AnswerKey",
     "ExamAsset",
     "ExamEnrollment",
+    "QuestionExplanation",
 ]

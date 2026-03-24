@@ -9,7 +9,7 @@ from apps.shared.contracts.ai_result import AIResult
 from apps.worker.ai_worker.ai.config import AIConfig
 from apps.worker.ai_worker.ai.ocr.google import google_ocr
 from apps.worker.ai_worker.ai.ocr.tesseract import tesseract_ocr
-from apps.worker.ai_worker.ai.detection.segment_dispatcher import segment_questions
+from apps.worker.ai_worker.ai.detection.segment_dispatcher import segment_questions, segment_questions_multipage
 from apps.worker.ai_worker.ai.handwriting.detector import analyze_handwriting
 from apps.worker.ai_worker.ai.embedding.service import get_embeddings
 from apps.worker.ai_worker.ai.problem.generator import generate_problem_from_ocr
@@ -111,15 +111,19 @@ def handle_ai_job(job: AIJob) -> AIResult:
             )
 
         # --------------------------------------------------
-        # Question segmentation (PDF 시험지 문항 분할)
+        # Question segmentation (PDF 시험지 문항 분할 + 해설 인식)
         # --------------------------------------------------
         if job.type == "question_segmentation":
-            # 3단계: 다운로드(완료), 분할, 완료
-            _record_progress(job.id, "segmenting", 50, step_index=2, step_total=3, step_name_display="문항분할", step_percent=0, tenant_id=tenant_id)
-            boxes = segment_questions(local_path)
-            _record_progress(job.id, "segmenting", 90, step_index=2, step_total=3, step_name_display="문항분할", step_percent=100, tenant_id=tenant_id)
-            _record_progress(job.id, "done", 100, step_index=3, step_total=3, step_name_display="완료", step_percent=100, tenant_id=tenant_id)
-            return AIResult.done(job.id, {"boxes": boxes})
+            from apps.worker.ai_worker.ai.pipelines.pdf_question_pipeline import (
+                run_pdf_question_pipeline,
+            )
+            return run_pdf_question_pipeline(
+                job=job,
+                local_path=local_path,
+                payload=payload,
+                tenant_id=tenant_id,
+                record_progress=_record_progress,
+            )
 
         # --------------------------------------------------
         # Handwriting analysis
