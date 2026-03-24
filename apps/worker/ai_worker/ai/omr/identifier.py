@@ -123,8 +123,9 @@ def detect_identifier_v1(
     if image_bgr is None or image_bgr.size == 0:
         return {"identifier": None, "digits": [], "confidence": 0.0, "status": "error"}
 
-    # 대용량 이미지 리사이징 (처리 전)
-    image_bgr, _ = resize_if_large(image_bgr, max_megapixels=4.0)
+    # OMR identifier: 작은 버블(3.6mm)의 fill 정확도를 위해 해상도 유지
+    # A4 300dpi(8.7MP)는 identifier 감지에 필요한 최소 해상도
+    image_bgr, _ = resize_if_large(image_bgr, max_megapixels=10.0)
     
     h, w = image_bgr.shape[:2]
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)

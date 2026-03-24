@@ -148,12 +148,19 @@ def _build_identifier_meta() -> Dict[str, Any]:
     grid_offset_x = (available_w - grid_w) / 2
     grid_start_x = lp_inner_x + sec_pad + grid_offset_x
 
+    # 실측 보정: HTML justify-content:center + border/padding 누적 차이로
+    # 계산 좌표 대비 실제 인쇄 좌표가 x+6mm, y-6mm 오프셋 존재.
+    # 실측 기준(300dpi A4 스캔 5장 교차검증):
+    #   digit 0 value=5: 계산 (18.9, 149.6) → 실측 (25.0, 143.8)
+    #   digit 1 value=2: 계산 (24.8, 132.2) → 실측 (30.7, 127.0)
+    grid_start_x += 6.0
+
     # Y: 하단에서 역산 (lp-note ~25mm, phone section ~71mm)
     note_h = 25.0
     phone_sec_h = 71.0
     note_top = CONTENT_Y + CONTENT_H - note_h
     phone_sec_top = note_top - phone_sec_h
-    bubbles_start_y = phone_sec_top + 14.5  # header + pad + write_cells + gap
+    bubbles_start_y = phone_sec_top + 14.5 - 8.3  # 실측 보정 -8.3mm (5장 교차검증)
 
     digits = []
     for d in range(ID_DIGITS):

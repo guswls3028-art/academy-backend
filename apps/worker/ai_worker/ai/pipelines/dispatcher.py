@@ -248,8 +248,12 @@ def handle_ai_job(job: AIJob) -> AIResult:
             if img_bgr is None:
                 return AIResult.failed(job.id, "cannot read image")
             
-            # 대용량 이미지 리사이징 (처리 전)
-            img_bgr, was_resized = resize_if_large(img_bgr, max_megapixels=4.0)
+            # OMR: 식별자 버블(3.6mm)의 fill 정확도를 위해 A4 300dpi 해상도 유지
+            # 다른 job type은 4MP로 제한하지만, OMR은 원본 해상도 필요
+            if job.type == "omr_grading":
+                img_bgr, was_resized = resize_if_large(img_bgr, max_megapixels=12.0)
+            else:
+                img_bgr, was_resized = resize_if_large(img_bgr, max_megapixels=4.0)
             _record_progress(job.id, "loading", 40, step_index=3, step_total=7, step_name_display="이미지로드", step_percent=100, tenant_id=tenant_id)
 
             aligned = img_bgr
