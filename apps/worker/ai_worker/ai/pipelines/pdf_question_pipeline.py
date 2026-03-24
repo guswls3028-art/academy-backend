@@ -68,8 +68,10 @@ def run_pdf_question_pipeline(
         tenant_id=tenant_id,
     )
 
+    # PDF/이미지 판별 + 페이지 이미지 렌더링 (크롭에 필요)
     seg_result = segment_questions_multipage(local_path)
     is_pdf = seg_result["is_pdf"]
+    pages = seg_result["pages"]  # [{page_index, image_path, boxes}, ...]
 
     record_progress(
         job.id, "analyzing", 20,
@@ -78,52 +80,78 @@ def run_pdf_question_pipeline(
         tenant_id=tenant_id,
     )
 
-    # Step 2: 문항 영역 세그멘테이션 (이미 segment_questions_multipage에서 완료)
+    # Step 2: 텍스트 추출 + 텍스트 기반 문항 분할 (PDF만)
     record_progress(
-        job.id, "segmenting", 40,
+        job.id, "segmenting", 35,
         step_index=2, step_total=total_steps,
-        step_name_display="문항 분할", step_percent=100,
-        tenant_id=tenant_id,
-    )
-
-    pages = seg_result["pages"]
-    total_boxes = seg_result["total_boxes"]
-    logger.info(
-        "PDF_QUESTION_PIPELINE | job_id=%s | pages=%d | total_boxes=%d | is_pdf=%s",
-        job.id, len(pages), total_boxes, is_pdf,
-    )
-
-    # Step 3: 텍스트 블록 추출 (PDF인 경우만)
-    record_progress(
-        job.id, "extracting_text", 55,
-        step_index=3, step_total=total_steps,
-        step_name_display="텍스트 추출", step_percent=0,
+        step_name_display="문항 분할", step_percent=0,
         tenant_id=tenant_id,
     )
 
     text_blocks_by_page: Dict[int, List[Dict]] = {}
     full_text_by_page: Dict[int, str] = {}
+    questions: List[Dict] = []
 
     if is_pdf:
         text_blocks_by_page, full_text_by_page = _extract_pdf_text(local_path)
 
+        # 텍스트 기반 문항 분할 시도 (question_splitter 사용)
+        questions = _split_questions_by_text(local_path, text_blocks_by_page)
+        if questions:
+            logger.info(
+                "PDF_TEXT_SPLIT_OK | job_id=%s | questions=%d",
+                job.id, len(questions),
+            )
+            # 텍스트 기반 성공 → pages의 boxes를 questions bbox로 교체
+            # (pages의 image_path는 크롭에 사용)
+        else:
+            logger.info(
+                "PDF_TEXT_SPLIT_EMPTY | job_id=%s | falling back to OpenCV",
+                job.id,
+            )
+
+    # 텍스트 기반 실패 또는 이미지 파일 → OpenCV/YOLO fallback
+    if not questions:
+        questions = _build_question_list(pages, text_blocks_by_page)
+
+    total_boxes = len(questions)
+
+    record_progress(
+        job.id, "segmenting", 50,
+        step_index=2, step_total=total_steps,
+        step_name_display="문항 분할", step_percent=100,
+        tenant_id=tenant_id,
+    )
+
+    logger.info(
+        "PDF_QUESTION_PIPELINE | job_id=%s | pages=%d | questions=%d | is_pdf=%s",
+        job.id, len(pages), total_boxes, is_pdf,
+    )
+
+    # Step 3: 해설 추출
     record_progress(
         job.id, "extracting_text", 65,
         step_index=3, step_total=total_steps,
-        step_name_display="텍스트 추출", step_percent=100,
+        step_name_display="해설 추출", step_percent=0,
         tenant_id=tenant_id,
     )
 
-    # Step 4: 문항 번호 부여 + 해설 매칭
-    record_progress(
-        job.id, "matching", 75,
-        step_index=4, step_total=total_steps,
-        step_name_display="문항·해설 매칭", step_percent=0,
-        tenant_id=tenant_id,
-    )
-
-    questions = _build_question_list(pages, text_blocks_by_page)
     explanations = _extract_explanations(full_text_by_page) if is_pdf else []
+
+    record_progress(
+        job.id, "extracting_text", 75,
+        step_index=3, step_total=total_steps,
+        step_name_display="해설 추출", step_percent=100,
+        tenant_id=tenant_id,
+    )
+
+    # Step 4: 문항·해설 매칭 (이미 번호 기반으로 완료)
+    record_progress(
+        job.id, "matching", 85,
+        step_index=4, step_total=total_steps,
+        step_name_display="문항·해설 매칭", step_percent=100,
+        tenant_id=tenant_id,
+    )
 
     record_progress(
         job.id, "matching", 85,
@@ -195,6 +223,98 @@ def run_pdf_question_pipeline(
     )
 
     return AIResult.done(job.id, result)
+
+
+def _split_questions_by_text(
+    pdf_path: str,
+    text_blocks_by_page: Dict[int, List[Dict]],
+) -> List[Dict]:
+    """
+    PDF 텍스트 블록 기반 문항 분할 (question_splitter 활용).
+
+    텍스트에서 문항 번호 패턴("1.", "2)", "(1)" 등)을 찾아
+    문항 경계를 결정한다. OpenCV보다 정확하며 2단 레이아웃도 처리.
+
+    bbox는 PDF 좌표계(points)이므로 이미지 좌표로 변환 필요.
+    (200 DPI 렌더링 기준: scale = 200/72)
+
+    Returns:
+        [{ "number": int, "bbox": [x,y,w,h], "page_index": int, "text": str? }]
+        빈 리스트면 텍스트 기반 분할 실패 → OpenCV fallback 사용.
+    """
+    try:
+        from academy.adapters.tools.pymupdf_renderer import PdfDocument
+        from academy.domain.tools.question_splitter import (
+            split_questions,
+            TextBlock as SplitterTextBlock,
+        )
+    except ImportError as e:
+        logger.warning("TEXT_SPLIT_IMPORT_FAIL | %s", e)
+        return []
+
+    if not text_blocks_by_page:
+        return []
+
+    scale = 200.0 / 72.0  # PDF points → 200 DPI pixels
+
+    all_questions: List[Dict] = []
+
+    try:
+        with PdfDocument(pdf_path) as doc:
+            for page_idx in range(doc.page_count()):
+                blocks_raw = text_blocks_by_page.get(page_idx, [])
+                if not blocks_raw:
+                    continue
+
+                pw, ph = doc.page_dimensions(page_idx)
+
+                # Dict → SplitterTextBlock 변환
+                splitter_blocks = [
+                    SplitterTextBlock(
+                        text=b["text"],
+                        x0=b["x0"], y0=b["y0"],
+                        x1=b["x1"], y1=b["y1"],
+                    )
+                    for b in blocks_raw
+                ]
+
+                regions = split_questions(
+                    text_blocks=splitter_blocks,
+                    page_width=pw,
+                    page_height=ph,
+                    page_index=page_idx,
+                )
+
+                for region in regions:
+                    # bbox: (x0, y0, x1, y1) in PDF points → (x, y, w, h) in pixels
+                    rx0, ry0, rx1, ry1 = region.bbox
+                    x = int(rx0 * scale)
+                    y = int(ry0 * scale)
+                    w = int((rx1 - rx0) * scale)
+                    h = int((ry1 - ry0) * scale)
+
+                    all_questions.append({
+                        "number": region.number,
+                        "bbox": [x, y, w, h],
+                        "page_index": page_idx,
+                        "text": None,
+                    })
+    except Exception as e:
+        logger.warning("TEXT_SPLIT_ERROR | %s", e)
+        return []
+
+    if not all_questions:
+        return []
+
+    # 중복 번호 정리
+    numbers = [q["number"] for q in all_questions]
+    if len(set(numbers)) != len(numbers):
+        logger.warning("TEXT_SPLIT_DEDUP | %s → sequential", numbers)
+        for i, q in enumerate(all_questions):
+            q["number"] = i + 1
+
+    logger.info("TEXT_SPLIT_DONE | questions=%d", len(all_questions))
+    return all_questions
 
 
 def _extract_pdf_text(
