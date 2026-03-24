@@ -73,7 +73,7 @@ class PdfQuestionExtractView(APIView):
             )
 
             # Generate presigned download URL for worker
-            download_url = generate_presigned_download_url(r2_key)
+            download_url = generate_presigned_download_url(key=r2_key)
 
             # Submit AI job
             result = dispatch_job(
