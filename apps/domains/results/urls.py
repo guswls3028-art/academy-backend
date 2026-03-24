@@ -23,6 +23,7 @@ from apps.domains.results.views.score_draft_view import ScoreDraftView, ScoreDra
 from apps.domains.results.views.session_reorder_view import SessionReorderView
 
 from apps.domains.results.views.admin_result_fact_view import AdminResultFactView
+from apps.domains.results.views.admin_student_grades_view import AdminStudentGradesView
 
 from apps.domains.results.views.question_stats_views import (
     AdminExamQuestionStatsView,
@@ -107,6 +108,7 @@ urlpatterns = [
         name="admin-session-exams-summary",
     ),
     path("admin/facts/", AdminResultFactView.as_view(), name="admin-result-facts"),
+    path("admin/student-grades/", AdminStudentGradesView.as_view(), name="admin-student-grades"),
     path("admin/attempt-history/", AdminAttemptHistoryView.as_view(), name="admin-attempt-history"),
     path("admin/clinic-targets/", AdminClinicTargetsView.as_view(), name="admin-clinic-targets"),
     path("wrong-notes", WrongNoteView.as_view(), name="wrong-note"),
