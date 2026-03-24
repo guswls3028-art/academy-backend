@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from apps.domains.exams.models import ExamQuestion
+from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
 
 class QuestionSerializer(serializers.ModelSerializer):
@@ -10,6 +11,7 @@ class QuestionSerializer(serializers.ModelSerializer):
     """
     explanation_text = serializers.SerializerMethodField()
     explanation_source = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ExamQuestion
@@ -19,12 +21,25 @@ class QuestionSerializer(serializers.ModelSerializer):
             "number",
             "score",
             "image",
+            "image_key",
+            "image_url",
             "region_meta",  # ✅ 추가
             "explanation_text",
             "explanation_source",
             "created_at",
             "updated_at",
         ]
+        read_only_fields = ["id", "image_key", "image_url", "created_at", "updated_at"]
+
+    def get_image_url(self, obj) -> str | None:
+        if not obj.image_key:
+            return None
+        try:
+            return generate_presigned_get_url_storage(
+                key=obj.image_key, expires_in=3600,
+            )
+        except Exception:
+            return None
 
     def get_explanation_text(self, obj) -> str:
         try:

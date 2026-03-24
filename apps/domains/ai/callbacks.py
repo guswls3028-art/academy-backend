@@ -186,6 +186,7 @@ def _handle_exam_ai_result(
     boxes = result_payload.get("boxes", [])
     questions_data = result_payload.get("questions", [])
     explanations_data = result_payload.get("explanations", [])
+    question_image_keys = result_payload.get("question_image_keys") or {}
 
     if not boxes and not questions_data:
         logger.info(
@@ -258,10 +259,17 @@ def _handle_exam_ai_result(
                 else:
                     region_meta = {"x": 0, "y": 0, "w": 0, "h": 0}
 
+                # image_key: 워커가 크롭하여 R2에 업로드한 이미지 키
+                # question_image_keys는 {문항번호(int): r2_key(str)} 형태
+                q_image_key = question_image_keys.get(idx) or question_image_keys.get(str(idx)) or ""
+
                 obj, _ = ExamQuestion.objects.update_or_create(
                     sheet=sheet,
                     number=idx,
-                    defaults={"region_meta": region_meta},
+                    defaults={
+                        "region_meta": region_meta,
+                        "image_key": q_image_key,
+                    },
                 )
                 created_questions.append(obj)
 

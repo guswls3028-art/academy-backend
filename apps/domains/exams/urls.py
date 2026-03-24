@@ -35,6 +35,7 @@ from apps.domains.exams.views.question_explanation_view import (
     ExamExplanationBulkView,
     QuestionExplanationDetailView,
 )
+from apps.domains.exams.views.exam_image_upload_view import ExamImageUploadView
 
 router = DefaultRouter()
 # 서브 리소스(answer-keys, sheets, questions)를 빈 prefix("")보다 먼저 등록해야 함.
@@ -98,6 +99,11 @@ urlpatterns = [
     path("<int:exam_id>/explanations/", ExamExplanationListView.as_view()),
     path("<int:exam_id>/explanations/bulk/", ExamExplanationBulkView.as_view()),
     path("questions/<int:question_id>/explanation/", QuestionExplanationDetailView.as_view()),
+
+    # =========================
+    # Image upload (문항/해설 이미지)
+    # =========================
+    path("<int:exam_id>/upload-image/", ExamImageUploadView.as_view()),
 
     # =========================
     # Enrollment

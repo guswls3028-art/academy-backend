@@ -132,7 +132,23 @@ def run_pdf_question_pipeline(
         tenant_id=tenant_id,
     )
 
-    # Step 5: 결과 조립
+    # Step 5: 문항 이미지 크롭 + R2 업로드
+    record_progress(
+        job.id, "cropping", 90,
+        step_index=5, step_total=total_steps,
+        step_name_display="문항 이미지 저장", step_percent=0,
+        tenant_id=tenant_id,
+    )
+
+    exam_id = payload.get("exam_id")
+    question_image_keys = _crop_and_upload_question_images(
+        questions=questions,
+        pages=pages,
+        tenant_id=tenant_id,
+        exam_id=exam_id,
+        job_id=job.id,
+    )
+
     record_progress(
         job.id, "done", 100,
         step_index=5, step_total=total_steps,
@@ -166,6 +182,7 @@ def run_pdf_question_pipeline(
             for q in questions
         ],
         "explanations": matched_explanations,
+        "question_image_keys": question_image_keys,
         "page_count": len(pages),
         "total_questions": len(questions),
         "is_pdf": is_pdf,
@@ -297,6 +314,105 @@ def _match_text_to_bbox(
             return int(match.group(1)), best_text
 
     return None, best_text
+
+
+def _crop_and_upload_question_images(
+    *,
+    questions: List[Dict],
+    pages: List[Dict],
+    tenant_id: Optional[str],
+    exam_id: Optional[str],
+    job_id: str,
+) -> Dict[int, str]:
+    """
+    각 문항의 bbox를 페이지 이미지에서 크롭하여 R2 Storage에 업로드.
+
+    Returns:
+        {question_number: r2_key, ...}
+    """
+    if not tenant_id or not exam_id:
+        logger.warning(
+            "CROP_SKIP_NO_IDS | job_id=%s | tenant_id=%s | exam_id=%s",
+            job_id, tenant_id, exam_id,
+        )
+        return {}
+
+    import io
+    import cv2
+    import numpy as np
+
+    # 페이지별 이미지 로드 캐시
+    page_images: Dict[int, np.ndarray] = {}
+    for page in pages:
+        img_path = page.get("image_path")
+        if img_path:
+            img = cv2.imread(img_path)
+            if img is not None:
+                page_images[page["page_index"]] = img
+
+    if not page_images:
+        logger.warning("CROP_NO_PAGE_IMAGES | job_id=%s", job_id)
+        return {}
+
+    result_keys: Dict[int, str] = {}
+
+    try:
+        from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+    except Exception as e:
+        logger.warning("CROP_R2_IMPORT_FAILED | job_id=%s | error=%s", job_id, e)
+        return {}
+
+    for q in questions:
+        q_num = q["number"]
+        page_idx = q["page_index"]
+        bbox = q["bbox"]
+
+        img = page_images.get(page_idx)
+        if img is None:
+            continue
+
+        x, y, w, h = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+        img_h, img_w = img.shape[:2]
+
+        # bbox 경계 안전 처리
+        x = max(0, x)
+        y = max(0, y)
+        x2 = min(img_w, x + w)
+        y2 = min(img_h, y + h)
+
+        if x2 <= x or y2 <= y:
+            logger.warning(
+                "CROP_INVALID_BBOX | job_id=%s | q=%d | bbox=%s | img_size=%sx%s",
+                job_id, q_num, bbox, img_w, img_h,
+            )
+            continue
+
+        # 크롭 + PNG 인코딩
+        crop = img[y:y2, x:x2]
+        success, buf = cv2.imencode(".png", crop)
+        if not success:
+            continue
+
+        r2_key = f"tenants/{tenant_id}/exams/questions/{exam_id}/q{q_num:03d}.png"
+
+        try:
+            upload_fileobj_to_r2_storage(
+                fileobj=io.BytesIO(buf.tobytes()),
+                key=r2_key,
+                content_type="image/png",
+            )
+            result_keys[q_num] = r2_key
+        except Exception as e:
+            logger.warning(
+                "CROP_UPLOAD_FAILED | job_id=%s | q=%d | key=%s | error=%s",
+                job_id, q_num, r2_key, e,
+            )
+
+    logger.info(
+        "CROP_DONE | job_id=%s | uploaded=%d/%d",
+        job_id, len(result_keys), len(questions),
+    )
+    return result_keys
 
 
 def _extract_explanations(

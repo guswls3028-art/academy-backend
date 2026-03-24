@@ -35,6 +35,14 @@ class ExamQuestion(BaseModel):
         blank=True,
     )
 
+    # R2에 저장된 문항 크롭 이미지 키 (AI 워커가 PDF에서 자동 추출)
+    image_key = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="R2에 저장된 문항 크롭 이미지 키",
+    )
+
     # 🔥 STEP 2 필수: 문항 영역 메타 (bbox)
     # worker segmentation 결과를 그대로 저장
     # 형식 예: {"x": 10, "y": 20, "w": 100, "h": 40}
