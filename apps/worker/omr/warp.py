@@ -39,7 +39,11 @@ def warp_to_a4_landscape(
     h, w = image_bgr.shape[:2]
     if h > w:
         # Portrait → landscape: 시계 90도 회전 (스캐너에서 세로로 스캔한 landscape 문서)
-        image_bgr = cv2.rotate(image_bgr, cv2.ROTATE_90_CLOCKWISE)
+        # 스캐너 출력은 이미 정렬됨 — rotation만 하고 perspective warp 건너뜀
+        rotated = cv2.rotate(image_bgr, cv2.ROTATE_90_CLOCKWISE)
+        # 출력 크기에 맞춰 리사이즈만 (비율 유지, 비파괴)
+        out_w, out_h = out_size_px
+        return cv2.resize(rotated, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
 
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
