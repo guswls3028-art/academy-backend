@@ -225,6 +225,51 @@ def run_pdf_question_pipeline(
     return AIResult.done(job.id, result)
 
 
+def _is_non_question_page(blocks: List[Dict]) -> bool:
+    """
+    비문항 페이지 감지 — 표지, 진도표, 안내문, 강의 운영 방침 등.
+
+    휴리스틱:
+    - 문항 관련 키워드가 있으면 문항 페이지로 간주
+    - 비문항 키워드만 있으면 비문항 페이지로 간주
+    - 문항 번호 뒤에 보기 패턴(①②③④⑤, (1)(2)(3) 등)이 없으면 목차일 가능성 높음
+    """
+    full_text = " ".join(b["text"] for b in blocks).strip()
+    if not full_text:
+        return True
+
+    # 문항 페이지 강력 지표: 보기 번호 패턴이 있으면 문항 페이지
+    choice_patterns = [
+        "①", "②", "③", "④", "⑤",
+        "ㄱ.", "ㄴ.", "ㄷ.",
+    ]
+    has_choices = any(p in full_text for p in choice_patterns)
+
+    # 문항 지표: "옳은 것", "구하시오", "표시하시오", "고르시오" 등
+    question_indicators = [
+        "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
+        "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
+    ]
+    has_question_indicator = any(kw in full_text for kw in question_indicators)
+
+    if has_choices or has_question_indicator:
+        return False  # 문항 페이지
+
+    # 비문항 지표: 진도표, 강의방침, 안내 등
+    non_question_indicators = [
+        "진도", "운영 방침", "재시험", "클리닉", "홈페이지",
+        "대단원", "중단원", "세부 내용", "난이도",
+        "주차", "복습과제", "워크북",
+    ]
+    non_q_count = sum(1 for kw in non_question_indicators if kw in full_text)
+
+    # 비문항 키워드가 3개 이상이면 비문항 페이지
+    if non_q_count >= 3:
+        return True
+
+    return False
+
+
 def _split_questions_by_text(
     pdf_path: str,
     text_blocks_by_page: Dict[int, List[Dict]],
@@ -267,6 +312,11 @@ def _split_questions_by_text(
                     continue
 
                 pw, ph = doc.page_dimensions(page_idx)
+
+                # 비문항 페이지 필터: 표지, 진도표, 안내문 등 스킵
+                if _is_non_question_page(blocks_raw):
+                    logger.info("TEXT_SPLIT_SKIP_PAGE | page=%d | non-question page", page_idx)
+                    continue
 
                 # Dict → SplitterTextBlock 변환
                 splitter_blocks = [
