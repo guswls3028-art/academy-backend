@@ -24,16 +24,18 @@ def segment_questions_opencv(image_path: str) -> List[BBox]:
         blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
     )
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    dilated = cv2.dilate(thresh, kernel, iterations=1)
+    # 큰 커널 + 더 많은 dilation으로 인접 텍스트를 하나의 문항 영역으로 병합
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (30, 15))
+    dilated = cv2.dilate(thresh, kernel, iterations=3)
 
     contours, _ = cv2.findContours(
         dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
     h_img, w_img = gray.shape[:2]
+    # 문항 영역: 이미지 면적의 0.5% ~ 80%
     min_area = w_img * h_img * 0.005
-    max_area = w_img * h_img * 0.9
+    max_area = w_img * h_img * 0.8
 
     boxes: List[BBox] = []
     for cnt in contours:
@@ -42,8 +44,10 @@ def segment_questions_opencv(image_path: str) -> List[BBox]:
         if area < min_area or area > max_area:
             continue
 
-        aspect = h / (w + 1e-6)
-        if aspect < 0.3:
+        # 가로/세로 비율: 극단적으로 얇은 라인만 제거
+        # 시험지 문항은 가로가 넓고 세로가 짧을 수 있음 (aspect=h/w < 0.3도 정상)
+        aspect = min(h, w) / (max(h, w) + 1e-6)
+        if aspect < 0.05:  # 너무 얇은 선(가로선/세로선)만 제거
             continue
 
         boxes.append((x, y, w, h))
