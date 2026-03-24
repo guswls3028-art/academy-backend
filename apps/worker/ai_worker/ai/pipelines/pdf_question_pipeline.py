@@ -238,6 +238,14 @@ def _is_non_question_page(blocks: List[Dict]) -> bool:
     if not full_text:
         return True
 
+    import re
+
+    # 정답지 감지 (최우선): "⑴ × ⑵ O" "⑴ ② ⑵ ④" 같은 정답 표기 패턴이 반복
+    # 정답지에도 ①②③이 포함되므로 보기 체크보다 먼저 수행해야 함
+    answer_pattern = re.findall(r"[⑴⑵⑶⑷⑸⑹⑺⑻⑼]\s*[×OX①②③④⑤]", full_text)
+    if len(answer_pattern) >= 5:
+        return True
+
     # 문항 페이지 강력 지표: 보기 번호 패턴이 있으면 문항 페이지
     choice_patterns = [
         "①", "②", "③", "④", "⑤",
@@ -255,16 +263,9 @@ def _is_non_question_page(blocks: List[Dict]) -> bool:
     if has_choices or has_question_indicator:
         return False  # 문항 페이지
 
-    # 정답지 감지: "⑴ × ⑵ O" "⑴ ② ⑵ ④" 같은 정답 표기 패턴이 반복
-    import re
-    answer_pattern = re.findall(r"[⑴⑵⑶⑷⑸⑹⑺⑻⑼]\s*[×OX①②③④⑤]", full_text)
-    if len(answer_pattern) >= 5:
-        return True
-
-    # 해설지 감지: "~이므로", "~이다.", "~때문이다" 등 설명조 문장이 많고
-    # "옳은 것", "구하시오" 등 문항 지시문이 없으면 해설지
+    # 해설지 감지: 설명조 문장이 많고 보기/문항지시문 없으면 해설지
     explanation_markers = re.findall(r"(?:이므로|때문이다|따라서|그러므로|해설)", full_text)
-    if len(explanation_markers) >= 5 and not has_choices and not has_question_indicator:
+    if len(explanation_markers) >= 3:
         return True
 
     # 비문항 지표: 진도표, 강의방침, 안내 등
