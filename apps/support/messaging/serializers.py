@@ -192,6 +192,8 @@ class SendMessageRequestSerializer(serializers.Serializer):
 
 class AutoSendConfigSerializer(serializers.ModelSerializer):
     template_name = serializers.CharField(source="template.name", read_only=True, default="")
+    template_subject = serializers.CharField(source="template.subject", read_only=True, default="")
+    template_body = serializers.CharField(source="template.body", read_only=True, default="")
     template_solapi_status = serializers.CharField(
         source="template.solapi_status", read_only=True, default=""
     )
@@ -203,6 +205,8 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
             "trigger",
             "template",
             "template_name",
+            "template_subject",
+            "template_body",
             "template_solapi_status",
             "enabled",
             "message_mode",

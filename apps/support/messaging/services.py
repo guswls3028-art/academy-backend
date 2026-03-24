@@ -239,6 +239,124 @@ def get_tenant_site_url(tenant) -> str:
     return get_site_url()
 
 
+def send_event_notification(
+    tenant,
+    trigger: str,
+    student,
+    send_to: str = "parent",  # "parent" | "student"
+    context: dict = None,
+) -> bool:
+    """
+    이벤트 기반 자동 알림톡 발송.
+    AutoSendConfig에서 enabled 확인 → 템플릿 resolve → enqueue.
+
+    Args:
+        tenant: Tenant 인스턴스
+        trigger: AutoSendConfig.Trigger 값 (예: "check_in_complete")
+        student: Student 인스턴스 (name, phone, parent_phone 필요)
+        send_to: "parent" (학부모) 또는 "student"
+        context: 추가 치환 변수 dict (예: {"강의명": "수학A반", "차시명": "3차시"})
+
+    Returns:
+        bool: enqueue 성공 여부
+    """
+    from apps.support.messaging.selectors import get_auto_send_config
+    from apps.support.messaging.policy import get_owner_tenant_id, is_messaging_disabled, MessagingPolicyError
+
+    if is_messaging_disabled(tenant.id):
+        logger.info("send_event_notification skipped: tenant_id=%s messaging disabled", tenant.id)
+        return False
+
+    # 1) 현재 테넌트의 config 조회
+    config = get_auto_send_config(tenant.id, trigger)
+    # 2) 없으면 오너 테넌트 config로 fallback
+    if not config:
+        owner_id = get_owner_tenant_id()
+        if int(tenant.id) != owner_id:
+            config = get_auto_send_config(owner_id, trigger)
+    if not config or not config.enabled:
+        logger.debug(
+            "send_event_notification skipped: trigger=%s tenant=%s (config not found or disabled)",
+            trigger, tenant.id,
+        )
+        return False
+
+    template = config.template
+    if not template:
+        logger.debug("send_event_notification skipped: trigger=%s no template linked", trigger)
+        return False
+
+    solapi_template_id = (template.solapi_template_id or "").strip()
+    if not solapi_template_id or template.solapi_status != "APPROVED":
+        logger.debug(
+            "send_event_notification skipped: trigger=%s template not approved (status=%s)",
+            trigger, template.solapi_status,
+        )
+        return False
+
+    # 수신자 전화번호
+    phone = None
+    if send_to == "parent":
+        phone = (getattr(student, "parent_phone", "") or "").replace("-", "").strip()
+    else:
+        phone = (getattr(student, "phone", "") or "").replace("-", "").strip()
+    if not phone or len(phone) < 10:
+        logger.debug(
+            "send_event_notification skipped: trigger=%s no valid phone for send_to=%s",
+            trigger, send_to,
+        )
+        return False
+
+    name = (getattr(student, "name", "") or "").strip()
+    name_2 = name[:2] if len(name) >= 2 else name
+    academy_name = (getattr(tenant, "name", "") or "").strip()
+    site_url = get_tenant_site_url(tenant) or ""
+
+    # 알림톡 치환 변수
+    replacements = [
+        {"key": "학원명", "value": academy_name},
+        {"key": "학생이름", "value": name},
+        {"key": "학생이름2", "value": name_2},
+        {"key": "사이트링크", "value": site_url},
+    ]
+    for k, v in (context or {}).items():
+        replacements.append({"key": k, "value": str(v)})
+
+    # SMS 본문 (알림톡 실패 시 fallback용)
+    text = (template.body or "").strip()
+    text = text.replace("#{학원명}", academy_name)
+    text = text.replace("#{학생이름}", name)
+    text = text.replace("#{학생이름2}", name_2)
+    text = text.replace("#{사이트링크}", site_url)
+    for k, v in (context or {}).items():
+        text = text.replace(f"#{{{k}}}", str(v))
+
+    sender = (getattr(tenant, "messaging_sender", "") or "").strip()
+
+    try:
+        return enqueue_sms(
+            tenant_id=tenant.id,
+            to=phone,
+            text=text,
+            sender=sender,
+            message_mode=config.message_mode or "alimtalk",
+            template_id=solapi_template_id,
+            alimtalk_replacements=replacements,
+        )
+    except MessagingPolicyError as exc:
+        logger.info(
+            "send_event_notification policy error: trigger=%s tenant=%s reason=%s",
+            trigger, tenant.id, exc.reason,
+        )
+        return False
+    except Exception as exc:
+        logger.exception(
+            "send_event_notification failed: trigger=%s tenant=%s error=%s",
+            trigger, tenant.id, exc,
+        )
+        return False
+
+
 def send_welcome_messages(
     *,
     created_students: list,

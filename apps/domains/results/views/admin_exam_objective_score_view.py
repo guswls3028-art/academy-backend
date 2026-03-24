@@ -172,6 +172,35 @@ class AdminExamObjectiveScoreView(APIView):
                 logger.exception("progress pipeline dispatch failed (exam=%s, submission=%s)", _eid, _sid)
         transaction.on_commit(_dispatch_progress)
 
+        # 성적 공개 알림톡 (best-effort)
+        _new_total = float(result.total_score or 0.0)
+        _max = float(result.max_score or max_score)
+        _exam_title = str(getattr(exam, "title", "") or "")
+        _enrollment_id = enrollment_id
+        _tenant = request.tenant
+        def _send_score_notification():
+            try:
+                from apps.domains.enrollment.models import Enrollment as _Enr
+                from apps.support.messaging.services import send_event_notification
+                enr = _Enr.objects.select_related("student", "lecture").filter(
+                    id=_enrollment_id, tenant=_tenant
+                ).first()
+                if enr and enr.student:
+                    send_event_notification(
+                        tenant=_tenant,
+                        trigger="exam_score_published",
+                        student=enr.student,
+                        send_to="parent",
+                        context={
+                            "시험명": _exam_title,
+                            "강의명": str(getattr(enr.lecture, "title", "") or ""),
+                            "시험성적": f"{int(_new_total)}/{int(_max)}",
+                        },
+                    )
+            except Exception:
+                logger.debug("exam_score_published notification failed", exc_info=True)
+        transaction.on_commit(_send_score_notification)
+
         return Response(
             {
                 "ok": True,

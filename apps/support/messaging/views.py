@@ -730,6 +730,8 @@ class AutoSendConfigView(APIView):
                     "trigger": trigger,
                     "template": None,
                     "template_name": "",
+                    "template_subject": "",
+                    "template_body": "",
                     "template_solapi_status": "",
                     "enabled": False,
                     "message_mode": "sms",

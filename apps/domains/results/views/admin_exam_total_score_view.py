@@ -224,6 +224,31 @@ class AdminExamTotalScoreView(APIView):
             logger.exception("progress pipeline failed (exam=%s, submission=%s)", exam_id, submission_id)
             progress_error = str(exc)[:200]
 
+        # -------------------------------------------------
+        # 7️⃣ 성적 공개 알림톡 (best-effort)
+        # -------------------------------------------------
+        try:
+            from apps.domains.enrollment.models import Enrollment
+            from apps.support.messaging.services import send_event_notification
+
+            enrollment_obj = Enrollment.objects.select_related("student").filter(
+                id=enrollment_id, tenant=request.tenant
+            ).first()
+            if enrollment_obj and enrollment_obj.student:
+                send_event_notification(
+                    tenant=request.tenant,
+                    trigger="exam_score_published",
+                    student=enrollment_obj.student,
+                    send_to="parent",
+                    context={
+                        "시험명": str(getattr(exam, "title", "") or ""),
+                        "강의명": str(getattr(getattr(enrollment_obj, "lecture", None), "title", "") or ""),
+                        "시험성적": f"{int(new_score)}/{int(effective_max)}",
+                    },
+                )
+        except Exception:
+            logger.debug("exam_score_published notification failed (exam=%s)", exam_id, exc_info=True)
+
         return Response(
             {
                 "ok": True,

@@ -259,6 +259,29 @@ class AdminExamItemScoreView(APIView):
         else:
             dispatch_progress_pipeline(exam_id=int(exam_id))
 
+        # 성적 공개 알림톡 (best-effort)
+        try:
+            from apps.domains.enrollment.models import Enrollment as _Enr
+            from apps.support.messaging.services import send_event_notification
+            _exam = Exam.objects.filter(id=exam_id).first()
+            enr = _Enr.objects.select_related("student", "lecture").filter(
+                id=enrollment_id, tenant=request.tenant
+            ).first()
+            if enr and enr.student:
+                send_event_notification(
+                    tenant=request.tenant,
+                    trigger="exam_score_published",
+                    student=enr.student,
+                    send_to="parent",
+                    context={
+                        "시험명": str(getattr(_exam, "title", "") or ""),
+                        "강의명": str(getattr(enr.lecture, "title", "") or ""),
+                        "시험성적": f"{int(total_score)}/{int(max_total)}",
+                    },
+                )
+        except Exception:
+            logger.debug("exam_score_published notification failed", exc_info=True)
+
         return Response(
             {
                 "ok": True,

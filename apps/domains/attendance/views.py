@@ -31,6 +31,42 @@ from apps.domains.ai.gateway import dispatch_job
 logger = logging.getLogger(__name__)
 
 
+def _send_attendance_notification(tenant, attendance, trigger):
+    """
+    출결 알림톡 발송 (best-effort, 실패해도 출결 처리는 유지).
+    trigger: "check_in_complete" 또는 "absent_occurred"
+    """
+    try:
+        from apps.support.messaging.services import send_event_notification
+        from django.utils import timezone
+
+        enrollment = attendance.enrollment
+        student = enrollment.student
+        session = attendance.session
+        lecture = session.lecture
+        now = timezone.localtime()
+
+        context = {
+            "강의명": lecture.title or "",
+            "차시명": session.title or f"{session.order}차시",
+            "날짜": str(session.date) if session.date else now.strftime("%Y-%m-%d"),
+            "시간": now.strftime("%H:%M"),
+        }
+
+        send_event_notification(
+            tenant=tenant,
+            trigger=trigger,
+            student=student,
+            send_to="parent",
+            context=context,
+        )
+    except Exception:
+        logger.exception(
+            "attendance notification failed: trigger=%s attendance_id=%s",
+            trigger, attendance.id,
+        )
+
+
 class AttendanceListPagination(PageNumberPagination):
     """출결 목록 — 학생 도메인과 동일하게 page_size 쿼리 허용, 총계 표기용 count 반환."""
     page_size = 50
@@ -113,7 +149,22 @@ class AttendanceViewSet(ModelViewSet):
             instance.refresh_from_db()
             return Response(AttendanceSerializer(instance).data)
 
-        return super().partial_update(request, *args, **kwargs)
+        # 일반 출결 상태 변경 (PRESENT, ABSENT 등)
+        old_status = instance.status
+        response = super().partial_update(request, *args, **kwargs)
+        instance.refresh_from_db()
+        new_status_actual = instance.status
+
+        # 출결 알림톡 발송 (상태가 실제로 변경된 경우만)
+        if old_status != new_status_actual:
+            tenant = getattr(request, "tenant", None)
+            if tenant:
+                if new_status_actual in ("PRESENT", "LATE", "ONLINE", "SUPPLEMENT"):
+                    _send_attendance_notification(tenant, instance, "check_in_complete")
+                elif new_status_actual == "ABSENT":
+                    _send_attendance_notification(tenant, instance, "absent_occurred")
+
+        return response
 
     # =========================================================
     # 0-1️⃣ 전체 현장 출석 (세션 내 모든 출결을 PRESENT로 일괄 변경)
@@ -134,7 +185,8 @@ class AttendanceViewSet(ModelViewSet):
         if session.lecture.tenant_id != tenant.id:
             raise NotFound("세션을 찾을 수 없습니다.")
 
-        updated = Attendance.objects.filter(
+        # 변경 대상 ID를 먼저 수집 (알림톡 발송용)
+        target_qs = Attendance.objects.filter(
             tenant=tenant, session=session,
         ).exclude(
             status="PRESENT",
@@ -142,7 +194,22 @@ class AttendanceViewSet(ModelViewSet):
             status="SECESSION",
         ).exclude(
             enrollment__status="INACTIVE",
-        ).update(status="PRESENT")
+        )
+        target_ids = list(target_qs.values_list("id", flat=True))
+
+        updated = target_qs.update(status="PRESENT")
+
+        # 출결 알림톡 일괄 발송 (best-effort, transaction 밖에서)
+        if target_ids and tenant:
+            def _send_bulk_notifications():
+                attendances = (
+                    Attendance.objects
+                    .filter(id__in=target_ids)
+                    .select_related("enrollment__student", "session__lecture")
+                )
+                for att in attendances:
+                    _send_attendance_notification(tenant, att, "check_in_complete")
+            transaction.on_commit(_send_bulk_notifications)
 
         return Response(
             {"updated": updated, "session": session_id},
@@ -200,6 +267,23 @@ class AttendanceViewSet(ModelViewSet):
             )
 
             created.append(attendance)
+
+        # 출결 알림톡 발송 (생성된 출석 건에 대해)
+        if created and tenant:
+            def _send_bulk_create_notifications():
+                for att in created:
+                    if att.status in ("PRESENT", "LATE", "ONLINE", "SUPPLEMENT"):
+                        try:
+                            # select_related가 안 되어 있을 수 있으므로 refresh
+                            att_full = (
+                                Attendance.objects
+                                .select_related("enrollment__student", "session__lecture")
+                                .get(id=att.id)
+                            )
+                            _send_attendance_notification(tenant, att_full, "check_in_complete")
+                        except Exception:
+                            logger.exception("bulk_create notification failed: att_id=%s", att.id)
+            transaction.on_commit(_send_bulk_create_notifications)
 
         return Response(
             AttendanceSerializer(created, many=True).data,
