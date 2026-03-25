@@ -31,6 +31,7 @@ class RegularExamFactory:
         session_id: int,
         title: Optional[str] = None,
         description: Optional[str] = None,
+        tenant=None,
     ) -> Exam:
         if template_exam.exam_type != Exam.ExamType.TEMPLATE:
             raise ValidationError({"detail": "template exam required"})
@@ -45,7 +46,12 @@ class RegularExamFactory:
 
         session = get_object_or_404(Session, id=int(session_id))
 
-        # 3) regular 생성
+        # 3) tenant 검증: session이 요청 테넌트 소속인지 확인
+        if tenant and hasattr(session, "lecture") and session.lecture_id:
+            if session.lecture.tenant_id != tenant.id:
+                raise ValidationError({"detail": "Session does not belong to your program."})
+
+        # 4) regular 생성
         regular = Exam.objects.create(
             title=(title or template_exam.title).strip(),
             description=(description if description is not None else template_exam.description) or "",
@@ -53,6 +59,7 @@ class RegularExamFactory:
             exam_type=Exam.ExamType.REGULAR,
             template_exam=template_exam,
             is_active=True,
+            tenant=tenant,
         )
         regular.sessions.add(session)
 

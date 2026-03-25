@@ -1091,6 +1091,12 @@ class TestViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError(
                 {"tenant": "테넌트 컨텍스트가 필요합니다."}
             )
+        # P1 수정: session FK가 현재 테넌트 소속인지 검증
+        session = serializer.validated_data.get("session")
+        if session and session.tenant_id != tenant.id:
+            raise serializers.ValidationError(
+                {"session": "해당 세션이 현재 학원에 속하지 않습니다."}
+            )
         serializer.save(tenant=tenant)
 
 
@@ -1188,4 +1194,14 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
-        serializer.save(tenant=getattr(self.request, "tenant", None))
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError({"tenant": "테넌트 컨텍스트가 필요합니다."})
+        # P1 수정: test/student FK가 현재 테넌트 소속인지 검증
+        test = serializer.validated_data.get("test")
+        if test and test.tenant_id != tenant.id:
+            raise serializers.ValidationError({"test": "해당 시험이 현재 학원에 속하지 않습니다."})
+        student = serializer.validated_data.get("student")
+        if student and student.tenant_id != tenant.id:
+            raise serializers.ValidationError({"student": "해당 학생이 현재 학원에 속하지 않습니다."})
+        serializer.save(tenant=tenant)

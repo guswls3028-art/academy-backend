@@ -84,9 +84,11 @@ class ExamGradingService:
             max_score += q_score
             correct_answer = key_map.get(qid)
             student_answer = answers_map.get(qid, "")
+            # 정규화: 대소문자·공백 무시 (grader.py _norm()과 일관성 유지)
+            _norm = lambda s: str(s).strip().upper() if s else ""
             is_correct = (
                 correct_answer is not None
-                and student_answer == correct_answer
+                and _norm(student_answer) == _norm(correct_answer)
             )
             earned = q_score if is_correct else 0
 

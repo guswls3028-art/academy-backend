@@ -31,6 +31,10 @@ class BulkTemplateCreateView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def post(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            raise ValidationError({"detail": "tenant required"})
+
         title = (request.data.get("title") or "").strip()
         subject = (request.data.get("subject") or "").strip()
         description = (request.data.get("description") or "").strip()
@@ -41,17 +45,18 @@ class BulkTemplateCreateView(APIView):
         if not isinstance(questions, list) or len(questions) == 0:
             raise ValidationError({"detail": "questions 배열을 1개 이상 입력하세요."})
 
-        out = self._create_bulk(title=title, subject=subject, description=description, questions=questions)
+        out = self._create_bulk(title=title, subject=subject, description=description, questions=questions, tenant=tenant)
         return Response(out, status=status.HTTP_201_CREATED)
 
     @staticmethod
     @transaction.atomic
-    def _create_bulk(*, title: str, subject: str, description: str, questions: list) -> dict:
+    def _create_bulk(*, title: str, subject: str, description: str, questions: list, tenant) -> dict:
         exam = Exam.objects.create(
             title=title,
             subject=subject,
             description=description,
             exam_type=Exam.ExamType.TEMPLATE,
+            tenant=tenant,
         )
         init = TemplateBuilderService.ensure_initialized(exam)
         sheet_id = init["sheet_id"]

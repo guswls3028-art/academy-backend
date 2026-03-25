@@ -26,6 +26,7 @@ class SaveAsTemplateView(APIView):
                 {"detail": "This exam already has a template. Use that template or unlink first."}
             )
 
+        tenant = getattr(request, "tenant", None)
         template = Exam.objects.create(
             title=exam.title,
             description=exam.description or "",
@@ -33,6 +34,7 @@ class SaveAsTemplateView(APIView):
             exam_type=Exam.ExamType.TEMPLATE,
             template_exam=None,
             status=Exam.Status.OPEN,
+            tenant=tenant,
         )
         exam.template_exam = template
         exam.save(update_fields=["template_exam_id"])
