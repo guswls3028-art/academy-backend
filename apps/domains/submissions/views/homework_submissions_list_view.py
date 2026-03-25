@@ -74,10 +74,10 @@ class HomeworkSubmissionsListView(APIView):
             return Response([], status=200)
 
         # 테넌트 격리: homework가 해당 테넌트 소속인지 검증
-        from apps.domains.homework.models import HomeworkPolicy
-        if not HomeworkPolicy.objects.filter(
+        from apps.domains.homework_results.models import Homework
+        if not Homework.objects.filter(
             id=int(homework_id),
-            tenant=tenant,
+            session__lecture__tenant=tenant,
         ).exists():
             return Response([], status=200)
 

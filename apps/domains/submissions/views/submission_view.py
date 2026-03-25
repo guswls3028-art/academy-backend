@@ -123,9 +123,10 @@ class SubmissionViewSet(ModelViewSet):
                     id=int(target_id), sessions__lecture__tenant=tenant,
                 ).exists()
             elif target_type == Submission.TargetType.HOMEWORK:
-                from apps.domains.homework.models import HomeworkPolicy
-                return HomeworkPolicy.objects.filter(
-                    id=int(target_id), tenant=tenant,
+                from apps.domains.homework_results.models import Homework
+                return Homework.objects.filter(
+                    id=int(target_id),
+                    session__lecture__tenant=tenant,
                 ).exists()
         except Exception:
             pass
