@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 _redis_client: Optional[object] = None
 _redis_available: Optional[bool] = None
+_last_failure_time: float = 0.0
+_RETRY_INTERVAL_SECONDS: float = 300.0  # 5분 후 재시도
 
 
 def get_redis_client():
@@ -22,10 +25,18 @@ def get_redis_client():
     Redis 클라이언트 반환.
     REDIS_HOST 등이 설정되지 않았거나 연결 실패 시 None.
     """
-    global _redis_client, _redis_available
+    global _redis_client, _redis_available, _last_failure_time
 
     if _redis_available is False:
-        return None
+        # REDIS_HOST 미설정 또는 패키지 미설치 → 영구 비활성
+        if not os.getenv("REDIS_HOST"):
+            return None
+        # 일시적 연결 실패 → 일정 시간 후 재시도
+        if time.monotonic() - _last_failure_time < _RETRY_INTERVAL_SECONDS:
+            return None
+        # 재시도 시간 도래 → 상태 리셋하여 재연결 시도
+        _redis_available = None
+        _redis_client = None
 
     if _redis_client is not None:
         return _redis_client
@@ -63,8 +74,9 @@ def get_redis_client():
         logger.info("Redis connected: %s:%s db=%s", host, port, db)
         return client
     except Exception as e:
-        logger.warning("Redis connection failed (will use DB fallback): %s", e)
+        logger.warning("Redis connection failed (will retry in %ds): %s", int(_RETRY_INTERVAL_SECONDS), e)
         _redis_available = False
+        _last_failure_time = time.monotonic()
         return None
 
 

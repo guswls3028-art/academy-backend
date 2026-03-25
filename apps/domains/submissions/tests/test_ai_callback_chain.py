@@ -108,11 +108,11 @@ class TestHandleSubmission:
         m_grade.assert_not_called()
 
     @patch(_SUB_MODEL_MOCK)
-    @patch(_GRADE_MOCK)
     @patch(f"{_MOD}.apply_ai_result")
-    def test_failed_lite_treated_as_done(self, m_apply, m_grade, m_sub):
+    def test_failed_lite_passes_through_as_failed(self, m_apply, m_sub):
+        """lite/basic tier FAILED도 FAILED로 전달 (0점 결과 방지)."""
         m_apply.return_value = 42
-        m_sub.objects.filter.return_value.values_list.return_value.first.return_value = "answers_ready"
+        m_sub.objects.filter.return_value.values_list.return_value.first.return_value = "failed"
         m_sub.Status.ANSWERS_READY = "answers_ready"
 
         _handle_submission_ai_result(
@@ -121,8 +121,8 @@ class TestHandleSubmission:
         )
 
         p = m_apply.call_args[0][0]
-        assert p["status"] == "DONE"
-        assert p["error"] is None
+        assert p["status"] == "FAILED"
+        assert p["error"] == "oom"
 
     @patch(_SUB_MODEL_MOCK)
     @patch(f"{_MOD}.apply_ai_result")

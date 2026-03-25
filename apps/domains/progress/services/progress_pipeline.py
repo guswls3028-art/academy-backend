@@ -197,14 +197,18 @@ class ProgressPipelineService:
         2) Clinic triggers (failed / exam risk)
         3) LectureProgress + Risk evaluation
         """
-        # attendance/video/homework inputs are outside scope; keep conservative defaults.
+        # 기존 SessionProgress에서 출결/영상/과제 상태를 보존 (덮어쓰기 방지)
+        from apps.domains.progress.models import SessionProgress as _SP
+        _existing = _SP.objects.filter(
+            enrollment_id=int(enrollment_id), session=session,
+        ).first()
         sp = SessionProgressCalculator.calculate(
             enrollment_id=int(enrollment_id),
             session=session,
-            attendance_type="online",
-            video_progress_rate=0,
-            homework_submitted=bool(homework_submitted),
-            homework_teacher_approved=False,
+            attendance_type=getattr(_existing, "attendance_type", "online") or "online",
+            video_progress_rate=getattr(_existing, "video_progress_rate", 0) or 0,
+            homework_submitted=bool(homework_submitted) or getattr(_existing, "homework_submitted", False),
+            homework_teacher_approved=getattr(_existing, "homework_teacher_approved", False),
         )
 
         # failed trigger (idempotent via get_or_create in service)

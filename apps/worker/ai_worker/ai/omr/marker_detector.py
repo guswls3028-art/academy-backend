@@ -329,6 +329,10 @@ def _extract_candidates(
             area = cv2.contourArea(cnt)
             if area < min_area_px2 or area > max_area_px2:
                 continue
+            # Reject overly complex contours — real markers are simple shapes
+            # (square≈4, L/T/plus≈8-20 points). Noise blobs have 100+ points.
+            if len(cnt) > 80:
+                continue
 
             M = cv2.moments(cnt)
             if M["m00"] == 0:

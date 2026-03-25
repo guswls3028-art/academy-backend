@@ -74,6 +74,7 @@ class HomeworkViewSet(ModelViewSet):
             )
         if template_id:
             try:
+                # 템플릿은 tenant FK 없음 → derived_homeworks 기반 테넌트 가시성 검증
                 template = Homework.objects.get(
                     id=int(template_id),
                     homework_type=Homework.HomeworkType.TEMPLATE,
@@ -83,14 +84,12 @@ class HomeworkViewSet(ModelViewSet):
                     {"template_homework_id": "유효한 과제 템플릿이 아닙니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            tenant = getattr(request, "tenant", None)
-            if tenant and not template.derived_homeworks.filter(session__lecture__tenant=tenant).exists():
-                from apps.domains.homework_results.views.homework_template_with_usage import template_visible_to_tenant
-                if not template_visible_to_tenant(template, tenant):
-                    return Response(
-                        {"template_homework_id": "해당 템플릿에 접근할 수 없습니다."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+            # tenant 가시성: 해당 테넌트에서 사용된 적 있는 템플릿만 허용
+            if not template.derived_homeworks.filter(session__lecture__tenant=tenant).exists():
+                return Response(
+                    {"template_homework_id": "해당 템플릿에 접근할 수 없습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             title = (data.get("title") or "").strip() or template.title
             instance = Homework.objects.create(
                 homework_type=Homework.HomeworkType.REGULAR,

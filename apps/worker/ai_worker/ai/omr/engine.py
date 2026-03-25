@@ -417,8 +417,18 @@ def _detect_single_question(
         "details": {l: d for l, _, d in fills},
     }
 
-    # 판정
-    if top_score < config.blank_threshold:
+    # ── 판정 (v9 개선: 상대적 blank 감지) ──
+    # 노이즈 바닥을 자동 보정하기 위해 중앙값 기준 상대 점수 사용.
+    # 모든 선택지가 비슷한 점수(noise floor)면 blank로 판정.
+    scores_arr = np.array([s for _, s, _ in fills])
+    median_score = float(np.median(scores_arr))
+    relative_top = top_score - median_score
+
+    # Blank: 최고 점수가 중앙값 대비 유의미하게 높지 않으면 blank
+    _REL_BLANK_TH = 0.04  # 노이즈 위에 이 정도는 올라와야 마킹
+    is_blank = relative_top < _REL_BLANK_TH and top_score < 0.35
+
+    if is_blank:
         return OMRAnswerV1(
             version="v9", question_id=q_num,
             detected=[], marking="blank",
@@ -427,8 +437,9 @@ def _detect_single_question(
         )
 
     if gap < config.conf_gap_threshold:
-        # 복수 마킹 가능성
-        marked = [l for l, s, _ in fills if s >= config.blank_threshold]
+        # 복수 마킹 가능성 — 상대적 noise floor 기준
+        noise_floor = median_score + _REL_BLANK_TH
+        marked = [l for l, s, _ in fills if s >= noise_floor]
         return OMRAnswerV1(
             version="v9", question_id=q_num,
             detected=marked,

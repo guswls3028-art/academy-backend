@@ -135,7 +135,7 @@ class SQSQueueClient(QueueClient):
             return True
         except Exception as e:
             logger.error(f"Failed to send message to {queue_name}: {e}")
-            return False
+            raise
     
     def receive_message(self, queue_name: str, wait_time_seconds: int = 20) -> Optional[Dict[str, Any]]:
         """SQS에서 메시지 수신"""

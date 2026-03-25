@@ -167,6 +167,28 @@ def _try_marker_homography(
         )
         return None
 
+    # ── Remap corner labels from image-space to document-space ──
+    # The marker detector assigns labels based on which image corner region
+    # each marker was found in (image-space). For non-zero orientations,
+    # image-TL does NOT contain the document-TL marker. The rotation maps
+    # cycle clockwise [TL, TR, BR, BL], so image corner i contains the
+    # document marker at (i + rot_steps) % 4.
+    markers = detection.markers
+    orientation = detection.orientation
+    if orientation != 0:
+        _CO = ["TL", "TR", "BR", "BL"]
+        rot_steps = {90: 1, 180: 2, 270: 3}.get(orientation, 0)
+        remapped: Dict[str, Any] = {}
+        for i, img_corner in enumerate(_CO):
+            if img_corner in markers:
+                doc_corner = _CO[(i + rot_steps) % 4]
+                remapped[doc_corner] = markers[img_corner]
+        markers = remapped
+        logger.info(
+            "warp: remapped corners for orientation=%d: %s",
+            orientation, list(markers.keys()),
+        )
+
     # Build source points from detected marker centers
     dst_map = _get_marker_dst_points(meta, out_w, out_h)
 
@@ -176,7 +198,7 @@ def _try_marker_homography(
     corner_order = ["TL", "TR", "BR", "BL"]
 
     for corner in corner_order:
-        marker = detection.markers.get(corner)
+        marker = markers.get(corner)
         dst_pt = dst_map.get(corner)
         if marker is None or dst_pt is None:
             continue

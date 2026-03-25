@@ -163,7 +163,7 @@ class AISQSQueue:
             
         except Exception as e:
             logger.exception("Error enqueuing AI job: job_id=%s, tier=%s, error=%s", job.job_id, tier, e)
-            return False
+            raise
     
     def receive_message(
         self,

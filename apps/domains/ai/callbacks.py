@@ -108,23 +108,11 @@ def _handle_submission_ai_result(
     from apps.domains.submissions.services.ai_omr_result_mapper import apply_ai_result
     from apps.domains.results.tasks.grading_tasks import grade_submission_task
 
-    effective_status = status
-    effective_error = error
-
-    # Lite/Basic tier는 FAILED를 DONE으로 간주 (워커의 FAILED는 리소스 부족 등이므로)
-    if status == "FAILED" and tier in ("lite", "basic"):
-        effective_status = "DONE"
-        effective_error = None
-        logger.info(
-            "AI_CALLBACK_TIER_OVERRIDE | tier=%s | FAILED→DONE | submission_id=%s",
-            tier, submission_id,
-        )
-
     # apply_ai_result는 payload에서 submission_id를 꺼냄
     payload = dict(result_payload)
     payload["submission_id"] = submission_id
-    payload["status"] = effective_status
-    payload["error"] = effective_error
+    payload["status"] = status
+    payload["error"] = error
 
     returned_id = apply_ai_result(payload)
 
