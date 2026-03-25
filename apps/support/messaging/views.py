@@ -599,7 +599,8 @@ class SendMessageView(APIView):
         if template_id:
             t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
             if t:
-                if body_base and "#{내용}" in (t.body or ""):
+                tpl_body = t.body or ""
+                if body_base and ("#{공지내용}" in tpl_body or "#{내용}" in tpl_body):
                     user_custom_content = body_base
                 if not body_base:
                     body_base = (t.body or "").strip()

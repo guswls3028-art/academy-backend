@@ -26,7 +26,7 @@ from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
 
 from apps.domains.parents.services import ensure_parent_for_student
-from apps.support.messaging.services import send_welcome_messages, get_site_url, get_tenant_site_url, send_sms, send_registration_approved_messages, enqueue_sms
+from apps.support.messaging.services import send_welcome_messages, get_site_url, get_tenant_site_url, send_sms, send_registration_approved_messages, enqueue_sms, send_event_notification
 from apps.domains.ai.gateway import dispatch_job
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 
@@ -329,6 +329,13 @@ class StudentViewSet(ModelViewSet):
             student=student, tenant=request.tenant,
             status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
         ).update(status=SessionParticipant.Status.CANCELLED, status_changed_at=now)
+        # 퇴원 알림 발송 (학부모)
+        _student = student  # closure 캡처용
+        _tenant = request.tenant
+        transaction.on_commit(lambda: send_event_notification(
+            tenant=_tenant, trigger="withdrawal_complete",
+            student=_student, send_to="parent",
+        ))
         return Response(status=204)
 
     # ------------------------------
@@ -1847,8 +1854,8 @@ class StudentPasswordFindRequestView(APIView):
                 {"detail": "해당 이름과 전화번호로 등록된 학생이 없습니다."},
                 status=404,
             )
-        import random
-        code = "".join([str(random.randint(0, 9)) for _ in range(6)])
+        import secrets
+        code = "".join([str(secrets.randbelow(10)) for _ in range(6)])
         key = _pw_reset_cache_key(tenant.id, phone)
         cache.set(key, {"user_id": student.user_id, "code": code}, timeout=600)
 
@@ -1931,10 +1938,10 @@ def _normalize_phone_for_reset(value):
 
 def _generate_temp_password(length=10):
     """임시 비밀번호 생성 (영문+숫자)."""
-    import random
+    import secrets
     import string
     chars = string.ascii_letters + string.digits
-    return "".join(random.choice(chars) for _ in range(length))
+    return "".join(secrets.choice(chars) for _ in range(length))
 
 
 class StudentPasswordResetSendView(APIView):

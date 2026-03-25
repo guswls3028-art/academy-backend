@@ -182,17 +182,26 @@ def enqueue_sms(
 def is_reservation_cancelled(reservation_id: int, tenant_id=None) -> bool:
     """
     예약 취소 여부 (Double Check용).
-    tenant_id가 주어지면 해당 테넌트 소속 예약만 조회(격리). 모델에 tenant_id 없으면 tenant_id 무시.
+    tenant_id가 주어지면 해당 테넌트 소속 예약만 조회(격리).
+    tenant_id가 없으면 크로스 테넌트 방지를 위해 항상 False 반환.
     """
+    if tenant_id is None:
+        logger.warning(
+            "is_reservation_cancelled called without tenant_id (reservation_id=%s), "
+            "returning False to prevent cross-tenant lookup",
+            reservation_id,
+        )
+        return False
     try:
         from django.apps import apps
         for model in apps.get_models():
             if model.__name__ != "Reservation" or not hasattr(model, "status"):
                 continue
-            if tenant_id is not None and hasattr(model, "tenant_id"):
+            if hasattr(model, "tenant_id"):
                 r = model.objects.filter(tenant_id=tenant_id, pk=reservation_id).first()
             else:
-                r = model.objects.filter(pk=reservation_id).first()
+                # 모델에 tenant_id 필드 없으면 격리 불가 → 안전하게 False
+                continue
             if r and getattr(r, "status", None) == "CANCELLED":
                 return True
         return False

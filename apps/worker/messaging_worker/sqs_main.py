@@ -411,8 +411,12 @@ def main() -> int:
                         continue
 
                     tenant_id = data.get("tenant_id")
-                    if tenant_id is None and os.environ.get("DJANGO_SETTINGS_MODULE"):
-                        logger.warning("Message missing tenant_id, skipping (legacy message)")
+                    if tenant_id is None:
+                        logger.error(
+                            "Message missing tenant_id (required for tenant isolation), "
+                            "deleting message_id=%s",
+                            message_id,
+                        )
                         queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,

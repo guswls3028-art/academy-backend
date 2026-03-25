@@ -24,6 +24,7 @@ from django.conf import settings
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.support.messaging.services import send_event_notification
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,17 @@ class EnrollmentViewSet(ModelViewSet):
                 obj.status = "ACTIVE"
                 obj.save(update_fields=["status"])
             created.append(obj)
+            # 반 등록 완료 알림 (학부모)
+            if created_new:
+                _tenant = tenant
+                _student = obj.student if hasattr(obj, "student") else None
+                _lecture_title = lecture.title if lecture else ""
+                if _student:
+                    transaction.on_commit(lambda t=_tenant, s=_student, lt=_lecture_title: send_event_notification(
+                        tenant=t, trigger="class_enrollment_complete",
+                        student=s, send_to="parent",
+                        context={"강의명": lt},
+                    ))
 
         return Response(
             EnrollmentSerializer(created, many=True).data,
