@@ -26,7 +26,14 @@ def pytest_configure(config):
     db_host = db.get("HOST", "")
     test_db_name = db.get("TEST", {}).get("NAME", f"test_{db_name}")
 
-    # 1. PostgreSQL 필수
+    settings_module = os.environ.get("DJANGO_SETTINGS_MODULE", "")
+
+    # CI smoke test (settings.test)는 의도적으로 SQLite 사용 → PostgreSQL 검증 스킵
+    if settings_module.endswith(".test"):
+        print(f"\n[conftest] CI smoke test mode — DB 검증 스킵 ({engine})")
+        return
+
+    # 1. PostgreSQL 필수 (로컬/통합 테스트)
     assert "postgresql" in engine, (
         f"[FATAL] 테스트 DB ENGINE이 postgresql이 아닙니다: {engine}\n"
         "SQLite는 프로덕션과 동작이 다릅니다. PostgreSQL 환경변수를 설정하세요."
@@ -40,7 +47,7 @@ def pytest_configure(config):
 
     # 3. 정보 출력
     print(f"\n{'='*60}")
-    print(f"  TEST SETTINGS: {os.environ['DJANGO_SETTINGS_MODULE']}")
+    print(f"  TEST SETTINGS: {settings_module}")
     print(f"  DB ENGINE:     {engine}")
     print(f"  DB HOST:       {db_host}")
     print(f"  DB NAME:       {db_name}")
