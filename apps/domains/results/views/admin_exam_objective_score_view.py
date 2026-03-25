@@ -38,7 +38,7 @@ class AdminExamObjectiveScoreView(APIView):
 
         # ✅ tenant isolation: verify exam belongs to tenant
         from django.shortcuts import get_object_or_404 as _get_or_404
-        _get_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
+        exam = _get_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
         from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
@@ -55,7 +55,7 @@ class AdminExamObjectiveScoreView(APIView):
         if new_objective < 0:
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})
 
-        max_score = 100.0
+        max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
         if new_objective > max_score:
             raise ValidationError(
                 {"detail": f"score must be between 0 and {max_score}", "code": "INVALID"}

@@ -244,6 +244,19 @@ class ExamGradingService:
                 update_fields.append(f)
         result.save(update_fields=list(dict.fromkeys(update_fields)))
 
+        # P1 수정: 수동 오버라이드 후 Result(학생 화면)도 동기화
+        try:
+            from apps.domains.results.services.sync_result_from_submission import (
+                sync_result_from_exam_submission,
+            )
+            sync_result_from_exam_submission(int(submission.id))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "Manual override: failed to sync Result for submission %s",
+                submission.id,
+            )
+
         return result
 
     @transaction.atomic
