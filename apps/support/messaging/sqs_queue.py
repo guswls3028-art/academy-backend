@@ -27,9 +27,10 @@ def _build_business_key(
     target_id: str = "",
     recipient: str = "",
     occurrence_key: str = "",
+    template_id: str = "",
 ) -> str:
     """Build SHA-256 business idempotency key from domain fields."""
-    canonical = f"msg:{tenant_id}:{channel}:{event_type}:{target_type}:{target_id}:{recipient}:{occurrence_key}"
+    canonical = f"msg:{tenant_id}:{channel}:{event_type}:{target_type}:{target_id}:{recipient}:{occurrence_key}:{template_id}"
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -127,7 +128,8 @@ class MessagingSQSQueue:
             target_type=target_type or "",
             target_id=str(target_id) if target_id else "",
             recipient=message["to"],
-            occurrence_key=occurrence_key or timezone.now().strftime("%Y%m%d%H%M"),
+            occurrence_key=occurrence_key or timezone.now().strftime("%Y%m%d%H%M%S"),
+            template_id=str(template_id) if template_id else "",
         )
         if not message["to"] or not message["text"]:
             logger.warning("enqueue skipped: to or text empty")
