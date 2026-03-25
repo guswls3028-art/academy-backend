@@ -30,7 +30,7 @@ def pytest_configure(config):
 
     # CI smoke test (settings.test)는 의도적으로 SQLite 사용 → PostgreSQL 검증 스킵
     if settings_module.endswith(".test"):
-        print(f"\n[conftest] CI smoke test mode — DB 검증 스킵 ({engine})")
+        print(f"\n[conftest] CI smoke test mode - DB skip ({engine})")
         return
 
     # 1. PostgreSQL 필수 (로컬/통합 테스트)

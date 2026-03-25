@@ -69,8 +69,10 @@ class TestPsNumberUsernameSyncOnSave(TestCase):
         ifile = InventoryFile.objects.create(
             tenant=self.tenant,
             student_ps="A12345",
+            scope="student",
             folder=folder,
-            name="test.pdf",
+            display_name="test.pdf",
+            original_name="test.pdf",
             r2_key="test/key",
             size_bytes=100,
         )

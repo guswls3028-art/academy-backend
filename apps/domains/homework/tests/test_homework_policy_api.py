@@ -5,6 +5,8 @@ from rest_framework.test import APITestCase
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.lectures.models import Lecture, Session
+from apps.domains.enrollment.models import Enrollment
+from apps.domains.students.models import Student
 from apps.domains.homework_results.models import HomeworkScore, Homework
 
 
@@ -45,6 +47,24 @@ class HomeworkPolicyApiTests(APITestCase):
             lecture=self.lecture,
             order=1,
             title="S1",
+        )
+
+        User = get_user_model()
+        student_user = User.objects.create(
+            tenant=self.tenant,
+            username=f"t{self.tenant.id}_student",
+            is_active=True,
+        )
+        self.student = Student.objects.create(
+            tenant=self.tenant,
+            user=student_user,
+            name="Test Student",
+        )
+        self.enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            lecture=self.lecture,
+            status="ACTIVE",
         )
 
         self.client.force_authenticate(user=self.user)
@@ -97,7 +117,7 @@ class HomeworkPolicyApiTests(APITestCase):
 
         hw = Homework.objects.create(session=self.session, title="HW1")
         hs = HomeworkScore.objects.create(
-            enrollment_id=123,
+            enrollment_id=self.enrollment.id,
             session=self.session,
             homework=hw,
             score=60.0,       # percent 입력
