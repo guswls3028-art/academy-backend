@@ -87,7 +87,6 @@ class HomeworkSubmissionsListView(APIView):
                 target_type=Submission.TargetType.HOMEWORK,
                 target_id=int(homework_id),
             )
-            .select_related("enrollment__student", "enrollment__lecture")
             .order_by("-id")[:200]
         )
 
@@ -105,10 +104,17 @@ class HomeworkSubmissionsListView(APIView):
             enrollment_ids=enrollment_ids,
         ) if enrollment_ids else {}
 
+        # enrollment_id → (student, lecture) 일괄 조회
+        enrollment_map: Dict[int, Any] = {}
+        if enrollment_ids:
+            from apps.domains.enrollment.models import Enrollment
+            for enr in Enrollment.objects.select_related("student", "lecture").filter(id__in=enrollment_ids):
+                enrollment_map[enr.id] = enr
+
         items: list[Dict[str, Any]] = []
         for s in submissions_list:
             enrollment_id = getattr(s, "enrollment_id", None)
-            enrollment = getattr(s, "enrollment", None)
+            enrollment = enrollment_map.get(int(enrollment_id)) if enrollment_id else None
             student = getattr(enrollment, "student", None) if enrollment else None
             lecture = getattr(enrollment, "lecture", None) if enrollment else None
 
