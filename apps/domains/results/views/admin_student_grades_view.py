@@ -55,9 +55,16 @@ class AdminStudentGradesView(APIView):
                 target_type="exam",
             )
             .order_by("-submitted_at")
-            .values("target_id", "enrollment_id", "total_score", "max_score", "submitted_at")
+            .values("target_id", "enrollment_id", "total_score", "max_score", "submitted_at", "attempt_id")
         )
         exam_ids = list({r["target_id"] for r in results})
+
+        # ✅ 미응시 감지: ExamAttempt.meta.status
+        _attempt_ids = {int(r["attempt_id"]) for r in results if r.get("attempt_id")}
+        _attempt_meta_map = {}
+        if _attempt_ids:
+            for a in ExamAttempt.objects.filter(id__in=_attempt_ids).only("id", "meta"):
+                _attempt_meta_map[int(a.id)] = (a.meta or {}).get("status")
         exams_map = {}
         if exam_ids:
             for e in Exam.objects.filter(id__in=exam_ids).only("id", "title", "pass_score"):
@@ -133,13 +140,23 @@ class AdminStudentGradesView(APIView):
                     lecture_color = lecture_color or enroll_info["lecture_color"]
                     lecture_chip_label = lecture_chip_label or enroll_info["lecture_chip_label"]
 
+            _meta_status = _attempt_meta_map.get(int(r["attempt_id"])) if r.get("attempt_id") else None
+            is_not_submitted = (_meta_status == "NOT_SUBMITTED")
+
             raw_pass_score = info["pass_score"] or 0
-            is_pass_1st = float(r["total_score"]) >= raw_pass_score if raw_pass_score > 0 else None
+            if is_not_submitted:
+                is_pass_1st = None
+            elif raw_pass_score > 0:
+                is_pass_1st = float(r["total_score"]) >= raw_pass_score
+            else:
+                is_pass_1st = None
             enroll_id = r["enrollment_id"]
             resolution = resolved_exam_links.get((enroll_id, eid))
             max_attempt = retake_counts.get((enroll_id, eid), 1)
 
-            if is_pass_1st is None:
+            if is_not_submitted:
+                achievement = "NOT_SUBMITTED"
+            elif is_pass_1st is None:
                 achievement = None
             elif is_pass_1st:
                 achievement = "PASS"
@@ -152,10 +169,11 @@ class AdminStudentGradesView(APIView):
                 "exam_id": eid,
                 "enrollment_id": enroll_id,
                 "title": info["title"],
-                "total_score": r["total_score"],
+                "total_score": None if is_not_submitted else r["total_score"],
                 "max_score": r["max_score"],
                 "is_pass": is_pass_1st,
                 "achievement": achievement,
+                "meta_status": _meta_status,
                 "retake_count": max_attempt,
                 "session_id": session_id,
                 "session_title": session_title,

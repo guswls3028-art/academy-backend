@@ -380,9 +380,15 @@ class SessionScoresView(APIView):
             if r.attempt_id
         }
 
+        _attempt_qs = list(ExamAttempt.objects.filter(id__in=attempt_ids))
         attempt_status_map = {
             int(a.id): str(a.status or "")
-            for a in ExamAttempt.objects.filter(id__in=attempt_ids)
+            for a in _attempt_qs
+        }
+        # ✅ 미응시(NOT_SUBMITTED) 상태 맵
+        attempt_meta_status_map: Dict[int, Optional[str]] = {
+            int(a.id): (a.meta or {}).get("status")
+            for a in _attempt_qs
         }
 
         # -------------------------------------------------
@@ -503,7 +509,22 @@ class SessionScoresView(APIView):
                     )
                     locked = attempt_status.lower() == "grading" if attempt_status else False
                     pass_score = exam_pass_score_map.get(exid, 0.0)
-                    passed = bool(float(r.total_score or 0.0) >= float(pass_score))
+
+                    # ✅ 미응시 감지
+                    _meta_status = (
+                        attempt_meta_status_map.get(int(r.attempt_id))
+                        if r.attempt_id is not None else None
+                    )
+                    is_not_submitted = (_meta_status == "NOT_SUBMITTED")
+
+                    # 미응시 → passed=None / pass_score=0(기준 미설정) → passed=None
+                    if is_not_submitted:
+                        passed = None
+                    elif pass_score > 0:
+                        passed = bool(float(r.total_score or 0.0) >= float(pass_score))
+                    else:
+                        passed = None
+
                     items_list = list(r.items.all()) if hasattr(r, "items") else []
                     subjective_sum = sum(
                         float(ri.score or 0.0) for ri in items_list
@@ -511,14 +532,15 @@ class SessionScoresView(APIView):
                     objective_val = float(getattr(r, "objective_score", 0.0) or 0.0)
 
                     block = {
-                        "score": float(r.total_score or 0.0),
+                        "score": None if is_not_submitted else float(r.total_score or 0.0),
                         "max_score": float(r.max_score or 0.0),
                         "passed": passed,
                         "clinic_required": clinic_required,
                         "is_locked": locked,
                         "lock_reason": "GRADING" if locked else None,
-                        "objective_score": objective_val,
-                        "subjective_score": subjective_sum,
+                        "objective_score": None if is_not_submitted else objective_val,
+                        "subjective_score": None if is_not_submitted else subjective_sum,
+                        "meta": {"status": "NOT_SUBMITTED"} if is_not_submitted else None,
                     }
                     updated_at = r.updated_at
 

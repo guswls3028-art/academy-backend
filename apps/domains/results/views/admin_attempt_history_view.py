@@ -124,33 +124,36 @@ class AdminAttemptHistoryView(APIView):
         attempt_list = []
         for a in attempts:
             score = None
-            passed = False
+            passed = None  # 기본: 합격 기준 미설정 또는 미응시
+            a_meta = a.meta or {}
+            meta_status = a_meta.get("status")  # "NOT_SUBMITTED" | None
 
             if a.attempt_index == 1 and result:
-                # 1차: Result에서 점수 (성적 산출 SSOT)
-                score = float(result.total_score or 0)
+                score = None if meta_status == "NOT_SUBMITTED" else float(result.total_score or 0)
             else:
-                # 2차+: meta.total_score (ClinicRemediationService가 저장)
-                meta = a.meta or {}
-                score = meta.get("total_score")
+                score = a_meta.get("total_score")
 
             if score is not None and pass_score > 0:
                 passed = float(score) >= pass_score
 
-            source = "clinic" if a.is_retake else "grade"
+            # ✅ source: clinic_link 유무 기준 (is_retake는 당일 직접 재시도에도 True)
+            source = "clinic" if a.clinic_link_id else "grade"
 
-            attempt_list.append({
+            entry: dict = {
                 "attempt_index": a.attempt_index,
                 "score": score,
                 "passed": passed,
                 "at": a.created_at,
                 "source": source,
-            })
+            }
+            if meta_status:
+                entry["meta_status"] = meta_status
+            attempt_list.append(entry)
 
         # 1차 결과가 있지만 ExamAttempt이 없는 경우 (레거시)
         if not attempt_list and result:
             score = float(result.total_score or 0)
-            passed = score >= pass_score if pass_score > 0 else False
+            passed = score >= pass_score if pass_score > 0 else None
             attempt_list.append({
                 "attempt_index": 1,
                 "score": score,

@@ -134,8 +134,12 @@ def build_lecture_results_snapshot(
                 )
 
                 pass_score = _safe_float(getattr(ex, "pass_score", 0.0) or 0.0)
-                pcount = rs.filter(total_score__gte=pass_score).count()
-                fcount = rs.filter(total_score__lt=pass_score).count()
+                if pass_score > 0:
+                    pcount = rs.filter(total_score__gte=pass_score).count()
+                    fcount = rs.filter(total_score__lt=pass_score).count()
+                else:
+                    pcount = 0
+                    fcount = 0
 
                 p_total = _safe_int(agg["participant_count"] or 0)
                 p_rate = (pcount / p_total) if p_total else 0.0

@@ -79,14 +79,36 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     data["can_retake"] = can_retake
     data["clinic_required"] = bool(clinic_required)
 
+    # ✅ 미응시 감지: ExamAttempt.meta.status
+    _attempt_meta_status = None
+    if result.attempt_id:
+        _att = ExamAttempt.objects.filter(id=int(result.attempt_id)).only("meta").first()
+        if _att:
+            _attempt_meta_status = (_att.meta or {}).get("status")
+    is_not_submitted = (_attempt_meta_status == "NOT_SUBMITTED")
+    data["meta_status"] = _attempt_meta_status
+
     data["exam_id"] = exam_id
     pass_score = float(getattr(exam, "pass_score", 0) or 0)
-    data["is_pass"] = float(result.total_score) >= pass_score
+    # 미응시 → is_pass=None / pass_score=0(기준 미설정) → is_pass=None
+    if is_not_submitted:
+        data["is_pass"] = None
+    elif pass_score > 0:
+        data["is_pass"] = float(result.total_score) >= pass_score
+    else:
+        data["is_pass"] = None
 
     # 정답 공개 정책 적용
-    # 불합격 학생은 정답 비공개 (재시험 부정행위 방지)
+    # 불합격(is_pass=False) → 비공개 / 미응시 → 비공개 / 기준 미설정(None) → 정책 따름
     is_pass = data["is_pass"]
-    show_answers = exam.should_show_answers() if is_pass else False
+    if is_not_submitted:
+        show_answers = False
+    elif is_pass is None:
+        show_answers = exam.should_show_answers()
+    elif is_pass:
+        show_answers = exam.should_show_answers()
+    else:
+        show_answers = False
     data["answer_visibility"] = getattr(exam, "answer_visibility", "hidden")
     data["answers_visible"] = show_answers
 

@@ -50,6 +50,11 @@ class AdminExamTotalScoreView(APIView):
         from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
         validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
 
+        # ── 미응시 처리: meta_status="NOT_SUBMITTED" ──
+        meta_status = request.data.get("meta_status")
+        if meta_status == "NOT_SUBMITTED":
+            return self._handle_not_submitted(request, exam, exam_id, enrollment_id)
+
         if "score" not in request.data:
             raise ValidationError({"detail": "score is required", "code": "INVALID"})
 
@@ -188,12 +193,13 @@ class AdminExamTotalScoreView(APIView):
         result.save(update_fields=["total_score", "max_score", "updated_at"])
 
         # -------------------------------------------------
-        # 5-b) Representative ExamAttempt 점수 동기화 (드로어 AttemptHistory 정합성)
+        # 5-b) Representative ExamAttempt 점수 동기화 + NOT_SUBMITTED 해제
         # -------------------------------------------------
         if attempt and attempt.is_representative:
             attempt.meta = attempt.meta or {}
             attempt.meta["total_score"] = float(new_score)
             attempt.meta["synced_from_result"] = True
+            attempt.meta.pop("status", None)  # 정상 점수 입력 시 NOT_SUBMITTED 해제
             attempt.save(update_fields=["meta", "updated_at"])
 
         # -------------------------------------------------
@@ -258,6 +264,83 @@ class AdminExamTotalScoreView(APIView):
                 "max_score": float(result.max_score or 0.0),
                 "progress": {"dispatched": progress_ok, "error": progress_error, "debug": progress_debug},
             },
+            status=drf_status.HTTP_200_OK,
+        )
+
+    # ──────────────────────────────────────────────────
+    # 미응시 처리 (/ + Enter)
+    # ──────────────────────────────────────────────────
+    @transaction.atomic
+    def _handle_not_submitted(self, request, exam, exam_id: int, enrollment_id: int):
+        """
+        시험 미응시 처리.
+        - ExamAttempt.meta.status = "NOT_SUBMITTED"
+        - Result.total_score = 0 (FloatField non-nullable)
+        - 프론트/API에서 meta.status로 "미응시" 표시
+        """
+        max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
+
+        result = (
+            Result.objects.select_for_update()
+            .filter(target_type="exam", target_id=exam_id, enrollment_id=enrollment_id)
+            .first()
+        )
+        if not result or not result.attempt_id:
+            qs = ExamAttempt.objects.select_for_update().filter(
+                exam_id=exam_id, enrollment_id=enrollment_id
+            )
+            last = qs.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
+            next_index = int(last) + 1
+            qs.filter(is_representative=True).update(is_representative=False)
+            attempt = ExamAttempt.objects.create(
+                exam_id=exam_id, enrollment_id=enrollment_id,
+                submission_id=0, attempt_index=next_index,
+                is_retake=(last > 0), is_representative=True,
+                status="done", meta={"status": "NOT_SUBMITTED"},
+            )
+            if not result:
+                result = Result.objects.create(
+                    target_type="exam", target_id=exam_id,
+                    enrollment_id=enrollment_id, attempt_id=int(attempt.id),
+                    total_score=0.0, max_score=max_score, objective_score=0.0,
+                )
+            else:
+                result.attempt_id = int(attempt.id)
+                result.total_score = 0.0
+                result.max_score = max_score
+                result.save(update_fields=["attempt_id", "total_score", "max_score", "updated_at"])
+        else:
+            attempt = ExamAttempt.objects.filter(id=int(result.attempt_id)).first()
+            if attempt:
+                attempt.meta = attempt.meta or {}
+                attempt.meta["status"] = "NOT_SUBMITTED"
+                attempt.save(update_fields=["meta", "updated_at"])
+            result.total_score = 0.0
+            result.save(update_fields=["total_score", "updated_at"])
+
+        # audit
+        ResultFact.objects.create(
+            target_type="exam", target_id=exam_id,
+            enrollment_id=enrollment_id, submission_id=0,
+            attempt_id=int(result.attempt_id), question_id=0,
+            answer="", is_correct=False, score=0.0, max_score=max_score,
+            source="manual_not_submitted",
+            meta={"status": "NOT_SUBMITTED", "edited_at": timezone.now().isoformat()},
+        )
+
+        # progress pipeline (clinic 판정)
+        progress_ok = False
+        try:
+            dispatch_progress_pipeline(exam_id=int(exam_id))
+            progress_ok = True
+        except Exception:
+            logger.exception("progress pipeline failed for NOT_SUBMITTED (exam=%s)", exam_id)
+
+        return Response(
+            {"ok": True, "exam_id": exam_id, "enrollment_id": enrollment_id,
+             "total_score": 0.0, "max_score": max_score,
+             "meta_status": "NOT_SUBMITTED",
+             "progress": {"dispatched": progress_ok}},
             status=drf_status.HTTP_200_OK,
         )
 

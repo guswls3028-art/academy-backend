@@ -87,9 +87,16 @@ class MyGradesSummaryView(APIView):
                 target_type="exam",
             )
             .order_by("-submitted_at")
-            .values("target_id", "enrollment_id", "total_score", "max_score", "submitted_at")
+            .values("target_id", "enrollment_id", "total_score", "max_score", "submitted_at", "attempt_id")
         )
         exam_ids = list({r["target_id"] for r in results})
+
+        # ✅ 미응시 감지
+        _attempt_ids = {int(r["attempt_id"]) for r in results if r.get("attempt_id")}
+        _attempt_meta_map = {}
+        if _attempt_ids:
+            for a in ExamAttempt.objects.filter(id__in=_attempt_ids).only("id", "meta"):
+                _attempt_meta_map[int(a.id)] = (a.meta or {}).get("status")
         exams_map = {}
         if exam_ids:
             for e in Exam.objects.filter(id__in=exam_ids).only("id", "title", "pass_score"):
@@ -137,19 +144,23 @@ class MyGradesSummaryView(APIView):
             if session and hasattr(session, "lecture") and session.lecture and getattr(session.lecture, "is_system", False):
                 continue
 
-            # pass_score=0 → 합격 기준 미설정 → is_pass=None (합/불 판정 없음)
+            _meta_status = _attempt_meta_map.get(int(r["attempt_id"])) if r.get("attempt_id") else None
+            is_not_submitted = (_meta_status == "NOT_SUBMITTED")
+
             raw_pass_score = info["pass_score"] or 0
-            is_pass_1st = float(r["total_score"]) >= raw_pass_score if raw_pass_score > 0 else None
+            if is_not_submitted:
+                is_pass_1st = None
+            elif raw_pass_score > 0:
+                is_pass_1st = float(r["total_score"]) >= raw_pass_score
+            else:
+                is_pass_1st = None
             enroll_id = r["enrollment_id"]
             resolution = resolved_exam_links.get((enroll_id, eid))
             max_attempt = retake_counts.get((enroll_id, eid), 1)
 
-            # 최종 학습 성취 판정
-            # - 합격 기준 없음 (pass_score=0) → None (판정 불가)
-            # - 1차 합격 → "PASS"
-            # - 1차 불합격 + 보강 합격 → "REMEDIATED" (보강 후 합격)
-            # - 1차 불합격 + 미해소 → "FAIL"
-            if is_pass_1st is None:
+            if is_not_submitted:
+                achievement = "NOT_SUBMITTED"
+            elif is_pass_1st is None:
                 achievement = None
             elif is_pass_1st:
                 achievement = "PASS"
@@ -162,10 +173,11 @@ class MyGradesSummaryView(APIView):
                 "exam_id": eid,
                 "enrollment_id": enroll_id,
                 "title": info["title"],
-                "total_score": r["total_score"],
+                "total_score": None if is_not_submitted else r["total_score"],
                 "max_score": r["max_score"],
                 "is_pass": is_pass_1st,
                 "achievement": achievement,
+                "meta_status": _meta_status,
                 "retake_count": max_attempt,
                 "session_title": session_title,
                 "lecture_title": lecture_title,
