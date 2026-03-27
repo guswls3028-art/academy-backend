@@ -312,6 +312,7 @@ FFMPEG_TIMEOUT_DURATION_MULTIPLIER = 2.0
 FFMPEG_CHUNK_SECONDS = 300    # 한 번에 기다리는 구간
 FFMPEG_EXTEND_SECONDS = 300   # 연장 시 추가 시간
 FFMPEG_MAX_TOTAL_SECONDS = 86400  # 24h 절대 상한 (hang 감지용)
+FFMPEG_STALL_TIMEOUT_SECONDS = 900  # 15분 동안 진행 없으면 hang으로 판정하고 kill
 
 
 def _effective_ffmpeg_timeout(duration_sec: Optional[float], config_timeout: Optional[int]) -> int:
@@ -381,9 +382,22 @@ def transcode_to_hls(
         total_sec = float(duration_sec)
         last_pct = -1
         stderr_lines: List[str] = []
+        # Stall detection: track when ffmpeg last made progress
+        _last_progress_time = time.monotonic()
+        _last_progress_lock = threading.Lock()
+
+        def _update_progress_time() -> None:
+            nonlocal _last_progress_time
+            with _last_progress_lock:
+                _last_progress_time = time.monotonic()
+
+        def _seconds_since_last_progress() -> float:
+            with _last_progress_lock:
+                return time.monotonic() - _last_progress_time
 
         def on_progress(current_sec: float) -> None:
             nonlocal last_pct
+            _update_progress_time()
             pct = int(50 + 35 * (current_sec / total_sec)) if total_sec > 0 else 50
             pct = min(85, max(50, pct))
             if pct != last_pct:
@@ -432,6 +446,7 @@ def transcode_to_hls(
                 progress_reader.start()
                 stderr_reader.start()
                 # 작업 중 연장: 300초마다 대기, 타임아웃 시 300초 추가 (최대 24h)
+                # + stall detection: 15분간 진행 없으면 hang으로 판정하고 kill
                 deadline = time.monotonic() + effective_timeout
                 while True:
                     remaining = deadline - time.monotonic()
@@ -441,18 +456,35 @@ def transcode_to_hls(
                         raise TranscodeError(
                             f"ffmpeg timeout video_id={video_id} (extending, cap 24h) exceeded"
                         )
+                    # Stall detection: kill if no progress for FFMPEG_STALL_TIMEOUT_SECONDS
+                    stall_sec = _seconds_since_last_progress()
+                    if stall_sec > FFMPEG_STALL_TIMEOUT_SECONDS:
+                        logger.error(
+                            "[TRANSCODER] STALL DETECTED video_id=%s no_progress_for=%.0fs "
+                            "last_pct=%s stderr_tail=%s — killing ffmpeg",
+                            video_id, stall_sec, last_pct,
+                            trim_tail("".join(stderr_lines[-10:])),
+                        )
+                        p.kill()
+                        p.wait()
+                        raise TranscodeError(
+                            f"ffmpeg stall detected video_id={video_id}: "
+                            f"no progress for {int(stall_sec)}s (limit={FFMPEG_STALL_TIMEOUT_SECONDS}s)"
+                        )
                     chunk = min(FFMPEG_CHUNK_SECONDS, int(remaining))
                     try:
                         p.wait(timeout=chunk)
                         break
                     except subprocess.TimeoutExpired:
-                        deadline += FFMPEG_EXTEND_SECONDS
-                        cap = time.monotonic() + FFMPEG_MAX_TOTAL_SECONDS
-                        if deadline > cap:
-                            deadline = cap
+                        # Only extend if progress is still happening
+                        if stall_sec < FFMPEG_STALL_TIMEOUT_SECONDS:
+                            deadline += FFMPEG_EXTEND_SECONDS
+                            cap = time.monotonic() + FFMPEG_MAX_TOTAL_SECONDS
+                            if deadline > cap:
+                                deadline = cap
                         logger.debug(
-                            "[TRANSCODER] Extended ffmpeg timeout video_id=%s remaining=%ds",
-                            video_id, int(deadline - time.monotonic()),
+                            "[TRANSCODER] ffmpeg wait chunk video_id=%s remaining=%ds stall=%.0fs",
+                            video_id, int(deadline - time.monotonic()), stall_sec,
                         )
                 progress_reader.join(timeout=2.0)
                 stderr_reader.join(timeout=2.0)
