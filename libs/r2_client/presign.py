@@ -58,6 +58,68 @@ def create_presigned_put_url(
 
 
 
+# ---------------------------------------------------------------------
+# Multipart Upload
+# ---------------------------------------------------------------------
+
+def create_multipart_upload(key: str, content_type: str) -> str:
+    """R2 multipart upload 생성 → UploadId 반환."""
+    resp = _s3.create_multipart_upload(
+        Bucket=_get_bucket(),
+        Key=key,
+        ContentType=content_type,
+    )
+    return resp["UploadId"]
+
+
+def create_presigned_upload_part_url(
+    key: str,
+    upload_id: str,
+    part_number: int,
+    expires_in: int = 3600,  # 1 hour per part — 100MB 파트에 충분
+) -> str:
+    """개별 파트 업로드용 presigned URL 생성."""
+    return _s3.generate_presigned_url(
+        ClientMethod="upload_part",
+        Params={
+            "Bucket": _get_bucket(),
+            "Key": key,
+            "UploadId": upload_id,
+            "PartNumber": part_number,
+        },
+        ExpiresIn=expires_in,
+    )
+
+
+def complete_multipart_upload(key: str, upload_id: str, parts: list[dict]) -> dict:
+    """
+    Multipart upload 완료.
+    parts: [{"ETag": "...", "PartNumber": 1}, ...]
+    """
+    return _s3.complete_multipart_upload(
+        Bucket=_get_bucket(),
+        Key=key,
+        UploadId=upload_id,
+        MultipartUpload={"Parts": sorted(parts, key=lambda p: p["PartNumber"])},
+    )
+
+
+def abort_multipart_upload(key: str, upload_id: str) -> None:
+    """Multipart upload 중단 — 불완전 파트 정리."""
+    try:
+        _s3.abort_multipart_upload(
+            Bucket=_get_bucket(),
+            Key=key,
+            UploadId=upload_id,
+        )
+    except Exception:
+        pass  # best-effort cleanup
+
+
+# ---------------------------------------------------------------------
+# Presigned GET
+# ---------------------------------------------------------------------
+
 def create_presigned_get_url(
     key: str,
     expires_in: int = PRESIGN_STREAM_EXPIRES,

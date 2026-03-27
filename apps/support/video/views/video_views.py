@@ -25,7 +25,14 @@ from django_filters.rest_framework import DjangoFilterBackend
 
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from libs.r2_client.presign import create_presigned_put_url, create_presigned_get_url
+from libs.r2_client.presign import (
+    create_presigned_put_url,
+    create_presigned_get_url,
+    create_multipart_upload,
+    create_presigned_upload_part_url,
+    complete_multipart_upload,
+    abort_multipart_upload,
+)
 from libs.r2_client.client import head_object
 
 
@@ -379,6 +386,191 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             "upload_url": upload_url,
             "video_id": video.id,
         })
+
+    # ==================================================
+    # upload/multipart/init — R2 multipart upload 시작
+    # ==================================================
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/multipart/init",
+        parser_classes=[JSONParser],
+    )
+    def upload_multipart_init(self, request, pk=None):
+        """
+        R2 multipart upload 생성.
+        대용량 파일(>100MB)은 multipart로 업로드해야 안정적이며,
+        5GiB 초과 파일은 반드시 multipart 필요 (R2 단일 PUT 한계).
+        """
+        try:
+            video = self.get_object()
+        except Exception:
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if video.status != Video.Status.PENDING:
+            return Response(
+                {"detail": f"PENDING 상태에서만 가능합니다. (현재: {video.status})"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if not video.file_key:
+            return Response(
+                {"detail": "파일 키가 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content_type = request.data.get("content_type", "video/mp4").split(";")[0]
+
+        try:
+            upload_id = create_multipart_upload(
+                key=video.file_key,
+                content_type=content_type,
+            )
+        except Exception as e:
+            logger.exception("MULTIPART_INIT_ERROR | video_id=%s | %s", video.id, e)
+            return Response(
+                {"detail": "multipart upload 생성에 실패했습니다."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response({
+            "upload_id": upload_id,
+            "video_id": video.id,
+            "file_key": video.file_key,
+        })
+
+    # ==================================================
+    # upload/multipart/presign — 파트별 presigned URL 발급
+    # ==================================================
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/multipart/presign",
+        parser_classes=[JSONParser],
+    )
+    def upload_multipart_presign(self, request, pk=None):
+        """
+        파트 번호 목록에 대한 presigned URL 일괄 발급.
+        요청: { "upload_id": "...", "part_numbers": [1, 2, 3] }
+        응답: { "urls": { "1": "https://...", "2": "https://...", ... } }
+        """
+        try:
+            video = self.get_object()
+        except Exception:
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if video.status != Video.Status.PENDING:
+            return Response(
+                {"detail": f"PENDING 상태에서만 가능합니다. (현재: {video.status})"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        upload_id = request.data.get("upload_id")
+        part_numbers = request.data.get("part_numbers", [])
+
+        if not upload_id or not part_numbers:
+            return Response(
+                {"detail": "upload_id와 part_numbers 필요"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(part_numbers) > 100:
+            return Response(
+                {"detail": "한 번에 최대 100개 파트까지 요청 가능"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            urls = {}
+            for pn in part_numbers:
+                urls[str(pn)] = create_presigned_upload_part_url(
+                    key=video.file_key,
+                    upload_id=upload_id,
+                    part_number=int(pn),
+                )
+            return Response({"urls": urls})
+        except Exception as e:
+            logger.exception("MULTIPART_PRESIGN_ERROR | video_id=%s | %s", video.id, e)
+            return Response(
+                {"detail": "presigned URL 생성에 실패했습니다."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+    # ==================================================
+    # upload/multipart/complete — R2 multipart upload 완료
+    # ==================================================
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/multipart/complete",
+        parser_classes=[JSONParser],
+    )
+    def upload_multipart_complete(self, request, pk=None):
+        """
+        R2 multipart upload 완료.
+        요청: { "upload_id": "...", "parts": [{"ETag": "...", "PartNumber": 1}, ...] }
+        완료 후 기존 upload/complete와 동일한 인코딩 파이프라인 진입.
+        """
+        try:
+            video = self.get_object()
+        except Exception:
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if video.status != Video.Status.PENDING:
+            return Response(
+                {"detail": f"PENDING 상태에서만 가능합니다. (현재: {video.status})"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        upload_id = request.data.get("upload_id")
+        parts = request.data.get("parts", [])
+
+        if not upload_id or not parts:
+            return Response(
+                {"detail": "upload_id와 parts 필요"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            complete_multipart_upload(
+                key=video.file_key,
+                upload_id=upload_id,
+                parts=parts,
+            )
+        except Exception as e:
+            logger.exception("MULTIPART_COMPLETE_ERROR | video_id=%s | %s", video.id, e)
+            # 실패 시 abort 시도
+            abort_multipart_upload(key=video.file_key, upload_id=upload_id)
+            return Response(
+                {"detail": f"multipart 완료 실패: {str(e)[:200]}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # 성공 — 기존 upload_complete 로직으로 인코딩 파이프라인 진입
+        return self._trigger_upload_complete_pipeline(video)
+
+    def _trigger_upload_complete_pipeline(self, video):
+        """multipart 완료 후 기존 upload_complete 파이프라인 재사용."""
+        try:
+            return self._upload_complete_impl(video)
+        except Exception as e:
+            logger.exception(
+                "VIDEO_UPLOAD_COMPLETE_ERROR | video_id=%s | type=%s | %s",
+                video.id, type(e).__name__, e,
+            )
+            return Response(
+                {"detail": "업로드 완료 처리 중 오류가 발생했습니다."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
     # ==================================================
     # upload/complete
