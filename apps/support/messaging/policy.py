@@ -29,6 +29,41 @@ def is_messaging_disabled(tenant_id: int) -> bool:
     return int(tenant_id) == get_test_tenant_id()
 
 
+def get_messaging_test_whitelist() -> frozenset[str]:
+    """
+    메시징 테스트 모드 수신자 허용 번호.
+    MESSAGING_TEST_WHITELIST 환경변수에 콤마 구분 번호가 있으면 해당 번호만 실발송 허용.
+    비어 있거나 미설정이면 테스트 모드 비활성 (모든 번호 허용).
+    """
+    import os
+    raw = os.environ.get("MESSAGING_TEST_WHITELIST", "").strip()
+    if not raw:
+        return frozenset()
+    return frozenset(n.replace("-", "").strip() for n in raw.split(",") if n.strip())
+
+
+def check_recipient_allowed(to: str) -> bool:
+    """
+    수신 번호가 발송 허용 대상인지 확인.
+    테스트 모드(MESSAGING_TEST_WHITELIST 설정됨)에서는 whitelist에 있는 번호만 허용.
+    운영 모드(미설정)에서는 모든 번호 허용.
+
+    Returns:
+        True if allowed, False if blocked
+    """
+    whitelist = get_messaging_test_whitelist()
+    if not whitelist:
+        return True  # 운영 모드: 모든 번호 허용
+    normalized = (to or "").replace("-", "").strip()
+    if normalized in whitelist:
+        return True
+    logger.warning(
+        "recipient_guard: blocked sending to %s (not in whitelist: %s)",
+        normalized[:4] + "****", ",".join(sorted(whitelist)),
+    )
+    return False
+
+
 def _has_own_sms_credentials(tenant_id: int) -> bool:
     """테넌트가 자체 SMS 발송 가능한 연동 키를 갖고 있는지."""
     try:

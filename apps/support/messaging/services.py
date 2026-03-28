@@ -118,6 +118,10 @@ def enqueue_sms(
     use_alimtalk_first: bool = False,
     alimtalk_replacements: Optional[list[dict]] = None,
     template_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    target_type: Optional[str] = None,
+    target_id: Optional[int | str] = None,
+    occurrence_key: Optional[str] = None,
 ) -> bool:
     """
     SMS/알림톡 발송을 SQS에 넣어 워커가 비동기로 발송하도록 함.
@@ -129,22 +133,28 @@ def enqueue_sms(
         sender: 발신 번호
         reservation_id: 예약 ID 있으면 워커에서 취소 여부 Double Check 후 발송/스킵
         message_mode: "sms" | "alimtalk" | "both"
-            - sms: SMS만 발송
-            - alimtalk: 알림톡만 발송 (실패 시 폴백 없음)
-            - both: 알림톡 우선, 실패 시 SMS 폴백
         use_alimtalk_first: (하위호환) True면 both, False면 sms. message_mode가 있으면 무시
-        alimtalk_replacements: 알림톡 템플릿 치환 [{"key": "학생이름2", "value": "길동"}, ...]
+        alimtalk_replacements: 알림톡 템플릿 치환
         template_id: 알림톡 템플릿 ID (선택)
+        event_type: 비즈니스 이벤트 유형 (멱등성 키용, 예: "check_in_complete")
+        target_type: 대상 유형 (예: "student")
+        target_id: 대상 ID (예: student.id)
+        occurrence_key: 이벤트 발생 식별자 (예: "20260328_session_42"). 동일 이벤트 재전송 방지.
 
     Returns:
         bool: enqueue 성공 여부
     """
     from apps.support.messaging.sqs_queue import MessagingSQSQueue
-    from apps.support.messaging.policy import can_send_sms, MessagingPolicyError, is_messaging_disabled
+    from apps.support.messaging.policy import can_send_sms, MessagingPolicyError, is_messaging_disabled, check_recipient_allowed
 
     # 로컬 테스트용 tenant(9999): 알림톡·문자 없이 기능만 동작 (발송 스킵)
     if is_messaging_disabled(tenant_id):
         logger.info("enqueue_sms skipped: tenant_id=%s is test tenant (messaging disabled)", tenant_id)
+        return False
+
+    # Recipient whitelist guard (테스트 모드 시 허용 번호만 발송)
+    if not check_recipient_allowed(to):
+        logger.info("enqueue_sms blocked: recipient %s not in test whitelist", (to or "")[:4] + "****")
         return False
 
     mode = (message_mode or "").strip().lower() or None
@@ -176,6 +186,10 @@ def enqueue_sms(
         use_alimtalk_first=use_alimtalk_first,
         alimtalk_replacements=alimtalk_replacements,
         template_id=template_id,
+        event_type=event_type,
+        target_type=target_type,
+        target_id=target_id,
+        occurrence_key=occurrence_key,
     )
 
 
@@ -342,6 +356,11 @@ def send_event_notification(
 
     sender = (getattr(tenant, "messaging_sender", "") or "").strip()
 
+    # 멱등성 키용 메타데이터: trigger + student_id + 오늘 날짜로 동일 이벤트 중복 방지
+    student_id = getattr(student, "id", None) or getattr(student, "pk", None)
+    from django.utils import timezone as _tz
+    stable_occurrence = _tz.localtime().strftime("%Y%m%d")
+
     try:
         return enqueue_sms(
             tenant_id=tenant.id,
@@ -351,6 +370,10 @@ def send_event_notification(
             message_mode=config.message_mode or "alimtalk",
             template_id=solapi_template_id,
             alimtalk_replacements=replacements,
+            event_type=trigger,
+            target_type="student",
+            target_id=student_id,
+            occurrence_key=stable_occurrence,
         )
     except MessagingPolicyError as exc:
         logger.info(

@@ -35,6 +35,10 @@ def _send_attendance_notification(tenant, attendance, trigger):
     """
     출결 알림톡 발송 (best-effort, 실패해도 출결 처리는 유지).
     trigger: "check_in_complete" 또는 "absent_occurred"
+
+    Time Guard: 세션 날짜가 오늘이 아니면 발송하지 않음.
+    과거 날짜 출결 등록/수정은 행정 작업이지 실시간 이벤트가 아니므로
+    학부모에게 "입실하였습니다" 알림을 보내면 안 됨.
     """
     try:
         from apps.support.messaging.services import send_event_notification
@@ -46,10 +50,21 @@ def _send_attendance_notification(tenant, attendance, trigger):
         lecture = session.lecture
         now = timezone.localtime()
 
+        # ── Time Guard: 오늘 세션만 알림 발송 ──
+        session_date = session.date
+        today = now.date()
+        if session_date and session_date != today:
+            logger.info(
+                "attendance notification skipped (time guard): "
+                "trigger=%s session_date=%s today=%s att_id=%s",
+                trigger, session_date, today, attendance.id,
+            )
+            return
+
         context = {
             "강의명": lecture.title or "",
             "차시명": session.title or f"{session.order}차시",
-            "날짜": str(session.date) if session.date else now.strftime("%Y-%m-%d"),
+            "날짜": str(session_date) if session_date else now.strftime("%Y-%m-%d"),
             "시간": now.strftime("%H:%M"),
         }
 

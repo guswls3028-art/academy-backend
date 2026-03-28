@@ -651,3 +651,102 @@ class TestEnrollmentAndWithdrawalNotifications(TestCase):
         self.assertIn("학원플러스", text)
         self.assertIn("홍길", text)
         self.assertNotIn("#{", text)
+
+
+# ──────────────────────────────────────────
+# 안전장치 테스트 — time guard, idempotency, recipient whitelist
+# ──────────────────────────────────────────
+
+class TestTimeGuard(TestCase):
+    """출결 알림톡 time guard: 오늘 세션만 발송."""
+
+    @patch(f"{_SVC}.send_event_notification")
+    def test_past_date_session_skipped(self, mock_send):
+        """과거 날짜 세션 출결 변경 시 알림톡 발송하지 않음."""
+        from datetime import date, timedelta
+        yesterday = date.today() - timedelta(days=1)
+
+        session = SimpleNamespace(date=yesterday, title="3차시", order=3)
+        session.lecture = SimpleNamespace(title="수학A", tenant_id=1)
+        enrollment = SimpleNamespace(student=_make_student())
+        att = SimpleNamespace(id=1, enrollment=enrollment, session=session)
+        tenant = _make_tenant()
+
+        from apps.domains.attendance.views import _send_attendance_notification
+        _send_attendance_notification(tenant, att, "check_in_complete")
+
+        mock_send.assert_not_called()
+
+    @patch(f"{_SVC}.send_event_notification")
+    def test_today_session_sends(self, mock_send):
+        """오늘 날짜 세션 출결 변경 시 알림톡 정상 발송."""
+        from datetime import date
+        today = date.today()
+
+        session = SimpleNamespace(date=today, title="3차시", order=3)
+        session.lecture = SimpleNamespace(title="수학A", tenant_id=1)
+        enrollment = SimpleNamespace(student=_make_student())
+        att = SimpleNamespace(id=1, enrollment=enrollment, session=session)
+        tenant = _make_tenant()
+
+        from apps.domains.attendance.views import _send_attendance_notification
+        _send_attendance_notification(tenant, att, "check_in_complete")
+
+        mock_send.assert_called_once()
+
+
+class TestIdempotencyMetadata(TestCase):
+    """send_event_notification이 멱등성 메타데이터를 enqueue_sms에 전달."""
+
+    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    def test_passes_event_metadata(self, mock_owner, mock_disabled, mock_config, mock_enqueue):
+        """trigger, student_id, occurrence_key가 enqueue_sms에 전달됨."""
+        tenant = _make_tenant()
+        student = SimpleNamespace(
+            id=42, pk=42, name="홍길동", phone="01012345678",
+            parent_phone="01087654321", ps_number="PS001", tenant_id=1,
+        )
+        config = _make_config("check_in_complete")
+        mock_config.return_value = config
+        mock_enqueue.return_value = True
+
+        from apps.support.messaging.services import send_event_notification
+        send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
+
+        kwargs = mock_enqueue.call_args.kwargs
+        self.assertEqual(kwargs["event_type"], "check_in_complete")
+        self.assertEqual(kwargs["target_type"], "student")
+        self.assertEqual(kwargs["target_id"], 42)
+        self.assertTrue(kwargs["occurrence_key"])  # 날짜 기반 키
+
+
+class TestRecipientWhitelist(TestCase):
+    """recipient guard: 테스트 모드에서 whitelist 번호만 발송."""
+
+    @patch.dict("os.environ", {"MESSAGING_TEST_WHITELIST": "01031217466,01034137466"})
+    def test_allowed_number(self):
+        from apps.support.messaging.policy import check_recipient_allowed
+        self.assertTrue(check_recipient_allowed("01031217466"))
+        self.assertTrue(check_recipient_allowed("01034137466"))
+
+    @patch.dict("os.environ", {"MESSAGING_TEST_WHITELIST": "01031217466,01034137466"})
+    def test_blocked_number(self):
+        from apps.support.messaging.policy import check_recipient_allowed
+        self.assertFalse(check_recipient_allowed("01099999999"))
+
+    @patch.dict("os.environ", {"MESSAGING_TEST_WHITELIST": ""})
+    def test_empty_whitelist_allows_all(self):
+        """운영 모드: whitelist 비어있으면 모든 번호 허용."""
+        from apps.support.messaging.policy import check_recipient_allowed
+        self.assertTrue(check_recipient_allowed("01099999999"))
+
+    @patch.dict("os.environ", {}, clear=False)
+    def test_no_env_allows_all(self):
+        """MESSAGING_TEST_WHITELIST 미설정 시 모든 번호 허용."""
+        import os
+        os.environ.pop("MESSAGING_TEST_WHITELIST", None)
+        from apps.support.messaging.policy import check_recipient_allowed
+        self.assertTrue(check_recipient_allowed("01099999999"))
