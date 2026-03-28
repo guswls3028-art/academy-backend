@@ -667,6 +667,22 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             # ClinicLink 해소는 실제 시험/과제 통과 시에만 발생.
             # (ClinicResolutionService가 progress pipeline에서 자동 처리)
 
+        # ── 클리닉 예약 완료 알림 (AUTO_DEFAULT) ──
+        if obj.status in (SessionParticipant.Status.BOOKED, SessionParticipant.Status.PENDING):
+            try:
+                from apps.support.messaging.services import send_event_notification
+                _tenant = tenant
+                _student = student
+                transaction.on_commit(lambda: send_event_notification(
+                    tenant=_tenant,
+                    trigger="clinic_reservation_created",
+                    student=_student,
+                    send_to="parent",
+                    context={"클리닉명": getattr(session, "title", "") if session else ""},
+                ))
+            except Exception:
+                logger.exception("clinic_reservation_created notification failed")
+
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
         ).data
@@ -762,8 +778,27 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
             # ✅ V1.1.1 remediation 재정렬:
             # 예약 상태 변경(no_show, cancelled, rejected)은 ClinicLink 해소에 영향 없음.
-            # ClinicLink 해소는 실제 시험/과제 통과에 의해서만 결정됨.
-            # (레거시 BOOKING_LEGACY 해소는 마이그레이션에서 보존됨)
+
+        # ── 클리닉 상태 변경 알림 (AUTO_DEFAULT) ──
+        _trigger_map = {
+            SessionParticipant.Status.CANCELLED: "clinic_cancelled",
+            SessionParticipant.Status.ATTENDED: "clinic_check_in",
+            SessionParticipant.Status.NO_SHOW: "clinic_absent",
+        }
+        _trigger = _trigger_map.get(next_status)
+        if _trigger:
+            try:
+                from apps.support.messaging.services import send_event_notification
+                _tenant = getattr(request, "tenant", None)
+                _student = obj.student
+                transaction.on_commit(lambda: send_event_notification(
+                    tenant=_tenant,
+                    trigger=_trigger,
+                    student=_student,
+                    send_to="parent",
+                ))
+            except Exception:
+                logger.exception("clinic status notification failed: %s", _trigger)
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
@@ -800,6 +835,20 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 "status", "status_changed_at", "status_changed_by",
                 "updated_at",
             ])
+
+        # ── 클리닉 퇴실(완료) 알림 (AUTO_DEFAULT) ──
+        try:
+            from apps.support.messaging.services import send_event_notification
+            _tenant = getattr(request, "tenant", None)
+            _student = obj.student
+            transaction.on_commit(lambda: send_event_notification(
+                tenant=_tenant,
+                trigger="clinic_check_out",
+                student=_student,
+                send_to="parent",
+            ))
+        except Exception:
+            logger.exception("clinic_check_out notification failed")
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}

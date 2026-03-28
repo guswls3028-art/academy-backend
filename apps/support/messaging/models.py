@@ -167,41 +167,45 @@ class AutoSendConfig(models.Model):
     SSOT: backend/docs/AUTO-SEND-EVENT-SPEC.md
     """
     class Trigger(models.TextChoices):
-        # A. 가입/등록
+        # A. 가입/등록 — SYSTEM_AUTO
         STUDENT_SIGNUP = "student_signup", "가입 완료(레거시·미사용)"
         REGISTRATION_APPROVED_STUDENT = "registration_approved_student", "가입 안내(학생)"
         REGISTRATION_APPROVED_PARENT = "registration_approved_parent", "가입 안내(학부모)"
         CLASS_ENROLLMENT_COMPLETE = "class_enrollment_complete", "반 등록 완료"
         ENROLLMENT_EXPIRING_SOON = "enrollment_expiring_soon", "등록 만료 예정"
         WITHDRAWAL_COMPLETE = "withdrawal_complete", "퇴원 처리 완료"
-        # B. 출결
+        # B. 출결 (일반 강의) — MANUAL_DEFAULT / DISABLED
         LECTURE_SESSION_REMINDER = "lecture_session_reminder", "수업 시작 N분 전"
-        CHECK_IN_COMPLETE = "check_in_complete", "입실 완료"
-        ABSENT_OCCURRED = "absent_occurred", "결석 발생"
-        # C. 시험
+        CHECK_IN_COMPLETE = "check_in_complete", "입실 완료(일반 강의)"
+        ABSENT_OCCURRED = "absent_occurred", "결석 발생(일반 강의)"
+        # C. 시험 — MANUAL_DEFAULT
         EXAM_SCHEDULED_DAYS_BEFORE = "exam_scheduled_days_before", "시험 예정 N일 전"
         EXAM_START_MINUTES_BEFORE = "exam_start_minutes_before", "시험 시작 N분 전"
         EXAM_NOT_TAKEN = "exam_not_taken", "시험 미응시"
         EXAM_SCORE_PUBLISHED = "exam_score_published", "성적 공개"
         RETAKE_ASSIGNED = "retake_assigned", "재시험 대상 지정"
-        # D. 과제
+        # D. 과제 — MANUAL_DEFAULT
         ASSIGNMENT_REGISTERED = "assignment_registered", "과제 등록"
         ASSIGNMENT_DUE_HOURS_BEFORE = "assignment_due_hours_before", "과제 마감 N시간 전"
         ASSIGNMENT_NOT_SUBMITTED = "assignment_not_submitted", "과제 미제출"
-        # E. 성적/리포트
+        # E. 성적/리포트 — MANUAL_DEFAULT
         MONTHLY_REPORT_GENERATED = "monthly_report_generated", "월간 성적 리포트 발송"
-        # F. 클리닉/상담
+        # F. 클리닉/상담 — AUTO_DEFAULT
         CLINIC_REMINDER = "clinic_reminder", "클리닉 시작 N분 전"
         CLINIC_RESERVATION_CREATED = "clinic_reservation_created", "클리닉 예약 완료"
         CLINIC_RESERVATION_CHANGED = "clinic_reservation_changed", "클리닉 예약 변경"
-        CLINIC_SELF_STUDY_COMPLETED = "clinic_self_study_completed", "자율학습 완료"
+        CLINIC_CANCELLED = "clinic_cancelled", "클리닉 예약 취소"
+        CLINIC_CHECK_IN = "clinic_check_in", "클리닉 입실"
+        CLINIC_CHECK_OUT = "clinic_check_out", "클리닉 퇴실(완료)"
+        CLINIC_ABSENT = "clinic_absent", "클리닉 결석"
+        CLINIC_SELF_STUDY_COMPLETED = "clinic_self_study_completed", "자율학습 완료(레거시)"
         COUNSELING_RESERVATION_CREATED = "counseling_reservation_created", "상담 예약 완료"
         # G. 결제
         PAYMENT_COMPLETE = "payment_complete", "결제 완료"
         PAYMENT_DUE_DAYS_BEFORE = "payment_due_days_before", "납부 예정일 N일 전"
         # H. 운영공지
         URGENT_NOTICE = "urgent_notice", "긴급 공지"
-        # I. 비밀번호 찾기/재설정
+        # I. 비밀번호 찾기/재설정 — SYSTEM_AUTO
         PASSWORD_FIND_OTP = "password_find_otp", "비밀번호 찾기 인증번호"
         PASSWORD_RESET_STUDENT = "password_reset_student", "비밀번호 재설정(학생)"
         PASSWORD_RESET_PARENT = "password_reset_parent", "비밀번호 재설정(학부모)"

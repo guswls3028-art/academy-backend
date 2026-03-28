@@ -14,6 +14,63 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
+# ──────────────────────────────────────────
+# 트리거 정책 분류 — SSOT
+# ──────────────────────────────────────────
+# SYSTEM_AUTO: 시스템 필수 안내. 항상 자동. 사용자가 끌 수 없음.
+# AUTO_DEFAULT: 자동 기본값. 사용자가 설정에서 끌 수 있음.
+# MANUAL_DEFAULT: 수동 기본값. preview → confirm 필요. 사용자가 자동화 가능.
+# DISABLED: 현재 비활성. 정책상 의미 없는 트리거.
+
+TRIGGER_POLICY = {
+    # SYSTEM_AUTO — 시스템 필수 안내 메시지
+    "registration_approved_student": "SYSTEM_AUTO",
+    "registration_approved_parent": "SYSTEM_AUTO",
+    "password_find_otp": "SYSTEM_AUTO",
+    "password_reset_student": "SYSTEM_AUTO",
+    "password_reset_parent": "SYSTEM_AUTO",
+
+    # AUTO_DEFAULT — 학생 행동에 대한 즉시 통보 (클리닉)
+    "clinic_reservation_created": "AUTO_DEFAULT",
+    "clinic_reservation_changed": "AUTO_DEFAULT",
+    "clinic_cancelled": "AUTO_DEFAULT",
+    "clinic_check_in": "AUTO_DEFAULT",
+    "clinic_check_out": "AUTO_DEFAULT",
+    "clinic_absent": "AUTO_DEFAULT",
+    "clinic_reminder": "AUTO_DEFAULT",
+    "counseling_reservation_created": "AUTO_DEFAULT",
+
+    # MANUAL_DEFAULT — 선생 검토 필요 (preview → confirm)
+    "exam_score_published": "MANUAL_DEFAULT",
+    "exam_not_taken": "MANUAL_DEFAULT",
+    "retake_assigned": "MANUAL_DEFAULT",
+    "assignment_not_submitted": "MANUAL_DEFAULT",
+    "assignment_registered": "MANUAL_DEFAULT",
+    "assignment_due_hours_before": "MANUAL_DEFAULT",
+    "withdrawal_complete": "MANUAL_DEFAULT",
+    "check_in_complete": "MANUAL_DEFAULT",
+    "absent_occurred": "MANUAL_DEFAULT",
+    "monthly_report_generated": "MANUAL_DEFAULT",
+    "exam_scheduled_days_before": "MANUAL_DEFAULT",
+    "exam_start_minutes_before": "MANUAL_DEFAULT",
+    "lecture_session_reminder": "MANUAL_DEFAULT",
+    "payment_complete": "MANUAL_DEFAULT",
+    "payment_due_days_before": "MANUAL_DEFAULT",
+    "urgent_notice": "MANUAL_DEFAULT",
+
+    # DISABLED — 현재 정책상 비활성
+    "class_enrollment_complete": "DISABLED",
+    "enrollment_expiring_soon": "DISABLED",
+    "student_signup": "DISABLED",
+    "clinic_self_study_completed": "DISABLED",  # clinic_check_out으로 대체
+}
+
+
+def get_trigger_policy(trigger: str) -> str:
+    """트리거의 정책 분류 반환. 미등록 트리거는 DISABLED."""
+    return TRIGGER_POLICY.get(trigger, "DISABLED")
+
+
 def get_owner_tenant_id() -> int:
     """SMS 발송이 허용된 tenant ID (내 테넌트)."""
     return getattr(settings, "OWNER_TENANT_ID", 1)

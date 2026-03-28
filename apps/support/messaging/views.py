@@ -718,13 +718,18 @@ class AutoSendConfigView(APIView):
             self._auto_provision(tenant)
             configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
 
+        from apps.support.messaging.policy import get_trigger_policy
+
         by_trigger = {c.trigger: c for c in configs}
 
         result = []
         for trigger in triggers:
             c = by_trigger.get(trigger)
+            policy_mode = get_trigger_policy(trigger)
             if c:
-                result.append(AutoSendConfigSerializer(c).data)
+                data = AutoSendConfigSerializer(c).data
+                data["policy_mode"] = policy_mode
+                result.append(data)
             else:
                 result.append({
                     "id": None,
@@ -739,6 +744,7 @@ class AutoSendConfigView(APIView):
                     "minutes_before": None,
                     "created_at": None,
                     "updated_at": None,
+                    "policy_mode": policy_mode,
                 })
         return Response(result)
 
