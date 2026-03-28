@@ -238,6 +238,7 @@ class EnrollmentViewSet(ModelViewSet):
 class SessionEnrollmentViewSet(ModelViewSet):
     serializer_class = SessionEnrollmentSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    pagination_class = None  # 차시 수강생은 bulk_create 200건 제한 — 페이지네이션 불필요, 전체 반환
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["session", "enrollment"]
