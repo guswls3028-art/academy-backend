@@ -268,22 +268,8 @@ class AttendanceViewSet(ModelViewSet):
 
             created.append(attendance)
 
-        # 출결 알림톡 발송 (생성된 출석 건에 대해)
-        if created and tenant:
-            def _send_bulk_create_notifications():
-                for att in created:
-                    if att.status in ("PRESENT", "LATE", "ONLINE", "SUPPLEMENT"):
-                        try:
-                            # select_related가 안 되어 있을 수 있으므로 refresh
-                            att_full = (
-                                Attendance.objects
-                                .select_related("enrollment__student", "session__lecture")
-                                .get(id=att.id)
-                            )
-                            _send_attendance_notification(tenant, att_full, "check_in_complete")
-                        except Exception:
-                            logger.exception("bulk_create notification failed: att_id=%s", att.id)
-            transaction.on_commit(_send_bulk_create_notifications)
+        # 차시 학생 등록(bulk_create)은 행정 작업 — 입실(check_in_complete) 알림톡 발송 안 함.
+        # 실제 입실 알림은 partial_update(개별 출결 변경) 또는 bulk_set_present(전체 현장 출석)에서만 발송.
 
         return Response(
             AttendanceSerializer(created, many=True).data,

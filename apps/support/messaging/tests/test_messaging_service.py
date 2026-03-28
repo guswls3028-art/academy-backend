@@ -213,41 +213,23 @@ class TestSendEventNotification(TestCase):
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
-    def test_owner_fallback_only_for_registration_triggers(
+    def test_owner_fallback_when_tenant_has_no_config(
         self, mock_owner, mock_disabled, mock_config, mock_enqueue
     ):
-        """오너 fallback은 가입 안내 트리거(registration_approved_*)에만 적용."""
+        """테넌트에 config 없으면 오너 테넌트 config로 fallback."""
         tenant = _make_tenant(tid=2, name="박철과학")
         student = _make_student()
-        config = _make_config("registration_approved_student")
+        config = _make_config("check_in_complete")
         mock_config.side_effect = [None, config]
         mock_enqueue.return_value = True
 
         from apps.support.messaging.services import send_event_notification
-        result = send_event_notification(tenant=tenant, trigger="registration_approved_student", student=student)
+        result = send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
 
         self.assertTrue(result)
         self.assertEqual(mock_config.call_count, 2)
-        self.assertEqual(mock_config.call_args_list[0].args, (2, "registration_approved_student"))
-        self.assertEqual(mock_config.call_args_list[1].args, (1, "registration_approved_student"))
-
-    @patch(f"{_SVC}.enqueue_sms")
-    @patch(f"{_SEL}.get_auto_send_config")
-    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
-    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
-    def test_no_owner_fallback_for_non_registration_triggers(
-        self, mock_owner, mock_disabled, mock_config, mock_enqueue
-    ):
-        """check_in_complete 등 비가입 트리거는 오너 fallback 없이 스킵."""
-        tenant = _make_tenant(tid=2, name="박철과학")
-        student = _make_student()
-        mock_config.return_value = None
-
-        from apps.support.messaging.services import send_event_notification
-        result = send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
-
-        self.assertFalse(result)
-        self.assertEqual(mock_config.call_count, 1)  # 오너 fallback 호출 없음
+        self.assertEqual(mock_config.call_args_list[0].args, (2, "check_in_complete"))
+        self.assertEqual(mock_config.call_args_list[1].args, (1, "check_in_complete"))
 
 
 # ──────────────────────────────────────────

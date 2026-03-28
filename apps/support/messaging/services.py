@@ -276,16 +276,10 @@ def send_event_notification(
         logger.info("send_event_notification skipped: tenant_id=%s messaging disabled", tenant.id)
         return False
 
-    # 오너 테넌트 fallback 허용 트리거 (가입 안내만 — 오너 템플릿 공유 설계)
-    _OWNER_FALLBACK_TRIGGERS = frozenset([
-        "registration_approved_student",
-        "registration_approved_parent",
-    ])
-
     # 1) 현재 테넌트의 config 조회
     config = get_auto_send_config(tenant.id, trigger)
-    # 2) 가입 안내 트리거만 오너 테넌트 fallback 허용
-    if not config and trigger in _OWNER_FALLBACK_TRIGGERS:
+    # 2) 없으면 오너 테넌트 config로 fallback (공용 템플릿 공유 설계)
+    if not config:
         owner_id = get_owner_tenant_id()
         if int(tenant.id) != owner_id:
             config = get_auto_send_config(owner_id, trigger)
