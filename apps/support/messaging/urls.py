@@ -32,4 +32,15 @@ urlpatterns = [
         views_notification.AttendanceNotificationConfirmView.as_view(),
         name="attendance-notification-confirm",
     ),
+    # 범용 수동 알림 발송 (시험/과제/퇴원 등)
+    path(
+        "manual-notification/preview/",
+        views_notification.ManualNotificationPreviewView.as_view(),
+        name="manual-notification-preview",
+    ),
+    path(
+        "manual-notification/confirm/",
+        views_notification.ManualNotificationConfirmView.as_view(),
+        name="manual-notification-confirm",
+    ),
 ]

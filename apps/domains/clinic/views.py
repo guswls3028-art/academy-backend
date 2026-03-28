@@ -1093,7 +1093,20 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
             # ✅ V1.1.1 remediation 재정렬:
             # 예약 변경은 ClinicLink 해소에 영향 없음.
-            # ClinicLink 해소는 시험/과제 통과에 의해서만 결정됨.
+
+        # ── 클리닉 예약 변경 알림 (AUTO_DEFAULT) ──
+        try:
+            from apps.support.messaging.services import send_event_notification
+            _tenant = tenant
+            _student = request_student
+            transaction.on_commit(lambda: send_event_notification(
+                tenant=_tenant,
+                trigger="clinic_reservation_changed",
+                student=_student,
+                send_to="parent",
+            ))
+        except Exception:
+            logger.exception("clinic_reservation_changed notification failed")
 
         out = ClinicSessionParticipantSerializer(
             new_booking, context={"request": request}

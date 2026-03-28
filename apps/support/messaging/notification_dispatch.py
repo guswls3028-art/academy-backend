@@ -156,6 +156,96 @@ def build_attendance_preview(
     }
 
 
+def build_student_list_preview(
+    tenant,
+    trigger: str,
+    student_ids: list[int],
+    send_to: str = "parent",
+    context_per_student: dict = None,
+    shared_context: dict = None,
+) -> dict:
+    """
+    학생 ID 목록 기반 범용 알림 미리보기.
+    시험 성적 공개, 퇴원 안내, 과제 미제출 등 모든 MANUAL_DEFAULT에 사용.
+    """
+    from apps.domains.students.models import Student
+    from apps.support.messaging.selectors import get_auto_send_config
+    from apps.support.messaging.policy import get_owner_tenant_id
+    from apps.support.messaging.services import get_tenant_site_url
+
+    config = get_auto_send_config(tenant.id, trigger)
+    if not config:
+        owner_id = get_owner_tenant_id()
+        if int(tenant.id) != owner_id:
+            config = get_auto_send_config(owner_id, trigger)
+
+    template = config.template if config else None
+    if not template or not (template.solapi_template_id or "").strip() or template.solapi_status != "APPROVED":
+        return {"error": "승인된 알림톡 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+
+    solapi_template_id = template.solapi_template_id.strip()
+
+    students = Student.objects.filter(
+        id__in=student_ids, tenant_id=tenant.id, deleted_at__isnull=True,
+    )
+
+    academy_name = (tenant.name or "").strip()
+    site_url = get_tenant_site_url(tenant) or ""
+    context_per_student = context_per_student or {}
+    shared_context = shared_context or {}
+
+    recipients = []
+    for student in students:
+        name = (student.name or "").strip()
+        name_2 = name[:2] if len(name) >= 2 else name
+
+        if send_to == "parent":
+            phone = (student.parent_phone or "").replace("-", "").strip()
+        else:
+            phone = (student.phone or "").replace("-", "").strip()
+
+        excluded = False
+        exclude_reason = ""
+        if not phone or len(phone) < 10:
+            excluded = True
+            exclude_reason = "전화번호 없음" if not phone else "전화번호 형식 오류"
+
+        ctx = {
+            "학원명": academy_name,
+            "학생이름": name,
+            "학생이름2": name_2,
+            "사이트링크": site_url,
+            **shared_context,
+            **context_per_student.get(student.id, {}),
+        }
+
+        body = (template.body or "").strip()
+        for k, v in ctx.items():
+            body = body.replace(f"#{{{k}}}", str(v))
+
+        recipients.append({
+            "student_id": student.id,
+            "student_name": name,
+            "phone": phone[:3] + "****" + phone[-4:] if len(phone) >= 7 else phone,
+            "phone_raw": phone,
+            "message_body": body,
+            "excluded": excluded,
+            "exclude_reason": exclude_reason,
+            "alimtalk_replacements": [{"key": k, "value": str(v)} for k, v in ctx.items()],
+        })
+
+    sendable = [r for r in recipients if not r["excluded"]]
+    return {
+        "recipients": recipients,
+        "total_count": len(sendable),
+        "excluded_count": len(recipients) - len(sendable),
+        "message_template_body": (template.body or "").strip(),
+        "notification_type": trigger,
+        "solapi_template_id": solapi_template_id,
+        "message_mode": (config.message_mode if config else "alimtalk") or "alimtalk",
+    }
+
+
 def create_preview_token(
     tenant,
     preview_data: dict,

@@ -301,11 +301,16 @@ def send_event_notification(
 
     # 1) 현재 테넌트의 config 조회
     config = get_auto_send_config(tenant.id, trigger)
-    # 2) 없으면 오너 테넌트 config로 fallback (공용 템플릿 공유 설계)
+    # 2) 없으면 오너 테넌트 config로 fallback (공용 템플릿 공유)
     if not config:
         owner_id = get_owner_tenant_id()
         if int(tenant.id) != owner_id:
             config = get_auto_send_config(owner_id, trigger)
+            if config:
+                logger.info(
+                    "send_event_notification: owner fallback trigger=%s tenant=%s→owner=%s",
+                    trigger, tenant.id, owner_id,
+                )
     if not config or not config.enabled:
         logger.debug(
             "send_event_notification skipped: trigger=%s tenant=%s (config not found or disabled)",
