@@ -165,19 +165,11 @@ class AttendanceViewSet(ModelViewSet):
             return Response(AttendanceSerializer(instance).data)
 
         # 일반 출결 상태 변경 (PRESENT, ABSENT 등)
-        old_status = instance.status
         response = super().partial_update(request, *args, **kwargs)
         instance.refresh_from_db()
-        new_status_actual = instance.status
 
-        # 출결 알림톡 발송 (상태가 실제로 변경된 경우만)
-        if old_status != new_status_actual:
-            tenant = getattr(request, "tenant", None)
-            if tenant:
-                if new_status_actual in ("PRESENT", "LATE", "ONLINE", "SUPPLEMENT"):
-                    _send_attendance_notification(tenant, instance, "check_in_complete")
-                elif new_status_actual == "ABSENT":
-                    _send_attendance_notification(tenant, instance, "absent_occurred")
+        # 일반 강의 출결 변경 시 알림톡 발송하지 않음.
+        # 입실/퇴실/결석 알림은 클리닉 전용 기능. 일반 강의 출결은 행정 작업.
 
         return response
 
@@ -214,17 +206,8 @@ class AttendanceViewSet(ModelViewSet):
 
         updated = target_qs.update(status="PRESENT")
 
-        # 출결 알림톡 일괄 발송 (best-effort, transaction 밖에서)
-        if target_ids and tenant:
-            def _send_bulk_notifications():
-                attendances = (
-                    Attendance.objects
-                    .filter(id__in=target_ids)
-                    .select_related("enrollment__student", "session__lecture")
-                )
-                for att in attendances:
-                    _send_attendance_notification(tenant, att, "check_in_complete")
-            transaction.on_commit(_send_bulk_notifications)
+        # 일반 강의 전체 출석은 행정 작업 — 알림톡 발송하지 않음.
+        # 입실/결석 알림은 클리닉 전용 기능.
 
         return Response(
             {"updated": updated, "session": session_id},

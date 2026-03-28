@@ -64,6 +64,41 @@ def check_recipient_allowed(to: str) -> bool:
     return False
 
 
+def is_event_dry_run(trigger: str) -> bool:
+    """
+    특정 이벤트 트리거가 dry-run 모드인지 확인.
+    dry-run이면 로그만 남기고 실제 발송하지 않음.
+
+    환경변수 MESSAGING_DRY_RUN_TRIGGERS:
+    - "*" : 모든 이벤트 트리거 dry-run (가입/비번 제외)
+    - "check_in_complete,absent_occurred" : 특정 트리거만 dry-run
+    - 비어있으면 dry-run 없음 (운영 모드)
+
+    가입 안내/비밀번호 관련 트리거는 dry-run 대상에서 제외:
+    registration_approved_*, password_find_otp, password_reset_*
+    """
+    import os
+    raw = os.environ.get("MESSAGING_DRY_RUN_TRIGGERS", "").strip()
+    if not raw:
+        return False
+
+    # 가입/비밀번호 관련은 항상 실발송 (dry-run 제외)
+    ALWAYS_LIVE_TRIGGERS = frozenset([
+        "registration_approved_student",
+        "registration_approved_parent",
+        "password_find_otp",
+        "password_reset_student",
+        "password_reset_parent",
+    ])
+    if trigger in ALWAYS_LIVE_TRIGGERS:
+        return False
+
+    if raw == "*":
+        return True
+    dry_triggers = frozenset(t.strip() for t in raw.split(",") if t.strip())
+    return trigger in dry_triggers
+
+
 def _has_own_sms_credentials(tenant_id: int) -> bool:
     """테넌트가 자체 SMS 발송 가능한 연동 키를 갖고 있는지."""
     try:

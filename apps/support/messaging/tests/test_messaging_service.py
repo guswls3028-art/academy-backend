@@ -750,3 +750,71 @@ class TestRecipientWhitelist(TestCase):
         os.environ.pop("MESSAGING_TEST_WHITELIST", None)
         from apps.support.messaging.policy import check_recipient_allowed
         self.assertTrue(check_recipient_allowed("01099999999"))
+
+
+class TestDryRunMode(TestCase):
+    """dry-run 모드: 로그만 남기고 실발송 안 함."""
+
+    @patch.dict("os.environ", {"MESSAGING_DRY_RUN_TRIGGERS": "*"})
+    def test_wildcard_blocks_general_triggers(self):
+        from apps.support.messaging.policy import is_event_dry_run
+        self.assertTrue(is_event_dry_run("check_in_complete"))
+        self.assertTrue(is_event_dry_run("exam_score_published"))
+        self.assertTrue(is_event_dry_run("withdrawal_complete"))
+
+    @patch.dict("os.environ", {"MESSAGING_DRY_RUN_TRIGGERS": "*"})
+    def test_wildcard_allows_registration_triggers(self):
+        """가입/비밀번호 관련은 dry-run에서도 실발송."""
+        from apps.support.messaging.policy import is_event_dry_run
+        self.assertFalse(is_event_dry_run("registration_approved_student"))
+        self.assertFalse(is_event_dry_run("registration_approved_parent"))
+        self.assertFalse(is_event_dry_run("password_find_otp"))
+        self.assertFalse(is_event_dry_run("password_reset_student"))
+
+    @patch.dict("os.environ", {"MESSAGING_DRY_RUN_TRIGGERS": "check_in_complete,absent_occurred"})
+    def test_specific_triggers_only(self):
+        from apps.support.messaging.policy import is_event_dry_run
+        self.assertTrue(is_event_dry_run("check_in_complete"))
+        self.assertTrue(is_event_dry_run("absent_occurred"))
+        self.assertFalse(is_event_dry_run("exam_score_published"))
+
+    @patch.dict("os.environ", {"MESSAGING_DRY_RUN_TRIGGERS": ""})
+    def test_empty_env_no_dry_run(self):
+        from apps.support.messaging.policy import is_event_dry_run
+        self.assertFalse(is_event_dry_run("check_in_complete"))
+
+    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    @patch.dict("os.environ", {"MESSAGING_DRY_RUN_TRIGGERS": "*"})
+    def test_send_event_notification_dry_run(
+        self, mock_owner, mock_disabled, mock_config, mock_enqueue
+    ):
+        """dry-run 모드에서 send_event_notification은 enqueue 호출하지 않음."""
+        tenant = _make_tenant()
+        student = _make_student()
+        config = _make_config("check_in_complete")
+        mock_config.return_value = config
+
+        from apps.support.messaging.services import send_event_notification
+        result = send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
+
+        self.assertFalse(result)
+        mock_enqueue.assert_not_called()
+
+
+class TestAttendanceNoNotification(TestCase):
+    """일반 강의 출결 변경 시 알림톡 미발송 확인."""
+
+    @patch(f"{_SVC}.send_event_notification")
+    def test_partial_update_no_notification(self, mock_send):
+        """partial_update에서 알림톡 호출 코드가 제거되었는지 확인."""
+        # attendance/views.py의 partial_update에서 _send_attendance_notification 호출이 제거됨
+        # 이 테스트는 코드 제거를 문서화
+        from apps.domains.attendance import views as att_views
+        import inspect
+        source = inspect.getsource(att_views.AttendanceViewSet.partial_update)
+        self.assertNotIn("_send_attendance_notification", source)
+        self.assertNotIn("check_in_complete", source)
+        self.assertNotIn("absent_occurred", source)

@@ -284,10 +284,19 @@ def send_event_notification(
         bool: enqueue 성공 여부
     """
     from apps.support.messaging.selectors import get_auto_send_config
-    from apps.support.messaging.policy import get_owner_tenant_id, is_messaging_disabled, MessagingPolicyError
+    from apps.support.messaging.policy import get_owner_tenant_id, is_messaging_disabled, MessagingPolicyError, is_event_dry_run
 
     if is_messaging_disabled(tenant.id):
         logger.info("send_event_notification skipped: tenant_id=%s messaging disabled", tenant.id)
+        return False
+
+    # Dry-run 모드: 로그만 남기고 실발송 안 함
+    if is_event_dry_run(trigger):
+        student_name = getattr(student, "name", "?")
+        logger.info(
+            "send_event_notification DRY-RUN: trigger=%s tenant=%s student=%s send_to=%s (not sending)",
+            trigger, tenant.id, student_name, send_to,
+        )
         return False
 
     # 1) 현재 테넌트의 config 조회
