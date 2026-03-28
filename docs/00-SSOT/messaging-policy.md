@@ -1,56 +1,70 @@
-# 메시징/알림톡 도메인 — 운영 정책 SSOT
+# 메시징/알림톡 운영 정책 SSOT (2026-03-28 확정)
+
+## 정책 분류 체계
+
+코드 SSOT: `apps/support/messaging/policy.py` → `TRIGGER_POLICY` dict
+
+### SYSTEM_AUTO — 시스템 필수 안내 (항상 자동, 사용자가 끌 수 없음)
+| Trigger | 설명 | 수신자 | 발송 순간 |
+|---------|------|--------|----------|
+| registration_approved_student | 가입 안내(학생) | 학생 | 가입/등록 승인 시 |
+| registration_approved_parent | 가입 안내(학부모) | 학부모 | 가입/등록 승인 시 |
+| password_find_otp | 비밀번호 찾기 OTP | 요청자 | 비밀번호 찾기 요청 시 |
+| password_reset_student | 비밀번호 재설정(학생) | 학생 | 비밀번호 재설정 시 |
+| password_reset_parent | 비밀번호 재설정(학부모) | 학부모 | 비밀번호 재설정 시 |
+
+### AUTO_DEFAULT — 학생 행동 즉시 통보 (자동 기본 on, 선생이 설정에서 끌 수 있음)
+| Trigger | 설명 | 수신자 | 발송 순간 |
+|---------|------|--------|----------|
+| clinic_reservation_created | 클리닉 예약 완료 | 학부모 | 예약 생성(booked/pending) 시 |
+| clinic_reservation_changed | 클리닉 예약 변경 | 학부모 | 예약 변경 시 |
+| clinic_cancelled | 클리닉 예약 취소 | 학부모 | 상태 → cancelled |
+| clinic_check_in | 클리닉 입실 | 학부모 | 상태 → attended |
+| clinic_check_out | 클리닉 퇴실(완료) | 학부모 | 자율학습 완료(complete) 시 |
+| clinic_absent | 클리닉 결석 | 학부모 | 상태 → no_show |
+| clinic_reminder | 클리닉 시작 N분 전 | 학생 | 스케줄러 |
+| counseling_reservation_created | 상담 예약 완료 | 학부모 | 상담 예약 시 |
+
+### MANUAL_DEFAULT — 선생 검토 필요 (수동 기본, preview→confirm 또는 설정에서 자동화 가능)
+| Trigger | 설명 | 수신자 | 발송 순간 |
+|---------|------|--------|----------|
+| exam_score_published | 성적 공개 | 학부모 | 선생이 수동 발송 |
+| exam_not_taken | 시험 미응시 | 학부모 | 선생이 수동 발송 |
+| assignment_not_submitted | 과제 미제출 | 학부모 | 선생이 수동 발송 |
+| withdrawal_complete | 퇴원 안내 | 학부모 | 선생이 수동 발송 |
+| check_in_complete | 일반 강의 입실 | 학부모 | 선생이 수동 발송 |
+| absent_occurred | 일반 강의 결석 | 학부모 | 선생이 수동 발송 |
+| 기타 리마인더/과제/성적류 | — | — | 선생이 수동 발송 |
+
+### DISABLED — 비활성 (정책상 의미 없는 트리거)
+| Trigger | 사유 |
+|---------|------|
+| class_enrollment_complete | 수강등록=행정작업, 알림 의미 없음 |
+| enrollment_expiring_soon | 미구현 |
+| student_signup | 레거시 |
+| clinic_self_study_completed | clinic_check_out으로 대체 |
 
 ## 핵심 원칙
 1. **저장과 발송은 분리.** 행정 작업(저장/등록/수정)만으로 알림 발송 금지.
-2. **의도한 순간에만, 의도한 사람에게만, 의도한 내용으로만** 발송.
-3. **멀티테넌트 격리 절대.** 테넌트 간 데이터/설정/수신자 혼선 불가.
-4. **숨겨진 자동 발송 금지.** 모든 발송 경로가 사용자에게 투명해야 함.
+2. **SYSTEM_AUTO 외에는 사용자가 투명하게 보고 통제 가능.**
+3. **일반 강의와 클리닉 정책 절대 분리.**
+4. **숨겨진 자동 발송 금지.** 모든 발송 경로가 설정 콘솔에 노출.
 
-## 트리거별 정책
-
-### ALWAYS_ACTIVE (시스템 자동 — 사용자 요청 시 즉시 발송)
-| Trigger | 도메인 | 발송 순간 | 금지 순간 | 수신자 | 미리보기 | 비고 |
-|---------|--------|----------|----------|--------|---------|------|
-| registration_approved_student | 가입 | 가입 승인 시 | — | 학생 | 불필요 | 아이디/비밀번호 포함 |
-| registration_approved_parent | 가입 | 가입 승인 시 | — | 학부모 | 불필요 | 학부모/학생 정보 포함 |
-| password_find_otp | 비밀번호 | 비밀번호 찾기 요청 시 | — | 요청자 | 불필요 | OTP 코드 |
-| password_reset_student | 비밀번호 | 비밀번호 재설정 시 | — | 학생 | 불필요 | 임시 비밀번호 |
-| password_reset_parent | 비밀번호 | 비밀번호 재설정 시 | — | 학부모 | 불필요 | 임시 비밀번호 |
-
-### MANUAL_ONLY (선생 수동 — preview → confirm 필수)
-| Trigger | 도메인 | 발송 순간 | 금지 순간 | 수신자 | 미리보기 | 비고 |
-|---------|--------|----------|----------|--------|---------|------|
-| check_in_complete | 출결 | 선생이 출석 탭에서 "입실 알림 발송" 클릭 | 출결 저장/수정/일괄처리만으로 발송 금지 | 학부모 | 필수 | 클리닉 포함 |
-| absent_occurred | 출결 | 선생이 출석 탭에서 "결석 알림 발송" 클릭 | 출결 저장/수정/일괄처리만으로 발송 금지 | 학부모 | 필수 | — |
-
-### DISABLED (비활성 — 정책 미확정, 안전하게 잠금)
-| Trigger | 도메인 | 정책 미확정 사유 | 활성화 조건 |
-|---------|--------|----------------|------------|
-| class_enrollment_complete | 수강등록 | 행정 작업으로 오발송 위험 | 수동 발송 구조 전환 후 |
-| withdrawal_complete | 퇴원 | 퇴원 시 자동 발송 여부 미확정 | 정책 결정 후 |
-| exam_score_published | 성적 | 점수 입력마다 발송되는 구조 위험 | 수동 발송 구조 전환 후 |
-| exam_not_taken | 시험 | 미응시 자동 판정 기준 미확정 | 정책 결정 후 |
-| assignment_not_submitted | 과제 | 배치 발송 조건 미확정 | 정책 결정 후 |
-| assignment_registered | 과제 | 과제 등록=행정 작업 | 수동 발송 구조 전환 후 |
-| 나머지 (reminder, clinic 등) | 다양 | 미구현 또는 정책 미확정 | 구현 완료 후 |
+## Owner Fallback 정책
+모든 트리거에서 owner tenant fallback 허용. config.enabled가 2차 가드.
 
 ## 안전장치 체계
-1. **AutoSendConfig.enabled** — DB 레벨 on/off
-2. **is_event_dry_run()** — 환경변수 MESSAGING_DRY_RUN_TRIGGERS로 트리거별 dry-run
-3. **check_recipient_allowed()** — 환경변수 MESSAGING_TEST_WHITELIST로 수신자 제한
-4. **NotificationPreviewToken** — preview → confirm 핸드셰이크 (1회용, 5분 TTL)
-5. **is_messaging_disabled()** — 테넌트 9999 발송 비활성화
+1. **AutoSendConfig.enabled** — DB 레벨 on/off (설정 콘솔에서 제어)
+2. **TRIGGER_POLICY** — 코드 레벨 정책 분류 (SYSTEM_AUTO는 토글 비활성화)
+3. **is_event_dry_run()** — MESSAGING_DRY_RUN_TRIGGERS 환경변수로 dry-run
+4. **check_recipient_allowed()** — MESSAGING_TEST_WHITELIST로 수신자 제한
+5. **NotificationPreviewToken** — preview→confirm 핸드셰이크 (1회용, 5분 TTL)
 6. **멱등성 키** — business_idempotency_key (trigger + student_id + 날짜)
-
-## 금지 패턴
-- signal/post_save에서 자동 발송
-- bulk_create/bulk_update에서 자동 발송
-- on_commit 콜백에서 행정 작업 결과로 자동 발송 (가입 안내 제외)
-- AutoSendToggle을 행정 화면(출결/시험/과제)에 노출
-- preview 없이 confirm 직접 호출
-- 과거 날짜 이벤트에 대한 현재 시점 알림 발송
+7. **Time Guard** — 과거 날짜 출결은 알림 차단
 
 ## 변경 이력
-- 2026-03-28: 운영사고 수습 — 입실 자동 발송 제거, 수동 발송 구조 도입
-- 2026-03-28: 전역 AutoSendToggle 제거 (시험/과제/성적 화면)
-- 2026-03-28: 비필수 트리거 전면 비활성화
+- 2026-03-28: 정책 확정 — 4분류 체계 (SYSTEM_AUTO/AUTO_DEFAULT/MANUAL_DEFAULT/DISABLED)
+- 2026-03-28: 클리닉 트리거 세분화 (cancelled, check_in, check_out, absent)
+- 2026-03-28: 설정 콘솔 재정렬 (정책 배지, 템플릿 읽기 전용, DISABLED 숨김)
+- 2026-03-28: 일반 강의 출결 자동 발송 코드 완전 제거
+- 2026-03-28: 행정 화면 AutoSendToggle 전면 제거
