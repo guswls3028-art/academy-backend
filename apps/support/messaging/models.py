@@ -51,6 +51,9 @@ class NotificationLog(models.Model):
         help_text="발송 상태. processing=선점됨, sent=발송완료, failed=실패",
     )
     claimed_at = models.DateTimeField(null=True, blank=True, help_text="Worker 선점 시각")
+    batch_id = models.UUIDField(null=True, blank=True, db_index=True, help_text="수동 발송 배치 ID")
+    sender_staff_id = models.IntegerField(null=True, blank=True, help_text="발송 요청 Staff ID")
+    notification_type = models.CharField(max_length=30, blank=True, default="", help_text="check_in, absent 등")
 
     class Meta:
         app_label = "messaging"
@@ -64,6 +67,39 @@ class NotificationLog(models.Model):
                 name="uniq_notification_business_key_per_tenant_channel",
             ),
         ]
+
+
+class NotificationPreviewToken(models.Model):
+    """
+    수동 알림 발송의 preview → confirm 핸드셰이크 토큰.
+    preview 시 생성, confirm 시 소비 (1회용).
+    """
+    token = models.UUIDField(unique=True, db_index=True)
+    tenant = models.ForeignKey(
+        "core.Tenant", on_delete=models.CASCADE,
+        related_name="notification_preview_tokens",
+    )
+    notification_type = models.CharField(
+        max_length=30,
+        help_text="check_in | absent | clinic_reminder 등",
+    )
+    session_type = models.CharField(
+        max_length=20,
+        help_text="attendance | clinic",
+    )
+    session_id = models.IntegerField()
+    send_to = models.CharField(max_length=20, default="parent")
+    payload = models.JSONField(help_text="직렬화된 수신자 + 메시지 데이터")
+    created_by_id = models.IntegerField(null=True, blank=True, help_text="Staff ID")
+    created_at = models.DateTimeField(auto_now_add=True)
+    used_at = models.DateTimeField(null=True, blank=True, help_text="소비 시각 (non-null=사용됨)")
+    expires_at = models.DateTimeField()
+    batch_id = models.UUIDField(null=True, blank=True)
+
+    class Meta:
+        app_label = "messaging"
+        verbose_name = "Notification preview token"
+        verbose_name_plural = "Notification preview tokens"
 
 
 class MessageTemplate(models.Model):

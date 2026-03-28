@@ -1,6 +1,7 @@
 # apps/support/messaging/urls.py
 from django.urls import path
 from apps.support.messaging import views
+from apps.support.messaging import views_notification
 
 urlpatterns = [
     path("info/", views.MessagingInfoView.as_view(), name="messaging-info"),
@@ -20,4 +21,15 @@ urlpatterns = [
     path("auto-send/", views.AutoSendConfigView.as_view(), name="messaging-auto-send"),
     path("provision-defaults/", views.ProvisionDefaultTemplatesView.as_view(), name="messaging-provision-defaults"),
     path("test-credentials/", views.TestCredentialsView.as_view(), name="messaging-test-credentials"),
+    # 수동 알림 발송 (preview → confirm)
+    path(
+        "attendance-notification/preview/",
+        views_notification.AttendanceNotificationPreviewView.as_view(),
+        name="attendance-notification-preview",
+    ),
+    path(
+        "attendance-notification/confirm/",
+        views_notification.AttendanceNotificationConfirmView.as_view(),
+        name="attendance-notification-confirm",
+    ),
 ]
