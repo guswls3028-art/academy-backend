@@ -292,6 +292,11 @@ class SessionEnrollmentViewSet(ModelViewSet):
                     {"detail": "다른 강의 수강자는 이 세션에 추가할 수 없습니다."}
                 )
 
+            # 퇴원(INACTIVE) 수강생 재등록 시 활성화 복원 (attendance bulk_create와 동일 정책)
+            if enrollment.status != "ACTIVE":
+                enrollment.status = "ACTIVE"
+                enrollment.save(update_fields=["status"])
+
             obj, _ = enroll_repo.session_enrollment_get_or_create_tenant(
                 tenant=tenant,
                 session=session,
