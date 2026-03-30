@@ -219,8 +219,23 @@ class LandingHasPublishedView(APIView):
 
 
 # ─────────────────────────────────────────────────
-# Admin API
+# Admin API (owner/admin 전용)
 # ─────────────────────────────────────────────────
+
+LANDING_ADMIN_ROLES = {"owner", "admin"}
+
+
+def _check_landing_admin_role(request):
+    """owner/admin만 랜딩 편집 허용. teacher/staff 차단."""
+    from apps.core.models import TenantMembership
+    tenant = request.tenant
+    user = request.user
+    try:
+        membership = TenantMembership.objects.get(user=user, tenant=tenant, is_active=True)
+    except TenantMembership.DoesNotExist:
+        return False
+    return membership.role in LANDING_ADMIN_ROLES
+
 
 class LandingAdminView(APIView):
     """
@@ -228,6 +243,12 @@ class LandingAdminView(APIView):
     PUT  /api/v1/core/landing/admin/ — draft_config 업데이트
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not _check_landing_admin_role(request):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("랜딩페이지 편집은 원장/관리자만 가능합니다.")
 
     def get(self, request):
         tenant = request.tenant
@@ -287,6 +308,12 @@ class LandingPublishView(APIView):
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not _check_landing_admin_role(request):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("랜딩페이지 편집은 원장/관리자만 가능합니다.")
+
     def post(self, request):
         tenant = request.tenant
         try:
@@ -318,6 +345,12 @@ class LandingUnpublishView(APIView):
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not _check_landing_admin_role(request):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("랜딩페이지 편집은 원장/관리자만 가능합니다.")
+
     def post(self, request):
         tenant = request.tenant
         try:
@@ -340,6 +373,12 @@ class LandingUploadImageView(APIView):
     field: "hero" | "logo"
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not _check_landing_admin_role(request):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("랜딩페이지 편집은 원장/관리자만 가능합니다.")
 
     def post(self, request):
         tenant = request.tenant
