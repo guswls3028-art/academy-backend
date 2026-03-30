@@ -23,6 +23,15 @@ from apps.core.views import (
     PublicOgMetaView,
     LegalConfigView,
 )
+from apps.core.views_landing import (
+    LandingPublicView,
+    LandingHasPublishedView,
+    LandingAdminView,
+    LandingPublishView,
+    LandingUnpublishView,
+    LandingUploadImageView,
+    LandingTemplatesView,
+)
 
 router = DefaultRouter()
 router.register("profile", ProfileViewSet, basename="profile")
@@ -46,5 +55,13 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/owner/", TenantOwnerView.as_view(), name="core-tenant-owner"),
     path("tenants/<int:tenant_id>/owners/", TenantOwnerListView.as_view(), name="core-tenant-owners"),
     path("tenants/<int:tenant_id>/owners/<int:user_id>/", TenantOwnerDetailView.as_view(), name="core-tenant-owner-detail"),
+    # Landing page
+    path("landing/public/", LandingPublicView.as_view(), name="core-landing-public"),
+    path("landing/has-published/", LandingHasPublishedView.as_view(), name="core-landing-has-published"),
+    path("landing/admin/", LandingAdminView.as_view(), name="core-landing-admin"),
+    path("landing/publish/", LandingPublishView.as_view(), name="core-landing-publish"),
+    path("landing/unpublish/", LandingUnpublishView.as_view(), name="core-landing-unpublish"),
+    path("landing/upload-image/", LandingUploadImageView.as_view(), name="core-landing-upload-image"),
+    path("landing/templates/", LandingTemplatesView.as_view(), name="core-landing-templates"),
     path("", include(router.urls)),
 ]

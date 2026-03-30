@@ -4,6 +4,7 @@ from .tenant_domain import TenantDomain
 from .tenant_membership import TenantMembership
 from .user import User, Attendance, Expense
 from .program import Program
+from .landing_page import LandingPage
 
 __all__ = [
     "Tenant",
@@ -13,4 +14,5 @@ __all__ = [
     "Attendance",
     "Expense",
     "Program",
+    "LandingPage",
 ]
