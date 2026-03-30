@@ -133,10 +133,16 @@ def _validate_config(data: dict) -> list[str]:
         errors.append(f"허용되지 않은 색상입니다: {color}")
 
     sections = data.get("sections", [])
+    if not isinstance(sections, list):
+        errors.append("sections는 배열이어야 합니다.")
+        return errors
     if len(sections) > MAX_SECTIONS:
         errors.append(f"섹션은 최대 {MAX_SECTIONS}개까지 가능합니다.")
 
     for sec in sections:
+        if not isinstance(sec, dict):
+            errors.append("각 섹션은 객체여야 합니다.")
+            continue
         stype = sec.get("type", "")
         if stype not in SECTION_TYPES:
             errors.append(f"알 수 없는 섹션 타입: {stype}")
@@ -202,7 +208,13 @@ class LandingHasPublishedView(APIView):
 
     def get(self, request):
         tenant = request.tenant
-        has = LandingPage.objects.filter(tenant=tenant, is_published=True).exists()
+        try:
+            landing = LandingPage.objects.get(tenant=tenant, is_published=True)
+        except LandingPage.DoesNotExist:
+            return Response({"has_published": False})
+        # LandingPublicView와 동일한 판정: brand_name 있어야 유효
+        pub_config = landing.published_config or {}
+        has = bool(pub_config.get("brand_name"))
         return Response({"has_published": has})
 
 
@@ -284,6 +296,11 @@ class LandingPublishView(APIView):
 
         if not landing.draft_config:
             return Response({"detail": "저장된 초안이 없습니다."}, status=400)
+
+        # 게시 전 재검증
+        errors = _validate_config(landing.draft_config)
+        if errors:
+            return Response({"detail": errors}, status=400)
 
         landing.publish()
         logger.info("Landing page published: tenant=%s", tenant.id)
