@@ -236,6 +236,7 @@ class OMRPdfRenderer:
         self._left(cv, doc)
         self._mc(cv, doc)
         self._essay(cv, doc)
+        self._timing_marks(cv, doc)
         cv.save()
         return buf.getvalue()
 
@@ -279,7 +280,6 @@ class OMRPdfRenderer:
         # 2) 성명 카드
         _card(c, x, t_name, H_NAME, w)
         _header(c, x, w, t_name, "성 명")
-        self._name_line(c, x, w, t_name)
 
         # 3) 전화번호 카드
         _card(c, x, t_phone, H_PHONE, w)
@@ -297,16 +297,6 @@ class OMRPdfRenderer:
         c.setDash(1, 1)
         c.rect(qr_x, qr_y, _mm(8), _mm(8), stroke=1, fill=0)
         c.setDash()
-
-    def _name_line(self, c, x, w, top):
-        """성명란 밑줄 (한 줄)."""
-        body_top = top + HEADER_H
-        body_h = H_NAME - HEADER_H
-        guide_y = body_top + body_h - 3
-        inner_x = x + _mm(3)
-        inner_w = w - _mm(6)
-        c.setStrokeColor(C2); c.setLineWidth(S2)
-        c.line(inner_x, _y(guide_y), inner_x + inner_w, _y(guide_y))
 
     def _logo_title(self, c, doc, x, w, top, h):
         """로고 + 시험명 + 부제. 테두리 없음. 내부 여백 확보."""
@@ -453,6 +443,94 @@ class OMRPdfRenderer:
             s = i * pc + 1
             e = min(s + pc - 1, mc)
             self._mc_col(c, doc, cx, s, e, nc)
+
+    def _timing_marks(self, c, doc):
+        """
+        OMR 인식용 타이밍 마크 — 행 위치 기준점을 컬럼 바깥에 배치.
+
+        추가 마커:
+        1. MC 컬럼 좌측: 매 행마다 작은 사각 마크 (1.5×1.0mm)
+        2. MC 컬럼 우측: 5행마다 큰 사각 마크 (2.0×1.2mm)
+        3. 컬럼 상/하단: 삼각 마크 (기존 원형 앵커 보강)
+        4. 식별자 그리드 좌측: 매 행마다 작은 마크
+
+        이 마크들은 AI 워커가 행 좌표를 보정하는 데 사용.
+        meta_generator.py에도 동기화 필요.
+        """
+        mc = doc.mc_count
+        if mc <= 0:
+            return
+
+        if mc <= 20:   pc, nc = mc, 1
+        elif mc <= 40: pc, nc = math.ceil(mc/2), 2
+        else:          pc, nc = math.ceil(mc/3), 3
+
+        bt = CONTENT_Y + MC_HEADER_H
+        bh = CONTENT_H - MC_HEADER_H
+        c.setFillColor(black)
+
+        for ci in range(nc):
+            col_x = ANS_X + ci * (MC_COL_W + MC_COL_GAP)
+            s = ci * pc + 1
+            e = min(s + pc - 1, mc)
+            cnt = e - s + 1
+            rh = bh / cnt if cnt else bh
+
+            # ── 좌측 타이밍 마크: 매 행 중심에 작은 사각형 ──
+            mark_x = col_x - 2.0  # 컬럼 왼쪽 2mm
+            mark_w = 1.5
+            mark_h = 1.0
+            for qi in range(cnt):
+                rc = bt + (qi + 0.5) * rh
+                c.rect(
+                    _mm(mark_x), _y(rc + mark_h / 2),
+                    _mm(mark_w), _mm(mark_h),
+                    fill=1, stroke=0,
+                )
+
+            # ── 우측 타이밍 마크: 5행마다 큰 사각형 ──
+            rmark_x = col_x + MC_COL_W + 0.5
+            for qi in range(cnt):
+                if qi % 5 == 0:
+                    rc = bt + (qi + 0.5) * rh
+                    c.rect(
+                        _mm(rmark_x), _y(rc + 0.6),
+                        _mm(2.0), _mm(1.2),
+                        fill=1, stroke=0,
+                    )
+
+            # ── 컬럼 상/하단 삼각형 마커 (기존 원형 앵커 보강) ──
+            # 상단 중앙: ▼
+            top_cx = col_x + MC_COL_W / 2
+            top_cy = CONTENT_Y - 1.5
+            self._triangle_down(c, top_cx, top_cy, 2.0)
+            # 하단 중앙: ▲
+            bot_cy = CONTENT_Y + CONTENT_H + 1.5
+            self._triangle_up(c, top_cx, bot_cy, 2.0)
+
+    @staticmethod
+    def _triangle_down(c, cx_mm, cy_mm, size_mm):
+        """아래 방향 삼각형 (채움)."""
+        s = size_mm / 2
+        p = c.beginPath()
+        p.moveTo(_mm(cx_mm - s), _y(cy_mm - s))
+        p.lineTo(_mm(cx_mm + s), _y(cy_mm - s))
+        p.lineTo(_mm(cx_mm), _y(cy_mm + s))
+        p.close()
+        c.setFillColor(black)
+        c.drawPath(p, fill=1, stroke=0)
+
+    @staticmethod
+    def _triangle_up(c, cx_mm, cy_mm, size_mm):
+        """위 방향 삼각형 (채움)."""
+        s = size_mm / 2
+        p = c.beginPath()
+        p.moveTo(_mm(cx_mm - s), _y(cy_mm + s))
+        p.lineTo(_mm(cx_mm + s), _y(cy_mm + s))
+        p.lineTo(_mm(cx_mm), _y(cy_mm - s))
+        p.close()
+        c.setFillColor(black)
+        c.drawPath(p, fill=1, stroke=0)
 
     def _mc_col(self, c, doc, col_mm, s, e, ncols):
         cx = _mm(col_mm)
@@ -607,11 +685,4 @@ class OMRPdfRenderer:
             c.setFont(_FB, 8); c.setFillColor(CT)
             c.drawCentredString(ex + nw/2, _y(rc) - _mm(1.4), str(i + 1))
 
-            # 서술형 줄선 (4mm 간격)
-            write_x = ex + nw
-            write_w = ew - nw
-            c.setStrokeColor(C_ESSAY_LINE); c.setLineWidth(S4)
-            line_y = rt + 4.0
-            while line_y < rt + rh - 1.0:
-                c.line(write_x + _mm(1), _y(line_y), write_x + write_w - _mm(1), _y(line_y))
-                line_y += 4.0
+            # 서술형: 빈 칸 (줄선 없음)

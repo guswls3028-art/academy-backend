@@ -46,6 +46,14 @@ class AnswerDetectConfig:
     use_elliptical_mask: bool = True
     # multi-feature scoring 사용 여부
     use_multi_feature: bool = True
+    # v10: CLAHE 전처리 (그림자/조명 불균일 보정)
+    use_clahe: bool = True
+    clahe_clip_limit: float = 2.0
+    clahe_grid_size: int = 8
+    # v10: 이미지 품질 기반 adaptive 파라미터 자동 조정
+    use_quality_adaptive: bool = True
+    # v10: border density 특성 (부분 마킹/오염 구분)
+    use_border_density: bool = True
 
 
 def detect_omr_answers_v7(
@@ -75,14 +83,36 @@ def detect_omr_answers_v7(
 
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
 
+    # --- v10: CLAHE 전처리 (그림자/조명 불균일 보정) ---
+    if config.use_clahe:
+        clahe = cv2.createCLAHE(
+            clipLimit=config.clahe_clip_limit,
+            tileGridSize=(config.clahe_grid_size, config.clahe_grid_size),
+        )
+        gray = clahe.apply(gray)
+
+    # --- v10: 이미지 품질 기반 파라미터 자동 조정 ---
+    block_size = config.adaptive_block_size
+    adaptive_c = config.adaptive_c
+    if config.use_quality_adaptive:
+        blur_metric = cv2.Laplacian(gray, cv2.CV_64F).var()
+        if blur_metric < 100:
+            # 흐릿한 이미지: 블록 크기 키우고 C 낮춤
+            block_size = max(block_size, 21)
+            adaptive_c = max(2, adaptive_c - 2)
+            logger.info("OMR quality: blurry (laplacian_var=%.1f), block=%d C=%d", blur_metric, block_size, adaptive_c)
+        elif blur_metric > 2000:
+            # 매우 선명: 기본값 유지
+            pass
+
     # --- Binarization ---
     if config.use_adaptive_threshold:
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         binary = cv2.adaptiveThreshold(
             blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY_INV,
-            blockSize=config.adaptive_block_size,
-            C=config.adaptive_c,
+            blockSize=block_size,
+            C=adaptive_c,
         )
     else:
         # Legacy fixed threshold fallback
@@ -324,7 +354,7 @@ def _compute_bubble_score(
         fill_ratio = float(np.count_nonzero(binary_roi)) / max(1, binary_roi.size)
 
     if not config.use_multi_feature:
-        return fill_ratio, {"fill_ratio": fill_ratio, "darkness": 0.0, "uniformity": 0.0}
+        return fill_ratio, {"fill_ratio": fill_ratio, "darkness": 0.0, "uniformity": 0.0, "border_density": 0.0}
 
     # --- Darkness & Uniformity (center 60% area) ---
     margin_x = int(roi_w * 0.2)
@@ -341,13 +371,27 @@ def _compute_bubble_score(
     uniformity = 1.0 - (std_intensity / 128.0)
     uniformity = max(0.0, min(1.0, uniformity))
 
+    # --- v10: Border density (부분 마킹/오염 구분) ---
+    # 실제 마킹: 중심이 진하고 가장자리도 채워짐
+    # 오염/스미어: 가장자리에만 검은 픽셀, 중심은 비어있을 가능성
+    border_density = 0.0
+    if config.use_border_density and roi_h > 4 and roi_w > 4:
+        center_binary = binary_roi[margin_y:roi_h - margin_y, margin_x:roi_w - margin_x]
+        center_fill = float(np.count_nonzero(center_binary)) / max(1, center_binary.size)
+        # 중심 대비 전체 fill ratio — 중심이 더 꽉 차 있으면 진짜 마킹
+        border_density = min(1.0, center_fill / max(0.01, fill_ratio))
+
     # Composite score: weighted combination
-    score = 0.5 * fill_ratio + 0.3 * darkness + 0.2 * uniformity
+    if config.use_border_density:
+        score = 0.40 * fill_ratio + 0.25 * darkness + 0.15 * uniformity + 0.20 * border_density
+    else:
+        score = 0.50 * fill_ratio + 0.30 * darkness + 0.20 * uniformity
 
     return score, {
         "fill_ratio": round(fill_ratio, 4),
         "darkness": round(darkness, 4),
         "uniformity": round(uniformity, 4),
+        "border_density": round(border_density, 4),
     }
 
 
@@ -417,15 +461,18 @@ def _detect_single_question(
         "details": {l: d for l, _, d in fills},
     }
 
-    # ── 판정 (v9 개선: 상대적 blank 감지) ──
-    # 노이즈 바닥을 자동 보정하기 위해 중앙값 기준 상대 점수 사용.
-    # 모든 선택지가 비슷한 점수(noise floor)면 blank로 판정.
+    # ── 판정 (v10 개선: IQR 기반 noise floor) ──
+    # 노이즈 바닥을 IQR로 추정하여 동적 threshold 적용.
     scores_arr = np.array([s for _, s, _ in fills])
+    q1 = float(np.percentile(scores_arr, 25))
+    q3 = float(np.percentile(scores_arr, 75))
+    iqr = q3 - q1
+    noise_std = iqr / 1.35  # IQR→σ 근사 (정규분포 가정)
     median_score = float(np.median(scores_arr))
     relative_top = top_score - median_score
 
-    # Blank: 최고 점수가 중앙값 대비 유의미하게 높지 않으면 blank
-    _REL_BLANK_TH = 0.04  # 노이즈 위에 이 정도는 올라와야 마킹
+    # Blank: 최고 점수가 noise floor 대비 유의미하게 높지 않으면 blank
+    _REL_BLANK_TH = max(0.04, 2.0 * noise_std)  # 동적 threshold
     is_blank = relative_top < _REL_BLANK_TH and top_score < 0.35
 
     if is_blank:

@@ -65,6 +65,80 @@ ID_BUB_GAP = 0.6
 ID_DIGITS = 8
 ID_VALUES = 10
 
+# ══════════════════════════════════════════
+# 레이아웃 안전 제한 (판독 안정성 최우선)
+# ══════════════════════════════════════════
+MIN_ROW_H_MM = 8.0              # 행 최소 높이 (버블 5.2mm + 여백)
+MIN_VERTICAL_GAP_MM = 2.0       # 버블 간 최소 수직 간격
+MAX_MC_QUESTIONS = 60           # 1페이지 최대 객관식 수
+MAX_QUESTIONS_PER_COL = 20      # 컬럼당 최대 문항 수
+MAX_COLS = 3                    # 최대 컬럼 수
+
+
+def compute_safe_layout(question_count: int) -> Dict[str, Any]:
+    """
+    문항수에 대해 안전한 컬럼/행 레이아웃 결정.
+
+    Returns:
+        {"n_cols": int, "per_col": int, "row_h_mm": float, "safe": bool, "reason": str}
+    """
+    if question_count <= 0:
+        return {"n_cols": 0, "per_col": 0, "row_h_mm": 0, "safe": True, "reason": ""}
+
+    body_h = CONTENT_H - MC_HEADER_H  # ~189.5mm
+
+    if question_count > MAX_MC_QUESTIONS:
+        return {
+            "n_cols": 0, "per_col": 0, "row_h_mm": 0, "safe": False,
+            "reason": f"객관식 {question_count}문항은 1페이지 최대 {MAX_MC_QUESTIONS}문항을 초과합니다.",
+        }
+
+    # 최소 컬럼 수 결정: per_col <= MAX_QUESTIONS_PER_COL && row_h >= MIN_ROW_H_MM
+    for n_cols in range(1, MAX_COLS + 1):
+        per_col = math.ceil(question_count / n_cols)
+        if per_col > MAX_QUESTIONS_PER_COL:
+            continue
+        row_h = body_h / per_col
+        if row_h >= MIN_ROW_H_MM:
+            return {
+                "n_cols": n_cols, "per_col": per_col,
+                "row_h_mm": round(row_h, 2), "safe": True, "reason": "",
+            }
+
+    # 3컬럼으로도 안전 기준 미달 → 차단
+    per_col = math.ceil(question_count / MAX_COLS)
+    row_h = body_h / per_col
+    return {
+        "n_cols": MAX_COLS, "per_col": per_col,
+        "row_h_mm": round(row_h, 2), "safe": False,
+        "reason": f"객관식 {question_count}문항: 행 높이 {round(row_h, 1)}mm < 최소 {MIN_ROW_H_MM}mm. 문항 수를 줄여주세요.",
+    }
+
+
+def validate_layout(question_count: int, essay_count: int = 0) -> List[str]:
+    """레이아웃 유효성 검증. 에러 메시지 리스트 반환 (빈 리스트 = OK)."""
+    errors: List[str] = []
+    if question_count < 0:
+        errors.append("객관식 문항 수는 0 이상이어야 합니다.")
+    if essay_count < 0:
+        errors.append("서술형 문항 수는 0 이상이어야 합니다.")
+    if question_count > MAX_MC_QUESTIONS:
+        errors.append(f"객관식 {question_count}문항은 1페이지 최대 {MAX_MC_QUESTIONS}문항을 초과합니다.")
+    layout = compute_safe_layout(question_count)
+    if not layout["safe"]:
+        errors.append(layout["reason"])
+
+    # 컬럼 수 × 폭이 페이지를 초과하는지
+    n_cols = layout["n_cols"]
+    total_mc_w = n_cols * MC_COL_W + max(0, n_cols - 1) * MC_COL_GAP
+    ans_w = PAGE_W - MARGIN_R - ANS_X  # 사용 가능 너비
+    if essay_count > 0:
+        min_essay_w = 40.0
+        if total_mc_w + MC_COL_GAP + min_essay_w > ans_w:
+            errors.append(f"객관식 {n_cols}컬럼 + 서술형이 페이지 너비를 초과합니다. 문항 수를 줄여주세요.")
+
+    return errors
+
 
 def _calc_bubble_centers_x(col_x: float, n_choices: int) -> List[float]:
     """MC column 내 버블 중심 x좌표 (space-evenly)."""
@@ -114,17 +188,10 @@ def build_omr_meta(
     n_choices: int = 5,
     essay_count: int = 0,
 ) -> Dict[str, Any]:
-    """OMR 메타 생성 (좌표 SSOT)."""
-    if question_count <= 0:
-        per_col, n_cols = 0, 0
-    elif question_count <= 20:
-        per_col, n_cols = question_count, 1
-    elif question_count <= 40:
-        per_col = math.ceil(question_count / 2)
-        n_cols = 2
-    else:
-        per_col = math.ceil(question_count / 3)
-        n_cols = 3
+    """OMR 메타 생성 (좌표 SSOT). v10: 안전 레이아웃 + 타이밍 마크."""
+    layout = compute_safe_layout(question_count)
+    per_col = layout["per_col"]
+    n_cols = layout["n_cols"]
 
     body_y = CONTENT_Y + MC_HEADER_H
     body_h = CONTENT_H - MC_HEADER_H
@@ -195,17 +262,101 @@ def build_omr_meta(
             "anchors": col_anchors,
         })
 
+    # 타이밍 마크 좌표 (pdf_renderer와 동기화)
+    timing_marks = _build_timing_marks_meta(
+        n_cols=n_cols, per_col=per_col, question_count=question_count,
+        body_y=body_y, body_h=body_h,
+    )
+
     return {
-        "version": "v9",
+        "version": "v10",
         "units": "mm",
         "page": {"width": PAGE_W, "height": PAGE_H},
         "markers": _build_marker_meta(),
         "mc_count": question_count,
         "essay_count": essay_count,
         "n_choices": n_choices,
+        "layout": {
+            "n_cols": n_cols,
+            "per_col": per_col,
+            "row_h_mm": layout["row_h_mm"],
+            "safe": layout["safe"],
+        },
         "questions": questions,           # flat list (backward compatible)
         "columns": columns,               # grouped by column with anchors
+        "timing_marks": timing_marks,     # 행 정렬용 타이밍 마크
         "identifier": _build_identifier_meta(),
+    }
+
+
+# ── 타이밍 마크 상수 (pdf_renderer와 동기화) ──
+TM_LEFT_OFFSET_X = -2.0    # 컬럼 왼쪽으로 2mm
+TM_LEFT_W = 1.5            # 좌측 마크 폭
+TM_LEFT_H = 1.0            # 좌측 마크 높이
+TM_RIGHT_OFFSET_X = 0.5    # 컬럼 오른쪽으로 0.5mm
+TM_RIGHT_W = 2.0           # 우측 마크 폭 (5행 단위)
+TM_RIGHT_H = 1.2           # 우측 마크 높이
+TM_TRIANGLE_SIZE = 2.0     # 상하 삼각형 크기
+TM_TRIANGLE_TOP_Y = -1.5   # CONTENT_Y 위로 1.5mm
+TM_TRIANGLE_BOT_Y = 1.5    # CONTENT_Y + CONTENT_H 아래로 1.5mm
+
+
+def _build_timing_marks_meta(
+    *, n_cols: int, per_col: int, question_count: int,
+    body_y: float, body_h: float,
+) -> Dict[str, Any]:
+    """타이밍 마크 좌표 생성 (pdf_renderer._timing_marks와 동기화)."""
+    left_marks: List[Dict[str, Any]] = []
+    right_marks: List[Dict[str, Any]] = []
+    triangles: List[Dict[str, Any]] = []
+
+    for ci in range(n_cols):
+        col_x = ANS_X + ci * (MC_COL_W + MC_COL_GAP)
+        s = ci * per_col + 1
+        e = min(s + per_col - 1, question_count)
+        cnt = e - s + 1
+        if cnt <= 0:
+            continue
+        rh = body_h / cnt
+
+        # 좌측: 매 행 중심
+        for qi in range(cnt):
+            rc = body_y + (qi + 0.5) * rh
+            left_marks.append({
+                "column": ci,
+                "row": qi,
+                "center": {"x": round(col_x + TM_LEFT_OFFSET_X, 2), "y": round(rc, 2)},
+                "w": TM_LEFT_W, "h": TM_LEFT_H,
+            })
+
+        # 우측: 5행마다
+        for qi in range(cnt):
+            if qi % 5 == 0:
+                rc = body_y + (qi + 0.5) * rh
+                right_marks.append({
+                    "column": ci,
+                    "row": qi,
+                    "center": {"x": round(col_x + MC_COL_W + TM_RIGHT_OFFSET_X, 2), "y": round(rc, 2)},
+                    "w": TM_RIGHT_W, "h": TM_RIGHT_H,
+                })
+
+        # 상/하 삼각형
+        mid_x = col_x + MC_COL_W / 2
+        triangles.append({
+            "column": ci, "position": "top",
+            "center": {"x": round(mid_x, 2), "y": round(CONTENT_Y + TM_TRIANGLE_TOP_Y, 2)},
+            "size": TM_TRIANGLE_SIZE,
+        })
+        triangles.append({
+            "column": ci, "position": "bottom",
+            "center": {"x": round(mid_x, 2), "y": round(CONTENT_Y + CONTENT_H + TM_TRIANGLE_BOT_Y, 2)},
+            "size": TM_TRIANGLE_SIZE,
+        })
+
+    return {
+        "left": left_marks,
+        "right": right_marks,
+        "triangles": triangles,
     }
 
 

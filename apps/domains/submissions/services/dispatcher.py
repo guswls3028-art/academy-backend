@@ -100,7 +100,8 @@ def _build_ai_payload(submission: Submission) -> Dict[str, Any]:
         if sh:
             qc = int(getattr(sh, "total_questions", 0) or 0)
 
-        if qc in (10, 20, 30):
+        # v10: 모든 문항수에 template_meta 전달 (기존 10/20/30 제한 제거)
+        if qc > 0:
             payload["question_count"] = qc
             payload["template_meta"] = build_objective_template_meta(question_count=qc)
 
