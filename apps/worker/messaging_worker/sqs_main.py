@@ -97,7 +97,7 @@ def send_one_alimtalk_ppurio(
     api_key: str = "",
     account: str = "",
 ) -> dict:
-    """뿌리오 알림톡 1건 발송. Solapi send_one_alimtalk과 동일 인터페이스."""
+    """비즈뿌리오 알림톡 1건 발송. Solapi send_one_alimtalk과 동일 인터페이스."""
     try:
         from apps.support.messaging.ppurio_client import send_ppurio_alimtalk
         return send_ppurio_alimtalk(
@@ -106,7 +106,7 @@ def send_one_alimtalk_ppurio(
             api_key=api_key, account=account,
         )
     except Exception as e:
-        logger.exception("ppurio alimtalk failed to=%s****", (to or "")[:4])
+        logger.exception("bizppurio alimtalk failed to=%s****", (to or "")[:4])
         return {"status": "error", "reason": str(e)[:500]}
 
 
@@ -114,12 +114,12 @@ def send_one_sms_ppurio(
     to: str, text: str, sender: str,
     *, api_key: str = "", account: str = "",
 ) -> dict:
-    """뿌리오 SMS/LMS 1건 발송. Solapi send_one_sms와 동일 인터페이스."""
+    """비즈뿌리오 SMS/LMS 1건 발송. Solapi send_one_sms와 동일 인터페이스."""
     try:
         from apps.support.messaging.ppurio_client import send_ppurio_sms
         return send_ppurio_sms(to=to, text=text, sender=sender, api_key=api_key, account=account)
     except Exception as e:
-        logger.exception("ppurio sms failed to=%s****", (to or "")[:4])
+        logger.exception("bizppurio sms failed to=%s****", (to or "")[:4])
         return {"status": "error", "reason": str(e)[:500]}
 
 
