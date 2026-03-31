@@ -145,11 +145,17 @@ def enqueue_sms(
         bool: enqueue 성공 여부
     """
     from apps.support.messaging.sqs_queue import MessagingSQSQueue
-    from apps.support.messaging.policy import can_send_sms, MessagingPolicyError, is_messaging_disabled, check_recipient_allowed
+    from apps.support.messaging.policy import can_send_sms, MessagingPolicyError, is_messaging_disabled, check_recipient_allowed, is_messaging_restricted
 
     # 로컬 테스트용 tenant(9999): 알림톡·문자 없이 기능만 동작 (발송 스킵)
     if is_messaging_disabled(tenant_id):
         logger.info("enqueue_sms skipped: tenant_id=%s is test tenant (messaging disabled)", tenant_id)
+        return False
+
+    # 제한 테넌트: 계정 관련(registration/password) 외 메시징 차단
+    # 계정 관련 발송은 OWNER_TENANT_ID로 enqueue되므로 여기서 차단되지 않음
+    if is_messaging_restricted(tenant_id):
+        logger.info("enqueue_sms blocked: tenant_id=%s messaging restricted (account-only)", tenant_id)
         return False
 
     # Recipient whitelist guard (테스트 모드 시 허용 번호만 발송)
@@ -345,7 +351,7 @@ def send_event_notification(
         return False
 
     name = (getattr(student, "name", "") or "").strip()
-    name_2 = name[:2] if len(name) >= 2 else name
+    name_2 = name[-2:] if len(name) >= 2 else name
     academy_name = (getattr(tenant, "name", "") or "").strip()
     site_url = get_tenant_site_url(tenant) or ""
 

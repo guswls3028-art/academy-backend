@@ -71,6 +71,21 @@ def get_trigger_policy(trigger: str) -> str:
     return TRIGGER_POLICY.get(trigger, "DISABLED")
 
 
+# ──────────────────────────────────────────
+# 테넌트별 메시징 제한 — 계정 관련만 허용
+# ──────────────────────────────────────────
+# 제한된 테넌트: 가입/등록/비번 관련 알림톡만 발송 가능.
+# 이 트리거들은 send_alimtalk_via_owner / send_welcome_messages /
+# send_registration_approved_messages에서 OWNER_TENANT_ID로 발송되므로
+# enqueue_sms 단에서 tenant_id 기준 차단 시 자동 우회됨.
+RESTRICTED_MESSAGING_TENANTS: frozenset = frozenset([3])  # 림글리쉬
+
+
+def is_messaging_restricted(tenant_id: int) -> bool:
+    """해당 테넌트의 비계정(non-account) 메시징이 제한되어 있는지 여부."""
+    return int(tenant_id) in RESTRICTED_MESSAGING_TENANTS
+
+
 def get_owner_tenant_id() -> int:
     """SMS 발송이 허용된 tenant ID (내 테넌트)."""
     return getattr(settings, "OWNER_TENANT_ID", 1)

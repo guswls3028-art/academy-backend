@@ -507,7 +507,7 @@ class SendMessageView(APIView):
                 skipped_no_phone += 1
                 continue
             name = (s.name or "").strip()
-            name_2 = name[:2] if len(name) >= 2 else name
+            name_2 = name[-2:] if len(name) >= 2 else name
             name_3 = name[:3] if len(name) >= 3 else name
             site_url = get_tenant_site_url(request.tenant) or ""
             academy_name = (tenant.name or "").strip()
@@ -641,7 +641,7 @@ class SendMessageView(APIView):
                 skipped_no_phone += 1
                 continue
             name = (s.name or "").strip()
-            name_2 = name[:2] if len(name) >= 2 else name
+            name_2 = name[-2:] if len(name) >= 2 else name
             name_3 = name[:3] if len(name) >= 3 else name
             site_url = get_tenant_site_url(request.tenant) or ""
             academy_name = (tenant.name or "").strip()
