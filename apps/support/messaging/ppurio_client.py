@@ -220,6 +220,15 @@ def send_ppurio_alimtalk(
     if not to or not pf_id or not template_id:
         return {"status": "error", "reason": "to_pf_template_required"}
 
+    # 뿌리오 senderProfile은 @xxx 형식이어야 함 (솔라피 KA01PF... 형식은 불가)
+    if pf_id and not pf_id.startswith("@"):
+        logger.warning(
+            "ppurio alimtalk: senderProfile '%s' does not start with '@'. "
+            "Ppurio requires @channelSearchId format. Solapi-format PFID is not compatible.",
+            pf_id[:20],
+        )
+        return {"status": "error", "reason": "invalid_sender_profile_format"}
+
     refkey = _generate_refkey()
 
     target: dict = {"to": to}
