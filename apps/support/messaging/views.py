@@ -192,7 +192,7 @@ class VerifySenderView(APIView):
 
         if provider == "ppurio":
             return Response(
-                {"verified": True, "message": "뿌리오는 발신번호 인증을 뿌리오 관리자 페이지에서 직접 확인하세요. 저장만 진행해도 됩니다."},
+                {"verified": True, "message": "뿌리오는 발신번호 인증을 뿌리오 관리자 페이지(ppurio.com)에서 직접 진행합니다. 여기서는 저장만 하시면 됩니다."},
                 status=status.HTTP_200_OK,
             )
 
@@ -303,8 +303,8 @@ class MessageTemplateSubmitReviewView(APIView):
 
         if provider == "ppurio":
             return Response(
-                {"detail": "뿌리오(Ppurio)는 알림톡 템플릿 검수를 뿌리오 관리자 페이지에서 직접 진행해야 합니다. "
-                           "승인된 템플릿 코드를 받은 뒤, 이 템플릿의 솔라피 템플릿 ID 필드에 해당 코드를 입력해 주세요."},
+                {"detail": "뿌리오는 알림톡 템플릿 검수를 뿌리오 관리자 페이지(ppurio.com)에서 직접 진행해야 합니다. "
+                           "승인된 템플릿 코드를 받은 뒤, 이 템플릿의 템플릿 ID 필드에 해당 코드를 입력해 주세요."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1111,8 +1111,8 @@ class TestCredentialsView(APIView):
             else:
                 # 뿌리오: 토큰 발급 테스트
                 try:
-                    from apps.support.messaging.ppurio_client import _get_access_token
-                    creds = {"api_key": api_key, "account": account, "api_url": "https://message.ppurio.com"}
+                    from apps.support.messaging.ppurio_client import _get_access_token, DEFAULT_API_URL
+                    creds = {"api_key": api_key, "account": account, "api_url": DEFAULT_API_URL}
                     token = _get_access_token(creds)
                     if token:
                         results["checks"].append({

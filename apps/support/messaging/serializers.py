@@ -64,7 +64,7 @@ class MessagingInfoUpdateSerializer(serializers.Serializer):
     kakao_pfid = serializers.CharField(max_length=100, required=False, allow_blank=True)
     messaging_sender = serializers.CharField(max_length=20, required=False, allow_blank=True)
     messaging_provider = serializers.ChoiceField(
-        choices=[("solapi", "솔라피"), ("ppurio", "비즈뿌리오")],
+        choices=[("solapi", "솔라피"), ("ppurio", "뿌리오")],
         required=False,
     )
     # 자체 연동 키 (직접 연동 모드)

@@ -38,14 +38,14 @@ class Tenant(models.Model):
     # ---------- 메시징(알림톡) ----------
     class MessagingProvider(models.TextChoices):
         SOLAPI = "solapi", "솔라피(Solapi)"
-        PPURIO = "ppurio", "비즈뿌리오(BizPpurio)"
+        PPURIO = "ppurio", "뿌리오(Ppurio)"
 
-    # 메시징 공급자 (솔라피 or 비즈뿌리오)
+    # 메시징 공급자 (솔라피 or 뿌리오)
     messaging_provider = models.CharField(
         max_length=10,
         choices=MessagingProvider.choices,
         default=MessagingProvider.SOLAPI,
-        help_text="SMS/알림톡 발송에 사용할 공급자 (solapi 또는 ppurio=비즈뿌리오)",
+        help_text="SMS/알림톡 발송에 사용할 공급자 (solapi 또는 ppurio=뿌리오)",
     )
     # 학원 개별 카카오 프로필 ID (연동 시 저장)
     kakao_pfid = models.CharField(max_length=100, blank=True, default="")
@@ -55,7 +55,7 @@ class Tenant(models.Model):
     credit_balance = models.DecimalField(
         max_digits=12, decimal_places=0, default=Decimal("0")
     )
-    # 직접 연동 모드: 학원이 본인 솔라피/비즈뿌리오 계정을 사용할 때 저장
+    # 직접 연동 모드: 학원이 본인 솔라피/뿌리오 계정을 사용할 때 저장
     # 비어 있으면 플랫폼 기본(시스템 환경변수) 키 사용
     own_solapi_api_key = models.CharField(
         max_length=200, blank=True, default="",
@@ -67,11 +67,11 @@ class Tenant(models.Model):
     )
     own_ppurio_api_key = models.CharField(
         max_length=200, blank=True, default="",
-        help_text="학원 자체 비즈뿌리오 API Key (직접 연동 시)",
+        help_text="학원 자체 뿌리오 API Key (직접 연동 시)",
     )
     own_ppurio_account = models.CharField(
         max_length=100, blank=True, default="",
-        help_text="학원 자체 비즈뿌리오 계정 ID (직접 연동 시)",
+        help_text="학원 자체 뿌리오 계정 ID (직접 연동 시)",
     )
     # 알림톡 기능 활성화 여부
     messaging_is_active = models.BooleanField(default=False)
