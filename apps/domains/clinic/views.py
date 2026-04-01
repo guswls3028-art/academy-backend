@@ -686,7 +686,10 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         # ── 클리닉 예약 완료 알림 (AUTO_DEFAULT, 학생+학부모) ──
         if obj.status in (SessionParticipant.Status.BOOKED, SessionParticipant.Status.PENDING):
             _t, _s = tenant, student
-            _ctx = {"클리닉명": getattr(session, "title", "") if session else ""}
+            _ctx = {
+                "클리닉명": getattr(session, "title", "") if session else "",
+                "장소": getattr(session, "location", "") if session else "",
+            }
             transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_reservation_created", _ctx))
 
         out = ClinicSessionParticipantSerializer(
@@ -797,7 +800,11 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             _t = getattr(request, "tenant", None)
             _s = obj.student
             _tr = _trigger
-            transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr))
+            _ctx = {
+                "클리닉명": getattr(session, "title", "") if session else "",
+                "장소": getattr(session, "location", "") if session else "",
+            }
+            transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
@@ -838,7 +845,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         # ── 클리닉 퇴실(완료) 알림 (AUTO_DEFAULT, 학생+학부모) ──
         _t = getattr(request, "tenant", None)
         _s = obj.student
-        transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_check_out"))
+        _ctx = {"클리닉명": getattr(session, "title", "") if session else "", "장소": getattr(session, "location", "") if session else ""}
+        transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_check_out", _ctx))
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
@@ -1086,7 +1094,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
         # ── 클리닉 예약 변경 알림 (AUTO_DEFAULT, 학생+학부모) ──
         _t, _s = tenant, request_student
-        transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_reservation_changed"))
+        _ctx = {"클리닉명": getattr(new_session, "title", "") if new_session else "", "장소": getattr(new_session, "location", "") if new_session else ""}
+        transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_reservation_changed", _ctx))
 
         out = ClinicSessionParticipantSerializer(
             new_booking, context={"request": request}
