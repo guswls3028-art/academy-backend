@@ -67,11 +67,15 @@ class Tenant(models.Model):
     )
     own_ppurio_api_key = models.CharField(
         max_length=200, blank=True, default="",
-        help_text="학원 자체 뿌리오 API Key (직접 연동 시)",
+        help_text="뿌리오 API Key (인증키 — 뿌리오 아이디 대체 값)",
     )
     own_ppurio_account = models.CharField(
         max_length=100, blank=True, default="",
-        help_text="학원 자체 뿌리오 계정 ID (직접 연동 시)",
+        help_text="뿌리오 계정 ID (로그인 아이디, 참고용)",
+    )
+    own_ppurio_password = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="뿌리오 로그인 비밀번호 (토큰 발급용: Base64(API_KEY:비밀번호))",
     )
     # 알림톡 기능 활성화 여부
     messaging_is_active = models.BooleanField(default=False)

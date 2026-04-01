@@ -2,27 +2,26 @@
 """
 뿌리오(Ppurio) 메시지 발송 클라이언트
 
-- 알림톡 / SMS / LMS 발송 지원
-- 뿌리오 REST API v3 (https://api.bizppurio.com)
-- 인증: Basic Auth → Bearer Token (24시간 유효)
+- SMS / LMS / 알림톡 발송 지원
+- 뿌리오 API: https://message.ppurio.com
+- 인증: HTTPBasicAuth(계정ID, 연동인증키) → Bearer Token (24시간)
 - 환경변수: PPURIO_ACCOUNT, PPURIO_API_KEY, PPURIO_API_URL
-- 공식 문서: https://biztech.gitbook.io/webapi
+- 공식 샘플: ppurio.com → 연동 → 연동개발(API)
 """
 
-import base64
 import logging
 import os
 import uuid
 from typing import Optional
 
 import requests
+from requests.auth import HTTPBasicAuth
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-# 뿌리오 API 기본 URL (운영)
-DEFAULT_API_URL = "https://api.bizppurio.com"
-# 검수(테스트) 환경: https://dev-api.bizppurio.com
+# 뿌리오 API 기본 URL
+DEFAULT_API_URL = "https://message.ppurio.com"
 
 
 def _get_ppurio_credentials(
@@ -32,6 +31,8 @@ def _get_ppurio_credentials(
     뿌리오 인증 정보 반환.
 
     우선순위: 함수 인자(테넌트 자체 키) > 환경변수 > Django settings
+    - account: 뿌리오 계정 ID (로그인 아이디)
+    - api_key: 연동 개발 인증키 (뿌리오 연동관리에서 발급)
     """
     resolved_account = (
         account
@@ -61,8 +62,8 @@ def _get_access_token(creds: dict) -> Optional[str]:
     뿌리오 인증 토큰 발급.
 
     POST /v1/token
-    Authorization: Basic base64(account:api_key)
-    응답: {"accesstoken": "eyJ...", "type": "Bearer", "expired": "20260401120000"}
+    Authorization: HTTPBasicAuth(account, api_key)
+    응답: {"token": "...", "expired": "..."}
     토큰 유효시간: 24시간
     """
     account = creds["account"]
@@ -70,29 +71,32 @@ def _get_access_token(creds: dict) -> Optional[str]:
     if not account or not api_key:
         return None
 
-    auth_str = base64.b64encode(f"{account}:{api_key}".encode()).decode()
     url = f"{creds['api_url']}/v1/token"
 
     try:
         resp = requests.post(
             url,
-            headers={
-                "Authorization": f"Basic {auth_str}",
-                "Content-Type": "application/json; charset=utf-8",
-            },
+            auth=HTTPBasicAuth(account, api_key),
             timeout=10,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            data = resp.json() if resp.text else {}
+            logger.warning(
+                "ppurio token failed: status=%s code=%s desc=%s",
+                resp.status_code,
+                data.get("code"),
+                data.get("description"),
+            )
+            return None
         data = resp.json()
-        # 공식 응답 키: "accesstoken"
-        return data.get("accesstoken") or data.get("token") or data.get("access_token")
+        return data.get("token") or data.get("accesstoken")
     except Exception as e:
         logger.warning("ppurio token request failed: %s", e)
         return None
 
 
 def _generate_refkey() -> str:
-    """고객사 고유 키 생성 (최대 32자)."""
+    """고객사 고유 키 생성."""
     return uuid.uuid4().hex[:32]
 
 
@@ -107,11 +111,11 @@ def send_ppurio_sms(
     """
     뿌리오 SMS/LMS 발송.
 
-    POST /v3/message
-    Authorization: Bearer {accesstoken}
+    POST /v1/message
+    Authorization: Bearer {token}
 
-    SMS: EUC-KR 90바이트 이하 → type: "sms", content.sms.message
-    LMS: EUC-KR 90바이트 초과 → type: "lms", content.lms.subject + content.lms.message
+    SMS: EUC-KR 90바이트 이하 → messageType: "SMS"
+    LMS: EUC-KR 90바이트 초과 → messageType: "LMS"
 
     Returns: {"status": "ok"|"error"|"skipped", "refkey"?, "messagekey"?, "reason"?}
     """
@@ -137,58 +141,40 @@ def send_ppurio_sms(
         text_bytes_len = len(text.encode("utf-8"))
 
     refkey = _generate_refkey()
+    msg_type = "SMS" if text_bytes_len <= 90 else "LMS"
 
-    if text_bytes_len <= 90:
-        # SMS
-        payload = {
-            "account": creds["account"],
-            "refkey": refkey,
-            "type": "sms",
-            "from": sender,
-            "to": to,
-            "content": {
-                "sms": {
-                    "message": text,
-                },
-            },
-        }
-    else:
-        # LMS
-        subject = (text[:30] + "…") if len(text) > 30 else text
-        payload = {
-            "account": creds["account"],
-            "refkey": refkey,
-            "type": "lms",
-            "from": sender,
-            "to": to,
-            "content": {
-                "lms": {
-                    "subject": subject,
-                    "message": text,
-                },
-            },
-        }
+    payload = {
+        "account": creds["account"],
+        "messageType": msg_type,
+        "content": text,
+        "from": sender,
+        "duplicateFlag": "N",
+        "refKey": refkey,
+        "targetCount": 1,
+        "targets": [
+            {"to": to},
+        ],
+    }
 
     try:
         resp = requests.post(
-            f"{creds['api_url']}/v3/message",
+            f"{creds['api_url']}/v1/message",
             headers={
                 "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json; charset=utf-8",
+                "Content-Type": "application/json",
             },
             json=payload,
             timeout=15,
         )
         data = resp.json()
-        code = data.get("code")
-        # 성공 코드: "1000"
-        if resp.status_code in (200, 201) and code == "1000":
-            messagekey = data.get("messagekey") or data.get("msgkey")
+        if resp.status_code in (200, 201) and "messageKey" in data:
+            messagekey = data["messageKey"]
             logger.info(
-                "ppurio SMS ok to=%s**** refkey=%s messagekey=%s",
-                to[:4], refkey, messagekey,
+                "ppurio SMS ok to=%s**** refkey=%s messagekey=%s type=%s",
+                to[:4], refkey, messagekey, msg_type,
             )
             return {"status": "ok", "refkey": refkey, "messagekey": messagekey}
+        code = data.get("code", "")
         reason = data.get("description") or data.get("message") or f"code={code}, http={resp.status_code}"
         logger.warning("ppurio SMS failed to=%s****: %s", to[:4], reason)
         return {"status": "error", "reason": reason[:500]}
@@ -208,22 +194,12 @@ def send_ppurio_alimtalk(
     account: str = "",
 ) -> dict:
     """
-    뿌리오 알림톡(AT) 발송.
+    뿌리오 알림톡(카카오톡) 발송.
 
-    POST /v3/message
-    Authorization: Bearer {accesstoken}
+    POST /v1/message
+    Authorization: Bearer {token}
 
-    type: "at"
-    content.at.senderkey: 카카오 발신프로필키
-    content.at.templatecode: 카카오 알림톡 템플릿 코드
-    content.at.message: 치환 완료된 최종 본문 (필수)
-
-    Args:
-        to: 수신 번호 (01012345678)
-        sender: 발신 번호
-        pf_id: 카카오 비즈니스 채널 발신프로필키 (senderKey)
-        template_id: 카카오 알림톡 템플릿 코드
-        replacements: [{"key": "학생이름", "value": "길동"}, ...]
+    messageType: "AT" (알림톡)
 
     Returns: {"status": "ok"|"error", "refkey"?, "messagekey"?, "reason"?}
     """
@@ -243,45 +219,48 @@ def send_ppurio_alimtalk(
 
     refkey = _generate_refkey()
 
-    # 뿌리오 알림톡: templatecode 기반 발송.
-    # 카카오 알림톡은 templatecode만 있으면 카카오 서버에서 본문을 조립하므로
-    # message 필드는 비워도 됨. 호출측에서 완성된 본문(text)을 전달하면 그대로 사용.
-    message = ""
-
     payload = {
         "account": creds["account"],
-        "refkey": refkey,
-        "type": "at",
+        "messageType": "AT",
+        "content": "",
         "from": sender,
-        "to": to,
-        "content": {
-            "at": {
-                "senderkey": pf_id,
-                "templatecode": template_id,
-                "message": message,
-            },
-        },
+        "refKey": refkey,
+        "targetCount": 1,
+        "targets": [
+            {"to": to},
+        ],
+        "senderKey": pf_id,
+        "templateCode": template_id,
     }
+
+    # 치환 변수 적용
+    if replacements:
+        change_word = {}
+        for r in replacements:
+            if isinstance(r, dict) and "key" in r and "value" in r:
+                change_word[r["key"]] = r["value"]
+        if change_word:
+            payload["targets"][0]["changeWord"] = change_word
 
     try:
         resp = requests.post(
-            f"{creds['api_url']}/v3/message",
+            f"{creds['api_url']}/v1/message",
             headers={
                 "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json; charset=utf-8",
+                "Content-Type": "application/json",
             },
             json=payload,
             timeout=15,
         )
         data = resp.json()
-        code = data.get("code")
-        if resp.status_code in (200, 201) and code == "1000":
-            messagekey = data.get("messagekey") or data.get("msgkey")
+        if resp.status_code in (200, 201) and "messageKey" in data:
+            messagekey = data["messageKey"]
             logger.info(
                 "ppurio alimtalk ok to=%s**** refkey=%s messagekey=%s",
                 to[:4], refkey, messagekey,
             )
             return {"status": "ok", "refkey": refkey, "messagekey": messagekey}
+        code = data.get("code", "")
         reason = data.get("description") or data.get("message") or f"code={code}, http={resp.status_code}"
         logger.warning("ppurio alimtalk failed to=%s****: %s", to[:4], reason)
         return {"status": "error", "reason": reason[:500]}

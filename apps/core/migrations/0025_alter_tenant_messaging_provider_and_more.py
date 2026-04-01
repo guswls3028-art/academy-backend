@@ -16,10 +16,10 @@ class Migration(migrations.Migration):
             field=models.CharField(
                 choices=[
                     ("solapi", "솔라피(Solapi)"),
-                    ("ppurio", "비즈뿌리오(BizPpurio)"),
+                    ("ppurio", "뿌리오(Ppurio)"),
                 ],
                 default="solapi",
-                help_text="SMS/알림톡 발송에 사용할 공급자 (solapi 또는 ppurio=비즈뿌리오)",
+                help_text="SMS/알림톡 발송에 사용할 공급자 (solapi 또는 ppurio=뿌리오)",
                 max_length=10,
             ),
         ),
@@ -29,7 +29,7 @@ class Migration(migrations.Migration):
             field=models.CharField(
                 blank=True,
                 default="",
-                help_text="학원 자체 비즈뿌리오 계정 ID (직접 연동 시)",
+                help_text="학원 자체 뿌리오 계정 ID (직접 연동 시)",
                 max_length=100,
             ),
         ),
@@ -39,7 +39,7 @@ class Migration(migrations.Migration):
             field=models.CharField(
                 blank=True,
                 default="",
-                help_text="학원 자체 비즈뿌리오 API Key (직접 연동 시)",
+                help_text="학원 자체 뿌리오 API Key (직접 연동 시)",
                 max_length=200,
             ),
         ),
