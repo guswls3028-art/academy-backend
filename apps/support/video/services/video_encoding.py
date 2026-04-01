@@ -117,72 +117,71 @@ def create_job_and_submit_batch(video: Video) -> JobResult:
             logger.warning("create_job_and_submit_batch: video %s total jobs=%s >= %s", video.id, video_job_count, per_video_limit)
             return JobResult(None, REASON_PER_VIDEO_LIMIT)
 
-        try:
-            job = VideoTranscodeJob.objects.create(
-                video=video,
-                tenant_id=tenant_id,
-                state=VideoTranscodeJob.State.QUEUED,
-            )
-            video.current_job_id = job.id
-            video.save(update_fields=["current_job_id", "updated_at"])
+        job = VideoTranscodeJob.objects.create(
+            video=video,
+            tenant_id=tenant_id,
+            state=VideoTranscodeJob.State.QUEUED,
+        )
+        video.current_job_id = job.id
+        video.save(update_fields=["current_job_id", "updated_at"])
 
-            if not lock_acquire(video.id, str(job.id), ttl_seconds=lock_ttl):
-                job.delete()
-                existing_after = VideoTranscodeJob.objects.filter(
-                    video=video,
-                    state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RUNNING, VideoTranscodeJob.State.RETRY_WAIT],
-                ).first()
-                if existing_after:
-                    video.current_job_id = existing_after.id
-                    video.save(update_fields=["current_job_id", "updated_at"])
-                else:
-                    video.current_job_id = None
-                    video.save(update_fields=["current_job_id", "updated_at"])
-                logger.info("create_job_and_submit_batch: video %s DDB lock failed, returning existing=%s", video.id, existing_after.id if existing_after else None)
-                return JobResult(existing_after, None if existing_after else REASON_SUBMIT_FAILED)
-
-            # Worker mode routing:
-            # - daemon mode + known duration <= 30min: daemon polls DB
-            # - daemon mode + duration > 30min OR unknown (NULL): auto-fallback to Batch
-            #   (NULL duration = ffprobe failed or not yet probed → treat as potentially long → Batch is safer)
-            # - batch mode: always submit to Batch
-            worker_mode = getattr(settings, "VIDEO_WORKER_MODE", "batch")
-            daemon_max_duration = int(getattr(settings, "DAEMON_MAX_DURATION_SECONDS", 5400))
-            video_duration = video.duration  # None if unknown
-
-            if worker_mode == "daemon" and video_duration is not None and video_duration <= daemon_max_duration:
-                logger.info(
-                    "create_job_and_submit_batch: DAEMON mode — job %s created, skipping Batch submit (video %s, duration=%s)",
-                    job.id, video.id, video.duration,
-                )
-                return JobResult(job, None)
-
-            if worker_mode == "daemon":
-                reason = "duration unknown (NULL)" if video_duration is None else f"duration {video_duration}s > {daemon_max_duration}s"
-                logger.info(
-                    "create_job_and_submit_batch: DAEMON mode but %s — fallback to Batch (video %s, job %s)",
-                    reason, video.id, job.id,
-                )
-
-            try:
-                aws_job_id, submit_error = submit_batch_job(str(job.id), duration_seconds=video.duration if video.duration else None)
-            except Exception as exc:
-                # ImproperlyConfigured, boto3 import 실패 등 — submit_batch_job 내부 예외
-                submit_error = str(exc)[:2000]
-                aws_job_id = None
-
-            if aws_job_id:
-                job.aws_batch_job_id = aws_job_id
-                job.save(update_fields=["aws_batch_job_id", "updated_at"])
-                return JobResult(job, None)
-
-            # Submit 실패: orphan job 정리 + 락 해제 (DDB 락 누수 방지)
+        if not lock_acquire(video.id, str(job.id), ttl_seconds=lock_ttl):
             job.delete()
-            video.current_job_id = None
-            video.save(update_fields=["current_job_id", "updated_at"])
-            lock_release(video.id)
-            logger.error(
-                "create_job_and_submit_batch: submit failed for video %s, error=%s — job deleted, lock released",
-                video.id, submit_error,
+            existing_after = VideoTranscodeJob.objects.filter(
+                video=video,
+                state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RUNNING, VideoTranscodeJob.State.RETRY_WAIT],
+            ).first()
+            if existing_after:
+                video.current_job_id = existing_after.id
+                video.save(update_fields=["current_job_id", "updated_at"])
+            else:
+                video.current_job_id = None
+                video.save(update_fields=["current_job_id", "updated_at"])
+            logger.info("create_job_and_submit_batch: video %s DDB lock failed, returning existing=%s", video.id, existing_after.id if existing_after else None)
+            return JobResult(existing_after, None if existing_after else REASON_SUBMIT_FAILED)
+
+        # Worker mode routing:
+        # - daemon mode + known duration <= 30min: daemon polls DB
+        # - daemon mode + duration > 30min OR unknown (NULL): auto-fallback to Batch
+        #   (NULL duration = ffprobe failed or not yet probed → treat as potentially long → Batch is safer)
+        # - batch mode: always submit to Batch
+        worker_mode = getattr(settings, "VIDEO_WORKER_MODE", "batch")
+        daemon_max_duration = int(getattr(settings, "DAEMON_MAX_DURATION_SECONDS", 5400))
+        video_duration = video.duration  # None if unknown
+
+        if worker_mode == "daemon" and video_duration is not None and video_duration <= daemon_max_duration:
+            logger.info(
+                "create_job_and_submit_batch: DAEMON mode — job %s created, skipping Batch submit (video %s, duration=%s)",
+                job.id, video.id, video.duration,
             )
-            return JobResult(None, REASON_SUBMIT_FAILED)
+            return JobResult(job, None)
+
+        if worker_mode == "daemon":
+            reason = "duration unknown (NULL)" if video_duration is None else f"duration {video_duration}s > {daemon_max_duration}s"
+            logger.info(
+                "create_job_and_submit_batch: DAEMON mode but %s — fallback to Batch (video %s, job %s)",
+                reason, video.id, job.id,
+            )
+
+        try:
+            aws_job_id, submit_error = submit_batch_job(str(job.id), duration_seconds=video.duration if video.duration else None)
+        except Exception as exc:
+            # ImproperlyConfigured, boto3 import 실패 등 — submit_batch_job 내부 예외
+            submit_error = str(exc)[:2000]
+            aws_job_id = None
+
+        if aws_job_id:
+            job.aws_batch_job_id = aws_job_id
+            job.save(update_fields=["aws_batch_job_id", "updated_at"])
+            return JobResult(job, None)
+
+        # Submit 실패: orphan job 정리 + 락 해제 (DDB 락 누수 방지)
+        job.delete()
+        video.current_job_id = None
+        video.save(update_fields=["current_job_id", "updated_at"])
+        lock_release(video.id)
+        logger.error(
+            "create_job_and_submit_batch: submit failed for video %s, error=%s — job deleted, lock released",
+            video.id, submit_error,
+        )
+        return JobResult(None, REASON_SUBMIT_FAILED)
