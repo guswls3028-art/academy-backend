@@ -764,7 +764,8 @@ jobs:
               | if .secrets == [] then del(.secrets) else . end
               | if .logConfiguration.secretOptions == [] then .logConfiguration |= del(.secretOptions) else . end
             ' > "$TMPFILE"
-            PLATFORM=$(echo "$CURRENT" | jq -r '.platformCapabilities // ["EC2"] | join(",")')
+            # Force EC2 — all video batch CEs are EC2. Prevents FARGATE propagation bug.
+            PLATFORM="EC2"
             ERR=$(aws batch register-job-definition \
               --job-definition-name "$JOBDEF_NAME" \
               --type container \
