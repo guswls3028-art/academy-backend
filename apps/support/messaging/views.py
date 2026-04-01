@@ -520,6 +520,10 @@ class SendMessageView(APIView):
             for var in ("강의명", "차시명", "시험명", "과제명", "클리닉명", "장소", "날짜", "시간", "시험성적", "클리닉합불"):
                 val = alimtalk_extra_vars.get(var, "")
                 text = text.replace(f"#{{{var}}}", val)
+            # 미치환 변수 정리
+            import re as _re
+            text = _re.sub(r"#\{[^}]+\}", "", text)
+            text = _re.sub(r"\n{3,}", "\n\n", text).strip()
             if subject_base:
                 text = subject_base + "\n" + text
 

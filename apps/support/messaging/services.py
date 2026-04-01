@@ -369,6 +369,12 @@ def send_event_notification(
     for k, v in (context or {}).items():
         text = text.replace(f"#{{{k}}}", str(v))
 
+    # 미치환 변수 정리 — #{공지내용} 등 context에 공급되지 않은 변수를 빈 문자열로 제거
+    import re as _re
+    text = _re.sub(r"#\{[^}]+\}", "", text)
+    # 빈 줄 정리 (3줄 이상 연속 → 2줄)
+    text = _re.sub(r"\n{3,}", "\n\n", text).strip()
+
     sender = (getattr(tenant, "messaging_sender", "") or "").strip()
 
     # 멱등성 키용 메타데이터: trigger + student_id + 오늘 날짜로 동일 이벤트 중복 방지
