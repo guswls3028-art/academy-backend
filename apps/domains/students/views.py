@@ -1066,14 +1066,16 @@ class StudentViewSet(ModelViewSet):
                         [tuple(student_ids)],
                     )
                     if user_ids:
+                        tenant_id = tenant.id
                         # submissions_submission.user_id → accounts_user. enrollment 외 제출도 있을 수 있으므로 user_id 기준 정리.
+                        # ⚠️ 반드시 tenant_id 필터 포함 — User는 여러 Tenant에 소속 가능
                         cursor.execute(
                             "SELECT 1 FROM information_schema.tables "
                             "WHERE table_schema = %s AND table_name = %s",
                             ["public", "submissions_submission"],
                         )
                         if cursor.fetchone():
-                            sub_ids_sql = "SELECT id FROM submissions_submission WHERE user_id IN %s"
+                            sub_ids_sql = "SELECT id FROM submissions_submission WHERE user_id IN %s AND tenant_id = %s"
                             cursor.execute(
                                 "SELECT 1 FROM information_schema.tables "
                                 "WHERE table_schema = %s AND table_name = %s",
@@ -1083,7 +1085,7 @@ class StudentViewSet(ModelViewSet):
                                 logger.info("bulk_permanent_delete DELETE results_exam_result (by user submissions)")
                                 cursor.execute(
                                     f"DELETE FROM results_exam_result WHERE submission_id IN ({sub_ids_sql})",
-                                    [tuple(user_ids)],
+                                    [tuple(user_ids), tenant_id],
                                 )
                             cursor.execute(
                                 "SELECT 1 FROM information_schema.tables "
@@ -1094,34 +1096,35 @@ class StudentViewSet(ModelViewSet):
                                 logger.info("bulk_permanent_delete DELETE submissions_submissionanswer (by user)")
                                 cursor.execute(
                                     f"DELETE FROM submissions_submissionanswer WHERE submission_id IN ({sub_ids_sql})",
-                                    [tuple(user_ids)],
+                                    [tuple(user_ids), tenant_id],
                                 )
-                            logger.info("bulk_permanent_delete DELETE submissions_submission (by user_id)")
+                            logger.info("bulk_permanent_delete DELETE submissions_submission (by user_id, tenant)")
                             cursor.execute(
-                                "DELETE FROM submissions_submission WHERE user_id IN %s",
-                                [tuple(user_ids)],
+                                "DELETE FROM submissions_submission WHERE user_id IN %s AND tenant_id = %s",
+                                [tuple(user_ids), tenant_id],
                             )
-                        for tbl in ["core_attendance", "core_expense"]:
-                            cursor.execute(
-                                "SELECT 1 FROM information_schema.tables "
-                                "WHERE table_schema = %s AND table_name = %s",
-                                ["public", tbl],
-                            )
-                            if cursor.fetchone():
-                                logger.info("bulk_permanent_delete DELETE %s", tbl)
-                                cursor.execute(
-                                    f"DELETE FROM {tbl} WHERE user_id IN %s",
-                                    [tuple(user_ids)],
-                                )
-                        logger.info("bulk_permanent_delete DELETE core_tenantmembership, accounts_user")
+                        # 이 테넌트의 멤버십만 삭제
+                        logger.info("bulk_permanent_delete DELETE core_tenantmembership (tenant=%s)", tenant_id)
                         cursor.execute(
-                            "DELETE FROM core_tenantmembership WHERE user_id IN %s",
+                            "DELETE FROM core_tenantmembership WHERE user_id IN %s AND tenant_id = %s",
+                            [tuple(user_ids), tenant_id],
+                        )
+                        # User 계정은 다른 테넌트에 멤버십이 없는 경우에만 삭제
+                        cursor.execute(
+                            "SELECT id FROM accounts_user WHERE id IN %s AND NOT EXISTS ("
+                            "  SELECT 1 FROM core_tenantmembership WHERE user_id = accounts_user.id"
+                            ")",
                             [tuple(user_ids)],
                         )
-                        cursor.execute(
-                            "DELETE FROM accounts_user WHERE id IN %s",
-                            [tuple(user_ids)],
-                        )
+                        orphan_user_ids = [row[0] for row in cursor.fetchall()]
+                        if orphan_user_ids:
+                            logger.info("bulk_permanent_delete DELETE accounts_user (orphaned) ids=%s", orphan_user_ids)
+                            cursor.execute(
+                                "DELETE FROM accounts_user WHERE id IN %s",
+                                [tuple(orphan_user_ids)],
+                            )
+                        else:
+                            logger.info("bulk_permanent_delete SKIP accounts_user delete — users have other tenant memberships")
                     deleted = len(to_delete)
         except Exception as e:
             logger.exception(

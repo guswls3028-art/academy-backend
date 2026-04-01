@@ -238,12 +238,25 @@ class AttendanceViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = Session.objects.select_related("lecture").filter(id=session_id).first()
+        session = Session.objects.select_related("lecture").filter(
+            id=session_id, lecture__tenant=tenant,
+        ).first()
         if not session:
             raise NotFound("세션을 찾을 수 없습니다.")
-        # 🔐 tenant isolation: verify session belongs to request tenant
-        if session.lecture.tenant_id != tenant.id:
-            raise NotFound("세션을 찾을 수 없습니다.")
+
+        # 🔐 tenant isolation: client가 보낸 student_id가 이 테넌트 소속인지 검증
+        from apps.domains.students.models import Student
+        valid_sids = set(
+            Student.objects.filter(
+                tenant=tenant, id__in=student_ids, deleted_at__isnull=True,
+            ).values_list("id", flat=True)
+        )
+        invalid_sids = [sid for sid in student_ids if sid not in valid_sids]
+        if invalid_sids:
+            return Response(
+                {"detail": f"이 학원에 속하지 않는 학생 ID: {invalid_sids}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         created = []
 
         for sid in student_ids:
