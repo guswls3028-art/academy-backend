@@ -122,6 +122,20 @@ R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
 R2_EXCEL_BUCKET = os.getenv("R2_EXCEL_BUCKET", os.getenv("EXCEL_BUCKET_NAME", "academy-excel"))
 
 # ==================================================
+# Video Batch (인코딩 제출용 — enqueue_uploaded 등 ops job이 사용)
+# ==================================================
+VIDEO_BATCH_JOB_QUEUE = os.getenv("VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
+VIDEO_BATCH_JOB_DEFINITION = os.getenv("VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
+VIDEO_BATCH_JOB_QUEUE_LONG = os.getenv("VIDEO_BATCH_JOB_QUEUE_LONG", "academy-v1-video-batch-long-queue")
+VIDEO_BATCH_JOB_DEFINITION_LONG = os.getenv("VIDEO_BATCH_JOB_DEFINITION_LONG", "academy-v1-video-batch-long-jobdef")
+VIDEO_BATCH_COMPUTE_ENV_NAME = os.getenv("VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce")
+VIDEO_WORKER_MODE = os.getenv("VIDEO_WORKER_MODE", "batch")
+VIDEO_TENANT_MAX_CONCURRENT = int(os.getenv("VIDEO_TENANT_MAX_CONCURRENT", "9999"))
+VIDEO_GLOBAL_MAX_CONCURRENT = int(os.getenv("VIDEO_GLOBAL_MAX_CONCURRENT", "9999"))
+VIDEO_JOB_LOCK_TABLE_NAME = os.getenv("VIDEO_JOB_LOCK_TABLE_NAME", "academy-v1-video-job-lock")
+VIDEO_JOB_LOCK_TTL_SECONDS = int(os.getenv("VIDEO_JOB_LOCK_TTL_SECONDS", "43200"))
+
+# ==================================================
 # Video / CDN
 # ==================================================
 CDN_HLS_BASE_URL = os.getenv("CDN_HLS_BASE_URL", "https://pub-54ae4dcb984d4491b08f6c57023a1621.r2.dev")

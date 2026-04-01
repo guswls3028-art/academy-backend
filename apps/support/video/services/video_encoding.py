@@ -164,16 +164,25 @@ def create_job_and_submit_batch(video: Video) -> JobResult:
                     reason, video.id, job.id,
                 )
 
-            aws_job_id, submit_error = submit_batch_job(str(job.id), duration_seconds=video.duration if video.duration else None)
+            try:
+                aws_job_id, submit_error = submit_batch_job(str(job.id), duration_seconds=video.duration if video.duration else None)
+            except Exception as exc:
+                # ImproperlyConfigured, boto3 import 실패 등 — submit_batch_job 내부 예외
+                submit_error = str(exc)[:2000]
+                aws_job_id = None
+
             if aws_job_id:
                 job.aws_batch_job_id = aws_job_id
                 job.save(update_fields=["aws_batch_job_id", "updated_at"])
                 return JobResult(job, None)
 
+            # Submit 실패: orphan job 정리 + 락 해제 (DDB 락 누수 방지)
+            job.delete()
+            video.current_job_id = None
+            video.save(update_fields=["current_job_id", "updated_at"])
             lock_release(video.id)
-            raise RuntimeError(submit_error or "submit_batch_job returned None")
-        except RuntimeError:
-            logger.exception("create_job_and_submit_batch: submit failed for video %s", video.id)
+            logger.error(
+                "create_job_and_submit_batch: submit failed for video %s, error=%s — job deleted, lock released",
+                video.id, submit_error,
+            )
             return JobResult(None, REASON_SUBMIT_FAILED)
-        except Exception:
-            raise

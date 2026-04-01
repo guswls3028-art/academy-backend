@@ -46,6 +46,8 @@ def acquire(video_id: int | str, job_id: str, ttl_seconds: Optional[int] = None)
     expiry = int(time.time()) + ttl_val
     key = str(video_id)
 
+    now_epoch = int(time.time())
+
     try:
         client = boto3.client("dynamodb", region_name=getattr(settings, "AWS_DEFAULT_REGION", "ap-northeast-2"))
         client.put_item(
@@ -55,13 +57,17 @@ def acquire(video_id: int | str, job_id: str, ttl_seconds: Optional[int] = None)
                 "jobId": {"S": str(job_id)},
                 ttl_attr: {"N": str(expiry)},
             },
-            ConditionExpression="attribute_not_exists(videoId)",
+            # 락이 없거나, TTL이 만료된 stale 아이템이면 덮어쓰기 허용
+            # (DynamoDB TTL 삭제는 최대 48시간 지연될 수 있음)
+            ConditionExpression="attribute_not_exists(videoId) OR #ttl < :now",
+            ExpressionAttributeNames={"#ttl": ttl_attr},
+            ExpressionAttributeValues={":now": {"N": str(now_epoch)}},
         )
         logger.info("VIDEO_JOB_LOCK_ACQUIRED | video_id=%s job_id=%s ttl_seconds=%s", key, job_id, ttl_val)
         return True
     except ClientError as e:
         if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
-            logger.info("VIDEO_JOB_LOCK_NOT_ACQUIRED | video_id=%s (already locked)", key)
+            logger.info("VIDEO_JOB_LOCK_NOT_ACQUIRED | video_id=%s (already locked, ttl still valid)", key)
             return False
         raise
     except Exception as e:
