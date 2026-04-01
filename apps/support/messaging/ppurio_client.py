@@ -196,10 +196,13 @@ def send_ppurio_alimtalk(
     """
     뿌리오 알림톡(카카오톡) 발송.
 
-    POST /v1/message
+    POST /v1/kakao
     Authorization: Bearer {token}
 
-    messageType: "AT" (알림톡)
+    messageType: ALT(텍스트) / ALL(장문) / ALH(이미지헤더) / ALI(아이템리스트)
+    senderProfile: 발신프로필명 (@xxx)
+    templateCode: 뿌리오에 등록된 템플릿 코드
+    isResend: 대체 발송 여부 (Y/N)
 
     Returns: {"status": "ok"|"error", "refkey"?, "messagekey"?, "reason"?}
     """
@@ -219,19 +222,7 @@ def send_ppurio_alimtalk(
 
     refkey = _generate_refkey()
 
-    payload = {
-        "account": creds["account"],
-        "messageType": "AT",
-        "content": "",
-        "from": sender,
-        "refKey": refkey,
-        "targetCount": 1,
-        "targets": [
-            {"to": to},
-        ],
-        "senderKey": pf_id,
-        "templateCode": template_id,
-    }
+    target: dict = {"to": to}
 
     # 치환 변수 적용
     if replacements:
@@ -240,11 +231,23 @@ def send_ppurio_alimtalk(
             if isinstance(r, dict) and "key" in r and "value" in r:
                 change_word[r["key"]] = r["value"]
         if change_word:
-            payload["targets"][0]["changeWord"] = change_word
+            target["changeWord"] = change_word
+
+    payload = {
+        "account": creds["account"],
+        "messageType": "ALT",
+        "senderProfile": pf_id,
+        "templateCode": template_id,
+        "duplicateFlag": "N",
+        "isResend": "N",
+        "refKey": refkey,
+        "targetCount": 1,
+        "targets": [target],
+    }
 
     try:
         resp = requests.post(
-            f"{creds['api_url']}/v1/message",
+            f"{creds['api_url']}/v1/kakao",
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
