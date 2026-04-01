@@ -66,6 +66,7 @@ def _send_attendance_notification(tenant, attendance, trigger):
             "차시명": session.title or f"{session.order}차시",
             "날짜": str(session_date) if session_date else now.strftime("%Y-%m-%d"),
             "시간": now.strftime("%H:%M"),
+            "_domain_object_id": str(attendance.id),
         }
 
         send_event_notification(

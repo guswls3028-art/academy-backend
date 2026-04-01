@@ -362,25 +362,42 @@ def send_event_notification(
 
     # 메시지 본문 (템플릿 치환)
     text = (template.body or "").strip()
-    text = text.replace("#{학원명}", academy_name)
-    text = text.replace("#{학생이름}", name)
-    text = text.replace("#{학생이름2}", name_2)
-    text = text.replace("#{사이트링크}", site_url)
-    for k, v in (context or {}).items():
-        text = text.replace(f"#{{{k}}}", str(v))
+    all_vars = {
+        "학원명": academy_name, "학생이름": name, "학생이름2": name_2,
+        "사이트링크": site_url,
+    }
+    all_vars.update({k: str(v) for k, v in (context or {}).items()})
+    for k, v in all_vars.items():
+        text = text.replace(f"#{{{k}}}", v)
 
-    # 미치환 변수 정리 — #{공지내용} 등 context에 공급되지 않은 변수를 빈 문자열로 제거
+    # required/optional 변수 검증 — 미치환 #{...} 잔존 검사
     import re as _re
-    text = _re.sub(r"#\{[^}]+\}", "", text)
-    # 빈 줄 정리 (3줄 이상 연속 → 2줄)
+    # optional: 공지내용, 내용 — 빈 문자열 허용
+    _OPTIONAL_VARS = {"공지내용", "내용"}
+    remaining = _re.findall(r"#\{([^}]+)\}", text)
+    required_missing = [v for v in remaining if v not in _OPTIONAL_VARS]
+    if required_missing:
+        logger.error(
+            "send_event_notification BLOCKED: trigger=%s template=%s required_vars missing: %s",
+            trigger, template.name, required_missing,
+        )
+        return False
+    # optional 변수만 빈 문자열로 치환
+    for opt in _OPTIONAL_VARS:
+        text = text.replace(f"#{{{opt}}}", "")
     text = _re.sub(r"\n{3,}", "\n\n", text).strip()
 
     sender = (getattr(tenant, "messaging_sender", "") or "").strip()
 
-    # 멱등성 키용 메타데이터: trigger + student_id + 오늘 날짜로 동일 이벤트 중복 방지
+    # 멱등성 키: trigger + student_id + domain_object_id (세션/예약 등) 기준
+    # 날짜 단위가 아닌 도메인 객체 단위로 중복 방지 → 같은 날 다른 세션 알림은 별개 발송
     student_id = getattr(student, "id", None) or getattr(student, "pk", None)
-    from django.utils import timezone as _tz
-    stable_occurrence = _tz.localtime().strftime("%Y%m%d")
+    domain_object_id = (context or {}).get("_domain_object_id", "")
+    if not domain_object_id:
+        # fallback: 날짜 + 트리거 조합 (이전 호환)
+        from django.utils import timezone as _tz
+        domain_object_id = _tz.localtime().strftime("%Y%m%d")
+    stable_occurrence = f"{trigger}:{domain_object_id}"
 
     try:
         return enqueue_sms(
@@ -512,7 +529,13 @@ def send_welcome_messages(
 
         # 학부모용 — registration_approved_parent 템플릿
         if parent_phone and len(parent_phone) >= 10 and tmpl_parent and sid_parent:
-            pwd = parent_password_by_phone.get(parent_phone, "0000")
+            pwd = parent_password_by_phone.get(parent_phone)
+            if not pwd:
+                logger.error(
+                    "send_welcome_messages SKIP parent: phone=%s no password in mapping, refusing to send with empty/default password",
+                    parent_phone[:4] + "****",
+                )
+                continue
             replacements = {
                 "학생이름": name,
                 "학생아이디": ps_number,
