@@ -24,6 +24,7 @@ class HomeworkSaveAsTemplateView(APIView):
             raise ValidationError({"detail": "이미 템플릿이 연결되어 있습니다."})
 
         template = Homework.objects.create(
+            tenant=hw.tenant,
             homework_type=Homework.HomeworkType.TEMPLATE,
             session=None,
             template_homework=None,
@@ -42,7 +43,7 @@ class HomeworkSaveAsTemplateView(APIView):
             raise PermissionDenied("Tenant required.")
         try:
             hw = Homework.objects.filter(
-                session__lecture__tenant=tenant,
+                tenant=tenant,
                 homework_type=Homework.HomeworkType.REGULAR,
             ).get(id=homework_id)
         except Homework.DoesNotExist:

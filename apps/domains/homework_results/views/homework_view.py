@@ -41,9 +41,8 @@ class HomeworkViewSet(ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return Homework.objects.none()
-        # 세션 소속 regular만 (템플릿은 session=None이라 제외)
         qs = Homework.objects.filter(
-            session__lecture__tenant=tenant
+            tenant=tenant
         ).select_related("session", "session__lecture", "template_homework")
 
         session_id = self.request.query_params.get("session_id")
@@ -67,6 +66,8 @@ class HomeworkViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant is required."}, status=status.HTTP_403_FORBIDDEN)
         if not Session.objects.filter(id=int(session_id), lecture__tenant=tenant).exists():
             return Response(
                 {"detail": "해당 차시를 찾을 수 없습니다."},
@@ -74,9 +75,9 @@ class HomeworkViewSet(ModelViewSet):
             )
         if template_id:
             try:
-                # 템플릿은 tenant FK 없음 → derived_homeworks 기반 테넌트 가시성 검증
                 template = Homework.objects.get(
                     id=int(template_id),
+                    tenant=tenant,
                     homework_type=Homework.HomeworkType.TEMPLATE,
                 )
             except (ValueError, TypeError, Homework.DoesNotExist):
@@ -84,14 +85,9 @@ class HomeworkViewSet(ModelViewSet):
                     {"template_homework_id": "유효한 과제 템플릿이 아닙니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            # tenant 가시성: 해당 테넌트에서 사용된 적 있는 템플릿만 허용
-            if not template.derived_homeworks.filter(session__lecture__tenant=tenant).exists():
-                return Response(
-                    {"template_homework_id": "해당 템플릿에 접근할 수 없습니다."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
             title = (data.get("title") or "").strip() or template.title
             instance = Homework.objects.create(
+                tenant=tenant,
                 homework_type=Homework.HomeworkType.REGULAR,
                 session_id=int(session_id),
                 template_homework=template,
@@ -113,6 +109,7 @@ class HomeworkViewSet(ModelViewSet):
         if not Session.objects.filter(id=int(session_id), lecture__tenant=tenant).exists():
             raise ValidationError({"detail": "해당 차시를 찾을 수 없습니다."})
         serializer.save(
+            tenant=tenant,
             homework_type=Homework.HomeworkType.REGULAR,
             session_id=int(session_id),
             title=(data.get("title") or "").strip() or "제목 없음",

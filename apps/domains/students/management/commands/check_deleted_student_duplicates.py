@@ -76,7 +76,7 @@ class Command(BaseCommand):
                     )
                 )
                 for s in to_remove:
-                    student_repo.enrollment_filter_student_delete_obj(s)
+                    student_repo.enrollment_filter_student_delete_obj(s, tenant_id=g["tenant_id"])
                     user = s.user
                     s.delete()
                     if user:

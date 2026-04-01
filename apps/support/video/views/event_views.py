@@ -76,7 +76,7 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         qs = (
             VideoPlaybackEvent.objects
-            .filter(video__session__lecture__tenant=tenant)
+            .filter(video__tenant=tenant)
             .select_related("enrollment", "enrollment__student", "video")
         ) if tenant else VideoPlaybackEvent.objects.none()
 

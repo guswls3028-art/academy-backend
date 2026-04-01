@@ -50,7 +50,7 @@ class ExamGradingService:
         sheet,
         answer_key,
         submission_answers,
-    ) -> Tuple[int, float, Dict]:
+    ) -> Tuple[float, float, Dict]:
         """
         Returns:
           (total_score, max_score, breakdown)
@@ -103,7 +103,7 @@ class ExamGradingService:
                 "correct_answer": correct_answer or "",
             }
 
-        return int(round(total_score)), max_score, breakdown
+        return round(float(total_score), 2), max_score, breakdown
 
     # ------------------------------------------------------------------
     # Public API
@@ -207,7 +207,6 @@ class ExamGradingService:
 
         # overrides에서 점수 정보 추출
         grades = overrides.get("grades") or overrides.get("overrides") or []
-        note = overrides.get("note", "")
 
         manual_total = 0.0
         manual_max = 0.0
@@ -232,30 +231,39 @@ class ExamGradingService:
             result.total_score = manual_total
             result.max_score = manual_max
             result.subjective_score = manual_total
-            result.manual_breakdown = manual_breakdown
-        if note:
-            result.note = note
+            result.manual_overrides = manual_breakdown
 
         result.status = ExamResult.Status.DRAFT
 
-        update_fields = ["total_score", "max_score", "status", "updated_at"]
-        for f in ("subjective_score", "manual_breakdown", "note"):
-            if hasattr(result, f):
-                update_fields.append(f)
-        result.save(update_fields=list(dict.fromkeys(update_fields)))
+        update_fields = [
+            "total_score", "max_score", "subjective_score",
+            "manual_overrides", "status", "updated_at",
+        ]
+        result.save(update_fields=update_fields)
 
-        # P1 수정: 수동 오버라이드 후 Result(학생 화면)도 동기화
-        try:
-            from apps.domains.results.services.sync_result_from_submission import (
-                sync_result_from_exam_submission,
-            )
-            sync_result_from_exam_submission(int(submission.id))
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception(
-                "Manual override: failed to sync Result for submission %s",
-                submission.id,
-            )
+        # 수동 오버라이드 후 Result(학생 화면)에 수동 점수를 직접 반영
+        # sync_result_from_exam_submission은 자동채점을 다시 수행하므로 사용하면 안 됨
+        if grades:
+            try:
+                from apps.domains.results.models import Result
+                enrollment_id = getattr(submission, "enrollment_id", None)
+                if enrollment_id:
+                    r, _ = Result.objects.get_or_create(
+                        target_type="exam",
+                        target_id=int(exam.id),
+                        enrollment_id=int(enrollment_id),
+                        defaults={"total_score": 0, "max_score": 0},
+                    )
+                    r.total_score = manual_total
+                    r.max_score = manual_max
+                    r.objective_score = result.objective_score
+                    r.save(update_fields=["total_score", "max_score", "objective_score", "updated_at"])
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Manual override: failed to sync Result for submission %s",
+                    submission.id,
+                )
 
         return result
 

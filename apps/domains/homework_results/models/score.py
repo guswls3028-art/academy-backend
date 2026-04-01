@@ -99,7 +99,11 @@ class HomeworkScore(TimestampModel):
             models.UniqueConstraint(
                 fields=["enrollment", "session", "homework", "attempt_index"],
                 name="uniq_hwscore_enroll_sess_hw_attempt",
-            )
+            ),
+            models.CheckConstraint(
+                condition=models.Q(score__gte=0) | models.Q(score__isnull=True),
+                name="hwscore_non_negative",
+            ),
         ]
 
         # ✅ 운영 성능 필수 인덱스 (삭제 금지: RULE 2)

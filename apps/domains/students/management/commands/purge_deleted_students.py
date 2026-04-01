@@ -55,8 +55,7 @@ class Command(BaseCommand):
 
         deleted = 0
         with transaction.atomic():
-            student_ids = [s.id for s in to_purge]
-            student_repo.enrollment_filter_student_ids_bulk(student_ids)
+            # Enrollment은 Student FK CASCADE로 자동 삭제됨 — 명시적 선행 삭제 불필요
             for student in to_purge:
                 user = student.user
                 student.delete()

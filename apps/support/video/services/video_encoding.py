@@ -64,8 +64,13 @@ def create_job_and_submit_batch(video: Video) -> JobResult:
             )
             return JobResult(None, REASON_NOT_UPLOADED)
         try:
-            tenant = video.session.lecture.tenant
-            tenant_id = int(tenant.id)
+            tenant_id = video.tenant_id
+            if tenant_id is None:
+                # fallback: 간접 체인
+                tenant_id = video.session.lecture.tenant_id
+            if tenant_id is None:
+                raise ValueError("tenant_id is None")
+            tenant_id = int(tenant_id)
         except Exception as e:
             logger.error("create_job_and_submit_batch: Cannot get tenant for video %s, error=%s", video.id, e)
             return JobResult(None, REASON_NO_TENANT)

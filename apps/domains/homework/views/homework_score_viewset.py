@@ -58,6 +58,9 @@ from apps.domains.homework.filters import HomeworkScoreFilter
 
 from apps.core.permissions import TenantResolvedAndStaff
 
+# 🔐 enrollment tenant guard
+from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
+
 # submissions 기준 보정 (기존 구조 유지)
 from apps.domains.submissions.models import Submission
 
@@ -217,6 +220,9 @@ class HomeworkScoreViewSet(ModelViewSet):
     def partial_update(self, request, *args, **kwargs):
         obj: HomeworkScore = self.get_object()
 
+        # 🔐 enrollment tenant guard: obj의 enrollment이 현재 tenant에 속하는지 검증
+        validate_enrollment_belongs_to_tenant(obj.enrollment_id, request.tenant)
+
         if getattr(obj, "is_locked", False):
             return _locked_response(obj)
 
@@ -305,6 +311,10 @@ class HomeworkScoreViewSet(ModelViewSet):
 
             homework_id = serializer.validated_data["homework_id"]
             enrollment_id = serializer.validated_data["enrollment_id"]
+
+            # 🔐 enrollment tenant guard: enrollment이 현재 tenant에 속하는지 검증
+            validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
+
             score = serializer.validated_data.get("score")
             max_score = serializer.validated_data.get("max_score")
             meta_status = serializer.validated_data.get("meta_status")

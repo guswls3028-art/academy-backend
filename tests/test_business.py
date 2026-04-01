@@ -175,6 +175,7 @@ class TestScoreResultFlow(TestCase):
 
         # Exam (regular, linked to session)
         cls.exam = Exam.objects.create(
+            tenant=cls.tenant,
             title="Mid-Term Math",
             exam_type=Exam.ExamType.REGULAR,
             status=Exam.Status.OPEN,

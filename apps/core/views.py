@@ -309,12 +309,15 @@ class MyAttendanceViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         user = self.request.user
         tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Tenant is required.")
 
         start = self.request.data.get("start_time")
         end = self.request.data.get("end_time")
 
         duration = calculate_duration_hours(start, end)
-        amount = calculate_amount(tenant, duration) if tenant is not None else 0
+        amount = calculate_amount(tenant, duration)
 
         serializer.save(
             tenant=tenant,
@@ -366,6 +369,9 @@ class MyExpenseViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Tenant is required.")
         raw_amount = self.request.data.get("amount")
         serializer.save(
             tenant=tenant,

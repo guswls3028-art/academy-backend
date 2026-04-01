@@ -1,3 +1,4 @@
+# DEPRECATED: Active version is in homework/views/homework_score_viewset.py
 # PATH: apps/domains/homework/views/homework_score_viewset.py
 
 """

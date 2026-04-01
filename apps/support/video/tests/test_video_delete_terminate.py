@@ -23,6 +23,7 @@ class VideoDeleteTerminateTest(TestCase):
         lecture = Lecture.objects.create(title="L", name="L", subject="S", tenant=tenant)
         session = Session.objects.create(lecture=lecture, title="S", order=1)
         self.video = Video.objects.create(
+            tenant=tenant,
             session=session,
             title="V",
             file_key="",

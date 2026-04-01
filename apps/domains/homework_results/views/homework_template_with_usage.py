@@ -18,10 +18,7 @@ def template_visible_to_tenant(template: Homework, tenant) -> bool:
     """해당 테넌트가 이 템플릿을 사용할 수 있는지."""
     if template.homework_type != Homework.HomeworkType.TEMPLATE:
         return False
-    # ✅ Tenant isolation: template must have at least one derived homework in this tenant
-    return template.derived_homeworks.filter(
-        session__lecture__tenant=tenant,
-    ).exists()
+    return template.tenant_id == tenant.id
 
 
 class HomeworkTemplateWithUsageListView(APIView):
@@ -38,9 +35,10 @@ class HomeworkTemplateWithUsageListView(APIView):
             return Response([])
 
         qs = (
-            Homework.objects.filter(homework_type=Homework.HomeworkType.TEMPLATE)
-            .filter(derived_homeworks__session__lecture__tenant=tenant)
-            .distinct()
+            Homework.objects.filter(
+                tenant=tenant,
+                homework_type=Homework.HomeworkType.TEMPLATE,
+            )
             .prefetch_related("derived_homeworks__session__lecture")
         )
 

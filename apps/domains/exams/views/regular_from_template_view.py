@@ -31,10 +31,7 @@ class RegularExamFromTemplateView(APIView):
     def post(self, request, exam_id: int):
         tenant = request.tenant
         template_exam = get_object_or_404(
-            Exam.objects.filter(
-                Q(sessions__lecture__tenant=tenant)
-                | Q(derived_exams__sessions__lecture__tenant=tenant)
-            ).distinct(),
+            Exam.objects.filter(tenant=tenant),
             id=int(exam_id),
             exam_type=Exam.ExamType.TEMPLATE,
         )
@@ -60,6 +57,7 @@ class RegularExamFromTemplateView(APIView):
             session_id=session_id,
             title=str(title).strip() if title else None,
             description=str(description).strip() if description else None,
+            tenant=tenant,
         )
 
         return Response(ExamSerializer(regular).data, status=status.HTTP_201_CREATED)

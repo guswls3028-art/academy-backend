@@ -5,6 +5,7 @@ from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
 from apps.domains.lectures.models import Lecture
 from apps.domains.enrollment.models import Enrollment
+from apps.domains.students.models import Student
 
 
 class ClinicSessionSerializer(serializers.ModelSerializer):
@@ -216,12 +217,14 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
         if request and hasattr(request, "tenant") and request.tenant:
-            self.fields["session"].queryset = Session.objects.filter(tenant=request.tenant)
+            tenant = request.tenant
+            self.fields["session"].queryset = Session.objects.filter(tenant=tenant)
+            self.fields["enrollment_id"].queryset = Enrollment.objects.filter(tenant=tenant)
 
     # FK 전환 호환: 프론트가 enrollment_id로 보내면 enrollment FK로 매핑
     enrollment_id = serializers.PrimaryKeyRelatedField(
         source="enrollment",
-        queryset=Enrollment.objects.all(),
+        queryset=Enrollment.objects.none(),  # __init__에서 tenant-scoped로 교체
         required=False,
         allow_null=True,
     )
@@ -301,8 +304,26 @@ class ClinicTestSerializer(serializers.ModelSerializer):
         model = Test
         fields = "__all__"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request, "tenant") and request.tenant:
+            tenant = request.tenant
+            if "session" in self.fields:
+                self.fields["session"].queryset = Session.objects.filter(tenant=tenant)
+
 
 class ClinicSubmissionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Submission
         fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request, "tenant") and request.tenant:
+            tenant = request.tenant
+            if "test" in self.fields:
+                self.fields["test"].queryset = Test.objects.filter(tenant=tenant)
+            if "student" in self.fields:
+                self.fields["student"].queryset = Student.objects.filter(tenant=tenant)

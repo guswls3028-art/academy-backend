@@ -364,6 +364,14 @@ class WorkRecordSerializer(serializers.ModelSerializer):
         read_only_fields = ["resolved_hourly_wage", "is_manually_edited", "created_at", "updated_at"]
         ref_name = "StaffWorkRecord"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request, "tenant") and request.tenant:
+            tenant = request.tenant
+            self.fields["staff"].queryset = Staff.objects.filter(tenant=tenant)
+            self.fields["work_type"].queryset = WorkType.objects.filter(tenant=tenant)
+
 
 # ---------------------------
 # ExpenseRecord
@@ -400,6 +408,13 @@ class ExpenseRecordSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         ref_name = "StaffExpenseRecord"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request, "tenant") and request.tenant:
+            tenant = request.tenant
+            self.fields["staff"].queryset = Staff.objects.filter(tenant=tenant)
 
 
 # ---------------------------

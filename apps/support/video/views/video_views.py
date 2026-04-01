@@ -145,7 +145,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             from apps.support.video.models import Video
             return Video.objects.none()
         return video_repo.get_video_queryset_with_relations().filter(
-            session__lecture__tenant=tenant
+            tenant=tenant
         )
 
     # 테넌트 스태프(owner/admin/staff/teacher)만 허용 — Django is_staff 없어도 오너·원장 업로드 가능
@@ -753,7 +753,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         from apps.support.video.services.batch_submit import terminate_batch_job
 
         try:
-            video = Video.objects.select_for_update(of=("self",)).select_related("session__lecture__tenant").get(
+            video = Video.objects.select_for_update(of=("self",)).select_related("tenant", "session__lecture__tenant").get(
                 pk=self.get_object().pk
             )
         except Video.DoesNotExist:

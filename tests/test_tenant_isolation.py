@@ -347,6 +347,7 @@ class TestCrossTenantPrevention(TestCase):
             lecture=self.lecture1, order=1, title="S1"
         )
         exam = Exam.objects.create(
+            tenant=self.tenant1,
             title="Cross Exam", exam_type=Exam.ExamType.REGULAR,
             status=Exam.Status.OPEN, max_score=100, pass_score=60,
         )

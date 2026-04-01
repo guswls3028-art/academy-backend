@@ -115,7 +115,7 @@ class HomeworkPolicyApiTests(APITestCase):
         )
         pid = res.data["results"][0]["id"]
 
-        hw = Homework.objects.create(session=self.session, title="HW1")
+        hw = Homework.objects.create(tenant=self.tenant, session=self.session, title="HW1")
         hs = HomeworkScore.objects.create(
             enrollment_id=self.enrollment.id,
             session=self.session,

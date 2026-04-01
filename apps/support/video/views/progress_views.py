@@ -98,10 +98,10 @@ class VideoProgressView(APIView):
 
                 video = (
                     Video.objects.filter(
-                        session__lecture__tenant=tenant,
+                        tenant=tenant,
                         pk=video_id,
                     )
-                    .select_related("session__lecture__tenant")
+                    .select_related("tenant")
                     .first()
                 )
                 if video:
@@ -199,7 +199,7 @@ class VideoProgressViewSet(ModelViewSet):
         if not tenant:
             return video_repo.video_progress_all().none()
         return video_repo.video_progress_all().filter(
-            video__session__lecture__tenant=tenant,
+            video__tenant=tenant,
         )
 
     def perform_update(self, serializer):

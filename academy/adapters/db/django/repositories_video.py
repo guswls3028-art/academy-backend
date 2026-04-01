@@ -63,7 +63,13 @@ def create_video(session, title, file_key, order, status, allow_skip=False, max_
         try:
             kwargs["tenant_id"] = session.lecture.tenant_id
         except Exception:
-            pass
+            raise ValueError(
+                f"Cannot determine tenant for video: session={session.id}, "
+                f"lecture={getattr(session, 'lecture_id', None)}. "
+                "Pass tenant explicitly."
+            )
+    else:
+        raise ValueError("tenant is required for Video creation.")
     return Video.objects.create(**kwargs)
 
 
@@ -393,9 +399,14 @@ def playback_event_bulk_create(objs, batch_size=500):
 
 
 def _tenant_id_from_video(video) -> Optional[int]:
-    """Video에서 tenant_id 추출 (session.lecture.tenant)."""
+    """Video에서 tenant_id 추출. video.tenant_id 우선, fallback으로 session.lecture.tenant_id."""
     if not video:
         return None
+    # 직접 FK 우선
+    tid = getattr(video, "tenant_id", None)
+    if tid is not None:
+        return tid
+    # fallback: 간접 체인
     if getattr(video, "session", None) and getattr(video.session, "lecture", None):
         return getattr(video.session.lecture, "tenant_id", None)
     return None

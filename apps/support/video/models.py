@@ -83,11 +83,9 @@ class Video(TimestampModel):
     tenant = models.ForeignKey(
         "core.Tenant",
         on_delete=models.CASCADE,
-        null=True,
-        blank=True,
         related_name="videos",
         db_index=True,
-        help_text="영상 소유 테넌트 (직접 참조, session→lecture→tenant 체인 대체)",
+        help_text="영상 소유 테넌트 (SSOT, session→lecture→tenant 체인 대체)",
     )
 
     session = models.ForeignKey(

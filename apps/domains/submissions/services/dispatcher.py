@@ -16,7 +16,6 @@ from apps.infrastructure.storage.r2 import generate_presigned_get_url
 
 from apps.domains.ai.gateway import dispatch_job
 from apps.domains.results.services.grading_service import grade_submission
-from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 
 # ✅ [추가] AI 워커 EC2 제어
 from apps.domains.ai.services.worker_instance_control import start_ai_worker_instance
@@ -127,10 +126,8 @@ def dispatch_submission(submission: Submission) -> None:
 
         transit_save(submission, Submission.Status.GRADING, actor="dispatcher.online")
 
+        # grade_submission 내부에서 auto_grade_objective가 DONE 전이 + dispatch_progress_pipeline 호출까지 수행
         grade_submission(int(submission.id))
-        dispatch_progress_pipeline(submission_id=submission.id)
-
-        transit_save(submission, Submission.Status.DONE, actor="dispatcher.online")
         return
 
     # FILE 기반

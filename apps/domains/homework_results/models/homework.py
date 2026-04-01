@@ -36,6 +36,13 @@ class Homework(TimestampModel):
         OPEN = "OPEN", "진행중"
         CLOSED = "CLOSED", "마감"
 
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="homeworks",
+        help_text="이 과제가 속한 학원.",
+    )
+
     homework_type = models.CharField(
         max_length=20,
         choices=HomeworkType.choices,

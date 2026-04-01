@@ -53,12 +53,13 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
             answers_map[qid] = ans
 
     questions = list(sheet.questions.all().order_by("number"))
+    _norm = lambda s: str(s).strip().upper() if s else ""
     items_payload = []
     for q in questions:
         qid = int(q.id)
         ans = answers_map.get(qid, "")
         correct_key = key_map.get(qid, "")
-        is_correct = bool(correct_key and ans == correct_key)
+        is_correct = bool(correct_key and _norm(ans) == _norm(correct_key))
         max_score = float(getattr(q, "score", 0) or 0)
         score = max_score if is_correct else 0.0
         items_payload.append({
@@ -96,7 +97,7 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
 
     result.total_score = total
     result.max_score = max_total
-    result.objective_score = 0.0  # 동기화 시에는 전부 문항합(주관식)으로 간주
+    result.objective_score = total  # 자동채점 문항 합산 = objective score
     result.submitted_at = timezone.now()
     result.save(update_fields=["total_score", "max_score", "objective_score", "submitted_at", "updated_at"])
 

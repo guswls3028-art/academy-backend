@@ -41,8 +41,6 @@ class Exam(BaseModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="exams",
-        null=True,
-        blank=True,
         help_text="이 시험이 속한 학원. template exam의 tenant isolation 보장.",
     )
 

@@ -68,9 +68,12 @@ def student_filter_tenant_ps_number(tenant, ps_number):
     return Student.objects.filter(tenant=tenant, ps_number=ps_number, deleted_at__isnull=True)
 
 
-def enrollment_filter_student_delete(student_id):
+def enrollment_filter_student_delete(student_id, tenant=None):
     from apps.domains.enrollment.models import Enrollment
-    return Enrollment.objects.filter(student_id=student_id).delete()
+    qs = Enrollment.objects.filter(student_id=student_id)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    return qs.delete()
 
 
 def student_filter_tenant_pk(tenant, pk):
@@ -83,9 +86,14 @@ def student_get(tenant, pk):
     return Student.objects.get(tenant=tenant, pk=pk)
 
 
-def enrollment_filter_student_delete_obj(student):
+def enrollment_filter_student_delete_obj(student, tenant=None, tenant_id=None):
     from apps.domains.enrollment.models import Enrollment
-    return Enrollment.objects.filter(student=student).delete()
+    qs = Enrollment.objects.filter(student=student)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    elif tenant_id is not None:
+        qs = qs.filter(tenant_id=tenant_id)
+    return qs.delete()
 
 
 def student_filter_tenant_deleted():
@@ -257,6 +265,9 @@ def student_filter_deleted_before_cutoff(cutoff):
     return Student.objects.filter(deleted_at__lt=cutoff).select_related("user")
 
 
-def enrollment_filter_student_ids_bulk(student_ids):
+def enrollment_filter_student_ids_bulk(student_ids, tenant=None):
     from apps.domains.enrollment.models import Enrollment
-    return Enrollment.objects.filter(student_id__in=student_ids).delete()
+    qs = Enrollment.objects.filter(student_id__in=student_ids)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    return qs.delete()

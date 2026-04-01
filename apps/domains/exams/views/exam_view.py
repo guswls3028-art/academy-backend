@@ -87,6 +87,10 @@ class ExamViewSet(ModelViewSet):
     # CREATE 로직
     # ================================
     def perform_create(self, serializer):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            raise PermissionDenied("Tenant is required.")
+
         exam_type = serializer.validated_data.get("exam_type")
 
         # =========================
@@ -102,7 +106,6 @@ class ExamViewSet(ModelViewSet):
                     {"template_exam_id": "template exam must not receive template_exam_id"}
                 )
 
-            tenant = getattr(self.request, "tenant", None)
             serializer.save(
                 exam_type=Exam.ExamType.TEMPLATE,
                 template_exam=None,
@@ -123,16 +126,8 @@ class ExamViewSet(ModelViewSet):
             except (TypeError, ValueError):
                 raise ValidationError({"template_exam_id": "must be integer"})
 
-            tenant = getattr(self.request, "tenant", None)
             try:
-                tenant_filter = Q(
-                    sessions__lecture__tenant=tenant
-                ) | Q(
-                    derived_exams__sessions__lecture__tenant=tenant
-                ) | Q(
-                    tenant=tenant
-                ) if tenant else Q()
-                template_exam = Exam.objects.filter(tenant_filter).distinct().get(id=template_exam_id)
+                template_exam = Exam.objects.filter(tenant=tenant).get(id=template_exam_id)
             except Exam.DoesNotExist:
                 raise ValidationError({"template_exam_id": "invalid"})
             if template_exam.exam_type != Exam.ExamType.TEMPLATE:
@@ -153,8 +148,7 @@ class ExamViewSet(ModelViewSet):
         except Session.DoesNotExist:
             raise ValidationError({"session_id": "invalid"})
 
-        tenant = getattr(self.request, "tenant", None)
-        if tenant and getattr(session, "lecture", None) and session.lecture.tenant_id != tenant.id:
+        if getattr(session, "lecture", None) and session.lecture.tenant_id != tenant.id:
             raise PermissionDenied("Session does not belong to your program.")
 
         # 템플릿 없이 생성 시 강의(Lecture) 과목을 시험 과목으로 자동 반영

@@ -23,7 +23,7 @@ class VideoPermissionViewSet(ModelViewSet):
         if not tenant:
             return video_repo.video_access_all().none()
         return video_repo.video_access_all().filter(
-            video__session__lecture__tenant=tenant,
+            video__tenant=tenant,
         )
 
     @transaction.atomic
@@ -35,7 +35,7 @@ class VideoPermissionViewSet(ModelViewSet):
         from apps.support.video.models import Video
         if not Video.objects.filter(
             id=video_id,
-            session__lecture__tenant=request.tenant,
+            tenant=request.tenant,
         ).exists():
             return Response({"error": "Video not found"}, status=404)
 

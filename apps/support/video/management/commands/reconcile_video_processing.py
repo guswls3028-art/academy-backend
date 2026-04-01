@@ -23,6 +23,10 @@ from apps.support.video.services.video_encoding import create_job_and_submit_bat
 
 
 def _tenant_id_from_video(video: Video) -> int | None:
+    # video.tenant_id 우선, fallback으로 session.lecture.tenant_id
+    tid = getattr(video, "tenant_id", None)
+    if tid is not None:
+        return int(tid)
     try:
         return int(video.session.lecture.tenant_id)
     except (AttributeError, TypeError):

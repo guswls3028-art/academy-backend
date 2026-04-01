@@ -693,7 +693,7 @@ class StudentViewSet(ModelViewSet):
                     created_students.append(student)
                 else:
                     with transaction.atomic():
-                        student_repo.enrollment_filter_student_delete(student.id)
+                        student_repo.enrollment_filter_student_delete(student.id, tenant=tenant)
                         if student.user_id:
                             student.user.delete()
                         else:
@@ -1186,7 +1186,7 @@ class StudentViewSet(ModelViewSet):
                     )
                 )
                 for s in to_remove:
-                    student_repo.enrollment_filter_student_delete_obj(s)
+                    student_repo.enrollment_filter_student_delete_obj(s, tenant=tenant)
                     user = s.user
                     s.delete()
                     if user:

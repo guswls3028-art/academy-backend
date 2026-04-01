@@ -116,6 +116,13 @@ class AttendanceViewSet(ModelViewSet):
             )
         )
 
+    def perform_create(self, serializer):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Tenant is required.")
+        serializer.save(tenant=tenant)
+
     # =========================================================
     # 0️⃣ 퇴원 처리 (SECESSION → 수강등록 비활성화 + 시험/과제 대상 제외)
     # =========================================================
