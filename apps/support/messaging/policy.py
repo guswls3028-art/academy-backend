@@ -78,7 +78,7 @@ def get_trigger_policy(trigger: str) -> str:
 # 이 트리거들은 send_alimtalk_via_owner / send_welcome_messages /
 # send_registration_approved_messages에서 OWNER_TENANT_ID로 발송되므로
 # enqueue_sms 단에서 tenant_id 기준 차단 시 자동 우회됨.
-RESTRICTED_MESSAGING_TENANTS: frozenset = frozenset([3])  # 림글리쉬
+RESTRICTED_MESSAGING_TENANTS: frozenset = frozenset()  # 림글리쉬 제한 해제 (뿌리오 자체 연동 완료)
 
 
 def is_messaging_restricted(tenant_id: int) -> bool:
