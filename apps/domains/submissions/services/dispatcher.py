@@ -153,12 +153,9 @@ def dispatch_submission(submission: Submission) -> None:
     dispatch_job(
         job_type=job_type,
         payload=payload,
+        tenant_id=str(submission.tenant_id),
         source_domain="submissions",
         source_id=source_id,
-        # Note: dispatch_job 내부에서 DB에 AIJob INSERT + SQS publish가 실행된다.
-        # SQS publish는 safe_dispatch 안에서 실행되므로 transaction.atomic 내부이다.
-        # on_commit은 gateway 레벨에서 처리해야 하지만, 현재 구조에서는 dispatch_job이
-        # 자체적으로 SQS publish를 한다. 아래 on_commit에서 워커 기동만 처리.
     )
 
     # 워커 기동은 반드시 DB commit 후에 (on_commit)

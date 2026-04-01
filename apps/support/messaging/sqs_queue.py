@@ -168,6 +168,7 @@ class MessagingSQSQueue:
                 logger.error("Invalid message format: %s", data)
                 return None
             return {
+                "tenant_id": data.get("tenant_id"),
                 "to": str(data.get("to", "")),
                 "text": str(data.get("text", "")),
                 "sender": (data.get("sender") or "").strip() or None,
