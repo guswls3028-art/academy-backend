@@ -213,7 +213,7 @@ def send_one_alimtalk(
     text: str = "",
 ) -> dict:
     """
-    Solapi 알림톡 1건 발송. 실패/수신거부 시 caller가 SMS로 fallback.
+    Solapi 알림톡 1건 발송.
     replacements: [{"key": "학생이름2", "value": "길동"}, ...] — 템플릿 #{학생이름2}, #{날짜}, #{클리닉명} 등 치환.
     text: SMS 대체 본문 (Solapi 필수 필드).
     """
@@ -464,9 +464,7 @@ def main() -> int:
                     text = str(data.get("text", ""))
                     sender = (data.get("sender") or "").strip()
                     message_mode = (data.get("message_mode") or "").strip().lower()
-                    if not message_mode:
-                        message_mode = "both" if data.get("use_alimtalk_first") else "sms"
-                    if message_mode not in ("sms", "alimtalk", "both"):
+                    if not message_mode or message_mode not in ("sms", "alimtalk"):
                         message_mode = "sms"
                     alimtalk_replacements = data.get("alimtalk_replacements") or []
                     template_id_msg = data.get("template_id") or ""
@@ -651,7 +649,7 @@ def main() -> int:
                         or bool(_own_ppurio_key and _own_ppurio_acct)
                     )
 
-                    # message_mode: sms | alimtalk | both
+                    # message_mode: sms | alimtalk
                     try:
                         _record_progress(job_id, "sending", 70, step_index=3, step_percent=0, tenant_id=tenant_id_str)
                         result = None
@@ -699,24 +697,10 @@ def main() -> int:
                                     alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
                                     text_=text,
                                 )
-                                # 알림톡만: 폴백 없음
                             else:
                                 result = {"status": "error", "reason": "alimtalk_requires_pf_id_and_template_id"}
-                        elif message_mode == "both" and pf_id and template_id:
-                            # both = 알림톡 발송 (SMS fallback 없음, disable_sms=True)
-                            result = _dispatch_alimtalk(
-                                to, sender, pf_id, template_id,
-                                alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
-                                text_=text,
-                            )
-                            if result.get("status") != "ok":
-                                logger.warning("alimtalk failed, NO SMS fallback (provider=%s)", tenant_provider)
                         else:
-                            # alimtalk/both인데 pf_id·template_id 없으면 실패 처리 (SMS 대체 없음)
-                            if message_mode in ("alimtalk", "both") and (not pf_id or not template_id):
-                                logger.warning("alimtalk requested but pf_id/template_id missing, NO SMS fallback")
-                                result = {"status": "error", "reason": "alimtalk_requires_pf_id_and_template_id"}
-                            elif not _sms_allowed:
+                            if not _sms_allowed:
                                 logger.warning(
                                     "SMS blocked by policy: tenant_id=%s (no own credentials, not owner)",
                                     tenant_id,

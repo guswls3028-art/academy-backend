@@ -44,8 +44,7 @@ class MessagingSQSQueue:
         "text": str,
         "sender": str | None,
         "reservation_id": int | None,
-        "message_mode": "sms" | "alimtalk" | "both",  # sms=SMS만, alimtalk=알림톡만, both=알림톡→SMS폴백
-        "use_alimtalk_first": bool,  # 하위호환: True면 both, False면 sms
+        "message_mode": "sms" | "alimtalk",  # sms=SMS만, alimtalk=알림톡만
         "alimtalk_replacements": list[{"key": str, "value": str}] | None,
     }
     """
@@ -69,7 +68,6 @@ class MessagingSQSQueue:
         sender: Optional[str] = None,
         reservation_id: Optional[int] = None,
         message_mode: Optional[str] = None,
-        use_alimtalk_first: bool = False,
         alimtalk_replacements: Optional[list[dict]] = None,
         template_id: Optional[str] = None,
         event_type: Optional[str] = None,
@@ -83,21 +81,17 @@ class MessagingSQSQueue:
         Args:
             tenant_id: 테넌트 ID (워커에서 잔액/PFID 조회용)
             to: 수신 번호
-            text: 본문 (SMS용 또는 알림톡 실패 시 폴백용)
+            text: 본문
             sender: 발신 번호
             reservation_id: 예약 ID (워커에서 취소 시 스킵)
-            message_mode: "sms" | "alimtalk" | "both"
+            message_mode: "sms" | "alimtalk"
                 - sms: SMS만 발송
-                - alimtalk: 알림톡만 발송 (실패 시 폴백 없음)
-                - both: 알림톡 우선, 실패 시 SMS 폴백
-            use_alimtalk_first: (하위호환) True면 both, False면 sms. message_mode가 있으면 무시
+                - alimtalk: 알림톡만 발송
             alimtalk_replacements: 알림톡 치환 [{"key": "학생이름2", "value": "길동"}, ...]
             template_id: 알림톡 템플릿 ID (미지정 시 워커 기본값 사용)
         """
-        mode = (message_mode or "").strip().lower() or None
-        if not mode:
-            mode = "both" if use_alimtalk_first else "sms"
-        if mode not in ("sms", "alimtalk", "both"):
+        mode = (message_mode or "").strip().lower() or "sms"
+        if mode not in ("sms", "alimtalk"):
             import logging
             logging.getLogger(__name__).warning(
                 "Invalid message_mode '%s' downgraded to 'sms' (tenant=%s, to=%s)",
@@ -115,8 +109,6 @@ class MessagingSQSQueue:
         }
         if reservation_id is not None:
             message["reservation_id"] = int(reservation_id)
-        if mode in ("alimtalk", "both") and not message_mode:
-            message["use_alimtalk_first"] = True
         if alimtalk_replacements:
             message["alimtalk_replacements"] = alimtalk_replacements
         if template_id:
@@ -183,7 +175,6 @@ class MessagingSQSQueue:
                 "message_id": raw.get("MessageId"),
                 "created_at": data.get("created_at"),
                 "reservation_id": data.get("reservation_id"),
-                "use_alimtalk_first": bool(data.get("use_alimtalk_first")),
                 "alimtalk_replacements": data.get("alimtalk_replacements") or [],
             }
         except Exception as e:

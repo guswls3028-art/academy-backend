@@ -385,13 +385,13 @@ class SendMessageView(APIView):
         tenant = request.tenant
         send_to = data["send_to"]
         message_mode = (data.get("message_mode") or "sms").strip().lower()
-        if message_mode not in ("sms", "alimtalk", "both"):
+        if message_mode not in ("sms", "alimtalk"):
             message_mode = "sms"
         template_id = data.get("template_id")
         raw_body = (data.get("raw_body") or "").strip()
         raw_subject = (data.get("raw_subject") or "").strip()
 
-        # 발신번호: 알림톡 전용이면 선택, SMS/both면 필수
+        # 발신번호: 알림톡 전용이면 선택, SMS면 필수
         sender = (tenant.messaging_sender or "").strip()
         if not sender and message_mode != "alimtalk":
             return Response(
@@ -465,7 +465,7 @@ class SendMessageView(APIView):
             solapi_template_id = (t.solapi_template_id or "").strip()
 
         # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택 (테넌트 → 오너 fallback)
-        if message_mode in ("alimtalk", "both") and not solapi_template_id:
+        if message_mode == "alimtalk" and not solapi_template_id:
             freeform = resolve_freeform_template(tenant.id)
             if freeform:
                 t = freeform
@@ -476,16 +476,16 @@ class SendMessageView(APIView):
 
         # 자유양식 없으면 카테고리별 승인 템플릿 fallback (성적 공개 등)
         alimtalk_extra_vars = data.get("alimtalk_extra_vars") or {}
-        if message_mode in ("alimtalk", "both") and not solapi_template_id:
+        if message_mode == "alimtalk" and not solapi_template_id:
             from apps.support.messaging.selectors import resolve_category_template
             category_tpl = resolve_category_template(tenant.id, alimtalk_extra_vars)
             if category_tpl:
                 t = category_tpl
                 solapi_template_id = (category_tpl.solapi_template_id or "").strip()
 
-        if message_mode in ("alimtalk", "both") and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
+        if message_mode == "alimtalk" and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
             return Response(
-                {"detail": "알림톡/폴백 모드는 검수 승인된 템플릿이 필요합니다. 템플릿을 선택하거나 SMS만 모드로 발송하세요."},
+                {"detail": "알림톡 모드는 검수 승인된 템플릿이 필요합니다. 템플릿을 선택하거나 SMS 모드로 발송하세요."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -529,7 +529,7 @@ class SendMessageView(APIView):
 
             alimtalk_replacements = None
             template_id_solapi = None
-            if message_mode in ("alimtalk", "both") and solapi_template_id:
+            if message_mode == "alimtalk" and solapi_template_id:
                 template_id_solapi = solapi_template_id
                 alimtalk_replacements = [
                     {"key": "학생이름", "value": name},
@@ -609,7 +609,7 @@ class SendMessageView(APIView):
                 solapi_template_id = (t.solapi_template_id or "").strip()
 
         # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택 (테넌트 → 오너 fallback)
-        if message_mode in ("alimtalk", "both") and not solapi_template_id:
+        if message_mode == "alimtalk" and not solapi_template_id:
             freeform = resolve_freeform_template(tenant.id)
             if freeform:
                 t = freeform
@@ -618,9 +618,9 @@ class SendMessageView(APIView):
                 if not subject_base:
                     subject_base = (freeform.subject or "").strip()
 
-        if message_mode in ("alimtalk", "both") and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
+        if message_mode == "alimtalk" and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
             return Response(
-                {"detail": "알림톡/폴백 모드는 검수 승인된 템플릿이 필요합니다. 템플릿을 선택하거나 SMS만 모드로 발송하세요."},
+                {"detail": "알림톡 모드는 검수 승인된 템플릿이 필요합니다. 템플릿을 선택하거나 SMS 모드로 발송하세요."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -662,7 +662,7 @@ class SendMessageView(APIView):
 
             alimtalk_replacements = None
             template_id_solapi = None
-            if message_mode in ("alimtalk", "both") and solapi_template_id:
+            if message_mode == "alimtalk" and solapi_template_id:
                 template_id_solapi = solapi_template_id
                 alimtalk_replacements = [
                     {"key": "학생이름", "value": name},
@@ -704,7 +704,7 @@ class SendMessageView(APIView):
 class AutoSendConfigView(APIView):
     """
     GET: 테넌트의 모든 자동발송 설정 목록 (트리거별)
-    PATCH: 트리거별 설정 수정. Body: { "configs": [ { "trigger": "...", "template_id": null|int, "enabled": bool, "message_mode": "sms"|"alimtalk"|"both" }, ... ] }
+    PATCH: 트리거별 설정 수정. Body: { "configs": [ { "trigger": "...", "template_id": null|int, "enabled": bool, "message_mode": "sms"|"alimtalk" }, ... ] }
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
@@ -798,7 +798,7 @@ class AutoSendConfigView(APIView):
             template_id = item.get("template_id")
             enabled = item.get("enabled", False)
             message_mode = (item.get("message_mode") or "sms").strip().lower()
-            if message_mode not in ("sms", "alimtalk", "both"):
+            if message_mode not in ("sms", "alimtalk"):
                 message_mode = "sms"
             minutes_before = item.get("minutes_before")
             if minutes_before is not None:
@@ -929,7 +929,7 @@ class ProvisionDefaultTemplatesView(APIView):
                     trigger=trigger,
                     template=tpl,
                     enabled=True,
-                    message_mode="both",
+                    message_mode="alimtalk",
                     minutes_before=defaults.get("minutes_before"),
                 )
                 created_configs += 1

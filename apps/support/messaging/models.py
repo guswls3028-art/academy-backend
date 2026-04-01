@@ -30,7 +30,7 @@ class NotificationLog(models.Model):
     message_body = models.TextField(blank=True, default="", help_text="실제 발송된 메시지 본문")
     message_mode = models.CharField(
         max_length=20, blank=True, default="",
-        choices=[("sms", "SMS"), ("alimtalk", "알림톡"), ("both", "알림톡→SMS")],
+        choices=[("sms", "SMS"), ("alimtalk", "알림톡")],
         help_text="발송 방식",
     )
     sqs_message_id = models.CharField(
@@ -231,7 +231,7 @@ class AutoSendConfig(models.Model):
     enabled = models.BooleanField(default=False)
     message_mode = models.CharField(
         max_length=20,
-        choices=[("sms", "SMS만"), ("alimtalk", "알림톡만"), ("both", "알림톡→SMS폴백")],
+        choices=[("sms", "SMS만"), ("alimtalk", "알림톡만")],
         default="sms",
     )
     # N분 전 발송 (예: 강의 30분 전, 클리닉 60분 전). null=이벤트 시점 발송. 스케줄러에서 사용.
