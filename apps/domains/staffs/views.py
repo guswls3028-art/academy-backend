@@ -519,6 +519,13 @@ class ExpenseRecordViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return staff_repo.expense_record_queryset_tenant(self.request.tenant)
 
+    def perform_create(self, serializer):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Tenant is required.")
+        serializer.save(tenant_id=tenant.id)
+
     def perform_update(self, serializer):
         instance = self.get_object()
 
@@ -724,6 +731,13 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
             .select_related("staff", "work_type")
             .order_by("-date", "-start_time")
         )
+
+    def perform_create(self, serializer):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Tenant is required.")
+        serializer.save(tenant_id=tenant.id)
 
     def perform_update(self, serializer):
         instance = serializer.instance
