@@ -47,8 +47,6 @@ class MessagingInfoView(APIView):
         tenant = request.tenant
         serializer = MessagingInfoSerializer(tenant)
         data = serializer.data
-        data["credit_balance"] = str(data["credit_balance"])
-        data["base_price"] = str(data["base_price"])
         # 정책 SSOT 기반: 발송 허용·채널 출처 (API 응답만 사용, 프론트에서 재계산 금지)
         data["sms_allowed"] = can_send_sms(tenant.id)
         channel = resolve_kakao_channel(tenant.id)
@@ -84,8 +82,6 @@ class MessagingInfoView(APIView):
             tenant.save(update_fields=update_fields)
         serializer = MessagingInfoSerializer(tenant)
         data = serializer.data
-        data["credit_balance"] = str(data["credit_balance"])
-        data["base_price"] = str(data["base_price"])
         data["sms_allowed"] = can_send_sms(tenant.id)
         channel = resolve_kakao_channel(tenant.id)
         data["channel_source"] = "system_default" if channel.get("use_default", True) else "tenant_override"

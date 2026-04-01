@@ -71,11 +71,11 @@ class Tenant(models.Model):
     )
     own_ppurio_account = models.CharField(
         max_length=100, blank=True, default="",
-        help_text="뿌리오 계정 ID (로그인 아이디, 참고용)",
+        help_text="뿌리오 계정 ID (로그인 아이디 — 토큰 발급 인증에 사용)",
     )
     own_ppurio_password = models.CharField(
         max_length=200, blank=True, default="",
-        help_text="뿌리오 로그인 비밀번호 (토큰 발급용: Base64(API_KEY:비밀번호))",
+        help_text="(미사용) 향후 확장용 예비 필드",
     )
     # 알림톡 기능 활성화 여부
     messaging_is_active = models.BooleanField(default=False)
@@ -126,6 +126,12 @@ class Tenant(models.Model):
         app_label = "core"
         verbose_name = "Tenant"
         verbose_name_plural = "Tenants"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(credit_balance__gte=0),
+                name="credit_balance_non_negative",
+            ),
+        ]
 
     def __str__(self):
         return self.name

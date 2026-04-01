@@ -8,14 +8,6 @@ from apps.support.messaging.models import MessageTemplate, AutoSendConfig
 
 class MessagingInfoSerializer(serializers.ModelSerializer):
     """GET/PATCH 응답: 테넌트 메시징 정보"""
-    credit_balance = serializers.DecimalField(
-        max_digits=12, decimal_places=0, read_only=True
-    )
-    # 표시용. 현재 발송 차단 정책에는 미사용(정책은 policy.can_send_sms / resolve_kakao_channel 기준).
-    is_active = serializers.BooleanField(source="messaging_is_active", read_only=True)
-    base_price = serializers.DecimalField(
-        source="messaging_base_price", max_digits=10, decimal_places=2, read_only=True
-    )
 
     # 자체 연동 키 — GET 시 마스킹 처리
     own_solapi_api_key = serializers.SerializerMethodField()
@@ -27,13 +19,11 @@ class MessagingInfoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
         fields = [
-            "kakao_pfid", "messaging_sender", "credit_balance",
-            "is_active", "base_price", "messaging_provider",
+            "kakao_pfid", "messaging_sender", "messaging_provider",
             "own_solapi_api_key", "own_solapi_api_secret",
             "own_ppurio_api_key", "own_ppurio_account",
             "has_own_credentials",
         ]
-        read_only_fields = ["credit_balance", "is_active", "base_price"]
 
     @staticmethod
     def _mask(value: str) -> str:
