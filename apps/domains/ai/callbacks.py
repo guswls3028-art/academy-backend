@@ -108,11 +108,38 @@ def _handle_submission_ai_result(
     from apps.domains.submissions.services.ai_omr_result_mapper import apply_ai_result
     from apps.domains.results.tasks.grading_tasks import grade_submission_task
 
+    # 🔐 tenant 교차검증: AI job의 tenant_id와 submission의 tenant_id 일치 확인
+    ai_job = None
+    if job_id:
+        from apps.domains.ai.models import AIJobModel
+        from apps.domains.submissions.models import Submission as SubModel
+        ai_job = AIJobModel.objects.filter(job_id=job_id).first()
+        if ai_job and ai_job.tenant_id:
+            try:
+                sub_tenant_id = SubModel.objects.filter(pk=submission_id).values_list("tenant_id", flat=True).first()
+                if sub_tenant_id and str(ai_job.tenant_id) != str(sub_tenant_id):
+                    logger.error(
+                        "TENANT_ISOLATION_VIOLATION | _handle_submission_ai_result | "
+                        "job_id=%s | job_tenant=%s | submission_tenant=%s | submission_id=%s",
+                        job_id, ai_job.tenant_id, sub_tenant_id, submission_id,
+                    )
+                    return
+            except Exception:
+                logger.exception(
+                    "TENANT_CHECK_ERROR | job_id=%s | submission_id=%s",
+                    job_id, submission_id,
+                )
+
     # apply_ai_result는 payload에서 submission_id를 꺼냄
     payload = dict(result_payload)
     payload["submission_id"] = submission_id
+    payload["job_id"] = job_id
     payload["status"] = status
     payload["error"] = error
+
+    # tenant_id를 payload에 전달하여 apply_omr_ai_result에서도 교차검증 가능
+    if ai_job and ai_job.tenant_id:
+        payload["tenant_id"] = str(ai_job.tenant_id)
 
     returned_id = apply_ai_result(payload)
 
@@ -189,6 +216,18 @@ def _handle_exam_ai_result(
 
         with transaction.atomic():
             exam = Exam.objects.select_for_update().get(id=int(exam_id))
+
+            # 🔐 tenant 교차검증: AI job의 tenant_id와 exam의 tenant_id 일치 확인
+            if job_id:
+                from apps.domains.ai.models import AIJobModel
+                ai_job = AIJobModel.objects.filter(job_id=job_id).first()
+                if ai_job and ai_job.tenant_id and hasattr(exam, "tenant_id"):
+                    if str(ai_job.tenant_id) != str(exam.tenant_id):
+                        logger.error(
+                            "AI_CALLBACK_TENANT_MISMATCH | job_id=%s | job_tenant=%s | exam_tenant=%s | exam_id=%s",
+                            job_id, ai_job.tenant_id, exam.tenant_id, exam_id,
+                        )
+                        return
 
             # Template exam만 구조 변경 가능
             if exam.exam_type != Exam.ExamType.TEMPLATE:

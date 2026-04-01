@@ -79,6 +79,18 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         logger.warning("apply_omr_ai_result: submission %s not found", submission_id)
         return None
 
+    # 🔐 tenant 교차검증: AI job의 tenant_id와 submission의 tenant_id 일치 확인
+    job_id = payload.get("job_id")
+    payload_tenant_id = payload.get("tenant_id")
+    if payload_tenant_id and hasattr(submission, "tenant_id") and submission.tenant_id:
+        if str(payload_tenant_id) != str(submission.tenant_id):
+            logger.error(
+                "TENANT_ISOLATION_VIOLATION | apply_omr_ai_result | "
+                "job_id=%s | payload_tenant=%s | submission_tenant=%s | submission_id=%s",
+                job_id, payload_tenant_id, submission.tenant_id, submission_id,
+            )
+            return None
+
     # 멱등성 가드: 이미 DISPATCHED 이후 단계로 진행된 submission은 건너뛴다
     if submission.status in _ALREADY_PROCESSED_STATUSES:
         logger.info(

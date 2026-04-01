@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
 from apps.core.permissions import IsLambdaInternal
 from apps.support.video.models import Video
+
+logger = logging.getLogger(__name__)
 
 
 class VideoProcessingCompleteView(APIView):
@@ -47,6 +51,18 @@ class VideoProcessingCompleteView(APIView):
         video = video_repo.video_get_by_id(int(video_id))
         if not video:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 🔐 tenant 교차검증: request body에 job_id가 있으면 VideoTranscodeJob.tenant_id와 video.tenant_id 비교
+        req_job_id = data.get("job_id")
+        if req_job_id and hasattr(video, "tenant_id") and video.tenant_id:
+            from apps.support.video.models import VideoTranscodeJob
+            job = VideoTranscodeJob.objects.filter(id=req_job_id).first()
+            if job and job.tenant_id and int(job.tenant_id) != int(video.tenant_id):
+                logger.error(
+                    "VideoProcessingComplete TENANT_MISMATCH: job.tenant=%s video.tenant=%s video_id=%s job_id=%s",
+                    job.tenant_id, video.tenant_id, video_id, req_job_id,
+                )
+                return Response({"detail": "tenant_mismatch"}, status=status.HTTP_403_FORBIDDEN)
 
         # 멱등
         if video.status == Video.Status.READY and bool(video.hls_path):
