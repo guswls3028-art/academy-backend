@@ -716,23 +716,46 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             )
 
         # 상태 전이 검증 (유효한 전이만 허용)
-        VALID_TRANSITIONS = {
-            SessionParticipant.Status.PENDING: {
-                SessionParticipant.Status.BOOKED,
-                SessionParticipant.Status.REJECTED,
-                SessionParticipant.Status.CANCELLED,
-            },
-            SessionParticipant.Status.BOOKED: {
-                SessionParticipant.Status.ATTENDED,
-                SessionParticipant.Status.NO_SHOW,
-                SessionParticipant.Status.CANCELLED,
-            },
-            # Terminal states — no further transitions allowed
-            SessionParticipant.Status.ATTENDED: set(),
-            SessionParticipant.Status.NO_SHOW: set(),
-            SessionParticipant.Status.REJECTED: set(),
-            SessionParticipant.Status.CANCELLED: set(),
-        }
+        # 학생: terminal state 변경 불가
+        # 관리자: attended/no_show → booked 되돌리기 허용 (오입력 수정용)
+        from apps.domains.student_app.permissions import get_request_student
+        _is_student = get_request_student(request) is not None
+
+        if _is_student:
+            VALID_TRANSITIONS = {
+                SessionParticipant.Status.PENDING: {
+                    SessionParticipant.Status.CANCELLED,
+                },
+                SessionParticipant.Status.BOOKED: set(),
+                SessionParticipant.Status.ATTENDED: set(),
+                SessionParticipant.Status.NO_SHOW: set(),
+                SessionParticipant.Status.REJECTED: set(),
+                SessionParticipant.Status.CANCELLED: set(),
+            }
+        else:
+            VALID_TRANSITIONS = {
+                SessionParticipant.Status.PENDING: {
+                    SessionParticipant.Status.BOOKED,
+                    SessionParticipant.Status.REJECTED,
+                    SessionParticipant.Status.CANCELLED,
+                },
+                SessionParticipant.Status.BOOKED: {
+                    SessionParticipant.Status.ATTENDED,
+                    SessionParticipant.Status.NO_SHOW,
+                    SessionParticipant.Status.CANCELLED,
+                },
+                # 관리자: attended/no_show 간 전환 및 booked 되돌리기 허용 (오입력 수정용)
+                SessionParticipant.Status.ATTENDED: {
+                    SessionParticipant.Status.BOOKED,
+                    SessionParticipant.Status.NO_SHOW,
+                },
+                SessionParticipant.Status.NO_SHOW: {
+                    SessionParticipant.Status.BOOKED,
+                    SessionParticipant.Status.ATTENDED,
+                },
+                SessionParticipant.Status.REJECTED: set(),
+                SessionParticipant.Status.CANCELLED: set(),
+            }
 
         with transaction.atomic():
             # Re-fetch with row lock to prevent concurrent status transitions
@@ -748,7 +771,6 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 )
 
             # 학생 권한 체크: 자신의 예약 신청만 취소 가능
-            from apps.domains.student_app.permissions import get_request_student
             request_student = get_request_student(request)
             if request_student:
                 if obj.student != request_student:
@@ -800,9 +822,10 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             _t = getattr(request, "tenant", None)
             _s = obj.student
             _tr = _trigger
+            _session = obj.session
             _ctx = {
-                "클리닉명": getattr(session, "title", "") if session else "",
-                "장소": getattr(session, "location", "") if session else "",
+                "클리닉명": getattr(_session, "title", "") if _session else "",
+                "장소": getattr(_session, "location", "") if _session else "",
             }
             transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
 
@@ -845,7 +868,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         # ── 클리닉 퇴실(완료) 알림 (AUTO_DEFAULT, 학생+학부모) ──
         _t = getattr(request, "tenant", None)
         _s = obj.student
-        _ctx = {"클리닉명": getattr(session, "title", "") if session else "", "장소": getattr(session, "location", "") if session else ""}
+        _session = obj.session
+        _ctx = {"클리닉명": getattr(_session, "title", "") if _session else "", "장소": getattr(_session, "location", "") if _session else ""}
         transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_check_out", _ctx))
 
         out = ClinicSessionParticipantSerializer(
