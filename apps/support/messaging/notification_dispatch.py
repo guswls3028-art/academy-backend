@@ -348,8 +348,11 @@ def execute_notification_batch(
 
     recipients = payload.get("recipients", [])
     solapi_template_id = payload.get("solapi_template_id", "")
-    message_mode = payload.get("message_mode", "alimtalk")
+    raw_message_mode = payload.get("message_mode", "alimtalk")
     notification_type = payload.get("notification_type", "")
+
+    # "both" 모드: 알림톡 + SMS 각각 발송
+    modes_to_send = ["alimtalk", "sms"] if raw_message_mode == "both" else [raw_message_mode]
 
     sent = 0
     failed = 0
@@ -365,28 +368,29 @@ def execute_notification_batch(
             logger.info("batch %s: blocked recipient %s (whitelist)", batch_id, phone[:4] + "****")
             continue
 
-        try:
-            ok = enqueue_sms(
-                tenant_id=tenant.id,
-                to=phone,
-                text=r.get("message_body", ""),
-                message_mode=message_mode,
-                template_id=solapi_template_id,
-                alimtalk_replacements=r.get("alimtalk_replacements", []),
-                event_type=f"manual_{notification_type}",
-                target_type="student",
-                target_id=r.get("student_id"),
-                occurrence_key=f"batch_{batch_id}",
-            )
-            if ok:
-                sent += 1
-            else:
+        for mode in modes_to_send:
+            try:
+                ok = enqueue_sms(
+                    tenant_id=tenant.id,
+                    to=phone,
+                    text=r.get("message_body", ""),
+                    message_mode=mode,
+                    template_id=solapi_template_id if mode == "alimtalk" else None,
+                    alimtalk_replacements=r.get("alimtalk_replacements", []) if mode == "alimtalk" else None,
+                    event_type=f"manual_{notification_type}",
+                    target_type="student",
+                    target_id=r.get("student_id"),
+                    occurrence_key=f"batch_{batch_id}",
+                )
+                if ok:
+                    sent += 1
+                else:
+                    failed += 1
+            except MessagingPolicyError:
                 failed += 1
-        except MessagingPolicyError:
-            failed += 1
-        except Exception:
-            logger.exception("batch %s: enqueue failed for %s", batch_id, phone[:4] + "****")
-            failed += 1
+            except Exception:
+                logger.exception("batch %s: enqueue failed for %s mode=%s", batch_id, phone[:4] + "****", mode)
+                failed += 1
 
     logger.info(
         "notification batch completed: batch_id=%s type=%s sent=%d failed=%d blocked=%d staff=%s",

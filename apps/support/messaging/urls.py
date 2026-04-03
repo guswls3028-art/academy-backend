@@ -18,6 +18,16 @@ urlpatterns = [
         views.MessageTemplateSubmitReviewView.as_view(),
         name="messaging-template-submit-review",
     ),
+    path(
+        "templates/<int:pk>/set-default/",
+        views.MessageTemplateSetDefaultView.as_view(),
+        name="messaging-template-set-default",
+    ),
+    path(
+        "templates/<int:pk>/duplicate/",
+        views.MessageTemplateDuplicateView.as_view(),
+        name="messaging-template-duplicate",
+    ),
     path("auto-send/", views.AutoSendConfigView.as_view(), name="messaging-auto-send"),
     path("provision-defaults/", views.ProvisionDefaultTemplatesView.as_view(), name="messaging-provision-defaults"),
     path("test-credentials/", views.TestCredentialsView.as_view(), name="messaging-test-credentials"),

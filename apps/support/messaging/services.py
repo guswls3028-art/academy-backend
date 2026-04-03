@@ -399,32 +399,39 @@ def send_event_notification(
         domain_object_id = _tz.localtime().strftime("%Y%m%d")
     stable_occurrence = f"{trigger}:{domain_object_id}"
 
-    try:
-        return enqueue_sms(
-            tenant_id=tenant.id,
-            to=phone,
-            text=text,
-            sender=sender,
-            message_mode=config.message_mode or "alimtalk",
-            template_id=solapi_template_id,
-            alimtalk_replacements=replacements,
-            event_type=trigger,
-            target_type="student",
-            target_id=student_id,
-            occurrence_key=stable_occurrence,
-        )
-    except MessagingPolicyError as exc:
-        logger.info(
-            "send_event_notification policy error: trigger=%s tenant=%s reason=%s",
-            trigger, tenant.id, exc.reason,
-        )
-        return False
-    except Exception as exc:
-        logger.exception(
-            "send_event_notification failed: trigger=%s tenant=%s error=%s",
-            trigger, tenant.id, exc,
-        )
-        return False
+    effective_mode = config.message_mode or "alimtalk"
+    # "both" 모드: 알림톡 + SMS 각각 enqueue (멱등성 키에 채널 포함 → 중복 없음)
+    modes_to_send = ["alimtalk", "sms"] if effective_mode == "both" else [effective_mode]
+
+    any_success = False
+    for mode in modes_to_send:
+        try:
+            ok = enqueue_sms(
+                tenant_id=tenant.id,
+                to=phone,
+                text=text,
+                sender=sender,
+                message_mode=mode,
+                template_id=solapi_template_id if mode == "alimtalk" else None,
+                alimtalk_replacements=replacements if mode == "alimtalk" else None,
+                event_type=trigger,
+                target_type="student",
+                target_id=student_id,
+                occurrence_key=stable_occurrence,
+            )
+            if ok:
+                any_success = True
+        except MessagingPolicyError as exc:
+            logger.info(
+                "send_event_notification policy error: trigger=%s tenant=%s mode=%s reason=%s",
+                trigger, tenant.id, mode, exc.reason,
+            )
+        except Exception as exc:
+            logger.exception(
+                "send_event_notification failed: trigger=%s tenant=%s mode=%s error=%s",
+                trigger, tenant.id, mode, exc,
+            )
+    return any_success
 
 
 def send_welcome_messages(

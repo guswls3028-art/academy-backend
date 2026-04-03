@@ -100,6 +100,8 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
             "name",
             "subject",
             "body",
+            "is_system",
+            "is_user_default",
             "solapi_template_id",
             "solapi_status",
             "has_content_var",
@@ -108,6 +110,7 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "is_system",
             "solapi_template_id",
             "solapi_status",
             "has_content_var",
@@ -212,7 +215,7 @@ class AutoSendConfigUpdateSerializer(serializers.Serializer):
     template_id = serializers.IntegerField(required=False, allow_null=True)
     enabled = serializers.BooleanField(required=False)
     message_mode = serializers.ChoiceField(
-        choices=[("sms", "SMS만"), ("alimtalk", "알림톡만")],
+        choices=[("sms", "SMS만"), ("alimtalk", "알림톡만"), ("both", "둘 다")],
         required=False,
     )
     minutes_before = serializers.IntegerField(required=False, allow_null=True, min_value=0)

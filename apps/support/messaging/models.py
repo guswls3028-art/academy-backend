@@ -151,6 +151,15 @@ class MessageTemplate(models.Model):
         ],
     )
 
+    is_system = models.BooleanField(
+        default=False,
+        help_text="시스템 기본 양식 여부. True이면 사용자 수정/삭제 불가.",
+    )
+    is_user_default = models.BooleanField(
+        default=False,
+        help_text="사용자가 해당 카테고리에서 기본 양식으로 지정한 템플릿. tenant+category당 1개만.",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -159,6 +168,13 @@ class MessageTemplate(models.Model):
         ordering = ["-updated_at"]
         verbose_name = "Message template"
         verbose_name_plural = "Message templates"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "category"],
+                condition=models.Q(is_user_default=True),
+                name="uniq_user_default_per_tenant_category",
+            ),
+        ]
 
 
 class AutoSendConfig(models.Model):
@@ -231,7 +247,7 @@ class AutoSendConfig(models.Model):
     enabled = models.BooleanField(default=False)
     message_mode = models.CharField(
         max_length=20,
-        choices=[("sms", "SMS만"), ("alimtalk", "알림톡만")],
+        choices=[("sms", "SMS만"), ("alimtalk", "알림톡만"), ("both", "둘 다")],
         default="sms",
     )
     # N분 전 발송 (예: 강의 30분 전, 클리닉 60분 전). null=이벤트 시점 발송. 스케줄러에서 사용.

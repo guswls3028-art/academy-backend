@@ -244,12 +244,13 @@ class MessageTemplateListCreateView(APIView):
     def post(self, request):
         serializer = MessageTemplateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(tenant=request.tenant)
+        # 사용자가 생성하는 템플릿은 항상 is_system=False
+        serializer.save(tenant=request.tenant, is_system=False)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class MessageTemplateDetailView(APIView):
-    """GET/PATCH/DELETE: 단일 템플릿"""
+    """GET/PATCH/DELETE: 단일 템플릿. 시스템 양식은 수정/삭제 차단."""
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def _get_template(self, request, pk):
@@ -265,6 +266,11 @@ class MessageTemplateDetailView(APIView):
         t = self._get_template(request, pk)
         if not t:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if t.is_system:
+            return Response(
+                {"detail": "시스템 기본 양식은 수정할 수 없습니다. '복제' 후 수정해 주세요."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = MessageTemplateSerializer(t, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -274,8 +280,55 @@ class MessageTemplateDetailView(APIView):
         t = self._get_template(request, pk)
         if not t:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if t.is_system:
+            return Response(
+                {"detail": "시스템 기본 양식은 삭제할 수 없습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         t.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MessageTemplateSetDefaultView(APIView):
+    """POST: 해당 템플릿을 해당 카테고리의 기본 양식으로 지정 (tenant+category당 1개)."""
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def post(self, request, pk):
+        t = MessageTemplate.objects.filter(tenant=request.tenant, pk=pk).first()
+        if not t:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        # 같은 tenant+category의 기존 기본 해제
+        MessageTemplate.objects.filter(
+            tenant=request.tenant, category=t.category, is_user_default=True,
+        ).exclude(pk=pk).update(is_user_default=False)
+        # 토글: 이미 기본이면 해제, 아니면 설정
+        t.is_user_default = not t.is_user_default
+        t.save(update_fields=["is_user_default"])
+        return Response(MessageTemplateSerializer(t).data)
+
+
+class MessageTemplateDuplicateView(APIView):
+    """POST: 시스템/기존 양식을 복제하여 내 양식으로 저장."""
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def post(self, request, pk):
+        src = MessageTemplate.objects.filter(tenant=request.tenant, pk=pk).first()
+        if not src:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        # 요청에 name이 있으면 사용, 없으면 원본 이름 + " (복사본)"
+        new_name = (request.data.get("name") or "").strip()
+        if not new_name:
+            new_name = f"{src.name} (복사본)"
+        dup = MessageTemplate.objects.create(
+            tenant=request.tenant,
+            category=src.category,
+            name=new_name,
+            subject=src.subject,
+            body=src.body,
+            is_system=False,
+            is_user_default=False,
+        )
+        return Response(MessageTemplateSerializer(dup).data, status=status.HTTP_201_CREATED)
 
 
 class MessageTemplateSubmitReviewView(APIView):
@@ -766,8 +819,13 @@ class AutoSendConfigView(APIView):
                     "category": defaults["category"],
                     "subject": defaults.get("subject", ""),
                     "body": defaults["body"],
+                    "is_system": True,
                 },
             )
+            # 기존 시스템 템플릿이 is_system=False이면 교정
+            if not created and not tpl.is_system:
+                tpl.is_system = True
+                tpl.save(update_fields=["is_system"])
             # 자유양식 템플릿 등 유효한 트리거가 아니면 AutoSendConfig 생성 스킵
             if trigger not in valid_triggers:
                 continue
@@ -798,7 +856,7 @@ class AutoSendConfigView(APIView):
             template_id = item.get("template_id")
             enabled = item.get("enabled", False)
             message_mode = (item.get("message_mode") or "sms").strip().lower()
-            if message_mode not in ("sms", "alimtalk"):
+            if message_mode not in ("sms", "alimtalk", "both"):
                 message_mode = "sms"
             minutes_before = item.get("minutes_before")
             if minutes_before is not None:
@@ -909,6 +967,7 @@ class ProvisionDefaultTemplatesView(APIView):
                     category=tpl_category,
                     subject=tpl_subject,
                     body=tpl_body,
+                    is_system=True,
                 )
                 created_templates += 1
 
