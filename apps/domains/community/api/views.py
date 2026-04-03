@@ -51,7 +51,13 @@ class PostViewSet(viewsets.ModelViewSet):
     permission_classes = [TenantResolvedAndMember]
 
     def update(self, request, *args, **kwargs):
-        """학생은 본인 글만 수정 가능."""
+        """학생은 본인 글만 수정 가능. 학부모는 수정 불가."""
+        # 학부모 write 차단
+        if getattr(request.user, "parent_profile", None) is not None:
+            return Response(
+                {"detail": "학부모 계정은 글 수정이 제한됩니다.", "code": "parent_read_only"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         instance = self.get_object()
         request_student = get_request_student(request)
         if request_student is not None and getattr(instance, "created_by_id", None) != request_student.id:
@@ -59,7 +65,13 @@ class PostViewSet(viewsets.ModelViewSet):
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
-        """학생은 본인 글만 삭제 가능."""
+        """학생은 본인 글만 삭제 가능. 학부모는 삭제 불가."""
+        # 학부모 write 차단
+        if getattr(request.user, "parent_profile", None) is not None:
+            return Response(
+                {"detail": "학부모 계정은 글 삭제가 제한됩니다.", "code": "parent_read_only"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         instance = self.get_object()
         request_student = get_request_student(request)
         if request_student is not None and getattr(instance, "created_by_id", None) != request_student.id:

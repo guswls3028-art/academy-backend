@@ -18,7 +18,7 @@ def get_post_by_id(tenant, post_id: int):
     """단건 조회. mappings prefetch, replies_count 포함. 없으면 None."""
     return (
         PostEntity.objects.filter(tenant=tenant, id=post_id)
-        .annotate(replies_count=Count("replies"))
+        .annotate(replies_count=Count("replies", distinct=True))
         .select_related("created_by", "block_type")
         .prefetch_related(
             Prefetch(
@@ -39,7 +39,7 @@ def get_all_posts_for_tenant(tenant, *, include_unpublished: bool = False) -> Qu
     return (
         qs
         .filter(_EXCLUDE_DELETED_AUTHOR)
-        .annotate(replies_count=Count("replies"))
+        .annotate(replies_count=Count("replies", distinct=True))
         .select_related("created_by", "block_type")
         .prefetch_related(
             Prefetch(
@@ -97,7 +97,7 @@ def get_posts_for_node(
     return (
         qs
         .filter(_EXCLUDE_DELETED_AUTHOR)
-        .annotate(replies_count=Count("replies"))
+        .annotate(replies_count=Count("replies", distinct=True))
         .select_related("created_by", "block_type")
         .prefetch_related(
             Prefetch(
@@ -123,7 +123,7 @@ def get_admin_post_list(
     qs = (
         PostEntity.objects.filter(tenant=tenant)
         .filter(_EXCLUDE_DELETED_AUTHOR)
-        .annotate(replies_count=Count("replies"))
+        .annotate(replies_count=Count("replies", distinct=True))
         .select_related("created_by", "block_type")
         .prefetch_related(
             Prefetch(
@@ -156,7 +156,7 @@ def get_posts_by_type_for_tenant(tenant, post_type: str, *, include_unpublished:
     return (
         qs
         .filter(_EXCLUDE_DELETED_AUTHOR)
-        .annotate(replies_count=Count("replies"))
+        .annotate(replies_count=Count("replies", distinct=True))
         .select_related("created_by", "block_type")
         .prefetch_related(
             Prefetch(
@@ -177,7 +177,7 @@ def get_notice_posts_for_tenant(tenant, *, include_unpublished: bool = False) ->
     return (
         qs
         .filter(_EXCLUDE_DELETED_AUTHOR)
-        .annotate(replies_count=Count("replies"))
+        .annotate(replies_count=Count("replies", distinct=True))
         .select_related("created_by", "block_type")
         .prefetch_related(
             Prefetch(
