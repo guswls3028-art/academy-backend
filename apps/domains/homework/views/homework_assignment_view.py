@@ -100,7 +100,9 @@ class HomeworkAssignmentManageView(APIView):
                     parent_phone = getattr(student, "parent_phone", "") or ""
                     student_phone = getattr(student, "phone", "") or ""
                     school_type = getattr(student, "school_type", None)
-                    if school_type == "HIGH":
+                    if school_type == "ELEMENTARY":
+                        school = getattr(student, "elementary_school", "") or ""
+                    elif school_type == "HIGH":
                         school = getattr(student, "high_school", "") or ""
                     else:
                         school = getattr(student, "middle_school", "") or ""

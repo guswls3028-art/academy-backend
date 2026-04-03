@@ -56,18 +56,18 @@ class Student(TimestampModel):
     )
 
     grade = models.PositiveSmallIntegerField(
-        choices=[(1, "1"), (2, "2"), (3, "3")],
         null=True,
         blank=True,
     )
 
     SCHOOL_TYPE_CHOICES = (
+        ("ELEMENTARY", "초등"),
         ("MIDDLE", "중등"),
         ("HIGH", "고등"),
     )
 
     school_type = models.CharField(
-        max_length=10,
+        max_length=12,
         choices=SCHOOL_TYPE_CHOICES,
         default="HIGH",
     )
@@ -100,6 +100,7 @@ class Student(TimestampModel):
         related_name="students",
     )
 
+    elementary_school = models.CharField(max_length=100, null=True, blank=True)
     high_school = models.CharField(max_length=100, null=True, blank=True)
     high_school_class = models.CharField(max_length=100, null=True, blank=True)
     major = models.CharField(max_length=50, null=True, blank=True)
@@ -268,7 +269,8 @@ class StudentRegistrationRequest(TimestampModel):
     parent_phone = models.CharField(max_length=20)
     phone = models.CharField(max_length=20, null=True, blank=True)
 
-    school_type = models.CharField(max_length=10, default="HIGH")
+    school_type = models.CharField(max_length=12, default="HIGH")
+    elementary_school = models.CharField(max_length=100, null=True, blank=True)
     high_school = models.CharField(max_length=100, null=True, blank=True)
     middle_school = models.CharField(max_length=100, null=True, blank=True)
     high_school_class = models.CharField(max_length=100, null=True, blank=True)

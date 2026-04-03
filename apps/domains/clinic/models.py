@@ -13,7 +13,10 @@ from apps.core.models import Tenant
 # --------------------------------------------------
 
 class Session(TimestampModel):
-    GRADE_CHOICES = [(1, "1학년"), (2, "2학년"), (3, "3학년")]
+    GRADE_CHOICES = [
+        (1, "1학년"), (2, "2학년"), (3, "3학년"),
+        (4, "4학년"), (5, "5학년"), (6, "6학년"),
+    ]
 
     tenant = models.ForeignKey(
         Tenant,
@@ -40,7 +43,7 @@ class Session(TimestampModel):
     )
 
     # 대상 학교 유형: null이면 전체, MIDDLE/HIGH이면 해당 유형만
-    SCHOOL_TYPE_CHOICES = [("MIDDLE", "중등"), ("HIGH", "고등")]
+    SCHOOL_TYPE_CHOICES = [("ELEMENTARY", "초등"), ("MIDDLE", "중등"), ("HIGH", "고등")]
     target_school_type = models.CharField(
         max_length=10,
         choices=SCHOOL_TYPE_CHOICES,

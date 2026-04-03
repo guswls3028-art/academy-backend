@@ -281,6 +281,8 @@ def _parse_school_grade(value: str) -> tuple[str, str]:
 def _infer_school_type(school: str) -> str:
     if not school:
         return "HIGH"
+    if re.search(r"초등학교|초등|초\b", school):
+        return "ELEMENTARY"
     if re.search(r"중학교|중등|중\b", school):
         return "MIDDLE"
     return "HIGH"

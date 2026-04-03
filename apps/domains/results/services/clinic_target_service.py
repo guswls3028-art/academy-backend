@@ -282,11 +282,12 @@ class ClinicTargetService:
             parent_phone = getattr(student, "parent_phone", None) if student else None
             student_phone = getattr(student, "phone", None) if student else None
             school_type = getattr(student, "school_type", "HIGH") if student else "HIGH"
-            school_name = (
-                getattr(student, "high_school", None)
-                if school_type == "HIGH"
-                else getattr(student, "middle_school", None)
-            ) if student else None
+            if school_type == "ELEMENTARY":
+                school_name = getattr(student, "elementary_school", None) if student else None
+            elif school_type == "HIGH":
+                school_name = getattr(student, "high_school", None) if student else None
+            else:
+                school_name = getattr(student, "middle_school", None) if student else None
             grade_val = getattr(student, "grade", None) if student else None
             profile_photo_url = _get_student_photo_url(student)
 

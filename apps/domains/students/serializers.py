@@ -42,7 +42,7 @@ class StudentListSerializer(serializers.ModelSerializer):
             "id", "tenant", "user", "ps_number", "omr_code",
             "name", "gender", "grade", "school_type",
             "phone", "parent_phone", "uses_identifier", "parent",
-            "high_school", "high_school_class", "major",
+            "elementary_school", "high_school", "high_school_class", "major",
             "middle_school", "origin_middle_school",
             "memo", "address", "is_managed", "deleted_at",
             "created_at", "updated_at",
@@ -141,7 +141,7 @@ class StudentDetailSerializer(serializers.ModelSerializer):
             "id", "tenant", "user", "ps_number", "omr_code",
             "name", "gender", "grade", "school_type",
             "phone", "parent_phone", "uses_identifier", "parent",
-            "high_school", "high_school_class", "major",
+            "elementary_school", "high_school", "high_school_class", "major",
             "middle_school", "origin_middle_school",
             "memo", "address", "is_managed", "deleted_at",
             "created_at", "updated_at",
@@ -180,7 +180,7 @@ class StudentBulkItemSerializer(serializers.Serializer):
     uses_identifier = serializers.BooleanField(required=False, default=False)
     gender = serializers.CharField(allow_blank=True, default="")
     school_type = serializers.ChoiceField(
-        choices=[("HIGH", "고등"), ("MIDDLE", "중등")],
+        choices=[("ELEMENTARY", "초등"), ("MIDDLE", "중등"), ("HIGH", "고등")],
         default="HIGH",
     )
     school = serializers.CharField(allow_blank=True, default="", required=False)
@@ -399,9 +399,10 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
     parent_phone = serializers.CharField(max_length=20)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True, allow_null=True, default="")
     school_type = serializers.ChoiceField(
-        choices=[("HIGH", "고등"), ("MIDDLE", "중등")],
+        choices=[("ELEMENTARY", "초등"), ("MIDDLE", "중등"), ("HIGH", "고등")],
         default="HIGH",
     )
+    elementary_school = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
     high_school = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
     middle_school = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
     high_school_class = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
@@ -432,7 +433,7 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
         if attrs.get("phone"):
             attrs["phone"] = _normalize_phone(attrs["phone"]) or None
         # null → 빈 문자열로 통일 (모델은 null 허용이지만 저장 시 빈 문자열도 허용)
-        for key in ("username", "high_school", "middle_school", "high_school_class", "major", "gender", "memo", "address", "origin_middle_school"):
+        for key in ("username", "elementary_school", "high_school", "middle_school", "high_school_class", "major", "gender", "memo", "address", "origin_middle_school"):
             if attrs.get(key) is None:
                 attrs[key] = ""
 
@@ -450,8 +451,10 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
         if school_type == "HIGH":
             signup_required["high_school"] = "고등학교명"
             signup_required["origin_middle_school"] = "출신중학교"
-        else:
+        elif school_type == "MIDDLE":
             signup_required["middle_school"] = "중학교명"
+        elif school_type == "ELEMENTARY":
+            signup_required["elementary_school"] = "초등학교명"
 
         for key, label in signup_required.items():
             val = attrs.get(key)

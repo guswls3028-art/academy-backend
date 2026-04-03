@@ -42,6 +42,7 @@ def _profile_response(request, student, *, is_parent_read_only=False, parent_dis
         "gender": (student.gender or "").strip() or None,
         "address": (student.address or "").strip() or None,
         "school_type": getattr(student, "school_type", "HIGH") or "HIGH",
+        "elementary_school": (getattr(student, "elementary_school", None) or "").strip() or None,
         "high_school": (getattr(student, "high_school", None) or "").strip() or None,
         "middle_school": (getattr(student, "middle_school", None) or "").strip() or None,
         "origin_middle_school": (getattr(student, "origin_middle_school", None) or "").strip() or None,
@@ -177,9 +178,12 @@ class StudentProfileView(APIView):
         # 회원가입 모달과 동일한 학교·추가 정보 필드
         if "school_type" in data:
             st = (data.get("school_type") or "").strip().upper()
-            if st in ("HIGH", "MIDDLE"):
+            if st in ("ELEMENTARY", "MIDDLE", "HIGH"):
                 student.school_type = st
                 update_fields.append("school_type")
+        if "elementary_school" in data:
+            student.elementary_school = (data.get("elementary_school") or "").strip()[:100] or None
+            update_fields.append("elementary_school")
         if "high_school" in data:
             student.high_school = (data.get("high_school") or "").strip()[:100] or None
             update_fields.append("high_school")
@@ -190,11 +194,12 @@ class StudentProfileView(APIView):
             student.origin_middle_school = (data.get("origin_middle_school") or "").strip()[:100] or None
             update_fields.append("origin_middle_school")
         if "grade" in data:
+            from apps.domains.students.services.school import is_valid_grade
             raw = data.get("grade")
             if raw is not None and raw != "":
                 try:
                     g = int(raw)
-                    student.grade = g if 1 <= g <= 3 else None
+                    student.grade = g if is_valid_grade(student.school_type, g) else None
                 except (TypeError, ValueError):
                     student.grade = None
             else:

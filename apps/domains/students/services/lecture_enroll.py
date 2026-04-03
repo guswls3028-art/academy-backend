@@ -12,12 +12,13 @@ from .school import normalize_school_from_name
 from ..ps_number import _generate_unique_ps_number
 
 
-def _grade_value(v):
+def _grade_value(v, school_type="HIGH"):
     if v is None:
         return None
     try:
         n = int(v)
-        return n if 1 <= n <= 3 else None
+        from .school import is_valid_grade
+        return n if is_valid_grade(school_type, n) else None
     except (TypeError, ValueError):
         return None
 
@@ -63,10 +64,11 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
             update_fields.append("phone")
         school_val = (item.get("school") or "").strip() or None
         if school_val is not None:
-            st, high_school, middle_school = normalize_school_from_name(
+            st, elementary_school, high_school, middle_school = normalize_school_from_name(
                 school_val, item.get("school_type")
             )
             deleted_student.school_type = st
+            deleted_student.elementary_school = elementary_school
             deleted_student.high_school = high_school
             deleted_student.middle_school = middle_school
             deleted_student.high_school_class = (
@@ -78,7 +80,7 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
                 (item.get("major") or "").strip() or None if st == "HIGH" else None
             )
             update_fields.extend(
-                ["school_type", "high_school", "middle_school", "high_school_class", "major"]
+                ["school_type", "elementary_school", "high_school", "middle_school", "high_school_class", "major"]
             )
         gr = _grade_value(item.get("grade"))
         if gr is not None:
@@ -176,7 +178,7 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
         user.save()
 
         school_val = (item.get("school") or "").strip() or None
-        st, high_school, middle_school = normalize_school_from_name(
+        st, elementary_school, high_school, middle_school = normalize_school_from_name(
             school_val, item.get("school_type")
         )
         high_school_class = (item.get("high_school_class") or "").strip() or None if st == "HIGH" else None
@@ -194,6 +196,7 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
             uses_identifier=item.get("uses_identifier", False) or (phone is None or not phone),
             gender=(item.get("gender") or "").strip().upper()[:1] or None,
             school_type=st,
+            elementary_school=elementary_school,
             high_school=high_school,
             middle_school=middle_school,
             high_school_class=high_school_class,

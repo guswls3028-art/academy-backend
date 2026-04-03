@@ -559,7 +559,7 @@ class StudentViewSet(ModelViewSet):
                     user.save()
 
                     school_val = (item.get("school") or "").strip() or None
-                    st, high_school, middle_school = normalize_school_from_name(
+                    st, elementary_school, high_school, middle_school = normalize_school_from_name(
                         school_val, item.get("school_type")
                     )
                     high_school_class = (item.get("high_school_class") or "").strip() or None if st == "HIGH" else None
@@ -577,6 +577,7 @@ class StudentViewSet(ModelViewSet):
                         uses_identifier=item.get("uses_identifier", False) or (phone is None),
                         gender=item.get("gender") or None,
                         school_type=st,
+                        elementary_school=elementary_school,
                         high_school=high_school,
                         middle_school=middle_school,
                         high_school_class=high_school_class,
@@ -671,10 +672,11 @@ class StudentViewSet(ModelViewSet):
                         student.deleted_at = None
                         student.name = (student_data.get("name") or student.name or "").strip()
                         school_val = (student_data.get("school") or "").strip() or None
-                        st, high_school, middle_school = normalize_school_from_name(
+                        st, elementary_school, high_school, middle_school = normalize_school_from_name(
                             school_val, student_data.get("school_type")
                         )
                         student.school_type = st
+                        student.elementary_school = elementary_school
                         student.high_school = high_school
                         student.middle_school = middle_school
                         student.high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
@@ -746,6 +748,7 @@ class StudentViewSet(ModelViewSet):
                         uses_identifier=student_data.get("uses_identifier", False) or (phone is None),
                         gender=student_data.get("gender") or None,
                         school_type=st,
+                        elementary_school=elementary_school,
                         high_school=high_school,
                         middle_school=middle_school,
                         high_school_class=high_school_class,
@@ -1226,20 +1229,21 @@ class StudentViewSet(ModelViewSet):
         user = student.user
 
         # --- 기본 정보 필드 유효성 검증 (setattr 전에 수행) ---
-        VALID_SCHOOL_TYPES = {"MIDDLE", "HIGH"}
-        VALID_GRADES = {1, 2, 3}
+        from .services.school import ALL_SCHOOL_TYPES, get_valid_grades
         STRING_FIELD_LIMITS = {
             "name": 100, "phone": 20, "parent_phone": 20,
-            "gender": 10, "address": 255, "high_school": 100,
-            "middle_school": 100, "origin_middle_school": 100,
+            "gender": 10, "address": 255, "elementary_school": 100,
+            "high_school": 100, "middle_school": 100,
+            "origin_middle_school": 100,
             "high_school_class": 100, "major": 50, "memo": None,
         }
 
-        if "school_type" in data and data["school_type"] not in VALID_SCHOOL_TYPES:
+        if "school_type" in data and data["school_type"] not in ALL_SCHOOL_TYPES:
             return Response(
-                {"detail": f"school_type은 {VALID_SCHOOL_TYPES} 중 하나여야 합니다."},
+                {"detail": f"school_type은 {sorted(ALL_SCHOOL_TYPES)} 중 하나여야 합니다."},
                 status=400,
             )
+        school_type_for_grade = data.get("school_type", student.school_type)
         if "grade" in data and data["grade"] is not None:
             try:
                 grade_val = int(data["grade"])
@@ -1247,9 +1251,10 @@ class StudentViewSet(ModelViewSet):
                 return Response(
                     {"detail": "grade는 정수여야 합니다."}, status=400,
                 )
-            if grade_val not in VALID_GRADES:
+            valid_grades = get_valid_grades(school_type_for_grade)
+            if grade_val not in valid_grades:
                 return Response(
-                    {"detail": f"grade는 {sorted(VALID_GRADES)} 중 하나여야 합니다."},
+                    {"detail": f"grade는 {sorted(valid_grades)} 중 하나여야 합니다."},
                     status=400,
                 )
         for field, max_len in STRING_FIELD_LIMITS.items():
@@ -1310,7 +1315,7 @@ class StudentViewSet(ModelViewSet):
             # 기본 정보 수정
             updatable_fields = [
                 "name", "phone", "parent_phone", "gender", "address",
-                "school_type", "high_school", "middle_school",
+                "school_type", "elementary_school", "high_school", "middle_school",
                 "origin_middle_school", "grade", "high_school_class",
                 "major", "memo",
             ]
@@ -1424,6 +1429,7 @@ def _approve_registration_request(request, reg):
                 omr_code=omr_code,
                 uses_identifier=not (phone and phone.strip()),
                 school_type=reg.school_type,
+                elementary_school=reg.elementary_school or None,
                 high_school=reg.high_school or None,
                 middle_school=reg.middle_school or None,
                 high_school_class=reg.high_school_class or None,
