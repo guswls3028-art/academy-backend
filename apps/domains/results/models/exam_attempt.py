@@ -43,7 +43,8 @@ class ExamAttempt(BaseModel):
 
     # Submission은 시도의 원인(event)
     submission_id = models.PositiveIntegerField(
-        help_text="이 attempt를 발생시킨 submission"
+        null=True, blank=True,
+        help_text="이 attempt를 발생시킨 submission (클리닉 직접 입력 시 null)"
     )
 
     # 1부터 시작 (시험 n번째 응시)

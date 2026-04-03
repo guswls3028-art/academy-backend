@@ -92,7 +92,7 @@ class ClinicRemediationService:
         attempt = ExamAttempt.objects.create(
             exam_id=exam.id,
             enrollment_id=link.enrollment_id,
-            submission_id=0,  # 클리닉 직접 입력 — submission 없음
+            submission_id=None,  # 클리닉 직접 입력 — submission 없음
             attempt_index=next_attempt,
             is_retake=True,
             is_representative=False,  # ← 핵심: 성적 산출 제외
@@ -107,7 +107,7 @@ class ClinicRemediationService:
         )
 
         # 4. 합격 판정
-        is_passed = score >= pass_score if pass_score > 0 else False
+        is_passed = score >= pass_score  # pass_score=0 → 모든 점수 합격
 
         # ExamResult는 submission 1:1이라 클리닉 직접 입력에는 생성하지 않음
         # 대신 attempt.meta에 점수를 기록 (위에서 이미 저장)
@@ -291,7 +291,7 @@ class ClinicRemediationService:
         attempt.meta["updated_by_user_id"] = graded_by_user_id
         attempt.save(update_fields=["meta", "updated_at"])
 
-        is_passed = score >= pass_score if pass_score > 0 else False
+        is_passed = score >= pass_score  # pass_score=0 → 모든 점수 합격
 
         result = RetakeResult(
             passed=is_passed,
