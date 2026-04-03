@@ -938,6 +938,10 @@ class ProvisionDefaultTemplatesView(APIView):
                     existing_tpl.save(update_fields=["name", "updated_at"])
 
             if existing_tpl:
+                # 기존 시스템 템플릿이 is_system=False이면 교정
+                if not existing_tpl.is_system:
+                    existing_tpl.is_system = True
+                    existing_tpl.save(update_fields=["is_system"])
                 # 기본 템플릿이면 본문·제목·카테고리를 최신 기본값으로 리셋
                 changed = False
                 if existing_tpl.category != tpl_category:
