@@ -289,13 +289,13 @@ class ClinicSessionBulkCreateSerializer(serializers.Serializer):
     )
 
     def validate_target_grade(self, value):
-        if value is not None and value not in (1, 2, 3):
-            raise serializers.ValidationError("학년은 1, 2, 3 중 하나여야 합니다.")
+        if value is not None and value not in range(1, 7):  # 1~6 (초등 포함)
+            raise serializers.ValidationError("학년은 1~6 중 하나여야 합니다.")
         return value
 
     def validate_target_school_type(self, value):
-        if value is not None and value not in ("MIDDLE", "HIGH"):
-            raise serializers.ValidationError("학교 유형은 MIDDLE 또는 HIGH이어야 합니다.")
+        if value is not None and value not in ("ELEMENTARY", "MIDDLE", "HIGH"):
+            raise serializers.ValidationError("학교 유형은 ELEMENTARY, MIDDLE, HIGH 중 하나여야 합니다.")
         return value
 
 

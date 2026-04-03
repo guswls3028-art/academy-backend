@@ -82,7 +82,8 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
             update_fields.extend(
                 ["school_type", "elementary_school", "high_school", "middle_school", "high_school_class", "major"]
             )
-        gr = _grade_value(item.get("grade"))
+        grade_school_type = st if school_val is not None else (deleted_student.school_type or "HIGH")
+        gr = _grade_value(item.get("grade"), grade_school_type)
         if gr is not None:
             deleted_student.grade = gr
             update_fields.append("grade")
@@ -201,7 +202,7 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
             middle_school=middle_school,
             high_school_class=high_school_class,
             major=major,
-            grade=_grade_value(item.get("grade")),
+            grade=_grade_value(item.get("grade"), st),
             memo=(item.get("memo") or "").strip() or None,
             is_managed=item.get("is_managed", True),
         )
