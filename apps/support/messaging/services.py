@@ -325,12 +325,22 @@ def send_event_notification(
         return False
 
     solapi_template_id = (template.solapi_template_id or "").strip()
-    if not solapi_template_id or template.solapi_status != "APPROVED":
-        logger.debug(
-            "send_event_notification skipped: trigger=%s template not approved (status=%s)",
-            trigger, template.solapi_status,
-        )
-        return False
+    solapi_approved = solapi_template_id and template.solapi_status == "APPROVED"
+
+    effective_mode = config.message_mode or "alimtalk"
+    # 알림톡 미승인 시: alimtalk 전용이면 skip, both/sms면 SMS만 발송
+    if not solapi_approved:
+        if effective_mode == "alimtalk":
+            logger.debug(
+                "send_event_notification skipped: trigger=%s template not approved (status=%s)",
+                trigger, template.solapi_status,
+            )
+            return False
+        else:
+            logger.info(
+                "send_event_notification: trigger=%s alimtalk skipped (not approved), SMS only",
+                trigger,
+            )
 
     # 수신자 전화번호
     phone = None
@@ -347,6 +357,7 @@ def send_event_notification(
 
     name = (getattr(student, "name", "") or "").strip()
     name_2 = name[-2:] if len(name) >= 2 else name
+    name_3 = name[:3] if len(name) >= 3 else name
     academy_name = (getattr(tenant, "name", "") or "").strip()
     site_url = get_tenant_site_url(tenant) or ""
 
@@ -355,6 +366,7 @@ def send_event_notification(
         {"key": "학원명", "value": academy_name},
         {"key": "학생이름", "value": name},
         {"key": "학생이름2", "value": name_2},
+        {"key": "학생이름3", "value": name_3},
         {"key": "사이트링크", "value": site_url},
     ]
     for k, v in (context or {}).items():
@@ -364,7 +376,7 @@ def send_event_notification(
     text = (template.body or "").strip()
     all_vars = {
         "학원명": academy_name, "학생이름": name, "학생이름2": name_2,
-        "사이트링크": site_url,
+        "학생이름3": name_3, "사이트링크": site_url,
     }
     all_vars.update({k: str(v) for k, v in (context or {}).items()})
     for k, v in all_vars.items():
@@ -399,9 +411,14 @@ def send_event_notification(
         domain_object_id = _tz.localtime().strftime("%Y%m%d")
     stable_occurrence = f"{trigger}:{domain_object_id}"
 
-    effective_mode = config.message_mode or "alimtalk"
     # "both" 모드: 알림톡 + SMS 각각 enqueue (멱등성 키에 채널 포함 → 중복 없음)
-    modes_to_send = ["alimtalk", "sms"] if effective_mode == "both" else [effective_mode]
+    # solapi 미승인 시 alimtalk 제외
+    if effective_mode == "both":
+        modes_to_send = ["alimtalk", "sms"] if solapi_approved else ["sms"]
+    elif effective_mode == "alimtalk":
+        modes_to_send = ["alimtalk"]  # solapi_approved guaranteed by earlier check
+    else:
+        modes_to_send = [effective_mode]
 
     any_success = False
     for mode in modes_to_send:
