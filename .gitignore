@@ -40,6 +40,9 @@ storage/*
 !apps/infrastructure/storage/
 !apps/infrastructure/storage/**
 
+# 위 예외로 __pycache__까지 추적 대상이 되므로 다시 제외
+apps/infrastructure/storage/**/__pycache__/
+
 # 🔥 EXCEPTION: AI worker storage (downloader)는 코드
 !apps/worker/ai_worker/storage/
 !apps/worker/ai_worker/storage/**
