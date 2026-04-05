@@ -213,8 +213,9 @@ def _apply_score_and_policy(
 
     obj.save(update_fields=save_fields + ["updated_at"])
 
-    # ✅ 과제 통과 시 ClinicLink 자동 해소
+    # ✅ 과제 합불에 따른 ClinicLink 동기화
     if obj.passed:
+        # 합격 → 미해소 ClinicLink 해소
         try:
             from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
             ClinicResolutionService.resolve_by_homework_pass(
@@ -228,6 +229,59 @@ def _apply_score_and_policy(
             import logging
             logging.getLogger(__name__).exception(
                 "clinic auto-resolve homework failed (enrollment=%s, session=%s, homework=%s)",
+                obj.enrollment_id, obj.session_id, obj.homework_id,
+            )
+    elif obj.clinic_required and score is not None:
+        # 불합격 + clinic_required + 실제 점수 입력 → ClinicLink 생성
+        try:
+            from apps.domains.progress.models import ClinicLink
+            from django.db.models import Max
+            from django.db import IntegrityError as DjangoIntegrityError, transaction
+
+            _eid = int(obj.enrollment_id)
+            _sid = int(obj.session_id)
+            _hid = int(obj.homework_id)
+
+            existing_unresolved = ClinicLink.objects.filter(
+                enrollment_id=_eid,
+                session_id=_sid,
+                source_type="homework",
+                source_id=_hid,
+                resolved_at__isnull=True,
+            ).exists()
+
+            if not existing_unresolved:
+                max_cycle = ClinicLink.objects.filter(
+                    enrollment_id=_eid,
+                    session_id=_sid,
+                    source_type="homework",
+                    source_id=_hid,
+                ).aggregate(Max("cycle_no"))["cycle_no__max"] or 0
+
+                with transaction.atomic():
+                    try:
+                        ClinicLink.objects.create(
+                            enrollment_id=_eid,
+                            session_id=_sid,
+                            source_type="homework",
+                            source_id=_hid,
+                            reason=ClinicLink.Reason.AUTO_FAILED,
+                            is_auto=True,
+                            approved=False,
+                            cycle_no=max(max_cycle + 1, 1),
+                            meta={
+                                "kind": "HOMEWORK_FAILED",
+                                "homework_id": _hid,
+                                "score": score,
+                                "max_score": max_score,
+                            },
+                        )
+                    except DjangoIntegrityError:
+                        pass
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "clinic auto-create homework failed (enrollment=%s, session=%s, homework=%s)",
                 obj.enrollment_id, obj.session_id, obj.homework_id,
             )
 

@@ -351,7 +351,7 @@ class HomeworkScoreViewSet(ModelViewSet):
 
                 def _dispatch():
                     try:
-                        dispatch_progress_pipeline(sub_id)
+                        dispatch_progress_pipeline(submission_id=sub_id)
                     except Exception:
                         pass
 

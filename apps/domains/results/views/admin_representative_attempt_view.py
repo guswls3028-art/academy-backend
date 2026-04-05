@@ -168,7 +168,7 @@ class AdminRepresentativeAttemptView(APIView):
                 status=drf_status.HTTP_409_CONFLICT,
             )
 
-        dispatch_progress_pipeline(int(submission.id))
+        dispatch_progress_pipeline(submission_id=int(submission.id))
 
         return Response(
             {

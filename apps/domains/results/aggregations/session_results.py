@@ -119,7 +119,7 @@ def build_session_results_snapshot(*, session_id: int) -> Dict[str, Any]:
 
     # clinic_rate(단일 진실)
     clinic_count = (
-        ClinicLink.objects.filter(session=session, is_auto=True)
+        ClinicLink.objects.filter(session=session, is_auto=True, resolved_at__isnull=True)
         .values("enrollment_id")
         .distinct()
         .count()

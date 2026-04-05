@@ -435,10 +435,10 @@ class ClinicTargetService:
                 meta = att.meta or {}
                 if "total_score" in meta:
                     att_score = float(meta["total_score"])
-                    att_passed = att_score >= cutline if cutline > 0 else False
+                    att_passed = att_score >= cutline if cutline > 0 else True
                 elif att.attempt_index == 1 and result:
                     att_score = float(exam_score)
-                    att_passed = att_score >= cutline if cutline > 0 else False
+                    att_passed = att_score >= cutline if cutline > 0 else True
 
                 attempt_history.append({
                     "attempt_index": att.attempt_index,

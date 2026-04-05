@@ -313,6 +313,8 @@ class SessionProgressCalculator:
 
         if obj.completed and not obj.completed_at:
             obj.completed_at = timezone.now()
+        elif not obj.completed and obj.completed_at:
+            obj.completed_at = None
 
         obj.calculated_at = timezone.now()
         obj.save()

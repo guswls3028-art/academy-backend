@@ -108,13 +108,19 @@ class ClinicResolutionService:
         ).update(**update_kwargs)
 
         # Fallback: legacy links (source_type=NULL, V1.1.1 이전 데이터)
+        # 1건만 해소하여 다른 원인(과제 불합격 등)의 legacy link를 잘못 해소하지 않도록 방어
         if count == 0:
-            count = ClinicLink.objects.filter(
+            legacy_link = ClinicLink.objects.filter(
                 enrollment_id=enrollment_id,
                 session_id=session_id,
                 source_type__isnull=True,
                 resolved_at__isnull=True,
-            ).update(**update_kwargs)
+            ).order_by("id").first()
+            if legacy_link:
+                for k, v in update_kwargs.items():
+                    setattr(legacy_link, k, v)
+                legacy_link.save(update_fields=list(update_kwargs.keys()) + ["updated_at"])
+                count = 1
 
         if count > 0:
             logger.info(
@@ -163,13 +169,19 @@ class ClinicResolutionService:
         ).update(**update_kwargs)
 
         # Fallback: legacy links (source_type=NULL, V1.1.1 이전 데이터)
+        # 1건만 해소하여 다른 원인(시험 불합격 등)의 legacy link를 잘못 해소하지 않도록 방어
         if count == 0:
-            count = ClinicLink.objects.filter(
+            legacy_link = ClinicLink.objects.filter(
                 enrollment_id=enrollment_id,
                 session_id=session_id,
                 source_type__isnull=True,
                 resolved_at__isnull=True,
-            ).update(**update_kwargs)
+            ).order_by("id").first()
+            if legacy_link:
+                for k, v in update_kwargs.items():
+                    setattr(legacy_link, k, v)
+                legacy_link.save(update_fields=list(update_kwargs.keys()) + ["updated_at"])
+                count = 1
 
         if count > 0:
             logger.info(

@@ -23,7 +23,8 @@ class LectureProgressCalculator:
         ).order_by("session__order")
 
         completed_sessions = progress_qs.filter(completed=True).count()
-        failed_sessions = progress_qs.filter(completed=False).count()
+        # calculated_at이 있는 행만 실제 평가된 세션 — 미평가 행은 failed에서 제외
+        failed_sessions = progress_qs.filter(completed=False, calculated_at__isnull=False).count()
 
         # 연속 미완료 계산
         consecutive_failed = 0

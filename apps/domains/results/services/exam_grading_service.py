@@ -143,7 +143,7 @@ class ExamGradingService:
         )
 
         pass_score = float(getattr(exam, "pass_score", 0) or 0)
-        is_passed = total_score >= pass_score if pass_score > 0 else False
+        is_passed = total_score >= pass_score if pass_score > 0 else True
 
         result = existing or ExamResult.objects.create(
             submission=submission,
