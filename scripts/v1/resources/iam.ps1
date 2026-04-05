@@ -40,6 +40,11 @@ function Ensure-BatchIAM {
         Invoke-Aws @("iam", "create-role", "--role-name", $EcsInstanceRoleName, "--assume-role-policy-document", "file://$($trustEc2 -replace '\\','/')") -ErrorMessage "iam create-role ECS instance" | Out-Null
     }
     Invoke-Aws @("iam", "attach-role-policy", "--role-name", $EcsInstanceRoleName, "--policy-arn", "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role") -ErrorMessage "attach ECS instance" 2>$null | Out-Null
+    # DynamoDB video job lock: instance role fallback (jobRoleArn이 설정되지 않은 컨테이너 대비)
+    $policyInstanceDynamo = Join-Path $TemplatesPath "policy_instance_dynamodb.json"
+    if (Test-Path $policyInstanceDynamo) {
+        Invoke-Aws @("iam", "put-role-policy", "--role-name", $EcsInstanceRoleName, "--policy-name", "dynamodb-video-job-lock", "--policy-document", "file://$($policyInstanceDynamo -replace '\\','/')") -ErrorMessage "put instance DynamoDB policy" 2>$null | Out-Null
+    }
     $ip = Invoke-AwsJson @("iam", "get-instance-profile", "--instance-profile-name", $InstanceProfileName, "--output", "json")
     if (-not $ip) {
         $script:ChangesMade = $true
