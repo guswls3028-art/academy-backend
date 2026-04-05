@@ -5,7 +5,7 @@
 완료 작업:
 - ops 디렉터리 생성 및 WORK_QUEUE.md, WORK_STATUS.md, WORK_LOG.md 초기화
 - .cursor/rules 09_multitenant_isolation.mdc, 00_project_context.mdc 확인
-- 커서 규칙 반영 위치 파악 (이미 반영: 09_multitenant_isolation.mdc, .cursorrules §7)
+- 커서 규칙 반영 위치 파악 (이미 반영: 09_multitenant_isolation.mdc, `CLAUDE.md` §B, academy 루트 `.cursorrules` §2 — 구 `.cursorrules` §7 멀티테넌트 요약은 여기로 이전)
 - 실제 코드 기준 기능 목록 추출 (apps/api/v1/urls.py, 도메인 urls, AdminRouter/StudentRouter 기준)
 - 멀티테넌트 구조 요약 (resolver.py, middleware/tenant.py 기준)
 - 배포 구조 요약 (deploy.ps1, api.ps1, run-qna-e2e-verify.ps1, run-api-management-remote.ps1 기준)
