@@ -18,13 +18,16 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from apps.core.permissions import TenantResolvedAndMember
+from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.exams.models import Exam
+from apps.domains.exams.models.exam_enrollment import ExamEnrollment
 from apps.domains.exams.models.template_bundle import TemplateBundle, TemplateBundleItem
 from apps.domains.exams.serializers.template_bundle import (
     ApplyBundleSerializer,
     TemplateBundleCreateSerializer,
     TemplateBundleSerializer,
 )
+from apps.domains.homework.models.homework_assignment import HomeworkAssignment
 from apps.domains.homework_results.models.homework import Homework
 from apps.domains.lectures.models import Session
 from apps.domains.results.permissions import IsTeacherOrAdmin
@@ -226,9 +229,42 @@ class ApplyBundleView(GenericAPIView):
                     )
                     created_homeworks.append({"id": hw.id, "title": hw.title})
 
+            # ── 학생 자동 등록 (세션 수강생 전원) ──
+            enrollment_ids = list(
+                SessionEnrollment.objects.filter(
+                    session=session,
+                    enrollment__status="ACTIVE",
+                ).values_list("enrollment_id", flat=True)
+            )
+
+            if enrollment_ids:
+                for exam_data in created_exams:
+                    ExamEnrollment.objects.bulk_create(
+                        [
+                            ExamEnrollment(exam_id=exam_data["id"], enrollment_id=eid)
+                            for eid in enrollment_ids
+                        ],
+                        ignore_conflicts=True,
+                    )
+
+                for hw_data in created_homeworks:
+                    HomeworkAssignment.objects.bulk_create(
+                        [
+                            HomeworkAssignment(
+                                tenant=tenant,
+                                homework_id=hw_data["id"],
+                                session=session,
+                                enrollment_id=eid,
+                            )
+                            for eid in enrollment_ids
+                        ],
+                        ignore_conflicts=True,
+                    )
+
         return Response({
             "created_exams": created_exams,
             "created_homeworks": created_homeworks,
             "skipped_items": skipped_items,
             "total": len(created_exams) + len(created_homeworks),
+            "enrolled_students": len(enrollment_ids) if enrollment_ids else 0,
         }, status=status.HTTP_201_CREATED)
