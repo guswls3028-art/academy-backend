@@ -149,7 +149,7 @@ class SessionProgressCalculator:
                     "score": score,
                     "max_score": cls._safe_float(r.max_score, default=0.0),
                     "pass_score": float(pass_score),
-                    "passed": bool(score >= float(pass_score)),
+                    "passed": bool(score >= float(pass_score)) if pass_score > 0 else True,
                     "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
                     "attempt_count": int(attempt_counts.get(int(r.target_id), 0)),
                 }
@@ -196,7 +196,10 @@ class SessionProgressCalculator:
             aggregate_score = cls._safe_float(best.get("score"), 0.0)
             selected_pass_score = cls._safe_float(best.get("pass_score"), 0.0)
 
-        exam_passed = bool((aggregate_score or 0.0) >= float(selected_pass_score))
+        if selected_pass_score > 0:
+            exam_passed = bool((aggregate_score or 0.0) >= float(selected_pass_score))
+        else:
+            exam_passed = True  # pass_score=0 → 기준 없음, 통과 처리
 
         meta = {
             "strategy": str(strategy),
@@ -215,7 +218,6 @@ class SessionProgressCalculator:
         attendance_type: str,
         video_progress_rate: int = 0,
         homework_submitted: bool = False,
-        homework_teacher_approved: bool = False,
     ) -> SessionProgress:
         policy = SessionProgressCalculator._get_or_create_policy(session)
 
@@ -262,10 +264,23 @@ class SessionProgressCalculator:
                 obj.homework_passed = bool(homework_submitted)
 
             elif policy.homework_pass_type == ProgressPolicy.HomeworkPassType.SCORE:
-                obj.homework_passed = bool(homework_teacher_approved)
+                # HomeworkScore를 직접 쿼리 (exam과 동일 패턴)
+                from apps.domains.homework_results.models import HomeworkScore
+                obj.homework_passed = HomeworkScore.objects.filter(
+                    enrollment_id=enrollment_id,
+                    session_id=session.id,
+                    attempt_index=1,
+                    passed=True,
+                ).exists()
 
             elif policy.homework_pass_type == ProgressPolicy.HomeworkPassType.TEACHER_APPROVAL:
-                obj.homework_passed = bool(homework_teacher_approved)
+                from apps.domains.homework_results.models import HomeworkScore
+                obj.homework_passed = HomeworkScore.objects.filter(
+                    enrollment_id=enrollment_id,
+                    session_id=session.id,
+                    attempt_index=1,
+                    teacher_approved=True,
+                ).exists()
         else:
             obj.homework_passed = True
 

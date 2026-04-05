@@ -176,7 +176,11 @@ class AdminExamResultsView(ListAPIView):
                 submission_status_map.get(submission_id) if submission_id else None
             )
 
-            passed = bool(float(r.total_score or 0.0) >= float(pass_score))
+            # pass_score=0 → 판정 기준 없음(None). session_scores_view 동일 패턴.
+            if pass_score > 0:
+                passed = bool(float(r.total_score or 0.0) >= float(pass_score))
+            else:
+                passed = None
 
             clinic_required = bool(
                 session

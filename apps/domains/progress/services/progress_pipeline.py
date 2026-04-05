@@ -208,7 +208,6 @@ class ProgressPipelineService:
             attendance_type=getattr(_existing, "attendance_type", "online") or "online",
             video_progress_rate=getattr(_existing, "video_progress_rate", 0) or 0,
             homework_submitted=bool(homework_submitted) or getattr(_existing, "homework_submitted", False),
-            homework_teacher_approved=getattr(_existing, "homework_teacher_approved", False),
         )
 
         # failed trigger (idempotent via get_or_create in service)

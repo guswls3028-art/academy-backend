@@ -72,6 +72,10 @@ from apps.domains.homework.utils.homework_policy import (
     calc_homework_passed_and_clinic,
 )
 
+# ClinicLink 관리 (과제 합불 → 클리닉 대상 생성/해소)
+from apps.domains.progress.models import ClinicLink
+from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
+
 
 # =====================================================
 # helpers
@@ -81,6 +85,70 @@ logger = logging.getLogger(__name__)
 
 def _safe_user_id(request) -> int | None:
     return getattr(getattr(request, "user", None), "id", None)
+
+
+def _sync_homework_clinic_link(
+    *,
+    enrollment_id: int,
+    session,
+    homework_id: int,
+    passed: bool,
+    score: float | None,
+    max_score: float | None,
+) -> None:
+    """
+    과제 합불 결과에 따라 ClinicLink를 생성하거나 해소한다.
+    - 불합격(passed=False): 미해소 ClinicLink가 없으면 생성
+    - 합격(passed=True): 미해소 ClinicLink가 있으면 해소
+    """
+    if passed:
+        # 합격 → 미해소 ClinicLink 해소
+        ClinicResolutionService.resolve_by_homework_pass(
+            enrollment_id=enrollment_id,
+            session_id=session.id,
+            homework_id=homework_id,
+            score=score,
+            max_score=max_score,
+        )
+    else:
+        # 불합격/미제출 → ClinicLink 생성 (idempotent)
+        existing_unresolved = ClinicLink.objects.filter(
+            enrollment_id=enrollment_id,
+            session=session,
+            source_type="homework",
+            source_id=homework_id,
+            resolved_at__isnull=True,
+        ).exists()
+        if not existing_unresolved:
+            from django.db.models import Max
+            max_cycle = ClinicLink.objects.filter(
+                enrollment_id=enrollment_id,
+                session=session,
+                source_type="homework",
+                source_id=homework_id,
+            ).aggregate(Max("cycle_no"))["cycle_no__max"] or 0
+
+            from django.db import IntegrityError as DjangoIntegrityError
+            try:
+                ClinicLink.objects.create(
+                    enrollment_id=enrollment_id,
+                    session=session,
+                    source_type="homework",
+                    source_id=homework_id,
+                    reason=ClinicLink.Reason.AUTO_FAILED,
+                    is_auto=True,
+                    approved=False,
+                    cycle_no=max(max_cycle + 1, 1),
+                    meta={
+                        "kind": "HOMEWORK_FAILED",
+                        "homework_id": homework_id,
+                        "score": score,
+                        "max_score": max_score,
+                    },
+                )
+            except DjangoIntegrityError:
+                # race condition: 동시 요청으로 이미 생성됨 — 정상 케이스
+                pass
 
 
 def _locked_response(obj: HomeworkScore) -> Response:
@@ -187,7 +255,10 @@ class HomeworkScoreViewSet(ModelViewSet):
         return (
             HomeworkScore.objects
             .select_related("session", "session__lecture", "homework")
-            .filter(session__lecture__tenant=self.request.tenant)
+            .filter(
+                session__lecture__tenant=self.request.tenant,
+                attempt_index=1,  # 성적 탭은 1차(성적 산출 대상)만 조회
+            )
         )
 
     filter_backends = [
@@ -262,7 +333,8 @@ class HomeworkScoreViewSet(ModelViewSet):
             submission = (
                 Submission.objects.filter(
                     enrollment_id=score_obj.enrollment_id,
-                    session_id=score_obj.session_id,
+                    target_type="homework",
+                    target_id=score_obj.homework_id,
                 )
                 .order_by("-id")
                 .first()
@@ -287,6 +359,24 @@ class HomeworkScoreViewSet(ModelViewSet):
                 progress_info = {"dispatched": True, "reason": None}
             else:
                 progress_info = {"dispatched": False, "reason": "NO_SUBMISSION"}
+
+            # ✅ ClinicLink 동기화: Submission 없어도 과제 합불에 따라 생성/해소
+            # 중첩 savepoint로 감싸서 IntegrityError가 외부 트랜잭션을 깨지 않도록 보호
+            try:
+                with transaction.atomic():
+                    _sync_homework_clinic_link(
+                        enrollment_id=score_obj.enrollment_id,
+                        session=score_obj.session,
+                        homework_id=score_obj.homework_id,
+                        passed=bool(score_obj.passed),
+                        score=score_obj.score,
+                        max_score=score_obj.max_score,
+                    )
+            except Exception:
+                logger.exception(
+                    "partial_update: clinic link sync failed (hw=%s, enrollment=%s)",
+                    score_obj.homework_id, score_obj.enrollment_id,
+                )
 
         data = self.get_serializer(score_obj).data
         data["progress"] = progress_info
@@ -403,6 +493,24 @@ class HomeworkScoreViewSet(ModelViewSet):
                         if not obj.meta:
                             obj.meta = None
                         obj.save(update_fields=["meta", "updated_at"])
+
+                # ✅ ClinicLink 동기화: 과제 합불 결과에 따라 생성/해소
+                # 중첩 savepoint로 감싸서 IntegrityError가 외부 트랜잭션을 깨지 않도록 보호
+                try:
+                    with transaction.atomic():
+                        _sync_homework_clinic_link(
+                            enrollment_id=enrollment_id,
+                            session=session,
+                            homework_id=homework_id,
+                            passed=bool(obj.passed),
+                            score=obj.score,
+                            max_score=obj.max_score,
+                        )
+                except Exception:
+                    logger.exception(
+                        "quick_patch: clinic link sync failed (hw=%s, enrollment=%s)",
+                        homework_id, enrollment_id,
+                    )
 
             return Response(
                 HomeworkScoreSerializer(obj).data,

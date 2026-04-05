@@ -289,7 +289,9 @@ class SessionScoresView(APIView):
         # 3) Clinic 대상자
         # -------------------------------------------------
         clinic_ids: Set[int] = set(
-            ClinicLink.objects.filter(session=session, is_auto=True)
+            ClinicLink.objects.filter(
+                session=session, is_auto=True, resolved_at__isnull=True,
+            )
             .values_list("enrollment_id", flat=True)
             .distinct()
         )

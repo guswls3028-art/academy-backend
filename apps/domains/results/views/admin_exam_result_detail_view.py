@@ -117,7 +117,11 @@ class AdminExamResultDetailView(APIView):
         # -------------------------------------------------
         # 2️⃣ passed (시험 단위 기준)
         # -------------------------------------------------
-        passed = bool(float(result.total_score or 0.0) >= pass_score)
+        # pass_score=0 → 판정 기준 없음(None). session_scores_view 동일 패턴.
+        if pass_score > 0:
+            passed = bool(float(result.total_score or 0.0) >= pass_score)
+        else:
+            passed = None
 
         # -------------------------------------------------
         # 3️⃣ 재시험 정책 (⚠️ 기존 기능 유지)

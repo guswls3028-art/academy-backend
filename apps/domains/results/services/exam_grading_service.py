@@ -233,11 +233,15 @@ class ExamGradingService:
             result.subjective_score = manual_total
             result.manual_overrides = manual_breakdown
 
+        # is_passed 재계산 (수동 점수 반영)
+        pass_score = float(getattr(exam, "pass_score", 0) or 0)
+        result.is_passed = result.total_score >= pass_score if pass_score > 0 else False
+
         result.status = ExamResult.Status.DRAFT
 
         update_fields = [
             "total_score", "max_score", "subjective_score",
-            "manual_overrides", "status", "updated_at",
+            "manual_overrides", "is_passed", "status", "updated_at",
         ]
         result.save(update_fields=update_fields)
 

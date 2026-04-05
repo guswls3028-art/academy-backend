@@ -475,6 +475,7 @@ def main() -> int:
                     pf_id_tenant = ""
                     tenant_provider = "solapi"  # 기본 공급자
                     own_creds = {}  # 테넌트 자체 연동 키
+                    use_default_channel = True  # 시스템 기본 알림톡 채널 사용 여부
                     if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
                         try:
                             from apps.support.messaging.credit_services import (
@@ -494,6 +495,7 @@ def main() -> int:
                             # 알림톡 채널: resolver로 통일 (tenant 연동 채널 → 시스템 기본)
                             channel = resolve_kakao_channel(int(tenant_id))
                             pf_id_tenant = (channel.get("pf_id") or "").strip()
+                            use_default_channel = channel.get("use_default", True)
                             # 공급자 결정
                             tenant_provider = get_tenant_provider(int(tenant_id))
                             # 테넌트 자체 연동 키 (직접 연동 모드)
@@ -624,6 +626,19 @@ def main() -> int:
                         return send_one_sms(cfg, to=to_, text=text_, sender=sender_)
 
                     def _dispatch_alimtalk(to_, sender_, pf_id_, template_id_, replacements_, text_=""):
+                        # 시스템 기본 채널(Solapi PFID)을 사용하는 경우:
+                        # tenant provider와 무관하게 시스템 Solapi로 발송.
+                        # 뿌리오는 @xxx 형식 PFID만 지원하므로 Solapi 형식 PFID를 넘기면 실패함.
+                        if use_default_channel:
+                            logger.info(
+                                "alimtalk via system solapi (default channel): tenant=%s provider=%s",
+                                tenant_id, tenant_provider,
+                            )
+                            return send_one_alimtalk(
+                                cfg, to=to_, sender=sender_, pf_id=pf_id_,
+                                template_id=template_id_, replacements=replacements_, text=text_,
+                            )
+                        # 테넌트 자체 채널이 있으면 테넌트 공급자로 발송
                         if tenant_provider == "ppurio":
                             return send_one_alimtalk_ppurio(
                                 to=to_, sender=sender_, pf_id=pf_id_,

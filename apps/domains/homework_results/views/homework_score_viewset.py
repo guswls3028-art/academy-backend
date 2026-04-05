@@ -125,6 +125,7 @@ def _sync_clinic_link_for_not_submitted(
     *,
     enrollment_id: int,
     session_id: int,
+    homework_id: int,
     now_not_submitted: bool,
 ) -> None:
     """
@@ -142,6 +143,7 @@ def _sync_clinic_link_for_not_submitted(
             session_id=int(session_id),
             reason=ClinicLink.Reason.AUTO_FAILED,
             source_type="homework",
+            source_id=int(homework_id),
             defaults={
                 "is_auto": True,
                 "approved": False,
@@ -166,6 +168,8 @@ def _sync_clinic_link_for_not_submitted(
     qs = ClinicLink.objects.filter(
         enrollment_id=int(enrollment_id),
         session_id=int(session_id),
+        source_type="homework",
+        source_id=int(homework_id),
         is_auto=True,
         resolved_at__isnull=True,
     ).exclude(meta__isnull=True)
@@ -175,7 +179,8 @@ def _sync_clinic_link_for_not_submitted(
         meta = getattr(link, "meta", None)
         if isinstance(meta, dict) and meta.get("kind") == "HOMEWORK_NOT_SUBMITTED":
             link.resolved_at = timezone.now()
-            link.save(update_fields=["resolved_at", "updated_at"])
+            link.resolution_type = ClinicLink.ResolutionType.HOMEWORK_PASS
+            link.save(update_fields=["resolved_at", "resolution_type", "updated_at"])
 
 
 def _apply_score_and_policy(
@@ -379,6 +384,7 @@ class HomeworkScoreViewSet(ModelViewSet):
                 _sync_clinic_link_for_not_submitted(
                     enrollment_id=int(score_obj.enrollment_id),
                     session_id=int(score_obj.session_id),
+                    homework_id=int(score_obj.homework_id),
                     now_not_submitted=(normalized_status == HomeworkScore.MetaStatus.NOT_SUBMITTED),
                 )
 
@@ -512,6 +518,7 @@ class HomeworkScoreViewSet(ModelViewSet):
                 _sync_clinic_link_for_not_submitted(
                     enrollment_id=int(obj.enrollment_id),
                     session_id=int(obj.session_id),
+                    homework_id=int(obj.homework_id),
                     now_not_submitted=(normalized_status == HomeworkScore.MetaStatus.NOT_SUBMITTED),
                 )
 
