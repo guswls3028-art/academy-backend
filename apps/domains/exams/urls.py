@@ -36,6 +36,10 @@ from apps.domains.exams.views.question_explanation_view import (
     QuestionExplanationDetailView,
 )
 from apps.domains.exams.views.exam_image_upload_view import ExamImageUploadView
+from apps.domains.exams.views.template_bundle_view import TemplateBundleViewSet, ApplyBundleView
+
+bundle_router = DefaultRouter()
+bundle_router.register(r"", TemplateBundleViewSet, basename="template-bundles")
 
 router = DefaultRouter()
 # 서브 리소스(answer-keys, sheets, questions)를 빈 prefix("")보다 먼저 등록해야 함.
@@ -114,4 +118,10 @@ urlpatterns = [
     # Student
     # =========================
     path("me/available/", StudentAvailableExamListView.as_view()),
+
+    # =========================
+    # Template Bundles (묶음)
+    # =========================
+    path("bundles/", include(bundle_router.urls)),
+    path("bundles/<int:bundle_id>/apply/", ApplyBundleView.as_view()),
 ]

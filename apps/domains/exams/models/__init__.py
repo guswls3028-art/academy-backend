@@ -6,6 +6,7 @@ from .answer_key import AnswerKey
 from .exam_asset import ExamAsset
 from .exam_enrollment import ExamEnrollment
 from .question_explanation import QuestionExplanation
+from .template_bundle import TemplateBundle, TemplateBundleItem
 
 __all__ = [
     "Exam",
@@ -15,4 +16,6 @@ __all__ = [
     "ExamAsset",
     "ExamEnrollment",
     "QuestionExplanation",
+    "TemplateBundle",
+    "TemplateBundleItem",
 ]
