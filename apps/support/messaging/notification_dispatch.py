@@ -71,10 +71,24 @@ def build_attendance_preview(
             config = get_auto_send_config(owner_id, trigger)
 
     template = config.template if config else None
-    if not template or not (template.solapi_template_id or "").strip() or template.solapi_status != "APPROVED":
-        return {"error": "승인된 알림톡 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    effective_mode = (config.message_mode if config else "alimtalk") or "alimtalk"
+    solapi_template_id = (template.solapi_template_id or "").strip() if template else ""
+    solapi_approved = solapi_template_id and template.solapi_status == "APPROVED" if template else False
 
-    solapi_template_id = template.solapi_template_id.strip()
+    # SMS-only 모드: 템플릿 본문만 있으면 됨 (APPROVED 불필요)
+    # 알림톡 포함 모드 (alimtalk/both): APPROVED 템플릿 필요
+    if not template or not (template.body or "").strip():
+        return {"error": "발송 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    if effective_mode in ("alimtalk", "both") and not solapi_approved:
+        # 알림톡 불가 시: SMS로 폴백 가능한지 확인
+        from apps.support.messaging.policy import can_send_sms
+        if effective_mode == "both" and can_send_sms(tenant.id):
+            effective_mode = "sms"  # 알림톡 불가, SMS만 발송
+            solapi_template_id = ""
+        elif effective_mode == "alimtalk":
+            return {"error": "승인된 알림톡 템플릿이 없습니다. SMS 모드로 변경하거나 템플릿 검수를 요청하세요.", "recipients": [], "total_count": 0, "excluded_count": 0}
+        else:
+            return {"error": "승인된 알림톡 템플릿이 없고 SMS 발송도 불가합니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
 
     # 출결 상태별 필터
     if notification_type == "check_in":
@@ -151,8 +165,8 @@ def build_attendance_preview(
         "notification_type": notification_type,
         "session_title": session.title or f"{session.order}차시",
         "lecture_title": session.lecture.title or "",
-        "solapi_template_id": solapi_template_id,
-        "message_mode": (config.message_mode if config else "alimtalk") or "alimtalk",
+        "solapi_template_id": solapi_template_id if solapi_approved else "",
+        "message_mode": effective_mode,
     }
 
 
@@ -180,10 +194,21 @@ def build_student_list_preview(
             config = get_auto_send_config(owner_id, trigger)
 
     template = config.template if config else None
-    if not template or not (template.solapi_template_id or "").strip() or template.solapi_status != "APPROVED":
-        return {"error": "승인된 알림톡 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    effective_mode = (config.message_mode if config else "alimtalk") or "alimtalk"
+    solapi_template_id = (template.solapi_template_id or "").strip() if template else ""
+    solapi_approved = solapi_template_id and template.solapi_status == "APPROVED" if template else False
 
-    solapi_template_id = template.solapi_template_id.strip()
+    if not template or not (template.body or "").strip():
+        return {"error": "발송 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    if effective_mode in ("alimtalk", "both") and not solapi_approved:
+        from apps.support.messaging.policy import can_send_sms
+        if effective_mode == "both" and can_send_sms(tenant.id):
+            effective_mode = "sms"
+            solapi_template_id = ""
+        elif effective_mode == "alimtalk":
+            return {"error": "승인된 알림톡 템플릿이 없습니다. SMS 모드로 변경하거나 템플릿 검수를 요청하세요.", "recipients": [], "total_count": 0, "excluded_count": 0}
+        else:
+            return {"error": "승인된 알림톡 템플릿이 없고 SMS 발송도 불가합니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
 
     students = Student.objects.filter(
         id__in=student_ids, tenant_id=tenant.id, deleted_at__isnull=True,
@@ -241,8 +266,8 @@ def build_student_list_preview(
         "excluded_count": len(recipients) - len(sendable),
         "message_template_body": (template.body or "").strip(),
         "notification_type": trigger,
-        "solapi_template_id": solapi_template_id,
-        "message_mode": (config.message_mode if config else "alimtalk") or "alimtalk",
+        "solapi_template_id": solapi_template_id if solapi_approved else "",
+        "message_mode": effective_mode,
     }
 
 
@@ -344,15 +369,45 @@ def execute_notification_batch(
     payload의 수신자 목록에 대해 알림톡 발송 실행.
     """
     from apps.support.messaging.services import enqueue_sms
-    from apps.support.messaging.policy import check_recipient_allowed, MessagingPolicyError
+    from apps.support.messaging.policy import check_recipient_allowed, MessagingPolicyError, can_send_sms
 
     recipients = payload.get("recipients", [])
     solapi_template_id = payload.get("solapi_template_id", "")
     raw_message_mode = payload.get("message_mode", "alimtalk")
     notification_type = payload.get("notification_type", "")
 
-    # "both" 모드: 알림톡 + SMS 각각 발송
-    modes_to_send = ["alimtalk", "sms"] if raw_message_mode == "both" else [raw_message_mode]
+    # 채널 가용성 사전 확인 후 modes_to_send 결정
+    _can_sms = can_send_sms(tenant.id)
+    _can_alimtalk = bool(solapi_template_id)
+    if raw_message_mode == "both":
+        modes_to_send = []
+        if _can_alimtalk:
+            modes_to_send.append("alimtalk")
+        if _can_sms:
+            modes_to_send.append("sms")
+    elif raw_message_mode == "sms":
+        if _can_sms:
+            modes_to_send = ["sms"]
+        elif _can_alimtalk:
+            modes_to_send = ["alimtalk"]  # SMS 불가 → 알림톡 폴백
+            logger.info("batch: SMS unavailable for tenant=%s, fallback to alimtalk", tenant.id)
+        else:
+            modes_to_send = []
+    else:
+        modes_to_send = ["alimtalk"] if _can_alimtalk else []
+
+    if not modes_to_send:
+        logger.warning(
+            "batch %s: no available channel (mode=%s, can_sms=%s, can_alimtalk=%s)",
+            batch_id, raw_message_mode, _can_sms, _can_alimtalk,
+        )
+        return {
+            "batch_id": batch_id,
+            "sent_count": 0,
+            "failed_count": len([r for r in recipients if not r.get("excluded")]),
+            "blocked_count": 0,
+            "error": "발송 가능한 채널이 없습니다.",
+        }
 
     sent = 0
     failed = 0
