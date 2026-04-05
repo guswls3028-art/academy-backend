@@ -231,29 +231,38 @@ class AdminExamTotalScoreView(APIView):
             progress_error = str(exc)[:200]
 
         # -------------------------------------------------
-        # 7️⃣ 성적 공개 알림톡 (best-effort)
+        # 7️⃣ 성적 공개 알림톡 (best-effort, on_commit)
         # -------------------------------------------------
-        try:
-            from apps.domains.enrollment.models import Enrollment
-            from apps.support.messaging.services import send_event_notification
+        _notif_tenant = request.tenant
+        _notif_exam_id = int(exam_id)
+        _notif_enrollment_id = int(enrollment_id)
+        _notif_exam_title = str(getattr(exam, "title", "") or "")
+        _notif_score = int(new_score)
+        _notif_max = int(effective_max)
+        def _send_score_notification():
+            try:
+                from apps.domains.enrollment.models import Enrollment
+                from apps.support.messaging.services import send_event_notification
 
-            enrollment_obj = Enrollment.objects.select_related("student").filter(
-                id=enrollment_id, tenant=request.tenant
-            ).first()
-            if enrollment_obj and enrollment_obj.student:
-                send_event_notification(
-                    tenant=request.tenant,
-                    trigger="exam_score_published",
-                    student=enrollment_obj.student,
-                    send_to="parent",
-                    context={
-                        "시험명": str(getattr(exam, "title", "") or ""),
-                        "강의명": str(getattr(getattr(enrollment_obj, "lecture", None), "title", "") or ""),
-                        "시험성적": f"{int(new_score)}/{int(effective_max)}",
-                    },
-                )
-        except Exception:
-            logger.debug("exam_score_published notification failed (exam=%s)", exam_id, exc_info=True)
+                enrollment_obj = Enrollment.objects.select_related("student", "lecture").filter(
+                    id=_notif_enrollment_id, tenant=_notif_tenant
+                ).first()
+                if enrollment_obj and enrollment_obj.student:
+                    send_event_notification(
+                        tenant=_notif_tenant,
+                        trigger="exam_score_published",
+                        student=enrollment_obj.student,
+                        send_to="parent",
+                        context={
+                            "시험명": _notif_exam_title,
+                            "강의명": str(getattr(enrollment_obj.lecture, "title", "") or ""),
+                            "시험성적": f"{_notif_score}/{_notif_max}",
+                            "_domain_object_id": str(_notif_exam_id),
+                        },
+                    )
+            except Exception:
+                logger.debug("exam_score_published notification failed (exam=%s)", _notif_exam_id, exc_info=True)
+        transaction.on_commit(_send_score_notification)
 
         return Response(
             {

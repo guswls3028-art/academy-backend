@@ -207,6 +207,7 @@ class AdminExamSubjectiveScoreView(APIView):
                             "시험명": _exam_title,
                             "강의명": str(getattr(enr.lecture, "title", "") or ""),
                             "시험성적": f"{int(_new_total)}/{int(_max)}",
+                            "_domain_object_id": str(_eid),
                         },
                     )
             except Exception:

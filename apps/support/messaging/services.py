@@ -285,7 +285,7 @@ def send_event_notification(
         bool: enqueue 성공 여부
     """
     from apps.support.messaging.selectors import get_auto_send_config
-    from apps.support.messaging.policy import get_owner_tenant_id, is_messaging_disabled, MessagingPolicyError, is_event_dry_run
+    from apps.support.messaging.policy import get_owner_tenant_id, is_messaging_disabled, MessagingPolicyError, is_event_dry_run, can_send_sms
 
     if is_messaging_disabled(tenant.id):
         logger.info("send_event_notification skipped: tenant_id=%s messaging disabled", tenant.id)
@@ -328,19 +328,34 @@ def send_event_notification(
     solapi_approved = solapi_template_id and template.solapi_status == "APPROVED"
 
     effective_mode = config.message_mode or "alimtalk"
-    # 알림톡 미승인 시: alimtalk 전용이면 skip, both/sms면 SMS만 발송
+    # 알림톡 미승인 시: 오너 테넌트의 승인 템플릿으로 폴백 시도
+    owner_alimtalk_template_id = ""  # 오너 폴백용
     if not solapi_approved:
-        if effective_mode == "alimtalk":
-            logger.debug(
-                "send_event_notification skipped: trigger=%s template not approved (status=%s)",
-                trigger, template.solapi_status,
-            )
-            return False
-        else:
-            logger.info(
-                "send_event_notification: trigger=%s alimtalk skipped (not approved), SMS only",
-                trigger,
-            )
+        # 오너 테넌트에서 같은 트리거의 승인 템플릿 조회
+        owner_id = get_owner_tenant_id()
+        if int(tenant.id) != owner_id:
+            owner_config = get_auto_send_config(owner_id, trigger)
+            if owner_config and owner_config.template:
+                ot = owner_config.template
+                ot_id = (ot.solapi_template_id or "").strip()
+                if ot_id and ot.solapi_status == "APPROVED":
+                    owner_alimtalk_template_id = ot_id
+                    logger.info(
+                        "send_event_notification: trigger=%s tenant=%s using owner alimtalk template=%s",
+                        trigger, tenant.id, ot_id,
+                    )
+        if not owner_alimtalk_template_id:
+            if effective_mode == "alimtalk":
+                logger.debug(
+                    "send_event_notification skipped: trigger=%s template not approved (status=%s)",
+                    trigger, template.solapi_status,
+                )
+                return False
+            else:
+                logger.info(
+                    "send_event_notification: trigger=%s alimtalk skipped (not approved, no owner fallback), SMS only",
+                    trigger,
+                )
 
     # 수신자 전화번호
     phone = None
@@ -370,7 +385,20 @@ def send_event_notification(
         {"key": "사이트링크", "value": site_url},
     ]
     for k, v in (context or {}).items():
+        if k.startswith("_"):
+            continue  # _domain_object_id 등 내부 키는 치환/전송 제외
         replacements.append({"key": k, "value": str(v)})
+
+    # 오너 폴백 템플릿 사용 시: #{공지내용} 변수를 context에서 조합하여 제공
+    # 오너 범용 클리닉 템플릿은 #{공지내용}을 단일 변수로 사용 — 도메인 컨텍스트에서 조합
+    if owner_alimtalk_template_id and not any(r["key"] == "공지내용" for r in replacements):
+        _parts = []
+        for k, v in (context or {}).items():
+            if k.startswith("_") or not str(v).strip():
+                continue
+            _parts.append(str(v).strip())
+        if _parts:
+            replacements.append({"key": "공지내용", "value": "\n".join(_parts)})
 
     # 메시지 본문 (템플릿 치환)
     text = (template.body or "").strip()
@@ -378,7 +406,7 @@ def send_event_notification(
         "학원명": academy_name, "학생이름": name, "학생이름2": name_2,
         "학생이름3": name_3, "사이트링크": site_url,
     }
-    all_vars.update({k: str(v) for k, v in (context or {}).items()})
+    all_vars.update({k: str(v) for k, v in (context or {}).items() if not k.startswith("_")})
     for k, v in all_vars.items():
         text = text.replace(f"#{{{k}}}", v)
 
@@ -411,14 +439,45 @@ def send_event_notification(
         domain_object_id = _tz.localtime().strftime("%Y%m%d")
     stable_occurrence = f"{trigger}:{domain_object_id}"
 
-    # "both" 모드: 알림톡 + SMS 각각 enqueue (멱등성 키에 채널 포함 → 중복 없음)
-    # solapi 미승인 시 alimtalk 제외
+    # ── 발송 모드 결정: 사용자 설정(config) × 테넌트 능력(capability) ──
+    # 알림톡: 자체 승인 템플릿 > 오너 폴백 템플릿. 둘 다 없으면 불가.
+    _alimtalk_tid = solapi_template_id if solapi_approved else owner_alimtalk_template_id
+    _can_alimtalk = bool(_alimtalk_tid)
+    _can_sms = can_send_sms(tenant.id)
+
+    # 사용자 의도 기반 모드 결정 + 능력 필터링
+    # - 알림톡은 오너 폴백으로 항상 가능하므로, 의도에 포함되면 포함
+    # - SMS는 자체 키가 있어야만 가능
+    # - 둘 다 불가능한 경우만 빈 리스트 → 발송 실패
     if effective_mode == "both":
-        modes_to_send = ["alimtalk", "sms"] if solapi_approved else ["sms"]
+        modes_to_send = []
+        if _can_alimtalk:
+            modes_to_send.append("alimtalk")
+        if _can_sms:
+            modes_to_send.append("sms")
     elif effective_mode == "alimtalk":
-        modes_to_send = ["alimtalk"]  # solapi_approved guaranteed by earlier check
+        modes_to_send = ["alimtalk"] if _can_alimtalk else []
+    elif effective_mode == "sms":
+        # SMS 전용 설정이지만 SMS 불가능 → 알림톡 폴백 (메시지 유실 방지)
+        if _can_sms:
+            modes_to_send = ["sms"]
+        elif _can_alimtalk:
+            modes_to_send = ["alimtalk"]
+            logger.info(
+                "send_event_notification: trigger=%s tenant=%s SMS unavailable, fallback to alimtalk",
+                trigger, tenant.id,
+            )
+        else:
+            modes_to_send = []
     else:
-        modes_to_send = [effective_mode]
+        modes_to_send = []
+
+    if not modes_to_send:
+        logger.warning(
+            "send_event_notification: trigger=%s tenant=%s no available channel (mode=%s, can_alimtalk=%s, can_sms=%s)",
+            trigger, tenant.id, effective_mode, _can_alimtalk, _can_sms,
+        )
+        return False
 
     any_success = False
     for mode in modes_to_send:
@@ -429,7 +488,7 @@ def send_event_notification(
                 text=text,
                 sender=sender,
                 message_mode=mode,
-                template_id=solapi_template_id if mode == "alimtalk" else None,
+                template_id=_alimtalk_tid if mode == "alimtalk" else None,
                 alimtalk_replacements=replacements if mode == "alimtalk" else None,
                 event_type=trigger,
                 target_type="student",

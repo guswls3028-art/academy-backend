@@ -238,8 +238,25 @@ class MessageTemplateListCreateView(APIView):
         valid_cats = {c.value for c in MessageTemplate.Category}
         if category and category in valid_cats:
             qs = qs.filter(category=category)
-        serializer = MessageTemplateSerializer(qs, many=True)
-        return Response(serializer.data)
+
+        # include_system=true: 오너 테넌트의 승인 알림톡 템플릿을 시스템 기본으로 포함
+        # (자체 PFID 없는 테넌트가 알림톡 발송 시 시스템 기본 채널+템플릿 사용)
+        include_system = (request.query_params.get("include_system") or "").strip().lower() in ("true", "1")
+        result = MessageTemplateSerializer(qs, many=True).data
+        if include_system:
+            from apps.support.messaging.policy import get_owner_tenant_id
+            owner_id = get_owner_tenant_id()
+            if int(request.tenant.id) != owner_id:
+                system_qs = MessageTemplate.objects.filter(
+                    tenant_id=owner_id,
+                    solapi_status="APPROVED",
+                ).exclude(
+                    category="signup",
+                ).order_by("-updated_at")
+                if category and category in valid_cats:
+                    system_qs = system_qs.filter(category=category)
+                result = list(result) + MessageTemplateSerializer(system_qs, many=True).data
+        return Response(result)
 
     def post(self, request):
         serializer = MessageTemplateSerializer(data=request.data)
@@ -498,6 +515,14 @@ class SendMessageView(APIView):
 
         if template_id:
             t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
+            # 오너 테넌트의 승인 시스템 템플릿도 허용 (알림톡 기본 채널 폴백)
+            if not t and message_mode == "alimtalk":
+                from apps.support.messaging.policy import get_owner_tenant_id
+                owner_id = get_owner_tenant_id()
+                if int(tenant.id) != owner_id:
+                    t = MessageTemplate.objects.filter(
+                        tenant_id=owner_id, pk=template_id, solapi_status="APPROVED",
+                    ).first()
             if not t:
                 return Response(
                     {"detail": "템플릿을 찾을 수 없습니다."},
@@ -525,6 +550,14 @@ class SendMessageView(APIView):
 
         # 자유양식 없으면 카테고리별 승인 템플릿 fallback (성적 공개 등)
         alimtalk_extra_vars = data.get("alimtalk_extra_vars") or {}
+        # 학생별 개별 치환 변수: {"123": {"시험성적": "85/100"}} → {123: {"시험성적": "85/100"}}
+        raw_per_student = data.get("alimtalk_extra_vars_per_student") or {}
+        extra_vars_per_student = {}
+        for k, v in raw_per_student.items():
+            try:
+                extra_vars_per_student[int(k)] = v if isinstance(v, dict) else {}
+            except (ValueError, TypeError):
+                pass
         if message_mode == "alimtalk" and not solapi_template_id:
             from apps.support.messaging.selectors import resolve_category_template
             category_tpl = resolve_category_template(tenant.id, alimtalk_extra_vars)
@@ -569,9 +602,10 @@ class SendMessageView(APIView):
                 .replace("#{공지내용}", user_custom_content)
                 .replace("#{내용}", user_custom_content)
             )
-            # Context-dependent variables: 추가 변수에 있으면 치환, 없으면 빈 문자열
+            # Context-dependent variables: 학생별 개별 변수 우선, 없으면 공통 변수, 없으면 빈 문자열
+            student_extra = extra_vars_per_student.get(s.id, {})
             for var in ("강의명", "차시명", "시험명", "과제명", "클리닉명", "장소", "날짜", "시간", "시험성적", "클리닉합불"):
-                val = alimtalk_extra_vars.get(var, "")
+                val = student_extra.get(var) or alimtalk_extra_vars.get(var, "")
                 text = text.replace(f"#{{{var}}}", val)
             # 수동 발송에서는 사용자가 직접 편집한 본문이므로 잔여 변수는 optional 처리
             import re as _re
@@ -594,8 +628,9 @@ class SendMessageView(APIView):
                 if user_custom_content:
                     alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
                     alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
-                # 추가 변수 (성적 발송 등 카테고리별 템플릿 변수)
-                for var_key, var_val in alimtalk_extra_vars.items():
+                # 추가 변수 (성적 발송 등 카테고리별 템플릿 변수) — 학생별 개별값 우선
+                merged_extra = {**alimtalk_extra_vars, **student_extra}
+                for var_key, var_val in merged_extra.items():
                     if var_val and var_key not in ("학생이름", "학생이름2", "학생이름3", "사이트링크"):
                         alimtalk_replacements.append({"key": var_key, "value": str(var_val)})
 
@@ -651,6 +686,14 @@ class SendMessageView(APIView):
 
         if template_id:
             t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
+            # 오너 테넌트의 승인 시스템 템플릿도 허용 (알림톡 기본 채널 폴백)
+            if not t and message_mode == "alimtalk":
+                from apps.support.messaging.policy import get_owner_tenant_id
+                owner_id = get_owner_tenant_id()
+                if int(tenant.id) != owner_id:
+                    t = MessageTemplate.objects.filter(
+                        tenant_id=owner_id, pk=template_id, solapi_status="APPROVED",
+                    ).first()
             if t:
                 tpl_body = t.body or ""
                 if body_base and ("#{공지내용}" in tpl_body or "#{내용}" in tpl_body):

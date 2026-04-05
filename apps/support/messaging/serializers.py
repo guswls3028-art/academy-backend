@@ -161,6 +161,11 @@ class SendMessageRequestSerializer(serializers.Serializer):
         default=dict,
         help_text="알림톡 추가 치환 변수 (예: {시험명: '수학', 시험성적: '80/100'})",
     )
+    alimtalk_extra_vars_per_student = serializers.DictField(
+        required=False,
+        default=dict,
+        help_text="학생별 개별 치환 변수 (key: student_id, value: {변수명: 값})",
+    )
 
     def validate(self, attrs):
         send_to = attrs.get("send_to") or "parent"

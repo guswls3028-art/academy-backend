@@ -180,6 +180,7 @@ class ManualNotificationPreviewView(APIView):
         "withdrawal_complete", "check_in_complete", "absent_occurred",
         "monthly_report_generated", "lecture_session_reminder",
         "payment_complete", "payment_due_days_before", "urgent_notice",
+        "clinic_self_study_completed", "clinic_result_notification",
     }
 
     def post(self, request):
@@ -191,6 +192,14 @@ class ManualNotificationPreviewView(APIView):
         student_ids = request.data.get("student_ids", [])
         send_to = request.data.get("send_to", "parent")
         context = request.data.get("context") or {}
+        # 학생별 개별 변수 (성적 등) — key: student_id(int)
+        raw_ctx_per_student = request.data.get("context_per_student") or {}
+        context_per_student = {}
+        for k, v in raw_ctx_per_student.items():
+            try:
+                context_per_student[int(k)] = v if isinstance(v, dict) else {}
+            except (ValueError, TypeError):
+                pass
 
         if not trigger:
             return Response({"detail": "trigger는 필수입니다."}, status=http_status.HTTP_400_BAD_REQUEST)
@@ -205,6 +214,7 @@ class ManualNotificationPreviewView(APIView):
             student_ids=student_ids,
             send_to=send_to,
             shared_context=context,
+            context_per_student=context_per_student or None,
         )
 
         if "error" in preview:

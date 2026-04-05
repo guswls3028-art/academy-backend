@@ -38,6 +38,8 @@ TRIGGER_POLICY = {
     "clinic_check_out": "AUTO_DEFAULT",
     "clinic_absent": "AUTO_DEFAULT",
     "clinic_reminder": "AUTO_DEFAULT",
+    "clinic_self_study_completed": "AUTO_DEFAULT",
+    "clinic_result_notification": "AUTO_DEFAULT",
     "counseling_reservation_created": "AUTO_DEFAULT",
 
     # MANUAL_DEFAULT — 선생 검토 필요 (preview → confirm)
@@ -62,7 +64,7 @@ TRIGGER_POLICY = {
     "class_enrollment_complete": "DISABLED",
     "enrollment_expiring_soon": "DISABLED",
     "student_signup": "DISABLED",
-    "clinic_self_study_completed": "DISABLED",  # clinic_check_out으로 대체
+
 }
 
 

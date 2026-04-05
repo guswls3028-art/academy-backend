@@ -865,12 +865,22 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 "updated_at",
             ])
 
-        # ── 클리닉 퇴실(완료) 알림 (AUTO_DEFAULT, 학생+학부모) ──
+        # ── 클리닉 퇴실(완료) + 자율학습 완료 알림 ──
         _t = getattr(request, "tenant", None)
         _s = obj.student
         _session = obj.session
-        _ctx = {"클리닉명": getattr(_session, "title", "") if _session else "", "장소": getattr(_session, "location", "") if _session else ""}
-        transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_check_out", _ctx))
+        _now = timezone.now()
+        _ctx = {
+            "클리닉명": getattr(_session, "title", "") if _session else "",
+            "장소": getattr(_session, "location", "") if _session else "",
+            "날짜": str(_session.date) if _session and _session.date else _now.strftime("%Y-%m-%d"),
+            "시간": _now.strftime("%H:%M"),
+            "_domain_object_id": str(obj.pk),
+        }
+        def _send_complete_notifications():
+            _send_clinic_notification(_t, _s, "clinic_check_out", _ctx)
+            _send_clinic_notification(_t, _s, "clinic_self_study_completed", _ctx)
+        transaction.on_commit(_send_complete_notifications)
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}

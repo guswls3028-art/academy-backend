@@ -25,6 +25,43 @@ from apps.domains.progress.models import ClinicLink
 logger = logging.getLogger(__name__)
 
 
+def _send_resolution_notification(enrollment_id: int, session_id: int, resolution_type: str):
+    """클리닉 해소 완료 알림 (best-effort, on_commit에서 호출)."""
+    try:
+        from apps.domains.enrollment.models import Enrollment
+        from apps.support.messaging.services import send_event_notification
+
+        enr = Enrollment.objects.select_related("student", "tenant", "lecture").filter(
+            id=enrollment_id,
+        ).first()
+        if not enr or not enr.student or not enr.tenant:
+            return
+
+        # 해소 결과 ��글 매핑
+        result_label = {
+            "EXAM_PASS": "시험 통과",
+            "HOMEWORK_PASS": "과제 통과",
+            "MANUAL_OVERRIDE": "수동 해소",
+            "WAIVED": "면제",
+        }.get(resolution_type, "해소")
+
+        context = {
+            "클리닉명": str(getattr(enr.lecture, "title", "") or ""),
+            "클리닉합불": result_label,
+            "_domain_object_id": f"{enrollment_id}:{session_id}",
+        }
+        for send_to in ("parent", "student"):
+            send_event_notification(
+                tenant=enr.tenant,
+                trigger="clinic_result_notification",
+                student=enr.student,
+                send_to=send_to,
+                context=context,
+            )
+    except Exception:
+        logger.debug("clinic_result_notification failed (enrollment=%s)", enrollment_id, exc_info=True)
+
+
 class ClinicResolutionService:
     """
     ClinicLink 해소 단일 진실 서비스.
@@ -85,6 +122,8 @@ class ClinicResolutionService:
                 "(enrollment=%s, session=%s, exam=%s, score=%s)",
                 count, enrollment_id, session_id, exam_id, score,
             )
+            _eid, _sid = enrollment_id, session_id
+            transaction.on_commit(lambda: _send_resolution_notification(_eid, _sid, "EXAM_PASS"))
         return count
 
     @staticmethod
@@ -138,6 +177,8 @@ class ClinicResolutionService:
                 "(enrollment=%s, session=%s, homework=%s)",
                 count, enrollment_id, session_id, homework_id,
             )
+            _eid, _sid = enrollment_id, session_id
+            transaction.on_commit(lambda: _send_resolution_notification(_eid, _sid, "HOMEWORK_PASS"))
         return count
 
     @staticmethod
@@ -168,6 +209,8 @@ class ClinicResolutionService:
         link.save(update_fields=["resolved_at", "resolution_type", "resolution_evidence", "memo", "updated_at"])
 
         logger.info("clinic_resolution: MANUAL_OVERRIDE (link=%s, user=%s)", clinic_link_id, user_id)
+        _eid, _sid = link.enrollment_id, link.session_id
+        transaction.on_commit(lambda: _send_resolution_notification(_eid, _sid, "MANUAL_OVERRIDE"))
         return link
 
     @staticmethod
@@ -198,6 +241,8 @@ class ClinicResolutionService:
         link.save(update_fields=["resolved_at", "resolution_type", "resolution_evidence", "memo", "updated_at"])
 
         logger.info("clinic_resolution: WAIVED (link=%s, user=%s)", clinic_link_id, user_id)
+        _eid, _sid = link.enrollment_id, link.session_id
+        transaction.on_commit(lambda: _send_resolution_notification(_eid, _sid, "WAIVED"))
         return link
 
     @staticmethod
