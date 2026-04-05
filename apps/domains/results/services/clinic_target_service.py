@@ -313,6 +313,7 @@ class ClinicTargetService:
                 "parent_phone": parent_phone or "",
                 "student_phone": student_phone or "",
                 "school": school_name or "",
+                "school_type": school_type,
                 "grade": grade_val,
                 "profile_photo_url": profile_photo_url,
             }

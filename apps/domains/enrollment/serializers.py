@@ -14,6 +14,7 @@ class StudentShortSerializer(serializers.ModelSerializer):
             "name",
             "grade",
             "school_type",
+            "elementary_school",
             "high_school",
             "middle_school",
             "high_school_class",

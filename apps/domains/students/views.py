@@ -731,7 +731,7 @@ class StudentViewSet(ModelViewSet):
                     user.set_password(password)
                     user.save()
                     school_val = (student_data.get("school") or "").strip() or None
-                    st, high_school, middle_school = normalize_school_from_name(
+                    st, elementary_school, high_school, middle_school = normalize_school_from_name(
                         school_val, student_data.get("school_type")
                     )
                     high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
@@ -1641,6 +1641,7 @@ class RegistrationRequestViewSet(ModelViewSet):
                 parent_phone=data.get("parent_phone", ""),
                 phone=data.get("phone"),
                 school_type=data.get("school_type", "HIGH"),
+                elementary_school=(data.get("elementary_school") or "") or None,
                 high_school=(data.get("high_school") or "") or None,
                 middle_school=(data.get("middle_school") or "") or None,
                 high_school_class=(data.get("high_school_class") or "") or None,
