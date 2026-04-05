@@ -129,6 +129,16 @@ class SessionProgressCalculator:
             )
         }
 
+        # 미응시(NOT_SUBMITTED) ExamAttempt 식별
+        not_submitted_exam_ids: set = set()
+        for ea in ExamAttempt.objects.filter(
+            exam_id__in=[int(x) for x in exam_ids],
+            enrollment_id=int(enrollment_id),
+        ):
+            meta = ea.meta if isinstance(ea.meta, dict) else {}
+            if meta.get("status") == "NOT_SUBMITTED":
+                not_submitted_exam_ids.add(int(ea.exam_id))
+
         per_exam_rows: List[Dict[str, Any]] = []
         for r in results:
             ex = exams.get(int(r.target_id))
@@ -143,13 +153,22 @@ class SessionProgressCalculator:
             )
             score = cls._safe_float(r.total_score, default=0.0)
 
+            # 미응시 학생은 pass_score와 무관하게 불합격
+            is_not_submitted = int(r.target_id) in not_submitted_exam_ids
+            if is_not_submitted:
+                passed_value = False
+            elif pass_score > 0:
+                passed_value = bool(score >= float(pass_score))
+            else:
+                passed_value = True  # pass_score=0 + 응시완료 → 기준 없음, 통과
+
             per_exam_rows.append(
                 {
                     "exam_id": int(r.target_id),
                     "score": score,
                     "max_score": cls._safe_float(r.max_score, default=0.0),
                     "pass_score": float(pass_score),
-                    "passed": bool(score >= float(pass_score)) if pass_score > 0 else True,
+                    "passed": passed_value,
                     "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
                     "attempt_count": int(attempt_counts.get(int(r.target_id), 0)),
                 }
@@ -196,10 +215,16 @@ class SessionProgressCalculator:
             aggregate_score = cls._safe_float(best.get("score"), 0.0)
             selected_pass_score = cls._safe_float(best.get("pass_score"), 0.0)
 
-        if selected_pass_score > 0:
+        # 미응시만 있고 실제 응시가 없으면 불합격
+        all_not_submitted = all(not x["passed"] for x in per_exam_rows) and all(
+            int(x["exam_id"]) in not_submitted_exam_ids for x in per_exam_rows
+        )
+        if all_not_submitted:
+            exam_passed = False
+        elif selected_pass_score > 0:
             exam_passed = bool((aggregate_score or 0.0) >= float(selected_pass_score))
         else:
-            exam_passed = True  # pass_score=0 → 기준 없음, 통과 처리
+            exam_passed = True  # pass_score=0 + 응시자 존재 → 기준 없음, 통과 처리
 
         meta = {
             "strategy": str(strategy),

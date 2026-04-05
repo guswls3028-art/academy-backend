@@ -235,7 +235,7 @@ class ExamGradingService:
 
         # is_passed 재계산 (수동 점수 반영)
         pass_score = float(getattr(exam, "pass_score", 0) or 0)
-        result.is_passed = result.total_score >= pass_score if pass_score > 0 else False
+        result.is_passed = result.total_score >= pass_score if pass_score > 0 else True
 
         result.status = ExamResult.Status.DRAFT
 
