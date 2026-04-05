@@ -120,6 +120,8 @@ class MessageTemplate(models.Model):
         CLINIC = "clinic", "클리닉"
         PAYMENT = "payment", "결제"
         NOTICE = "notice", "운영공지"
+        COMMUNITY = "community", "커뮤니티"
+        STAFF = "staff", "직원"
 
     tenant = models.ForeignKey(
         "core.Tenant",
@@ -214,7 +216,8 @@ class AutoSendConfig(models.Model):
         CLINIC_CHECK_IN = "clinic_check_in", "클리닉 입실"
         CLINIC_CHECK_OUT = "clinic_check_out", "클리닉 퇴실(완료)"
         CLINIC_ABSENT = "clinic_absent", "클리닉 결석"
-        CLINIC_SELF_STUDY_COMPLETED = "clinic_self_study_completed", "자율학습 완료(레거시)"
+        CLINIC_SELF_STUDY_COMPLETED = "clinic_self_study_completed", "자율학습 완료"
+        CLINIC_RESULT_NOTIFICATION = "clinic_result_notification", "클리닉 대상 해소(완료)"
         COUNSELING_RESERVATION_CREATED = "counseling_reservation_created", "상담 예약 완료"
         # G. 결제
         PAYMENT_COMPLETE = "payment_complete", "결제 완료"
