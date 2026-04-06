@@ -20,11 +20,13 @@ from __future__ import annotations
 SOLAPI_CLINIC_INFO = "KA01TP2604061058318608Hy40ZnTFZT"      # 클리닉 일정 안내
 SOLAPI_CLINIC_CHANGE = "KA01TP260406110706969XS06XRZveEk"    # 클리닉 일정 변경
 SOLAPI_SCORE = "KA01TP260406105458211774JKJ3OU55"            # 성적표발송
+SOLAPI_ATTENDANCE = "KA01TP260406121126868FGddLmrDFUC"       # 수업출석안내
 
 UNIFIED_TEMPLATE_IDS = frozenset({
     SOLAPI_CLINIC_INFO,
     SOLAPI_CLINIC_CHANGE,
     SOLAPI_SCORE,
+    SOLAPI_ATTENDANCE,
 })
 
 # ──────────────────────────────────────────
@@ -34,11 +36,13 @@ UNIFIED_TEMPLATE_IDS = frozenset({
 TYPE_CLINIC_INFO = "clinic_info"        # 장소/날짜/시간
 TYPE_CLINIC_CHANGE = "clinic_change"    # 기존일정/변동사항/수정자
 TYPE_SCORE = "score"                    # 강의명/차시명
+TYPE_ATTENDANCE = "attendance"          # 강의명/차시명/강의날짜/강의시간
 
 TEMPLATE_TYPE_TO_SOLAPI_ID = {
     TYPE_CLINIC_INFO: SOLAPI_CLINIC_INFO,
     TYPE_CLINIC_CHANGE: SOLAPI_CLINIC_CHANGE,
     TYPE_SCORE: SOLAPI_SCORE,
+    TYPE_ATTENDANCE: SOLAPI_ATTENDANCE,
 }
 
 # ──────────────────────────────────────────
@@ -60,10 +64,12 @@ TRIGGER_TO_TEMPLATE_TYPE: dict[str, str] = {
     "clinic_reservation_changed": TYPE_CLINIC_CHANGE,
     "clinic_cancelled": TYPE_CLINIC_CHANGE,
 
+    # 수업출석안내 (강의명/차시명/강의날짜/강의시간)
+    "check_in_complete": TYPE_ATTENDANCE,
+    "absent_occurred": TYPE_ATTENDANCE,
+    "lecture_session_reminder": TYPE_ATTENDANCE,
+
     # 성적표발송 (강의명/차시명)
-    "check_in_complete": TYPE_SCORE,
-    "absent_occurred": TYPE_SCORE,
-    "lecture_session_reminder": TYPE_SCORE,
     "exam_scheduled_days_before": TYPE_SCORE,
     "exam_start_minutes_before": TYPE_SCORE,
     "exam_not_taken": TYPE_SCORE,
@@ -107,6 +113,9 @@ TEMPLATE_TYPE_VARIABLES: dict[str, list[str]] = {
     ],
     TYPE_SCORE: [
         "학원이름", "학생이름", "강의명", "차시명", "내용", "사이트링크",
+    ],
+    TYPE_ATTENDANCE: [
+        "학원이름", "학생이름", "강의명", "차시명", "강의날짜", "강의시간", "내용", "사이트링크",
     ],
 }
 
@@ -159,9 +168,11 @@ def build_unified_replacements(
         "클리닉기존일정": "clinic_old_schedule",
         "클리닉변동사항": "clinic_changes",
         "클리닉수정자": "clinic_modifier",
-        # score
+        # score / attendance
         "강의명": "lecture_name",
         "차시명": "session_name",
+        "강의날짜": "date",
+        "강의시간": "time",
         "시험명": "exam_name",
         "과제명": "assignment_name",
         "성적": "score",

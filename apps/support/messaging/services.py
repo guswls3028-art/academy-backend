@@ -427,6 +427,18 @@ def send_event_notification(
                 f"{content_value}\n"
                 f"{site_url}"
             ).strip()
+        elif _template_type == "attendance":
+            text = (
+                f"{academy_name}입니다.\n\n"
+                f"{name}학생님.\n\n"
+                f"출석 안내 드립니다.\n"
+                f"강의: {_ctx.get('lecture_name', _ctx.get('강의명', ''))}\n"
+                f"차시: {_ctx.get('session_name', _ctx.get('차시명', ''))}\n"
+                f"날짜: {_ctx.get('date', '')}\n"
+                f"시간: {_ctx.get('time', '')}\n\n"
+                f"{content_value}\n"
+                f"{site_url}"
+            ).strip()
         elif _template_type == "score":
             text = (
                 f"{academy_name}입니다.\n\n"
