@@ -270,6 +270,13 @@ class Session(TimestampModel):
 
     class Meta:
         ordering = ["order"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["lecture", "section", "order"],
+                condition=models.Q(section__isnull=False),
+                name="uniq_session_order_per_lecture_section",
+            ),
+        ]
 
     def __str__(self):
         section_label = f" ({self.section.label}반)" if self.section else ""

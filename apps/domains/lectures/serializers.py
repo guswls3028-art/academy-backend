@@ -22,6 +22,25 @@ class SessionSerializer(serializers.ModelSerializer):
         fields = "__all__"
         ref_name = "LectureSession"
 
+    def validate(self, attrs):
+        """
+        section이 제공된 경우, 해당 section이 같은 tenant + 같은 lecture에 속하는지 검증.
+        """
+        section = attrs.get("section")
+        lecture = attrs.get("lecture")
+
+        if section and lecture:
+            if section.lecture_id != lecture.id:
+                raise serializers.ValidationError(
+                    {"section": "반은 해당 강의에 속한 반이어야 합니다."}
+                )
+            if section.tenant_id != lecture.tenant_id:
+                raise serializers.ValidationError(
+                    {"section": "반과 강의의 학원이 일치하지 않습니다."}
+                )
+
+        return attrs
+
 
 class SectionSerializer(serializers.ModelSerializer):
     day_of_week_display = serializers.CharField(source="get_day_of_week_display", read_only=True)

@@ -215,16 +215,22 @@ class SessionViewSet(ModelViewSet):
 
     def perform_create(self, serializer):
         """
-        🔐 Session 생성 시 lecture.tenant 검증
-        order 미제공 시 해당 강의의 max(order)+1 자동 설정
+        🔐 Session 생성 시 lecture.tenant 검증 + section 일관성 검증
+        order 미제공 시 해당 강의(+반)의 max(order)+1 자동 설정
         """
         lecture = serializer.validated_data["lecture"]
         if lecture.tenant_id != self.request.tenant.id:
             raise PermissionDenied("다른 학원의 강의에는 세션을 추가할 수 없습니다.")
 
+        section = serializer.validated_data.get("section")
+        if section:
+            if section.lecture_id != lecture.id:
+                raise ValidationError("반은 해당 강의에 속한 반이어야 합니다.")
+            if section.tenant_id != self.request.tenant.id:
+                raise PermissionDenied("다른 학원의 반에 세션을 추가할 수 없습니다.")
+
         order = serializer.validated_data.get("order")
         if order is None:
-            section = serializer.validated_data.get("section")
             if section:
                 # section_mode: 반 내 순번
                 agg = Session.objects.filter(
@@ -237,11 +243,19 @@ class SessionViewSet(ModelViewSet):
 
     def perform_update(self, serializer):
         """
-        🔐 Session 수정 시 lecture FK 변경 → 테넌트 검증
+        🔐 Session 수정 시 lecture FK 변경 → 테넌트 검증 + section 일관성 검증
         """
         lecture = serializer.validated_data.get("lecture", serializer.instance.lecture)
         if lecture.tenant_id != self.request.tenant.id:
             raise PermissionDenied("다른 학원의 강의로 세션을 이동할 수 없습니다.")
+
+        section = serializer.validated_data.get("section", serializer.instance.section)
+        if section:
+            if section.lecture_id != lecture.id:
+                raise ValidationError("반은 해당 강의에 속한 반이어야 합니다.")
+            if section.tenant_id != self.request.tenant.id:
+                raise PermissionDenied("다른 학원의 반으로 세션을 이동할 수 없습니다.")
+
         serializer.save()
 
 
@@ -305,15 +319,17 @@ class SectionViewSet(ModelViewSet):
         )
         section_map = {s.label: s for s in sections}
 
-        agg = Session.objects.filter(lecture=lecture).aggregate(max_order=Max("order"))
-        next_order = (agg["max_order"] or 0) + 1
-
         created = []
         with transaction.atomic():
             for label, date_str in dates.items():
                 section = section_map.get(label)
                 if not section:
                     continue
+                # per-section max order 계산
+                agg = Session.objects.filter(
+                    lecture=lecture, section=section,
+                ).aggregate(max_order=Max("order"))
+                next_order = (agg["max_order"] or 0) + 1
                 session = Session.objects.create(
                     lecture=lecture,
                     section=section,
@@ -409,11 +425,18 @@ class SectionAssignmentViewSet(ModelViewSet):
         if not sections:
             raise ValidationError(f"{section_type} 타입의 활성 반이 없습니다.")
 
-        # 이미 편성된 enrollment IDs
+        # 이미 편성된 enrollment IDs (MANUAL 배정 포함 — 자동배정으로 덮어쓰지 않음)
         if section_type == "CLASS":
             assigned_ids = set(
                 SectionAssignment.objects.filter(
                     tenant=tenant, enrollment__lecture=lecture,
+                ).values_list("enrollment_id", flat=True)
+            )
+            # MANUAL 배정은 별도로 추적하여 update_or_create에서 보호
+            manual_ids = set(
+                SectionAssignment.objects.filter(
+                    tenant=tenant, enrollment__lecture=lecture,
+                    source="MANUAL",
                 ).values_list("enrollment_id", flat=True)
             )
         else:
@@ -423,11 +446,20 @@ class SectionAssignmentViewSet(ModelViewSet):
                 ).exclude(clinic_section__isnull=True)
                 .values_list("enrollment_id", flat=True)
             )
+            # CLINIC 자동배정도 MANUAL 보호
+            manual_ids = set(
+                SectionAssignment.objects.filter(
+                    tenant=tenant, enrollment__lecture=lecture,
+                    source="MANUAL",
+                ).exclude(clinic_section__isnull=True)
+                .values_list("enrollment_id", flat=True)
+            )
 
-        # 미편성 활성 수강생
+        # 미편성 활성 수강생 (MANUAL 배정된 학생도 제외 — 자동배정으로 덮어쓰지 않음)
+        excluded_ids = assigned_ids | manual_ids
         unassigned = Enrollment.objects.filter(
             tenant=tenant, lecture=lecture, status="ACTIVE",
-        ).exclude(id__in=assigned_ids)
+        ).exclude(id__in=excluded_ids)
 
         unassigned_list = list(unassigned)
         if not unassigned_list:
