@@ -224,7 +224,14 @@ class SessionViewSet(ModelViewSet):
 
         order = serializer.validated_data.get("order")
         if order is None:
-            agg = enroll_repo.session_aggregate_max_order(lecture)
+            section = serializer.validated_data.get("section")
+            if section:
+                # section_mode: 반 내 순번
+                agg = Session.objects.filter(
+                    lecture=lecture, section=section,
+                ).aggregate(max_order=Max("order"))
+            else:
+                agg = enroll_repo.session_aggregate_max_order(lecture)
             order = (agg["max_order"] or 0) + 1
         serializer.save(order=order)
 
