@@ -106,7 +106,7 @@ class TestSendEventNotification(TestCase):
         # alimtalk replacements
         reps = {r["key"]: r["value"] for r in kw["alimtalk_replacements"]}
         self.assertEqual(reps["학원명"], "학원플러스")
-        self.assertEqual(reps["학생이름2"], "홍길")
+        self.assertEqual(reps["학생이름2"], "길동")
         self.assertEqual(reps["강의명"], "수학A반")
 
     @patch(f"{_SVC}.enqueue_sms")
@@ -506,7 +506,7 @@ class TestScoreReportFormat(TestCase):
         )
         replacements = {
             "학원명": "학원플러스",
-            "학생이름2": "홍길",
+            "학생이름2": "길동",
             "강의명": "수학A반",
             "차시명": "5차시",
             "시험성적": "[시험]\n- 단원평가: 92/100 (92%) 합격\n\n[요약]\n- 시험: 1/1 합격 (평균 92점)\n- 최종: 합격",
@@ -518,7 +518,7 @@ class TestScoreReportFormat(TestCase):
 
         self.assertNotIn("#{", text)
         self.assertIn("학원플러스", text)
-        self.assertIn("홍길", text)
+        self.assertIn("길동", text)
         self.assertIn("수학A반 · 5차시", text)
         self.assertIn("단원평가: 92/100 (92%) 합격", text)
         self.assertIn("최종: 합격", text)
@@ -624,7 +624,7 @@ class TestEnrollmentAndWithdrawalNotifications(TestCase):
         self.assertTrue(result)
         reps = {r["key"]: r["value"] for r in mock_enqueue.call_args.kwargs["alimtalk_replacements"]}
         self.assertEqual(reps["학원명"], "학원플러스")
-        self.assertEqual(reps["학생이름2"], "홍길")
+        self.assertEqual(reps["학생이름2"], "길동")
 
     @patch(f"{_SVC}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
@@ -649,7 +649,7 @@ class TestEnrollmentAndWithdrawalNotifications(TestCase):
         self.assertTrue(result)
         text = mock_enqueue.call_args.kwargs["text"]
         self.assertIn("학원플러스", text)
-        self.assertIn("홍길", text)
+        self.assertIn("길동", text)
         self.assertNotIn("#{", text)
 
 

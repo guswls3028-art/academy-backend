@@ -589,8 +589,8 @@ class SendMessageView(APIView):
                 skipped_no_phone += 1
                 continue
             name = (s.name or "").strip()
-            name_2 = name[-2:] if len(name) >= 2 else name
-            name_3 = name[:3] if len(name) >= 3 else name
+            name_2 = name[1:] if len(name) >= 2 else name  # 성(첫 글자) 제외 = 이름만
+            name_3 = name  # 전체 이름 (하위 호환: 기존 #{학생이름3} 치환)
             site_url = get_tenant_site_url(request.tenant) or ""
             academy_name = (tenant.name or "").strip()
             text = (
@@ -737,8 +737,8 @@ class SendMessageView(APIView):
                 skipped_no_phone += 1
                 continue
             name = (s.name or "").strip()
-            name_2 = name[-2:] if len(name) >= 2 else name
-            name_3 = name[:3] if len(name) >= 3 else name
+            name_2 = name[1:] if len(name) >= 2 else name  # 성(첫 글자) 제외 = 이름만
+            name_3 = name  # 전체 이름 (하위 호환: 기존 #{학생이름3} 치환)
             site_url = get_tenant_site_url(request.tenant) or ""
             academy_name = (tenant.name or "").strip()
             text = (

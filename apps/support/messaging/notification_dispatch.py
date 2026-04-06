@@ -115,7 +115,7 @@ def build_attendance_preview(
     for att in attendances:
         student = att.enrollment.student
         name = (student.name or "").strip()
-        name_2 = name[-2:] if len(name) >= 2 else name
+        name_2 = name[1:] if len(name) >= 2 else name  # 성(첫 글자) 제외 = 이름만
 
         if send_to == "parent":
             phone = (student.parent_phone or "").replace("-", "").strip()
@@ -222,7 +222,7 @@ def build_student_list_preview(
     recipients = []
     for student in students:
         name = (student.name or "").strip()
-        name_2 = name[-2:] if len(name) >= 2 else name
+        name_2 = name[1:] if len(name) >= 2 else name  # 성(첫 글자) 제외 = 이름만
 
         if send_to == "parent":
             phone = (student.parent_phone or "").replace("-", "").strip()
