@@ -286,6 +286,11 @@ def send_event_notification(
     """
     from apps.support.messaging.selectors import get_auto_send_config
     from apps.support.messaging.policy import get_owner_tenant_id, is_messaging_disabled, MessagingPolicyError, is_event_dry_run, can_send_sms
+    from apps.support.messaging.alimtalk_content_builders import (
+        get_solapi_template_id as get_unified_tid,
+        get_template_type,
+        build_unified_replacements,
+    )
 
     if is_messaging_disabled(tenant.id):
         logger.info("send_event_notification skipped: tenant_id=%s messaging disabled", tenant.id)
@@ -328,9 +333,15 @@ def send_event_notification(
     solapi_approved = solapi_template_id and template.solapi_status == "APPROVED"
 
     effective_mode = config.message_mode or "alimtalk"
-    # 알림톡 미승인 시: 오너 테넌트의 승인 템플릿으로 폴백 시도
-    owner_alimtalk_template_id = ""  # 오너 폴백용
-    if not solapi_approved:
+
+    # ── 통합 알림톡 템플릿 감지 ──
+    # 트리거에 매핑된 통합 템플릿이 있으면 해당 ID 사용
+    unified_tid = get_unified_tid(trigger)
+    use_unified = bool(unified_tid)
+
+    # 알림톡 미승인 시: 통합 템플릿 > 오너 테넌트 승인 템플릿 폴백
+    owner_alimtalk_template_id = ""
+    if not solapi_approved and not use_unified:
         # 오너 테넌트에서 같은 트리거의 승인 템플릿 조회
         owner_id = get_owner_tenant_id()
         if int(tenant.id) != owner_id:
@@ -376,79 +387,125 @@ def send_event_notification(
     academy_name = (getattr(tenant, "name", "") or "").strip()
     site_url = get_tenant_site_url(tenant) or ""
 
-    # 알림톡 치환 변수
-    replacements = [
-        {"key": "학원명", "value": academy_name},
-        {"key": "학생이름", "value": name},
-        {"key": "학생이름2", "value": name_2},
-        {"key": "학생이름3", "value": name_3},
-        {"key": "사이트링크", "value": site_url},
-    ]
-    for k, v in (context or {}).items():
-        if k.startswith("_"):
-            continue  # _domain_object_id 등 내부 키는 치환/전송 제외
-        replacements.append({"key": k, "value": str(v)})
+    # ── 통합 템플릿 모드: #{내용} + 변수 replacements 빌드 ──
+    if use_unified:
+        # template.body = #{내용}에 들어갈 안내 문구 (선생님 편집 가능)
+        content_body = (template.body or "").strip()
 
-    # 오너 폴백 템플릿 사용 시: #{공지내용} 변수를 context에서 조합하여 제공
-    # 오너 범용 클리닉 템플릿은 #{공지내용}을 단일 변수로 사용 — 도메인 컨텍스트에서 조합
-    if owner_alimtalk_template_id and not any(r["key"] == "공지내용" for r in replacements):
-        _parts = []
-        for k, v in (context or {}).items():
-            if k.startswith("_") or not str(v).strip():
-                continue
-            _parts.append(str(v).strip())
-        if _parts:
-            replacements.append({"key": "공지내용", "value": "\n".join(_parts)})
-
-    # 메시지 본문 (템플릿 치환)
-    text = (template.body or "").strip()
-    all_vars = {
-        "학원명": academy_name, "학생이름": name, "학생이름2": name_2,
-        "학생이름3": name_3, "사이트링크": site_url,
-    }
-    all_vars.update({k: str(v) for k, v in (context or {}).items() if not k.startswith("_")})
-    for k, v in all_vars.items():
-        text = text.replace(f"#{{{k}}}", v)
-
-    # required/optional 변수 검증 — 미치환 #{...} 잔존 검사
-    import re as _re
-    # optional: 공지내용, 내용 — 빈 문자열 허용
-    _OPTIONAL_VARS = {"공지내용", "내용"}
-    remaining = _re.findall(r"#\{([^}]+)\}", text)
-    required_missing = [v for v in remaining if v not in _OPTIONAL_VARS]
-    if required_missing:
-        logger.error(
-            "send_event_notification BLOCKED: trigger=%s template=%s required_vars missing: %s",
-            trigger, template.name, required_missing,
+        # Solapi replacements: 내용 + 학원이름 + 학생이름 + 도메인 변수 + 사이트링크
+        replacements = build_unified_replacements(
+            trigger=trigger,
+            content_body=content_body,
+            context=context or {},
+            tenant_name=academy_name,
+            student_name=name,
+            site_url=site_url,
         )
-        return False
-    # optional 변수만 빈 문자열로 치환
-    for opt in _OPTIONAL_VARS:
-        text = text.replace(f"#{{{opt}}}", "")
-    text = _re.sub(r"\n{3,}", "\n\n", text).strip()
+
+        # SMS 폴백용 text — 알림톡 전체 구조를 평문으로 재현
+        content_value = next((r["value"] for r in replacements if r["key"] == "내용"), "")
+        _ctx = context or {}
+        _template_type = get_template_type(trigger)
+        if _template_type == "clinic_info":
+            text = (
+                f"{academy_name}입니다.\n\n"
+                f"{name}학생님.\n\n"
+                f"클리닉 안내 드립니다.\n"
+                f"장소: {_ctx.get('place', '')}\n"
+                f"날짜: {_ctx.get('date', '')}\n"
+                f"시간: {_ctx.get('time', '')}\n\n"
+                f"{content_value}\n"
+                f"{site_url}"
+            ).strip()
+        elif _template_type == "clinic_change":
+            text = (
+                f"{academy_name}입니다.\n\n"
+                f"{name}학생님. 클리닉 일정이 변경되었습니다.\n\n"
+                f"기존일정: {_ctx.get('clinic_old_schedule', '')}\n"
+                f"변동사항: {_ctx.get('clinic_changes', '')}\n"
+                f"수정자: {_ctx.get('clinic_modifier', '')}\n\n"
+                f"{content_value}\n"
+                f"{site_url}"
+            ).strip()
+        elif _template_type == "score":
+            text = (
+                f"{academy_name}입니다.\n\n"
+                f"{name}학생님.\n\n"
+                f"성적표 안내 드립니다.\n"
+                f"강의: {_ctx.get('lecture_name', _ctx.get('강의명', ''))}\n"
+                f"차시: {_ctx.get('session_name', _ctx.get('차시명', ''))}\n\n"
+                f"{content_value}\n"
+                f"{site_url}"
+            ).strip()
+        else:
+            text = f"{content_value}\n{site_url}".strip()
+
+        _alimtalk_tid = unified_tid
+
+    else:
+        # ── 기존 모드 (가입 안내 등 개별 승인 템플릿) ──
+        replacements = [
+            {"key": "학원명", "value": academy_name},
+            {"key": "학생이름", "value": name},
+            {"key": "학생이름2", "value": name_2},
+            {"key": "학생이름3", "value": name_3},
+            {"key": "사이트링크", "value": site_url},
+        ]
+        for k, v in (context or {}).items():
+            if k.startswith("_"):
+                continue
+            replacements.append({"key": k, "value": str(v)})
+
+        # 오너 폴백 시 #{공지내용} 조합
+        if owner_alimtalk_template_id and not any(r["key"] == "공지내용" for r in replacements):
+            _parts = []
+            for k, v in (context or {}).items():
+                if k.startswith("_") or not str(v).strip():
+                    continue
+                _parts.append(str(v).strip())
+            if _parts:
+                replacements.append({"key": "공지내용", "value": "\n".join(_parts)})
+
+        # 메시지 본문 (템플릿 치환)
+        text = (template.body or "").strip()
+        all_vars = {
+            "학원명": academy_name, "학생이름": name, "학생이름2": name_2,
+            "학생이름3": name_3, "사이트링크": site_url,
+        }
+        all_vars.update({k: str(v) for k, v in (context or {}).items() if not k.startswith("_")})
+        for k, v in all_vars.items():
+            text = text.replace(f"#{{{k}}}", v)
+
+        import re as _re
+        _OPTIONAL_VARS = {"공지내용", "내용"}
+        remaining = _re.findall(r"#\{([^}]+)\}", text)
+        required_missing = [v for v in remaining if v not in _OPTIONAL_VARS]
+        if required_missing:
+            logger.error(
+                "send_event_notification BLOCKED: trigger=%s template=%s required_vars missing: %s",
+                trigger, template.name, required_missing,
+            )
+            return False
+        for opt in _OPTIONAL_VARS:
+            text = text.replace(f"#{{{opt}}}", "")
+        text = _re.sub(r"\n{3,}", "\n\n", text).strip()
+
+        _alimtalk_tid = solapi_template_id if solapi_approved else owner_alimtalk_template_id
 
     sender = (getattr(tenant, "messaging_sender", "") or "").strip()
 
-    # 멱등성 키: trigger + student_id + domain_object_id (세션/예약 등) 기준
-    # 날짜 단위가 아닌 도메인 객체 단위로 중복 방지 → 같은 날 다른 세션 알림은 별개 발송
+    # 멱등성 키
     student_id = getattr(student, "id", None) or getattr(student, "pk", None)
     domain_object_id = (context or {}).get("_domain_object_id", "")
     if not domain_object_id:
-        # fallback: 날짜 + 트리거 조합 (이전 호환)
         from django.utils import timezone as _tz
         domain_object_id = _tz.localtime().strftime("%Y%m%d")
     stable_occurrence = f"{trigger}:{domain_object_id}"
 
-    # ── 발송 모드 결정: 사용자 설정(config) × 테넌트 능력(capability) ──
-    # 알림톡: 자체 승인 템플릿 > 오너 폴백 템플릿. 둘 다 없으면 불가.
-    _alimtalk_tid = solapi_template_id if solapi_approved else owner_alimtalk_template_id
+    # ── 발송 모드 결정 ──
     _can_alimtalk = bool(_alimtalk_tid)
     _can_sms = can_send_sms(tenant.id)
 
-    # 사용자 의도 기반 모드 결정 + 능력 필터링
-    # - 알림톡은 오너 폴백으로 항상 가능하므로, 의도에 포함되면 포함
-    # - SMS는 자체 키가 있어야만 가능
-    # - 둘 다 불가능한 경우만 빈 리스트 → 발송 실패
     if effective_mode == "both":
         modes_to_send = []
         if _can_alimtalk:
@@ -458,7 +515,6 @@ def send_event_notification(
     elif effective_mode == "alimtalk":
         modes_to_send = ["alimtalk"] if _can_alimtalk else []
     elif effective_mode == "sms":
-        # SMS 전용 설정이지만 SMS 불가능 → 알림톡 폴백 (메시지 유실 방지)
         if _can_sms:
             modes_to_send = ["sms"]
         elif _can_alimtalk:

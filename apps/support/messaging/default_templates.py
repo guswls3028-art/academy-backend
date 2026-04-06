@@ -69,294 +69,170 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         ),
         "minutes_before": None,
     },
-    # ───────── 출결 ─────────
+    # ───────── 출결 (통합 알림톡: score 템플릿) ─────────
+    # body = #{내용} 변수에만 들어가는 안내 문구.
+    # 나머지(학원이름, 학생이름, 강의명, 차시명, 사이트링크)는 솔라피 템플릿 하드코딩.
     "lecture_session_reminder": {
         "category": "attendance",
         "name": "[{academy_name}] 수업 시작 알림",
         "subject": "오늘 수업이 곧 시작됩니다",
-        "body": (
-            "#{학생이름2}학생님, 오늘 수업이 곧 시작됩니다.\n"
-            "\n"
-            "▶ 수업 정보\n"
-            "강의: #{강의명}\n"
-            "차시: #{차시명}\n"
-            "시간: #{날짜} #{시간}\n"
-            "\n"
-            "준비물을 챙기고 시간에 맞춰 입실해 주세요.\n"
-            "#{사이트링크}"
-        ),
+        "body": "오늘 수업이 곧 시작됩니다.\n\n준비물을 챙기고 시간에 맞춰 입실해 주세요.",
         "minutes_before": 30,
     },
     "check_in_complete": {
         "category": "attendance",
         "name": "[{academy_name}] 입실 완료 알림",
         "subject": "학생이 입실하였습니다",
-        "body": (
-            "#{학생이름2}학생이 학원에 입실하였습니다.\n"
-            "\n"
-            "강의: #{강의명}\n"
-            "차시: #{차시명}\n"
-            "시간: #{날짜} #{시간}\n"
-            "\n"
-            "출결 현황은 앱에서 확인하실 수 있습니다.\n"
-            "#{사이트링크}"
-        ),
+        "body": "학원에 입실하였습니다.\n\n출결 현황은 앱에서 확인하실 수 있습니다.",
         "minutes_before": None,
     },
     "absent_occurred": {
         "category": "attendance",
         "name": "[{academy_name}] 결석 발생 알림",
         "subject": "결석이 발생하였습니다",
-        "body": (
-            "#{학생이름2}학생님의 수업에 결석이 발생하였습니다.\n"
-            "\n"
-            "강의: #{강의명}\n"
-            "차시: #{차시명}\n"
-            "날짜: #{날짜}\n"
-            "\n"
-            "사유가 있으시면 학원으로 연락 부탁드립니다.\n"
-            "#{사이트링크}"
-        ),
+        "body": "수업에 결석이 발생하였습니다.\n\n사유가 있으시면 학원으로 연락 부탁드립니다.",
         "minutes_before": None,
     },
-    # ───────── 시험 ─────────
+    # ───────── 시험 (통합 알림톡: score 템플릿) ─────────
     "exam_scheduled_days_before": {
         "category": "exam",
         "name": "[{academy_name}] 시험 예정 안내",
         "subject": "시험이 예정되어 있습니다",
-        "body": (
-            "#{학생이름2}학생님, 시험이 예정되어 있습니다.\n"
-            "\n"
-            "▶ 시험 정보\n"
-            "시험명: #{시험명}\n"
-            "강의: #{강의명}\n"
-            "일시: #{날짜} #{시간}\n"
-            "\n"
-            "시험 범위를 앱에서 확인하고 미리 준비해 주세요.\n"
-            "#{사이트링크}"
-        ),
+        "body": "시험이 예정되어 있습니다.\n\n시험 범위를 앱에서 확인하고 미리 준비해 주세요.",
         "minutes_before": 1440,
     },
     "exam_start_minutes_before": {
         "category": "exam",
         "name": "[{academy_name}] 시험 시작 알림",
         "subject": "시험이 곧 시작됩니다",
-        "body": (
-            "#{학생이름2}학생님, 시험이 곧 시작됩니다.\n"
-            "\n"
-            "시험명: #{시험명}\n"
-            "강의: #{강의명}\n"
-            "시간: #{시간}\n"
-            "\n"
-            "앱에서 시험에 응시할 수 있습니다.\n"
-            "#{사이트링크}"
-        ),
+        "body": "시험이 곧 시작됩니다.\n\n앱에서 시험에 응시할 수 있습니다.",
         "minutes_before": 30,
     },
     "exam_not_taken": {
         "category": "exam",
         "name": "[{academy_name}] 시험 미응시 알림",
         "subject": "시험에 응시하지 않았습니다",
-        "body": (
-            "#{학생이름2}학생님, 예정된 시험에 아직 응시하지 않았습니다.\n"
-            "\n"
-            "시험명: #{시험명}\n"
-            "강의: #{강의명}\n"
-            "\n"
-            "응시 기한 내에 반드시 시험을 완료해 주세요.\n"
-            "미응시 시 불합격 처리될 수 있습니다.\n"
-            "#{사이트링크}"
-        ),
+        "body": "예정된 시험에 아직 응시하지 않았습니다.\n\n응시 기한 내에 반드시 시험을 완료해 주세요.",
         "minutes_before": None,
     },
     "exam_score_published": {
         "category": "grades",
         "name": "[{academy_name}] 성적 공개 안내",
         "subject": "시험 성적이 공개되었습니다",
-        "body": (
-            "#{학생이름2}학생님, 시험 성적이 공개되었습니다.\n"
-            "\n"
-            "시험명: #{시험명}\n"
-            "강의: #{강의명}\n"
-            "성적: #{시험성적}\n"
-            "\n"
-            "앱에서 상세 결과를 확인하실 수 있습니다.\n"
-            "#{사이트링크}"
-        ),
+        "body": "시험 성적이 공개되었습니다.\n\n앱에서 상세 결과를 확인하실 수 있습니다.",
         "minutes_before": None,
     },
     "retake_assigned": {
         "category": "exam",
         "name": "[{academy_name}] 재시험 대상 안내",
         "subject": "재시험 대상으로 지정되었습니다",
-        "body": (
-            "#{학생이름2}학생님, 재시험 대상으로 지정되었습니다.\n"
-            "\n"
-            "시험명: #{시험명}\n"
-            "강의: #{강의명}\n"
-            "\n"
-            "재시험 일정과 범위를 앱에서 확인해 주세요.\n"
-            "#{사이트링크}"
-        ),
+        "body": "재시험 대상으로 지정되었습니다.\n\n재시험 일정과 범위를 앱에서 확인해 주세요.",
         "minutes_before": None,
     },
-    # ───────── 과제 ─────────
+    # ───────── 과제 (통합 알림톡: score 템플릿) ─────────
     "assignment_registered": {
         "category": "assignment",
         "name": "[{academy_name}] 새 과제 등록 안내",
         "subject": "새로운 과제가 등록되었습니다",
-        "body": (
-            "#{학생이름2}학생님, 새로운 과제가 등록되었습니다.\n"
-            "\n"
-            "▶ 과제 정보\n"
-            "과제명: #{과제명}\n"
-            "강의: #{강의명}\n"
-            "차시: #{차시명}\n"
-            "\n"
-            "과제 내용과 제출 기한을 앱에서 확인해 주세요.\n"
-            "#{사이트링크}"
-        ),
+        "body": "새로운 과제가 등록되었습니다.\n\n과제 내용과 제출 기한을 앱에서 확인해 주세요.",
         "minutes_before": None,
     },
     "assignment_due_hours_before": {
         "category": "assignment",
         "name": "[{academy_name}] 과제 마감 임박 알림",
         "subject": "과제 제출 마감이 다가오고 있습니다",
-        "body": (
-            "#{학생이름2}학생님, 과제 제출 마감이 얼마 남지 않았습니다.\n"
-            "\n"
-            "과제명: #{과제명}\n"
-            "강의: #{강의명}\n"
-            "\n"
-            "아직 제출하지 않았다면 서둘러 주세요.\n"
-            "마감 후에는 제출이 어려울 수 있습니다.\n"
-            "#{사이트링크}"
-        ),
+        "body": "과제 제출 마감이 얼마 남지 않았습니다.\n\n아직 제출하지 않았다면 서둘러 주세요.",
         "minutes_before": 180,
     },
     "assignment_not_submitted": {
         "category": "assignment",
         "name": "[{academy_name}] 과제 미제출 알림",
         "subject": "과제가 미제출 상태입니다",
-        "body": (
-            "#{학생이름2}학생님, 과제가 아직 미제출 상태입니다.\n"
-            "\n"
-            "과제명: #{과제명}\n"
-            "강의: #{강의명}\n"
-            "\n"
-            "가능한 빨리 과제를 제출해 주세요.\n"
-            "사유가 있으시면 담당 선생님께 말씀해 주세요.\n"
-            "#{사이트링크}"
-        ),
+        "body": "과제가 아직 미제출 상태입니다.\n\n가능한 빨리 과제를 제출해 주세요.",
         "minutes_before": None,
     },
-    # ───────── 성적 ─────────
+    # ───────── 성적 (통합 알림톡: score 템플릿) ─────────
     "monthly_report_generated": {
         "category": "grades",
         "name": "[{academy_name}] 월간 성적 리포트",
         "subject": "이번 달 성적 리포트가 생성되었습니다",
-        "body": (
-            "#{학생이름2}학생님, 이번 달 성적 리포트가 생성되었습니다.\n"
-            "\n"
-            "시험·과제·출결 종합 분석 결과를 앱에서 확인하세요.\n"
-            "#{사이트링크}\n"
-            "\n"
-            "꾸준한 성장을 응원합니다."
-        ),
+        "body": "이번 달 성적 리포트가 생성되었습니다.\n\n시험·과제·출결 종합 분석 결과를 앱에서 확인하세요.",
         "minutes_before": None,
     },
-    # ───────── 클리닉/상담 ─────────
+    # ───────── 클리닉/상담 (통합 알림톡: clinic_info / clinic_change 리스트형 템플릿) ─────────
+    # body = #{내용} 변수에만 들어가는 안내 문구.
+    # 학원이름, 학생이름, 장소, 날짜, 시간, 사이트링크는 솔라피 리스트형 템플릿에 하드코딩.
+    # 리스트 항목 라벨(장소/날짜/시간/기존일정/변동사항/수정자)도 하드코딩 — 변수값만 제어 가능.
     "clinic_reminder": {
         "category": "clinic",
         "name": "[{academy_name}] 클리닉 시작 알림",
         "subject": "클리닉이 곧 시작됩니다",
-        "body": (
-            "#{학생이름2}학생님, 클리닉이 곧 시작됩니다.\n"
-            "\n"
-            "클리닉: #{클리닉명}\n"
-            "장소: #{장소}\n"
-            "시간: #{날짜} #{시간}\n"
-            "\n"
-            "시간에 맞춰 준비해 주세요.\n"
-            "#{사이트링크}"
-        ),
+        "body": "클리닉이 곧 시작됩니다.\n\n시간에 맞춰 준비해 주세요.",
         "minutes_before": 30,
     },
     "clinic_reservation_created": {
         "category": "clinic",
         "name": "[{academy_name}] 클리닉 예약 완료",
         "subject": "클리닉 예약이 완료되었습니다",
-        "body": (
-            "#{학생이름2}학생님, 클리닉 예약이 완료되었습니다.\n"
-            "\n"
-            "클리닉: #{클리닉명}\n"
-            "장소: #{장소}\n"
-            "일시: #{날짜} #{시간}\n"
-            "\n"
-            "변경이 필요하시면 앱에서 수정해 주세요.\n"
-            "#{사이트링크}"
-        ),
+        "body": "클리닉 예약이 완료되었습니다.\n\n변경이 필요하시면 앱에서 수정해 주세요.",
         "minutes_before": None,
     },
+    # clinic_change 리스트형 템플릿 (기존일정/변동사항/수정자 리스트)
     "clinic_reservation_changed": {
         "category": "clinic",
         "name": "[{academy_name}] 클리닉 예약 변경 안내",
         "subject": "클리닉 예약이 변경되었습니다",
-        "body": (
-            "#{학생이름2}학생님, 클리닉 예약 일정이 변경되었습니다.\n"
-            "\n"
-            "클리닉: #{클리닉명}\n"
-            "장소: #{장소}\n"
-            "변경 일시: #{날짜} #{시간}\n"
-            "\n"
-            "변경된 일정을 확인해 주세요.\n"
-            "#{사이트링크}"
-        ),
+        "body": "변경된 일정을 확인해 주세요.",
         "minutes_before": None,
     },
     "clinic_self_study_completed": {
         "category": "clinic",
         "name": "[{academy_name}] 자율학습 완료 안내",
         "subject": "자율학습이 완료되었습니다",
-        "body": (
-            "#{학생이름2}학생님, 자율학습이 완료되었습니다.\n"
-            "\n"
-            "클리닉: #{클리닉명}\n"
-            "일시: #{날짜} #{시간}\n"
-            "\n"
-            "수고하셨습니다.\n"
-            "#{사이트링크}"
-        ),
+        "body": "자율학습이 완료되었습니다.\n\n수고하셨습니다.",
+        "minutes_before": None,
+    },
+    # clinic_change 리스트형 템플릿
+    "clinic_cancelled": {
+        "category": "clinic",
+        "name": "[{academy_name}] 클리닉 예약 취소 안내",
+        "subject": "클리닉 예약이 취소되었습니다",
+        "body": "클리닉 예약이 취소되었습니다.\n\n재예약이 필요하시면 앱에서 신청해 주세요.",
+        "minutes_before": None,
+    },
+    "clinic_check_in": {
+        "category": "clinic",
+        "name": "[{academy_name}] 클리닉 입실 알림",
+        "subject": "클리닉에 입실하였습니다",
+        "body": "클리닉에 입실하였습니다.\n\n출결 현황은 앱에서 확인하실 수 있습니다.",
+        "minutes_before": None,
+    },
+    "clinic_check_out": {
+        "category": "clinic",
+        "name": "[{academy_name}] 클리닉 퇴실 알림",
+        "subject": "클리닉에서 퇴실하였습니다",
+        "body": "클리닉에서 퇴실하였습니다.\n\n수고하셨습니다.",
+        "minutes_before": None,
+    },
+    "clinic_absent": {
+        "category": "clinic",
+        "name": "[{academy_name}] 클리닉 결석 알림",
+        "subject": "클리닉에 결석하였습니다",
+        "body": "예정된 클리닉에 결석하였습니다.\n\n사유가 있으시면 학원으로 연락 부탁드립니다.",
         "minutes_before": None,
     },
     "clinic_result_notification": {
         "category": "clinic",
         "name": "[{academy_name}] 클리닉 결과 안내",
         "subject": "클리닉 결과를 안내드립니다",
-        "body": (
-            "#{학생이름2}학생님, 클리닉 결과를 안내드립니다.\n"
-            "\n"
-            "클리닉: #{클리닉명}\n"
-            "결과: #{클리닉합불}\n"
-            "\n"
-            "상세 내용은 앱에서 확인하실 수 있습니다.\n"
-            "#{사이트링크}"
-        ),
+        "body": "클리닉 결과를 안내드립니다.\n\n상세 내용은 앱에서 확인하실 수 있습니다.",
         "minutes_before": None,
     },
     "counseling_reservation_created": {
         "category": "clinic",
         "name": "[{academy_name}] 상담 예약 완료",
         "subject": "상담 예약이 완료되었습니다",
-        "body": (
-            "#{학생이름2}학생님, 상담 예약이 완료되었습니다.\n"
-            "\n"
-            "장소: #{장소}\n"
-            "일시: #{날짜} #{시간}\n"
-            "\n"
-            "시간에 맞춰 방문해 주세요.\n"
-            "#{사이트링크}"
-        ),
+        "body": "상담 예약이 완료되었습니다.\n\n시간에 맞춰 방문해 주세요.",
         "minutes_before": None,
     },
     # ───────── 결제 ─────────
@@ -519,20 +395,7 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "minutes_before": None,
     },
     # ───────── 운영공지 ─────────
-    "urgent_notice": {
-        "category": "notice",
-        "name": "[{academy_name}] 긴급 공지",
-        "subject": "긴급 공지사항",
-        "body": (
-            "#{학생이름2}학생님, 학원에서 긴급 공지사항을 안내드립니다.\n"
-            "\n"
-            "상세 내용은 앱에서 확인해 주세요.\n"
-            "#{사이트링크}\n"
-            "\n"
-            "중요한 내용이니 반드시 확인 부탁드립니다."
-        ),
-        "minutes_before": None,
-    },
+    # urgent_notice: 카카오 알림톡 정책 위반으로 제거
 }
 
 

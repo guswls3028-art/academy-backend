@@ -58,7 +58,7 @@ TRIGGER_POLICY = {
     "lecture_session_reminder": "MANUAL_DEFAULT",
     "payment_complete": "MANUAL_DEFAULT",
     "payment_due_days_before": "MANUAL_DEFAULT",
-    "urgent_notice": "MANUAL_DEFAULT",
+    # urgent_notice: 카카오 알림톡 정책 위반으로 제거
 
     # DISABLED — 현재 정책상 비활성
     "class_enrollment_complete": "DISABLED",
