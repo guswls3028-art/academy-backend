@@ -347,6 +347,15 @@ class PptGenerateView(View):
             content_type="application/pdf",
         )
 
+        # Build image settings payload for worker
+        image_settings = {
+            "invert": bool(ppt_settings.get("invert", False)),
+            "grayscale": bool(ppt_settings.get("grayscale", False)),
+            "auto_enhance": bool(ppt_settings.get("auto_enhance", False)),
+            "brightness": float(ppt_settings.get("brightness", 1.0)),
+            "contrast": float(ppt_settings.get("contrast", 1.0)),
+        }
+
         # Dispatch job
         from apps.domains.ai.gateway import dispatch_job
 
@@ -360,6 +369,7 @@ class PptGenerateView(View):
                     "background": background,
                     "fit_mode": fit_mode,
                 },
+                "settings": image_settings,
                 "tenant_id": tenant_id,
             },
             tenant_id=tenant_id,
