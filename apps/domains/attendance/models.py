@@ -2,6 +2,7 @@
 
 from django.db import models
 from apps.core.models import Tenant
+from apps.domains.lectures.models import Section
 
 
 # ========================================================
@@ -44,6 +45,15 @@ class Attendance(models.Model):
             ("SECESSION", "탈퇴"),
         ],
         default="PRESENT",
+    )
+
+    attended_section = models.ForeignKey(
+        Section,
+        on_delete=models.SET_NULL,
+        related_name="attendances",
+        null=True,
+        blank=True,
+        help_text="실제 출석한 반 (section_mode=true). null이면 반 무관.",
     )
 
     memo = models.TextField(blank=True)

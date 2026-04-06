@@ -121,11 +121,147 @@ class Lecture(TimestampModel):
             raise  # 예상 못한 에러는 전파
 
 
+class Section(TimestampModel):
+    """
+    반 (Section) — 강의 내 반 편성 단위.
+
+    section_mode=true인 학원에서만 사용.
+    같은 강의의 같은 내용을 다른 요일/시간에 제공하는 단위.
+    예) 수학 A반(수요일 17시), 수학 B반(목요일 19시)
+    """
+
+    SECTION_TYPE_CHOICES = [
+        ("CLASS", "수업"),
+        ("CLINIC", "클리닉"),
+    ]
+
+    DAY_OF_WEEK_CHOICES = [
+        (0, "월"),
+        (1, "화"),
+        (2, "수"),
+        (3, "목"),
+        (4, "금"),
+        (5, "토"),
+        (6, "일"),
+    ]
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="sections",
+        db_index=True,
+    )
+    lecture = models.ForeignKey(
+        "Lecture",
+        on_delete=models.CASCADE,
+        related_name="sections",
+    )
+
+    label = models.CharField(max_length=10, help_text="반 이름 (A, B, C...)")
+    section_type = models.CharField(
+        max_length=10,
+        choices=SECTION_TYPE_CHOICES,
+        default="CLASS",
+    )
+    day_of_week = models.IntegerField(
+        choices=DAY_OF_WEEK_CHOICES,
+        help_text="요일 (0=월 ~ 6=일)",
+    )
+    start_time = models.TimeField(help_text="시작 시간")
+    end_time = models.TimeField(null=True, blank=True, help_text="종료 시간")
+    location = models.CharField(max_length=100, blank=True, default="")
+    max_capacity = models.PositiveIntegerField(null=True, blank=True, help_text="최대 수용 인원")
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["tenant", "lecture"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "lecture", "label", "section_type"],
+                name="uniq_section_per_lecture_type",
+            ),
+        ]
+        ordering = ["section_type", "label"]
+
+    def __str__(self):
+        return f"{self.lecture.title} - {self.get_section_type_display()} {self.label}반"
+
+
+class SectionAssignment(TimestampModel):
+    """
+    정규편성 — 학생(Enrollment)의 정규 반 배정.
+
+    enrollment당 1개. class_section(수업 반) + clinic_section(클리닉 반, optional).
+    학생은 교차 출석 가능하므로 실제 출석 반은 Attendance.attended_section에 기록.
+    """
+
+    SOURCE_CHOICES = [
+        ("SELF", "자발적 등록"),
+        ("AUTO", "자동 배정"),
+        ("MANUAL", "수동 배정"),
+    ]
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="section_assignments",
+        db_index=True,
+    )
+    enrollment = models.OneToOneField(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        related_name="section_assignment",
+    )
+    class_section = models.ForeignKey(
+        Section,
+        on_delete=models.PROTECT,
+        related_name="class_assignments",
+        help_text="수업 정규반",
+    )
+    clinic_section = models.ForeignKey(
+        Section,
+        on_delete=models.SET_NULL,
+        related_name="clinic_assignments",
+        null=True,
+        blank=True,
+        help_text="클리닉 정규반 (clinic_mode=regular일 때)",
+    )
+    source = models.CharField(
+        max_length=10,
+        choices=SOURCE_CHOICES,
+        default="MANUAL",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["tenant", "class_section"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "enrollment"],
+                name="uniq_section_assignment_per_enrollment",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.enrollment} → {self.class_section.label}반"
+
+
 class Session(TimestampModel):
     lecture = models.ForeignKey(
         Lecture,
         on_delete=models.CASCADE,
         related_name="sessions",
+    )
+    section = models.ForeignKey(
+        Section,
+        on_delete=models.SET_NULL,
+        related_name="sessions",
+        null=True,
+        blank=True,
+        help_text="반별 차시 (section_mode=true). null이면 반 무관 공통 차시.",
     )
 
     order = models.PositiveIntegerField()
@@ -136,4 +272,5 @@ class Session(TimestampModel):
         ordering = ["order"]
 
     def __str__(self):
-        return f"{self.lecture.title} - {self.order}차시"
+        section_label = f" ({self.section.label}반)" if self.section else ""
+        return f"{self.lecture.title} - {self.order}차시{section_label}"

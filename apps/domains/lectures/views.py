@@ -1,5 +1,6 @@
 # PATH: apps/domains/lectures/views.py
 
+from django.db import transaction
 from django.db.models import Max, Count, Avg, Q
 from django.db.models.functions import Coalesce
 
@@ -7,17 +8,24 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.filters import SearchFilter
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework import status as http_status
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.exceptions import PermissionDenied, NotFound
+from rest_framework.exceptions import PermissionDenied, NotFound, ValidationError
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from academy.adapters.db.django import repositories_teachers as teacher_repo
 from academy.adapters.db.django import repositories_video as video_repo
-from .models import Lecture, Session
-from .serializers import LectureSerializer, SessionSerializer
+from .models import Lecture, Session, Section, SectionAssignment
+from .serializers import (
+    LectureSerializer,
+    SessionSerializer,
+    SectionSerializer,
+    SectionAssignmentSerializer,
+)
 
 from apps.core.models import TenantMembership
 from apps.domains.attendance.models import Attendance
+from apps.domains.enrollment.models import Enrollment
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 
@@ -175,14 +183,16 @@ class SessionViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ["lecture", "date"]
+    filterset_fields = ["lecture", "date", "section"]
     search_fields = ["title"]
 
     def get_queryset(self):
         """
-        Session은 lecture를 통해 tenant가 결정됨
+        Session은 lecture를 통해 tenant가 결정됨.
+        section 필터 지원 (section_mode=true일 때).
         """
         qs = enroll_repo.session_queryset_select_related_lecture()
+        qs = qs.select_related("section")
         qs = qs.filter(lecture__tenant=self.request.tenant)
 
         lecture = self.request.query_params.get("lecture")
@@ -192,6 +202,14 @@ class SessionViewSet(ModelViewSet):
         date = self.request.query_params.get("date")
         if date:
             qs = qs.filter(date=date)
+
+        section = self.request.query_params.get("section")
+        if section:
+            qs = qs.filter(section_id=section)
+
+        section_type = self.request.query_params.get("section_type")
+        if section_type:
+            qs = qs.filter(section__section_type=section_type)
 
         return qs.order_by("order", "id")
 
@@ -218,3 +236,252 @@ class SessionViewSet(ModelViewSet):
         if lecture.tenant_id != self.request.tenant.id:
             raise PermissionDenied("다른 학원의 강의로 세션을 이동할 수 없습니다.")
         serializer.save()
+
+
+class SectionViewSet(ModelViewSet):
+    """
+    반 (Section) CRUD.
+    section_mode=true인 학원에서 강의 내 반 관리.
+    """
+
+    serializer_class = SectionSerializer
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["lecture", "section_type", "is_active"]
+    search_fields = ["label"]
+
+    def get_queryset(self):
+        qs = Section.objects.filter(tenant=self.request.tenant)
+        qs = qs.select_related("lecture")
+        qs = qs.annotate(
+            assignment_count=Count(
+                "class_assignments",
+                filter=Q(class_assignments__enrollment__status="ACTIVE"),
+            )
+        )
+        return qs
+
+    def perform_create(self, serializer):
+        lecture = serializer.validated_data["lecture"]
+        if lecture.tenant_id != self.request.tenant.id:
+            raise PermissionDenied("다른 학원의 강의에 반을 추가할 수 없습니다.")
+        serializer.save(tenant=self.request.tenant)
+
+    def perform_update(self, serializer):
+        lecture = serializer.validated_data.get("lecture", serializer.instance.lecture)
+        if lecture.tenant_id != self.request.tenant.id:
+            raise PermissionDenied("다른 학원의 강의로 반을 이동할 수 없습니다.")
+        serializer.save()
+
+    @action(detail=False, methods=["post"], url_path="bulk-create-sessions")
+    def bulk_create_sessions(self, request):
+        """
+        반별 차시 일괄 생성.
+        같은 order의 차시를 모든 반에 한번에 생성.
+        POST { "lecture_id": 1, "title": "1차시", "dates": {"A": "2026-04-09", "B": "2026-04-10"} }
+        """
+        tenant = request.tenant
+        lecture_id = request.data.get("lecture_id")
+        title = request.data.get("title", "")
+        dates = request.data.get("dates", {})  # {section_label: date_string}
+
+        if not lecture_id or not dates:
+            raise ValidationError("lecture_id와 dates는 필수입니다.")
+
+        lecture = Lecture.objects.filter(id=lecture_id, tenant=tenant).first()
+        if not lecture:
+            raise NotFound("강의를 찾을 수 없습니다.")
+
+        sections = Section.objects.filter(
+            tenant=tenant, lecture=lecture, label__in=dates.keys(),
+        )
+        section_map = {s.label: s for s in sections}
+
+        agg = Session.objects.filter(lecture=lecture).aggregate(max_order=Max("order"))
+        next_order = (agg["max_order"] or 0) + 1
+
+        created = []
+        with transaction.atomic():
+            for label, date_str in dates.items():
+                section = section_map.get(label)
+                if not section:
+                    continue
+                session = Session.objects.create(
+                    lecture=lecture,
+                    section=section,
+                    order=next_order,
+                    title=title or f"{next_order}차시",
+                    date=date_str,
+                )
+                created.append(SessionSerializer(session).data)
+
+        return Response(created, status=http_status.HTTP_201_CREATED)
+
+
+class SectionAssignmentViewSet(ModelViewSet):
+    """
+    정규편성 관리.
+    학생의 반 배정 CRUD + 자동배정 기능.
+    """
+
+    serializer_class = SectionAssignmentSerializer
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["class_section", "clinic_section", "source", "enrollment__lecture"]
+
+    def get_queryset(self):
+        qs = SectionAssignment.objects.filter(tenant=self.request.tenant)
+        qs = qs.select_related(
+            "enrollment__student",
+            "enrollment__lecture",
+            "class_section",
+            "clinic_section",
+        )
+        return qs
+
+    def perform_create(self, serializer):
+        enrollment = serializer.validated_data["enrollment"]
+        if enrollment.tenant_id != self.request.tenant.id:
+            raise PermissionDenied("다른 학원의 수강에 편성할 수 없습니다.")
+        class_section = serializer.validated_data["class_section"]
+        if class_section.tenant_id != self.request.tenant.id:
+            raise PermissionDenied("다른 학원의 반에 배정할 수 없습니다.")
+        if class_section.lecture_id != enrollment.lecture_id:
+            raise ValidationError("수업 반은 수강 중인 강의의 반이어야 합니다.")
+        clinic_section = serializer.validated_data.get("clinic_section")
+        if clinic_section:
+            if clinic_section.tenant_id != self.request.tenant.id:
+                raise PermissionDenied("다른 학원의 클리닉 반에 배정할 수 없습니다.")
+            if clinic_section.lecture_id != enrollment.lecture_id:
+                raise ValidationError("클리닉 반은 수강 중인 강의의 반이어야 합니다.")
+        serializer.save(tenant=self.request.tenant)
+
+    def perform_update(self, serializer):
+        enrollment = serializer.validated_data.get("enrollment", serializer.instance.enrollment)
+        if enrollment.tenant_id != self.request.tenant.id:
+            raise PermissionDenied("다른 학원의 수강에 편성할 수 없습니다.")
+        class_section = serializer.validated_data.get("class_section", serializer.instance.class_section)
+        if class_section.tenant_id != self.request.tenant.id:
+            raise PermissionDenied("다른 학원의 반에 배정할 수 없습니다.")
+        if class_section.lecture_id != enrollment.lecture_id:
+            raise ValidationError("수업 반은 수강 중인 강의의 반이어야 합니다.")
+        clinic_section = serializer.validated_data.get("clinic_section", serializer.instance.clinic_section)
+        if clinic_section:
+            if clinic_section.tenant_id != self.request.tenant.id:
+                raise PermissionDenied("다른 학원의 클리닉 반에 배정할 수 없습니다.")
+            if clinic_section.lecture_id != enrollment.lecture_id:
+                raise ValidationError("클리닉 반은 수강 중인 강의의 반이어야 합니다.")
+        serializer.save()
+
+    @action(detail=False, methods=["post"], url_path="auto-assign")
+    def auto_assign(self, request):
+        """
+        미편성 학생 자동배정.
+        POST { "lecture_id": 1, "section_type": "CLASS" }
+        각 반의 현재 인원과 max_capacity를 고려하여 균등 배분.
+        """
+        tenant = request.tenant
+        lecture_id = request.data.get("lecture_id")
+        section_type = request.data.get("section_type", "CLASS")
+
+        if not lecture_id:
+            raise ValidationError("lecture_id는 필수입니다.")
+
+        lecture = Lecture.objects.filter(id=lecture_id, tenant=tenant).first()
+        if not lecture:
+            raise NotFound("강의를 찾을 수 없습니다.")
+
+        sections = list(
+            Section.objects.filter(
+                tenant=tenant, lecture=lecture,
+                section_type=section_type, is_active=True,
+            ).order_by("label")
+        )
+        if not sections:
+            raise ValidationError(f"{section_type} 타입의 활성 반이 없습니다.")
+
+        # 이미 편성된 enrollment IDs
+        if section_type == "CLASS":
+            assigned_ids = set(
+                SectionAssignment.objects.filter(
+                    tenant=tenant, enrollment__lecture=lecture,
+                ).values_list("enrollment_id", flat=True)
+            )
+        else:
+            assigned_ids = set(
+                SectionAssignment.objects.filter(
+                    tenant=tenant, enrollment__lecture=lecture,
+                ).exclude(clinic_section__isnull=True)
+                .values_list("enrollment_id", flat=True)
+            )
+
+        # 미편성 활성 수강생
+        unassigned = Enrollment.objects.filter(
+            tenant=tenant, lecture=lecture, status="ACTIVE",
+        ).exclude(id__in=assigned_ids)
+
+        unassigned_list = list(unassigned)
+        if not unassigned_list:
+            return Response({"message": "미편성 학생이 없습니다.", "assigned": 0})
+
+        # 현재 반별 인원수 → 균등 배분
+        if section_type == "CLASS":
+            counts = {s.id: SectionAssignment.objects.filter(
+                tenant=tenant, class_section=s,
+            ).count() for s in sections}
+        else:
+            counts = {s.id: SectionAssignment.objects.filter(
+                tenant=tenant, clinic_section=s,
+            ).count() for s in sections}
+
+        assigned_count = 0
+        skipped_count = 0
+        with transaction.atomic():
+            for enrollment in unassigned_list:
+                # 가장 인원 적은 반 중 ���용 가능한 반 선택
+                available = [
+                    s for s in sections
+                    if s.max_capacity is None or counts.get(s.id, 0) < s.max_capacity
+                ]
+                if not available:
+                    skipped_count += len(unassigned_list) - assigned_count
+                    break
+
+                target = min(available, key=lambda s: counts.get(s.id, 0))
+
+                if section_type == "CLASS":
+                    SectionAssignment.objects.update_or_create(
+                        tenant=tenant,
+                        enrollment=enrollment,
+                        defaults={
+                            "class_section": target,
+                            "source": "AUTO",
+                        },
+                    )
+                else:
+                    # clinic: 기존 assignment에 clinic_section 업데이트
+                    assignment = SectionAssignment.objects.filter(
+                        tenant=tenant, enrollment=enrollment,
+                    ).first()
+                    if assignment:
+                        assignment.clinic_section = target
+                        assignment.source = "AUTO"
+                        assignment.save(update_fields=["clinic_section", "source", "updated_at"])
+                    else:
+                        # class 편성이 없으면 CLINIC 자동배정 불가 → skip
+                        skipped_count += 1
+                        continue
+
+                counts[target.id] = counts.get(target.id, 0) + 1
+                assigned_count += 1
+
+        msg = f"{assigned_count}명 자동 배정 완료."
+        if skipped_count:
+            msg += f" {skipped_count}명은 수용 ���과 또는 수업 반 미편성으로 건너뜀."
+        return Response({
+            "message": msg,
+            "assigned": assigned_count,
+            "skipped": skipped_count,
+        })
