@@ -511,7 +511,7 @@ class SendMessageView(APIView):
         subject_base = (raw_subject or "").strip()
         t = None
         solapi_template_id = ""
-        user_custom_content = ""  # 사용자가 직접 입력한 본문 (#{내용} 변수용)
+        user_custom_content = ""  # 사용자가 직접 입력한 본문 (#{선생님메모} 변수용)
 
         if template_id:
             t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
@@ -528,9 +528,9 @@ class SendMessageView(APIView):
                     {"detail": "템플릿을 찾을 수 없습니다."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            # 사용자 커스텀 본문이 있고, 템플릿에 #{공지내용} 또는 #{내용} 변수가 있으면 자유양식 모드
+            # 사용자 커스텀 본문이 있고, 템플릿에 #{공지내용} 또는 #{선생님메모} 변수가 있으면 자유양식 모드
             tpl_body = t.body or ""
-            if body_base and ("#{공지내용}" in tpl_body or "#{내용}" in tpl_body):
+            if body_base and ("#{공지내용}" in tpl_body or "#{선생님메모}" in tpl_body or "#{내용}" in tpl_body):
                 user_custom_content = body_base
             if not body_base:
                 body_base = (t.body or "").strip()
@@ -600,6 +600,7 @@ class SendMessageView(APIView):
                 .replace("#{학원명}", academy_name)
                 .replace("#{사이트링크}", site_url)
                 .replace("#{공지내용}", user_custom_content)
+                .replace("#{선생님메모}", user_custom_content)
                 .replace("#{내용}", user_custom_content)
             )
             # Context-dependent variables: 학생별 개별 변수 우선, 없으면 공통 변수, 없으면 빈 문자열
@@ -627,6 +628,7 @@ class SendMessageView(APIView):
                 ]
                 if user_custom_content:
                     alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
+                    alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
                     alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
                 # 추가 변수 (성적 발송 등 카테고리별 템플릿 변수) — 학생별 개별값 우선
                 merged_extra = {**alimtalk_extra_vars, **student_extra}
@@ -696,7 +698,7 @@ class SendMessageView(APIView):
                     ).first()
             if t:
                 tpl_body = t.body or ""
-                if body_base and ("#{공지내용}" in tpl_body or "#{내용}" in tpl_body):
+                if body_base and ("#{공지내용}" in tpl_body or "#{선생님메모}" in tpl_body or "#{내용}" in tpl_body):
                     user_custom_content = body_base
                 if not body_base:
                     body_base = (t.body or "").strip()
@@ -748,6 +750,7 @@ class SendMessageView(APIView):
                 .replace("#{학원명}", academy_name)
                 .replace("#{사이트링크}", site_url)
                 .replace("#{공지내용}", user_custom_content)
+                .replace("#{선생님메모}", user_custom_content)
                 .replace("#{내용}", user_custom_content)
             )
             # Context-dependent variables not available in manual send — replace with empty string
@@ -769,7 +772,7 @@ class SendMessageView(APIView):
                 ]
                 if user_custom_content:
                     alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
-                    # 하위호환: 구버전 #{내용} 변수 템플릿용
+                    alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
                     alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
 
             try:

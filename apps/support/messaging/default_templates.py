@@ -70,7 +70,7 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "minutes_before": None,
     },
     # ───────── 출결 (통합 알림톡: score 템플릿) ─────────
-    # body = #{내용} 변수에만 들어가는 안내 문구.
+    # body = #{선생님메모} 변수에만 들어가는 안내 문구.
     # 나머지(학원이름, 학생이름, 강의명, 차시명, 사이트링크)는 솔라피 템플릿 하드코딩.
     "lecture_session_reminder": {
         "category": "attendance",
@@ -160,7 +160,7 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "minutes_before": None,
     },
     # ───────── 클리닉/상담 (통합 알림톡: clinic_info / clinic_change 리스트형 템플릿) ─────────
-    # body = #{내용} 변수에만 들어가는 안내 문구.
+    # body = #{선생님메모} 변수에만 들어가는 안내 문구.
     # 학원이름, 학생이름, 장소, 날짜, 시간, 사이트링크는 솔라피 리스트형 템플릿에 하드코딩.
     # 리스트 항목 라벨(장소/날짜/시간/기존일정/변동사항/수정자)도 하드코딩 — 변수값만 제어 가능.
     "clinic_reminder": {

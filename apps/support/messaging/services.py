@@ -387,12 +387,12 @@ def send_event_notification(
     academy_name = (getattr(tenant, "name", "") or "").strip()
     site_url = get_tenant_site_url(tenant) or ""
 
-    # ── 통합 템플릿 모드: #{내용} + 변수 replacements 빌드 ──
+    # ── 통합 템플릿 모드: #{선생님메모} + 변수 replacements 빌드 ──
     if use_unified:
-        # template.body = #{내용}에 들어갈 안내 문구 (선생님 편집 가능)
+        # template.body = #{선생님메모}에 들어갈 안내 문구 (선생님 편집 가능)
         content_body = (template.body or "").strip()
 
-        # Solapi replacements: 내용 + 학원이름 + 학생이름 + 도메인 변수 + 사이트링크
+        # Solapi replacements: 선생님메모 + 학원이름 + 학생이름 + 도메인 변수 + 사이트링크
         replacements = build_unified_replacements(
             trigger=trigger,
             content_body=content_body,
@@ -403,7 +403,7 @@ def send_event_notification(
         )
 
         # SMS 폴백용 text — 알림톡 전체 구조를 평문으로 재현
-        content_value = next((r["value"] for r in replacements if r["key"] == "내용"), "")
+        content_value = next((r["value"] for r in replacements if r["key"] == "선생님메모"), "")
         _ctx = context or {}
         _template_type = get_template_type(trigger)
         if _template_type == "clinic_info":
@@ -489,7 +489,7 @@ def send_event_notification(
             text = text.replace(f"#{{{k}}}", v)
 
         import re as _re
-        _OPTIONAL_VARS = {"공지내용", "내용"}
+        _OPTIONAL_VARS = {"공지내용", "선생님메모", "내용"}
         remaining = _re.findall(r"#\{([^}]+)\}", text)
         required_missing = [v for v in remaining if v not in _OPTIONAL_VARS]
         if required_missing:

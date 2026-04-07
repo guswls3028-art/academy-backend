@@ -3,11 +3,11 @@
 통합 알림톡 템플릿 — 3개 범용 Solapi 템플릿으로 모든 자동발송 커버.
 
 구조:
-  Solapi 템플릿 본문 = "#{내용}\n#{사이트링크}"
-  → 백엔드에서 트리거별 메시지를 조립해 #{내용} 값으로 전송
+  Solapi 템플릿 본문 = "#{선생님메모}\n#{사이트링크}"
+  → 백엔드에서 트리거별 메시지를 조립해 #{선생님메모} 값으로 전송
   → #{사이트링크}는 테넌트 URL
 
-트리거별 기본 #{내용} 컨텐츠는 default_templates.py의 body에 정의.
+트리거별 기본 #{선생님메모} 컨텐츠는 default_templates.py의 body에 정의.
 선생님이 편집한 body는 MessageTemplate.body에 저장됨.
 """
 
@@ -106,16 +106,16 @@ def is_unified_template(solapi_template_id: str) -> bool:
 
 TEMPLATE_TYPE_VARIABLES: dict[str, list[str]] = {
     TYPE_CLINIC_INFO: [
-        "학원이름", "학생이름", "클리닉장소", "클리닉날짜", "클리닉시간", "내용", "사이트링크",
+        "학원이름", "학생이름", "클리닉장소", "클리닉날짜", "클리닉시간", "선생님메모", "사이트링크",
     ],
     TYPE_CLINIC_CHANGE: [
-        "학원이름", "학생이름", "클리닉기존일정", "클리닉변동사항", "클리닉수정자", "내용", "사이트링크",
+        "학원이름", "학생이름", "클리닉기존일정", "클리닉변동사항", "클리닉수정자", "선생님메모", "사이트링크",
     ],
     TYPE_SCORE: [
-        "학원이름", "학생이름", "강의명", "차시명", "내용", "사이트링크",
+        "학원이름", "학생이름", "강의명", "차시명", "선생님메모", "사이트링크",
     ],
     TYPE_ATTENDANCE: [
-        "학원이름", "학생이름", "강의명", "차시명", "강의날짜", "강의시간", "내용", "사이트링크",
+        "학원이름", "학생이름", "강의명", "차시명", "강의날짜", "강의시간", "선생님메모", "사이트링크",
     ],
 }
 
@@ -131,19 +131,19 @@ def build_unified_replacements(
     """
     통합 템플릿용 Solapi replacements 빌드.
 
-    1. content_body 내의 #{서브변수}를 context 값으로 치환 → #{내용} 값
+    1. content_body 내의 #{서브변수}를 context 값으로 치환 → #{선생님메모} 값
     2. 템플릿 타입의 등록 변수 전체를 replacements로 반환
 
     Args:
         trigger: AutoSendConfig 트리거명
-        content_body: 사용자 편집 가능한 #{내용} 콘텐츠 (서브변수 포함)
+        content_body: 사용자 편집 가능한 #{선생님메모} 콘텐츠 (서브변수 포함)
         context: 도메인 컨텍스트 (강의명, 장소 등)
         tenant_name: 학원명
         student_name: 학생 전체 이름
         site_url: 테넌트 사이트 URL
 
     Returns:
-        Solapi replacements list: [{"key": "내용", "value": "..."}, ...]
+        Solapi replacements list: [{"key": "선생님메모", "value": "..."}, ...]
     """
     import re
 
@@ -206,7 +206,7 @@ def build_unified_replacements(
     registered_vars = TEMPLATE_TYPE_VARIABLES.get(template_type, [])
     replacements = []
     for var_name in registered_vars:
-        if var_name == "내용":
+        if var_name == "선생님메모":
             replacements.append({"key": var_name, "value": built_content})
         elif var_name == "사이트링크":
             replacements.append({"key": var_name, "value": site_url})
