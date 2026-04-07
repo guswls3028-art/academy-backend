@@ -113,7 +113,7 @@ class ClinicLinkViewSet(ModelViewSet):
         if not tenant:
             return ClinicLink.objects.none()
         qs = ClinicLink.objects.filter(
-            session__lecture__tenant=tenant,
+            tenant=tenant,
         ).select_related("session", "session__lecture", "enrollment__student")
 
         # 추가 필터: unresolved_only

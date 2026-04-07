@@ -218,15 +218,19 @@ class ClinicTargetService:
 
     @staticmethod
     def list_admin_targets(tenant: Any = None, include_resolved: bool = False) -> List[Dict[str, Any]]:
+        # tenant 격리: tenant가 None이면 빈 결과 반환 (cross-tenant 누출 방지)
+        if tenant is None:
+            return []
         links = (
-            ClinicLink.objects.filter(is_auto=True)
+            ClinicLink.objects.filter(
+                is_auto=True,
+                tenant=tenant,
+            )
             .select_related("session", "session__lecture")
             .order_by("-created_at")
         )
         if not include_resolved:
             links = links.filter(resolved_at__isnull=True)
-        if tenant is not None:
-            links = links.filter(session__lecture__tenant=tenant)
 
         # ✅ 퇴원(INACTIVE) 수강생의 ClinicLink 제외
         links = links.filter(enrollment__status="ACTIVE")

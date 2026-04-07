@@ -6,15 +6,88 @@ V1.1.2: 시험/과제별 개별 ClinicLink 생성
 - auto_create_if_failed: SessionProgress.completed 대신 exam_meta의 개별 시험 pass/fail로 판정
 - auto_create_if_exam_risk: source_type/source_id로 시험별 개별 ClinicLink 생성
 - 세션 MAX 집계와 독립적으로 개별 시험 불합격을 추적
+
+동시성 보장:
+- transaction.atomic + unique constraint fallback으로 idempotent 생성
+- 동시 파이프라인 실행 시에도 중복 생성 방지
 """
 from __future__ import annotations
 
 import logging
 
+from django.db import IntegrityError, transaction
+from django.db.models import Max
+
 from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.progress.services.clinic_exam_rule_service import ClinicExamRuleService
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_tenant_id(enrollment_id: int) -> int | None:
+    """enrollment_id에서 tenant_id를 조회한다."""
+    from apps.domains.enrollment.models import Enrollment
+    return Enrollment.objects.filter(id=enrollment_id).values_list("tenant_id", flat=True).first()
+
+
+def _idempotent_create_clinic_link(
+    *,
+    enrollment_id: int,
+    session,
+    source_type: str,
+    source_id: int,
+    reason: str,
+    is_auto: bool = True,
+    meta: dict | None = None,
+) -> ClinicLink | None:
+    """
+    ClinicLink를 idempotent하게 생성.
+    - 미해소 link가 있으면 skip
+    - unique constraint 충돌 시 기존 link 반환 (race condition 방어)
+    - transaction.atomic으로 check-then-create 원자성 보장
+    """
+    with transaction.atomic():
+        # 미해소 link가 있으면 skip
+        existing = ClinicLink.objects.filter(
+            enrollment_id=enrollment_id,
+            session=session,
+            source_type=source_type,
+            source_id=source_id,
+            resolved_at__isnull=True,
+        ).exists()
+        if existing:
+            return None
+
+        max_cycle = ClinicLink.objects.filter(
+            enrollment_id=enrollment_id,
+            session=session,
+            source_type=source_type,
+            source_id=source_id,
+        ).aggregate(Max("cycle_no"))["cycle_no__max"] or 0
+        next_cycle = max(max_cycle + 1, 1)
+
+        try:
+            tenant_id = _resolve_tenant_id(enrollment_id)
+            return ClinicLink.objects.create(
+                enrollment_id=enrollment_id,
+                session=session,
+                source_type=source_type,
+                source_id=source_id,
+                reason=reason,
+                is_auto=is_auto,
+                approved=False,
+                cycle_no=next_cycle,
+                meta=meta,
+                tenant_id=tenant_id,
+            )
+        except IntegrityError:
+            # unique constraint 충돌 = 동시 실행으로 이미 생성됨
+            logger.info(
+                "clinic_trigger: duplicate ClinicLink skipped "
+                "(enrollment=%s, session=%s, source=%s:%s)",
+                enrollment_id, session, source_type, source_id,
+            )
+            return None
 
 
 class ClinicTriggerService:
@@ -40,37 +113,12 @@ class ClinicTriggerService:
             if passed:
                 continue  # 이 시험은 합격 → ClinicLink 불필요
 
-            # 불합격 시험에 대해 개별 ClinicLink 생성
-            # 이미 미해소 link가 있으면 skip (idempotent)
-            existing_unresolved = ClinicLink.objects.filter(
-                enrollment_id=session_progress.enrollment_id,
-                session=session_progress.session,
-                source_type="exam",
-                source_id=exam_id,
-                resolved_at__isnull=True,
-            ).exists()
-            if existing_unresolved:
-                continue  # 이미 미해소 항목 존재 → 중복 생성 방지
-
-            # 해소된 link의 최대 cycle_no를 찾아 +1 (재불합격 시 새 cycle)
-            from django.db.models import Max
-            max_cycle = ClinicLink.objects.filter(
-                enrollment_id=session_progress.enrollment_id,
-                session=session_progress.session,
-                source_type="exam",
-                source_id=exam_id,
-            ).aggregate(Max("cycle_no"))["cycle_no__max"] or 0
-            next_cycle = max(max_cycle + 1, 1)
-
-            ClinicLink.objects.create(
+            _idempotent_create_clinic_link(
                 enrollment_id=session_progress.enrollment_id,
                 session=session_progress.session,
                 source_type="exam",
                 source_id=exam_id,
                 reason=ClinicLink.Reason.AUTO_FAILED,
-                is_auto=True,
-                approved=False,
-                cycle_no=next_cycle,
                 meta={
                     "kind": "EXAM_FAILED",
                     "exam_id": exam_id,
@@ -98,6 +146,7 @@ class ClinicTriggerService:
         source_type: str | None = None,
         source_id: int | None = None,
     ) -> ClinicLink:
+        tenant_id = _resolve_tenant_id(enrollment_id)
         return ClinicLink.objects.create(
             enrollment_id=enrollment_id,
             session_id=session_id,
@@ -106,6 +155,7 @@ class ClinicTriggerService:
             memo=memo,
             source_type=source_type,
             source_id=source_id,
+            tenant_id=tenant_id,
         )
 
     @staticmethod
@@ -117,6 +167,7 @@ class ClinicTriggerService:
     ) -> None:
         """
         V1.1.2: source_type/source_id로 시험별 개별 ClinicLink 생성.
+        동시성: atomic + IntegrityError fallback으로 idempotent
         """
         reasons = ClinicExamRuleService.evaluate(
             enrollment_id=int(enrollment_id),
@@ -125,43 +176,33 @@ class ClinicTriggerService:
         if not reasons:
             return
 
-        # 미해소 link가 있으면 meta만 갱신
-        existing = ClinicLink.objects.filter(
-            enrollment_id=int(enrollment_id),
-            session=session,
-            source_type="exam",
-            source_id=int(exam_id),
-            resolved_at__isnull=True,
-        ).first()
+        with transaction.atomic():
+            # 미해소 link가 있으면 meta만 갱신
+            existing = ClinicLink.objects.filter(
+                enrollment_id=int(enrollment_id),
+                session=session,
+                source_type="exam",
+                source_id=int(exam_id),
+                resolved_at__isnull=True,
+            ).first()
 
-        if existing:
-            meta = dict(existing.meta or {})
-            meta["kind"] = "EXAM_RISK"
-            meta["exam_id"] = int(exam_id)
-            meta["exam_reasons"] = reasons
-            existing.meta = meta
-            existing.is_auto = True
-            existing.save(update_fields=["meta", "is_auto", "updated_at"])
-            return
+            if existing:
+                meta = dict(existing.meta or {})
+                meta["kind"] = "EXAM_RISK"
+                meta["exam_id"] = int(exam_id)
+                meta["exam_reasons"] = reasons
+                existing.meta = meta
+                existing.is_auto = True
+                existing.save(update_fields=["meta", "is_auto", "updated_at"])
+                return
 
-        # 새로 생성 (재불합격 시 cycle 증가)
-        from django.db.models import Max
-        max_cycle = ClinicLink.objects.filter(
-            enrollment_id=int(enrollment_id),
-            session=session,
-            source_type="exam",
-            source_id=int(exam_id),
-        ).aggregate(Max("cycle_no"))["cycle_no__max"] or 0
-
-        ClinicLink.objects.create(
+        # 새로 생성 (idempotent helper 사용)
+        _idempotent_create_clinic_link(
             enrollment_id=int(enrollment_id),
             session=session,
             source_type="exam",
             source_id=int(exam_id),
             reason=ClinicLink.Reason.AUTO_FAILED,
-            is_auto=True,
-            approved=False,
-            cycle_no=max(max_cycle + 1, 1),
             meta={
                 "kind": "EXAM_RISK",
                 "exam_id": int(exam_id),

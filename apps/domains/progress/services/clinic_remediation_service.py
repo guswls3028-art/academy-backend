@@ -192,6 +192,10 @@ class ClinicRemediationService:
             ).first()
             max_score = float(first_score.max_score or 100) if first_score and first_score.max_score else 100.0
 
+        # 점수 상한 검증: 만점 초과 방지
+        if max_score > 0 and score > max_score:
+            raise ValueError(f"점수({score})가 만점({max_score})을 초과할 수 없습니다.")
+
         # 2. 다음 attempt_index 계산
         max_attempt = (
             HomeworkScore.objects.filter(

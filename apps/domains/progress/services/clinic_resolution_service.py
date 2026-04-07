@@ -308,7 +308,7 @@ class ClinicResolutionService:
         link.resolution_evidence = {"carried_over": True, "carried_at": now.isoformat()}
         link.save(update_fields=["resolved_at", "resolution_type", "resolution_evidence", "updated_at"])
 
-        # Create next cycle (source 전파)
+        # Create next cycle (source + tenant 전파)
         new_link = ClinicLink.objects.create(
             enrollment_id=link.enrollment_id,
             session_id=link.session_id,
@@ -320,6 +320,7 @@ class ClinicResolutionService:
             cycle_no=link.cycle_no + 1,
             memo=f"{link.cycle_no}차 이월",
             meta=link.meta,
+            tenant_id=link.tenant_id,
         )
 
         logger.info(

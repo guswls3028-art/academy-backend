@@ -133,11 +133,17 @@ def _sync_clinic_link_for_not_submitted(
 
     규칙:
     - meta.status="NOT_SUBMITTED"  => 클리닉 대상 (ClinicLink 생성/유지)
-    - 해제(None)                   => 본 API가 만든 "미제출" 클리닉 링크만 resolved_at 처리
+    - 해제(None)                   => ClinicResolutionService를 통해 HOMEWORK_PASS 해소
 
     ❗Reason 확장은 migration 필요하므로 기존 AUTO_FAILED를 사용하고 meta로 kind를 구분한다.
     """
+    from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
+
     if now_not_submitted:
+        # tenant_id 조회 (ClinicLink에 직접 tenant FK 추가됨)
+        from apps.domains.enrollment.models import Enrollment as _Enrollment
+        _tenant_id = _Enrollment.objects.filter(id=int(enrollment_id)).values_list("tenant_id", flat=True).first()
+
         obj, created = ClinicLink.objects.get_or_create(
             enrollment_id=int(enrollment_id),
             session_id=int(session_id),
@@ -148,6 +154,7 @@ def _sync_clinic_link_for_not_submitted(
                 "is_auto": True,
                 "approved": False,
                 "resolved_at": None,
+                "tenant_id": _tenant_id,
                 "meta": {
                     "kind": "HOMEWORK_NOT_SUBMITTED",
                 },
@@ -160,27 +167,20 @@ def _sync_clinic_link_for_not_submitted(
             obj.meta = meta
             obj.is_auto = True
             if getattr(obj, "resolved_at", None) is not None:
-                obj.resolved_at = None
-            obj.save(update_fields=["meta", "is_auto", "resolved_at", "updated_at"])
+                # 해소 취소도 SSOT 서비스 경유
+                ClinicResolutionService.unresolve(clinic_link_id=obj.id)
+                obj.refresh_from_db()
+            obj.save(update_fields=["meta", "is_auto", "updated_at"])
         return
 
-    # 해제: 본 API가 만든 HOMEWORK_NOT_SUBMITTED 링크만 resolved 처리
-    qs = ClinicLink.objects.filter(
+    # 해제: SSOT 서비스를 통한 해소 (resolution_evidence 포함)
+    ClinicResolutionService.resolve_by_homework_pass(
         enrollment_id=int(enrollment_id),
         session_id=int(session_id),
-        source_type="homework",
-        source_id=int(homework_id),
-        is_auto=True,
-        resolved_at__isnull=True,
-    ).exclude(meta__isnull=True)
-
-    # meta.kind 필터는 DB마다 JSON 쿼리 지원이 달라질 수 있으므로 방어적으로 파이썬 필터링
-    for link in qs.order_by("-id")[:20]:
-        meta = getattr(link, "meta", None)
-        if isinstance(meta, dict) and meta.get("kind") == "HOMEWORK_NOT_SUBMITTED":
-            link.resolved_at = timezone.now()
-            link.resolution_type = ClinicLink.ResolutionType.HOMEWORK_PASS
-            link.save(update_fields=["resolved_at", "resolution_type", "updated_at"])
+        homework_id=int(homework_id),
+        score=None,
+        max_score=None,
+    )
 
 
 def _apply_score_and_policy(

@@ -40,10 +40,12 @@ def compute_clinic_highlight_map(
         return {}
 
     # 1) 클리닉 대상 enrollment (미해결 자동 ClinicLink)
+    # tenant 격리: ClinicLink.tenant FK로 직접 필터 (cross-tenant 누출 방어)
     clinic_qs = ClinicLink.objects.filter(
         is_auto=True,
         resolved_at__isnull=True,
         enrollment_id__in=enrollment_ids,
+        tenant=tenant,
     )
     if session is not None:
         clinic_qs = clinic_qs.filter(session=session)

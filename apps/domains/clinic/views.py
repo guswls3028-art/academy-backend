@@ -18,6 +18,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
 from .models import Session, SessionParticipant, Test, Submission
+from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
 
 
 def _send_clinic_notification(tenant, student, trigger, context=None):
@@ -190,14 +191,22 @@ class SessionViewSet(viewsets.ModelViewSet):
                 ],
             ).values_list("enrollment_id", flat=True)
         )
+        tenant = getattr(self.request, "tenant", None)
         with transaction.atomic():
             if enrollment_ids:
                 # 레거시 예약 기반 해소만 되돌림. 실제 pass 기반 해소는 유지.
-                ClinicLink.objects.filter(
+                # SSOT: ClinicResolutionService.unresolve() 경유
+                # tenant 격리: session__lecture__tenant 명시 필터
+                qs = ClinicLink.objects.filter(
                     enrollment_id__in=enrollment_ids,
                     is_auto=True,
                     resolution_type="BOOKING_LEGACY",
-                ).update(resolved_at=None, resolution_type=None, resolution_evidence=None)
+                    resolved_at__isnull=False,
+                )
+                if tenant:
+                    qs = qs.filter(session__lecture__tenant=tenant)
+                for link in qs:
+                    ClinicResolutionService.unresolve(clinic_link_id=link.id)
             instance.delete()
 
     def retrieve(self, request, *args, **kwargs):
@@ -628,12 +637,14 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             # Auto-determine clinic_reason from ClinicLink if not explicitly set
             clinic_reason = serializer.validated_data.get("clinic_reason")
             if not clinic_reason and enrollment_id:
+                # tenant 격리: session__lecture__tenant 명시 필터
                 links = ClinicLink.objects.filter(
                     enrollment_id=enrollment_id,
                     resolved_at__isnull=True,
+                    session__lecture__tenant=tenant,
                 )
-                has_exam = links.filter(reason__in=["AUTO_FAILED", "AUTO_RISK"]).exists()
-                has_homework = False  # TODO: check homework-specific links when available
+                has_exam = links.filter(source_type="exam").exists()
+                has_homework = links.filter(source_type="homework").exists()
                 if has_exam and has_homework:
                     clinic_reason = "both"
                 elif has_exam:
@@ -689,6 +700,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             _ctx = {
                 "클리닉명": getattr(session, "title", "") if session else "",
                 "장소": getattr(session, "location", "") if session else "",
+                # 예약 건별 멱등 키 — 미지정 시 occurrence_key가 날짜만 되어 같은 날 재예약 시 발송이 DB dedup으로 스킵될 수 있음
+                "_domain_object_id": f"clinic_participant_{obj.pk}",
             }
             transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_reservation_created", _ctx))
 
@@ -826,6 +839,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             _ctx = {
                 "클리닉명": getattr(_session, "title", "") if _session else "",
                 "장소": getattr(_session, "location", "") if _session else "",
+                "_domain_object_id": f"participant_{obj.pk}_{next_status}",
             }
             transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
 
@@ -834,11 +848,21 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         ).data
         return Response(out)
 
+    # complete() 허용 전이: 자율학습 완료 시 ATTENDED로 전환할 수 있는 상태
+    COMPLETE_ALLOWED_TRANSITIONS = {
+        SessionParticipant.Status.PENDING,
+        SessionParticipant.Status.BOOKED,
+    }
+
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
         """
         POST /clinic/participants/{id}/complete/
         자율학습 완료 처리 — 이력 기록 + 문자 트리거
+
+        상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)
+        이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고
+        completed_at만 기록한다.
         """
         with transaction.atomic():
             obj = SessionParticipant.objects.select_for_update().get(
@@ -849,13 +873,20 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     {"detail": "이미 완료 처리된 참가자입니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            # terminal 상태(CANCELLED, REJECTED)에서는 완료 불가
+            if obj.status in (
+                SessionParticipant.Status.CANCELLED,
+                SessionParticipant.Status.REJECTED,
+            ):
+                return Response(
+                    {"detail": f"'{obj.get_status_display()}' 상태의 참가자는 완료 처리할 수 없습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             obj.completed_at = timezone.now()
             obj.completed_by = request.user
-            # 출석 처리도 같이 (자율학습 완료 = 출석 확정)
-            if obj.status in (
-                SessionParticipant.Status.PENDING,
-                SessionParticipant.Status.BOOKED,
-            ):
+            # 출석 처리 (자율학습 완료 = 출석 확정)
+            # PENDING/BOOKED → ATTENDED 전환만 허용 (명시적 전이 맵)
+            if obj.status in self.COMPLETE_ALLOWED_TRANSITIONS:
                 obj.status = SessionParticipant.Status.ATTENDED
                 obj.status_changed_at = timezone.now()
                 obj.status_changed_by = request.user
@@ -1128,7 +1159,11 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
         # ── 클리닉 예약 변경 알림 (AUTO_DEFAULT, 학생+학부모) ──
         _t, _s = tenant, request_student
-        _ctx = {"클리닉명": getattr(new_session, "title", "") if new_session else "", "장소": getattr(new_session, "location", "") if new_session else ""}
+        _ctx = {
+            "클리닉명": getattr(new_session, "title", "") if new_session else "",
+            "장소": getattr(new_session, "location", "") if new_session else "",
+            "_domain_object_id": f"booking_change_{new_booking.pk}",
+        }
         transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_reservation_changed", _ctx))
 
         out = ClinicSessionParticipantSerializer(

@@ -46,7 +46,8 @@ class StudentClinicIdcardView(APIView):
 
         # tenant is guaranteed by TenantResolved permission
         qs = Enrollment.objects.filter(student=student, tenant=tenant, status="ACTIVE")
-        enrollment = qs.select_related("lecture").order_by("id").first()
+        # enrollment 선택 SSOT: 가장 최근 활성 등록 (booking/ops console과 동일 규칙)
+        enrollment = qs.select_related("lecture").order_by("-enrolled_at", "-id").first()
         
         if not enrollment:
             profile_photo_url = None

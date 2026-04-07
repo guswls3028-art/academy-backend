@@ -225,6 +225,13 @@ class ClinicLink(TimestampModel):
         WAIVED = "WAIVED", "면제"
         BOOKING_LEGACY = "BOOKING_LEGACY", "레거시(예약 기반)"
 
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="clinic_links",
+        db_index=True,
+        null=True,  # Step 1: nullable. Step 2: backfill. Step 3: NOT NULL 전환
+    )
     enrollment = models.ForeignKey(
         "enrollment.Enrollment",
         on_delete=models.CASCADE,

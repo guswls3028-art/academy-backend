@@ -129,6 +129,9 @@ def _sync_homework_clinic_link(
             ).aggregate(Max("cycle_no"))["cycle_no__max"] or 0
 
             from django.db import IntegrityError as DjangoIntegrityError
+            # tenant_id 조회
+            from apps.domains.enrollment.models import Enrollment as _Enrollment
+            _tenant_id = _Enrollment.objects.filter(id=enrollment_id).values_list("tenant_id", flat=True).first()
             try:
                 ClinicLink.objects.create(
                     enrollment_id=enrollment_id,
@@ -139,6 +142,7 @@ def _sync_homework_clinic_link(
                     is_auto=True,
                     approved=False,
                     cycle_no=max(max_cycle + 1, 1),
+                    tenant_id=_tenant_id,
                     meta={
                         "kind": "HOMEWORK_FAILED",
                         "homework_id": homework_id,

@@ -1,6 +1,6 @@
 # PATH: apps/domains/lectures/views.py
 
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.db.models import Max, Count, Avg, Q
 from django.db.models.functions import Coalesce
 
@@ -239,7 +239,13 @@ class SessionViewSet(ModelViewSet):
             else:
                 agg = enroll_repo.session_aggregate_max_order(lecture)
             order = (agg["max_order"] or 0) + 1
-        serializer.save(order=order)
+        try:
+            serializer.save(order=order)
+        except IntegrityError:
+            section_label = f" ({section.label}반)" if section else ""
+            raise ValidationError(
+                {"order": f"이 강의{section_label}에 이미 {order}차시가 존재합니다."}
+            )
 
     def perform_update(self, serializer):
         """
