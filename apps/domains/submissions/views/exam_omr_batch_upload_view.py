@@ -59,9 +59,9 @@ class ExamOMRBatchUploadView(APIView):
                     status=400,
                 )
 
-        # exam 테넌트 검증 — 크로스 테넌트 시험 제출 방지
+        # exam 테넌트 검증 — 크로스 테넌트 시험 제출 방지 (tenant FK 직접 검증)
         from apps.domains.exams.models import Exam
-        if not Exam.objects.filter(id=exam_id, sessions__lecture__tenant=tenant).exists():
+        if not Exam.objects.filter(id=exam_id, tenant=tenant).exists():
             return Response({"detail": "해당 시험을 찾을 수 없습니다."}, status=400)
 
         sheet_id = request.data.get("sheet_id")
