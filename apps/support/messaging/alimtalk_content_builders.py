@@ -16,6 +16,9 @@ from __future__ import annotations
 # ──────────────────────────────────────────
 # 통합 Solapi 템플릿 ID (검수 통과 후 사용)
 # ──────────────────────────────────────────
+# 카카오 검수 승인 완료 시 True로 변경 → 즉시 통합 템플릿 사용 시작
+# 미승인 상태에서 True로 두면 Solapi 발송 거부됨 — 반드시 승인 확인 후 변경
+UNIFIED_TEMPLATES_ENABLED = False
 
 SOLAPI_CLINIC_INFO = "KA01TP2604061058318608Hy40ZnTFZT"      # 클리닉 일정 안내
 SOLAPI_CLINIC_CHANGE = "KA01TP260406110706969XS06XRZveEk"    # 클리닉 일정 변경
@@ -88,7 +91,9 @@ def get_template_type(trigger: str) -> str | None:
 
 
 def get_solapi_template_id(trigger: str) -> str | None:
-    """트리거에 해당하는 Solapi 템플릿 ID 반환."""
+    """트리거에 해당하는 Solapi 템플릿 ID 반환. 통합 템플릿 미활성 시 None."""
+    if not UNIFIED_TEMPLATES_ENABLED:
+        return None
     tt = get_template_type(trigger)
     if tt:
         return TEMPLATE_TYPE_TO_SOLAPI_ID.get(tt)

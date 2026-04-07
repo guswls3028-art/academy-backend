@@ -27,8 +27,9 @@ def get_all_auto_send_configs(tenant_id: int) -> dict[str, Optional[AutoSendConf
 def resolve_freeform_template(tenant_id: int):
     """
     알림톡 자유양식 APPROVED 템플릿 resolve.
-    1) 현재 테넌트의 APPROVED 템플릿 (#{공지내용} 또는 #{선생님메모} 또는 #{내용})
+    1) 현재 테넌트의 APPROVED 템플릿 (#{공지내용} 또는 #{내용})
     2) 없으면 오너 테넌트의 APPROVED 템플릿으로 fallback
+    Note: #{선생님메모}는 Solapi 전용 변수명으로 DB body에는 존재하지 않음.
     Returns: MessageTemplate | None
     """
     from apps.support.messaging.models import MessageTemplate
@@ -38,10 +39,6 @@ def resolve_freeform_template(tenant_id: int):
         freeform = MessageTemplate.objects.filter(
             tenant_id=tid, solapi_status="APPROVED", body__contains="#{공지내용}",
         ).first()
-        if not freeform:
-            freeform = MessageTemplate.objects.filter(
-                tenant_id=tid, solapi_status="APPROVED", body__contains="#{선생님메모}",
-            ).first()
         if not freeform:
             freeform = MessageTemplate.objects.filter(
                 tenant_id=tid, solapi_status="APPROVED", body__contains="#{내용}",
