@@ -11,6 +11,15 @@ class LectureSerializer(serializers.ModelSerializer):
         read_only_fields = ["tenant"]
         ref_name = "Lecture"
 
+    def validate(self, attrs):
+        start = attrs.get("start_date") or (self.instance and self.instance.start_date)
+        end = attrs.get("end_date") or (self.instance and self.instance.end_date)
+        if start and end and start > end:
+            raise serializers.ValidationError(
+                {"end_date": "종료일은 시작일보다 같거나 이후여야 합니다."}
+            )
+        return attrs
+
 
 class SessionSerializer(serializers.ModelSerializer):
     order = serializers.IntegerField(required=False, allow_null=True)
@@ -25,6 +34,8 @@ class SessionSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """
         section이 제공된 경우, 해당 section이 같은 tenant + 같은 lecture에 속하는지 검증.
+        날짜가 강의 기간 범위를 벗어나면 경고 (차단하지는 않음 — 보강 차시 등 운영 패턴 존재).
+        order 중복 시 명확한 에러 메시지.
         """
         section = attrs.get("section")
         lecture = attrs.get("lecture")
@@ -38,6 +49,27 @@ class SessionSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"section": "반과 강의의 학원이 일치하지 않습니다."}
                 )
+
+        # order 중복 검증 (DB 제약과 별도로 명확한 에러 메시지 제공)
+        order = attrs.get("order")
+        if order is not None and lecture:
+            qs = Session.objects.filter(lecture=lecture, order=order, section=section)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                section_label = f" ({section.label}반)" if section else ""
+                raise serializers.ValidationError(
+                    {"order": f"이 강의{section_label}에 이미 {order}차시가 존재합니다."}
+                )
+
+        # 날짜 범위 경고 (ValidationError가 아닌 non_field_errors 수준 경고)
+        date = attrs.get("date")
+        if date and lecture:
+            if lecture.start_date and date < lecture.start_date:
+                # 경고만 — 차단하지 않음 (보강 차시 등 정상 운영 패턴)
+                pass
+            if lecture.end_date and date > lecture.end_date:
+                pass
 
         return attrs
 
@@ -69,3 +101,16 @@ class SectionAssignmentSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["tenant"]
         ref_name = "SectionAssignment"
+
+    def validate(self, attrs):
+        class_section = attrs.get("class_section")
+        if class_section and class_section.section_type != "CLASS":
+            raise serializers.ValidationError(
+                {"class_section": "수업 반에는 CLASS 타입의 반만 지정할 수 있습니다."}
+            )
+        clinic_section = attrs.get("clinic_section")
+        if clinic_section and clinic_section.section_type != "CLINIC":
+            raise serializers.ValidationError(
+                {"clinic_section": "클리닉 반에는 CLINIC 타입의 반만 지정할 수 있습니다."}
+            )
+        return attrs

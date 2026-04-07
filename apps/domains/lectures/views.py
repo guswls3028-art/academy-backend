@@ -373,12 +373,16 @@ class SectionAssignmentViewSet(ModelViewSet):
             raise PermissionDenied("다른 학원의 반에 배정할 수 없습니다.")
         if class_section.lecture_id != enrollment.lecture_id:
             raise ValidationError("수업 반은 수강 중인 강의의 반이어야 합니다.")
+        if class_section.section_type != "CLASS":
+            raise ValidationError("수업 반(class_section)에는 CLASS 타입의 반만 지정할 수 있습니다.")
         clinic_section = serializer.validated_data.get("clinic_section")
         if clinic_section:
             if clinic_section.tenant_id != self.request.tenant.id:
                 raise PermissionDenied("다른 학원의 클리닉 반에 배정할 수 없습니다.")
             if clinic_section.lecture_id != enrollment.lecture_id:
                 raise ValidationError("클리닉 반은 수강 중인 강의의 반이어야 합니다.")
+            if clinic_section.section_type != "CLINIC":
+                raise ValidationError("클리닉 반(clinic_section)에는 CLINIC 타입의 반만 지정할 수 있습니다.")
         serializer.save(tenant=self.request.tenant)
 
     def perform_update(self, serializer):
@@ -390,12 +394,16 @@ class SectionAssignmentViewSet(ModelViewSet):
             raise PermissionDenied("다른 학원의 반에 배정할 수 없습니다.")
         if class_section.lecture_id != enrollment.lecture_id:
             raise ValidationError("수업 반은 수강 중인 강의의 반이어야 합니다.")
+        if class_section.section_type != "CLASS":
+            raise ValidationError("수업 반(class_section)에는 CLASS 타입의 반만 지정할 수 있습니다.")
         clinic_section = serializer.validated_data.get("clinic_section", serializer.instance.clinic_section)
         if clinic_section:
             if clinic_section.tenant_id != self.request.tenant.id:
                 raise PermissionDenied("다른 학원의 클리닉 반에 배정할 수 없습니다.")
             if clinic_section.lecture_id != enrollment.lecture_id:
                 raise ValidationError("클리닉 반은 수강 중인 강의의 반이어야 합니다.")
+            if clinic_section.section_type != "CLINIC":
+                raise ValidationError("클리닉 반(clinic_section)에는 CLINIC 타입의 반만 지정할 수 있습니다.")
         serializer.save()
 
     @action(detail=False, methods=["post"], url_path="auto-assign")
@@ -404,6 +412,9 @@ class SectionAssignmentViewSet(ModelViewSet):
         미편성 학생 자동배정.
         POST { "lecture_id": 1, "section_type": "CLASS" }
         각 반의 현재 인원과 max_capacity를 고려하여 균등 배분.
+
+        동시성 안전: 전체 로직을 transaction.atomic() + select_for_update()로 보호하여
+        동시 요청 시에도 max_capacity를 초과하지 않도록 보장.
         """
         tenant = request.tenant
         lecture_id = request.data.get("lecture_id")
@@ -416,79 +427,91 @@ class SectionAssignmentViewSet(ModelViewSet):
         if not lecture:
             raise NotFound("강의를 찾을 수 없습니다.")
 
-        sections = list(
-            Section.objects.filter(
-                tenant=tenant, lecture=lecture,
-                section_type=section_type, is_active=True,
-            ).order_by("label")
-        )
-        if not sections:
-            raise ValidationError(f"{section_type} 타입의 활성 반이 없습니다.")
-
-        # 이미 편성된 enrollment IDs (MANUAL 배정 포함 — 자동배정으로 덮어쓰지 않음)
-        if section_type == "CLASS":
-            assigned_ids = set(
-                SectionAssignment.objects.filter(
-                    tenant=tenant, enrollment__lecture=lecture,
-                ).values_list("enrollment_id", flat=True)
-            )
-            # MANUAL 배정은 별도로 추적하여 update_or_create에서 보호
-            manual_ids = set(
-                SectionAssignment.objects.filter(
-                    tenant=tenant, enrollment__lecture=lecture,
-                    source="MANUAL",
-                ).values_list("enrollment_id", flat=True)
-            )
-        else:
-            assigned_ids = set(
-                SectionAssignment.objects.filter(
-                    tenant=tenant, enrollment__lecture=lecture,
-                ).exclude(clinic_section__isnull=True)
-                .values_list("enrollment_id", flat=True)
-            )
-            # CLINIC 자동배정도 MANUAL 보호
-            manual_ids = set(
-                SectionAssignment.objects.filter(
-                    tenant=tenant, enrollment__lecture=lecture,
-                    source="MANUAL",
-                ).exclude(clinic_section__isnull=True)
-                .values_list("enrollment_id", flat=True)
-            )
-
-        # 미편성 활성 수강생 (MANUAL 배정된 학생도 제외 — 자동배정으로 덮어쓰지 않음)
-        excluded_ids = assigned_ids | manual_ids
-        unassigned = Enrollment.objects.filter(
-            tenant=tenant, lecture=lecture, status="ACTIVE",
-        ).exclude(id__in=excluded_ids)
-
-        unassigned_list = list(unassigned)
-        if not unassigned_list:
-            return Response({"message": "미편성 학생이 없습니다.", "assigned": 0})
-
-        # 현재 반별 인원수 → 균등 배분
-        if section_type == "CLASS":
-            counts = {s.id: SectionAssignment.objects.filter(
-                tenant=tenant, class_section=s,
-            ).count() for s in sections}
-        else:
-            counts = {s.id: SectionAssignment.objects.filter(
-                tenant=tenant, clinic_section=s,
-            ).count() for s in sections}
-
         assigned_count = 0
         skipped_count = 0
+
         with transaction.atomic():
+            # select_for_update로 Section 행을 잠가 동시 배정 방지
+            sections = list(
+                Section.objects.select_for_update().filter(
+                    tenant=tenant, lecture=lecture,
+                    section_type=section_type, is_active=True,
+                ).order_by("label")
+            )
+            if not sections:
+                raise ValidationError(
+                    f"{section_type} 타입의 활성 반이 없습니다."
+                )
+
+            # 트랜잭션 내에서 현재 배정 상태 조회
+            if section_type == "CLASS":
+                assigned_ids = set(
+                    SectionAssignment.objects.filter(
+                        tenant=tenant, enrollment__lecture=lecture,
+                    ).values_list("enrollment_id", flat=True)
+                )
+                manual_ids = set(
+                    SectionAssignment.objects.filter(
+                        tenant=tenant, enrollment__lecture=lecture,
+                        source="MANUAL",
+                    ).values_list("enrollment_id", flat=True)
+                )
+            else:
+                assigned_ids = set(
+                    SectionAssignment.objects.filter(
+                        tenant=tenant, enrollment__lecture=lecture,
+                    ).exclude(clinic_section__isnull=True)
+                    .values_list("enrollment_id", flat=True)
+                )
+                manual_ids = set(
+                    SectionAssignment.objects.filter(
+                        tenant=tenant, enrollment__lecture=lecture,
+                        source="MANUAL",
+                    ).exclude(clinic_section__isnull=True)
+                    .values_list("enrollment_id", flat=True)
+                )
+
+            excluded_ids = assigned_ids | manual_ids
+            unassigned_list = list(
+                Enrollment.objects.filter(
+                    tenant=tenant, lecture=lecture, status="ACTIVE",
+                ).exclude(id__in=excluded_ids)
+            )
+            if not unassigned_list:
+                return Response({
+                    "message": "미편성 학생이 없습니다.",
+                    "assigned": 0,
+                })
+
+            # 트랜잭션 내에서 정확한 카운트 조회
+            if section_type == "CLASS":
+                counts = {
+                    s.id: SectionAssignment.objects.filter(
+                        tenant=tenant, class_section=s,
+                    ).count()
+                    for s in sections
+                }
+            else:
+                counts = {
+                    s.id: SectionAssignment.objects.filter(
+                        tenant=tenant, clinic_section=s,
+                    ).count()
+                    for s in sections
+                }
+
             for enrollment in unassigned_list:
-                # 가장 인원 적은 반 중 ���용 가능한 반 선택
                 available = [
                     s for s in sections
-                    if s.max_capacity is None or counts.get(s.id, 0) < s.max_capacity
+                    if s.max_capacity is None
+                    or counts.get(s.id, 0) < s.max_capacity
                 ]
                 if not available:
                     skipped_count += len(unassigned_list) - assigned_count
                     break
 
-                target = min(available, key=lambda s: counts.get(s.id, 0))
+                target = min(
+                    available, key=lambda s: counts.get(s.id, 0)
+                )
 
                 if section_type == "CLASS":
                     SectionAssignment.objects.update_or_create(
@@ -500,16 +523,20 @@ class SectionAssignmentViewSet(ModelViewSet):
                         },
                     )
                 else:
-                    # clinic: 기존 assignment에 clinic_section 업데이트
                     assignment = SectionAssignment.objects.filter(
                         tenant=tenant, enrollment=enrollment,
                     ).first()
                     if assignment:
                         assignment.clinic_section = target
-                        assignment.source = "AUTO"
-                        assignment.save(update_fields=["clinic_section", "source", "updated_at"])
+                        # source 보존: MANUAL 배정은 유지 (감사 추적 보호)
+                        if assignment.source != "MANUAL":
+                            assignment.source = "AUTO"
+                        assignment.save(
+                            update_fields=[
+                                "clinic_section", "source", "updated_at",
+                            ]
+                        )
                     else:
-                        # class 편성이 없으면 CLINIC 자동배정 불가 → skip
                         skipped_count += 1
                         continue
 
@@ -518,7 +545,10 @@ class SectionAssignmentViewSet(ModelViewSet):
 
         msg = f"{assigned_count}명 자동 배정 완료."
         if skipped_count:
-            msg += f" {skipped_count}명은 수용 ���과 또는 수업 반 미편성으로 건너뜀."
+            msg += (
+                f" {skipped_count}명은 수용 초과 또는"
+                " 수업 반 미편성으로 건너뜀."
+            )
         return Response({
             "message": msg,
             "assigned": assigned_count,

@@ -67,6 +67,23 @@ class Lecture(TimestampModel):
             ),
         ]
 
+    def clean(self):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise DjangoValidationError(
+                {"end_date": "종료일은 시작일보다 같거나 이후여야 합니다."}
+            )
+
+    def save(self, *args, **kwargs):
+        # clean()은 ModelForm/admin에서 자동 호출되지만, ORM 직접 save 시에도 보장
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            raise DjangoValidationError(
+                {"end_date": "종료일은 시작일보다 같거나 이후여야 합니다."}
+            )
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.title
 
@@ -270,11 +287,19 @@ class Session(TimestampModel):
 
     class Meta:
         ordering = ["order"]
+        indexes = [
+            models.Index(fields=["lecture", "section"]),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["lecture", "section", "order"],
                 condition=models.Q(section__isnull=False),
                 name="uniq_session_order_per_lecture_section",
+            ),
+            models.UniqueConstraint(
+                fields=["lecture", "order"],
+                condition=models.Q(section__isnull=True),
+                name="uniq_session_order_per_lecture_no_section",
             ),
         ]
 
