@@ -22,6 +22,22 @@ class ExamGradingService:
     """
 
     # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _get_question_max_score(exam: Exam, question_id: int) -> float:
+        """문항 DB에서 원본 만점 조회. 찾지 못하면 0 반환."""
+        try:
+            from apps.domains.exams.models import ExamQuestion
+            tid = exam.effective_template_exam_id
+            q = ExamQuestion.objects.filter(
+                sheet__exam_id=tid, id=int(question_id),
+            ).only("score").first()
+            return float(q.score) if q else 0.0
+        except Exception:
+            return 0.0
+
+    # ------------------------------------------------------------------
     # Loaders
     # ------------------------------------------------------------------
     def _load_submission(self, submission_id: int):
@@ -212,16 +228,46 @@ class ExamGradingService:
         manual_max = 0.0
         manual_breakdown = {}
 
+        # P0-4: max_score 왜곡 방지
+        # max_score는 반드시 원본 문항 만점을 사용.
+        # item에 max_score가 없으면 기존 breakdown에서 원본 만점을 복원.
+        existing_breakdown = result.breakdown or {}
+
+        # breakdown 키는 question number이고 값에 question_id 포함.
+        # question_id → breakdown entry 매핑 생성
+        qid_to_breakdown = {}
+        for _num, entry in existing_breakdown.items():
+            if isinstance(entry, dict):
+                entry_qid = entry.get("question_id")
+                if entry_qid is not None:
+                    qid_to_breakdown[int(entry_qid)] = entry
+
         for item in grades:
             if isinstance(item, dict):
                 qid = item.get("exam_question_id", 0)
                 score = float(item.get("score", 0) or 0)
-                max_score_item = float(item.get("max_score", score) or score)
+
+                # max_score 결정: item 명시 > 기존 breakdown의 earned > exam 문항 DB
+                raw_max = item.get("max_score")
+                if raw_max is not None and float(raw_max) > 0:
+                    max_score_item = float(raw_max)
+                else:
+                    # 기존 자동채점 breakdown에서 원본 만점 복원 (question_id 기준)
+                    orig = qid_to_breakdown.get(int(qid), {})
+                    orig_earned = orig.get("earned")
+                    # breakdown의 earned는 정답 시 문항 만점이므로 참조
+                    if orig_earned is not None and float(orig_earned) > 0:
+                        max_score_item = float(orig_earned)
+                    else:
+                        # 마지막 수단: 문항 DB에서 조회
+                        max_score_item = self._get_question_max_score(exam, qid)
+
                 manual_total += score
                 manual_max += max_score_item
                 manual_breakdown[str(qid)] = {
                     "question_id": qid,
                     "score": score,
+                    "max_score": max_score_item,  # 원본 만점 보존
                     "is_correct": item.get("is_correct", score >= max_score_item),
                     "source": "manual",
                     "note": item.get("note", ""),

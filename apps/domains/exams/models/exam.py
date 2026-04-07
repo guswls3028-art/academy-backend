@@ -114,10 +114,37 @@ class Exam(BaseModel):
             # template는 template_exam을 가질 수 없음
             models.CheckConstraint(
                 name="exams_exam_template_has_no_template_exam",
-                check=~Q(exam_type="template") | Q(template_exam__isnull=True),
+                condition=~Q(exam_type="template") | Q(template_exam__isnull=True),
             ),
-            # regular은 template_exam 선택 사항 (생성 시 미지정 가능, 시험 설정에서 나중에 지정)
+            # P1-5: max_attempts >= 1 (0이면 시험 응시 불가)
+            models.CheckConstraint(
+                name="exams_exam_max_attempts_gte_1",
+                condition=Q(max_attempts__gte=1),
+            ),
+            # P1-5: pass_score <= max_score (합격 불가능한 시험 방지)
+            models.CheckConstraint(
+                name="exams_exam_pass_lte_max",
+                condition=Q(pass_score__lte=models.F("max_score")),
+            ),
         ]
+
+    def clean(self):
+        """P1-5: 모델 레벨 유효성 검증"""
+        from django.core.exceptions import ValidationError
+        errors = {}
+        if self.max_attempts is not None and self.max_attempts < 1:
+            errors["max_attempts"] = "max_attempts는 1 이상이어야 합니다."
+        if self.pass_score is not None and self.max_score is not None:
+            if self.pass_score > self.max_score:
+                errors["pass_score"] = (
+                    f"합격 점수({self.pass_score})가 만점({self.max_score})을 초과할 수 없습니다."
+                )
+        if self.open_at and self.close_at and self.open_at >= self.close_at:
+            errors["close_at"] = (
+                f"마감 시각({self.close_at})이 시작 시각({self.open_at}) 이후여야 합니다."
+            )
+        if errors:
+            raise ValidationError(errors)
 
     def __str__(self) -> str:
         return self.title

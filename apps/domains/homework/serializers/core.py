@@ -112,3 +112,25 @@ class HomeworkQuickPatchSerializer(serializers.Serializer):
         allow_null=True,
         required=False,
     )
+
+    def validate(self, attrs):
+        # P1-7: score <= max_score 검증
+        score = attrs.get("score")
+        max_score = attrs.get("max_score")
+        if score is not None and max_score is not None and max_score > 0:
+            if score > max_score:
+                raise serializers.ValidationError(
+                    {"score": f"점수({score})가 만점({max_score})을 초과할 수 없습니다."},
+                    code="SCORE_EXCEEDS_MAX",
+                )
+        if score is not None and score < 0:
+            raise serializers.ValidationError(
+                {"score": "점수는 0 이상이어야 합니다."},
+                code="NEGATIVE_SCORE",
+            )
+        if max_score is not None and max_score < 0:
+            raise serializers.ValidationError(
+                {"max_score": "만점은 0 이상이어야 합니다."},
+                code="NEGATIVE_MAX_SCORE",
+            )
+        return attrs

@@ -48,3 +48,24 @@ class ExamSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def validate(self, attrs):
+        # P1-5: 시험 유효성 검증 (serializer 레벨)
+        instance = self.instance
+        max_attempts = attrs.get("max_attempts", getattr(instance, "max_attempts", 1) if instance else 1)
+        pass_score = attrs.get("pass_score", getattr(instance, "pass_score", 0) if instance else 0)
+        max_score = attrs.get("max_score", getattr(instance, "max_score", 100) if instance else 100)
+        open_at = attrs.get("open_at", getattr(instance, "open_at", None) if instance else None)
+        close_at = attrs.get("close_at", getattr(instance, "close_at", None) if instance else None)
+
+        errors = {}
+        if max_attempts is not None and max_attempts < 1:
+            errors["max_attempts"] = "1 이상이어야 합니다."
+        if pass_score is not None and max_score is not None and pass_score > max_score:
+            errors["pass_score"] = f"합격 점수({pass_score})가 만점({max_score})을 초과할 수 없습니다."
+        if open_at and close_at and open_at >= close_at:
+            errors["close_at"] = "마감 시각이 시작 시각 이후여야 합니다."
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        return attrs

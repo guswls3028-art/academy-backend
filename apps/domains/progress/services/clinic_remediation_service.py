@@ -79,6 +79,10 @@ class ClinicRemediationService:
         pass_score = float(getattr(exam, "pass_score", 0) or 0)
         max_score_val = float(getattr(exam, "max_score", 100) or 100)
 
+        # 점수 상한 검증: 만점 초과 방지
+        if max_score_val > 0 and score > max_score_val:
+            raise ValueError(f"점수({score})가 만점({max_score_val})을 초과할 수 없습니다.")
+
         # 2. 다음 attempt_index 계산
         max_attempt = (
             ExamAttempt.objects.filter(
@@ -164,10 +168,12 @@ class ClinicRemediationService:
         from apps.domains.homework_results.models import HomeworkScore, Homework
         from apps.domains.homework.utils.homework_policy import calc_homework_passed_and_clinic
 
-        # 1. ClinicLink 조회
-        link = ClinicLink.objects.select_for_update().get(
-            id=clinic_link_id,
-            resolved_at__isnull=True,
+        # 1. ClinicLink 조회 (session→lecture→tenant 프리로드)
+        link = (
+            ClinicLink.objects
+            .select_for_update()
+            .select_related("session", "session__lecture", "session__lecture__tenant")
+            .get(id=clinic_link_id, resolved_at__isnull=True)
         )
 
         if link.source_type != "homework":
@@ -346,7 +352,12 @@ class ClinicRemediationService:
         if attempt_index < 2:
             raise ValueError("1차 시도는 이 API로 수정할 수 없습니다. 성적표 편집을 사용하세요.")
 
-        link = ClinicLink.objects.select_for_update().get(id=clinic_link_id)
+        link = (
+            ClinicLink.objects
+            .select_for_update()
+            .select_related("session", "session__lecture", "session__lecture__tenant")
+            .get(id=clinic_link_id)
+        )
 
         if link.source_type != "homework":
             raise ValueError(f"ClinicLink {clinic_link_id}는 과제 유형이 아닙니다")

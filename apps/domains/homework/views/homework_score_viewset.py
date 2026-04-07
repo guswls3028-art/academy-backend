@@ -412,7 +412,7 @@ class HomeworkScoreViewSet(ModelViewSet):
             # ✅ 단일 진실: homework → session (DoesNotExist → 404)
             # 🔐 tenant isolation: homework must belong to request tenant
             homework = get_object_or_404(
-                Homework.objects.select_related("session").filter(
+                Homework.objects.select_related("session", "session__lecture", "session__lecture__tenant").filter(
                     session__lecture__tenant=self.request.tenant,
                 ),
                 id=homework_id,

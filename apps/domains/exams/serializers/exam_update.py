@@ -41,6 +41,23 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
                         {"status": "채점 결과가 있는 마감 시험은 다시 열 수 없습니다."}
                     )
 
+        # P1-5: 시험 유효성 검증
+        max_attempts = attrs.get("max_attempts", exam.max_attempts)
+        pass_score = attrs.get("pass_score", exam.pass_score)
+        max_score = attrs.get("max_score", exam.max_score)
+        open_at = attrs.get("open_at", exam.open_at)
+        close_at = attrs.get("close_at", exam.close_at)
+
+        errors = {}
+        if max_attempts is not None and max_attempts < 1:
+            errors["max_attempts"] = "1 이상이어야 합니다."
+        if pass_score is not None and max_score is not None and pass_score > max_score:
+            errors["pass_score"] = f"합격 점수({pass_score})가 만점({max_score})을 초과할 수 없습니다."
+        if open_at and close_at and open_at >= close_at:
+            errors["close_at"] = "마감 시각이 시작 시각 이후여야 합니다."
+        if errors:
+            raise serializers.ValidationError(errors)
+
         if exam.exam_type == Exam.ExamType.TEMPLATE:
             return attrs
 

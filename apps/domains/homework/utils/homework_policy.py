@@ -79,15 +79,14 @@ def calc_homework_passed_and_clinic(
     - percent: Optional[int] (rounded percent, COUNT 모드일 때는 None)
     """
     # HomeworkPolicy는 tenant+session 단위 단일 진실 (tenant 필수)
+    # P1-6: tenant fallback 제거 — tenant 불명확 시 fail-closed
     tenant = getattr(getattr(session, "lecture", None), "tenant", None)
     if tenant is None:
-        # tenant 컨텍스트가 없으면 안전하게 기본값으로 처리 (500 방지)
-        mode = "PERCENT"
-        cutline_value = 80
-        round_unit = 5
-        clinic_enabled = True
-        clinic_on_fail = True
-        policy = None
+        raise ValueError(
+            f"calc_homework_passed_and_clinic: session(id={getattr(session, 'id', '?')})에 "
+            f"tenant 정보가 없습니다. session.lecture.tenant가 로드되었는지 확인하세요. "
+            f"(select_related 누락 가능성)"
+        )
     else:
         policy, _ = HomeworkPolicy.objects.get_or_create(
             tenant=tenant,

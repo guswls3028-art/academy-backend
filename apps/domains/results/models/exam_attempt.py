@@ -95,6 +95,22 @@ class ExamAttempt(BaseModel):
         db_table = "results_exam_attempt"
         unique_together = ("exam", "enrollment", "attempt_index")
         ordering = ["-created_at"]
+        constraints = [
+            # P0-1: (exam, enrollment) 당 is_representative=True 최대 1개 보장
+            # 장애/동시성에서 대표가 0개 또는 2개가 되는 경로 차단
+            models.UniqueConstraint(
+                fields=["exam", "enrollment"],
+                condition=models.Q(is_representative=True),
+                name="unique_representative_per_exam_enrollment",
+            ),
+            # P0-3: 동일 submission으로 중복 attempt 생성 차단 (동시성 안전)
+            # submission_id=NULL(클리닉 직접 입력)은 제외
+            models.UniqueConstraint(
+                fields=["submission_id"],
+                condition=models.Q(submission_id__isnull=False),
+                name="unique_submission_per_attempt",
+            ),
+        ]
 
     def __str__(self):
         return (
