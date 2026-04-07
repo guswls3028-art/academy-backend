@@ -276,15 +276,41 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             )
 
     # =========================
-    # UPDATE (is_active sync, role 무시)
+    # UPDATE (Teacher 동기화 포함, role 무시)
     # =========================
     def update(self, instance, validated_data):
         validated_data.pop("role", None)  # role은 create 전용
+        validated_data.pop("username", None)
+        validated_data.pop("password", None)
+
+        # Teacher 동기화를 위해 old 값 보존 (super().update() 전)
+        old_name = instance.name
+        old_phone = instance.phone or ""
         is_active_before = instance.is_active
+
         staff = super().update(instance, validated_data)
 
+        new_name = staff.name
+        new_phone = staff.phone or ""
+        name_or_phone_changed = (old_name != new_name) or (old_phone != new_phone)
+
+        # 1) 이름/전화 변경 → Teacher 레코드 동기화 (old 값으로 찾아서 new 값으로 업데이트)
+        if name_or_phone_changed:
+            teacher_repo.teacher_update_name_phone(
+                staff.tenant, old_name, old_phone, new_name, new_phone,
+            )
+
+        # 2) 비활성화 → Teacher도 비활성화 (이름/전화 동기화 후이므로 new 값 사용)
         if is_active_before and staff.is_active is False:
-            teacher_repo.teacher_update_is_active_by_name_phone(staff.tenant, staff.name, staff.phone or "", False)
+            teacher_repo.teacher_update_is_active_by_name_phone(
+                staff.tenant, new_name, new_phone, False,
+            )
+
+        # 3) 재활성화 → Teacher도 활성화
+        if not is_active_before and staff.is_active is True:
+            teacher_repo.teacher_update_is_active_by_name_phone(
+                staff.tenant, new_name, new_phone, True,
+            )
 
         return staff
 

@@ -231,6 +231,23 @@ class StaffViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(instance)
         serializer.delete(instance)
 
+    @action(detail=True, methods=["post"], url_path="change-password")
+    def change_password(self, request, pk=None):
+        """직원 비밀번호 변경. Body: { "password": "..." }"""
+        staff = self.get_object()
+        if not staff.user:
+            raise ValidationError("이 직원에게 연결된 계정이 없습니다.")
+
+        new_password = (request.data.get("password") or "").strip()
+        if not new_password:
+            raise ValidationError({"password": "새 비밀번호를 입력하세요."})
+        if len(new_password) < 4:
+            raise ValidationError({"password": "비밀번호는 4자 이상이어야 합니다."})
+
+        staff.user.set_password(new_password)
+        staff.user.save(update_fields=["password"])
+        return Response({"detail": "비밀번호가 변경되었습니다."})
+
     @action(detail=False, methods=["get"], url_path="me", permission_classes=[IsAuthenticated])
     def me(self, request):
         import logging

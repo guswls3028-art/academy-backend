@@ -38,3 +38,11 @@ def teacher_create(tenant, name, phone, is_active: bool = True):
         phone=phone or "",
         is_active=is_active,
     )
+
+
+def teacher_update_name_phone(tenant, old_name, old_phone, new_name, new_phone):
+    """Staff 이름/전화 변경 시 대응하는 Teacher 레코드도 동기화."""
+    from apps.domains.teachers.models import Teacher
+    return Teacher.objects.filter(
+        tenant=tenant, name=old_name, phone=old_phone or "",
+    ).update(name=new_name, phone=new_phone or "")
