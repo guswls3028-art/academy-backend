@@ -8,6 +8,7 @@
 
 import logging
 import os
+import re
 from typing import Optional
 
 from django.conf import settings
@@ -477,8 +478,7 @@ def send_event_notification(
         else:
             text = f"{content_value}\n{site_url}".strip()
         # 연속 빈 줄 정리
-        import re as _re_sms
-        text = _re_sms.sub(r"\n{3,}", "\n\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
 
         _alimtalk_tid = unified_tid
 
@@ -516,9 +516,8 @@ def send_event_notification(
         for k, v in all_vars.items():
             text = text.replace(f"#{{{k}}}", v)
 
-        import re as _re
         _OPTIONAL_VARS = {"공지내용", "선생님메모", "내용"}
-        remaining = _re.findall(r"#\{([^}]+)\}", text)
+        remaining = re.findall(r"#\{([^}]+)\}", text)
         required_missing = [v for v in remaining if v not in _OPTIONAL_VARS]
         if required_missing:
             logger.error(
@@ -528,7 +527,7 @@ def send_event_notification(
             return False
         for opt in _OPTIONAL_VARS:
             text = text.replace(f"#{{{opt}}}", "")
-        text = _re.sub(r"\n{3,}", "\n\n", text).strip()
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
 
         _alimtalk_tid = solapi_template_id if solapi_approved else owner_alimtalk_template_id
 

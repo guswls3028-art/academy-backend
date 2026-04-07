@@ -1,6 +1,6 @@
 # 메시지 도메인 SSOT
 
-> 최종 갱신: 2026-03-24
+> 최종 갱신: 2026-04-08
 > 버전: V1.1.1
 
 ---
@@ -41,6 +41,21 @@
 **자동 변수** (학원명, 학생이름, 사이트링크): 백엔드 `SendMessageView`에서 자동 치환. 프론트 전달 불필요.
 **컨텍스트 변수** (강의명, 시험명 등): 프론트에서 `alimtalkExtraVars`로 전달 또는 자동발송 시 서비스에서 직접 구성.
 
+### 2-B. 통합 템플릿 변수 (Solapi 등록 변수, 2026-04-08~)
+
+> **핵심:** 솔라피에는 `#{선생님메모}`, 프론트 UI에는 `내용`으로 표시. 카카오 검수에서 `#{내용}`은 어뷰징 우려로 반려됨.
+
+| 템플릿 타입 | Solapi ID | 등록 변수 | 용도 |
+|------------|-----------|----------|------|
+| **clinic_info** | `KA01TP2604061058318608Hy40ZnTFZT` | 학원이름, 학생이름, 클리닉장소, 클리닉날짜, 클리닉시간, **선생님메모**, 사이트링크 | 클리닉 일정 안내 |
+| **clinic_change** | `KA01TP260406110706969XS06XRZveEk` | 학원이름, 학생이름, 클리닉기존일정, 클리닉변동사항, 클리닉수정자, **선생님메모**, 사이트링크 | 클리닉 변경/취소 |
+| **score** | `KA01TP260406105458211774JKJ3OU55` | 학원이름, 학생이름, 강의명, 차시명, **선생님메모**, 사이트링크 | 성적/시험/과제 안내 |
+| **attendance** | `KA01TP260406121126868FGddLmrDFUC` | 학원이름, 학생이름, 강의명, 차시명, 강의날짜, 강의시간, **선생님메모**, 사이트링크 | 수업 출석 안내 |
+
+**활성화 플래그:** `UNIFIED_TEMPLATES_ENABLED` (`alimtalk_content_builders.py`)
+- `False` (현재): 기존 개별 승인 템플릿 사용
+- `True`: 통합 4종 사용 (카카오 승인 확인 후 변경)
+
 ---
 
 ## 3. 이벤트별 메시지 매핑
@@ -56,9 +71,18 @@
 | 비밀번호 찾기 인증번호 | `password_find_otp` | 학생 | 112 | **APPROVED** | `policy.py:send_alimtalk_via_owner` |
 | 수동 발송 | (관리자 UI) | 선택 대상 | - | (자유양식) | `views.py:SendMessageView` |
 
-### B. 카카오 검수 대기 (PENDING) — 승인 후 즉시 사용 가능
+### B. 통합 템플릿 (INSPECTING, 2026-04-08) — 승인 후 `UNIFIED_TEMPLATES_ENABLED=True`로 활성화
 
-#### 수동 발송 (자유양식 카테고리별)
+> 아래 트리거들은 통합 4종 템플릿으로 커버됨. 승인 후 개별 KA01TP260324... 템플릿은 불필요.
+
+| 통합 타입 | 커버 트리거 |
+|-----------|-----------|
+| **attendance** | `lecture_session_reminder`, `check_in_complete`, `absent_occurred` |
+| **score** | `exam_*`, `retake_assigned`, `assignment_*`, `monthly_report_generated` |
+| **clinic_info** | `clinic_reservation_created`, `clinic_reminder`, `clinic_check_*`, `clinic_absent`, `clinic_self_study_completed`, `clinic_result_notification`, `counseling_reservation_created` |
+| **clinic_change** | `clinic_reservation_changed`, `clinic_cancelled` |
+
+#### 레거시 수동 발송 (자유양식 카테고리별, 개별 승인)
 
 | 카테고리 | 템플릿명 | DB id | Solapi ID | 변수 | 링크 목적지 |
 |----------|---------|-------|-----------|------|-----------|
@@ -90,7 +114,7 @@
 | 납부 예정 | `payment_due_days_before` | 학부모 | 262 | `KA01TP2603240519322...` | 학원명, 학생이름2 | (대시보드) | **미구현** |
 | 반 등록 완료 | `class_enrollment_complete` | 학부모 | 266 | `KA01TP2603240519326...` | 학원명, 학생이름2 | `/student/sessions` | **미구현** |
 | 퇴원 처리 | `withdrawal_complete` | 학부모 | 242 | `KA01TP2603240519330...` | 학원명, 학생이름2 | - | **미구현** |
-| 긴급 공지 | `urgent_notice` | 학생/학부모 | 265 | `KA01TP2603240519339...` | 학원명, 학생이름2, 공지내용 | `/student/notices` | **미구현** |
+| ~~긴급 공지~~ | ~~`urgent_notice`~~ | - | - | - | - | - | **삭제** (카카오 정책 위반) |
 
 #### Solapi 미등록 (DB만 존재, 등록 보류)
 
@@ -217,22 +241,20 @@ https://hakwonplus.com
 
 ## 7. 승인 후 즉시 사용 체크리스트
 
-### 수동 발송 (성적표/클리닉/자유양식)
+### 통합 템플릿 활성화 (출결/시험/과제/클리닉)
+
+1. [ ] Solapi에서 4개 통합 템플릿 APPROVED 확인 (API 조회)
+2. [ ] `alimtalk_content_builders.py`에서 `UNIFIED_TEMPLATES_ENABLED = True` 변경
+3. [ ] 배포 (git push → CI/CD)
+4. [ ] 테스트 발송 → 수신 확인 (출결, 클리닉, 성적 각 1건)
+5. [ ] 레거시 개별 템플릿(KA01TP260324...) 솔라피에서 삭제 (선택)
+
+### 수동 발송 (자유양식)
 
 1. [ ] Solapi 검수 승인 확인
 2. [ ] DB `solapi_status` → `APPROVED` 업데이트
-3. [ ] `resolve_freeform_template()` 또는 `resolve_category_template()`에서 해당 템플릿 반환 확인
-4. [ ] 프론트 SendMessageModal에서 알림톡 모드 발송 버튼 활성화 확인
-5. [ ] 테스트 발송 → 수신 확인
-
-### 이벤트 자동 발송
-
-1. [ ] Solapi 검수 승인 확인
-2. [ ] DB `solapi_status` → `APPROVED` 업데이트
-3. [ ] 해당 트리거의 발송 코드 구현 (services.py)
-4. [ ] AutoSendConfig에 트리거 + 템플릿 연결
-5. [ ] 선생앱 토글 UI 구현
-6. [ ] 테스트 발송 → 수신 확인
+3. [ ] `resolve_freeform_template()` 반환 확인
+4. [ ] 프론트 SendMessageModal 알림톡 모드 발송 테스트
 
 ---
 
@@ -240,8 +262,7 @@ https://hakwonplus.com
 
 | 항목 | 상태 | 필요 조치 |
 |------|------|----------|
-| 카카오 검수 승인 | **대기 중** (24개 PENDING) | 1~2 영업일 소요 |
-| 카카오 채널명 변경 | 미착수 | 카카오 비즈니스센터에서 변경 |
-| 자동발송 코드 구현 | **미구현** (15개 트리거) | 별도 구현 작업 |
+| 통합 템플릿 4종 카카오 검수 | **INSPECTING** | 승인 후 `UNIFIED_TEMPLATES_ENABLED=True` |
+| 자유양식 카테고리 템플릿 | APPROVED (15개) / INSPECTING (5개) | — |
+| 자동발송 코드 | 출결/클리닉 **구현 완료**, 시험/과제/결제 미구현 | 트리거별 구현 |
 | 딥링크 | 미구현 | 이벤트별 경로 추가 |
-| 선생앱 토글 UI | 미구현 | SSOT 확정 후 구현 |

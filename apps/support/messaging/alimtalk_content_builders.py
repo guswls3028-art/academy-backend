@@ -25,13 +25,6 @@ SOLAPI_CLINIC_CHANGE = "KA01TP260406110706969XS06XRZveEk"    # 클리닉 일정 
 SOLAPI_SCORE = "KA01TP260406105458211774JKJ3OU55"            # 성적표발송
 SOLAPI_ATTENDANCE = "KA01TP260406121126868FGddLmrDFUC"       # 수업출석안내
 
-UNIFIED_TEMPLATE_IDS = frozenset({
-    SOLAPI_CLINIC_INFO,
-    SOLAPI_CLINIC_CHANGE,
-    SOLAPI_SCORE,
-    SOLAPI_ATTENDANCE,
-})
-
 # ──────────────────────────────────────────
 # 템플릿 타입 상수
 # ──────────────────────────────────────────
@@ -99,10 +92,6 @@ def get_solapi_template_id(trigger: str) -> str | None:
         return TEMPLATE_TYPE_TO_SOLAPI_ID.get(tt)
     return None
 
-
-def is_unified_template(solapi_template_id: str) -> bool:
-    """통합 템플릿 ID인지 확인."""
-    return solapi_template_id in UNIFIED_TEMPLATE_IDS
 
 
 # ──────────────────────────────────────────

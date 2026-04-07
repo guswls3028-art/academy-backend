@@ -5,10 +5,6 @@ from typing import Optional
 from apps.support.messaging.models import AutoSendConfig
 
 
-def get_active_provider():
-    return None
-
-
 def get_auto_send_config(tenant_id: int, trigger: str) -> Optional[AutoSendConfig]:
     """테넌트·트리거별 자동발송 설정 조회."""
     return AutoSendConfig.objects.filter(
