@@ -130,14 +130,40 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     answers = result.get("answers") or []
     identifier = result.get("identifier")
 
+    # ── question_number → ExamQuestion.id 매핑 ──
+    # AI 엔진은 question_id = question_number(1,2,3...)를 반환한다.
+    # SubmissionAnswer.exam_question_id는 ExamQuestion PK여야 하므로 변환 필요.
+    qnum_to_pk: dict[int, int] = {}
+    if submission.target_type == "exam" and submission.target_id:
+        try:
+            from apps.domains.exams.models import Sheet, ExamQuestion
+            from apps.domains.exams.services.template_resolver import resolve_template_exam
+            from apps.domains.exams.models import Exam
+
+            exam = Exam.objects.filter(id=int(submission.target_id)).first()
+            if exam:
+                template_exam = resolve_template_exam(exam)
+                sheet = Sheet.objects.filter(exam=template_exam).first()
+                if sheet:
+                    for q in ExamQuestion.objects.filter(sheet=sheet).only("id", "number"):
+                        qnum_to_pk[int(q.number)] = int(q.id)
+        except Exception:
+            logger.exception(
+                "apply_omr_ai_result: failed to build qnum→pk map for submission %s",
+                submission_id,
+            )
+
     manual_required = False
     reasons = []
 
     for a in answers:
-        # v7 engine은 question_id, 구버전은 exam_question_id
-        eqid = a.get("exam_question_id") or a.get("question_id")
-        if not eqid:
+        # v7 engine은 question_id(=question_number), 구버전은 exam_question_id(=PK)
+        raw_id = a.get("exam_question_id") or a.get("question_id")
+        if not raw_id:
             continue
+
+        # question_number → ExamQuestion PK 변환 (매핑이 있으면 사용)
+        eqid = qnum_to_pk.get(int(raw_id), int(raw_id))
 
         SubmissionAnswer.objects.update_or_create(
             submission=submission,

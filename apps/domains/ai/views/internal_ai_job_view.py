@@ -127,4 +127,25 @@ class InternalAIJobResultView(APIView):
             return Response({"ok": True, "detail": "failed_recorded"}, status=status.HTTP_200_OK)
 
         q.mark_done(job_id=job.job_id)
+
+        # ── 도메인 콜백 (채점 등 후속 처리) ──
+        # SQS 워커가 직접 콜백하지 못한 경우(HTTP 워커 경로)에도 여기서 트리거.
+        try:
+            from apps.domains.ai.callbacks import dispatch_ai_result_to_domain
+            dispatch_ai_result_to_domain(
+                job_id=str(job.job_id),
+                status=status_in,
+                result_payload=result if isinstance(result, dict) else {},
+                error=error or None,
+                source_domain=job.source_domain,
+                source_id=job.source_id,
+                tier=tier,
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "InternalAIJobResultView: domain callback failed (non-fatal) job_id=%s",
+                job.job_id,
+            )
+
         return Response({"ok": True, "detail": "done"}, status=status.HTTP_200_OK)
