@@ -55,12 +55,23 @@ class Command(BaseCommand):
 
         deleted = 0
         with transaction.atomic():
-            # Enrollment은 Student FK CASCADE로 자동 삭제됨 — 명시적 선행 삭제 불필요
             for student in to_purge:
                 user = student.user
+                tenant = student.tenant
                 student.delete()
                 if user:
-                    user.delete()
+                    # Only delete user if no other tenant memberships remain
+                    from apps.core.models import TenantMembership
+                    other_memberships = TenantMembership.objects.filter(
+                        user=user,
+                    ).exclude(tenant=tenant).exists()
+                    if not other_memberships:
+                        user.delete()
+                    else:
+                        # Just remove this tenant's membership
+                        TenantMembership.objects.filter(
+                            user=user, tenant=tenant,
+                        ).delete()
                 deleted += 1
 
         self.stdout.write(self.style.SUCCESS(f"영구 삭제 완료: {deleted}명"))

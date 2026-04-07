@@ -700,64 +700,64 @@ class StudentViewSet(ModelViewSet):
                             student.user.delete()
                         else:
                             student.delete()
-                    parent = None
-                    parent_phone_raw = str(student_data.get("parent_phone") or student_data.get("parentPhone", "")).replace(" ", "").replace("-", "").replace(".", "")
-                    parent_phone = parent_phone_raw if len(parent_phone_raw) >= 11 else ""
-                    if parent_phone:
-                        parent = ensure_parent_for_student(
+                        parent = None
+                        parent_phone_raw = str(student_data.get("parent_phone") or student_data.get("parentPhone", "")).replace(" ", "").replace("-", "").replace(".", "")
+                        parent_phone = parent_phone_raw if len(parent_phone_raw) >= 11 else ""
+                        if parent_phone:
+                            parent = ensure_parent_for_student(
+                                tenant=tenant,
+                                parent_phone=parent_phone,
+                                student_name=student_data.get("name", ""),
+                            )
+                        phone_raw = str(student_data.get("phone", "")).replace(" ", "").replace("-", "").replace(".", "")
+                        phone = phone_raw if phone_raw and len(phone_raw) == 11 and phone_raw.startswith("010") else None
+                        parent_phone_val = student_data.get("parent_phone") or student_data.get("parentPhone", "")
+                        parent_phone = str(parent_phone_val).replace(" ", "").replace("-", "").replace(".", "")
+                        # ps_number: 임의 6자리 자동 부여
+                        ps_number = _generate_unique_ps_number(tenant=tenant)
+                        # omr_code: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
+                        if phone and len(phone) >= 8:
+                            omr_code = phone[-8:]
+                        elif parent_phone and len(parent_phone) >= 8:
+                            omr_code = parent_phone[-8:]
+                        else:
+                            raise ValueError("학생 전화번호 또는 부모 전화번호가 필요합니다.")
+                        user = student_repo.user_create_user(
+                            username=ps_number,
                             tenant=tenant,
-                            parent_phone=parent_phone,
-                            student_name=student_data.get("name", ""),
+                            phone=phone or "",
+                            name=student_data.get("name", ""),
                         )
-                    phone_raw = str(student_data.get("phone", "")).replace(" ", "").replace("-", "").replace(".", "")
-                    phone = phone_raw if phone_raw and len(phone_raw) == 11 and phone_raw.startswith("010") else None
-                    parent_phone_val = student_data.get("parent_phone") or student_data.get("parentPhone", "")
-                    parent_phone = str(parent_phone_val).replace(" ", "").replace("-", "").replace(".", "")
-                    # ps_number: 임의 6자리 자동 부여
-                    ps_number = _generate_unique_ps_number(tenant=tenant)
-                    # omr_code: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
-                    if phone and len(phone) >= 8:
-                        omr_code = phone[-8:]
-                    elif parent_phone and len(parent_phone) >= 8:
-                        omr_code = parent_phone[-8:]
-                    else:
-                        raise ValueError("학생 전화번호 또는 부모 전화번호가 필요합니다.")
-                    user = student_repo.user_create_user(
-                        username=ps_number,
-                        tenant=tenant,
-                        phone=phone or "",
-                        name=student_data.get("name", ""),
-                    )
-                    user.set_password(password)
-                    user.save()
-                    school_val = (student_data.get("school") or "").strip() or None
-                    st, elementary_school, high_school, middle_school = normalize_school_from_name(
-                        school_val, student_data.get("school_type")
-                    )
-                    high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
-                    major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
-                    new_student = student_repo.student_create(
-                        tenant=tenant,
-                        user=user,
-                        parent=parent,
-                        name=student_data.get("name", ""),
-                        phone=phone,
-                        parent_phone=parent_phone,
-                        ps_number=ps_number,
-                        omr_code=omr_code,
-                        uses_identifier=student_data.get("uses_identifier", False) or (phone is None),
-                        gender=student_data.get("gender") or None,
-                        school_type=st,
-                        elementary_school=elementary_school,
-                        high_school=high_school,
-                        middle_school=middle_school,
-                        high_school_class=high_school_class,
-                        major=major,
-                        grade=student_data.get("grade"),
-                        memo=student_data.get("memo") or None,
-                        is_managed=student_data.get("is_managed", True),
-                    )
-                    TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
+                        user.set_password(password)
+                        user.save()
+                        school_val = (student_data.get("school") or "").strip() or None
+                        st, elementary_school, high_school, middle_school = normalize_school_from_name(
+                            school_val, student_data.get("school_type")
+                        )
+                        high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
+                        major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
+                        new_student = student_repo.student_create(
+                            tenant=tenant,
+                            user=user,
+                            parent=parent,
+                            name=student_data.get("name", ""),
+                            phone=phone,
+                            parent_phone=parent_phone,
+                            ps_number=ps_number,
+                            omr_code=omr_code,
+                            uses_identifier=student_data.get("uses_identifier", False) or (phone is None),
+                            gender=student_data.get("gender") or None,
+                            school_type=st,
+                            elementary_school=elementary_school,
+                            high_school=high_school,
+                            middle_school=middle_school,
+                            high_school_class=high_school_class,
+                            major=major,
+                            grade=student_data.get("grade"),
+                            memo=student_data.get("memo") or None,
+                            is_managed=student_data.get("is_managed", True),
+                        )
+                        TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
                     created_count += 1
                     created_students.append(new_student)
             except Exception as e:
@@ -938,8 +938,8 @@ class StudentViewSet(ModelViewSet):
                 with connection.cursor() as cursor:
                     # enrollment ID를 먼저 명시적으로 수집
                     cursor.execute(
-                        "SELECT id FROM enrollment_enrollment WHERE student_id IN %s",
-                        [tuple(student_ids)],
+                        "SELECT id FROM enrollment_enrollment WHERE student_id IN %s AND tenant_id = %s",
+                        [tuple(student_ids), tenant.id],
                     )
                     enrollment_ids = [row[0] for row in cursor.fetchall()]
                     logger.info(
@@ -1012,8 +1012,8 @@ class StudentViewSet(ModelViewSet):
                     # 3) enrollment 자체 삭제
                     logger.info("bulk_permanent_delete DELETE enrollment_enrollment")
                     cursor.execute(
-                        "DELETE FROM enrollment_enrollment WHERE student_id IN %s",
-                        [tuple(student_ids)],
+                        "DELETE FROM enrollment_enrollment WHERE student_id IN %s AND tenant_id = %s",
+                        [tuple(student_ids), tenant.id],
                     )
                     logger.info("bulk_permanent_delete DELETE students_studenttag")
                     cursor.execute(
@@ -1184,11 +1184,11 @@ class StudentViewSet(ModelViewSet):
         with transaction.atomic():
             for g in groups_list:
                 keep = student_repo.student_filter_dup_keep_first(
-                    g["tenant_id"], g["name"], g["parent_phone"]
+                    tenant.id, g["name"], g["parent_phone"]
                 )
                 to_remove = list(
                     student_repo.student_filter_dup_to_remove(
-                        g["tenant_id"], g["name"], g["parent_phone"], keep.id
+                        tenant.id, g["name"], g["parent_phone"], keep.id
                     )
                 )
                 for s in to_remove:
@@ -1328,6 +1328,20 @@ class StudentViewSet(ModelViewSet):
                         value = int(value)
                     setattr(student, field, value)
                     update_fields.append(field)
+            # omr_code 재계산: phone 또는 parent_phone 변경 시
+            if "phone" in data or "parent_phone" in data:
+                phone_str = str(student.phone).strip() if student.phone else None
+                pp_str = str(student.parent_phone).strip() if student.parent_phone else None
+                if phone_str and len(phone_str) >= 8:
+                    new_omr = phone_str[-8:]
+                elif pp_str and len(pp_str) >= 8:
+                    new_omr = pp_str[-8:]
+                else:
+                    new_omr = student.omr_code  # 기존값 유지
+                if new_omr != student.omr_code:
+                    student.omr_code = new_omr
+                    if "omr_code" not in update_fields:
+                        update_fields.append("omr_code")
             if update_fields:
                 student.save(update_fields=update_fields)
 

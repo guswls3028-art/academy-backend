@@ -26,7 +26,11 @@ class EnrollmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Enrollment
-        fields = "__all__"
+        fields = [
+            "id", "student", "lecture", "status",
+            "created_at", "updated_at",
+            "lecture_name", "lecture_color", "lecture_chip_label",
+        ]
         ref_name = "StudentEnrollment"
 
 

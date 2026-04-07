@@ -218,7 +218,7 @@ def user_filter_phone_exists(phone, tenant=None):
 def student_filter_tenant_ps_exclude_id(tenant, ps_number, exclude_id):
     from apps.domains.students.models import Student
     return Student.objects.filter(
-        tenant=tenant, ps_number=ps_number
+        tenant=tenant, ps_number=ps_number, deleted_at__isnull=True
     ).exclude(id=exclude_id)
 
 
