@@ -468,6 +468,7 @@ def main() -> int:
                         message_mode = "sms"
                     alimtalk_replacements = data.get("alimtalk_replacements") or []
                     template_id_msg = data.get("template_id") or ""
+                    event_type_msg = (data.get("event_type") or "").strip()[:30]
 
                     # 테넌트별 잔액·PFID·발신번호·단가·공급자 (Django 있을 때만)
                     info = None
@@ -584,6 +585,7 @@ def main() -> int:
                                     message_body=text[:2000],
                                     message_mode=message_mode,
                                     sqs_message_id=message_id,
+                                    notification_type=event_type_msg,
                                 )
                                 queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
@@ -694,6 +696,7 @@ def main() -> int:
                                             message_body=text[:2000],
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
+                                            notification_type=event_type_msg,
                                         )
                                     except Exception as e:
                                         logger.warning("create_notification_log failed: %s", e)
@@ -741,6 +744,7 @@ def main() -> int:
                                             amount_deducted=Decimal(str(base_price)),
                                             template_summary=template_id or "SMS",
                                             message_body=text[:2000],
+                                            notification_type=event_type_msg,
                                         )
                                     else:
                                         create_notification_log(
@@ -752,6 +756,7 @@ def main() -> int:
                                             message_body=text[:2000],
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
+                                            notification_type=event_type_msg,
                                         )
                                 else:
                                     if deducted:
@@ -774,6 +779,7 @@ def main() -> int:
                                             success=False,
                                             failure_reason=failure_reason[:500],
                                             message_body=text[:2000],
+                                            notification_type=event_type_msg,
                                         )
                                     else:
                                         create_notification_log(
@@ -785,6 +791,7 @@ def main() -> int:
                                             message_body=text[:2000],
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
+                                            notification_type=event_type_msg,
                                         )
                             except Exception as e:
                                 logger.exception("NotificationLog/rollback failed: %s", e)
@@ -803,11 +810,27 @@ def main() -> int:
                             _msg_deleted = True
                             consecutive_errors = 0
                         else:
-                            logger.warning("send failed, message will retry: %s", result.get("reason"))
-                            consecutive_errors += 1
-                            if consecutive_errors >= max_consecutive_errors:
-                                logger.error("Too many consecutive errors (%s), exiting", consecutive_errors)
-                                return 1
+                            reason = result.get("reason", "")
+                            # 비재시도성 오류: 템플릿 미승인, 변수 불일치 등 → 재시도해도 영구 실패
+                            _NON_RETRYABLE = ("alimtalk_failed_or_rejected", "InvalidParameterValue", "TemplateNotApproved")
+                            is_permanent = any(nr in reason for nr in _NON_RETRYABLE)
+                            if is_permanent:
+                                logger.error(
+                                    "send permanently failed (non-retryable), deleting message: reason=%s to=%s tenant=%s",
+                                    reason, to[:4] if to else "?", tenant_id,
+                                )
+                                queue_client.delete_message(
+                                    queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                                    receipt_handle=receipt_handle,
+                                )
+                                _msg_deleted = True
+                                consecutive_errors = 0
+                            else:
+                                logger.warning("send failed, message will retry: %s", reason)
+                                consecutive_errors += 1
+                                if consecutive_errors >= max_consecutive_errors:
+                                    logger.error("Too many consecutive errors (%s), exiting", consecutive_errors)
+                                    return 1
 
                         _current_receipt_handle = None
                     except Exception:

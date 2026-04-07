@@ -162,36 +162,39 @@ def build_unified_replacements(
         "학생이름": student_name,
         "사이트링크": site_url,
     }
-    # 도메인 컨텍스트 매핑
-    context_var_mapping = {
-        # clinic_info
-        "클리닉장소": "place",
-        "클리닉날짜": "date",
-        "클리닉시간": "time",
-        "클리닉명": "clinic_name",
-        # clinic_change
-        "클리닉기존일정": "clinic_old_schedule",
-        "클리닉변동사항": "clinic_changes",
-        "클리닉수정자": "clinic_modifier",
-        # score / attendance
-        "강의명": "lecture_name",
-        "차시명": "session_name",
-        "강의날짜": "date",
-        "강의시간": "time",
-        "시험명": "exam_name",
-        "과제명": "assignment_name",
-        "성적": "score",
-        "시험성적": "exam_score",
-        "클리닉합불": "clinic_result",
+    # 도메인 컨텍스트 매핑: Solapi 변수명 → [context에서 찾을 키 목록] (한국어 우선, 영어 하위호환)
+    # 호출자는 한국어 키(장소, 날짜, 시간 등)를 전달함.
+    context_var_mapping: dict[str, list[str]] = {
+        # clinic_info — 호출자: {"장소": "301호", "날짜": "2026-04-08", "시간": "14:00"}
+        "클리닉장소": ["장소", "place"],
+        "클리닉날짜": ["날짜", "date"],
+        "클리닉시간": ["시간", "time"],
+        "클리닉명": ["클리닉명", "clinic_name"],
+        # clinic_change — 호출자: 미구현, 향후 한국어 키 사용 예정
+        "클리닉기존일정": ["클리닉기존일정", "clinic_old_schedule"],
+        "클리닉변동사항": ["클리닉변동사항", "clinic_changes"],
+        "클리닉수정자": ["클리닉수정자", "clinic_modifier"],
+        # score / attendance — 호출자: {"강의명": "수학", "차시명": "1차시", "날짜": "...", "시간": "..."}
+        "강의명": ["강의명", "lecture_name"],
+        "차시명": ["차시명", "session_name"],
+        "강의날짜": ["날짜", "date"],
+        "강의시간": ["시간", "time"],
+        "시험명": ["시험명", "exam_name"],
+        "과제명": ["과제명", "assignment_name"],
+        "성적": ["성적", "score"],
+        "시험성적": ["시험성적", "exam_score"],
+        "클리닉합불": ["클리닉합불", "clinic_result"],
         # common
-        "날짜": "date",
-        "시간": "time",
-        "장소": "place",
+        "날짜": ["날짜", "date"],
+        "시간": ["시간", "time"],
+        "장소": ["장소", "place"],
     }
 
-    for var_name, ctx_key in context_var_mapping.items():
-        if ctx_key in context and context[ctx_key]:
-            all_vars[var_name] = str(context[ctx_key])
+    for var_name, ctx_keys in context_var_mapping.items():
+        for ctx_key in ctx_keys:
+            if ctx_key in context and context[ctx_key]:
+                all_vars[var_name] = str(context[ctx_key])
+                break
 
     # 직접 한국어 키로 전달된 context도 반영
     for k, v in context.items():

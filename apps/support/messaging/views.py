@@ -694,15 +694,19 @@ class SendMessageView(APIView):
                     t = MessageTemplate.objects.filter(
                         tenant_id=owner_id, pk=template_id, solapi_status="APPROVED",
                     ).first()
-            if t:
-                tpl_body = t.body or ""
-                if body_base and ("#{공지내용}" in tpl_body or "#{내용}" in tpl_body):
-                    user_custom_content = body_base
-                if not body_base:
-                    body_base = (t.body or "").strip()
-                if not subject_base:
-                    subject_base = (t.subject or "").strip()
-                solapi_template_id = (t.solapi_template_id or "").strip()
+            if not t:
+                return Response(
+                    {"detail": "템플릿을 찾을 수 없습니다."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            tpl_body = t.body or ""
+            if body_base and ("#{공지내용}" in tpl_body or "#{내용}" in tpl_body):
+                user_custom_content = body_base
+            if not body_base:
+                body_base = (t.body or "").strip()
+            if not subject_base:
+                subject_base = (t.subject or "").strip()
+            solapi_template_id = (t.solapi_template_id or "").strip()
 
         # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택 (테넌트 → 오너 fallback)
         if message_mode == "alimtalk" and not solapi_template_id:
@@ -750,9 +754,10 @@ class SendMessageView(APIView):
                 .replace("#{공지내용}", user_custom_content)
                 .replace("#{내용}", user_custom_content)
             )
-            # Context-dependent variables not available in manual send — replace with empty string
-            for var in ("강의명", "차시명", "시험명", "과제명", "클리닉명", "장소", "날짜", "시간", "시험성적", "클리닉합불"):
-                text = text.replace(f"#{{{var}}}", "")
+            # 수동 발송: 잔여 변수 catch-all 제거
+            import re as _re
+            text = _re.sub(r"#\{[^}]+\}", "", text)
+            text = _re.sub(r"\n{3,}", "\n\n", text).strip()
             if subject_base:
                 text = subject_base + "\n" + text
 

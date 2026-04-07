@@ -406,51 +406,79 @@ def send_event_notification(
         content_value = next((r["value"] for r in replacements if r["key"] == "선생님메모"), "")
         _ctx = context or {}
         _template_type = get_template_type(trigger)
+
+        def _ctx_val(*keys: str) -> str:
+            """context에서 한국어/영어 키 순으로 값 조회."""
+            for k in keys:
+                v = _ctx.get(k, "")
+                if v:
+                    return str(v)
+            return ""
+
+        def _labeled_lines(pairs: list[tuple[str, str]]) -> str:
+            """값이 있는 항목만 '라벨: 값' 줄로 조합."""
+            return "\n".join(f"{label}: {val}" for label, val in pairs if val)
+
         if _template_type == "clinic_info":
+            detail_lines = _labeled_lines([
+                ("장소", _ctx_val("장소", "place")),
+                ("날짜", _ctx_val("날짜", "date")),
+                ("시간", _ctx_val("시간", "time")),
+            ])
             text = (
                 f"{academy_name}입니다.\n\n"
                 f"{name}학생님.\n\n"
                 f"클리닉 안내 드립니다.\n"
-                f"장소: {_ctx.get('place', '')}\n"
-                f"날짜: {_ctx.get('date', '')}\n"
-                f"시간: {_ctx.get('time', '')}\n\n"
+                f"{detail_lines}\n\n"
                 f"{content_value}\n"
                 f"{site_url}"
             ).strip()
         elif _template_type == "clinic_change":
+            detail_lines = _labeled_lines([
+                ("기존일정", _ctx_val("클리닉기존일정", "clinic_old_schedule")),
+                ("변동사항", _ctx_val("클리닉변동사항", "clinic_changes")),
+                ("수정자", _ctx_val("클리닉수정자", "clinic_modifier")),
+            ])
             text = (
                 f"{academy_name}입니다.\n\n"
                 f"{name}학생님. 클리닉 일정이 변경되었습니다.\n\n"
-                f"기존일정: {_ctx.get('clinic_old_schedule', '')}\n"
-                f"변동사항: {_ctx.get('clinic_changes', '')}\n"
-                f"수정자: {_ctx.get('clinic_modifier', '')}\n\n"
+                f"{detail_lines}\n\n"
                 f"{content_value}\n"
                 f"{site_url}"
             ).strip()
         elif _template_type == "attendance":
+            detail_lines = _labeled_lines([
+                ("강의", _ctx_val("강의명", "lecture_name")),
+                ("차시", _ctx_val("차시명", "session_name")),
+                ("날짜", _ctx_val("날짜", "date")),
+                ("시간", _ctx_val("시간", "time")),
+            ])
             text = (
                 f"{academy_name}입니다.\n\n"
                 f"{name}학생님.\n\n"
                 f"출석 안내 드립니다.\n"
-                f"강의: {_ctx.get('lecture_name', _ctx.get('강의명', ''))}\n"
-                f"차시: {_ctx.get('session_name', _ctx.get('차시명', ''))}\n"
-                f"날짜: {_ctx.get('date', '')}\n"
-                f"시간: {_ctx.get('time', '')}\n\n"
+                f"{detail_lines}\n\n"
                 f"{content_value}\n"
                 f"{site_url}"
             ).strip()
         elif _template_type == "score":
+            detail_lines = _labeled_lines([
+                ("강의", _ctx_val("강의명", "lecture_name")),
+                ("차시", _ctx_val("차시명", "session_name")),
+            ])
             text = (
                 f"{academy_name}입니다.\n\n"
                 f"{name}학생님.\n\n"
                 f"성적표 안내 드립니다.\n"
-                f"강의: {_ctx.get('lecture_name', _ctx.get('강의명', ''))}\n"
-                f"차시: {_ctx.get('session_name', _ctx.get('차시명', ''))}\n\n"
+                f"{detail_lines}\n\n"
                 f"{content_value}\n"
                 f"{site_url}"
             ).strip()
         else:
             text = f"{content_value}\n{site_url}".strip()
+        # 연속 빈 줄 정리
+        import re as _re_sms
+        text = _re_sms.sub(r"\n{3,}", "\n\n", text)
 
         _alimtalk_tid = unified_tid
 
