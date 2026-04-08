@@ -1,9 +1,8 @@
 # PATH: apps/domains/fees/views.py
 
 import logging
-from datetime import date
-
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
 from rest_framework.decorators import action
@@ -145,9 +144,23 @@ class StudentFeeViewSet(ModelViewSet):
         except FeeTemplate.DoesNotExist:
             return Response({"detail": "비목을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
+        # 학생 ID가 해당 테넌트 소속인지 검증 (크로스 테넌트 방지)
+        from apps.domains.students.models import Student
+        valid_student_ids = set(
+            Student.objects.filter(
+                id__in=student_ids, tenant=tenant, deleted_at__isnull=True,
+            ).values_list("id", flat=True)
+        )
+        invalid_ids = set(student_ids) - valid_student_ids
+        if invalid_ids:
+            return Response(
+                {"detail": f"해당 학원 소속이 아닌 학생이 포함되어 있습니다: {sorted(invalid_ids)[:5]}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         created = 0
         skipped = 0
-        for sid in student_ids:
+        for sid in valid_student_ids:
             _, was_created = StudentFee.objects.get_or_create(
                 tenant=tenant,
                 student_id=sid,
@@ -350,7 +363,7 @@ class FeeDashboardView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
-        today = date.today()
+        today = timezone.localdate()
         year = int(request.query_params.get("year", today.year))
         month = int(request.query_params.get("month", today.month))
 

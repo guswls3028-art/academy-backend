@@ -191,11 +191,12 @@ class AdminDashboardView(APIView):
     permission_classes = [IsAuthenticated, IsSuperuserOnly]
 
     def get(self, request):
-        from datetime import date, timedelta
+        from datetime import timedelta
         from django.conf import settings
         from django.db.models import Count, Sum, Q
+        from django.utils import timezone
 
-        today = date.today()
+        today = timezone.localdate()
         exempt = settings.BILLING_EXEMPT_TENANT_IDS
         programs = Program.objects.exclude(tenant_id__in=exempt)
 

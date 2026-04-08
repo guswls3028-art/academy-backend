@@ -314,7 +314,7 @@ def mark_overdue_invoices(tenant=None):
     """
     qs = StudentInvoice.objects.filter(
         status__in=["PENDING", "PARTIAL"],
-        due_date__lt=date.today(),
+        due_date__lt=timezone.localdate(),
     )
     if tenant:
         qs = qs.filter(tenant=tenant)

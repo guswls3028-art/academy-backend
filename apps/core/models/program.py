@@ -194,7 +194,7 @@ class Program(TimestampModel):
         if self.subscription_status in (self.SubscriptionStatus.ACTIVE, self.SubscriptionStatus.GRACE):
             if self.subscription_expires_at is None:
                 return True  # 만료일 미설정 = 무제한
-            return date.today() <= self.subscription_expires_at
+            return timezone.localdate() <= self.subscription_expires_at
         return False
 
     @property
@@ -202,7 +202,7 @@ class Program(TimestampModel):
         """남은 이용일수 (만료일 없으면 None)"""
         if self.subscription_expires_at is None:
             return None
-        delta = (self.subscription_expires_at - date.today()).days
+        delta = (self.subscription_expires_at - timezone.localdate()).days
         return max(0, delta)
 
     def __str__(self) -> str:

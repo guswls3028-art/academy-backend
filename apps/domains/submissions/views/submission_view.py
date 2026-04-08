@@ -31,7 +31,13 @@ class SubmissionViewSet(ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return Submission.objects.none()
-        return Submission.objects.filter(tenant=tenant).order_by("-id")
+        qs = Submission.objects.filter(tenant=tenant).order_by("-id")
+        # 학생/학부모는 자기 제출만 볼 수 있음
+        user = self.request.user
+        role = getattr(user, "tenant_role", None) or getattr(self.request, "tenant_role", None)
+        if role in ("student", "parent"):
+            qs = qs.filter(user=user)
+        return qs
 
     def get_serializer_class(self):
         if self.action in ("create", "admin_omr_upload"):

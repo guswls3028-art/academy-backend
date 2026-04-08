@@ -159,9 +159,9 @@ class AttendanceViewSet(ModelViewSet):
                 tenant=tenant, enrollment=enrollment
             ).update(status="SECESSION")
 
-            # 시험 응시 대상에서 제거
+            # 시험 응시 대상에서 제거 (enrollment__tenant 방어 필터)
             ExamEnrollment.objects.filter(
-                enrollment=enrollment
+                enrollment=enrollment, enrollment__tenant=tenant,
             ).delete()
 
             # 과제 대상에서 제거
