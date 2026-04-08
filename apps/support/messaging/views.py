@@ -594,7 +594,7 @@ class SendMessageView(APIView):
                 skipped_no_phone += 1
                 continue
             name = (s.name or "").strip()
-            name_2 = name[1:] if len(name) >= 2 else name
+            name_2 = name[-2:] if len(name) >= 2 else name
             name_3 = name
             site_url = get_tenant_site_url(request.tenant) or ""
             academy_name = (tenant.name or "").strip()
@@ -703,6 +703,8 @@ class SendMessageView(APIView):
         t = None
         solapi_template_id = ""
         user_custom_content = ""
+        use_unified = False
+        unified_template_type = None
 
         if template_id:
             t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
@@ -727,6 +729,13 @@ class SendMessageView(APIView):
             if not subject_base:
                 subject_base = (t.subject or "").strip()
             solapi_template_id = (t.solapi_template_id or "").strip()
+            if message_mode == "alimtalk":
+                from apps.support.messaging.alimtalk_content_builders import get_unified_for_category
+                unified_tt, unified_sid = get_unified_for_category(t.category, t.name, {})
+                if unified_tt and unified_sid:
+                    use_unified = True
+                    unified_template_type = unified_tt
+                    solapi_template_id = unified_sid
 
         # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택 (테넌트 → 오너 fallback)
         if message_mode == "alimtalk" and not solapi_template_id:
@@ -761,7 +770,7 @@ class SendMessageView(APIView):
                 skipped_no_phone += 1
                 continue
             name = (s.name or "").strip()
-            name_2 = name[1:] if len(name) >= 2 else name  # 성(첫 글자) 제외 = 이름만
+            name_2 = name[-2:] if len(name) >= 2 else name  # 성(첫 글자) 제외 = 이름만
             name_3 = name  # 전체 이름 (하위 호환: 기존 #{학생이름3} 치환)
             site_url = get_tenant_site_url(request.tenant) or ""
             academy_name = (tenant.name or "").strip()
@@ -785,17 +794,28 @@ class SendMessageView(APIView):
             template_id_solapi = None
             if message_mode == "alimtalk" and solapi_template_id:
                 template_id_solapi = solapi_template_id
-                alimtalk_replacements = [
-                    {"key": "학생이름", "value": name},
-                    {"key": "학생이름2", "value": name_2},
-                    {"key": "학생이름3", "value": name_3},
-                    {"key": "학원명", "value": academy_name},
-                    {"key": "사이트링크", "value": site_url},
-                ]
-                if user_custom_content:
-                    alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
-                    alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
-                    alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
+                if use_unified and unified_template_type:
+                    from apps.support.messaging.alimtalk_content_builders import build_manual_replacements
+                    alimtalk_replacements = build_manual_replacements(
+                        template_type=unified_template_type,
+                        content_body=body_base,
+                        context={"내용": user_custom_content, "공지내용": user_custom_content},
+                        tenant_name=academy_name,
+                        student_name=name,
+                        site_url=site_url,
+                    )
+                else:
+                    alimtalk_replacements = [
+                        {"key": "학생이름", "value": name},
+                        {"key": "학생이름2", "value": name_2},
+                        {"key": "학생이름3", "value": name_3},
+                        {"key": "학원명", "value": academy_name},
+                        {"key": "사이트링크", "value": site_url},
+                    ]
+                    if user_custom_content:
+                        alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
+                        alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
+                        alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
 
             try:
                 ok = enqueue_sms(

@@ -187,7 +187,7 @@ def build_manual_replacements(
         "학원이름": tenant_name,
         "학원명": tenant_name,
         "학생이름": student_name,
-        "학생이름2": student_name[1:] if len(student_name) >= 2 else student_name,
+        "학생이름2": student_name[-2:] if len(student_name) >= 2 else student_name,
         "학생이름3": student_name,
         "사이트링크": site_url,
     }
@@ -297,7 +297,7 @@ def build_unified_replacements(
         "학원이름": tenant_name,
         "학원명": tenant_name,  # alias — 사용자 커스텀 body에서 #{학원명} 사용 가능
         "학생이름": student_name,
-        "학생이름2": student_name[1:] if len(student_name) >= 2 else student_name,  # 성 제외
+        "학생이름2": student_name[-2:] if len(student_name) >= 2 else student_name,  # 성 제외
         "학생이름3": student_name,  # 전체 이름 (하위 호환)
         "사이트링크": site_url,
     }
