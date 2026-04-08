@@ -274,6 +274,8 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "60/minute",
         "user": "300/minute",
+        "sms_endpoint": "5/hour",
+        "signup_check": "30/minute",
     },
 }
 

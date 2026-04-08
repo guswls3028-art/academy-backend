@@ -22,6 +22,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.core.permissions import IsStudent, TenantResolvedAndStaff, TenantResolved
+from apps.api.common.throttles import SmsEndpointThrottle, SignupCheckThrottle
 from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
 
@@ -1512,6 +1513,13 @@ class RegistrationRequestViewSet(ModelViewSet):
             return []
         return super().get_authenticators()
 
+    def get_throttles(self):
+        if getattr(self, "action", None) == "check_duplicate":
+            return [SignupCheckThrottle()]
+        if getattr(self, "action", None) == "create":
+            return [SmsEndpointThrottle()]
+        return super().get_throttles()
+
     def get_permissions(self):
         if getattr(self, "action", None) in ("create", "check_duplicate"):
             return [AllowAny(), TenantResolved()]
@@ -1846,6 +1854,7 @@ def _pw_reset_cache_key(tenant_id, phone: str) -> str:
 class StudentPasswordFindRequestView(APIView):
     """POST: name, phone → 학생 조회 후 6자리 인증번호 알림톡 발송, 캐시 저장."""
     permission_classes = [AllowAny, TenantResolved]
+    throttle_classes = [SmsEndpointThrottle]
 
     def get_authenticators(self):
         return []  # 비로그인 요청 허용, 만료 JWT 시 401 방지
@@ -1974,6 +1983,7 @@ class StudentPasswordResetSendView(APIView):
     임시 비밀번호 생성·저장하고 알림톡(SMS)으로 발송.
     """
     permission_classes = [AllowAny, TenantResolved]
+    throttle_classes = [SmsEndpointThrottle]
 
     def get_authenticators(self):
         """AllowAny이지만 JWT가 있으면 파싱 — staff 판별용 (temp_password/skip_notify)."""
@@ -2158,6 +2168,7 @@ class SendExistingCredentialsView(APIView):
     (회원가입 시 중복 감지 → "카카오톡으로 ID/비밀번호 발송" 버튼용)
     """
     permission_classes = [AllowAny, TenantResolved]
+    throttle_classes = [SmsEndpointThrottle]
 
     def get_authenticators(self):
         return []
