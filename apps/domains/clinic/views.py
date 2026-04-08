@@ -75,6 +75,10 @@ class SessionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
+            )
         qs = (
             Session.objects
             .filter(tenant=tenant)
@@ -181,6 +185,11 @@ class SessionViewSet(viewsets.ModelViewSet):
         세션 삭제 시 해소 상태를 건드리지 않음.
         단, BOOKING_LEGACY 해소만 되돌림 (레거시 호환).
         """
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
+            )
         enrollment_ids = list(
             SessionParticipant.objects.filter(
                 session=instance,
@@ -191,7 +200,6 @@ class SessionViewSet(viewsets.ModelViewSet):
                 ],
             ).values_list("enrollment_id", flat=True)
         )
-        tenant = getattr(self.request, "tenant", None)
         with transaction.atomic():
             if enrollment_ids:
                 # 레거시 예약 기반 해소만 되돌림. 실제 pass 기반 해소는 유지.
@@ -202,9 +210,8 @@ class SessionViewSet(viewsets.ModelViewSet):
                     is_auto=True,
                     resolution_type="BOOKING_LEGACY",
                     resolved_at__isnull=False,
+                    session__lecture__tenant=tenant,
                 )
-                if tenant:
-                    qs = qs.filter(session__lecture__tenant=tenant)
                 for link in qs:
                     ClinicResolutionService.unresolve(clinic_link_id=link.id)
             instance.delete()
@@ -243,6 +250,10 @@ class SessionViewSet(viewsets.ModelViewSet):
         - serializer 우회 (UI 최적화 목적)
         """
         tenant = getattr(request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
+            )
 
         year = request.query_params.get("year")
         month = request.query_params.get("month")
@@ -421,6 +432,10 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
+            )
         qs = (
             SessionParticipant.objects
             .filter(tenant=tenant)
@@ -449,6 +464,10 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         - 학생 신청 시: session 또는 (requested_date + requested_start_time) 사용 가능
         """
         tenant = getattr(request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
+            )
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -700,6 +719,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             _ctx = {
                 "클리닉명": getattr(session, "title", "") if session else "",
                 "장소": getattr(session, "location", "") if session else "",
+                "날짜": str(session.date) if session and session.date else "",
+                "시간": str(session.start_time)[:5] if session and session.start_time else "",
                 # 예약 건별 멱등 키 — 미지정 시 occurrence_key가 날짜만 되어 같은 날 재예약 시 발송이 DB dedup으로 스킵될 수 있음
                 "_domain_object_id": f"clinic_participant_{obj.pk}",
             }
@@ -839,6 +860,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             _ctx = {
                 "클리닉명": getattr(_session, "title", "") if _session else "",
                 "장소": getattr(_session, "location", "") if _session else "",
+                "날짜": str(_session.date) if _session and _session.date else "",
+                "시간": str(_session.start_time)[:5] if _session and getattr(_session, "start_time", None) else "",
                 "_domain_object_id": f"participant_{obj.pk}_{next_status}",
             }
             transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
@@ -1162,6 +1185,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         _ctx = {
             "클리닉명": getattr(new_session, "title", "") if new_session else "",
             "장소": getattr(new_session, "location", "") if new_session else "",
+            "날짜": str(new_session.date) if new_session and new_session.date else "",
+            "시간": str(new_session.start_time)[:5] if new_session and getattr(new_session, "start_time", None) else "",
             "_domain_object_id": f"booking_change_{new_booking.pk}",
         }
         transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_reservation_changed", _ctx))
@@ -1203,6 +1228,10 @@ class TestViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
+            )
         return Test.objects.filter(tenant=tenant).select_related("session")
 
     def perform_create(self, serializer):
@@ -1254,33 +1283,36 @@ class ClinicSettingsView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant가 필요합니다."}, status=status.HTTP_400_BAD_REQUEST)
+        update_fields = []
+        with transaction.atomic():
+            if "use_daily_random" in request.data:
+                tenant.clinic_use_daily_random = bool(request.data["use_daily_random"])
+                update_fields.append("clinic_use_daily_random")
 
-        # use_daily_random 업데이트
-        if "use_daily_random" in request.data:
-            tenant.clinic_use_daily_random = bool(request.data["use_daily_random"])
-            tenant.save(update_fields=["clinic_use_daily_random"])
+            if "auto_approve_booking" in request.data:
+                tenant.clinic_auto_approve_booking = bool(request.data["auto_approve_booking"])
+                update_fields.append("clinic_auto_approve_booking")
 
-        if "auto_approve_booking" in request.data:
-            tenant.clinic_auto_approve_booking = bool(request.data["auto_approve_booking"])
-            tenant.save(update_fields=["clinic_auto_approve_booking"])
-
-        colors = request.data.get("colors")
-        if colors is not None:
-            if not isinstance(colors, list) or len(colors) != 3:
-                return Response(
-                    {"detail": "colors는 3개의 색상 코드 배열이어야 합니다. (예: [\"#ef4444\", \"#3b82f6\", \"#22c55e\"])"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            import re
-            hex_pattern = re.compile(r"^#[0-9A-Fa-f]{6}$")
-            for c in colors:
-                if not isinstance(c, str) or not hex_pattern.match(c):
+            colors = request.data.get("colors")
+            if colors is not None:
+                if not isinstance(colors, list) or len(colors) != 3:
                     return Response(
-                        {"detail": f"잘못된 색상 코드: {c}. #RRGGBB 형식이어야 합니다."},
+                        {"detail": "colors는 3개의 색상 코드 배열이어야 합니다. (예: [\"#ef4444\", \"#3b82f6\", \"#22c55e\"])"},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-            tenant.clinic_idcard_colors = colors[:3]
-            tenant.save(update_fields=["clinic_idcard_colors"])
+                import re
+                hex_pattern = re.compile(r"^#[0-9A-Fa-f]{6}$")
+                for c in colors:
+                    if not isinstance(c, str) or not hex_pattern.match(c):
+                        return Response(
+                            {"detail": f"잘못된 색상 코드: {c}. #RRGGBB 형식이어야 합니다."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                tenant.clinic_idcard_colors = colors[:3]
+                update_fields.append("clinic_idcard_colors")
+
+            if update_fields:
+                tenant.save(update_fields=update_fields)
 
         use_daily_random = getattr(tenant, "clinic_use_daily_random", False)
         auto_approve_booking = getattr(tenant, "clinic_auto_approve_booking", False)
@@ -1307,6 +1339,10 @@ class SubmissionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
+            )
         return (
             Submission.objects
             .filter(tenant=tenant)
