@@ -429,7 +429,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ("update", "partial_update", "destroy"):
             return [TenantResolvedAndStaff()]
-        return [IsAuthenticated()]
+        return [IsAuthenticated(), TenantResolvedAndMember()]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)

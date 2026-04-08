@@ -46,7 +46,7 @@ from academy.adapters.db.django import repositories_core as core_repo
 from .filters import StaffFilter, WorkRecordFilter, ExpenseRecordFilter
 from apps.domains.teachers.models import Teacher
 from apps.core.models import TenantMembership
-from apps.core.permissions import is_effective_staff
+from apps.core.permissions import is_effective_staff, TenantResolvedAndMember, TenantResolvedAndStaff
 
 User = get_user_model()
 
@@ -253,7 +253,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         staff.user.save(update_fields=["password"])
         return Response({"detail": "비밀번호가 변경되었습니다."})
 
-    @action(detail=False, methods=["get"], url_path="me", permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=["get"], url_path="me", permission_classes=[IsAuthenticated, TenantResolvedAndMember])
     def me(self, request):
         import logging
         logger = logging.getLogger(__name__)
@@ -358,7 +358,7 @@ class StaffViewSet(viewsets.ModelViewSet):
             return "TEACHER"
         return "ASSISTANT"
 
-    @action(detail=False, methods=["get"], url_path="currently-working", permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=["get"], url_path="currently-working", permission_classes=[IsAuthenticated, TenantResolvedAndStaff])
     def currently_working(self, request):
         """현재 근무 중인 직원 목록 (end_time 이 null 인 WorkRecord 가 있는 직원). 직급(role) + 근무 시작 시각·휴식 정보(드롭다운용)."""
         tenant = getattr(request, "tenant", None)
