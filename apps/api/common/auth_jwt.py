@@ -61,6 +61,10 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
             )
 
         refresh = self.get_token(user)
+        # JWT에 tenant_id 클레임 추가 — 크로스테넌트 헤더 조작 방어
+        if user.tenant_id is not None:
+            refresh["tenant_id"] = user.tenant_id
+            refresh.access_token["tenant_id"] = user.tenant_id
         return {
             "refresh": str(refresh),
             "access": str(refresh.access_token),

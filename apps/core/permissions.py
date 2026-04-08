@@ -58,19 +58,23 @@ class IsLambdaInternal(BasePermission):
 
 def is_effective_staff(user, tenant=None):
     """
-    테넌트 내 슈퍼유저급 권한: Django is_superuser/is_staff 또는 해당 테넌트 스태프(owner/admin/staff/teacher).
-    오너는 is_staff 없어도 프로그램 내 풀 권한. 운영상 테넌트는 항상 있음(미들웨어가 설정).
+    테넌트 내 슈퍼유저급 권한: 해당 테넌트 스태프(owner/admin/staff/teacher).
+    superuser/staff라도 해당 테넌트에 멤버십이 있거나 tenant_id가 일치해야 함.
+    크로스테넌트 접근 원천 차단.
     """
     if not user or not user.is_authenticated:
         return False
-    if user.is_superuser or user.is_staff:
-        return True
     if not tenant:
         return False
     from academy.adapters.db.django import repositories_core as core_repo
-    return core_repo.membership_exists_staff(
+    if core_repo.membership_exists_staff(
         tenant=tenant, user=user, staff_roles=("owner", "admin", "staff", "teacher")
-    )
+    ):
+        return True
+    # superuser/staff: 멤버십 없어도 자기 테넌트에는 접근 허용
+    if (user.is_superuser or user.is_staff) and getattr(user, "tenant_id", None) == tenant.id:
+        return True
+    return False
 
 
 class IsAdminOrStaff(BasePermission):
@@ -173,8 +177,8 @@ class TenantResolvedAndStaff(BasePermission):
     ✅ 운영레벨 Staff 전용 Permission (오너 = 테넌트 내 슈퍼유저급)
 
     허용:
-    - Django is_superuser / is_staff (테넌트 멤버십 없이도 통과, 충돌 방지)
-    - request.tenant 기준 owner / admin / staff / teacher
+    - request.tenant 기준 owner / admin / staff / teacher (멤버십 필수)
+    - superuser/staff도 멤버십 또는 tenant_id 일치 필요 (크로스테넌트 차단)
 
     학생 / 학부모 접근 차단용
     """
@@ -187,13 +191,16 @@ class TenantResolvedAndStaff(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if user.is_superuser or user.is_staff:
-            return True
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return False
         from academy.adapters.db.django import repositories_core as core_repo
-        return core_repo.membership_exists_staff(tenant=tenant, user=user, staff_roles=self.STAFF_ROLES)
+        if core_repo.membership_exists_staff(tenant=tenant, user=user, staff_roles=self.STAFF_ROLES):
+            return True
+        # superuser/staff: 멤버십 없어도 자기 테넌트에는 접근 허용
+        if (user.is_superuser or user.is_staff) and getattr(user, "tenant_id", None) == tenant.id:
+            return True
+        return False
 
 
 class TenantResolvedAndOwner(BasePermission):
