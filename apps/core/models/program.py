@@ -68,11 +68,12 @@ class Program(TimestampModel):
     )
 
     # ✅ 구독 관리
+    # 해지 예약은 cancel_at_period_end 플래그로 관리.
+    # subscription_status는 서비스 이용 가능 상태만 나타낸다.
     class SubscriptionStatus(models.TextChoices):
         ACTIVE = "active", "활성"
         EXPIRED = "expired", "만료"
         GRACE = "grace", "유예기간"
-        CANCELLED = "cancelled", "해지"
 
     subscription_status = models.CharField(
         max_length=20,

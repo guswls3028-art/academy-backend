@@ -104,6 +104,7 @@ _SUBSCRIPTION_EXEMPT_PREFIXES = (
     "/api/v1/core/program",
     "/api/v1/core/subscription",
     "/api/v1/core/legal-config",
+    "/api/v1/billing/",  # 결제 관련 API는 만료 후에도 접근 가능해야 함
     "/admin/",
     "/static/",
     "/media/",

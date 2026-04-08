@@ -54,11 +54,13 @@ class InvoiceAdmin(admin.ModelAdmin):
         "billing_mode",
         "due_date",
         "paid_at",
+        "attempt_count",
     )
     list_filter = ("status", "billing_mode", "plan")
-    search_fields = ("invoice_number",)
+    search_fields = ("invoice_number", "provider_order_id")
     raw_id_fields = ("tenant",)
     date_hierarchy = "due_date"
+    readonly_fields = ("provider_order_id",)
 
 
 @admin.register(PaymentTransaction)
@@ -71,8 +73,10 @@ class PaymentTransactionAdmin(admin.ModelAdmin):
         "payment_method",
         "card_company",
         "processed_at",
+        "reconciled_at",
     )
     list_filter = ("status", "payment_method", "provider")
+    search_fields = ("provider_payment_key", "provider_order_id", "idempotency_key")
     raw_id_fields = ("tenant", "invoice")
 
 

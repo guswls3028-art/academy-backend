@@ -2,11 +2,14 @@
 결제/구독 도메인 모델
 
 상태 분리 원칙:
-- subscription status: Program.subscription_status (ACTIVE/EXPIRED/GRACE/CANCELLED)
+- subscription status: Program.subscription_status (ACTIVE/EXPIRED/GRACE)
+  해지 예약은 cancel_at_period_end 플래그로 별도 관리.
 - invoice status: Invoice.status (SCHEDULED/PENDING/PAID/FAILED/OVERDUE/VOID)
 - payment status: PaymentTransaction.status (PENDING/SUCCESS/FAILED/REFUNDED)
 - tax invoice status: TaxInvoiceIssue.status (NOT_REQUESTED/REQUESTED/READY/ISSUED/FAILED)
 """
+
+import uuid
 
 from django.db import models
 
@@ -48,7 +51,8 @@ class BillingProfile(TimestampModel):
         max_length=30, default="tosspayments", help_text="PG사"
     )
     provider_customer_key = models.CharField(
-        max_length=200, blank=True, help_text="PG사 고객 고유 키"
+        max_length=200, blank=True,
+        help_text="PG사 고객 고유 키 (예측 불가능한 UUID, 자동 생성)",
     )
     payer_name = models.CharField(
         max_length=100, blank=True, help_text="결제자 이름"
@@ -62,6 +66,11 @@ class BillingProfile(TimestampModel):
         db_table = "billing_profile"
         verbose_name = "결제 프로필"
         verbose_name_plural = "결제 프로필"
+
+    def save(self, *args, **kwargs):
+        if not self.provider_customer_key:
+            self.provider_customer_key = f"cus_{uuid.uuid4().hex}"
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"BillingProfile({self.tenant.code})"
@@ -160,7 +169,11 @@ class Invoice(TimestampModel):
         "core.Tenant", on_delete=models.CASCADE, related_name="invoices"
     )
     invoice_number = models.CharField(
-        max_length=30, unique=True, help_text="청구서 번호 (예: INV-2026-03-001)"
+        max_length=30, unique=True, help_text="청구서 번호 — 사람이 보는 표시용 (예: INV-2026-03-001)"
+    )
+    provider_order_id = models.CharField(
+        max_length=64, unique=True, blank=True,
+        help_text="PG 주문 식별용 고유 ID (UUID 기반, invoice_number와 분리)",
     )
 
     # 구독 정보 스냅샷
@@ -190,6 +203,18 @@ class Invoice(TimestampModel):
     paid_at = models.DateTimeField(
         null=True, blank=True, help_text="결제 완료 시각"
     )
+    failed_at = models.DateTimeField(
+        null=True, blank=True, help_text="마지막 결제 실패 시각"
+    )
+    failure_reason = models.TextField(
+        blank=True, help_text="마지막 결제 실패 사유"
+    )
+    attempt_count = models.PositiveSmallIntegerField(
+        default=0, help_text="결제 시도 횟수"
+    )
+    next_retry_at = models.DateField(
+        null=True, blank=True, help_text="다음 재시도 예정일"
+    )
 
     memo = models.TextField(blank=True)
 
@@ -208,6 +233,11 @@ class Invoice(TimestampModel):
                 name="unique_invoice_per_period",
             ),
         ]
+
+    def save(self, *args, **kwargs):
+        if not self.provider_order_id:
+            self.provider_order_id = f"ord_{uuid.uuid4().hex}"
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Invoice({self.invoice_number}, {self.status})"
@@ -231,7 +261,17 @@ class PaymentTransaction(TimestampModel):
 
     # PG 정보
     transaction_key = models.CharField(
-        max_length=200, blank=True, help_text="PG 트랜잭션 키"
+        max_length=200, blank=True, help_text="PG 트랜잭션 키 (레거시, provider_payment_key 사용 권장)"
+    )
+    provider_payment_key = models.CharField(
+        max_length=200, blank=True, help_text="PG사 결제 키 (Toss: paymentKey)"
+    )
+    provider_order_id = models.CharField(
+        max_length=64, blank=True, help_text="PG 주문 ID (Invoice.provider_order_id와 동일)"
+    )
+    idempotency_key = models.CharField(
+        max_length=64, unique=True, blank=True, null=True,
+        help_text="멱등성 키 — 동일 결제 중복 방지"
     )
     provider = models.CharField(max_length=30, blank=True, help_text="PG사")
     payment_method = models.CharField(
@@ -250,11 +290,18 @@ class PaymentTransaction(TimestampModel):
     card_company = models.CharField(max_length=50, blank=True)
     card_number_masked = models.CharField(max_length=20, blank=True)
 
+    # 요청/응답
+    request_payload = models.JSONField(default=dict, help_text="PG 요청 페이로드")
+    response_payload = models.JSONField(default=dict, help_text="PG 응답 페이로드 (원본)")
+    raw_response = models.JSONField(default=dict, help_text="PG 원본 응답 (레거시, response_payload 사용 권장)")
+
     # 결과
     failure_reason = models.TextField(blank=True, help_text="실패 사유")
-    raw_response = models.JSONField(default=dict, help_text="PG 원본 응답")
     processed_at = models.DateTimeField(
         null=True, blank=True, help_text="처리 완료 시각"
+    )
+    reconciled_at = models.DateTimeField(
+        null=True, blank=True, help_text="대사 완료 시각"
     )
 
     # 환불

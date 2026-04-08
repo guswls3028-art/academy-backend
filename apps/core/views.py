@@ -199,6 +199,12 @@ class SubscriptionView(APIView):
         is_promo = program.monthly_price < original_price
         discount_rate = round((1 - program.monthly_price / original_price) * 100) if is_promo and original_price > 0 else 0
 
+        # 해지 예약 상태 표시
+        if program.cancel_at_period_end:
+            status_display = f"{program.get_subscription_status_display()} (해지 예약)"
+        else:
+            status_display = program.get_subscription_status_display()
+
         return Response({
             "plan": program.plan,
             "plan_display": program.get_plan_display(),
@@ -207,11 +213,16 @@ class SubscriptionView(APIView):
             "is_promo": is_promo,
             "discount_rate": discount_rate,
             "subscription_status": program.subscription_status,
-            "subscription_status_display": program.get_subscription_status_display(),
+            "subscription_status_display": status_display,
             "subscription_started_at": str(program.subscription_started_at) if program.subscription_started_at else None,
             "subscription_expires_at": str(program.subscription_expires_at) if program.subscription_expires_at else None,
             "is_subscription_active": program.is_subscription_active,
             "days_remaining": program.days_remaining,
+            "billing_email": program.billing_email,
+            "billing_mode": program.billing_mode,
+            "next_billing_at": str(program.next_billing_at) if program.next_billing_at else None,
+            "cancel_at_period_end": program.cancel_at_period_end,
+            "canceled_at": str(program.canceled_at) if program.canceled_at else None,
             "tenant_code": tenant.code,
             "tenant_name": tenant.name or "",
         })
