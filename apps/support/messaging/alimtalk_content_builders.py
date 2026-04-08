@@ -93,6 +93,117 @@ def get_solapi_template_id(trigger: str) -> str | None:
     return None
 
 
+# ──────────────────────────────────────────
+# 카테고리 → 통합 템플릿 타입 매핑 (수동 발송용)
+# ──────────────────────────────────────────
+# 시스템 기본양식(signup)은 자체 Solapi 템플릿 유지 → 매핑에서 제외.
+
+CATEGORY_TO_TEMPLATE_TYPE: dict[str, str] = {
+    "grades": TYPE_SCORE,
+    "exam": TYPE_SCORE,
+    "assignment": TYPE_SCORE,
+    "attendance": TYPE_ATTENDANCE,
+    "lecture": TYPE_ATTENDANCE,
+    "clinic": TYPE_CLINIC_INFO,
+    "payment": TYPE_SCORE,
+    "notice": TYPE_SCORE,
+    "community": TYPE_SCORE,
+    "staff": TYPE_SCORE,
+    "default": TYPE_SCORE,
+    "student": TYPE_SCORE,
+}
+
+# 시스템 기본양식 — 통합 4종 대신 자체 Solapi 템플릿 유지
+SYSTEM_TEMPLATE_CATEGORIES = frozenset({"signup"})
+
+
+def get_unified_for_category(category: str) -> tuple[str | None, str | None]:
+    """
+    카테고리에 해당하는 통합 템플릿 (template_type, solapi_id) 반환.
+    시스템 기본양식(signup) 또는 통합 미활성 시 (None, None).
+    """
+    if not UNIFIED_TEMPLATES_ENABLED:
+        return None, None
+    if category in SYSTEM_TEMPLATE_CATEGORIES:
+        return None, None
+    tt = CATEGORY_TO_TEMPLATE_TYPE.get(category)
+    if tt:
+        return tt, TEMPLATE_TYPE_TO_SOLAPI_ID.get(tt)
+    return None, None
+
+
+def build_manual_replacements(
+    template_type: str,
+    content_body: str,
+    context: dict,
+    tenant_name: str,
+    student_name: str,
+    site_url: str,
+) -> list[dict[str, str]]:
+    """
+    수동 발송용 통합 템플릿 replacements 빌드.
+    build_unified_replacements()와 동일 로직이나, trigger 대신 template_type을 직접 받음.
+    """
+    import re
+
+    # 서브변수 치환용 dict
+    all_vars = {
+        "학원이름": tenant_name,
+        "학원명": tenant_name,
+        "학생이름": student_name,
+        "학생이름2": student_name[1:] if len(student_name) >= 2 else student_name,
+        "학생이름3": student_name,
+        "사이트링크": site_url,
+    }
+    context_var_mapping: dict[str, list[str]] = {
+        "클리닉장소": ["장소", "클리닉장소", "place"],
+        "클리닉날짜": ["날짜", "클리닉날짜", "date"],
+        "클리닉시간": ["시간", "클리닉시간", "time"],
+        "클리닉기존일정": ["클리닉기존일정", "clinic_old_schedule"],
+        "클리닉변동사항": ["클리닉변동사항", "clinic_changes"],
+        "클리닉수정자": ["클리닉수정자", "clinic_modifier"],
+        "강의명": ["강의명", "lecture_name"],
+        "차시명": ["차시명", "session_name"],
+        "강의날짜": ["날짜", "강의날짜", "date"],
+        "강의시간": ["시간", "강의시간", "time"],
+        "날짜": ["날짜", "date"],
+        "시간": ["시간", "time"],
+    }
+
+    for var_name, ctx_keys in context_var_mapping.items():
+        for ctx_key in ctx_keys:
+            if ctx_key in context and context[ctx_key]:
+                all_vars[var_name] = str(context[ctx_key])
+                break
+
+    for k, v in context.items():
+        if not k.startswith("_") and k not in all_vars:
+            all_vars[k] = str(v) if v else ""
+
+    # content_body 내 #{서브변수} 치환 → #{선생님메모} 값
+    built_content = content_body
+    for k, v in all_vars.items():
+        built_content = built_content.replace(f"#{{{k}}}", v)
+
+    built_content = re.sub(r"#\{[^}]+\}", "", built_content)
+    built_content = re.sub(r"\n{3,}", "\n\n", built_content).strip()
+
+    # Solapi replacements
+    registered_vars = TEMPLATE_TYPE_VARIABLES.get(template_type, [])
+    replacements = []
+    for var_name in registered_vars:
+        if var_name == "선생님메모":
+            replacements.append({"key": var_name, "value": built_content})
+        elif var_name == "사이트링크":
+            replacements.append({"key": var_name, "value": site_url})
+        elif var_name in all_vars:
+            replacements.append({"key": var_name, "value": all_vars[var_name]})
+        else:
+            replacements.append({"key": var_name, "value": ""})
+
+    return replacements
+
+
 
 # ──────────────────────────────────────────
 # 템플릿 타입별 등록 변수 (Solapi에 전달해야 하는 전체 변수)

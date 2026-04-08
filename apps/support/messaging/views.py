@@ -511,7 +511,8 @@ class SendMessageView(APIView):
         subject_base = (raw_subject or "").strip()
         t = None
         solapi_template_id = ""
-        user_custom_content = ""  # 사용자가 직접 입력한 본문 (#{선생님메모} 변수용)
+        use_unified = False       # 통합 4종 템플릿 사용 여부
+        unified_template_type = None  # score / attendance / clinic_info / clinic_change
 
         if template_id:
             t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
@@ -528,29 +529,14 @@ class SendMessageView(APIView):
                     {"detail": "템플릿을 찾을 수 없습니다."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            # 사용자 커스텀 본문이 있고, 템플릿에 #{공지내용} 또는 #{선생님메모} 변수가 있으면 자유양식 모드
-            tpl_body = t.body or ""
-            if body_base and ("#{공지내용}" in tpl_body or "#{내용}" in tpl_body):
-                user_custom_content = body_base
             if not body_base:
                 body_base = (t.body or "").strip()
             if not subject_base:
                 subject_base = (t.subject or "").strip()
-            solapi_template_id = (t.solapi_template_id or "").strip()
 
-        # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택 (테넌트 → 오너 fallback)
-        if message_mode == "alimtalk" and not solapi_template_id:
-            freeform = resolve_freeform_template(tenant.id)
-            if freeform:
-                t = freeform
-                solapi_template_id = (freeform.solapi_template_id or "").strip()
-                user_custom_content = body_base  # 전체 본문을 #{공지내용}으로
-                if not subject_base:
-                    subject_base = (freeform.subject or "").strip()
-
-        # 자유양식 없으면 카테고리별 승인 템플릿 fallback (성적 공개 등)
+        # ── 알림톡: 통합 4종 템플릿 우선 사용 ──
+        # 시스템 기본양식(signup: 가입승인/비번찾기)만 자체 Solapi 템플릿 유지
         alimtalk_extra_vars = data.get("alimtalk_extra_vars") or {}
-        # 학생별 개별 치환 변수: {"123": {"시험성적": "85/100"}} → {123: {"시험성적": "85/100"}}
         raw_per_student = data.get("alimtalk_extra_vars_per_student") or {}
         extra_vars_per_student = {}
         for k, v in raw_per_student.items():
@@ -558,14 +544,32 @@ class SendMessageView(APIView):
                 extra_vars_per_student[int(k)] = v if isinstance(v, dict) else {}
             except (ValueError, TypeError):
                 pass
-        if message_mode == "alimtalk" and not solapi_template_id:
-            from apps.support.messaging.selectors import resolve_category_template
-            category_tpl = resolve_category_template(tenant.id, alimtalk_extra_vars)
-            if category_tpl:
-                t = category_tpl
-                solapi_template_id = (category_tpl.solapi_template_id or "").strip()
 
-        if message_mode == "alimtalk" and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
+        if message_mode == "alimtalk":
+            from apps.support.messaging.alimtalk_content_builders import (
+                get_unified_for_category,
+                build_manual_replacements,
+                SYSTEM_TEMPLATE_CATEGORIES,
+            )
+            category = (t.category if t else "") or ""
+            unified_tt, unified_sid = get_unified_for_category(category)
+
+            if unified_tt and unified_sid:
+                # 통합 4종 사용
+                use_unified = True
+                unified_template_type = unified_tt
+                solapi_template_id = unified_sid
+            elif category in SYSTEM_TEMPLATE_CATEGORIES and t:
+                # 시스템 기본양식: 자체 Solapi 템플릿 유지
+                solapi_template_id = (t.solapi_template_id or "").strip()
+            else:
+                # 카테고리 매핑 없음 → score로 fallback
+                use_unified = True
+                unified_template_type = "score"
+                from apps.support.messaging.alimtalk_content_builders import TEMPLATE_TYPE_TO_SOLAPI_ID, TYPE_SCORE
+                solapi_template_id = TEMPLATE_TYPE_TO_SOLAPI_ID.get(TYPE_SCORE, "")
+
+        if message_mode == "alimtalk" and not solapi_template_id:
             return Response(
                 {"detail": "알림톡 모드는 검수 승인된 템플릿이 필요합니다. 템플릿을 선택하거나 SMS 모드로 발송하세요."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -589,26 +593,32 @@ class SendMessageView(APIView):
                 skipped_no_phone += 1
                 continue
             name = (s.name or "").strip()
-            name_2 = name[1:] if len(name) >= 2 else name  # 성(첫 글자) 제외 = 이름만
-            name_3 = name  # 전체 이름 (하위 호환: 기존 #{학생이름3} 치환)
+            name_2 = name[1:] if len(name) >= 2 else name
+            name_3 = name
             site_url = get_tenant_site_url(request.tenant) or ""
             academy_name = (tenant.name or "").strip()
+
+            # 학생별 개별 변수 merge
+            student_extra = extra_vars_per_student.get(s.id, {})
+            merged_context = {**alimtalk_extra_vars, **student_extra}
+
+            # SMS용 text: 변수 치환
+            import re as _re
             text = (
                 body_base.replace("#{학생이름}", name)
                 .replace("#{학생이름2}", name_2)
                 .replace("#{학생이름3}", name_3)
                 .replace("#{학원명}", academy_name)
+                .replace("#{학원이름}", academy_name)
                 .replace("#{사이트링크}", site_url)
-                .replace("#{공지내용}", user_custom_content)
-                .replace("#{내용}", user_custom_content)
             )
-            # Context-dependent variables: 학생별 개별 변수 우선, 없으면 공통 변수, 없으면 빈 문자열
-            student_extra = extra_vars_per_student.get(s.id, {})
-            for var in ("강의명", "차시명", "시험명", "과제명", "클리닉명", "장소", "날짜", "시간", "시험성적", "클리닉합불"):
-                val = student_extra.get(var) or alimtalk_extra_vars.get(var, "")
+            for var in ("강의명", "차시명", "시험명", "과제명", "클리닉명", "장소", "날짜", "시간",
+                        "시험성적", "클리닉합불", "공지내용", "내용",
+                        "클리닉장소", "클리닉날짜", "클리닉시간",
+                        "클리닉기존일정", "클리닉변동사항", "클리닉수정자",
+                        "강의날짜", "강의시간"):
+                val = merged_context.get(var, "")
                 text = text.replace(f"#{{{var}}}", val)
-            # 수동 발송에서는 사용자가 직접 편집한 본문이므로 잔여 변수는 optional 처리
-            import re as _re
             text = _re.sub(r"#\{[^}]+\}", "", text)
             text = _re.sub(r"\n{3,}", "\n\n", text).strip()
             if subject_base:
@@ -616,24 +626,32 @@ class SendMessageView(APIView):
 
             alimtalk_replacements = None
             template_id_solapi = None
+
             if message_mode == "alimtalk" and solapi_template_id:
                 template_id_solapi = solapi_template_id
-                alimtalk_replacements = [
-                    {"key": "학생이름", "value": name},
-                    {"key": "학생이름2", "value": name_2},
-                    {"key": "학생이름3", "value": name_3},
-                    {"key": "학원명", "value": academy_name},
-                    {"key": "사이트링크", "value": site_url},
-                ]
-                if user_custom_content:
-                    alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
-                    alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
-                    alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
-                # 추가 변수 (성적 발송 등 카테고리별 템플릿 변수) — 학생별 개별값 우선
-                merged_extra = {**alimtalk_extra_vars, **student_extra}
-                for var_key, var_val in merged_extra.items():
-                    if var_val and var_key not in ("학생이름", "학생이름2", "학생이름3", "사이트링크"):
-                        alimtalk_replacements.append({"key": var_key, "value": str(var_val)})
+
+                if use_unified and unified_template_type:
+                    # ── 통합 4종: build_manual_replacements로 정확한 변수 세트 빌드 ──
+                    alimtalk_replacements = build_manual_replacements(
+                        template_type=unified_template_type,
+                        content_body=body_base,
+                        context=merged_context,
+                        tenant_name=academy_name,
+                        student_name=name,
+                        site_url=site_url,
+                    )
+                else:
+                    # ── 시스템 기본양식: 기존 방식 유지 (가입승인/비번 등) ──
+                    alimtalk_replacements = [
+                        {"key": "학생이름", "value": name},
+                        {"key": "학생이름2", "value": name_2},
+                        {"key": "학생이름3", "value": name_3},
+                        {"key": "학원명", "value": academy_name},
+                        {"key": "사이트링크", "value": site_url},
+                    ]
+                    for var_key, var_val in merged_context.items():
+                        if var_val and var_key not in ("학생이름", "학생이름2", "학생이름3", "사이트링크"):
+                            alimtalk_replacements.append({"key": var_key, "value": str(var_val)})
 
             try:
                 ok = enqueue_sms(
