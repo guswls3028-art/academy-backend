@@ -972,7 +972,7 @@ class ClinicAPITestMixin(ClinicTestMixin):
         return data
 
     def _headers(self, tenant):
-        return {"HTTP_X_TENANT_CODE": tenant.code}
+        return {"HTTP_HOST": "localhost", "HTTP_X_TENANT_CODE": tenant.code}
 
 
 class TenantIsolationAPITest(APITestCase, ClinicAPITestMixin):
