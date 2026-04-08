@@ -944,3 +944,241 @@ class EnrollmentSelectionDBTest(TestCase, ClinicTestMixin):
         ).order_by("-enrolled_at", "-id").first()
 
         self.assertEqual(selected.id, e_active.id)
+
+
+# ═══════════════════════════════════════════════════
+# 11. API 레벨 검증 (DRF APIClient 실 호출)
+# ═══════════════════════════════════════════════════
+
+from rest_framework.test import APITestCase
+from apps.core.models import TenantMembership
+
+
+class ClinicAPITestMixin(ClinicTestMixin):
+    """API 테스트용 helper — 인증+tenant 설정."""
+
+    def setup_api_tenant(self, code, student_count=1):
+        """tenant + admin user + TenantMembership + force_authenticate."""
+        data = self.setup_full_tenant(code, student_count=student_count)
+        admin_user = self.make_user(f"admin_{code}")
+        admin_user.is_staff = True
+        admin_user.tenant = data["tenant"]
+        admin_user.save()
+        TenantMembership.objects.create(
+            user=admin_user, tenant=data["tenant"],
+            role="admin", is_active=True,
+        )
+        data["admin_user"] = admin_user
+        return data
+
+    def _headers(self, tenant):
+        return {"HTTP_X_TENANT_CODE": tenant.code}
+
+
+class TenantIsolationAPITest(APITestCase, ClinicAPITestMixin):
+    """API 엔드포인트 레벨에서 tenant A/B 교차 접근 차단 확인."""
+
+    def setUp(self):
+        self.a = self.setup_api_tenant("api_a", student_count=1)
+        self.b = self.setup_api_tenant("api_b", student_count=1)
+
+        # tenant A에 클리닉 세션 + 예약
+        self.part_a = self.make_participant(
+            self.a["tenant"], self.a["clinic_session"],
+            self.a["students"][0], status="booked",
+        )
+
+    def test_tenant_b_cannot_see_tenant_a_participants(self):
+        """tenant B 인증으로 tenant A participant 조회 시 빈 목록."""
+        self.client.force_authenticate(user=self.b["admin_user"])
+        resp = self.client.get(
+            "/api/v1/clinic/participants/",
+            **self._headers(self.b["tenant"]),
+        )
+        self.assertEqual(resp.status_code, 200)
+        ids = {p["id"] for p in resp.data.get("results", resp.data)}
+        self.assertNotIn(self.part_a.id, ids)
+
+    def test_tenant_b_cannot_retrieve_tenant_a_participant(self):
+        """tenant B 인증으로 tenant A participant 직접 조회 → 404."""
+        self.client.force_authenticate(user=self.b["admin_user"])
+        resp = self.client.get(
+            f"/api/v1/clinic/participants/{self.part_a.id}/",
+            **self._headers(self.b["tenant"]),
+        )
+        self.assertIn(resp.status_code, [403, 404])
+
+    def test_tenant_b_cannot_complete_tenant_a_participant(self):
+        """tenant B 인증으로 tenant A participant complete → 403/404."""
+        self.client.force_authenticate(user=self.b["admin_user"])
+        resp = self.client.post(
+            f"/api/v1/clinic/participants/{self.part_a.id}/complete/",
+            **self._headers(self.b["tenant"]),
+        )
+        self.assertIn(resp.status_code, [403, 404])
+
+    def test_tenant_a_sees_own_participant(self):
+        """tenant A 인증으로 자기 participant 정상 조회."""
+        self.client.force_authenticate(user=self.a["admin_user"])
+        resp = self.client.get(
+            f"/api/v1/clinic/participants/{self.part_a.id}/",
+            **self._headers(self.a["tenant"]),
+        )
+        self.assertEqual(resp.status_code, 200)
+
+
+class DuplicateBookingAPITest(APITestCase, ClinicAPITestMixin):
+    """API 레벨 중복 예약 방어."""
+
+    def setUp(self):
+        self.data = self.setup_api_tenant("dup_api", student_count=1)
+        self.tenant = self.data["tenant"]
+        self.student = self.data["students"][0]
+        self.clinic_session = self.data["clinic_session"]
+        self.client.force_authenticate(user=self.data["admin_user"])
+
+    def test_duplicate_booking_returns_409(self):
+        """동일 학생 동일 세션 이중 POST → 409 CONFLICT."""
+        payload = {
+            "session": self.clinic_session.id,
+            "student": self.student.id,
+        }
+        resp1 = self.client.post(
+            "/api/v1/clinic/participants/",
+            payload,
+            **self._headers(self.tenant),
+        )
+        self.assertIn(resp1.status_code, [200, 201])
+
+        resp2 = self.client.post(
+            "/api/v1/clinic/participants/",
+            payload,
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(resp2.status_code, 409)
+
+
+class CompleteBlockedAPITest(APITestCase, ClinicAPITestMixin):
+    """cancelled/rejected 참가자에 대한 complete API → 400."""
+
+    def setUp(self):
+        self.data = self.setup_api_tenant("comp_api", student_count=2)
+        self.tenant = self.data["tenant"]
+        self.client.force_authenticate(user=self.data["admin_user"])
+
+    def test_complete_cancelled_returns_400(self):
+        """cancelled 상태 참가자 complete → 400."""
+        p = self.make_participant(
+            self.tenant, self.data["clinic_session"],
+            self.data["students"][0], status="cancelled",
+        )
+        resp = self.client.post(
+            f"/api/v1/clinic/participants/{p.id}/complete/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_complete_rejected_returns_400(self):
+        """rejected 상태 참가자 complete → 400."""
+        p = self.make_participant(
+            self.tenant, self.data["clinic_session"],
+            self.data["students"][1], status="rejected",
+        )
+        resp = self.client.post(
+            f"/api/v1/clinic/participants/{p.id}/complete/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_complete_booked_returns_200(self):
+        """booked 상태 참가자 complete → 200 (정상 전이)."""
+        p = self.make_participant(
+            self.tenant, self.data["clinic_session"],
+            self.data["students"][0], status="booked",
+        )
+        resp = self.client.post(
+            f"/api/v1/clinic/participants/{p.id}/complete/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(resp.status_code, 200)
+        p.refresh_from_db()
+        self.assertEqual(p.status, "attended")
+        self.assertIsNotNone(p.completed_at)
+
+
+class ScoreValidationAPITest(TestCase, ClinicTestMixin):
+    """서비스 레벨 점수 검증 — 만점 초과/음수 점수 거부 확인 (보강)."""
+
+    def setUp(self):
+        self.data = self.setup_full_tenant("score_api", student_count=1)
+        self.enrollment = self.data["enrollments"][0]
+        self.lec_session = self.data["lec_session"]
+        self.tenant = self.data["tenant"]
+        self.admin_user = self.make_user("admin_score_api")
+
+    def test_negative_score_not_passed(self):
+        """음수 점수 → 불합격 처리 (점수는 기록되지만 해소 안 됨)."""
+        from apps.domains.exams.models import Exam
+        from apps.domains.progress.services.clinic_remediation_service import ClinicRemediationService
+
+        exam = Exam.objects.create(
+            tenant=self.tenant, title="음수시험",
+            max_score=100.0, pass_score=60.0,
+        )
+        link = self.make_clinic_link(
+            self.enrollment, self.lec_session,
+            source_type="exam", source_id=exam.id,
+        )
+        result = ClinicRemediationService.submit_exam_retake(
+            clinic_link_id=link.id,
+            score=-10.0,
+            graded_by_user_id=self.admin_user.id,
+        )
+        self.assertFalse(result.passed)
+        link.refresh_from_db()
+        self.assertIsNone(link.resolved_at)
+
+    def test_zero_score_accepted(self):
+        """0점 → 불합격이지만 제출 자체는 성공."""
+        from apps.domains.exams.models import Exam
+        from apps.domains.progress.services.clinic_remediation_service import ClinicRemediationService
+
+        exam = Exam.objects.create(
+            tenant=self.tenant, title="영점시험",
+            max_score=100.0, pass_score=60.0,
+        )
+        link = self.make_clinic_link(
+            self.enrollment, self.lec_session,
+            source_type="exam", source_id=exam.id,
+        )
+        result = ClinicRemediationService.submit_exam_retake(
+            clinic_link_id=link.id,
+            score=0.0,
+            graded_by_user_id=self.admin_user.id,
+        )
+        self.assertFalse(result.passed)
+        link.refresh_from_db()
+        self.assertIsNone(link.resolved_at)  # 불합격 → 미해소
+
+    def test_exact_max_score_accepted(self):
+        """만점 정확히 → 합격 + 해소."""
+        from apps.domains.exams.models import Exam
+        from apps.domains.progress.services.clinic_remediation_service import ClinicRemediationService
+
+        exam = Exam.objects.create(
+            tenant=self.tenant, title="만점시험",
+            max_score=100.0, pass_score=60.0,
+        )
+        link = self.make_clinic_link(
+            self.enrollment, self.lec_session,
+            source_type="exam", source_id=exam.id,
+        )
+        result = ClinicRemediationService.submit_exam_retake(
+            clinic_link_id=link.id,
+            score=100.0,
+            graded_by_user_id=self.admin_user.id,
+        )
+        self.assertTrue(result.passed)
+        link.refresh_from_db()
+        self.assertIsNotNone(link.resolved_at)
+        self.assertEqual(link.resolution_type, "EXAM_PASS")
