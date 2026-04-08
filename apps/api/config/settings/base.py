@@ -384,7 +384,7 @@ VIDEO_BATCH_JOB_QUEUE = os.getenv("VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-bat
 VIDEO_BATCH_JOB_DEFINITION = os.getenv("VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
 VIDEO_BATCH_JOB_QUEUE_LONG = os.getenv("VIDEO_BATCH_JOB_QUEUE_LONG", "academy-v1-video-batch-long-queue")
 VIDEO_BATCH_JOB_DEFINITION_LONG = os.getenv("VIDEO_BATCH_JOB_DEFINITION_LONG", "academy-v1-video-batch-long-jobdef")
-VIDEO_BATCH_COMPUTE_ENV_NAME = os.getenv("VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce")
+VIDEO_BATCH_COMPUTE_ENV_NAME = os.getenv("VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce-200gb")
 # EventBridge + Ops JobDef (reconcile, scanstuck)
 VIDEO_RECONCILE_RULE_NAME = os.getenv("VIDEO_RECONCILE_RULE_NAME", "academy-v1-reconcile-video-jobs")
 VIDEO_SCAN_STUCK_RULE_NAME = os.getenv("VIDEO_SCAN_STUCK_RULE_NAME", "academy-v1-video-scan-stuck-rate")

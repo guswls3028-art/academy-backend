@@ -30,6 +30,9 @@ class SessionSerializer(serializers.ModelSerializer):
         model = Session
         fields = "__all__"
         ref_name = "LectureSession"
+        # UniqueConstraint validators를 비활성화 — order auto-assign과 충돌 방지
+        # 커스텀 validate() + DB 제약에서 중복 검증
+        validators = []
 
     def validate(self, attrs):
         """

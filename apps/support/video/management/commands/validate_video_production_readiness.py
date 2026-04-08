@@ -16,7 +16,7 @@ from django.db import connection
 REGION = getattr(settings, "AWS_DEFAULT_REGION", None) or __import__("os").environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
 QUEUE_NAME = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
 JOB_DEF_NAME = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
-CE_NAME = getattr(settings, "VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce")
+CE_NAME = getattr(settings, "VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce-200gb")
 RECONCILE_RULE = getattr(settings, "VIDEO_RECONCILE_RULE_NAME", "academy-v1-reconcile-video-jobs")
 SCAN_STUCK_RULE = getattr(settings, "VIDEO_SCAN_STUCK_RULE_NAME", "academy-v1-video-scan-stuck-rate")
 OPS_JOB_DEFS = list(getattr(settings, "VIDEO_OPS_JOB_DEFS", ("academy-v1-video-ops-reconcile", "academy-v1-video-ops-scanstuck")))

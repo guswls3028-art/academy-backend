@@ -1,21 +1,14 @@
 # ==============================================================================
-# Video Worker — Build and push to ECR only.
-# Infrastructure provisioning (deploy.ps1) is NOT run here.
-# Infra changes require broader admin permissions and must use the controlled
-# operator path: run-with-env.ps1 -- deploy.ps1 (local/SSH).
+# DEPRECATED: Video Worker — Build and push to ECR only.
+# This workflow is REDUNDANT with v1-build-and-push-latest.yml which already
+# builds+deploys video worker images with SHA tagging and Batch job def updates.
+# Kept for workflow_dispatch only (emergency manual builds).
 # ==============================================================================
 
-name: Video Worker Build
+name: Video Worker Build (manual only)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "docker/video-worker/**"
-      - "apps/worker/video_worker/**"
-      - "apps/support/video/**"
-      - ".github/workflows/video_batch_deploy.yml"
 
 concurrency:
   group: video-batch-deploy

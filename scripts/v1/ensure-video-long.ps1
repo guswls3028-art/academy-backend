@@ -20,7 +20,7 @@ if ($AwsProfile) { $env:AWS_PROFILE = $AwsProfile; if (-not $env:AWS_DEFAULT_REG
 . (Join-Path $PSScriptRoot "resources\jobdef.ps1")
 $null = Load-SSOT -Env "prod"
 $script:BatchIam = Ensure-BatchIAM
-$refCe = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", "academy-v1-video-batch-ce", "--region", $script:Region, "--output", "json") 2>$null
+$refCe = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", "academy-v1-video-batch-ce-200gb", "--region", $script:Region, "--output", "json") 2>$null
 if ($refCe -and $refCe.computeEnvironments) {
     $res = $refCe.computeEnvironments[0].computeResources
     if (-not $script:BatchSecurityGroupId -and $res.securityGroupIds[0]) { $script:BatchSecurityGroupId = $res.securityGroupIds[0] }

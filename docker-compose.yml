@@ -105,11 +105,11 @@ services:
       
       # AWS SQS
       AWS_REGION: ${AWS_REGION:-ap-northeast-2}
-      VIDEO_SQS_QUEUE_NAME: ${VIDEO_SQS_QUEUE_NAME:-academy-video-jobs}
-      AI_SQS_QUEUE_NAME_LITE: ${AI_SQS_QUEUE_NAME_LITE:-academy-ai-jobs-lite}
-      AI_SQS_QUEUE_NAME_BASIC: ${AI_SQS_QUEUE_NAME_BASIC:-academy-ai-jobs-basic}
-      AI_SQS_QUEUE_NAME_PREMIUM: ${AI_SQS_QUEUE_NAME_PREMIUM:-academy-ai-jobs-premium}
-      
+      VIDEO_SQS_QUEUE_NAME: ${VIDEO_SQS_QUEUE_NAME:-academy-v1-video-batch-queue}
+      AI_SQS_QUEUE_NAME_LITE: ${AI_SQS_QUEUE_NAME_LITE:-academy-v1-ai-queue}
+      AI_SQS_QUEUE_NAME_BASIC: ${AI_SQS_QUEUE_NAME_BASIC:-academy-v1-ai-queue}
+      AI_SQS_QUEUE_NAME_PREMIUM: ${AI_SQS_QUEUE_NAME_PREMIUM:-academy-v1-ai-queue}
+
       # Worker 통신
       INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
       
@@ -170,8 +170,8 @@ services:
       
       # AWS SQS
       AWS_REGION: ${AWS_REGION:-ap-northeast-2}
-      VIDEO_SQS_QUEUE_NAME: ${VIDEO_SQS_QUEUE_NAME:-academy-video-jobs}
-      
+      VIDEO_SQS_QUEUE_NAME: ${VIDEO_SQS_QUEUE_NAME:-academy-v1-video-batch-queue}
+
       # Redis (선택적)
       REDIS_HOST: ${REDIS_HOST:-redis}
       REDIS_PORT: ${REDIS_PORT:-6379}
@@ -250,9 +250,9 @@ services:
       
       # AWS SQS
       AWS_REGION: ${AWS_REGION:-ap-northeast-2}
-      AI_SQS_QUEUE_NAME_LITE: ${AI_SQS_QUEUE_NAME_LITE:-academy-ai-jobs-lite}
-      AI_SQS_QUEUE_NAME_BASIC: ${AI_SQS_QUEUE_NAME_BASIC:-academy-ai-jobs-basic}
-      
+      AI_SQS_QUEUE_NAME_LITE: ${AI_SQS_QUEUE_NAME_LITE:-academy-v1-ai-queue}
+      AI_SQS_QUEUE_NAME_BASIC: ${AI_SQS_QUEUE_NAME_BASIC:-academy-v1-ai-queue}
+
       # Cloudflare R2 Storage
       R2_ACCESS_KEY: ${R2_ACCESS_KEY}
       R2_SECRET_KEY: ${R2_SECRET_KEY}
@@ -308,7 +308,7 @@ services:
       
       # AWS SQS
       AWS_REGION: ${AWS_REGION:-ap-northeast-2}
-      AI_SQS_QUEUE_NAME_PREMIUM: ${AI_SQS_QUEUE_NAME_PREMIUM:-academy-ai-jobs-premium}
+      AI_SQS_QUEUE_NAME_PREMIUM: ${AI_SQS_QUEUE_NAME_PREMIUM:-academy-v1-ai-queue}
       
       # Cloudflare R2 Storage
       R2_ACCESS_KEY: ${R2_ACCESS_KEY}
@@ -362,7 +362,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_PORT: ${DB_PORT:-5432}
       AWS_REGION: ${AWS_REGION:-ap-northeast-2}
-      MESSAGING_SQS_QUEUE_NAME: ${MESSAGING_SQS_QUEUE_NAME:-academy-messaging-jobs}
+      MESSAGING_SQS_QUEUE_NAME: ${MESSAGING_SQS_QUEUE_NAME:-academy-v1-messaging-queue}
       SOLAPI_API_KEY: ${SOLAPI_API_KEY}
       SOLAPI_API_SECRET: ${SOLAPI_API_SECRET}
       SOLAPI_SENDER: ${SOLAPI_SENDER}

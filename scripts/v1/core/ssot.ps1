@@ -170,7 +170,7 @@ function Load-SSOT {
     $vb = $p["videoBatch"]
     $vbs = if ($vb["standard"]) { $vb["standard"] } else { $vb }
     $vbl = $vb["long"]
-    $script:VideoCEName = if ($vbs["computeEnvironmentName"]) { $vbs["computeEnvironmentName"] } else { "academy-v1-video-batch-ce" }
+    $script:VideoCEName = if ($vbs["computeEnvironmentName"]) { $vbs["computeEnvironmentName"] } else { "academy-v1-video-batch-ce-200gb" }
     $script:VideoQueueName = if ($vbs["videoQueueName"]) { $vbs["videoQueueName"] } else { "academy-v1-video-batch-queue" }
     $script:VideoJobDefName = if ($vbs["workerJobDefName"]) { $vbs["workerJobDefName"] } else { "academy-v1-video-batch-jobdef" }
     $script:VideoCEMinvCpus = Coerce-Int $(if ($vbs["minvCpus"]) { $vbs["minvCpus"] } else { 0 }) 0

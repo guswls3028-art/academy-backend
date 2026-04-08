@@ -430,8 +430,8 @@ foreach ($bq in @(
 
 # Batch CE status
 foreach ($ce in @(
-    @{ Name="standard"; CE="academy-v1-video-batch-ce" },
-    @{ Name="long";     CE="academy-v1-video-batch-long-ce" },
+    @{ Name="standard"; CE="academy-v1-video-batch-ce-200gb" },
+    @{ Name="long";     CE="academy-v1-video-batch-long-ce-200gb" },
     @{ Name="ops";      CE="academy-v1-video-ops-ce" }
 )) {
     try {

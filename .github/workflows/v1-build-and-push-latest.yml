@@ -549,7 +549,7 @@ jobs:
               --query 'InstanceRefreshes[0].Status' \
               --output text)
 
-            echo "Attempt $i/20: API refresh status=$STATUS"
+            echo "Attempt $i/30: API refresh status=$STATUS"
 
             if [ "$STATUS" = "Successful" ]; then
               echo "API ASG refresh completed successfully"
@@ -790,7 +790,7 @@ jobs:
 
       - name: Verify Batch compute environments
         run: |
-          for CE in academy-v1-video-batch-ce academy-v1-video-batch-long-ce academy-v1-video-ops-ce; do
+          for CE in academy-v1-video-batch-ce-200gb academy-v1-video-batch-long-ce-200gb academy-v1-video-ops-ce; do
             STATUS=$(aws batch describe-compute-environments \
               --compute-environments "$CE" \
               --query 'computeEnvironments[0].status' --output text 2>/dev/null)

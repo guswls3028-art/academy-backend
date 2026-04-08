@@ -30,7 +30,7 @@ try {
         VIDEO_BATCH_JOB_DEFINITION = "academy-v1-video-batch-jobdef"
         VIDEO_BATCH_JOB_QUEUE_LONG = "academy-v1-video-batch-long-queue"
         VIDEO_BATCH_JOB_DEFINITION_LONG = "academy-v1-video-batch-long-jobdef"
-        VIDEO_BATCH_COMPUTE_ENV_NAME = "academy-v1-video-batch-ce"
+        VIDEO_BATCH_COMPUTE_ENV_NAME = "academy-v1-video-batch-ce-200gb"
     }
     $allOk = $true
     foreach ($k in $keys) {
@@ -79,9 +79,9 @@ Write-Host "`n=== 4) AWS Batch Compute Environments ===" -ForegroundColor Cyan
 try {
     $ce = aws batch describe-compute-environments --region $Region --profile $Profile --query "computeEnvironments[*].computeEnvironmentName" --output text 2>&1
     if ($LASTEXITCODE -ne 0) { throw $ce }
-    $hasCe = $ce -match "academy-v1-video-batch-ce"
-    if ($hasCe) { Write-Host "  academy-v1-video-batch-ce 존재" -ForegroundColor Green }
-    else { Write-Host "  academy-v1-video-batch-ce 없음" -ForegroundColor Red }
+    $hasCe = $ce -match "academy-v1-video-batch-ce-200gb"
+    if ($hasCe) { Write-Host "  academy-v1-video-batch-ce-200gb 존재" -ForegroundColor Green }
+    else { Write-Host "  academy-v1-video-batch-ce-200gb 없음" -ForegroundColor Red }
     Write-Host "  $ce" -ForegroundColor Gray
 } catch {
     Write-Host "  ERROR: $_" -ForegroundColor Red

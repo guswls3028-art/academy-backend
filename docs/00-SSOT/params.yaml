@@ -130,7 +130,7 @@ aiWorker:
 videoBatch:
   # standard: 기존 계열 유지. 3시간 이하 일반 작업. maxvCpus=40, Spot 혼합.
   standard:
-    computeEnvironmentName: academy-v1-video-batch-ce
+    computeEnvironmentName: academy-v1-video-batch-ce-200gb
     videoQueueName: academy-v1-video-batch-queue
     workerJobDefName: academy-v1-video-batch-jobdef
     minvCpus: 0
@@ -143,7 +143,7 @@ videoBatch:
     useSpot: true
   # long: 3시간 초과·장시간 작업. On-Demand 우선(Spot 중단 리스크 회피). maxvCpus=80.
   long:
-    computeEnvironmentName: academy-v1-video-batch-long-ce
+    computeEnvironmentName: academy-v1-video-batch-long-ce-200gb
     videoQueueName: academy-v1-video-batch-long-queue
     workerJobDefName: academy-v1-video-batch-long-jobdef
     minvCpus: 0
@@ -154,7 +154,7 @@ videoBatch:
     stuckHeartbeatAgeMinutes: 45
     allocationStrategy: BEST_FIT
     useSpot: false
-  longComputeEnvironmentName: academy-v1-video-batch-long-ce
+  longComputeEnvironmentName: academy-v1-video-batch-long-ce-200gb
   longQueueName: academy-v1-video-batch-long-queue
   longWorkerJobDefName: academy-v1-video-batch-long-jobdef
   # Job timeout / stuck / retry (3시간 영상 기준)
@@ -204,6 +204,9 @@ eventBridge:
   enqueueUploadedState: ENABLED
   detectStuckSchedule: "rate(30 minutes)"
   detectStuckState: ENABLED
+  purgeRawRuleName: academy-v1-purge-raw-videos
+  purgeRawSchedule: "cron(0 18 * * ? *)"
+  purgeRawState: ENABLED
 
 dynamodb:
   lockTableName: academy-v1-video-job-lock

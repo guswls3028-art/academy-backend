@@ -113,6 +113,9 @@ class MessagingSQSQueue:
             message["alimtalk_replacements"] = alimtalk_replacements
         if template_id:
             message["template_id"] = str(template_id)
+        et = (event_type or "").strip()
+        if et:
+            message["event_type"] = et[:30]
         message["business_idempotency_key"] = _build_business_key(
             tenant_id=int(tenant_id),
             channel=mode,
